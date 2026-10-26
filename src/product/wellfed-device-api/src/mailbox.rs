@@ -8,6 +8,8 @@
 //! them for every firmware.
 
 use wellfed_core::clock::wall::{Jump, Sync, SyncError};
+pub use wellfed_core::clock::wall::{Origin, State as ClockState};
+pub use wellfed_core::clock::zone::Zone;
 use wellfed_core::named_enum;
 
 use crate::clients::{Label, Role};
@@ -68,8 +70,84 @@ impl TimeResult {
             Err(SyncError::Time) => Self::Refused("time"),
             Err(SyncError::Offset) => Self::Refused("offset"),
             Err(SyncError::NextChange) => Self::Refused("next_change"),
+            Err(SyncError::Bounded) => Self::Refused("bounded"),
         }
     }
+}
+
+/// Where the feeder asks for the time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NtpServer {
+    Off,
+    /// The router that gave the feeder its address: on a home network the
+    /// one host the feeder already trusts to route it.
+    Gateway {
+        port: u16,
+    },
+    Address {
+        ip: [u8; 4],
+        port: u16,
+    },
+}
+
+impl Default for NtpServer {
+    fn default() -> Self {
+        Self::Gateway {
+            port: wellfed_core::clock::ntp::PORT,
+        }
+    }
+}
+
+/// The time settings: the owner's zone and the NTP server.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TimeSettings {
+    /// `None`: local time comes from a client sync's offsets, if any.
+    pub zone: Option<Zone>,
+    pub ntp: NtpServer,
+}
+
+/// The time settings as the writer last published them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TimeSettingsView {
+    pub settings: TimeSettings,
+    pub generation: u32,
+    pub writable: bool,
+}
+
+/// How a time settings request ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TimeSettingsResult {
+    /// The current settings; `pending` once a change is queued for the
+    /// writer.
+    Current {
+        view: TimeSettingsView,
+        pending: bool,
+    },
+    /// A change is already queued, or the store is still loading.
+    Busy,
+    ReadOnly,
+    /// This firmware keeps no time settings.
+    Unserved,
+}
+
+/// What the last NTP exchange came to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NtpResult {
+    Used,
+    /// The answer disagreed with a valid clock beyond both error bounds.
+    Bounded,
+    Lost,
+    /// Unusable: unsynchronized, kiss-o'-death, too loose or malformed.
+    Refused,
+}
+
+/// The clock and the NTP exchange, for the time view.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TimeState {
+    pub clock: ClockState,
+    /// The uptime now, to age the last fix.
+    pub now_ms: u32,
+    pub ntp_last: Option<NtpResult>,
 }
 
 /// How a `lock` request ended.

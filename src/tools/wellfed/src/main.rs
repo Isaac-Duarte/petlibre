@@ -29,7 +29,9 @@ use wellfed_client::api::Invite;
 use wellfed_client::setup::{Ask, Credentials, Session, Step, panel_position};
 use wellfed_formats::private;
 use wellfed_model::setup::{Enrolled, Refusal, Reply, WifiSaved};
-use wellfed_model::{Answer, ClientRole, EventBody, Joined, Op, Pushed, SettingsPatch, Wifi};
+use wellfed_model::{
+    Answer, ClientRole, EventBody, Joined, NtpServer, Op, Pushed, SettingsPatch, TimeChanges, Wifi,
+};
 use wellfed_session::setup_code::Code;
 
 use crate::ble::Link;
@@ -60,8 +62,10 @@ enum Command {
     Lock(LockArgs),
     /// Store or clear the network the feeder joins next.
     Wifi(WifiArgs),
-    /// Set the feeder's clock from this computer's, with its time zone.
-    Time(Target),
+    /// Set the feeder's clock from this computer's, with its time zone's
+    /// offsets; or, with --zone or --ntp, change the time settings; or,
+    /// with --show, read them and the clock's state.
+    Time(TimeArgs),
     /// The feeder's history, and with --follow its live events and samples.
     Events(EventsArgs),
     /// Mint a single-use invite for another client.
@@ -115,7 +119,7 @@ fn main() -> Result<()> {
             },
         )),
         Command::Wifi(args) => runtime.block_on(wifi_command(args)),
-        Command::Time(target) => runtime.block_on(time_command(target)),
+        Command::Time(args) => runtime.block_on(time_command(args)),
         Command::Events(args) => runtime.block_on(events_command(args)),
         Command::Invite(args) => runtime.block_on(invite_command(args)),
         Command::Join(args) => runtime.block_on(join_command(args)),
@@ -307,6 +311,57 @@ struct WifiArgs {
 }
 
 #[derive(Args)]
+struct TimeArgs {
+    #[command(flatten)]
+    target: Target,
+    /// The feeder's time zone, an IANA name (`America/Denver`), or
+    /// `system` for this computer's; sent as the zone's POSIX rule.
+    #[arg(long, conflicts_with = "clear_zone")]
+    zone: Option<String>,
+    /// Forget the zone; local time then follows the syncs' offsets.
+    #[arg(long)]
+    clear_zone: bool,
+    /// Where the feeder asks for the time: `off`, `gateway`, `gateway:PORT`,
+    /// `IP` or `IP:PORT` (port 123 unless named).
+    #[arg(long, value_parser = parse_ntp)]
+    ntp: Option<NtpServer>,
+    /// Read the time settings and the clock's state.
+    #[arg(long, conflicts_with_all = ["zone", "clear_zone", "ntp"])]
+    show: bool,
+}
+
+/// An NTP server as `--ntp` takes it.
+fn parse_ntp(text: &str) -> Result<NtpServer, String> {
+    const PORT: u16 = 123;
+    let port = |text: Option<&str>| match text {
+        None => Ok(PORT),
+        Some(port) => match port.parse::<u16>() {
+            Ok(0) | Err(_) => Err(format!("{port:?} is not a port")),
+            Ok(port) => Ok(port),
+        },
+    };
+    let (host, port_text) = match text.split_once(':') {
+        Some((host, port)) => (host, Some(port)),
+        None => (text, None),
+    };
+    match host {
+        "off" if port_text.is_none() => Ok(NtpServer::Off),
+        "gateway" => Ok(NtpServer::Gateway {
+            port: port(port_text)?,
+        }),
+        _ => match host.parse() {
+            Ok(ip) => Ok(NtpServer::Address {
+                ip,
+                port: port(port_text)?,
+            }),
+            Err(_) => Err(format!(
+                "{text:?} is not off, gateway[:PORT] or an IPv4 address[:PORT]"
+            )),
+        },
+    }
+}
+
+#[derive(Args)]
 struct EventsArgs {
     #[command(flatten)]
     target: Target,
@@ -456,10 +511,44 @@ async fn wifi_command(args: WifiArgs) -> Result<()> {
     print_answer(&answer)
 }
 
-async fn time_command(target: Target) -> Result<()> {
-    let zone = jiff::tz::TimeZone::system();
-    let sync = wellfed_client::time::sync(jiff::Timestamp::now(), &zone);
-    ask_and_print(&target, &Op::TimeSync(sync)).await
+async fn time_command(args: TimeArgs) -> Result<()> {
+    let now = jiff::Timestamp::now();
+    if args.show {
+        return ask_and_print(&args.target, &Op::GetTime).await;
+    }
+    let zone = match (args.zone.as_deref(), args.clear_zone) {
+        (_, true) => Some(String::new()),
+        (None, false) => None,
+        (Some(name), false) => {
+            let name = match name {
+                "system" => jiff::tz::TimeZone::system()
+                    .iana_name()
+                    .context("this computer's time zone has no IANA name")?
+                    .to_owned(),
+                name => name.to_owned(),
+            };
+            Some(wellfed_client::time::rule(&name, now)?)
+        }
+    };
+    if zone.is_none() && args.ntp.is_none() {
+        let sync = wellfed_client::time::sync(now, &jiff::tz::TimeZone::system());
+        return ask_and_print(&args.target, &Op::TimeSync(sync)).await;
+    }
+
+    let (_, _, mut connection) = connect(&args.target).await?;
+    let Answer::Time(view) = connection.ask(&Op::GetTime).await? else {
+        bail!("the feeder did not return its time settings (a build without them?)");
+    };
+    let answer = connection
+        .ask(&Op::PutTime {
+            base: view.generation,
+            changes: TimeChanges {
+                zone,
+                ntp: args.ntp,
+            },
+        })
+        .await?;
+    print_answer(&answer)
 }
 
 async fn events_command(args: EventsArgs) -> Result<()> {
@@ -678,4 +767,29 @@ async fn recover_command(args: RecoverArgs) -> Result<()> {
     key.remember(&identity)?;
     println!("Recovered feeder {} ({text}).", fingerprint(&identity));
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ntp_servers_parse() {
+        assert_eq!(parse_ntp("off"), Ok(NtpServer::Off));
+        assert_eq!(parse_ntp("gateway"), Ok(NtpServer::Gateway { port: 123 }));
+        assert_eq!(
+            parse_ntp("gateway:1123"),
+            Ok(NtpServer::Gateway { port: 1123 })
+        );
+        assert_eq!(
+            parse_ntp("10.42.103.1:1123"),
+            Ok(NtpServer::Address {
+                ip: [10, 42, 103, 1].into(),
+                port: 1123
+            })
+        );
+        for bad in ["off:123", "gateway:0", "pool.ntp.org", "10.42.103.1:x"] {
+            assert!(parse_ntp(bad).is_err(), "{bad}");
+        }
+    }
 }

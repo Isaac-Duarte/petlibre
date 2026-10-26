@@ -1159,6 +1159,18 @@ unsafe extern "C" {
     ) -> i32;
     fn wellfed_mdns_send(socket: i32, data: *const u8, length: u32, ip: u32, port: u32) -> i32;
     fn wellfed_ipv4() -> u32;
+    fn wellfed_gateway_ipv4() -> u32;
+    fn wellfed_udp_open() -> i32;
+    fn wellfed_rtc_read(out: *mut u32);
+}
+
+/// The KM0 RTC's TR, CR, ISR and PRER registers, read only.
+pub fn rtc_registers() -> [u32; 4] {
+    let mut out = [0; 4];
+    // SAFETY: the C shim in `example_entry.c` writes four words to `out`,
+    // which is live for the call.
+    unsafe { wellfed_rtc_read(out.as_mut_ptr()) };
+    out
 }
 
 /// The device API's non-blocking listener on `port`, or `None`.
@@ -1232,6 +1244,22 @@ pub fn ipv4() -> Option<u32> {
     // SAFETY: the C shim in `example_entry.c`; any buffer is live for the call.
     let ip = unsafe { wellfed_ipv4() };
     (ip != 0).then_some(ip)
+}
+
+/// The lease's gateway (host order), once DHCP gave one.
+pub fn gateway() -> Option<u32> {
+    // SAFETY: the C shim in `example_entry.c`; it takes no arguments.
+    let ip = unsafe { wellfed_gateway_ipv4() };
+    (ip != 0).then_some(ip)
+}
+
+/// A UDP socket on an ephemeral port, non-blocking, or `None`; its
+/// datagrams go through [`mdns_send`] and [`mdns_recv`], which take any UDP
+/// socket.
+pub fn udp_open() -> Option<i32> {
+    // SAFETY: the C shim in `example_entry.c`; it takes no arguments.
+    let socket = unsafe { wellfed_udp_open() };
+    (socket >= 0).then_some(socket)
 }
 
 /// Milliseconds since the scheduler started (configTICK_RATE_HZ is 1000).

@@ -198,7 +198,7 @@ pub enum Answer {
         feed: u32,
     },
     Update(UpdateView),
-    /// An answer no [`Ask`] expects (clients, an invite).
+    /// An answer no [`Ask`] expects (clients, an invite, the time view).
     Unexpected,
 }
 
@@ -214,7 +214,7 @@ impl Answer {
             Model::Refused(refusal) => Self::Refused(refusal),
             Model::Feeding { feed } => Self::Feeding { feed },
             Model::Update(view) => Self::Update(view),
-            Model::Clients(_) | Model::Invite(_) => Self::Unexpected,
+            Model::Clients(_) | Model::Invite(_) | Model::Time(_) => Self::Unexpected,
         }
     }
 }

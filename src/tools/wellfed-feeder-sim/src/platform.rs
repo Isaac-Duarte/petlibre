@@ -25,14 +25,17 @@ use std::rc::Rc;
 
 use wellfed_board_plaf103::storage;
 use wellfed_core::buttons::Gesture;
-use wellfed_core::clock::wall::{Jump, Sync, SyncError, WallClock};
+use wellfed_core::clock::wall::{
+    Fix, Jump, Origin, State as ClockState, Sync, SyncError, WallClock,
+};
+use wellfed_core::clock::zone::Rule;
 use wellfed_core::ota::install::{Answer, Progress, Refused};
 use wellfed_core::store::slot::crc32;
 use wellfed_core::tone::Tune;
 use wellfed_device_api::clients::{CLIENTS, Client, Label, Role};
 use wellfed_device_api::mailbox::{
     ClientChange, KeyResult, PlayResult, Requested, SettingsFields, SettingsResult, SettingsView,
-    WifiResult, WifiSource, WifiView,
+    TimeSettings, TimeSettingsResult, TimeSettingsView, WifiResult, WifiSource, WifiView,
 };
 use wellfed_device_api::wifi::Credentials;
 use wellfed_feeder::feeder::Platform;
@@ -43,6 +46,7 @@ use wellfed_feeder::store::clients::{ClientError, ClientStore};
 use wellfed_feeder::store::events::{BODY_BYTES, EventLog, Read};
 use wellfed_feeder::store::net::NetStore;
 use wellfed_feeder::store::settings::{Settings, SettingsStatus, SettingsStore};
+use wellfed_feeder::store::time::TimeStore;
 use wellfed_hal::interlock::INTERLOCK;
 use wellfed_hal::ota::mailbox::{self, Request};
 use wellfed_hal::ota::signers;
@@ -95,6 +99,8 @@ pub enum Socket {
     /// The mDNS socket, which drops everything when the simulator does not
     /// advertise.
     Mdns,
+    /// The NTP exchange's socket.
+    Ntp,
     /// One accepted connection.
     Stream(u32),
 }
@@ -105,6 +111,10 @@ pub struct SimPlatform {
     settings_pending: Option<SettingsFields>,
     net: NetStore<Region>,
     wifi_pending: Option<Option<Credentials>>,
+    time: TimeStore<Region>,
+    time_pending: Option<TimeSettings>,
+    /// The NTP exchange's socket, on an ephemeral loopback-reachable port.
+    ntp: Option<std::net::UdpSocket>,
     clients: ClientStore<Region>,
     /// Bumped on every change, as the writer's published table is.
     clients_generation: u32,
@@ -162,6 +172,8 @@ impl SimPlatform {
         settings.open(Region::new(flash, storage::SETTINGS), BINDING);
         let mut net = NetStore::default();
         net.open(Region::new(flash, storage::NET));
+        let mut time = TimeStore::default();
+        time.open(Region::new(flash, storage::TIME));
         let mut clients = ClientStore::default();
         clients.open(Region::new(flash, storage::CLIENTS));
         if clients.identity().is_none() {
@@ -194,6 +206,9 @@ impl SimPlatform {
             settings_pending: None,
             net,
             wifi_pending: None,
+            time,
+            time_pending: None,
+            ntp: None,
             clients,
             clients_generation: 1,
             identity_generation: 1,
@@ -299,6 +314,9 @@ impl SimPlatform {
         if let Some(credentials) = self.wifi_pending.take() {
             self.net.save(credentials.as_ref());
         }
+        if let Some(settings) = self.time_pending.take() {
+            self.time.save(&settings);
+        }
 
         let (ticket, change) = self.keys_pending.take()?;
         let result = match change {
@@ -365,6 +383,14 @@ impl SimPlatform {
         }
     }
 
+    fn time_view(&self) -> TimeSettingsView {
+        TimeSettingsView {
+            settings: self.time.settings,
+            generation: u32::try_from(self.time.generation).unwrap_or(u32::MAX),
+            writable: self.time.writable(),
+        }
+    }
+
     fn stream(&mut self, id: u32) -> Option<&mut TcpStream> {
         self.streams
             .iter_mut()
@@ -400,7 +426,7 @@ impl Platform for SimPlatform {
 
     fn capabilities(&self) -> Capabilities {
         // No motor: the server refuses feeds before they reach the owner.
-        Capabilities::UPDATE
+        Capabilities::UPDATE.union(Capabilities::TIME)
     }
 
     fn reset(&mut self) {
@@ -450,6 +476,33 @@ impl Platform for SimPlatform {
 
     fn ipv4(&mut self) -> Option<u32> {
         Some(u32::from(self.ip))
+    }
+
+    /// The simulator has no router: an NTP setting names an address.
+    fn gateway(&mut self) -> Option<u32> {
+        None
+    }
+
+    fn time_settings(&mut self) -> TimeSettingsResult {
+        TimeSettingsResult::Current {
+            view: self.time_view(),
+            pending: self.time_pending.is_some(),
+        }
+    }
+
+    fn time_settings_change(&mut self, settings: TimeSettings) -> TimeSettingsResult {
+        let view = self.time_view();
+        if !view.writable {
+            return TimeSettingsResult::ReadOnly;
+        }
+        if self.time_pending.is_some() {
+            return TimeSettingsResult::Busy;
+        }
+        self.time_pending = Some(settings);
+        TimeSettingsResult::Current {
+            view,
+            pending: true,
+        }
     }
 
     fn settings(&mut self) -> Option<SettingsView> {
@@ -566,8 +619,20 @@ impl Platform for SimPlatform {
         self.clock.read(now_ms).map(|reading| reading.unix_ms)
     }
 
-    fn time_sync(&mut self, now_ms: u32, sync: Sync) -> Result<Jump, SyncError> {
-        self.clock.sync(now_ms, sync)
+    fn time_sync(&mut self, now_ms: u32, sync: Sync, origin: Origin) -> Result<Jump, SyncError> {
+        self.clock.sync(now_ms, sync, origin)
+    }
+
+    fn time_fix(&mut self, now_ms: u32, fix: Fix) -> Result<Jump, SyncError> {
+        self.clock.fix(now_ms, fix)
+    }
+
+    fn clock_state(&mut self, now_ms: u32) -> ClockState {
+        self.clock.state(now_ms)
+    }
+
+    fn set_zone_rule(&mut self, rule: Option<Rule>) {
+        self.clock.set_rule(rule);
     }
 
     fn outputs_claimed(&self) -> bool {
@@ -661,6 +726,7 @@ impl Platform for SimPlatform {
         match socket {
             Socket::Listener => self.listening = false,
             Socket::Mdns => {}
+            Socket::Ntp => self.ntp = None,
             Socket::Stream(id) => self.streams.retain(|(stream, _)| *stream != id),
         }
     }
@@ -689,6 +755,40 @@ impl Platform for SimPlatform {
                 port: from.port(),
             },
             Ok(_) | Err(_) => Datagram::None,
+        }
+    }
+
+    fn ntp_open(&mut self) -> Option<Socket> {
+        let socket = std::net::UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).ok()?;
+        socket.set_nonblocking(true).ok()?;
+        self.ntp = Some(socket);
+        Some(Socket::Ntp)
+    }
+
+    /// A failed send is only a lost request: the exchange asks again.
+    fn ntp_send(&mut self, _socket: Socket, bytes: &[u8], ip: u32, port: u16) -> bool {
+        let Some(ntp) = &self.ntp else {
+            return false;
+        };
+        let to = SocketAddrV4::new(Ipv4Addr::from(ip), port);
+        ntp.send_to(bytes, to).is_ok()
+    }
+
+    fn ntp_receive(&mut self, _socket: Socket, into: &mut [u8]) -> Datagram {
+        let Some(ntp) = &self.ntp else {
+            return Datagram::Error;
+        };
+        match ntp.recv_from(into) {
+            Ok((len, SocketAddr::V4(from))) => Datagram::Got {
+                len,
+                ip: u32::from(*from.ip()),
+                port: from.port(),
+            },
+            Ok(_) => Datagram::None,
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => Datagram::None,
+            // A refused port (nothing listens yet) is not the socket's end.
+            Err(error) if error.kind() == io::ErrorKind::ConnectionRefused => Datagram::None,
+            Err(_) => Datagram::Error,
         }
     }
 

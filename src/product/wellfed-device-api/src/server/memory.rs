@@ -60,7 +60,7 @@ pub(super) fn remembered(reply: Reply) -> Remembered {
         Reply::Invite(invite) => Remembered::Invite { id: invite.id },
         Reply::Feeding(feed) => Remembered::Feeding { feed },
         Reply::Update(_) => Remembered::Update,
-        Reply::Status | Reply::Settings(_) | Reply::Clients => Remembered::Done(None),
+        Reply::Status | Reply::Settings(_) | Reply::Clients | Reply::Time => Remembered::Done(None),
     }
 }
 

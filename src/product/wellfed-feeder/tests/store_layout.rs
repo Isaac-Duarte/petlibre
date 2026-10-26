@@ -1,6 +1,6 @@
 //! The on-flash bytes of every record the product's stores write, pinned:
-//! settings, Wi-Fi credentials and their clear, the client table, and the
-//! event ring's records. These are the layouts deployed feeders hold, so a
+//! settings, Wi-Fi credentials and their clear, the client table, the time
+//! settings and the event ring's records. These are the layouts deployed feeders hold, so a
 //! change to the shared slot layer must leave every byte where it was. The
 //! units are larger than the records so the bytes after each record are
 //! pinned erased too.
@@ -11,11 +11,13 @@
 
 use wellfed_core::feed::progress::BowlMode;
 use wellfed_device_api::clients::{Client, Label, Role};
+use wellfed_device_api::mailbox::{NtpServer, TimeSettings, Zone};
 use wellfed_device_api::wifi::Credentials;
 use wellfed_feeder::store::clients::{ClientStatus, ClientStore};
 use wellfed_feeder::store::events::{BODY_BYTES, EventLog, Read, Record};
 use wellfed_feeder::store::net::{NetStatus, NetStore};
 use wellfed_feeder::store::settings::{Settings, SettingsStatus, SettingsStore};
+use wellfed_feeder::store::time::{TimeStatus, TimeStore};
 use wellfed_testkit::journal_flash::FakeJournalFlash;
 
 /// `bytes` as lowercase hex, 32 bytes a line.
@@ -89,6 +91,52 @@ fn net_records() {
 
     assert!(s.save(None));
     pinned("clear", &f, 0, 128, CLEAR);
+}
+
+/// The time settings: a zone and an address, then the defaults written.
+fn time_settings() -> [TimeSettings; 2] {
+    [
+        TimeSettings {
+            zone: Some(Zone::parse(b"MST7MDT,M3.2.0,M11.1.0").unwrap()),
+            ntp: NtpServer::Address {
+                ip: [10, 42, 103, 1],
+                port: 1123,
+            },
+        },
+        TimeSettings::default(),
+    ]
+}
+
+#[test]
+fn time_records() {
+    let mut f = FakeJournalFlash::with_unit(512);
+    let mut s = TimeStore::default();
+    // SAFETY: the fake flash outlives the store.
+    unsafe { s.open(f.io()) };
+
+    let [zone, defaults] = time_settings();
+    assert!(s.save(&zone));
+    pinned("zone and address", &f, 0, 128, ZONE_AND_ADDRESS);
+    assert!(s.save(&defaults));
+    pinned("time defaults", &f, 1, 128, TIME_DEFAULTS);
+}
+
+#[test]
+fn time_store_reads_the_pinned_records() {
+    let [zone, defaults] = time_settings();
+    for (record, slot, generation, settings) in [
+        (ZONE_AND_ADDRESS, 0, 1, zone),
+        (TIME_DEFAULTS, 1, 2, defaults),
+    ] {
+        let mut f = flash(512, &[(slot, record)]);
+        let mut s = TimeStore::default();
+        // SAFETY: the fake flash outlives the store.
+        assert_eq!(unsafe { s.open(f.io()) }, TimeStatus::Loaded);
+        assert_eq!(
+            (s.generation, s.slot, s.settings),
+            (generation, slot as u32, settings)
+        );
+    }
 }
 
 #[test]
@@ -394,4 +442,20 @@ const THREE_EVENTS: &[&str] = &[
     "010000000100ed5ec0d4fc68101112131415161718191a1b1c1d1e1fbedaf516",
     "020000000100ed5e0000000000000000000000000000000000000000529a0291",
     "030000000100ed5effffffffffffffffffffffffffffffffffffffff728e95b3",
+];
+
+/// Time settings: a zone rule and an NTP address.
+const ZONE_AND_ADDRESS: &[&str] = &[
+    "504c4654494d3031010080000100000000000000020a2a67016304164d535437",
+    "4d44542c4d332e322e302c4d31312e312e300000000000000000000000000000",
+    "0000000000000000000000000000000000000000000000000000000000000000",
+    "0000000000000000000000000000000000000000000000007c75de9a434d4954",
+];
+
+/// Time settings: no zone, NTP from the gateway on port 123.
+const TIME_DEFAULTS: &[&str] = &[
+    "504c4654494d303101008000020000000000000001000000007b000000000000",
+    "0000000000000000000000000000000000000000000000000000000000000000",
+    "0000000000000000000000000000000000000000000000000000000000000000",
+    "0000000000000000000000000000000000000000000000008228174a434d4954",
 ];

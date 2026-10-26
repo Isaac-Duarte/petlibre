@@ -15,8 +15,8 @@ use wellfed_core::tone::Tune;
 use wellfed_device_api::clients::{CLIENTS, Client, Label, Role};
 use wellfed_device_api::mailbox::Lock;
 use wellfed_device_api::mailbox::{
-    LockResult, PlayResult, SettingsFields, SettingsResult, SettingsView, TimeFields, TimeResult,
-    WifiResult, WifiSource, WifiView,
+    LockResult, Origin, PlayResult, SettingsFields, SettingsResult, SettingsView, TimeFields,
+    TimeResult, WifiResult, WifiSource, WifiView,
 };
 use wellfed_device_api::pairing::{Config, Event as PairingEvent, Pairing};
 use wellfed_device_api::wifi::Credentials;
@@ -259,7 +259,7 @@ impl Device for Fake {
         Some(PlayResult::Started)
     }
 
-    fn time_sync(&mut self, _fields: TimeFields) -> TimeResult {
+    fn time_sync(&mut self, _fields: TimeFields, _origin: Origin) -> TimeResult {
         self.syncs += 1;
         TimeResult::Synced { jump_ms: Some(5) }
     }
@@ -730,6 +730,17 @@ fn a_member_may_feed_and_change_settings_but_not_manage_clients() {
     assert_eq!(revoke, Answer::Refused(model::Refusal::Forbidden));
     let reboot = ask(&mut rig, &mut member, 3, Op::Reboot);
     assert_eq!(reboot, Answer::Refused(model::Refusal::Forbidden));
+    // The NTP server decides which fixes the clock hears: an owner's.
+    let time = ask(
+        &mut rig,
+        &mut member,
+        7,
+        Op::PutTime {
+            base: Generation(0),
+            changes: model::TimeChanges::default(),
+        },
+    );
+    assert_eq!(time, Answer::Refused(model::Refusal::Forbidden));
 
     let lock = ask(&mut rig, &mut member, 4, Op::SetLock { locked: true });
     assert_eq!(lock, Answer::Done { generation: None });
@@ -1310,7 +1321,8 @@ fn a_connection_names_the_epoch_and_answers_each_request_once() {
             model::ClientRole::Owner,
             model::Capabilities {
                 feed: true,
-                update: false
+                update: false,
+                time: false,
             },
             EPOCH
         )
@@ -1671,6 +1683,7 @@ fn only_an_owner_s_session_with_the_update_bit_may_update() {
         capabilities: model::Capabilities {
             feed: true,
             update: false,
+            time: false,
         },
     };
     let slot = rig.accept().unwrap();

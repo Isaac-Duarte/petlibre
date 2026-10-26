@@ -12,6 +12,7 @@ use wellfed_feeder::store::clients::ClientStatus;
 use wellfed_feeder::store::events::Read;
 use wellfed_feeder::store::net::NetStatus;
 use wellfed_feeder::store::settings::{Settings, SettingsStatus};
+use wellfed_feeder::store::time::TimeStatus;
 use wellfed_feeder_runtime::keys::{self, Change, Requested};
 use wellfed_feeder_runtime::writer::{
     self as writer, ErrorStage, Identity, KeyChange, KeyResult, Record, Writer,
@@ -144,6 +145,13 @@ fn changes_are_saved_once_each_inside_a_marked_attempt() {
         step(&mut writer, &mut provider),
         Some(Record::NetOpen { stored: false, .. })
     ));
+    assert_eq!(
+        step(&mut writer, &mut provider),
+        Some(Record::TimeOpen {
+            status: TimeStatus::Empty,
+            generation: 0
+        })
+    );
     assert!(matches!(
         step(&mut writer, &mut provider),
         Some(Record::Keys { .. })
@@ -251,6 +259,7 @@ fn wifi_credentials_are_saved_inside_a_marked_attempt_and_cleared() {
     let (_guard, mut writer, mut provider) = start();
     step(&mut writer, &mut provider); // open
     step(&mut writer, &mut provider); // net open
+    step(&mut writer, &mut provider); // time open
     step(&mut writer, &mut provider); // keys
     step(&mut writer, &mut provider); // events
 
@@ -314,9 +323,11 @@ fn error_records_format_as_before() {
     assert_eq!(text, "net error stage=unarmed");
 }
 
-/// The writer's first three records on one boot: open, net open, then keys.
+/// The writer's first records on one boot: open, net open, time open, then
+/// keys.
 fn boot_keys() -> Record {
     let (mut writer, mut provider) = (Writer::default(), Provider::default());
+    step(&mut writer, &mut provider);
     step(&mut writer, &mut provider);
     step(&mut writer, &mut provider);
     step(&mut writer, &mut provider).expect("the keys record")
@@ -390,8 +401,8 @@ fn key_changes_apply_and_a_reset_publishes_a_new_identity() {
     let (_guard, mut writer, mut provider) = start();
     fake::with(|h| h.adc_noise = 0x1357_9bdf);
     assert_eq!(rng::start().result, Ok(()));
-    for _ in 0..4 {
-        step(&mut writer, &mut provider); // open, net open, keys, events
+    for _ in 0..5 {
+        step(&mut writer, &mut provider); // open, net open, time open, keys, events
     }
     let (first, identity) = keys::identity_since(0).expect("the identity is published");
 
@@ -452,7 +463,7 @@ fn a_reset_needs_the_generator_and_an_armed_writer() {
     let (_guard, mut writer, mut provider) = start();
     fake::with(|h| h.adc_noise = 0x0bad_cafe);
     assert_eq!(rng::start().result, Ok(()));
-    for _ in 0..4 {
+    for _ in 0..5 {
         step(&mut writer, &mut provider);
     }
     let (first, _) = keys::identity_since(0).unwrap();
@@ -488,8 +499,8 @@ fn key_change_records_format() {
 #[test]
 fn queued_events_are_appended_and_read_back_after_a_reboot() {
     let (_guard, mut writer, mut provider) = start();
-    for _ in 0..4 {
-        step(&mut writer, &mut provider); // open, net open, keys, events
+    for _ in 0..5 {
+        step(&mut writer, &mut provider); // open, net open, time open, keys, events
     }
     assert!(events::record(Some(1_700_000_000), [1; 16]));
     assert!(events::record(None, [2; 16]));
@@ -500,7 +511,7 @@ fn queued_events_are_appended_and_read_back_after_a_reboot() {
     // The next boot finds both; a reader asks, the writer answers.
     events::reset();
     let mut writer = Writer::default();
-    for _ in 0..3 {
+    for _ in 0..4 {
         step(&mut writer, &mut provider);
     }
     assert_eq!(
@@ -553,6 +564,7 @@ fn every_store_write_waits_for_a_feed_and_completes_after_it() {
     assert_eq!(rng::start().result, Ok(()));
     step(&mut writer, &mut provider); // open
     step(&mut writer, &mut provider); // net open
+    step(&mut writer, &mut provider); // time open
     let storage = || fake::with(|h| h.storage.clone());
 
     // A feed holds the outputs before the first boot's seed and identity.
@@ -649,8 +661,8 @@ fn every_store_write_waits_for_a_feed_and_completes_after_it() {
 #[test]
 fn a_feeds_outcome_has_a_slot_however_many_events_pile_up() {
     let (_guard, mut writer, mut provider) = start();
-    for _ in 0..4 {
-        step(&mut writer, &mut provider); // open, net open, keys, events
+    for _ in 0..5 {
+        step(&mut writer, &mut provider); // open, net open, time open, keys, events
     }
     INTERLOCK.claim_feed(u32::MAX).unwrap();
 
@@ -725,4 +737,68 @@ fn store_writes_decode_for_the_bench() {
         },
         None,
     );
+}
+
+#[test]
+fn time_settings_are_saved_inside_a_marked_attempt_and_published() {
+    use wellfed_device_api::mailbox::{NtpServer, TimeSettings, TimeSettingsResult, Zone};
+    use wellfed_feeder_runtime::time;
+
+    let (_guard, mut writer, mut provider) = start();
+    time::reset();
+    assert_eq!(time::current(), TimeSettingsResult::Busy, "not opened yet");
+    for _ in 0..5 {
+        step(&mut writer, &mut provider); // open, net open, time open, keys, events
+    }
+    let TimeSettingsResult::Current { view, pending } = time::current() else {
+        panic!("the store is published");
+    };
+    assert_eq!(
+        (view.settings, view.generation, pending),
+        (TimeSettings::default(), 0, false)
+    );
+    assert!(view.writable);
+
+    let settings = TimeSettings {
+        zone: Some(Zone::parse(b"MST7MDT,M3.2.0,M11.1.0").unwrap()),
+        ntp: NtpServer::Address {
+            ip: [10, 42, 103, 1],
+            port: 1123,
+        },
+    };
+    assert!(matches!(
+        time::change(settings),
+        TimeSettingsResult::Current { pending: true, .. }
+    ));
+    assert_eq!(time::change(settings), TimeSettingsResult::Busy);
+    ATTEMPT_SEEN.with(|s| s.set(false));
+    assert_eq!(
+        step(&mut writer, &mut provider),
+        Some(Record::TimeSaved { generation: 1 })
+    );
+    assert!(ATTEMPT_SEEN.with(Cell::get));
+    assert_eq!(sdk::backup_read(MARKER_REGISTER), 0);
+    let TimeSettingsResult::Current { view, pending } = time::current() else {
+        panic!("the store is published");
+    };
+    assert_eq!(
+        (view.settings, view.generation, pending),
+        (settings, 1, false)
+    );
+
+    // The next boot reads them back.
+    let mut writer = Writer::default();
+    for _ in 0..2 {
+        step(&mut writer, &mut provider);
+    }
+    assert_eq!(
+        step(&mut writer, &mut provider),
+        Some(Record::TimeOpen {
+            status: TimeStatus::Loaded,
+            generation: 1
+        })
+    );
+    let mut text = String::new();
+    writer::describe(Record::TimeSaved { generation: 1 }, &mut text).unwrap();
+    assert_eq!(text, "time saved generation=1");
 }

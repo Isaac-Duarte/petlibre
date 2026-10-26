@@ -32,7 +32,10 @@ pub use event::{
     ClientRole, EnrollPath, Event, EventBody, EventKind, FeedOutcome, FeedReason, Gap, MetricKind,
     Pushed, Sample, SampleValue, Source,
 };
-pub use request::{Answer, Client, Invite, Op, Refusal, TimeSync, Tune, Wifi};
+pub use request::{
+    Answer, Client, Invite, NtpResult, NtpServer, Op, Refusal, TimeChanges, TimeSource, TimeSync,
+    TimeView, Tune, Wifi,
+};
 pub use session::{Capabilities, Hello, Joined, OpenRefusal};
 pub use status::{Power, Settings, SettingsPatch, Status, WifiSource};
 pub use update::{UpdatePhase, UpdateRefusal, UpdateStop, UpdateView};

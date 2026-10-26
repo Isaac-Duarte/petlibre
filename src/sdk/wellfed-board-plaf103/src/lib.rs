@@ -115,10 +115,17 @@ pub mod storage {
         first: 25,
         count: 2,
     };
+    /// The time settings: the owner's zone and the NTP server. Free
+    /// sectors before, so a build that predates the store never touches
+    /// them.
+    pub const TIME: Sectors = Sectors {
+        first: 27,
+        count: 2,
+    };
 
-    /// Every allocation, in region order; sectors 27-31 are free.
-    pub const ALL: [Sectors; 9] = [
-        JOURNAL, SETTINGS, CONFIRM, NET, SEED, CLIENTS, PLANS, EVENTS, UPDATE,
+    /// Every allocation, in region order; sectors 29-31 are free.
+    pub const ALL: [Sectors; 10] = [
+        JOURNAL, SETTINGS, CONFIRM, NET, SEED, CLIENTS, PLANS, EVENTS, UPDATE, TIME,
     ];
 
     const fn disjoint_and_inside() -> bool {

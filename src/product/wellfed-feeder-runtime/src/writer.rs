@@ -14,6 +14,10 @@
 //! the loop queues ([`keys`]): enrollments, revocations and the
 //! Reset, which forgets every client and draws a new identity.
 //!
+//! It keeps the time settings too (sectors 27 and 28,
+//! `wellfed_feeder::store::time`): the owner's zone and the NTP server,
+//! published for the loop ([`time`]).
+//!
 //! It also keeps the event history (sectors 13-24,
 //! `wellfed_feeder::store::events`). It appends the records the loop queues
 //! and answers the device API's reads ([`events`]), polling
@@ -38,6 +42,7 @@ use wellfed_feeder::store::clients::{ClientError, ClientStatus, ClientStore};
 use wellfed_feeder::store::events::EventLog;
 use wellfed_feeder::store::net::{NetStatus, NetStore};
 use wellfed_feeder::store::settings::{Settings, SettingsStatus, SettingsStore};
+use wellfed_feeder::store::time::{TimeStatus, TimeStore};
 use wellfed_hal::flash::park::Mmio;
 use wellfed_hal::flash_lock::arming::{self, Arming, Hooks, Poll};
 use wellfed_hal::flash_lock::provider::Provider;
@@ -52,6 +57,7 @@ use crate::events;
 pub use crate::keys::KeyResult;
 use crate::keys::{self, Change};
 use crate::network::{self, NET_BASE};
+use crate::time::{self, TIME_BASE};
 
 pub const POLL_MS: u32 = 200;
 /// While events wait to be written or read.
@@ -125,6 +131,17 @@ pub enum Record {
         stored: bool,
     },
     NetError {
+        stage: ErrorStage,
+    },
+    /// The time settings (sectors 27 and 28).
+    TimeOpen {
+        status: TimeStatus,
+        generation: u64,
+    },
+    TimeSaved {
+        generation: u64,
+    },
+    TimeError {
         stage: ErrorStage,
     },
     /// The stored seed and the client store.
@@ -221,6 +238,13 @@ pub fn describe(record: Record, f: &mut impl fmt::Write) -> fmt::Result {
             u8::from(stored)
         ),
         Record::NetError { stage } => write!(f, "net error stage={stage}"),
+        Record::TimeOpen { status, generation } => write!(
+            f,
+            "time open status={} generation={generation}",
+            status.name()
+        ),
+        Record::TimeSaved { generation } => write!(f, "time saved generation={generation}"),
+        Record::TimeError { stage } => write!(f, "time error stage={stage}"),
         Record::Keys {
             seed,
             mixed,
@@ -315,6 +339,9 @@ pub struct Writer<F> {
     net: NetStore<Slots<F, NET_BASE>>,
     /// The credential store's open record, logged on the next step.
     net_opened: bool,
+    time: TimeStore<Slots<F, TIME_BASE>>,
+    /// The time store's open record, logged on a later step.
+    time_opened: bool,
     armed: bool,
     seed: SeedStore<Slots<F, SEED_BASE>>,
     clients: ClientStore<Slots<F, CLIENTS_BASE>>,
@@ -333,6 +360,8 @@ impl<F> Default for Writer<F> {
             store: SettingsStore::default(),
             net: NetStore::default(),
             net_opened: false,
+            time: TimeStore::default(),
+            time_opened: false,
             armed: false,
             seed: SeedStore::default(),
             clients: ClientStore::default(),
@@ -533,6 +562,7 @@ impl<F: FlashOps> Writer<F> {
             writable,
         });
         network::publish(&self.net, self.armed);
+        time::publish(&self.time, self.armed);
     }
 
     /// One task iteration.
@@ -545,6 +575,7 @@ impl<F: FlashOps> Writer<F> {
             Stage::Open => {
                 let status = self.store.open(Slots::new(), SETTINGS_BINDING);
                 self.net.open(Slots::new());
+                self.time.open(Slots::new());
                 self.armed = H::armed();
                 self.stage = if self.armed { Stage::Idle } else { Stage::Arm };
                 self.publish();
@@ -595,6 +626,16 @@ impl<F: FlashOps> Writer<F> {
                             status: self.net.status,
                             generation: self.net.generation,
                             stored: self.net.credentials.is_some(),
+                        }),
+                    );
+                }
+                if !self.time_opened {
+                    self.time_opened = true;
+                    return next(
+                        POLL_MS,
+                        Some(Record::TimeOpen {
+                            status: self.time.status,
+                            generation: self.time.generation,
                         }),
                     );
                 }
@@ -666,6 +707,36 @@ impl<F: FlashOps> Writer<F> {
                     };
                     self.publish();
                     network::finish();
+                    return next(POLL_MS, Some(record));
+                }
+                if let Some(settings) = time::pending() {
+                    let record = if self.stage == Stage::Serve || !H::armed() {
+                        Record::TimeError {
+                            stage: ErrorStage::Unarmed,
+                        }
+                    } else if settings == self.time.settings && self.time.generation != 0 {
+                        Record::TimeSaved {
+                            generation: self.time.generation,
+                        }
+                    } else {
+                        let Some(_turn) = self.take_turn() else {
+                            return self.waiting();
+                        };
+                        arming::set_attempt();
+                        let saved = self.time.save(&settings);
+                        arming::clear_attempt();
+                        if saved {
+                            Record::TimeSaved {
+                                generation: self.time.generation,
+                            }
+                        } else {
+                            Record::TimeError {
+                                stage: ErrorStage::Save,
+                            }
+                        }
+                    };
+                    self.publish();
+                    time::finish();
                     return next(POLL_MS, Some(record));
                 }
                 let Some(fields) = settings::pending() else {

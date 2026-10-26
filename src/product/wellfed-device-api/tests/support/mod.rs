@@ -10,11 +10,13 @@
 
 #![allow(dead_code, reason = "each consumer drives a subset")]
 
+use wellfed_core::clock::wall::WallClock;
 use wellfed_core::tone::Tune;
 use wellfed_device_api::clients::{CLIENTS, Client, Label, Role};
 use wellfed_device_api::mailbox::{
-    LockResult, PlayResult, SettingsFields, SettingsResult, SettingsView, TimeFields, TimeResult,
-    WifiResult, WifiSource, WifiView,
+    LockResult, Origin, PlayResult, SettingsFields, SettingsResult, SettingsView, TimeFields,
+    TimeResult, TimeSettings, TimeSettingsResult, TimeSettingsView, TimeState, WifiResult,
+    WifiSource, WifiView,
 };
 use wellfed_device_api::pairing::{Config, Pairing};
 use wellfed_device_api::setup::{Received, Responder};
@@ -46,6 +48,8 @@ struct Fake {
     ticket: u32,
     feeds: u32,
     events: Vec<proto::Event>,
+    time: TimeSettingsView,
+    clock: WallClock,
 }
 
 impl Device for Fake {
@@ -117,8 +121,28 @@ impl Device for Fake {
         Some(PlayResult::Started)
     }
 
-    fn time_sync(&mut self, _fields: TimeFields) -> TimeResult {
-        TimeResult::Synced { jump_ms: Some(5) }
+    fn time_sync(&mut self, fields: TimeFields, origin: Origin) -> TimeResult {
+        TimeResult::from_sync(self.clock.sync(1, fields.sync(), origin))
+    }
+
+    fn time_settings(&mut self, change: Option<TimeSettings>) -> TimeSettingsResult {
+        if let Some(settings) = change {
+            self.time.settings = settings;
+            self.time.generation += 1;
+        }
+        self.time.writable = true;
+        TimeSettingsResult::Current {
+            view: self.time,
+            pending: false,
+        }
+    }
+
+    fn time_state(&mut self, now_ms: u32) -> Option<TimeState> {
+        Some(TimeState {
+            clock: self.clock.state(now_ms),
+            now_ms,
+            ntp_last: None,
+        })
     }
 
     fn keys(&mut self, _change: KeyChange) -> Option<u32> {
@@ -131,7 +155,7 @@ impl Device for Fake {
     }
 
     fn capabilities(&self) -> Capabilities {
-        Capabilities::FEED
+        Capabilities::FEED.union(Capabilities::TIME)
     }
 
     fn feed(&mut self, _portions: u8, _by: proto::Source) -> Result<u32, Refusal> {
@@ -287,7 +311,7 @@ impl Rig {
         .expect("IK with the feeder's key");
         let hello = Hello {
             major: PROTOCOL_MAJOR,
-            capabilities: Capabilities::FEED,
+            capabilities: Capabilities::FEED.union(Capabilities::TIME),
         };
         let mut payload = [0; 16];
         let len = wellfed_proto::encode(&hello, &mut payload).expect("a hello fits");

@@ -6,7 +6,8 @@ use super::memory::Remembered;
 use super::{Phase, Server, Waiting, slot_id};
 use crate::clients::{Label, Role};
 use crate::mailbox::{
-    LockResult, PlayResult, SettingsFields, SettingsResult, TimeFields, TimeResult, WifiResult,
+    LockResult, NtpServer, Origin, PlayResult, SettingsFields, SettingsResult, TimeFields,
+    TimeResult, TimeSettingsResult, WifiResult, Zone,
 };
 use crate::pairing::{self, Pairing};
 use crate::wifi::Credentials;
@@ -111,7 +112,7 @@ impl Server {
                 Some(PlayResult::Busy) => Reply::Refused(Refusal::Busy),
                 None => Reply::Refused(Refusal::Unavailable),
             },
-            Action::TimeSync(fields) => match device.time_sync(fields) {
+            Action::TimeSync(fields) => match device.time_sync(fields, origin(role)) {
                 TimeResult::Synced { jump_ms } => {
                     let jump_ms = jump_ms.map(saturate);
                     device.record(now_ms, EventBody::ClockSync { by, jump_ms });
@@ -150,6 +151,17 @@ impl Server {
                     Reply::Refused(Refusal::Busy)
                 }
             }
+            Action::GetTime => match device.time_settings(None) {
+                TimeSettingsResult::Current { .. } => Reply::Time,
+                TimeSettingsResult::Busy => Reply::Refused(Refusal::Busy),
+                TimeSettingsResult::ReadOnly | TimeSettingsResult::Unserved => {
+                    Reply::Refused(Refusal::Unavailable)
+                }
+            },
+            Action::PutTime { base, zone, ntp } => match put_time(base, zone, ntp, device) {
+                Ok(()) => return self.wait(index, id, action, Waiting::Time),
+                Err(refusal) => Reply::Refused(refusal),
+            },
             Action::Invalid => Reply::Refused(Refusal::Invalid),
             // Each of these may write the update store; none goes in while
             // a feed is queued or driven. A cancel during an install is not
@@ -300,6 +312,50 @@ fn put_wifi<D: Device>(
     }
 }
 
+/// Queue the time settings `base` names with the changes applied.
+fn put_time<D: Device>(
+    base: u32,
+    zone: Option<Option<Zone>>,
+    ntp: Option<NtpServer>,
+    device: &mut D,
+) -> Result<(), Refusal> {
+    let view = match device.time_settings(None) {
+        TimeSettingsResult::Current { pending: true, .. } | TimeSettingsResult::Busy => {
+            return Err(Refusal::Busy);
+        }
+        TimeSettingsResult::ReadOnly => return Err(Refusal::NotWritable),
+        TimeSettingsResult::Unserved => return Err(Refusal::Unavailable),
+        TimeSettingsResult::Current { view, .. } => view,
+    };
+    if view.generation != base {
+        return Err(Refusal::Stale {
+            current: view.generation,
+        });
+    }
+
+    let mut settings = view.settings;
+    if let Some(zone) = zone {
+        settings.zone = zone;
+    }
+    if let Some(ntp) = ntp {
+        settings.ntp = ntp;
+    }
+    match device.time_settings(Some(settings)) {
+        TimeSettingsResult::Current { pending: true, .. } => Ok(()),
+        TimeSettingsResult::Current { .. } | TimeSettingsResult::Busy => Err(Refusal::Busy),
+        TimeSettingsResult::ReadOnly => Err(Refusal::NotWritable),
+        TimeSettingsResult::Unserved => Err(Refusal::Unavailable),
+    }
+}
+
+/// An owner's sync may step the clock; anyone else's only narrows it.
+const fn origin(role: Role) -> Origin {
+    match role {
+        Role::Owner => Origin::Owner,
+        Role::Member | Role::Server | Role::UpdateSigner => Origin::Client,
+    }
+}
+
 /// Whether `role` may run `action`. Owners do everything; members and the
 /// server feed, change settings and the lock, and read; nobody else opens a
 /// session at all.
@@ -317,6 +373,7 @@ const fn allowed(role: Role, action: Action) -> bool {
                 | Action::CancelUpdate
                 | Action::EnrollUpdateKey { .. }
                 | Action::UpdateKeyStatement
+                | Action::PutTime { .. }
         ),
         Role::UpdateSigner => false,
     }
@@ -397,6 +454,13 @@ pub(super) enum Action {
         label: Label,
     },
     UpdateKeyStatement,
+    GetTime,
+    PutTime {
+        base: u32,
+        /// `Some(None)` clears the zone.
+        zone: Option<Option<Zone>>,
+        ntp: Option<NtpServer>,
+    },
     /// A field failed the stores' checks before anything ran.
     Invalid,
 }
@@ -466,6 +530,29 @@ impl From<Op<'_>> for Action {
                 None => Self::Invalid,
             },
             Op::UpdateKeyStatement { .. } => Self::UpdateKeyStatement,
+            Op::GetTime => Self::GetTime,
+            Op::PutTime { base, changes } => {
+                let zone = match changes.zone {
+                    None => None,
+                    Some("") => Some(None),
+                    Some(text) => match Zone::parse(text.as_bytes()) {
+                        Ok(zone) => Some(Some(zone)),
+                        Err(_) => return Self::Invalid,
+                    },
+                };
+                let ntp = changes.ntp.map(|ntp| match ntp {
+                    proto::NtpServer::Off => NtpServer::Off,
+                    proto::NtpServer::Gateway { port } => NtpServer::Gateway { port },
+                    proto::NtpServer::Address { ip, port } => NtpServer::Address { ip, port },
+                });
+                if matches!(
+                    ntp,
+                    Some(NtpServer::Gateway { port: 0 } | NtpServer::Address { port: 0, .. })
+                ) {
+                    return Self::Invalid;
+                }
+                Self::PutTime { base, zone, ntp }
+            }
         }
     }
 }
@@ -484,6 +571,7 @@ impl Action {
                 | Self::Invalid
                 | Self::UpdateState
                 | Self::UpdateChunk { .. }
+                | Self::GetTime
         )
     }
 
@@ -508,6 +596,8 @@ impl Action {
             Self::CancelUpdate => "cancel-update",
             Self::EnrollUpdateKey { .. } => "enroll-update-key",
             Self::UpdateKeyStatement => "update-key-statement",
+            Self::GetTime => "get-time",
+            Self::PutTime { .. } => "put-time",
             Self::Invalid => "invalid",
         }
     }
@@ -525,6 +615,8 @@ pub(super) enum Reply {
     Clients,
     Feeding(u32),
     Update(UpdateView),
+    /// The time view, read when the answer is sealed.
+    Time,
 }
 
 fn saturate(jump_ms: i64) -> i32 {
@@ -546,6 +638,7 @@ impl Name for Reply {
             Self::Invite(_) => "invite",
             Self::Feeding(_) => "feeding",
             Self::Update(_) => "update",
+            Self::Time => "time",
             Self::Refused(refusal) => match refusal {
                 Refusal::Forbidden => "forbidden",
                 Refusal::Stale { .. } => "stale",

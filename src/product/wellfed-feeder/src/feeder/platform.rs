@@ -10,7 +10,8 @@
 use core::fmt;
 
 use wellfed_core::buttons::Gesture;
-use wellfed_core::clock::wall::{Jump, Sync, SyncError};
+use wellfed_core::clock::wall::{Fix, Jump, Origin, State as ClockState, Sync, SyncError};
+use wellfed_core::clock::zone::Rule;
 use wellfed_core::ota::install::{Answer, Progress, Refused};
 use wellfed_core::tone::Tune;
 use wellfed_proto::api::{Capabilities, Power};
@@ -19,7 +20,7 @@ use crate::store::events::{BODY_BYTES, Read};
 use wellfed_device_api::clients::{CLIENTS, Client};
 use wellfed_device_api::mailbox::{
     ClientChange, KeyResult, PlayResult, Requested, SettingsFields, SettingsResult, SettingsView,
-    WifiResult, WifiSource,
+    TimeSettings, TimeSettingsResult, WifiResult, WifiSource,
 };
 use wellfed_device_api::wifi::Credentials;
 
@@ -185,6 +186,8 @@ pub trait Platform {
     fn link(&mut self) -> Link;
     /// This boot's address, once DHCP gave one.
     fn ipv4(&mut self) -> Option<u32>;
+    /// The lease's gateway, once DHCP gave one.
+    fn gateway(&mut self) -> Option<u32>;
 
     // ---- The settings writer's mailboxes.
 
@@ -209,6 +212,10 @@ pub trait Platform {
     /// Copy the enrolled clients into `table` if published since `seen` (0
     /// before the first); their generation.
     fn clients_since(&mut self, seen: u32, table: &mut [Option<Client>; CLIENTS]) -> Option<u32>;
+    /// The time settings as the writer last published them.
+    fn time_settings(&mut self) -> TimeSettingsResult;
+    /// Queue the whole new time settings for the writer.
+    fn time_settings_change(&mut self, settings: TimeSettings) -> TimeSettingsResult;
 
     // ---- The event history.
 
@@ -228,8 +235,15 @@ pub trait Platform {
 
     /// Unix milliseconds now, while the clock is valid.
     fn wall_ms(&mut self, now_ms: u32) -> Option<u64>;
-    /// Check and adopt a sync from a client.
-    fn time_sync(&mut self, now_ms: u32, sync: Sync) -> Result<Jump, SyncError>;
+    /// Check and adopt a sync from a client; `origin` says whether it may
+    /// step the clock.
+    fn time_sync(&mut self, now_ms: u32, sync: Sync, origin: Origin) -> Result<Jump, SyncError>;
+    /// Adopt an NTP fix measured at `now_ms`.
+    fn time_fix(&mut self, now_ms: u32, fix: Fix) -> Result<Jump, SyncError>;
+    /// The clock's state now.
+    fn clock_state(&mut self, now_ms: u32) -> ClockState;
+    /// Set or clear the zone's rule.
+    fn set_zone_rule(&mut self, rule: Option<Rule>);
 
     // ---- The outputs' turn (feeds, joins and store writes).
 
@@ -267,6 +281,10 @@ pub trait Platform {
     fn mdns_open(&mut self) -> Option<Self::Socket>;
     fn mdns_send(&mut self, socket: Self::Socket, bytes: &[u8], ip: u32, port: u16) -> bool;
     fn mdns_receive(&mut self, socket: Self::Socket, into: &mut [u8]) -> Datagram;
+    /// The NTP exchange's socket: UDP on an ephemeral port.
+    fn ntp_open(&mut self) -> Option<Self::Socket>;
+    fn ntp_send(&mut self, socket: Self::Socket, bytes: &[u8], ip: u32, port: u16) -> bool;
+    fn ntp_receive(&mut self, socket: Self::Socket, into: &mut [u8]) -> Datagram;
     /// The heap free now, and its low point.
     fn heap(&self) -> (u32, u32);
 

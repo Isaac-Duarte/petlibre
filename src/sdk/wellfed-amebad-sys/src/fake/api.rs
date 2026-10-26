@@ -934,20 +934,48 @@ pub fn mdns_open() -> Option<i32> {
     with(|h| (!h.tcp_listen_fails).then_some(300))
 }
 
-pub fn mdns_recv(_socket: i32, buffer: &mut [u8]) -> Datagram {
-    with(|h| match h.mdns_rx.pop_front() {
-        None => Datagram::None,
-        Some((data, ip, port)) => {
-            let len = data.len().min(buffer.len());
-            buffer[..len].copy_from_slice(&data[..len]);
-            Datagram::Got { len, ip, port }
+/// The fake's sockets 300 (mDNS) and 301 (NTP) keep their datagrams apart.
+const UDP: i32 = 301;
+
+pub fn udp_open() -> Option<i32> {
+    with(|h| (!h.tcp_listen_fails).then_some(UDP))
+}
+
+pub fn rtc_registers() -> [u32; 4] {
+    with(|h| h.rtc)
+}
+
+pub fn gateway() -> Option<u32> {
+    with(|h| (h.gateway != 0).then_some(h.gateway))
+}
+
+pub fn mdns_recv(socket: i32, buffer: &mut [u8]) -> Datagram {
+    with(|h| {
+        match if socket == UDP {
+            h.udp_rx.pop_front()
+        } else {
+            h.mdns_rx.pop_front()
+        } {
+            None => Datagram::None,
+            Some((data, ip, port)) => {
+                let len = data.len().min(buffer.len());
+                buffer[..len].copy_from_slice(&data[..len]);
+                Datagram::Got { len, ip, port }
+            }
         }
     })
 }
 
 #[must_use]
-pub fn mdns_send(_socket: i32, data: &[u8], ip: u32, port: u16) -> bool {
-    with(|h| h.mdns_tx.push((data.to_vec(), ip, port)));
+pub fn mdns_send(socket: i32, data: &[u8], ip: u32, port: u16) -> bool {
+    with(|h| {
+        let sent = if socket == UDP {
+            &mut h.udp_tx
+        } else {
+            &mut h.mdns_tx
+        };
+        sent.push((data.to_vec(), ip, port));
+    });
     true
 }
 

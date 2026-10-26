@@ -2321,6 +2321,7 @@ version = "0.1.0"
 dependencies = [
  "ed25519-dalek",
  "jiff",
+ "jiff-tzdb",
  "wellfed-core",
  "wellfed-device-api",
  "wellfed-feeder",
@@ -2628,6 +2629,7 @@ dependencies = [
 name = "wellfed-rig"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "clap",
  "ed25519-dalek",
  "jiff",

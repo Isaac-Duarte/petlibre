@@ -11,9 +11,10 @@ use wellfed_proto::setup as proto_setup;
 
 use crate::{
     Answer, Capabilities, Client, ClientRole, EnrollPath, Event, EventBody, FeedOutcome,
-    FeedReason, Generation, Hello, Hex, Invite, Joined, Op, OpenRefusal, Power, Refusal, Sample,
-    SampleValue, Settings, SettingsPatch, Source, Status, TimeSync, Tune, UpdatePhase,
-    UpdateRefusal, UpdateStop, UpdateView, WifiSource, setup,
+    FeedReason, Generation, Hello, Hex, Invite, Joined, NtpResult, NtpServer, Op, OpenRefusal,
+    Power, Refusal, Sample, SampleValue, Settings, SettingsPatch, Source, Status, TimeSource,
+    TimeSync, TimeView, Tune, UpdatePhase, UpdateRefusal, UpdateStop, UpdateView, WifiSource,
+    setup,
 };
 
 /// One event of the history `epoch` counts.
@@ -428,6 +429,79 @@ impl From<proto::Outcome<'_>> for Answer {
             proto::Outcome::Refused(refusal) => Self::Refused(refusal.into()),
             proto::Outcome::Feeding { feed } => Self::Feeding { feed },
             proto::Outcome::Update(view) => Self::Update(view.into()),
+            proto::Outcome::Time(view) => Self::Time(view.into()),
+        }
+    }
+}
+
+impl From<proto::TimeView<'_>> for TimeView {
+    fn from(view: proto::TimeView<'_>) -> Self {
+        let proto::TimeView {
+            generation,
+            writable,
+            zone,
+            ntp,
+            clock_ms,
+            error_ms,
+            offset_s,
+            rate_ppb,
+            rate_bound_ppb,
+            learned,
+            syncs,
+            last,
+            last_age_s,
+            ntp_last,
+        } = view;
+        Self {
+            generation: Generation(generation),
+            writable,
+            zone: (!zone.is_empty()).then(|| zone.to_owned()),
+            ntp: ntp.into(),
+            clock_ms,
+            error_ms,
+            offset_s,
+            rate_ppb,
+            rate_bound_ppb,
+            learned,
+            syncs,
+            last: last.map(|source| match source {
+                proto::TimeSource::Owner => TimeSource::Owner,
+                proto::TimeSource::Client => TimeSource::Client,
+                proto::TimeSource::Ntp => TimeSource::Ntp,
+            }),
+            last_age_s,
+            ntp_last: ntp_last.map(|result| match result {
+                proto::NtpResult::Used => NtpResult::Used,
+                proto::NtpResult::Bounded => NtpResult::Bounded,
+                proto::NtpResult::Lost => NtpResult::Lost,
+                proto::NtpResult::Refused => NtpResult::Refused,
+            }),
+        }
+    }
+}
+
+impl From<proto::NtpServer> for NtpServer {
+    fn from(ntp: proto::NtpServer) -> Self {
+        match ntp {
+            proto::NtpServer::Off => Self::Off,
+            proto::NtpServer::Gateway { port } => Self::Gateway { port },
+            proto::NtpServer::Address { ip, port } => Self::Address {
+                ip: ip.into(),
+                port,
+            },
+        }
+    }
+}
+
+impl From<NtpServer> for proto::NtpServer {
+    fn from(ntp: NtpServer) -> Self {
+        match ntp {
+            NtpServer::Off => Self::Off,
+            NtpServer::Gateway { port } => Self::Gateway { port },
+            NtpServer::Address { ip, port } => Self::Address {
+                ip: ip.octets(),
+                port,
+            },
         }
     }
 }
@@ -577,6 +651,14 @@ impl Op {
             Self::CancelUpdate => proto::Op::CancelUpdate,
             Self::EnrollUpdateKey { key, label } => proto::Op::EnrollUpdateKey { key: *key, label },
             Self::UpdateKeyStatement { statement } => proto::Op::UpdateKeyStatement { statement },
+            Self::GetTime => proto::Op::GetTime,
+            Self::PutTime { base, changes } => proto::Op::PutTime {
+                base: base.0,
+                changes: proto::TimeChanges {
+                    zone: changes.zone.as_deref(),
+                    ntp: changes.ntp.map(Into::into),
+                },
+            },
         }
     }
 }
@@ -631,19 +713,23 @@ impl From<proto::Capabilities> for Capabilities {
         Self {
             feed: bits.contains(proto::Capabilities::FEED),
             update: bits.contains(proto::Capabilities::UPDATE),
+            time: bits.contains(proto::Capabilities::TIME),
         }
     }
 }
 
 impl From<Capabilities> for proto::Capabilities {
     fn from(capabilities: Capabilities) -> Self {
-        let Capabilities { feed, update } = capabilities;
+        let Capabilities { feed, update, time } = capabilities;
         let mut bits = proto::Capabilities::V1.0;
         if feed {
             bits |= proto::Capabilities::FEED.0;
         }
         if update {
             bits |= proto::Capabilities::UPDATE.0;
+        }
+        if time {
+            bits |= proto::Capabilities::TIME.0;
         }
         Self(bits)
     }

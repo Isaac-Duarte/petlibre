@@ -28,6 +28,8 @@ thiserror.workspace = true
 uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]
+# The bench NTP responder example's command line.
+anyhow.workspace = true
 ed25519-dalek = "2"
 # Freezes the pinned stock review for one ignored test.
 wellfed-build = { path = "../wellfed-build" }

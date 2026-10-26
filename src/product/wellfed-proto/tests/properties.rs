@@ -92,6 +92,24 @@ fn op() -> impl Strategy<Value = Op<'static>> {
         Just(Op::CancelUpdate),
         (any::<[u8; 32]>(), text(24)).prop_map(|(key, label)| Op::EnrollUpdateKey { key, label }),
         bytes(200).prop_map(|statement| Op::UpdateKeyStatement { statement }),
+        Just(Op::GetTime),
+        (
+            any::<u32>(),
+            proptest::option::of(text(60)),
+            proptest::option::of(ntp())
+        )
+            .prop_map(|(base, zone, ntp)| Op::PutTime {
+                base,
+                changes: TimeChanges { zone, ntp },
+            }),
+    ]
+}
+
+fn ntp() -> impl Strategy<Value = NtpServer> {
+    prop_oneof![
+        Just(NtpServer::Off),
+        any::<u16>().prop_map(|port| NtpServer::Gateway { port }),
+        (any::<[u8; 4]>(), any::<u16>()).prop_map(|(ip, port)| NtpServer::Address { ip, port }),
     ]
 }
 

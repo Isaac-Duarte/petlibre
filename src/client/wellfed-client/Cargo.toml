@@ -9,6 +9,7 @@ publish.workspace = true
 
 [dependencies]
 jiff = "0.2.38"
+jiff-tzdb = "0.1.9"
 wellfed-core.workspace = true
 wellfed-model.workspace = true
 wellfed-proto.workspace = true

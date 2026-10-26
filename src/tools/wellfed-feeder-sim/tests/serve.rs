@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use wellfed_client::api::Invite;
 use wellfed_connect::{Connection, Error as ConnectError, join};
+use wellfed_core::clock::ntp;
 use wellfed_device_api::mailbox::KeyResult;
 use wellfed_device_api::mailbox::Lock;
 use wellfed_feeder::panel::{Action, Event as PanelEvent, Source as PanelSource};
@@ -15,8 +16,8 @@ use wellfed_feeder_sim::harness;
 use wellfed_feeder_sim::serve::Event;
 use wellfed_feeder_sim::sim::Record;
 use wellfed_model::{
-    Answer, ClientRole, EventBody, Generation, Joined, Op, Pushed, Refusal, SettingsPatch, Source,
-    Status, TimeSync, Wifi,
+    Answer, ClientRole, EventBody, Generation, Joined, NtpResult, NtpServer, Op, Pushed, Refusal,
+    SettingsPatch, Source, Status, TimeChanges, TimeSource, TimeSync, Wifi,
 };
 use wellfed_proto::api::RequestId;
 use wellfed_session::noise::Keypair;
@@ -198,6 +199,88 @@ fn an_owner_reads_and_writes_the_feeder() {
             Answer::Refused(Refusal::Unavailable),
             "no feeding owner yet"
         );
+        sim.stop().await;
+    });
+}
+
+/// An NTP responder on loopback: answers every request with this host's
+/// clock until the test ends.
+async fn ntp_responder() -> u16 {
+    let socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let port = socket.local_addr().unwrap().port();
+    tokio::task::spawn_local(async move {
+        let mut request = [0; 64];
+        while let Ok((len, from)) = socket.recv_from(&mut request).await {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap();
+            let now = u64::try_from(now.as_millis()).unwrap();
+            if let Some(answer) = ntp::serve(&request[..len], now, now, 2, 5) {
+                let _ = socket.send_to(&answer, from).await;
+            }
+        }
+    });
+    port
+}
+
+#[test]
+fn an_owner_sets_the_zone_and_the_ntp_server_and_the_clock_follows() {
+    local(async {
+        let mut sim = Running::start(&Flash::memory(), true).await;
+        let mut owner = sim.open(OWNER).await.unwrap();
+
+        let Answer::Time(before) = owner.ask(sim.id(), &Op::GetTime).await.unwrap() else {
+            panic!("the time view");
+        };
+        assert_eq!(before.clock_ms, None, "no clock before a source");
+        assert_eq!(before.zone, None);
+        assert_eq!(before.ntp, NtpServer::Gateway { port: 123 });
+
+        let port = ntp_responder().await;
+        let put = Op::PutTime {
+            base: before.generation,
+            changes: TimeChanges {
+                zone: Some("<+0530>-5:30".to_owned()),
+                ntp: Some(NtpServer::Address {
+                    ip: std::net::Ipv4Addr::LOCALHOST,
+                    port,
+                }),
+            },
+        };
+        let put = owner.ask(sim.id(), &put).await.unwrap();
+        assert_eq!(
+            put,
+            Answer::Done {
+                generation: Some(Generation(1))
+            }
+        );
+
+        let mut view = None;
+        for _ in 0..50 {
+            let Answer::Time(time) = owner.ask(sim.id(), &Op::GetTime).await.unwrap() else {
+                panic!("the time view");
+            };
+            if time.clock_ms.is_some() {
+                view = Some(time);
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        let view = view.expect("the clock set from NTP");
+        assert_eq!(view.last, Some(TimeSource::Ntp));
+        assert_eq!(view.ntp_last, Some(NtpResult::Used));
+        assert_eq!(view.offset_s, Some(5 * 3600 + 1800), "the zone's rule");
+        assert!(view.error_ms.is_some_and(|error| error < 1_000));
+
+        // An owner's sync may step the clock past what NTP said.
+        let hour_on = TimeSync {
+            unix_ms: view.clock_ms.unwrap() + 3_600_000,
+            offset_s: 0,
+            next_change_s: 0,
+            next_offset_s: 0,
+        };
+        let stepped = owner.ask(sim.id(), &Op::TimeSync(hour_on)).await.unwrap();
+        assert_eq!(stepped, Answer::Done { generation: None });
         sim.stop().await;
     });
 }

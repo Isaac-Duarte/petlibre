@@ -7,12 +7,15 @@ use super::memory::remembered;
 use super::request::{Action, Name, Reply};
 use super::{Pending, Phase, Server, Waiting, slot_id};
 use crate::clients::Role;
-use crate::mailbox::{SettingsFields, SettingsResult, WifiResult};
+use crate::mailbox::{
+    NtpResult, NtpServer, Origin, SettingsFields, SettingsResult, TimeSettingsResult, WifiResult,
+};
 use crate::pairing::{self, Path};
 use crate::{Device, KeyChange, KeyOutcome, Reason, Record, UpdateAnswer, UpdateKeyChange};
 use wellfed_core::ota::offer::key_id;
 use wellfed_proto::api::{
-    EventBody, FeederMessage, Outcome, Refusal, RequestId, Source, UpdateRefusal,
+    self as proto, EventBody, FeederMessage, Outcome, Refusal, RequestId, Source, TimeView,
+    UpdateRefusal,
 };
 
 impl Server {
@@ -76,6 +79,20 @@ impl Server {
                 }
                 WifiResult::Current { pending: true, .. } | WifiResult::Busy => return Ok(None),
                 WifiResult::ReadOnly | WifiResult::Invalid => Reply::Refused(Refusal::NotWritable),
+            },
+            // No event: the history's settings events carry the settings
+            // store's generation, and the time settings have their own.
+            Waiting::Time => match device.time_settings(None) {
+                TimeSettingsResult::Current {
+                    view,
+                    pending: false,
+                } => Reply::Done(Some(view.generation)),
+                TimeSettingsResult::Current { pending: true, .. } | TimeSettingsResult::Busy => {
+                    return Ok(None);
+                }
+                TimeSettingsResult::ReadOnly | TimeSettingsResult::Unserved => {
+                    Reply::Refused(Refusal::NotWritable)
+                }
             },
             Waiting::Keys { ticket, revoked } => match device.keys_outcome(ticket) {
                 None => return Ok(None),
@@ -197,6 +214,8 @@ impl Server {
                 result: reply.name(),
             });
         }
+        // The time view's zone borrows this until the answer is sealed.
+        let zone;
         let result = match reply {
             Reply::Clients => return self.list_clients(index, id),
             Reply::Done(generation) => Outcome::Done { generation },
@@ -210,7 +229,89 @@ impl Server {
                 status.sessions = u8::try_from(self.sessions()).unwrap_or(u8::MAX);
                 Outcome::Status(status)
             }
+            Reply::Time => match time_view(device, now_ms) {
+                Some((view, text)) => {
+                    zone = text;
+                    Outcome::Time(TimeView {
+                        zone: zone.as_str(),
+                        ..view
+                    })
+                }
+                None => Outcome::Refused(Refusal::Unavailable),
+            },
         };
         self.seal_and_send(index, &FeederMessage::Response { id, result })
+    }
+}
+
+/// The zone's text, copied out of the device's view for the answer to
+/// borrow.
+struct ZoneText {
+    len: usize,
+    bytes: [u8; wellfed_core::clock::zone::TEXT_MAX],
+}
+
+impl ZoneText {
+    fn as_str(&self) -> &str {
+        // The rule parser accepts ASCII only.
+        core::str::from_utf8(&self.bytes[..self.len]).unwrap_or("")
+    }
+}
+
+/// The time view, its zone left empty for the caller to fill from the
+/// returned text.
+fn time_view<D: Device>(device: &mut D, now_ms: u32) -> Option<(TimeView<'static>, ZoneText)> {
+    let TimeSettingsResult::Current { view, .. } = device.time_settings(None) else {
+        return None;
+    };
+    let state = device.time_state(now_ms)?;
+
+    let mut text = ZoneText {
+        len: 0,
+        bytes: [0; wellfed_core::clock::zone::TEXT_MAX],
+    };
+    if let Some(zone) = view.settings.zone {
+        let bytes = zone.text();
+        text.bytes[..bytes.len()].copy_from_slice(bytes);
+        text.len = bytes.len();
+    }
+
+    let clock = state.clock;
+    let reading = clock.reading;
+    let view = TimeView {
+        generation: view.generation,
+        writable: view.writable,
+        zone: "",
+        ntp: proto_ntp(view.settings.ntp),
+        clock_ms: reading.map(|r| r.unix_ms),
+        error_ms: reading.map(|r| u32::try_from(r.error_ms).unwrap_or(u32::MAX)),
+        offset_s: reading.and_then(|r| r.offset_s),
+        rate_ppb: clock.rate_ppb,
+        rate_bound_ppb: clock.rate_bound_ppb,
+        learned: clock.learned,
+        syncs: clock.syncs,
+        last: clock.last.map(|(origin, _)| match origin {
+            Origin::Owner => proto::TimeSource::Owner,
+            Origin::Client => proto::TimeSource::Client,
+            Origin::Ntp => proto::TimeSource::Ntp,
+        }),
+        last_age_s: clock
+            .last
+            .map(|(_, at)| state.now_ms.wrapping_sub(at) / 1000),
+        ntp_last: state.ntp_last.map(|result| match result {
+            NtpResult::Used => proto::NtpResult::Used,
+            NtpResult::Bounded => proto::NtpResult::Bounded,
+            NtpResult::Lost => proto::NtpResult::Lost,
+            NtpResult::Refused => proto::NtpResult::Refused,
+        }),
+    };
+    Some((view, text))
+}
+
+const fn proto_ntp(ntp: NtpServer) -> proto::NtpServer {
+    match ntp {
+        NtpServer::Off => proto::NtpServer::Off,
+        NtpServer::Gateway { port } => proto::NtpServer::Gateway { port },
+        NtpServer::Address { ip, port } => proto::NtpServer::Address { ip, port },
     }
 }

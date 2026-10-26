@@ -8,7 +8,7 @@ use std::sync::{Mutex, MutexGuard};
 use wellfed_feeder::conformance::Rig;
 use wellfed_feeder::feeder::Feeder;
 use wellfed_feeder_runtime::writer::Writer;
-use wellfed_feeder_runtime::{events, keys, network};
+use wellfed_feeder_runtime::{events, keys, network, time};
 use wellfed_fw_feeder::platform::Plaf103;
 use wellfed_sdk::hal::flash::park::Mmio;
 use wellfed_sdk::hal::flash_lock::arming::Hooks;
@@ -101,6 +101,7 @@ impl FirmwareRig {
         unsafe { network::reset() };
         keys::reset();
         events::reset();
+        time::reset();
         clock::reset();
         mailbox::reset();
         INTERLOCK.reset();
@@ -151,3 +152,50 @@ impl Rig for FirmwareRig {
 }
 
 wellfed_feeder::conformance!(FirmwareRig::start());
+
+/// The loop asks the lease's gateway on port 123 once DHCP gave an
+/// address, and an answer to its request sets the clock; one with another
+/// nonce, or from another address, does not.
+#[test]
+fn the_loop_asks_the_gateway_and_an_answer_sets_the_clock() {
+    use wellfed_core::clock::ntp;
+    use wellfed_feeder::feeder::NoFeeds;
+
+    let mut rig = FirmwareRig::start();
+    let gateway = u32::from_be_bytes([10, 42, 103, 1]);
+    fake::with(|h| {
+        h.ipv4 = u32::from_be_bytes([10, 42, 103, 172]);
+        h.gateway = gateway;
+        h.uptime_ms = 10_000;
+    });
+    rig.feeder.pass(10_000, &mut NoFeeds, |_| {});
+    let sent = fake::with(|h| core::mem::take(&mut h.udp_tx));
+    let [(request, ip, port)] = sent.as_slice() else {
+        panic!("one request: {sent:?}");
+    };
+    assert_eq!((*ip, *port), (gateway, ntp::PORT));
+    assert_eq!(request[0], 0x23, "a version 4 client request");
+
+    // 2026-10-22T13:00:00Z.
+    let now = 1_792_674_000_000;
+    let answer = ntp::serve(request, now, now, 2, 5).unwrap();
+    let mut forged = answer;
+    forged[24] ^= 1;
+    fake::with(|h| {
+        h.udp_rx
+            .push_back((answer.to_vec(), u32::from_be_bytes([10, 42, 103, 9]), 123));
+        h.udp_rx.push_back((forged.to_vec(), gateway, 123));
+        h.uptime_ms += 20;
+    });
+    rig.feeder.pass(10_020, &mut NoFeeds, |_| {});
+    assert_eq!(clock::state().reading, None, "neither is an answer");
+
+    fake::with(|h| {
+        h.udp_rx.push_back((answer.to_vec(), gateway, 123));
+        h.uptime_ms += 20;
+    });
+    rig.feeder.pass(10_040, &mut NoFeeds, |_| {});
+    let reading = clock::state().reading.expect("the clock is set");
+    assert!(reading.unix_ms.abs_diff(now) < 100, "{reading:?}");
+    assert_eq!(reading.offset_s, None, "no zone, no client sync");
+}

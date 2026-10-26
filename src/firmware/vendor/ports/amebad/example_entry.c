@@ -639,6 +639,50 @@ unsigned int wellfed_ipv4(void)
     return ((unsigned int)a[0] << 24) | ((unsigned int)a[1] << 16) | ((unsigned int)a[2] << 8) | a[3];
 }
 
+/* The lease's gateway, host order, or 0 until DHCP gave one. */
+unsigned int wellfed_gateway_ipv4(void)
+{
+    if (!dhcp_supplied_address(&xnetif[0])) {
+        return 0;
+    }
+    return wellfed_be32(LwIP_GetGW(&xnetif[0]));
+}
+
+/* The KM0 RTC's time, control, status and prescaler registers, read only.
+ * The SDK's RTC header says the RTC keeps counting through every reset but
+ * a power loss; nothing in this firmware sets it, so the boot record shows
+ * whether it runs at all and whether its count survives a watchdog reset,
+ * an activation or a trial boot. */
+void wellfed_rtc_read(unsigned int *out)
+{
+    out[0] = HAL_READ32(RTC_BASE, 0x00); /* TR */
+    out[1] = HAL_READ32(RTC_BASE, 0x04); /* CR */
+    out[2] = HAL_READ32(RTC_BASE, 0x08); /* ISR */
+    out[3] = HAL_READ32(RTC_BASE, 0x0C); /* PRER */
+}
+
+/* The NTP exchange's socket: UDP on an ephemeral port, non-blocking, or
+ * -1. Datagrams go through wellfed_mdns_send and wellfed_mdns_recv, which
+ * take any UDP socket. */
+int wellfed_udp_open(void)
+{
+    int s = lwip_socket(AF_INET, SOCK_DGRAM, 0);
+    if (s < 0) {
+        return -1;
+    }
+    struct sockaddr_in at;
+    memset(&at, 0, sizeof(at));
+    at.sin_family = AF_INET;
+    at.sin_port = 0;
+    at.sin_addr.s_addr = lwip_htonl(INADDR_ANY);
+    if (lwip_bind(s, (struct sockaddr *)&at, sizeof(at)) != 0) {
+        lwip_close(s);
+        return -1;
+    }
+    wellfed_nonblocking(s);
+    return s;
+}
+
 /* The speaker. Stock 1.1.15 plays through the codec's line output
  * (CODEC_Init application 8) from SPORT by GDMA and holds PB23 HIGH while it
  * plays, the amplifier enable that Rust drives (wellfed-hal audio.rs).

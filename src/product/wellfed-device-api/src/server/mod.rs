@@ -49,6 +49,7 @@ pub struct Pass<'a, D> {
 enum Waiting {
     Settings,
     Wifi,
+    Time,
     Keys {
         ticket: u32,
         revoked: [u8; 32],

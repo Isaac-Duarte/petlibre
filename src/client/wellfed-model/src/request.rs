@@ -77,6 +77,83 @@ pub enum Op {
     UpdateKeyStatement {
         statement: Vec<u8>,
     },
+    /// The time settings and the clock's state.
+    GetTime,
+    /// Applies only if the time settings are still at `base`. Owners only.
+    PutTime {
+        base: Generation,
+        changes: TimeChanges,
+    },
+}
+
+/// A change to the time settings; `None` leaves a field as it is.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TimeChanges {
+    /// The zone as a POSIX TZ rule (`wellfed_client::time::rule` makes one
+    /// from an IANA name), or `""` to clear it.
+    pub zone: Option<String>,
+    pub ntp: Option<NtpServer>,
+}
+
+/// Where the feeder asks for the time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum NtpServer {
+    Off,
+    /// The router that gave the feeder its address.
+    Gateway {
+        port: u16,
+    },
+    Address {
+        ip: std::net::Ipv4Addr,
+        port: u16,
+    },
+}
+
+/// Who last set the feeder's clock.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TimeSource {
+    /// An owner's session, which may step the clock freely.
+    Owner,
+    /// A member's or the server's session, which may only narrow it.
+    Client,
+    Ntp,
+}
+
+/// What the feeder's last NTP exchange came to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NtpResult {
+    Used,
+    /// The answer disagreed with a valid clock beyond both error bounds.
+    Bounded,
+    Lost,
+    Refused,
+}
+
+/// The time settings and the feeder's clock.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TimeView {
+    pub generation: Generation,
+    pub writable: bool,
+    /// The zone's POSIX rule; `None` when none is set.
+    pub zone: Option<String>,
+    pub ntp: NtpServer,
+    /// Unix milliseconds; `None` while the clock is invalid: the feeder
+    /// needs the time, and scheduled meals hold.
+    pub clock_ms: Option<u64>,
+    pub error_ms: Option<u32>,
+    /// East of UTC, when a zone or a client sync gave one.
+    pub offset_s: Option<i32>,
+    /// The uptime clock's learned correction, parts per billion.
+    pub rate_ppb: i32,
+    pub rate_bound_ppb: u32,
+    pub learned: bool,
+    pub syncs: u32,
+    pub last: Option<TimeSource>,
+    pub last_age_s: Option<u32>,
+    pub ntp_last: Option<NtpResult>,
 }
 
 /// Credentials for the feeder's next join.
@@ -139,6 +216,7 @@ pub enum Answer {
         feed: u32,
     },
     Update(UpdateView),
+    Time(TimeView),
 }
 
 /// Why the feeder refused a request.

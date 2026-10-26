@@ -20,8 +20,8 @@ use wellfed_proto::api::{Capabilities, Event, EventBody, Refusal, Source};
 use crate::feeder::{Feeder, NoFeeds, Platform};
 use wellfed_device_api::clients::{Label, Role};
 use wellfed_device_api::mailbox::{
-    LockResult, SettingsFields, SettingsResult, SettingsView, TimeFields, TimeResult, WifiResult,
-    WifiView,
+    LockResult, NtpServer, Origin, SettingsFields, SettingsResult, SettingsView, TimeFields,
+    TimeResult, TimeSettings, TimeSettingsResult, TimeSettingsView, WifiResult, WifiView, Zone,
 };
 use wellfed_device_api::wifi::Credentials;
 use wellfed_device_api::{Device, EventRead, KeyChange, KeyOutcome};
@@ -239,7 +239,7 @@ pub fn a_time_sync_sets_the_clock(rig: &mut impl Rig) {
         next_offset_s: 0,
     };
     assert_eq!(
-        device(rig, 0, |device| device.time_sync(bad)),
+        device(rig, 0, |device| device.time_sync(bad, Origin::Owner)),
         TimeResult::Refused("offset")
     );
     let sync = TimeFields {
@@ -248,13 +248,84 @@ pub fn a_time_sync_sets_the_clock(rig: &mut impl Rig) {
         ..bad
     };
     assert_eq!(
-        device(rig, 0, |device| device.time_sync(sync)),
+        device(rig, 0, |device| device.time_sync(sync, Origin::Owner)),
         TimeResult::Synced { jump_ms: None }
     );
 
     let status = device(rig, 0, |device| device.status(0));
     let clock = status.clock_ms.expect("the clock runs");
     assert!(clock >= sync.unix_ms, "{clock}");
+
+    // Anyone but an owner may not step a valid clock by an hour.
+    let hour_on = TimeFields {
+        unix_ms: clock + 3_600_000,
+        ..sync
+    };
+    assert_eq!(
+        device(rig, 0, |device| device.time_sync(hour_on, Origin::Client)),
+        TimeResult::Refused("bounded")
+    );
+    assert!(matches!(
+        device(rig, 0, |device| device.time_sync(hour_on, Origin::Owner)),
+        TimeResult::Synced { jump_ms: Some(_) }
+    ));
+}
+
+fn time_settings(rig: &mut impl Rig, change: Option<TimeSettings>) -> TimeSettingsResult {
+    device(rig, 0, |device| device.time_settings(change))
+}
+
+fn time_view(rig: &mut impl Rig) -> TimeSettingsView {
+    match time_settings(rig, None) {
+        TimeSettingsResult::Current {
+            view,
+            pending: false,
+        } => view,
+        other => panic!("the time settings with nothing queued: {other:?}"),
+    }
+}
+
+/// The time settings start at their defaults, a change lands on the
+/// writer's turn, and the next pass gives the clock the zone's rule.
+pub fn time_settings_land_and_set_the_zone(rig: &mut impl Rig) {
+    let before = time_view(rig);
+    assert!(before.writable, "the store opened writable");
+    assert_eq!(before.settings, TimeSettings::default());
+
+    let zone = Zone::parse(b"<+0530>-5:30").expect("a fixed rule");
+    let target = TimeSettings {
+        zone: Some(zone),
+        ntp: NtpServer::Off,
+    };
+    assert!(matches!(
+        time_settings(rig, Some(target)),
+        TimeSettingsResult::Current { pending: true, .. }
+    ));
+    assert_eq!(time_settings(rig, Some(target)), TimeSettingsResult::Busy);
+    rig.write();
+    let after = time_view(rig);
+    assert_eq!(after.settings, target);
+    assert_eq!(after.generation, before.generation + 1);
+
+    // An NTP fix gives no offset; the zone's rule does, once applied.
+    pass(rig, 0);
+    let sync = TimeFields {
+        unix_ms: 1_800_000_000_000,
+        offset_s: 0,
+        next_change_s: 0,
+        next_offset_s: 0,
+    };
+    device(rig, 0, |device| device.time_sync(sync, Origin::Owner));
+    let state = device(rig, 0, |device| device.time_state(0)).expect("the clock's state");
+    let reading = state.clock.reading.expect("a valid clock");
+    assert_eq!(reading.offset_s, Some(5 * 3600 + 1800));
+
+    rig.claim_outputs(true);
+    assert_eq!(
+        time_settings(rig, Some(before.settings)),
+        TimeSettingsResult::Busy
+    );
+    rig.claim_outputs(false);
 }
 
 /// A recorded event reads back from the ring, after the boot's, under the
@@ -306,6 +377,7 @@ pub fn a_feeder_without_a_feeding_owner_refuses_feeds(rig: &mut impl Rig) {
         (device.capabilities(), device.feed(1, Source::Feeder))
     });
     assert!(capabilities.contains(Capabilities::UPDATE));
+    assert!(capabilities.contains(Capabilities::TIME));
     assert_eq!(fed, Err(Refusal::Unavailable));
     assert_eq!(
         device(rig, 0, |device| device.feed_reserved(1)),
@@ -324,6 +396,7 @@ macro_rules! conformance {
             writes_are_refused_while_the_outputs_are_claimed,
             the_lock_follows_the_panel_owner,
             a_time_sync_sets_the_clock,
+            time_settings_land_and_set_the_zone,
             a_recorded_event_reads_back,
             status_reports_the_build_and_the_time,
             a_feeder_without_a_feeding_owner_refuses_feeds,

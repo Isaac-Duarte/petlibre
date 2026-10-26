@@ -8,7 +8,8 @@
 //! - the client table, copied from the settings writer when it changes, so
 //!   a revoked key's sessions close;
 //! - the live samples (power each time the supply is sampled, Wi-Fi signal
-//!   every 30 s) for subscribers, and the boot's and lost records' events.
+//!   every 30 s) for subscribers, and the boot's and lost records' events;
+//! - the time settings and the NTP exchange ([`super::time`]).
 //!
 //! [`FeederDevice`] is the server's view of the rest of the feeder: the
 //! platform's mailboxes and clock, the panel's lock and the feeding owner.
@@ -31,11 +32,13 @@ use super::events;
 use super::lock::LockBox;
 use super::owner::{self, POLL_MS};
 use super::platform::{Accepted, Boot, Datagram, Platform, Received};
+use super::time::{self, Time};
 use crate::store::events::Read;
 use crate::update as wire;
 use wellfed_device_api::mailbox::{
-    ClientChange, KeyResult, LockFields, LockResult, PlayResult, Requested, SettingsFields,
-    SettingsResult, TimeFields, TimeResult, WifiResult, WifiSource,
+    ClientChange, KeyResult, LockFields, LockResult, NtpResult, Origin, PlayResult, Requested,
+    SettingsFields, SettingsResult, TimeFields, TimeResult, TimeSettings, TimeSettingsResult,
+    TimeState, WifiResult, WifiSource,
 };
 use wellfed_device_api::pairing::{self, Pairing};
 use wellfed_device_api::wifi::Credentials;
@@ -65,6 +68,7 @@ pub enum Record {
     Address {
         ip: u32,
     },
+    Time(time::Record),
     /// Once a minute: the heap, and the mDNS datagrams seen and answered.
     Stats {
         free: u32,
@@ -89,6 +93,7 @@ pub fn describe(record: Record, f: &mut impl fmt::Write) -> fmt::Result {
             let [a, b, c, d] = ip.to_be_bytes();
             write!(f, "mdns address={a}.{b}.{c}.{d} port={PORT}")
         }
+        Record::Time(record) => time::describe(record, f),
         Record::Stats {
             free,
             min,
@@ -159,6 +164,7 @@ pub struct Serve<S> {
     failed: u32,
     packet: [u8; mdns::PACKET],
     reply: [u8; mdns::PACKET],
+    time: Time<S>,
 }
 
 impl<S: Copy> Serve<S> {
@@ -183,12 +189,18 @@ impl<S: Copy> Serve<S> {
             failed: 0,
             packet: [0; mdns::PACKET],
             reply: [0; mdns::PACKET],
+            time: Time::new(),
         }
     }
 
     /// The server, for a host test to look into.
     pub fn server(&mut self) -> &mut Server {
         &mut self.server
+    }
+
+    /// What the last NTP exchange came to.
+    pub const fn ntp_last(&self) -> Option<NtpResult> {
+        self.time.last()
     }
 
     /// This boot's facts, read once.
@@ -254,6 +266,8 @@ impl<S: Copy> Serve<S> {
             self.open_sockets(platform, now_ms, &mut record);
         }
         self.mdns(platform, now_ms);
+        self.time
+            .step(platform, now_ms, ip, |r| record(Record::Time(r)));
         self.accept(platform, now_ms, &mut record);
         self.receive(platform, &mut record);
 
@@ -270,6 +284,7 @@ impl<S: Copy> Serve<S> {
             boot,
             locked,
             now_ms,
+            ntp_last: self.time.last(),
         };
         let busy = self.server.step(
             Pass {
@@ -499,6 +514,8 @@ pub struct FeederDevice<'a, P, F> {
     pub(super) locked: Option<bool>,
     /// The pass's time, which a clock sync is anchored to.
     pub(super) now_ms: u32,
+    /// What the last NTP exchange came to.
+    pub(super) ntp_last: Option<NtpResult>,
 }
 
 impl<P: Platform, F: Feeds> Device for FeederDevice<'_, P, F> {
@@ -568,8 +585,24 @@ impl<P: Platform, F: Feeds> Device for FeederDevice<'_, P, F> {
         None
     }
 
-    fn time_sync(&mut self, fields: TimeFields) -> TimeResult {
-        TimeResult::from_sync(self.platform.time_sync(self.now_ms, fields.sync()))
+    fn time_sync(&mut self, fields: TimeFields, origin: Origin) -> TimeResult {
+        TimeResult::from_sync(self.platform.time_sync(self.now_ms, fields.sync(), origin))
+    }
+
+    fn time_settings(&mut self, change: Option<TimeSettings>) -> TimeSettingsResult {
+        match change {
+            None => self.platform.time_settings(),
+            Some(_) if self.platform.outputs_claimed() => TimeSettingsResult::Busy,
+            Some(settings) => self.platform.time_settings_change(settings),
+        }
+    }
+
+    fn time_state(&mut self, now_ms: u32) -> Option<TimeState> {
+        Some(TimeState {
+            clock: self.platform.clock_state(now_ms),
+            now_ms,
+            ntp_last: self.ntp_last,
+        })
     }
 
     /// `None` while the outputs are claimed, as when the slot is taken: a

@@ -94,6 +94,12 @@ pub struct Hardware {
     pub mdns_rx: VecDeque<(Vec<u8>, u32, u16)>,
     pub mdns_tx: Vec<(Vec<u8>, u32, u16)>,
     pub ipv4: u32,
+    /// The NTP socket: datagrams waiting, what was sent, and the gateway.
+    pub udp_rx: VecDeque<(Vec<u8>, u32, u16)>,
+    pub udp_tx: Vec<(Vec<u8>, u32, u16)>,
+    pub gateway: u32,
+    /// The KM0 RTC's TR, CR, ISR and PRER.
+    pub rtc: [u32; 4],
     /// Milliseconds; a timed-out receive advances it by its timeout.
     pub uptime_ms: u32,
 
@@ -252,6 +258,10 @@ impl Default for Hardware {
             mdns_rx: VecDeque::new(),
             mdns_tx: Vec::new(),
             ipv4: 0,
+            udp_rx: VecDeque::new(),
+            udp_tx: Vec::new(),
+            gateway: 0,
+            rtc: [0; 4],
             uptime_ms: 0,
 
             wifi_started: false,

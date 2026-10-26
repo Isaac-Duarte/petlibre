@@ -11,7 +11,7 @@
 //!    it runs ([`owner`], [`setup`]); then the reboot setup mode asks for,
 //!    and the lock it now holds for the device API ([`lock`]);
 //! 3. the device API: its sockets, the server's step and the live samples
-//!    ([`serve`]).
+//!    ([`serve`]), with the time settings and the NTP exchange ([`time`]).
 //!
 //! The feeding owner is the platform's: the firmware steps it before the
 //! pass and hands it in as [`Feeds`], and records its `Fed` events through
@@ -25,6 +25,7 @@ pub mod owner;
 pub mod platform;
 pub mod serve;
 pub mod setup;
+pub mod time;
 
 use core::fmt;
 
@@ -226,6 +227,7 @@ impl<P: Platform> Feeder<P> {
     /// owner `feeds`, as the server sees it in a pass.
     pub fn device<'a, F: Feeds>(&'a mut self, now_ms: u32, feeds: &'a mut F) -> impl Device + 'a {
         let boot = self.serve.boot(&mut self.platform, now_ms);
+        let ntp_last = self.serve.ntp_last();
         FeederDevice {
             platform: &mut self.platform,
             lock: &mut self.lock,
@@ -233,6 +235,7 @@ impl<P: Platform> Feeder<P> {
             boot,
             locked: self.owner.lock().map(Lock::locked),
             now_ms,
+            ntp_last,
         }
     }
 }

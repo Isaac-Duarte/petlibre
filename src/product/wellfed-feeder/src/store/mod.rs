@@ -1,5 +1,5 @@
-//! The product's records on NOR: device settings, Wi-Fi credentials and the
-//! client keys, each a dual-slot store (`wellfed_core::store::slot`: two
+//! The product's records on NOR: device settings, Wi-Fi credentials, the
+//! client keys and the time settings, each a dual-slot store (`wellfed_core::store::slot`: two
 //! alternating erase units under one torn-write rule, with the store's own
 //! fields and recovery policy), and the event history in a ring of units
 //! ([`events`]). Each keeps its sectors in the board's map and its on-flash
@@ -14,3 +14,4 @@ pub mod clients;
 pub mod events;
 pub mod net;
 pub mod settings;
+pub mod time;

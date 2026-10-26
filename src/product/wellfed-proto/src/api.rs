@@ -83,10 +83,13 @@ impl Capabilities {
     /// ([`Op::EnrollUpdateKey`], [`Op::UpdateKeyStatement`]), with
     /// [`Outcome::Update`] and [`Refusal::Update`]. Owner sessions only.
     pub const UPDATE: Self = Self(2);
+    /// The time settings and the clock's state: [`Op::GetTime`],
+    /// [`Op::PutTime`] and [`Outcome::Time`].
+    pub const TIME: Self = Self(4);
     /// Every bit this crate defines: what a current client claims. A
     /// session then runs on the bits both sides claim, so a client adapts
     /// to whatever feeder it meets, however old.
-    pub const KNOWN: Self = Self(Self::FEED.0 | Self::UPDATE.0);
+    pub const KNOWN: Self = Self(Self::FEED.0 | Self::UPDATE.0 | Self::TIME.0);
 
     pub const fn union(self, other: Self) -> Self {
         Self(self.0 | other.0)
@@ -256,6 +259,16 @@ pub enum Op<'a> {
         #[serde(borrow)]
         statement: &'a [u8],
     },
+    /// The time settings and the clock's state.
+    GetTime,
+    /// Applies only if the time settings are still at `base` generation.
+    /// Owner sessions only: the NTP server decides which fixes the clock
+    /// hears.
+    PutTime {
+        base: u32,
+        #[serde(borrow)]
+        changes: TimeChanges<'a>,
+    },
 }
 
 /// The largest [`Op::UpdateChunk`]: an eighth of a flash sector, which
@@ -276,6 +289,7 @@ impl Op<'_> {
                 | Self::ListClients
                 | Self::UpdateState
                 | Self::UpdateChunk { .. }
+                | Self::GetTime
         )
     }
 
@@ -290,6 +304,7 @@ impl Op<'_> {
             | Self::CancelUpdate
             | Self::EnrollUpdateKey { .. }
             | Self::UpdateKeyStatement { .. } => Capabilities::UPDATE,
+            Self::GetTime | Self::PutTime { .. } => Capabilities::TIME,
             Self::Status
             | Self::GetSettings
             | Self::PutSettings { .. }
@@ -321,6 +336,81 @@ pub enum Tune {
     Alert,
     Test,
     Twinkle,
+}
+
+/// A change to the time settings; `None` leaves a field as it is.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TimeChanges<'a> {
+    /// The owner's zone as a POSIX TZ rule (at most 48 bytes, the footer
+    /// of the zone's TZif file), or `""` to clear it.
+    #[serde(borrow)]
+    pub zone: Option<&'a str>,
+    pub ntp: Option<NtpServer>,
+}
+
+/// Where the feeder asks for the time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum NtpServer {
+    Off,
+    /// The router that gave the feeder its address.
+    Gateway {
+        port: u16,
+    },
+    Address {
+        ip: [u8; 4],
+        port: u16,
+    },
+}
+
+/// Who last set the clock.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TimeSource {
+    /// An owner's session, which may step the clock freely.
+    Owner,
+    /// A member's or the server's session, which may only narrow it.
+    Client,
+    Ntp,
+}
+
+/// What the last NTP exchange came to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum NtpResult {
+    /// The clock took the answer.
+    Used,
+    /// The answer disagreed with a valid clock beyond both error bounds.
+    Bounded,
+    /// No answer in time.
+    Lost,
+    /// An answer that could not be used (unsynchronized, kiss-o'-death,
+    /// too loose or malformed).
+    Refused,
+}
+
+/// The time settings and the clock.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TimeView<'a> {
+    pub generation: u32,
+    pub writable: bool,
+    /// The zone's POSIX rule, `""` when none is set.
+    pub zone: &'a str,
+    pub ntp: NtpServer,
+    /// Unix milliseconds; `None` while the clock is invalid: the feeder
+    /// needs the time, and scheduled meals hold.
+    pub clock_ms: Option<u64>,
+    /// How far off the clock could be.
+    pub error_ms: Option<u32>,
+    /// East of UTC, when a zone or a client sync gave one.
+    pub offset_s: Option<i32>,
+    /// The uptime clock's learned correction, parts per billion.
+    pub rate_ppb: i32,
+    /// How far the true rate could be from it.
+    pub rate_bound_ppb: u32,
+    pub learned: bool,
+    pub syncs: u32,
+    pub last: Option<TimeSource>,
+    /// Seconds since the last fix.
+    pub last_age_s: Option<u32>,
+    pub ntp_last: Option<NtpResult>,
 }
 
 /// The wall clock and the zone's next change, as the wall clock takes them.
@@ -377,6 +467,8 @@ pub enum Outcome<'a> {
     },
     /// Where the update stands, after an update op.
     Update(UpdateView),
+    #[serde(borrow)]
+    Time(TimeView<'a>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

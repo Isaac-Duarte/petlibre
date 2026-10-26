@@ -281,7 +281,7 @@ fn messages() -> Vec<Fixture> {
             "hello-update",
             entry(&Hello {
                 major: 1,
-                capabilities: Capabilities::KNOWN,
+                capabilities: Capabilities::FEED.union(Capabilities::UPDATE),
             }),
             |b| decode::<Hello>(b).is_ok(),
         ),
@@ -342,6 +342,51 @@ fn messages() -> Vec<Fixture> {
             entry(&response(Outcome::Refused(Refusal::Update(
                 UpdateRefusal::Downgrade,
             )))),
+            feeder,
+        ),
+        (
+            "hello-time",
+            entry(&Hello {
+                major: 1,
+                capabilities: Capabilities::FEED
+                    .union(Capabilities::UPDATE)
+                    .union(Capabilities::TIME),
+            }),
+            |b| decode::<Hello>(b).is_ok(),
+        ),
+        ("op-get-time", entry(&request(Op::GetTime)), client),
+        (
+            "op-put-time",
+            entry(&request(Op::PutTime {
+                base: 3,
+                changes: TimeChanges {
+                    zone: Some("MST7MDT,M3.2.0,M11.1.0"),
+                    ntp: Some(NtpServer::Address {
+                        ip: [10, 42, 103, 1],
+                        port: 123,
+                    }),
+                },
+            })),
+            client,
+        ),
+        (
+            "outcome-time",
+            entry(&response(Outcome::Time(TimeView {
+                generation: 4,
+                writable: true,
+                zone: "MST7MDT,M3.2.0,M11.1.0",
+                ntp: NtpServer::Gateway { port: 123 },
+                clock_ms: Some(1_792_674_000_000),
+                error_ms: Some(1_120),
+                offset_s: Some(-21_600),
+                rate_ppb: 735_000,
+                rate_bound_ppb: 100_000,
+                learned: true,
+                syncs: 9,
+                last: Some(TimeSource::Ntp),
+                last_age_s: Some(60),
+                ntp_last: Some(NtpResult::Used),
+            }))),
             feeder,
         ),
     ]

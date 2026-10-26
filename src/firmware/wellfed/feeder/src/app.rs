@@ -24,6 +24,7 @@ fn start() -> Startup {
         c"PLPANEL1 task created=0\r\n"
     });
     wellfed_sdk::buttons::start(BUTTONS);
+    wellfed_sdk::hal::clock::log_rtc();
 
     #[cfg(feature = "gap-probe")]
     gap_probe::start();

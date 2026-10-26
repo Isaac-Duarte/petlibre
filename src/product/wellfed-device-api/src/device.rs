@@ -4,7 +4,8 @@
 
 use crate::clients::{Label, Role};
 use crate::mailbox::{
-    LockResult, PlayResult, SettingsFields, SettingsResult, TimeFields, TimeResult, WifiResult,
+    LockResult, Origin, PlayResult, SettingsFields, SettingsResult, TimeFields, TimeResult,
+    TimeSettings, TimeSettingsResult, TimeState, WifiResult,
 };
 use crate::wifi::Credentials;
 use wellfed_core::named_enum;
@@ -31,7 +32,8 @@ pub trait Device {
     fn lock(&mut self, locked: bool) -> LockResult;
     /// `None` when this firmware does not play tunes outside setup mode.
     fn play(&mut self, tune: CoreTune) -> Option<PlayResult>;
-    fn time_sync(&mut self, fields: TimeFields) -> TimeResult;
+    /// A client's sync; `origin` says whether it may step the clock.
+    fn time_sync(&mut self, fields: TimeFields, origin: Origin) -> TimeResult;
     /// Queue a client store change; its ticket, or `None` while the mailbox
     /// is busy.
     fn keys(&mut self, change: KeyChange) -> Option<u32>;
@@ -83,6 +85,16 @@ pub trait Device {
     /// A feed is queued or runs: no install starts.
     fn feed_active(&self) -> bool {
         false
+    }
+
+    /// The time settings; with `Some`, the whole new settings queued for
+    /// the writer. A device without [`Capabilities::TIME`] keeps none.
+    fn time_settings(&mut self, _change: Option<TimeSettings>) -> TimeSettingsResult {
+        TimeSettingsResult::Unserved
+    }
+    /// The clock and the NTP exchange now.
+    fn time_state(&mut self, _now_ms: u32) -> Option<TimeState> {
+        None
     }
 }
 

@@ -16,6 +16,9 @@ pub struct Capabilities {
     pub feed: bool,
     /// Updates: the update ops, the `Update` answer and refusals.
     pub update: bool,
+    /// The time settings and the clock's state: `GetTime`, `PutTime` and
+    /// the `Time` answer.
+    pub time: bool,
 }
 
 impl Capabilities {
@@ -23,11 +26,13 @@ impl Capabilities {
     pub const V1: Self = Self {
         feed: false,
         update: false,
+        time: false,
     };
     /// Every feature this crate knows: what a current client claims.
     pub const KNOWN: Self = Self {
         feed: true,
         update: true,
+        time: true,
     };
 
     /// The features both `self` and `other` claim.
@@ -36,6 +41,7 @@ impl Capabilities {
         Self {
             feed: self.feed && other.feed,
             update: self.update && other.update,
+            time: self.time && other.time,
         }
     }
 }

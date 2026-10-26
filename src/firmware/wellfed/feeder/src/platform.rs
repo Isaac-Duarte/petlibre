@@ -11,13 +11,14 @@
 use core::fmt;
 
 use wellfed_core::buttons::Gesture;
-use wellfed_core::clock::wall::{Jump, Sync, SyncError};
+use wellfed_core::clock::wall::{Fix, Jump, Origin, State as ClockState, Sync, SyncError};
+use wellfed_core::clock::zone::Rule;
 use wellfed_core::ota::install::{Answer, Progress, Refused};
 use wellfed_core::tone::Tune;
 use wellfed_device_api::clients::{CLIENTS, Client};
 use wellfed_device_api::mailbox::{
     ClientChange, KeyResult, PlayResult, Requested, SettingsFields, SettingsResult, SettingsView,
-    WifiResult, WifiSource,
+    TimeSettings, TimeSettingsResult, WifiResult, WifiSource,
 };
 use wellfed_device_api::wifi::Credentials;
 use wellfed_feeder::feeder::Platform;
@@ -26,7 +27,7 @@ use wellfed_feeder::feeder::platform::{
     EventSlot, Link, Received,
 };
 use wellfed_feeder::store::events::{BODY_BYTES, Read};
-use wellfed_feeder_runtime::{events, keys, network};
+use wellfed_feeder_runtime::{events, keys, network, time};
 use wellfed_proto::api::{Capabilities, Power};
 use wellfed_sdk::hal::audio::{self, Speaker};
 use wellfed_sdk::hal::ble::{self, BleSetup, DropReason};
@@ -102,7 +103,9 @@ impl Platform for Plaf103 {
     }
 
     fn capabilities(&self) -> Capabilities {
-        Capabilities::FEED.union(Capabilities::UPDATE)
+        Capabilities::FEED
+            .union(Capabilities::UPDATE)
+            .union(Capabilities::TIME)
     }
 
     fn reset(&mut self) {
@@ -160,6 +163,10 @@ impl Platform for Plaf103 {
         sdk::ipv4()
     }
 
+    fn gateway(&mut self) -> Option<u32> {
+        sdk::gateway()
+    }
+
     fn settings(&mut self) -> Option<SettingsView> {
         settings::current()
     }
@@ -200,6 +207,14 @@ impl Platform for Plaf103 {
         keys::clients_since(seen, table)
     }
 
+    fn time_settings(&mut self) -> TimeSettingsResult {
+        time::current()
+    }
+
+    fn time_settings_change(&mut self, settings: TimeSettings) -> TimeSettingsResult {
+        time::change(settings)
+    }
+
     fn queue_event(&mut self, at: Option<u32>, body: [u8; BODY_BYTES], slot: EventSlot) -> bool {
         match slot {
             EventSlot::Shared => events::record(at, body),
@@ -225,11 +240,23 @@ impl Platform for Plaf103 {
 
     /// The clock reads its own uptime.
     fn wall_ms(&mut self, _now_ms: u32) -> Option<u64> {
-        clock::health().0.map(|clock| clock.unix_ms)
+        clock::state().reading.map(|reading| reading.unix_ms)
     }
 
-    fn time_sync(&mut self, _now_ms: u32, sync: Sync) -> Result<Jump, SyncError> {
-        clock::sync(sync)
+    fn time_sync(&mut self, _now_ms: u32, sync: Sync, origin: Origin) -> Result<Jump, SyncError> {
+        clock::sync(sync, origin)
+    }
+
+    fn time_fix(&mut self, _now_ms: u32, fix: Fix) -> Result<Jump, SyncError> {
+        clock::fix(fix)
+    }
+
+    fn clock_state(&mut self, _now_ms: u32) -> ClockState {
+        clock::state()
+    }
+
+    fn set_zone_rule(&mut self, rule: Option<Rule>) {
+        clock::set_rule(rule);
     }
 
     fn outputs_claimed(&self) -> bool {
@@ -310,11 +337,19 @@ impl Platform for Plaf103 {
     }
 
     fn mdns_receive(&mut self, socket: i32, into: &mut [u8]) -> Datagram {
-        match sdk::mdns_recv(socket, into) {
-            sdk::Datagram::Got { len, ip, port } => Datagram::Got { len, ip, port },
-            sdk::Datagram::None => Datagram::None,
-            sdk::Datagram::Error => Datagram::Error,
-        }
+        datagram(sdk::mdns_recv(socket, into))
+    }
+
+    fn ntp_open(&mut self) -> Option<i32> {
+        sdk::udp_open()
+    }
+
+    fn ntp_send(&mut self, socket: i32, bytes: &[u8], ip: u32, port: u16) -> bool {
+        sdk::mdns_send(socket, bytes, ip, port)
+    }
+
+    fn ntp_receive(&mut self, socket: i32, into: &mut [u8]) -> Datagram {
+        datagram(sdk::mdns_recv(socket, into))
     }
 
     fn heap(&self) -> (u32, u32) {
@@ -396,5 +431,13 @@ fn boot_facts() -> Boot {
         bank: 1,
         reset_flags: 0,
         boot_count: 0,
+    }
+}
+
+fn datagram(received: sdk::Datagram) -> Datagram {
+    match received {
+        sdk::Datagram::Got { len, ip, port } => Datagram::Got { len, ip, port },
+        sdk::Datagram::None => Datagram::None,
+        sdk::Datagram::Error => Datagram::Error,
     }
 }

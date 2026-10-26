@@ -5,16 +5,116 @@
 //! here does not certify ROM or recovery safety. There are no baud changes,
 //! cancellations, retries or fallback images.
 
+use std::collections::BTreeMap;
+use std::fmt;
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use std::collections::BTreeMap;
-
 use serde::Serialize;
 
-use crate::error::{Result, refuse, require};
+use crate::error::Result;
 use wellfed_formats::canonical::sha256;
+use wellfed_formats::require;
+
+/// The loader, helper and console protocol's refusals. Each stops the
+/// session with the transport left as it is; none is retried.
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("Interrupted by the operator; no retry")]
+    Interrupted,
+    #[error("Helper does not match the reviewed vendor binary")]
+    HelperMismatch { bytes: usize },
+    #[error("Unexpected helper entry pointer")]
+    HelperEntry { entry: Option<u32> },
+    #[error("Only the pinned helper may be uploaded")]
+    UnpinnedHelper { bytes: usize },
+    #[error("Invalid helper packet index")]
+    HelperPacket { index: usize },
+
+    #[error("Read range must be positive and aligned to 4 KiB")]
+    ReadUnaligned { offset: usize, length: usize },
+    #[error("Read exceeds the identified flash capacity")]
+    ReadBeyondCapacity { offset: usize, length: usize },
+    #[error("Read exceeds the helper's sector count")]
+    ReadSectorCount { length: usize },
+    #[error("Address outside the 8 MiB array")]
+    AddressOutside { offset: usize },
+
+    #[error("Serial read deadline expired")]
+    SerialDeadline,
+    #[error("Partial serial write; aborting without replay")]
+    PartialWrite { written: usize, length: usize },
+    #[error("Unexpected protocol byte {actual:#04x}; expected {expected:#04x}")]
+    UnexpectedByte { actual: u8, expected: u8 },
+    #[error("Loader NAK deadline expired")]
+    NakDeadline,
+    #[error("Unexpected {0} output")]
+    UnexpectedOutput(Pending),
+    #[error("BAUDCHK acknowledgement deadline expired")]
+    BaudcheckDeadline,
+    #[error("Unexpected BAUDCHK response")]
+    BaudcheckResponse { byte: u8 },
+
+    #[error("Overall read deadline expired")]
+    ReadDeadline,
+    #[error("Premature EOT; incomplete read")]
+    PrematureEot { received: usize, length: usize },
+    #[error("Unexpected read control {control:#04x}; no fallback")]
+    ReadControl { control: u8 },
+    #[error("Packet number/complement mismatch")]
+    PacketComplement { number: u8, complement: u8 },
+    #[error("Read packet checksum mismatch")]
+    PacketChecksum { number: u8 },
+    #[error("Changed or excessive duplicate packet")]
+    ChangedDuplicate { number: u8 },
+    #[error("Out-of-order read packet")]
+    OutOfOrder { number: u8, expected: u8 },
+    #[error("Read exceeded requested length")]
+    ReadOverrun { length: usize },
+    #[error("Incomplete region read")]
+    IncompleteRegion { received: usize, length: usize },
+
+    #[error("Unexpectedly large console response")]
+    ConsoleOverflow { bytes: usize },
+    #[error("Observation must be 1-180 seconds")]
+    ObservationWindow { seconds: f64 },
+    #[error("Console command is outside the fixed ROM-inspection profile")]
+    ConsoleCommand,
+    #[error("Fault or startup observed during console query; stop and inspect capture")]
+    ConsoleFault,
+    #[error("Unexpected pre-existing fault output")]
+    PreexistingFault,
+    #[error("Expected stock KM4 command table not observed; no core switch attempted")]
+    Km4Table,
+    #[error("Expected stock KM0 help table not observed; no ROM read attempted")]
+    Km0Table,
+    #[error("Expected exactly one matching ROM word; no retry")]
+    RomWordCount { address: u32, found: usize },
+    #[error("ROM differs from candidate at {address:#x}; helper upload blocked")]
+    RomDiffers { address: u32 },
+    #[error("KM4 console return not verified")]
+    Km4Return,
+}
+
+/// Where unexpected bytes were already buffered: before a helper command,
+/// before the helper upload, or before a read request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pending {
+    Command,
+    Upload,
+    Read,
+}
+
+impl fmt::Display for Pending {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Command => "buffered helper",
+            Self::Upload => "pending loader",
+            Self::Read => "pending helper",
+        })
+    }
+}
 
 /// The reviewed vendor flash helper, which runs from RAM; no other bytes are
 /// ever uploaded.
@@ -46,10 +146,9 @@ pub const ROM_SHA256: [&str; 2] = [
 pub static INTERRUPTED: AtomicBool = AtomicBool::new(false);
 
 pub fn interrupted() -> Result<()> {
-    require(
-        !INTERRUPTED.load(Ordering::SeqCst),
-        "Interrupted by the operator; no retry",
-    )
+    Ok(require(!INTERRUPTED.load(Ordering::SeqCst), || {
+        Error::Interrupted
+    })?)
 }
 
 /// A serial-shaped byte transport. `read` returns 0 when nothing arrives
@@ -65,43 +164,41 @@ pub trait Port {
 pub fn load_helper(data: Vec<u8>) -> Result<Vec<u8>> {
     require(
         data.len() == HELPER_BYTES && sha256(&data) == HELPER_SHA256,
-        "Helper does not match the reviewed vendor binary",
+        || Error::HelperMismatch { bytes: data.len() },
     )?;
-    require(
-        data.first_chunk().map(|word| u32::from_le_bytes(*word)) == Some(HELPER_ADDRESS + 0x21),
-        "Unexpected helper entry pointer",
-    )?;
+    let entry = data.first_chunk().map(|word| u32::from_le_bytes(*word));
+    require(entry == Some(HELPER_ADDRESS + 0x21), || {
+        Error::HelperEntry { entry }
+    })?;
     Ok(data)
 }
 
 pub fn read_request(offset: usize, length: usize) -> Result<[u8; 6]> {
     require(
         length > 0 && offset.is_multiple_of(SECTOR) && length.is_multiple_of(SECTOR),
-        "Read range must be positive and aligned to 4 KiB",
+        || Error::ReadUnaligned { offset, length },
     )?;
-    require(
-        offset + length <= CAPACITY,
-        "Read exceeds the identified flash capacity",
-    )?;
-    let offset = address(offset)?;
+    require(offset + length <= CAPACITY, || Error::ReadBeyondCapacity {
+        offset,
+        length,
+    })?;
+    let [low, middle, high] = address(offset)?;
     let Ok(sectors) = u16::try_from(length / SECTOR) else {
-        return refuse("Read exceeds the helper's sector count");
+        return Err(Error::ReadSectorCount { length }.into());
     };
 
-    let sectors = sectors.to_le_bytes();
-    Ok([
-        0x20, offset[0], offset[1], offset[2], sectors[0], sectors[1],
-    ])
+    let [count_low, count_high] = sectors.to_le_bytes();
+    Ok([0x20, low, middle, high, count_low, count_high])
 }
 
 /// The three address bytes requests carry; the 8 MiB array needs no more.
 fn address(offset: usize) -> Result<[u8; 3]> {
-    require(offset < CAPACITY, "Address outside the 8 MiB array")?;
-    let Ok(offset) = u32::try_from(offset) else {
-        return refuse("Address outside the 8 MiB array");
+    require(offset < CAPACITY, || Error::AddressOutside { offset })?;
+    let Ok(word) = u32::try_from(offset) else {
+        return Err(Error::AddressOutside { offset }.into());
     };
 
-    let [low, middle, high, _] = offset.to_le_bytes();
+    let [low, middle, high, _] = word.to_le_bytes();
     Ok([low, middle, high])
 }
 
@@ -128,18 +225,19 @@ pub fn frame(number: u8, address: u32, payload: &[u8; 1024]) -> Vec<u8> {
 }
 
 fn pinned_helper(helper: &[u8]) -> Result<()> {
-    require(
+    Ok(require(
         helper.len() == HELPER_BYTES && sha256(helper) == HELPER_SHA256,
-        "Only the pinned helper may be uploaded",
-    )
+        || Error::UnpinnedHelper {
+            bytes: helper.len(),
+        },
+    )?)
 }
 
 pub fn upload_frame(helper: &[u8], index: usize) -> Result<Vec<u8>> {
     pinned_helper(helper)?;
-    require(
-        index < helper.len().div_ceil(1024),
-        "Invalid helper packet index",
-    )?;
+    require(index < helper.len().div_ceil(1024), || {
+        Error::HelperPacket { index }
+    })?;
 
     let mut payload = [0xffu8; 1024];
     let chunk = &helper[index * 1024..helper.len().min((index + 1) * 1024)];
@@ -147,7 +245,7 @@ pub fn upload_frame(helper: &[u8], index: usize) -> Result<Vec<u8>> {
 
     // The pinned helper is five packets, so both always fit.
     let (Ok(number), Ok(at)) = (u8::try_from(index + 1), u32::try_from(index * 1024)) else {
-        return refuse("Invalid helper packet index");
+        return Err(Error::HelperPacket { index }.into());
     };
     Ok(frame(number, HELPER_ADDRESS + at, &payload))
 }
@@ -161,7 +259,7 @@ pub fn exact_read(port: &mut dyn Port, count: usize, timeout: f64) -> Result<Vec
     let mut data = vec![0; count];
     let mut filled = 0;
     while filled < count {
-        require(Instant::now() < deadline, "Serial read deadline expired")?;
+        require(Instant::now() < deadline, || Error::SerialDeadline)?;
         interrupted()?;
         filled += port.read(&mut data[filled..])?;
     }
@@ -172,19 +270,20 @@ pub fn send(port: &mut dyn Port, data: &[u8]) -> Result<()> {
     // Checked after the intent's fsync and before the bytes, as Python's
     // KeyboardInterrupt lands before `send` runs.
     interrupted()?;
-    require(
-        port.write(data)? == data.len(),
-        "Partial serial write; aborting without replay",
-    )?;
+    let written = port.write(data)?;
+    require(written == data.len(), || Error::PartialWrite {
+        written,
+        length: data.len(),
+    })?;
     Ok(port.flush()?)
 }
 
 pub fn expect(port: &mut dyn Port, value: u8) -> Result<()> {
     let actual = exact_read(port, 1, 3.0)?[0];
-    require(
-        actual == value,
-        format!("Unexpected protocol byte {actual:#04x}; expected {value:#04x}"),
-    )
+    Ok(require(actual == value, || Error::UnexpectedByte {
+        actual,
+        expected: value,
+    })?)
 }
 
 /// Require consecutive NAKs; any preceding banner stays in the transport log.
@@ -193,7 +292,7 @@ pub fn wait_naks(port: &mut dyn Port, count: usize, timeout: f64) -> Result<()> 
     let mut seen = 0;
     let mut byte = [0u8; 1];
     while seen < count {
-        require(Instant::now() < deadline, "Loader NAK deadline expired")?;
+        require(Instant::now() < deadline, || Error::NakDeadline)?;
         interrupted()?;
         if port.read(&mut byte)? == 0 {
             continue;
@@ -204,11 +303,13 @@ pub fn wait_naks(port: &mut dyn Port, count: usize, timeout: f64) -> Result<()> 
 }
 
 /// Drain only idle-ready NAK bytes that are already buffered.
-pub fn drain_naks(port: &mut dyn Port, message: &str) -> Result<()> {
+pub fn drain_naks(port: &mut dyn Port, before: Pending) -> Result<()> {
     let pending = port.in_waiting()?;
     if pending > 0 {
         let data = exact_read(port, pending, 1.0)?;
-        require(data.iter().all(|byte| *byte == NAK), message)?;
+        require(data.iter().all(|byte| *byte == NAK), || {
+            Error::UnexpectedOutput(before)
+        })?;
     }
     Ok(())
 }
@@ -216,7 +317,7 @@ pub fn drain_naks(port: &mut dyn Port, message: &str) -> Result<()> {
 /// Helper idle-ready: fresh NAKs, then nothing else buffered.
 pub fn command_ready(port: &mut dyn Port) -> Result<()> {
     wait_naks(port, 3, 5.0)?;
-    drain_naks(port, "Unexpected buffered helper output")
+    drain_naks(port, Pending::Command)
 }
 
 /// One request; only already-in-flight NAKs may precede its ACK.
@@ -224,14 +325,11 @@ pub fn baudcheck(port: &mut dyn Port) -> Result<()> {
     send(port, &[0x07])?;
     let deadline = Instant::now() + seconds(3.0);
     loop {
-        require(
-            Instant::now() < deadline,
-            "BAUDCHK acknowledgement deadline expired",
-        )?;
+        require(Instant::now() < deadline, || Error::BaudcheckDeadline)?;
         match exact_read(port, 1, 1.0)?[0] {
             ACK => return Ok(()),
             NAK => {}
-            _ => return refuse("Unexpected BAUDCHK response"),
+            byte => return Err(Error::BaudcheckResponse { byte }.into()),
         }
     }
 }
@@ -240,7 +338,7 @@ pub fn baudcheck(port: &mut dyn Port) -> Result<()> {
 pub fn upload_helper(port: &mut dyn Port, helper: &[u8]) -> Result<()> {
     pinned_helper(helper)?;
     wait_naks(port, 3, 5.0)?;
-    drain_naks(port, "Unexpected pending loader output")?;
+    drain_naks(port, Pending::Upload)?;
     baudcheck(port)?;
 
     for index in 0..helper.len().div_ceil(1024) {
@@ -275,7 +373,7 @@ pub fn receive_flash(
 ) -> Result<Transfer> {
     let request = read_request(offset, length)?;
     wait_naks(port, 3, 5.0)?;
-    drain_naks(port, "Unexpected pending helper output")?;
+    drain_naks(port, Pending::Read)?;
     send(port, &request)?;
 
     let mut total = 0;
@@ -285,11 +383,14 @@ pub fn receive_flash(
     let deadline = Instant::now() + seconds(30.0 + length as f64 / 4000.0);
 
     loop {
-        require(Instant::now() < deadline, "Overall read deadline expired")?;
+        require(Instant::now() < deadline, || Error::ReadDeadline)?;
         interrupted()?;
         let control = exact_read(port, 1, 5.0)?[0];
         if control == EOT {
-            require(total == length, "Premature EOT; incomplete read")?;
+            require(total == length, || Error::PrematureEot {
+                received: total,
+                length,
+            })?;
             send(port, &[ACK])?;
             wait_naks(port, 3, 5.0)?;
             return Ok(Transfer {
@@ -299,41 +400,37 @@ pub fn receive_flash(
             });
         }
 
-        require(
-            control == STX,
-            format!("Unexpected read control {control:#04x}; no fallback"),
-        )?;
+        require(control == STX, || Error::ReadControl { control })?;
 
         let frame = exact_read(port, 1027, 3.0)?;
         let (number, complement) = (frame[0], frame[1]);
         let payload = &frame[2..1026];
-        require(
-            number ^ complement == 0xff,
-            "Packet number/complement mismatch",
-        )?;
-        require(
-            checksum(payload) == frame[1026],
-            "Read packet checksum mismatch",
-        )?;
+        require(number ^ complement == 0xff, || Error::PacketComplement {
+            number,
+            complement,
+        })?;
+        require(checksum(payload) == frame[1026], || Error::PacketChecksum {
+            number,
+        })?;
 
         if previous.is_some() && number == (sequence - 1).to_le_bytes()[0] {
             require(
                 previous.as_deref() == Some(payload) && duplicates < 8,
-                "Changed or excessive duplicate packet",
+                || Error::ChangedDuplicate { number },
             )?;
             duplicates += 1;
             send(port, &[ACK])?;
             continue;
         }
 
-        require(
-            number == sequence.to_le_bytes()[0],
-            "Out-of-order read packet",
-        )?;
-        require(
-            total + payload.len() <= length,
-            "Read exceeded requested length",
-        )?;
+        let expected = sequence.to_le_bytes()[0];
+        require(number == expected, || Error::OutOfOrder {
+            number,
+            expected,
+        })?;
+        require(total + payload.len() <= length, || Error::ReadOverrun {
+            length,
+        })?;
 
         output.write_all(payload)?;
         total += payload.len();
@@ -353,7 +450,10 @@ pub fn receive_flash(
 pub fn read_region(port: &mut dyn Port, offset: usize, length: usize) -> Result<Vec<u8>> {
     let mut output = Vec::with_capacity(length);
     receive_flash(port, offset, length, &mut output, None)?;
-    require(output.len() == length, "Incomplete region read")?;
+    require(output.len() == length, || Error::IncompleteRegion {
+        received: output.len(),
+        length,
+    })?;
     Ok(output)
 }
 
@@ -365,10 +465,9 @@ pub fn collect(port: &mut dyn Port, timeout: f64) -> Result<Vec<u8>> {
         interrupted()?;
         let count = port.read(&mut buffer)?;
         result.extend_from_slice(&buffer[..count]);
-        require(
-            result.len() <= 512 * 1024,
-            "Unexpectedly large console response",
-        )?;
+        require(result.len() <= 512 * 1024, || Error::ConsoleOverflow {
+            bytes: result.len(),
+        })?;
     }
     Ok(result)
 }
@@ -408,12 +507,17 @@ pub struct Observation {
     pub limit: &'static str,
 }
 
+/// The bounded receive-only window, checked before the port opens and again
+/// before observing.
+pub fn observation_window(seconds: f64) -> Result<(), Error> {
+    require((1.0..=180.0).contains(&seconds), || {
+        Error::ObservationWindow { seconds }
+    })
+}
+
 /// Receive only: NAKs are observations, never an automatic loader assertion.
 pub fn observe(port: &mut dyn Port, seconds: f64) -> Result<Observation> {
-    require(
-        (1.0..=180.0).contains(&seconds),
-        "Observation must be 1-180 seconds",
-    )?;
+    observation_window(seconds)?;
 
     let data = collect(port, seconds)?;
     let longest = data
@@ -446,10 +550,7 @@ fn rom_command(command: &[u8]) -> bool {
 }
 
 pub fn console_query(port: &mut dyn Port, command: &[u8], seconds: f64) -> Result<Vec<u8>> {
-    require(
-        rom_command(command),
-        "Console command is outside the fixed ROM-inspection profile",
-    )?;
+    require(rom_command(command), || Error::ConsoleCommand)?;
 
     send(port, command)?;
     let reply = collect(port, seconds)?;
@@ -458,7 +559,7 @@ pub fn console_query(port: &mut dyn Port, command: &[u8], seconds: f64) -> Resul
             .iter()
             .chain([&b"app_main:version:"[..]].iter())
             .any(|marker| contains(&reply, marker)),
-        "Fault or startup observed during console query; stop and inspect capture",
+        || Error::ConsoleFault,
     )?;
 
     Ok(reply)
@@ -555,25 +656,18 @@ pub fn inspect_rom(
     start: Core,
 ) -> Result<RomInspection> {
     let initial = collect(port, 0.5)?;
-    require(
-        !contains(&initial, b"Hard Fault"),
-        "Unexpected pre-existing fault output",
-    )?;
+    require(!contains(&initial, b"Hard Fault"), || {
+        Error::PreexistingFault
+    })?;
 
     if start == Core::Km4 {
         let high = console_query(port, b"?\r\n", 1.0)?;
-        require(
-            is_km4_help(&high),
-            "Expected stock KM4 command table not observed; no core switch attempted",
-        )?;
+        require(is_km4_help(&high), || Error::Km4Table)?;
         console_query(port, b">>\r\n", 0.5)?;
     }
 
     let low = console_query(port, b"?\r\n", 1.0)?;
-    require(
-        is_km0_help(&low),
-        "Expected stock KM0 help table not observed; no ROM read attempted",
-    )?;
+    require(is_km0_help(&low), || Error::Km0Table)?;
 
     let mut samples = Vec::new();
     let mut surviving: Vec<&(String, Vec<u8>)> = candidates.iter().collect();
@@ -582,18 +676,15 @@ pub fn inspect_rom(
         let command = format!("DW {address:08X}\r\n");
         let response = console_query(port, command.as_bytes(), 0.25)?;
         let values = dumped_words(&response, address);
-        require(
-            values.len() == 1,
-            "Expected exactly one matching ROM word; no retry",
-        )?;
+        require(values.len() == 1, || Error::RomWordCount {
+            address,
+            found: values.len(),
+        })?;
 
         let value = values[0];
         let at = address as usize;
         surviving.retain(|(_, rom)| rom.get(at..at + 4) == Some(&value.to_le_bytes()[..]));
-        require(
-            !surviving.is_empty(),
-            format!("ROM differs from candidate at {address:#x}; helper upload blocked"),
-        )?;
+        require(!surviving.is_empty(), || Error::RomDiffers { address })?;
 
         samples.push(Sample {
             address: format!("0x{address:08x}"),
@@ -603,7 +694,7 @@ pub fn inspect_rom(
 
     console_query(port, b">>\r\n", 0.5)?;
     let high = console_query(port, b"?\r\n", 1.0)?;
-    require(is_km4_help(&high), "KM4 console return not verified")?;
+    require(is_km4_help(&high), || Error::Km4Return)?;
 
     Ok(RomInspection {
         sampled_words: samples,
@@ -626,14 +717,46 @@ mod tests {
             read_request(0x186000, 0x2000).unwrap(),
             [0x20, 0x00, 0x60, 0x18, 0x02, 0x00]
         );
-        assert!(read_request(0x100, 4096).is_err());
-        assert!(read_request(0, 0).is_err());
-        assert!(read_request(CAPACITY - 4096, 8192).is_err());
+        assert!(matches!(
+            read_request(0x100, 4096),
+            Err(crate::Error::Protocol(Error::ReadUnaligned {
+                offset: 0x100,
+                ..
+            }))
+        ));
+        assert!(matches!(
+            read_request(0, 0),
+            Err(crate::Error::Protocol(Error::ReadUnaligned {
+                length: 0,
+                ..
+            }))
+        ));
+        assert!(matches!(
+            read_request(CAPACITY - 4096, 8192),
+            Err(crate::Error::Protocol(Error::ReadBeyondCapacity { .. }))
+        ));
         assert_eq!(
             erase_request(0x186000).unwrap(),
             [0x17, 0x00, 0x60, 0x18, 1, 0]
         );
-        assert!(erase_request(CAPACITY).is_err());
+        assert!(matches!(
+            erase_request(CAPACITY),
+            Err(crate::Error::Protocol(Error::AddressOutside {
+                offset: CAPACITY
+            }))
+        ));
+        assert_eq!(
+            Error::UnexpectedOutput(Pending::Upload).to_string(),
+            "Unexpected pending loader output"
+        );
+        assert_eq!(
+            Error::UnexpectedByte {
+                actual: 0x15,
+                expected: 6
+            }
+            .to_string(),
+            "Unexpected protocol byte 0x15; expected 0x06"
+        );
     }
 
     #[test]

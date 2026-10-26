@@ -246,11 +246,11 @@ fn serial_evidence_never_continues_an_emulated_session() {
     args.extend(["--output".into(), path(&f.out("inspect"))]);
     let summary = f.run(&mut helper, &args).expect(2, "refused");
 
-    assert!(
-        summary["error"]
-            .as_str()
-            .unwrap()
-            .contains("different transport")
+    // The binary's summary is all an integration test sees; it names the
+    // transport refusal in full.
+    assert_eq!(
+        summary["error"],
+        "Report comes from a different transport than this session"
     );
     assert!(helper.host_tx().is_empty());
 }

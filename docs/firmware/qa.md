@@ -16,7 +16,7 @@ wellfed-bench ota NAME --build                          # or install it over the
 wellfed-audit qa --capture private/captures/NAME-01 --manifest … --image … --output private/…/qa.json
 ```
 
-The single-purpose firmwares (`optics`, `buttons`, `adc`, `speaker`, `motor`, `trial`) each run one probe for as long as a bring-up session needs. QA steps the same probes (`src/sdk/wellfed-probes`), for a bounded time each.
+The `bringup` firmware's variants (`optics`, `buttons`, `adc`, `speaker`, `pulse`, and the `stall` and `fail` trial images) each run one probe for as long as a bring-up session needs. QA steps the same probes (`src/sdk/wellfed-probes`), for a bounded time each.
 
 ## Sequence
 

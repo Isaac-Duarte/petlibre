@@ -417,4 +417,38 @@ quiet = { summary = "No probes" }
             .collect();
         assert_eq!(motion, ["pulse"]);
     }
+
+    /// Every declared variant is one the crate's start selection knows: the
+    /// one-variant check counts it, and only `fail` (whose failure is the
+    /// runtime's) keeps the normal image's start hook.
+    #[test]
+    fn the_bringup_start_selection_knows_every_variant() {
+        let repo = Repo::here().unwrap();
+        let bringup = Firmware::new(&repo, "bringup").unwrap();
+        let app =
+            fs::read_to_string(repo.path("src/firmware/wellfed/bringup/src/app.rs")).unwrap();
+        let block = |start: &str, end: &str| {
+            let from = app.find(start).unwrap();
+            let to = from + app[from..].find(end).unwrap();
+            app[from..to].to_string()
+        };
+        let counted = block("let variants = [", "];");
+        let normal = block("#[cfg(not(any(", ")))]");
+
+        assert!(!bringup.variants.is_empty());
+        for variant in &bringup.variants {
+            let feature = format!("feature = \"{}\"", variant.name());
+            assert!(
+                counted.contains(&feature),
+                "{} is not counted",
+                variant.name()
+            );
+            assert_eq!(
+                normal.contains(&feature),
+                variant.name() != "fail",
+                "{} and the normal start hook",
+                variant.name()
+            );
+        }
+    }
 }

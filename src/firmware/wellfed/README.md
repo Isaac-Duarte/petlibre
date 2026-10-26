@@ -15,7 +15,7 @@ make -C src/firmware/vendor firstboot FIRMWARE=bringup VARIANT=buttons   # defau
 
 The probes these firmwares run live once, in `src/sdk/wellfed-probes`, so a bring-up variant and QA step the same code. Each firmware owns the tasks that step them.
 
-The bench still names the bring-up areas as firmwares: `wellfed-bench ota --build --firmware optics` builds `--firmware bringup --variant optics`, `--firmware trial --variant stall` builds `--firmware bringup --variant stall`, and `--firmware trial` alone the normal image. Every variant's source identity covers the whole crate, so a change to one area is a new identity for every bring-up image.
+The bench still names the bring-up areas as firmwares: `wellfed-bench ota --build --firmware optics` builds `--firmware bringup --variant optics`, `--firmware trial --variant stall` builds `--firmware bringup --variant stall`, and `--firmware trial` alone the normal image. A bring-up area is a variant, so it builds only with the `firstboot` profile (`make -C src/firmware/vendor firstboot FIRMWARE=bringup VARIANT=optics`); the `bringup` make target is the unrelated SDK profile of that name, not this firmware. Every variant's source identity covers the whole crate, so a change to one area is a new identity for every bring-up image.
 
 ## What the SDK runtime guarantees
 

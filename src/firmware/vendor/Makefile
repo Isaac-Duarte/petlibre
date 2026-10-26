@@ -15,7 +15,7 @@ help:
 	@echo "bootstrap: fetch and verify the device platform's pinned SDK and toolchain"
 	@echo "list: the devices and firmwares (with their variants) this checkout builds"
 	@echo "baseline: build the unchanged SDK example in a private worktree"
-	@echo "bringup: build the Rust application in a separate worktree"
+	@echo "bringup: build the Rust application in a separate worktree (the profile; the bringup firmware's areas need firstboot FIRMWARE=bringup VARIANT=<area>)"
 	@echo "device: build/audit the application with the device's stock-derived OTA bank addresses"
 	@echo "firstboot: build/audit UART-only SDK mains and the Rust application"
 	@echo "test: run hardware-independent Rust firmware tests on the host"

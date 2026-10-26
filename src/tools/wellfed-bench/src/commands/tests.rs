@@ -1731,6 +1731,33 @@ fn bench_names_resolve_to_the_builders_firmware_and_variant() {
     }
 }
 
+/// The bring-up variants the bench names are ones the bring-up firmware
+/// declares.
+#[test]
+fn bench_bringup_variants_are_declared() {
+    let manifest = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../firmware/wellfed/bringup/Cargo.toml"),
+    )
+    .unwrap();
+    let images = [
+        Image::of(Firmware::Optics),
+        Image::of(Firmware::Buttons),
+        Image::of(Firmware::Adc),
+        Image::of(Firmware::Speaker),
+        Image::of(Firmware::Trial),
+        Image::trial(Variant::Stall),
+        Image::trial(Variant::Fail),
+    ];
+    for image in images {
+        let args = image.args();
+        assert_eq!(args[..2], ["--firmware", "bringup"], "{image}");
+        if let Some(variant) = args.get(3) {
+            let table = format!("[package.metadata.wellfed.variants.{variant}]");
+            assert!(manifest.contains(&table), "{image}: {table}");
+        }
+    }
+}
+
 #[test]
 fn a_variant_needs_the_firmware_that_declares_it() {
     for (firmware, variant) in [

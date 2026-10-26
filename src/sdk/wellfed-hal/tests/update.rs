@@ -86,10 +86,13 @@ struct TestFlash {
     fail_program: Option<usize>,
     /// Program this call's data with one bit cleared, so readback differs.
     corrupt_program: Option<usize>,
-    /// Return this read call's first byte with a bit flipped, as a stale
-    /// cache line would; the cells and an uncached read stay right.
+    /// From this read call on, every plain read of that call's first byte
+    /// returns it with a bit flipped, as a stale cache line would, until an
+    /// uncached read of it; the cells stay right.
     stale_read: Option<usize>,
     reads: usize,
+    /// The stale byte: bank-1 sector and offset.
+    stale: Option<(u32, u32)>,
     programs: usize,
     /// Bank 1's first 8 bytes before each program, and the store's state
     /// when the marker went in.
@@ -131,13 +134,27 @@ impl Flash for TestFlash {
     fn read(&mut self, sector: u32, offset: u32, bytes: &mut [u8]) -> bool {
         let n = self.reads;
         self.reads += 1;
-        let ok = self.inner.read(sector, offset, bytes);
         if self.stale_read == Some(n) {
-            bytes[0] ^= 1;
+            self.stale = Some((sector, offset));
+        }
+
+        let ok = self.inner.read(sector, offset, bytes);
+        if let Some((stale_sector, stale_offset)) = self.stale
+            && stale_sector == sector
+            && let Some(at) = stale_offset.checked_sub(offset)
+            && let Some(byte) = bytes.get_mut(at as usize)
+        {
+            *byte ^= 1;
         }
         ok
     }
     fn read_uncached(&mut self, sector: u32, offset: u32, bytes: &mut [u8]) -> bool {
+        if self
+            .stale
+            .is_some_and(|(s, o)| s == sector && (offset..offset + bytes.len() as u32).contains(&o))
+        {
+            self.stale = None;
+        }
         self.inner.read_uncached(sector, offset, bytes)
     }
     fn bank0(&mut self, offset: u32, bytes: &mut [u8]) -> bool {

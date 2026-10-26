@@ -13,6 +13,13 @@ use wellfed_core::flash_coord::{
     FlashCoord, FlashFault, FlashParty, FlashPhase, FlashReply, FlashToken,
 };
 
+use crate::flash::hooks::HookTicket;
+use crate::flash::park::{self, Mmio, ParkToken};
+use crate::flash::peer::{HEARTBEAT_REGISTER, MARKER_REGISTER, PARK_CHANNEL};
+use crate::sdk;
+use crate::stopped;
+use crate::supervision::config::SYSTIMER_HZ;
+
 // The lease-fault field gives each of these codes four bits.
 const _: () = assert!(
     FlashPhase::Fault.code() < 16
@@ -20,13 +27,6 @@ const _: () = assert!(
         && FlashReply::Failed.code() < 16
         && LeaseStage::Ticket.code() < 8
 );
-
-use crate::flash::hooks::HookTicket;
-use crate::flash::park::{self, Mmio, ParkToken};
-use crate::flash::peer::{HEARTBEAT_REGISTER, MARKER_REGISTER, PARK_CHANNEL};
-use crate::sdk;
-use crate::stopped;
-use crate::supervision::config::SYSTIMER_HZ;
 
 /// KM4 boot count; KM0 keeps its own in backup register 4.
 pub const BOOT_COUNT_REGISTER: u32 = 3;
@@ -201,8 +201,8 @@ pub struct Provider {
     pub release_max: u32,
     pub frozen: u64,
     /// The longest any lease held IRQs masked, from the acquire's masking
-    /// (request and quiesce included) to KM0's release, in SysTimer ticks; and how many held them past
-    /// [`LONG_LEASE_TICKS`].
+    /// (request and quiesce included) to KM0's release, in SysTimer ticks;
+    /// and how many held them past [`LONG_LEASE_TICKS`].
     pub masked_max: u32,
     pub masked_long: u64,
     /// The first failed step, for the report after reset or halt.

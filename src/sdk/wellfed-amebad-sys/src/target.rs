@@ -788,6 +788,8 @@ pub fn bank1_read_uncached(sector: u32, offset: u32, bytes: &mut [u8]) -> bool {
     let base = k::WELLFED_SPI_FLASH_BASE + address;
     let end = base + len;
 
+    // SAFETY: a barrier only: earlier accesses complete before the invalidates.
+    unsafe { core::arch::asm!("dsb sy", options(nostack, preserves_flags)) };
     let mut line = base & !(DCACHE_LINE - 1);
     while line < end {
         // SAFETY: the architectural SCB register; an invalidate by address

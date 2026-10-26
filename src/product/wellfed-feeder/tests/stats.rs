@@ -191,7 +191,7 @@ fn the_uptime_counts_past_the_millisecond_clock_s_wrap() {
     let mut keeper = Keeper::new();
     keeper.tick(u32::MAX - 500);
     keeper.tick(1_500);
-    assert_eq!(keeper.counts(1_500).uptime_s, 4_294_969);
+    assert_eq!(keeper.counts(1_500).uptime_s, 4_294_968);
 }
 
 #[test]

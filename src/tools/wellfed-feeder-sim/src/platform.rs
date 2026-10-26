@@ -42,7 +42,7 @@ use wellfed_device_api::wifi::Credentials;
 use wellfed_feeder::feeder::Platform;
 use wellfed_feeder::feeder::platform::{
     Accepted, BleDrop, BleStep, Boot, Check, Datagram, DriverStep, EventSlot, EventsFill, Link,
-    Received, TaskStack,
+    Received, TaskCount, TaskStack,
 };
 use wellfed_feeder::store::clients::{ClientError, ClientStore};
 use wellfed_feeder::store::events::{BODY_BYTES, EventLog, Read};
@@ -824,8 +824,8 @@ impl Platform for SimPlatform {
     }
 
     /// The simulator runs no RTOS tasks.
-    fn task_stacks(&mut self, _out: &mut [TaskStack; TASKS_MAX]) -> usize {
-        0
+    fn task_stacks(&mut self, _out: &mut [TaskStack; TASKS_MAX]) -> TaskCount {
+        TaskCount::default()
     }
 
     fn erases(&self) -> proto::Erases {

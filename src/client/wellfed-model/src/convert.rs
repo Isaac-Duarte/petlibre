@@ -501,7 +501,9 @@ impl From<proto::Stats<'_>> for Stats {
                 heap_free,
                 heap_min,
                 tasks,
+                tasks_total,
             }) => Self::Memory(Memory {
+                tasks_total,
                 heap_free,
                 heap_min,
                 tasks: tasks

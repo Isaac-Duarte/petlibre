@@ -25,7 +25,7 @@ use wellfed_device_api::wifi::Credentials;
 use wellfed_feeder::feeder::Platform;
 use wellfed_feeder::feeder::platform::{
     Accepted, BleDrop, BleLink, BleStep, Boot, Check, Datagram, DriverRecord, DriverStep,
-    EventSlot, EventsFill, Link, Received, TaskStack,
+    EventSlot, EventsFill, Link, Received, TaskCount, TaskStack,
 };
 use wellfed_feeder::store::events::{BODY_BYTES, Read};
 use wellfed_feeder_runtime::{events, keys, network, stats, time};
@@ -373,13 +373,16 @@ impl Platform for Plaf103 {
         (sdk::heap_free(), sdk::heap_min_free())
     }
 
-    fn task_stacks(&mut self, out: &mut [TaskStack; TASKS_MAX]) -> usize {
+    fn task_stacks(&mut self, out: &mut [TaskStack; TASKS_MAX]) -> TaskCount {
         let mut raw = [sdk::TaskStack::default(); TASKS_MAX];
-        let filled = sdk::task_stacks(&mut raw);
-        for (out, task) in out.iter_mut().zip(&raw[..filled]) {
+        let count = sdk::task_stacks(&mut raw);
+        for (out, task) in out.iter_mut().zip(&raw[..count.listed]) {
             *out = TaskStack::new(task.name(), task.free_min);
         }
-        filled
+        TaskCount {
+            listed: count.listed,
+            total: count.total,
+        }
     }
 
     fn erases(&self) -> Erases {

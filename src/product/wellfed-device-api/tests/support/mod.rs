@@ -95,6 +95,7 @@ fn widest(section: StatsSection) -> Stats<'static> {
                 name: "0123456789abcdef",
                 free_min: u32::MAX,
             }); proto::TASKS_MAX],
+            tasks_total: u32::MAX,
         }),
         StatsSection::Flash => Stats::Flash(proto::Flash {
             boot: erases,

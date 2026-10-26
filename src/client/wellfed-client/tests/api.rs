@@ -330,6 +330,7 @@ impl Device for Fake {
                     heap_free: 125_088,
                     heap_min: 119_000,
                     tasks,
+                    tasks_total: 1,
                 })
             }
             StatsSection::Flash => Stats::Flash(proto::Flash {
@@ -1754,6 +1755,16 @@ fn every_statistics_section_answers_a_session_that_claims_the_bit() {
     let section = model::StatsSection::Counters;
     let answer = ask(&mut rig, &mut member, 9, Op::Stats { section });
     assert!(matches!(answer, Answer::Stats(_)), "{answer:?}");
+
+    // The stack walk pauses the feeder's scheduler: owners only, and never
+    // during a feed.
+    let memory = model::StatsSection::Memory;
+    let answer = ask(&mut rig, &mut member, 10, Op::Stats { section: memory });
+    assert_eq!(answer, Answer::Refused(model::Refusal::Forbidden));
+    rig.feeding = true;
+    let answer = ask(&mut rig, &mut owner, 11, Op::Stats { section: memory });
+    assert_eq!(answer, Answer::Refused(model::Refusal::Busy));
+    rig.feeding = false;
 
     let hello = Hello {
         major: 1,

@@ -166,6 +166,14 @@ pub struct TaskStack {
     pub free_min: u32,
 }
 
+/// What `task_stacks` filled, and how many tasks the RTOS runs: more
+/// than listed when they did not all fit.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TaskCount {
+    pub listed: usize,
+    pub total: u32,
+}
+
 impl TaskStack {
     /// The name up to its first NUL, if it is UTF-8.
     pub fn name(&self) -> &str {

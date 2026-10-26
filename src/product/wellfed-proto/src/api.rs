@@ -485,10 +485,6 @@ pub enum FeederMessage<'a> {
 /// message's tag, numbers and the text's length prefix.
 pub const LOG_TEXT_MAX: usize = MESSAGE_MAX - 16;
 
-#[expect(
-    clippy::large_enum_variant,
-    reason = "a wire message, built in place: the feeder cannot box"
-)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Outcome<'a> {
     /// A write took effect (or a read of nothing); for a settings or Wi-Fi
@@ -1031,6 +1027,9 @@ pub struct Memory<'a> {
     /// reports them; empty where it reports none.
     #[serde(borrow)]
     pub tasks: [Option<TaskStack<'a>>; TASKS_MAX],
+    /// The tasks the RTOS runs: more than `tasks` lists when they did not
+    /// all fit.
+    pub tasks_total: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1232,6 +1231,7 @@ mod tests {
                 heap_free: u32::MAX,
                 heap_min: u32::MAX,
                 tasks: [Some(task); TASKS_MAX],
+                tasks_total: u32::MAX,
             }),
             Stats::Flash(Flash {
                 boot: erases,

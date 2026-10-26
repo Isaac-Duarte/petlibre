@@ -89,6 +89,9 @@ pub struct Memory {
     pub heap_free: u32,
     pub heap_min: u32,
     pub tasks: Vec<TaskStack>,
+    /// The tasks the RTOS runs: more than `tasks` lists when they did not
+    /// all fit.
+    pub tasks_total: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

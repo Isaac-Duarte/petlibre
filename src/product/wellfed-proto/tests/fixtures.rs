@@ -493,6 +493,7 @@ fn messages() -> Vec<Fixture> {
                 heap_free: 125_088,
                 heap_min: 119_000,
                 tasks,
+                tasks_total: 14,
             })))),
             feeder,
         ),

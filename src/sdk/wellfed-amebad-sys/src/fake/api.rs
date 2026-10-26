@@ -136,12 +136,15 @@ pub fn bank1_erase_count() -> u32 {
     with(|h| h.bank1_erases)
 }
 
-/// The modelled tasks' stacks into `out`; how many it filled.
-pub fn task_stacks(out: &mut [crate::TaskStack]) -> usize {
+/// The modelled tasks' stacks into `out`, and how many there are.
+pub fn task_stacks(out: &mut [crate::TaskStack]) -> crate::TaskCount {
     with(|h| {
         let n = h.task_stacks.len().min(out.len());
         out[..n].copy_from_slice(&h.task_stacks[..n]);
-        n
+        crate::TaskCount {
+            listed: n,
+            total: u32::try_from(h.task_stacks.len()).unwrap_or(u32::MAX),
+        }
     })
 }
 

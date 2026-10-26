@@ -92,6 +92,13 @@ impl TaskStack {
     }
 }
 
+/// What [`Platform::task_stacks`] filled, and how many tasks there are.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TaskCount {
+    pub listed: usize,
+    pub total: u32,
+}
+
 /// The event ring's fill, for the statistics.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct EventsFill {
@@ -354,8 +361,9 @@ pub trait Platform {
 
     // ---- The statistics.
 
-    /// Each task's stack into `out`; how many it filled.
-    fn task_stacks(&mut self, out: &mut [TaskStack; TASKS_MAX]) -> usize;
+    /// Each task's stack into `out`, and how many tasks there are. The
+    /// RTOS may pause the scheduler to walk the stacks.
+    fn task_stacks(&mut self, out: &mut [TaskStack; TASKS_MAX]) -> TaskCount;
     /// Each storage sector's erases this boot, and bank 1's.
     fn erases(&self) -> Erases;
     /// The event ring's fill, as the writer last published it.

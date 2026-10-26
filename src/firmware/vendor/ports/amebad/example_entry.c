@@ -29,6 +29,7 @@
 #include "wifi_constants.h"
 #include "lwip_netconf.h"
 #include "lwip/dhcp.h"
+#include "lwip/prot/dhcp.h"
 #include "lwip/inet_chksum.h"
 #include "lwip/sockets.h"
 #include <platform/platform_stdlib.h>
@@ -257,13 +258,21 @@ static void wellfed_access_point(unsigned int attempt)
 }
 
 /* lwIP's DHCP client restarts its lease clock at every ACK. Seeing it go
- * back while still joined is a renewal (or a rebind): no event of lwIP's
- * says so. A read of one u16 from another task, so at worst one renewal
+ * back while bound to the lease is a renewal (or a rebind): no event of
+ * lwIP's says so. A read of one u16 from another task, so at worst one renewal
  * is seen a tick late. */
 static unsigned int wellfed_lease_used(void)
 {
     struct dhcp *dhcp = netif_dhcp_data(&xnetif[0]);
     return dhcp != NULL ? dhcp->lease_used : 0;
+}
+
+/* Bound to a lease: a release (an expiry) also zeroes the lease clock, and
+ * is no renewal. */
+static int wellfed_dhcp_bound(void)
+{
+    struct dhcp *dhcp = netif_dhcp_data(&xnetif[0]);
+    return dhcp != NULL && dhcp->state == DHCP_STATE_BOUND;
 }
 
 /* One attempt with the credentials Rust selects, reporting the outcome. */
@@ -380,7 +389,7 @@ static int wellfed_watch(unsigned int attempt, unsigned int *backoff)
     unsigned int lease_used = wellfed_lease_used();
     for (;;) {
         unsigned int used = wellfed_lease_used();
-        if (used < lease_used) {
+        if (used < lease_used && wellfed_dhcp_bound()) {
             wellfed_event(WELLFED_EV_RENEW, attempt, 0, used, 0);
         }
         lease_used = used;
@@ -463,14 +472,18 @@ struct wellfed_task_stack {
 #define WELLFED_TASKS 24
 
 /* Each task's name and the fewest free stack bytes it has had, into `out`
- * (at most `max`); how many it wrote, 0 when there are more tasks than it
- * can list. The RTOS walks each stack's untouched fill with the scheduler
- * paused, which only an owner's statistics request asks for. */
-int wellfed_task_stacks(struct wellfed_task_stack *out, int max)
+ * (at most `max`); how many it wrote, with the number of tasks in `total`.
+ * More tasks than WELLFED_TASKS lists none, and `total` says so. The RTOS
+ * walks each stack's untouched fill, and the names point into the tasks'
+ * control blocks, so the scheduler stays paused until they are copied; the
+ * loop asks at most every few seconds, for an owner's statistics. */
+int wellfed_task_stacks(struct wellfed_task_stack *out, int max, unsigned int *total)
 {
     static TaskStatus_t status[WELLFED_TASKS];
-    UBaseType_t count = uxTaskGetSystemState(status, WELLFED_TASKS, NULL);
     int written = 0;
+    vTaskSuspendAll();
+    UBaseType_t tasks = uxTaskGetNumberOfTasks();
+    UBaseType_t count = tasks <= WELLFED_TASKS ? uxTaskGetSystemState(status, WELLFED_TASKS, NULL) : 0;
     for (UBaseType_t i = 0; i < count && written < max; i++) {
         struct wellfed_task_stack *task = &out[written++];
         memset(task->name, 0, sizeof(task->name));
@@ -480,6 +493,8 @@ int wellfed_task_stacks(struct wellfed_task_stack *out, int max)
         }
         task->free_min = (unsigned int)status[i].usStackHighWaterMark * sizeof(StackType_t);
     }
+    (void)xTaskResumeAll();
+    *total = (unsigned int)tasks;
     return written;
 }
 

@@ -225,6 +225,10 @@ impl Server {
                 }
                 Reply::Done(None)
             }
+            // The stack walk pauses the scheduler; none during a feed.
+            Action::Stats {
+                section: StatsSection::Memory,
+            } if self.feeding || device.feed_active() => Reply::Refused(Refusal::Busy),
             Action::Stats { section } => return Some(Reply::Stats(section)),
         };
         Some(self.remember(memory, id, action, outcome))
@@ -383,6 +387,9 @@ const fn allowed(role: Role, action: Action) -> bool {
                 | Action::UpdateKeyStatement
                 | Action::PutTime { .. }
                 | Action::TailLog { .. }
+                | Action::Stats {
+                    section: StatsSection::Memory,
+                }
         ),
         Role::UpdateSigner => false,
     }

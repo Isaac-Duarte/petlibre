@@ -16,7 +16,7 @@ use wellfed_board_plaf103::{STORAGE_OFFSET, STORAGE_SECTORS};
 
 use super::{
     AUDIO_PAGE_SAMPLES, FlashMmuEntry, GpioRouting, Irq, Isr, LpClock, SECTOR_BYTES, SYSTICK_CTRL,
-    Systick, TaskStack, TaskStep, WifiEvent, WifiPoll,
+    Systick, TaskCount, TaskStack, TaskStep, WifiEvent, WifiPoll,
 };
 use super::{Accepted, ApiRecv, Datagram};
 #[cfg(feature = "bluetooth")]
@@ -1105,17 +1105,21 @@ pub fn wifi_event(seq: u32) -> WifiPoll {
 }
 
 unsafe extern "C" {
-    fn wellfed_task_stacks(out: *mut TaskStack, max: i32) -> i32;
+    fn wellfed_task_stacks(out: *mut TaskStack, max: i32, total: *mut u32) -> i32;
 }
 
-/// Every task's stack into `out`; how many it filled (0 when the RTOS has
-/// more tasks than the shim lists).
-pub fn task_stacks(out: &mut [TaskStack]) -> usize {
+/// Every task's stack into `out`, and how many tasks there are (none
+/// listed when the RTOS has more than the shim can).
+pub fn task_stacks(out: &mut [TaskStack]) -> TaskCount {
     let max = i32::try_from(out.len()).unwrap_or(i32::MAX);
+    let mut total = 0;
     // SAFETY: the C shim in `example_entry.c` writes at most `max` entries
-    // of the shared layout into the live buffer.
-    let written = unsafe { wellfed_task_stacks(out.as_mut_ptr(), max) };
-    usize::try_from(written).map_or(0, |n| n.min(out.len()))
+    // of the shared layout into the live buffer, and one u32 to `total`.
+    let written = unsafe { wellfed_task_stacks(out.as_mut_ptr(), max, &raw mut total) };
+    TaskCount {
+        listed: usize::try_from(written).map_or(0, |n| n.min(out.len())),
+        total,
+    }
 }
 
 unsafe extern "C" {

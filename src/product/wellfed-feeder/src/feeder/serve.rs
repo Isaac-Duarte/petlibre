@@ -36,7 +36,7 @@ use super::Feeds;
 use super::events;
 use super::lock::LockBox;
 use super::owner::{self, POLL_MS};
-use super::platform::{Accepted, Boot, Datagram, Platform, Received, TaskStack};
+use super::platform::{Accepted, Boot, Datagram, Platform, Received, TaskCount, TaskStack};
 use super::time::{self, Time};
 use crate::stats::Keeper;
 use crate::store::events::Read;
@@ -177,7 +177,7 @@ pub struct Serve<S> {
     failed: u32,
     stats: Keeper,
     /// The task stacks a memory answer borrows its names from.
-    tasks: [TaskStack; TASKS_MAX],
+    tasks: TaskCache,
     packet: [u8; mdns::PACKET],
     reply: [u8; mdns::PACKET],
     time: Time<S>,
@@ -204,7 +204,7 @@ impl<S: Copy> Serve<S> {
             answers: 0,
             failed: 0,
             stats: Keeper::new(),
-            tasks: [TaskStack::EMPTY; TASKS_MAX],
+            tasks: TaskCache::new(),
             packet: [0; mdns::PACKET],
             reply: [0; mdns::PACKET],
             time: Time::new(),
@@ -227,7 +227,7 @@ impl<S: Copy> Serve<S> {
     }
 
     /// The statistics and the buffer a memory answer borrows from.
-    pub(super) fn stats_parts(&mut self) -> (&mut Keeper, &mut [TaskStack; TASKS_MAX]) {
+    pub(super) fn stats_parts(&mut self) -> (&mut Keeper, &mut TaskCache) {
         (&mut self.stats, &mut self.tasks)
     }
 
@@ -595,7 +595,41 @@ pub struct FeederDevice<'a, P, F> {
     /// What the last NTP exchange came to.
     pub(super) ntp_last: Option<NtpResult>,
     pub(super) stats: &'a mut Keeper,
-    pub(super) tasks: &'a mut [TaskStack; TASKS_MAX],
+    pub(super) tasks: &'a mut TaskCache,
+}
+
+/// How long a walk of the task stacks answers memory requests: the walk
+/// pauses the scheduler, so a client asking again and again repeats none.
+const TASKS_MS: u32 = 5_000;
+
+/// The task stacks as last walked.
+pub struct TaskCache {
+    stacks: [TaskStack; TASKS_MAX],
+    count: TaskCount,
+    at: Option<u32>,
+}
+
+impl TaskCache {
+    pub(super) const fn new() -> Self {
+        Self {
+            stacks: [TaskStack::EMPTY; TASKS_MAX],
+            count: TaskCount {
+                listed: 0,
+                total: 0,
+            },
+            at: None,
+        }
+    }
+
+    /// The stacks, walked again once the last walk is [`TASKS_MS`] old.
+    fn read<P: Platform>(&mut self, platform: &mut P, now_ms: u32) -> (&[TaskStack], u32) {
+        if self.at.is_none_or(|at| now_ms.wrapping_sub(at) >= TASKS_MS) {
+            self.count = platform.task_stacks(&mut self.stacks);
+            self.at = Some(now_ms);
+        }
+        let listed = self.count.listed.min(TASKS_MAX);
+        (&self.stacks[..listed], self.count.total)
+    }
 }
 
 impl<P: Platform, F: Feeds> Device for FeederDevice<'_, P, F> {
@@ -770,9 +804,9 @@ impl<P: Platform, F: Feeds> Device for FeederDevice<'_, P, F> {
             StatsSection::Counters => Stats::Counters(self.stats.counters(now_ms)),
             StatsSection::Memory => {
                 let (heap_free, heap_min) = self.platform.heap();
-                let filled = self.platform.task_stacks(self.tasks);
+                let (stacks, tasks_total) = self.tasks.read(&mut *self.platform, now_ms);
                 let mut tasks = [None; TASKS_MAX];
-                for (out, task) in tasks.iter_mut().zip(&self.tasks[..filled.min(TASKS_MAX)]) {
+                for (out, task) in tasks.iter_mut().zip(stacks) {
                     *out = Some(WireTask {
                         name: task.name(),
                         free_min: task.free_min,
@@ -782,6 +816,7 @@ impl<P: Platform, F: Feeds> Device for FeederDevice<'_, P, F> {
                     heap_free,
                     heap_min,
                     tasks,
+                    tasks_total,
                 })
             }
             StatsSection::Flash => {

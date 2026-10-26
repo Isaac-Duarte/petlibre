@@ -91,7 +91,7 @@ Scope is the **research PLAF103 only**; the household feeder is excluded. Reconf
 
 ## Device state worth knowing
 
-- **Storage region:** `0x340000–0x360000`, 32 sectors, every sector named in `wellfed_amebad_sys::storage`. Feed journal 0–1, seed 7–8, client store 9–10, event ring 13–24. Stock's clock-save block `0x3f0000–0x400000` is in `layout.json`'s preserve ranges.
+- **Storage region:** `0x340000–0x360000`, 32 sectors, every sector named in `wellfed_board_plaf103::storage`. Feed journal 0–1, seed 7–8, client store 9–10, event ring 13–24. Stock's clock-save block `0x3f0000–0x400000` is in `layout.json`'s preserve ranges.
 - **Wi-Fi store:** empty since a signed clear (October 24); the feeder joins the hotspot with the build's credentials.
 - Wi-Fi and broker credentials come from private files; images stay under `private/`.
 

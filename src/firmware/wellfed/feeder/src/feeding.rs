@@ -220,6 +220,7 @@ pub fn drive_figures(trace: &FeedTrace) -> wellfed_feeder::trace::DriveFigures {
         rising: trace.rising,
         falling: trace.falling,
         first_edge_ms: trace.first_edge_ms,
+        reversals: u16::from(trace.reversals),
     }
 }
 

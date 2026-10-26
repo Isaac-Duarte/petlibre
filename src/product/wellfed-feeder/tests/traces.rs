@@ -98,6 +98,7 @@ fn record(recorder: &mut Recorder, feed: u32, portions: u32) -> TraceSummary {
         rising: u16::try_from(portions).unwrap(),
         falling: u16::try_from(portions).unwrap(),
         first_edge_ms: Some(7_870),
+        reversals: 0,
     };
     let portions = u8::try_from(portions).unwrap();
     recorder.seal(&fed(feed, portions), &figures).unwrap()
@@ -235,8 +236,11 @@ fn a_chattering_sensor_truncates_the_body_but_not_the_summary() {
     assert!(recorder.body().len() <= BODY_MAX);
 }
 
+/// The summary's reversals are the owner's count of its reverse attempts,
+/// the one the `fed` log line prints: the body shows every turn, but a turn
+/// is not a reversal by itself (a double bowl turns between its portions).
 #[test]
-fn a_turn_from_one_direction_to_the_other_is_a_reversal() {
+fn the_reversals_are_the_owners_reverse_attempts() {
     let mut recorder = Recorder::new();
     recorder.begin(2);
     for (at, motor) in [
@@ -254,10 +258,17 @@ fn a_turn_from_one_direction_to_the_other_is_a_reversal() {
             ..Observation::default()
         });
     }
-    let summary = recorder.seal(&fed(2, 1), &DriveFigures::default()).unwrap();
-    // One reverse-and-resume is one reversal, as the owner counts its
-    // reverse attempts.
+    let figures = DriveFigures {
+        reversals: 1,
+        ..DriveFigures::default()
+    };
+    let summary = recorder.seal(&fed(2, 1), &figures).unwrap();
     assert_eq!(summary.reversals, 1);
+    let turns = entries(recorder.body())
+        .iter()
+        .filter(|e| matches!(e, Entry::Motor { .. }))
+        .count();
+    assert_eq!(turns, 5, "every change of drive is in the body");
 
     recorder.begin(3);
     for (at, motor) in [
@@ -275,7 +286,7 @@ fn a_turn_from_one_direction_to_the_other_is_a_reversal() {
         });
     }
     let summary = recorder.seal(&fed(3, 1), &DriveFigures::default()).unwrap();
-    assert_eq!(summary.reversals, 2);
+    assert_eq!(summary.reversals, 0, "turns the owner did not count");
 }
 
 /// The poll that sees the counting edge also sees the stop it caused: the

@@ -40,6 +40,10 @@ pub struct DriveFigures {
     pub rising: u16,
     pub falling: u16,
     pub first_edge_ms: Option<u32>,
+    /// Times the drive backed off a jam, as the controller counts its
+    /// reverse attempts: the one count the log, the trace and the
+    /// statistics share. A double bowl's change of direction is none.
+    pub reversals: u16,
 }
 
 /// The whole recorder, body and bookkeeping, stays under a kilobyte of
@@ -57,7 +61,6 @@ pub struct Recorder {
     polls: u32,
     truncated: bool,
     beam_breaks: u16,
-    reversals: u16,
     battery_rest: Option<u32>,
     battery_min: Option<u32>,
     /// The last battery reading the body kept.
@@ -65,9 +68,6 @@ pub struct Recorder {
     beams: Option<Beams>,
     edges: u32,
     motor: MotorCommand,
-    /// The feed's own direction (its first drive) and the last one driven.
-    direction: Option<MotorCommand>,
-    last_drive: Option<MotorCommand>,
     summary: Option<TraceSummary>,
 }
 
@@ -88,15 +88,12 @@ impl Recorder {
             polls: 0,
             truncated: false,
             beam_breaks: 0,
-            reversals: 0,
             battery_rest: None,
             battery_min: None,
             battery_kept: None,
             beams: None,
             edges: 0,
             motor: MotorCommand::Stop,
-            direction: None,
-            last_drive: None,
             summary: None,
         }
     }
@@ -110,15 +107,12 @@ impl Recorder {
         self.polls = 0;
         self.truncated = false;
         self.beam_breaks = 0;
-        self.reversals = 0;
         self.battery_rest = None;
         self.battery_min = None;
         self.battery_kept = None;
         self.beams = None;
         self.edges = 0;
         self.motor = MotorCommand::Stop;
-        self.direction = None;
-        self.last_drive = None;
         self.summary = None;
     }
 
@@ -205,15 +199,6 @@ impl Recorder {
                 MotorCommand::Drive0 => Motor::Drive0,
                 MotorCommand::Drive1 => Motor::Drive1,
             };
-            if seen.motor != MotorCommand::Stop {
-                // A turn away from the feed's own direction is one reverse
-                // attempt, however it resumes.
-                let feed = *self.direction.get_or_insert(seen.motor);
-                if seen.motor != feed && self.last_drive == Some(feed) {
-                    self.reversals = self.reversals.saturating_add(1);
-                }
-                self.last_drive = Some(seen.motor);
-            }
             self.push(Entry::Motor { at_ms, motor });
         }
 
@@ -290,7 +275,7 @@ impl Recorder {
             falling: drive.falling,
             first_edge_ms: drive.first_edge_ms,
             beam_breaks: self.beam_breaks,
-            reversals: self.reversals,
+            reversals: drive.reversals,
             battery_rest_mv: mv(self.battery_rest),
             battery_min_mv: mv(self.battery_min),
             stride: self.stride,

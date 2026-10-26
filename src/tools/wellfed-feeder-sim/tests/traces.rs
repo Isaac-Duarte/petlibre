@@ -118,6 +118,7 @@ fn three_portions() -> (proto::TraceSummary, Vec<u8>, Vec<(u32, bool)>) {
         rising,
         falling,
         first_edge_ms: edges.first().map(|&(at, _)| at),
+        reversals: 0,
     };
     let summary = recorder.seal(&fed, &figures).unwrap();
     (summary, recorder.body().to_vec(), edges)

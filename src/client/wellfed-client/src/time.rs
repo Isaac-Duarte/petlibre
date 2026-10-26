@@ -60,8 +60,10 @@ pub enum RuleError {
 }
 
 /// The POSIX TZ rule the feeder keeps for the IANA zone `name` from
-/// `now`, checked by the feeder's own parser and against the zone.
-pub fn rule(name: &str, now: Timestamp) -> Result<String, RuleError> {
+/// `now`, checked by the feeder's own parser, against the bundled zone and
+/// against `host`, the host's own view of the zone if it has one (the
+/// caller reads it: this crate does no IO).
+pub fn rule(name: &str, now: Timestamp, host: Option<&TimeZone>) -> Result<String, RuleError> {
     let (canonical, tzif) =
         jiff_tzdb::get(name).ok_or_else(|| RuleError::Unknown(name.to_owned()))?;
     let footer = footer(tzif).ok_or_else(|| RuleError::NoRule(canonical.to_owned()))?;
@@ -78,8 +80,7 @@ pub fn rule(name: &str, now: Timestamp) -> Result<String, RuleError> {
     // feeder must not keep a rule either one contradicts.
     let bundled =
         TimeZone::tzif(canonical, tzif).map_err(|_| RuleError::NoRule(canonical.to_owned()))?;
-    let host = TimeZone::get(canonical).ok();
-    for full in core::iter::once(&bundled).chain(host.as_ref()) {
+    for full in core::iter::once(&bundled).chain(host) {
         if let Some(at) = disagreement(zone.rule(), full, now) {
             return Err(RuleError::Irregular {
                 name: canonical.to_owned(),
@@ -156,12 +157,12 @@ mod tests {
     fn rules_come_from_the_bundled_tzdb() {
         let now = Timestamp::from_second(NOW).unwrap();
         assert_eq!(
-            rule("America/Denver", now).unwrap(),
+            rule("America/Denver", now, None).unwrap(),
             "MST7MDT,M3.2.0,M11.1.0"
         );
-        assert_eq!(rule("Asia/Kolkata", now).unwrap(), "IST-5:30");
+        assert_eq!(rule("Asia/Kolkata", now, None).unwrap(), "IST-5:30");
         assert_eq!(
-            rule("Mars/Olympus", now),
+            rule("Mars/Olympus", now, None),
             Err(RuleError::Unknown("Mars/Olympus".to_owned()))
         );
     }
@@ -189,7 +190,8 @@ mod tests {
         let now = Timestamp::from_second(NOW).unwrap();
         let (mut regular, mut irregular) = (0, Vec::new());
         for name in jiff_tzdb::available() {
-            match rule(name, now) {
+            let host = TimeZone::get(name).ok();
+            match rule(name, now, host.as_ref()) {
                 Ok(rule) => {
                     assert!(rule.len() <= TEXT_MAX, "{name}: {rule}");
                     regular += 1;

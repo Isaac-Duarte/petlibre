@@ -219,6 +219,15 @@ fn civil_from_days(days: i64) -> (i64, i64, i64) {
     (year, month, day)
 }
 
+/// The offsets the wall clock and the device API accept, -12 h to +14 h.
+fn in_range(offset_s: i32) -> Result<i32, Invalid> {
+    if (super::wall::MIN_OFFSET_S..=super::wall::MAX_OFFSET_S).contains(&offset_s) {
+        Ok(offset_s)
+    } else {
+        Err(Invalid)
+    }
+}
+
 struct Parser<'a> {
     text: &'a [u8],
     at: usize,
@@ -227,7 +236,7 @@ struct Parser<'a> {
 impl Parser<'_> {
     fn rule(mut self) -> Result<Rule, Invalid> {
         self.name()?;
-        let std_offset_s = -self.offset(OFFSET_LIMIT)?;
+        let std_offset_s = in_range(-self.offset(OFFSET_LIMIT)?)?;
         if self.done() {
             return Ok(Rule {
                 std_offset_s,
@@ -236,11 +245,11 @@ impl Parser<'_> {
         }
 
         self.name()?;
-        let offset_s = if self.peek() == Some(b',') {
+        let offset_s = in_range(if self.peek() == Some(b',') {
             std_offset_s + HOUR
         } else {
             -self.offset(OFFSET_LIMIT)?
-        };
+        })?;
         self.expect(b',')?;
         let start = self.transition()?;
         self.expect(b',')?;

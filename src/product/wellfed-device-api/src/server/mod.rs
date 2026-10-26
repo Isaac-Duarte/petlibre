@@ -49,7 +49,11 @@ pub struct Pass<'a, D> {
 enum Waiting {
     Settings,
     Wifi,
-    Time,
+    /// The digest of the settings asked for: the write succeeded if the
+    /// store holds them once nothing is pending.
+    Time {
+        digest: u32,
+    },
     Keys {
         ticket: u32,
         revoked: [u8; 32],

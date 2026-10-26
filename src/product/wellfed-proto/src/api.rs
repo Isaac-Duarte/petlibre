@@ -85,7 +85,7 @@ impl Capabilities {
     pub const UPDATE: Self = Self(2);
     /// The time settings and the clock's state: [`Op::GetTime`],
     /// [`Op::PutTime`] and [`Outcome::Time`].
-    pub const TIME: Self = Self(4);
+    pub const TIME: Self = Self(8);
     /// Every bit this crate defines: what a current client claims. A
     /// session then runs on the bits both sides claim, so a client adapts
     /// to whatever feeder it meets, however old.

@@ -37,12 +37,14 @@ fn an_answer_is_carried_to_its_arrival_with_its_error() {
 fn bad_answers_are_named() {
     let nonce = 5;
     let good = serve(&request(nonce), NOON, NOON, 2, 0).unwrap();
-    assert_eq!(answer(&good[..47], nonce, 0, 1), Err(Bad::Short));
+    // Too short, or not the request's nonce, is not this answer at all.
+    assert_eq!(answer(&good[..47], nonce, 0, 1), Err(Bad::Origin));
     assert_eq!(answer(&good, nonce + 1, 0, 1), Err(Bad::Origin));
 
     let mut client_mode = good;
     client_mode[0] = 0x23;
     assert_eq!(answer(&client_mode, nonce, 0, 1), Err(Bad::Header));
+    assert_eq!(answer(&client_mode, nonce + 1, 0, 1), Err(Bad::Origin));
 
     let mut unsynchronized = good;
     unsynchronized[0] |= 0xc0;
@@ -107,6 +109,39 @@ fn the_exchange_paces_itself() {
     assert_eq!(exchange.received(now + 11, &real), None);
     assert_eq!(exchange.poll(now + 10 + POLL_MS - 1, 5), None);
     assert!(exchange.poll(now + 10 + POLL_MS, 5).is_some());
+}
+
+#[test]
+fn a_forged_short_or_client_datagram_leaves_the_exchange_waiting() {
+    let mut exchange = Exchange::new();
+    assert!(exchange.poll(0, 7).is_some());
+    assert_eq!(
+        exchange.received(5, &[0; 12]),
+        Some(Outcome::Refused(Bad::Origin))
+    );
+    assert_eq!(
+        exchange.received(6, &request(1)),
+        Some(Outcome::Refused(Bad::Origin))
+    );
+    let real = serve(&request(7), NOON, NOON, 2, 0).unwrap();
+    assert!(matches!(
+        exchange.received(10, &real),
+        Some(Outcome::Fix(_))
+    ));
+}
+
+#[test]
+fn a_clock_that_needs_the_time_asks_soon() {
+    let mut exchange = Exchange::new();
+    assert!(exchange.poll(0, 1).is_some());
+    let real = serve(&request(1), NOON, NOON, 2, 0).unwrap();
+    assert!(matches!(
+        exchange.received(10, &real),
+        Some(Outcome::Fix(_))
+    ));
+    assert!(!exchange.due(20));
+    exchange.soon(20);
+    assert!(exchange.due(20));
 }
 
 #[test]

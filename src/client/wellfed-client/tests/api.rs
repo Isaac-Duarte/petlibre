@@ -11,12 +11,14 @@ use wellfed_client::connection::{
     Connection, Cursor, Event, KEEPALIVE_ID, Recovery, Resume, Timing,
 };
 use wellfed_core::buttons::{Button, Buttons, Gesture};
+use wellfed_core::clock::wall::WallClock;
 use wellfed_core::tone::Tune;
 use wellfed_device_api::clients::{CLIENTS, Client, Label, Role};
 use wellfed_device_api::mailbox::Lock;
 use wellfed_device_api::mailbox::{
     LockResult, Origin, PlayResult, SettingsFields, SettingsResult, SettingsView, TimeFields,
-    TimeResult, WifiResult, WifiSource, WifiView,
+    TimeResult, TimeSettings, TimeSettingsResult, TimeSettingsView, TimeState, WifiResult,
+    WifiSource, WifiView,
 };
 use wellfed_device_api::pairing::{Config, Event as PairingEvent, Pairing};
 use wellfed_device_api::wifi::Credentials;
@@ -82,6 +84,10 @@ struct Fake {
     held: Option<(u32, Result<UpdateAnswer, Refusal>)>,
     /// Chunk offsets handed over.
     chunks: Vec<u32>,
+    time: TimeSettingsView,
+    time_pending: Option<TimeSettings>,
+    /// The writer's next time save fails, leaving the store as it was.
+    time_fails: bool,
 }
 
 /// An install receiving its first sector.
@@ -144,6 +150,13 @@ impl Fake {
         }
         if self.wifi_pending.take().is_some() {
             self.wifi_generation += 1;
+        }
+        if let Some(settings) = self.time_pending.take()
+            && !std::mem::take(&mut self.time_fails)
+            && settings != self.time.settings
+        {
+            self.time.settings = settings;
+            self.time.generation += 1;
         }
         if let Some((ticket, change)) = self.keys_pending.take() {
             let outcome = match change {
@@ -283,8 +296,32 @@ impl Device for Fake {
         if self.update {
             Capabilities::KNOWN
         } else {
-            Capabilities::FEED
+            Capabilities::FEED.union(Capabilities::TIME)
         }
+    }
+
+    fn time_settings(&mut self, change: Option<TimeSettings>) -> TimeSettingsResult {
+        if let Some(settings) = change {
+            if self.time_pending.is_some() {
+                return TimeSettingsResult::Busy;
+            }
+            self.time_pending = Some(settings);
+        }
+        TimeSettingsResult::Current {
+            view: TimeSettingsView {
+                writable: true,
+                ..self.time
+            },
+            pending: self.time_pending.is_some(),
+        }
+    }
+
+    fn time_state(&mut self, now_ms: u32) -> Option<TimeState> {
+        Some(TimeState {
+            clock: WallClock::new().state(now_ms),
+            now_ms,
+            ntp_last: None,
+        })
     }
 
     fn update(&mut self, request: UpdateRequest<'_>) -> Result<u32, Refusal> {
@@ -704,6 +741,48 @@ fn a_retried_write_gets_its_first_answer_even_after_a_reconnect() {
             .iter()
             .any(|r| matches!(r, Record::Retried { .. }))
     );
+}
+
+/// A time settings write answers `Done` with the new generation once the
+/// store holds it, `Done` too when it changed nothing, and is refused when
+/// the writer could not make it, rather than answered with the old
+/// generation as if it had.
+#[test]
+fn a_time_settings_write_answers_what_the_writer_did() {
+    let mut rig = Rig::new();
+    let mut owner = open(&mut rig, OWNER);
+    let put = |base, port| Op::PutTime {
+        base: Generation(base),
+        changes: model::TimeChanges {
+            zone: Some("MST7MDT,M3.2.0,M11.1.0".to_owned()),
+            ntp: Some(model::NtpServer::Gateway { port }),
+        },
+    };
+
+    let done = ask(&mut rig, &mut owner, 1, put(0, 1123));
+    assert_eq!(
+        done,
+        Answer::Done {
+            generation: Some(Generation(1))
+        }
+    );
+    let unchanged = ask(&mut rig, &mut owner, 2, put(1, 1123));
+    assert_eq!(
+        unchanged,
+        Answer::Done {
+            generation: Some(Generation(1))
+        }
+    );
+
+    rig.device.time_fails = true;
+    let failed = ask(&mut rig, &mut owner, 3, put(1, 123));
+    assert_eq!(failed, Answer::Refused(model::Refusal::NotWritable));
+    let Answer::Time(view) = ask(&mut rig, &mut owner, 4, Op::GetTime) else {
+        panic!("the time view");
+    };
+    assert_eq!(view.generation, Generation(1));
+    assert_eq!(view.ntp, model::NtpServer::Gateway { port: 1123 });
+    assert_eq!(view.clock_ms, None, "the feeder needs the time");
 }
 
 #[test]
@@ -1322,7 +1401,7 @@ fn a_connection_names_the_epoch_and_answers_each_request_once() {
             model::Capabilities {
                 feed: true,
                 update: false,
-                time: false,
+                time: true,
             },
             EPOCH
         )

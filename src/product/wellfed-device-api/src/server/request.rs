@@ -159,7 +159,7 @@ impl Server {
                 }
             },
             Action::PutTime { base, zone, ntp } => match put_time(base, zone, ntp, device) {
-                Ok(()) => return self.wait(index, id, action, Waiting::Time),
+                Ok(digest) => return self.wait(index, id, action, Waiting::Time { digest }),
                 Err(refusal) => Reply::Refused(refusal),
             },
             Action::Invalid => Reply::Refused(Refusal::Invalid),
@@ -312,13 +312,14 @@ fn put_wifi<D: Device>(
     }
 }
 
-/// Queue the time settings `base` names with the changes applied.
+/// Queue the time settings `base` names with the changes applied; the
+/// digest of what was asked for.
 fn put_time<D: Device>(
     base: u32,
     zone: Option<Option<Zone>>,
     ntp: Option<NtpServer>,
     device: &mut D,
-) -> Result<(), Refusal> {
+) -> Result<u32, Refusal> {
     let view = match device.time_settings(None) {
         TimeSettingsResult::Current { pending: true, .. } | TimeSettingsResult::Busy => {
             return Err(Refusal::Busy);
@@ -341,7 +342,7 @@ fn put_time<D: Device>(
         settings.ntp = ntp;
     }
     match device.time_settings(Some(settings)) {
-        TimeSettingsResult::Current { pending: true, .. } => Ok(()),
+        TimeSettingsResult::Current { pending: true, .. } => Ok(settings.digest()),
         TimeSettingsResult::Current { .. } | TimeSettingsResult::Busy => Err(Refusal::Busy),
         TimeSettingsResult::ReadOnly => Err(Refusal::NotWritable),
         TimeSettingsResult::Unserved => Err(Refusal::Unavailable),

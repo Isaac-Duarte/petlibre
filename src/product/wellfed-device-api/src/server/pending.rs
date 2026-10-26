@@ -81,12 +81,17 @@ impl Server {
                 WifiResult::ReadOnly | WifiResult::Invalid => Reply::Refused(Refusal::NotWritable),
             },
             // No event: the history's settings events carry the settings
-            // store's generation, and the time settings have their own.
-            Waiting::Time => match device.time_settings(None) {
+            // store's generation, and the time settings have their own. A
+            // write the writer could not make (unarmed, or a failed save)
+            // leaves the store as it was: refused, never `Done`.
+            Waiting::Time { digest } => match device.time_settings(None) {
                 TimeSettingsResult::Current {
                     view,
                     pending: false,
-                } => Reply::Done(Some(view.generation)),
+                } if view.settings.digest() == digest => Reply::Done(Some(view.generation)),
+                TimeSettingsResult::Current { pending: false, .. } => {
+                    Reply::Refused(Refusal::NotWritable)
+                }
                 TimeSettingsResult::Current { pending: true, .. } | TimeSettingsResult::Busy => {
                     return Ok(None);
                 }

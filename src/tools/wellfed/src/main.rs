@@ -527,7 +527,8 @@ async fn time_command(args: TimeArgs) -> Result<()> {
                     .to_owned(),
                 name => name.to_owned(),
             };
-            Some(wellfed_client::time::rule(&name, now)?)
+            let host = jiff::tz::TimeZone::get(&name).ok();
+            Some(wellfed_client::time::rule(&name, now, host.as_ref())?)
         }
     };
     if zone.is_none() && args.ntp.is_none() {

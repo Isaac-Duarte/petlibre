@@ -106,6 +106,27 @@ pub struct TimeSettings {
     pub ntp: NtpServer,
 }
 
+impl TimeSettings {
+    /// A checksum of the settings, so a pending write can tell whether
+    /// the store now holds what it asked for without keeping a copy.
+    pub fn digest(&self) -> u32 {
+        let mut bytes = [0; wellfed_core::clock::zone::TEXT_MAX + 8];
+        let text = self.zone.as_ref().map_or(&[][..], Zone::text);
+        bytes[..text.len()].copy_from_slice(text);
+        let (kind, ip, port) = match self.ntp {
+            NtpServer::Off => (0, [0; 4], 0),
+            NtpServer::Gateway { port } => (1, [0; 4], port),
+            NtpServer::Address { ip, port } => (2, ip, port),
+        };
+        let tail = wellfed_core::clock::zone::TEXT_MAX;
+        bytes[tail] = u8::try_from(text.len()).unwrap_or(u8::MAX);
+        bytes[tail + 1] = kind;
+        bytes[tail + 2..tail + 6].copy_from_slice(&ip);
+        bytes[tail + 6..tail + 8].copy_from_slice(&port.to_le_bytes());
+        wellfed_core::store::slot::crc32(&bytes)
+    }
+}
+
 /// The time settings as the writer last published them.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TimeSettingsView {

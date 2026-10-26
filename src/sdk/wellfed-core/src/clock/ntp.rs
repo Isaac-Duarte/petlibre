@@ -15,7 +15,8 @@
 //!
 //! **Pacing.** One request at a time, answered within [`ANSWER_MS`].
 //! A lost or refused answer retries at [`RETRY_MIN_MS`], backing off to
-//! [`RETRY_MAX_MS`]; after a good one the next goes [`POLL_MS`] later. A
+//! [`RETRY_MAX_MS`]; after a good one the next goes [`POLL_MS`] later,
+//! unless the clock needs the time before then ([`Exchange::soon`]). A
 //! kiss-o'-death `RATE` waits [`RATE_MS`], and `DENY` or `RSTR` stops asking
 //! that server for [`DENIED_MS`].
 
@@ -51,10 +52,10 @@ const LEAP_UNSYNCHRONIZED: u8 = 3;
 /// Why an answer was not used.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Bad {
-    Short,
     /// Not a server's answer, or a version this client does not speak.
     Header,
-    /// The origin timestamp is not the request's nonce: stale or forged.
+    /// Too short to hold an origin timestamp, or one that is not the
+    /// request's nonce: stale or forged.
     Origin,
     /// The server says it is not synchronized (leap 3, or stratum 16+).
     Unsynchronized,
@@ -117,17 +118,17 @@ fn short_ms(value: u32) -> u32 {
 /// An answer to the request for `nonce`, sent at uptime `sent` and received
 /// at uptime `now`, as a fix for the wall clock at `now`.
 pub fn answer(bytes: &[u8], nonce: u64, sent: u32, now: u32) -> Result<Fix, Bad> {
-    if bytes.len() < PACKET {
-        return Err(Bad::Short);
+    // Anything that does not echo the nonce is not this request's answer:
+    // checked first, so a forged datagram of any shape only leaves the
+    // exchange waiting for the real one.
+    if bytes.len() < PACKET || be64(bytes, 24) != nonce {
+        return Err(Bad::Origin);
     }
     let leap = bytes[0] >> 6;
     let version = (bytes[0] >> 3) & 7;
     let mode = bytes[0] & 7;
     if mode != MODE_SERVER || !(3..=4).contains(&version) {
         return Err(Bad::Header);
-    }
-    if be64(bytes, 24) != nonce {
-        return Err(Bad::Origin);
     }
     let stratum = bytes[1];
     if stratum == 0 {
@@ -239,6 +240,17 @@ impl Exchange {
     pub fn restart(&mut self, now: u32) {
         self.phase = Phase::Idle { next: now };
         self.retry_ms = RETRY_MIN_MS;
+    }
+
+    /// The clock needs the time: ask within [`RETRY_MAX_MS`] rather than
+    /// wait out a poll interval. Lost answers still back off.
+    pub fn soon(&mut self, now: u32) {
+        if let Phase::Idle { next } = self.phase
+            && next.wrapping_sub(now) > RETRY_MAX_MS
+            && !crate::deadline_passed(now, next)
+        {
+            self.phase = Phase::Idle { next: now };
+        }
     }
 
     /// Whether a request is due now, so a caller draws a nonce only then.

@@ -652,7 +652,13 @@ unsigned int wellfed_gateway_ipv4(void)
  * The SDK's RTC header says the RTC keeps counting through every reset but
  * a power loss; nothing in this firmware sets it, so the boot record shows
  * whether it runs at all and whether its count survives a watchdog reset,
- * an activation or a trial boot. */
+ * an activation or a trial boot.
+ * Reading it from KM4 is what the SDK itself does: the KM4 build compiles
+ * rtl8721d_rtc.c (ram_common) and mbed's rtc_api.c, whose rtc_read and
+ * RTC_Init access these registers at RTC_BASE with no clock enable first,
+ * since the RTC sits in the always-on domain on the 32 kHz clock KM0 starts
+ * at every boot. A read that faulted would fail bank 1's trial, which falls
+ * back to bank 0; the first bench boot confirms it does not. */
 void wellfed_rtc_read(unsigned int *out)
 {
     out[0] = HAL_READ32(RTC_BASE, 0x00); /* TR */

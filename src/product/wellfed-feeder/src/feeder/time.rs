@@ -77,7 +77,6 @@ const fn name(result: NtpResult) -> &'static str {
 
 const fn bad_name(bad: Bad) -> &'static str {
     match bad {
-        Bad::Short => "short",
         Bad::Header => "header",
         Bad::Origin => "origin",
         Bad::Unsynchronized => "unsynchronized",
@@ -168,6 +167,9 @@ impl<S: Copy> Time<S> {
         }
         let lost = self.exchange.expire(now_ms);
         self.outcome(platform, now_ms, lost, &mut record);
+        if platform.clock_state(now_ms).reading.is_none() {
+            self.exchange.soon(now_ms);
+        }
 
         // A nonce costs a generator draw: only when a request is due.
         if !self.exchange.due(now_ms) {

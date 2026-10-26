@@ -2,27 +2,37 @@
 //!
 //! The feeder has no battery-backed clock, so the wall clock is invalid at
 //! every boot until a fix arrives: a sync from a client's session, or an
-//! NTP answer. Between fixes the time is the last estimate plus elapsed
-//! uptime, corrected by the uptime clock's learned rate.
+//! NTP answer. Between fixes the time is carried by uptime, corrected by
+//! the uptime clock's learned rate.
 //!
-//! **Error bound.** Every estimate carries how far off it could be: the
-//! last fix's own error plus the rate's bound times the time since. Before
-//! a rate is learned the bound is [`UNLEARNED_PPM`] (the research unit's
-//! uptime clock ran a steady 735 ppm slow, two 10-minute resyncs, October
-//! 22). Once two fixes far enough apart measure the rate to within
-//! [`LEARN_MAX_PPM`], the correction applies and the bound drops to
-//! [`LEARNED_FLOOR_PPM`], or to how far successive measurements disagree
-//! if that is more. The clock reads invalid once the bound passes
-//! [`MAX_ERROR_MS`]: about 16 h after a fix unlearned, about 14 days
-//! learned.
+//! **The trusted interval.** The clock keeps an anchor that only a trusted
+//! fix sets: an owner's sync, or any fix while the clock is invalid (the
+//! first, or after expiry). From the anchor the true time lies within the
+//! anchor's error plus the rate bound times the time since: [`UNLEARNED_PPM`]
+//! before a rate is learned (the research unit's uptime clock ran a steady
+//! 735 ppm slow, two 10-minute resyncs, October 22), and once two trusted
+//! fixes far enough apart measure the rate to within [`LEARN_MAX_PPM`],
+//! the correction applies and the bound drops to [`LEARNED_FLOOR_PPM`], or
+//! to how far successive measurements disagree if that is more. The rate is
+//! learned from trusted fixes only, so a spoofed answer cannot poison it.
 //!
-//! **Who may move it.** An owner's sync replaces the estimate whatever it
-//! says: the owner is the authority on the time. Any other fix (NTP, or a
-//! member's or the server's sync) may only narrow it: the new estimate is
-//! the overlap of the two error intervals, and a fix whose interval misses
-//! the clock's is refused. So a lying NTP server or a member cannot step a
-//! valid clock, and repeated fixes cannot walk it faster than its own
-//! error grows. With no valid clock any fix sets it.
+//! **The reading.** Any other fix (NTP, or a member's or the server's
+//! sync) must fall inside the trusted interval, or it is refused; inside,
+//! it moves the reading's centre to the overlap of the two intervals. The
+//! reading's error is never less than the trusted interval allows: the
+//! centre's distance from the anchor's estimate plus the anchor's error. So
+//! an untrusted fix can improve where the clock reads within what it knows,
+//! but cannot make it claim more than it knows, and cannot walk it outside
+//! the trusted interval, which a later trusted fix resets.
+//!
+//! **Validity.** The clock reads invalid once its error passes
+//! [`MAX_ERROR_MS`]: about 16 h after a trusted fix unlearned, about 7-14
+//! days learned. Then the next fix of any origin sets it again. A run of
+//! [`DISJOINT_LIMIT`] NTP answers that all miss the trusted interval means
+//! the anchor or the learned rate is wrong (or the server is): the clock
+//! forgets both and reads invalid, so it needs the time rather than
+//! staying silently valid. An owner's sync that disagrees with the clock
+//! also forgets the learned rate.
 //!
 //! **Local time.** The zone setting's rule ([`Rule`]) gives the offset at
 //! any instant. Without one, a client sync's offset and next change stand
@@ -54,6 +64,9 @@ pub const SYNC_ERROR_MS: u32 = 1000;
 pub const MAX_ERROR_MS: u64 = 120_000;
 /// A fix within this of the running estimate is in step, not a jump.
 pub const STEP_MS: i64 = 2000;
+/// NTP answers in a row that miss the trusted interval before the clock
+/// gives up on it.
+pub const DISJOINT_LIMIT: u8 = 3;
 /// A scheduled occurrence at most this late still runs (the feeding-plan policy).
 pub const MISSED_GRACE_MS: u64 = 15 * 60 * 1000;
 
@@ -79,9 +92,10 @@ pub struct Sync {
 pub enum Origin {
     /// An owner's session: steps the clock freely.
     Owner = 0,
-    /// A member's or the server's session: only narrows a valid clock.
+    /// A member's or the server's session: only moves a valid clock within
+    /// its trusted interval.
     Client = 1,
-    /// An NTP answer: only narrows a valid clock.
+    /// An NTP answer: as a client's.
     Ntp = 2,
 }
 
@@ -106,8 +120,7 @@ pub enum SyncError {
     Time,
     Offset,
     NextChange,
-    /// A fix that may not step the clock disagreed with it beyond both
-    /// error bounds.
+    /// A fix that may not step the clock fell outside its trusted interval.
     Bounded,
 }
 
@@ -158,9 +171,8 @@ pub struct State {
     pub last: Option<(Origin, u32)>,
 }
 
-/// A point of the estimate, in microseconds: an error bound rounded up to
-/// the millisecond at every narrowing would let fixes walk the clock a
-/// millisecond each.
+/// A point of the clock, in microseconds: an error rounded up to the
+/// millisecond at every fix would let fixes walk it a millisecond each.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Anchor {
     uptime_ms: u32,
@@ -178,13 +190,19 @@ struct Hint {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WallClock {
-    anchor: Option<Anchor>,
-    /// The first fix since the clock was last set from nothing or stepped:
-    /// the rate is measured across it.
+    /// The last trusted fix.
+    trust: Option<Anchor>,
+    /// Where the clock reads: the trusted fix, or an untrusted fix's
+    /// overlap with the trusted interval. Its own error is never reported.
+    centre: Option<Anchor>,
+    /// The first trusted fix since the rate was last forgotten: the rate
+    /// is measured across it.
     base: Option<Anchor>,
     rate_ppb: i32,
     rate_bound_ppb: u32,
     learned: bool,
+    /// NTP answers in a row outside the trusted interval.
+    disjoint: u8,
     hint: Option<Hint>,
     rule: Option<Rule>,
     syncs: u32,
@@ -217,11 +235,13 @@ impl WallClock {
     /// Unset, for a static.
     pub const fn new() -> Self {
         Self {
-            anchor: None,
+            trust: None,
+            centre: None,
             base: None,
             rate_ppb: 0,
             rate_bound_ppb: UNLEARNED_PPM * 1000,
             learned: false,
+            disjoint: 0,
             hint: None,
             rule: None,
             syncs: 0,
@@ -262,36 +282,48 @@ impl WallClock {
             error_us: u64::from(fix.error_ms) * 1000,
         };
 
-        let jump = match self
-            .estimate(now)
-            .filter(|e| e.error_us <= MAX_ERROR_MS * 1000)
-        {
-            None => {
-                self.anchor = Some(point);
-                self.base = Some(point);
+        let jump = match (self.current(now), fix.origin) {
+            // Nothing valid to weigh it against: any fix is trusted.
+            (None, _) => {
+                self.trusted(point);
+                self.learn(point);
                 Jump::First
             }
-            Some(estimate) => {
-                let delta = signed(point.unix_us, estimate.unix_us);
-                let consistent = delta.unsigned_abs() <= estimate.error_us + point.error_us;
-                if fix.origin == Origin::Owner {
-                    self.anchor = Some(point);
-                    if consistent {
-                        self.learn(point);
-                    } else {
-                        // The clock was wrong: what it was measured
-                        // against says nothing about the rate.
-                        self.base = Some(point);
-                    }
-                    classify(delta)
-                } else if consistent {
-                    let narrowed = narrow(estimate, point);
-                    self.anchor = Some(narrowed);
+            (Some((_, centre, error_us)), Origin::Owner) => {
+                let delta = signed(point.unix_us, centre.unix_us);
+                let consistent = delta.unsigned_abs() <= error_us + point.error_us;
+                self.trusted(point);
+                if consistent {
                     self.learn(point);
-                    classify(signed(narrowed.unix_us, estimate.unix_us))
                 } else {
+                    // The clock was wrong, so its rate may be: what it was
+                    // measured against says nothing more.
+                    self.forget_rate();
+                    self.base = Some(point);
+                }
+                classify(delta)
+            }
+            (Some((trust, centre, _)), Origin::Client | Origin::Ntp) => {
+                let delta = signed(point.unix_us, trust.unix_us);
+                if delta.unsigned_abs() > trust.error_us + point.error_us {
+                    if fix.origin == Origin::Ntp {
+                        self.disjoint = self.disjoint.saturating_add(1);
+                        if self.disjoint >= DISJOINT_LIMIT {
+                            self.trust = None;
+                            self.centre = None;
+                            self.forget_rate();
+                            self.base = None;
+                            self.disjoint = 0;
+                        }
+                    }
                     return Err(SyncError::Bounded);
                 }
+                let moved = narrow(trust, point);
+                self.centre = Some(moved);
+                if fix.origin == Origin::Ntp {
+                    self.disjoint = 0;
+                }
+                classify(signed(moved.unix_us, centre.unix_us))
             }
         };
         self.syncs = self.syncs.saturating_add(1);
@@ -299,8 +331,20 @@ impl WallClock {
         Ok(jump)
     }
 
-    /// Measure the rate across the baseline, once it is long enough to do
-    /// so within `LEARN_MAX_PPM`.
+    fn trusted(&mut self, point: Anchor) {
+        self.trust = Some(point);
+        self.centre = Some(point);
+        self.disjoint = 0;
+    }
+
+    fn forget_rate(&mut self) {
+        self.rate_ppb = 0;
+        self.rate_bound_ppb = UNLEARNED_PPM * 1000;
+        self.learned = false;
+    }
+
+    /// Measure the rate across the baseline, from one trusted fix to
+    /// another, once it is long enough to do so within `LEARN_MAX_PPM`.
     fn learn(&mut self, point: Anchor) {
         let Some(base) = self.base else {
             self.base = Some(point);
@@ -353,10 +397,9 @@ impl WallClock {
         self.rule = rule;
     }
 
-    /// The estimate at uptime `now`, valid or not; `None` before the first
-    /// fix or past half the uptime clock's range.
-    fn estimate(&self, now: u32) -> Option<Anchor> {
-        let anchor = self.anchor?;
+    /// `anchor` carried to uptime `now`, its error grown by the rate
+    /// bound; `None` past half the uptime clock's range.
+    fn project(&self, anchor: Anchor, now: u32) -> Option<Anchor> {
         let elapsed = now.wrapping_sub(anchor.uptime_ms);
         if elapsed >= crate::HALF_RANGE {
             return None;
@@ -374,19 +417,24 @@ impl WallClock {
         })
     }
 
+    /// The trusted interval and the centre at `now`, and the error the
+    /// reading reports, while the clock is valid.
+    fn current(&self, now: u32) -> Option<(Anchor, Anchor, u64)> {
+        let trust = self.project(self.trust?, now)?;
+        let centre = self.project(self.centre?, now)?;
+        let error_us = signed(centre.unix_us, trust.unix_us).unsigned_abs() + trust.error_us;
+        (error_us.div_ceil(1000) <= MAX_ERROR_MS).then_some((trust, centre, error_us))
+    }
+
     /// The time at uptime `now`, or `None` before the first fix and once
-    /// the error bound passes `MAX_ERROR_MS`.
+    /// the error passes `MAX_ERROR_MS`.
     pub fn read(&self, now: u32) -> Option<Reading> {
-        let estimate = self.estimate(now)?;
-        let error_ms = estimate.error_us.div_ceil(1000);
-        if error_ms > MAX_ERROR_MS {
-            return None;
-        }
-        let unix_ms = estimate.unix_us / 1000;
+        let (_, centre, error_us) = self.current(now)?;
+        let unix_ms = centre.unix_us / 1000;
         Some(Reading {
             unix_ms,
             offset_s: self.offset_at(unix_ms),
-            error_ms,
+            error_ms: error_us.div_ceil(1000),
         })
     }
 

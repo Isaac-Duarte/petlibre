@@ -28,6 +28,7 @@
 use std::path::PathBuf;
 
 use crate::args::{ItestArgs, StockOtaArgs};
+use wellfed_core::ota::install::StopStage;
 use wellfed_core::record::Event;
 use wellfed_formats::bench::progress::StepState;
 use wellfed_formats::bench::run::SUFFIX;
@@ -35,14 +36,67 @@ use wellfed_formats::bench::{VERIFICATION, catalog::Tier};
 use wellfed_formats::stock::{OtaReport, TrialPhase};
 use wellfed_rig::commands::Bench;
 use wellfed_rig::commands::ota::{self, OtaArgs, Outcome, Staged, Target, Timing};
+use wellfed_rig::say;
 use wellfed_rig::server::{STOCK_VERSION, TrialAnswer, TrialRequest};
-use wellfed_rig::{Error, Result, say};
 
 use super::log::events;
 use super::{
-    Ctx, Fault, HEALTH_SECONDS, INSTALL_SECONDS, Report, STATUS_POLL_SECONDS, STATUS_SECONDS,
-    Server, Silent, Verdict, live,
+    Ctx, Fault, HEALTH_SECONDS, INSTALL_SECONDS, Report, Result, STATUS_POLL_SECONDS,
+    STATUS_SECONDS, Server, Silent, Verdict, live,
 };
+
+/// Why the trip through stock, or a `stock-ota` stage, stopped. Stock is
+/// asked once and never again, so none of these is retried.
+#[derive(Debug, thiserror::Error)]
+pub enum StockError {
+    #[error("stock-roundtrip needs --stock STOCK_REVIEW")]
+    NoStockReview,
+    #[error("Signing the stock review failed")]
+    StockUnsigned,
+    #[error("{} is not a stock review", review.display())]
+    NotStock { review: PathBuf },
+    #[error("Stock did not start: {outcome:?}")]
+    StockNotStarted { outcome: Outcome },
+    #[error("Signing the baseline again failed")]
+    BaselineUnsigned,
+    #[error("Building or signing the payload failed")]
+    PayloadUnstaged,
+    #[error("The server has no record of the request")]
+    NoRequest,
+    /// `report` is stock's last OTA report, if the server kept one.
+    #[error(
+        "Stock refused or failed the install ({})",
+        report.as_ref().map_or_else(|| "no report".into(), ToString::to_string)
+    )]
+    InstallRefused { report: Option<OtaReport> },
+    #[error("The build did not start within {:.0} min", INSTALL_SECONDS / 60.0)]
+    NotStarted,
+    #[error("Unreadable startup record")]
+    UnreadableStart,
+    #[error("Build {} started, not {}", short(reported), short(build))]
+    WrongBuild { reported: String, build: String },
+    #[error("The build started on bank {bank:?}, not 0")]
+    WrongBank { bank: Option<u8> },
+    /// A wait's reason while the device API reports another build.
+    #[error("build {build}")]
+    OtherBuild { build: String },
+    /// A wait's reason while the device API reports another bank.
+    #[error("bank {bank}")]
+    OtherBank { bank: u8 },
+    #[error("Bank 1 fell back to bank 0 after trial boot {boot:?}")]
+    PromotionFellBack { boot: Option<u32> },
+    #[error("The promotion failed at {stage}")]
+    PromotionFailed { stage: StopStage },
+    #[error("The promotion's attempt reset; bank 0 will not retry until a cold boot")]
+    PromotionSkipped,
+    #[error("The server did not resolve {id} within {:.0} min", SETTLE_SECONDS / 60.0)]
+    Unresolved { id: String },
+}
+
+/// A build ID's first 12 digits, as the operator compares them.
+fn short(build: &str) -> &str {
+    build.get(..12).unwrap_or(build)
+}
 
 /// Stock joins the hotspot, connects and reports its attributes within a
 /// minute or two of power; allow a slow join.
@@ -120,23 +174,13 @@ fn rig_args(args: &StockOtaArgs) -> ItestArgs {
 pub(super) fn roundtrip(ctx: &mut Ctx) -> Result<()> {
     let baseline = ctx.baseline()?.clone();
     // `unmet` skips the scenario without it.
-    let review = ctx
-        .args
-        .stock
-        .clone()
-        .ok_or_else(|| Error::Bench("stock-roundtrip needs --stock STOCK_REVIEW".into()))?;
+    let review = ctx.args.stock.clone().ok_or(StockError::NoStockReview)?;
 
     // To stock: our updater writes it into bank 1, then its banner shows.
     let to_stock = ctx.ota_args("stock", Some(review.clone()));
-    let stock = ctx
-        .rig
-        .stage(&to_stock)?
-        .ok_or_else(|| Error::Bench("Signing the stock review failed".into()))?;
+    let stock = ctx.rig.stage(&to_stock)?.ok_or(StockError::StockUnsigned)?;
     if stock.target != Target::Stock {
-        return Err(Error::Bench(format!(
-            "{} is not a stock review",
-            review.display()
-        )));
+        return Err(StockError::NotStock { review }.into());
     }
     let since = ctx.mark()?;
     ctx.rig.offer(Some(&stock), Fault::None)?;
@@ -144,7 +188,7 @@ pub(super) fn roundtrip(ctx: &mut Ctx) -> Result<()> {
     let outcome =
         ctx.offline(|ctx| ctx.watch_as(&stock.build, Target::Stock, since, INSTALL_SECONDS))?;
     if outcome != Outcome::Passed {
-        return Err(Error::Bench(format!("Stock did not start: {outcome:?}")));
+        return Err(StockError::StockNotStarted { outcome }.into());
     }
     ctx.rig.offer(None, Fault::None)?;
 
@@ -159,10 +203,7 @@ pub(super) fn roundtrip(ctx: &mut Ctx) -> Result<()> {
 
     // Back: stock installs the baseline into bank 0, which then promotes it.
     let back = ctx.ota_args("back", Some(baseline.review.clone()));
-    let staged = ctx
-        .rig
-        .stage(&back)?
-        .ok_or_else(|| Error::Bench("Signing the baseline again failed".into()))?;
+    let staged = ctx.rig.stage(&back)?.ok_or(StockError::BaselineUnsigned)?;
     let request_id = uuid::Uuid::new_v4().to_string();
     request(ctx, &staged, &request_id)?;
     install(ctx, &staged.build, &request_id)?;
@@ -285,17 +326,12 @@ fn install(ctx: &mut Ctx, build: &str, request_id: &str) -> Result<()> {
                         }
                     }
                     match status.trial(request_id).map(|trial| trial.phase) {
-                        None => {
-                            return Err(Error::Bench(
-                                "The server has no record of the request".into(),
-                            ));
-                        }
+                        None => return Err(StockError::NoRequest.into()),
                         Some(TrialPhase::ReportedError) => {
-                            let last = status.ota_reports.last().map(ToString::to_string);
-                            return Err(Error::Bench(format!(
-                                "Stock refused or failed the install ({})",
-                                last.unwrap_or_else(|| "no report".into())
-                            )));
+                            return Err(StockError::InstallRefused {
+                                report: status.ota_reports.last().cloned(),
+                            }
+                            .into());
                         }
                         Some(_) => {}
                     }
@@ -304,10 +340,7 @@ fn install(ctx: &mut Ctx, build: &str, request_id: &str) -> Result<()> {
             }
 
             if ctx.rig.clock() >= deadline {
-                return Err(Error::Bench(format!(
-                    "The build did not start within {:.0} min",
-                    INSTALL_SECONDS / 60.0
-                )));
+                return Err(StockError::NotStarted.into());
             }
             ctx.rig.wait(STATUS_POLL_SECONDS)?;
         }
@@ -325,21 +358,19 @@ fn started(line: &str, build: &str) -> Result<()> {
         bank,
     }) = events(line).find(is_start)
     else {
-        return Err(Error::Bench("Unreadable startup record".into()));
+        return Err(StockError::UnreadableStart.into());
     };
     let reported = reported.to_ascii_lowercase();
 
     if reported != build {
-        return Err(Error::Bench(format!(
-            "Build {} started, not {}",
-            reported.get(..12).unwrap_or(&reported),
-            &build[..12]
-        )));
+        return Err(StockError::WrongBuild {
+            reported,
+            build: build.into(),
+        }
+        .into());
     }
     if bank != Some(0) {
-        return Err(Error::Bench(format!(
-            "The build started on bank {bank:?}, not 0"
-        )));
+        return Err(StockError::WrongBank { bank }.into());
     }
     Ok(())
 }
@@ -360,10 +391,13 @@ fn bank0(ctx: &mut Ctx, build: &str, request_id: &str) -> Result<()> {
         HEALTH_SECONDS,
         |status| {
             if status.build != build {
-                return Err(Error::Bench(format!("build {}", status.build)));
+                return Err(StockError::OtherBuild {
+                    build: status.build.clone(),
+                }
+                .into());
             }
             if status.bank != 0 {
-                return Err(Error::Bench(format!("bank {}", status.bank)));
+                return Err(StockError::OtherBank { bank: status.bank }.into());
             }
             Ok(format!(
                 "Status: build {} on bank 0",
@@ -420,18 +454,12 @@ fn promote(ctx: &mut Ctx, staged: &Staged) -> Result<()> {
     match ctx.watch(build, since, INSTALL_SECONDS)? {
         Outcome::Passed => {}
         Outcome::FellBack { boot } => {
-            return Err(Error::Bench(format!(
-                "Bank 1 fell back to bank 0 after trial boot {boot:?}"
-            )));
+            return Err(StockError::PromotionFellBack { boot }.into());
         }
         Outcome::Failed { stage } => {
-            return Err(Error::Bench(format!("The promotion failed at {stage}")));
+            return Err(StockError::PromotionFailed { stage }.into());
         }
-        Outcome::Skipped => {
-            return Err(Error::Bench(
-                "The promotion's attempt reset; bank 0 will not retry until a cold boot".into(),
-            ));
-        }
+        Outcome::Skipped => return Err(StockError::PromotionSkipped.into()),
     }
     ctx.confirm(build)
 }
@@ -477,10 +505,7 @@ fn settle(ctx: &mut Ctx) -> Result<()> {
                 }
             }
             if ctx.rig.clock() >= deadline {
-                return Err(Error::Bench(format!(
-                    "The server did not resolve {id} within {:.0} min",
-                    SETTLE_SECONDS / 60.0
-                )));
+                return Err(StockError::Unresolved { id: id.clone() }.into());
             }
             ctx.rig.wait(SETTLE_POLL_SECONDS)?;
         }
@@ -503,9 +528,7 @@ pub(super) fn stock_ota(bench: &mut Bench, args: &StockOtaArgs, stock_bin: PathB
         args.config.display()
     );
     let Some(staged) = bench.ota_stage(&ota_args(args), &mut Timing::default())? else {
-        return Err(Error::Bench(
-            "Building or signing the payload failed".into(),
-        ));
+        return Err(StockError::PayloadUnstaged.into());
     };
 
     let rig_args = rig_args(args);

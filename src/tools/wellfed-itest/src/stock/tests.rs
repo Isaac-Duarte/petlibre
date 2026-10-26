@@ -3,14 +3,28 @@
 //! replacement firmware do, on a virtual clock.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
+use wellfed_stock_api::ApiError;
 use serde_json::{Value, json};
 
 use super::*;
-use wellfed_rig::device::{Answer, Ask, DeviceStatus, Intruder, Rebuffed};
+use wellfed_rig::device::{Answer, Ask, DeviceError, DeviceStatus, Intruder, Rebuffed};
 use wellfed_rig::server::{StockStatus, TrialAnswer};
+use wellfed_rig::tools::PushError;
 
-use crate::{Fault, Rig};
+use crate::{Error, Fault, Rig};
+
+/// The server's refusal of a `POST` to `path`, as `wellfed-stock` sends it.
+fn conflict(path: &str, body: &str) -> Error {
+    ApiError::Refused {
+        method: "POST",
+        path: path.into(),
+        code: 409,
+        body: json!(body),
+    }
+    .into()
+}
 
 const BUILD: &str = "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90";
 const OTHER: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -233,14 +247,14 @@ impl Rig for StockFeeder {
         Ok(())
     }
 
-    fn offered(&mut self) -> Option<std::result::Result<(), String>> {
+    fn offered(&mut self) -> Option<std::result::Result<(), Arc<PushError>>> {
         None
     }
 
     fn device(&mut self, ask: &Ask) -> Result<Answer> {
         self.release();
         let Some((build, bank)) = self.api.clone() else {
-            return Err(Error::Bench("the feeder did not answer".into()));
+            return Err(DeviceError::Closed.into());
         };
         assert_eq!(*ask, Ask::Status, "the round trip only reads status");
         Ok(Answer::Status(DeviceStatus {
@@ -336,8 +350,9 @@ impl Rig for StockFeeder {
         };
         assert_eq!(id, request_id);
         if now < *at {
-            return Err(Error::Bench(
-                "POST /api/ota/trial/resolve: 409 resolution needs more evidence".into(),
+            return Err(conflict(
+                "/api/ota/trial/resolve",
+                "resolution needs more evidence",
             ));
         }
         *phase = "not_installed";
@@ -360,8 +375,9 @@ impl Rig for StockFeeder {
         if self.answer_refusals > 0 {
             self.answer_refusals -= 1;
             self.actions.push("answer refused".into());
-            return Err(Error::Bench(
-                "POST /api/ota/trial/answered: 409 stock is still reporting".into(),
+            return Err(conflict(
+                "/api/ota/trial/answered",
+                "stock is still reporting",
             ));
         }
         *phase = "replacement_healthy";
@@ -793,7 +809,10 @@ fn stock_that_never_reaches_the_server_stops_the_round_trip_on_stock() {
     let error = roundtrip(&mut ctx).unwrap_err();
     drop(ctx);
 
-    assert!(error.to_string().contains("No stock 1.1.15"), "{error}");
+    assert!(
+        matches!(&error, Error::Waited { what, .. } if what == "stock 1.1.15"),
+        "{error:?}"
+    );
     assert!(feeder.trial.is_none(), "stock was never asked");
     assert!(feeder.on_stock);
 }

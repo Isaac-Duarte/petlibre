@@ -38,11 +38,21 @@ use std::time::{Duration, Instant};
 /// (with its power-off cleanup) instead of running on.
 pub static INTERRUPTED: AtomicBool = AtomicBool::new(false);
 
+/// Everything a bench sequence stops on. A refusal or stop condition is a
+/// variant of the module that makes it, whose `Display` is what the
+/// operator reads and the progress record keeps; a lower crate's error is
+/// wrapped whole.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    /// A refusal or stop condition, reported to the operator as is.
-    #[error("{0}")]
-    Bench(String),
+    /// A power, flash or capture sequence refused or stopped.
+    #[error(transparent)]
+    Command(#[from] commands::CommandsError),
+    /// The over-the-air loop refused or stopped.
+    #[error(transparent)]
+    Ota(#[from] commands::ota::OtaError),
+    /// A child tool or the device API could not do its part.
+    #[error(transparent)]
+    Tool(#[from] tools::ToolsError),
     #[error("Interrupted by the operator")]
     Interrupted,
     /// A JSON file the bench reads (its config, the server's, a review's
@@ -87,14 +97,6 @@ pub enum Error {
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
-
-pub fn require(condition: bool, message: impl Into<String>) -> Result<()> {
-    if condition {
-        Ok(())
-    } else {
-        Err(Error::Bench(message.into()))
-    }
-}
 
 /// Read the JSON file at `relative` under `root` into its type.
 pub fn load<T: serde::de::DeserializeOwned>(root: &Path, relative: &Path) -> Result<T> {

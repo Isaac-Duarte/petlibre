@@ -78,13 +78,22 @@ enum Command {
     InspectJournal { journal: PathBuf },
 }
 
-fn number<T: TryFrom<u64>>(text: &str) -> Result<T, String> {
+/// Why a decimal or `0x` hex argument did not parse; clap shows it.
+#[derive(Debug, thiserror::Error)]
+enum NumberError {
+    #[error(transparent)]
+    Parse(#[from] std::num::ParseIntError),
+    /// It parsed, but does not fit the argument's type.
+    #[error("{text} is out of range")]
+    Range { text: String },
+}
+
+fn number<T: TryFrom<u64>>(text: &str) -> Result<T, NumberError> {
     let value = match text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")) {
         Some(hex) => u64::from_str_radix(hex, 16),
         None => text.parse(),
-    }
-    .map_err(|error| error.to_string())?;
-    T::try_from(value).map_err(|_| format!("{text} is out of range"))
+    }?;
+    T::try_from(value).map_err(|_| NumberError::Range { text: text.into() })
 }
 
 #[derive(Args)]

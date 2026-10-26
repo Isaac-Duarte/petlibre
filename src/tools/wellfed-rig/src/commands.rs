@@ -23,9 +23,10 @@ use wellfed_formats::transients::{self, TransientCycle, TransientsManifest};
 use serde::Deserialize;
 
 use crate::tools::{Analyzer, Observation, Observer, Tools};
-use crate::{Error, Result, now, require};
+use crate::{Error, Result, now};
 use wellfed_formats::bench::progress::{BenchCommand, Status};
 use wellfed_formats::bench::{CAPTURES, Config, Paths, plain_name, relative};
+use wellfed_formats::require;
 use wellfed_relay::{POWER, Relay, STRAP, UART};
 
 pub mod ota;
@@ -48,6 +49,60 @@ const ANALYZER_OUTPUT_CHANNELS: [(&str, u8); 2] = [("outa", 2), ("outb", 3)];
 
 const STOPPED_POWERED: &str =
     "Stopped without retry; the feeder stays powered. Inspect the evidence.";
+
+/// Why a power, flash or capture sequence refused or stopped. Each refusal
+/// comes before the step it guards, so none leaves a write half done.
+#[derive(Debug, thiserror::Error)]
+pub enum CommandsError {
+    #[error("Session name {name:?} must be a single plain name")]
+    BadName { name: String },
+    /// Evidence directories are never reused; `path` root-relative.
+    #[error("Refusing to reuse {path}")]
+    NameTaken { path: String },
+    #[error("Boot reached the ROM loader, not the application")]
+    ReachedLoader,
+    /// The strapped boot did not show the loader's banner and NAK run.
+    #[error("Loader not confirmed; see {capture}")]
+    LoaderNotConfirmed { capture: String },
+    #[error("Need cycles >= 1 and a capture longer than arming")]
+    TransientBounds,
+    #[error("{tool} not found; install it before a transient session")]
+    ToolMissing { tool: &'static str },
+    #[error("Analyzer exited before power-on: {stderr:?}")]
+    AnalyzerExited { stderr: String },
+    #[error("Analyzer did not finish its bounded capture")]
+    AnalyzerTimeout,
+    #[error("Analyzer failed: {stderr:?}")]
+    AnalyzerFailed { stderr: String },
+    #[error("--source is required except when overwriting bank 0")]
+    SourceRequired,
+    /// A target manifest that cannot be read is not taken as motionless.
+    #[error("Cannot read {manifest} to check its motion policy: {source}")]
+    MotionPolicyUnreadable {
+        manifest: String,
+        source: wellfed_formats::Error,
+    },
+    #[error(
+        "Target drives the motor ({policy}); rerun with --attended-motion only with the owner watching"
+    )]
+    MotionNotAttended { policy: String },
+    /// An execute needs its prepared plan, and runs it at most once.
+    #[error("Prepared plan required; execution is single-use")]
+    PlanRequired,
+    #[error("Feeder power was cycled since prepare; start over")]
+    PowerCycled,
+    #[error(
+        "Bank 1 holds a valid image, which stock recovery refuses; give way first: \
+         wellfed-bench stock-prepare {name} --fallback <bank-0 review>"
+    )]
+    Bank1Valid { name: String },
+    #[error("The boot capture shows no stock version banner")]
+    NoStockBanner,
+    #[error("Bank 1 offset out of range")]
+    Bank1Offset,
+    #[error("{} is not a full read", read.display())]
+    NotFullRead { read: PathBuf },
+}
 
 #[derive(Debug, Clone, Args)]
 pub struct UpdateArgs {
@@ -163,10 +218,9 @@ pub struct TransientArgs {
 
 /// A session name is one plain path component.
 pub fn check_name(name: &str) -> Result<()> {
-    require(
-        plain_name(name),
-        format!("Session name {name:?} must be a single plain name"),
-    )
+    require(plain_name(name), || {
+        CommandsError::BadName { name: name.into() }.into()
+    })
 }
 
 /// One command line: the subcommand words, then each group of flags.
@@ -250,10 +304,12 @@ impl Bench {
 
     /// Captures never reuse a directory; refuse before any relay change.
     pub fn fresh(&self, output: &Path) -> Result<()> {
-        require(
-            !output.exists(),
-            format!("Refusing to reuse {}", self.rel(output)),
-        )
+        require(!output.exists(), || {
+            CommandsError::NameTaken {
+                path: self.rel(output),
+            }
+            .into()
+        })
     }
 
     fn start_observer(&mut self, output: &Path, seconds: f64) -> Result<Box<dyn Observer>> {
@@ -347,10 +403,9 @@ impl Bench {
         }
 
         let result = self.finish_observer(observer.as_mut())?;
-        require(
-            !result.download_banner_seen,
-            "Boot reached the ROM loader, not the application",
-        )?;
+        require(!result.download_banner_seen, || {
+            CommandsError::ReachedLoader
+        })?;
 
         say!(
             "Boot captured: {} bytes in {}; fault marker {}",
@@ -385,7 +440,9 @@ impl Bench {
                     && result.longest_nak_run >= LOADER_NAK_RUN
                     && !result.fault_marker_seen
                     && result.stock_startup_markers == 0,
-                format!("Loader not confirmed; see {}", self.rel(output)),
+                || CommandsError::LoaderNotConfirmed {
+                    capture: self.rel(output),
+                },
             )?;
             Ok(result)
         })();
@@ -422,12 +479,11 @@ impl Bench {
         self.fresh(&out)?;
         require(
             args.cycles >= 1 && args.seconds > ANALYZER_ARMING_SECONDS,
-            "Need cycles >= 1 and a capture longer than arming",
+            || CommandsError::TransientBounds,
         )?;
-        require(
-            self.tools.sigrok_available(),
-            "sigrok-cli not found; install it before a transient session",
-        )?;
+        require(self.tools.sigrok_available(), || {
+            CommandsError::ToolMissing { tool: "sigrok-cli" }
+        })?;
         fs::create_dir_all(&out)?;
 
         let channels: BTreeMap<String, u8> =
@@ -514,10 +570,10 @@ impl Bench {
     ) -> Result<f64> {
         (self.sleep)(ANALYZER_ARMING_SECONDS)?;
         if !analyzer.running() {
-            return Err(Error::Bench(format!(
-                "Analyzer exited before power-on: {:?}",
-                analyzer.stderr()
-            )));
+            return Err(CommandsError::AnalyzerExited {
+                stderr: analyzer.stderr(),
+            }
+            .into());
         }
 
         let powered = now();
@@ -532,15 +588,12 @@ impl Bench {
 
         let code = analyzer.wait(Duration::from_secs_f64(args.seconds + 30.0))?;
         let Some(code) = code else {
-            return Err(Error::Bench(
-                "Analyzer did not finish its bounded capture".into(),
-            ));
+            return Err(CommandsError::AnalyzerTimeout.into());
         };
         self.power_off(0.0)?;
-        require(
-            code == 0,
-            format!("Analyzer failed: {:?}", analyzer.stderr()),
-        )?;
+        require(code == 0, || CommandsError::AnalyzerFailed {
+            stderr: analyzer.stderr(),
+        })?;
         Ok(powered)
     }
 
@@ -610,10 +663,9 @@ impl Bench {
     }
 
     fn update_args(&self, args: &UpdateArgs, p: &Paths) -> Result<Vec<String>> {
-        require(
-            args.source.is_some() || args.bank == 0,
-            "--source is required except when overwriting bank 0",
-        )?;
+        require(args.source.is_some() || args.bank == 0, || {
+            CommandsError::SourceRequired
+        })?;
 
         let mut out = self.evidence_args(p);
         out.extend([
@@ -651,11 +703,11 @@ impl Bench {
             return Ok(());
         }
 
-        let manifest: BuildManifest = wellfed_formats::load(&path).map_err(|error| {
-            Error::Bench(format!(
-                "Cannot read {} to check its motion policy: {error}",
-                self.rel(&path)
-            ))
+        let manifest: BuildManifest = wellfed_formats::load(&path).map_err(|source| {
+            CommandsError::MotionPolicyUnreadable {
+                manifest: self.rel(&path),
+                source,
+            }
         })?;
         self.attended_motion(&manifest, args.attended_motion)
     }
@@ -670,12 +722,9 @@ impl Bench {
             return Ok(());
         };
 
-        require(
-            allowed,
-            format!(
-                "Target drives the motor ({policy}); rerun with --attended-motion only with the owner watching"
-            ),
-        )?;
+        require(allowed, || CommandsError::MotionNotAttended {
+            policy: policy.into(),
+        })?;
         say!("Attended motion image ({policy}): the motor will move after boot");
         Ok(())
     }
@@ -739,10 +788,9 @@ impl Bench {
         let p = Paths::new(&self.root, &args.update.name);
         self.require_attended_motion(&args.update)?;
         let update = self.update_args(&args.update, &p)?;
-        require(
-            p.plan.is_file() && !p.execute.exists(),
-            "Prepared plan required; execution is single-use",
-        )?;
+        require(p.plan.is_file() && !p.execute.exists(), || {
+            CommandsError::PlanRequired
+        })?;
         self.require_unbroken_power()?;
 
         // Progress estimate only; the updater reads and checks the plan itself.
@@ -783,10 +831,7 @@ impl Bench {
     fn require_unbroken_power(&mut self) -> Result<()> {
         let powered = self.get(POWER)?;
         let strap = self.get(STRAP)?;
-        require(
-            powered && !strap,
-            "Feeder power was cycled since prepare; start over",
-        )
+        require(powered && !strap, || CommandsError::PowerCycled.into())
     }
 
     /// Loader, bounded read, give-way inspection and plan; stop for review.
@@ -851,10 +896,9 @@ impl Bench {
     /// Execute a reviewed give-way in the still-powered helper session, then boot.
     pub fn give_way_execute(&mut self, args: &GiveWayExecuteArgs) -> Result<u8> {
         let p = Paths::new(&self.root, &args.give_way.name);
-        require(
-            p.plan.is_file() && !p.execute.exists(),
-            "Prepared plan required; execution is single-use",
-        )?;
+        require(p.plan.is_file() && !p.execute.exists(), || {
+            CommandsError::PlanRequired
+        })?;
         self.require_unbroken_power()?;
 
         let command = argv(
@@ -928,14 +972,11 @@ impl Bench {
         }
 
         let current = p.full.join("flash-read.bin");
-        require(
-            !bank1_marker_valid(&current)?,
-            format!(
-                "Bank 1 holds a valid image, which stock recovery refuses; give way first: \
-                 wellfed-bench stock-prepare {} --fallback <bank-0 review>",
-                args.name
-            ),
-        )?;
+        require(!bank1_marker_valid(&current)?, || {
+            CommandsError::Bank1Valid {
+                name: args.name.clone(),
+            }
+        })?;
 
         let recover = argv(
             &["stock-recovery", "prepare"],
@@ -993,10 +1034,9 @@ impl Bench {
         }
 
         let p = Paths::new(&self.root, name);
-        require(
-            p.plan.is_file() && !p.execute.exists(),
-            "Prepared plan required; execution is single-use",
-        )?;
+        require(p.plan.is_file() && !p.execute.exists(), || {
+            CommandsError::PlanRequired
+        })?;
         self.require_unbroken_power()?;
 
         let command = argv(
@@ -1020,10 +1060,9 @@ impl Bench {
         }
 
         let seen = self.boot(&p.boot, args.boot_seconds)?;
-        require(
-            seen.stock_startup_markers > 0,
-            "The boot capture shows no stock version banner",
-        )?;
+        require(seen.stock_startup_markers > 0, || {
+            CommandsError::NoStockBanner
+        })?;
         say!(
             "Stock boots from bank 1. {} holds the unit's serial and cloud keys: keep it private.",
             self.rel(&p.boot)
@@ -1067,10 +1106,10 @@ fn give_way_name(name: &str) -> String {
 fn bank1_marker_valid(read: &Path) -> Result<bool> {
     let bytes = fs::read(read)?;
     let start = usize::try_from(wellfed_core::ota::BANK1_OFFSET)
-        .map_err(|_| Error::Bench("Bank 1 offset out of range".into()))?;
+        .map_err(|_| CommandsError::Bank1Offset)?;
     let marker = bytes
         .get(start..start + wellfed_core::ota::MARKER.len())
-        .ok_or_else(|| Error::Bench(format!("{} is not a full read", read.display())))?;
+        .ok_or_else(|| CommandsError::NotFullRead { read: read.into() })?;
     Ok(marker == wellfed_core::ota::MARKER)
 }
 

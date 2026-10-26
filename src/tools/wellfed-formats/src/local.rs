@@ -134,6 +134,36 @@ pub struct ServerConfig {
     pub mqtt_listen: std::net::SocketAddr,
 }
 
+/// The image server's lease file, beside the server config.
+pub const IMAGE_LEASE_FILE: &str = "ota-image-server.json";
+
+/// Private record of the running image server (`wellfed-local ota-images`),
+/// written beside the config. Trial dispatch requires its token, an
+/// unexpired accept window and a live listener; the bench reads the token
+/// for its trial request.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImageLease {
+    pub token: Uuid,
+    pub peer: Ipv4Addr,
+    pub expires_at: DateTime<Utc>,
+    /// The served build's SHA-256, which the install command announces.
+    pub sha256: String,
+    /// The served build's identity: its frozen manifest's startup identity,
+    /// 64 lowercase hex, as the build's device API reports it.
+    pub build: String,
+}
+
+impl ImageLease {
+    /// The lease file beside `config_path`.
+    pub fn path(config_path: &Path) -> PathBuf {
+        config_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(IMAGE_LEASE_FILE)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -162,35 +192,5 @@ mod tests {
         let mut extra = record;
         extra["retries"] = json!(1);
         assert!(serde_json::from_value::<TrialRecord>(extra).is_err());
-    }
-}
-
-/// The image server's lease file, beside the server config.
-pub const IMAGE_LEASE_FILE: &str = "ota-image-server.json";
-
-/// Private record of the running image server (`wellfed-local ota-images`),
-/// written beside the config. Trial dispatch requires its token, an
-/// unexpired accept window and a live listener; the bench reads the token
-/// for its trial request.
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct ImageLease {
-    pub token: Uuid,
-    pub peer: Ipv4Addr,
-    pub expires_at: DateTime<Utc>,
-    /// The served build's SHA-256, which the install command announces.
-    pub sha256: String,
-    /// The served build's identity: its frozen manifest's startup identity,
-    /// 64 lowercase hex, as the build's device API reports it.
-    pub build: String,
-}
-
-impl ImageLease {
-    /// The lease file beside `config_path`.
-    pub fn path(config_path: &Path) -> PathBuf {
-        config_path
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .join(IMAGE_LEASE_FILE)
     }
 }

@@ -108,7 +108,7 @@ Recorded scope decisions, not authorization to operate hardware or publish. Foll
 - Use the fast [changed-sector UART updater](docs/development/uart-development.md); routine iterations need no full-flash read or stock round trip. Keep fresh helper, source, guard and status checks, exact plans and readback verification.
 - No automatic retry or replay of a flash write. `--interrupted` also accepts one sector holding the staged target's first 1–3 program frames followed by erased flash (owner-approved, after a stop at `0x1d6000`).
 - Motor bring-up went ahead before FW30's power-on flicker was classified, since the flicker also appears in the ROM loader (October 24).
-- The firmware's MQTT request path is deleted; the broker and its credentials stay only for update offers until FW48 (October 24).
+- The replacement firmware has no MQTT at all since AR6 (October 25): updates go over the device API; the broker stays only for stock.
 - BLE setup starts only on a Lock-then-Mic hold on an unlocked panel; losing Wi-Fi never starts it (October 24).
 - The startup LED probe is gone: startup only drives the indicators LOW (October 22).
 - Preserve the demonstrated conservative recovery path. Stock return through the development updater remains untested.

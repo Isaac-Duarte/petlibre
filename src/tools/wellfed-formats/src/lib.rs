@@ -49,3 +49,10 @@ pub fn load<T: serde::de::DeserializeOwned>(path: &std::path::Path) -> Result<T>
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
+
+/// The guard every host tool's checks go through: `Ok` when `condition`
+/// holds, else the typed refusal `error` builds. Built lazily, so a refusal
+/// that formats its fields costs nothing when the check passes.
+pub fn require<E>(condition: bool, error: impl FnOnce() -> E) -> std::result::Result<(), E> {
+    if condition { Ok(()) } else { Err(error()) }
+}

@@ -51,7 +51,7 @@ fn a_crumb_round_trips_through_its_register_word() {
 fn the_name_keeps_three_characters_after_the_shared_prefix() {
     let wifi = Crumb::new(b"wellfed_wifi", Scheduler::Running, Feeder::Feeding, 0);
     assert!(wifi.prefixed);
-    assert_eq!(&wifi.name, b"_wi");
+    assert_eq!(&wifi.name, b"wif");
 
     // Vendor tasks keep their first characters, folded to lower case; a
     // space ends the name.
@@ -106,7 +106,7 @@ fn the_crumb_tells_a_spin_from_masked_interrupts_and_a_deliberate_stop() {
     assert_eq!(spin.stall(), Stall::Spin);
     assert_eq!(
         spin.to_string(),
-        "kind=spin task=wellfed_wi since_ms=3968 suspended=0"
+        "kind=spin task=wellfed-wif since_ms=3968 suspended=0"
     );
 
     // The tick stopped inside a feed period: interrupts were masked.
@@ -148,7 +148,7 @@ fn the_tick_hook_counts_ticks_since_the_feeder_ran() {
     crumb::fed();
     ticks(c"wellfed_wifi", 3_000);
     let crumb = Crumb::decode(register()).expect("the hook leaves a crumb");
-    assert_eq!(&crumb.name, b"_wi");
+    assert_eq!(&crumb.name, b"wif");
     assert!(crumb.prefixed);
     assert_eq!(
         (crumb.scheduler, crumb.feeder),
@@ -188,7 +188,7 @@ fn a_null_name_and_a_long_one_are_read_safely() {
 
     tick(c"wellfed-a-very-long-task-name", false);
     let crumb = Crumb::decode(register()).expect("the hook leaves a crumb");
-    assert_eq!((crumb.prefixed, &crumb.name), (true, b"-a-"));
+    assert_eq!((crumb.prefixed, &crumb.name), (true, b"a-v"));
 }
 
 #[test]
@@ -298,4 +298,41 @@ fn a_supervision_stop_past_the_gap_leaves_and_marks_the_crumb() {
     let crumb = Crumb::decode(register()).expect("the hook leaves a crumb");
     assert_eq!(crumb.feeder, Feeder::Stopping);
     link::reset();
+}
+
+#[test]
+fn every_real_task_name_decodes_to_its_short_form() {
+    let _guard = start();
+    for (name, shown) in [
+        (c"wellfed-svc", "wellfed-svc"),
+        (c"wellfed-wdg", "wellfed-wdg"),
+        (c"wellfed-loop", "wellfed-loo"),
+        (c"wellfed-key", "wellfed-key"),
+        (c"wellfed_wifi", "wellfed-wif"),
+        (c"wellfed", "wellfed"),
+        (c"IDLE", "idl"),
+        (c"Tmr Svc", "tmr"),
+        (c"cmd_thread", "cmd"),
+        (c"rtw_recv", "rtw"),
+        (c"TCP_IP", "tcp"),
+        (c"t9x", "t9x"),
+    ] {
+        // Through the tick hook and the register, as the next boot reads it.
+        tick(name, false);
+        let crumb = Crumb::decode(register()).expect("the hook leaves a crumb");
+        let line = crumb.to_string();
+        assert!(
+            line.contains(&format!(" task={shown} ")),
+            "{name:?} printed {line}"
+        );
+    }
+}
+
+#[test]
+fn letters_and_digits_round_trip_in_lower_case() {
+    for name in [b"abc", b"xyz", b"019", b"A7z"] {
+        let crumb = Crumb::new(name, Scheduler::Running, Feeder::Feeding, 0);
+        let decoded = Crumb::decode(crumb.encode()).expect("a crumb");
+        assert_eq!(decoded.name, name.map(|b| b.to_ascii_lowercase()));
+    }
 }

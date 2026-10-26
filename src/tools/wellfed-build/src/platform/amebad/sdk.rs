@@ -47,7 +47,8 @@ const BLE_SOURCE: &str = "component/common/example/wellfed_ble.c";
 /// from a corrupted pointer.
 const APP_START: &str = "component/soc/realtek/amebad/fwlib/ram_hp/rtl8721dhp_app_start.c";
 /// KM4's FreeRTOS options, which gain the tick hook the application entry
-/// defines: it leaves a breadcrumb that survives a silent watchdog reset.
+/// defines (it leaves a breadcrumb that survives a silent watchdog reset)
+/// and task names long enough for it to tell the tasks apart.
 const FREERTOS_CONFIG: &str = "project/realtek_amebaD_va0_example/inc/inc_hp/FreeRTOSConfig.h";
 /// Object suffixes the vendor makefiles leave beside a source.
 const OBJECT_SUFFIXES: [&str; 5] = [".o", ".d", ".i", ".s", ".su"];
@@ -244,14 +245,26 @@ fn fault_registers(pinned: &str) -> Result<String> {
     )
 }
 
-/// Have FreeRTOS call `vApplicationTickHook` from every tick interrupt.
-fn tick_hook(pinned: &str) -> Result<String> {
+/// Have FreeRTOS call `vApplicationTickHook` from every tick interrupt,
+/// and keep 15 characters of a task's name, not 9: at the
+/// vendor's 10 every runtime task's name ends at `wellfed-`, and the
+/// breadcrumb could not tell them apart. Every KM4 object recompiles with
+/// it (the options stamp); of the prebuilt libraries none allocates tasks
+/// statically, and the one that reads task names takes only the pointer.
+fn freertos_options(pinned: &str) -> Result<String> {
     let anchor = "#define configUSE_TICK_HOOK\t\t\t\t\t\t\t\t0\n";
-    replace_once(
+    let text = replace_once(
         pinned,
         anchor,
         &anchor.replace("\t0\n", "\t1\n"),
         "Pinned tick hook option changed",
+    )?;
+    let anchor = "#define configMAX_TASK_NAME_LEN\t\t\t\t\t\t\t( 10 )\n";
+    replace_once(
+        &text,
+        anchor,
+        &anchor.replace("( 10 )", "( 16 )"),
+        "Pinned task name length changed",
     )
 }
 
@@ -462,7 +475,7 @@ fn rust_overlays(
     overlay(sdk, hooks::SOURCE, &text, overrides)?;
     let text = fault_registers(&pinned(sdk, APP_START)?)?;
     overlay(sdk, APP_START, &text, overrides)?;
-    let text = tick_hook(&pinned(sdk, FREERTOS_CONFIG)?)?;
+    let text = freertos_options(&pinned(sdk, FREERTOS_CONFIG)?)?;
     overlay(sdk, FREERTOS_CONFIG, &text, overrides)?;
 
     // SDK dependencies can retain the old public definitions otherwise.
@@ -808,16 +821,19 @@ mod tests {
     }
 
     #[test]
-    fn the_tick_hook_is_switched_on_and_only_it() {
-        let pinned = "#define configUSE_IDLE_HOOK\t\t\t\t\t\t\t\t0\n\
+    fn the_tick_hook_and_name_length_are_set_and_only_they() {
+        let pinned = "#define configMAX_TASK_NAME_LEN\t\t\t\t\t\t\t( 10 )\n\
+                      #define configUSE_IDLE_HOOK\t\t\t\t\t\t\t\t0\n\
                       #define configUSE_TICK_HOOK\t\t\t\t\t\t\t\t0\n";
-        let text = tick_hook(pinned).unwrap();
+        let text = freertos_options(pinned).unwrap();
         assert!(text.contains("configUSE_TICK_HOOK\t\t\t\t\t\t\t\t1\n"));
+        assert!(text.contains("configMAX_TASK_NAME_LEN\t\t\t\t\t\t\t( 16 )\n"));
         assert!(text.contains("configUSE_IDLE_HOOK\t\t\t\t\t\t\t\t0\n"));
 
         // A changed option line is refused, not patched elsewhere.
-        assert!(tick_hook("#define configUSE_TICK_HOOK 0\n").is_err());
-        assert!(tick_hook(&pinned.repeat(2)).is_err());
+        assert!(freertos_options("#define configUSE_TICK_HOOK 0\n").is_err());
+        assert!(freertos_options(&pinned.replace("( 10 )", "( 12 )")).is_err());
+        assert!(freertos_options(&pinned.repeat(2)).is_err());
     }
 
     #[test]

@@ -50,7 +50,9 @@ pub const SPIN_MS: u32 = 16 * SINCE_STEP_MS;
 /// The task-name prefix every runtime and firmware task shares; the crumb
 /// keeps the characters after it.
 const PREFIX: &[u8] = b"wellfed";
-/// Characters of the name the crumb keeps.
+/// Characters of the name the crumb keeps. The kernel must keep them too:
+/// the vendor's `configMAX_TASK_NAME_LEN` of 10 cut every runtime task's
+/// name to `wellfed-`, so the builder raises it to 16.
 pub const NAME_LEN: usize = 3;
 
 const TAG: u32 = 0b101;
@@ -150,7 +152,14 @@ impl Crumb {
     /// The crumb for a task named `name` (its bytes up to the terminator).
     pub fn new(name: &[u8], scheduler: Scheduler, feeder: Feeder, since_ms: u32) -> Self {
         let (prefixed, rest) = match name.strip_prefix(PREFIX) {
-            Some(rest) => (true, rest),
+            // The separator (`-`, or the Wi-Fi task's `_`) would take one
+            // of the three characters that tell the tasks apart.
+            Some(rest) => (
+                true,
+                rest.strip_prefix(b"-")
+                    .or(rest.strip_prefix(b"_"))
+                    .unwrap_or(rest),
+            ),
             None => (false, name),
         };
         let mut kept = [0; NAME_LEN];
@@ -238,7 +247,13 @@ impl core::fmt::Display for Crumb {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "kind={} task=", self.stall().name())?;
         if self.prefixed {
-            f.write_str("wellfed")?;
+            // The diagnostic task is `wellfed` itself; the others print
+            // with one separator, whichever their name had.
+            f.write_str(if self.name[0] == 0 {
+                "wellfed"
+            } else {
+                "wellfed-"
+            })?;
         }
         let kept = self.name.iter().take_while(|&&byte| byte != 0);
         for &byte in kept {
@@ -299,7 +314,7 @@ pub unsafe extern "C" fn wellfed_tick_hook(name: *const u8, suspended: i32) {
     let ticks = SINCE_TICKS.load(Ordering::Relaxed).saturating_add(1);
     SINCE_TICKS.store(ticks, Ordering::Relaxed);
 
-    let mut bytes = [0u8; PREFIX.len() + NAME_LEN];
+    let mut bytes = [0u8; PREFIX.len() + 1 + NAME_LEN];
     let mut len = 0;
     if !name.is_null() {
         while len < bytes.len() {

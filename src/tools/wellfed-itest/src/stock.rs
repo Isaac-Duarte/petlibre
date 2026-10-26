@@ -19,7 +19,7 @@
 //! installs it into bank 1 and the feeder ends in the normal two-bank state
 //! (`--no-promote` stops at bank 0).
 //!
-//! Stock reaches this server only through `wellfed-local network apply`, a
+//! Stock reaches this server only through `wellfed-stock network apply`, a
 //! host firewall change the operator makes and removes by hand; the run never
 //! touches routing. The way back to stock is the UART stock recovery.
 //!
@@ -36,7 +36,7 @@ use wellfed_core::record::tag;
 use wellfed_formats::bench::progress::StepState;
 use wellfed_formats::bench::run::SUFFIX;
 use wellfed_formats::bench::{VERIFICATION, catalog::Tier};
-use wellfed_formats::local::{OtaReport, TrialPhase};
+use wellfed_formats::stock::{OtaReport, TrialPhase};
 
 use super::log::Record;
 use super::{
@@ -152,7 +152,7 @@ pub(super) fn roundtrip(ctx: &mut Ctx) -> Result<()> {
     ctx.rig.server(Server::StockTrial)?;
     ctx.note(
         "  Stock reaches this server only through the feeder routing: \
-         `sudo wellfed-local network apply` while this waits",
+         `sudo wellfed-stock network apply` while this waits",
     );
     ready(ctx)?;
     settle(ctx)?;
@@ -486,7 +486,7 @@ fn settle(ctx: &mut Ctx) -> Result<()> {
 
 /// Build the payload, bring the bench up with a trial-enabled server,
 /// run the stages, restore the bench and record the verdicts.
-pub(super) fn stock_ota(bench: &mut Bench, args: &StockOtaArgs, local_bin: PathBuf) -> Result<u8> {
+pub(super) fn stock_ota(bench: &mut Bench, args: &StockOtaArgs, stock_bin: PathBuf) -> Result<u8> {
     let record = bench
         .root
         .join(VERIFICATION)
@@ -496,7 +496,7 @@ pub(super) fn stock_ota(bench: &mut Bench, args: &StockOtaArgs, local_bin: PathB
 
     say!(
         "Stock reaches this server only through the feeder routing: run \
-             `sudo wellfed-local network apply --config {}` first, and `network remove` afterwards.",
+             `sudo wellfed-stock network apply --config {}` first, and `network remove` afterwards.",
         args.config.display()
     );
     let Some(staged) = bench.ota_stage(&ota_args(args), &mut Timing::default())? else {
@@ -506,7 +506,7 @@ pub(super) fn stock_ota(bench: &mut Bench, args: &StockOtaArgs, local_bin: PathB
     };
 
     let rig_args = rig_args(args);
-    let mut rig = live::LiveRig::open(bench, &rig_args, local_bin)?;
+    let mut rig = live::LiveRig::open(bench, &rig_args, stock_bin)?;
     let result = match rig.start(Server::StockTrial) {
         Ok(()) => {
             let mut ctx = Ctx::new(&mut rig, &rig_args);
@@ -535,7 +535,7 @@ pub(super) fn stock_ota(bench: &mut Bench, args: &StockOtaArgs, local_bin: PathB
     if let Some(line) = recovery(&reports) {
         say!("{line}");
     }
-    say!("Remember `sudo wellfed-local network remove`.");
+    say!("Remember `sudo wellfed-stock network remove`.");
 
     let summary = super::summary(&args.name, &reports, silent.as_ref(), &captures);
     std::fs::write(&record, serde_json::to_string_pretty(&summary)? + "\n")?;

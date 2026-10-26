@@ -1,4 +1,4 @@
-//! Loopback HTTP API of `wellfed-local serve`.
+//! Loopback HTTP API of `wellfed-stock serve`.
 //!
 //! Every route except `/health` needs the bearer token from the private
 //! configuration, compared in constant time, and write bodies are capped at
@@ -23,9 +23,11 @@ use serde::Serialize;
 use subtle::ConstantTimeEq;
 use tokio::sync::{mpsc, oneshot, watch};
 
-use wellfed_stock::{controller::Rejection, ota};
-
-use wellfed_stock::{controller::Status, mqtt::Request};
+use crate::{
+    controller::{Rejection, Status},
+    mqtt::Request,
+    ota,
+};
 
 use crate::build_info::BUILD;
 
@@ -177,7 +179,7 @@ async fn service_info() -> Json<ServiceInfo> {
     Json(ServiceInfo {
         build_clean: BUILD.clean,
         build_commit: BUILD.commit,
-        service: "wellfed-local",
+        service: "wellfed-stock",
         version: env!("CARGO_PKG_VERSION"),
     })
 }
@@ -208,10 +210,10 @@ mod tests {
             body(&ServiceInfo {
                 build_clean: true,
                 build_commit: "abc",
-                service: "wellfed-local",
+                service: "wellfed-stock",
                 version: "0.1.0",
             }),
-            r#"{"build_clean":true,"build_commit":"abc","service":"wellfed-local","version":"0.1.0"}"#
+            r#"{"build_clean":true,"build_commit":"abc","service":"wellfed-stock","version":"0.1.0"}"#
         );
         assert_eq!(body(&ErrorBody { error: "x" }), r#"{"error":"x"}"#);
     }

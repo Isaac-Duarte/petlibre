@@ -1,6 +1,6 @@
 //! Bounded observations of stock OTA reports. This module sends no commands.
 use chrono::{DateTime, Utc};
-pub use wellfed_formats::local::OtaReport;
+pub use wellfed_formats::stock::OtaReport;
 
 use crate::protocol::Message;
 

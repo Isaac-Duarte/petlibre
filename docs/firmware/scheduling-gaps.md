@@ -54,7 +54,7 @@ The shim's own `PLWIF3` records (scan, connect, DHCP, loss, backoff, with their 
 
 ## Procedure (no motion)
 
-The bench must be powered and on the replacement firmware, with the hotspot up for the install (it goes over the device API; `wellfed-local serve` is not needed). The owner authorization of October 22 covers the OTA install and the hotspot; this procedure moves no motor.
+The bench must be powered and on the replacement firmware, with the hotspot up for the install (it goes over the device API; `wellfed-stock serve` is not needed). The owner authorization of October 22 covers the OTA install and the hotspot; this procedure moves no motor.
 
 1. **Install over the air:** `target/release/wellfed-bench ota NAME-install --build --firmware feeder --variant gap-probe`. It builds and freezes the review, offers it, and captures until the build confirms. (Over UART instead: the same build, frozen with `wellfed-build review build`, then `wellfed-bench flash-prepare`/`flash-execute` as the [development updater](../development/uart-development.md) describes.) Once the device API reports the build, rejoins need only the hotspot.
 2. **Capture** in back-to-back 180 s segments: `target/release/wellfed-bench capture NAME-01 --seconds 180`, then `-02`, and so on. Each segment holds about two rejoin cycles.

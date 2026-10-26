@@ -1,24 +1,24 @@
-# Local server
+# Stock server
 
-The `wellfed-local` executable is the bench's local server: an embedded authenticated broker, the stock 1.1.15 protocol as far as installing the replacement needs it, and a bearer-authenticated loopback API. The replacement firmware speaks no MQTT: its updates and status go over its [device API](../firmware/device-api.md). It is being split up and retired ([tools roadmap](tools-roadmap.md)).
+The `wellfed-stock` executable is the bench's server for stock 1.1.15: an embedded authenticated broker, the stock protocol as far as installing the replacement needs it, the image server stock installs from, and a bearer-authenticated loopback API. It exists only for stock: the replacement firmware speaks no MQTT, and its updates and status go over its [device API](../firmware/device-api.md), which `wellfed-bench` and the owner's `wellfed` CLI use directly.
 
-Since October 25, 2026 it is a binary over the [`wellfed-stock`](../../src/tools/wellfed-stock) library, which holds everything stock 1.1.15 speaks: its MQTT protocol, the broker with stock's two identities (the stock device and the server) and the CONNECT normalization in front of it, the server's MQTT session with stock, the setup frame, the image server stock installs from, and the install-trial ledger. `wellfed-local` itself keeps the command line, the loopback API and the `network` redirect. The replacement firmware's side of the broker and the session (its role, health and offers) is deleted, and the broker admits only stock's two identities.
+The [`wellfed-stock`](../../src/tools/wellfed-stock) crate is the library and the binary. The library holds everything stock speaks: its MQTT protocol, the broker with stock's two identities (the stock device and the server) and the CONNECT normalization in front of it, the server's MQTT session with stock, the setup frame, the image server and the install-trial ledger. The binary adds the command line, the loopback API and the `network` redirect. The bench, its suite and the progress page run it as a process and speak its API through [`wellfed-stock-api`](../../src/tools/wellfed-stock-api), which links none of it. The server was the `wellfed-local` binary until October 26, 2026, with the same commands, configuration, ledger and API.
 
-Its stock control (manual feeds, the feed ledger, `resolve`) and the C-probe and modified-stock trials were removed on October 24, 2026 (FW51): the product uses stock only to install from and roll back to. Local dispensing on stock 1.1.15 was demonstrated on the research unit before that, and the code is in Git history.
+Its stock control (manual feeds, the feed ledger, `resolve`) and the C-probe and modified-stock trials were removed on October 24, 2026: the product uses stock only to install from and roll back to. Local dispensing on stock 1.1.15 was demonstrated on the research unit before that, and the code is in Git history.
 
 ## Build and try synthetic initialization
 
 ```sh
-cargo build --locked
-./target/debug/wellfed-local init \
-  --credentials src/tools/wellfed-local/examples/mqtt-credentials.json \
-  --capture src/tools/wellfed-local/examples/mqtt-capture.json \
+cargo build --locked -p wellfed-stock
+./target/debug/wellfed-stock init \
+  --credentials src/tools/wellfed-stock/examples/mqtt-credentials.json \
+  --capture src/tools/wellfed-stock/examples/mqtt-capture.json \
   --mqtt-listen 127.0.0.1:18883 \
   --hotspot-interface test_wifi \
   --output private/example-server.json
 ```
 
-The [example inputs](../../src/tools/wellfed-local/examples/README.md) contain only synthetic identities. This command writes configuration and sends no device commands. A second import to the same path is refused. `--timezone` accepts an IANA timezone and defaults to `UTC`. The generated API token and server password are independent; configuration is mode 0600 on Unix.
+The [example inputs](../../src/tools/wellfed-stock/examples/README.md) contain only synthetic identities. This command writes configuration and sends no device commands. A second import to the same path is refused. `--timezone` accepts an IANA timezone and defaults to `UTC`. The generated API token and server password are independent; configuration is mode 0600 on Unix.
 
 ## Configure an actual device
 
@@ -31,16 +31,16 @@ A typical decoded packet export is `tshark -r private/capture.pcap -Y mqtt -T js
 Run `init` with your own credential/capture paths, a specific IPv4 broker address reachable from the feeder, your gateway interface, and your timezone. Wildcard and IPv6 broker binds are rejected. `private/server.json` is the default output. The HTTP default is loopback `127.0.0.1:8765`. The configuration format remains version 1; a configuration from before FW51 still carries `max_portions`, which is refused as an unknown field, so delete that line. Edit configuration while the service is stopped and retain the ledger beside it.
 
 ```sh
-./target/debug/wellfed-local serve --config private/server.json
-./target/debug/wellfed-local status --config private/server.json
-./target/debug/wellfed-local network preview --config private/server.json
+./target/debug/wellfed-stock serve --config private/server.json
+./target/debug/wellfed-stock status --config private/server.json
+./target/debug/wellfed-stock network preview --config private/server.json
 ```
 
-Starting the service does not redirect traffic or command feeding. Linux gateway `network apply` is a separate privileged operation: it validates an nft transaction, redirects the configured feeder MAC's TCP/1883 traffic on the configured interface, and blocks its forwarded WAN traffic. Inspect preview and confirm device identity before explicitly invoking it. `network remove` removes Wellfed's dedicated table/tagged rule. AP setup, host-wide firewall policy, persistent services, and reboot persistence are outside this workflow. Do not assume WAN isolation without checking counters and actual traffic.
+Starting the service does not redirect traffic or command feeding. Linux gateway `network apply` is a separate privileged operation: it validates an nft transaction, redirects the configured feeder MAC's TCP/1883 traffic on the configured interface, and blocks its forwarded WAN traffic. Inspect preview and confirm device identity before explicitly invoking it. `network remove` removes Wellfed's dedicated table and its tagged input rules; their names are unchanged since the server's rename, so rules applied before it are removed too. AP setup, host-wide firewall policy, persistent services, and reboot persistence are outside this workflow. Do not assume WAN isolation without checking counters and actual traffic.
 
 ## The replacement firmware (deleted roles)
 
-The broker once served the replacement firmware too, as a role with its own credential and namespace (`firmware-credential`, health, requests and `ota-offer`; the [transport design](../firmware/local-transport.md) records it). It is deleted, with the firmware's MQTT transport: builds take updates over the [device API](../firmware/ota-design.md#updates-over-the-device-api), which `wellfed-bench ota` pushes, and `wellfed-build` no longer reads `private/fw-mqtt.json`. A configuration written while the role existed keeps its `firmware` section; `wellfed-local` ignores it unread, so the file loads as it is.
+The broker once served the replacement firmware too, as a role with its own credential and namespace (`firmware-credential`, health, requests and `ota-offer`; the [transport design](../firmware/local-transport.md) records it). It is deleted, with the firmware's MQTT transport: builds take updates over the [device API](../firmware/ota-design.md#updates-over-the-device-api), which `wellfed-bench ota` pushes, and `wellfed-build` no longer reads `private/fw-mqtt.json`. A configuration written while the role existed keeps its `firmware` section; `wellfed-stock` ignores it unread, so the file loads as it is.
 
 ## The install ledger
 
@@ -54,7 +54,7 @@ Write bodies are bounded to 4096 bytes. Use bearer authentication from the priva
 
 | Route | Interface |
 | --- | --- |
-| `GET /health` | Public process/build identity |
+| `GET /health` | Public process/build identity (`"service": "wellfed-stock"`) |
 | `GET /api/status` | Authenticated stock telemetry, build identity, install trials and stock's OTA reports |
 | `POST /api/ota/trial` | `{ "request_id": "UUID", "server_token": "UUID" }`: the stock-to-replacement install; explicit trial mode and a live image lease required |
 | `POST /api/ota/trial/resolve` | Explicit uncertain-trial reconciliation; sends no command |

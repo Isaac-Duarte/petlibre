@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 
 use super::*;
 use wellfed_bench::device::{Answer, Ask, DeviceStatus, Intruder, Rebuffed};
-use wellfed_bench::server::{LocalStatus, TrialAnswer};
+use wellfed_bench::server::{StockStatus, TrialAnswer};
 
 use crate::{Fault, Rig};
 
@@ -265,7 +265,7 @@ impl Rig for StockFeeder {
         unreachable!()
     }
 
-    fn status(&mut self) -> Result<LocalStatus> {
+    fn status(&mut self) -> Result<StockStatus> {
         self.release();
         // Newest first, as the server lists them.
         let earlier = self
@@ -658,7 +658,7 @@ fn a_start_record_from_bank_1_is_refused() {
 
 #[test]
 fn trial_phases_read_from_the_server_s_ledger() {
-    let status: LocalStatus = serde_json::from_value(json!({
+    let status: StockStatus = serde_json::from_value(json!({
         "ota_trials": [record(EARLIER, "replacement_healthy", true)],
     }))
     .unwrap();

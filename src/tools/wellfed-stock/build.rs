@@ -1,17 +1,14 @@
 //! Record the source commit so a running service can prove what it executes.
 //! Paths are relative to this package. The inputs are its own sources, the
-//! first-party crates it links (`wellfed-stock` holds the stock protocol
-//! and the trial ledger, `wellfed-formats` the status types,
+//! first-party crates it links (`wellfed-formats` the status types,
 //! `wellfed-core` and `wellfed-session` the update format and hex), and the
 //! workspace's manifest, lockfile and toolchain.
 use std::process::Command;
 
-const BUILD_INPUTS: [&str; 14] = [
+const BUILD_INPUTS: [&str; 12] = [
     "src",
     "build.rs",
     "Cargo.toml",
-    "../wellfed-stock/src",
-    "../wellfed-stock/Cargo.toml",
     "../wellfed-formats/src",
     "../wellfed-formats/Cargo.toml",
     "../../sdk/wellfed-core/src",

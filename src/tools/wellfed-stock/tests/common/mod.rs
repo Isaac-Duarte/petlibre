@@ -1,5 +1,6 @@
-//! Shared fixtures: a synthetic stock configuration and the controller
-//! over it.
+//! Shared fixtures: a synthetic stock configuration, the controller over
+//! it, and helpers that run the real `wellfed-stock serve` binary on
+//! loopback ports.
 
 #![allow(dead_code)]
 use std::path::PathBuf;
@@ -36,4 +37,100 @@ pub fn config() -> Config {
 /// The controller over `path`'s ledger, with [`config`].
 pub fn load(path: PathBuf) -> anyhow::Result<Controller> {
     Controller::load(config(), path, BUILD)
+}
+
+use serde_json::Value;
+use std::{
+    net::TcpListener,
+    process::{Child, Command, Stdio},
+    time::Duration,
+};
+
+pub struct Service(Child);
+impl Drop for Service {
+    fn drop(&mut self) {
+        let _ = Command::new("kill")
+            .args(["-INT", &self.0.id().to_string()])
+            .status();
+
+        for _ in 0..30 {
+            if self.0.try_wait().ok().flatten().is_some() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+pub fn address() -> std::net::SocketAddr {
+    TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+}
+
+pub fn start(path: &std::path::Path) -> Service {
+    start_mode(path, false)
+}
+
+pub fn start_mode(path: &std::path::Path, ota: bool) -> Service {
+    start_in(path, ota, None)
+}
+
+/// Start the server, optionally in `cwd` (paths like `private/...` resolve there).
+pub fn start_in(path: &std::path::Path, ota: bool, cwd: Option<&std::path::Path>) -> Service {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_wellfed-stock"));
+    command.args(["serve", "--config"]).arg(path);
+
+    if let Some(cwd) = cwd {
+        command.current_dir(cwd);
+    }
+    if ota {
+        // Tests run from uncommitted trees; production refuses such builds.
+        command
+            .arg("--enable-ota-trial")
+            .env(wellfed_stock::build_info::ALLOW_UNREVIEWED_ENV, "1");
+    }
+
+    Service(
+        command
+            .stdout(Stdio::null())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .unwrap(),
+    )
+}
+
+/// Waits up to 10 s: a loaded host (a parallel test binary, a bench update)
+/// can delay the spawned server's broker connection past 5 s.
+pub async fn ready(config: &Config, client: &reqwest::Client) {
+    for _ in 0..200 {
+        if let Ok(response) = client
+            .get(format!("http://{}/api/status", config.http_listen))
+            .bearer_auth(&config.api_token)
+            .send()
+            .await
+            && let Ok(value) = response.json::<Value>().await
+            && value["broker_connected"] == true
+        {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("stock server did not become ready");
+}
+
+pub async fn status(config: &Config, client: &reqwest::Client) -> Value {
+    client
+        .get(format!("http://{}/api/status", config.http_listen))
+        .bearer_auth(&config.api_token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap()
 }

@@ -271,18 +271,18 @@ async fn an_explicit_api_install_publishes_once_and_never_again() {
 
 #[test]
 fn trial_mode_refuses_a_build_without_a_clean_source_commit() {
-    if wellfed_local::build_info::BUILD.reviewable() {
+    if wellfed_stock::build_info::BUILD.reviewable() {
         return; // Built from a clean commit: the guard correctly permits it.
     }
 
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_wellfed-local"))
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_wellfed-stock"))
         .args([
             "serve",
             "--config",
             "/nonexistent/server.json",
             "--enable-ota-trial",
         ])
-        .env_remove(wellfed_local::build_info::ALLOW_UNREVIEWED_ENV)
+        .env_remove(wellfed_stock::build_info::ALLOW_UNREVIEWED_ENV)
         .output()
         .unwrap();
 

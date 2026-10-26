@@ -257,18 +257,18 @@ pub trait Analyzer {
 pub struct Processes {
     pub root: PathBuf,
     pub flash_bin: PathBuf,
-    pub local_bin: PathBuf,
+    pub stock_bin: PathBuf,
     pub build_bin: PathBuf,
     /// Opened at the first status check and kept, with its session.
     device: Option<Device>,
 }
 
 impl Processes {
-    pub fn new(root: PathBuf, flash_bin: PathBuf, local_bin: PathBuf, build_bin: PathBuf) -> Self {
+    pub fn new(root: PathBuf, flash_bin: PathBuf, stock_bin: PathBuf, build_bin: PathBuf) -> Self {
         Self {
             root,
             flash_bin,
-            local_bin,
+            stock_bin,
             build_bin,
             device: None,
         }
@@ -287,9 +287,9 @@ pub fn default_flash_bin() -> PathBuf {
     beside_this("wellfed-flash")
 }
 
-/// `wellfed-local` beside this executable.
-pub fn default_local_bin() -> PathBuf {
-    beside_this("wellfed-local")
+/// `wellfed-stock` beside this executable.
+pub fn default_stock_bin() -> PathBuf {
+    beside_this("wellfed-stock")
 }
 
 /// `wellfed-itest` beside this executable: the suite's commands run there.
@@ -766,7 +766,7 @@ mod tests {
         let mut tools = Processes {
             root: tmp.path().into(),
             flash_bin,
-            local_bin: tmp.path().join("absent"),
+            stock_bin: tmp.path().join("absent"),
             build_bin: tmp.path().join("absent"),
             device: None,
         };
@@ -796,7 +796,7 @@ echo '{"status":"complete","result":{"bytes":7}}' > "$8/report.json""#,
         let mut tools = Processes {
             root: tmp.path().into(),
             flash_bin,
-            local_bin: tmp.path().join("absent"),
+            stock_bin: tmp.path().join("absent"),
             build_bin: tmp.path().join("absent"),
             device: None,
         };
@@ -814,7 +814,7 @@ echo '{"status":"complete","result":{"bytes":7}}' > "$8/report.json""#,
         let mut tools = Processes {
             root: tmp.path().into(),
             flash_bin,
-            local_bin: tmp.path().join("absent"),
+            stock_bin: tmp.path().join("absent"),
             build_bin: tmp.path().join("absent"),
             device: None,
         };
@@ -838,7 +838,7 @@ echo '{"status":"complete","result":{"bytes":7}}' > "$8/report.json""#,
         let mut tools = Processes {
             root: tmp.into(),
             flash_bin: fake_flash(tmp, &script),
-            local_bin: "/bin/sh".into(),
+            stock_bin: "/bin/sh".into(),
             build_bin: tmp.join("absent"),
             device: None,
         };
@@ -927,7 +927,7 @@ echo '{"status":"complete","result":{"bytes":7}}' > "$8/report.json""#,
         let mut tools = Processes {
             root: tmp.path().into(),
             flash_bin: tmp.path().join("absent"),
-            local_bin: tmp.path().join("absent"),
+            stock_bin: tmp.path().join("absent"),
             build_bin: builder,
             device: None,
         };
@@ -961,7 +961,7 @@ echo '{"status":"complete","result":{"bytes":7}}' > "$8/report.json""#,
         let mut tools = Processes {
             root: tmp.path().into(),
             flash_bin: tmp.path().join("absent"),
-            local_bin: tmp.path().join("absent"),
+            stock_bin: tmp.path().join("absent"),
             build_bin: tmp.path().join("absent"),
             device: None,
         };

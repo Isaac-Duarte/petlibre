@@ -179,7 +179,7 @@ pub(crate) struct RunView {
     modified: Option<f64>,
     /// The tails of the record's captures that lie inside `private/captures/`.
     capture_tails: Vec<TailView>,
-    /// `NAME-servers.log`: what `wellfed-local` and its helpers printed.
+    /// `NAME-servers.log`: what `wellfed-stock` and its helpers printed.
     servers: Option<TailView>,
 }
 

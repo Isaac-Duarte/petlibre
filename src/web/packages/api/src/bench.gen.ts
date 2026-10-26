@@ -314,7 +314,7 @@ export type RunView = { modified: number | null,
  */
 capture_tails: Array<TailView>, 
 /**
- * `NAME-servers.log`: what `wellfed-local` and its helpers printed.
+ * `NAME-servers.log`: what `wellfed-stock` and its helpers printed.
  */
 servers: TailView | null, name: string, 
 /**

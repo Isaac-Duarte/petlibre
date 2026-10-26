@@ -12,7 +12,7 @@ clap.workspace = true
 wellfed-bench = { path = "../wellfed-bench" }
 wellfed-core.workspace = true
 wellfed-formats.workspace = true
-wellfed-local-api = { path = "../wellfed-local-api" }
+wellfed-stock-api = { path = "../wellfed-stock-api" }
 wellfed-model.workspace = true
 wellfed-relay = { path = "../wellfed-relay" }
 rustix = { version = "1", features = ["fs", "process"] }

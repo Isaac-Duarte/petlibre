@@ -1,4 +1,4 @@
-//! `wellfed-local serve`'s loopback HTTP API as the bench tools speak it:
+//! `wellfed-stock serve`'s loopback HTTP API as the bench tools speak it:
 //! the integration suite drives it, and the bench page reads its status.
 //!
 //! Both clients make the same exchange, so it lives here once; the server
@@ -14,7 +14,7 @@ use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::time::Duration;
 
-use wellfed_formats::local::ServerConfig;
+use wellfed_formats::stock::ServerConfig;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -53,13 +53,13 @@ pub enum Auth {
 }
 
 #[derive(Debug, Clone)]
-pub struct LocalApi {
+pub struct StockApi {
     pub address: SocketAddr,
     token: String,
     timeout: Duration,
 }
 
-impl LocalApi {
+impl StockApi {
     pub fn new(config: &ServerConfig, timeout: Duration) -> Self {
         Self {
             address: config.http_listen,

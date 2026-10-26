@@ -1,5 +1,6 @@
-//! The serving binary's source identity, which the status document reports.
-//! The binary records it at build time; trial dispatch requires a clean commit.
+//! The serving binary's source identity, which the status document and
+//! `/health` report. `build.rs` records it; trial dispatch requires a clean
+//! commit of every build input.
 use serde::Serialize;
 
 #[derive(Clone, Copy, Debug, Serialize)]
@@ -13,3 +14,12 @@ impl Build {
         self.clean && self.commit != "unknown"
     }
 }
+
+/// This build's identity, as `build.rs` recorded it.
+pub const BUILD: Build = Build {
+    commit: env!("WELLFED_BUILD_COMMIT"),
+    clean: matches!(env!("WELLFED_BUILD_CLEAN").as_bytes(), b"true"),
+};
+
+/// Test-only escape hatch: integration tests run from uncommitted trees.
+pub const ALLOW_UNREVIEWED_ENV: &str = "WELLFED_ALLOW_UNREVIEWED_OTA_BUILD";

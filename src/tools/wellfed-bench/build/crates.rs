@@ -8,7 +8,7 @@ const CRATES: &[&str] = &[
     "../wellfed-itest",
     "../wellfed-relay",
     "../wellfed-formats",
-    "../wellfed-local-api",
+    "../wellfed-stock-api",
     "../wellfed-dashboard",
     "../wellfed-build",
     "../wellfed-flash",

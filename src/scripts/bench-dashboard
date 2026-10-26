@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Serve the read-only bench page for this checkout, attached to whatever is
 # running: a bench command or integration run in another terminal, and a
-# wellfed-local serve if one is up. Builds the page and binary when needed.
+# wellfed-stock serve if one is up. Builds the page and binary when needed.
 #
 #   src/scripts/bench-dashboard                     # http://127.0.0.1:8780/
 #   src/scripts/bench-dashboard --ui-port 8781

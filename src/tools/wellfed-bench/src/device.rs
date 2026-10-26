@@ -342,7 +342,7 @@ pub enum Rebuffed {
     Silent,
 }
 
-/// The parts of `wellfed-local`'s config the device client uses.
+/// The parts of `wellfed-stock`'s config the device client uses.
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct Hotspot {
     #[serde(default)]
@@ -359,7 +359,7 @@ fn utc() -> String {
 }
 
 /// One `ip -j neigh` entry; incomplete entries have no `lladdr`. The same
-/// lookup as `wellfed-local`'s `neighbour::discover`.
+/// lookup as `wellfed-stock`'s `neighbour::discover`.
 #[derive(Deserialize)]
 struct Neighbour {
     dst: String,

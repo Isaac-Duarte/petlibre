@@ -18,7 +18,7 @@ pub const ORIGINAL_VERSION: &str = "1.1.15";
 /// `%d.%d.%d` and refuses its own version; nothing reports it back.
 pub const REPLACEMENT_VERSION: &str = "2.0.0";
 
-pub use wellfed_formats::local::{
+pub use wellfed_formats::stock::{
     TrialInput as Input, TrialPhase as Phase, TrialRecord as Record,
 };
 

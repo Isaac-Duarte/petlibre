@@ -22,7 +22,6 @@ The update-signing tests of `wellfed-build` and `wellfed-bench` freeze the pinne
 | `private/fixtures/baseline.bin` | Exact historical 8 MiB research baseline required by pinned recovery checks |
 | `private/fixtures/current-read/flash-read.bin` | Recorded current full snapshot the first-boot mapping test places the build into |
 | `private/fixtures/rom-inspection/report.json` | Finalized ROM report; linked serial evidence must remain beside it |
-| `private/firmware/experiments/` | Explicitly prepared stock-version OTA pairs that `wellfed-local`'s pinned-image test reads |
 
 The generic locations replace dated workstation paths. They do **not** make the exact research-unit recovery profile portable. No other contributor is expected to possess its baseline or historical artifact. Keep each capture/report bundle intact and supply explicit report arguments when required; two independently captured bundles should remain in separate subdirectories with their companion files. Generic fixture paths are test conventions, not proof of valid session provenance.
 

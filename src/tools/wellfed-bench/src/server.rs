@@ -1,9 +1,9 @@
-//! What the bench reads from and sends to `wellfed-local`: its status
+//! What the bench reads from and sends to `wellfed-stock`: its status
 //! document (`GET /api/status`) and the stock trial bodies. The server
 //! relays no requests (they go over the device API, `crate::device`) and
 //! hears nothing from the replacement firmware, which speaks no MQTT.
 //!
-//! The document's type is `wellfed-local`'s own (`wellfed_formats::local`),
+//! The document's type is `wellfed-stock`'s own (`wellfed_formats::stock`),
 //! and strict where the server is: a trial record with a field or phase the
 //! bench does not know fails the whole read, which stops the wait that
 //! needed it rather than guessing. Both are built from this repository, so
@@ -12,18 +12,18 @@
 use std::fmt::Display;
 use std::ops::Deref;
 
-use wellfed_formats::local::TrialRecord;
+use wellfed_formats::stock::TrialRecord;
 use wellfed_model::WifiSource;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// A `wellfed-local` status document.
+/// A `wellfed-stock` status document.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(transparent)]
-pub struct LocalStatus(pub wellfed_formats::local::LocalStatus);
+pub struct StockStatus(pub wellfed_formats::stock::StockStatus);
 
-impl Deref for LocalStatus {
-    type Target = wellfed_formats::local::LocalStatus;
+impl Deref for StockStatus {
+    type Target = wellfed_formats::stock::StockStatus;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -100,7 +100,7 @@ fn shown<T: Display>(value: &Option<T>) -> String {
         .map_or_else(|| "?".into(), ToString::to_string)
 }
 
-impl LocalStatus {
+impl StockStatus {
     /// Stock 1.1.15 is online, freshly reported and on its adapter: what the
     /// server's trial gate also requires before asking it to install.
     pub fn stock_ready(&self) -> Result<String, StockNotReady> {

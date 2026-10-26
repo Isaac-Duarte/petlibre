@@ -3,7 +3,7 @@
 
 use std::{fs, process::Command};
 
-use wellfed_local::config;
+use wellfed_stock::config;
 use tempfile::TempDir;
 
 fn inputs(dir: &TempDir) -> Vec<String> {
@@ -32,7 +32,7 @@ fn inputs(dir: &TempDir) -> Vec<String> {
 }
 
 fn init(args: &[String]) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_wellfed-local"))
+    Command::new(env!("CARGO_BIN_EXE_wellfed-stock"))
         .args(args)
         .output()
         .unwrap()

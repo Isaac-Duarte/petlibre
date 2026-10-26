@@ -19,7 +19,7 @@ Non-goals for FW08:
 **Decision:** the firmware is an MQTT 3.1.1 client of the server's embedded broker. It opens the connection outbound and listens on no port.
 
 Why this rather than an HTTP server on the feeder:
-- The server already runs an authenticated, topic-scoped broker for stock firmware ([local server](../development/local-server.md)). FW08 adds a second, separate role to it instead of a second protocol.
+- The server already runs an authenticated, topic-scoped broker for stock firmware ([local server](../development/stock-server.md)). FW08 adds a second, separate role to it instead of a second protocol.
 - With no listening socket on the feeder, nothing on the network can make it accept a new connection, and the feeder needs no request router of its own.
 - The last will gives the server "went offline" without polling. The broker has retained messages disabled (for the stock role too), so the server keeps the latest health in memory.
 - The broker already speaks MQTT 3.1.1; it translates the stock device's legacy 3.1 CONNECT for it.
@@ -119,7 +119,7 @@ The bench host's firewall needs one more input rule for the broker port from the
 
 Server-to-firmware requests can carry an HMAC so that a party with only the Wi-Fi and broker passwords can't send them. This section is the wire format and the server's part.
 
-- **Key:** 32 random bytes, shared by the server configuration (`firmware.request_key`) and the firmware build's credential file (`request_key`), each as 64 lowercase hex characters. `wellfed-local firmware-request-key` creates it; see the [local server](../development/local-server.md#request-signing).
+- **Key:** 32 random bytes, shared by the server configuration (`firmware.request_key`) and the firmware build's credential file (`request_key`), each as 64 lowercase hex characters. `wellfed-local firmware-request-key` creates it; see the [local server](../development/stock-server.md#request-signing).
 - **Nonce:** health from a firmware built with a key has `"nonce":"<16 lowercase hex>"`, a fresh 64-bit value for each MQTT session. Firmware without a key sends no `nonce`.
 - **Signed request:** the normal request with `nonce` and `seq` appended and the MAC as the last field, compact JSON with no whitespace:
 

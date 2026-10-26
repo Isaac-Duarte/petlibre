@@ -67,4 +67,4 @@ It covers command IDs, sensor faults, blocked outlet, missing and bouncing feedb
 
 The repository is self-contained: SDK/toolchain copies and fixtures resolve locally. Original research documents/tools/history are retained in ignored `private/research-archive/`; see [provenance](provenance.md). Historical evidence paths are records, not instructions to access another checkout.
 
-The rules the code follows are in the [Rust standard](rust.md) and the [TypeScript standard](typescript.md). See [local server](local-server.md), [SDK builds](firmware-builds.md), [optional fixtures](fixtures.md), and [contribution guidance](../../CONTRIBUTING.md).
+The rules the code follows are in the [Rust standard](rust.md) and the [TypeScript standard](typescript.md). See [stock server](stock-server.md), [SDK builds](firmware-builds.md), [optional fixtures](fixtures.md), and [contribution guidance](../../CONTRIBUTING.md).

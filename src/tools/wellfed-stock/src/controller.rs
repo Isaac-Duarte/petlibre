@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
-use wellfed_formats::local::LocalStatus;
+use wellfed_formats::stock::StockStatus;
 
 use crate::{
     build_info::Build,
@@ -67,7 +67,7 @@ pub const LEDGER_FILE: &str = "stock-ledger.json";
 pub const RETIRED_LEDGER_FILE: &str = "feed-ledger.json";
 
 /// The status document `GET /api/status` serves.
-pub type Status = LocalStatus;
+pub type Status = StockStatus;
 
 fn reported_version(status: &Status) -> Option<&str> {
     status

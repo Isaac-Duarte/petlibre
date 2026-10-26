@@ -22,7 +22,7 @@ The owner's target (Oct 23, 2026): the Petlibro experience, fully open and usabl
 | Clock validity | Valid until its error could exceed a bound | A fixed week is arbitrary; never expiring lets meals drift with no warning |
 | On-device history | At least 7 days of events | — |
 | Code layout | SDK mechanisms; a `wellfed-feeder` policy crate; thin firmware per model | Policy in the SDK would burden other device types; policy in each firmware gets copied per model |
-| Server | A new `wellfed-server` crate | Growing `wellfed-local` would mix bench shortcuts and the stock protocol into the owners' product |
+| Server | A new `wellfed-server` crate | Growing the bench's server (now `wellfed-stock`'s binary) would mix bench shortcuts and the stock protocol into the owners' product |
 | Stock firmware | Used only to install and roll back | Ongoing stock control means two device protocols forever |
 | Several feeders | The app manages each one directly | Requiring a server for a second feeder weakens the no-server promise |
 | App | An Android app in Flutter over a sans-IO Rust core. It talks to feeders directly and to a server when one exists | Tauri: one UI, but mobile BLE and Wi-Fi need native plugins and the app feels like a web page. Native Swift/Kotlin: two or three UIs for one maintainer. iOS and a desktop app: not needed now |
@@ -57,7 +57,7 @@ In code:
 - **`wellfed-feeder-runtime` (`src/product/wellfed-feeder-runtime`):** the product's stores on the SDK runtime: the settings writer and its mailboxes. Every PLAF103 firmware links it, so a firmware swap keeps the owner's data.
 - **Firmware (`src/firmware/wellfed/feeder`):** the PLAF103's wiring: its `Platform` (pins, drivers, sockets, mailboxes) and the feeding owner, stepped in one loop task before the product's pass. Another model gets its own thin firmware. It exists since FP11; the feeding owner joined the loop on October 25 (FW16).
 - **`wellfed-client`:** a sans-IO Rust core. It turns bytes in into bytes out (the Noise handshake, pairing, invites, requests, event-cursor sync and the installer's steps) and never opens a socket or a radio. The server drives it with tokio, the Android app with Dart IO, and WASM can run it later.
-- **`wellfed-server`:** the owner's server. Shared pieces (the Noise client, the request types, the stock install path) come out of `wellfed-local` and `wellfed-bench` into single-purpose libraries, signing moves to `wellfed-build`, and `wellfed-local` is then deleted ([tools roadmap](../development/tools-roadmap.md)).
+- **`wellfed-server`:** the owner's server. Shared pieces live in single-purpose libraries it links: the Noise client and the request types in `wellfed-client` and `wellfed-model`, the stock protocol in `wellfed-stock`, with signing in `wellfed-build`; the bench's old catch-all server was deleted on October 26, 2026 ([tools roadmap](../development/tools-roadmap.md)).
 
 ## Frontends
 

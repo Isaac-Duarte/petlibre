@@ -83,9 +83,9 @@ pub enum Error {
     Serial(#[from] serialport::Error),
     #[error(transparent)]
     Relay(#[from] wellfed_relay::Error),
-    /// `wellfed-local`'s loopback API refused or did not answer.
+    /// `wellfed-stock`'s loopback API refused or did not answer.
     #[error(transparent)]
-    Api(#[from] wellfed_local_api::ApiError),
+    Api(#[from] wellfed_stock_api::ApiError),
     /// A progress or evidence file could not be written or read.
     #[error(transparent)]
     Formats(#[from] wellfed_formats::Error),

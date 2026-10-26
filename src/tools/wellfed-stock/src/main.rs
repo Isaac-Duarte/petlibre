@@ -1,12 +1,11 @@
-//! `wellfed-local` command line.
+//! `wellfed-stock` command line: the bench's server for stock 1.1.15.
 //!
 //! `serve` runs the server: the MQTT broker stock connects to, as a child
 //! process of this binary, the stock install path, and the loopback HTTP
-//! API. Most
-//! other subcommands are clients of that API and read the bearer token from
-//! the private configuration, so the token never appears in shell arguments.
-//! Starting the service redirects no traffic; `network apply` is the separate,
-//! privileged step that does.
+//! API. Most other subcommands are clients of that API and read the bearer
+//! token from the private configuration, so the token never appears in
+//! shell arguments. Starting the service redirects no traffic; `network
+//! apply` is the separate, privileged step that does.
 
 #![forbid(unsafe_code)]
 #![warn(clippy::print_stdout)]
@@ -15,15 +14,13 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
-use wellfed_local::{
+use wellfed_stock::{
     api::{self, ApiState},
     build_info::{self, BUILD},
-    config, neighbour, network,
-};
-use wellfed_stock::{
+    config,
     controller::{self, Controller},
     mqtt::{self, broker},
-    ota,
+    neighbour, network, ota,
 };
 use reqwest::Method;
 use serde::Serialize;
@@ -36,7 +33,7 @@ use tracing::info;
 #[derive(Parser)]
 #[command(
     version,
-    about = "The bench's local PLAF103 server: stock's broker and its install trials"
+    about = "The bench's server for stock PLAF103 1.1.15: its broker, the image server and the install trials"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -185,7 +182,7 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "wellfed_local=info,wellfed_stock=info,mqtt5=warn".into()),
+                .unwrap_or_else(|_| "wellfed_stock=info,mqtt5=warn".into()),
         )
         .with_writer(std::io::stderr)
         .init();
@@ -476,4 +473,53 @@ async fn api_request(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::{CommandFactory, Parser};
+
+    use super::{Action, Cli};
+
+    #[test]
+    fn the_command_line_is_well_formed() {
+        Cli::command().debug_assert();
+    }
+
+    /// `wellfed-itest`'s live rig spawns this binary with exactly these
+    /// arguments; it links nothing of this crate, so this is where a
+    /// renamed command or flag would surface.
+    #[test]
+    fn the_suite_invocations_parse() {
+        let serve = ["wellfed-stock", "serve", "--config", "private/server.json"];
+        assert!(matches!(
+            Cli::try_parse_from(serve).unwrap().command,
+            Action::Serve {
+                enable_ota_trial: false,
+                ..
+            }
+        ));
+
+        let trial = [&serve[..], &["--enable-ota-trial"]].concat();
+        assert!(matches!(
+            Cli::try_parse_from(trial).unwrap().command,
+            Action::Serve {
+                enable_ota_trial: true,
+                ..
+            }
+        ));
+
+        let images = [
+            "wellfed-stock",
+            "ota-images",
+            "--config",
+            "private/server.json",
+            "--directory",
+            "private/verification/review",
+        ];
+        assert!(matches!(
+            Cli::try_parse_from(images).unwrap().command,
+            Action::OtaImages { peer: None, .. }
+        ));
+    }
 }

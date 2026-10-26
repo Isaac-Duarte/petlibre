@@ -1,4 +1,4 @@
-//! `/api/feeder`: stock as `wellfed-local serve` last heard it.
+//! `/api/feeder`: stock as `wellfed-stock serve` last heard it.
 //!
 //! The page asks the server, never the feeder: one `GET /api/status` on the
 //! server's loopback API, with the token from `private/server.json`. That
@@ -13,9 +13,9 @@ use std::time::Duration;
 use serde::Serialize;
 use serde_json::Value;
 
-use wellfed_formats::local::LocalStatus;
-use wellfed_formats::local::{SERVER_CONFIG, ServerConfig};
-use wellfed_local_api::{Auth, LocalApi};
+use wellfed_formats::stock::StockStatus;
+use wellfed_formats::stock::{SERVER_CONFIG, ServerConfig};
+use wellfed_stock_api::{Auth, StockApi};
 
 /// The page polls; a slow server must not hold a worker for long.
 const TIMEOUT: Duration = Duration::from_secs(2);
@@ -49,10 +49,10 @@ pub(crate) fn feeder(root: &Path) -> FeederView {
             };
         }
     };
-    let api = LocalApi::new(&config, TIMEOUT);
+    let api = StockApi::new(&config, TIMEOUT);
     let address = api.address.to_string();
 
-    match api.get::<LocalStatus>("/api/status", Auth::Token) {
+    match api.get::<StockStatus>("/api/status", Auth::Token) {
         Ok(status) => view(address, &status),
         Err(error) => FeederView::Down {
             address,
@@ -61,7 +61,7 @@ pub(crate) fn feeder(root: &Path) -> FeederView {
     }
 }
 
-fn view(address: String, status: &LocalStatus) -> FeederView {
+fn view(address: String, status: &StockStatus) -> FeederView {
     FeederView::Up {
         address,
         broker_connected: status.broker_connected,
@@ -121,7 +121,7 @@ mod tests {
 
     #[test]
     fn status_shows_stock() {
-        let status: LocalStatus = serde_json::from_value(json!({
+        let status: StockStatus = serde_json::from_value(json!({
             "broker_connected": true,
             "device_online": true,
             "attributes": { "softwareVersion": "1.1.15", "powerType": 1 },

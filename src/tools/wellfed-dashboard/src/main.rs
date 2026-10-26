@@ -1,6 +1,6 @@
 //! `wellfed-dashboard`: serve the bench's read-only page until Ctrl+C,
 //! attached to whatever runs: a bench command or integration run in another
-//! terminal, and a `wellfed-local serve` if one is up.
+//! terminal, and a `wellfed-stock serve` if one is up.
 //!
 //! It links no relay driver and no flash client, so it can run beside any
 //! bench operation without touching relays, the UART or flash.
@@ -23,7 +23,7 @@ static STOP: AtomicBool = AtomicBool::new(false);
 #[command(
     version,
     about = "Serve the bench's read-only progress page",
-    long_about = "Serve the bench's read-only progress page: the feeder as wellfed-local last \
+    long_about = "Serve the bench's read-only progress page: the feeder as wellfed-stock last \
         heard it, bench progress, the integration suite's runs and the evidence sessions. It \
         reads private/ under --root and never touches relays, the UART or flash."
 )]

@@ -21,7 +21,7 @@ use crate::{
 /// Crates linked into, or testing, every firmware build: the whole SDK and the
 /// product crates it links (the device protocol and the product's stores). The
 /// selected firmware's directory joins them; other firmwares and host tools
-/// such as wellfed-local and wellfed-flash never change a build's identity.
+/// such as wellfed-stock and wellfed-flash never change a build's identity.
 const SDK_CRATES: [&str; 2] = ["src/sdk", "src/product"];
 
 /// The builder's own sources (its fixture tests are not), plus the

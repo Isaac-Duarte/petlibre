@@ -2,7 +2,7 @@
 
 mod common;
 
-use wellfed_local::network;
+use wellfed_stock::network;
 
 #[test]
 fn routing_is_scoped_to_device_mac_and_hotspot_and_blocks_its_wan_only() {
@@ -14,6 +14,9 @@ fn routing_is_scoped_to_device_mac_and_hotspot_and_blocks_its_wan_only() {
     assert!(rules.contains("dnat ip to 10.42.103.1:1883"));
     // Stock downloads updates from the image server on its fixed port.
     assert!(rules.contains("ip daddr 10.42.103.1 tcp dport 8088 counter accept"));
+    // The table and the rule tag are what earlier releases installed on
+    // bench hosts, so `remove` still finds those rules.
+    assert!(rules.starts_with("table inet wellfed_local {"));
     assert_eq!(
         rules.matches("comment \"wellfed-local-broker\"").count(),
         2

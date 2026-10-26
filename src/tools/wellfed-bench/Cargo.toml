@@ -22,7 +22,7 @@ wellfed-dashboard = { path = "../wellfed-dashboard", optional = true }
 # goes through the wellfed-flash binary as a child process.
 wellfed-flash = { path = "../wellfed-flash" }
 wellfed-formats = { workspace = true, features = ["clap"] }
-wellfed-local-api = { path = "../wellfed-local-api" }
+wellfed-stock-api = { path = "../wellfed-stock-api" }
 wellfed-model.workspace = true
 wellfed-proto.workspace = true
 wellfed-relay = { path = "../wellfed-relay" }

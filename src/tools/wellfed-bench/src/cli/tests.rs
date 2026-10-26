@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn ota_takes_its_flags_and_the_global_local_bin() {
+fn ota_takes_its_flags_and_the_global_stock_bin() {
     let cli = Cli::try_parse_from([
         "wellfed-bench",
         "ota",
@@ -12,8 +12,8 @@ fn ota_takes_its_flags_and_the_global_local_bin() {
         "14",
         "--minutes",
         "5",
-        "--local-bin",
-        "bin/wellfed-local",
+        "--stock-bin",
+        "bin/wellfed-stock",
     ])
     .unwrap();
 
@@ -23,7 +23,7 @@ fn ota_takes_its_flags_and_the_global_local_bin() {
     assert_eq!((args.version, args.minutes), (Some(14), 5.0));
     assert!(!args.attended_motion && !args.build);
     assert_eq!(args.config, PathBuf::from("private/server.json"));
-    assert_eq!(cli.local_bin, Some(PathBuf::from("bin/wellfed-local")));
+    assert_eq!(cli.stock_bin, Some(PathBuf::from("bin/wellfed-stock")));
 }
 
 #[test]

@@ -6,7 +6,7 @@ Findings apply to the inspected PLAF103 stock **1.1.15** image and research unit
 
 The observed feeder uses plaintext MQTT on TCP 1883 with device-specific credentials. Its initial CONNECT uses legacy MQTT 3.1 (`MQIsdp`); the server normalizes that CONNECT for an MQTT 3.1.1 broker and forces a clean session. It preserves the credentials, client identifier, keepalive, and later packets. Topic access stays within the configured device namespace.
 
-Topics have the form `dl/PLAF103/<device-id>/<group>/<event>/post` or `/sub`. The local server handles startup, attributes, heartbeat, clock, binding, captured plan replies, and manual feeding. Consult the Rust protocol tests for complete synthetic wire examples. The API is described in [local-server setup](../../../development/local-server.md).
+Topics have the form `dl/PLAF103/<device-id>/<group>/<event>/post` or `/sub`. The stock server handles startup, attributes, heartbeat, clock, binding and captured plan replies (its manual feeding was removed on October 24, 2026). Consult the Rust protocol tests for complete synthetic wire examples. The API is described in [stock server setup](../../../development/stock-server.md).
 
 The broker is authenticated, has no upstream bridge, and uses nonpersistent sessions. Manual feed commands have durable caller UUIDs, QoS 0, and no retained messages. Replies must correlate to the request ID. An uncertain operation is not automatically republished. Stock firmware's limited raw-payload/result caching is not a substitute for durable no-replay handling.
 

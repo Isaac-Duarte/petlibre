@@ -13,8 +13,10 @@ use std::process::Command;
 use anyhow::{Context, Result, ensure};
 use serde::Deserialize;
 
-use wellfed_stock::config::Config;
+use crate::config::Config;
 
+// The names are what `apply` has already installed on bench hosts, under
+// the server's earlier name, so `remove` must keep matching them exactly.
 const TABLE: &str = "wellfed_local";
 const COMMENT: &str = "wellfed-local-broker";
 
@@ -106,7 +108,7 @@ pub fn rules(config: &Config) -> Result<String> {
 insert rule inet computer_security input iifname "{interface}" ether saddr {mac} ip daddr {ip} tcp dport {port} counter accept comment "{COMMENT}"
 insert rule inet computer_security input iifname "{interface}" ether saddr {mac} ip daddr {ip} tcp dport {images} counter accept comment "{COMMENT}"
 "#,
-        images = wellfed_stock::ota::image::PORT,
+        images = crate::ota::image::PORT,
     ))
 }
 

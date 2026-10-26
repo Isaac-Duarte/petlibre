@@ -62,7 +62,7 @@ pub fn payload(container: &[u8]) -> Result<&[u8]> {
 }
 
 /// Private record of the running image server, written beside the config.
-pub use wellfed_formats::local::ImageLease as Lease;
+pub use wellfed_formats::stock::ImageLease as Lease;
 
 /// The lease, only when its file parses and the listener accepts TCP.
 pub async fn current(config_path: &Path, host: std::net::IpAddr) -> Option<Lease> {

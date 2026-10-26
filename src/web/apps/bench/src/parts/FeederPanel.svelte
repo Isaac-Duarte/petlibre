@@ -10,14 +10,14 @@
 
 <Panel title="Feeder">
   {#snippet meta()}
-    {#if feeder?.server === "up"}from wellfed-local on <code>{feeder.address}</code>{/if}
+    {#if feeder?.server === "up"}from wellfed-stock on <code>{feeder.address}</code>{/if}
   {/snippet}
 
   {#if !feeder}
     <Empty title="Asking the local server" />
   {:else if feeder.server === "unconfigured"}
     <Empty title="No local server configured">
-      The page reads stock through <code>wellfed-local serve</code>, configured in
+      The page reads stock through <code>wellfed-stock serve</code>, configured in
       <code>{feeder.config}</code>.
     </Empty>
   {:else if feeder.server === "down"}
@@ -29,7 +29,7 @@
       Nothing answers on <code>{feeder.address}</code>. An integration run starts its own server; to watch stock outside
       one:
     </p>
-    <Command command="wellfed-local serve --config private/server.json" />
+    <Command command="wellfed-stock serve --config private/server.json" />
   {:else}
     <div class="state">
       <LiveDot tone={feeder.stock_online ? "pass" : "muted"} pulse={feeder.stock_online} />

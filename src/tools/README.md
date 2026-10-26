@@ -2,7 +2,7 @@
 
 Every host tool is a Rust crate in the workspace. Build them with `cargo build --locked --release` and run the binaries from `target/release/` at the repository root (or pass `--root` where a tool takes one). `make check` runs their tests; the evidence tests that need ignored private inputs run under `make check-fixtures` ([fixtures](../../docs/development/fixtures.md)).
 
-Where each tool is going (`wellfed-local` split up and retired) is in the [tools roadmap](../../docs/development/tools-roadmap.md).
+Where each tool is going is in the [tools roadmap](../../docs/development/tools-roadmap.md).
 
 **Device** marks the tools that open a serial port or switch relays. Everything else works offline. Physical operations need an explicit task and a reviewed procedure (see [AGENTS.md](../../AGENTS.md)); a tool being here does not authorize running it against the feeder.
 
@@ -12,12 +12,11 @@ Where each tool is going (`wellfed-local` split up and retired) is in the [tools
 | [wellfed-bench](wellfed-bench) | yes | The relay bench: power and loader strap, chained `wellfed-flash` sessions, the over-the-air loop, and the read-only progress page beside a command with `--features ui` ([guide](../../docs/devices/plaf103/bench.md)); hands `itest` and `stock-ota` to `wellfed-itest` |
 | [wellfed-itest](wellfed-itest) | yes | The real-device integration suite (`wellfed-bench itest`) and the stock-to-replacement install (`stock-ota`), run on the bench's rig ([integration suite](../../docs/devices/plaf103/bench.md#integration-suite)) |
 | [wellfed-relay](wellfed-relay) | yes | The SH-UR04A relay board driver: feeder power, the loader strap and the UART lines |
-| [wellfed-local-api](wellfed-local-api) | no (network) | The blocking loopback client of `wellfed-local serve`'s HTTP API that the suite and the page share |
+| [wellfed-stock-api](wellfed-stock-api) | no (network) | The blocking loopback client of `wellfed-stock serve`'s HTTP API that the suite and the page share; links nothing of the server |
 | [wellfed-dashboard](wellfed-dashboard) | no | The bench's read-only progress page, alone (`src/scripts/bench-dashboard`) or under `wellfed-bench --ui`; links no relay or flash code |
 | [wellfed](wellfed) | yes (Bluetooth) | The owner's command line: `wellfed setup` pairs this computer with a feeder in BLE setup mode and gives it Wi-Fi ([Bluetooth](../../docs/firmware/bluetooth.md#setup-exchange)); `status`, `settings`, `lock`, `wifi`, `time`, `events`, `invite`, `join`, `clients`, `revoke`, `reboot` and `recover` run on the [device API](../../docs/firmware/device-api.md), all through `wellfed-client` and `wellfed-connect` |
 | [wellfed-feeder-sim](wellfed-feeder-sim) | no (network) | A simulated feeder serving the real [device API](../../docs/firmware/device-api.md) over TCP, running the feeder's own loop pass (API server and driver, panel, pairing, setup mode) on the product's stores, with the panel's buttons on standard input: what the server, the app and the CLI run against without hardware |
-| [wellfed-local](wellfed-local) | no (network) | The bench's local server, a binary over `wellfed-stock`: stock's broker, the stock-to-replacement install and its trial ledger ([guide](../../docs/development/local-server.md)); being retired |
-| [wellfed-stock](wellfed-stock) | no (network) | What stock 1.1.15 speaks, as far as installing from it and rolling back need: its MQTT protocol and broker, the setup frame, the image server and the install-trial ledger ([guide](../../docs/development/local-server.md)) |
+| [wellfed-stock](wellfed-stock) | no (network) | What stock 1.1.15 speaks, as far as installing from it and rolling back need: its MQTT protocol and broker, the setup frame, the image server and the install-trial ledger; its binary is the bench's stock server (`serve`, `ota-images`, the trial commands and the feeder-only `network` redirect) ([guide](../../docs/development/stock-server.md)) |
 | [wellfed-build](wellfed-build) | no | SDK firmware builds, their linked-image audits, `review`, which freezes a reviewed build or the stock OTA for `wellfed-flash`, and `keygen`/`sign`, which sign a frozen review as an update ([firmware builds](../../docs/development/firmware-builds.md), [development updates](../../docs/development/uart-development.md)) |
 | [wellfed-audit](wellfed-audit) | no | Offline audits of finalized receive-only captures (startup, ADC samples, driver transients) and full-flash backup comparison |
 | [wellfed-emu](wellfed-emu) | no | The vendor factory loader (mapping and bank selection) and UART flash helper, executed under Unicorn on supplied state: the review's mapping check, the OTA marker fixtures, and `wellfed-flash`'s emulated sessions |

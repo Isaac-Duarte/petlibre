@@ -61,7 +61,7 @@ wellfed-server ─► wellfed-service ─► wellfed-store ─► wellfed-api* �
 - **`wellfed-feeder-sim`** runs `wellfed-feeder`'s own API server, panel and pairing policy, and its stores on a flash image laid out like the feeder's storage region, so service, end-to-end and web tests meet the feeder's behavior rather than a mock of it. Its standard input stands in for the panel's buttons; a feed is refused until the feeding owner lands.
 - **`wellfed-api`** builds for every target, including the app's Android library, so it carries no server dependencies.
 - **`wellfed-service`** never sees an HTTP type, and **`wellfed-server`** never sees SQL. A handler parses, authorizes, calls one service method and maps the result.
-- **`wellfed-local`** is retired in stages ([tools roadmap](../development/tools-roadmap.md)): its stock protocol moved to the `wellfed-stock` library on October 25, and its installer steps go to `wellfed-client`; its replacement path to `wellfed-client` and the owner's `wellfed` CLI. Its MQTT request path went with FW47 and its offers with the device API's updates (October 25); the replacement's side of the broker is deleted, and the broker stays only for stock.
+- **`wellfed-stock`** holds stock 1.1.15's protocol, and its binary is the bench's server for stock ([tools roadmap](../development/tools-roadmap.md)). The catch-all bench server it came out of was deleted on October 26, 2026: the replacement's requests and offers go over the device API, through `wellfed-client` and the owner's `wellfed` CLI, and the broker stays only for stock. The installer's steps (FW42) and the rollback to stock (FW43) go to `wellfed-client` when those cards land.
 - **Workspace members** gain `src/client/*` and `src/server/*`. Shared versions stay in `[workspace.dependencies]`.
 
 ## Device protocol
@@ -216,7 +216,7 @@ Pinned in `[workspace.dependencies]`; a new dependency needs a reason in its pul
 | Crypto | a `no_std` Noise implementation (chosen in FW45), `argon2`, `chacha20poly1305` (the Noise cipher, reused for keys at rest), `sha2`, `getrandom` |
 | OpenAPI and types | `utoipa`, `utoipa-axum`, `flutter_rust_bridge`; `ts-rs` (already) stays for the bench's views only |
 | Discovery | `mdns-sd` |
-| Releases | `reqwest` with rustls (already in `wellfed-local`), `ed25519-dalek` (already) |
+| Releases | `reqwest` with rustls (`reqwest` already in `wellfed-stock`), `ed25519-dalek` (already) |
 | Observability | `tracing` and `tracing-subscriber` (already) |
 | Tests | `insta` (snapshots), `proptest` (codec round trips), `tower::ServiceExt` (in-process requests), `sqlx::test` |
 | Hygiene | `cargo-deny` (licenses, advisories, duplicates) and `cargo-nextest`, both in place ([Rust standard](../development/rust.md)) |

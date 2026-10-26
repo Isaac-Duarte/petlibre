@@ -1,4 +1,4 @@
-//! The live [`Rig`]: the bench's real hotspot, `wellfed-local` children,
+//! The live [`Rig`]: the bench's real hotspot, `wellfed-stock` children,
 //! UART captures, device API sessions as the owner's key (requests, and the
 //! updates it pushes on a thread of its own) and, with `--power`, the
 //! feeder supply relay.
@@ -30,15 +30,15 @@ use serde::de::IgnoredAny;
 use wellfed_bench::commands::Bench;
 use wellfed_bench::commands::ota::{self, OtaArgs, Staged, Target, Timing};
 use wellfed_bench::device::{Answer, Ask, Device, Intruder, Rebuffed};
-use wellfed_bench::server::{LocalStatus, TrialAnswer, TrialRequest, TrialResolve};
+use wellfed_bench::server::{StockStatus, TrialAnswer, TrialRequest, TrialResolve};
 use wellfed_bench::suite::ItestArgs;
 use wellfed_bench::tools::{Capture, InstallJob, Installing};
 use wellfed_bench::{Error, Result, require, say};
 use wellfed_formats::bench::progress::StepState;
 use wellfed_formats::bench::{CAPTURES, VERIFICATION};
-use wellfed_formats::local::{ImageLease, ServerConfig};
-use wellfed_local_api::{Auth, LocalApi};
+use wellfed_formats::stock::{ImageLease, ServerConfig};
 use wellfed_relay::{POWER, STRAP};
+use wellfed_stock_api::{Auth, StockApi};
 
 use super::{Fault, Rig, Server};
 
@@ -55,7 +55,7 @@ struct Hotspot {
     connection: String,
 }
 
-/// The fixed trial port stock's URL names (`wellfed-local` `ota::image::PORT`).
+/// The fixed trial port stock's URL names (`wellfed_stock::ota::image::PORT`).
 const IMAGE_PORT: u16 = 8088;
 
 #[derive(Default)]
@@ -69,7 +69,7 @@ pub(super) struct LiveRig<'b> {
     name: String,
     started: Instant,
     config_arg: String,
-    api: LocalApi,
+    api: StockApi,
     device: Device,
     /// The owner key file and server config every push uses.
     keys: PathBuf,
@@ -85,7 +85,7 @@ pub(super) struct LiveRig<'b> {
     power: bool,
     power_was_on: Option<bool>,
     children: Children,
-    local_bin: PathBuf,
+    stock_bin: PathBuf,
     capture: Option<Box<dyn Capture>>,
     /// The segment being read, by index, and how far into it.
     reading: (usize, u64),
@@ -98,7 +98,7 @@ pub(super) struct LiveRig<'b> {
 impl<'b> LiveRig<'b> {
     /// Check everything that can refuse before the bench changes: configs,
     /// binaries, ports, unused evidence names and no `serve` running.
-    pub(super) fn open(bench: &'b mut Bench, args: &ItestArgs, local_bin: PathBuf) -> Result<Self> {
+    pub(super) fn open(bench: &'b mut Bench, args: &ItestArgs, stock_bin: PathBuf) -> Result<Self> {
         let root = bench.root.clone();
         let name = args.name().to_string();
         let config: ServerConfig = wellfed_bench::load(&root, &args.config)?;
@@ -112,7 +112,7 @@ impl<'b> LiveRig<'b> {
             name: name.clone(),
             started: Instant::now(),
             config_arg: args.config.display().to_string(),
-            api: LocalApi::new(&config, HTTP_TIMEOUT),
+            api: StockApi::new(&config, HTTP_TIMEOUT),
             device: Device::open(&root, &args.keys, &args.config)?,
             keys: args.keys.clone(),
             config: args.config.clone(),
@@ -128,7 +128,7 @@ impl<'b> LiveRig<'b> {
             reading: (0, 0),
             captures: Vec::new(),
             server_log: root.join(VERIFICATION).join(format!("{name}-servers.log")),
-            local_bin,
+            stock_bin,
             restored: false,
             bench,
         };
@@ -138,10 +138,10 @@ impl<'b> LiveRig<'b> {
             format!("UART port {} is missing", rig.bench.config.uart_port),
         )?;
         require(
-            rig.local_bin().is_file(),
+            rig.stock_bin().is_file(),
             format!(
-                "{} not found; cargo build --release -p wellfed-local",
-                rig.local_bin().display()
+                "{} not found; cargo build --release -p wellfed-stock",
+                rig.stock_bin().display()
             ),
         )?;
         rig.bench.fresh(&rig.server_log)?;
@@ -192,8 +192,8 @@ impl<'b> LiveRig<'b> {
         self.server(server)
     }
 
-    fn local_bin(&self) -> PathBuf {
-        self.local_bin.clone()
+    fn stock_bin(&self) -> PathBuf {
+        self.stock_bin.clone()
     }
 
     fn segment_path(&self, n: u32) -> PathBuf {
@@ -266,8 +266,8 @@ impl<'b> LiveRig<'b> {
         if trial {
             args.push("--enable-ota-trial");
         }
-        let mut child = self.spawn(&self.local_bin(), &args)?;
-        let ready = self.until_ready(&mut child, "wellfed-local serve", || {
+        let mut child = self.spawn(&self.stock_bin(), &args)?;
+        let ready = self.until_ready(&mut child, "wellfed-stock serve", || {
             self.api
                 .get::<IgnoredAny>("/health", Auth::Anonymous)
                 .is_ok()
@@ -355,8 +355,8 @@ impl Rig for LiveRig<'_> {
     fn server(&mut self, server: Server) -> Result<()> {
         self.stop_servers();
         let label = match &server {
-            Server::Serve => "wellfed-local serve",
-            Server::StockTrial => "wellfed-local serve --enable-ota-trial",
+            Server::Serve => "wellfed-stock serve",
+            Server::StockTrial => "wellfed-stock serve --enable-ota-trial",
         };
         self.note(&format!("  Server: {label}"));
 
@@ -426,7 +426,7 @@ impl Rig for LiveRig<'_> {
             .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
     }
 
-    fn status(&mut self) -> Result<LocalStatus> {
+    fn status(&mut self) -> Result<StockStatus> {
         Ok(self.api.get("/api/status", Auth::Token)?)
     }
 
@@ -527,9 +527,9 @@ impl Rig for LiveRig<'_> {
             "--directory",
             &review,
         ];
-        let mut child = self.spawn(&self.local_bin(), &args)?;
+        let mut child = self.spawn(&self.stock_bin(), &args)?;
         let listener = SocketAddr::new(self.mqtt.ip(), IMAGE_PORT);
-        let ready = self.until_ready(&mut child, "wellfed-local ota-images", || {
+        let ready = self.until_ready(&mut child, "wellfed-stock ota-images", || {
             read(&lease_path).is_some_and(|lease| Some(&lease) != before.as_ref())
                 && TcpStream::connect_timeout(&listener, Duration::from_millis(500)).is_ok()
         });

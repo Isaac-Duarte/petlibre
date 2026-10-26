@@ -11,7 +11,7 @@ use std::path::PathBuf;
 
 use clap::Args;
 use wellfed_formats::bench::catalog::Tier;
-use wellfed_formats::local::SERVER_CONFIG;
+use wellfed_formats::stock::SERVER_CONFIG;
 
 use crate::Result;
 use crate::commands::Bench;
@@ -26,8 +26,8 @@ pub trait Suite {
     fn stock_ota_steps(&self, args: &StockOtaArgs) -> Vec<&'static str>;
     /// Run the selected scenarios on the live bench, restore it, then print
     /// and record the verdicts.
-    fn itest(&self, bench: &mut Bench, args: &ItestArgs, local_bin: PathBuf) -> Result<u8>;
-    fn stock_ota(&self, bench: &mut Bench, args: &StockOtaArgs, local_bin: PathBuf) -> Result<u8>;
+    fn itest(&self, bench: &mut Bench, args: &ItestArgs, stock_bin: PathBuf) -> Result<u8>;
+    fn stock_ota(&self, bench: &mut Bench, args: &StockOtaArgs, stock_bin: PathBuf) -> Result<u8>;
 }
 
 #[derive(Debug, Clone, Args)]
@@ -67,7 +67,7 @@ pub struct ItestArgs {
     pub feeds: bool,
     /// Allow the round trip to stock and back (`stock-roundtrip`), installing
     /// this frozen stock review (the pinned 1.1.15). Stock reaches the server
-    /// only through `sudo wellfed-local network apply`, which the operator
+    /// only through `sudo wellfed-stock network apply`, which the operator
     /// runs; a failure on stock is a UART recovery.
     #[arg(long, value_name = "STOCK_REVIEW", requires = "power")]
     pub stock: Option<PathBuf>,
@@ -77,7 +77,7 @@ pub struct ItestArgs {
     /// With --build: build even when a review of the same sources exists.
     #[arg(long, requires = "build")]
     pub rebuild: bool,
-    /// wellfed-local config the suite serves with (root-relative); its
+    /// wellfed-stock config the suite serves with (root-relative); its
     /// hotspot interface and feeder MAC also find the feeder when mDNS does not.
     #[arg(long, default_value = SERVER_CONFIG)]
     pub config: PathBuf,
@@ -117,7 +117,7 @@ pub struct StockOtaArgs {
     /// Switch the feeder supply on if it is off (and off again afterwards).
     #[arg(long)]
     pub power: bool,
-    /// wellfed-local config the run serves with (root-relative).
+    /// wellfed-stock config the run serves with (root-relative).
     #[arg(long, default_value = SERVER_CONFIG)]
     pub config: PathBuf,
     /// Hotspot description: its NetworkManager `connection` (root-relative).

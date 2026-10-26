@@ -307,7 +307,7 @@ pub struct OtaArgs {
     /// gap-probe with --firmware feeder.
     #[arg(long, value_parser = parse_variant)]
     pub variant: Option<Variant>,
-    /// wellfed-local config (root-relative): its hotspot interface and
+    /// wellfed-stock config (root-relative): its hotspot interface and
     /// feeder MAC find the feeder for the final status check when mDNS does not.
     #[arg(long, default_value = "private/server.json")]
     pub config: PathBuf,

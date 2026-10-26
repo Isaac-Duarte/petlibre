@@ -10,7 +10,7 @@
 //! prints the reviewed UART recovery commands instead of acting on its own.
 //!
 //! Every physical action goes through [`Rig`]: the live rig owns the
-//! hotspot, the `wellfed-local` children, the UART captures, the device
+//! hotspot, the `wellfed-stock` children, the UART captures, the device
 //! API sessions (every request, the status, and the updates it pushes on a
 //! thread of its own, faults included) and (only with `--power`) the
 //! feeder supply relay, and restores what it changed when the run ends.
@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 use wellfed_bench::commands::ota::{self, Outcome, Staged, Target, Watch};
 use wellfed_bench::commands::{Bench, Image, OtaArgs};
 use wellfed_bench::device::{Answer, Ask, DeviceStatus, Intruder, Rebuffed};
-use wellfed_bench::server::{LocalStatus, TrialAnswer, TrialRequest};
+use wellfed_bench::server::{StockStatus, TrialAnswer, TrialRequest};
 use wellfed_bench::suite::{ItestArgs, StockOtaArgs, Suite};
 use wellfed_bench::{Error, Result, require, say};
 use wellfed_formats::bench::VERIFICATION;
@@ -104,7 +104,7 @@ impl Fault {
 /// What answers stock on the hotspot's broker address.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Server {
-    /// `wellfed-local serve`: broker and API.
+    /// `wellfed-stock serve`: broker and API.
     Serve,
     /// `serve --enable-ota-trial`, so it may ask stock to install an image.
     StockTrial,
@@ -143,7 +143,7 @@ trait Rig {
     /// The host's wall clock, Unix milliseconds: what a clock sync sends.
     fn unix_ms(&self) -> i64;
     /// `GET /api/status`: stock's reports and the install trials.
-    fn status(&mut self) -> Result<LocalStatus>;
+    fn status(&mut self) -> Result<StockStatus>;
     fn hotspot(&mut self, up: bool) -> Result<()>;
     /// Cut the feeder's supply, wait, restore it: a cold boot.
     fn power_cycle(&mut self) -> Result<()>;
@@ -271,7 +271,7 @@ impl<'r> Ctx<'r> {
         &mut self,
         what: &str,
         seconds: f64,
-        check: impl Fn(&LocalStatus) -> Result<String>,
+        check: impl Fn(&StockStatus) -> Result<String>,
     ) -> Result<String> {
         let deadline = self.rig.clock() + seconds;
         let mut last = String::new();
@@ -839,18 +839,18 @@ impl Suite for Linked {
         stock::steps(args)
     }
 
-    fn itest(&self, bench: &mut Bench, args: &ItestArgs, local_bin: PathBuf) -> Result<u8> {
-        itest(bench, args, local_bin)
+    fn itest(&self, bench: &mut Bench, args: &ItestArgs, stock_bin: PathBuf) -> Result<u8> {
+        itest(bench, args, stock_bin)
     }
 
-    fn stock_ota(&self, bench: &mut Bench, args: &StockOtaArgs, local_bin: PathBuf) -> Result<u8> {
-        stock::stock_ota(bench, args, local_bin)
+    fn stock_ota(&self, bench: &mut Bench, args: &StockOtaArgs, stock_bin: PathBuf) -> Result<u8> {
+        stock::stock_ota(bench, args, stock_bin)
     }
 }
 
 /// Run the selected scenarios on the live bench, restore it, then print
 /// and record the verdicts.
-fn itest(bench: &mut Bench, args: &ItestArgs, local_bin: PathBuf) -> Result<u8> {
+fn itest(bench: &mut Bench, args: &ItestArgs, stock_bin: PathBuf) -> Result<u8> {
     let scenarios = select(args)?;
     let name = args.name().to_string();
     let record = bench
@@ -860,7 +860,7 @@ fn itest(bench: &mut Bench, args: &ItestArgs, local_bin: PathBuf) -> Result<u8> 
     bench.fresh(&record)?;
     std::fs::create_dir_all(bench.root.join(VERIFICATION))?;
 
-    let mut rig = live::LiveRig::open(bench, args, local_bin)?;
+    let mut rig = live::LiveRig::open(bench, args, stock_bin)?;
     let (result, baseline) = match rig.start(Server::Serve) {
         Ok(()) => {
             let mut ctx = Ctx::new(&mut rig, args);

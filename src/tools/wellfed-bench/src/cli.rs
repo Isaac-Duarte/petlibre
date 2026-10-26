@@ -31,7 +31,7 @@ use crate::commands::{
 };
 use crate::suite::{ItestArgs, StockOtaArgs, Suite};
 use crate::tools::{
-    Processes, default_build_bin, default_flash_bin, default_itest_bin, default_local_bin,
+    Processes, default_build_bin, default_flash_bin, default_itest_bin, default_stock_bin,
 };
 use crate::{Error, INTERRUPTED};
 
@@ -60,9 +60,9 @@ struct Cli {
     /// The wellfed-flash binary (default: beside this one).
     #[arg(long, global = true)]
     flash_bin: Option<PathBuf>,
-    /// The wellfed-local binary for `ota` and `itest` (default: beside this one).
+    /// The wellfed-stock binary for `itest` and `stock-ota` (default: beside this one).
     #[arg(long, global = true)]
-    local_bin: Option<PathBuf>,
+    stock_bin: Option<PathBuf>,
     /// The wellfed-build binary for `--build` (default: beside this one).
     #[arg(long, global = true)]
     build_bin: Option<PathBuf>,
@@ -142,7 +142,7 @@ enum Command {
     /// replacement image and have stock install it over its own updater.
     /// Runs its own hotspot, trial-enabled server and UART capture, sends
     /// stock one request, restores the bench afterwards. Never flashes over
-    /// UART and never changes routing (`wellfed-local network apply` is the
+    /// UART and never changes routing (`wellfed-stock network apply` is the
     /// operator's).
     StockOta(StockOtaArgs),
 }
@@ -225,7 +225,7 @@ fn run(cli: Cli, suite: Option<&dyn Suite>) -> crate::Result<u8> {
     let tools = Processes::new(
         root.clone(),
         cli.flash_bin.unwrap_or_else(default_flash_bin),
-        cli.local_bin.unwrap_or_else(default_local_bin),
+        cli.stock_bin.unwrap_or_else(default_stock_bin),
         cli.build_bin.unwrap_or_else(default_build_bin),
     );
 
@@ -278,14 +278,14 @@ fn run(cli: Cli, suite: Option<&dyn Suite>) -> crate::Result<u8> {
 
     let status_dir = root.join(STATUS_DIR);
 
-    let local_bin = tools.local_bin.clone();
+    let stock_bin = tools.stock_bin.clone();
     let mut bench = open_bench(root, tools, &command, cli.off_seconds, cli.uart_when_off)?;
     // `status` only reads, so it leaves no status record behind.
     if !matches!(command, Command::Status) {
         record_start(&mut bench, &command, status_dir, suite)?;
     }
 
-    let result = dispatch(&mut bench, &command, local_bin, suite);
+    let result = dispatch(&mut bench, &command, stock_bin, suite);
     let (code, error) = match &result {
         Ok(code) => (*code, None),
         Err(error) => (1, Some(error.to_string())),
@@ -496,7 +496,7 @@ fn record_start(
 fn dispatch(
     bench: &mut Bench,
     command: &Command,
-    local_bin: PathBuf,
+    stock_bin: PathBuf,
     suite: Option<&dyn Suite>,
 ) -> crate::Result<u8> {
     let captures = bench.root.join(wellfed_formats::bench::CAPTURES);
@@ -519,8 +519,8 @@ fn dispatch(
         Command::StockPrepare(args) => bench.stock_prepare(args),
         Command::StockExecute(args) => bench.stock_execute(args),
         Command::Ota(args) => bench.ota(args),
-        Command::Itest(args) => suite_of(suite)?.itest(bench, args, local_bin),
-        Command::StockOta(args) => suite_of(suite)?.stock_ota(bench, args, local_bin),
+        Command::Itest(args) => suite_of(suite)?.itest(bench, args, stock_bin),
+        Command::StockOta(args) => suite_of(suite)?.stock_ota(bench, args, stock_bin),
     }
 }
 

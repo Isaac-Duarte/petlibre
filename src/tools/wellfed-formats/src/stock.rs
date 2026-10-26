@@ -1,4 +1,4 @@
-//! `wellfed-local`'s status document (`GET /api/status`), which the bench
+//! `wellfed-stock`'s status document (`GET /api/status`), which the bench
 //! reads to follow stock and its install trials.
 //!
 //! The trial records are the server's persisted ledger entries, so they
@@ -17,7 +17,7 @@ use uuid::Uuid;
 /// The server's view of stock.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
-pub struct LocalStatus {
+pub struct StockStatus {
     /// The feeder's MQTT session reaches the server's broker.
     pub broker_connected: bool,
     /// Stock telemetry is current.
@@ -122,11 +122,11 @@ pub enum TrialPhase {
     ReplacementHealthy,
 }
 
-/// `wellfed-local`'s config, root-relative: the suite serves with it and the
+/// `wellfed-stock`'s config, root-relative: the suite serves with it and the
 /// page reads the server's address and token from it.
 pub const SERVER_CONFIG: &str = "private/server.json";
 
-/// The parts of `wellfed-local`'s config the bench tools use.
+/// The parts of `wellfed-stock`'s config the bench tools use.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ServerConfig {
     pub api_token: String,
@@ -137,7 +137,7 @@ pub struct ServerConfig {
 /// The image server's lease file, beside the server config.
 pub const IMAGE_LEASE_FILE: &str = "ota-image-server.json";
 
-/// Private record of the running image server (`wellfed-local ota-images`),
+/// Private record of the running image server (`wellfed-stock ota-images`),
 /// written beside the config. Trial dispatch requires its token, an
 /// unexpired accept window and a live listener; the bench reads the token
 /// for its trial request.
@@ -173,7 +173,7 @@ mod tests {
     fn a_document_from_an_older_server_still_reads() {
         // Servers before the replacement's broker was deleted also sent its
         // health; the field is ignored.
-        let status: LocalStatus =
+        let status: StockStatus =
             serde_json::from_value(json!({"device_online": true, "replacement": null})).unwrap();
         assert!(status.device_online);
     }

@@ -23,13 +23,13 @@ pub mod device;
 pub mod flash_plan;
 pub mod hex;
 pub mod layout;
-pub mod local;
 pub mod lock;
 pub mod manifest;
 pub mod owner;
 pub mod private;
 pub mod qa;
 pub mod review;
+pub mod stock;
 pub mod transients;
 
 #[derive(Debug, thiserror::Error)]

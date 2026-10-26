@@ -26,8 +26,8 @@ What made those runs work on the bench, and must stay in any installer:
 | Mains power, idle, model and version checked first | Stock's own precheck; the server's trial gate checks the same reports |
 
 What the bench still uses and a consumer must not need:
-- `wellfed-local network apply`: a root firewall redirect of the feeder's TCP 1883, plus WAN blocking;
-- device MQTT credentials captured from traffic (`wellfed-local init`);
+- `wellfed-stock network apply`: a root firewall redirect of the feeder's TCP 1883, plus WAN blocking;
+- device MQTT credentials captured from traffic (`wellfed-stock init`);
 - a build carrying the owner's Wi-Fi credentials, broker credentials and update key.
 
 The setup protocol below removes the first two. Generic images remove the third.
@@ -68,7 +68,7 @@ The vendor app provisions a PLAF103 through the feeder's **setup access point**,
 
 **Re-provisioning guard.** While the `0x3e9000` record is non-blank and the device state is bound, types 1–3 are acknowledged but not applied. A feeder must be reset or unbound first.
 
-**Credentials.** The MQTT client ID, username and password the feeder presents are its own: they are loaded from flash at boot, not issued at bind. `BINDING` is an application-level association, which `wellfed-local` already answers by replaying the captured cloud reply. The commands stock dispatches over MQTT are `OTA_UPGRADE`, `GET_CONFIG`, `BINDING`, `UNBIND`, `DEVICE_REBOOT`, `WIFI_RECONNECT_SERVICE`, `WIFI_CHANGE_SERVICE`, `ATTR_SET_SERVICE` and `ATTR_GET_SERVICE` ([stock behavior](../devices/plaf103/stock/README.md)).
+**Credentials.** The MQTT client ID, username and password the feeder presents are its own: they are loaded from flash at boot, not issued at bind. `BINDING` is an application-level association, which `wellfed-stock` already answers by replaying the captured cloud reply. The commands stock dispatches over MQTT are `OTA_UPGRADE`, `GET_CONFIG`, `BINDING`, `UNBIND`, `DEVICE_REBOOT`, `WIFI_RECONNECT_SERVICE`, `WIFI_CHANGE_SERVICE`, `ATTR_SET_SERVICE` and `ATTR_GET_SERVICE` ([stock behavior](../devices/plaf103/stock/README.md)).
 
 **Open questions (to settle physically):**
 - Is type 3 really what goes on the wire? Reading the decompiled app depends on its integer encoding, so a capture should confirm it.
@@ -76,11 +76,11 @@ The vendor app provisions a PLAF103 through the feeder's **setup access point**,
 - How is a feeder reset or unbound? Is there a button hold? What does `UNBIND` (`0e015fd4`, not decompiled) clear?
 - Are the credentials fixed at the factory, or derived from the serial? Either way they arrive at our broker unchanged.
 
-**Planned physical test:** with stock on the feeder and in setup mode, the bench host joins its access point. It then sends one type-3 frame with `wellfed-local setup-send --ssid <hotspot> --id <digits>`, which reads the passphrase from stdin and names this server's broker (`10.42.103.1:1883`) unless `--broker` is given. The frame encoder is host-tested against the parser's length rule and field limits. If stock then joins the hotspot and connects to `wellfed-local` with its own credentials, the redirect and the captured credentials are no longer needed.
+**Planned physical test:** with stock on the feeder and in setup mode, the bench host joins its access point. It then sends one type-3 frame with `wellfed-stock setup-send --ssid <hotspot> --id <digits>`, which reads the passphrase from stdin and names this server's broker (`10.42.103.1:1883`) unless `--broker` is given. The frame encoder is host-tested against the parser's length rule and field limits. If stock then joins the hotspot and connects to `wellfed-stock serve` with its own credentials, the redirect and the captured credentials are no longer needed.
 
 ## What a self-hosted server must answer (static, partly physical)
 
-`wellfed-local` already implements the stock side (physical: stock 1.1.15 local dispensing):
+`wellfed-stock` already implements the stock side (physical: stock 1.1.15 local dispensing):
 - a broker on TCP 1883 that accepts stock's legacy MQTT 3.1 CONNECT;
 - the `dl/PLAF103/<device-id>/…/post` and `/sub` topics;
 - replies to `NTP`, `BINDING` and `GET_FEEDING_PLAN_EVENT`;
@@ -134,5 +134,5 @@ What a rollback keeps and leaves behind:
 The decisions are in [product architecture](product-architecture.md); for the installer they mean:
 - **Installer steps:** the setup frame, the single stock request, the progress tracking and the backup receiver live in the sans-IO `wellfed-client` crate, so the Android app, `wellfed-server` and the CLI run the same steps the bench now proves. Each caller supplies the IO: the image server, the broker and the sockets.
 - **Android app (Flutter):** it joins the feeder's access point through platform Wi-Fi APIs and serves the image itself, in the foreground for about 3 minutes.
-- **Server and CLI:** `wellfed-server` or the CLI can run the same install for owners who self-host. `wellfed-local` stays the bench and stock-protocol tool.
+- **Server and CLI:** `wellfed-server` or the CLI can run the same install for owners who self-host. `wellfed-stock` stays the bench's stock-protocol tool.
 - **Afterwards:** the feeder is handed to the pairing flow (FW45), not to a server. The app talks to it directly on the LAN, and a server is optional.

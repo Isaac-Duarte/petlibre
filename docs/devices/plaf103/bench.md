@@ -2,10 +2,10 @@
 
 `wellfed-bench` ([src/tools/wellfed-bench](../../../src/tools/wellfed-bench)) powers the feeder, enters the ROM loader and chains the [Rust UART flash client](../../development/rust-flash.md). It adds power and strap control only. Serial reads, inspections, plans and writes run as separate `wellfed-flash` processes, so their pinned checks, plan hashes and no-retry stops apply unchanged. Running it is a physical bench operation; build and check targets never call it.
 
-Build the binaries together; the bench runs the `wellfed-flash` beside itself unless `--flash-bin` names another, and hands `itest` and `stock-ota` (with the same arguments) to the `wellfed-itest` beside itself:
+Build the binaries together; the bench runs the `wellfed-flash` beside itself unless `--flash-bin` names another, and hands `itest` and `stock-ota` (with the same arguments) to the `wellfed-itest` beside itself, which runs the stock server, the `wellfed-stock` beside it unless `--stock-bin` names another ([stock server](../../development/stock-server.md)):
 
 ```sh
-cargo build --locked --release -p wellfed-bench -p wellfed-itest -p wellfed-flash
+cargo build --locked --release -p wellfed-bench -p wellfed-itest -p wellfed-flash -p wellfed-stock
 target/release/wellfed-bench status
 ```
 
@@ -83,7 +83,7 @@ target/release/wellfed-bench ota stock-01 --review private/verification/<stock r
 
 - **Version:** `--version`, or one more than the highest version among the signed manifests in `private/verification/`. The manifest is written to `private/verification/NAME-vN.manifest`.
 - **Build ID:** the review's `startup_identity`. A review whose `startup_motion_policy` is set needs `--attended-motion`, as for `flash-prepare`.
-- **Tools:** `wellfed-local` runs beside the bench unless `--local-bin` names another; its output goes to the progress log.
+- **Tools:** no server runs: the bench signs by linking `wellfed-build` and offers over the device API. `--build` runs the `wellfed-build` beside it unless `--build-bin` names another; its output goes to the progress log.
 - **Captures:** 60 s segments `private/captures/NAME-01`, `-02`, … A name with any numbered segment is refused before building or signing.
 
 The `PL…` lines are read as each segment ends. Progress shows on stdout and the page: the give-way, the manifest, written sectors as a bar, activation, the new build's start and trial boots. The outcomes:
@@ -140,11 +140,11 @@ A scenario whose flag is missing is reported as **skipped**, never as passed. `-
 
 **Device state.** Once the baseline confirms, the suite reads the settings, whether Wi-Fi credentials are stored, and the build and bank. After every later scenario it reads them again. A scenario that leaves any of them changed fails, even if its own checks passed. The suite puts back what a request can: settings at once, stored credentials from the next boot.
 
-**Bench state.** Before changing anything, the suite refuses if any of these is wrong: the UART port is missing, `wellfed-local` or its examples are not built, an evidence name is in use, or anything already answers on the server's `http_listen` (stop that `serve`; the suite runs its own). It then:
+**Bench state.** Before changing anything, the suite refuses if any of these is wrong: the UART port is missing, `wellfed-stock` is not built, an evidence name is in use, or anything already answers on the server's `http_listen` (stop that `serve`; the suite runs its own). It then:
 - records whether the hotspot connection named in `private/hotspot.json` is active, and brings it up;
 - with `--power`, records relay 1 and switches the supply on;
 - starts the UART capture;
-- starts `wellfed-local serve --config private/server.json` as a child.
+- starts `wellfed-stock serve --config private/server.json` as a child.
 
 Updates go over the device API, pushed on a thread of their own while the scenario reads the UART; `serve` stays up for stock's broker. The suite talks to the feeder over the device API as the key in `--keys` (default `private/wellfed-owner.json`), found over mDNS or, while the bench host's firewall drops UDP 5353, through the hotspot's neighbour table and `target_mac`. All server output goes to `private/verification/NAME-servers.log`. At the end, or on an error or Ctrl+C, the suite stops its children and puts the hotspot and the supply back as it found them. Without `--power` the relay board is never opened. The suite never flashes over UART and never changes the firewall or routing. Motion builds are not offered, and only `feed-writes`, under `--feeds`, asks the feeder to feed (the owner approved unattended feeds on October 25, 2026).
 
@@ -225,8 +225,8 @@ The boot capture holds the unit's serial and cloud keys, so keep it private. The
 ```sh
 cargo build --release --bins --examples          # from a clean commit: --enable-ota-trial refuses a dirty build
 target/release/wellfed-bench stock-ota NAME --power                     # default firmware (qa)
-sudo target/release/wellfed-local network apply --config private/server.json   # once it reaches stock-ready
-sudo target/release/wellfed-local network remove                               # afterwards
+sudo target/release/wellfed-stock network apply --config private/server.json   # once it reaches stock-ready
+sudo target/release/wellfed-stock network remove                               # afterwards
 ```
 
 **Routing is the operator's.** Stock connects to its vendor broker on TCP 1883. Only `network apply`, a host firewall change, redirects the feeder's traffic to this server, and only the operator runs it and removes it.
@@ -240,7 +240,7 @@ sudo target/release/wellfed-local network remove                               #
    - **The server's evidence:** 20 minutes since that request, 10 quiet connected minutes, and a fresh 1.1.15 version report.
    - **Version report:** idle stock reports its version only around a connect, so a refused resolve makes the server send stock a read-only `ATTR_GET_SERVICE`.
    - **Heartbeat:** stock heartbeats about every 61 s, which the server's 90 s telemetry bound tolerates (`fw40-stock-ota-03`/`-04`).
-4. **`stock-request`:** `wellfed-local ota-images` serves the review's `image.bin`, bound to its `ota_sha256`, to the feeder found by its MAC. Then one `POST /api/ota/trial`. The server persists the request, then sends stock one `OTA_UPGRADE` with:
+4. **`stock-request`:** `wellfed-stock ota-images` serves the review's `image.bin`, bound to its `ota_sha256`, to the feeder found by its MAC. Then one `POST /api/ota/trial`. The server persists the request, then sends stock one `OTA_UPGRADE` with:
    - target version `2.0.0`;
    - the image's SHA-256;
    - a URL of about 80 characters, under stock's 128-byte parser buffer.
@@ -299,7 +299,7 @@ cargo build --locked --release -p wellfed-bench -p wellfed-itest -p wellfed-dash
 
 A binary built without the feature refuses `--ui` before any bench command runs. Node and pnpm are needed only for `make ui` and `make check-web`, never for `make check`. The page's TypeScript types (`src/web/packages/api/src/bench.gen.ts`) are generated from the Rust views, and a test in `make check` fails when they are stale (`UPDATE_BINDINGS=1 cargo test -p wellfed-dashboard bindings` rewrites them).
 
-**What it reads.** The page reads only the status files, the evidence directories and the local server's status. It links no relay or flash code and never opens a serial port, so it can run beside any command, and nothing it does writes. The feeder panel asks `wellfed-local serve` for `GET /api/status` on the address and token in `private/server.json`, every 5 seconds; that read changes nothing on the server or the feeder. When the server is down or not configured, the panel says so.
+**What it reads.** The page reads only the status files, the evidence directories and the stock server's status. It links no relay or flash code and never opens a serial port, so it can run beside any command, and nothing it does writes. The feeder panel asks `wellfed-stock serve` for `GET /api/status` on the address and token in `private/server.json`, every 5 seconds; that read changes nothing on the server or the feeder. When the server is down or not configured, the panel says so.
 
 **Network.** The page binds to loopback by default because it shows private UART output. `--listen ADDRESS` serves another interface, for example the Tailscale address to reach it from a phone. There is no access token: anyone who can reach that address can read the page, so prefer a private interface such as Tailscale. `--listen 0.0.0.0` (or `::`) serves every interface, including the feeder hotspot and any container bridges; the owner chose to allow it (October 25). Allowing that port through the host firewall is the owner's change. `--ui-port` changes the port.
 
@@ -308,7 +308,7 @@ The page has four views (keys `g o`, `g t`, `g s`, `g l`; `/` filters the log):
 - **Overview:**
   - **Guided QA** (when the latest capture holds `PLQA1` records): coaches the newest [QA](../../firmware/qa.md) run from its records. It shows what to do now in plain words ("Look at the Wi-Fi light. Lit: press Dispense. Dark: press Lock."), the time left on a button prompt, each check's state with the answers recorded so far, and the result. **Enable sound** beeps at each new prompt. It follows the records only; `wellfed-audit qa` still grades the run. The records are parsed by `wellfed_formats::qa`, which the audit shares.
   - **Now:** the command, its outcome and elapsed time. Steps show their own durations. While the command runs, bars show straight-line ETAs for the tool's own counts, an update's estimated transfer and the active capture. The next command to run after review is shown with a copy button. The tab title carries the state.
-  - **Feeder:** stock as `wellfed-local` last heard it: online or not, its reported version, and whether the server holds its broker session. The replacement firmware speaks no MQTT, so it shows nowhere here.
+  - **Feeder:** stock as `wellfed-stock` last heard it: online or not, its reported version, and whether the server holds its broker session. The replacement firmware speaks no MQTT, so it shows nowhere here.
   - **Latest integration run:** each scenario's verdict, or the live run's progress.
   - **Recent commands.**
 - **Tests:**
@@ -335,7 +335,7 @@ For a timed operator run, an optional `private/bench-status/script.json` lists s
 
 ## Evidence
 
-The Rust bench is host-tested only: fake relay board and flash client, the page's handlers in process, and the real binary against synthetic status files (October 22, 2026). The web page is host-tested too (October 22, 2026, simulation): unit tests for its log reading, run builder and formatting, and Playwright against the real binary serving a synthetic `private/` tree, on desktop and phone sizes in both themes. Its feeder panel has not yet read a live `wellfed-local serve`. Its sequences port the Python bench line for line. The physical evidence below was gathered with the Python `src/tools/bench/bench.py`, which it replaces; repeat `status`, `on`/`off`, `loader` and a no-op `flash-prepare`/`flash-execute` under a reviewed session before relying on it.
+The Rust bench is host-tested only: fake relay board and flash client, the page's handlers in process, and the real binary against synthetic status files (October 22, 2026). The web page is host-tested too (October 22, 2026, simulation): unit tests for its log reading, run builder and formatting, and Playwright against the real binary serving a synthetic `private/` tree, on desktop and phone sizes in both themes. Its feeder panel has not yet read a live `wellfed-stock serve`. Its sequences port the Python bench line for line. The physical evidence below was gathered with the Python `src/tools/bench/bench.py`, which it replaces; repeat `status`, `on`/`off`, `loader` and a no-op `flash-prepare`/`flash-execute` under a reviewed session before relying on it.
 
 **Full live test (physical, October 22, 2026, Python bench).** Every command was exercised on the research unit, except `transients`, which needs the analyzer:
 - **Commands:** `status`, `on`, `capture` (power untouched), `off`, `boot`, `loader` and `dump`. The dump was a full 8 MiB read, and comparing it with the previous one showed exactly the expected changes.

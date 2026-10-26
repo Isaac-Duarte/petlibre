@@ -219,5 +219,5 @@ Single-purpose crates in place of `wellfed-local` and a monolithic bench ([tools
 | FW57 Minimal CI | ⏸ Deferred |
 | FW58 Confirmation proves feeding | ⬜ Planned |
 | FW59 Bench lease that survives a killed process | 🚧 In progress |
-| FW60 UART recovery survives an SDK lock bump | ⬜ Planned |
+| FW60 UART recovery survives an SDK lock bump | ✅ Done |
 | FW58 Firmware authoring attributes | ✅ Done |

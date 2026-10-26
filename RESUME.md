@@ -1,6 +1,6 @@
 # Resume firmware development
 
-Handoff checkpoint: **October 25, 2026 (about 1 pm), Mountain time**. Read this, then [AGENTS.md](AGENTS.md), the [development guide](docs/development/README.md), and [FIRMWARE_BOARD.md](FIRMWARE_BOARD.md) (stock parity: [FEATURE_BOARD.md](FEATURE_BOARD.md)).
+Handoff checkpoint: **October 26, 2026 (about 2 pm), Mountain time**, during the coordinated board run (rules at the top of FIRMWARE_BOARD.md). Read this, then [AGENTS.md](AGENTS.md), the [development guide](docs/development/README.md), and [FIRMWARE_BOARD.md](FIRMWARE_BOARD.md) (stock parity: [FEATURE_BOARD.md](FEATURE_BOARD.md)).
 
 This file is the handoff, not the history. Keep it to the current state, today's work, what is open, and what a new session must know before touching the bench. When a day ends, fold its entries into the boards' evidence columns and the topic docs, and cut them here; the full log up to October 25 is `git show 756f68f:RESUME.md`.
 
@@ -8,13 +8,13 @@ This file is the handoff, not the history. Keep it to the current state, today's
 
 Reconfirm with the owner before any bench operation; this is the last recorded state, not a live observation.
 
-- **Bank 1:** `feeder` `9243940c…` (v226, `fw58-boot-01`, confirmed on its first trial boot, October 26 about 2:40 am): FW58's firmware authoring attributes, built on `master` at `27f6a7e`. It replaced v225 (`ar12-restore-01`).
+- **Bank 1:** `feeder` `aa3c7f3f…` (v230, `fw16-restore-20261026-01`, confirmed, October 26), restored after the FW16 fault runs (v228 `feed-stall`, v229 `stop-fail`). v227 (`875203504a…`, `tool-split-20261026-01`) and v226 (`9243940c…`, FW58) came before.
 - **Bank 0:** `feeder` `24673ae2…` (installed by stock 1.1.15 during `ar31-rt-01`, October 26): the full feeder; it installs updates over the device API, and a failed trial falls back to it. The UART full-flash backup from before the October 25 bank-0 install is indexed in the evidence file.
-- **Next manifest version:** 227; the update floor was 224 before v225 and v226 confirmed, not reread since. **Feeder routing:** `network apply` rules in place (owner, October 25; nft table `wellfed_local`, removed with `sudo target/release/wellfed-stock network remove`). **Feed journal:** high water 22 (feed 21 completed 2 of 2 and feed 22 was cancelled on purpose in `ar12-std-02`; feeds 19 and 20 on AR10 and AR11 completed; feed 14 was interrupted on purpose and resolved uncertain).
+- **Next manifest version:** 231; the update floor rises as builds confirm, not reread since. **Feeder routing:** `network apply` rules in place (owner, October 25; nft table `wellfed_local`, removed with `sudo target/release/wellfed-stock network remove`). **Feed journal:** high water 29 (feeds 23–25 analyzer checks, 1 portion each, completed; 26–29 the FW16 fault runs: 26 failed (output), 27 uncertain, 28 cancelled, 29 uncertain).
 
 - **Client store:** one owner, the bench CLI's key (`private/wellfed-owner.json`).
-- **Bench:** feeder on (relay 1), UART relays 3 and 4 closed, hotspot up (found up on October 25 afternoon and left so), no server, no capture. Hopper empty. The logic analyzer may still be clipped at the motor.
-- **Next (FW16):** the motor lease under a stalled loop during a feed, and a failed stop; then FW17. Cancellation during motion passed on October 25 (`feedwrites-20261025-01`, v173: feed 18 cancelled 2 s into the drive, `outcome=2 reason=2`, 0/2 portions, outputs stopped) ([procedure](docs/firmware/motor-pulse.md#feeds-through-the-owner)).
+- **Bench:** feeder on (relay 1), UART relays 3 and 4 closed, relay 2 off, hotspot up, no server, no capture, bench lease free (FW59: `private/bench.lease`). Hopper empty, D cells out. The logic analyzer is clipped at the motor (D2, D3 on the suppression capacitor; record all eight channels: a D2,D3-only capture read flat through a real drive).
+- **Next:** FW17 (in review), then its bench gate; FW46 (fixing review findings), then its RTC and NTP checks (NTP needs the owner's `wlan1` firewall rule); FW54 and FW56 in host work. FW16 is done (stall and failed stop on hardware, October 26).
 - **A power cut during a feed is safe since v172 (AR24):** the next boot resolves the feed as uncertain and the owner opens; the feed is never re-run.
 
 ## Today (October 25): FW16 feeding through the owner

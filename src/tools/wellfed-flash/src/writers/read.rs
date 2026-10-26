@@ -6,6 +6,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde::Serialize;
 
@@ -80,6 +81,8 @@ pub struct Args {
     pub candidate_rom: Vec<PathBuf>,
     pub rom_report: Option<PathBuf>,
     pub small_report: Option<PathBuf>,
+    /// The operator's --seconds; only observation reads it, and it becomes a
+    /// span once its range is checked.
     pub seconds: f64,
     /// Which core owns the console when ROM inspection starts.
     pub start_core: Core,
@@ -190,9 +193,11 @@ pub fn run(context: &Context, args: &Args) -> Result<Outcome> {
     let mut helper = None;
     let mut candidates = Vec::new();
     let mut continued = None;
+    // Zero is never observed: only observation reads it, and observe refuses it.
+    let mut window = Duration::ZERO;
 
     match args.mode {
-        Mode::Observe => protocol::observation_window(args.seconds)?,
+        Mode::Observe => window = protocol::observation_window(args.seconds)?,
 
         Mode::InspectRom => {
             require(!args.candidate_rom.is_empty(), || {
@@ -285,7 +290,7 @@ pub fn run(context: &Context, args: &Args) -> Result<Outcome> {
         };
 
         match args.mode {
-            Mode::Observe => protocol::observe(&mut port, args.seconds).map(Reading::Observation),
+            Mode::Observe => protocol::observe(&mut port, window).map(Reading::Observation),
             Mode::InspectRom => {
                 protocol::inspect_rom(&mut port, &candidates, args.start_core).map(Reading::Rom)
             }

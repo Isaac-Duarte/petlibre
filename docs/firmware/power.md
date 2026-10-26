@@ -50,7 +50,7 @@ Static analysis and host tests:
 - **The cause is reported.** A boot's reset cause comes from the ROM's flags (`BOOT_Reason` bit 18 is brownout); the statistics report it (`ResetCause::Brownout`) and the `Boot` event carries the raw flags. Whether a real brownout on this board sets that bit is unverified.
 - **No feed is replayed.** A brownout is a reset: a feed it interrupted is resolved as `Uncertain` by the next boot's journal recovery, under its own id, and never resumed (FW17, physical for a power cut mid-drive).
 - **The next feed waits for the adapter.** A boot whose cause is brownout holds feeding as `Blocked::Battery` until the adapter is seen (`feeder::supply::Watch`). At rest the pack recovers, so its reading alone would let the next feed start and sag it into the same brownout: a loop of resets, each leaving a feed uncertain. New cells are a power cycle, a power-on reset, which does not hold.
-- **The reset storm breaker (FW61, on its own branch; described, not changed here).** Brownouts keep the backup registers, so KM0 counts a brownout reset like any other unrequested one. A pack weak enough to brown out at idle (Wi-Fi transmit peaks) could reach the storm limit of five within ten minutes: a confirmed bank 1 would then give way to bank 0, an older build, for a supply fault rather than a build fault. Recommendation for FW61: KM0 reads `BOOT_Reason` before counting and does not count a brownout boot (or counts it apart and holds rather than gives way). The floor makes a motor-driven brownout unlikely; it cannot prevent an idle one on a pack below the regulator's dropout.
+- **Brownouts are not a reset storm.** Brownouts keep the backup registers, so without a rule KM0 would count a brownout reset like any other unrequested one. A pack weak enough to brown out at idle (Wi-Fi transmit peaks) could then reach the storm limit of five within ten minutes, and a confirmed bank 1 would give way to bank 0, an older build, for a supply fault rather than a build fault. So KM0 reads `BOOT_Reason` before its trial step, and on a brownout boot takes back the count the previous boot left pending (`trial::forgiven`, `PLTRL1 brownout=1 reg=…`): the brownout neither counts nor ends a burst. A trial still counts a brownout boot, so no trial is shortened or skipped ([OTA design](ota-design.md#reset-storms); `wellfed-hal-common/tests/trial_brownout.rs`). The floor makes a motor-driven brownout unlikely; it cannot prevent an idle one on a pack below the regulator's dropout.
 
 ## Sleep
 
@@ -63,7 +63,7 @@ Deferred; both cores keep their wakelocks. Static analysis:
 ## Tests
 
 - **Core:** `wellfed-core/tests/supply.rs` (readings, the floor's hold, cutoff, hysteresis and wrap) and `tests/sensor_inputs.rs` (a surge under the floor tolerated, a long sag or one under the cutoff not, the clear level, the adapter's verdict, a failed conversion).
-- **HAL:** `wellfed-hal/tests/power.rs` (unread, stale and implausible readings from the monitor's own samples).
+- **HAL:** `wellfed-hal/tests/power.rs` (unread, stale and implausible readings from the monitor's own samples); `wellfed-hal-common/tests/trial_brownout.rs` (a bank that keeps browning out never gives way or holds, a fault's resets still storm with brownouts between, a trial still counts a brownout boot).
 - **Product:** `wellfed-feeder/tests/supply.rs` (events and their rate limit, the brownout hold, readiness order); the firmware's `tests/manual_feed.rs` (a press refused on a low pack, the adapter's loss as a `Supply` event from the board's samples); `wellfed-client/tests/api.rs` (the battery reason to a `POWER` session and as `Starting` to an older one); wire fixtures appended for every new variant.
 - **Simulation** (the real owner on the fake SDK, `wellfed-sim`; the plant now sags the battery channel by `surge_sag_adc` and `drive_sag_adc` while it drives on the pack, both unmeasured and zero by default): the adapter pulled mid-feed fails it and nothing drives until a new feed, which completes on the pack; a surge under the floor is tolerated; a sustained sag or one under the cutoff fails the feed; under the floor and in the band no feed drives, at the clear level one does. Checked-in scenarios: `adapter-loss-mid-feed.json`, `battery-sag.json`.
 
@@ -73,12 +73,11 @@ Physical acceptance needs the cells in, which the run's rules leave to the owner
 1. **Readings at rest.** Fit three fresh D cells, adapter in. `wellfed stats --section power` and a subscriber's `Supply` sample should read `Reading` near the meter's voltage, `below_floor: false`. Pull the adapter with relay 1: one `Supply` event (`adapter: false`), readiness `Ready`. Restore: one more after a minute at most.
 2. **The floor without motion.** Replace the cells with a bench supply at the pack terminals and take the adapter out, starting at 4.5 V. Step it down: readiness turns `Battery` within a poll of the pin reading under 1650 for 300 ms (about 3.40 V), and back to `Ready` only at about 3.53 V. Note the voltage at which the board resets, if it does, and whether the next boot's reset cause is `Brownout`: that is the margin the floor is provisional on.
 3. **Under load** (needs an authorization covering motion with the cells or supply in): a one-portion feed on fresh cells, with the analyzer on the motor and the supply's voltage logged, measures the real surge and drive sag; then the same at a supply voltage just above the floor. Those figures replace the plant's zero sags and confirm or move `FLOOR`.
-4. **Brownout hold.** After a brownout reset on the supply, readiness stays `Battery` until the adapter returns.
+4. **Brownout hold.** After a brownout reset on the supply, readiness stays `Battery` until the adapter returns, and the KM0 log shows `PLTRL1 brownout=1` with the following `PLTRL1 … resets=N` not raised by it.
 
 ## Open
 
 - The floor's figures under load and the board's brownout level (above).
-- Whether `BOOT_Reason`'s brownout bit is set by a real brownout here.
-- The storm breaker's treatment of brownout boots (FW61).
+- Whether `BOOT_Reason`'s brownout bit is set by a real brownout here (the storm breaker's brownout rule and the brownout hold both rest on it).
 - Sleep, and with it the KM0 flash users on the DLPS path.
 - Battery-mode behaviour and a battery percentage on stock's curve (FP14).

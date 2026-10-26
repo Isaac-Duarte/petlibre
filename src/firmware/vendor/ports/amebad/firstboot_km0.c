@@ -85,13 +85,17 @@ __attribute__((noinline)) void wellfed_wifi_fw_start(void)
     }
 }
 
-u32 wellfed_amebad_trial_decide(const u8 *bank1, const u8 *bank0, const u8 *record, u32 *reg);
+u32 wellfed_amebad_trial_decide(const u8 *bank1, const u8 *bank0, const u8 *record, u32 *reg,
+                                 u32 brownout);
 
 /* Boot trial (wellfed-hal-common/src/trial.rs decides): before KM4 runs,
  * count an unconfirmed bank-1 image's boots in backup register 4 and, at the
  * limit with a valid bank 0, clear bank 1's first marker byte and reset so
  * the loader falls back to bank 0. A confirmed build's reset storm gives way
- * the same way. KM4 is off, so the SDK flash lock only masks
+ * the same way. A brownout boot takes back the previous boot's pending storm
+ * count (a supply fault, not the build's); the loader backs the ROM's reset
+ * flags up into BOOT_Reason on every boot, so the bit is this boot's.
+ * KM4 is off, so the SDK flash lock only masks
  * this core's interrupts (wellfed_trial_program).
  * Physical reads go through the direct SPIC window. */
 #define WELLFED_BANK0_OFFSET 0x006000U
@@ -120,8 +124,12 @@ __attribute__((noinline)) void wellfed_trial_step(void)
     const u8 *bank1 = (const u8 *)(SPI_FLASH_BASE + WELLFED_BANK1_OFFSET);
     const u8 *bank0 = (const u8 *)(SPI_FLASH_BASE + WELLFED_BANK0_OFFSET);
     const u8 *record = (const u8 *)(SPI_FLASH_BASE + WELLFED_CONFIRM_OFFSET);
+    u32 brownout = (BOOT_Reason() & BIT_BOOT_BOD_RESET_HAPPEN) != 0;
     u32 reg = BKUP_Read(BKUP_REG4);
-    u32 code = wellfed_amebad_trial_decide(bank1, bank0, record, &reg);
+    if (brownout) {
+        DiagPrintf("PLTRL1 brownout=1 reg=%08x\n", reg);
+    }
+    u32 code = wellfed_amebad_trial_decide(bank1, bank0, record, &reg, brownout);
     BKUP_Write(BKUP_REG4, reg);
     switch (code & 0xFFU) {
     case 0:

@@ -39,6 +39,17 @@
 //!   nothing for [`HALT_MS`] ([`Storm::Halted`]), then resets into a held
 //!   boot ([`halt_over`]).
 //!
+//! **Brownouts.** A brownout resets the SoC but keeps the backup registers,
+//! so the boot before it left its early reset pending in the storm field.
+//! A brownout is the supply, not the build: a pack weak enough to brown out
+//! at idle would otherwise make a storm within minutes and give a good
+//! bank 1 away to an older build. So on a boot whose reset was a brownout
+//! ([`Reset::Brownout`]), KM0 first takes that pending reset back
+//! ([`forgiven`]); the boot itself is then counted as early as any other.
+//! A trial counts its boots in the low nibble, which this never touches: a
+//! brownout on trial still counts toward `LIMIT`, so no trial is shortened
+//! or skipped, and its give-way is unchanged.
+//!
 //! Nothing is permanent: a feeder held or halted by a fault that clears
 //! (a run of association hangs, a battery brownout) feeds again on its own,
 //! and a fault that persists resets at most a few times an hour. Backup
@@ -196,6 +207,26 @@ fn storm_stamp(register: u32, identity: &[u8; 32], level: u32, storm: u32) -> u3
     )
 }
 
+/// What reset this boot, as far as the storm count cares: the ROM's
+/// brownout flag (`BIT_BOOT_BOD_RESET_HAPPEN` in `BOOT_Reason`), which the
+/// loader sets or clears on every boot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Reset {
+    Brownout,
+    Other,
+}
+
+/// The register with the previous boot's pending early reset taken back
+/// when that boot ended in a brownout, else unchanged. Only the storm
+/// field moves: a trial's count, the level and the tag stay as they are.
+pub fn forgiven(register: u32, identity: &[u8; 32], reset: Reset) -> u32 {
+    let (nibble, storm) = fields(register, identity);
+    match reset {
+        Reset::Brownout if storm > 0 => stamp(register, identity, nibble, storm - 1),
+        Reset::Brownout | Reset::Other => register,
+    }
+}
+
 /// The trial decision and the new backup-register value.
 pub fn decide(
     bank1: &[u8; 8],
@@ -319,7 +350,8 @@ mod exported {
     use wellfed_core::ota::CONFIRM_LEN;
 
     /// Called once by the KM0 main before `km4_boot_on`, with bank 1's and
-    /// bank 0's first 8 physical bytes and the confirmation record. Writes
+    /// bank 0's first 8 physical bytes, the confirmation record and whether
+    /// the ROM flagged this boot's reset as a brownout (nonzero). Writes
     /// the new backup-register value to `register` and returns
     /// `Decision::code`. Flash and the register are written by the caller.
     ///
@@ -331,10 +363,20 @@ mod exported {
         bank0: *const [u8; 8],
         record: *const [u8; CONFIRM_LEN],
         register: *mut u32,
+        brownout: u32,
     ) -> u32 {
+        let identity = super::identity();
+        let reset = if brownout != 0 {
+            super::Reset::Brownout
+        } else {
+            super::Reset::Other
+        };
+
         // SAFETY: the caller's contract.
+        let found = super::forgiven(unsafe { *register }, &identity, reset);
+        // SAFETY: as above.
         let (decision, value) =
-            unsafe { super::decide(&*bank1, &*bank0, &*record, *register, &super::identity()) };
+            unsafe { super::decide(&*bank1, &*bank0, &*record, found, &identity) };
         // SAFETY: as above.
         unsafe { *register = value };
         decision.code()

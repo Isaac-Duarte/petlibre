@@ -11,13 +11,28 @@ use utoipa::ToSchema;
 
 use crate::{Generation, Hex};
 
-/// What the feeder pushes to a subscribed session.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// What the feeder pushes to a subscribed session, or to one that asked
+/// for its log.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Pushed {
     Event(Event),
     Gap(Gap),
     Sample(Sample),
+    Log(LogLines),
+}
+
+/// Record lines the feeder logged, as `TailLog` streams them. The text is
+/// diagnostics, not a contract: any build may change it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LogLines {
+    /// The last line's number this boot: the cursor to resume after.
+    pub seq: u32,
+    /// Lines after the previous cursor the feeder overwrote before sending
+    /// them.
+    pub dropped: u32,
+    /// The lines, without their endings.
+    pub lines: Vec<String>,
 }
 
 /// One event the feeder recorded.

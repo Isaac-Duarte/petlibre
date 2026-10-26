@@ -12,6 +12,7 @@ use core::fmt;
 use wellfed_core::buttons::Gesture;
 use wellfed_core::clock::wall::{Fix, Jump, Origin, State as ClockState, Sync, SyncError};
 use wellfed_core::clock::zone::Rule;
+use wellfed_core::log_tail::Batch as LogBatch;
 use wellfed_core::ota::install::{Answer, Progress, Refused};
 use wellfed_core::tone::Tune;
 use wellfed_proto::api::{Capabilities, Power};
@@ -230,6 +231,13 @@ pub trait Platform {
     fn epoch(&self) -> Option<u32>;
     /// The ring's newest record.
     fn last_event(&self) -> Option<u64>;
+
+    // ---- The log tail.
+
+    /// The record lines logged after line `after` (`None`: from the oldest
+    /// the RAM tail keeps) that fit `text`; `None` when there are none, or
+    /// the platform keeps no tail (it then claims no `Capabilities::LOG`).
+    fn log_after(&self, after: Option<u32>, text: &mut [u8]) -> Option<LogBatch>;
 
     // ---- The wall clock.
 

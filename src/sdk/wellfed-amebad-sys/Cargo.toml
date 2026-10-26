@@ -18,9 +18,13 @@ km4 = []
 # The BLE peripheral's calls; only a firmware that declares
 # `bluetooth = true` links `wellfed_ble.c`, which defines them.
 bluetooth = []
+# Copy every logged line into the RAM log tail (`LOG_TAIL`) as well, for
+# the device API to stream. Host builds always keep the tail.
+log-tail = []
 
 [dependencies]
 wellfed-board-plaf103.workspace = true
+wellfed-core.workspace = true
 
 [target.'cfg(target_os = "none")'.dependencies]
 cortex-m.workspace = true

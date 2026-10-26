@@ -711,6 +711,7 @@ pub fn panic_outputs_safe() {
 
 pub fn log(message: &CStr) {
     print!("{}", message.to_string_lossy());
+    crate::LOG_TAIL.push(message.to_bytes());
 }
 
 /// One host thread drives the fake, so nothing else can be scheduled.

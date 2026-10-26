@@ -86,10 +86,14 @@ impl Capabilities {
     /// The time settings and the clock's state: [`Op::GetTime`],
     /// [`Op::PutTime`] and [`Outcome::Time`].
     pub const TIME: Self = Self(8);
+    /// The debug log: [`Op::TailLog`] and the [`FeederMessage::Log`]
+    /// batches it starts. Owner sessions only. The lines are diagnostics,
+    /// not a contract: their text may change with any build.
+    pub const LOG: Self = Self(32);
     /// Every bit this crate defines: what a current client claims. A
     /// session then runs on the bits both sides claim, so a client adapts
     /// to whatever feeder it meets, however old.
-    pub const KNOWN: Self = Self(Self::FEED.0 | Self::UPDATE.0 | Self::TIME.0);
+    pub const KNOWN: Self = Self(Self::FEED.0 | Self::UPDATE.0 | Self::TIME.0 | Self::LOG.0);
 
     pub const fn union(self, other: Self) -> Self {
         Self(self.0 | other.0)
@@ -269,6 +273,14 @@ pub enum Op<'a> {
         #[serde(borrow)]
         changes: TimeChanges<'a>,
     },
+    /// Push the feeder's record lines after line `after` (`None`: from
+    /// the oldest its RAM tail keeps), then each new one, as
+    /// [`FeederMessage::Log`] batches. Answered `Done`; asking again moves
+    /// the cursor. Lines count from 1 each boot, so a cursor past the
+    /// newest line (an earlier boot's) starts from the oldest.
+    TailLog {
+        after: Option<u32>,
+    },
 }
 
 /// The largest [`Op::UpdateChunk`]: an eighth of a flash sector, which
@@ -290,6 +302,7 @@ impl Op<'_> {
                 | Self::UpdateState
                 | Self::UpdateChunk { .. }
                 | Self::GetTime
+                | Self::TailLog { .. }
         )
     }
 
@@ -305,6 +318,7 @@ impl Op<'_> {
             | Self::EnrollUpdateKey { .. }
             | Self::UpdateKeyStatement { .. } => Capabilities::UPDATE,
             Self::GetTime | Self::PutTime { .. } => Capabilities::TIME,
+            Self::TailLog { .. } => Capabilities::LOG,
             Self::Status
             | Self::GetSettings
             | Self::PutSettings { .. }
@@ -441,7 +455,23 @@ pub enum FeederMessage<'a> {
         to: u64,
     },
     Sample(Sample),
+    /// Record lines after [`Op::TailLog`]'s cursor, each ending in `\n`,
+    /// as many whole lines as fit one frame (at most [`LOG_TEXT_MAX`]
+    /// bytes). `seq` is the last line's number, the cursor to resume
+    /// after; `dropped` counts the lines after the previous cursor that
+    /// the batch does not hold, because the tail overwrote them before
+    /// they were sent. Only to a session that asked, and only when it has
+    /// sent everything before.
+    Log {
+        seq: u32,
+        dropped: u32,
+        text: &'a str,
+    },
 }
+
+/// The most text one [`FeederMessage::Log`] carries: a frame, less the
+/// message's tag, numbers and the text's length prefix.
+pub const LOG_TEXT_MAX: usize = MESSAGE_MAX - 16;
 
 #[expect(
     clippy::large_enum_variant,
@@ -903,6 +933,15 @@ mod tests {
         };
         let len = encode(&view, &mut out).unwrap();
         assert_eq!(decode::<FeederMessage<'_>>(&out[..len]), Ok(view));
+
+        let text = [b'x'; LOG_TEXT_MAX];
+        let log = FeederMessage::Log {
+            seq: u32::MAX,
+            dropped: u32::MAX,
+            text: core::str::from_utf8(&text).unwrap(),
+        };
+        let len = encode(&log, &mut out).unwrap();
+        assert_eq!(decode::<FeederMessage<'_>>(&out[..len]), Ok(log));
     }
 
     /// The event ring stores a body in 16 bytes.

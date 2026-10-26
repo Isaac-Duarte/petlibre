@@ -13,6 +13,7 @@ use core::fmt;
 use wellfed_core::buttons::Gesture;
 use wellfed_core::clock::wall::{Fix, Jump, Origin, State as ClockState, Sync, SyncError};
 use wellfed_core::clock::zone::Rule;
+use wellfed_core::log_tail::Batch as LogBatch;
 use wellfed_core::ota::install::{Answer, Progress, Refused};
 use wellfed_core::tone::Tune;
 use wellfed_device_api::clients::{CLIENTS, Client};
@@ -102,10 +103,16 @@ impl Platform for Plaf103 {
         boot_facts()
     }
 
+    /// The log ships in release images: an owner's feeder has no UART
+    /// wired, so the tail is the only way to see what it logged, and
+    /// keeping the bit costs only the tail's RAM ([device API]).
+    ///
+    /// [device API]: ../../../../../docs/firmware/device-api.md#debug-log
     fn capabilities(&self) -> Capabilities {
         Capabilities::FEED
             .union(Capabilities::UPDATE)
             .union(Capabilities::TIME)
+            .union(Capabilities::LOG)
     }
 
     fn reset(&mut self) {
@@ -236,6 +243,10 @@ impl Platform for Plaf103 {
 
     fn last_event(&self) -> Option<u64> {
         events::last_seq()
+    }
+
+    fn log_after(&self, after: Option<u32>, text: &mut [u8]) -> Option<LogBatch> {
+        wellfed_sdk::log_tail(after, text)
     }
 
     /// The clock reads its own uptime.

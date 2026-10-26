@@ -260,7 +260,7 @@ impl Connection {
                 }
             }
             Incoming::Pushed(pushed) => {
-                match pushed {
+                match &pushed {
                     Pushed::Event(event) => {
                         self.cursor = Some(Cursor {
                             epoch: event.epoch,
@@ -273,7 +273,9 @@ impl Connection {
                             seq: gap.to,
                         });
                     }
-                    Pushed::Sample(_) => {}
+                    // Log lines count per boot, outside the history: the
+                    // caller keeps their cursor.
+                    Pushed::Sample(_) | Pushed::Log(_) => {}
                 }
                 self.events.push_back(Event::Pushed(pushed));
             }

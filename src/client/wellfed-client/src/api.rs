@@ -293,6 +293,9 @@ impl Session {
                 Incoming::Pushed(Pushed::Gap(Gap { epoch, from, to }))
             }
             FeederMessage::Sample(sample) => Incoming::Pushed(Pushed::Sample(sample.into())),
+            FeederMessage::Log { seq, dropped, text } => {
+                Incoming::Pushed(Pushed::Log(convert::log(seq, dropped, text)))
+            }
         }))
     }
 

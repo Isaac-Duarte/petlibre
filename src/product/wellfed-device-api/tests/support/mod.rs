@@ -11,6 +11,7 @@
 #![allow(dead_code, reason = "each consumer drives a subset")]
 
 use wellfed_core::clock::wall::WallClock;
+use wellfed_core::log_tail::{Batch as LogBatch, LogTail};
 use wellfed_core::tone::Tune;
 use wellfed_device_api::clients::{CLIENTS, Client, Label, Role};
 use wellfed_device_api::mailbox::{
@@ -50,6 +51,8 @@ struct Fake {
     events: Vec<proto::Event>,
     time: TimeSettingsView,
     clock: WallClock,
+    /// A line every pass, so a tailing session always has more to read.
+    log: LogTail<1024>,
 }
 
 impl Device for Fake {
@@ -155,7 +158,9 @@ impl Device for Fake {
     }
 
     fn capabilities(&self) -> Capabilities {
-        Capabilities::FEED.union(Capabilities::TIME)
+        Capabilities::FEED
+            .union(Capabilities::TIME)
+            .union(Capabilities::LOG)
     }
 
     fn feed(&mut self, _portions: u8, _by: proto::Source) -> Result<u32, Refusal> {
@@ -193,6 +198,10 @@ impl Device for Fake {
     }
 
     fn reboot(&mut self) {}
+
+    fn log_after(&mut self, after: Option<u32>, text: &mut [u8]) -> Option<LogBatch> {
+        self.log.read(after, text)
+    }
 }
 
 /// The server with one enrolled owner and the recovery window open.
@@ -243,6 +252,12 @@ impl Rig {
 
     pub fn pass(&mut self) {
         self.now += 20;
+        let line = format!(
+            "PLTST1 pass now={} {}\r\n",
+            self.now,
+            "x".repeat(self.now as usize % 120)
+        );
+        self.device.log.push(line.as_bytes());
         let records = &mut self.records;
         self.server.step(
             Pass {
@@ -311,7 +326,9 @@ impl Rig {
         .expect("IK with the feeder's key");
         let hello = Hello {
             major: PROTOCOL_MAJOR,
-            capabilities: Capabilities::FEED.union(Capabilities::TIME),
+            capabilities: Capabilities::FEED
+                .union(Capabilities::TIME)
+                .union(Capabilities::LOG),
         };
         let mut payload = [0; 16];
         let len = wellfed_proto::encode(&hello, &mut payload).expect("a hello fits");

@@ -8,6 +8,7 @@ use crate::mailbox::{
     TimeSettings, TimeSettingsResult, TimeState, WifiResult,
 };
 use crate::wifi::Credentials;
+use wellfed_core::log_tail::Batch as LogBatch;
 use wellfed_core::named_enum;
 use wellfed_core::ota::offer::KeyId;
 use wellfed_core::tone::Tune as CoreTune;
@@ -94,6 +95,13 @@ pub trait Device {
     }
     /// The clock and the NTP exchange now.
     fn time_state(&mut self, _now_ms: u32) -> Option<TimeState> {
+        None
+    }
+    /// The logged lines after line `after` (`None`: from the oldest kept)
+    /// that fit `text` whole, each ending in `\n` and printable ASCII.
+    /// `None` when there is nothing new. A device without
+    /// [`Capabilities::LOG`] keeps none.
+    fn log_after(&mut self, _after: Option<u32>, _text: &mut [u8]) -> Option<LogBatch> {
         None
     }
 }

@@ -12,6 +12,7 @@ use wellfed_client::connection::{
 };
 use wellfed_core::buttons::{Button, Buttons, Gesture};
 use wellfed_core::clock::wall::WallClock;
+use wellfed_core::log_tail::{Batch as LogBatch, LogTail};
 use wellfed_core::tone::Tune;
 use wellfed_device_api::clients::{CLIENTS, Client, Label, Role};
 use wellfed_device_api::mailbox::Lock;
@@ -88,6 +89,9 @@ struct Fake {
     time_pending: Option<TimeSettings>,
     /// The writer's next time save fails, leaving the store as it was.
     time_fails: bool,
+    /// Serves `Capabilities::LOG` from `tail`.
+    log: bool,
+    tail: LogTail<4096>,
 }
 
 /// An install receiving its first sector.
@@ -293,11 +297,18 @@ impl Device for Fake {
     }
 
     fn capabilities(&self) -> Capabilities {
+        let mut capabilities = Capabilities::FEED.union(Capabilities::TIME);
         if self.update {
-            Capabilities::KNOWN
-        } else {
-            Capabilities::FEED.union(Capabilities::TIME)
+            capabilities = capabilities.union(Capabilities::UPDATE);
         }
+        if self.log {
+            capabilities = capabilities.union(Capabilities::LOG);
+        }
+        capabilities
+    }
+
+    fn log_after(&mut self, after: Option<u32>, text: &mut [u8]) -> Option<LogBatch> {
+        self.tail.read(after, text)
     }
 
     fn time_settings(&mut self, change: Option<TimeSettings>) -> TimeSettingsResult {
@@ -1402,6 +1413,7 @@ fn a_connection_names_the_epoch_and_answers_each_request_once() {
                 feed: true,
                 update: false,
                 time: true,
+                log: false,
             },
             EPOCH
         )
@@ -1763,6 +1775,7 @@ fn only_an_owner_s_session_with_the_update_bit_may_update() {
             feed: true,
             update: false,
             time: false,
+            log: true,
         },
     };
     let slot = rig.accept().unwrap();
@@ -2092,4 +2105,138 @@ fn an_unpressed_update_key_is_refused_and_a_closed_session_cancels_its_offer() {
         "no offer is pending any more"
     );
     assert!(!rig.device.clients.iter().any(|c| c.key == [0x5e; 32]));
+}
+
+fn log_rig() -> Rig {
+    let mut rig = Rig::new();
+    rig.device.log = true;
+    rig
+}
+
+fn log_line(n: u32) -> String {
+    format!("PLTST1 line={n:04} {}", "x".repeat(80))
+}
+
+/// Run until the session has read every log line up to `seq`: the lines
+/// read and the dropped counts, each batch checked against the frame.
+fn follow_log(rig: &mut Rig, client: &mut Client_, seq: u32) -> (Vec<String>, u32) {
+    let (mut lines, mut dropped, mut last) = (Vec::new(), 0, 0);
+    run(rig, client, |session| {
+        while let Some(incoming) = session.next_incoming().unwrap() {
+            if let Incoming::Pushed(model::Pushed::Log(batch)) = incoming {
+                let text: usize = batch.lines.iter().map(|line| line.len() + 1).sum();
+                assert!(text <= proto::LOG_TEXT_MAX, "{text} bytes");
+                assert!(batch.seq > last, "batches go forward");
+                last = batch.seq;
+                dropped += batch.dropped;
+                lines.extend(batch.lines);
+            }
+        }
+        last == seq
+    });
+    (lines, dropped)
+}
+
+#[test]
+fn an_owner_follows_the_log_in_batches_that_fit_a_frame() {
+    let mut rig = log_rig();
+    for n in 1..=30 {
+        rig.device
+            .tail
+            .push(format!("{}\r\n", log_line(n)).as_bytes());
+    }
+
+    let mut owner = open(&mut rig, OWNER);
+    let answer = ask(&mut rig, &mut owner, 1, Op::TailLog { after: None });
+    assert_eq!(answer, Answer::Done { generation: None });
+    let (lines, dropped) = follow_log(&mut rig, &mut owner, 30);
+    let expected: Vec<_> = (1..=30).map(log_line).collect();
+    assert_eq!(
+        lines, expected,
+        "every line, in order, across several frames"
+    );
+    assert_eq!(dropped, 0);
+
+    // New lines follow live, and a request is still answered between them.
+    rig.device.tail.push(log_line(31).as_bytes());
+    let (lines, _) = follow_log(&mut rig, &mut owner, 31);
+    assert_eq!(lines, [log_line(31)]);
+    let answer = ask(&mut rig, &mut owner, 2, Op::Status);
+    assert!(matches!(answer, Answer::Status(_)), "{answer:?}");
+
+    // Asking again moves the cursor back.
+    ask(&mut rig, &mut owner, 3, Op::TailLog { after: Some(29) });
+    let (lines, _) = follow_log(&mut rig, &mut owner, 31);
+    assert_eq!(lines, [log_line(30), log_line(31)]);
+}
+
+#[test]
+fn lines_the_tail_overwrote_before_they_were_sent_are_counted_dropped() {
+    let mut rig = log_rig();
+    rig.device.tail.push(log_line(1).as_bytes());
+    let mut owner = open(&mut rig, OWNER);
+    ask(&mut rig, &mut owner, 1, Op::TailLog { after: None });
+    follow_log(&mut rig, &mut owner, 1);
+
+    // Far more than the tail holds, between two of the session's turns.
+    for n in 2..=200 {
+        rig.device.tail.push(log_line(n).as_bytes());
+    }
+    let (lines, dropped) = follow_log(&mut rig, &mut owner, 200);
+    assert!(dropped > 100, "{dropped}");
+    assert_eq!(u32::try_from(lines.len()).unwrap() + dropped, 199);
+    assert_eq!(lines.last(), Some(&log_line(200)));
+}
+
+#[test]
+fn only_an_owner_whose_session_both_sides_log_may_tail() {
+    let tail = Op::TailLog { after: None };
+    let mut rig = log_rig();
+    rig.device.tail.push(log_line(1).as_bytes());
+    let mut member = open(&mut rig, MEMBER);
+    let answer = ask(&mut rig, &mut member, 1, tail.clone());
+    assert_eq!(answer, Answer::Refused(model::Refusal::Forbidden));
+
+    // An owner whose hello lacks the bit, or a feeder that keeps no log.
+    let hello = Hello {
+        major: 1,
+        capabilities: model::Capabilities {
+            log: false,
+            ..model::Capabilities::KNOWN
+        },
+    };
+    let slot = rig.accept().unwrap();
+    let (session, outbox) =
+        Session::connect_with(&Keypair::from_secret(OWNER), public(FEEDER), [7; 32], hello)
+            .unwrap();
+    let mut old = Client_ {
+        slot,
+        session,
+        outbox,
+    };
+    run(&mut rig, &mut old, |session| {
+        matches!(session.next_incoming(), Ok(Some(Incoming::Opened(_))))
+    });
+    let unavailable = Answer::Refused(model::Refusal::Unavailable);
+    assert_eq!(ask(&mut rig, &mut old, 1, tail.clone()), unavailable);
+    let mut plain = Rig::new();
+    let mut owner = open(&mut plain, OWNER);
+    assert_eq!(ask(&mut plain, &mut owner, 1, tail), unavailable);
+
+    // None of them is ever pushed a line.
+    for _ in 0..20 {
+        rig.pass();
+        plain.pass();
+        for client in [&mut member, &mut old] {
+            let bytes = rig.collect(client.slot);
+            client.session.receive(&bytes).unwrap();
+        }
+        let bytes = plain.collect(owner.slot);
+        owner.session.receive(&bytes).unwrap();
+    }
+    for session in [&mut member.session, &mut old.session, &mut owner.session] {
+        while let Some(incoming) = session.next_incoming().unwrap() {
+            assert!(!matches!(incoming, Incoming::Pushed(model::Pushed::Log(_))));
+        }
+    }
 }

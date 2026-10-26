@@ -65,6 +65,15 @@ pub use tasks::{FIRMWARE_TASKS, Task};
 pub use wellfed_hal as hal;
 
 pub use wellfed_hal::startup::{LogRecord, log};
+
+/// The lines [`log`] printed after `after` (`None`: from the oldest the
+/// RAM tail keeps) that fit `out`, for the device API to stream; see
+/// `wellfed_core::log_tail`. A firmware has it with the `log-tail`
+/// feature.
+#[cfg(any(not(target_os = "none"), feature = "log-tail"))]
+pub fn log_tail(after: Option<u32>, out: &mut [u8]) -> Option<wellfed_core::log_tail::Batch> {
+    hal::sdk::LOG_TAIL.read(after, out)
+}
 pub use wellfed_sdk_macros::{Record, start, task};
 
 /// What the start hook returns: whether the firmware's startup work

@@ -389,6 +389,31 @@ fn messages() -> Vec<Fixture> {
             }))),
             feeder,
         ),
+        (
+            "hello-log",
+            entry(&Hello {
+                major: 1,
+                capabilities: Capabilities::FEED
+                    .union(Capabilities::UPDATE)
+                    .union(Capabilities::TIME)
+                    .union(Capabilities::LOG),
+            }),
+            |b| decode::<Hello>(b).is_ok(),
+        ),
+        (
+            "op-tail-log",
+            entry(&request(Op::TailLog { after: Some(42) })),
+            client,
+        ),
+        (
+            "log",
+            entry(&FeederMessage::Log {
+                seq: 43,
+                dropped: 2,
+                text: "PLAPI1 one\nPLAPI1 two\n",
+            }),
+            feeder,
+        ),
     ]
 }
 

@@ -17,6 +17,7 @@
 
 use core::fmt;
 
+use wellfed_core::log_tail::Batch as LogBatch;
 use wellfed_core::mdns::{self, Destination, Responder};
 use wellfed_core::ota::install::{Answer, Phase};
 use wellfed_core::ota::offer::{KeyStatement, key_id};
@@ -744,5 +745,9 @@ impl<P: Platform, F: Feeds> Device for FeederDevice<'_, P, F> {
 
     fn feed_active(&self) -> bool {
         self.feeds.busy()
+    }
+
+    fn log_after(&mut self, after: Option<u32>, text: &mut [u8]) -> Option<LogBatch> {
+        self.platform.log_after(after, text)
     }
 }

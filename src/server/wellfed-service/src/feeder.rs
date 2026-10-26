@@ -341,6 +341,8 @@ impl Task {
                     sample: FeederSample::new(sample, received),
                 });
             }
+            // The server never asks for the log, so none comes.
+            Pushed::Log(_) => {}
         }
         Ok(())
     }

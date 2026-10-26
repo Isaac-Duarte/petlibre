@@ -29,6 +29,7 @@ use wellfed_core::clock::wall::{
     Fix, Jump, Origin, State as ClockState, Sync, SyncError, WallClock,
 };
 use wellfed_core::clock::zone::Rule;
+use wellfed_core::log_tail::{Batch as LogBatch, LogTail};
 use wellfed_core::ota::install::{Answer, Progress, Refused};
 use wellfed_core::store::slot::crc32;
 use wellfed_core::tone::Tune;
@@ -50,6 +51,7 @@ use wellfed_feeder::store::time::TimeStore;
 use wellfed_hal::interlock::INTERLOCK;
 use wellfed_hal::ota::mailbox::{self, Request};
 use wellfed_hal::ota::signers;
+use wellfed_hal::sdk::LOG_TAIL_BYTES;
 use wellfed_proto::api::{self as proto, Capabilities};
 use tokio::net::{TcpStream, UdpSocket};
 
@@ -145,6 +147,9 @@ pub struct SimPlatform {
     mdns: Option<UdpSocket>,
     /// The address the A record gives.
     ip: Ipv4Addr,
+    /// The lines this boot logged, as the firmware's RAM tail keeps them;
+    /// the simulator copies its records in ([`crate::sim::Sim::pass`]).
+    log: Rc<LogTail<LOG_TAIL_BYTES>>,
 }
 
 impl std::fmt::Debug for SimPlatform {
@@ -234,6 +239,7 @@ impl SimPlatform {
             next_stream: 0,
             mdns,
             ip,
+            log: Rc::new(LogTail::new()),
         };
         platform.publish_signers();
         Ok(platform)
@@ -391,6 +397,11 @@ impl SimPlatform {
         }
     }
 
+    /// This boot's log tail, which the simulator's records go into.
+    pub(crate) fn log_tail(&self) -> Rc<LogTail<LOG_TAIL_BYTES>> {
+        Rc::clone(&self.log)
+    }
+
     fn stream(&mut self, id: u32) -> Option<&mut TcpStream> {
         self.streams
             .iter_mut()
@@ -426,7 +437,9 @@ impl Platform for SimPlatform {
 
     fn capabilities(&self) -> Capabilities {
         // No motor: the server refuses feeds before they reach the owner.
-        Capabilities::UPDATE.union(Capabilities::TIME)
+        Capabilities::UPDATE
+            .union(Capabilities::TIME)
+            .union(Capabilities::LOG)
     }
 
     fn reset(&mut self) {
@@ -613,6 +626,10 @@ impl Platform for SimPlatform {
 
     fn last_event(&self) -> Option<u64> {
         self.events.last_seq()
+    }
+
+    fn log_after(&self, after: Option<u32>, text: &mut [u8]) -> Option<LogBatch> {
+        self.log.read(after, text)
     }
 
     fn wall_ms(&mut self, now_ms: u32) -> Option<u64> {

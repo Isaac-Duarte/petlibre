@@ -198,6 +198,13 @@ impl Sim {
     /// One pass of the loop at `now_ms`, then the writer's turn and the
     /// update stage's. The delay until the next pass.
     pub fn pass(&mut self, now_ms: u32, mut record: impl FnMut(Record)) -> u32 {
+        // Every record line goes into the log tail too, as the firmware's
+        // `log` copies what it prints.
+        let tail = self.feeder.platform().log_tail();
+        let mut record = |r: Record| {
+            tail.push(r.to_string().as_bytes());
+            record(r);
+        };
         if !self.booted {
             self.booted = true;
             record(self.boot);

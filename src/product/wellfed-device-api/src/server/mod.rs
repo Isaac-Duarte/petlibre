@@ -110,6 +110,9 @@ enum Phase {
         events: Option<Option<u64>>,
         samples: bool,
         sample: Option<Sample>,
+        /// Push log lines after this cursor (`Some(None)`: from the
+        /// oldest), once the session asked.
+        log: Option<Option<u32>>,
     },
     /// An invite's handshake is done: enroll the key, then answer.
     Joining {

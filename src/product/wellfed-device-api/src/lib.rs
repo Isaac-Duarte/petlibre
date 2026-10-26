@@ -27,6 +27,10 @@
 //!   request or an install holds the flash. Chunks are
 //!   idempotent by offset, so they are not remembered writes. An update
 //!   key is enrolled only once someone at the feeder presses Dispense.
+//! - **The debug log is an owner's** ([`Capabilities::LOG`]): after
+//!   `TailLog`, a session is pushed the lines the device's RAM tail keeps,
+//!   in batches that fit a frame, only once its last frame is out and
+//!   after any event or sample waiting.
 //!
 //! Sessions authenticate with Noise IK under the feeder's identity, against
 //! the enrolled clients the settings writer publishes. A revoked key's

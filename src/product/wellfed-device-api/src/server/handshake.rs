@@ -243,6 +243,7 @@ impl Server {
             events: None,
             samples: false,
             sample: None,
+            log: None,
         };
         record(Record::Opened {
             slot: slot_id(index),

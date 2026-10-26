@@ -219,6 +219,12 @@ impl Server {
                 self.reboot_at = Some(now_ms.wrapping_add(REBOOT_MS));
                 Reply::Done(None)
             }
+            Action::TailLog { after } => {
+                if let Phase::Open { log, .. } = &mut self.slots[index].phase {
+                    *log = Some(after);
+                }
+                Reply::Done(None)
+            }
         };
         Some(self.remember(memory, id, action, outcome))
     }
@@ -375,6 +381,7 @@ const fn allowed(role: Role, action: Action) -> bool {
                 | Action::EnrollUpdateKey { .. }
                 | Action::UpdateKeyStatement
                 | Action::PutTime { .. }
+                | Action::TailLog { .. }
         ),
         Role::UpdateSigner => false,
     }
@@ -461,6 +468,9 @@ pub(super) enum Action {
         /// `Some(None)` clears the zone.
         zone: Option<Option<Zone>>,
         ntp: Option<NtpServer>,
+    },
+    TailLog {
+        after: Option<u32>,
     },
     /// A field failed the stores' checks before anything ran.
     Invalid,
@@ -554,6 +564,7 @@ impl From<Op<'_>> for Action {
                 }
                 Self::PutTime { base, zone, ntp }
             }
+            Op::TailLog { after } => Self::TailLog { after },
         }
     }
 }
@@ -573,6 +584,7 @@ impl Action {
                 | Self::UpdateState
                 | Self::UpdateChunk { .. }
                 | Self::GetTime
+                | Self::TailLog { .. }
         )
     }
 
@@ -599,6 +611,7 @@ impl Action {
             Self::UpdateKeyStatement => "update-key-statement",
             Self::GetTime => "get-time",
             Self::PutTime { .. } => "put-time",
+            Self::TailLog { .. } => "tail-log",
             Self::Invalid => "invalid",
         }
     }

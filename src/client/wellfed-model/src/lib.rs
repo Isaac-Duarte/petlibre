@@ -29,8 +29,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use utoipa::ToSchema;
 
 pub use event::{
-    ClientRole, EnrollPath, Event, EventBody, EventKind, FeedOutcome, FeedReason, Gap, MetricKind,
-    Pushed, Sample, SampleValue, Source,
+    ClientRole, EnrollPath, Event, EventBody, EventKind, FeedOutcome, FeedReason, Gap, LogLines,
+    MetricKind, Pushed, Sample, SampleValue, Source,
 };
 pub use request::{
     Answer, Client, Invite, NtpResult, NtpServer, Op, Refusal, TimeChanges, TimeSource, TimeSync,

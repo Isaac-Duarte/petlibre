@@ -18,6 +18,8 @@ bluetooth = ["wellfed-amebad-sys/bluetooth"]
 # Motor STOP writes that do not take while a hold is armed (`inject`).
 # Only the feeder's `stop-fail` bench variant sets it.
 stop-fail = []
+# The RAM log tail beside the UART log.
+log-tail = ["wellfed-amebad-sys/log-tail"]
 
 [dependencies]
 wellfed-hal-common.workspace = true

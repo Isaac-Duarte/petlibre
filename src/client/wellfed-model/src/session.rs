@@ -19,6 +19,8 @@ pub struct Capabilities {
     /// The time settings and the clock's state: `GetTime`, `PutTime` and
     /// the `Time` answer.
     pub time: bool,
+    /// The debug log: the `TailLog` op and the log batches it starts.
+    pub log: bool,
 }
 
 impl Capabilities {
@@ -27,12 +29,14 @@ impl Capabilities {
         feed: false,
         update: false,
         time: false,
+        log: false,
     };
     /// Every feature this crate knows: what a current client claims.
     pub const KNOWN: Self = Self {
         feed: true,
         update: true,
         time: true,
+        log: true,
     };
 
     /// The features both `self` and `other` claim.
@@ -42,6 +46,7 @@ impl Capabilities {
             feed: self.feed && other.feed,
             update: self.update && other.update,
             time: self.time && other.time,
+            log: self.log && other.log,
         }
     }
 }

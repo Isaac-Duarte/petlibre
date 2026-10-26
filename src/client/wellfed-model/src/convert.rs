@@ -11,11 +11,20 @@ use wellfed_proto::setup as proto_setup;
 
 use crate::{
     Answer, Capabilities, Client, ClientRole, EnrollPath, Event, EventBody, FeedOutcome,
-    FeedReason, Generation, Hello, Hex, Invite, Joined, NtpResult, NtpServer, Op, OpenRefusal,
-    Power, Refusal, Sample, SampleValue, Settings, SettingsPatch, Source, Status, TimeSource,
-    TimeSync, TimeView, Tune, UpdatePhase, UpdateRefusal, UpdateStop, UpdateView, WifiSource,
-    setup,
+    FeedReason, Generation, Hello, Hex, Invite, Joined, LogLines, NtpResult, NtpServer, Op,
+    OpenRefusal, Power, Refusal, Sample, SampleValue, Settings, SettingsPatch, Source, Status,
+    TimeSource, TimeSync, TimeView, Tune, UpdatePhase, UpdateRefusal, UpdateStop, UpdateView,
+    WifiSource, setup,
 };
+
+/// One log batch: its text is whole lines, each ending in `\n`.
+pub fn log(seq: u32, dropped: u32, text: &str) -> LogLines {
+    LogLines {
+        seq,
+        dropped,
+        lines: text.lines().map(str::to_owned).collect(),
+    }
+}
 
 /// One event of the history `epoch` counts.
 pub fn event(epoch: u32, event: proto::Event) -> Event {
@@ -659,6 +668,7 @@ impl Op {
                     ntp: changes.ntp.map(Into::into),
                 },
             },
+            Self::TailLog { after } => proto::Op::TailLog { after: *after },
         }
     }
 }
@@ -714,13 +724,19 @@ impl From<proto::Capabilities> for Capabilities {
             feed: bits.contains(proto::Capabilities::FEED),
             update: bits.contains(proto::Capabilities::UPDATE),
             time: bits.contains(proto::Capabilities::TIME),
+            log: bits.contains(proto::Capabilities::LOG),
         }
     }
 }
 
 impl From<Capabilities> for proto::Capabilities {
     fn from(capabilities: Capabilities) -> Self {
-        let Capabilities { feed, update, time } = capabilities;
+        let Capabilities {
+            feed,
+            update,
+            time,
+            log,
+        } = capabilities;
         let mut bits = proto::Capabilities::V1.0;
         if feed {
             bits |= proto::Capabilities::FEED.0;
@@ -730,6 +746,9 @@ impl From<Capabilities> for proto::Capabilities {
         }
         if time {
             bits |= proto::Capabilities::TIME.0;
+        }
+        if log {
+            bits |= proto::Capabilities::LOG.0;
         }
         Self(bits)
     }

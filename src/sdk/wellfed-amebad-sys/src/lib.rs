@@ -270,6 +270,19 @@ pub enum Irq {
     GpioA,
 }
 
+/// The log tail's size: about 70 record lines of the usual length.
+pub const LOG_TAIL_BYTES: usize = 4096;
+
+/// The newest lines [`log`] printed, for the device API to stream. A task
+/// copies its line in while the scheduler is still suspended for the
+/// print, so only an interrupt can find another writer mid-copy (it drops
+/// its line and counts it). On the target it exists only with the
+/// `log-tail` feature, so a firmware that serves no API spends no RAM on
+/// it.
+#[cfg(any(not(target_os = "none"), feature = "log-tail"))]
+pub static LOG_TAIL: wellfed_core::log_tail::LogTail<LOG_TAIL_BYTES> =
+    wellfed_core::log_tail::LogTail::new();
+
 #[cfg(all(target_os = "none", feature = "km4"))]
 mod target;
 #[cfg(all(target_os = "none", feature = "km4"))]

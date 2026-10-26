@@ -10,8 +10,8 @@ use crate::pairing::Pairing;
 use crate::{Device, EventRead, HANDSHAKE_MS, IDLE_MS, KeyChange, KeyOutcome, Reason, Record};
 use wellfed_core::deadline_passed;
 use wellfed_proto::api::{
-    self as proto, ClientMessage, Clients, EventBody, FeederMessage, Joined, Open, Outcome,
-    Refusal, RequestId,
+    self as proto, ClientMessage, Clients, EventBody, FeederMessage, Joined, LOG_TEXT_MAX, Open,
+    Outcome, Refusal, RequestId,
 };
 
 impl Server {
@@ -249,17 +249,20 @@ impl Server {
         self.seal_plain(index, len)
     }
 
-    /// Push the next event, or the latest sample, to a subscriber.
+    /// Push the next event, else the latest sample, else the next log
+    /// lines: one frame, and only once the last is out.
     fn push<D: Device>(&mut self, index: usize, device: &mut D) -> Result<bool, Reason> {
         let Phase::Open {
             events,
             sample,
             capabilities,
+            log,
             ..
         } = &mut self.slots[index].phase
         else {
             return Ok(false);
         };
+        let log = *log;
         if let Some(after) = *events {
             let message = match device.event_after(after) {
                 EventRead::Event(event) => {
@@ -287,6 +290,33 @@ impl Server {
                 .seal_and_send(index, &FeederMessage::Sample(next))
                 .map(|()| true);
         }
-        Ok(false)
+        match log {
+            Some(after) => self.push_log(index, after, device),
+            None => Ok(false),
+        }
+    }
+
+    /// The lines after `after` that fit one frame. The text is read into
+    /// the sealing buffer, which is free until the message is sealed.
+    fn push_log<D: Device>(
+        &mut self,
+        index: usize,
+        after: Option<u32>,
+        device: &mut D,
+    ) -> Result<bool, Reason> {
+        let Some(batch) = device.log_after(after, &mut self.out[..LOG_TEXT_MAX]) else {
+            return Ok(false);
+        };
+        let text = self.out.get(..batch.len).ok_or(Reason::Malformed)?;
+        let message = FeederMessage::Log {
+            seq: batch.seq,
+            dropped: batch.dropped,
+            text: core::str::from_utf8(text).map_err(|_| Reason::Malformed)?,
+        };
+        let len = proto_encode(&message, &mut self.plain)?;
+        if let Phase::Open { log, .. } = &mut self.slots[index].phase {
+            *log = Some(Some(batch.seq));
+        }
+        self.seal_plain(index, len).map(|()| true)
     }
 }

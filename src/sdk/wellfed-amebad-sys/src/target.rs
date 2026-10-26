@@ -1297,10 +1297,17 @@ pub fn current_task() -> usize {
 
 /// One line, not split by another task's print: from a task, the scheduler
 /// is paused for the print (interrupts keep running). Before the scheduler
-/// starts, or from an interrupt, it prints directly.
+/// starts, or from an interrupt, it prints directly. With the `log-tail`
+/// feature the line is then copied into [`crate::LOG_TAIL`], still
+/// unscheduled, so the UART sees it at the same moment as before and tasks
+/// never contend for the tail.
 pub fn log(message: &CStr) {
-    // SAFETY: a NUL-terminated format and string.
-    unscheduled(|| unsafe { raw::_rtl_printf(c"%s".as_ptr(), message.as_ptr()) });
+    unscheduled(|| {
+        // SAFETY: a NUL-terminated format and string.
+        unsafe { raw::_rtl_printf(c"%s".as_ptr(), message.as_ptr()) };
+        #[cfg(feature = "log-tail")]
+        crate::LOG_TAIL.push(message.to_bytes());
+    });
 }
 
 /// Run `f` with no other task scheduled: from a task, the scheduler is

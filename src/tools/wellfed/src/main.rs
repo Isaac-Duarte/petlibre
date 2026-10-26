@@ -30,7 +30,8 @@ use wellfed_client::setup::{Ask, Credentials, Session, Step, panel_position};
 use wellfed_formats::private;
 use wellfed_model::setup::{Enrolled, Refusal, Reply, WifiSaved};
 use wellfed_model::{
-    Answer, ClientRole, EventBody, Joined, NtpServer, Op, Pushed, SettingsPatch, TimeChanges, Wifi,
+    self as model, Answer, ClientRole, EventBody, Joined, NtpServer, Op, Pushed, SettingsPatch,
+    TimeChanges, Wifi,
 };
 use wellfed_session::setup_code::Code;
 
@@ -68,6 +69,9 @@ enum Command {
     Time(TimeArgs),
     /// The feeder's history, and with --follow its live events and samples.
     Events(EventsArgs),
+    /// The feeder's debug log (the record lines its UART prints), and with
+    /// --follow each new line. Owners only.
+    Logs(LogsArgs),
     /// Mint a single-use invite for another client.
     Invite(InviteArgs),
     /// Redeem an invite with this computer's key.
@@ -121,6 +125,7 @@ fn main() -> Result<()> {
         Command::Wifi(args) => runtime.block_on(wifi_command(args)),
         Command::Time(args) => runtime.block_on(time_command(args)),
         Command::Events(args) => runtime.block_on(events_command(args)),
+        Command::Logs(args) => runtime.block_on(logs_command(args)),
         Command::Invite(args) => runtime.block_on(invite_command(args)),
         Command::Join(args) => runtime.block_on(join_command(args)),
         Command::Clients(target) => runtime.block_on(clients_command(target)),
@@ -378,6 +383,19 @@ struct EventsArgs {
 }
 
 #[derive(Args)]
+struct LogsArgs {
+    #[command(flatten)]
+    target: Target,
+    /// Start after this line number of the feeder's current boot (default:
+    /// the oldest line its RAM tail keeps, a few KB).
+    #[arg(long)]
+    after: Option<u32>,
+    /// Keep the session open and print new lines as the feeder logs them.
+    #[arg(long)]
+    follow: bool,
+}
+
+#[derive(Args)]
 struct FeedArgs {
     #[command(flatten)]
     target: Target,
@@ -572,6 +590,45 @@ async fn events_command(args: EventsArgs) -> Result<()> {
             Err(error) => return Err(error),
         };
         println!("{}", serde_json::to_string(&pushed)?);
+    }
+}
+
+/// The lines as the feeder logged them, one per line on standard output;
+/// lines the feeder overwrote before sending are counted on standard error.
+async fn logs_command(args: LogsArgs) -> Result<()> {
+    let (_, _, mut connection) = connect(&args.target).await?;
+    match connection.ask(&Op::TailLog { after: args.after }).await? {
+        Answer::Done { .. } => {}
+        Answer::Refused(model::Refusal::Unavailable) => {
+            bail!("this feeder's build keeps no log (it lacks the log capability)")
+        }
+        Answer::Refused(refusal) => bail!("refused: {refusal:?}"),
+        other => bail!("unexpected answer {other:?}"),
+    }
+    // Without --follow, stop once the tail has been sent and is quiet.
+    let wait = if args.follow {
+        Duration::from_secs(3600)
+    } else {
+        Duration::from_secs(2)
+    };
+    loop {
+        let pushed = match connection.next(wait).await? {
+            Some(pushed) => pushed,
+            None if args.follow => continue,
+            None => return Ok(()),
+        };
+        let Pushed::Log(batch) = pushed else {
+            continue;
+        };
+        if batch.dropped > 0 {
+            eprintln!(
+                "({} lines dropped: the feeder logged faster than this session read)",
+                batch.dropped
+            );
+        }
+        for line in batch.lines {
+            println!("{line}");
+        }
     }
 }
 

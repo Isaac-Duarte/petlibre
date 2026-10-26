@@ -102,6 +102,7 @@ fn op() -> impl Strategy<Value = Op<'static>> {
                 base,
                 changes: TimeChanges { zone, ntp },
             }),
+        any::<Option<u32>>().prop_map(|after| Op::TailLog { after }),
     ]
 }
 

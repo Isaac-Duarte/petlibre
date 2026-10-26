@@ -84,6 +84,12 @@ pub enum Op {
         base: Generation,
         changes: TimeChanges,
     },
+    /// Push the feeder's record lines after line `after` (`None`: from the
+    /// oldest it keeps), then each new one, as [`crate::Pushed::Log`].
+    /// Owners only; asking again moves the cursor.
+    TailLog {
+        after: Option<u32>,
+    },
 }
 
 /// A change to the time settings; `None` leaves a field as it is.

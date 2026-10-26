@@ -2245,6 +2245,7 @@ dependencies = [
  "bindgen 0.72.1",
  "cortex-m",
  "wellfed-board-plaf103",
+ "wellfed-core",
 ]
 
 [[package]]

@@ -851,3 +851,79 @@ fn the_recovery_window_admits_a_new_owner_who_proves_the_code() {
         sim.stop().await;
     });
 }
+
+/// The lines the next batches carry, until one ends with a line `until`
+/// accepts.
+async fn log_until(connection: &mut Connection, until: impl Fn(&str) -> bool) -> Vec<String> {
+    let mut lines = Vec::new();
+    loop {
+        let message = connection.next(WAIT).await.unwrap();
+        if let Pushed::Log(batch) = message {
+            let done = batch.lines.iter().any(|line| until(line));
+            lines.extend(batch.lines);
+            if done {
+                return lines;
+            }
+        }
+    }
+}
+
+#[test]
+fn an_owner_tails_the_record_lines_the_feeder_logs() {
+    local(async {
+        let mut sim = Running::start(&Flash::memory(), true).await;
+        let mut owner = sim.open(OWNER).await.unwrap();
+        let tail = owner
+            .ask(sim.id(), &Op::TailLog { after: None })
+            .await
+            .unwrap();
+        assert_eq!(tail, Answer::Done { generation: None });
+
+        // From the boot on, as the feeder's UART printed it.
+        let lines = log_until(&mut owner, |line| line.contains("op=tail-log")).await;
+        assert!(lines[0].starts_with("boot bank="), "{lines:?}");
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.starts_with("PLAPI1 session slot=0 state=open role=owner")),
+            "{lines:?}"
+        );
+
+        // A new line follows live.
+        let lock = owner
+            .ask(sim.id(), &Op::SetLock { locked: false })
+            .await
+            .unwrap();
+        assert_eq!(lock, Answer::Done { generation: None });
+        log_until(&mut owner, |line| line.contains("op=set-lock")).await;
+
+        // A member may not.
+        let invite = owner
+            .ask(
+                sim.id(),
+                &Op::CreateInvite {
+                    role: ClientRole::Member,
+                },
+            )
+            .await
+            .unwrap();
+        let Answer::Invite(invite) = invite else {
+            panic!("{invite:?}");
+        };
+        let invite = Invite {
+            feeder: sim.identity,
+            id: invite.id,
+            secret: invite.secret.0,
+        };
+        join(&keys(MEMBER), invite, "member", sim.address, [0x92; 32])
+            .await
+            .unwrap();
+        let mut member = sim.open(MEMBER).await.unwrap();
+        let refused = member
+            .ask(sim.id(), &Op::TailLog { after: None })
+            .await
+            .unwrap();
+        assert_eq!(refused, Answer::Refused(Refusal::Forbidden));
+        sim.stop().await;
+    });
+}

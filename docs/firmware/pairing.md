@@ -89,7 +89,7 @@ Status (October 24, 2026):
 
 ## Keys and the panel (physical, October 24)
 
-**Carrying keys between tasks (`wellfed-hal::keys`):**
+**Carrying keys between tasks (`wellfed-feeder-runtime::keys`):**
 - The settings writer alone writes the client store, and the loop task alone reads the panel and will run the handshakes.
 - The loop queues one change at a time (enroll, revoke or reset) in a one-slot mailbox; a second before the writer takes the first is `busy`.
 - The writer logs each result as `PLCFG1 keys change=… result=… enrolled=…`.
@@ -174,7 +174,7 @@ The exchange and its refusals are in [Bluetooth](bluetooth.md#setup-exchange). T
 - **`wellfed-session::setup_code`:** the owner's code and the press-by-press proof both sides run, bound to the handshake hash.
 - **`wellfed-feeder::setup::Responder`:** the feeder's side of Noise XX under its identity, returning the client's checked offer (its key and a label the client store accepts), then running the proof and returning the Wi-Fi from the client's last step, checked against the Wi-Fi store's rules.
 - **`wellfed-client::setup::Session`:** the client's side, with the BLE framing. The owner's `wellfed setup` and the Android app share it.
-- **The loop (`feeder/src/setup.rs`):** starts the stack on the gesture, offers the key to pairing (`Pairing::setup`), which collects the code from the buttons, runs the proof, and once the client has proven it queues the enrollment in the keys mailbox, waits for its result (`keys::ticket` and `keys::outcome`), then queues the Wi-Fi (`network::save`) and waits for the writer. A client that leaves before the proof cancels its offer (`Pairing::cancel`), so the next press feeds again.
+- **The loop (`wellfed_feeder::feeder::setup`, over the firmware's `Platform`):** starts the stack on the gesture, offers the key to pairing (`Pairing::setup`), which collects the code from the buttons, runs the proof, and once the client has proven it queues the enrollment in the keys mailbox, waits for its result (`keys::ticket` and `keys::outcome`), then queues the Wi-Fi (`network::save`) and waits for the writer. A client that leaves before the proof cancels its offer (`Pairing::cancel`), so the next press feeds again.
 - **Not at boot:** the product architecture first chose setup mode at boot, but every free KM0 backup register is taken, so a "setup next boot" flag has nowhere to live. The gesture starts the stack on the running feeder instead, and a reboot still ends it.
 
 The LAN handshakes for invites and the recovery window run over FW47's Noise stream ([device API](device-api.md)). An invite's redemption and a revocation ran on hardware on October 24. Recovery changed with it: the window no longer admits a plain XX handshake, but runs this same setup exchange, code proof included, over the stream (`Pairing::recovery`). So a LAN neighbour cannot slip in while it is open. That is host-tested; the hardware run needs the owner at the panel.

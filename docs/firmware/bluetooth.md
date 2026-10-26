@@ -34,7 +34,7 @@ The link audit is unchanged and passes: `ftl_init` and every flash erase and pro
 - **GATT callbacks** only copy bytes into rings (control 1 KiB, outgoing notifications 512 B) and record events.
 - **Rust requests** (notify, advertise, disconnect) go through the task's IO queue, so every stack call runs on the task that started the stack.
 
-The Rust side is the `feeder` firmware's loop task (`feeder/src/setup.rs`), which steps `wellfed_hal::ble::BleSetup`, the link:
+The Rust side is the `feeder` firmware's loop task, whose setup mode (`wellfed_feeder::feeder::setup`) steps `wellfed_hal::ble::BleSetup`, the link, through the firmware's `Platform`:
 - **Started** only once setup mode begins: the stack's heap and C tasks cost nothing on a normal boot (FW44).
 - **Advertising:** while the power monitor reports the adapter (mains, as stock), and never while connected or after setup has finished.
 - **Messages:** the link reassembles a host's framed writes into one held message and frames each reply; what the messages say is the loop's.

@@ -165,7 +165,7 @@ Server-to-firmware requests can carry an HMAC so that a party with only the Wi-F
 ## Device settings (FW25)
 
 `{"id":…,"op":"settings"}` reads the device settings: lights, sound, volume, the record generation, and whether NOR may be written. With `"lights":0|1`, `"sound":0|1` or `"volume":0..100` it queues one change, which **must be signed**. The reply reports the current values and `"pending":true`. A second change while one is queued gets `error: busy`, and an unwritable store gets `error: read_only`.
-- **Writer:** the firmware's settings task (`src/sdk/wellfed-sdk/src/settings.rs`, part of the runtime every firmware runs inside) owns the FW15 store in storage sectors 2 and 3. It starts after the boot is confirmed, arms the flash-lock hooks if the confirmation did not, and only then lets the offer check start, so the two never arm at once. Each save sets the arming attempt marker and clears it after.
+- **Writer:** the firmware's settings task (`src/product/wellfed-feeder-runtime/src/writer.rs`, which the runtime every firmware runs inside steps) owns the FW15 store in storage sectors 2 and 3. It starts after the boot is confirmed, arms the flash-lock hooks if the confirmation did not, and only then lets the offer check start, so the two never arm at once. Each save sets the arming attempt marker and clears it after.
 - **Transport isolation:** the transport may only call `settings::request`, which queues and reads atomics and never touches flash.
 - **Records:** `PLCFG1 start`, `open status=… generation=… lights=… sound=… volume=…`, the arming records, `saved …` and `error stage=unarmed|save status=…`.
 - **API:** `POST /api/replacement/request` takes `{"op":"settings"}` or `{"op":"settings","lights":true,"volume":40}`; the server signs it.
@@ -177,7 +177,7 @@ Server-to-firmware requests can carry an HMAC so that a party with only the Wi-F
 
 ## Child lock (FP11)
 
-`{"id":…,"op":"lock"}` reads the panel's child lock. With `"locked":0|1` it queues one change for the panel's owner, which **must be signed**. The reply is `"ok":true,"pending":…,"locked":0|1`, with the lock as the owner last published it, or `error: busy` (a change is already queued) or `error: unserved` (this firmware runs no panel owner; only `feeder` does). An unlock from here relocks after the same 30 s idle time as a button unlock. The transport may only call `panel::request`, which reads and fills a one-slot mailbox (`wellfed-hal/src/panel.rs`). API: `POST /api/replacement/request` with `{"op":"lock"}` or `{"op":"lock","locked":false}`. Policy and evidence: [stock behavior](../devices/plaf103/stock/README.md#panel-buttons-and-child-lock).
+`{"id":…,"op":"lock"}` reads the panel's child lock. With `"locked":0|1` it queues one change for the panel's owner, which **must be signed**. The reply is `"ok":true,"pending":…,"locked":0|1`, with the lock as the owner last published it, or `error: busy` (a change is already queued) or `error: unserved` (this firmware runs no panel owner; only `feeder` does). An unlock from here relocks after the same 30 s idle time as a button unlock. The device API reaches the lock only through a one-slot box the loop's panel owner reads (`wellfed_feeder::feeder::lock`). API: `POST /api/replacement/request` with `{"op":"lock"}` or `{"op":"lock","locked":false}`. Policy and evidence: [stock behavior](../devices/plaf103/stock/README.md#panel-buttons-and-child-lock).
 
 ## Server side
 

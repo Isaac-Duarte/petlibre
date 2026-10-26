@@ -15,7 +15,7 @@ make -C src/firmware/vendor firstboot FIRMWARE=buttons   # default: qa
 | [`speaker`](speaker) | The startup chime and the tune player |
 | [`motor`](motor) | The first supervised motor pulse, in its `pulse` variant only; the normal image adds nothing |
 | [`trial`](trial) | Trial images KM0 must roll back: `stall` and `fail` |
-| [`feeder`](feeder) | The product firmware, growing owner by owner: so far the panel, whose child lock follows stock (5 s Lock hold, 30 s idle relock), shows on PA4 and takes a signed `lock` request, BLE setup mode (a Lock and Mic hold, then a phone's key and Wi-Fi, confirmed by Dispense), the device API, and the feeding owner, which holds the motor and emitters stopped and supervised (no feed is submitted yet); its loop task and the button service are its two tasks. Claims the ADC for the owner, which publishes power health in the runtime monitor's place. Links the device's BLE stack (`bluetooth = true`) and starts it only in setup mode |
+| [`feeder`](feeder) | The product firmware: the PLAF103's `Platform` for the product's loop pass (`wellfed_feeder::feeder`), which the simulator runs too, and the feeding owner. So far the panel, whose child lock follows stock (5 s Lock hold, 30 s idle relock), shows on PA4 and takes a signed `lock` request, BLE setup mode (a Lock and Mic hold, then a phone's key and Wi-Fi, confirmed by Dispense), the device API, and the feeding owner, which holds the motor and emitters stopped and supervised (no feed is submitted yet); its loop task and the button service are its two tasks. Claims the ADC for the owner, which publishes power health in the runtime monitor's place. Links the device's BLE stack (`bluetooth = true`) and starts it only in setup mode |
 | [`blink`](blink) | One task that blinks the connection indicator; the smallest firmware and the template for new ones |
 
 The probes these firmwares run live once, in `src/sdk/wellfed-probes`, so a single-purpose firmware and QA step the same code. Each firmware owns the tasks that step them.
@@ -27,7 +27,7 @@ A firmware adds tasks; it does not own the device. The runtime always runs first
 - **Startup checks.** Motor STOP and infrared OFF are requested and read back, the synthetic core diagnostic runs, and the indicators are verified LOW before any firmware code starts. A failure stops startup.
 - **Recovery.** Bank 0 holds the fallback: the `feeder` build, which runs its firmware there too (it feeds and serves the device API) and is the only bank that installs updates into bank 1. A failed update or trial lands on it. A unit whose bank 1 holds a firmware that serves no device API (the bring-up firmwares) takes no offer: it leaves that build through KM0's trial or a UART install.
 - **Supervision and rollback.** The watchdog feeder stops feeding when a runtime task hangs, outputs drift from stopped, or a trial image fails or never confirms. KM0 counts the reset and rolls a trial back to the previous build.
-- **Confirmation, settings and updates.** The runtime confirms a healthy build on bank 1, runs the settings writer, and runs the update stage, which takes offers through a firmware's device API (the `feeder`'s), checks their signatures on its own stack and writes bank 1 from bank 0.
+- **Confirmation, settings and updates.** The runtime confirms a healthy build on bank 1, runs the settings writer (the product's, which every firmware links from `wellfed-feeder-runtime`, so a swap keeps the owner's settings, keys and history), and runs the update stage, which takes offers through a firmware's device API (the `feeder`'s), checks their signatures on its own stack and writes bank 1 from bank 0.
 - **Task slots.** The SDK has eight task slots, and the runtime holds three on either bank (the watchdog feeder, the startup task, and one service task for power, confirmation, settings and the update stage), so a firmware gets **four tasks**, counting the SDK services it starts (the button service is one), and one slot stays spare. `spawn` refuses a fifth (`PLFW1 error firmware_tasks=full`), and the build's stack audit refuses an image that links more. When those runtime stages were separate tasks, a firmware that took one of their slots could no longer save settings or see an update offer (`fw44-simon-01`).
 - **Panics.** Interrupts are masked and outputs forced stopped before halting.
 
@@ -35,7 +35,7 @@ Not yet guaranteed: the feeder does not watch firmware tasks' liveness, so a hun
 
 ## Writing a firmware
 
-A firmware is a `no_std` crate in `src/firmware/wellfed/<name>`, with the package name `wellfed-fw-<name>`. It is a KM4 staticlib with a `km4` feature that enables `wellfed-sdk/km4`. Copy `blink`'s `Cargo.toml` and change the name.
+A firmware is a `no_std` crate in `src/firmware/wellfed/<name>`, with the package name `wellfed-fw-<name>`. It is a KM4 staticlib with a `km4` feature that enables `wellfed-sdk/km4` and `wellfed-feeder-runtime/km4`. It links `wellfed-feeder-runtime` (`use wellfed_feeder_runtime as _;`): the runtime's settings writer and Wi-Fi join call the stores it defines, and an image without it does not link. Copy `blink`'s `Cargo.toml` and change the name.
 
 Its `[package.metadata.wellfed]` table is all the builder knows about it (`wellfed-build list` prints it):
 
@@ -55,6 +55,8 @@ The startup audit checks each policy against the image's markers, so declare onl
 Its target-only module defines the start hook and creates its tasks:
 
 ```rust
+use wellfed_feeder_runtime as _;
+
 wellfed_sdk::firmware!(start);
 
 fn start() {

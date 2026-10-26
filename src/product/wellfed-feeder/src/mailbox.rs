@@ -1,6 +1,6 @@
 //! What the device API's requests hand the firmware's owners, and how
-//! each request ended: settings, the panel lock, the clock, a tune and the
-//! Wi-Fi credentials. The owner tasks fill these from their own state; the
+//! each request ended: settings, the panel lock, the clock, a tune, the
+//! Wi-Fi credentials and the client store. The owner tasks fill these from their own state; the
 //! device API only formats them.
 //!
 //! Sans-IO and allocation-free, like the rest of the crate. The settings'
@@ -8,6 +8,9 @@
 //! them for every firmware.
 
 use wellfed_core::clock::wall::{Jump, Sync, SyncError};
+use wellfed_core::named_enum;
+
+use crate::store::clients::{ClientError, Label, Role};
 
 pub use wellfed_core::settings::{MAX_VOLUME, SettingsFields, SettingsResult, SettingsView};
 pub use wellfed_core::tone::PlayResult;
@@ -141,4 +144,56 @@ pub enum WifiResult {
     ReadOnly,
     /// The SSID or passphrase failed the store's checks.
     Invalid,
+}
+
+/// A change to the client store, queued for the settings writer, which
+/// alone writes it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClientChange {
+    Enroll {
+        key: [u8; 32],
+        label: Label,
+        role: Role,
+    },
+    Revoke {
+        key: [u8; 32],
+    },
+    /// Forget every client and take a new identity.
+    Reset,
+}
+
+named_enum! {
+    /// Whether a one-slot mailbox took a change.
+    pub enum Requested {
+        Queued = "queued",
+        /// A change is already waiting for the writer.
+        Busy = "busy",
+    }
+}
+
+named_enum! {
+    /// What became of a queued client store change.
+    pub enum KeyResult {
+        Done = "done",
+        Unarmed = "unarmed",
+        /// A reset needs a new identity, and the generator never started.
+        NoGenerator = "no-generator",
+        NotWritable = "not-writable",
+        Full = "full",
+        Duplicate = "duplicate",
+        NotFound = "not-found",
+        Io = "io",
+    }
+}
+
+impl From<ClientError> for KeyResult {
+    fn from(error: ClientError) -> Self {
+        match error {
+            ClientError::NotWritable | ClientError::IdentitySet => Self::NotWritable,
+            ClientError::Full => Self::Full,
+            ClientError::Duplicate => Self::Duplicate,
+            ClientError::NotFound => Self::NotFound,
+            ClientError::Io => Self::Io,
+        }
+    }
 }

@@ -23,10 +23,9 @@
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 
 use wellfed_core::ota::MAX_CHUNK;
+pub use wellfed_core::ota::install::Answer;
 use wellfed_core::ota::install::{Progress, Refused};
-use wellfed_core::ota::offer::{
-    DOWNGRADE_BODY, KeyStatement, MANIFEST_LEN, SIGNATURE_LEN, STATEMENT_MAX,
-};
+use wellfed_core::ota::offer::{DOWNGRADE_BODY, MANIFEST_LEN, SIGNATURE_LEN, STATEMENT_MAX};
 
 use crate::cell::TaskCell;
 use crate::sdk;
@@ -88,14 +87,6 @@ impl Request {
         out[..bytes.len()].copy_from_slice(bytes);
         Ok(Self::Statement { bytes: out, len })
     }
-}
-
-/// What a request came to.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Answer {
-    Progress(Progress),
-    /// A key statement took effect.
-    Key(KeyStatement),
 }
 
 /// Who holds a slot, as its state byte stores it.

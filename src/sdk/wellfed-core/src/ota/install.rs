@@ -13,7 +13,7 @@
 //! readback; on [`Install::ready`] it records the activation in the update
 //! store, then programs the marker and reads it back.
 
-use super::offer::{Admitted, OfferError, StatementError};
+use super::offer::{Admitted, KeyStatement, OfferError, StatementError};
 use super::{MAX_CHUNK, Program, SECTOR_BYTES, WriteError, Writer};
 use crate::store::update::UpdateError;
 
@@ -128,6 +128,14 @@ pub enum Refused {
     /// Another update is in progress.
     Installing,
     NotInstalling,
+}
+
+/// What an update request came to, as the update stage answers it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Answer {
+    Progress(Progress),
+    /// A key statement took effect.
+    Key(KeyStatement),
 }
 
 /// What one chunk did.

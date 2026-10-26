@@ -20,61 +20,12 @@
 
 use core::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 
-use wellfed_core::named_enum;
-use wellfed_feeder::store::clients::{CLIENTS as STORE_CLIENTS, Client, ClientError, Label, Role};
+pub use wellfed_feeder::mailbox::{ClientChange as Change, KeyResult, Requested};
+use wellfed_feeder::store::clients::{CLIENTS as STORE_CLIENTS, Client, Role};
 
 use wellfed_hal::cell::TaskCell;
 use wellfed_hal::ota::signers;
 use wellfed_hal::sdk;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Change {
-    Enroll {
-        key: [u8; 32],
-        label: Label,
-        role: Role,
-    },
-    Revoke {
-        key: [u8; 32],
-    },
-    /// Forget every client and take a new identity.
-    Reset,
-}
-
-named_enum! {
-    pub enum Requested {
-        Queued = "queued",
-        /// A change is already waiting for the writer.
-        Busy = "busy",
-    }
-}
-
-named_enum! {
-    /// What became of a queued client store change.
-    pub enum KeyResult {
-        Done = "done",
-        Unarmed = "unarmed",
-        /// A reset needs a new identity, and the generator never started.
-        NoGenerator = "no-generator",
-        NotWritable = "not-writable",
-        Full = "full",
-        Duplicate = "duplicate",
-        NotFound = "not-found",
-        Io = "io",
-    }
-}
-
-impl From<ClientError> for KeyResult {
-    fn from(error: ClientError) -> Self {
-        match error {
-            ClientError::NotWritable | ClientError::IdentitySet => Self::NotWritable,
-            ClientError::Full => Self::Full,
-            ClientError::Duplicate => Self::Duplicate,
-            ClientError::NotFound => Self::NotFound,
-            ClientError::Io => Self::Io,
-        }
-    }
-}
 
 /// Who holds `PENDING`, as `STATE` stores it.
 #[derive(Clone, Copy, PartialEq, Eq)]

@@ -619,6 +619,7 @@ impl Build<'_> {
             )?);
         }
         if job.profile.has(Stage::Rust) {
+            audit::time_carry(sdk, binutils)?;
             audits.ram_park_audit = Some(park::audit(sdk, binutils, archives)?);
             audits.sdk_hook_audit = Some(audit::hooks::audit(sdk, binutils, archives)?);
         }

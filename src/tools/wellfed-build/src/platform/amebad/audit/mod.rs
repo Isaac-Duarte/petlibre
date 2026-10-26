@@ -22,6 +22,7 @@ use serde::Serialize;
 use super::{Core, PROJECT, binutils};
 use crate::device::StockPaths;
 use crate::{Firmware, Repo, Result, relative, text};
+use wellfed_formats::require;
 
 pub mod hooks;
 pub(crate) mod layout;
@@ -61,6 +62,40 @@ pub enum AuditError {
     PmapSymbol { found: usize },
     #[error("No {core} archive")]
     NoArchive { core: Core },
+    #[error("KM4 {name} is at {found:?}, not {TIME_CARRY:#x}")]
+    TimeCarry {
+        name: &'static str,
+        found: Option<u64>,
+    },
+}
+
+/// Where the KM4 link puts the wall clock's warm-reset record, and the
+/// heap's end with it. A record survives an activation only if the next
+/// build looks for it at the same address, so every build pins it.
+pub(crate) const TIME_CARRY: u64 = 0x1007_bfc0;
+
+/// Refuse a KM4 link whose `wellfed_time_carry` or `__sram_end__` is not
+/// at [`TIME_CARRY`].
+pub(crate) fn time_carry(sdk: &Path, binutils: &Binutils) -> Result<()> {
+    let table = tool(&binutils.objdump(), &["-t"], &elf(sdk, Core::Hp))?;
+    time_carry_in(&table)
+}
+
+/// The check on an `objdump -t` listing.
+pub(crate) fn time_carry_in(table: &str) -> Result<()> {
+    for name in ["wellfed_time_carry", "__sram_end__"] {
+        let found: Vec<u64> = table
+            .lines()
+            .filter(|line| line.split_whitespace().last() == Some(name))
+            .filter_map(|line| line.split_whitespace().next())
+            .map(parse_hex)
+            .collect::<Result<_>>()?;
+        require(found == [TIME_CARRY], || AuditError::TimeCarry {
+            name,
+            found: found.first().copied(),
+        })?;
+    }
+    Ok(())
 }
 
 /// Run a binutils tool and return its stdout.
@@ -197,4 +232,31 @@ pub(crate) fn archive_record(
         object_path: relative(object, sdk.parent().unwrap_or(sdk))?,
         object_sha256: crate::digest(object)?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_time_carry_is_pinned_with_the_heap_end() {
+        let table = "1007bfc0 g       *ABS*\t00000000 wellfed_time_carry\n\
+                     1007bfc0 g       .bluetooth_trace.text\t00000000 __sram_end__\n";
+        time_carry_in(table).unwrap();
+
+        let moved = table.replace("1007bfc0 g       .b", "1007c000 g       .b");
+        let missing = table.lines().next().unwrap().to_string();
+        for (table, name) in [
+            (moved, "__sram_end__"),
+            (missing, "__sram_end__"),
+            (table.repeat(2), "wellfed_time_carry"),
+        ] {
+            match time_carry_in(&table) {
+                Err(crate::Error::Audit(AuditError::TimeCarry { name: found, .. })) => {
+                    assert_eq!(found, name);
+                }
+                other => panic!("{other:?}"),
+            }
+        }
+    }
 }

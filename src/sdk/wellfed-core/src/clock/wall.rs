@@ -39,7 +39,10 @@
 //!
 //! **Validity.** The clock reads invalid once its error passes
 //! [`MAX_ERROR_MS`]: about 6.6 h after a trusted fix unlearned, about 22 h
-//! learned. Then the next fix of any origin sets it again. A run of
+//! learned. Then the next fix sets it again: an owner's or a client's
+//! freely, an NTP answer only inside the expired anchor's interval grown
+//! without the two-minute cap (so each re-set moves the clock by at most
+//! that), and such an answer teaches no rate. A run of
 //! [`DISJOINT_LIMIT`] NTP answers that all miss the trusted interval means
 //! the anchor or the learned rate is wrong (or the server is): the clock
 //! forgets both and reads invalid, so it needs the time rather than
@@ -131,6 +134,16 @@ impl Origin {
     /// The variant's number, as records print it.
     pub const fn code(self) -> u8 {
         self as u8
+    }
+
+    /// The variant a stored code names.
+    pub const fn from_byte(byte: u8) -> Option<Self> {
+        match byte {
+            0 => Some(Self::Owner),
+            1 => Some(Self::Client),
+            2 => Some(Self::Ntp),
+            _ => None,
+        }
     }
 }
 
@@ -356,11 +369,33 @@ impl WallClock {
             error_us: u64::from(fix.error_ms) * 1000,
         };
 
+        // An expired clock still knows where the time lies, only too loosely
+        // to read: NTP must fall inside that, so an answer re-sets the clock
+        // by at most the old interval each expiry, not to anything. Owner
+        // and client syncs re-set it freely, as before the anchor.
+        let expired = match self.current(now) {
+            None if fix.origin == Origin::Ntp => self.trust.and_then(|t| self.project(t, now)),
+            _ => None,
+        };
+        if let Some(old) = expired
+            && signed(point.unix_us, old.unix_us).unsigned_abs() > old.error_us + point.error_us
+        {
+            self.missed();
+            return Err(SyncError::Bounded);
+        }
+
         let jump = match (self.current(now), fix.origin) {
-            // Nothing valid to weigh it against: any fix is trusted.
+            // Nothing valid to weigh it against: any fix inside the expired
+            // interval, if there is one, is trusted. An NTP answer that only
+            // had to fall inside that interval measures no rate: it could
+            // sit anywhere in it, which is the unlearned bound again, and
+            // an answerer teaching a rate at each expiry would walk the
+            // clock further every time while it claimed the learned bound.
             (None, _) => {
                 self.trusted(point);
-                self.learn(point);
+                if expired.is_none() {
+                    self.learn(point);
+                }
                 Jump::First
             }
             (Some((_, centre, error_us)), Origin::Owner) => {
@@ -381,14 +416,7 @@ impl WallClock {
                 let delta = signed(point.unix_us, trust.unix_us);
                 if delta.unsigned_abs() > trust.error_us + point.error_us {
                     if fix.origin == Origin::Ntp {
-                        self.disjoint = self.disjoint.saturating_add(1);
-                        if self.disjoint >= DISJOINT_LIMIT {
-                            self.trust = None;
-                            self.centre = None;
-                            self.forget_rate();
-                            self.base = None;
-                            self.disjoint = 0;
-                        }
+                        self.missed();
                     }
                     return Err(SyncError::Bounded);
                 }
@@ -403,6 +431,20 @@ impl WallClock {
         self.syncs = self.syncs.saturating_add(1);
         self.last = Some((fix.origin, now));
         Ok(jump)
+    }
+
+    /// An NTP answer outside the trusted interval: after `DISJOINT_LIMIT`
+    /// in a row the anchor, the rate or the server is wrong, so the clock
+    /// forgets the anchor and needs the time from any source.
+    fn missed(&mut self) {
+        self.disjoint = self.disjoint.saturating_add(1);
+        if self.disjoint >= DISJOINT_LIMIT {
+            self.trust = None;
+            self.centre = None;
+            self.forget_rate();
+            self.base = None;
+            self.disjoint = 0;
+        }
     }
 
     fn trusted(&mut self, point: Anchor) {
@@ -545,8 +587,9 @@ impl WallClock {
     /// The clock at uptime `now`, which the RTC reads as second `rtc_s`,
     /// as a record to keep across a warm reset; `None` while invalid, when
     /// the caller clears what it kept. The trusted interval and the reading
-    /// are carried with the zone hint; the rate, the sync count and the
-    /// baseline are not.
+    /// are carried with the zone hint and the last fix's origin and age (a
+    /// feeding plan may ask whether an owner confirmed the time); the rate,
+    /// the sync count and the baseline are not.
     pub fn carry(&self, now: u32, rtc_s: u32) -> Option<[u32; CARRY_WORDS]> {
         let (trust, centre, _) = self.current(now)?;
         Some(
@@ -556,6 +599,10 @@ impl WallClock {
                 trust_error_us: trust.error_us,
                 centre_us: centre.unix_us,
                 hint: self.hint,
+                last: self.last.and_then(|(origin, at)| {
+                    let age = now.wrapping_sub(at);
+                    (age < crate::HALF_RANGE).then_some((origin, age))
+                }),
             }
             .encode(),
         )
@@ -616,6 +663,12 @@ impl WallClock {
         self.base = None;
         self.forget_rate();
         self.hint = carry.hint;
+        // The last fix keeps its origin and its age, now across the gap: the
+        // uptime it came at lies before this boot, which only an age reads.
+        self.last = carry.last.and_then(|(origin, age_ms)| {
+            let age = age_ms.checked_add(gap_s * 1000)?;
+            (age < crate::HALF_RANGE).then_some((origin, now.wrapping_sub(age)))
+        });
         Ok(Resumed {
             gap_s,
             error_ms: reported_us.div_ceil(1000),
@@ -626,9 +679,10 @@ impl WallClock {
 /// A clock saved for a warm reset, as 16 little-endian words: the magic,
 /// the version and flags, the RTC second, the trusted estimate and its
 /// error and the reading (each in microseconds, low word first), the zone
-/// hint, two reserved zero words, and a CRC-32 of the rest. The record
-/// lives in RAM only, so its layout may change with any build: a build
-/// that reads another's as `Corrupt` just starts unsynced.
+/// hint, the last fix's origin (its code plus one, 0 for none) and age in
+/// milliseconds, and a CRC-32 of the rest. The record lives in RAM only,
+/// so its layout may change with any build: a build that reads another's
+/// as `Corrupt` just starts unsynced.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Carry {
     rtc_s: u32,
@@ -636,6 +690,8 @@ struct Carry {
     trust_error_us: u64,
     centre_us: u64,
     hint: Option<Hint>,
+    /// The last fix's origin and its age at the save.
+    last: Option<(Origin, u32)>,
 }
 
 /// `PLTC`.
@@ -658,6 +714,9 @@ impl Carry {
             next_offset_s: 0,
         });
         let flags = if self.hint.is_some() { CARRY_HINT } else { 0 };
+        let [last_origin, last_age_ms] = self.last.map_or([0, 0], |(origin, age_ms)| {
+            [u32::from(origin.code()) + 1, age_ms]
+        });
 
         let [trust_lo, trust_hi] = split(self.trust_us);
         let [error_lo, error_hi] = split(self.trust_error_us);
@@ -677,8 +736,8 @@ impl Carry {
             change_lo,
             change_hi,
             hint.next_offset_s.cast_unsigned(),
-            0,
-            0,
+            last_origin,
+            last_age_ms,
             0,
         ];
         words[CARRY_WORDS - 1] = carry_check(&words);
@@ -692,12 +751,21 @@ impl Carry {
         let flags = words[1] & !0xffff;
         let valid = words[1] & 0xffff == CARRY_VERSION
             && flags & !CARRY_HINT == 0
-            && words[13] == 0
-            && words[14] == 0
             && words[CARRY_WORDS - 1] == carry_check(words);
         if !valid {
             return Err(NoResume::Corrupt);
         }
+        let last = match words[13] {
+            0 if words[14] == 0 => None,
+            code @ 1..=3 if words[14] < crate::HALF_RANGE => {
+                let origin = u8::try_from(code - 1)
+                    .ok()
+                    .and_then(Origin::from_byte)
+                    .ok_or(NoResume::Corrupt)?;
+                Some((origin, words[14]))
+            }
+            _ => return Err(NoResume::Corrupt),
+        };
 
         let join = |lo: u32, hi: u32| (u64::from(hi) << 32) | u64::from(lo);
         let hint = Hint {
@@ -719,6 +787,7 @@ impl Carry {
             trust_error_us: join(words[5], words[6]),
             centre_us: join(words[7], words[8]),
             hint,
+            last,
         };
         let times = MIN_UNIX_MS * 1000..MAX_UNIX_MS * 1000;
         if !times.contains(&carry.trust_us)

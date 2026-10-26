@@ -285,13 +285,7 @@ fn ntp_polls_stay_inside_the_bound_at_the_measured_worst_drift() {
             assert_eq!(clock.fix(now, ntp(NOON + truth, 25)), Ok(Jump::First));
         }
     }
-    let state = clock.state(slow_by(2060, 84 * step));
-    assert!(state.learned);
-    assert!(
-        (state.rate_ppb - 2_064_000).abs() < 5_000,
-        "{}",
-        state.rate_ppb
-    );
+    assert!(!clock.state(slow_by(2060, 84 * step)).learned);
 }
 
 #[test]
@@ -332,31 +326,37 @@ fn the_rate_is_learned_from_owner_syncs_and_the_clock_holds_for_a_day() {
 }
 
 #[test]
-fn ntp_alone_learns_the_rate_across_its_first_expiry() {
+fn ntp_alone_never_learns_a_rate_and_an_owner_sync_does() {
     let mut clock = WallClock::default();
     clock.fix(0, ntp(NOON, 20)).unwrap();
 
-    // Answers every 17 minutes keep the reading on time but teach nothing;
-    // after about 6 h the trusted interval expires, and the next answer is
-    // trusted, measuring the rate across the whole span.
+    // Answers every 17 minutes keep the reading on time but teach nothing.
+    // The reading follows NTP while the trusted estimate runs 735 ppm slow,
+    // and the gap counts in the error, so it expires after about 5.8 h; the
+    // next answer re-sets it inside the old interval, again teaching
+    // nothing, since it only had to fall inside that interval.
     let step = 1_024_000u64;
-    let mut learned_at = None;
+    let mut resets = 0;
     for i in 1..=80u64 {
         let truth = i * step;
         let now = slow(truth);
         if let Some(reading) = clock.read(now) {
             honest(reading, NOON + truth, &format!("poll {i}"));
         }
-        let _ = clock.fix(now, ntp(NOON + truth, 20));
-        if learned_at.is_none() && clock.state(now).learned {
-            learned_at = Some(i);
+        if clock.fix(now, ntp(NOON + truth, 20)) == Ok(Jump::First) {
+            resets += 1;
         }
+        assert!(!clock.state(now).learned, "poll {i}");
     }
-    // The reading follows NTP while the trusted estimate runs 735 ppm
-    // slow; the gap counts in the error, so it expires after about 5.8 h.
-    let i = learned_at.expect("learned after the first expiry");
-    assert!((20..=22).contains(&i), "learned at poll {i}");
-    let state = clock.state(slow(80 * step));
+    assert!((3..=4).contains(&resets), "{resets} re-sets");
+
+    // An owner's sync measures the rate from the first NTP fix.
+    let truth = 80 * step + 60_000;
+    clock
+        .fix(slow(truth), fix(NOON + truth, 20, Origin::Owner))
+        .unwrap();
+    let state = clock.state(slow(truth));
+    assert!(state.learned);
     assert!(
         (state.rate_ppb - 735_000).abs() < 1_000,
         "{}",
@@ -403,6 +403,74 @@ fn ntp_answers_that_keep_missing_the_clock_make_it_need_the_time() {
     assert_eq!(clock.fix(6_000, ntp(off, 20)), Err(SyncError::Bounded));
     assert_eq!(clock.read(6_000), None, "the clock needs the time");
     assert_eq!(clock.fix(7_000, ntp(off, 20)), Ok(Jump::First));
+}
+
+/// After expiry NTP must still fall inside the old anchor's interval, grown
+/// at the bound without the two-minute cap: each re-set moves the clock by
+/// at most that interval, not to whatever answers. A miss counts as one,
+/// and only after `DISJOINT_LIMIT` of them may any answer set it.
+#[test]
+fn an_expired_clock_is_re_set_by_ntp_only_inside_its_old_interval() {
+    let mut clock = WallClock::default();
+    clock.fix(0, fix(NOON, 20, Origin::Owner)).unwrap();
+
+    // Seven hours on: invalid, the old interval ±126 s.
+    let now = 7 * HOUR_MS;
+    let truth = NOON + u64::from(now);
+    assert_eq!(clock.read(now), None);
+    for n in 1..DISJOINT_LIMIT {
+        assert_eq!(
+            clock.fix(now + u32::from(n), ntp(truth + 3_600_000, 20)),
+            Err(SyncError::Bounded)
+        );
+    }
+    assert_eq!(
+        clock.fix(now + 10, ntp(truth + 100_000, 20)),
+        Ok(Jump::First),
+        "inside the grown interval"
+    );
+    assert_eq!(clock.read(now + 10).unwrap().unix_ms, truth + 100_000);
+
+    // An attacker re-setting it at the edge every expiry walks it at most
+    // one grown interval each time: about 2 minutes per 6.6 hours, not a
+    // jump to anything.
+    let mut clock = WallClock::default();
+    clock.fix(0, fix(NOON, 20, Origin::Owner)).unwrap();
+    let mut now = 0u32;
+    for _ in 0..4 {
+        while clock.read(now).is_some() {
+            now += HOUR_MS;
+        }
+        assert_eq!(
+            clock.fix(now, ntp(NOON + u64::from(now) + 3_600_000, 20)),
+            Err(SyncError::Bounded)
+        );
+        // The furthest ahead it accepts, found on copies so the probes
+        // count no misses.
+        let mut edge = NOON + u64::from(now) + 3_600_000;
+        while {
+            let mut probe = clock;
+            probe.fix(now, ntp(edge, 20)).is_err()
+        } {
+            edge -= 1_000;
+        }
+        assert_eq!(clock.fix(now, ntp(edge, 20)), Ok(Jump::First));
+    }
+    // Each re-set moves it by at most the interval grown since the anchor
+    // (a little over 2 minutes, expiry checked hourly), plus what the
+    // taught rate carries: minutes over four expiries, never the hour.
+    let walked = clock.read(now).unwrap().unix_ms - (NOON + u64::from(now));
+    assert!(walked <= 4 * 130_000, "walked {walked} ms");
+
+    // Three misses in a row: the anchor is forgotten and any answer sets it.
+    let mut clock = WallClock::default();
+    clock.fix(0, fix(NOON, 20, Origin::Owner)).unwrap();
+    let now = 7 * HOUR_MS;
+    let far = NOON + u64::from(now) + 3_600_000;
+    for _ in 0..DISJOINT_LIMIT {
+        assert_eq!(clock.fix(now, ntp(far, 20)), Err(SyncError::Bounded));
+    }
+    assert_eq!(clock.fix(now, ntp(far, 20)), Ok(Jump::First));
 }
 
 #[test]
@@ -494,11 +562,17 @@ fn a_warm_reset_resumes_the_clock_with_the_rtc_gap_in_its_error() {
         honest(reading, truth, "either end of the RTC's second");
     }
 
-    // Carried on by uptime from there, unlearned, with no sync counted.
+    // Carried on by uptime from there, unlearned, with no sync counted. The
+    // owner's sync is still the last fix, 132 s old a minute later.
     let state = clock.state(63_000);
     assert_eq!(state.reading.unwrap().error_ms, 2_430 + 300);
     assert!(!state.learned);
-    assert_eq!((state.syncs, state.last), (0, None));
+    assert_eq!(state.syncs, 0);
+    let (origin, at) = state.last.unwrap();
+    assert_eq!(
+        (origin, 63_000u32.wrapping_sub(at)),
+        (Origin::Owner, 132_000)
+    );
 }
 
 #[test]
@@ -600,6 +674,20 @@ fn a_record_too_close_to_expiry_is_not_resumed() {
         Err(NoResume::Expired)
     );
     assert_eq!(fresh.read(1_000), None);
+}
+
+#[test]
+fn an_ntp_last_fix_survives_the_reset_as_ntp() {
+    let mut clock = WallClock::default();
+    clock.fix(0, ntp(NOON, 20)).unwrap();
+    let record = clock.carry(10_000, 500).unwrap();
+
+    let mut resumed = WallClock::default();
+    resumed
+        .resume(2_000, &record, Some(505), Restart::Warm)
+        .unwrap();
+    let (origin, at) = resumed.state(2_000).last.unwrap();
+    assert_eq!((origin, 2_000u32.wrapping_sub(at)), (Origin::Ntp, 15_000));
 }
 
 #[test]

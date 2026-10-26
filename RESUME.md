@@ -8,9 +8,9 @@ This file is the handoff, not the history. Keep it to the current state, today's
 
 Reconfirm with the owner before any bench operation; this is the last recorded state, not a live observation.
 
-- **Bank 1:** `feeder` `5b36c495…` (v207, `ar21b-pc-01`, confirmed, October 25): `master` at `3160e3d` (through AR6 and the install fault records).
+- **Bank 1:** `feeder` `186c9d5d…` (v209, `ar10-01`, confirmed, October 25): `master` at `f002649` (through AR10 and AR17); bank 0 still `5b36c495…`.
 - **Bank 0:** `feeder` `5b36c495…` (installed by stock 1.1.15 during `ar21b-rt-01`, October 25): the full feeder; it installs updates over the device API, and a failed trial falls back to it. The UART full-flash backup from before the October 25 bank-0 install is indexed in the evidence file.
-- **Next manifest version:** 208; update floor (`min_version`) 207. **Feeder routing:** `wellfed-local network apply` rules in place (owner, October 25). **Feed journal:** high water 18 (feed 14 was interrupted on purpose and resolved uncertain).
+- **Next manifest version:** 210; update floor (`min_version`) 209. **Feeder routing:** `wellfed-local network apply` rules in place (owner, October 25). **Feed journal:** high water 19 (feed 19 on AR10 completed; feed 14 was interrupted on purpose and resolved uncertain).
 
 - **Client store:** one owner, the bench CLI's key (`private/wellfed-owner.json`).
 - **Bench:** feeder on (relay 1), UART relays 3 and 4 closed, hotspot up (found up on October 25 afternoon and left so), no server, no capture. Hopper empty. The logic analyzer may still be clipped at the motor.

@@ -86,8 +86,9 @@ pub fn begin(feed: u32) -> bool {
             return false;
         }
         if hand_over(held, Hand::Recording) {
-            // A trace still recording never got a result (its feed ended
-            // before its reservation): there was nothing to save.
+            // A sealed trace the writer has not reached is lost here. One
+            // still recording never got a result (its feed ended before
+            // its reservation), so there was nothing to save.
             if held == Hand::Sealed {
                 UNSAVED.fetch_add(1, Ordering::Relaxed);
             }

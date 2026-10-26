@@ -212,6 +212,17 @@ impl<I: SlotIo> TraceRing<I> {
             self.head = next;
         }
 
+        // A slot the scan took for free but that holds something (a write
+        // the scan could not see the start of) is skipped, never
+        // programmed over.
+        while self.table[self.head].free < self.per_unit
+            && !blank(io, self.head, self.table[self.head].free)
+        {
+            self.table[self.head].free += 1;
+        }
+        if self.table[self.head].free >= self.per_unit {
+            return Err(TraceError::Io);
+        }
         let unit = &mut self.table[self.head];
         let offset = unit.free * SLOT_BYTES;
         unit.free += 1;

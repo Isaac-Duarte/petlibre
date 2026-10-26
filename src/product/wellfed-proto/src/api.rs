@@ -1243,7 +1243,9 @@ pub struct TraceSummary {
     pub first_edge_ms: Option<u32>,
     /// Times a poll found the outlet beam blocked after finding it clear.
     pub beam_breaks: u16,
-    /// Times the motor command turned from one direction to the other.
+    /// Turns of the motor command away from the feed's own direction:
+    /// one reverse-and-resume counts once, as the owner counts reverse
+    /// attempts.
     pub reversals: u16,
     /// The battery pack just before the drive, and its lowest during it;
     /// `None` with no pack fitted, or no reading.

@@ -255,7 +255,71 @@ fn a_turn_from_one_direction_to_the_other_is_a_reversal() {
         });
     }
     let summary = recorder.seal(&fed(2, 1), &DriveFigures::default()).unwrap();
+    // One reverse-and-resume is one reversal, as the owner counts its
+    // reverse attempts.
+    assert_eq!(summary.reversals, 1);
+
+    recorder.begin(3);
+    for (at, motor) in [
+        (0, MotorCommand::Drive0),
+        (100, MotorCommand::Drive1),
+        (200, MotorCommand::Drive0),
+        (300, MotorCommand::Drive1),
+        (400, MotorCommand::Drive0),
+    ] {
+        recorder.observe(&Observation {
+            at_ms: DRIVE_AT + at,
+            drive_at_ms: Some(DRIVE_AT),
+            motor,
+            ..Observation::default()
+        });
+    }
+    let summary = recorder.seal(&fed(3, 1), &DriveFigures::default()).unwrap();
     assert_eq!(summary.reversals, 2);
+}
+
+/// The poll that sees the counting edge also sees the stop it caused: the
+/// mark keeps the interrupt's millisecond, and the stop follows it.
+#[test]
+fn the_counting_edge_keeps_its_time_in_the_poll_that_stops() {
+    let mut recorder = Recorder::new();
+    recorder.begin(4);
+    recorder.observe(&Observation {
+        at_ms: DRIVE_AT,
+        drive_at_ms: Some(DRIVE_AT),
+        current: Some(60),
+        motor: MotorCommand::Drive0,
+        ..Observation::default()
+    });
+    recorder.observe(&Observation {
+        at_ms: DRIVE_AT + 9_090,
+        drive_at_ms: Some(DRIVE_AT),
+        current: Some(60),
+        rising: 1,
+        last_edge: Some((DRIVE_AT + 9_062, true)),
+        motor: MotorCommand::Stop,
+        ..Observation::default()
+    });
+    recorder.seal(&fed(4, 1), &DriveFigures::default()).unwrap();
+
+    let read = entries(recorder.body());
+    let mark = read.iter().position(|e| {
+        *e == Entry::Mark {
+            at_ms: 9_062,
+            edges: 1,
+            high: true,
+        }
+    });
+    let stop = read.iter().position(|e| {
+        *e == Entry::Motor {
+            at_ms: 9_090,
+            motor: Motor::Stop,
+        }
+    });
+    assert!(
+        matches!((mark, stop), (Some(m), Some(s)) if m < s),
+        "{read:?}"
+    );
 }
 
 #[test]

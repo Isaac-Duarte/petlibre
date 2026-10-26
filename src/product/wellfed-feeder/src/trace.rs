@@ -65,8 +65,9 @@ pub struct Recorder {
     beams: Option<Beams>,
     edges: u32,
     motor: MotorCommand,
-    /// The last direction the motor was driven in.
+    /// The feed's own direction (its first drive) and the last one driven.
     direction: Option<MotorCommand>,
+    last_drive: Option<MotorCommand>,
     summary: Option<TraceSummary>,
 }
 
@@ -95,6 +96,7 @@ impl Recorder {
             edges: 0,
             motor: MotorCommand::Stop,
             direction: None,
+            last_drive: None,
             summary: None,
         }
     }
@@ -116,6 +118,7 @@ impl Recorder {
         self.edges = 0;
         self.motor = MotorCommand::Stop;
         self.direction = None;
+        self.last_drive = None;
         self.summary = None;
     }
 
@@ -153,22 +156,6 @@ impl Recorder {
         };
         let at_ms = since(seen.at_ms);
 
-        if seen.motor != self.motor {
-            self.motor = seen.motor;
-            let motor = match seen.motor {
-                MotorCommand::Stop => Motor::Stop,
-                MotorCommand::Drive0 => Motor::Drive0,
-                MotorCommand::Drive1 => Motor::Drive1,
-            };
-            if seen.motor != MotorCommand::Stop {
-                if self.direction.is_some_and(|last| last != seen.motor) {
-                    self.reversals = self.reversals.saturating_add(1);
-                }
-                self.direction = Some(seen.motor);
-            }
-            self.push(Entry::Motor { at_ms, motor });
-        }
-
         let edges = u32::from(seen.rising) + u32::from(seen.falling);
         if edges > self.edges
             && let Some((at, high)) = seen.last_edge
@@ -205,6 +192,29 @@ impl Recorder {
                 self.battery_kept = Some(mv);
                 self.push(Entry::Battery { at_ms, mv });
             }
+        }
+
+        // After the marks, beams and battery: an entry timed before the
+        // last one is held at its time, so the poll's own entries go after
+        // the edge the interrupt stamped earlier (the counting edge and the
+        // stop it causes fall in one poll).
+        if seen.motor != self.motor {
+            self.motor = seen.motor;
+            let motor = match seen.motor {
+                MotorCommand::Stop => Motor::Stop,
+                MotorCommand::Drive0 => Motor::Drive0,
+                MotorCommand::Drive1 => Motor::Drive1,
+            };
+            if seen.motor != MotorCommand::Stop {
+                // A turn away from the feed's own direction is one reverse
+                // attempt, however it resumes.
+                let feed = *self.direction.get_or_insert(seen.motor);
+                if seen.motor != feed && self.last_drive == Some(feed) {
+                    self.reversals = self.reversals.saturating_add(1);
+                }
+                self.last_drive = Some(seen.motor);
+            }
+            self.push(Entry::Motor { at_ms, motor });
         }
 
         if let Some(value) = seen.current {
@@ -284,7 +294,7 @@ impl Recorder {
             battery_rest_mv: mv(self.battery_rest),
             battery_min_mv: mv(self.battery_min),
             stride: self.stride,
-            truncated: self.truncated,
+            truncated: self.truncated || self.body.truncated(),
         };
         self.summary = Some(summary);
         Some(summary)

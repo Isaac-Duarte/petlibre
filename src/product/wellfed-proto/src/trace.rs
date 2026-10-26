@@ -153,6 +153,9 @@ pub struct Writer<const N: usize = BODY_MAX> {
     len: usize,
     base: Base,
     currents: u32,
+    /// A halving found an entry it could not rewrite in place and ended
+    /// the body there.
+    truncated: bool,
 }
 
 impl<const N: usize> Default for Writer<N> {
@@ -172,6 +175,7 @@ impl<const N: usize> Writer<N> {
                 battery: 0,
             },
             currents: 0,
+            truncated: false,
         }
     }
 
@@ -180,6 +184,12 @@ impl<const N: usize> Writer<N> {
         self.len = 0;
         self.base = Base::default();
         self.currents = 0;
+        self.truncated = false;
+    }
+
+    /// Whether a halving ended the body early.
+    pub const fn truncated(&self) -> bool {
+        self.truncated
     }
 
     /// The body so far.
@@ -228,6 +238,7 @@ impl<const N: usize> Writer<N> {
         let mut kept = 0u32;
         while read < self.len {
             let Ok((entry, used)) = decode(&self.body[read..self.len], &mut decoded) else {
+                self.truncated = true;
                 break;
             };
             read += used;
@@ -242,6 +253,7 @@ impl<const N: usize> Writer<N> {
             let mut base = encoded;
             let n = encode(entry, &mut base, &mut scratch);
             if write + n > read {
+                self.truncated = true;
                 break;
             }
             self.body[write..write + n].copy_from_slice(&scratch[..n]);

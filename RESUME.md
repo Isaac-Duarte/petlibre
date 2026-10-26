@@ -8,9 +8,9 @@ This file is the handoff, not the history. Keep it to the current state, today's
 
 Reconfirm with the owner before any bench operation; this is the last recorded state, not a live observation.
 
-- **Bank 1:** `feeder` v173 `1afb2b4d…` (`ar25-install-20261025-01`, confirmed, October 25): `master` at `222511b` (adds AR25 to v172's AR3, AR4, AR5, AR9, AR22, AR24): `master` at `545d18c` (AR1, AR2+AR13, AR15, AR19). Five cold boots (`ar-boot-20261025-01`…`05`) came up on bank 1 with the owner idle and unfaulted; the pre-epoch event ring kept epoch 0.
-- **Bank 0:** `feeder` `262a9f37…` (UART, `bank0-diag-01`, October 24): its recovery role only; it never feeds.
-- **Next manifest version:** 174. **Feed journal:** high water 18 (feed 14 was interrupted on purpose and resolved uncertain).
+- **Bank 1:** `feeder` R0 `693db48f…` (v191, `ar21-restore-20261025-03`, confirmed, October 25): `master` at `f7e0638`: `master` at `545d18c` (AR1, AR2+AR13, AR15, AR19). Five cold boots (`ar-boot-20261025-01`…`05`) came up on bank 1 with the owner idle and unfaulted; the pre-epoch event ring kept epoch 0.
+- **Bank 0:** `feeder` R0 `693db48f…` (UART, `ar21-bank0-20261025-02`, October 25, review `ar21-r0-review`): since AR7 it runs the full feeder and installs updates over the device API; a failed trial falls back to it and it feeds. Backup before the install: `private/flash-backups/ar21-pre-20261025-01-full`.
+- **Next manifest version:** 192; update floor (`min_version`) 180. **Feed journal:** high water 18 (feed 14 was interrupted on purpose and resolved uncertain).
 
 - **Client store:** one owner, the bench CLI's key (`private/wellfed-owner.json`).
 - **Bench:** feeder on (relay 1), UART relays 3 and 4 closed, hotspot up (found up on October 25 afternoon and left so), no server, no capture. Hopper empty. The logic analyzer may still be clipped at the motor.
@@ -37,6 +37,7 @@ Code for steps 4–8 is committed as `756f68f`.
 Findings and loose ends no card has closed yet. Each line says where it came from; move it to a card's notes when one takes it.
 
 **Firmware**
+- **Silent watchdog reset during a bank-0 install** (physical, October 25, `ar21-itest-20261025-02-uart-02`): about sector 192 of 229 of v183, no fault dump, reset flags `0x00100000`; earlier same-size installs completed. The next boot skipped arming (`PLCFG1 skip marker=0x300`), as the once-per-power-cycle rule says, so it could not feed or take offers until power was cut. Root cause being chased (service task beat during an install). Whether the skip boot should re-arm after one more reset is the owner's call: it trades feeding sooner against a possible hang loop.
 - **A feed's write id is forgotten if its session closes first** (static, October 25, `feed-writes` review): the device API remembers a write's outcome only when its pending answer resolves (`wellfed-feeder` `api.rs`), so a client that gives up on a Feed and resends the same id on a new session after the feed ended starts a second feed. Clients never resend an uncertain feed (AGENTS.md), so nothing does today; the feeder should still remember the id from the moment it queues the feed. FW17's request-id rules.
 - **No new session during a feed** (physical, October 25, v173): the feeder holds off Noise handshakes while a feed is claimed, so `wellfed cancel-feed` or any CLI command from a fresh process can't connect until the feed ends; only sessions opened before the feed (the server's, the app's) reach it. Matters for FW16's cancel-during-motion step and AR25's held-session test.
 - **Loop hard fault after a rejected association** (physical, October 25, `ar9-gap-20261025-cap-04`): UNDEFINSTR on a valid XIP instruction in `wellfed-loop` right after a status-53 association reject and a 720 ms stall; reset, back on bank 1. One in about 14 forced rejoins. Same class as bank 0's vendor Wi-Fi faults. A fault during a feed would interrupt it (see the latch below). [Result](docs/firmware/scheduling-gaps.md#result-october-25-2026-physical).

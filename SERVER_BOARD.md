@@ -2,7 +2,7 @@
 
 This board tracks the architecture and build-out of the owner's server (`src/server/`): the crates, their boundaries, and each capability the product needs from them. [FIRMWARE_BOARD.md](FIRMWARE_BOARD.md) tracks the SDK and hardware, and [FEATURE_BOARD.md](FEATURE_BOARD.md) tracks owner-visible behavior. FP18 (server mirror), FP21 (server web UI) and FP22 (device health) stay on the feature board as the acceptance cards; the SV cards here are the engineering that gets them there. The contracts are in the [API design](docs/api/README.md), the product decisions in [product architecture](docs/firmware/product-architecture.md) and the UI in the [web UI design](docs/web/README.md).
 
-Drafted October 26, 2026, from a read of the four server crates and the docs above (rechecked at `bb244c8`), with the owner's decisions from the same day. Every finding here is **static analysis**. No server has met a real feeder yet.
+Drafted October 26, 2026, from a read of the four server crates and the docs above (rechecked at `bb244c8`; the server crates were unchanged at `3549cc07`, and the client counts in SV19 are from there), with the owner's decisions from the same day. Every finding here is **static analysis**. No server has met a real feeder yet.
 
 ## Using the board
 
@@ -14,6 +14,7 @@ A card never relaxes the feeding-safety rules: every feed goes through the devic
 
 - Each card runs the review loop: one implementer agent in its own worktree branched from current `master`, one reviewer agent resumed until it reports nothing blocking (three rounds at most, then the card parks on its branch for the owner). Then the card is rebased on `master`, `cargo fmt --all` and `make check` pass on the result, and it is committed to `master` and pushed.
 - One card at a time through the foundations: they edit the same crates, so parallel branches would conflict.
+- Cards merge while a firmware run is also merging to `master`: each is rebased on the newest `master` just before its `make check`, and a conflict in `Cargo.toml` or `Cargo.lock` is resolved at that rebase, never by holding the firmware run. The bench has one holder at a time, so SV09 and SV65 wait for it.
 - **Sequencing is API first, UI after:** the server API is built across the board, and FP21's screens follow once the cards they need are Done.
 
 ## Decisions (owner, October 26)
@@ -122,10 +123,10 @@ wellfed (the CLI) ─► wellfed-server-client ─► wellfed-api
 
 - **Done:** the first slice (FP18, Oct 24, host simulation): setup and login, adoption by invite, the mirror, settings, lock, history pages and the stream.
 - **Ready:** SV01–SV05, SV09.
-- **Next:** SV09 first, so the current server meets the research unit before the foundations reshape it; then the foundations, in this order: SV01, SV02, SV03, SV04, SV05, SV06, SV07, SV08. They change no behavior. SV19 runs when no firmware run is editing `src/client/`.
+- **Next:** the foundations, in this order: SV01, SV02, SV03, SV04, SV05, SV06, then SV07 and SV08. They change no behavior. SV09 runs as soon as the bench is free, and always before SV07, so the current server meets the research unit before the mirror is reshaped (owner, Oct 26: the firmware run holds the bench, so SV01–SV05 go first). SV19 runs when no firmware run is editing `src/client/`.
 - **Then:** the command plane (SV20, SV21) and the public setup's accounts (SV30–SV32), the CLI on the server API (SV34), then data, owner data and releases.
 - **Critical path to a feed from the web UI:** SV07 → SV20 → SV21. FW17 (feeds that survive a reboot) is done.
-- **Waiting on firmware:** SV13 (FW54, FW55), SV23 (FP03), SV52 (FW42, FW43).
+- **Waiting on firmware:** SV13 (FW54, FW55, FW62), SV23 (FP03), SV52 (FW42, FW43).
 
 ## Foundations
 
@@ -140,7 +141,7 @@ wellfed (the CLI) ─► wellfed-server-client ─► wellfed-api
 | **SV07 `wellfed-mirror`** | Planned | — | SV01, SV05, SV09 | The per-feeder tasks, ingest, the command channel and the hub move out of `wellfed-service` into `wellfed-mirror`, behind the surface the [target architecture](#target-architecture) names. The command surface is final here: `ask` for a short command, and a handle for a long operation that yields between its steps, both served one at a time for now, so SV22 changes only what is behind them. SV09's findings shape the reconnect and link state. The service keeps users and the use cases, and its error enum splits by domain. Every service and end-to-end test passes unchanged in what it asserts. |
 | **SV08 File size guard** | Planned | — | SV03, SV05, SV07 | `cargo xtask check-repository` refuses a file in `src/server/` over 400 lines, or over 600 under `tests/`. SV03, SV05 and SV07 split the server's four that are over at `bb244c8` (`wellfed-store/src/lib.rs` 767, `wellfed-service/tests/service.rs` 721, `feeder.rs` 480, `feeders.rs` 416); none is exempt when the card closes. SV19 extends the guard to `src/client/`. |
 | **SV09 Current server on the bench** | Ready | — | — | **Bench**, before the foundations: today's server adopts the research unit by invite, mirrors its history, changes settings and the lock, and keeps the history whole across a server restart, a feeder power cut and a Wi-Fi drop. No motion. Findings on reconnect, discovery, cursor sync and one command at a time are recorded here and feed SV07 and SV22. Run under the owner's bench authorization, with the prior network and service state restored and recorded. |
-| **SV19 Client file splits** | Planned | — | SV08 | The guard covers `src/client/` too. The six client files over at `bb244c8` split: `wellfed-client/tests/api.rs` 2666 and `tests/update.rs` 1181, `wellfed-model/src/convert.rs` 1300, `wellfed-client/src/api.rs` 594 and `src/connection.rs` 466, `wellfed-connect/src/lib.rs` 446. Runs only while no firmware run edits `src/client/`, since the firmware cards change these files too. None is exempt when the card closes. |
+| **SV19 Client file splits** | Planned | — | SV08 | The guard covers `src/client/` too. The eight client files over at `3549cc07` split: `wellfed-client/tests/api.rs` 2927 and `tests/update.rs` 1185, `wellfed-model/src/convert.rs` 1602, `wellfed-client/src/api.rs` 594, `src/install.rs` 560, `src/install/tests.rs` 479 (a unit-test module under `src/`, so the 400 limit) and `src/connection.rs` 466, `wellfed-connect/src/lib.rs` 446. The firmware run keeps growing them, so the card recounts when it starts. Runs only while no firmware run edits `src/client/`, since the firmware cards change these files too. None is exempt when the card closes. |
 
 ## Command plane
 
@@ -170,7 +171,7 @@ wellfed (the CLI) ─► wellfed-server-client ─► wellfed-api
 | **SV10 Projections beside the raw log** | Planned | — | SV07 | Ingest decodes each event once and writes its projection rows in the raw insert's transaction: a `feeds` table (feed number, source, requested and delivered portions, outcome, reason, times), lock and food-level changes, boots and resets (finding 4). The raw log stays the truth: a projection version, and a rebuild from raw when it changes. Tests: projections equal a rebuild after random ingest, replays included. |
 | **SV11 Samples, rollups and retention** | Planned | — | SV10, SV12 | Samples carry a numeric value beside the raw bytes, written in small batches. Hourly rollups (count, min, max, mean) are kept incrementally. `GET /feeders/{id}/samples?metric=&from=&to=&resolution=raw\|hour`, and the owner's raw retention keeps rollups past it. A month of five feeders' samples queries quickly in a test, with the figures recorded. |
 | **SV12 Background jobs** | Planned | — | SV07 | One supervisor in the binary runs typed jobs on the cancellation tree: retention, rollup catch-up, expired sessions and users, and backups (SV64). Each job records its last run and result, runs at most once at a time, and runs on a virtual clock in tests (finding 7). |
-| **SV13 Feed traces and statistics** | Planned | — | SV10, SV22, FW54, FW55 | After each `Fed` event the mirror fetches that feed's trace and stores it with the feed; the stats pages are read and kept as samples. Both run on the long-operation lane, never ahead of a feed or a status read. Serves FP22's device page. |
+| **SV13 Feed traces and statistics** | Planned | — | SV10, SV22, FW54, FW55, FW62 | After each `Fed` event the mirror fetches that feed's trace and stores it with the feed; the stats pages (FW62's lifetime counters among them) are read and kept as samples. Both run on the long-operation lane, never ahead of a feed or a status read. Serves FP22's device page. |
 | **SV14 Debug log** | Planned | — | SV07 | The owner can follow a feeder's debug log through the stream. Whether any of it is stored is decided on the card. |
 
 ## Owner data and derived views

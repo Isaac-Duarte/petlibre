@@ -127,7 +127,7 @@ All storage-region sectors are now named in one table, `wellfed_board_plaf103::s
 | 13–24 | 7-day event ring (FW47) |
 | 25–26 | Update store: the anti-rollback floor, the give-way's candidate, update keys, bank 0's image |
 | 27–28 | Time settings: the zone's rule and the NTP server (FW46, [clock](clock.md#time-settings)) |
-| 29–31 | Free |
+| 29–31 | Free (planned for FW55's trace ring) |
 
 ## Clients
 

@@ -123,7 +123,8 @@ pub mod storage {
         count: 2,
     };
 
-    /// Every allocation, in region order; sectors 29-31 are free.
+    /// Every allocation, in region order; sectors 29-31 are free (planned
+    /// for the per-feed trace ring).
     pub const ALL: [Sectors; 10] = [
         JOURNAL, SETTINGS, CONFIRM, NET, SEED, CLIENTS, PLANS, EVENTS, UPDATE, TIME,
     ];

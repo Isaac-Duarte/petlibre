@@ -336,7 +336,7 @@ fn reverse_completion_cannot_consume_old_edges() {
     assert!(f.events.push(10, true));
     assert!(f.process(10));
     assert!(f.controller.state == FeedState::Running && f.controller.progress.completed == 0);
-    assert!(f.controller.inhibit_at == 10 && f.events.count == 0);
+    assert!(f.controller.resumed_at == 10 && f.controller.inhibit_at == 0 && f.events.count == 0);
 }
 
 #[test]

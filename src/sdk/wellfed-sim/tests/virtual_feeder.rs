@@ -716,6 +716,40 @@ fn drives(report: &Value, motor: u64) -> usize {
         .count()
 }
 
+/// A jam freed just before a mark, and one just past a credited mark: the
+/// mark the rotor reaches soon after the resume is credited (no inhibit
+/// window restarts there), and the one it recrosses while backing off is
+/// not credited twice. Each feed stops at the rise of its last real mark.
+#[test]
+fn a_jam_next_to_a_mark_credits_each_mark_once() {
+    // The drive starts about 220 ms after the submission; the first rise is
+    // about 9.07 s of drive in, the second about 18.15 s.
+    for (portions, wedge_at, rises) in [(1, 8700, 1), (2, 9600, 2), (2, 18_000, 2)] {
+        let report = passing(
+            vec![
+                act(SUBMIT, "submit", &[1, portions]),
+                act(wedge_at, "wedge", &[1]),
+                expect(
+                    portions * 9100 + 4000,
+                    json!({"state": "terminal", "outcome": "done", "completed": portions,
+                           "durable": true, "motor": 0}),
+                ),
+            ],
+            portions * 9100 + 4100,
+            "single",
+        );
+        assert_eq!(drives(&report, 2), 1, "wedge at {wedge_at}");
+        // The rotor ends just past the last real rise: no mark credited
+        // twice, none skipped.
+        let rotor = last_status(&report)["rotor_ms"].as_i64().unwrap();
+        let expected = 9074 * rises;
+        assert!(
+            (expected - 100..expected + 100).contains(&rotor),
+            "wedge at {wedge_at}: rotor at {rotor}"
+        );
+    }
+}
+
 /// A wedge the first reversal frees: the drive backs off once, then
 /// completes the portion, its deadline lengthened by what backing off cost.
 #[test]

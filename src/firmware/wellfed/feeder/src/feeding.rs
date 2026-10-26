@@ -101,6 +101,8 @@ pub const CONFIG: OwnerConfig = OwnerConfig {
         // A jam backs off 1 s (about 13 degrees of rotor, a ninth of a
         // compartment), stops 0.5 s, and drives on, three times at most as
         // stock does; each costs 2.5 s of deadline and feedback window.
+        // Stock's reversal length is not recovered: 1 s is provisional
+        // until a real jam shows what frees it.
         direction_pause_ms: 500,
         reverse_ms: 1000,
         // A feed's average must stay within 12 s a portion, and every gap
@@ -109,8 +111,10 @@ pub const CONFIG: OwnerConfig = OwnerConfig {
         portion_ms: 12_000,
         max_observation_gap_ms: 100,
         // A turning rotor shows an edge at least every 8.5 s (a mark's fall
-        // 7.8-8.4 s after the last rise, empty or with food), and reads LOW
-        // for 1.2-1.4 s at a mark.
+        // 7.8-8.4 s after the last rise, empty or with food, on the
+        // adapter), and reads LOW for 1.2-1.4 s at a mark. On batteries the
+        // motor may turn slower; a gap past 11 s there would end feeds
+        // `FeedbackTimeout`, so the rotor's speed on D cells needs a check.
         mark_gap_ms: 11_000,
         mark_low_ms: 4000,
         // Scaled counts (stock's unit; milliamps need a reference): a drive
@@ -120,6 +124,13 @@ pub const CONFIG: OwnerConfig = OwnerConfig {
         // polling; the 150 ms after each change of drive (50 ms of it the
         // driver's deadtime) count toward no jam, and only a reading past
         // twice the highest surge stops at once.
+        //
+        // Risk: both come from empty and light-food drives on the adapter.
+        // A full hopper's peaks, the peaks on batteries, and a real stall's
+        // current are unmeasured. Peaks near 300 would reverse sound feeds
+        // (and end them after three); a stall reading over 1000 would stop
+        // every jam at once with no reversal, which is safe but never frees
+        // one. Both want measuring before the limits are trusted.
         current_limit_ma: 300,
         current_max_ma: 1000,
         surge_ms: 150,
@@ -307,6 +318,59 @@ impl Proof {
     }
 }
 
+/// How long the owner holds lost sensors, at rest, before the loop asks
+/// for the one restart a power cycle allows.
+pub const RECOVERY_HOLD_MS: u32 = 10 * 60_000;
+
+/// Which boot of its power cycle this is: the KM4 boot count the flash
+/// arming keeps in a backup register, which power loss clears.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PowerCycle {
+    FirstBoot,
+    /// Some reset came before this boot: a restart, an update, a watchdog.
+    Restarted,
+}
+
+/// When a feeder whose owner holds lost sensors restarts by itself.
+///
+/// Lost sensors are held, not reset on (the owner's own rule), so a feeder
+/// left alone would never feed again. A converter that stopped once may
+/// convert again after a reset, so after `RECOVERY_HOLD_MS` of holding them
+/// at rest with nothing in flight, the loop asks for one restart, only from
+/// the first boot of a power cycle: if the sensors are lost again after it,
+/// the owner holds them for good, until the owner restarts it or power is
+/// cut. No backup register bit is free to count restarts, so a power cycle
+/// that already had any reset gives up its recovery restart.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Recovery {
+    /// Since when the owner has held lost sensors at rest.
+    since: Option<u32>,
+    asked: bool,
+}
+
+impl Recovery {
+    /// One pass at `now_ms`; `held` names the boot while the owner holds
+    /// lost sensors with nothing in flight and no install running. True
+    /// once, when the restart is due.
+    pub fn step(&mut self, now_ms: u32, held: Option<PowerCycle>) -> bool {
+        let Some(cycle) = held else {
+            self.since = None;
+            return false;
+        };
+        let since = *self.since.get_or_insert(now_ms);
+        let due = cycle == PowerCycle::FirstBoot
+            && !self.asked
+            && now_ms.wrapping_sub(since) >= RECOVERY_HOLD_MS;
+        self.asked |= due;
+        due
+    }
+
+    /// How long the owner has held them, for the log.
+    pub fn held_ms(&self, now_ms: u32) -> u32 {
+        self.since.map_or(0, |since| now_ms.wrapping_sub(since))
+    }
+}
+
 pub const JOURNAL: JournalConfig = JournalConfig {
     binding: wellfed_sdk::storage::JOURNAL_BINDING,
     mode: BOWL,
@@ -360,6 +424,9 @@ pub enum Record {
         max_gap_ms: u32,
         handshakes: u32,
     },
+    /// The owner held lost sensors this long: the loop restarts the feeder
+    /// once to recover them.
+    Recover { held_ms: u32 },
 }
 
 /// The most pads a `pins` record lists, so the line fits a record.
@@ -463,6 +530,7 @@ impl core::fmt::Display for Record {
                 f,
                 "steps id={feed} max_gap_ms={max_gap_ms} handshakes={handshakes}"
             ),
+            Record::Recover { held_ms } => write!(f, "recover restart=1 held_ms={held_ms}"),
             Record::Held { portions, held } => {
                 write!(f, "feed portions={portions} held={}", held.code())
             }
@@ -530,11 +598,13 @@ mod target {
     use wellfed_proto::api::{Blocked, EventBody, Refusal, Source, TraceSummary};
     use wellfed_sdk::hal::interlock::{self, INTERLOCK, Turn};
     use wellfed_sdk::hal::owner::{
-        Owner, OwnerConfig, OwnerState, OwnerStatus, Step, SubmitResult,
+        Owner, OwnerConfig, OwnerFault, OwnerState, OwnerStatus, Step, SubmitResult,
     };
     use wellfed_sdk::{JournalSlots, Slot};
 
-    use super::{CONFIG, JOURNAL, Opened, Proof, Record, drive_figures};
+    use super::{
+        CONFIG, JOURNAL, Opened, PowerCycle, Proof, Record, Recovery, drive_figures,
+    };
 
     type Journal = FeedJournal<JournalSlots>;
 
@@ -582,6 +652,8 @@ mod target {
         interrupted: Option<u64>,
         /// What the owner has shown, for a trial's confirmation.
         proof: Proof,
+        /// When to restart to recover lost sensors.
+        recovery: Recovery,
     }
 
     impl Feeding {
@@ -673,7 +745,32 @@ mod target {
                 };
                 wellfed_sdk::report_feeding(self.proof.step(opened, now));
             }
+            self.recover(&status, now, &mut record);
             delay
+        }
+
+        /// The one restart a power cycle allows to recover lost sensors
+        /// (`Recovery`), through the restart every reboot takes.
+        fn recover(&mut self, status: &OwnerStatus, now: u32, record: &mut impl FnMut(Record)) {
+            use wellfed_sdk::hal::flash_lock::provider::BOOT_COUNT_REGISTER;
+            use wellfed_sdk::hal::sdk;
+
+            let held = status.state == OwnerState::Fault
+                && status.fault == OwnerFault::Sensor
+                && status.stopped
+                && status.optics_off
+                && self.current.is_none()
+                && !wellfed_sdk::hal::ota::mailbox::installing();
+            let cycle = if sdk::backup_read(BOOT_COUNT_REGISTER) <= 1 {
+                PowerCycle::FirstBoot
+            } else {
+                PowerCycle::Restarted
+            };
+            let held_ms = self.recovery.held_ms(now);
+            if self.recovery.step(now, held.then_some(cycle)) {
+                record(Record::Recover { held_ms });
+                wellfed_sdk::request_reset();
+            }
         }
 
         /// Hands the outputs' turn back by `may_release`, and watches for a

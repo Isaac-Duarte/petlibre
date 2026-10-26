@@ -4,6 +4,35 @@
 use wellfed_fw_feeder::feeding::{CONFIG, JOURNAL, MAX_PORTIONS};
 use wellfed_sdk::hal::supervision::config::FLASH_LIMITS;
 
+/// Lost sensors held at rest restart the feeder once, after ten minutes,
+/// and only from the first boot of a power cycle: a repeat holds for good.
+#[test]
+fn lost_sensors_held_at_rest_restart_once_a_power_cycle() {
+    use wellfed_fw_feeder::feeding::{PowerCycle, RECOVERY_HOLD_MS, Recovery};
+
+    let first = Some(PowerCycle::FirstBoot);
+    let mut recovery = Recovery::default();
+    assert!(!recovery.step(0, None));
+    assert!(!recovery.step(1000, first));
+    assert!(!recovery.step(1000 + RECOVERY_HOLD_MS - 1, first));
+    assert_eq!(recovery.held_ms(1000 + RECOVERY_HOLD_MS), RECOVERY_HOLD_MS);
+    assert!(recovery.step(1000 + RECOVERY_HOLD_MS, first));
+    assert!(!recovery.step(1000 + 3 * RECOVERY_HOLD_MS, first), "once");
+
+    // A hold that lapses (a feed in flight, an install) counts afresh.
+    let mut recovery = Recovery::default();
+    assert!(!recovery.step(0, first));
+    assert!(!recovery.step(RECOVERY_HOLD_MS - 1, None));
+    assert!(!recovery.step(RECOVERY_HOLD_MS, first));
+    assert!(recovery.step(2 * RECOVERY_HOLD_MS, first));
+
+    // After any reset this power cycle, the hold is for good.
+    let mut recovery = Recovery::default();
+    let restarted = Some(PowerCycle::Restarted);
+    assert!(!recovery.step(0, restarted));
+    assert!(!recovery.step(10 * RECOVERY_HOLD_MS, restarted));
+}
+
 #[test]
 fn the_owner_accepts_the_configuration() {
     assert!(CONFIG.valid());

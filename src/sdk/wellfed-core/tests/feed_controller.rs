@@ -287,10 +287,18 @@ fn reverse_attempts_are_bounded() {
     assert_eq!(f.controller.motor, MotorCommand::Stop);
     f.advance(3);
     assert_eq!(f.controller.motor, MotorCommand::Drive0);
-    assert_eq!(f.controller.inhibit_at, f.now);
+    // The inhibit window stays where the request started: the rotor wins
+    // its ground back at once, and a mark just past the jam is real.
+    assert_eq!(f.controller.inhibit_at, 0);
+    assert_eq!(f.controller.resumed_at, f.now);
 
-    f.advance(4);
-    f.edge(true);
+    // An edge captured before the resume belongs to the pause.
+    let early = FeedSample {
+        feedback_edge: true,
+        feedback_high: true,
+        ..f.sample
+    };
+    f.controller.update_captured(f.now, Some(&early), f.now - 1);
     assert_eq!(f.controller.progress.completed, 0);
     f.advance(1);
     f.edge(true);
@@ -797,4 +805,108 @@ fn stopped_outputs_do_not_resume_on_bad_current() {
     let mut f = begin(BowlMode::Single, Direction::D0, 3);
     f.controller.update(1, None);
     f.expect_fault(FeedReason::Sensor);
+}
+
+/// The PLAF103's feed limits, stepped every millisecond against a rotor
+/// with its marks: a rise every `PERIOD` ms of drive, LOW for `LOW` ms
+/// before it, position 0 just past a rise.
+const PLAF103: FeedLimits = FeedLimits {
+    feedback_inhibit_ms: 5000,
+    feedback_timeout_ms: 15_000,
+    direction_pause_ms: 500,
+    reverse_ms: 1000,
+    max_duration_ms: 12_000 * 48,
+    portion_ms: 12_000,
+    max_observation_gap_ms: 100,
+    mark_gap_ms: 11_000,
+    mark_low_ms: 4000,
+    current_limit_ma: 300,
+    current_max_ma: 1000,
+    surge_ms: 150,
+    max_portions: 48,
+    max_reverse_attempts: 3,
+};
+const PERIOD: i64 = 9100;
+const LOW: i64 = 1200;
+
+fn rotor_high(position: i64) -> bool {
+    position.rem_euclid(PERIOD) <= PERIOD - LOW
+}
+
+/// A feed of `portions` with a jam at `jam` ms of rotor travel that stalls
+/// forward drive until the motor has backed off `stalls` times: the
+/// controller when it stopped, and where the rotor stopped.
+fn jammed_feed(portions: u16, jam: i64, stalls: u8) -> (FeedController, i64) {
+    let mut controller = FeedController::new(&PLAF103, 0).unwrap();
+    let r = request(1, portions, BowlMode::Single, Direction::D0);
+    assert_eq!(controller.start(&r, 0, &HEALTHY), FeedStartResult::Accepted);
+
+    let (mut position, mut stalls) = (0_i64, stalls);
+    let mut last = controller.motor;
+    for now in 1..120_000 {
+        let motor = controller.motor;
+        if last == MotorCommand::Drive0 && motor == MotorCommand::Drive1 {
+            stalls = stalls.saturating_sub(1);
+        }
+        last = motor;
+
+        let stalled = motor == MotorCommand::Drive0 && stalls > 0 && position == jam;
+        let before = rotor_high(position);
+        match motor {
+            MotorCommand::Drive0 if !stalled => position += 1,
+            MotorCommand::Drive1 => position -= 1,
+            _ => {}
+        }
+        let high = rotor_high(position);
+
+        let poll = FeedSample {
+            current_ma: if stalled { 400 } else { 100 },
+            mark_low: !high,
+            ..HEALTHY
+        };
+        controller.update(now, Some(&poll));
+        if high != before {
+            let edge = FeedSample {
+                feedback_edge: true,
+                feedback_high: high,
+                ..poll
+            };
+            controller.update(now, Some(&edge));
+        }
+        if !controller.active() {
+            break;
+        }
+    }
+    (controller, position)
+}
+
+/// Wherever a jam the reversals free comes, before, inside or just past a
+/// mark, the feed credits every mark the rotor really passes once, and
+/// stops just past the last: no mark hidden by an inhibit window restarted
+/// at the resume, and none counted twice when backing off recrossed it.
+#[test]
+fn a_freed_jam_anywhere_in_a_mark_period_credits_each_mark_once() {
+    let last_rise = 2 * PERIOD;
+    let mut jams: Vec<i64> = (100..last_rise).step_by(53).collect();
+    // Just after a credited rise, recrossed while backing off or not; and
+    // inside a mark, before its rise.
+    jams.extend([PERIOD + 1, PERIOD + 300, PERIOD + 999, PERIOD + 1000]);
+    jams.extend([PERIOD - 600, PERIOD - 1, PERIOD - LOW + 1]);
+
+    for stalls in 1..=3 {
+        for &jam in &jams {
+            let (controller, position) = jammed_feed(2, jam, stalls);
+            assert_eq!(
+                (controller.state, controller.progress.completed),
+                (FeedState::Complete, 2),
+                "jam at {jam}, {stalls} reversals: {:?}",
+                controller.reason
+            );
+            assert_eq!(controller.reverse_attempts, stalls, "jam at {jam}");
+            assert!(
+                (last_rise..=last_rise + 1).contains(&position),
+                "jam at {jam}, {stalls} reversals: stopped at {position}"
+            );
+        }
+    }
 }

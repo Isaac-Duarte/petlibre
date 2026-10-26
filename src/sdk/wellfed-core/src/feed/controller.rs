@@ -12,10 +12,12 @@
 //! `direction_pause_ms`) and drives on, at most `max_reverse_attempts`
 //! times, then ends the request `Overcurrent`. Each reversal lengthens the
 //! request's deadline and its feedback window by what it costs (the time
-//! back, the pause, and the time to win the ground back), so a jam that
-//! clears does not then time out; the attempts bound that extension. A
-//! reading over `current_max_ma`, or the limit held while backing off or
-//! stopped, ends it at once.
+//! back, the pause, and the time to win the ground back); the attempts
+//! bound that extension. The portion's inhibit window stays anchored to the
+//! last portion across a reversal, so the mark just past a cleared jam
+//! still counts, and the one boundary backing off can recross is not
+//! counted twice. A reading over `current_max_ma`, or the limit held while
+//! backing off or stopped, ends it at once.
 //!
 //! Missing feedback is no jam: without marks the controller cannot tell a
 //! stopped rotor from a lost sensor, so it never reverses blind. The request
@@ -286,6 +288,21 @@ pub struct FeedController {
     /// What the reversals since the last portion add to the feedback
     /// timeout.
     pub feedback_grace_ms: u32,
+    /// When forward drive last began (the start, or a resume): an edge
+    /// captured before it belongs to the drive or pause before.
+    pub resumed_at: u32,
+    /// The pause in progress follows a reversal, not a double bowl's
+    /// portion.
+    pub backing_off: bool,
+    /// The feedback input read LOW while backing off: the rotor went back
+    /// into a mark.
+    pub low_while_backing: bool,
+    /// The last forward edge was a portion boundary (a rise in single-bowl
+    /// mode), credited or inhibited.
+    pub last_boundary: bool,
+    /// The next forward boundary is one the rotor already crossed before it
+    /// backed off: crossed again, it is no new portion.
+    pub skip_boundary: bool,
 
     pub reverse_attempts: u8,
     /// Consecutive polls over the current limit past the surge window; a
@@ -342,10 +359,26 @@ impl FeedController {
 
     /// Forward again after a pause. Edges captured while stopped or
     /// coasting must not count, and the mark gap counts afresh.
+    ///
+    /// After a double bowl's portion the inhibit window starts again here.
+    /// After a reversal it stays anchored to the last portion (or the
+    /// start): the rotor wins its ground back in about `reverse_ms`, so a
+    /// window restarted here would hide a real mark just past the jam. The
+    /// one mark that can come twice is the boundary the rotor crossed
+    /// before backing off and recrossed while backing: backing off is
+    /// shorter than a mark, so at most that one, and only if the input read
+    /// LOW meanwhile.
     fn resume(&mut self, now_ms: u32) {
         self.state = FeedState::Running;
         self.motor = MotorCommand::drive(self.progress.direction);
-        self.inhibit_at = now_ms;
+        if self.backing_off {
+            self.skip_boundary = self.last_boundary && self.low_while_backing;
+        } else {
+            self.inhibit_at = now_ms;
+        }
+        self.backing_off = false;
+        self.low_while_backing = false;
+        self.resumed_at = now_ms;
         self.edge_at = now_ms;
         self.drive_changed(now_ms);
     }
@@ -365,6 +398,8 @@ impl FeedController {
         self.state = FeedState::Reversing;
         self.state_at = now_ms;
         self.motor = MotorCommand::drive(self.progress.direction.toggled());
+        self.backing_off = true;
+        self.low_while_backing = false;
         self.drive_changed(now_ms);
     }
 
@@ -437,8 +472,13 @@ impl FeedController {
         self.inhibit_at = now_ms;
         self.state_at = now_ms;
         self.edge_at = now_ms;
+        self.resumed_at = now_ms;
         self.feedback_grace_ms = 0;
         self.reverse_attempts = 0;
+        self.backing_off = false;
+        self.low_while_backing = false;
+        self.last_boundary = false;
+        self.skip_boundary = false;
         self.drive_changed(now_ms);
         self.state = FeedState::Running;
         self.reason = FeedReason::None;
@@ -526,6 +566,9 @@ impl FeedController {
                 self.stop(FeedState::Fault, FeedReason::Sensor);
                 return;
             }
+            if self.backing_off && sample.mark_low {
+                self.low_while_backing = true;
+            }
         }
         let overcurrent = self.over_limit >= OVERCURRENT_POLLS;
 
@@ -560,22 +603,28 @@ impl FeedController {
             return;
         }
 
-        if !sample.feedback_edge {
+        // An edge captured before the last resume belongs to the drive or
+        // the pause before it.
+        if !sample.feedback_edge || captured_at_ms.wrapping_sub(self.resumed_at) >= HALF_RANGE {
             return;
         }
-        // Any edge shows the rotor turning, qualified or not; one captured
-        // before the last resume belongs to the drive before it.
+        // Any edge shows the rotor turning, qualified or not.
         if captured_at_ms.wrapping_sub(self.edge_at) < HALF_RANGE {
             self.edge_at = captured_at_ms;
-        }
-        let inhibition = captured_at_ms.wrapping_sub(self.inhibit_at);
-        if inhibition >= HALF_RANGE || inhibition < self.limits.feedback_inhibit_ms {
-            return;
         }
 
         let expected_high =
             self.progress.mode == BowlMode::Single || self.progress.direction == Direction::D0;
-        if sample.feedback_high != expected_high {
+        let boundary = sample.feedback_high == expected_high;
+        self.last_boundary = boundary;
+        // The boundary crossed again after backing off: no portion, and its
+        // bounces fall in a window of its own.
+        if boundary && core::mem::take(&mut self.skip_boundary) {
+            self.inhibit_at = captured_at_ms;
+            return;
+        }
+        let inhibition = captured_at_ms.wrapping_sub(self.inhibit_at);
+        if !boundary || inhibition >= HALF_RANGE || inhibition < self.limits.feedback_inhibit_ms {
             return;
         }
 

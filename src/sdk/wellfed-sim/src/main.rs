@@ -109,6 +109,9 @@ struct World {
     wedge: Wedge,
     /// The current channel held by a `current` command.
     held_current: Option<u16>,
+    /// The battery channel at rest, as a `battery` command set it; a drive
+    /// on the pack alone sags it by the plant's sag.
+    battery_rest: u16,
     /// Milliseconds the motor has driven one way, from the drive's start.
     drive_ms: u64,
     previous_motor: u32,
@@ -460,6 +463,7 @@ fn current(response: u64) -> Status {
             rotor_ms: (*world).plant.position_ms(),
             writes_done: (*world).writer.done,
             writes_waiting: (*world).writer.waiting(),
+            supply_low: s.supply_low,
         }
     }
 }
@@ -533,8 +537,9 @@ fn feedback(flip: Flip) {
 }
 
 /// The motor's last millisecond: the rotor turns while it drives (unless
-/// jammed, or wedged going forward), and the current channel reads its
-/// surge, its load, a stall or rest.
+/// jammed, or wedged going forward), the current channel reads its surge,
+/// its load, a stall or rest, and on the pack alone (PA19 low) the battery
+/// channel sags under the same surge and load.
 fn turn_rotor() {
     let m = motor();
     let driving = matches!(m, 1 | 2);
@@ -566,7 +571,23 @@ fn turn_rotor() {
             (*world).plant.drive_reading()
         };
         let reading = (*world).held_current.unwrap_or(reading);
-        fake::with(|h| h.current_adc = reading);
+        let sag = if !driving {
+            0
+        } else if (*world).drive_ms <= u64::from(c.surge_ms) {
+            c.surge_sag_adc
+        } else {
+            c.drive_sag_adc
+        };
+        let rest = (*world).battery_rest;
+        fake::with(|h| {
+            h.current_adc = reading;
+            let on_pack = h.input[0] & (1 << 19) == 0;
+            h.battery_adc = if on_pack {
+                rest.saturating_sub(sag)
+            } else {
+                rest
+            };
+        });
 
         // Drive0 turns the rotor forward, Drive1 back.
         let turn = if m == 1 { Turn::Forward } else { Turn::Back };
@@ -831,6 +852,7 @@ fn main() {
         jammed: false,
         wedge: Wedge::Clear,
         held_current: None,
+        battery_rest: fake::with(|h| h.battery_adc),
         drive_ms: 0,
         previous_motor: 0,
         writer: Writer::default(),
@@ -970,7 +992,10 @@ unsafe fn execute(world: *mut World, command: Command) -> u64 {
                 fake::with(|h| h.blocked_motor_write = fails.0);
             }
             Command::Current { args: [level] } => (*world).held_current = Some(level.0),
-            Command::Battery { args: [level] } => fake::with(|h| h.battery_adc = level.0),
+            Command::Battery { args: [level] } => {
+                (*world).battery_rest = level.0;
+                fake::with(|h| h.battery_adc = level.0);
+            }
 
             Command::Inputs { args: [bits] } => fake::with(|h| {
                 let bits = bits.0;

@@ -1004,7 +1004,7 @@ fn an_owner_reads_the_statistics_and_their_live_metrics() {
 
         owner.subscribe(None, true).await.unwrap();
         let mut kinds = Vec::new();
-        while kinds.len() < 6 {
+        while kinds.len() < MetricKind::ALL.len() {
             match owner.next(Duration::from_secs(60)).await.unwrap() {
                 Pushed::Sample(sample) => {
                     if let SampleValue::Wifi { channel, .. } = sample.value {

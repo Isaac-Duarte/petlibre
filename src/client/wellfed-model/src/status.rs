@@ -72,6 +72,9 @@ pub enum Blocked {
     Setup,
     /// The firmware has no feeding owner.
     Unserved,
+    /// On its batteries, below the floor a feed needs (or unread), or
+    /// after a brownout until the adapter returns.
+    Battery,
 }
 
 /// Which Wi-Fi credentials the feeder joined with.
@@ -87,6 +90,27 @@ pub enum WifiSource {
 pub struct Power {
     pub adapter: bool,
     pub battery_mv: Option<u32>,
+}
+
+/// The battery pack, as the feeder judged its reading.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum Battery {
+    /// No pack fitted.
+    Absent,
+    Reading {
+        mv: u16,
+    },
+    /// A value no pack of the board can read, as read.
+    Implausible {
+        mv: u16,
+    },
+    /// Nothing sampled.
+    Unread,
+    /// The last sample is this old, past the feeder's limit.
+    Stale {
+        age_ms: u32,
+    },
 }
 
 /// The feeder's settings. Its `generation` goes back in `If-Match` with a

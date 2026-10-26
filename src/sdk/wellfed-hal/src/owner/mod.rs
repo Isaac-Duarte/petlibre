@@ -131,6 +131,12 @@ pub struct OwnerStatus {
     /// The food beam's latest qualified reading (`true` with food), kept
     /// after the emitters go off; `None` until a feed has lit them.
     pub food: Option<bool>,
+    /// The pack against its floor (`SensorInputs::floor`), `None` before
+    /// the owner has judged it.
+    pub below_floor: Option<bool>,
+    /// The supply keeps a feed from starting (`SensorInputs::supply_low`):
+    /// on the pack, and the pack not judged above its floor.
+    pub supply_low: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

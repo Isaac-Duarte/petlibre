@@ -82,6 +82,10 @@ impl Feeds for Feeding {
         Feeding::blocked(self)
     }
 
+    fn below_floor(&self) -> Option<bool> {
+        Feeding::below_floor(self)
+    }
+
     #[cfg(not(feature = "gap-probe"))]
     fn submit(&mut self, portions: u8, by: Source) -> Result<u32, Refusal> {
         Feeding::submit(self, portions, by, |record| {

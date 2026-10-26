@@ -33,6 +33,9 @@ pub struct Capabilities {
     /// Portion calibration: `GetCalibration`, `PutCalibration`, the
     /// `Calibration` answer and the portions statistics.
     pub calibration: bool,
+    /// The supply judged: the `Supply` sample and event, and readiness's
+    /// `Battery` reason.
+    pub power: bool,
 }
 
 impl Capabilities {
@@ -46,6 +49,7 @@ impl Capabilities {
         readiness: false,
         traces: false,
         calibration: false,
+        power: false,
     };
     /// Every feature this crate knows: what a current client claims.
     pub const KNOWN: Self = Self {
@@ -57,6 +61,7 @@ impl Capabilities {
         readiness: true,
         traces: true,
         calibration: true,
+        power: true,
     };
 
     /// The features both `self` and `other` claim.
@@ -71,6 +76,7 @@ impl Capabilities {
             readiness: self.readiness && other.readiness,
             traces: self.traces && other.traces,
             calibration: self.calibration && other.calibration,
+            power: self.power && other.power,
         }
     }
 }

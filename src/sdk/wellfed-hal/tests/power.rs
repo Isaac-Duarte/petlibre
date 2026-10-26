@@ -128,3 +128,51 @@ fn an_unreadable_efuse_never_starts_the_adc() {
     assert_eq!(monitor.step().delay_ms, 0);
     assert_eq!(power::health(10_000), None);
 }
+
+/// The judged reading: unread before the first sample, then the pack's
+/// millivolts, then stale (the adapter unknown with it) once the sample is
+/// past the health's limit, never the last value relabelled.
+#[test]
+fn the_supply_names_unread_and_stale_samples() {
+    use wellfed_core::supply::{Pack, Reading};
+
+    let (_serial, mut monitor) = start(2849, false);
+    assert_eq!(power::supply(10_000), Reading::UNREAD);
+    monitor.step();
+    monitor.step();
+
+    let mv = u16::try_from(pin_mv(2849) * DIVIDER_PER_MILLE / 1000).unwrap();
+    assert_eq!(
+        power::supply(10_000),
+        Reading {
+            adapter: Some(false),
+            pack: Pack::Reading { mv },
+        }
+    );
+    assert_eq!(power::supply(10_000 + STALE_MS).pack_mv(), Some(mv));
+    assert_eq!(
+        power::supply(10_001 + STALE_MS),
+        Reading {
+            adapter: None,
+            pack: Pack::Stale {
+                age_ms: STALE_MS + 1
+            },
+        }
+    );
+}
+
+/// On the pack alone a reading too low for the board to run on is not
+/// passed off as a voltage.
+#[test]
+fn an_implausible_pack_reading_is_named() {
+    use wellfed_core::supply::Pack;
+
+    let (_serial, mut monitor) = start(1600, false);
+    monitor.step();
+    monitor.step();
+    assert!(matches!(
+        power::supply(10_000).pack,
+        Pack::Implausible { .. }
+    ));
+    assert!(power::FLOOR.valid());
+}

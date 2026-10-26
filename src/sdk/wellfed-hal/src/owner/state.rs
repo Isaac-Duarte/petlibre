@@ -91,6 +91,8 @@ impl<S: OwnerStorage> OwnerTask<S> {
             optics_off: s.optics_off,
             trace: self.trace,
             food: self.food,
+            below_floor: self.sensors.floor.below(),
+            supply_low: self.sensors.supply_low(),
             ..OwnerStatus::default()
         };
 

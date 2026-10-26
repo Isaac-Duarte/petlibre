@@ -10,7 +10,7 @@ use wellfed_proto::api as proto;
 use wellfed_proto::setup as proto_setup;
 
 use crate::{
-    Answer, Blocked, Bowl, Calibration, CalibrationView, Capabilities, Client, ClientRole,
+    Answer, Battery, Blocked, Bowl, Calibration, CalibrationView, Capabilities, Client, ClientRole,
     Counters, Counts, EnrollPath, Erases, Event, EventBody, FeedOutcome, FeedReason, Flash, Food,
     Generation, Hello, Hex, Invite, Joined, LogLines, Memory, NtpResult, NtpServer, Op,
     OpenRefusal, Phase, Portions, Power, PowerStats, Readiness, Refusal, ResetCause, Resets,
@@ -117,6 +117,7 @@ impl From<proto::Blocked> for Blocked {
             proto::Blocked::Updating => Self::Updating,
             proto::Blocked::Setup => Self::Setup,
             proto::Blocked::Unserved => Self::Unserved,
+            proto::Blocked::Battery => Self::Battery,
         }
     }
 }
@@ -133,6 +134,7 @@ impl From<Blocked> for proto::Blocked {
             Blocked::Updating => Self::Updating,
             Blocked::Setup => Self::Setup,
             Blocked::Unserved => Self::Unserved,
+            Blocked::Battery => Self::Battery,
         }
     }
 }
@@ -156,6 +158,30 @@ impl From<proto::Power> for Power {
         Self {
             adapter,
             battery_mv,
+        }
+    }
+}
+
+impl From<proto::Battery> for Battery {
+    fn from(battery: proto::Battery) -> Self {
+        match battery {
+            proto::Battery::Absent => Self::Absent,
+            proto::Battery::Reading { mv } => Self::Reading { mv },
+            proto::Battery::Implausible { mv } => Self::Implausible { mv },
+            proto::Battery::Unread => Self::Unread,
+            proto::Battery::Stale { age_ms } => Self::Stale { age_ms },
+        }
+    }
+}
+
+impl From<Battery> for proto::Battery {
+    fn from(battery: Battery) -> Self {
+        match battery {
+            Battery::Absent => Self::Absent,
+            Battery::Reading { mv } => Self::Reading { mv },
+            Battery::Implausible { mv } => Self::Implausible { mv },
+            Battery::Unread => Self::Unread,
+            Battery::Stale { age_ms } => Self::Stale { age_ms },
         }
     }
 }
@@ -227,6 +253,15 @@ impl From<proto::EventBody> for EventBody {
             proto::EventBody::FeedingBlocked { reason } => Self::FeedingBlocked {
                 reason: reason.map(Blocked::from),
             },
+            proto::EventBody::Supply(proto::Supply {
+                adapter,
+                battery,
+                below_floor,
+            }) => Self::Supply {
+                adapter,
+                battery: battery.into(),
+                below_floor,
+            },
         }
     }
 }
@@ -282,6 +317,15 @@ impl From<EventBody> for proto::EventBody {
             EventBody::FeedingBlocked { reason } => Self::FeedingBlocked {
                 reason: reason.map(proto::Blocked::from),
             },
+            EventBody::Supply {
+                adapter,
+                battery,
+                below_floor,
+            } => Self::Supply(proto::Supply {
+                adapter,
+                battery: battery.into(),
+                below_floor,
+            }),
         }
     }
 }
@@ -451,6 +495,15 @@ impl From<proto::Metric> for SampleValue {
                 channel,
                 ap_changes,
             },
+            proto::Metric::Supply(proto::Supply {
+                adapter,
+                battery,
+                below_floor,
+            }) => Self::Supply {
+                adapter,
+                battery: battery.into(),
+                below_floor,
+            },
         }
     }
 }
@@ -485,6 +538,15 @@ impl From<SampleValue> for proto::Metric {
                 channel,
                 ap_changes,
             },
+            SampleValue::Supply {
+                adapter,
+                battery,
+                below_floor,
+            } => Self::Supply(proto::Supply {
+                adapter,
+                battery: battery.into(),
+                below_floor,
+            }),
         }
     }
 }
@@ -1206,6 +1268,7 @@ impl From<proto::Capabilities> for Capabilities {
             readiness: bits.contains(proto::Capabilities::READINESS),
             traces: bits.contains(proto::Capabilities::TRACES),
             calibration: bits.contains(proto::Capabilities::CALIBRATION),
+            power: bits.contains(proto::Capabilities::POWER),
         }
     }
 }
@@ -1221,6 +1284,7 @@ impl From<Capabilities> for proto::Capabilities {
             readiness,
             traces,
             calibration,
+            power,
         } = capabilities;
         let mut bits = proto::Capabilities::V1.0;
         if feed {
@@ -1246,6 +1310,9 @@ impl From<Capabilities> for proto::Capabilities {
         }
         if calibration {
             bits |= proto::Capabilities::CALIBRATION.0;
+        }
+        if power {
+            bits |= proto::Capabilities::POWER.0;
         }
         Self(bits)
     }

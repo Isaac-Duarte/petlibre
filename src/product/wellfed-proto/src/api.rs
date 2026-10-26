@@ -109,6 +109,11 @@ impl Capabilities {
     /// [`Refusal::Unverified`], and the [`StatsSection::Portions`]
     /// statistics.
     pub const CALIBRATION: Self = Self(256);
+    /// The supply, judged: [`Metric::Supply`] to subscribers, the
+    /// [`EventBody::Supply`] history of its changes, and readiness's
+    /// [`Blocked::Battery`]. A session without the bit sees that reason as
+    /// [`Blocked::Starting`] ([`Blocked::seen_by`]).
+    pub const POWER: Self = Self(128);
     /// Every bit this crate defines: what a current client claims. A
     /// session then runs on the bits both sides claim, so a client adapts
     /// to whatever feeder it meets, however old.
@@ -120,7 +125,8 @@ impl Capabilities {
             | Self::STATS.0
             | Self::LOG.0
             | Self::TRACES.0
-            | Self::CALIBRATION.0,
+            | Self::CALIBRATION.0
+            | Self::POWER.0,
     );
 
     pub const fn union(self, other: Self) -> Self {
@@ -648,6 +654,12 @@ pub enum Blocked {
     Setup,
     /// This firmware has no feeding owner.
     Unserved,
+    /// The feeder runs on its batteries and they are below the floor a
+    /// feed needs, or unread; or this boot followed a brownout and the
+    /// adapter has not been seen since. It clears when the adapter returns
+    /// or the pack recovers past the floor's hysteresis. Only to a session
+    /// that claims [`Capabilities::POWER`].
+    Battery,
 }
 
 impl Blocked {
@@ -661,7 +673,19 @@ impl Blocked {
             | Self::Feeding
             | Self::Joining
             | Self::Updating
-            | Self::Setup => Refusal::Busy,
+            | Self::Setup
+            | Self::Battery => Refusal::Busy,
+        }
+    }
+
+    /// The reason as a session with `capabilities` can decode it: one
+    /// without [`Capabilities::POWER`] gets [`Self::Battery`] as
+    /// [`Self::Starting`], the reason that also refuses `Busy`, is not
+    /// lasting, and says only that the feeder will feed again by itself.
+    pub const fn seen_by(self, capabilities: Capabilities) -> Self {
+        match self {
+            Self::Battery if !capabilities.contains(Capabilities::POWER) => Self::Starting,
+            other => other,
         }
     }
 
@@ -674,9 +698,15 @@ impl Blocked {
     pub const fn lasting(self) -> bool {
         match self {
             Self::Journal | Self::Fault | Self::Updating | Self::Setup => true,
-            Self::Starting | Self::Resolving | Self::Feeding | Self::Joining | Self::Unserved => {
-                false
-            }
+            // The supply's changes are their own events (`Supply`), rate
+            // limited, so an adapter that comes and goes does not fill the
+            // history twice over.
+            Self::Starting
+            | Self::Resolving
+            | Self::Feeding
+            | Self::Joining
+            | Self::Unserved
+            | Self::Battery => false,
         }
     }
 }
@@ -857,6 +887,37 @@ pub struct Power {
     pub battery_mv: Option<u32>,
 }
 
+/// The supply as the feeder judges it ([`Capabilities::POWER`]): never an
+/// unknown passed off as a value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Supply {
+    /// The adapter's detect pin; `None` with no fresh sample.
+    pub adapter: Option<bool>,
+    pub battery: Battery,
+    /// Whether the feeding owner judges the pack below the floor a feed
+    /// needs (with its hold and hysteresis); `None` before it has judged,
+    /// or in a firmware without one. Judged on the adapter too, where it
+    /// does not refuse feeds.
+    pub below_floor: Option<bool>,
+}
+
+/// The battery pack in a [`Supply`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Battery {
+    /// No pack fitted: the channel reads near zero.
+    Absent,
+    /// The pack's millivolts.
+    Reading { mv: u16 },
+    /// A value no pack of this board can read (above fresh cells, or on
+    /// the pack alone too low to be running), as read.
+    Implausible { mv: u16 },
+    /// Nothing sampled: the monitor has not run, its ADC failed, or the
+    /// firmware does not sample the supply.
+    Unread,
+    /// The last sample is this old, past the monitor's limit.
+    Stale { age_ms: u32 },
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Settings {
     pub generation: u32,
@@ -954,6 +1015,10 @@ pub enum EventBody {
     FeedingBlocked {
         reason: Option<Blocked>,
     },
+    /// The adapter came or went, or the pack crossed its floor. At most
+    /// one a minute: changes inside that minute are recorded together,
+    /// as the supply stands at its end.
+    Supply(Supply),
 }
 
 impl EventBody {
@@ -964,6 +1029,7 @@ impl EventBody {
         match self {
             Self::Fed { .. } => Capabilities::FEED,
             Self::FeedingBlocked { .. } => Capabilities::READINESS,
+            Self::Supply(_) => Capabilities::POWER,
             Self::Boot { .. }
             | Self::Lock { .. }
             | Self::Settings { .. }
@@ -1070,6 +1136,8 @@ pub enum Metric {
         channel: Option<u8>,
         ap_changes: u32,
     },
+    /// The supply, judged, each time it is sampled.
+    Supply(Supply),
 }
 
 impl Metric {
@@ -1081,6 +1149,7 @@ impl Metric {
             Self::Heap { .. } | Self::Loop { .. } | Self::Gateway { .. } | Self::Wifi { .. } => {
                 Capabilities::STATS
             }
+            Self::Supply(_) => Capabilities::POWER,
         }
     }
 }
@@ -1647,6 +1716,15 @@ mod tests {
             assert_eq!(metric.capability(), Capabilities::STATS);
         }
         assert_eq!(Metric::Rssi(-50).capability(), Capabilities::V1);
+        assert_eq!(
+            Metric::Supply(Supply {
+                adapter: None,
+                battery: Battery::Unread,
+                below_floor: None,
+            })
+            .capability(),
+            Capabilities::POWER
+        );
         for section in StatsSection::ALL {
             assert!(Capabilities::KNOWN.contains(section.capability()));
         }
@@ -1709,6 +1787,16 @@ mod tests {
             EventBody::FeedingBlocked {
                 reason: Some(Blocked::Unserved),
             },
+            EventBody::Supply(Supply {
+                adapter: Some(false),
+                battery: Battery::Stale { age_ms: u32::MAX },
+                below_floor: Some(true),
+            }),
+            EventBody::Supply(Supply {
+                adapter: Some(true),
+                battery: Battery::Implausible { mv: u16::MAX },
+                below_floor: Some(false),
+            }),
         ] {
             let mut out = [0; 16];
             let len = encode(&body, &mut out).unwrap();

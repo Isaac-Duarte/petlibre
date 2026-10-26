@@ -14,6 +14,7 @@ use wellfed_core::clock::wall::{Fix, Jump, Origin, State as ClockState, Sync, Sy
 use wellfed_core::clock::zone::Rule;
 use wellfed_core::log_tail::Batch as LogBatch;
 use wellfed_core::ota::install::{Answer, Progress, Refused};
+use wellfed_core::supply::{Pack, Reading};
 use wellfed_core::tone::Tune;
 use wellfed_proto::api::{Capabilities, Counts, Erases, Power, Refusal, TASKS_MAX, TraceSummary};
 use wellfed_proto::trace::PAGE_MAX;
@@ -268,6 +269,17 @@ pub trait Platform {
     fn indicators_off(&mut self);
     /// The supply, once sampled.
     fn power(&mut self, now_ms: u32) -> Option<Power>;
+    /// The supply judged, unknowns named. A platform that cannot tell an
+    /// implausible or stale sample from a fresh one reports what
+    /// [`Self::power`] does.
+    fn supply(&mut self, now_ms: u32) -> Reading {
+        self.power(now_ms).map_or(Reading::UNREAD, |power| Reading {
+            adapter: Some(power.adapter),
+            pack: power.battery_mv.map_or(Pack::Absent, |mv| Pack::Reading {
+                mv: u16::try_from(mv).unwrap_or(u16::MAX),
+            }),
+        })
+    }
     fn link(&mut self) -> Link;
     /// This boot's address, once DHCP gave one.
     fn ipv4(&mut self) -> Option<u32>;

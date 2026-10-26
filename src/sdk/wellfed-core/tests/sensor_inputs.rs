@@ -13,6 +13,7 @@ use wellfed_core::feed::controller::{
 };
 use wellfed_core::feed::progress::{BowlMode, Direction};
 use wellfed_core::feed::sensor_inputs::{SensorInputs, SensorLimits, SensorReading};
+use wellfed_core::supply::FloorLimits;
 
 /// Compressed durations exercise software; no deployment defaults are implied.
 const LIMITS: SensorLimits = SensorLimits {
@@ -22,8 +23,20 @@ const LIMITS: SensorLimits = SensorLimits {
     power_settle_ms: 2,
     max_observation_gap_ms: 2,
     max_age_ms: 2,
-    battery_min_scaled: 1650,
+    battery: FloorLimits {
+        floor: 1650,
+        clear: 1710,
+        cutoff: 1550,
+        hold_ms: 4,
+    },
 };
+
+/// Battery channel readings (raw) for scaled values around the floor,
+/// with the default calibration.
+const RAW_1536: u16 = 2100;
+const RAW_1619: u16 = 2200;
+const RAW_1700: u16 = 2297;
+const RAW_1710: u16 = 2309;
 
 struct Fixture {
     inputs: SensorInputs,
@@ -391,4 +404,98 @@ fn the_food_reading_is_known_only_while_the_emitters_qualify_it() {
     f.raw.optics_enabled = false;
     f.advance(1);
     assert_eq!(f.inputs.food_present(), None);
+}
+
+#[test]
+fn raw_constants_scale_where_the_floor_tests_need_them() {
+    let calibration = defaults();
+    for (raw, scaled) in [
+        (RAW_1536, 1536),
+        (RAW_1619, 1619),
+        (RAW_1700, 1700),
+        (RAW_1710, 1710),
+    ] {
+        assert_eq!(calibration.scale_16(&[raw; SAMPLES]), Some(scaled));
+    }
+}
+
+/// On the pack: a sag under the floor shorter than the hold leaves power
+/// healthy (a motor's start-up surge); a longer one does not; and once
+/// below, the pack must read the clear level, not just the floor, before
+/// power is healthy again.
+#[test]
+fn a_sag_shorter_than_the_hold_is_tolerated_and_a_low_pack_needs_the_clear_level() {
+    let mut f = begin(0);
+    f.raw.dc_present = false;
+    f.advance(3);
+    assert!(f.snapshot().power_healthy && !f.inputs.supply_low());
+    assert_eq!(f.inputs.floor.below(), Some(false));
+
+    f.raw.battery = [RAW_1619; SAMPLES];
+    f.advance(3);
+    assert!(f.snapshot().power_healthy, "inside the hold");
+    f.raw.battery = [2800; SAMPLES];
+    f.advance(1);
+    f.raw.battery = [RAW_1619; SAMPLES];
+    f.advance(3);
+    assert!(
+        f.snapshot().power_healthy,
+        "the hold restarts after a recovery"
+    );
+
+    f.advance(2);
+    assert!(!f.snapshot().power_healthy && f.inputs.supply_low());
+    assert_eq!(f.inputs.floor.below(), Some(true));
+
+    f.raw.battery = [RAW_1700; SAMPLES];
+    f.advance(5);
+    assert!(
+        !f.snapshot().power_healthy,
+        "between the floor and the clear level"
+    );
+    f.raw.battery = [RAW_1710; SAMPLES];
+    f.advance(1);
+    assert!(f.snapshot().power_healthy && !f.inputs.supply_low());
+}
+
+#[test]
+fn a_sag_under_the_cutoff_is_below_the_floor_at_once() {
+    let mut f = begin(0);
+    f.raw.dc_present = false;
+    f.advance(3);
+    assert!(f.snapshot().power_healthy);
+
+    f.raw.battery = [RAW_1536; SAMPLES];
+    f.advance(1);
+    assert!(!f.snapshot().power_healthy && f.inputs.supply_low());
+}
+
+/// On the adapter the pack's floor does not matter, but it is still
+/// judged, so pulling the adapter from a low pack finds it already low.
+#[test]
+fn the_floor_is_judged_on_the_adapter_and_only_matters_on_the_pack() {
+    let mut f = begin(0);
+    f.raw.battery = [RAW_1536; SAMPLES];
+    f.advance(3);
+    assert!(f.snapshot().power_healthy && !f.inputs.supply_low());
+    assert_eq!(f.inputs.floor.below(), Some(true));
+
+    f.raw.dc_present = false;
+    f.advance(3);
+    assert!(!f.snapshot().power_healthy && f.inputs.supply_low());
+}
+
+/// A failed battery conversion on the pack is not a reading: power is
+/// unhealthy at once, as before, and the floor counts it under.
+#[test]
+fn a_failed_battery_conversion_on_the_pack_is_not_healthy() {
+    let mut f = begin(0);
+    f.raw.dc_present = false;
+    f.advance(3);
+    f.raw.battery_adc_valid = false;
+    f.advance(1);
+    assert!(!f.snapshot().power_healthy && f.inputs.supply_low());
+    assert_eq!(f.inputs.floor.below(), Some(false));
+    f.advance(4);
+    assert_eq!(f.inputs.floor.below(), Some(true));
 }

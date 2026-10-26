@@ -4,9 +4,17 @@
 //! [`FeedSample`] for the controller from it. A timing gap or an invalid
 //! acquisition drops qualification back to unknown instead of keeping old
 //! good data, and optical inputs count only after the emitters have settled.
+//!
+//! On the pack alone, power is healthy only while the pack is judged above
+//! its floor ([`Floor`]): a sag under the floor shorter than its hold (a
+//! motor's start-up surge) does not stop a feed, a longer one or one under
+//! the cutoff does, and a pack once below must read the floor's clear level
+//! before a feed starts again. An adapter change still unsettles power for
+//! `power_settle_ms`, so a feed that sees one stops.
 
 use crate::adc_scale::{AdcCalibration, SAMPLES};
 use crate::feed::controller::FeedSample;
+use crate::supply::{Floor, FloorLimits};
 use crate::{HALF_RANGE, interval_valid};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -17,7 +25,8 @@ pub struct SensorLimits {
     pub power_settle_ms: u32,
     pub max_observation_gap_ms: u32,
     pub max_age_ms: u32,
-    pub battery_min_scaled: u32,
+    /// The pack's floor, in the battery channel's scaled unit.
+    pub battery: FloorLimits,
 }
 
 /// One coherent acquisition; no cached data relabeled with a new timestamp.
@@ -77,6 +86,9 @@ pub struct SensorInputs {
 
     pub current_scaled: u32,
     pub battery_scaled: u32,
+    /// The pack against its floor, judged on every acquisition, on the
+    /// adapter too, so the verdict is current when it is pulled.
+    pub floor: Floor,
 
     pub have_time: bool,
     pub timing_valid: bool,
@@ -101,7 +113,7 @@ impl SensorInputs {
             && interval_valid(limits.power_settle_ms)
             && interval_valid(limits.max_observation_gap_ms)
             && interval_valid(limits.max_age_ms)
-            && limits.battery_min_scaled != 0;
+            && limits.battery.valid();
         valid.then(|| Self {
             limits: *limits,
             calibration: *calibration,
@@ -154,6 +166,8 @@ impl SensorInputs {
             self.battery_scaled = value;
             self.battery_valid = true;
         }
+        let battery = self.battery_valid.then_some(self.battery_scaled);
+        self.floor.update(now_ms, battery, &self.limits.battery);
 
         self.gpio_valid = reading.gpio_valid;
         if !reading.gpio_valid {
@@ -199,6 +213,13 @@ impl SensorInputs {
         }
     }
 
+    /// Whether the supply keeps a feed from starting: the feeder runs on
+    /// its pack (the adapter read absent) and the pack is not judged above
+    /// its floor, or its last acquisition failed.
+    pub fn supply_low(&self) -> bool {
+        self.power_known && !self.dc_present && !(self.battery_valid && self.floor.above())
+    }
+
     /// Compose a controller snapshot. Feedback is supplied by the caller's
     /// ordered edge queue, once per edge; this module never caches or replays
     /// feedback. Unknown/disabled/settling optics and stale observations are
@@ -214,9 +235,7 @@ impl SensorInputs {
         FeedSample {
             power_healthy: gpio
                 && self.power_settled
-                && (self.dc_present
-                    || (self.battery_valid
-                        && self.battery_scaled >= self.limits.battery_min_scaled)),
+                && (self.dc_present || (self.battery_valid && self.floor.above())),
             optical_valid: gpio && self.optical_ready && self.outlet.known,
             outlet_clear: self.outlet.good,
             current_valid: fresh && self.current_valid,

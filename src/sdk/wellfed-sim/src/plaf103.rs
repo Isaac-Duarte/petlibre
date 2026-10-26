@@ -41,7 +41,7 @@ pub const OWNER: OwnerConfig = OwnerConfig {
         power_settle_ms: 100,
         max_observation_gap_ms: 100,
         max_age_ms: 100,
-        battery_min_scaled: 1650,
+        battery: wellfed_hal::power::FLOOR,
     },
     events: EventsConfig {
         ticks_per_second: SYSTIMER_HZ,

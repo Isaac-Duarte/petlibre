@@ -414,10 +414,13 @@ pub enum Command {
     Current {
         args: [Adc; 1],
     },
+    /// The battery channel at rest; a drive on the pack alone sags it by
+    /// the plant's `surge_sag_adc` and `drive_sag_adc`.
     Battery {
         args: [Adc; 1],
     },
-    /// Bit 0 food present, bit 1 power, bit 2 outlet blocked.
+    /// Bit 0 sets PA16 (the outlet beam reads clear), bit 1 PA17 (the food
+    /// beam), bit 2 PA19 (the adapter is present).
     Inputs {
         args: [Bounded<0, 7>; 1],
     },
@@ -482,6 +485,9 @@ pub struct Status {
     /// or not yet due.
     pub writes_done: u32,
     pub writes_waiting: u32,
+    /// The owner's supply verdict: on the pack, and the pack not judged
+    /// above its floor.
+    pub supply_low: bool,
 }
 
 impl Status {

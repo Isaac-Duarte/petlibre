@@ -15,8 +15,9 @@ use wellfed_feeder::feeder::{Feeder, Feeds, Record};
 use wellfed_feeder_runtime::events;
 use wellfed_fw_feeder::platform::{Driver, Plaf103};
 use wellfed_proto::api::{
-    Blocked, EventBody, FeedOutcome, FeedReason, Readiness, Refusal, Source,
+    Battery, Blocked, EventBody, FeedOutcome, FeedReason, Readiness, Refusal, Source, Supply,
 };
+use wellfed_sdk::hal::power::{self, Monitor};
 use wellfed_sdk::hal::sdk::fake;
 use wellfed_sdk::hal::{audio, buttons, settings};
 
@@ -29,6 +30,7 @@ static SERIAL: Mutex<()> = Mutex::new(());
 struct Owner {
     submitted: Vec<(u8, Source)>,
     blocked: Option<Blocked>,
+    below_floor: Option<bool>,
 }
 
 impl Feeds for Owner {
@@ -42,6 +44,10 @@ impl Feeds for Owner {
 
     fn blocked(&self) -> Option<Blocked> {
         self.blocked
+    }
+
+    fn below_floor(&self) -> Option<bool> {
+        self.below_floor
     }
 
     fn submit(&mut self, portions: u8, by: Source) -> Result<u32, Refusal> {
@@ -286,4 +292,69 @@ fn a_stalled_ring_holds_up_nothing_and_still_ends() {
         "the speaker gives up on its own bound: {:?}",
         rig.lines
     );
+}
+
+/// The owner's battery reason refuses a press like any passing reason:
+/// logged, refused `Busy`, never a `FeedingBlocked` event.
+#[test]
+fn a_press_on_a_low_pack_is_refused_and_not_recorded_as_blocked() {
+    let mut rig = Rig::new(true);
+    rig.unlock();
+    rig.owner.blocked = Some(Blocked::Battery);
+    rig.press_dispense();
+    assert!(rig.owner.submitted.is_empty());
+    assert!(rig.logged("PLFEED1 readiness state=blocked reason=battery"));
+    assert!(
+        rig.logged("PLFEED1 dispense refused=busy"),
+        "{:?}",
+        rig.lines
+    );
+    assert!(
+        !rig.events()
+            .iter()
+            .any(|body| matches!(body, EventBody::FeedingBlocked { .. }))
+    );
+}
+
+/// The board's own samples end to end: the supply as the power monitor
+/// publishes it, judged, its first reading a baseline and the adapter's
+/// loss a `Supply` event with the owner's verdict.
+#[test]
+fn the_adapter_leaving_is_a_supply_event_with_the_pack_reading() {
+    let mut rig = Rig::new(true);
+    power::reset();
+    let mut monitor = Monitor::default();
+    // A pack: 2117 mV at the pin with the default calibration, 4.37 V.
+    fake::with(|h| {
+        h.input[0] |= 1 << 19;
+        h.battery_adc = 2800;
+    });
+    monitor.step();
+    monitor.step();
+    rig.owner.below_floor = Some(false);
+    rig.pass();
+    let _ = rig.events();
+
+    fake::with(|h| h.input[0] &= !(1 << 19));
+    monitor.step();
+    rig.pass();
+    let events = rig.events();
+    let supply: Vec<_> = events
+        .iter()
+        .filter_map(|body| match body {
+            EventBody::Supply(supply) => Some(*supply),
+            _ => None,
+        })
+        .collect();
+    let [
+        Supply {
+            adapter: Some(false),
+            battery: Battery::Reading { mv },
+            below_floor: Some(false),
+        },
+    ] = supply.as_slice()
+    else {
+        panic!("{events:?}");
+    };
+    assert!((4000..5000).contains(mv), "{mv}");
 }

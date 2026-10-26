@@ -1110,6 +1110,47 @@ fn the_status_says_whether_a_feed_can_start_and_a_feed_obeys_it() {
         matches!(session.next_incoming(), Ok(Some(Incoming::Opened(_))))
     });
     assert_eq!(readiness(ask(&mut rig, &mut old, 1, Op::Status)), None);
+
+    // The battery's reason reaches a session that claims the power bit; a
+    // feed is refused `Busy`, as it clears by itself.
+    rig.device.blocked = Some(proto::Blocked::Battery);
+    assert_eq!(
+        readiness(ask(&mut rig, &mut owner, 5, Op::Status)),
+        Some(model::Readiness::Blocked(model::Blocked::Battery))
+    );
+    let fed = ask(&mut rig, &mut owner, 6, Op::Feed { portions: 1 });
+    assert_eq!(fed, Answer::Refused(model::Refusal::Busy));
+
+    // One that claims readiness but not power could not decode it, and
+    // reads the reason that also refuses `Busy` and clears by itself.
+    let slot = rig.accept().unwrap();
+    let hello = Hello {
+        major: 1,
+        capabilities: model::Capabilities {
+            power: false,
+            ..model::Capabilities::KNOWN
+        },
+    };
+    let (session, outbox) = Session::connect_with(
+        &Keypair::from_secret(OWNER),
+        public(FEEDER),
+        [0x79; 32],
+        hello,
+    )
+    .unwrap();
+    let mut older = Client_ {
+        slot,
+        session,
+        outbox,
+    };
+    run(&mut rig, &mut older, |session| {
+        matches!(session.next_incoming(), Ok(Some(Incoming::Opened(_))))
+    });
+    assert_eq!(
+        readiness(ask(&mut rig, &mut older, 1, Op::Status)),
+        Some(model::Readiness::Blocked(model::Blocked::Starting))
+    );
+    assert!(rig.device.feeds.is_empty(), "nothing reached the owner");
 }
 
 #[test]
@@ -1778,6 +1819,7 @@ fn a_connection_names_the_epoch_and_answers_each_request_once() {
                 readiness: true,
                 traces: true,
                 calibration: true,
+                power: false,
             },
             EPOCH
         )
@@ -1975,6 +2017,7 @@ fn every_body() -> Vec<EventBody> {
             EventBody::Lost { .. } => 7,
             EventBody::Fed { .. } => 8,
             EventBody::FeedingBlocked { .. } => 9,
+            EventBody::Supply(_) => 10,
         }
     }
     let by = proto::Source::Panel;
@@ -2005,6 +2048,11 @@ fn every_body() -> Vec<EventBody> {
         EventBody::FeedingBlocked {
             reason: Some(proto::Blocked::Fault),
         },
+        EventBody::Supply(proto::Supply {
+            adapter: Some(false),
+            battery: proto::Battery::Reading { mv: 4757 },
+            below_floor: Some(false),
+        }),
     ];
     let mut seen: Vec<usize> = bodies.iter().map(variant).collect();
     seen.dedup();
@@ -2412,6 +2460,7 @@ fn only_an_owner_s_session_with_the_update_bit_may_update() {
             readiness: true,
             traces: true,
             calibration: false,
+            power: true,
         },
     };
     let slot = rig.accept().unwrap();

@@ -765,6 +765,86 @@ fn messages() -> Vec<Fixture> {
             })))),
             feeder,
         ),
+        (
+            "hello-power",
+            entry(&Hello {
+                major: 1,
+                capabilities: Capabilities::FEED
+                    .union(Capabilities::READINESS)
+                    .union(Capabilities::POWER),
+            }),
+            |b| decode::<Hello>(b).is_ok(),
+        ),
+        (
+            "sample-supply",
+            entry(&FeederMessage::Sample(Sample {
+                at_ms: 20,
+                metric: Metric::Supply(Supply {
+                    adapter: Some(false),
+                    battery: Battery::Reading { mv: 4757 },
+                    below_floor: Some(false),
+                }),
+            })),
+            feeder,
+        ),
+        (
+            "sample-supply-stale",
+            entry(&FeederMessage::Sample(Sample {
+                at_ms: 21,
+                metric: Metric::Supply(Supply {
+                    adapter: None,
+                    battery: Battery::Stale { age_ms: 15_001 },
+                    below_floor: None,
+                }),
+            })),
+            feeder,
+        ),
+        (
+            "sample-supply-unread",
+            entry(&FeederMessage::Sample(Sample {
+                at_ms: 22,
+                metric: Metric::Supply(Supply {
+                    adapter: None,
+                    battery: Battery::Unread,
+                    below_floor: None,
+                }),
+            })),
+            feeder,
+        ),
+        (
+            "event-supply-absent",
+            entry(&FeederMessage::Event(Event {
+                seq: 18,
+                at: None,
+                body: EventBody::Supply(Supply {
+                    adapter: Some(true),
+                    battery: Battery::Absent,
+                    below_floor: Some(true),
+                }),
+            })),
+            feeder,
+        ),
+        (
+            "event-supply-implausible",
+            entry(&FeederMessage::Event(Event {
+                seq: 19,
+                at: None,
+                body: EventBody::Supply(Supply {
+                    adapter: Some(false),
+                    battery: Battery::Implausible { mv: 2475 },
+                    below_floor: Some(true),
+                }),
+            })),
+            feeder,
+        ),
+        (
+            "outcome-feeder-status-battery",
+            entry(&response(Outcome::FeederStatus {
+                status,
+                readiness: Readiness::Blocked(Blocked::Battery),
+            })),
+            feeder,
+        ),
     ]
 }
 

@@ -16,6 +16,7 @@ use crate::feed::feedback::{FeedbackDrive, FeedbackEvents, FeedbackFault};
 use crate::feed::motor_gate::{MotorGate, MotorGateFault, MotorPins};
 use crate::feed::progress::{BowlMode, Direction};
 use crate::feed::sensor_inputs::{SensorInputs, SensorLimits, SensorReading};
+use crate::supply::FloorLimits;
 
 #[derive(Default)]
 struct SimulatedMotor {
@@ -49,7 +50,12 @@ fn run_pipeline() -> Option<()> {
         power_settle_ms: 2,
         max_observation_gap_ms: 2,
         max_age_ms: 2,
-        battery_min_scaled: 1650,
+        battery: FloorLimits {
+            floor: 1650,
+            clear: 1710,
+            cutoff: 1550,
+            hold_ms: 4,
+        },
     };
 
     let feed_limits = FeedLimits {

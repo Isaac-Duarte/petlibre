@@ -541,6 +541,7 @@ impl Platform for SimPlatform {
             .union(Capabilities::STATS)
             .union(Capabilities::TRACES)
             .union(Capabilities::CALIBRATION)
+            .union(Capabilities::POWER)
     }
 
     fn reset(&mut self) {

@@ -29,6 +29,7 @@ pub mod record;
 pub mod rng;
 pub mod settings;
 pub mod store;
+pub mod supply;
 pub mod tone;
 
 /// Distances at or beyond this are ambiguous for wrapping millisecond clocks.

@@ -9,7 +9,7 @@ use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::{Blocked, Generation, Hex};
+use crate::{Battery, Blocked, Generation, Hex};
 
 /// What the feeder pushes to a subscribed session, or to one that asked
 /// for its log.
@@ -113,6 +113,14 @@ pub enum EventBody {
     FeedingBlocked {
         reason: Option<Blocked>,
     },
+    /// The adapter came or went, or the pack crossed its floor (at most
+    /// one a minute, as the supply stood at its end).
+    Supply {
+        adapter: Option<bool>,
+        battery: Battery,
+        /// Whether the feeding owner judged the pack below its floor.
+        below_floor: Option<bool>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -168,6 +176,7 @@ impl EventBody {
             Self::Lost { .. } => EventKind::Lost,
             Self::Fed { .. } => EventKind::Fed,
             Self::FeedingBlocked { .. } => EventKind::FeedingBlocked,
+            Self::Supply { .. } => EventKind::Supply,
         }
     }
 }
@@ -186,6 +195,7 @@ pub enum EventKind {
     Lost,
     Fed,
     FeedingBlocked,
+    Supply,
 }
 
 impl EventKind {
@@ -202,6 +212,7 @@ impl EventKind {
             Self::Lost => "lost",
             Self::Fed => "fed",
             Self::FeedingBlocked => "feeding_blocked",
+            Self::Supply => "supply",
         }
     }
 
@@ -217,6 +228,7 @@ impl EventKind {
             Self::Lost,
             Self::Fed,
             Self::FeedingBlocked,
+            Self::Supply,
         ]
         .into_iter()
         .find(|kind| kind.code() == code)
@@ -315,6 +327,12 @@ pub enum SampleValue {
         channel: Option<u8>,
         ap_changes: u32,
     },
+    /// The supply, judged.
+    Supply {
+        adapter: Option<bool>,
+        battery: Battery,
+        below_floor: Option<bool>,
+    },
 }
 
 impl SampleValue {
@@ -326,6 +344,7 @@ impl SampleValue {
             Self::Loop { .. } => MetricKind::Loop,
             Self::Gateway { .. } => MetricKind::Gateway,
             Self::Wifi { .. } => MetricKind::Wifi,
+            Self::Supply { .. } => MetricKind::Supply,
         }
     }
 }
@@ -339,16 +358,18 @@ pub enum MetricKind {
     Loop,
     Gateway,
     Wifi,
+    Supply,
 }
 
 impl MetricKind {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Power,
         Self::Rssi,
         Self::Heap,
         Self::Loop,
         Self::Gateway,
         Self::Wifi,
+        Self::Supply,
     ];
 
     /// The stored and query spelling, the same as the JSON one.
@@ -360,6 +381,7 @@ impl MetricKind {
             Self::Loop => "loop",
             Self::Gateway => "gateway",
             Self::Wifi => "wifi",
+            Self::Supply => "supply",
         }
     }
 

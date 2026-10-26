@@ -43,7 +43,7 @@ pub use stats::{
     Counters, Counts, Erases, FeedStats, Flash, Food, Memory, Portions, PowerStats, ResetCause,
     Resets, Stats, StatsSection, TaskStack,
 };
-pub use status::{Blocked, Power, Readiness, Settings, SettingsPatch, Status, WifiSource};
+pub use status::{Battery, Blocked, Power, Readiness, Settings, SettingsPatch, Status, WifiSource};
 pub use trace::{CurrentUnit, Malformed, Trace, TraceEntry, TraceMotor, TracePage, TraceSummary};
 pub use update::{UpdatePhase, UpdateRefusal, UpdateStop, UpdateView};
 

@@ -16,6 +16,7 @@ use wellfed_core::clock::zone::Rule;
 use wellfed_core::log_tail::Batch as LogBatch;
 use wellfed_core::ota::install::{Answer, Progress, Refused};
 use wellfed_core::store::slot::SlotIo;
+use wellfed_core::supply::Reading;
 use wellfed_core::tone::Tune;
 use wellfed_device_api::clients::{CLIENTS, Client};
 use wellfed_device_api::mailbox::{
@@ -151,6 +152,7 @@ impl Platform for Plaf103 {
             .union(Capabilities::READINESS)
             .union(Capabilities::TRACES)
             .union(Capabilities::CALIBRATION)
+            .union(Capabilities::POWER)
     }
 
     fn reset(&mut self) {
@@ -193,6 +195,10 @@ impl Platform for Plaf103 {
             adapter: sample.adapter,
             battery_mv: sample.battery_mv,
         })
+    }
+
+    fn supply(&mut self, now_ms: u32) -> Reading {
+        power::supply(now_ms)
     }
 
     fn link(&mut self) -> Link {

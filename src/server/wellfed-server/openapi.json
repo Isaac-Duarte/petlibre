@@ -728,6 +728,103 @@
           }
         }
       },
+      "Battery": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "No pack fitted.",
+            "required": [
+              "state"
+            ],
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": [
+                  "absent"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "mv",
+              "state"
+            ],
+            "properties": {
+              "mv": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "reading"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A value no pack of the board can read, as read.",
+            "required": [
+              "mv",
+              "state"
+            ],
+            "properties": {
+              "mv": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "implausible"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Nothing sampled.",
+            "required": [
+              "state"
+            ],
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": [
+                  "unread"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The last sample is this old, past the feeder's limit.",
+            "required": [
+              "age_ms",
+              "state"
+            ],
+            "properties": {
+              "age_ms": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "stale"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "The battery pack, as the feeder judged its reading."
+      },
       "Blocked": {
         "type": "string",
         "description": "Why a feed cannot start now.",
@@ -740,7 +837,8 @@
           "joining",
           "updating",
           "setup",
-          "unserved"
+          "unserved",
+          "battery"
         ]
       },
       "ClientRole": {
@@ -1070,6 +1168,38 @@
                   {
                     "type": "null"
                   }
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The adapter came or went, or the pack crossed its floor (at most\none a minute, as the supply stood at its end).",
+            "required": [
+              "battery",
+              "kind"
+            ],
+            "properties": {
+              "adapter": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
+              "battery": {
+                "$ref": "#/components/schemas/Battery"
+              },
+              "below_floor": {
+                "type": [
+                  "boolean",
+                  "null"
+                ],
+                "description": "Whether the feeding owner judged the pack below its floor."
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "supply"
                 ]
               }
             }
@@ -1754,6 +1884,37 @@
                 "type": "string",
                 "enum": [
                   "wifi"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The supply, judged.",
+            "required": [
+              "battery",
+              "metric"
+            ],
+            "properties": {
+              "adapter": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
+              "battery": {
+                "$ref": "#/components/schemas/Battery"
+              },
+              "below_floor": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
+              "metric": {
+                "type": "string",
+                "enum": [
+                  "supply"
                 ]
               }
             }

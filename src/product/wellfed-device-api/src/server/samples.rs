@@ -5,7 +5,7 @@
 use wellfed_proto::api::{Metric, Sample};
 
 /// One per [`Metric`] variant.
-const KINDS: usize = 6;
+const KINDS: usize = 7;
 
 /// Where each kind waits. No wildcard: a new metric needs its own slot.
 const fn kind(metric: &Metric) -> usize {
@@ -16,6 +16,7 @@ const fn kind(metric: &Metric) -> usize {
         Metric::Loop { .. } => 3,
         Metric::Gateway { .. } => 4,
         Metric::Wifi { .. } => 5,
+        Metric::Supply(_) => 6,
     }
 }
 

@@ -120,6 +120,7 @@ pub struct Expectation {
     pub stopped: Option<bool>,
     pub submission: Option<Submission>,
     pub supervisor_fault: Option<u32>,
+    pub supply_low: Option<bool>,
     pub watchdog_fault: Option<u32>,
     pub watchdog_resets: Option<u32>,
     pub writes_done: Option<u32>,

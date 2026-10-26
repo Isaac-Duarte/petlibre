@@ -15,8 +15,8 @@ use crate::pairing::{self, Path};
 use crate::{Device, KeyChange, KeyOutcome, Reason, Record, UpdateAnswer, UpdateKeyChange};
 use wellfed_core::ota::offer::key_id;
 use wellfed_proto::api::{
-    self as proto, Capabilities, EventBody, FeederMessage, Outcome, Refusal, RequestId, Source,
-    TimeView, UpdateRefusal,
+    self as proto, Capabilities, EventBody, FeederMessage, Outcome, Readiness, Refusal, RequestId,
+    Source, TimeView, UpdateRefusal,
 };
 
 impl Server {
@@ -210,6 +210,15 @@ impl Server {
         capabilities.contains(bit) && device.capabilities().contains(bit)
     }
 
+    /// The bits the session at `index` claimed in its hello; none before
+    /// it is open.
+    fn claimed(&self, index: usize) -> Capabilities {
+        match self.slots[index].phase {
+            Phase::Open { capabilities, .. } => capabilities,
+            _ => Capabilities::V1,
+        }
+    }
+
     /// Move a pending request on to its next wait.
     fn waiting(&mut self, index: usize, next: Waiting) {
         if let Phase::Open {
@@ -258,7 +267,12 @@ impl Server {
                 let mut status = device.status(now_ms);
                 status.sessions = u8::try_from(self.sessions()).unwrap_or(u8::MAX);
                 if self.shares(index, Capabilities::READINESS, device) {
-                    let readiness = device.readiness();
+                    let readiness = match device.readiness() {
+                        Readiness::Blocked(blocked) => {
+                            Readiness::Blocked(blocked.seen_by(self.claimed(index)))
+                        }
+                        Readiness::Ready => Readiness::Ready,
+                    };
                     Outcome::FeederStatus { status, readiness }
                 } else {
                     Outcome::Status(status)

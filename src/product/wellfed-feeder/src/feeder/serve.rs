@@ -28,9 +28,9 @@ use wellfed_core::ota::install::{Answer, Phase};
 use wellfed_core::ota::offer::{KeyStatement, key_id};
 use wellfed_core::tone::Tune;
 use wellfed_proto::api::{
-    self as proto, Capabilities, EventBody, Metric, PORT, Readiness, Refusal, Sample, Source,
-    Stats, StatsSection, Status, TASKS_MAX, TaskStack as WireTask, TracePage, UpdateRefusal,
-    UpdateView,
+    self as proto, Battery, Capabilities, EventBody, Metric, PORT, Power, Readiness, Refusal,
+    Sample, Source, Stats, StatsSection, Status, Supply, TASKS_MAX, TaskStack as WireTask,
+    TracePage, UpdateRefusal, UpdateView,
 };
 use wellfed_proto::trace::PAGE_MAX;
 use wellfed_session::noise::Keypair;
@@ -159,6 +159,10 @@ pub struct Inputs<'a, F> {
     pub recovery: Option<pairing::Event>,
     /// Pairing's decision on an update key's offer, this step.
     pub signer: Option<pairing::Event>,
+    /// The supply this pass judged.
+    pub supply: Supply,
+    /// A brownout holds feeding until the adapter is seen.
+    pub battery_hold: bool,
     pub feeds: &'a mut F,
 }
 
@@ -273,6 +277,8 @@ impl<S: Copy> Serve<S> {
             locked,
             recovery,
             signer,
+            supply,
+            battery_hold,
             feeds,
         } = inputs;
         let boot = self.boot(platform, now_ms);
@@ -336,6 +342,7 @@ impl<S: Copy> Serve<S> {
             stats: &mut self.stats,
             tasks: &mut self.tasks,
             page: &mut self.page,
+            battery_hold,
             call: None,
         };
         let busy = self.server.step(
@@ -364,7 +371,7 @@ impl<S: Copy> Serve<S> {
             self.stats.opened(handshake_ms);
         }
         self.send(platform, &mut record);
-        self.samples(platform, now_ms);
+        self.samples(platform, now_ms, supply);
 
         if wellfed_core::deadline_passed(now_ms, self.next_heap) {
             self.next_heap = now_ms.wrapping_add(HEAP_MS);
@@ -555,14 +562,34 @@ impl<S: Copy> Serve<S> {
         stats.tick(now_ms);
     }
 
-    fn samples<P: Platform<Socket = S>>(&mut self, platform: &mut P, now_ms: u32) {
+    fn samples<P: Platform<Socket = S>>(&mut self, platform: &mut P, now_ms: u32, supply: Supply) {
         if wellfed_core::deadline_passed(now_ms, self.next_power) {
             self.next_power = now_ms.wrapping_add(P::POWER_SAMPLE_MS);
             if let Some(power) = platform.power(now_ms) {
-                self.stats.power(now_ms, power);
+                // The history keeps only readings a pack can give.
+                let battery_mv = match supply.battery {
+                    Battery::Reading { mv } => Some(u32::from(mv)),
+                    Battery::Absent
+                    | Battery::Implausible { .. }
+                    | Battery::Unread
+                    | Battery::Stale { .. } => None,
+                };
+                self.stats.power(
+                    now_ms,
+                    Power {
+                        battery_mv,
+                        ..power
+                    },
+                );
                 self.server.sample(Sample {
                     at_ms: now_ms,
                     metric: Metric::Power(power),
+                });
+            }
+            if platform.capabilities().contains(Capabilities::POWER) {
+                self.server.sample(Sample {
+                    at_ms: now_ms,
+                    metric: Metric::Supply(supply),
                 });
             }
         }
@@ -622,6 +649,8 @@ pub struct FeederDevice<'a, P, F> {
     pub(super) tasks: &'a mut TaskCache,
     /// The page a trace answer borrows its bytes from.
     pub(super) page: &'a mut [u8; PAGE_MAX],
+    /// A brownout holds feeding until the adapter is seen.
+    pub(super) battery_hold: bool,
     /// The feed a client queued, and its feed call's request.
     pub(super) call: Option<(u32, PlayResult)>,
 }
@@ -793,7 +822,12 @@ impl<P: Platform, F: Feeds> Device for FeederDevice<'_, P, F> {
     }
 
     fn readiness(&mut self) -> Readiness {
-        feeding::readiness(&*self.feeds, self.setup, self.platform.installing())
+        feeding::readiness(
+            &*self.feeds,
+            self.setup,
+            self.platform.installing(),
+            self.battery_hold,
+        )
     }
 
     fn feed(&mut self, portions: u8, by: Source) -> Result<u32, Refusal> {

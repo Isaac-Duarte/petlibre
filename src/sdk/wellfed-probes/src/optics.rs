@@ -66,7 +66,7 @@ pub const SENSORS: SensorLimits = SensorLimits {
     power_settle_ms: 100,
     max_observation_gap_ms: 100,
     max_age_ms: 100,
-    battery_min_scaled: 1650,
+    battery: wellfed_hal::power::FLOOR,
 };
 
 /// Never started: `observe` needs an idle controller.

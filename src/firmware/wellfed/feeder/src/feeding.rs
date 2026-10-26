@@ -154,7 +154,7 @@ pub const CONFIG: OwnerConfig = OwnerConfig {
         power_settle_ms: 100,
         max_observation_gap_ms: 100,
         max_age_ms: 100,
-        battery_min_scaled: 1650,
+        battery: wellfed_sdk::hal::power::FLOOR,
     },
     events: EventsConfig {
         ticks_per_second: SYSTIMER_HZ,
@@ -1126,6 +1126,11 @@ mod target {
             if self.current.is_some() || status.state != OwnerState::Idle {
                 return Some(Blocked::Feeding);
             }
+            // On the pack below its floor, a feed would only sag it
+            // further; the owner would refuse it at the start anyway.
+            if status.supply_low {
+                return Some(Blocked::Battery);
+            }
             match INTERLOCK.turn() {
                 Turn::Joining | Turn::FeedingJoinWaits => Some(Blocked::Joining),
                 Turn::Free | Turn::Feeding => None,
@@ -1153,6 +1158,11 @@ mod target {
                 homed: self.homed,
                 outlet_breaks: self.outlet_breaks,
             })
+        }
+
+        /// The owner's verdict on the pack's floor, once it has judged.
+        pub fn below_floor(&self) -> Option<bool> {
+            OWNER.enter().and_then(|owner| owner.status().below_floor)
         }
 
         /// A feed is queued or runs: no install starts.

@@ -10,8 +10,9 @@
 //!    relock, pairing's timers, the lock indicator and BLE setup mode while
 //!    it runs ([`owner`], [`setup`]); then the reboot setup mode asks for,
 //!    and the lock it now holds for the device API ([`lock`]);
-//! 3. a Dispense press the panel allowed, queued for the feeding owner,
-//!    and readiness noted ([`feeding`]);
+//! 3. the supply judged, its change recorded ([`supply`]); a Dispense
+//!    press the panel allowed, queued for the feeding owner, and readiness
+//!    noted ([`feeding`]);
 //! 4. the device API: its sockets, the server's step and the live samples
 //!    ([`serve`]), with the time settings and the NTP exchange ([`time`]);
 //! 5. the speaker, while the feed call plays (setup mode steps it itself).
@@ -29,6 +30,7 @@ pub mod owner;
 pub mod platform;
 pub mod serve;
 pub mod setup;
+pub mod supply;
 pub mod time;
 
 use core::fmt;
@@ -71,6 +73,11 @@ pub trait Feeds {
     /// Where the rotor rests and what the feeds' marks and outlet beam
     /// counted this boot, once the owner has opened.
     fn marks(&self) -> Option<Marks> {
+        None
+    }
+    /// Whether the owner judges the battery pack below the floor a feed
+    /// needs; `None` before it has judged, or with no owner.
+    fn below_floor(&self) -> Option<bool> {
         None
     }
 }
@@ -167,6 +174,7 @@ pub struct Feeder<P: Platform> {
     lock: LockBox,
     serve: Serve<P::Socket>,
     readiness: feeding::Watch,
+    supply: supply::Watch,
 }
 
 impl<P: Platform> Feeder<P> {
@@ -180,6 +188,7 @@ impl<P: Platform> Feeder<P> {
             lock: LockBox::new(),
             serve: Serve::new(),
             readiness: feeding::Watch::new(),
+            supply: supply::Watch::new(),
         }
     }
 
@@ -219,7 +228,12 @@ impl<P: Platform> Feeder<P> {
 
     /// Whether a feed can start now, with the feeding owner `feeds`.
     pub fn readiness<F: Feeds>(&self, feeds: &F) -> Readiness {
-        feeding::readiness(feeds, self.owner.setup_on(), self.platform.installing())
+        feeding::readiness(
+            feeds,
+            self.owner.setup_on(),
+            self.platform.installing(),
+            self.supply.holds(),
+        )
     }
 
     /// One pass at `now_ms`, with the feeding owner `feeds`; `record`
@@ -253,6 +267,15 @@ impl<P: Platform> Feeder<P> {
             self.platform.reset();
         }
 
+        // The boot's facts (and its `Boot` event) first, so the supply's
+        // brownout hold is armed before the first readiness.
+        let boot = self.serve.boot(&mut self.platform, now_ms);
+        let reading = supply::supply(self.platform.supply(now_ms), feeds.below_floor());
+        let reset = crate::stats::reset_cause(boot.reset_flags);
+        if let Some(changed) = self.supply.note(now_ms, reset, reading) {
+            events::record(&mut self.platform, now_ms, EventBody::Supply(changed));
+        }
+
         if self.owner.take_dispense() {
             let ready = self.readiness(feeds);
             let portions = feeding::DISPENSE_PORTIONS;
@@ -282,6 +305,8 @@ impl<P: Platform> Feeder<P> {
             signer: self.owner.take_signer(),
             pairing: self.owner.pairing(),
             identity: self.identity.keypair(),
+            supply: reading,
+            battery_hold: self.supply.holds(),
             feeds,
         };
         let mut calls = None;
@@ -345,6 +370,7 @@ impl<P: Platform> Feeder<P> {
             stats,
             tasks,
             page,
+            battery_hold: self.supply.holds(),
             call: None,
         }
     }

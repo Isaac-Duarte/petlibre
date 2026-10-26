@@ -58,6 +58,12 @@ pub struct PlantConfig {
     /// The current channel while a wedge stalls the motor: not measured
     /// (no real jam yet); 1000 scales to about 620, twice the jam limit.
     pub stall_adc: u16,
+    /// How far the battery channel (raw) falls while a drive on the pack
+    /// alone is in its surge, and after it. Unmeasured: no motor has run
+    /// on the pack yet, so both default to none, and the pack scenarios
+    /// set them.
+    pub surge_sag_adc: u16,
+    pub drive_sag_adc: u16,
 }
 
 impl Default for PlantConfig {
@@ -84,6 +90,8 @@ impl Default for PlantConfig {
             ripple_adc: 170,
             idle_adc: 16,
             stall_adc: 1000,
+            surge_sag_adc: 0,
+            drive_sag_adc: 0,
         }
     }
 }

@@ -398,6 +398,7 @@ impl<'a> Simulation<'a> {
             stopped: status.stopped,
             submission: submission,
             supervisor_fault: status.supervisor_fault,
+            supply_low: status.supply_low,
             watchdog_fault: status.watchdog_fault,
             watchdog_resets: status.watchdog_resets,
             writes_done: status.writes_done,

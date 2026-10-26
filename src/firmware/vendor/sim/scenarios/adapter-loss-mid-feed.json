@@ -1,0 +1,68 @@
+{
+  "version": 2,
+  "name": "adapter-loss-mid-feed",
+  "profile": "single",
+  "end_ms": 18300,
+  "actions": [
+    {
+      "at_ms": 100,
+      "op": "submit",
+      "args": [
+        1,
+        3
+      ]
+    },
+    {
+      "at_ms": 3000,
+      "op": "inputs",
+      "args": [
+        1
+      ]
+    },
+    {
+      "at_ms": 3100,
+      "op": "expect",
+      "values": {
+        "state": "terminal",
+        "outcome": "failed",
+        "reason": "power",
+        "motor": 0,
+        "optics": 0,
+        "durable": true
+      }
+    },
+    {
+      "at_ms": 8000,
+      "op": "expect",
+      "values": {
+        "state": "terminal",
+        "motor": 0
+      }
+    },
+    {
+      "at_ms": 8000,
+      "op": "ack",
+      "args": [
+        1
+      ]
+    },
+    {
+      "at_ms": 8100,
+      "op": "submit",
+      "args": [
+        2,
+        1
+      ]
+    },
+    {
+      "at_ms": 18100,
+      "op": "expect",
+      "values": {
+        "state": "terminal",
+        "id": 2,
+        "outcome": "done",
+        "completed": 1
+      }
+    }
+  ]
+}

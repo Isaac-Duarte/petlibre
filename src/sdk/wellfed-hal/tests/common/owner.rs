@@ -10,6 +10,7 @@ use wellfed_core::feed::sensor_inputs::SensorLimits;
 use wellfed_core::feed::storage::{OwnerOutcome, OwnerRecovery, OwnerResult, OwnerStorage};
 use wellfed_core::flash_coord::{FlashCoord, FlashParty, FlashReply};
 use wellfed_core::store::feed_journal::{FeedJournal, JournalConfig, JournalError};
+use wellfed_core::supply::FloorLimits;
 use wellfed_hal::board::MOTOR_MASK;
 use wellfed_hal::owner::{
     Owner, OwnerConfig, OwnerState, OwnerStatus, OwnerTask, Step, SubmitResult,
@@ -44,7 +45,12 @@ pub const CONFIG: OwnerConfig = OwnerConfig {
         power_settle_ms: 2,
         max_observation_gap_ms: 4,
         max_age_ms: 2,
-        battery_min_scaled: 1650,
+        battery: FloorLimits {
+            floor: 1650,
+            clear: 1710,
+            cutoff: 1550,
+            hold_ms: 4,
+        },
     },
     events: EventsConfig {
         ticks_per_second: 32_000,

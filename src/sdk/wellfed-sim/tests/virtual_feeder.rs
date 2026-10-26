@@ -1414,3 +1414,150 @@ fn checked_in_examples() {
         assert!(report["passed"] == true, "{}", path.display());
     }
 }
+
+/// The battery channel (raw, default calibration) at rest for the pack
+/// scenarios: 1786 scaled, a pack of about 3.68 V, above the floor's clear
+/// level (1710). The floor is 1650 (raw 2237) and the cutoff 1550.
+const PACK_REST: u64 = 2400;
+/// PA16 high (outlet clear) and PA19 low: on the pack alone.
+const ON_PACK: u64 = 1;
+/// When a one-portion feed on the pack is surely over.
+const PACK_FEED_DONE: u64 = SUBMIT + ONE_PORTION;
+
+fn on_pack(plant: Value, actions: Vec<Value>, end: u64) -> Value {
+    let mut all = vec![
+        act(10, "battery", &[PACK_REST]),
+        act(10, "inputs", &[ON_PACK]),
+    ];
+    all.extend(actions);
+    checked(&with_plant(all, end, "single", plant))
+}
+
+/// The adapter pulled mid-feed: the feed stops at once with an explicit
+/// result (failed, power), is never restarted, and a new feed on the pack
+/// then completes.
+#[test]
+fn adapter_loss_mid_feed_fails_the_feed_and_a_new_one_runs_on_the_pack() {
+    let report = passing(
+        vec![
+            act(SUBMIT, "submit", &[1, 3]),
+            expect(3000, json!({"state": "feeding", "motor": 1})),
+            act(3000, "inputs", &[ON_PACK]),
+            expect(
+                3100,
+                json!({"state": "terminal", "outcome": "failed", "reason": "power",
+                       "motor": 0, "optics": 0, "durable": true, "completed": 0}),
+            ),
+            expect(8000, json!({"state": "terminal", "motor": 0, "id": 1})),
+            act(8000, "ack", &[1]),
+            expect(8050, json!({"state": "idle", "supply_low": false})),
+            act(8100, "submit", &[2, 1]),
+            expect(8100, json!({"submission": "enqueued"})),
+            expect(
+                8100 + ONE_PORTION,
+                json!({"state": "terminal", "id": 2, "outcome": "done", "completed": 1}),
+            ),
+        ],
+        8200 + ONE_PORTION,
+        "single",
+    );
+
+    // Between the stop and the second feed's start, nothing drove.
+    let drove = events(&report, "outputs").any(|e| {
+        let at = e["device_ms"].as_u64().unwrap_or(0);
+        (3100..8100).contains(&at) && matches!(e["motor"].as_u64(), Some(1 | 2))
+    });
+    assert!(!drove, "a failed feed is never restarted");
+}
+
+/// The pack sags under the motor: a start-up surge under the floor (but
+/// over the cutoff) for its 20 ms is tolerated, and the feed completes.
+#[test]
+fn a_surge_under_the_floor_is_tolerated_on_the_pack() {
+    let plant = json!({"surge_sag_adc": 200, "drive_sag_adc": 40});
+    let report = on_pack(
+        plant,
+        vec![
+            act(SUBMIT, "submit", &[1, 1]),
+            expect(
+                PACK_FEED_DONE,
+                json!({"state": "terminal", "outcome": "done", "completed": 1}),
+            ),
+        ],
+        PACK_FEED_DONE + 100,
+    );
+    assert_eq!(last_status(&report)["outcome"], 1, "done");
+}
+
+/// A pack that stays under the floor while it drives fails the feed once
+/// the hold (300 ms) runs out; one whose surge sags under the cutoff fails
+/// it at once.
+#[test]
+fn a_sustained_sag_or_one_under_the_cutoff_fails_the_feed() {
+    for (name, plant, by) in [
+        ("held", json!({"drive_sag_adc": 200}), SUBMIT + 800),
+        ("cutoff", json!({"surge_sag_adc": 450}), SUBMIT + 300),
+    ] {
+        let report = on_pack(
+            plant,
+            vec![
+                act(SUBMIT, "submit", &[1, 3]),
+                expect(
+                    by,
+                    json!({"state": "terminal", "outcome": "failed", "reason": "power",
+                           "motor": 0, "optics": 0, "durable": true}),
+                ),
+                expect(by + 1000, json!({"state": "terminal", "motor": 0})),
+            ],
+            by + 1100,
+        );
+        let drives = events(&report, "outputs")
+            .filter(|e| matches!(e["motor"].as_u64(), Some(1 | 2)))
+            .count();
+        assert!(drives > 0, "{name}: it started");
+        let stopped = events(&report, "outputs")
+            .filter(|e| e["device_ms"].as_u64().unwrap_or(0) > by)
+            .all(|e| e["motor"] == 0);
+        assert!(stopped, "{name}: never restarted");
+    }
+}
+
+/// The floor at rest on the pack, with its hysteresis: under the floor no
+/// feed drives (it expires); recovered into the band between the floor and
+/// the clear level, still none; at the clear level the next one runs.
+#[test]
+fn the_floor_refuses_feeds_until_the_pack_reads_the_clear_level() {
+    let report = on_pack(
+        json!({}),
+        vec![
+            act(100, "battery", &[2200]),
+            expect(500, json!({"supply_low": true})),
+            act(1000, "submit", &[1, 1]),
+            expect(
+                3100,
+                json!({"state": "terminal", "outcome": "expired", "motor": 0, "durable": true}),
+            ),
+            act(3100, "ack", &[1]),
+            act(3200, "battery", &[2297]),
+            expect(3600, json!({"state": "idle", "supply_low": true})),
+            act(3600, "submit", &[2, 1]),
+            expect(
+                5700,
+                json!({"state": "terminal", "id": 2, "outcome": "expired"}),
+            ),
+            act(5700, "ack", &[2]),
+            act(5800, "battery", &[2309]),
+            expect(5850, json!({"state": "idle", "supply_low": false})),
+            act(5900, "submit", &[3, 1]),
+            expect(
+                5900 + ONE_PORTION,
+                json!({"state": "terminal", "id": 3, "outcome": "done", "completed": 1}),
+            ),
+        ],
+        6000 + ONE_PORTION,
+    );
+    let drove_low = events(&report, "outputs").any(|e| {
+        e["device_ms"].as_u64().unwrap_or(0) < 5900 && matches!(e["motor"].as_u64(), Some(1 | 2))
+    });
+    assert!(!drove_low, "no drive while the pack was under its floor");
+}

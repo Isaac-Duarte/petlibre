@@ -5,7 +5,9 @@
 //! **Readiness** is one decision ([`readiness`]): the feeding owner's own
 //! reason not to feed ([`Feeds::blocked`]), then BLE setup mode (it ends in
 //! a restart, which would leave a feed uncertain) and an install (it holds
-//! the flash). The status reports it, a feed is asked for only while it is
+//! the flash), then the brownout hold ([`super::supply`]). The owner's own
+//! reasons include the battery pack below its floor while the adapter is
+//! out (`Blocked::Battery`). The status reports it, a feed is asked for only while it is
 //! ready, and the owner's own checks stay behind it for a feed that lost a
 //! race (a join that began in between). A change of a lasting reason
 //! ([`Blocked::lasting`]) is recorded in the history as a `FeedingBlocked`
@@ -41,12 +43,18 @@ pub const FEED_CALL: Tune = Tune::Meal;
 
 /// Whether a feed can start now. The owner's lasting reasons come first,
 /// since they outlast setup mode and an install; then those two; then the
-/// owner's passing ones.
-pub fn readiness<F: Feeds>(feeds: &F, setup: bool, installing: bool) -> Readiness {
+/// owner's passing ones; then a brownout's `battery_hold`.
+pub fn readiness<F: Feeds>(
+    feeds: &F,
+    setup: bool,
+    installing: bool,
+    battery_hold: bool,
+) -> Readiness {
     let blocked = match feeds.blocked() {
         Some(blocked) if blocked.lasting() || blocked == Blocked::Unserved => Some(blocked),
         _ if setup => Some(Blocked::Setup),
         _ if installing => Some(Blocked::Updating),
+        None if battery_hold => Some(Blocked::Battery),
         owner => owner,
     };
     blocked.map_or(Readiness::Ready, Readiness::Blocked)
@@ -168,6 +176,7 @@ const fn blocked_name(blocked: Blocked) -> &'static str {
         Blocked::Updating => "updating",
         Blocked::Setup => "setup",
         Blocked::Unserved => "unserved",
+        Blocked::Battery => "battery",
     }
 }
 

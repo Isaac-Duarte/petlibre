@@ -57,28 +57,26 @@
 
 use core::ffi::c_uint;
 
+/// The record most stores keep, and where its checksum sits.
 pub const RECORD_BYTES: usize = 128;
-/// [`RECORD_BYTES`] as the header's length field stores it.
-pub const RECORD_LEN: u16 = 128;
-pub const COMMIT: [u8; 4] = *b"CMIT";
-
-/// The header every store's record shares after its 8-byte magic: the format
-/// version (u16) and the record length (u16).
-pub const VERSION_AT: usize = 8;
-pub const LENGTH_AT: usize = 10;
-/// Where the fields after the header start.
-pub const FIELDS_AT: usize = 12;
 /// CRC-32 of bytes `..CRC_AT` in a [`RECORD_BYTES`] record.
 pub const CRC_AT: usize = 120;
+
+const COMMIT: [u8; 4] = *b"CMIT";
+/// The header every record shares after its 8-byte magic: the format
+/// version (u16) and the record length (u16).
+const VERSION_AT: usize = 8;
+const LENGTH_AT: usize = 10;
+/// Where the store's fields start.
+const FIELDS_AT: usize = 12;
 /// How much of a unit's erased tail a scan reads at once.
-pub const TAIL_CHUNK: u32 = 64;
+const TAIL_CHUNK: u32 = 64;
 
 const MARKER_BYTES: usize = COMMIT.len();
 /// The checksum and the marker at a record's end.
 const TRAILER_BYTES: usize = 4 + MARKER_BYTES;
 
 const _: () = assert!(RECORD_BYTES == CRC_AT + TRAILER_BYTES);
-const _: () = assert!(RECORD_LEN as usize == RECORD_BYTES);
 
 /// Two or more EXCLUSIVE, nonoverlapping erase units, assigned only after a
 /// complete physical flash map/backup. This interface contains no physical

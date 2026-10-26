@@ -9,7 +9,8 @@
 //! device API. A firmware with a feeding owner confirms only once that owner
 //! has proved it can feed (`claim_feeding`, `report_feeding`), and every
 //! boot reads KM0's reset-storm count: a storm with nothing to fall back to
-//! boots held (no feeding owner) or, past the halt limit, starts nothing.
+//! boots held (no feeding owner, for a time that doubles with each storm in
+//! a row) or, past the halt limit, starts nothing for an hour.
 //! Booted from bank 0, the build is the fallback a failed update
 //! lands on: it never confirms, opens the settings writer at once, so it
 //! saves and feeds, and installs offers into bank 1. Nothing opens an MQTT
@@ -167,12 +168,16 @@ pub fn confirming() -> bool {
 /// This boot follows a reset storm with nothing to fall back to
 /// (`trial::Storm::Held`): the feeding owner must not open, so the outputs
 /// stay stopped, while the device API reports why and takes an update or
-/// a reboot.
+/// a reboot. Held only for `trial::hold_ms` of the storm's level: then the
+/// runtime releases it and the owner opens.
 pub fn held() -> bool {
     HELD.load(Ordering::Acquire)
 }
 
 static HELD: AtomicBool = AtomicBool::new(false);
+/// This boot started held (it stays true once released): its stable run
+/// does not step the backoff down, its release already moved it.
+static STARTED_HELD: AtomicBool = AtomicBool::new(false);
 
 /// Whether the feeder opened the watchdog at startup.
 pub fn watchdog_open() -> bool {
@@ -346,11 +351,42 @@ impl Hooks for SdkHooks {
 /// hook fault (IRQs masked), an activation, or a trial image that fails or
 /// never confirms all stop the feeding, and the watchdog resets the
 /// platform, which KM0's boot trial counts.
+/// The reset-storm count, from the feeder task while it feeds: a boot that
+/// has run `STABLE_MS` gives KM0 its count back, once (a trial only once
+/// confirmed); a held boot that has run its hold opens the owner, one
+/// backoff level up.
+fn storm_step(feeding: bool, now: u32) {
+    // The count was given back this boot.
+    static SETTLED: AtomicBool = AtomicBool::new(false);
+    if !feeding {
+        return;
+    }
+    let identity = trial::identity();
+
+    if HELD.load(Ordering::Acquire) {
+        let level = trial::level(sdk::backup_read(trial::REGISTER), &identity);
+        if now >= trial::hold_ms(level) {
+            update_trial_register(|register| trial::released(register, &identity));
+            HELD.store(false, Ordering::Release);
+            let mut report = startup::Report::new();
+            if let Ok(line) =
+                report.record(format_args!("PLSUP1 storm released=1 level={level}\r\n"))
+            {
+                sdk::log(line);
+            }
+        }
+        return;
+    }
+    let stable = now >= trial::STABLE_MS && !confirming() && !STARTED_HELD.load(Ordering::Acquire);
+    if stable && !SETTLED.swap(true, Ordering::Relaxed) {
+        update_trial_register(|register| trial::settled(register, &identity));
+        sdk::log(c"PLSUP1 storm settled=1\r\n");
+    }
+}
+
 unsafe extern "C" fn feeder_task(_: *mut c_void) -> u32 {
     static PROGRESS: AtomicU32 = AtomicU32::new(0);
     static STOPPED: AtomicBool = AtomicBool::new(false);
-    // The reset-storm count was given back this boot.
-    static SETTLED: AtomicBool = AtomicBool::new(false);
     // Uptime of the last checkpoint. Each one refreshes the hardware (the
     // feed period exceeds the refresh rate limit), so a reset's host
     // timestamp, less this, times the watchdog's expiry.
@@ -358,7 +394,10 @@ unsafe extern "C" fn feeder_task(_: *mut c_void) -> u32 {
     // Every pass, fed or not: the tick hook's crumb counts from here.
     crumb::fed();
     if !WATCHDOG_OPEN.load(Ordering::Acquire) {
-        let trial = on_trial();
+        // A trial that ran out with no fallback runs on as a build in no
+        // trial: no deadline, its resets a storm's (`trial.rs`).
+        let past = trial::past_trial(sdk::backup_read(trial::REGISTER), &trial::identity());
+        let trial = on_trial() && !past;
         TRIAL.store(trial, Ordering::Release);
         let opened = SdkHooks::watchdog();
         let mut report = startup::Report::new();
@@ -394,13 +433,7 @@ unsafe extern "C" fn feeder_task(_: *mut c_void) -> u32 {
         feeding: Feeding::from_code(FEEDING.load(Ordering::Acquire)),
     };
     let feeding = supervise::feed(&inputs);
-    // A boot that has run this long ends any reset storm: give KM0 its
-    // count back, once.
-    if feeding && now >= trial::STABLE_MS && !SETTLED.swap(true, Ordering::Relaxed) {
-        let identity = trial::identity();
-        update_trial_register(|register| trial::settled(register, &identity));
-        sdk::log(c"PLSUP1 storm settled=1\r\n");
-    }
+    storm_step(feeding, now);
     // A supervision stop (a trial's deadline, a hung task) leaves the
     // network as a restart does, but only once it has outlasted the
     // progress gap and the reset is certain.
@@ -1036,6 +1069,30 @@ unsafe extern "C" fn diagnostic_task(_: *mut c_void) -> u32 {
     1
 }
 
+/// A halted boot's only task: after `trial::HALT_MS` it leaves KM0 a held
+/// count and opens the watchdog without ever feeding it, so the board
+/// resets into a held boot. Until then nothing runs and the outputs stay
+/// stopped; a halt is a pause, never the end.
+unsafe extern "C" fn halt_task(_: *mut c_void) -> u32 {
+    if sdk::uptime_ms() < trial::HALT_MS {
+        return HALT_POLL_MS;
+    }
+    static OVER: AtomicBool = AtomicBool::new(false);
+    if !OVER.swap(true, Ordering::Relaxed) {
+        let identity = trial::identity();
+        update_trial_register(|register| trial::halt_over(register, &identity));
+        sdk::log(c"PLSUP1 storm halt_over=1 reset=1\r\n");
+    }
+    if SdkHooks::watchdog() {
+        return 0;
+    }
+    // Asked again on the next poll: a halt must end.
+    sdk::log(c"PLSUP1 error watchdog=open\r\n");
+    HALT_POLL_MS
+}
+
+const HALT_POLL_MS: u32 = 1_000;
+
 /// Called once by the SDK's `example_entry`, before the scheduler starts.
 #[unsafe(no_mangle)]
 pub extern "C" fn wellfed_app_start() {
@@ -1065,12 +1122,14 @@ pub extern "C" fn wellfed_app_start() {
         }
     }
     // KM0 counted this boot in the reset-storm burst (`trial.rs`).
-    let resets = trial::resets(sdk::backup_read(trial::REGISTER), &trial::identity());
+    let register = sdk::backup_read(trial::REGISTER);
+    let resets = trial::resets(register, &trial::identity());
+    let level = trial::level(register, &trial::identity());
     let storm = trial::Storm::of(resets);
-    if resets != 0 {
+    if resets != 0 || level != 0 {
         let mut report = startup::Report::new();
         if let Ok(line) = report.record(format_args!(
-            "PLSUP1 storm resets={resets} mode={}\r\n",
+            "PLSUP1 storm resets={resets} level={level} mode={}\r\n",
             storm.name()
         )) {
             sdk::log(line);
@@ -1078,11 +1137,19 @@ pub extern "C" fn wellfed_app_start() {
     }
     match storm {
         trial::Storm::Normal => {}
-        trial::Storm::Held => HELD.store(true, Ordering::Release),
-        // Held boots kept resetting too: start nothing. The outputs stay as
-        // `stopped::initialize` left them, and with no watchdog open the
-        // board stays up, stopped, until power is lost.
-        trial::Storm::Halted => return,
+        trial::Storm::Held => {
+            HELD.store(true, Ordering::Release);
+            STARTED_HELD.store(true, Ordering::Release);
+        }
+        // Held boots kept resetting too: start nothing but the halt's
+        // timer. The outputs stay as `stopped::initialize` left them.
+        trial::Storm::Halted => {
+            // SAFETY: the step takes no context and keeps its state in statics.
+            if !unsafe { sdk::task_create(c"wellfed-halt", 512, 3, halt_task, ptr::null_mut()) } {
+                sdk::log(c"PLSUP1 error task=create\r\n");
+            }
+            return;
+        }
     }
 
     // Supervise from the first scheduled step, so a startup fault or

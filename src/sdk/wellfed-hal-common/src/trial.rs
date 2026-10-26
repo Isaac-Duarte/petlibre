@@ -13,9 +13,10 @@
 //!   this build's identity. KM4 writes it once the image proves it can feed.
 //! - **Count:** backup register 4 ([`REGISTER`]), which survives a watchdog
 //!   reset but not power loss. Bits 0-15 hold the KM0 boot count (the peer
-//!   session), bits 16-19 the trial count, bits 20-23 the storm count and
-//!   bits 24-31 a tag from the identity, so a count never carries over to a
-//!   different image.
+//!   session), bits 16-19 the trial count on a trial boot, or, with bit 19
+//!   set ([`STORM_STATE`]), the storm's backoff level on any other, bits
+//!   20-23 the storm count and bits 24-31 a tag from the identity, so a count
+//!   never carries over to a different image.
 //!
 //! **Reset storms.** Confirmation proves one boot, not every later one: a
 //! confirmed build can still fault into a reset at every boot. So on every
@@ -27,18 +28,22 @@
 //! - a confirmed bank 1 with a valid bank 0 gives way, as a failed trial
 //!   does: bank 0 is the full feeder, and a build that faults this often is
 //!   the likeliest cause;
-//! - otherwise (bank 0 itself, or no valid bank 0 to fall back to) KM4
-//!   boots **held** ([`Storm::Held`]): the feeding owner never opens, the
-//!   outputs stay stopped, and the device API stays up to say why and to
-//!   take an update or a reboot. A held boot that runs `STABLE_MS` keeps the
-//!   count at the limit, so it stays held until power is lost or the owner
-//!   restarts it;
+//! - otherwise (bank 0 itself, no valid bank 0 to fall back to, or a trial
+//!   with no fallback that ran out) KM4 boots **held** ([`Storm::Held`]):
+//!   the feeding owner stays closed and the outputs stopped, while the
+//!   device API stays up to say why and to take an update or a reboot. A
+//!   held boot that runs [`hold_ms`] of its level opens the owner and feeds
+//!   again ([`released`]), one level up, so each storm in a row holds twice
+//!   as long, up to [`MAX_LEVEL`]; every stable boot takes a level back;
 //! - at [`HALT_LIMIT`], when held boots keep resetting too, KM4 starts
-//!   nothing at all and holds the outputs stopped until power is lost
-//!   ([`Storm::Halted`]), so no cause can reset the board forever.
+//!   nothing for [`HALT_MS`] ([`Storm::Halted`]), then resets into a held
+//!   boot ([`halt_over`]).
 //!
-//! Backup registers clear on power loss, so a power cut restarts every
-//! count; no flash record is involved, and none can be torn.
+//! Nothing is permanent: a feeder held or halted by a fault that clears
+//! (a run of association hangs, a battery brownout) feeds again on its own,
+//! and a fault that persists resets at most a few times an hour. Backup
+//! registers clear on power loss, so a power cut restarts every count; no
+//! flash record is involved, and none can be torn.
 
 use wellfed_core::ota::{self, MARKER, Trial};
 
@@ -50,22 +55,32 @@ pub const CONFIRM_SECTOR: u32 = wellfed_board_plaf103::storage::CONFIRM.first;
 /// The backup register KM0 counts in; KM4 reads and settles it.
 pub const REGISTER: u32 = 4;
 pub const BOOT_MASK: u32 = 0xffff;
-const COUNT_SHIFT: u32 = 16;
+const NIBBLE_SHIFT: u32 = 16;
 const STORM_SHIFT: u32 = 20;
 const FIELD_MASK: u32 = 0xf;
+/// In the low nibble: what follows is a storm's backoff level, not a trial
+/// count. A trial count never reaches it (`LIMIT` is 3).
+pub const STORM_STATE: u32 = 0x8;
+const LEVEL_MASK: u32 = 0x7;
 const TAG_SHIFT: u32 = 24;
 
 /// Resets in a row, each within [`STABLE_MS`] of its boot, that make a
 /// storm: an occasional fault (a Wi-Fi driver fault every few dozen boots)
-/// never reaches it, a build that faults at every boot does within minutes.
+/// rarely reaches it, a build that faults at every boot does within minutes.
 pub const STORM_LIMIT: u32 = 5;
-/// Further early resets of held boots before KM4 starts nothing.
+/// Further early resets of held boots before KM4 stops for [`HALT_MS`].
 pub const HALT_LIMIT: u32 = STORM_LIMIT + 3;
 /// A boot that has run this long ends the burst: the trial's deadline, by
 /// which a build that starts at all has long since proved itself.
 pub const STABLE_MS: u32 = 10 * 60 * 1000;
+/// The backoff levels: a held boot holds `STABLE_MS << level`, so 10, 20,
+/// 40, 80 and at most 160 minutes.
+pub const MAX_LEVEL: u32 = 4;
+/// How long a halted boot starts nothing before it resets into a held one.
+pub const HALT_MS: u32 = 60 * 60 * 1000;
 
-const _: () = assert!(LIMIT <= FIELD_MASK && HALT_LIMIT < FIELD_MASK);
+const _: () = assert!(LIMIT < STORM_STATE && HALT_LIMIT < FIELD_MASK && MAX_LEVEL <= LEVEL_MASK);
+const _: () = assert!(STABLE_MS.checked_shl(MAX_LEVEL).is_some());
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Decision {
@@ -81,11 +96,12 @@ pub enum Decision {
     Counted(u32),
     /// Clear bank 1's first marker byte, then reset.
     GiveWay,
-    /// The limit is reached but bank 0 is not valid: keep bank 1, since
-    /// both banks invalid leaves nothing to boot.
+    /// The trial ran out but bank 0 is not valid: keep bank 1, since both
+    /// banks invalid leaves nothing to boot, and run it as a build in no
+    /// trial, its resets counted as a storm's.
     NoFallback(u32),
     /// A storm with nothing to fall back to: boot KM4, which holds (or, past
-    /// `HALT_LIMIT`, halts).
+    /// `HALT_LIMIT`, halts for a while).
     Held {
         resets: u32,
     },
@@ -114,9 +130,9 @@ impl Decision {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Storm {
     Normal,
-    /// The feeding owner never opens; everything else runs.
+    /// The feeding owner stays closed for [`hold_ms`]; everything else runs.
     Held,
-    /// Nothing starts: outputs stopped, no task, until power is lost.
+    /// Nothing starts for [`HALT_MS`]: outputs stopped, then a reset.
     Halted,
 }
 
@@ -140,25 +156,44 @@ impl Storm {
     }
 }
 
+/// How long a held boot at `level` keeps the owner closed.
+pub const fn hold_ms(level: u32) -> u32 {
+    let level = if level > MAX_LEVEL { MAX_LEVEL } else { level };
+    STABLE_MS << level
+}
+
 fn tag(identity: &[u8; 32]) -> u32 {
     u32::from(identity[0])
 }
 
-/// The storm field, when the register's tag is this image's.
-fn storm_field(register: u32, identity: &[u8; 32]) -> u32 {
+/// The register's low nibble and storm field, when its tag is this image's.
+fn fields(register: u32, identity: &[u8; 32]) -> (u32, u32) {
     if register >> TAG_SHIFT == tag(identity) {
-        (register >> STORM_SHIFT) & FIELD_MASK
+        (
+            (register >> NIBBLE_SHIFT) & FIELD_MASK,
+            (register >> STORM_SHIFT) & FIELD_MASK,
+        )
     } else {
-        0
+        (0, 0)
     }
 }
 
-/// The register with this image's tag and the given counts.
-fn stamp(register: u32, identity: &[u8; 32], trials: u32, storm: u32) -> u32 {
+/// The register with this image's tag, the low nibble and the storm field.
+fn stamp(register: u32, identity: &[u8; 32], nibble: u32, storm: u32) -> u32 {
     (tag(identity) << TAG_SHIFT)
-        | (trials.min(FIELD_MASK) << COUNT_SHIFT)
+        | ((nibble & FIELD_MASK) << NIBBLE_SHIFT)
         | (storm.min(FIELD_MASK) << STORM_SHIFT)
         | (register & BOOT_MASK)
+}
+
+/// The register in storm state at `level`, with `storm` for the next boot.
+fn storm_stamp(register: u32, identity: &[u8; 32], level: u32, storm: u32) -> u32 {
+    stamp(
+        register,
+        identity,
+        STORM_STATE | level.min(MAX_LEVEL),
+        storm,
+    )
 }
 
 /// The trial decision and the new backup-register value.
@@ -171,64 +206,93 @@ pub fn decide(
 ) -> (Decision, u32) {
     let running_bank1 = *bank1 == MARKER;
     let confirmed = ota::confirmed(record, identity).is_some();
-    if !running_bank1 || confirmed {
-        let resets = storm_field(register, identity);
-        // Bank 0 starts its own count: even the same build there is a
-        // different boot path.
-        if running_bank1 && resets >= STORM_LIMIT && *bank0 == MARKER {
-            return (Decision::StormGiveWay { resets }, register & BOOT_MASK);
+    let (nibble, storm) = fields(register, identity);
+    let state = nibble & STORM_STATE != 0;
+    let level = if state { nibble & LEVEL_MASK } else { 0 };
+
+    // A trial in progress: the low nibble is its count.
+    if running_bank1 && !confirmed && !state {
+        match ota::trial(false, nibble, LIMIT) {
+            Trial::Count(n) => return (Decision::Counted(n), stamp(register, identity, n, 0)),
+            Trial::GiveWay if *bank0 == MARKER => {
+                return (Decision::GiveWay, register & BOOT_MASK);
+            }
+            // No fallback: the build runs on as one in no trial, held at
+            // once, so a trial that cannot pass never resets forever.
+            Trial::GiveWay => {
+                let value = storm_stamp(register, identity, 0, STORM_LIMIT + 1);
+                return (Decision::NoFallback(nibble), value);
+            }
+            Trial::Run => {}
         }
-        let decision = match (running_bank1, resets >= STORM_LIMIT) {
-            (_, true) => Decision::Held { resets },
-            (false, false) => Decision::NotBank1 { resets },
-            (true, false) => Decision::Confirmed { resets },
-        };
-        // This boot counts as early until KM4 settles it.
-        return (decision, stamp(register, identity, 0, resets + 1));
     }
 
-    let counted = if register >> TAG_SHIFT == tag(identity) {
-        (register >> COUNT_SHIFT) & FIELD_MASK
-    } else {
-        0
-    };
-    match ota::trial(false, counted, LIMIT) {
-        Trial::Run => (Decision::Confirmed { resets: 0 }, register & BOOT_MASK),
-        Trial::Count(n) => (Decision::Counted(n), stamp(register, identity, n, 0)),
-        Trial::GiveWay if *bank0 == MARKER => (Decision::GiveWay, register & BOOT_MASK),
-        Trial::GiveWay => (
-            Decision::NoFallback(counted),
-            stamp(register, identity, counted, 0),
-        ),
+    let resets = storm;
+    // Bank 0 starts its own count: even the same build there is a
+    // different boot path.
+    if running_bank1 && confirmed && resets >= STORM_LIMIT && *bank0 == MARKER {
+        return (Decision::StormGiveWay { resets }, register & BOOT_MASK);
     }
+    let decision = match (running_bank1, confirmed, resets >= STORM_LIMIT) {
+        (_, _, true) => Decision::Held { resets },
+        (false, _, false) => Decision::NotBank1 { resets },
+        (true, true, false) => Decision::Confirmed { resets },
+        (true, false, false) => Decision::NoFallback(LIMIT),
+    };
+    // This boot counts as early until KM4 settles it.
+    (decision, storm_stamp(register, identity, level, resets + 1))
 }
 
 /// The resets in a row before this boot, as KM4 reads the register KM0
 /// stamped: KM0 already counted this boot.
 pub fn resets(register: u32, identity: &[u8; 32]) -> u32 {
-    storm_field(register, identity).saturating_sub(1)
+    fields(register, identity).1.saturating_sub(1)
 }
 
-/// The register once this boot has run `STABLE_MS`: the burst is over. A
-/// held boot stays held: its count goes back to the limit, so only a burst
-/// of new early resets moves it on to a halt.
+/// The storm's backoff level, as this boot's KM0 left it.
+pub fn level(register: u32, identity: &[u8; 32]) -> u32 {
+    let (nibble, _) = fields(register, identity);
+    if nibble & STORM_STATE != 0 {
+        nibble & LEVEL_MASK
+    } else {
+        0
+    }
+}
+
+/// Whether this boot runs outside any trial by KM0's count: storm state,
+/// which a trial that ran out with no fallback is in too. KM4 then applies
+/// no trial deadline, whatever the confirmation record says.
+pub fn past_trial(register: u32, identity: &[u8; 32]) -> bool {
+    fields(register, identity).0 & STORM_STATE != 0
+}
+
+/// The register once a boot that is not held has run `STABLE_MS`: the
+/// burst is over, and the backoff steps down a level.
 pub fn settled(register: u32, identity: &[u8; 32]) -> u32 {
-    let storm = match Storm::of(resets(register, identity)) {
-        Storm::Normal => 0,
-        Storm::Held | Storm::Halted => STORM_LIMIT,
-    };
-    with_storm(register, storm)
+    let level = level(register, identity).saturating_sub(1);
+    storm_stamp(register, identity, level, 0)
+}
+
+/// The register once a held boot has run its [`hold_ms`]: the owner opens,
+/// the count starts again, and the next storm in a row holds a level
+/// longer.
+pub fn released(register: u32, identity: &[u8; 32]) -> u32 {
+    let level = level(register, identity) + 1;
+    storm_stamp(register, identity, level, 0)
+}
+
+/// The register just before a halted boot resets after [`HALT_MS`]: the
+/// next boot is held, a level longer, rather than halted again at once.
+pub fn halt_over(register: u32, identity: &[u8; 32]) -> u32 {
+    let level = level(register, identity) + 1;
+    storm_stamp(register, identity, level, STORM_LIMIT)
 }
 
 /// The register before a restart someone asked for (a reboot, an
 /// activation, a give-way, setup): not a fault, so the burst ends, and a
-/// held feeder the owner restarts tries again.
+/// held feeder the owner restarts tries again at once.
 pub fn deliberate(register: u32) -> u32 {
-    with_storm(register, 0)
-}
-
-fn with_storm(register: u32, storm: u32) -> u32 {
-    (register & !(FIELD_MASK << STORM_SHIFT)) | (storm << STORM_SHIFT)
+    register & !(FIELD_MASK << STORM_SHIFT)
 }
 
 /// The build identity, from the reviewed build wrapper (all zeros on host).

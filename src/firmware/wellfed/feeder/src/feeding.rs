@@ -12,7 +12,8 @@
 //! interrupted feed resolved, and at rest with every check passing for
 //! [`PROOF_MS`]. An owner that cannot open reports a failure, which resets a
 //! trial build at once so KM0 counts it. After a reset storm with nothing
-//! to fall back to (`wellfed_sdk::held`), the owner never opens.
+//! to fall back to (`wellfed_sdk::held`), the owner stays closed until the
+//! runtime ends the hold, then opens as on any boot.
 //!
 //! A feed comes from the device API (`wellfed_feeder::feeder::Feeds`): the
 //! loop submits it under the next journal id, answers once the owner has
@@ -569,8 +570,9 @@ mod target {
             mut outcome: impl FnMut(EventBody, Option<&TraceSummary>),
         ) -> Option<u32> {
             let now = wellfed_sdk::hal::sdk::uptime_ms();
-            // After a reset storm the owner never opens: the outputs stay
-            // as startup left them, stopped.
+            // While a reset storm holds the feeder the owner stays closed,
+            // the outputs as startup left them, stopped. It opens once the
+            // hold ends.
             if wellfed_sdk::held() {
                 return None;
             }
@@ -881,7 +883,7 @@ mod target {
             if self.journal_failed {
                 return Some(Blocked::Journal);
             }
-            // After a reset storm the owner never opens this boot.
+            // While a reset storm holds the feeder, until the hold ends.
             if wellfed_sdk::held() {
                 return Some(Blocked::Fault);
             }

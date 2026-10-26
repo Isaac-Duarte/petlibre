@@ -145,10 +145,12 @@ impl Banks {
                     self.bank1[0] = 0;
                     continue;
                 }
-                Decision::Counted(_) | Decision::NoFallback(_) => true,
-                Decision::NotBank1 { .. } | Decision::Confirmed { .. } | Decision::Held { .. } => {
-                    false
-                }
+                Decision::Counted(_) => true,
+                // A trial that ran out with no fallback runs on in no trial.
+                Decision::NoFallback(_)
+                | Decision::NotBank1 { .. }
+                | Decision::Confirmed { .. }
+                | Decision::Held { .. } => false,
             };
             let storm = Storm::of(trial::resets(self.register, &identity));
             return Boot { bank, trial, storm };

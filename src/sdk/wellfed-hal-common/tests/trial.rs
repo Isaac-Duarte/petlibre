@@ -3,7 +3,8 @@
 
 use wellfed_core::ota::{CONFIRM_LEN, MARKER, confirm_record};
 use wellfed_hal_common::trial::{
-    Decision, HALT_LIMIT, LIMIT, STORM_LIMIT, Storm, decide, deliberate, resets, settled,
+    Decision, HALT_LIMIT, HALT_MS, LIMIT, MAX_LEVEL, STABLE_MS, STORM_LIMIT, STORM_STATE, Storm,
+    decide, deliberate, halt_over, hold_ms, level, past_trial, released, resets, settled,
 };
 
 const ID: [u8; 32] = [0x5a; 32];
@@ -72,27 +73,60 @@ fn a_confirmed_image_runs_a_trial_never() {
 }
 
 #[test]
-fn without_a_valid_bank_0_it_keeps_bank_1() {
+fn without_a_valid_bank_0_a_spent_trial_runs_on_held_never_resetting_forever() {
     let out = boots(6, CLEARED, NONE);
     assert_eq!(
-        &out[..3],
+        out[..4],
         [
             Decision::Counted(1),
             Decision::Counted(2),
-            Decision::Counted(3)
+            Decision::Counted(3),
+            Decision::NoFallback(3),
         ]
     );
-    assert!(out[3..].iter().all(|d| *d == Decision::NoFallback(3)));
+    // From there it is a build in no trial, held as after a storm.
+    assert_eq!(
+        out[4..],
+        [
+            Decision::Held {
+                resets: STORM_LIMIT + 1
+            },
+            Decision::Held {
+                resets: STORM_LIMIT + 2
+            },
+        ]
+    );
+
+    // KM4 sees it held and past its trial: no deadline resets it.
+    let mut register = 0;
+    for _ in 0..4 {
+        register = decide(&MARKER, &CLEARED, &NONE, bump(register), &ID).1;
+    }
+    assert!(past_trial(register, &ID));
+    assert_eq!(Storm::of(resets(register, &ID)), Storm::Held);
+
+    // Once its hold ends it runs as a normal build, its resets a storm's.
+    let freed = released(register, &ID);
+    let (decision, value) = decide(&MARKER, &CLEARED, &NONE, bump(freed), &ID);
+    assert_eq!(decision, Decision::NoFallback(LIMIT));
+    assert_eq!(Storm::of(resets(value, &ID)), Storm::Normal);
+    assert!(past_trial(value, &ID));
 }
 
 #[test]
 fn running_bank_0_runs_no_trial_and_clears_the_trial_count() {
     // Register layout: tag in bits 24-31, storm count 20-23, trial count
-    // 16-19, KM0 boot count 0-15.
+    // (or, with bit 19, the storm's level) 16-19, KM0 boot count 0-15.
     let register = (0x5a << 24) | (2 << 16) | 7;
     let (decision, value) = decide(&CLEARED, &MARKER, &NONE, register, &ID);
     assert_eq!(decision, Decision::NotBank1 { resets: 0 });
-    assert_eq!(value, (0x5a << 24) | (1 << 20) | 7, "this boot counts");
+    assert_eq!(
+        value,
+        (0x5a << 24) | (1 << 20) | (STORM_STATE << 16) | 7,
+        "this boot counts"
+    );
+    assert!(!past_trial(register, &ID));
+    assert!(past_trial(value, &ID));
 }
 
 #[test]
@@ -135,7 +169,7 @@ fn a_confirmed_build_that_keeps_resetting_gives_way_at_the_storm_limit() {
 
     // The give-way leaves no count behind for bank 0, even for the same
     // build there.
-    let full = (0x5a << 24) | (STORM_LIMIT << 20) | 4;
+    let full = (0x5a << 24) | (STORM_LIMIT << 20) | (STORM_STATE << 16) | 4;
     let (decision, value) = decide(&MARKER, &MARKER, &record, full, &ID);
     assert_eq!(
         decision,
@@ -168,7 +202,7 @@ fn a_boot_that_runs_stable_or_restarts_on_purpose_ends_the_burst() {
 }
 
 #[test]
-fn a_storm_with_nothing_to_fall_back_to_holds_then_halts() {
+fn a_storm_with_nothing_to_fall_back_to_holds() {
     // Bank 0 itself: early resets every boot.
     let out = boots_from(12, &CLEARED, MARKER, NONE, |_| None);
     for (resets, decision) in (0u32..).zip(&out) {
@@ -210,13 +244,45 @@ fn km4_reads_the_resets_before_this_boot_and_acts_on_them() {
 }
 
 #[test]
-fn a_held_boot_that_runs_stable_stays_held_and_a_reboot_frees_it() {
-    let held = (0x5a << 24) | ((STORM_LIMIT + 2) << 20) | 3;
+fn holds_double_with_each_storm_in_a_row_and_stable_boots_step_them_down() {
+    assert_eq!(hold_ms(0), STABLE_MS);
+    assert_eq!(hold_ms(1), 2 * STABLE_MS);
+    assert_eq!(hold_ms(MAX_LEVEL), STABLE_MS << MAX_LEVEL);
+    assert_eq!(hold_ms(MAX_LEVEL + 3), hold_ms(MAX_LEVEL), "capped");
+
+    // A held boot that ran its hold: the owner opens, the count starts
+    // again, and the next storm holds a level longer.
+    let held = (0x5a << 24) | ((STORM_LIMIT + 1) << 20) | (STORM_STATE << 16) | 3;
     assert_eq!(Storm::of(resets(held, &ID)), Storm::Held);
-    let calm = settled(held, &ID);
-    assert_eq!(calm, (0x5a << 24) | (STORM_LIMIT << 20) | 3);
-    // The next boot is still held, with the halt a whole burst away.
-    let (decision, value) = decide(&CLEARED, &MARKER, &NONE, bump(calm), &ID);
+    assert_eq!(level(held, &ID), 0);
+    let freed = released(held, &ID);
+    let (decision, value) = decide(&CLEARED, &MARKER, &NONE, bump(freed), &ID);
+    assert_eq!(decision, Decision::NotBank1 { resets: 0 });
+    assert_eq!(level(value, &ID), 1);
+
+    // Up to the cap, never past it.
+    let mut register = freed;
+    for _ in 0..10 {
+        register = released(register, &ID);
+    }
+    assert_eq!(level(register, &ID), MAX_LEVEL);
+
+    // Each stable boot steps it down; a reboot keeps the level but ends
+    // the burst.
+    let calmer = settled(register, &ID);
+    assert_eq!(level(calmer, &ID), MAX_LEVEL - 1);
+    assert_eq!(resets(bump(calmer), &ID), 0);
+    let rebooted = deliberate(held);
+    let (decision, _) = decide(&CLEARED, &MARKER, &NONE, bump(rebooted), &ID);
+    assert_eq!(decision, Decision::NotBank1 { resets: 0 });
+}
+
+#[test]
+fn a_halt_ends_in_a_held_boot_a_level_longer() {
+    let halted = (0x5a << 24) | ((HALT_LIMIT + 1) << 20) | (STORM_STATE << 16) | 3;
+    assert_eq!(Storm::of(resets(halted, &ID)), Storm::Halted);
+    let over = halt_over(halted, &ID);
+    let (decision, value) = decide(&CLEARED, &MARKER, &NONE, bump(over), &ID);
     assert_eq!(
         decision,
         Decision::Held {
@@ -224,12 +290,7 @@ fn a_held_boot_that_runs_stable_stays_held_and_a_reboot_frees_it() {
         }
     );
     assert_eq!(Storm::of(resets(value, &ID)), Storm::Held);
-
-    // A normal boot's stable run clears the count; the owner's reboot
-    // clears it whatever it was.
-    let normal = (0x5a << 24) | (3 << 20) | 3;
-    assert_eq!(settled(normal, &ID), (0x5a << 24) | 3);
-    assert_eq!(deliberate(held), (0x5a << 24) | 3);
+    assert_eq!(level(value, &ID), 1);
 }
 
 #[test]
@@ -240,59 +301,77 @@ fn trial_counts_never_become_storm_counts() {
         register = bump(register);
         register = decide(&MARKER, &MARKER, &NONE, register, &ID).1;
     }
+    assert!(!past_trial(register, &ID));
     let record = confirm_record(&ID, 0);
     let (decision, value) = decide(&MARKER, &MARKER, &record, bump(register), &ID);
     assert_eq!(decision, Decision::Confirmed { resets: 0 });
-    assert_eq!((value >> 16) & 0xf, 0, "the trial count is gone");
+    assert_eq!(level(value, &ID), 0, "the trial count is no level");
+    assert_eq!((value >> 16) & 0xf, STORM_STATE);
 }
 
-/// The whole board, boot after boot: the loader's choice, KM0's decision
-/// and the give-way's marker write, then KM4, which halts or resets early
-/// (a fault at every boot, on either bank). `cut_after` power-ons a cut
-/// clears the backup registers, as power loss does.
-fn faulting_board(cut_after: Option<u32>, boots: u32) -> (u32, Option<u32>, bool) {
+/// The whole board, minute by minute: the loader's choice, KM0's decision
+/// and the give-way's marker write, then KM4, which halts for `HALT_MS`
+/// or resets a minute into the boot (a fault at every boot, on either
+/// bank), with a power cut every `cut_every` minutes. The minute of every
+/// reset, and whether bank 1 gave way.
+fn faulting_board(cut_every: Option<u32>, minutes: u32) -> (Vec<u32>, bool) {
     let record = confirm_record(&ID, 0);
     let mut bank1 = MARKER;
     let mut register = 0;
-    // Resets since the last power-on, and the most of them.
-    let (mut resets_now, mut resets_max) = (0, 0);
-    for boot in 1..=boots {
-        if cut_after.is_some_and(|n| boot % n == 0) {
+    let mut resets_at = Vec::new();
+    let mut minute = 0;
+    while minute < minutes {
+        if cut_every.is_some_and(|n| minute % n == 0) && minute != 0 {
             register = 0;
-            resets_now = 0;
         }
         register = bump(register);
         let (decision, value) = decide(&bank1, &MARKER, &record, register, &ID);
         register = value;
         if matches!(decision, Decision::StormGiveWay { .. }) {
             bank1 = CLEARED;
-        } else if Storm::of(resets(register, &ID)) == Storm::Halted {
-            return (resets_max, Some(boot), bank1 == CLEARED);
+            resets_at.push(minute);
+            continue;
         }
-        resets_now += 1;
-        resets_max = resets_max.max(resets_now);
+        if Storm::of(resets(register, &ID)) == Storm::Halted {
+            minute += HALT_MS / 60_000;
+            register = halt_over(register, &ID);
+        } else {
+            minute += 1;
+        }
+        resets_at.push(minute);
     }
-    (resets_max, None, bank1 == CLEARED)
+    (resets_at, bank1 == CLEARED)
 }
 
 #[test]
-fn a_build_that_faults_at_every_boot_never_resets_forever() {
-    // Bank 1's storm gives way, bank 0's holds, then halts: within one
-    // power-on, the board resets a bounded number of times and then stays
-    // up, stopped.
-    let bound = STORM_LIMIT + 1 + HALT_LIMIT;
-    let (resets, halted, gave_way) = faulting_board(None, 1_000);
+fn a_build_that_faults_at_every_boot_resets_only_a_few_times_an_hour() {
+    // Bank 1's storm gives way; bank 0's holds, then halts for an hour,
+    // then holds again: the board never stops trying, and never resets
+    // fast for long.
+    let (resets, gave_way) = faulting_board(None, 48 * 60);
     assert!(gave_way);
-    assert_eq!(halted, Some(bound + 1));
-    assert_eq!(resets, bound);
+    let first_halt = STORM_LIMIT + 1 + HALT_LIMIT;
+    // After the first burst, each hour sees the held boots' few resets.
+    let late = resets.iter().filter(|&&m| m >= 2 * 60).count();
+    let hours = 46;
+    assert!(
+        late <= hours * (HALT_LIMIT - STORM_LIMIT + 1) as usize,
+        "{late} resets in {hours} h"
+    );
+    let early = resets.iter().filter(|&&m| m < 60).count();
+    assert!(early <= first_halt as usize + 1, "{early}");
 
-    // Power cuts only restart the counts: however they fall, no power-on
-    // sees more resets than that, and a cut mid-storm never loses the
+    // Power cuts only restart the counts: however they fall, no hour sees
+    // more resets than one burst, and a cut mid-storm never loses the
     // give-way already made.
-    for cut_after in 2..=20 {
-        let (resets, _, gave_way) = faulting_board(Some(cut_after), 500);
-        assert!(resets <= bound, "cut every {cut_after}: {resets}");
-        // A power-on that boots `STORM_LIMIT + 1` times sees the give-way.
-        assert_eq!(gave_way, cut_after > STORM_LIMIT, "cut every {cut_after}");
+    for cut_every in 2..=20 {
+        let (resets, gave_way) = faulting_board(Some(cut_every), 24 * 60);
+        assert_eq!(gave_way, cut_every > STORM_LIMIT, "cut every {cut_every}");
+        if cut_every > first_halt {
+            for hour in 0..24 {
+                let n = resets.iter().filter(|&&m| m / 60 == hour).count();
+                assert!(n <= 2 * first_halt as usize, "hour {hour}: {n}");
+            }
+        }
     }
 }

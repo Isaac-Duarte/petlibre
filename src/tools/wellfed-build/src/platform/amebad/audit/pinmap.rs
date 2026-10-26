@@ -11,8 +11,40 @@ use wellfed_formats::audit::PinmapAudit;
 use wellfed_formats::layout::Hex;
 use regex::Regex;
 
-use super::{refuse, word};
-use crate::{Result, require, sha256};
+use super::word;
+use crate::{Result, sha256};
+use wellfed_formats::require;
+
+/// Why the SDK pad table or the linked one differs from verified stock.
+#[derive(Debug, thiserror::Error)]
+pub enum PinmapError {
+    #[error("Pin table requires the exact verified stock OTA")]
+    Stock,
+    #[error("Unexpected stock pin order or sentinel")]
+    StockOrder,
+    #[error("Expected one pinned SDK pmap_func table")]
+    Tables { found: usize },
+    #[error("Unrecognized SDK pad fields")]
+    Fields { row: usize },
+    #[error("SDK pin order or sentinel differs from stock")]
+    Order { row: usize },
+    #[error("SDK sleep/low-power fields differ from stock")]
+    SleepFields { pin: u32 },
+    #[error("Unexpected active pull discrepancy")]
+    ActivePull { pin: u32 },
+    #[error("Cannot replace SDK active pull")]
+    Replace { pin: u32 },
+    #[error("Expected 65 records and the eight reviewed active pull changes")]
+    Changes { rows: usize, changed: Vec<u32> },
+    #[error("Candidate KM0 image header is truncated")]
+    Truncated,
+    #[error("Unexpected candidate KM0 XIP header")]
+    Header,
+    #[error("Linked pad table is outside the KM0 XIP body")]
+    Outside { address: u64 },
+    #[error("Linked KM0 pad table differs from verified stock")]
+    Differs,
+}
 
 const STOCK_SHA256: &str = "05147476fc70c91cc77ad7da6d6772376b2081d460ac7b1912e2d73868a09498";
 const STOCK_BYTES: usize = 1_376_288;
@@ -60,7 +92,7 @@ fn flag(name: &str) -> Option<u32> {
 fn stock_table(reference: &[u8]) -> Result<(&[u8], Vec<Row>)> {
     require(
         reference.len() == STOCK_BYTES && sha256(reference) == STOCK_SHA256,
-        "Pin table requires the exact verified stock OTA",
+        || PinmapError::Stock,
     )?;
     let start =
         64 + usize::try_from(TABLE_ADDRESS - XIP_ADDRESS).expect("a table inside the image");
@@ -77,7 +109,7 @@ fn stock_table(reference: &[u8]) -> Result<(&[u8], Vec<Row>)> {
 
     let pins: Vec<u32> = rows.iter().map(|row| row[0]).collect();
     let expected: Vec<u32> = (0..64).chain([NO_PIN]).collect();
-    require(pins == expected, "Unexpected stock pin order or sentinel")?;
+    require(pins == expected, || PinmapError::StockOrder)?;
     Ok((data, rows))
 }
 
@@ -86,7 +118,10 @@ pub(crate) fn overlay(source: &str, reference: &[u8]) -> Result<String> {
     let (_, expected) = stock_table(reference)?;
     let tables: Vec<_> = TABLE.captures_iter(source).collect();
     let [table] = &tables[..] else {
-        return refuse("Expected one pinned SDK pmap_func table");
+        return Err(PinmapError::Tables {
+            found: tables.len(),
+        }
+        .into());
     };
     let body = table.name("body").expect("TABLE always captures its body");
 
@@ -113,27 +148,19 @@ pub(crate) fn overlay(source: &str, reference: &[u8]) -> Result<String> {
                 })
                 .flatten();
             let Some(row) = parsed else {
-                return refuse("Unrecognized SDK pad fields");
+                return Err(PinmapError::Fields { row: rows }.into());
             };
 
-            require(
-                rows < TABLE_ROWS && row[0] == expected[rows][0],
-                "SDK pin order or sentinel differs from stock",
-            )?;
+            require(rows < TABLE_ROWS && row[0] == expected[rows][0], || {
+                PinmapError::Order { row: rows }
+            })?;
             let target = expected[rows];
-            require(
-                row[2..] == target[2..],
-                "SDK sleep/low-power fields differ from stock",
-            )?;
+            require(row[2..] == target[2..], || PinmapError::SleepFields { pin })?;
             if row[1] != target[1] {
-                require(
-                    CHANGED_PINS.contains(&pin) && target[1] == 0,
-                    "Unexpected active pull discrepancy",
-                )?;
-                require(
-                    ACTIVE_PULL.is_match(&line),
-                    "Cannot replace SDK active pull",
-                )?;
+                require(CHANGED_PINS.contains(&pin) && target[1] == 0, || {
+                    PinmapError::ActivePull { pin }
+                })?;
+                require(ACTIVE_PULL.is_match(&line), || PinmapError::Replace { pin })?;
                 line = ACTIVE_PULL
                     .replace(&line, "${1}GPIO_PuPd_NOPULL")
                     .into_owned();
@@ -144,10 +171,12 @@ pub(crate) fn overlay(source: &str, reference: &[u8]) -> Result<String> {
         output.push_str(&line);
     }
 
-    require(
-        rows == TABLE_ROWS && changed == CHANGED_PINS,
-        "Expected 65 records and the eight reviewed active pull changes",
-    )?;
+    require(rows == TABLE_ROWS && changed == CHANGED_PINS, || {
+        PinmapError::Changes {
+            rows,
+            changed: changed.clone(),
+        }
+    })?;
     Ok(format!(
         "{}{output}{}",
         &source[..body.start()],
@@ -165,11 +194,11 @@ pub(crate) fn audit_linked_table(
     let header = [32, 36, 40, 44].map(|at| word(candidate, at));
     let ([Some(magic1), Some(magic2), Some(size), Some(base)], 64..) = (header, candidate.len())
     else {
-        return refuse("Candidate KM0 image header is truncated");
+        return Err(PinmapError::Truncated.into());
     };
     require(
         (magic1, magic2, base) == (0x3539_3138, 0x3131_3738, XIP_ADDRESS),
-        "Unexpected candidate KM0 XIP header",
+        || PinmapError::Header,
     )?;
 
     // The table must lie inside the XIP body, which must lie inside the image.
@@ -179,13 +208,10 @@ pub(crate) fn audit_linked_table(
         .filter(|offset| offset + table <= size && 64 + size <= candidate.len() as u64)
         .and_then(|offset| usize::try_from(64 + offset).ok());
     let Some(start) = start else {
-        return refuse("Linked pad table is outside the KM0 XIP body");
+        return Err(PinmapError::Outside { address }.into());
     };
     let actual = &candidate[start..start + expected.len()];
-    require(
-        actual == expected,
-        "Linked KM0 pad table differs from verified stock",
-    )?;
+    require(actual == expected, || PinmapError::Differs)?;
 
     Ok(PinmapAudit {
         runtime_address: Hex(address),
@@ -202,7 +228,7 @@ pub(crate) fn audit_linked_table(
 mod tests {
     use super::*;
     use crate::platform::amebad::source;
-    use crate::{Device, Repo};
+    use crate::{Device, Error, Repo};
     use std::fs;
 
     /// The ignored stock image and pinned SDK source, when present.
@@ -267,26 +293,34 @@ mod tests {
             &sleep.replacen("GPIO_PuPd_KEEP", "GPIO_PuPd_DOWN", 1),
             1,
         );
-        assert!(
-            overlay(&damaged, &stock)
-                .unwrap_err()
-                .to_string()
-                .contains("sleep/low-power")
-        );
+        fn pinmap_error<T>(result: Result<T>) -> PinmapError {
+            match result {
+                Err(Error::Pinmap(error)) => error,
+                Err(other) => panic!("{other}"),
+                Ok(_) => panic!("accepted"),
+            }
+        }
+        assert!(matches!(
+            pinmap_error(overlay(&damaged, &stock)),
+            PinmapError::SleepFields { pin: 13 }
+        ));
         for replacement in ["_PA_14,", "_PA_99,"] {
-            let error = overlay(&source.replacen("_PA_13,", replacement, 1), &stock).unwrap_err();
-            assert!(error.to_string().contains("pin order"));
+            assert!(matches!(
+                pinmap_error(overlay(&source.replacen("_PA_13,", replacement, 1), &stock)),
+                PinmapError::Order { row: 13 }
+            ));
         }
 
         let mut mutated = stock.clone();
         *mutated.last_mut().unwrap() ^= 1;
-        assert!(
-            overlay(&source, &mutated)
-                .unwrap_err()
-                .to_string()
-                .contains("exact verified stock")
-        );
-        assert!(audit_linked_table(&stock, TABLE_ADDRESS, &mutated).is_err());
+        assert!(matches!(
+            pinmap_error(overlay(&source, &mutated)),
+            PinmapError::Stock
+        ));
+        assert!(matches!(
+            pinmap_error(audit_linked_table(&stock, TABLE_ADDRESS, &mutated)),
+            PinmapError::Stock
+        ));
 
         // A valid container checksum must not hide stale or incorrect pad data.
         let mut stale = stock.clone();
@@ -296,18 +330,20 @@ mod tests {
             .iter()
             .fold(0u32, |s, b| s.wrapping_add(*b as u32));
         stale[16..20].copy_from_slice(&sum.to_le_bytes());
-        let error = audit_linked_table(&stale, TABLE_ADDRESS, &stock).unwrap_err();
-        assert!(error.to_string().contains("differs from verified stock"));
+        assert!(matches!(
+            pinmap_error(audit_linked_table(&stale, TABLE_ADDRESS, &stock)),
+            PinmapError::Differs
+        ));
 
-        let error = audit_linked_table(&stock, XIP_ADDRESS - 4, &stock).unwrap_err();
-        assert!(error.to_string().contains("outside the KM0 XIP body"));
+        assert!(matches!(
+            pinmap_error(audit_linked_table(&stock, XIP_ADDRESS - 4, &stock)),
+            PinmapError::Outside { address } if address == XIP_ADDRESS - 4
+        ));
         let mut moved = stock.clone();
         moved[44..48].copy_from_slice(&0x0E00_0020u32.to_le_bytes());
-        let error = audit_linked_table(&moved, TABLE_ADDRESS, &stock).unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("Unexpected candidate KM0 XIP header")
-        );
+        assert!(matches!(
+            pinmap_error(audit_linked_table(&moved, TABLE_ADDRESS, &stock)),
+            PinmapError::Header
+        ));
     }
 }

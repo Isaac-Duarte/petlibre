@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 
 use wellfed_formats::layout::Layout;
 use wellfed_formats::lock::SdkLock;
+use wellfed_formats::require;
 use regex::Regex;
 
 use super::audit::{hooks, pinmap};
@@ -21,7 +22,72 @@ use super::credentials::wifi_header;
 use super::{Amebad, Core, PROJECT, WIFI_CREDENTIALS, source, toolchains};
 use crate::device::StockPaths;
 use crate::platform::Job;
-use crate::{Error, Profile, Repo, Result, Stage, digest, git, require, revision, run};
+use crate::{Profile, Repo, Result, Stage, digest, git, revision, run};
+
+/// Why a profile's SDK worktree was refused or could not be overlaid. A
+/// refused worktree is left unchanged for review.
+#[derive(Debug, thiserror::Error)]
+pub enum SdkError {
+    /// Changes outside the profile's overrides, as `git status` codes and
+    /// paths, sorted.
+    #[error(
+        "SDK worktree has changes outside this profile's overrides; left unchanged. \
+         Review, then restore or recreate {}: {}",
+        sdk.display(),
+        shown(changes)
+    )]
+    Worktree { sdk: PathBuf, changes: Vec<String> },
+    #[error("Pinned SDK file is not UTF-8: {path}")]
+    NotUtf8 { path: String },
+    /// An overlay's anchor no longer occurs exactly once in the pinned SDK.
+    #[error("{0}")]
+    Anchor(SdkAnchor),
+    /// A staged copy differs from the input the identity hashed.
+    #[error("{file}: {name}")]
+    Staged { file: StagedFile, name: String },
+    #[error("Build worktree has an unexpected SDK revision")]
+    Revision,
+    #[error("Unexpected toolchain path; left unchanged: {}", path.display())]
+    ToolchainPath { path: PathBuf },
+}
+
+/// The pinned SDK text each overlay anchors on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum SdkAnchor {
+    #[error("Pinned hard fault handler changed")]
+    FaultHandler,
+    #[error("Pinned tick hook option changed")]
+    TickHook,
+    #[error("Pinned task name length changed")]
+    TaskNameLength,
+    #[error("Pinned image2 link rule changed")]
+    Image2LinkRule,
+    #[error("Pinned RAM linker section changed")]
+    RamSection,
+    #[error("Pinned SDK OTA address definition changed")]
+    OtaAddress,
+    #[error("Pinned example source list changed")]
+    ExampleSources,
+    #[error("Pinned BT option changed")]
+    BtOption,
+    #[error("Pinned FTL source list changed")]
+    FtlSources,
+    #[error("Pinned BT system data switch read changed")]
+    BtSystemData,
+    #[error("Pinned fast-connect option changed")]
+    FastConnect,
+}
+
+/// The files staged into the worktree from the checkout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum StagedFile {
+    #[error("Source changed while staging")]
+    Source,
+    #[error("Wi-Fi credentials changed while staging")]
+    WifiCredentials,
+    #[error("First-boot main changed while staging")]
+    FirstbootMain,
+}
 
 const PLATFORM_OPTS: &str = "project/realtek_amebaD_va0_example/inc/inc_hp/platform_opts.h";
 const WIFI_HEADER: &str = "component/common/example/wellfed_wifi_credentials.h";
@@ -194,15 +260,20 @@ pub(crate) fn check_sdk_worktree(sdk: &Path, profile: Profile) -> Result<()> {
         return Ok(());
     }
 
-    let mut shown = unexpected[..unexpected.len().min(20)].join(", ");
-    if unexpected.len() > 20 {
-        shown.push_str(&format!(" (+{} more)", unexpected.len() - 20));
+    Err(SdkError::Worktree {
+        sdk: sdk.to_path_buf(),
+        changes: unexpected,
     }
-    Err(Error::Refused(format!(
-        "SDK worktree has changes outside this profile's overrides; left unchanged. \
-         Review, then restore or recreate {}: {shown}",
-        sdk.display()
-    )))
+    .into())
+}
+
+/// The first 20 of a worktree's unexpected changes, and how many more.
+fn shown(changes: &[String]) -> String {
+    let mut shown = changes[..changes.len().min(20)].join(", ");
+    if changes.len() > 20 {
+        shown.push_str(&format!(" (+{} more)", changes.len() - 20));
+    }
+    shown
 }
 
 /// Where a core's Rust archive is staged beside the SDK worktree.
@@ -216,13 +287,19 @@ pub(crate) fn rust_archive(sdk: &Path, core: Core) -> PathBuf {
 /// The pinned revision's copy of an SDK file.
 fn pinned(sdk: &Path, relative: &str) -> Result<String> {
     let output = run(crate::git_command(sdk).args(["show", &format!("HEAD:{relative}")]))?;
-    String::from_utf8(output.stdout)
-        .map_err(|_| Error::Refused(format!("Pinned SDK file is not UTF-8: {relative}")))
+    String::from_utf8(output.stdout).map_err(|_| {
+        SdkError::NotUtf8 {
+            path: relative.into(),
+        }
+        .into()
+    })
 }
 
-/// Replace the single `anchor` in `text`, refusing with `message` otherwise.
-fn replace_once(text: &str, anchor: &str, with: &str, message: &str) -> Result<String> {
-    require(text.matches(anchor).count() == 1, message)?;
+/// Replace the single `anchor` in `text`, refusing as `which` otherwise.
+fn replace_once(text: &str, anchor: &str, with: &str, which: SdkAnchor) -> Result<String> {
+    require(text.matches(anchor).count() == 1, || {
+        SdkError::Anchor(which)
+    })?;
     Ok(text.replacen(anchor, with, 1))
 }
 
@@ -241,7 +318,7 @@ fn fault_registers(pinned: &str) -> Result<String> {
              \t\t*(volatile uint32_t *)0xE000ED34, *(volatile uint32_t *)0xE000ED38,\n\
              \t\tlr_value, IsPstack);\n{anchor}"
         ),
-        "Pinned hard fault handler changed",
+        SdkAnchor::FaultHandler,
     )
 }
 
@@ -257,14 +334,14 @@ fn freertos_options(pinned: &str) -> Result<String> {
         pinned,
         anchor,
         &anchor.replace("\t0\n", "\t1\n"),
-        "Pinned tick hook option changed",
+        SdkAnchor::TickHook,
     )?;
     let anchor = "#define configMAX_TASK_NAME_LEN\t\t\t\t\t\t\t( 10 )\n";
     replace_once(
         &text,
         anchor,
         &anchor.replace("( 10 )", "( 16 )"),
-        "Pinned task name length changed",
+        SdkAnchor::TaskNameLength,
     )
 }
 
@@ -345,12 +422,12 @@ pub(crate) fn prepare(
     let sdk = worktree(repo, &job.output, profile, lock)?;
 
     let mut overrides = Overrides::new();
-    let staged = |source: &Path, copy: &Path, message: &str| -> Result<()> {
+    let staged = |source: &Path, copy: &Path, file: StagedFile| -> Result<()> {
         let name = crate::relative(source, &repo.root)?;
-        require(
-            job.inputs.get(&name) == Some(&digest(copy)?),
-            format!("{message}: {name}"),
-        )
+        require(job.inputs.get(&name) == Some(&digest(copy)?), || {
+            SdkError::Staged { file, name }
+        })?;
+        Ok(())
     };
 
     if let Some(stock) = stock {
@@ -381,10 +458,7 @@ fn worktree(repo: &Repo, output: &Path, profile: Profile, lock: &SdkLock) -> Res
             .arg(&sdk)
             .arg(&lock.sdk.revision))?;
     }
-    require(
-        revision(&sdk)? == lock.sdk.revision,
-        "Build worktree has an unexpected SDK revision",
-    )?;
+    require(revision(&sdk)? == lock.sdk.revision, || SdkError::Revision)?;
     remove_retired_header(&sdk)?;
     check_sdk_worktree(&sdk, profile)?;
 
@@ -395,13 +469,9 @@ fn worktree(repo: &Repo, output: &Path, profile: Profile, lock: &SdkLock) -> Res
         if link.is_symlink() && fs::canonicalize(&link).ok() == fs::canonicalize(&toolchains).ok() {
             continue;
         }
-        require(
-            fs::symlink_metadata(&link).is_err(),
-            format!(
-                "Unexpected toolchain path; left unchanged: {}",
-                link.display()
-            ),
-        )?;
+        require(fs::symlink_metadata(&link).is_err(), || {
+            SdkError::ToolchainPath { path: link.clone() }
+        })?;
         std::os::unix::fs::symlink(&toolchains, &link)?;
     }
     Ok(sdk)
@@ -414,7 +484,7 @@ fn rust_overlays(
     board: &Amebad,
     sdk: &Path,
     overrides: &mut Overrides,
-    staged: &dyn Fn(&Path, &Path, &str) -> Result<()>,
+    staged: &dyn Fn(&Path, &Path, StagedFile) -> Result<()>,
 ) -> Result<()> {
     let example = sdk.join("component/common/example");
     // The vendor makefiles name objects by basename and include old .d
@@ -427,7 +497,7 @@ fn rust_overlays(
 
     let destination = example.join("example_entry.c");
     write_if_changed(&destination, &fs::read(&board.entry)?)?;
-    staged(&board.entry, &destination, "Source changed while staging")?;
+    staged(&board.entry, &destination, StagedFile::Source)?;
 
     // Earlier C builds modified these SDK makefiles; restore the pinned copies.
     for relative in [project(UTILITIES_MAKEFILE), SRC_LP_MAKEFILE.to_string()] {
@@ -444,7 +514,7 @@ fn rust_overlays(
             &pinned(sdk, &relative)?,
             anchor,
             &format!("{anchor} {}", archive.display()),
-            "Pinned image2 link rule changed",
+            SdkAnchor::Image2LinkRule,
         )?;
         overlay(sdk, &relative, &text, overrides)?;
     }
@@ -467,7 +537,7 @@ fn rust_overlays(
             &pinned(sdk, &relative)?,
             anchor,
             &format!("KEEP(*(.image2.ram.text.wellfed_park))\n\t\t{anchor}"),
-            "Pinned RAM linker section changed",
+            SdkAnchor::RamSection,
         )?;
         overlay(sdk, &relative, &text, overrides)?;
     }
@@ -503,7 +573,7 @@ fn rust_overlays(
         &sdk.join(WIFI_HEADER),
         wifi_header(&fs::read(&wifi)?)?.as_bytes(),
     )?;
-    staged(&wifi, &wifi, "Wi-Fi credentials changed while staging")?;
+    staged(&wifi, &wifi, StagedFile::WifiCredentials)?;
     Ok(())
 }
 
@@ -518,10 +588,9 @@ fn ota_addresses(stock: &StockPaths, sdk: &Path, overrides: &mut Overrides) -> R
             r"(#define\s+LS_IMG2_OTA{}_ADDR\s+)0x[0-9A-Fa-f]+",
             index + 1
         ))?;
-        require(
-            pattern.find_iter(&text).count() == 1,
-            "Pinned SDK OTA address definition changed",
-        )?;
+        require(pattern.find_iter(&text).count() == 1, || {
+            SdkError::Anchor(SdkAnchor::OtaAddress)
+        })?;
         text = pattern
             .replace(&text, |c: &regex::Captures| {
                 format!("{}0x{address:08X}", &c[1])
@@ -542,7 +611,7 @@ fn bluetooth_overlays(
     sdk: &Path,
     bluetooth: Option<&Path>,
     overrides: &mut Overrides,
-    staged: &dyn Fn(&Path, &Path, &str) -> Result<()>,
+    staged: &dyn Fn(&Path, &Path, StagedFile) -> Result<()>,
 ) -> Result<()> {
     let objects = sdk.join(project("project_hp/asdk"));
     remove_objects(&objects.join("make/utilities_example"), "wellfed_ble")?;
@@ -560,7 +629,7 @@ fn bluetooth_overlays(
     };
 
     write_if_changed(&destination, &fs::read(source)?)?;
-    staged(source, &destination, "Source changed while staging")?;
+    staged(source, &destination, StagedFile::Source)?;
     // rust_overlays restored this makefile from the pinned revision.
     let makefile = project(UTILITIES_MAKEFILE);
     let anchor = "CSRC += $(DIR)/example_entry.c\n";
@@ -568,7 +637,7 @@ fn bluetooth_overlays(
         &pinned(sdk, &makefile)?,
         anchor,
         &format!("{anchor}CSRC += $(DIR)/wellfed_ble.c\n"),
-        "Pinned example source list changed",
+        SdkAnchor::ExampleSources,
     )?;
     overlay(sdk, &makefile, &text, overrides)?;
 
@@ -577,7 +646,7 @@ fn bluetooth_overlays(
         &pinned(sdk, &config)?,
         "# CONFIG_BT_EN is not set\n",
         "CONFIG_BT_EN=y\n",
-        "Pinned BT option changed",
+        SdkAnchor::BtOption,
     )?;
     overlay(sdk, &config, &text, overrides)?;
 
@@ -590,7 +659,7 @@ fn bluetooth_overlays(
         &pinned(sdk, &makefile)?,
         "CSRC += $(DIR)/ftl.c\n",
         "# wellfed: the BLE peripheral replaces FTL's entry points.\n",
-        "Pinned FTL source list changed",
+        SdkAnchor::FtlSources,
     )?;
     overlay(sdk, &makefile, &text, overrides)?;
 
@@ -608,7 +677,7 @@ fn bluetooth_overlays(
         &pinned(sdk, HCI_BOARD)?,
         anchor,
         "\t/* wellfed: an erased system data sector's switches. */\n\tret = x;\n",
-        "Pinned BT system data switch read changed",
+        SdkAnchor::BtSystemData,
     )?;
     overlay(sdk, HCI_BOARD, &text, overrides)
 }
@@ -676,7 +745,7 @@ fn firstboot_overlays(
     board: &Amebad,
     sdk: &Path,
     overrides: &mut Overrides,
-    staged: &dyn Fn(&Path, &Path, &str) -> Result<()>,
+    staged: &dyn Fn(&Path, &Path, StagedFile) -> Result<()>,
 ) -> Result<()> {
     // Fast connect saves reconnect data to FAST_RECONNECT_DATA (0x105000),
     // inside the application bank; it also enables fast DHCP's read of that
@@ -687,7 +756,7 @@ fn firstboot_overlays(
         &pinned(sdk, PLATFORM_OPTS)?,
         anchor,
         &anchor.replace("\t1\n", "\t0\n"),
-        "Pinned fast-connect option changed",
+        SdkAnchor::FastConnect,
     )?;
     overlay(sdk, PLATFORM_OPTS, &text, overrides)?;
 
@@ -697,11 +766,7 @@ fn firstboot_overlays(
             core.dir()
         );
         write_if_changed(&sdk.join(&relative), &fs::read(source)?)?;
-        staged(
-            source,
-            &sdk.join(&relative),
-            "First-boot main changed while staging",
-        )?;
+        staged(source, &sdk.join(&relative), StagedFile::FirstbootMain)?;
         overrides.insert(relative.clone(), digest(&sdk.join(&relative))?);
     }
     Ok(())
@@ -835,7 +900,10 @@ mod tests {
         assert!(changes(&sdk, Profile::Device).contains(&format!("M {main}")));
 
         let error = check_sdk_worktree(&sdk.path, Profile::Firstboot).unwrap_err();
-        assert!(error.to_string().contains("component/other.c"));
+        assert!(matches!(
+            error,
+            crate::Error::Sdk(SdkError::Worktree { changes, .. }) if changes == expected
+        ));
     }
 
     #[test]
@@ -862,9 +930,19 @@ mod tests {
         assert!(text.contains("configUSE_IDLE_HOOK\t\t\t\t\t\t\t\t0\n"));
 
         // A changed option line is refused, not patched elsewhere.
-        assert!(freertos_options("#define configUSE_TICK_HOOK 0\n").is_err());
-        assert!(freertos_options(&pinned.replace("( 10 )", "( 12 )")).is_err());
-        assert!(freertos_options(&pinned.repeat(2)).is_err());
+        let refused = |text: &str| match freertos_options(text) {
+            Err(crate::Error::Sdk(SdkError::Anchor(anchor))) => anchor,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(
+            refused("#define configUSE_TICK_HOOK 0\n"),
+            SdkAnchor::TickHook
+        );
+        assert_eq!(
+            refused(&pinned.replace("( 10 )", "( 12 )")),
+            SdkAnchor::TaskNameLength
+        );
+        assert_eq!(refused(&pinned.repeat(2)), SdkAnchor::TickHook);
     }
 
     #[test]
@@ -930,7 +1008,11 @@ mod tests {
         assert!(text.contains("0xE000ED28") && text.contains("0xE000ED38"));
 
         // A changed handler is refused, not patched elsewhere.
-        assert!(fault_registers("\twhile(1);\n").is_err());
-        assert!(fault_registers(&pinned.repeat(2)).is_err());
+        for changed in ["\twhile(1);\n".to_string(), pinned.repeat(2)] {
+            assert!(matches!(
+                fault_registers(&changed),
+                Err(crate::Error::Sdk(SdkError::Anchor(SdkAnchor::FaultHandler)))
+            ));
+        }
     }
 }

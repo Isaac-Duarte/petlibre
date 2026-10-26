@@ -16,9 +16,32 @@ use std::sync::LazyLock;
 use wellfed_formats::audit::{CoreWrites, WritesAudit};
 use regex::Regex;
 
-use super::{Binutils, HEADING, elf, index, parse_hex, refuse, tool, word};
+use super::{Binutils, HEADING, elf, index, parse_hex, tool, word};
 use crate::platform::amebad::Core;
-use crate::{Result, digest, require};
+use crate::{Result, digest};
+use wellfed_formats::require;
+
+/// Why a core image links or references a flash or eFuse writer it may not.
+#[derive(Debug, thiserror::Error)]
+pub enum WritesError {
+    #[error("Forbidden flash/eFuse writer linked: {}", names.join(", "))]
+    Forbidden { names: Vec<&'static str> },
+    #[error("Missing {name}")]
+    Missing { name: &'static str },
+    #[error("Unexpected {name}")]
+    Unexpected { name: &'static str },
+    /// Callers outside the reviewed pins, by write target.
+    #[error("Unreviewed flash/eFuse write reference: {references:?}")]
+    Unreviewed {
+        references: BTreeMap<String, Vec<String>>,
+    },
+    #[error("Pinned flash/eFuse reference changed: {target}: found {found:?}, pinned {pinned:?}")]
+    Changed {
+        target: String,
+        found: Option<BTreeSet<String>>,
+        pinned: BTreeSet<String>,
+    },
+}
 
 /// Never in the image: eFuse MAC programming, eFuse-command issuers, the SDK
 /// Wi-Fi/FTL flash writers, the mbed flash write API and any shell entry.
@@ -446,22 +469,20 @@ fn audit_core(elf: &Path, objdump: &Path, core: &Rules) -> Result<CoreWrites> {
         linked.sort();
         linked
     };
-    require(
-        linked.is_empty(),
-        format!("Forbidden flash/eFuse writer linked: {}", linked.join(", ")),
-    )?;
-    require(
-        names.contains_key(core.required) == core.present,
-        format!(
-            "{}{}",
-            if core.present {
-                "Missing "
-            } else {
-                "Unexpected "
-            },
-            core.required
-        ),
-    )?;
+    require(linked.is_empty(), || WritesError::Forbidden {
+        names: linked,
+    })?;
+    require(names.contains_key(core.required) == core.present, || {
+        if core.present {
+            WritesError::Missing {
+                name: core.required,
+            }
+        } else {
+            WritesError::Unexpected {
+                name: core.required,
+            }
+        }
+    })?;
 
     let expected: BTreeMap<&str, BTreeSet<String>> = core
         .expected
@@ -484,16 +505,26 @@ fn audit_core(elf: &Path, objdump: &Path, core: &Rules) -> Result<CoreWrites> {
         })
         .filter(|(_, extra)| !extra.is_empty())
         .collect();
-    require(
-        unexpected.is_empty(),
-        format!("Unreviewed flash/eFuse write reference: {unexpected:?}"),
-    )?;
+    require(unexpected.is_empty(), || WritesError::Unreviewed {
+        references: unexpected
+            .iter()
+            .map(|(target, callers)| {
+                (
+                    (*target).clone(),
+                    callers.iter().map(|c| (*c).clone()).collect(),
+                )
+            })
+            .collect(),
+    })?;
     for (target, callers) in &expected {
         let actual = found.get(*target);
         if names.contains_key(*target) && actual != Some(callers) {
-            return refuse(format!(
-                "Pinned flash/eFuse reference changed: {target}: found {actual:?}, pinned {callers:?}"
-            ));
+            return Err(WritesError::Changed {
+                target: (*target).into(),
+                found: actual.cloned(),
+                pinned: callers.clone(),
+            }
+            .into());
         }
     }
 

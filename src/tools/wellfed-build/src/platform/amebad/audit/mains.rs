@@ -14,9 +14,46 @@ use wellfed_formats::audit::{Main, MainCalls, MainsAudit};
 use regex::Regex;
 
 use super::hooks::file_offset;
-use super::{ADDRESSED, Binutils, DIRECT_BRANCH, INSTRUCTION, elf, hex, parse_hex, refuse, tool};
+use super::{ADDRESSED, Binutils, DIRECT_BRANCH, INSTRUCTION, elf, hex, parse_hex, tool};
+use crate::Result;
 use crate::platform::amebad::Core;
-use crate::{Result, require};
+use wellfed_formats::require;
+
+/// Why a core's linked first-boot `main` differs from the reviewed one.
+/// Locations are the instruction addresses the listing names.
+#[derive(Debug, thiserror::Error)]
+pub enum MainsError {
+    #[error("Unknown/ambiguous first-boot call target")]
+    CallTarget { target: u64 },
+    #[error("Unparsed first-boot instruction")]
+    Unparsed { line: String },
+    #[error("Instruction outside first-boot main")]
+    Outside { location: u64 },
+    #[error("Unreviewed first-boot instruction: {mnemonic}")]
+    Instruction { mnemonic: String },
+    #[error("Instructions after first-boot terminal loop")]
+    AfterLoop { location: u64 },
+    #[error("Unresolved indirect branch in first-boot main")]
+    IndirectBranch { location: u64 },
+    #[error("Unresolved first-boot branch")]
+    Branch { location: u64 },
+    #[error("Unexpected branch inside first-boot main")]
+    InnerBranch { location: u64 },
+    #[error("Indirect PC write in first-boot main")]
+    PcWrite { location: u64 },
+    #[error("Unresolved first-boot ROM pointer literal")]
+    Literal { location: u64 },
+    #[error("Unexpected first-boot {} main calls: {calls:?}", core.dir())]
+    Calls { core: Core, calls: Vec<String> },
+    #[error("Expected exactly one linked first-boot main")]
+    Mains { core: Core, found: usize },
+    #[error("Veneer without its target: {name}")]
+    VeneerTarget { name: &'static str },
+    #[error("Veneer target outside the 32-bit map: {name}")]
+    VeneerRange { name: &'static str },
+    #[error("Unreviewed first-boot veneer instructions/target")]
+    Veneer { name: &'static str },
+}
 
 /// The reviewed calls of each core's `main`, in order.
 pub fn expected(core: Core) -> &'static [&'static str] {
@@ -91,7 +128,7 @@ pub fn check_main(
                     .collect();
                 match names[..] {
                     [name] => name.to_string(),
-                    _ => return refuse("Unknown/ambiguous first-boot call target"),
+                    _ => return Err(MainsError::CallTarget { target }.into()),
                 }
             }
         };
@@ -106,43 +143,43 @@ pub fn check_main(
     for line in listing.lines() {
         let Some(m) = INSTRUCTION.captures(line) else {
             if ADDRESSED.is_match(line) {
-                return refuse("Unparsed first-boot instruction");
+                return Err(MainsError::Unparsed { line: line.into() }.into());
             }
             continue;
         };
         let (location, mnemonic, operands) = (parse_hex(&m[1])?, &m[2], &m[3]);
-        require(inside(location), "Instruction outside first-boot main")?;
+        require(inside(location), || MainsError::Outside { location })?;
         if mnemonic == ".word" {
             continue;
         }
         require(
             ["push", "ldr", "ldr.w", "movs", "blx", "bl", "b.n", "nop"].contains(&mnemonic),
-            format!("Unreviewed first-boot instruction: {mnemonic}"),
+            || MainsError::Instruction {
+                mnemonic: mnemonic.into(),
+            },
         )?;
-        require(
-            !terminal_loop || mnemonic == "nop",
-            "Instructions after first-boot terminal loop",
-        )?;
+        require(!terminal_loop || mnemonic == "nop", || {
+            MainsError::AfterLoop { location }
+        })?;
         instructions += 1;
 
         if mnemonic == "blx" {
             let target = registers.get(operands.trim()).copied();
             let Some(target) = target.filter(|t| t & 1 == 1) else {
-                return refuse("Unresolved indirect branch in first-boot main");
+                return Err(MainsError::IndirectBranch { location }.into());
             };
             called(target, &mut registers)?;
             continue;
         }
         if mnemonic == "bl" || DIRECT_BRANCH.is_match(mnemonic) {
             let Some(target) = TARGET.captures(operands) else {
-                return refuse("Unresolved first-boot branch");
+                return Err(MainsError::Branch { location }.into());
             };
             let target = parse_hex(&target[1])?;
             if inside(target) {
-                require(
-                    mnemonic == "b.n" && target == location,
-                    "Unexpected branch inside first-boot main",
-                )?;
+                require(mnemonic == "b.n" && target == location, || {
+                    MainsError::InnerBranch { location }
+                })?;
                 terminal_loop = true;
                 continue;
             }
@@ -155,7 +192,7 @@ pub fn check_main(
         let destination = code.split(',').next().unwrap_or_default().trim();
         require(
             destination != "pc" && !(mnemonic == "pop" && code.contains("pc")),
-            "Indirect PC write in first-boot main",
+            || MainsError::PcWrite { location },
         )?;
         if REGISTER.is_match(destination) {
             registers.remove(destination);
@@ -163,7 +200,7 @@ pub fn check_main(
             if let Some(literal) = literal.filter(|_| mnemonic == "ldr" || mnemonic == "ldr.w") {
                 let at = ((location + 4) & !3) + literal[2].parse::<u64>().unwrap_or(u64::MAX / 2);
                 let Some(value) = literals.get(&at).filter(|_| inside(at)) else {
-                    return refuse("Unresolved first-boot ROM pointer literal");
+                    return Err(MainsError::Literal { location }.into());
                 };
                 registers.insert(destination.to_string(), *value);
             }
@@ -172,7 +209,10 @@ pub fn check_main(
 
     require(
         instructions > 0 && terminal_loop && calls == reviewed,
-        format!("Unexpected first-boot {} main calls: {calls:?}", core.dir()),
+        || MainsError::Calls {
+            core,
+            calls: calls.clone(),
+        },
     )?;
     Ok(MainCalls {
         instructions,
@@ -212,7 +252,11 @@ pub fn audit(sdk: &Path, binutils: &Binutils) -> Result<MainsAudit> {
         let elf = elf(sdk, core);
         let (symbols, mains) = listing_inputs(&elf, &objdump)?;
         let [(address, size)] = mains[..] else {
-            return refuse("Expected exactly one linked first-boot main");
+            return Err(MainsError::Mains {
+                core,
+                found: mains.len(),
+            }
+            .into());
         };
 
         let data = fs::read(&elf)?;
@@ -222,18 +266,17 @@ pub fn audit(sdk: &Path, binutils: &Binutils) -> Result<MainsAudit> {
                 continue;
             };
             let Some(&target) = symbols.get(*name) else {
-                return refuse(format!("Veneer without its target: {name}"));
+                return Err(MainsError::VeneerTarget { name }.into());
             };
             let offset = file_offset(&elf, &objdump, at, 16)?;
             let Ok(target) = u32::try_from(target | 1) else {
-                return refuse(format!("Veneer target outside the 32-bit map: {name}"));
+                return Err(MainsError::VeneerRange { name }.into());
             };
             let mut body = VENEER.to_vec();
             body.extend_from_slice(&target.to_le_bytes());
-            require(
-                data.get(offset..offset + 16) == Some(&body[..]),
-                "Unreviewed first-boot veneer instructions/target",
-            )?;
+            require(data.get(offset..offset + 16) == Some(&body[..]), || {
+                MainsError::Veneer { name }
+            })?;
             veneers.insert(at, name.to_string());
         }
 

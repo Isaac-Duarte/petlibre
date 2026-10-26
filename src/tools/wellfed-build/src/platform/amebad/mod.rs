@@ -27,12 +27,45 @@ use self::toolchain::{toolchain_lock, verify_toolchain};
 use super::{Built, Job};
 use crate::device::StockPaths;
 use crate::environment::Environment;
-use crate::{Error, Firmware, Profile, Repo, Result, Stage, digest, relative, require, text};
+use crate::{Error, Firmware, Profile, Repo, Result, Stage, digest, relative, text};
+use wellfed_formats::require;
 
 pub mod audit;
 pub(crate) mod credentials;
 pub(crate) mod sdk;
 pub(crate) mod toolchain;
+
+/// Why an AmebaD build's compiled or packaged output was refused.
+#[derive(Debug, thiserror::Error)]
+pub enum AmebadError {
+    #[error("Unknown archive core {core}")]
+    UnknownCore { core: String },
+    #[error("Rust firmware build failed")]
+    RustBuild { status: std::process::ExitStatus },
+    #[error("OTA container is shorter than its header")]
+    ShortContainer,
+    #[error("OTA container does not match the combined image")]
+    Container,
+    #[error("OTA container checksum does not match")]
+    Checksum,
+    #[error("Missing build artifact: {}", path.display())]
+    MissingArtifact { path: PathBuf },
+    /// The Rust banner is in the image exactly when the profile links Rust.
+    #[error("Linked image does not match the requested application profile")]
+    Banner,
+    #[error("Linked image is missing the source-bound startup identity")]
+    NoIdentity,
+    #[error("Linked image is missing required application/core symbols")]
+    ImageSymbols,
+    #[error("Rust archive is missing expected symbols: {}", missing.join(", "))]
+    ArchiveSymbols { core: Core, missing: Vec<String> },
+    /// The vendor recipes take minutes, and an editor may touch the tree
+    /// meanwhile.
+    #[error("Generated SDK layout override changed during compilation")]
+    OverrideChanged { path: String },
+    #[error("Firmware {firmware} needs Bluetooth, which this device does not declare")]
+    NoBluetooth { firmware: String },
+}
 
 /// The vendor project inside an SDK worktree.
 pub const PROJECT: &str = "project/realtek_amebaD_va0_example/GCC-RELEASE";
@@ -130,7 +163,7 @@ pub(crate) fn archives(recorded: &[(String, PathBuf)]) -> Result<Vec<(Core, Path
         .iter()
         .map(|(core, path)| {
             let core = Core::from_name(core)
-                .ok_or_else(|| Error::Refused(format!("Unknown archive core {core}")))?;
+                .ok_or_else(|| AmebadError::UnknownCore { core: core.clone() })?;
             Ok((core, path.clone()))
         })
         .collect()
@@ -228,7 +261,7 @@ fn build_rust(
             .stdout(log.try_clone()?)
             .stderr(log.try_clone()?)
             .status()?;
-        require(status.success(), "Rust firmware build failed")?;
+        require(status.success(), || AmebadError::RustBuild { status })?;
 
         let staged = rust_archive(sdk, core);
         fs::create_dir_all(staged.parent().unwrap_or(sdk))?;
@@ -339,9 +372,7 @@ fn check_container(ota: &[u8], combined: &[u8]) -> Result<()> {
         address,
     ] = header[..]
     else {
-        return Err(Error::Refused(
-            "OTA container is shorter than its header".into(),
-        ));
+        return Err(AmebadError::ShortContainer.into());
     };
     require(
         (version, count, magic, entry, offset, address)
@@ -355,16 +386,14 @@ fn check_container(ota: &[u8], combined: &[u8]) -> Result<()> {
             )
             && size == combined.len() as u64
             && &ota[32..] == combined,
-        "OTA container does not match the combined image",
+        || AmebadError::Container,
     )?;
 
     let sum = combined
         .iter()
         .fold(0u32, |s, b| s.wrapping_add(u32::from(*b)));
-    require(
-        u64::from(sum) == checksum,
-        "OTA container checksum does not match",
-    )
+    require(u64::from(sum) == checksum, || AmebadError::Checksum)?;
+    Ok(())
 }
 
 fn contains(haystack: &[u8], needle: &[u8]) -> bool {
@@ -472,10 +501,9 @@ impl Build<'_> {
                 .join(format!("project_{}/asdk/image", core.dir()))
                 .join(name);
             let bytes = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-            require(
-                path.is_file() && bytes > 0,
-                format!("Missing build artifact: {}", path.display()),
-            )?;
+            require(path.is_file() && bytes > 0, || {
+                AmebadError::MissingArtifact { path: path.clone() }
+            })?;
             artifacts.push(Artifact {
                 path: relative(&path, &self.job.output)?,
                 bytes,
@@ -495,17 +523,14 @@ impl Build<'_> {
 
         let rust = self.job.profile.has(Stage::Rust);
         let banner = contains(&combined, b"Wellfed local firmware: Rust bringup");
-        require(
-            banner == rust,
-            "Linked image does not match the requested application profile",
-        )?;
+        require(banner == rust, || AmebadError::Banner)?;
         require(
             !rust
                 || contains(
                     &combined,
                     format!("{} start build={} ", Tag::Start, self.job.identity).as_bytes(),
                 ),
-            "Linked image is missing the source-bound startup identity",
+            || AmebadError::NoIdentity,
         )?;
         Ok((ota, banner))
     }
@@ -525,7 +550,7 @@ impl Build<'_> {
         let names = defined(&self.binutils.nm(), &image, NmLines::Any)?;
         require(
             required.iter().all(|s| names.iter().any(|n| n == s)),
-            "Linked image is missing required application/core symbols",
+            || AmebadError::ImageSymbols,
         )?;
 
         let mut compiled = Vec::new();
@@ -538,13 +563,10 @@ impl Build<'_> {
                 .copied()
                 .collect();
             missing.sort();
-            require(
-                missing.is_empty(),
-                format!(
-                    "Rust archive is missing expected symbols: {}",
-                    missing.join(", ")
-                ),
-            )?;
+            require(missing.is_empty(), || AmebadError::ArchiveSymbols {
+                core: *core,
+                missing: missing.iter().map(|s| s.to_string()).collect(),
+            })?;
 
             compiled.push(CompiledArchive {
                 core: core.name().into(),
@@ -564,10 +586,9 @@ impl Build<'_> {
         let job = self.job;
         (job.recheck)()?;
         for (path, checksum) in overrides {
-            require(
-                &digest(&self.sdk.join(path))? == checksum,
-                "Generated SDK layout override changed during compilation",
-            )?;
+            require(&digest(&self.sdk.join(path))? == checksum, || {
+                AmebadError::OverrideChanged { path: path.clone() }
+            })?;
         }
         check_sdk_worktree(&self.sdk, job.profile)?;
 
@@ -638,10 +659,10 @@ impl Amebad {
             return Ok(None);
         }
         let Some(source) = &self.bluetooth else {
-            return Err(Error::Refused(format!(
-                "Firmware {} needs Bluetooth, which this device does not declare",
-                firmware.name()
-            )));
+            return Err(AmebadError::NoBluetooth {
+                firmware: firmware.name().into(),
+            }
+            .into());
         };
         Ok(Some(source))
     }

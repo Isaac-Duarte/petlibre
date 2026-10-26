@@ -20,9 +20,14 @@
 //!
 //! A cut write beside a record at rest can only be the next reservation,
 //! cut short or since decayed. It is resolved the same way, as uncertain
-//! under the ID after the high water, so a power cut anywhere in a
-//! reservation's write never faults the journal and never lets its ID be
-//! reused: the reservation is written first, then its result.
+//! under the ID after the high water (the reservation first, then its
+//! result), so a power cut anywhere in a reservation's write never faults
+//! the journal. Usually that reservation never committed, so the motor never
+//! ran and no client holds its ID: the uncertain result is conservative. A
+//! cut late in the stand-in's own erase leaves its unit erased, and the
+//! journal reopens at the record at rest, where the ID is reserved again:
+//! harmless for a reservation that never committed; only a decayed
+//! committed one, cut there too, could be forgotten.
 
 use core::ffi::c_uint;
 
@@ -403,12 +408,14 @@ impl<I: SlotIo> FeedJournal<I> {
     /// The reservation a cut write beside `rest`, a record at rest, stands
     /// for. The unit after a record at rest is written next only by a
     /// reservation, so the cut write is that reservation cut short, or
-    /// committed and since decayed: the feed may have been handed out (the
-    /// device API answers with its ID before the reservation lands) or may
+    /// committed and since decayed. Cut short is the usual case: the motor
+    /// never ran, and since the device API answers `Feeding` only once the
+    /// reservation is durable, no client holds its ID. A decayed one may
     /// have moved. Either way it resolves as uncertain, under the ID after
-    /// the high water, which is the one the loop always reserves next, so
-    /// the ID is never reused and the feed never retried. The request's
-    /// size is lost with the record; it stands as the most a feed may ask.
+    /// the high water, which is the one the loop always reserves next, and
+    /// the feed is never retried: a conservative result, usually a false
+    /// positive. The request's size is lost with the record; it stands as
+    /// the most a feed may ask.
     ///
     /// `None` where no reservation can follow `rest` (a double bowl whose
     /// phase is unknown, a worn or exhausted journal): the cut write is
@@ -582,8 +589,10 @@ impl<I: SlotIo> FeedJournal<I> {
             return None;
         }
         // A cut reservation is written over its cut unit first, so the
-        // result can replace the record at rest: a cut of either write
-        // reads as this same reservation again.
+        // result can replace the record at rest: a cut of either write reads
+        // as this same reservation again, except a cut late in this erase,
+        // which leaves the unit erased and the journal back at the record at
+        // rest (harmless unless the lost reservation had committed).
         if self.unwritten {
             let intent = self.view;
             if !self.write_record(1 - self.slot, &intent, Prepare::Erase) {

@@ -675,6 +675,8 @@ pub enum FeedOutcome {
     Failed,
     /// The feeder stopped without recording a result: it may have
     /// dispensed anything up to `requested`. Never retried automatically.
+    /// When a power cut lost the reservation itself, `requested` is the
+    /// feeder's cap on one feed, not what was asked.
     Uncertain,
 }
 

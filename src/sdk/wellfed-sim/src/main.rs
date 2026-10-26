@@ -546,7 +546,7 @@ fn turn_rotor() {
         } else if (*world).drive_ms <= u64::from(c.surge_ms) {
             c.surge_adc
         } else {
-            c.drive_adc
+            (*world).plant.drive_reading()
         };
         let reading = (*world).held_current.unwrap_or(reading);
         fake::with(|h| h.current_adc = reading);

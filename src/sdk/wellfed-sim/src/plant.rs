@@ -49,9 +49,11 @@ pub struct PlantConfig {
     /// How long a drive's start-up surge reads, from the drive's start: the
     /// 17 ms reading, and no more than one 20 ms poll period.
     pub surge_ms: u32,
-    /// The current channel's raw readings: the surge, driving, and stopped.
+    /// The current channel's raw readings: the surge, driving (a floor and
+    /// a ripple above it, skewed toward the floor), and stopped.
     pub surge_adc: u16,
     pub drive_adc: u16,
+    pub ripple_adc: u16,
     pub idle_adc: u16,
 }
 
@@ -71,9 +73,12 @@ impl Default for PlantConfig {
             bounce_ms: 2,
             surge_ms: 20,
             // Raw readings for the default calibration (offset 2480, gain
-            // 12050): 650 scales to 334, 320 to 59, 16 to 0.
+            // 12050): 650 scales to 334, 16 to 0. Driving empty, feeds read
+            // a mean of 59-64 and a maximum of 164-168: a floor of 280 (26)
+            // with a ripple up to 450 (167) averages 322 (61).
             surge_adc: 650,
-            drive_adc: 320,
+            drive_adc: 280,
+            ripple_adc: 170,
             idle_adc: 16,
         }
     }
@@ -129,6 +134,9 @@ pub struct Plant {
     rise_last: i64,
 }
 
+/// Separates the ripple's draws from the marks'.
+const RIPPLE: u64 = 0x6375_7272_656e_7421;
+
 /// SplitMix64: a fixed, portable draw per seed and index.
 fn draw(seed: u64, index: u64) -> u64 {
     let mut z = seed ^ index.wrapping_mul(0x9e37_79b9_7f4a_7c15);
@@ -177,6 +185,17 @@ impl Plant {
 
     pub fn position_ms(&self) -> i64 {
         self.position_ms
+    }
+
+    /// The current channel while driving here: the floor, plus a ripple
+    /// drawn per position, cubed toward the floor so its mean stays a
+    /// quarter of the way up and its peaks are rare.
+    pub fn drive_reading(&self) -> u16 {
+        let c = self.config;
+        let x = draw(c.seed ^ RIPPLE, self.position_ms.cast_unsigned()) % 1001;
+        let up = u64::from(c.ripple_adc) * x * x * x / 1_000_000_000;
+        let up = u16::try_from(up).expect("at most the ripple");
+        c.drive_adc.saturating_add(up)
     }
 
     /// PA18's level here.
@@ -419,6 +438,25 @@ mod tests {
         let again = |config| run(&mut Plant::new(config, 0), 9_074 * 400, Turn::Forward);
         assert_ne!(again(other), flips);
         assert_eq!(again(config), flips);
+    }
+
+    #[test]
+    fn the_driving_current_ripples_as_the_feeds_read() {
+        let config = PlantConfig::default();
+        let scaled = |raw: u16| (u32::from(raw) * 10).saturating_sub(2480) * 1000 / 12050;
+        let mut plant = Plant::new(config, 0);
+        let readings: Vec<u32> = (0..27_000)
+            .map(|_| {
+                plant.drive(Turn::Forward);
+                scaled(plant.drive_reading())
+            })
+            .collect();
+        let max = readings.iter().copied().max().unwrap();
+        let mean = readings.iter().sum::<u32>() / 27_000;
+        assert!((160..=168).contains(&max), "{max}");
+        assert!((56..=66).contains(&mean), "{mean}");
+        // Never near the 300 limit: only the surge reaches it.
+        assert!(max < 300);
     }
 
     #[test]

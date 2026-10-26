@@ -42,18 +42,20 @@ use wellfed_device_api::wifi::Credentials;
 use wellfed_feeder::feeder::Platform;
 use wellfed_feeder::feeder::platform::{
     Accepted, BleDrop, BleStep, Boot, Check, Datagram, DriverStep, EventSlot, EventsFill, Link,
-    Received, TaskCount, TaskStack,
+    Received, TaskCount, TaskStack, TraceRead, TracesFill,
 };
 use wellfed_feeder::store::clients::{ClientError, ClientStore};
 use wellfed_feeder::store::events::{BODY_BYTES, EventLog, Read};
 use wellfed_feeder::store::net::NetStore;
 use wellfed_feeder::store::settings::{Settings, SettingsStatus, SettingsStore};
 use wellfed_feeder::store::time::TimeStore;
+use wellfed_feeder::store::traces::{self, TraceRing};
 use wellfed_hal::interlock::INTERLOCK;
 use wellfed_hal::ota::mailbox::{self, Request};
 use wellfed_hal::ota::signers;
 use wellfed_hal::sdk::LOG_TAIL_BYTES;
 use wellfed_proto::api::{self as proto, Capabilities, FLASH_SECTORS, TASKS_MAX};
+use wellfed_proto::trace::PAGE_MAX;
 use tokio::net::{TcpStream, UdpSocket};
 
 use crate::flash::{Flash, Region};
@@ -254,6 +256,11 @@ impl SimPlatform {
         Ok(platform)
     }
 
+    /// The trace ring's sectors.
+    fn traces(&self) -> Region {
+        Region::new(&self.flash, storage::TRACES)
+    }
+
     /// The identity secret the client store holds.
     pub fn identity(&self) -> Option<&[u8; 32]> {
         self.clients.identity()
@@ -446,12 +453,14 @@ impl Platform for SimPlatform {
 
     fn capabilities(&self) -> Capabilities {
         // No motor: the server refuses feeds before they reach the owner,
-        // and the status says why (`Unserved`).
+        // and the status says why (`Unserved`). It records no trace either,
+        // but serves the ones its storage ring holds.
         Capabilities::UPDATE
             .union(Capabilities::READINESS)
             .union(Capabilities::TIME)
             .union(Capabilities::LOG)
             .union(Capabilities::STATS)
+            .union(Capabilities::TRACES)
     }
 
     fn reset(&mut self) {
@@ -844,6 +853,26 @@ impl Platform for SimPlatform {
             kept: self.events.kept(),
             capacity: self.events.capacity(),
         }
+    }
+
+    fn traces_fill(&self) -> TracesFill {
+        let mut ring = TraceRing::default();
+        ring.open(self.traces(), storage::TRACES.count as usize);
+        TracesFill {
+            kept: ring.kept(),
+            capacity: ring.capacity(),
+            unsaved: 0,
+        }
+    }
+
+    fn trace_page(
+        &mut self,
+        feed: u32,
+        offset: u16,
+        out: &mut [u8; PAGE_MAX],
+    ) -> Result<TraceRead, proto::Refusal> {
+        let units = storage::TRACES.count as usize;
+        traces::page(&self.traces(), units, feed, offset, out)
     }
 
     fn ble_restart(&mut self) {}

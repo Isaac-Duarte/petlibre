@@ -242,6 +242,7 @@ impl Server {
                 section: StatsSection::Memory,
             } if self.feeding || device.feed_active() => Reply::Refused(Refusal::Busy),
             Action::Stats { section } => return Some(Reply::Stats(section)),
+            Action::FeedTrace { feed, offset } => return Some(Reply::FeedTrace { feed, offset }),
         };
         Some(self.remember(memory, id, action, outcome))
     }
@@ -495,6 +496,10 @@ pub(super) enum Action {
     Stats {
         section: StatsSection,
     },
+    FeedTrace {
+        feed: u32,
+        offset: u16,
+    },
     /// A field failed the stores' checks before anything ran.
     Invalid,
 }
@@ -589,6 +594,7 @@ impl From<Op<'_>> for Action {
             }
             Op::TailLog { after } => Self::TailLog { after },
             Op::Stats { section } => Self::Stats { section },
+            Op::FeedTrace { feed, offset } => Self::FeedTrace { feed, offset },
         }
     }
 }
@@ -610,6 +616,7 @@ impl Action {
                 | Self::GetTime
                 | Self::TailLog { .. }
                 | Self::Stats { .. }
+                | Self::FeedTrace { .. }
         )
     }
 
@@ -638,6 +645,7 @@ impl Action {
             Self::PutTime { .. } => "put-time",
             Self::TailLog { .. } => "tail-log",
             Self::Stats { .. } => "stats",
+            Self::FeedTrace { .. } => "feed-trace",
             Self::Invalid => "invalid",
         }
     }
@@ -658,6 +666,11 @@ pub(super) enum Reply {
     /// The time view, read when the answer is sealed.
     Time,
     Stats(StatsSection),
+    /// A trace's page, read when the answer is sealed.
+    FeedTrace {
+        feed: u32,
+        offset: u16,
+    },
 }
 
 fn saturate(jump_ms: i64) -> i32 {
@@ -681,6 +694,7 @@ impl Name for Reply {
             Self::Update(_) => "update",
             Self::Time => "time",
             Self::Stats(_) => "stats",
+            Self::FeedTrace { .. } => "feed-trace",
             Self::Refused(refusal) => match refusal {
                 Refusal::Forbidden => "forbidden",
                 Refusal::Stale { .. } => "stale",

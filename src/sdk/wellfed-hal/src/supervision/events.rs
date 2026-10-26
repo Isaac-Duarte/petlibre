@@ -98,7 +98,18 @@ pub struct FeedbackEdges {
     pub first_at: Option<u32>,
     /// The first `EDGE_LOG` edges: the supervisor's clock and the level after.
     pub log: [Option<(u32, bool)>; EDGE_LOG],
+    /// The latest edge, the same way.
+    pub last: Option<(u32, bool)>,
     pub pins: PinWatch,
+}
+
+/// The edge counts and the latest edge, without the pin watch: what a
+/// trace reads each poll.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct EdgeTally {
+    pub rising: u16,
+    pub falling: u16,
+    pub last: Option<(u32, bool)>,
 }
 
 /// How many feedback edges a feed keeps the time of.
@@ -682,6 +693,7 @@ impl EventsState {
             if let Some(slot) = edges.log.iter_mut().find(|slot| slot.is_none()) {
                 *slot = Some((value, high));
             }
+            edges.last = Some((value, high));
             if !self.feedback.push(value, high) {
                 self.fail(EventsFault::Feedback);
             }
@@ -708,6 +720,15 @@ impl Events {
     /// The feedback edges since capture was last enabled.
     pub fn edges(&self) -> FeedbackEdges {
         self.with(|state| state.edges)
+    }
+
+    /// The same counts and the latest edge, a few words to copy each poll.
+    pub fn edge_tally(&self) -> EdgeTally {
+        self.with(|state| EdgeTally {
+            rising: state.edges.rising,
+            falling: state.edges.falling,
+            last: state.edges.last,
+        })
     }
 
     /// Whether `open` succeeded and `close` has not.

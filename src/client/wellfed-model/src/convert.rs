@@ -17,6 +17,10 @@ use crate::{
     Status, TaskStack, TimeSource, TimeSync, TimeView, Tune, UpdatePhase, UpdateRefusal,
     UpdateStop, UpdateView, WifiSource, setup,
 };
+use crate::{
+    CurrentUnit, FeedStats, Malformed, Trace, TraceEntry, TraceMotor, TracePage, TraceSummary,
+};
+use wellfed_proto::trace as proto_trace;
 
 /// One log batch: its text is whole lines, each ending in `\n`.
 pub fn log(seq: u32, dropped: u32, text: &str) -> LogLines {
@@ -529,7 +533,124 @@ impl From<proto::Outcome<'_>> for Answer {
             }),
             proto::Outcome::Time(view) => Self::Time(view.into()),
             proto::Outcome::Stats(stats) => Self::Stats(stats.into()),
+            proto::Outcome::FeedTrace(page) => Self::FeedTrace(page.into()),
         }
+    }
+}
+
+impl From<proto::CurrentUnit> for CurrentUnit {
+    fn from(unit: proto::CurrentUnit) -> Self {
+        match unit {
+            proto::CurrentUnit::Scaled => Self::Scaled,
+            proto::CurrentUnit::MilliAmps => Self::MilliAmps,
+        }
+    }
+}
+
+impl From<proto::TraceSummary> for TraceSummary {
+    fn from(summary: proto::TraceSummary) -> Self {
+        let proto::TraceSummary {
+            feed,
+            requested,
+            completed,
+            outcome,
+            reason,
+            drive_ms,
+            samples,
+            unit,
+            current_peak,
+            current_mean,
+            rising,
+            falling,
+            first_edge_ms,
+            beam_breaks,
+            reversals,
+            battery_rest_mv,
+            battery_min_mv,
+            stride,
+            truncated,
+        } = summary;
+        Self {
+            feed,
+            requested,
+            completed,
+            outcome: outcome.into(),
+            reason: reason.into(),
+            drive_ms,
+            samples,
+            unit: unit.into(),
+            current_peak,
+            current_mean,
+            rising,
+            falling,
+            first_edge_ms,
+            beam_breaks,
+            reversals,
+            battery_rest_mv,
+            battery_min_mv,
+            stride,
+            truncated,
+        }
+    }
+}
+
+impl From<proto::TracePage<'_>> for TracePage {
+    fn from(page: proto::TracePage<'_>) -> Self {
+        let proto::TracePage {
+            summary,
+            stored,
+            offset,
+            total,
+            bytes,
+        } = page;
+        Self {
+            summary: summary.into(),
+            stored,
+            offset,
+            total,
+            bytes: bytes.to_vec(),
+        }
+    }
+}
+
+impl From<proto_trace::Entry> for TraceEntry {
+    fn from(entry: proto_trace::Entry) -> Self {
+        match entry {
+            proto_trace::Entry::Current { at_ms, value } => Self::Current { at_ms, value },
+            proto_trace::Entry::Mark { at_ms, edges, high } => Self::Mark { at_ms, edges, high },
+            proto_trace::Entry::Beams {
+                at_ms,
+                outlet_clear,
+                food,
+            } => Self::Beams {
+                at_ms,
+                outlet_clear,
+                food,
+            },
+            proto_trace::Entry::Battery { at_ms, mv } => Self::Battery { at_ms, mv },
+            proto_trace::Entry::Motor { at_ms, motor } => Self::Motor {
+                at_ms,
+                motor: match motor {
+                    proto_trace::Motor::Stop => TraceMotor::Stop,
+                    proto_trace::Motor::Drive0 => TraceMotor::Drive0,
+                    proto_trace::Motor::Drive1 => TraceMotor::Drive1,
+                },
+            },
+        }
+    }
+}
+
+impl Trace {
+    /// A whole trace from its summary and its body's bytes.
+    pub fn decode(summary: TraceSummary, stored: bool, body: &[u8]) -> Result<Self, Malformed> {
+        let entries = proto_trace::Reader::new(body)
+            .map(|entry| entry.map(TraceEntry::from).map_err(|_| Malformed))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self {
+            summary,
+            stored,
+            entries,
+        })
     }
 }
 
@@ -541,6 +662,7 @@ impl From<StatsSection> for proto::StatsSection {
             StatsSection::Flash => Self::Flash,
             StatsSection::Power => Self::Power,
             StatsSection::Food => Self::Food,
+            StatsSection::Feeds => Self::Feeds,
         }
     }
 }
@@ -607,6 +729,37 @@ impl From<proto::Stats<'_>> for Stats {
                 emptied,
                 refilled,
                 feeds_since_refill,
+            }),
+            proto::Stats::Feeds(proto::FeedStats {
+                traced,
+                drive_ms,
+                samples,
+                unit,
+                current_peak,
+                current_mean,
+                rising,
+                falling,
+                beam_breaks,
+                reversals,
+                kept,
+                capacity,
+                unsaved,
+                last,
+            }) => Self::Feeds(FeedStats {
+                traced,
+                drive_ms,
+                samples,
+                unit: unit.into(),
+                current_peak,
+                current_mean,
+                rising,
+                falling,
+                beam_breaks,
+                reversals,
+                kept,
+                capacity,
+                unsaved,
+                last: last.map(TraceSummary::from),
             }),
         }
     }
@@ -921,6 +1074,10 @@ impl Op {
             Self::Stats { section } => proto::Op::Stats {
                 section: (*section).into(),
             },
+            Self::FeedTrace { feed, offset } => proto::Op::FeedTrace {
+                feed: *feed,
+                offset: *offset,
+            },
         }
     }
 }
@@ -979,6 +1136,7 @@ impl From<proto::Capabilities> for Capabilities {
             log: bits.contains(proto::Capabilities::LOG),
             stats: bits.contains(proto::Capabilities::STATS),
             readiness: bits.contains(proto::Capabilities::READINESS),
+            traces: bits.contains(proto::Capabilities::TRACES),
         }
     }
 }
@@ -992,6 +1150,7 @@ impl From<Capabilities> for proto::Capabilities {
             log,
             stats,
             readiness,
+            traces,
         } = capabilities;
         let mut bits = proto::Capabilities::V1.0;
         if feed {
@@ -1011,6 +1170,9 @@ impl From<Capabilities> for proto::Capabilities {
         }
         if readiness {
             bits |= proto::Capabilities::READINESS.0;
+        }
+        if traces {
+            bits |= proto::Capabilities::TRACES.0;
         }
         Self(bits)
     }

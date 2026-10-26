@@ -13,7 +13,8 @@
 //!   times, the gateway's round trip and the access point, every 30 s) for
 //!   subscribers, and the boot's and lost records' events;
 //! - the statistics ([`Keeper`]): what the pass sees goes in, and the
-//!   `Stats` op reads it out.
+//!   `Stats` op reads it out; the `FeedTrace` op reads a feed's trace from
+//!   the platform a page at a time.
 //!
 //! [`FeederDevice`] is the server's view of the rest of the feeder: the
 //! platform's mailboxes and clock, the panel's lock and the feeding owner.
@@ -28,8 +29,10 @@ use wellfed_core::ota::offer::{KeyStatement, key_id};
 use wellfed_core::tone::Tune;
 use wellfed_proto::api::{
     self as proto, Capabilities, EventBody, Metric, PORT, Readiness, Refusal, Sample, Source,
-    Stats, StatsSection, Status, TASKS_MAX, TaskStack as WireTask, UpdateRefusal, UpdateView,
+    Stats, StatsSection, Status, TASKS_MAX, TaskStack as WireTask, TracePage, UpdateRefusal,
+    UpdateView,
 };
+use wellfed_proto::trace::PAGE_MAX;
 use wellfed_session::noise::Keypair;
 
 use super::Feeds;
@@ -181,6 +184,8 @@ pub struct Serve<S> {
     stats: Keeper,
     /// The task stacks a memory answer borrows its names from.
     tasks: TaskCache,
+    /// The trace page an answer borrows its bytes from.
+    page: [u8; PAGE_MAX],
     packet: [u8; mdns::PACKET],
     reply: [u8; mdns::PACKET],
     time: Time<S>,
@@ -208,6 +213,7 @@ impl<S: Copy> Serve<S> {
             failed: 0,
             stats: Keeper::new(),
             tasks: TaskCache::new(),
+            page: [0; PAGE_MAX],
             packet: [0; mdns::PACKET],
             reply: [0; mdns::PACKET],
             time: Time::new(),
@@ -229,9 +235,10 @@ impl<S: Copy> Serve<S> {
         &mut self.stats
     }
 
-    /// The statistics and the buffer a memory answer borrows from.
-    pub(super) fn stats_parts(&mut self) -> (&mut Keeper, &mut TaskCache) {
-        (&mut self.stats, &mut self.tasks)
+    /// The statistics and the buffers a memory or trace answer borrows
+    /// from.
+    pub(super) fn stats_parts(&mut self) -> (&mut Keeper, &mut TaskCache, &mut [u8; PAGE_MAX]) {
+        (&mut self.stats, &mut self.tasks, &mut self.page)
     }
 
     /// This boot's facts, read once.
@@ -328,6 +335,7 @@ impl<S: Copy> Serve<S> {
             ntp_last: self.time.last(),
             stats: &mut self.stats,
             tasks: &mut self.tasks,
+            page: &mut self.page,
             call: None,
         };
         let busy = self.server.step(
@@ -610,6 +618,8 @@ pub struct FeederDevice<'a, P, F> {
     pub(super) ntp_last: Option<NtpResult>,
     pub(super) stats: &'a mut Keeper,
     pub(super) tasks: &'a mut TaskCache,
+    /// The page a trace answer borrows its bytes from.
+    pub(super) page: &'a mut [u8; PAGE_MAX],
     /// The feed a client queued, and its feed call's request.
     pub(super) call: Option<(u32, PlayResult)>,
 }
@@ -854,7 +864,19 @@ impl<P: Platform, F: Feeds> Device for FeederDevice<'_, P, F> {
             }
             StatsSection::Power => Stats::Power(self.stats.power_stats()),
             StatsSection::Food => Stats::Food(self.stats.food_stats()),
+            StatsSection::Feeds => Stats::Feeds(self.stats.feed_stats(self.platform.traces_fill())),
         }
+    }
+
+    fn feed_trace(&mut self, feed: u32, offset: u16) -> Result<TracePage<'_>, Refusal> {
+        let read = self.platform.trace_page(feed, offset, self.page)?;
+        Ok(TracePage {
+            summary: read.summary,
+            stored: read.stored,
+            offset,
+            total: read.total,
+            bytes: self.page.get(..read.len).unwrap_or(&[]),
+        })
     }
 
     fn update(&mut self, request: UpdateRequest<'_>) -> Result<u32, Refusal> {

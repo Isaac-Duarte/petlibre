@@ -5,6 +5,7 @@ use wellfed_core::HALF_RANGE;
 use wellfed_core::feed::controller::{
     FeedController, FeedReason, FeedRequest, FeedStartResult, FeedState, MotorCommand,
 };
+use wellfed_core::feed::observe::{Beams, Observation};
 use wellfed_core::feed::progress::{BowlMode, Direction};
 use wellfed_core::feed::sensor_inputs::{SensorInputs, SensorReading};
 use wellfed_core::feed::storage::{OwnerOutcome, OwnerResult, OwnerStorage};
@@ -428,6 +429,7 @@ impl<S: OwnerStorage> OwnerTask<S> {
             self.optics_started = false;
             self.trace = FeedTrace::default();
             self.drive_at = None;
+            self.observation = None;
             self.result = OwnerResult {
                 id: self.request.id,
                 requested: self.request.portions,
@@ -484,19 +486,45 @@ impl<S: OwnerStorage> OwnerTask<S> {
 
         // The owner holds the ADC, so its captures stand in for the
         // runtime's power monitor.
-        if valid && let Some(pin_mv) = self.board().view().calibration.scale_16(&raw.battery) {
+        let pin_mv = valid
+            .then(|| self.board().view().calibration.scale_16(&raw.battery))
+            .flatten();
+        if let Some(pin_mv) = pin_mv {
             power::publish(pin_mv, raw.dc_present, uptime);
         }
 
+        let active = self.active_phase();
         // Cancellation has priority over feedback captured during acquisition.
-        if (self.state == OwnerState::Feeding || self.state == OwnerState::Preparing)
-            && self.cancelled()
-        {
+        let observed = if active && self.cancelled() {
             self.controller.cancel(self.request.id);
             self.reporting(OwnerOutcome::Cancelled, FeedReason::Cancelled);
-            return valid;
+            valid
+        } else {
+            valid && self.events().observe(&mut self.controller, &self.sensors)
+        };
+
+        if active {
+            let beams = (valid && raw.gpio_valid && raw.optics_enabled).then_some(Beams {
+                outlet_clear: raw.outlet_high,
+                food: !raw.food_high,
+            });
+            let edges = self.events().edge_tally();
+            self.observation = Some(Observation {
+                at_ms: started,
+                drive_at_ms: self.drive_at,
+                current: self
+                    .sensors
+                    .current_valid
+                    .then_some(self.sensors.current_scaled),
+                battery_mv: pin_mv.and_then(power::pack_mv),
+                beams,
+                rising: edges.rising,
+                falling: edges.falling,
+                last_edge: edges.last,
+                motor: self.controller.motor,
+            });
         }
-        valid && self.events().observe(&mut self.controller, &self.sensors)
+        observed
     }
 
     fn prepare(&mut self) {

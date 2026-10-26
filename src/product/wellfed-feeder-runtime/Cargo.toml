@@ -16,6 +16,7 @@ wellfed-core.workspace = true
 wellfed-device-api.workspace = true
 wellfed-feeder.workspace = true
 wellfed-hal.workspace = true
+wellfed-proto.workspace = true
 wellfed-sdk.workspace = true
 
 [lints]

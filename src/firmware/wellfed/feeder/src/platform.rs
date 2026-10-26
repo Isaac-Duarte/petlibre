@@ -15,6 +15,7 @@ use wellfed_core::clock::wall::{Fix, Jump, Origin, State as ClockState, Sync, Sy
 use wellfed_core::clock::zone::Rule;
 use wellfed_core::log_tail::Batch as LogBatch;
 use wellfed_core::ota::install::{Answer, Progress, Refused};
+use wellfed_core::store::slot::SlotIo;
 use wellfed_core::tone::Tune;
 use wellfed_device_api::clients::{CLIENTS, Client};
 use wellfed_device_api::mailbox::{
@@ -25,11 +26,13 @@ use wellfed_device_api::wifi::Credentials;
 use wellfed_feeder::feeder::Platform;
 use wellfed_feeder::feeder::platform::{
     Accepted, BleDrop, BleLink, BleStep, Boot, Check, Datagram, DriverRecord, DriverStep,
-    EventSlot, EventsFill, Link, Received, TaskCount, TaskStack,
+    EventSlot, EventsFill, Link, Received, TaskCount, TaskStack, TraceRead, TracesFill,
 };
+use wellfed_feeder::store;
 use wellfed_feeder::store::events::{BODY_BYTES, Read};
-use wellfed_feeder_runtime::{events, keys, network, stats, time};
-use wellfed_proto::api::{Capabilities, Erases, FLASH_SECTORS, Power, TASKS_MAX};
+use wellfed_feeder_runtime::{events, keys, network, stats, time, traces};
+use wellfed_proto::api::{Capabilities, Erases, FLASH_SECTORS, Power, Refusal, TASKS_MAX};
+use wellfed_proto::trace::PAGE_MAX;
 use wellfed_sdk::hal::audio::{self, Speaker};
 use wellfed_sdk::hal::ble::{self, BleSetup, DropReason};
 use wellfed_sdk::hal::interlock::INTERLOCK;
@@ -37,6 +40,7 @@ use wellfed_sdk::hal::leds::{self, Decision, Led};
 use wellfed_sdk::hal::ota::mailbox::{self, Request};
 use wellfed_sdk::hal::sdk::{self, ApiRecv};
 use wellfed_sdk::hal::{clock, net_status, power, rng, settings, startup};
+use wellfed_sdk::storage::{TRACES_BASE, TRACES_UNITS};
 
 /// What the board's own drivers record: `PLBLE1` for setup mode's link,
 /// `PLAUD1` for its speaker.
@@ -87,6 +91,35 @@ impl Default for Plaf103 {
     }
 }
 
+/// The trace ring as the loop reads it: mapped flash, which takes no
+/// lease. The settings writer alone appends to it, and a lease holds every
+/// other task off the flash, so a read never lands inside a program or an
+/// erase; one between an append's two programs fails its checksum.
+#[derive(Clone, Copy, Debug)]
+struct TraceReads;
+
+impl SlotIo for TraceReads {
+    fn unit_bytes(&self) -> u32 {
+        sdk::SECTOR_BYTES
+    }
+
+    fn read(&self, slot: u32, offset: u32, bytes: &mut [u8]) -> bool {
+        slot < TRACES_UNITS && sdk::storage_read(TRACES_BASE + slot, offset, bytes)
+    }
+
+    fn program(&self, _: u32, _: u32, _: &[u8]) -> bool {
+        false
+    }
+
+    fn erase(&self, _: u32) -> bool {
+        false
+    }
+
+    fn writable(&self) -> bool {
+        false
+    }
+}
+
 impl Platform for Plaf103 {
     type Socket = i32;
     type Record = Driver;
@@ -115,6 +148,7 @@ impl Platform for Plaf103 {
             .union(Capabilities::LOG)
             .union(Capabilities::STATS)
             .union(Capabilities::READINESS)
+            .union(Capabilities::TRACES)
     }
 
     fn reset(&mut self) {
@@ -399,6 +433,23 @@ impl Platform for Plaf103 {
 
     fn events_fill(&self) -> EventsFill {
         stats::fill()
+    }
+
+    fn traces_fill(&self) -> TracesFill {
+        traces::fill()
+    }
+
+    /// The latest feed's trace from RAM, any other from the storage ring.
+    fn trace_page(
+        &mut self,
+        feed: u32,
+        offset: u16,
+        out: &mut [u8; PAGE_MAX],
+    ) -> Result<TraceRead, Refusal> {
+        if let Some(read) = traces::page(feed, offset, out) {
+            return read;
+        }
+        store::traces::page(&TraceReads, TRACES_UNITS as usize, feed, offset, out)
     }
 
     fn ble_restart(&mut self) {

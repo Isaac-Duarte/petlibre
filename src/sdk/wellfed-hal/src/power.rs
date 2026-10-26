@@ -162,9 +162,14 @@ pub fn health(now_ms: u32) -> Option<PowerHealth> {
     let pin_mv = packed & MV_MASK;
     Some(PowerHealth {
         adapter: packed & ADAPTER != 0,
-        battery_mv: (pin_mv >= NO_PACK_PIN_MV).then(|| pin_mv * DIVIDER_PER_MILLE / 1000),
+        battery_mv: pack_mv(pin_mv),
         age_ms,
     })
+}
+
+/// The pack's millivolts from the pin's, `None` when no pack is fitted.
+pub fn pack_mv(pin_mv: u32) -> Option<u32> {
+    (pin_mv >= NO_PACK_PIN_MV).then(|| pin_mv.min(MV_MASK) * DIVIDER_PER_MILLE / 1000)
 }
 
 /// Tests only: forget the published sample.

@@ -119,8 +119,52 @@ fn widest(section: StatsSection) -> Stats<'static> {
             refilled: u32::MAX,
             feeds_since_refill: Some(u32::MAX),
         }),
+        StatsSection::Feeds => Stats::Feeds(proto::FeedStats {
+            traced: u32::MAX,
+            drive_ms: u32::MAX,
+            samples: u32::MAX,
+            unit: proto::CurrentUnit::MilliAmps,
+            current_peak: u32::MAX,
+            current_mean: Some(u32::MAX),
+            rising: u32::MAX,
+            falling: u32::MAX,
+            beam_breaks: u32::MAX,
+            reversals: u32::MAX,
+            kept: u32::MAX,
+            capacity: u32::MAX,
+            unsaved: u32::MAX,
+            last: Some(widest_summary()),
+        }),
     }
 }
+
+/// A trace's summary at its widest.
+fn widest_summary() -> proto::TraceSummary {
+    proto::TraceSummary {
+        feed: u32::MAX,
+        requested: u8::MAX,
+        completed: u8::MAX,
+        outcome: proto::FeedOutcome::Uncertain,
+        reason: proto::FeedReason::Output,
+        drive_ms: u32::MAX,
+        samples: u32::MAX,
+        unit: proto::CurrentUnit::MilliAmps,
+        current_peak: u32::MAX,
+        current_mean: Some(u32::MAX),
+        rising: u16::MAX,
+        falling: u16::MAX,
+        first_edge_ms: Some(u32::MAX),
+        beam_breaks: u16::MAX,
+        reversals: u16::MAX,
+        battery_rest_mv: Some(u16::MAX),
+        battery_min_mv: Some(u16::MAX),
+        stride: u16::MAX,
+        truncated: true,
+    }
+}
+
+/// The widest trace page: a whole page of body, at the largest offset.
+static TRACE_PAGE: [u8; wellfed_proto::trace::PAGE_MAX] = [0xff; wellfed_proto::trace::PAGE_MAX];
 
 impl Device for Fake {
     fn random(&mut self, out: &mut [u8; 32]) -> bool {
@@ -229,10 +273,21 @@ impl Device for Fake {
             .union(Capabilities::TIME)
             .union(Capabilities::STATS)
             .union(Capabilities::LOG)
+            .union(Capabilities::TRACES)
     }
 
     fn stats(&mut self, section: StatsSection, _now_ms: u32) -> Stats<'_> {
         widest(section)
+    }
+
+    fn feed_trace(&mut self, _feed: u32, offset: u16) -> Result<proto::TracePage<'_>, Refusal> {
+        Ok(proto::TracePage {
+            summary: widest_summary(),
+            stored: true,
+            offset,
+            total: u16::MAX,
+            bytes: &TRACE_PAGE,
+        })
     }
 
     fn feed(&mut self, _portions: u8, _by: proto::Source) -> Result<u32, Refusal> {

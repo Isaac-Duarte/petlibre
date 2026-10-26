@@ -264,6 +264,13 @@ impl Server {
                 };
                 return self.seal_and_send(index, &message);
             }
+            Reply::FeedTrace { feed, offset } => {
+                let result = match device.feed_trace(feed, offset) {
+                    Ok(page) => Outcome::FeedTrace(page),
+                    Err(refusal) => Outcome::Refused(refusal),
+                };
+                return self.seal_and_send(index, &FeederMessage::Response { id, result });
+            }
         };
         self.seal_and_send(index, &FeederMessage::Response { id, result })
     }

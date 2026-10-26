@@ -33,7 +33,7 @@ pub mod time;
 
 use core::fmt;
 
-use wellfed_proto::api::{Blocked, EventBody, Readiness, Refusal, Source};
+use wellfed_proto::api::{Blocked, EventBody, Readiness, Refusal, Source, TraceSummary};
 use wellfed_session::noise::Keypair;
 
 pub use platform::Platform;
@@ -298,6 +298,11 @@ impl<P: Platform> Feeder<P> {
         events::record_outcome(&mut self.platform, now_ms, body);
     }
 
+    /// A feed's trace was sealed: its figures join the statistics.
+    pub fn traced(&mut self, summary: &TraceSummary) {
+        self.serve.stats().traced(summary);
+    }
+
     /// The last loop pass (the feeding owner's step and [`Self::pass`])
     /// took `us`, for the loop metric.
     pub fn pass_took(&mut self, us: u32) {
@@ -309,7 +314,7 @@ impl<P: Platform> Feeder<P> {
     pub fn device<'a, F: Feeds>(&'a mut self, now_ms: u32, feeds: &'a mut F) -> impl Device + 'a {
         let boot = self.serve.boot(&mut self.platform, now_ms);
         let ntp_last = self.serve.ntp_last();
-        let (stats, tasks) = self.serve.stats_parts();
+        let (stats, tasks, page) = self.serve.stats_parts();
         FeederDevice {
             platform: &mut self.platform,
             lock: &mut self.lock,
@@ -321,6 +326,7 @@ impl<P: Platform> Feeder<P> {
             ntp_last,
             stats,
             tasks,
+            page,
             call: None,
         }
     }

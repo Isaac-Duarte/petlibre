@@ -16,8 +16,8 @@
 
 use wellfed_core::store::slot::crc32;
 use wellfed_proto::api::{
-    Blocked, Capabilities, Event, EventBody, FeedOutcome, FeedReason, Readiness, Refusal, Source,
-    Stats, StatsSection,
+    Blocked, Capabilities, CurrentUnit, Event, EventBody, FeedOutcome, FeedReason, Readiness,
+    Refusal, Source, Stats, StatsSection, TraceSummary,
 };
 
 use crate::feeder::{Feeder, Feeds, NoFeeds, Platform};
@@ -438,9 +438,67 @@ pub fn the_statistics_follow_the_loop(rig: &mut impl Rig) {
             }
             Stats::Power(_) => StatsSection::Power,
             Stats::Food(_) => StatsSection::Food,
+            Stats::Feeds(feeds) => {
+                assert_eq!((feeds.traced, feeds.last), (0, None));
+                StatsSection::Feeds
+            }
         });
         assert_eq!(answered, section);
     }
+}
+
+/// Every platform serves the traces beside the statistics: a feed it keeps
+/// no trace of is `NotFound`, the storage ring keeps at least eight, and a
+/// sealed trace's figures join the feeds section.
+pub fn traces_are_served_beside_the_statistics(rig: &mut impl Rig) {
+    pass(rig, 0);
+    rig.write();
+    let both = Capabilities::STATS.union(Capabilities::TRACES);
+    assert!(device(rig, 0, |device| device.capabilities()).contains(both));
+    let missing = device(rig, 0, |device| {
+        device.feed_trace(77, 0).map(|page| page.total)
+    });
+    assert_eq!(missing, Err(Refusal::NotFound));
+
+    let summary = TraceSummary {
+        feed: 77,
+        requested: 1,
+        completed: 1,
+        outcome: FeedOutcome::Done,
+        reason: FeedReason::Done,
+        drive_ms: 9_072,
+        samples: 300,
+        unit: CurrentUnit::Scaled,
+        current_peak: 164,
+        current_mean: Some(60),
+        rising: 1,
+        falling: 1,
+        first_edge_ms: Some(7_888),
+        beam_breaks: 2,
+        reversals: 0,
+        battery_rest_mv: Some(4_810),
+        battery_min_mv: Some(4_700),
+        stride: 1,
+        truncated: false,
+    };
+    rig.feeder().traced(&summary);
+    let feeds = device(rig, 0, |device| {
+        match device.stats(StatsSection::Feeds, 0) {
+            Stats::Feeds(feeds) => feeds,
+            other => panic!("{other:?}"),
+        }
+    });
+    assert_eq!(
+        (
+            feeds.traced,
+            feeds.drive_ms,
+            feeds.current_peak,
+            feeds.current_mean
+        ),
+        (1, 9_072, 164, Some(60))
+    );
+    assert_eq!((feeds.rising, feeds.falling, feeds.beam_breaks), (1, 1, 2));
+    assert_eq!((feeds.capacity, feeds.last), (8, Some(summary)));
 }
 
 /// An owner that stopped on a fault and serves no feed.
@@ -520,6 +578,7 @@ macro_rules! conformance {
             status_reports_the_build_and_the_time,
             a_feeder_without_a_feeding_owner_refuses_feeds,
             the_statistics_follow_the_loop,
+            traces_are_served_beside_the_statistics,
             a_lasting_reason_not_to_feed_is_recorded_once,
         );
     };

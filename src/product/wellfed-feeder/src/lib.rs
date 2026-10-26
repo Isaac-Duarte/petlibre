@@ -15,4 +15,5 @@ pub mod feeder;
 pub mod panel;
 pub mod stats;
 pub mod store;
+pub mod trace;
 pub mod update;

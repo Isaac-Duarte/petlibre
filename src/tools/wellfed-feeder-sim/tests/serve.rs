@@ -952,6 +952,9 @@ fn an_owner_reads_the_statistics_and_their_live_metrics() {
                     assert_eq!(flash.boot.storage.len(), 32);
                     assert!(flash.events_kept >= 1, "the boot event");
                 }
+                Stats::Feeds(feeds) => {
+                    assert_eq!((feeds.traced, feeds.kept, feeds.capacity), (0, 0, 8));
+                }
                 Stats::Memory(_) | Stats::Power(_) | Stats::Food(_) => {}
             }
         }

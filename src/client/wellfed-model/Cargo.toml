@@ -12,6 +12,7 @@ jiff = { workspace = true, features = ["serde"] }
 wellfed-proto.workspace = true
 wellfed-session.workspace = true
 serde.workspace = true
+thiserror.workspace = true
 utoipa = { workspace = true, features = ["jiff_0_2"] }
 
 [dev-dependencies]

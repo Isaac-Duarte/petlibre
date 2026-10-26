@@ -15,7 +15,8 @@ use wellfed_core::clock::zone::Rule;
 use wellfed_core::log_tail::Batch as LogBatch;
 use wellfed_core::ota::install::{Answer, Progress, Refused};
 use wellfed_core::tone::Tune;
-use wellfed_proto::api::{Capabilities, Erases, Power, TASKS_MAX};
+use wellfed_proto::api::{Capabilities, Erases, Power, Refusal, TASKS_MAX, TraceSummary};
+use wellfed_proto::trace::PAGE_MAX;
 
 use crate::store::events::{BODY_BYTES, Read};
 use wellfed_device_api::clients::{CLIENTS, Client};
@@ -104,6 +105,25 @@ pub struct TaskCount {
 pub struct EventsFill {
     pub kept: u32,
     pub capacity: u32,
+}
+
+/// The trace ring's fill, and the traces that never reached it, for the
+/// statistics.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TracesFill {
+    pub kept: u32,
+    pub capacity: u32,
+    pub unsaved: u32,
+}
+
+/// What [`Platform::trace_page`] copied: the trace's summary, whether it is
+/// in storage, its body's whole length and the bytes copied.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TraceRead {
+    pub summary: TraceSummary,
+    pub stored: bool,
+    pub total: u16,
+    pub len: usize,
 }
 
 /// What a non-blocking accept found.
@@ -368,6 +388,21 @@ pub trait Platform {
     fn erases(&self) -> Erases;
     /// The event ring's fill, as the writer last published it.
     fn events_fill(&self) -> EventsFill;
+
+    // ---- The per-feed traces.
+
+    /// The trace ring's fill, as the writer last published it.
+    fn traces_fill(&self) -> TracesFill;
+    /// Copy feed `feed`'s trace body from `offset` into `out`: from the
+    /// latest feed's trace in RAM, or from the storage ring. `NotFound` when
+    /// neither holds it, `Busy` while that feed is still recorded,
+    /// `Invalid` for an offset past the body.
+    fn trace_page(
+        &mut self,
+        feed: u32,
+        offset: u16,
+        out: &mut [u8; PAGE_MAX],
+    ) -> Result<TraceRead, Refusal>;
 
     // ---- Setup mode's BLE link and speaker, which run only in setup mode.
 

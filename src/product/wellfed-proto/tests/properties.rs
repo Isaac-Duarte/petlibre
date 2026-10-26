@@ -7,7 +7,7 @@
 
 use wellfed_proto::api::*;
 use wellfed_proto::setup::{self, Answer, Reply, Request};
-use wellfed_proto::{Error, decode, decode_padded, encode};
+use wellfed_proto::{Error, decode, decode_padded, encode, trace};
 use proptest::prelude::*;
 
 /// A string for a borrowed field. Tests only: each case leaks a few bytes
@@ -103,7 +103,45 @@ fn op() -> impl Strategy<Value = Op<'static>> {
                 changes: TimeChanges { zone, ntp },
             }),
         any::<Option<u32>>().prop_map(|after| Op::TailLog { after }),
+        (0..StatsSection::ALL.len()).prop_map(|index| Op::Stats {
+            section: StatsSection::ALL[index],
+        }),
+        (any::<u32>(), any::<u16>()).prop_map(|(feed, offset)| Op::FeedTrace { feed, offset }),
     ]
+}
+
+/// One trace entry, timed from `at_ms`, at most `step` ms after it.
+fn trace_entry(step: u32) -> impl Strategy<Value = (u32, trace::Entry)> {
+    use trace::{Entry, Motor};
+    let motor = prop_oneof![Just(Motor::Stop), Just(Motor::Drive0), Just(Motor::Drive1)];
+    (
+        0..step,
+        prop_oneof![
+            8 => (0u32..5_000).prop_map(|value| Entry::Current { at_ms: 0, value }),
+            1 => (1u32..300, any::<bool>()).prop_map(|(edges, high)| Entry::Mark { at_ms: 0, edges, high }),
+            1 => (any::<bool>(), any::<bool>())
+                .prop_map(|(outlet_clear, food)| Entry::Beams { at_ms: 0, outlet_clear, food }),
+            1 => (0u32..6_000).prop_map(|mv| Entry::Battery { at_ms: 0, mv }),
+            1 => motor.prop_map(|motor| Entry::Motor { at_ms: 0, motor }),
+        ],
+    )
+}
+
+fn retimed(entry: trace::Entry, at_ms: u32) -> trace::Entry {
+    use trace::Entry;
+    match entry {
+        Entry::Current { value, .. } => Entry::Current { at_ms, value },
+        Entry::Mark { edges, high, .. } => Entry::Mark { at_ms, edges, high },
+        Entry::Beams {
+            outlet_clear, food, ..
+        } => Entry::Beams {
+            at_ms,
+            outlet_clear,
+            food,
+        },
+        Entry::Battery { mv, .. } => Entry::Battery { at_ms, mv },
+        Entry::Motor { motor, .. } => Entry::Motor { at_ms, motor },
+    }
 }
 
 fn ntp() -> impl Strategy<Value = NtpServer> {
@@ -268,6 +306,62 @@ proptest! {
         let len = encode(&message, &mut out).unwrap();
         out[len] = extra;
         prop_assert_eq!(decode::<ClientMessage<'_>>(&out[..=len]), Err(Error::Malformed));
+    }
+
+    /// A body built as the feeder builds one (each entry pushed, halving
+    /// while it is full, ending at the first entry nothing makes room for)
+    /// reads back whole: every mark, beam, battery and motor entry pushed
+    /// before the end, in order and on time, and the current readings a
+    /// subsequence of those pushed.
+    #[test]
+    fn a_body_reads_back_through_any_halving(
+        steps in proptest::collection::vec(trace_entry(400), 0..1_500),
+    ) {
+        use trace::{Entry, Pushed, Reader, Writer};
+
+        let mut writer = Writer::<{ trace::BODY_MAX }>::new();
+        let mut pushed = Vec::new();
+        let mut at_ms = 0u32;
+        for (step, entry) in steps {
+            at_ms += step;
+            let entry = retimed(entry, at_ms);
+            let kept = loop {
+                match writer.push(entry) {
+                    Pushed::Kept => break true,
+                    Pushed::Full if writer.halve() => {}
+                    Pushed::Full => break false,
+                }
+            };
+            if !kept {
+                break;
+            }
+            pushed.push(entry);
+        }
+
+        let read: Vec<Entry> = Reader::new(writer.bytes()).map(Result::unwrap).collect();
+        let events = |entries: &[Entry]| -> Vec<Entry> {
+            entries.iter().copied().filter(|e| !matches!(e, Entry::Current { .. })).collect()
+        };
+        prop_assert_eq!(events(&read), events(&pushed));
+        let mut currents = pushed.iter().filter(|e| matches!(e, Entry::Current { .. }));
+        for entry in read.iter().filter(|e| matches!(e, Entry::Current { .. })) {
+            prop_assert!(currents.any(|pushed| pushed == entry));
+        }
+        prop_assert_eq!(
+            u32::try_from(read.iter().filter(|e| matches!(e, Entry::Current { .. })).count()).unwrap(),
+            writer.currents()
+        );
+    }
+
+    /// Any bytes read as a body end in entries or one error, never a panic.
+    #[test]
+    fn any_bytes_read_as_a_body(bytes in proptest::collection::vec(any::<u8>(), 0..64)) {
+        let mut reader = trace::Reader::new(&bytes);
+        let mut errors = 0;
+        for entry in &mut reader {
+            errors += usize::from(entry.is_err());
+        }
+        prop_assert!(errors <= 1);
     }
 
     #[test]

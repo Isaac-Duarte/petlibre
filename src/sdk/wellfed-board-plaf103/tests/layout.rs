@@ -24,6 +24,7 @@ fn storage_region_and_sector_map_are_pinned() {
     assert_eq!(storage::EVENTS, at(13, 12));
     assert_eq!(storage::UPDATE, at(25, 2));
     assert_eq!(storage::TIME, at(27, 2));
+    assert_eq!(storage::TRACES, at(29, 3));
 
     assert_eq!(
         storage::ALL,
@@ -38,6 +39,7 @@ fn storage_region_and_sector_map_are_pinned() {
             storage::EVENTS,
             storage::UPDATE,
             storage::TIME,
+            storage::TRACES,
         ]
     );
 }

@@ -8,7 +8,7 @@ use std::sync::{Mutex, MutexGuard};
 use wellfed_feeder::conformance::Rig;
 use wellfed_feeder::feeder::Feeder;
 use wellfed_feeder_runtime::writer::Writer;
-use wellfed_feeder_runtime::{events, keys, network, time};
+use wellfed_feeder_runtime::{events, keys, network, time, traces};
 use wellfed_fw_feeder::platform::Plaf103;
 use wellfed_sdk::hal::flash::park::Mmio;
 use wellfed_sdk::hal::flash_lock::arming::Hooks;
@@ -102,6 +102,7 @@ impl FirmwareRig {
         keys::reset();
         events::reset();
         time::reset();
+        traces::reset();
         clock::reset();
         mailbox::reset();
         INTERLOCK.reset();
@@ -239,4 +240,90 @@ fn a_denying_server_is_left_alone_while_the_clock_needs_the_time() {
     assert!(clock::state().reading.is_none());
     let asked = fake::with(|h| h.udp_tx.len());
     assert_eq!(asked, 0, "asked a denying server {asked} times");
+}
+
+/// A feed's trace on the board's platform: recorded from the owner's
+/// observations and sealed with its result, answered from RAM at once,
+/// held back while a feed claims the outputs, appended to the storage
+/// ring on the writer's next turn, and read from the ring once RAM has
+/// lost it (a restart). A sealed trace counts as a queued write, so the
+/// next feed's claim lets it go first.
+#[test]
+fn a_feed_trace_is_stored_on_the_writer_turn_and_read_back_after_a_restart() {
+    use wellfed_core::feed::controller::MotorCommand;
+    use wellfed_core::feed::observe::Observation;
+    use wellfed_device_api::Device;
+    use wellfed_feeder::feeder::NoFeeds;
+    use wellfed_feeder::trace::DriveFigures;
+    use wellfed_fw_feeder::feeding::writes_queued;
+    use wellfed_proto::api::{EventBody, FeedOutcome, FeedReason, Refusal, Source};
+    use wellfed_proto::trace::PAGE_MAX;
+
+    let mut rig = FirmwareRig::start();
+    rig.write();
+    let read = |rig: &mut FirmwareRig, feed: u32| -> Result<(Vec<u8>, bool), Refusal> {
+        let mut body = Vec::new();
+        let mut feeds = NoFeeds;
+        let mut device = rig.feeder.device(0, &mut feeds);
+        loop {
+            let offset = u16::try_from(body.len()).unwrap();
+            let page = device.feed_trace(feed, offset)?;
+            assert!(page.bytes.len() <= PAGE_MAX);
+            body.extend_from_slice(page.bytes);
+            if body.len() == usize::from(page.total) {
+                return Ok((body, page.stored));
+            }
+        }
+    };
+
+    assert!(traces::begin(9));
+    assert_eq!(read(&mut rig, 9), Err(Refusal::Busy), "still recorded");
+    for poll in 0..600u32 {
+        traces::observe(&Observation {
+            at_ms: 1_000 + 30 * poll,
+            drive_at_ms: Some(1_000),
+            current: Some(60 + poll % 9),
+            battery_mv: None,
+            beams: None,
+            rising: 0,
+            falling: u16::from(poll > 300),
+            last_edge: (poll > 300).then_some((1_000 + 9_000, false)),
+            motor: MotorCommand::Drive0,
+        });
+    }
+    let fed = EventBody::Fed {
+        feed: 9,
+        requested: 1,
+        completed: 0,
+        outcome: FeedOutcome::Failed,
+        reason: FeedReason::NoFeedback,
+        by: Source::Panel,
+    };
+    let figures = DriveFigures {
+        drive_ms: 18_000,
+        samples: 600,
+        ..DriveFigures::default()
+    };
+    let summary = traces::seal(&fed, &figures).expect("the trace of feed 9");
+    assert_eq!(summary.drive_ms, 18_000);
+    let (in_ram, stored) = read(&mut rig, 9).unwrap();
+    assert!(!stored && in_ram.len() > PAGE_MAX);
+    assert!(writes_queued(), "a sealed trace goes before the next feed");
+
+    // A feed holds the outputs: the append waits for them.
+    INTERLOCK
+        .claim_feed(u32::MAX)
+        .expect("no join or write runs");
+    rig.write();
+    assert!(traces::queued() && traces::fill().kept == 0);
+    INTERLOCK.release_feed();
+    rig.write();
+    assert!(!traces::queued() && !writes_queued());
+    assert_eq!(traces::fill().kept, 1);
+    assert_eq!(read(&mut rig, 9), Ok((in_ram.clone(), true)));
+
+    // A restart loses RAM; the ring still has it.
+    traces::reset();
+    assert_eq!(read(&mut rig, 9), Ok((in_ram, true)));
+    assert_eq!(read(&mut rig, 10), Err(Refusal::NotFound));
 }

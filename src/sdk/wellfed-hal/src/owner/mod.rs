@@ -27,6 +27,7 @@ use core::ptr;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use wellfed_core::feed::controller::{FeedController, FeedRequest};
+use wellfed_core::feed::observe::Observation;
 use wellfed_core::feed::progress::BowlMode;
 use wellfed_core::feed::sensor_inputs::SensorInputs;
 use wellfed_core::feed::storage::{OwnerRecovery, OwnerResult, OwnerStorage};
@@ -197,6 +198,8 @@ pub struct OwnerTask<S> {
     pub trace: FeedTrace,
     /// The supervisor's clock when the drive started, until it is reported.
     pub drive_at: Option<u32>,
+    /// What the last poll of a feed saw, until the stepping task takes it.
+    pub observation: Option<Observation>,
 
     pub state: OwnerState,
     pub fault: OwnerFault,
@@ -239,6 +242,7 @@ impl<S> Default for OwnerTask<S> {
             result: OwnerResult::default(),
             trace: FeedTrace::default(),
             drive_at: None,
+            observation: None,
             state: OwnerState::default(),
             fault: OwnerFault::default(),
             beat_raw: 0,
@@ -343,6 +347,20 @@ impl<S: OwnerStorage> Owner<S> {
         beat::close();
         set_active(ptr::null_mut());
         Step::Stopped
+    }
+
+    /// What the last step saw of a feed being prepared or driven, taken
+    /// once, for the task that steps the owner (`None` to any other). It
+    /// is read between steps, so whatever keeps a trace of it runs after
+    /// the step's stop and motor decisions, never inside them.
+    pub fn take_observation(&self) -> Option<Observation> {
+        let task = sdk::current_task();
+        if task == 0 || self.stepper.load(Ordering::Acquire) != task {
+            return None;
+        }
+        // SAFETY: this is the one stepping task and no step is running on
+        // it, so nothing else borrows the task half.
+        unsafe { (*self.task.get()).observation.take() }
     }
 }
 

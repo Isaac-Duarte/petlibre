@@ -37,6 +37,8 @@ wellfed-feeder-sim = { path = ".", features = ["harness"] }
 sha2 = "0.10"
 wellfed-connect.workspace = true
 wellfed-model.workspace = true
+# The measured mechanism, for a trace shaped like a real feed's.
+wellfed-sim.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 

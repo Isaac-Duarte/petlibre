@@ -5,7 +5,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ClientRole, Generation, Hex, Settings, SettingsPatch, Stats, StatsSection, Status,
+    ClientRole, Generation, Hex, Settings, SettingsPatch, Stats, StatsSection, Status, TracePage,
     UpdateRefusal, UpdateView,
 };
 
@@ -94,6 +94,12 @@ pub enum Op {
     /// One section of the feeder's statistics.
     Stats {
         section: StatsSection,
+    },
+    /// One page of feed `feed`'s trace, from byte `offset` of its body
+    /// (`wellfed_client::trace::Pages` asks for every page).
+    FeedTrace {
+        feed: u32,
+        offset: u16,
     },
 }
 
@@ -229,6 +235,7 @@ pub enum Answer {
     Update(UpdateView),
     Time(TimeView),
     Stats(Stats),
+    FeedTrace(TracePage),
 }
 
 /// Why the feeder refused a request.

@@ -3,7 +3,7 @@
 
 use wellfed_feeder::feeder::{Feeder, Feeds};
 use wellfed_feeder::panel::BUTTONS;
-use wellfed_proto::api::{Blocked, Refusal, Source};
+use wellfed_proto::api::{Blocked, EventBody, Refusal, Source, TraceSummary};
 use wellfed_sdk::hal::sdk;
 use wellfed_sdk::hal::supervision::config::SYSTIMER_HZ;
 use wellfed_sdk::{Slot, Startup, log};
@@ -105,7 +105,7 @@ fn loop_task() -> u32 {
     let began = sdk::systimer_ticks();
     let mut feed_delay = feeding.step(
         |record| log(format_args!("PLOWN1 {record}\r\n")),
-        |body| feeder.record_outcome(sdk::uptime_ms(), body),
+        |body, trace| outcome(&mut feeder, body, trace),
     );
 
     let now_ms = sdk::uptime_ms();
@@ -120,7 +120,7 @@ fn loop_task() -> u32 {
         feeding.handshook();
         feed_delay = feeding.step(
             |record| log(format_args!("PLOWN1 {record}\r\n")),
-            |body| feeder.record_outcome(sdk::uptime_ms(), body),
+            |body, trace| outcome(&mut feeder, body, trace),
         );
     }
     if let Some(feed_delay) = feed_delay {
@@ -139,6 +139,15 @@ fn loop_task() -> u32 {
     #[cfg(feature = "gap-probe")]
     gap_probe::end_pass(delay_ms);
     delay_ms
+}
+
+/// A feed's end: its `Fed` event, and its trace's figures for the
+/// statistics.
+fn outcome(feeder: &mut Feeder<Plaf103>, body: EventBody, trace: Option<&TraceSummary>) {
+    feeder.record_outcome(sdk::uptime_ms(), body);
+    if let Some(trace) = trace {
+        feeder.traced(trace);
+    }
 }
 
 /// `ticks` of the 32 kHz system timer in microseconds (a tick is about

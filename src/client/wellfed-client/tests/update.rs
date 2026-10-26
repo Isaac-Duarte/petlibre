@@ -434,6 +434,10 @@ impl Device for Feeder {
         proto::Stats::Counters(proto::Counters::default())
     }
 
+    fn feed_trace(&mut self, _feed: u32, _offset: u16) -> Result<proto::TracePage<'_>, Refusal> {
+        Err(Refusal::NotFound)
+    }
+
     fn readiness(&mut self) -> proto::Readiness {
         if self.installing() {
             proto::Readiness::Blocked(proto::Blocked::Updating)

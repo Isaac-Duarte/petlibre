@@ -22,6 +22,7 @@ mod session;
 pub mod setup;
 mod stats;
 mod status;
+mod trace;
 mod update;
 
 use std::fmt;
@@ -39,10 +40,11 @@ pub use request::{
 };
 pub use session::{Capabilities, Hello, Joined, OpenRefusal};
 pub use stats::{
-    Counters, Counts, Erases, Flash, Food, Memory, PowerStats, ResetCause, Resets, Stats,
-    StatsSection, TaskStack,
+    Counters, Counts, Erases, FeedStats, Flash, Food, Memory, PowerStats, ResetCause, Resets,
+    Stats, StatsSection, TaskStack,
 };
 pub use status::{Blocked, Power, Readiness, Settings, SettingsPatch, Status, WifiSource};
+pub use trace::{CurrentUnit, Malformed, Trace, TraceEntry, TraceMotor, TracePage, TraceSummary};
 pub use update::{UpdatePhase, UpdateRefusal, UpdateStop, UpdateView};
 
 /// A feeder store's generation: a write names the one it read, and the

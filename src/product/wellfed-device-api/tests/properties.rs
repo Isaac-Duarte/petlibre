@@ -142,6 +142,23 @@ fn the_session_driver_is_answered() {
     assert_eq!(support::session(&[&out[..len], &second[..second_len]]), 2);
 }
 
+/// A trace's widest page leaves in one frame.
+#[test]
+fn a_trace_page_is_answered_within_a_frame() {
+    use wellfed_proto::api::{ClientMessage, Op};
+
+    let mut out = [0; 64];
+    let request = ClientMessage::Request {
+        id: [7; 16],
+        op: Op::FeedTrace {
+            feed: u32::MAX,
+            offset: u16::MAX,
+        },
+    };
+    let len = wellfed_proto::encode(&request, &mut out).unwrap();
+    assert_eq!(support::session(&[&out[..len]]), 1);
+}
+
 /// Every statistics section at its widest leaves in one frame.
 #[test]
 fn every_stats_section_is_answered_within_a_frame() {

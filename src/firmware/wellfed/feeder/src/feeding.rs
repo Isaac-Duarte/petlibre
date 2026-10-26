@@ -34,6 +34,13 @@
 //! the journal failed, a fault, an interrupted feed being resolved, a feed
 //! in flight, or a join's turn. `submit` keeps its own checks behind it.
 //!
+//! Each feed is traced (`wellfed_feeder_runtime::traces`): after every
+//! owner step the loop hands what the step saw to the trace, so the trace
+//! never runs inside the owner's stop and motor decisions, and when the
+//! feed's result is recorded the trace is sealed with it and the owner's
+//! drive figures, for the settings writer to store once the outputs are
+//! stopped.
+//!
 //! While a feed is driven the loop steps the owner before each pass and,
 //! when the pass ran a handshake operation (a client opening a session),
 //! again at once after it, so the owner's observations stay
@@ -157,9 +164,23 @@ pub fn claim_outputs(
 /// which takes its write turn only on its next poll: a claim lets it go
 /// first, so the client hears its answer before the feed rather than after.
 pub fn writes_queued() -> bool {
-    use wellfed_feeder_runtime::{keys, network};
+    use wellfed_feeder_runtime::{keys, network, traces};
     use wellfed_sdk::hal::settings;
-    settings::pending().is_some() || network::saving() || keys::queued()
+    settings::pending().is_some() || network::saving() || keys::queued() || traces::queued()
+}
+
+/// The owner's figures for a feed's drive, as its trace's summary keeps
+/// them: the same that `fed` logs.
+pub fn drive_figures(trace: &FeedTrace) -> wellfed_feeder::trace::DriveFigures {
+    wellfed_feeder::trace::DriveFigures {
+        drive_ms: trace.drive_ms,
+        samples: u32::from(trace.current_samples),
+        current_peak: trace.current_max,
+        current_mean: trace.current_mean(),
+        rising: trace.rising,
+        falling: trace.falling,
+        first_edge_ms: trace.first_edge_ms,
+    }
 }
 
 /// Whether the loop has a feed between its submission and its recorded
@@ -401,14 +422,15 @@ mod target {
     use wellfed_core::feed::storage::OwnerResult;
     use wellfed_core::store::feed_journal::{FeedJournal, JournalError};
     use wellfed_feeder::feed::{self, Durability};
-    use wellfed_proto::api::{Blocked, EventBody, Refusal, Source};
+    use wellfed_feeder_runtime::traces;
+    use wellfed_proto::api::{Blocked, EventBody, Refusal, Source, TraceSummary};
     use wellfed_sdk::hal::interlock::{self, INTERLOCK, Turn};
     use wellfed_sdk::hal::owner::{
         Owner, OwnerConfig, OwnerState, OwnerStatus, Step, SubmitResult,
     };
     use wellfed_sdk::{JournalSlots, Slot};
 
-    use super::{CONFIG, JOURNAL, Record};
+    use super::{CONFIG, JOURNAL, Record, drive_figures};
 
     type Journal = FeedJournal<JournalSlots>;
 
@@ -458,11 +480,12 @@ mod target {
 
     impl Feeding {
         /// One pass; the owner's delay while it runs. A feed's end goes to
-        /// the log (`record`) and its `Fed` event to `outcome`.
+        /// the log (`record`), and its `Fed` event and its trace's summary
+        /// to `outcome`.
         pub fn step(
             &mut self,
             mut record: impl FnMut(Record),
-            mut outcome: impl FnMut(EventBody),
+            mut outcome: impl FnMut(EventBody, Option<&TraceSummary>),
         ) -> Option<u32> {
             if !self.settled {
                 if !wellfed_sdk::storage_armed() {
@@ -493,6 +516,11 @@ mod target {
                 Step::Wait(ms) => Some(ms),
                 Step::Stopped | Step::Refused => None,
             };
+            // After the step, so the trace never delays a stop or a
+            // motor decision.
+            if let Some(seen) = owner.take_observation() {
+                traces::observe(&seen);
+            }
 
             let status = owner.status();
             let key = |s: &OwnerStatus| {
@@ -550,7 +578,7 @@ mod target {
             owner: &Owner<Journal>,
             status: &OwnerStatus,
             record: &mut impl FnMut(Record),
-            outcome: &mut impl FnMut(EventBody),
+            outcome: &mut impl FnMut(EventBody, Option<&TraceSummary>),
         ) {
             let Some(current) = self.current.as_mut() else {
                 self.report_interrupted(owner, status, record, outcome);
@@ -605,7 +633,9 @@ mod target {
             }
             // The feed id fits the event: `submit` refused any that does not.
             let feed = u32::try_from(current.feed).unwrap_or(u32::MAX);
-            outcome(feed::fed(feed, &result, durability, current.by));
+            let body = feed::fed(feed, &result, durability, current.by);
+            let summary = traces::seal(&body, &drive_figures(&status.trace));
+            outcome(body, summary.as_ref());
             if status.state == OwnerState::Terminal {
                 owner.acknowledge(current.feed);
             }
@@ -620,7 +650,7 @@ mod target {
             owner: &Owner<Journal>,
             status: &OwnerStatus,
             record: &mut impl FnMut(Record),
-            outcome: &mut impl FnMut(EventBody),
+            outcome: &mut impl FnMut(EventBody, Option<&TraceSummary>),
         ) {
             let Some(feed) = self.interrupted else {
                 return;
@@ -642,8 +672,9 @@ mod target {
             });
             // The journal holds the id under the high water `submit` checks.
             let number = u32::try_from(feed).unwrap_or(u32::MAX);
+            // Its trace, if it had one, was lost with the RAM it was in.
             let body = feed::fed(number, &status.result, Durability::Durable, Source::Feeder);
-            outcome(body);
+            outcome(body, None);
         }
 
         /// Hand one feed to the owner on `by`'s behalf: the number its
@@ -676,6 +707,7 @@ mod target {
             });
             match result {
                 SubmitResult::Enqueued => {
+                    traces::begin(number);
                     self.current = Some(Current {
                         feed,
                         by,

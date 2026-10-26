@@ -425,3 +425,51 @@ fn no_feed_starts_while_an_install_holds_the_lease() {
     assert_eq!(f.owner.submit(1, 1), SubmitResult::Enqueued);
     mailbox::reset();
 }
+
+/// Each poll of a feed leaves one observation for the stepping task, taken
+/// once: the preparation's without a drive, the drive's with its current,
+/// command and edges. None at rest.
+#[test]
+fn a_feed_leaves_one_observation_a_poll_for_its_trace() {
+    use wellfed_core::feed::controller::MotorCommand;
+
+    let mut f = boot();
+    f.advance(2);
+    assert_eq!(f.owner.take_observation(), None);
+
+    assert_eq!(f.owner.submit(1, 1), SubmitResult::Enqueued);
+    f.step();
+    let preparing = f.owner.take_observation().expect("a preparing poll");
+    assert!(preparing.drive_at_ms.is_none() && preparing.motor == MotorCommand::Stop);
+    assert!(preparing.battery_mv.is_some());
+    assert_eq!(f.owner.take_observation(), None, "taken once");
+
+    f.advance(5);
+    let driving = f.owner.take_observation().expect("a driving poll");
+    assert!(driving.drive_at_ms.is_some() && driving.motor == MotorCommand::Drive0);
+    assert!(driving.current.is_some() && driving.beams.is_some());
+    assert_eq!(
+        (driving.rising, driving.falling, driving.last_edge),
+        (0, 0, None)
+    );
+
+    fake::advance(32, true);
+    fake::edge(false);
+    f.step();
+    let marked = f.owner.take_observation().expect("a poll after an edge");
+    assert_eq!((marked.rising, marked.falling), (0, 1));
+    assert!(
+        marked
+            .last_edge
+            .is_some_and(|(at, high)| !high && at <= marked.at_ms)
+    );
+
+    f.complete();
+    assert!(f.status().state == OwnerState::Terminal);
+    assert!(f.owner.acknowledge(1));
+    f.step();
+    f.owner.take_observation();
+    f.advance(2);
+    assert_eq!(f.owner.take_observation(), None, "none at rest");
+    f.stop();
+}

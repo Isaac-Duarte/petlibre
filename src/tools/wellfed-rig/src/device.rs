@@ -214,9 +214,11 @@ impl Answer {
             Model::Refused(refusal) => Self::Refused(refusal),
             Model::Feeding { feed } => Self::Feeding { feed },
             Model::Update(view) => Self::Update(view),
-            Model::Clients(_) | Model::Invite(_) | Model::Time(_) | Model::Stats(_) => {
-                Self::Unexpected
-            }
+            Model::Clients(_)
+            | Model::Invite(_)
+            | Model::Time(_)
+            | Model::Stats(_)
+            | Model::FeedTrace(_) => Self::Unexpected,
         }
     }
 }

@@ -15,11 +15,31 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
 
+use wellfed_board_plaf103::storage;
+use wellfed_feeder::store::traces::{TraceError, TraceRing};
+use wellfed_proto::api::TraceSummary;
+
 use crate::banks::Banks;
 use crate::console::{self, ConsoleError};
-use crate::flash::Flash;
+use crate::flash::{Flash, Region};
 use crate::platform::Random;
 use crate::serve::{self, Control, Event, Feeder};
+
+/// Append a feed's sealed trace to `flash`'s trace ring, as the feeder's
+/// settings writer does once the feed is over: the simulator has no motor
+/// to trace, but serves what its ring holds.
+pub fn store_trace(
+    flash: &Rc<Flash>,
+    summary: &TraceSummary,
+    body: &[u8],
+) -> Result<u32, TraceError> {
+    let mut ring = TraceRing::default();
+    ring.open(
+        Region::new(flash, storage::TRACES),
+        storage::TRACES.count as usize,
+    );
+    ring.append(summary, body)
+}
 
 /// A running simulator.
 #[derive(Debug)]

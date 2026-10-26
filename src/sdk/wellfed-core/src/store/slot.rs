@@ -467,12 +467,37 @@ pub fn get_u64<const AT: usize, const L: usize>(p: &[u8; L]) -> u64 {
 
 /// CRC-32/ISO-HDLC: reflected 0x04c11db7, init/xor-out all ones.
 pub fn crc32(p: &[u8]) -> u32 {
-    let mut value = u32::MAX;
-    for &byte in p {
-        value ^= u32::from(byte);
-        for _ in 0..8 {
-            value = (value >> 1) ^ if value & 1 != 0 { 0xedb8_8320 } else { 0 };
+    let mut crc = Crc32::new();
+    crc.update(p);
+    crc.finish()
+}
+
+/// [`crc32`] over bytes that arrive in pieces, such as a record read from
+/// flash a chunk at a time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Crc32(u32);
+
+impl Default for Crc32 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Crc32 {
+    pub const fn new() -> Self {
+        Self(u32::MAX)
+    }
+
+    pub fn update(&mut self, p: &[u8]) {
+        for &byte in p {
+            self.0 ^= u32::from(byte);
+            for _ in 0..8 {
+                self.0 = (self.0 >> 1) ^ if self.0 & 1 != 0 { 0xedb8_8320 } else { 0 };
+            }
         }
     }
-    !value
+
+    pub const fn finish(self) -> u32 {
+        !self.0
+    }
 }

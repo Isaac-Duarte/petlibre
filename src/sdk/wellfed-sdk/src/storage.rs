@@ -22,6 +22,9 @@ pub const CLIENTS_BASE: u32 = plaf103::storage::CLIENTS.first;
 /// The event ring.
 pub const EVENTS_BASE: u32 = plaf103::storage::EVENTS.first;
 pub const EVENTS_UNITS: u32 = plaf103::storage::EVENTS.count;
+/// The per-feed trace ring.
+pub const TRACES_BASE: u32 = plaf103::storage::TRACES.first;
+pub const TRACES_UNITS: u32 = plaf103::storage::TRACES.count;
 /// Installation binding for the research unit's settings.
 pub const SETTINGS_BINDING: u64 = 0x5046_5731_3502_0001;
 /// Installation binding for the research unit's feed journal. Not a key: a

@@ -6,7 +6,8 @@
 //! It holds the BLE setup session ([`setup`]), the device API's sessions
 //! and invite redemption ([`api`]), and the whole session every client
 //! runs over them ([`connection`]: keepalive, answers, the event cursor and
-//! LAN recovery), and the update an owner pushes over it ([`update`]).
+//! LAN recovery), the update an owner pushes over it ([`update`]), and a
+//! feed's trace read a page at a time ([`trace`]).
 //!
 //! Every public type is `wellfed-model`'s owned values or plain bytes (an
 //! `Op` in; answers, pushed events, gaps and samples, welcomes, refusals and
@@ -22,4 +23,5 @@ pub mod api;
 pub mod connection;
 pub mod setup;
 pub mod time;
+pub mod trace;
 pub mod update;

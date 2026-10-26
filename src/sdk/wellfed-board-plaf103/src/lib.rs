@@ -122,11 +122,16 @@ pub mod storage {
         first: 27,
         count: 2,
     };
+    /// The per-feed trace ring: four 1 KiB traces a sector, the last 8 to
+    /// 12 feeds. No build before it wrote these sectors.
+    pub const TRACES: Sectors = Sectors {
+        first: 29,
+        count: 3,
+    };
 
-    /// Every allocation, in region order; sectors 29-31 are free (planned
-    /// for the per-feed trace ring).
-    pub const ALL: [Sectors; 10] = [
-        JOURNAL, SETTINGS, CONFIRM, NET, SEED, CLIENTS, PLANS, EVENTS, UPDATE, TIME,
+    /// Every allocation, in region order.
+    pub const ALL: [Sectors; 11] = [
+        JOURNAL, SETTINGS, CONFIRM, NET, SEED, CLIENTS, PLANS, EVENTS, UPDATE, TIME, TRACES,
     ];
 
     const fn disjoint_and_inside() -> bool {

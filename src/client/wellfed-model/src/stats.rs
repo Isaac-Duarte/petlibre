@@ -2,6 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::{CurrentUnit, TraceSummary};
+
 /// What a `Stats` request asks for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -11,15 +13,18 @@ pub enum StatsSection {
     Flash,
     Power,
     Food,
+    /// This boot's feeds as their traces measured them.
+    Feeds,
 }
 
 impl StatsSection {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Counters,
         Self::Memory,
         Self::Flash,
         Self::Power,
         Self::Food,
+        Self::Feeds,
     ];
 }
 
@@ -32,6 +37,7 @@ pub enum Stats {
     Flash(Flash),
     Power(PowerStats),
     Food(Food),
+    Feeds(FeedStats),
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -136,4 +142,25 @@ pub struct Food {
     pub emptied: u32,
     pub refilled: u32,
     pub feeds_since_refill: Option<u32>,
+}
+
+/// This boot's feeds, from their traces.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FeedStats {
+    pub traced: u32,
+    pub drive_ms: u32,
+    pub samples: u32,
+    pub unit: CurrentUnit,
+    pub current_peak: u32,
+    pub current_mean: Option<u32>,
+    pub rising: u32,
+    pub falling: u32,
+    pub beam_breaks: u32,
+    pub reversals: u32,
+    /// Traces the feeder's storage ring holds, and the most it is sure to.
+    pub kept: u32,
+    pub capacity: u32,
+    /// Traces that never reached storage.
+    pub unsaved: u32,
+    pub last: Option<TraceSummary>,
 }

@@ -6,12 +6,15 @@
 //! Nothing here does IO or cryptography: the caller seals and opens the bytes.
 //! The BLE setup exchange ([`setup`]) and the device API ([`api`])
 //! share `wellfed_session::frame`'s length-prefixed frames.
+//! A feed's trace body ([`trace`]) is a compact format of its own,
+//! carried in the device API's pages and kept in the feeder's storage.
 //!
 //! [API design]: ../../../../docs/api/README.md
 #![no_std]
 
 pub mod api;
 pub mod setup;
+pub mod trace;
 
 use serde::{Deserialize, Serialize};
 

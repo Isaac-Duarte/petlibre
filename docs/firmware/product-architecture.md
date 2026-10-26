@@ -135,7 +135,8 @@ The feeder has no scale, bowl sensor or camera, so it knows what it dispensed, n
 The goal is that anyone can do anything with their feeder's data: the server keeps everything raw, and features like battery health are queries over it, not firmware changes. The feeder sends two streams:
 
 - **Durable events.** These are stored on the feeder in a ring that holds at least 7 days, each with a sequence number: feeds, faults, food-level changes, button presses and lock changes, setting changes with the client that made them, boots and reset reasons, updates and clock syncs. A feed is a summary: requested and delivered portions, duration, peak and mean motor current, and the result. A client that reconnects reads everything after its cursor. Records already lost to the ring are reported as lost, not skipped.
-- **Live samples.** Everything the runtime samples (supply and battery voltage, adapter state, Wi-Fi RSSI, clock offset, food-beam state), at its own rate. They are sent only to subscribers and never stored on the feeder, so a sample missed during a server outage is gone. Raw per-feed traces stay in bring-up firmwares.
+- **Live samples.** Everything the runtime samples (supply and battery voltage, adapter state, Wi-Fi RSSI, clock offset, food-beam state), at its own rate. They are sent only to subscribers and never stored on the feeder, so a sample missed during a server outage is gone.
+- **Per-feed traces.** Each feed's current, marks, beams, battery and motor commands over the drive, kept on the feeder for its last 8 to 12 feeds and read on demand ([feed traces](device-api.md#feed-traces)); the server is optional, so the feeder keeps its own history.
 
 **On the server (FP18):**
 

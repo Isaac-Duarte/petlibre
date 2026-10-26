@@ -89,6 +89,28 @@ fn messages() -> Vec<Fixture> {
     let mut history = [None; POWER_HISTORY];
     history[POWER_HISTORY - 2] = Some(4_800);
     history[POWER_HISTORY - 1] = Some(4_790);
+    // Feed 9 of the bench's first three-portion feed (October 25).
+    let trace = TraceSummary {
+        feed: 9,
+        requested: 3,
+        completed: 3,
+        outcome: FeedOutcome::Done,
+        reason: FeedReason::Done,
+        drive_ms: 27_241,
+        samples: 903,
+        unit: CurrentUnit::Scaled,
+        current_peak: 168,
+        current_mean: Some(59),
+        rising: 3,
+        falling: 3,
+        first_edge_ms: Some(7_840),
+        beam_breaks: 0,
+        reversals: 0,
+        battery_rest_mv: None,
+        battery_min_mv: None,
+        stride: 2,
+        truncated: false,
+    };
     let mut clients = [None; CLIENTS_MAX];
     clients[0] = Some(Client {
         key: [0x22; 32],
@@ -622,6 +644,63 @@ fn messages() -> Vec<Fixture> {
                 at: None,
                 body: EventBody::FeedingBlocked { reason: None },
             })),
+            feeder,
+        ),
+        (
+            "hello-traces",
+            entry(&Hello {
+                major: 1,
+                capabilities: Capabilities::FEED
+                    .union(Capabilities::STATS)
+                    .union(Capabilities::TRACES),
+            }),
+            |b| decode::<Hello>(b).is_ok(),
+        ),
+        (
+            "op-feed-trace",
+            entry(&request(Op::FeedTrace {
+                feed: 9,
+                offset: 448,
+            })),
+            client,
+        ),
+        (
+            "op-stats-feeds",
+            entry(&request(Op::Stats {
+                section: StatsSection::Feeds,
+            })),
+            client,
+        ),
+        (
+            "outcome-feed-trace",
+            entry(&response(Outcome::FeedTrace(TracePage {
+                summary: trace,
+                stored: true,
+                offset: 0,
+                total: 7,
+                // 333 at 17 ms, then a falling mark at 7,840 ms.
+                bytes: &[0x11, 0x9a, 0x05, 0x8f, 0x80, 0x3d, 0x02],
+            }))),
+            feeder,
+        ),
+        (
+            "outcome-stats-feeds",
+            entry(&response(Outcome::Stats(Stats::Feeds(FeedStats {
+                traced: 2,
+                drive_ms: 36_313,
+                samples: 1_203,
+                unit: CurrentUnit::Scaled,
+                current_peak: 333,
+                current_mean: Some(60),
+                rising: 4,
+                falling: 4,
+                beam_breaks: 0,
+                reversals: 0,
+                kept: 2,
+                capacity: 8,
+                unsaved: 0,
+                last: Some(trace),
+            })))),
             feeder,
         ),
     ]

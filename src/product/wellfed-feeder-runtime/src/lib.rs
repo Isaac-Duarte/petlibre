@@ -16,7 +16,8 @@
 //! The rest carries work between the loop task and the writer, each a
 //! one-slot or bounded mailbox: client changes and the identity ([`keys`]),
 //! Wi-Fi saves ([`network`]), the time settings ([`time`]), the event
-//! history ([`events`]) and its fill for the statistics ([`stats`]).
+//! history ([`events`]) and its fill for the statistics ([`stats`]), and
+//! the latest feed's trace on its way to storage ([`traces`]).
 //! [`stress`]
 //! is the settings store's power-cut probe, kept for its host tests.
 //!
@@ -33,4 +34,5 @@ pub mod network;
 pub mod stats;
 pub mod stress;
 pub mod time;
+pub mod traces;
 pub mod writer;

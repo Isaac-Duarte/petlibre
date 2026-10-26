@@ -14,7 +14,7 @@ use wellfed_core::ota::offer::KeyId;
 use wellfed_core::tone::Tune as CoreTune;
 use wellfed_proto::api::{
     self as proto, Blocked, Capabilities, EventBody, Readiness, Refusal, Source, Stats,
-    StatsSection, Status, UpdateView,
+    StatsSection, Status, TracePage, UpdateView,
 };
 
 /// The rest of the feeder, as the server needs it. Every call returns at
@@ -71,6 +71,11 @@ pub trait Device {
     /// One section of the statistics, read when its answer is sealed. Asked
     /// only of a device whose capabilities carry the section's bit.
     fn stats(&mut self, section: StatsSection, now_ms: u32) -> Stats<'_>;
+    /// One page of feed `feed`'s trace from byte `offset` of its body, read
+    /// when its answer is sealed: `NotFound` when no trace of it is kept,
+    /// `Busy` while it is still recorded, `Invalid` for an offset past the
+    /// body. Asked only of a device whose capabilities carry the traces.
+    fn feed_trace(&mut self, feed: u32, offset: u16) -> Result<TracePage<'_>, Refusal>;
 
     /// Queue an update request for the installer: its ticket, or why it
     /// cannot be queued now. A device without [`Capabilities::UPDATE`]

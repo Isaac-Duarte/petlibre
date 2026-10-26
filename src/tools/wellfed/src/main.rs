@@ -18,6 +18,7 @@
 mod ble;
 mod device;
 mod keys;
+mod trace;
 
 use std::io::BufRead;
 use std::path::PathBuf;
@@ -27,6 +28,7 @@ use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use wellfed_client::api::Invite;
 use wellfed_client::setup::{Ask, Credentials, Session, Step, panel_position};
+use wellfed_client::trace::Pages;
 use wellfed_formats::private;
 use wellfed_model::setup::{Enrolled, Refusal, Reply, WifiSaved};
 use wellfed_model::{
@@ -86,8 +88,12 @@ enum Command {
     CancelFeed(CancelFeedArgs),
     /// Restart the feeder.
     Reboot(Target),
-    /// The feeder's statistics: counters, memory, flash, power and food.
+    /// The feeder's statistics: counters, memory, flash, power, food and
+    /// feeds.
     Stats(StatsArgs),
+    /// What one feed's drive measured: its current, marks, beams, battery
+    /// and motor commands over time, from the feeder's RAM or its storage.
+    Trace(TraceArgs),
     /// Become an owner again through the feeder's recovery window.
     Recover(RecoverArgs),
 }
@@ -139,6 +145,7 @@ fn main() -> Result<()> {
         )),
         Command::Reboot(target) => runtime.block_on(ask_and_print(&target, &Op::Reboot)),
         Command::Stats(args) => runtime.block_on(stats_command(args)),
+        Command::Trace(args) => runtime.block_on(trace_command(args)),
         Command::Recover(args) => runtime.block_on(recover_command(args)),
     }
 }
@@ -432,6 +439,7 @@ enum Section {
     Flash,
     Power,
     Food,
+    Feeds,
 }
 
 impl Section {
@@ -442,8 +450,20 @@ impl Section {
             Self::Flash => StatsSection::Flash,
             Self::Power => StatsSection::Power,
             Self::Food => StatsSection::Food,
+            Self::Feeds => StatsSection::Feeds,
         }
     }
+}
+
+#[derive(Args)]
+struct TraceArgs {
+    #[command(flatten)]
+    target: Target,
+    /// The feed, as `wellfed feed` and the `Fed` event number it.
+    feed: u32,
+    /// The whole trace as JSON, instead of a summary and one line an entry.
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -573,14 +593,43 @@ async fn stats_command(args: StatsArgs) -> Result<()> {
         bail!("this feeder's build serves no statistics; update it first");
     }
     let sections: Vec<StatsSection> = if args.section.is_empty() {
-        StatsSection::ALL.to_vec()
+        let traces = connection.capabilities().traces;
+        StatsSection::ALL
+            .into_iter()
+            .filter(|&section| section != StatsSection::Feeds || traces)
+            .collect()
     } else {
         args.section.iter().map(|section| section.model()).collect()
     };
+    if sections.contains(&StatsSection::Feeds) && !connection.capabilities().traces {
+        bail!("this feeder's build keeps no feed traces; update it first");
+    }
     for section in sections {
         let answer = connection.ask(&Op::Stats { section }).await?;
         print_answer(&answer)?;
     }
+    Ok(())
+}
+
+/// One feed's trace, read a page at a time.
+async fn trace_command(args: TraceArgs) -> Result<()> {
+    let (_, _, mut connection) = connect(&args.target).await?;
+    // As for the statistics: a feeder that predates the op would end the
+    // session on it.
+    if !connection.capabilities().traces {
+        bail!("this feeder's build keeps no feed traces; update it first");
+    }
+    let mut pages = Pages::new(args.feed);
+    let trace = loop {
+        let answer = connection.ask(&pages.next_op()).await?;
+        if let Some(trace) = pages.take(answer).context("read the trace")? {
+            break trace;
+        }
+    };
+    if args.json {
+        return print_json(&trace);
+    }
+    print!("{}", trace::Text(&trace));
     Ok(())
 }
 

@@ -25,6 +25,11 @@
 //! seconds.
 //! It publishes the ring's fill for the statistics ([`stats`]).
 //!
+//! And it keeps the per-feed traces (sectors 29-31,
+//! `wellfed_feeder::store::traces`): a feed's trace, sealed in RAM once the
+//! feed is over, is appended to the ring on the writer's next turn
+//! ([`traces`]).
+//!
 //! No write starts while a feed may move the outputs: a flash lease then
 //! fails its stopped-outputs check and resets the board. So each store write
 //! first takes the write turn in `wellfed_hal::interlock`. While a feed
@@ -44,6 +49,7 @@ use wellfed_feeder::store::events::EventLog;
 use wellfed_feeder::store::net::{NetStatus, NetStore};
 use wellfed_feeder::store::settings::{Settings, SettingsStatus, SettingsStore};
 use wellfed_feeder::store::time::{TimeStatus, TimeStore};
+use wellfed_feeder::store::traces::TraceRing;
 use wellfed_hal::flash::park::Mmio;
 use wellfed_hal::flash_lock::arming::{self, Arming, Hooks, Poll};
 use wellfed_hal::flash_lock::provider::Provider;
@@ -51,7 +57,7 @@ use wellfed_hal::interlock::{INTERLOCK, WRITER_POLL_MS, WriteStep, WriteTurn};
 use wellfed_hal::{rng, sdk, settings};
 use wellfed_sdk::storage::{
     CLIENTS_BASE, EVENTS_BASE, EVENTS_UNITS, FlashOps, Region, SEED_BASE, SETTINGS_BASE,
-    SETTINGS_BINDING, Slots,
+    SETTINGS_BINDING, Slots, TRACES_BASE, TRACES_UNITS,
 };
 
 use crate::events;
@@ -60,6 +66,7 @@ use crate::keys::{self, Change};
 use crate::network::{self, NET_BASE};
 use crate::stats;
 use crate::time::{self, TIME_BASE};
+use crate::traces;
 use wellfed_feeder::feeder::platform::EventsFill;
 
 pub const POLL_MS: u32 = 200;
@@ -172,6 +179,11 @@ pub enum Record {
     },
     /// An append failed; the record is dropped.
     EventError,
+    /// A feed's trace went to the ring (`seq`), or did not (`None`).
+    Trace {
+        feed: u32,
+        seq: Option<u32>,
+    },
 }
 
 /// The body of a `PLCFG1` line.
@@ -284,6 +296,11 @@ pub fn describe(record: Record, f: &mut impl fmt::Write) -> fmt::Result {
             oldest.unwrap_or(0)
         ),
         Record::EventError => f.write_str("events error stage=append"),
+        Record::Trace {
+            feed,
+            seq: Some(seq),
+        } => write!(f, "trace saved feed={feed} seq={seq}"),
+        Record::Trace { feed, seq: None } => write!(f, "trace error feed={feed}"),
     }
 }
 
@@ -351,6 +368,7 @@ pub struct Writer<F> {
     keys_opened: bool,
     events: EventLog<Region<F, EVENTS_BASE, EVENTS_UNITS>>,
     events_opened: bool,
+    traces: TraceRing<Region<F, TRACES_BASE, TRACES_UNITS>>,
     /// This writer's wait for the write turn.
     turn: WriteTurn,
 }
@@ -371,6 +389,7 @@ impl<F> Default for Writer<F> {
             keys_opened: false,
             events: EventLog::default(),
             events_opened: false,
+            traces: TraceRing::default(),
             turn: WriteTurn::new(),
         }
     }
@@ -551,6 +570,39 @@ impl<F: FlashOps> Writer<F> {
         next(if more { EVENTS_POLL_MS } else { POLL_MS }, record)
     }
 
+    /// Append the sealed trace, if one waits: under the write turn, which a
+    /// feed's claim holds until its outputs are stopped. One that cannot be
+    /// written (unarmed, read-only) is let go at once, so the next feed's
+    /// claim never waits for it.
+    fn trace_step(&mut self, writable: bool) -> Option<Step> {
+        if !traces::queued() {
+            return None;
+        }
+        let turn = if writable {
+            let Some(turn) = self.take_turn() else {
+                return Some(self.waiting());
+            };
+            Some(turn)
+        } else {
+            None
+        };
+
+        let ring = &mut self.traces;
+        let mut seq = None;
+        let written = traces::write_sealed(|summary, body| {
+            if turn.is_none() {
+                return false;
+            }
+            arming::set_attempt();
+            seq = ring.append(summary, body).ok();
+            arming::clear_attempt();
+            seq.is_some()
+        });
+        drop(turn);
+        traces::publish_fill(self.traces.kept(), self.traces.capacity());
+        written.map(|(feed, _)| next(POLL_MS, Some(Record::Trace { feed, seq })))
+    }
+
     fn publish_fill(&self) {
         stats::publish_fill(EventsFill {
             kept: self.events.kept(),
@@ -668,6 +720,10 @@ impl<F: FlashOps> Writer<F> {
                 }
                 if !self.events_opened {
                     self.events_opened = true;
+                    // The trace ring opens with the event ring, unlogged:
+                    // each trace it takes logs its own line.
+                    self.traces.open(Region::new(), TRACES_UNITS as usize);
+                    traces::publish_fill(self.traces.kept(), self.traces.capacity());
                     self.events
                         .open(Region::new(), EVENTS_UNITS as usize, fresh_epoch());
                     events::publish_open(self.events.epoch(), self.events.last_seq());
@@ -753,6 +809,9 @@ impl<F: FlashOps> Writer<F> {
                 }
                 let Some(fields) = settings::pending() else {
                     let writable = self.stage == Stage::Idle && H::armed();
+                    if let Some(step) = self.trace_step(writable) {
+                        return step;
+                    }
                     return self.events_step(writable);
                 };
                 let target = changed(self.store.settings, fields);

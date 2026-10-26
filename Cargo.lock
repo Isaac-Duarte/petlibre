@@ -2412,6 +2412,7 @@ dependencies = [
  "wellfed-proto",
  "wellfed-session",
  "wellfed-testkit",
+ "thiserror",
 ]
 
 [[package]]
@@ -2422,6 +2423,7 @@ dependencies = [
  "wellfed-device-api",
  "wellfed-feeder",
  "wellfed-hal",
+ "wellfed-proto",
  "wellfed-sdk",
 ]
 
@@ -2445,6 +2447,7 @@ dependencies = [
  "wellfed-model",
  "wellfed-proto",
  "wellfed-session",
+ "wellfed-sim",
  "sha2 0.10.9",
  "socket2",
  "tempfile",
@@ -2595,6 +2598,7 @@ dependencies = [
  "wellfed-session",
  "serde",
  "serde_json",
+ "thiserror",
  "utoipa",
 ]
 

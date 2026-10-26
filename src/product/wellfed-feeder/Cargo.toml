@@ -17,6 +17,7 @@ wellfed-core.workspace = true
 wellfed-device-api.workspace = true
 wellfed-proto.workspace = true
 wellfed-session.workspace = true
+thiserror = { version = "2.0.21", default-features = false }
 
 [dev-dependencies]
 wellfed-testkit.workspace = true

@@ -27,6 +27,9 @@ pub struct Capabilities {
     /// Feeding readiness: [`crate::Status::readiness`] and the
     /// `FeedingBlocked` events.
     pub readiness: bool,
+    /// Per-feed traces: the `FeedTrace` op and the statistics' feeds
+    /// section. Shared only with the statistics: the wire needs both bits.
+    pub traces: bool,
 }
 
 impl Capabilities {
@@ -38,6 +41,7 @@ impl Capabilities {
         log: false,
         stats: false,
         readiness: false,
+        traces: false,
     };
     /// Every feature this crate knows: what a current client claims.
     pub const KNOWN: Self = Self {
@@ -47,6 +51,7 @@ impl Capabilities {
         log: true,
         stats: true,
         readiness: true,
+        traces: true,
     };
 
     /// The features both `self` and `other` claim.
@@ -59,6 +64,7 @@ impl Capabilities {
             log: self.log && other.log,
             stats: self.stats && other.stats,
             readiness: self.readiness && other.readiness,
+            traces: self.traces && other.traces,
         }
     }
 }

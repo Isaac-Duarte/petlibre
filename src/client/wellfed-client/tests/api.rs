@@ -96,6 +96,51 @@ struct Fake {
     blocked: Option<proto::Blocked>,
     /// The owner reserves no queued feed while set.
     hold_feeds: bool,
+    /// The trace the feeder holds: its summary, body and whether it is
+    /// stored; and a feed still being recorded.
+    trace: Option<(proto::TraceSummary, Vec<u8>, bool)>,
+    tracing: Option<u32>,
+}
+
+/// A sealed trace of feed `feed`: a reading every poll of a 400-poll drive,
+/// two pages of body.
+fn trace(feed: u32) -> (proto::TraceSummary, Vec<u8>, bool) {
+    use wellfed_proto::trace::{Entry, Writer};
+
+    let mut writer = Writer::<{ wellfed_proto::trace::BODY_MAX }>::new();
+    for poll in 0..400 {
+        writer.push(Entry::Current {
+            at_ms: 30 * poll,
+            value: 60 + poll % 7,
+        });
+    }
+    writer.push(Entry::Mark {
+        at_ms: 7_840,
+        edges: 1,
+        high: false,
+    });
+    let summary = proto::TraceSummary {
+        feed,
+        requested: 1,
+        completed: 0,
+        outcome: proto::FeedOutcome::Failed,
+        reason: proto::FeedReason::NoFeedback,
+        drive_ms: 12_000,
+        samples: 400,
+        unit: proto::CurrentUnit::Scaled,
+        current_peak: 66,
+        current_mean: Some(63),
+        rising: 0,
+        falling: 1,
+        first_edge_ms: Some(7_840),
+        beam_breaks: 0,
+        reversals: 0,
+        battery_rest_mv: None,
+        battery_min_mv: None,
+        stride: 1,
+        truncated: false,
+    };
+    (summary, writer.bytes().to_vec(), true)
 }
 
 /// An install receiving its first sector.
@@ -306,7 +351,8 @@ impl Device for Fake {
         let mut capabilities = Capabilities::FEED
             .union(Capabilities::READINESS)
             .union(Capabilities::TIME)
-            .union(Capabilities::STATS);
+            .union(Capabilities::STATS)
+            .union(Capabilities::TRACES);
         if self.update {
             capabilities = capabilities.union(Capabilities::UPDATE);
         }
@@ -351,7 +397,33 @@ impl Device for Fake {
                 ..proto::PowerStats::default()
             }),
             StatsSection::Food => Stats::Food(proto::Food::default()),
+            StatsSection::Feeds => Stats::Feeds(proto::FeedStats {
+                traced: 1,
+                kept: 1,
+                capacity: 8,
+                last: self.trace.as_ref().map(|(summary, ..)| *summary),
+                ..proto::FeedStats::default()
+            }),
         }
+    }
+
+    fn feed_trace(&mut self, feed: u32, offset: u16) -> Result<proto::TracePage<'_>, Refusal> {
+        if self.tracing == Some(feed) {
+            return Err(Refusal::Busy);
+        }
+        let Some((summary, body, stored)) = self.trace.as_ref().filter(|(s, ..)| s.feed == feed)
+        else {
+            return Err(Refusal::NotFound);
+        };
+        let rest = body.get(usize::from(offset)..).ok_or(Refusal::Invalid)?;
+        let len = rest.len().min(wellfed_proto::trace::PAGE_MAX);
+        Ok(proto::TracePage {
+            summary: *summary,
+            stored: *stored,
+            offset,
+            total: u16::try_from(body.len()).unwrap(),
+            bytes: &rest[..len],
+        })
     }
 
     fn log_after(&mut self, after: Option<u32>, text: &mut [u8]) -> Option<LogBatch> {
@@ -1697,6 +1769,7 @@ fn a_connection_names_the_epoch_and_answers_each_request_once() {
                 log: false,
                 stats: true,
                 readiness: true,
+                traces: true,
             },
             EPOCH
         )
@@ -1992,6 +2065,10 @@ fn every_statistics_section_answers_a_session_that_claims_the_bit() {
                 model::StatsSection::Power
             }
             model::Stats::Food(_) => model::StatsSection::Food,
+            model::Stats::Feeds(feeds) => {
+                assert_eq!((feeds.kept, feeds.capacity), (1, 8));
+                model::StatsSection::Feeds
+            }
         };
         assert_eq!(answered, section);
     }
@@ -2040,6 +2117,88 @@ fn every_statistics_section_answers_a_session_that_claims_the_bit() {
         "{:?}",
         old.events
     );
+}
+
+/// A feed's trace, read a page at a time by any role: the two pages make
+/// the body back, `Busy` while that feed is still recorded, `NotFound` for
+/// a feed with no trace, and only to a session whose hello claims both the
+/// statistics and the traces.
+#[test]
+fn a_trace_is_read_a_page_at_a_time_with_both_bits() {
+    use wellfed_client::trace::{Pages, TraceError};
+
+    let mut rig = Rig::new();
+    let (summary, body, _) = trace(5);
+    rig.device.trace = Some((summary, body.clone(), true));
+    let mut member = open(&mut rig, MEMBER);
+
+    let mut pages = Pages::new(5);
+    let mut id = 0;
+    let read = loop {
+        id += 1;
+        let answer = ask(&mut rig, &mut member, id, pages.next_op());
+        if let Some(read) = pages.take(answer).unwrap() {
+            break read;
+        }
+    };
+    assert_eq!(id, 2, "two pages");
+    assert_eq!(read.summary, summary.into());
+    assert!(read.stored);
+    let expected = model::Trace::decode(summary.into(), true, &body).unwrap();
+    assert_eq!(read, expected);
+    assert_eq!(read.entries.len(), 401);
+
+    rig.device.tracing = Some(6);
+    let mut pages = Pages::new(6);
+    let answer = ask(&mut rig, &mut member, 10, pages.next_op());
+    assert_eq!(
+        pages.take(answer),
+        Err(TraceError::Refused(model::Refusal::Busy))
+    );
+    let answer = ask(
+        &mut rig,
+        &mut member,
+        11,
+        Op::FeedTrace { feed: 7, offset: 0 },
+    );
+    assert_eq!(answer, Answer::Refused(model::Refusal::NotFound));
+
+    for claimed in [
+        model::Capabilities {
+            traces: false,
+            ..model::Capabilities::KNOWN
+        },
+        model::Capabilities {
+            stats: false,
+            ..model::Capabilities::KNOWN
+        },
+    ] {
+        let hello = Hello {
+            major: 1,
+            capabilities: claimed,
+        };
+        let mut old = live_with(&mut rig, OWNER, hello);
+        drive(&mut rig, &mut old, |live| {
+            live.connection.opened().is_some()
+        })
+        .unwrap();
+        let now = old.now(&rig);
+        old.connection
+            .request(now, [3; 16], &Op::FeedTrace { feed: 5, offset: 0 })
+            .unwrap();
+        drive(&mut rig, &mut old, |live| !live.events.is_empty()).unwrap();
+        assert!(
+            matches!(
+                &old.events[..],
+                [Event::Answer {
+                    answer: Answer::Refused(model::Refusal::Unavailable),
+                    ..
+                }]
+            ),
+            "{claimed:?}: {:?}",
+            old.events
+        );
+    }
 }
 
 /// The statistics' metrics go only to subscribers that claimed the bit,
@@ -2200,6 +2359,7 @@ fn only_an_owner_s_session_with_the_update_bit_may_update() {
             log: true,
             stats: true,
             readiness: true,
+            traces: true,
         },
     };
     let slot = rig.accept().unwrap();

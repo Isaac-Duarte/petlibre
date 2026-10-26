@@ -13,11 +13,11 @@
 //! totals (the storage region has none free).
 
 use wellfed_proto::api::{
-    self as proto, Counters, Counts, EventBody, FeedOutcome, Food, Metric, POWER_HISTORY, Power,
-    PowerStats, ResetCause,
+    self as proto, Counters, Counts, CurrentUnit, EventBody, FeedOutcome, FeedStats, Food, Metric,
+    POWER_HISTORY, Power, PowerStats, ResetCause, TraceSummary,
 };
 
-use crate::feeder::platform::Link;
+use crate::feeder::platform::{Link, TracesFill};
 
 /// One point of the battery's history.
 pub const HISTORY_MS: u32 = 60 * 60_000;
@@ -228,6 +228,39 @@ impl Beam {
     }
 }
 
+/// This boot's feeds as their traces summed them up.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Traced {
+    traced: u32,
+    drive_ms: u32,
+    samples: u32,
+    /// Each feed's mean times its readings, for the boot's mean.
+    current_total: u64,
+    current_peak: u32,
+    rising: u32,
+    falling: u32,
+    beam_breaks: u32,
+    reversals: u32,
+    last: Option<TraceSummary>,
+}
+
+impl Traced {
+    const fn new() -> Self {
+        Self {
+            traced: 0,
+            drive_ms: 0,
+            samples: 0,
+            current_total: 0,
+            current_peak: 0,
+            rising: 0,
+            falling: 0,
+            beam_breaks: 0,
+            reversals: 0,
+            last: None,
+        }
+    }
+}
+
 /// The feeder's statistics, kept by the loop.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Keeper {
@@ -249,6 +282,7 @@ pub struct Keeper {
     supply: Supply,
     beam: Beam,
     passes: PassTimes,
+    traces: Traced,
 }
 
 impl Default for Keeper {
@@ -289,6 +323,52 @@ impl Keeper {
                 feeds_since_refill: None,
             },
             passes: PassTimes::new(),
+            traces: Traced::new(),
+        }
+    }
+
+    /// A feed's trace, once sealed.
+    pub fn traced(&mut self, summary: &TraceSummary) {
+        let traces = &mut self.traces;
+        traces.traced = traces.traced.saturating_add(1);
+        traces.drive_ms = traces.drive_ms.saturating_add(summary.drive_ms);
+        traces.samples = traces.samples.saturating_add(summary.samples);
+        let total = u64::from(summary.current_mean.unwrap_or(0)) * u64::from(summary.samples);
+        traces.current_total = traces.current_total.saturating_add(total);
+        traces.current_peak = traces.current_peak.max(summary.current_peak);
+        traces.rising = traces.rising.saturating_add(u32::from(summary.rising));
+        traces.falling = traces.falling.saturating_add(u32::from(summary.falling));
+        traces.beam_breaks = traces
+            .beam_breaks
+            .saturating_add(u32::from(summary.beam_breaks));
+        traces.reversals = traces
+            .reversals
+            .saturating_add(u32::from(summary.reversals));
+        traces.last = Some(*summary);
+    }
+
+    /// The feeds section, with the platform's trace-ring figures.
+    pub fn feed_stats(&self, fill: TracesFill) -> FeedStats {
+        let traces = &self.traces;
+        let mean = traces
+            .current_total
+            .checked_div(u64::from(traces.samples))
+            .map(|mean| u32::try_from(mean).unwrap_or(u32::MAX));
+        FeedStats {
+            traced: traces.traced,
+            drive_ms: traces.drive_ms,
+            samples: traces.samples,
+            unit: CurrentUnit::Scaled,
+            current_peak: traces.current_peak,
+            current_mean: mean,
+            rising: traces.rising,
+            falling: traces.falling,
+            beam_breaks: traces.beam_breaks,
+            reversals: traces.reversals,
+            kept: fill.kept,
+            capacity: fill.capacity,
+            unsaved: fill.unsaved,
+            last: traces.last,
         }
     }
 

@@ -99,6 +99,11 @@ impl Capabilities {
     /// [`Metric`]s beyond power and signal, which a feeder sends only to a
     /// subscriber whose hello carries this bit.
     pub const STATS: Self = Self(16);
+    /// Per-feed traces: [`Op::FeedTrace`] and [`Outcome::FeedTrace`], and
+    /// the statistics' [`StatsSection::Feeds`]. Served only beside
+    /// [`Self::STATS`] (both bits are needed): a feeder that serves the
+    /// statistics but predates traces could not decode the op.
+    pub const TRACES: Self = Self(64);
     /// Every bit this crate defines: what a current client claims. A
     /// session then runs on the bits both sides claim, so a client adapts
     /// to whatever feeder it meets, however old.
@@ -108,7 +113,8 @@ impl Capabilities {
             | Self::READINESS.0
             | Self::TIME.0
             | Self::STATS.0
-            | Self::LOG.0,
+            | Self::LOG.0
+            | Self::TRACES.0,
     );
 
     pub const fn union(self, other: Self) -> Self {
@@ -302,6 +308,16 @@ pub enum Op<'a> {
     Stats {
         section: StatsSection,
     },
+    /// The trace of feed `feed` (the number [`Outcome::Feeding`] gave it),
+    /// from byte `offset` of its body: answered [`Outcome::FeedTrace`] with
+    /// at most [`PAGE_MAX`](crate::trace::PAGE_MAX) bytes, so a client asks
+    /// again from where each page ends until it has the whole body.
+    /// `NotFound` when the feeder keeps no trace of it, `Busy` while it
+    /// still runs, `Invalid` for an offset past the body's end.
+    FeedTrace {
+        feed: u32,
+        offset: u16,
+    },
 }
 
 /// The largest [`Op::UpdateChunk`]: an eighth of a flash sector, which
@@ -325,14 +341,16 @@ impl Op<'_> {
                 | Self::GetTime
                 | Self::TailLog { .. }
                 | Self::Stats { .. }
+                | Self::FeedTrace { .. }
         )
     }
 
-    /// The bit both sides must claim before the op is served. The match
+    /// The bits both sides must claim before the op is served. The match
     /// has no wildcard, so a new op cannot land without its decision.
     pub const fn capability(&self) -> Capabilities {
         match self {
             Self::Stats { section } => section.capability(),
+            Self::FeedTrace { .. } => Capabilities::STATS.union(Capabilities::TRACES),
             Self::Feed { .. } | Self::CancelFeed { .. } => Capabilities::FEED,
             Self::OfferUpdate { .. }
             | Self::UpdateChunk { .. }
@@ -528,6 +546,9 @@ pub enum Outcome<'a> {
         status: Status<'a>,
         readiness: Readiness,
     },
+    /// One page of the trace [`Op::FeedTrace`] asked for.
+    #[serde(borrow)]
+    FeedTrace(TracePage<'a>),
 }
 
 /// Whether the feeder can start a feed now. One decision, which both
@@ -1007,23 +1028,27 @@ pub enum StatsSection {
     Flash,
     Power,
     Food,
+    /// This boot's feeds as their traces measured them.
+    Feeds,
 }
 
 impl StatsSection {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Counters,
         Self::Memory,
         Self::Flash,
         Self::Power,
         Self::Food,
+        Self::Feeds,
     ];
 
-    /// The bit both sides must claim before this section is served.
+    /// The bits both sides must claim before this section is served.
     pub const fn capability(self) -> Capabilities {
         match self {
             Self::Counters | Self::Memory | Self::Flash | Self::Power | Self::Food => {
                 Capabilities::STATS
             }
+            Self::Feeds => Capabilities::STATS.union(Capabilities::TRACES),
         }
     }
 }
@@ -1037,6 +1062,7 @@ pub enum Stats<'a> {
     Flash(Flash),
     Power(PowerStats),
     Food(Food),
+    Feeds(FeedStats),
 }
 
 /// What the feeder counts, since this boot and over its life.
@@ -1183,6 +1209,93 @@ pub struct Food {
     pub feeds_since_refill: Option<u32>,
 }
 
+/// What a trace's current readings count in.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CurrentUnit {
+    /// The current channel scaled as stock scales it (the ADC's millivolts
+    /// at the sense input): proportional to the motor current, but not yet
+    /// calibrated to milliamps.
+    #[default]
+    Scaled,
+    MilliAmps,
+}
+
+/// One feed's trace, summed up: what the drive measured, from every poll,
+/// whether or not the body kept each reading.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TraceSummary {
+    pub feed: u32,
+    pub requested: u8,
+    pub completed: u8,
+    pub outcome: FeedOutcome,
+    pub reason: FeedReason,
+    /// How long the motor was commanded to move; 0 when it never started.
+    pub drive_ms: u32,
+    /// Polls that read the current while the motor was driven.
+    pub samples: u32,
+    pub unit: CurrentUnit,
+    pub current_peak: u32,
+    pub current_mean: Option<u32>,
+    /// Feedback edges, rising and falling, and the first one's time from
+    /// the drive's start.
+    pub rising: u16,
+    pub falling: u16,
+    pub first_edge_ms: Option<u32>,
+    /// Times a poll found the outlet beam blocked after finding it clear.
+    pub beam_breaks: u16,
+    /// Times the motor command turned from one direction to the other.
+    pub reversals: u16,
+    /// The battery pack just before the drive, and its lowest during it;
+    /// `None` with no pack fitted, or no reading.
+    pub battery_rest_mv: Option<u16>,
+    pub battery_min_mv: Option<u16>,
+    /// The body keeps every `stride`th current reading: 1 for each poll,
+    /// doubling each time a full body halved them.
+    pub stride: u16,
+    /// The body ran out of room for marks and other entries, and ends
+    /// before the drive did.
+    pub truncated: bool,
+}
+
+/// One page of a trace's body ([`crate::trace`]): `bytes` from `offset`,
+/// of `total` in all, and the trace's summary with each page, so a client
+/// can tell when the trace it was reading has gone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TracePage<'a> {
+    pub summary: TraceSummary,
+    /// The trace is in the feeder's storage, so it outlives a restart.
+    pub stored: bool,
+    pub offset: u16,
+    pub total: u16,
+    #[serde(borrow)]
+    pub bytes: &'a [u8],
+}
+
+/// This boot's feeds, from their traces.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FeedStats {
+    /// Feeds traced.
+    pub traced: u32,
+    /// Their drive time, polls and current, as each summary counts them.
+    pub drive_ms: u32,
+    pub samples: u32,
+    pub unit: CurrentUnit,
+    pub current_peak: u32,
+    pub current_mean: Option<u32>,
+    pub rising: u32,
+    pub falling: u32,
+    pub beam_breaks: u32,
+    pub reversals: u32,
+    /// Traces the storage ring holds, and the most it is sure to hold.
+    pub kept: u32,
+    pub capacity: u32,
+    /// Traces that never reached storage: the next feed's took the RAM
+    /// trace first, or the write failed.
+    pub unsaved: u32,
+    /// The latest feed's summary.
+    pub last: Option<TraceSummary>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1275,10 +1388,56 @@ mod tests {
             let len = encode(&message, &mut out).unwrap();
             assert_eq!(decode::<FeederMessage<'_>>(&out[..len]), Ok(message));
         }
+
+        let page = FeederMessage::Response {
+            id: [0xff; 16],
+            result: Outcome::FeedTrace(TracePage {
+                summary: largest_summary(),
+                stored: true,
+                offset: u16::MAX,
+                total: u16::MAX,
+                bytes: &[0xff; crate::trace::PAGE_MAX],
+            }),
+        };
+        let len = encode(&page, &mut out).unwrap();
+        assert_eq!(decode::<FeederMessage<'_>>(&out[..len]), Ok(page));
+    }
+
+    /// A summary with every field at its largest encoding.
+    fn largest_summary() -> TraceSummary {
+        TraceSummary {
+            feed: u32::MAX,
+            requested: u8::MAX,
+            completed: u8::MAX,
+            outcome: FeedOutcome::Uncertain,
+            reason: FeedReason::Output,
+            drive_ms: u32::MAX,
+            samples: u32::MAX,
+            unit: CurrentUnit::MilliAmps,
+            current_peak: u32::MAX,
+            current_mean: Some(u32::MAX),
+            rising: u16::MAX,
+            falling: u16::MAX,
+            first_edge_ms: Some(u32::MAX),
+            beam_breaks: u16::MAX,
+            reversals: u16::MAX,
+            battery_rest_mv: Some(u16::MAX),
+            battery_min_mv: Some(u16::MAX),
+            stride: u16::MAX,
+            truncated: true,
+        }
+    }
+
+    /// A summary fits the storage slot's header with room to spare.
+    #[test]
+    fn a_summary_fits_its_storage_header() {
+        let mut out = [0; 96];
+        let len = encode(&largest_summary(), &mut out).unwrap();
+        assert!(len <= 80, "{len}");
     }
 
     /// Every section at its widest: each field at its largest encoding.
-    fn largest_stats() -> [Stats<'static>; 5] {
+    fn largest_stats() -> [Stats<'static>; 6] {
         let counts = Counts {
             uptime_s: u32::MAX,
             feeds: u32::MAX,
@@ -1344,6 +1503,22 @@ mod tests {
                 refilled: u32::MAX,
                 feeds_since_refill: Some(u32::MAX),
             }),
+            Stats::Feeds(FeedStats {
+                traced: u32::MAX,
+                drive_ms: u32::MAX,
+                samples: u32::MAX,
+                unit: CurrentUnit::MilliAmps,
+                current_peak: u32::MAX,
+                current_mean: Some(u32::MAX),
+                rising: u32::MAX,
+                falling: u32::MAX,
+                beam_breaks: u32::MAX,
+                reversals: u32::MAX,
+                kept: u32::MAX,
+                capacity: u32::MAX,
+                unsaved: u32::MAX,
+                last: Some(largest_summary()),
+            }),
         ]
     }
 
@@ -1373,6 +1548,17 @@ mod tests {
         for section in StatsSection::ALL {
             assert!(Capabilities::KNOWN.contains(section.capability()));
         }
+        // Traces need both bits: a feeder with the statistics alone
+        // predates them.
+        let trace = Op::FeedTrace { feed: 1, offset: 0 }.capability();
+        assert!(!Capabilities::STATS.contains(trace));
+        assert!(!Capabilities::TRACES.contains(trace));
+        assert!(
+            Capabilities::STATS
+                .union(Capabilities::TRACES)
+                .contains(trace)
+        );
+        assert!(!Capabilities::STATS.contains(StatsSection::Feeds.capability()));
     }
 
     /// The event ring stores a body in 16 bytes.

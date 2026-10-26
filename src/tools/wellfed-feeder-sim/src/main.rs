@@ -14,8 +14,8 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use wellfed_feeder::store::clients::{Label, Role};
 use wellfed_feeder_sim::console::{self, HELP};
-use wellfed_feeder_sim::device::Random;
 use wellfed_feeder_sim::flash::Flash;
+use wellfed_feeder_sim::platform::Random;
 use wellfed_feeder_sim::serve::{self, Advertise, Control, Event, Feeder};
 use wellfed_formats::hex;
 use wellfed_formats::owner::{EnrolledFeeder, OwnerKeyFile};
@@ -117,7 +117,7 @@ async fn run(cli: Cli, flash: Rc<Flash>, owner: Option<([u8; 32], Label)>) -> Re
         update_key,
         random: Box::new(system_random),
         prepare: Box::new(move |sim| match owner {
-            Some((key, label)) => sim.device().enroll(key, label, Role::Owner),
+            Some((key, label)) => sim.platform().enroll(key, label, Role::Owner),
             None => Ok(()),
         }),
     };
@@ -132,7 +132,7 @@ async fn run(cli: Cli, flash: Rc<Flash>, owner: Option<([u8; 32], Label)>) -> Re
                 eprintln!("{error:#}");
             }
         }
-        Event::Sim(record) => eprintln!("{record:?}"),
+        Event::Sim(record) => eprintln!("{record}"),
         Event::Prepare(error) => eprintln!("--enroll-owner: {error}."),
         Event::Accept(kind) => eprintln!("Accept failed ({kind}); pausing the listener."),
     })

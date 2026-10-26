@@ -17,8 +17,8 @@ use tokio::task::JoinHandle;
 
 use crate::banks::Banks;
 use crate::console::{self, ConsoleError};
-use crate::device::Random;
 use crate::flash::Flash;
+use crate::platform::Random;
 use crate::serve::{self, Control, Event, Feeder};
 
 /// A running simulator.
@@ -73,7 +73,7 @@ impl Running {
             prepare: Box::new(move |sim| match owner {
                 Some(key) => {
                     let label = Label::new(b"test-owner").expect("a 10-byte label");
-                    sim.device().enroll(key, label, Role::Owner)
+                    sim.platform().enroll(key, label, Role::Owner)
                 }
                 None => Ok(()),
             }),

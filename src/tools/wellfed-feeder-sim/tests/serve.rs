@@ -7,11 +7,12 @@ use std::time::Duration;
 
 use wellfed_client::api::Invite;
 use wellfed_connect::{Connection, Error as ConnectError, join};
+use wellfed_feeder::mailbox::KeyResult;
 use wellfed_feeder::panel::{Action, Event as PanelEvent, Lock, Source as PanelSource};
 use wellfed_feeder_sim::flash::Flash;
 use wellfed_feeder_sim::harness;
 use wellfed_feeder_sim::serve::Event;
-use wellfed_feeder_sim::sim::{Record, Reset};
+use wellfed_feeder_sim::sim::Record;
 use wellfed_model::{
     Answer, ClientRole, EventBody, Generation, Joined, Op, Pushed, Refusal, SettingsPatch, Source,
     Status, TimeSync, Wifi,
@@ -374,8 +375,10 @@ fn a_fifth_connection_is_turned_away() {
 async fn panel_change(sim: &mut Running) -> (Lock, PanelSource) {
     loop {
         match sim.events.recv().await {
-            Some(Event::Sim(Record::Panel(PanelEvent::Changed { lock, source }))) => {
-                return (lock, source);
+            Some(Event::Sim(record)) => {
+                if let Some(PanelEvent::Changed { lock, source }) = record.panel() {
+                    return (lock, source);
+                }
             }
             Some(_) => {}
             None => panic!("the simulator stopped"),
@@ -438,18 +441,23 @@ fn a_reset_hold_takes_a_new_identity_and_forgets_every_client() {
         let identity = loop {
             match sim.events.recv().await {
                 Some(Event::Started { identity }) => break identity,
-                Some(Event::Sim(Record::Panel(PanelEvent::Asked {
-                    action: Action::Reset,
-                    allowed,
-                }))) => asked.push(allowed),
-                Some(Event::Sim(Record::Reset(reset))) => resets.push(reset),
+                Some(Event::Sim(Record::Keys(result))) => resets.push(result),
+                Some(Event::Sim(record)) => {
+                    if let Some(PanelEvent::Asked {
+                        action: Action::Reset,
+                        allowed,
+                    }) = record.panel()
+                    {
+                        asked.push(allowed);
+                    }
+                }
                 Some(_) => {}
                 None => panic!("the simulator stopped"),
             }
         };
         // The new identity came only after the second, unlocked hold.
         assert_eq!(asked, [false, true]);
-        assert_eq!(resets, [Reset::Done]);
+        assert_eq!(resets, [KeyResult::Done], "the writer reset the keys once");
         assert_ne!(identity, old);
         assert!(matches!(
             owner.next(WAIT).await,

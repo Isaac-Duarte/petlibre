@@ -2,8 +2,10 @@
 //!
 //! A client is its static key: an X25519 key for the device API's Noise
 //! sessions, or an Ed25519 key for an owner's update signatures. The whole
-//! table is one record, written to the other of two erase units on every
-//! change, so an enrollment or revocation lands entirely or not at all:
+//! table is one record in the dual-slot store
+//! (`wellfed_core::store::slot`), written to the other of two erase units
+//! on every change, so an enrollment or revocation lands entirely or not at
+//! all:
 //!
 //! | Bytes | Field |
 //! | --- | --- |
@@ -29,28 +31,29 @@
 use core::ffi::c_uint;
 
 use wellfed_core::store::slot::{
-    Bound, COMMIT, LENGTH_AT, SlotIo, VERSION_AT, crc32, get_u16, get_u32, get_u64, put_u16,
-    put_u32, put_u64,
+    DualSlot, Extent, Found, Layout, Pick, Prepare, SlotIo, get_u64, newest, put_u64, seal, target,
 };
 use wellfed_session::named_enum;
 
 pub const VERSION: u16 = 1;
-const MAGIC: [u8; 8] = *b"PLFCLI01";
+const LAYOUT: Layout = Layout {
+    magic: *b"PLFCLI01",
+    version: VERSION,
+    extent: Extent::Record,
+};
 /// Enrolled clients, apart from the four concurrent sessions.
 pub const CLIENTS: usize = 8;
 pub const LABEL_LEN: usize = 16;
 
+const GENERATION_AT: usize = 12;
 const IDENTITY_AT: usize = 20;
 const HAS_IDENTITY_AT: usize = 52;
 const ENTRIES_AT: usize = 64;
 const ENTRY_BYTES: usize = 64;
+/// The checksum, then the marker.
 const CRC_AT: usize = ENTRIES_AT + CLIENTS * ENTRY_BYTES;
-const COMMIT_AT: usize = CRC_AT + 4;
 /// The whole record.
-pub const RECORD_BYTES: usize = COMMIT_AT + COMMIT.len();
-/// [`COMMIT_AT`] and [`RECORD_BYTES`] as the I/O and the header store them.
-const COMMIT_OFFSET: u32 = 580;
-const RECORD_LEN: u16 = 584;
+pub const RECORD_BYTES: usize = CRC_AT + 8;
 
 // Within an entry.
 const LABEL_AT: usize = 32;
@@ -58,7 +61,6 @@ const ROLE_AT: usize = LABEL_AT + LABEL_LEN;
 const ENROLLED_AT: usize = 52;
 
 const _: () = assert!(ENROLLED_AT + 8 <= ENTRY_BYTES && RECORD_BYTES <= 4096);
-const _: () = assert!(COMMIT_OFFSET as usize == COMMIT_AT && RECORD_LEN as usize == RECORD_BYTES);
 
 named_enum! {
     /// What a client may do; the device API enforces it.
@@ -167,18 +169,9 @@ impl Table {
     };
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Scan {
-    Erased,
-    /// The generation; the table went to the caller's buffer.
-    Valid(u64),
-    Future,
-    Invalid,
-}
-
 #[derive(Clone, Copy)]
 pub struct ClientStore<I> {
-    io: Bound<I>,
+    units: DualSlot<I>,
     pub status: ClientStatus,
     pub generation: u64,
     pub slot: c_uint,
@@ -199,7 +192,7 @@ impl<I: SlotIo> core::fmt::Debug for ClientStore<I> {
 impl<I> Default for ClientStore<I> {
     fn default() -> Self {
         Self {
-            io: Bound::NONE,
+            units: DualSlot::unbound(&LAYOUT),
             status: ClientStatus::Unopened,
             generation: 0,
             slot: 0,
@@ -209,11 +202,8 @@ impl<I> Default for ClientStore<I> {
 }
 
 fn encode(generation: u64, table: &Table) -> [u8; RECORD_BYTES] {
-    let mut p = [0u8; RECORD_BYTES];
-    p[..8].copy_from_slice(&MAGIC);
-    put_u16::<VERSION_AT, _>(&mut p, VERSION);
-    put_u16::<LENGTH_AT, _>(&mut p, RECORD_LEN);
-    put_u64::<12, _>(&mut p, generation);
+    let mut p = LAYOUT.record();
+    put_u64::<GENERATION_AT, _>(&mut p, generation);
     if let Some(secret) = &table.identity {
         p[IDENTITY_AT..IDENTITY_AT + 32].copy_from_slice(secret);
         p[HAS_IDENTITY_AT] = 1;
@@ -230,9 +220,7 @@ fn encode(generation: u64, table: &Table) -> [u8; RECORD_BYTES] {
         entry[ROLE_AT] = client.role.code();
         put_u64::<ENROLLED_AT, _>(entry, client.enrolled);
     }
-    let crc = crc32(&p[..CRC_AT]);
-    put_u32::<CRC_AT, _>(&mut p, crc);
-    p[COMMIT_AT..].copy_from_slice(&COMMIT);
+    seal(&mut p);
     p
 }
 
@@ -262,29 +250,12 @@ fn decode_entry(entry: &[u8; ENTRY_BYTES]) -> Result<Option<Client>, ()> {
     }))
 }
 
-/// Decode `p`, leaving a valid record's table in `table` (any other result
-/// leaves `table` unspecified).
-fn decode(p: &[u8; RECORD_BYTES], table: &mut Table) -> Scan {
-    if p.iter().all(|&b| b == u8::MAX) {
-        return Scan::Erased;
-    }
-    if p[..8] != MAGIC
-        || usize::from(get_u16::<LENGTH_AT, _>(p)) != RECORD_BYTES
-        || p[COMMIT_AT..] != COMMIT
-        || get_u32::<CRC_AT, _>(p) != crc32(&p[..CRC_AT])
-    {
-        return Scan::Invalid;
-    }
-    let version = get_u16::<VERSION_AT, _>(p);
-    if version > VERSION {
-        return Scan::Future;
-    }
-    let generation = get_u64::<12, _>(p);
-    if version != VERSION
-        || generation == 0
-        || p[HAS_IDENTITY_AT + 1..ENTRIES_AT].iter().any(|&b| b != 0)
-    {
-        return Scan::Invalid;
+/// Decode `p` into `table`: the generation of a valid record (anything
+/// else leaves `table` unspecified).
+fn decode(p: &[u8; RECORD_BYTES], table: &mut Table) -> Option<u64> {
+    let generation = get_u64::<GENERATION_AT, _>(p);
+    if generation == 0 || p[HAS_IDENTITY_AT + 1..ENTRIES_AT].iter().any(|&b| b != 0) {
+        return None;
     }
 
     *table = Table::EMPTY;
@@ -295,36 +266,31 @@ fn decode(p: &[u8; RECORD_BYTES], table: &mut Table) -> Scan {
             secret.copy_from_slice(&p[IDENTITY_AT..HAS_IDENTITY_AT]);
             table.identity = Some(secret);
         }
-        _ => return Scan::Invalid,
+        _ => return None,
     }
     for (slot, entry) in table
         .clients
         .iter_mut()
         .zip(p[ENTRIES_AT..CRC_AT].as_chunks::<ENTRY_BYTES>().0)
     {
-        let Ok(client) = decode_entry(entry) else {
-            return Scan::Invalid;
-        };
-        *slot = client;
+        *slot = decode_entry(entry).ok()?;
     }
-    Scan::Valid(generation)
+    Some(generation)
 }
 
 impl<I: SlotIo> ClientStore<I> {
     /// Scan `slot` into the store's own table, so open never holds two
     /// decoded tables on the stack.
-    fn scan(&mut self, slot: c_uint) -> Option<Scan> {
-        let mut record = [0u8; RECORD_BYTES];
-        self.io
-            .read(slot, 0, &mut record)
-            .then(|| decode(&record, &mut self.table))
+    fn scan(&mut self, slot: c_uint) -> Option<Found<u64>> {
+        let table = &mut self.table;
+        self.units.scan(slot, |p| decode(p, table))
     }
 
     /// Bind to two exclusive erase units and load the newest valid table.
     pub fn open(&mut self, io: I) -> ClientStatus {
         let unit = io.unit_bytes();
         *self = Self {
-            io: Bound::new(io),
+            units: DualSlot::new(io, &LAYOUT),
             ..Self::default()
         };
         if (unit as usize) < RECORD_BYTES {
@@ -336,27 +302,21 @@ impl<I: SlotIo> ClientStore<I> {
             return self.status;
         };
 
-        let pick = match (a, b) {
-            (Scan::Valid(ga), Scan::Valid(gb)) => Some(if ga >= gb { (0, ga) } else { (1, gb) }),
-            (Scan::Valid(g), _) => Some((0, g)),
-            (_, Scan::Valid(g)) => Some((1, g)),
-            _ => None,
-        };
         // Both scans wrote the table; reload the winner's, or start empty.
         self.table = Table::EMPTY;
-        self.status = if a == Scan::Future || b == Scan::Future {
-            ClientStatus::ReadOnly
-        } else if let Some((slot, generation)) = pick {
-            if self.scan(slot) != Some(Scan::Valid(generation)) {
-                self.table = Table::EMPTY;
-                self.status = ClientStatus::Io;
-                return self.status;
+        self.status = match newest(a, b, |&generation| generation) {
+            Pick::Future => ClientStatus::ReadOnly,
+            Pick::Newest(slot, generation) => {
+                if self.scan(slot) != Some(Found::Valid(generation)) {
+                    self.table = Table::EMPTY;
+                    self.status = ClientStatus::Io;
+                    return self.status;
+                }
+                self.slot = slot;
+                self.generation = generation;
+                ClientStatus::Loaded
             }
-            self.slot = slot;
-            self.generation = generation;
-            ClientStatus::Loaded
-        } else {
-            ClientStatus::Empty
+            Pick::Nothing => ClientStatus::Empty,
         };
         self.status
     }
@@ -428,28 +388,18 @@ impl<I: SlotIo> ClientStore<I> {
         })
     }
 
-    /// Write `table` to the other unit: erase, program, verify, commit,
-    /// verify. A failure keeps the previous table in memory.
+    /// Write `table` to the other unit by the torn-write rule. A failure
+    /// keeps the previous table in memory.
     fn save(&mut self, table: &Table) -> Result<(), ClientError> {
-        if !self.writable() || !self.io.writable() {
+        if !self.writable() || !self.units.writable() {
             return Err(ClientError::NotWritable);
         }
         let generation = self.generation + 1;
-        let slot = if self.generation == 0 {
-            0
-        } else {
-            1 - self.slot
-        };
-        let bytes = encode(generation, table);
-        let mut checked = [0u8; RECORD_BYTES];
-        let ok = self.io.erase(slot)
-            && self.io.read(slot, 0, &mut checked)
-            && checked.iter().all(|&b| b == u8::MAX)
-            && self.io.program(slot, 0, &bytes[..COMMIT_AT])
-            && self.io.program(slot, COMMIT_OFFSET, &COMMIT)
-            && self.io.read(slot, 0, &mut checked)
-            && bytes == checked;
-        if !ok {
+        let slot = target(self.generation, self.slot);
+        if !self
+            .units
+            .write(slot, &encode(generation, table), Prepare::Erase)
+        {
             self.status = ClientStatus::Io;
             return Err(ClientError::Io);
         }

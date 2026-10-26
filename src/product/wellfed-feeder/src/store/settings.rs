@@ -1,5 +1,5 @@
-//! Two-slot alternating device settings with a schema version, CRC-32 and a
-//! commit marker, on the same slot I/O as the feed journal.
+//! Two-slot alternating device settings, in the dual-slot store
+//! (`wellfed_core::store::slot`) as the feed journal is.
 //!
 //! The on-flash v1 record is 128 bytes: magic `PLFSET01`, version, record
 //! size, generation, binding, bowl mode, flags (bit 0 lights, bit 1 sound),
@@ -10,18 +10,27 @@
 //! or invalid newer slot falls back to the older valid one. Storage with no
 //! valid record, or holding a newer schema version, reads as defaults and is
 //! never written until an explicit [`SettingsStore::reset`]: this firmware
-//! does not overwrite data it cannot interpret.
+//! does not overwrite data it cannot interpret. Only a save of its own cut
+//! short beside an erased unit ([`SlotState::Dirty`]) still reads as empty.
 
 use core::ffi::c_uint;
 
 use wellfed_core::feed::progress::BowlMode;
 use wellfed_core::store::slot::{
-    Bound, COMMIT, COMMIT_AT, COMMIT_OFFSET, CRC_AT, LENGTH_AT, RECORD_BYTES, RECORD_LEN, SlotIo,
-    TAIL_CHUNK, VERSION_AT, crc32, get_u16, get_u32, get_u64, put_u16, put_u32, put_u64,
+    CRC_AT, DualSlot, Extent, Found, Layout, Pick, Prepare, RECORD_BYTES, SlotIo, get_u16, get_u64,
+    newest, put_u16, put_u64, seal, target,
 };
 
 pub const VERSION: u16 = 1;
-const MAGIC: [u8; 8] = *b"PLFSET01";
+/// Settings read their whole units, as the journal does, so data another
+/// writer left is never taken for empty settings and overwritten.
+const LAYOUT: Layout = Layout {
+    magic: *b"PLFSET01",
+    version: VERSION,
+    extent: Extent::Unit,
+};
+const GENERATION_AT: usize = 12;
+const BINDING_AT: usize = 20;
 
 /// Generations written before saves are refused: about 50 000 erases per
 /// unit, half a typical NOR part's 100 000-cycle rating.
@@ -106,32 +115,23 @@ impl SlotState {
     pub const fn code(self) -> u32 {
         self as u32
     }
-}
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Scan {
-    Erased,
-    Valid(u64, Settings),
-    Future,
-    Dirty,
-    Invalid,
-}
-
-impl Scan {
-    fn state(self) -> SlotState {
-        match self {
-            Scan::Erased => SlotState::Erased,
-            Scan::Valid(..) => SlotState::Valid,
-            Scan::Future => SlotState::Future,
-            Scan::Dirty => SlotState::Dirty,
-            Scan::Invalid => SlotState::Invalid,
+    /// The torn-write rule's state as settings report it: only a save of
+    /// its own cut short is dirty.
+    fn of<V>(found: &Found<V>) -> Self {
+        match found {
+            Found::Erased => Self::Erased,
+            Found::Valid(_) => Self::Valid,
+            Found::Future => Self::Future,
+            Found::Partial => Self::Dirty,
+            Found::Unmarked | Found::Torn | Found::Invalid => Self::Invalid,
         }
     }
 }
 
 #[derive(Clone, Copy, Debug)]
 pub struct SettingsStore<I> {
-    io: Bound<I>,
+    units: DualSlot<I>,
     binding: u64,
     pub settings: Settings,
     pub status: SettingsStatus,
@@ -145,7 +145,7 @@ pub struct SettingsStore<I> {
 impl<I> Default for SettingsStore<I> {
     fn default() -> Self {
         Self {
-            io: Bound::NONE,
+            units: DualSlot::unbound(&LAYOUT),
             binding: 0,
             settings: Settings::default(),
             status: SettingsStatus::Unopened,
@@ -157,54 +157,30 @@ impl<I> Default for SettingsStore<I> {
     }
 }
 
-/// Programming lays bytes down in order, so a save cut short leaves a prefix
-/// of the magic followed by erased bytes, or the whole magic. Anything else
-/// is not evidence of our own write.
-fn ours_torn(record: &[u8; RECORD_BYTES]) -> bool {
-    let matched = MAGIC.iter().zip(record).take_while(|(m, r)| m == r).count();
-    matched == MAGIC.len() || record[matched..].iter().all(|&b| b == u8::MAX)
-}
-
 impl<I: SlotIo> SettingsStore<I> {
     fn encode(&self, generation: u64, s: &Settings) -> [u8; RECORD_BYTES] {
-        let mut p = [0u8; RECORD_BYTES];
-        p[..8].copy_from_slice(&MAGIC);
-        put_u16::<VERSION_AT, _>(&mut p, VERSION);
-        put_u16::<LENGTH_AT, _>(&mut p, RECORD_LEN);
-        put_u64::<12, _>(&mut p, generation);
-        put_u64::<20, _>(&mut p, self.binding);
+        let mut p = LAYOUT.record();
+        put_u64::<GENERATION_AT, _>(&mut p, generation);
+        put_u64::<BINDING_AT, _>(&mut p, self.binding);
 
         p[28] = s.bowl_mode.byte();
         p[29] = u8::from(s.lights) | (u8::from(s.sound) << 1);
         p[30] = s.volume;
         put_u16::<32, _>(&mut p, s.utc_offset_minutes as u16);
 
-        let crc = crc32(&p[..CRC_AT]);
-        put_u32::<CRC_AT, _>(&mut p, crc);
-        p[COMMIT_AT..].copy_from_slice(&COMMIT);
+        seal(&mut p);
         p
     }
 
-    fn decode(&self, p: &[u8; RECORD_BYTES]) -> Scan {
-        if p[..8] != MAGIC
-            || usize::from(get_u16::<LENGTH_AT, _>(p)) != RECORD_BYTES
-            || get_u32::<CRC_AT, _>(p) != crc32(&p[..CRC_AT])
-        {
-            return Scan::Invalid;
+    /// The generation and the settings of a record whose header and
+    /// checksum hold. Only v1 exists; an older version would be migrated
+    /// in the slot layer's version check.
+    fn decode(&self, p: &[u8; RECORD_BYTES]) -> Option<(u64, Settings)> {
+        if get_u64::<BINDING_AT, _>(p) != self.binding {
+            return None;
         }
 
-        let version = get_u16::<VERSION_AT, _>(p);
-        if version > VERSION {
-            return Scan::Future;
-        }
-        // Only v1 exists; an older version would be migrated here.
-        if version != VERSION || get_u64::<20, _>(p) != self.binding {
-            return Scan::Invalid;
-        }
-
-        let Some(bowl_mode) = BowlMode::from_byte(p[28]) else {
-            return Scan::Invalid;
-        };
+        let bowl_mode = BowlMode::from_byte(p[28])?;
         let s = Settings {
             bowl_mode,
             lights: p[29] & 1 != 0,
@@ -212,54 +188,28 @@ impl<I: SlotIo> SettingsStore<I> {
             volume: p[30],
             utc_offset_minutes: get_u16::<32, _>(p) as i16,
         };
-        let generation = get_u64::<12, _>(p);
+        let generation = get_u64::<GENERATION_AT, _>(p);
         if p[29] & !3 != 0
             || p[31] != 0
             || p[34..CRC_AT].iter().any(|&b| b != 0)
             || !s.valid()
             || generation == 0
         {
-            return Scan::Invalid;
-        }
-
-        Scan::Valid(generation, s)
-    }
-
-    /// The whole unit: one record, then erased bytes.
-    fn scan(&self, slot: c_uint) -> Option<Scan> {
-        let mut record = [0u8; RECORD_BYTES];
-        if !self.io.read(slot, 0, &mut record) {
             return None;
         }
 
-        let mut tail = [0u8; 64];
-        let mut offset = u32::from(RECORD_LEN);
-        let mut tail_erased = true;
-        while offset < self.io.unit_bytes() {
-            let chunk = (self.io.unit_bytes() - offset).min(TAIL_CHUNK);
-            let size = chunk as usize;
-            if !self.io.read(slot, offset, &mut tail[..size]) {
-                return None;
-            }
-            tail_erased &= tail[..size].iter().all(|&b| b == u8::MAX);
-            offset += chunk;
-        }
+        Some((generation, s))
+    }
 
-        let erased = record.iter().all(|&b| b == u8::MAX);
-        Some(match (erased, tail_erased) {
-            (true, true) => Scan::Erased,
-            (_, false) => Scan::Invalid,
-            _ if record[COMMIT_AT..] != COMMIT && ours_torn(&record) => Scan::Dirty,
-            _ if record[COMMIT_AT..] != COMMIT => Scan::Invalid,
-            _ => self.decode(&record),
-        })
+    fn scan(&self, slot: c_uint) -> Option<Found<(u64, Settings)>> {
+        self.units.scan(slot, |p| self.decode(p))
     }
 
     /// Bind to two exclusive erase units and load the newest valid record.
     pub fn open(&mut self, io: I, binding: u64) -> SettingsStatus {
         let unit = io.unit_bytes();
         *self = Self {
-            io: Bound::new(io),
+            units: DualSlot::new(io, &LAYOUT),
             binding,
             ..Self::default()
         };
@@ -272,42 +222,32 @@ impl<I: SlotIo> SettingsStore<I> {
             self.status = SettingsStatus::Io;
             return self.status;
         };
-        self.slots = [a.state(), b.state()];
-        let pick = match (a, b) {
-            (Scan::Valid(ga, sa), Scan::Valid(gb, sb)) if ga != gb => {
-                Some(if ga > gb { (0, ga, sa) } else { (1, gb, sb) })
-            }
-            (Scan::Valid(g, s), _) => Some((0, g, s)),
-            (_, Scan::Valid(g, s)) => Some((1, g, s)),
-            _ => None,
-        };
+        self.slots = [SlotState::of(&a), SlotState::of(&b)];
 
-        let future = a == Scan::Future || b == Scan::Future;
-        self.status = match pick {
+        let both_valid = a.is_valid() && b.is_valid();
+        let either_erased = a.is_erased() || b.is_erased();
+        // A torn first save never committed anything: still empty.
+        let first_cut = matches!(
+            (a, b),
+            (Found::Partial, Found::Erased) | (Found::Erased, Found::Partial)
+        );
+        self.status = match newest(a, b, |&(generation, _)| generation) {
             // A newer schema anywhere means this firmware must not write.
-            _ if future => SettingsStatus::Future,
-            Some(_) if matches!(a, Scan::Valid(..)) && matches!(b, Scan::Valid(..)) => {
-                SettingsStatus::Loaded
+            Pick::Future => SettingsStatus::Future,
+            Pick::Newest(slot, (generation, settings)) => {
+                self.slot = slot;
+                self.generation = generation;
+                self.settings = settings;
+                if both_valid || either_erased {
+                    SettingsStatus::Loaded
+                } else {
+                    SettingsStatus::Recovered
+                }
             }
-            Some(_) if a == Scan::Erased || b == Scan::Erased => SettingsStatus::Loaded,
-            Some(_) => SettingsStatus::Recovered,
-            None if a == Scan::Erased && b == Scan::Erased => SettingsStatus::Empty,
-            // A torn first save never committed anything: still empty.
-            None if matches!(
-                (a, b),
-                (Scan::Dirty, Scan::Erased) | (Scan::Erased, Scan::Dirty)
-            ) =>
-            {
-                SettingsStatus::Empty
-            }
-            None => SettingsStatus::Corrupt,
+            Pick::Nothing if (a.is_erased() && b.is_erased()) || first_cut => SettingsStatus::Empty,
+            Pick::Nothing => SettingsStatus::Corrupt,
         };
 
-        if let Some((slot, generation, settings)) = pick.filter(|_| !future) {
-            self.slot = slot;
-            self.generation = generation;
-            self.settings = settings;
-        }
         self.writable = matches!(
             self.status,
             SettingsStatus::Loaded | SettingsStatus::Empty | SettingsStatus::Recovered
@@ -316,9 +256,9 @@ impl<I: SlotIo> SettingsStore<I> {
         self.status
     }
 
-    /// Write `settings` to the other slot: erase, program, verify, commit,
-    /// verify. A failure keeps the previous settings in memory; the slot it
-    /// touched may be torn, which the next open falls back from.
+    /// Write `settings` to the other slot by the torn-write rule. A failure
+    /// keeps the previous settings in memory; the slot it touched may be
+    /// torn, which the next open falls back from.
     pub fn save(&mut self, settings: &Settings) -> bool {
         if !self.writable || !settings.valid() {
             return false;
@@ -330,25 +270,11 @@ impl<I: SlotIo> SettingsStore<I> {
         }
 
         let generation = self.generation + 1;
-        let slot = if self.generation == 0 {
-            0
-        } else {
-            1 - self.slot
-        };
-
-        let bytes = self.encode(generation, settings);
-        let mut checked = [0u8; RECORD_BYTES];
-        let ok = self.io.erase(slot)
-            && matches!(self.scan(slot), Some(Scan::Erased))
-            && self.io.program(slot, 0, &bytes[..COMMIT_AT])
-            && self.io.read(slot, 0, &mut checked)
-            && bytes[..COMMIT_AT] == checked[..COMMIT_AT]
-            && checked[COMMIT_AT..].iter().all(|&b| b == u8::MAX)
-            && self.io.program(slot, COMMIT_OFFSET, &COMMIT)
-            && self.io.read(slot, 0, &mut checked)
-            && bytes == checked;
-
-        if !ok {
+        let slot = target(self.generation, self.slot);
+        if !self
+            .units
+            .write(slot, &self.encode(generation, settings), Prepare::Erase)
+        {
             self.status = SettingsStatus::Io;
             return false;
         }
@@ -368,10 +294,7 @@ impl<I: SlotIo> SettingsStore<I> {
             return false;
         }
 
-        let ok = self.io.erase(0)
-            && self.io.erase(1)
-            && matches!(self.scan(0), Some(Scan::Erased))
-            && matches!(self.scan(1), Some(Scan::Erased));
+        let ok = self.units.clear();
 
         self.settings = Settings::default();
         self.generation = 0;

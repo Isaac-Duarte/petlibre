@@ -1,4 +1,6 @@
-//! Two-slot alternating feed journal with CRC-32 and a commit marker.
+//! Two-slot alternating feed journal, in the dual-slot store
+//! ([`slot`](crate::store::slot)) with its strictest policy: it never
+//! falls back past a reservation it might forget.
 //!
 //! The on-flash v1 record is 128 bytes and must stay byte-identical:
 //! magic `PLFJNL01`, version, record size, type, mode, direction, flags,
@@ -8,7 +10,7 @@
 //!
 //! A reservation a reset interrupted is resolved at the next boot by one
 //! more result record, outcome [`OwnerOutcome::Uncertain`]: same layout,
-//! same high-water ID. Its write is the same torn-write-safe sequence as any
+//! same high-water ID. Its write follows the same torn-write rule as any
 //! record, and `open` reads every torn state of it as the pending
 //! reservation, which resolves again, so a power cut never faults it and
 //! never resolves it twice. Flash corruption can: a committed result that
@@ -22,15 +24,21 @@ use crate::feed::controller::{FeedReason, FeedRequest};
 use crate::feed::progress::{BowlMode, Direction};
 use crate::feed::storage::{OwnerOutcome, OwnerRecovery, OwnerResult, OwnerStorage};
 use crate::store::slot::{
-    Bound, COMMIT, COMMIT_AT, COMMIT_OFFSET, CRC_AT, LENGTH_AT, RECORD_BYTES, RECORD_LEN, SlotIo,
-    TAIL_CHUNK, VERSION_AT, crc32, get_u16, get_u32, get_u64, put_u16, put_u32, put_u64,
+    CRC_AT, DualSlot, Extent, Found, Layout, Prepare, RECORD_BYTES, SlotIo, get_u16, get_u64,
+    put_u16, put_u64, seal,
 };
 
 const GENESIS: u8 = 0;
 const INTENT: u8 = 1;
 const RESULT: u8 = 2;
 
-const MAGIC: [u8; 8] = *b"PLFJNL01";
+/// The journal reads its whole units, so unrelated bytes are never taken
+/// for an empty journal.
+const LAYOUT: Layout = Layout {
+    magic: *b"PLFJNL01",
+    version: 1,
+    extent: Extent::Unit,
+};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct JournalConfig {
@@ -80,7 +88,7 @@ pub struct JournalView {
 /// Implementation-owned members. No concurrent access or native-struct dumps.
 #[derive(Clone, Copy, Debug)]
 pub struct FeedJournal<I> {
-    io: Bound<I>,
+    units: DualSlot<I>,
     pub config: JournalConfig,
     pub view: JournalView,
     pub error: JournalError,
@@ -92,7 +100,7 @@ pub struct FeedJournal<I> {
 impl<I> Default for FeedJournal<I> {
     fn default() -> Self {
         Self {
-            io: Bound::NONE,
+            units: DualSlot::unbound(&LAYOUT),
             config: JournalConfig::default(),
             view: JournalView::default(),
             error: JournalError::default(),
@@ -101,18 +109,6 @@ impl<I> Default for FeedJournal<I> {
             reserved_here: false,
         }
     }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Scan {
-    Erased,
-    Valid,
-    /// No commit marker: a cut program, or an erase cut over the marker.
-    Dirty,
-    /// Committed, but failing its checksum: an erase cut over the record.
-    Torn,
-    /// A checked record that does not decode, or a unit with bytes past it.
-    Invalid,
 }
 
 fn all(p: &[u8], value: u8) -> bool {
@@ -198,11 +194,7 @@ fn transition(c: &JournalConfig, old: &JournalView, next: &JournalView) -> bool 
 
 impl<I: SlotIo> FeedJournal<I> {
     fn encode(&self, v: &JournalView) -> [u8; RECORD_BYTES] {
-        let mut p = [0u8; RECORD_BYTES];
-        p[..8].copy_from_slice(&MAGIC);
-        put_u16::<VERSION_AT, _>(&mut p, 1);
-        put_u16::<LENGTH_AT, _>(&mut p, RECORD_LEN);
-
+        let mut p = LAYOUT.record();
         p[12] = if v.recovery.pending_request {
             INTENT
         } else if v.has_result {
@@ -226,24 +218,18 @@ impl<I: SlotIo> FeedJournal<I> {
         p[45] = v.result.reason.byte();
         put_u16::<46, _>(&mut p, self.config.max_portions);
 
-        let checksum = crc32(&p[..CRC_AT]);
-        put_u32::<CRC_AT, _>(&mut p, checksum);
-        p[COMMIT_AT..].copy_from_slice(&COMMIT);
-
+        seal(&mut p);
         p
     }
 
+    /// A record whose header and checksum the slot layer checked.
     fn decode(&self, p: &[u8; RECORD_BYTES]) -> Option<JournalView> {
-        if p[..8] != MAGIC
-            || get_u16::<VERSION_AT, _>(p) != 1
-            || usize::from(get_u16::<LENGTH_AT, _>(p)) != RECORD_BYTES
-            || p[12] > RESULT
+        if p[12] > RESULT
             || p[13] != self.config.mode.byte()
             || p[15] > 7
             || get_u64::<24, _>(p) != self.config.binding
             || get_u16::<46, _>(p) != self.config.max_portions
             || !all(&p[48..CRC_AT], 0)
-            || get_u32::<CRC_AT, _>(p) != crc32(&p[..CRC_AT])
         {
             return None;
         }
@@ -317,7 +303,7 @@ impl<I: SlotIo> FeedJournal<I> {
             return false;
         }
 
-        self.io = Bound::new(io);
+        self.units.bind(io);
         self.config = config;
         true
     }
@@ -329,40 +315,14 @@ impl<I: SlotIo> FeedJournal<I> {
         error
     }
 
-    /// Scan whole units so unrelated bytes cannot be mistaken for empty ownership.
-    fn scan(&self, slot: c_uint) -> Option<(Scan, Option<JournalView>)> {
-        let mut record = [0u8; RECORD_BYTES];
-        let mut tail = [0u8; 64];
-        if !self.io.read(slot, 0, &mut record) {
-            return None;
-        }
-
-        let mut offset = u32::from(RECORD_LEN);
-        while offset < self.io.unit_bytes() {
-            let chunk = (self.io.unit_bytes() - offset).min(TAIL_CHUNK);
-            let size = chunk as usize;
-            if !self.io.read(slot, offset, &mut tail[..size]) {
-                return None;
-            }
-            if !all(&tail[..size], u8::MAX) {
-                return Some((Scan::Invalid, None));
-            }
-            offset += chunk;
-        }
-
-        if all(&record, u8::MAX) {
-            return Some((Scan::Erased, None));
-        }
-        if record[COMMIT_AT..] != COMMIT {
-            return Some((Scan::Dirty, None));
-        }
-        if get_u32::<CRC_AT, _>(&record) != crc32(&record[..CRC_AT]) {
-            return Some((Scan::Torn, None));
-        }
-
-        Some(match self.decode(&record) {
-            Some(view) => (Scan::Valid, Some(view)),
-            None => (Scan::Invalid, None),
+    /// Unit `slot` by the torn-write rule. The journal has no read-only
+    /// state: a newer format version is a record it cannot read.
+    fn scan(&self, slot: c_uint) -> Option<Found<JournalView>> {
+        let found = self.units.scan(slot, |p| self.decode(p))?;
+        Some(if found.is_future() {
+            Found::Invalid
+        } else {
+            found
         })
     }
 
@@ -376,62 +336,50 @@ impl<I: SlotIo> FeedJournal<I> {
         let (Some(a), Some(b)) = (self.scan(0), self.scan(1)) else {
             return self.fail(JournalError::Io);
         };
-        let views = [a.1.unwrap_or_default(), b.1.unwrap_or_default()];
-        let (a, b) = (a.0, b.0);
 
-        if a == Scan::Erased && b == Scan::Erased {
+        if a.is_erased() && b.is_erased() {
             return self.fail(JournalError::Empty);
         }
-        if a != Scan::Valid && b != Scan::Valid {
-            return self.fail(JournalError::Corrupt);
-        }
-
-        let mut slot = if a == Scan::Valid { 0 } else { 1 };
-        if a == Scan::Valid && b == Scan::Valid {
-            slot = if views[0].sequence > views[1].sequence {
-                0
-            } else {
-                1
-            };
-            if !transition(&config, &views[1 - slot], &views[slot]) {
-                return self.fail(JournalError::Corrupt);
+        let (slot, view) = match (a, b) {
+            (Found::Valid(x), Found::Valid(y)) => {
+                let (slot, newer, older) = if x.sequence > y.sequence {
+                    (0, x, y)
+                } else {
+                    (1, y, x)
+                };
+                if !transition(&config, &older, &newer) {
+                    return self.fail(JournalError::Corrupt);
+                }
+                (slot, newer)
             }
-        } else {
-            let other = [a, b][1 - slot];
-            // Falling back to idle could forget a newer, ambiguous reservation.
-            // Beside a pending one, the other unit holds an older record or
-            // that reservation's own result, which a cut erase or program
-            // leaves dirty or torn: the reservation stands, to be finished or
-            // resolved again. A record that checks but does not decode is
-            // never a cut's, and faults whatever it sits beside.
-            let cut = matches!(other, Scan::Dirty | Scan::Torn);
-            if other == Scan::Invalid || (cut && !views[slot].recovery.pending_request) {
-                return self.fail(JournalError::Corrupt);
+            (Found::Valid(view), other) | (other, Found::Valid(view)) => {
+                // Falling back to idle could forget a newer, ambiguous
+                // reservation. Beside a pending one, the other unit holds an
+                // older record or that reservation's own result, which a cut
+                // erase or program leaves partial, unmarked or torn: the
+                // reservation stands, to be finished or resolved again. A
+                // record that checks but does not decode is never a cut's,
+                // and faults whatever it sits beside.
+                let cut = matches!(other, Found::Partial | Found::Unmarked | Found::Torn);
+                if other == Found::Invalid || (cut && !view.recovery.pending_request) {
+                    return self.fail(JournalError::Corrupt);
+                }
+                (c_uint::from(!a.is_valid()), view)
             }
-        }
+            _ => return self.fail(JournalError::Corrupt),
+        };
 
-        self.slot = c_uint::from(slot == 1);
-        self.view = views[slot];
+        self.slot = slot;
+        self.view = view;
         self.opened = true;
         self.error = JournalError::Ok;
         self.error
     }
 
-    fn write_record(&mut self, slot: c_uint, next: &JournalView, erase: bool) -> bool {
-        let bytes = self.encode(next);
-        let mut checked = [0u8; RECORD_BYTES];
-        // Program everything but the marker, verify it, then commit: a torn write
-        // leaves an uncommitted record that `scan` reports as dirty.
-        let ok = (!erase || self.io.erase(slot))
-            && matches!(self.scan(slot), Some((Scan::Erased, _)))
-            && self.io.program(slot, 0, &bytes[..COMMIT_AT])
-            && self.io.read(slot, 0, &mut checked)
-            && bytes[..COMMIT_AT] == checked[..COMMIT_AT]
-            && all(&checked[COMMIT_AT..], u8::MAX)
-            && self.io.program(slot, COMMIT_OFFSET, &COMMIT)
-            && self.io.read(slot, 0, &mut checked)
-            && bytes == checked;
-
+    /// Write `next` to unit `slot` by the torn-write rule, which every
+    /// torn state `open` reads stands on.
+    fn write_record(&mut self, slot: c_uint, next: &JournalView, prepare: Prepare) -> bool {
+        let ok = self.units.write(slot, &self.encode(next), prepare);
         if !ok {
             self.fail(JournalError::Io);
             return false;
@@ -477,11 +425,11 @@ impl<I: SlotIo> FeedJournal<I> {
         let (Some(a), Some(b)) = (self.scan(0), self.scan(1)) else {
             return self.fail(JournalError::Io);
         };
-        if a.0 != Scan::Erased || b.0 != Scan::Erased {
+        if !a.is_erased() || !b.is_erased() {
             return self.fail(JournalError::State);
         }
 
-        self.write_record(0, &next, false);
+        self.write_record(0, &next, Prepare::Erased);
         self.error
     }
 
@@ -537,7 +485,7 @@ impl<I: SlotIo> FeedJournal<I> {
         next.recovery.high_water_id = request.id;
         next.recovery.pending_request = true;
 
-        if !self.write_record(1 - self.slot, &next, true) {
+        if !self.write_record(1 - self.slot, &next, Prepare::Erase) {
             return false;
         }
         self.reserved_here = true;
@@ -608,7 +556,7 @@ impl<I: SlotIo> FeedJournal<I> {
         };
 
         if !transition(&self.config, &self.view, &next)
-            || !self.write_record(1 - self.slot, &next, true)
+            || !self.write_record(1 - self.slot, &next, Prepare::Erase)
         {
             return false;
         }
@@ -622,7 +570,7 @@ impl<I> FeedJournal<I> {
     /// journal's state: for tests that branch one history.
     #[doc(hidden)]
     pub fn rebind(&mut self, io: I) {
-        self.io = Bound::new(io);
+        self.units.bind(io);
     }
 }
 

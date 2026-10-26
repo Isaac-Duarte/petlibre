@@ -1,11 +1,12 @@
 //! The random generator's seed, carried across boots.
 //!
-//! Two alternating 128-byte records on the shared slot layout: magic
-//! `PLFSEED1`, version, record size, generation, the 32-byte seed, zero
-//! padding, CRC-32/ISO-HDLC of bytes 0..120 at 120 and `CMIT` at 124. The
-//! newest valid record wins and a torn newer slot falls back to the older
-//! one. The sectors are this store's alone, so an unreadable record is a
-//! save of ours cut short; only a newer schema makes the store read-only.
+//! A 128-byte record in the dual-slot store ([`slot`](crate::store::slot)):
+//! magic `PLFSEED1`, version, record size, generation, the 32-byte seed,
+//! zero padding, CRC-32/ISO-HDLC of bytes 0..120 at 120 and `CMIT` at 124.
+//! The newest valid record wins and a torn newer slot falls back to the
+//! older one. The sectors are this store's alone, so an unreadable record
+//! is a save of ours cut short; only a newer schema makes the store
+//! read-only.
 //!
 //! [`start`] is the only intended writer: each boot instantiates the DRBG
 //! from fresh pool input with the stored seed as its nonce, then stores a
@@ -19,12 +20,17 @@ use core::ffi::c_uint;
 
 use crate::rng::{Drbg, Error};
 use crate::store::slot::{
-    Bound, COMMIT, COMMIT_AT, COMMIT_OFFSET, CRC_AT, LENGTH_AT, RECORD_BYTES, RECORD_LEN, SlotIo,
-    VERSION_AT, crc32, get_u16, get_u32, get_u64, put_u16, put_u32, put_u64,
+    CRC_AT, DualSlot, Extent, Layout, Pick, Prepare, RECORD_BYTES, SlotIo, get_u64, newest,
+    put_u64, seal, target,
 };
 
 pub const VERSION: u16 = 1;
-const MAGIC: [u8; 8] = *b"PLFSEED1";
+const LAYOUT: Layout = Layout {
+    magic: *b"PLFSEED1",
+    version: VERSION,
+    extent: Extent::Record,
+};
+const GENERATION_AT: usize = 12;
 const SEED_AT: usize = 20;
 const SEED_END: usize = SEED_AT + 32;
 /// Personalization for the firmware's DRBG.
@@ -41,17 +47,9 @@ pub enum SeedStatus {
     Io,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Scan {
-    Erased,
-    Valid(u64, [u8; 32]),
-    Future,
-    Invalid,
-}
-
 #[derive(Clone, Copy)]
 pub struct SeedStore<I> {
-    io: Bound<I>,
+    units: DualSlot<I>,
     pub status: SeedStatus,
     pub generation: u64,
     pub slot: c_uint,
@@ -71,7 +69,7 @@ impl<I> core::fmt::Debug for SeedStore<I> {
 impl<I> Default for SeedStore<I> {
     fn default() -> Self {
         Self {
-            io: Bound::NONE,
+            units: DualSlot::unbound(&LAYOUT),
             status: SeedStatus::Unopened,
             generation: 0,
             slot: 0,
@@ -81,81 +79,50 @@ impl<I> Default for SeedStore<I> {
 }
 
 fn encode(generation: u64, seed: &[u8; 32]) -> [u8; RECORD_BYTES] {
-    let mut p = [0u8; RECORD_BYTES];
-    p[..8].copy_from_slice(&MAGIC);
-    put_u16::<VERSION_AT, _>(&mut p, VERSION);
-    put_u16::<LENGTH_AT, _>(&mut p, RECORD_LEN);
-    put_u64::<12, _>(&mut p, generation);
+    let mut p = LAYOUT.record();
+    put_u64::<GENERATION_AT, _>(&mut p, generation);
     p[SEED_AT..SEED_END].copy_from_slice(seed);
-    let crc = crc32(&p[..CRC_AT]);
-    put_u32::<CRC_AT, _>(&mut p, crc);
-    p[COMMIT_AT..].copy_from_slice(&COMMIT);
+    seal(&mut p);
     p
 }
 
-fn decode(p: &[u8; RECORD_BYTES]) -> Scan {
-    if p.iter().all(|&b| b == u8::MAX) {
-        return Scan::Erased;
-    }
-    if p[..8] != MAGIC
-        || usize::from(get_u16::<LENGTH_AT, _>(p)) != RECORD_BYTES
-        || p[COMMIT_AT..] != COMMIT
-        || get_u32::<CRC_AT, _>(p) != crc32(&p[..CRC_AT])
-    {
-        return Scan::Invalid;
-    }
-    let version = get_u16::<VERSION_AT, _>(p);
-    if version > VERSION {
-        return Scan::Future;
-    }
-    let generation = get_u64::<12, _>(p);
-    if version != VERSION || generation == 0 || p[SEED_END..CRC_AT].iter().any(|&b| b != 0) {
-        return Scan::Invalid;
+/// The generation and the seed.
+fn decode(p: &[u8; RECORD_BYTES]) -> Option<(u64, [u8; 32])> {
+    let generation = get_u64::<GENERATION_AT, _>(p);
+    if generation == 0 || p[SEED_END..CRC_AT].iter().any(|&b| b != 0) {
+        return None;
     }
     let mut seed = [0; 32];
     seed.copy_from_slice(&p[SEED_AT..SEED_END]);
-    Scan::Valid(generation, seed)
+    Some((generation, seed))
 }
 
 impl<I: SlotIo> SeedStore<I> {
-    fn scan(&self, slot: c_uint) -> Option<Scan> {
-        let mut record = [0u8; RECORD_BYTES];
-        self.io.read(slot, 0, &mut record).then(|| decode(&record))
-    }
-
     /// Bind to two exclusive erase units and load the newest valid seed.
     pub fn open(&mut self, io: I) -> SeedStatus {
         let unit = io.unit_bytes();
         *self = Self {
-            io: Bound::new(io),
+            units: DualSlot::new(io, &LAYOUT),
             ..Self::default()
         };
         if (unit as usize) < RECORD_BYTES {
             self.status = SeedStatus::Io;
             return self.status;
         }
-        let (Some(a), Some(b)) = (self.scan(0), self.scan(1)) else {
+        let (Some(a), Some(b)) = (self.units.scan(0, decode), self.units.scan(1, decode)) else {
             self.status = SeedStatus::Io;
             return self.status;
         };
 
-        let pick = match (a, b) {
-            (Scan::Valid(ga, sa), Scan::Valid(gb, sb)) => {
-                Some(if ga >= gb { (0, ga, sa) } else { (1, gb, sb) })
+        self.status = match newest(a, b, |&(generation, _)| generation) {
+            Pick::Future => SeedStatus::ReadOnly,
+            Pick::Newest(slot, (generation, seed)) => {
+                self.slot = slot;
+                self.generation = generation;
+                self.seed = Some(seed);
+                SeedStatus::Loaded
             }
-            (Scan::Valid(g, s), _) => Some((0, g, s)),
-            (_, Scan::Valid(g, s)) => Some((1, g, s)),
-            _ => None,
-        };
-        self.status = if a == Scan::Future || b == Scan::Future {
-            SeedStatus::ReadOnly
-        } else if let Some((slot, generation, seed)) = pick {
-            self.slot = slot;
-            self.generation = generation;
-            self.seed = Some(seed);
-            SeedStatus::Loaded
-        } else {
-            SeedStatus::Empty
+            Pick::Nothing => SeedStatus::Empty,
         };
         self.status
     }
@@ -168,28 +135,18 @@ impl<I: SlotIo> SeedStore<I> {
         matches!(self.status, SeedStatus::Empty | SeedStatus::Loaded)
     }
 
-    /// Store `seed` to the other slot: erase, program, verify, commit,
-    /// verify. A failure keeps the previous seed in memory.
+    /// Store `seed` to the other slot by the torn-write rule. A failure
+    /// keeps the previous seed in memory.
     pub fn save(&mut self, seed: &[u8; 32]) -> bool {
-        if !self.writable() || !self.io.writable() {
+        if !self.writable() || !self.units.writable() {
             return false;
         }
         let generation = self.generation + 1;
-        let slot = if self.generation == 0 {
-            0
-        } else {
-            1 - self.slot
-        };
-        let bytes = encode(generation, seed);
-        let mut checked = [0u8; RECORD_BYTES];
-        let ok = self.io.erase(slot)
-            && self.io.read(slot, 0, &mut checked)
-            && checked.iter().all(|&b| b == u8::MAX)
-            && self.io.program(slot, 0, &bytes[..COMMIT_AT])
-            && self.io.program(slot, COMMIT_OFFSET, &COMMIT)
-            && self.io.read(slot, 0, &mut checked)
-            && bytes == checked;
-        if !ok {
+        let slot = target(self.generation, self.slot);
+        if !self
+            .units
+            .write(slot, &encode(generation, seed), Prepare::Erase)
+        {
             self.status = SeedStatus::Io;
             return false;
         }

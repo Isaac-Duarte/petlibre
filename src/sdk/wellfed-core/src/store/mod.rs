@@ -1,8 +1,9 @@
 //! Records kept on NOR that the SDK itself owns: the feed journal, the
-//! random seed and the update store, each in two alternating erase units over
-//! the shared record layer in [`slot`]. The product's records (settings,
-//! Wi-Fi credentials, client keys and the event ring) are
-//! `wellfed_feeder::store`'s, over the same layer.
+//! random seed and the update store, each a dual-slot store ([`slot`]):
+//! two alternating erase units under one torn-write rule, each store with
+//! its own fields and recovery policy. The product's records (settings,
+//! Wi-Fi credentials, client keys) are `wellfed_feeder::store`'s, in the
+//! same dual-slot store, beside its event ring.
 
 pub mod feed_journal;
 pub mod seed;

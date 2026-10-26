@@ -14,8 +14,9 @@
 //!   0 that still holds exactly that image, so a give-way never lands on a
 //!   build that cannot take the offer.
 //!
-//! One 256-byte record, written whole to the other of two erase units on
-//! every change, newest valid wins, as the client store does:
+//! One 256-byte record in the dual-slot store
+//! ([`slot`](crate::store::slot)), written whole to the other of two erase
+//! units on every change, newest valid wins, as the client store does:
 //!
 //! | Bytes | Field |
 //! | --- | --- |
@@ -52,18 +53,22 @@ use core::ffi::c_uint;
 
 use crate::ota::offer::{ImageKind, KeyId, key_id};
 use crate::store::slot::{
-    Bound, COMMIT, LENGTH_AT, SlotIo, VERSION_AT, crc32, get_u16, get_u32, get_u64, put_u16,
-    put_u32, put_u64,
+    DualSlot, Extent, Layout, Pick, Prepare, SlotIo, get_u32, get_u64, newest, put_u32, put_u64,
+    seal, target,
 };
 
 pub const VERSION: u16 = 1;
-const MAGIC: [u8; 8] = *b"PLFUPD01";
+const LAYOUT: Layout = Layout {
+    magic: *b"PLFUPD01",
+    version: VERSION,
+    extent: Extent::Record,
+};
 /// Retired key ids the store keeps.
 pub const REVOKED: usize = 4;
 /// The whole record.
 pub const RECORD_BYTES: usize = 256;
-const RECORD_LEN: u16 = 256;
 
+const GENERATION_AT: usize = 12;
 const MIN_AT: usize = 20;
 const STATE_AT: usize = 24;
 const KIND_AT: usize = 25;
@@ -81,13 +86,11 @@ const BANK0_SHA_AT: usize = 200;
 const HAS_BANK0_KEY_AT: usize = 161;
 const BANK0_KEY_AT: usize = 232;
 const BANK0_END: usize = 240;
+/// The checksum, then the marker.
 const CRC_AT: usize = 248;
-const COMMIT_AT: usize = 252;
-const COMMIT_OFFSET: u32 = 252;
 
 const _: () = assert!(REVOKED_AT + REVOKED * 8 == HAS_BANK0_AT);
-const _: () = assert!(COMMIT_AT + COMMIT.len() == RECORD_BYTES);
-const _: () = assert!(COMMIT_OFFSET as usize == COMMIT_AT && RECORD_LEN as usize == RECORD_BYTES);
+const _: () = assert!(CRC_AT + 8 == RECORD_BYTES);
 
 /// One manifest the update is about.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -199,21 +202,9 @@ pub enum UpdateError {
     Io,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-#[expect(
-    clippy::large_enum_variant,
-    reason = "a scan result on the stack once per unit, never stored"
-)]
-enum Scan {
-    Erased,
-    Valid(u64, Update),
-    Future,
-    Invalid,
-}
-
 #[derive(Clone, Copy)]
 pub struct UpdateStore<I> {
-    io: Bound<I>,
+    units: DualSlot<I>,
     pub status: UpdateStatus,
     pub generation: u64,
     pub slot: c_uint,
@@ -234,7 +225,7 @@ impl<I> core::fmt::Debug for UpdateStore<I> {
 impl<I> Default for UpdateStore<I> {
     fn default() -> Self {
         Self {
-            io: Bound::NONE,
+            units: DualSlot::unbound(&LAYOUT),
             status: UpdateStatus::Unopened,
             generation: 0,
             slot: 0,
@@ -251,11 +242,8 @@ fn put_candidate(p: &mut [u8; RECORD_BYTES], candidate: &Candidate) {
 }
 
 fn encode(generation: u64, record: &Update) -> [u8; RECORD_BYTES] {
-    let mut p = [0u8; RECORD_BYTES];
-    p[..8].copy_from_slice(&MAGIC);
-    put_u16::<VERSION_AT, _>(&mut p, VERSION);
-    put_u16::<LENGTH_AT, _>(&mut p, RECORD_LEN);
-    put_u64::<12, _>(&mut p, generation);
+    let mut p = LAYOUT.record();
+    put_u64::<GENERATION_AT, _>(&mut p, generation);
     put_u32::<MIN_AT, _>(&mut p, record.min_version);
     p[STATE_AT] = record.state.code();
     if let Some(candidate) = record.state.candidate() {
@@ -285,9 +273,7 @@ fn encode(generation: u64, record: &Update) -> [u8; RECORD_BYTES] {
             p[BANK0_KEY_AT..BANK0_END].copy_from_slice(key);
         }
     }
-    let crc = crc32(&p[..CRC_AT]);
-    put_u32::<CRC_AT, _>(&mut p, crc);
-    p[COMMIT_AT..].copy_from_slice(&COMMIT);
+    seal(&mut p);
     p
 }
 
@@ -301,26 +287,13 @@ fn zero(p: &[u8]) -> bool {
     p.iter().all(|&b| b == 0)
 }
 
-fn decode(p: &[u8; RECORD_BYTES]) -> Scan {
-    if p.iter().all(|&b| b == u8::MAX) {
-        return Scan::Erased;
+/// The generation and the record.
+fn decode(p: &[u8; RECORD_BYTES]) -> Option<(u64, Update)> {
+    let generation = get_u64::<GENERATION_AT, _>(p);
+    if generation == 0 || !zero(&p[BANK0_END..CRC_AT]) {
+        return None;
     }
-    if p[..8] != MAGIC
-        || usize::from(get_u16::<LENGTH_AT, _>(p)) != RECORD_BYTES
-        || p[COMMIT_AT..] != COMMIT
-        || get_u32::<CRC_AT, _>(p) != crc32(&p[..CRC_AT])
-    {
-        return Scan::Invalid;
-    }
-    let version = get_u16::<VERSION_AT, _>(p);
-    if version > VERSION {
-        return Scan::Future;
-    }
-    let generation = get_u64::<12, _>(p);
-    if version != VERSION || generation == 0 || !zero(&p[BANK0_END..CRC_AT]) {
-        return Scan::Invalid;
-    }
-    decode_fields(p).map_or(Scan::Invalid, |record| Scan::Valid(generation, record))
+    decode_fields(p).map(|record| (generation, record))
 }
 
 fn decode_fields(p: &[u8; RECORD_BYTES]) -> Option<Update> {
@@ -395,44 +368,31 @@ fn decode_fields(p: &[u8; RECORD_BYTES]) -> Option<Update> {
 }
 
 impl<I: SlotIo> UpdateStore<I> {
-    fn scan(&self, slot: c_uint) -> Option<Scan> {
-        let mut record = [0u8; RECORD_BYTES];
-        self.io.read(slot, 0, &mut record).then(|| decode(&record))
-    }
-
     /// Bind to two exclusive erase units and load the newest valid record.
     pub fn open(&mut self, io: I) -> UpdateStatus {
         let unit = io.unit_bytes();
         *self = Self {
-            io: Bound::new(io),
+            units: DualSlot::new(io, &LAYOUT),
             ..Self::default()
         };
         if (unit as usize) < RECORD_BYTES {
             self.status = UpdateStatus::Io;
             return self.status;
         }
-        let (Some(a), Some(b)) = (self.scan(0), self.scan(1)) else {
+        let (Some(a), Some(b)) = (self.units.scan(0, decode), self.units.scan(1, decode)) else {
             self.status = UpdateStatus::Io;
             return self.status;
         };
 
-        let pick = match (a, b) {
-            (Scan::Valid(ga, ra), Scan::Valid(gb, rb)) => {
-                Some(if ga >= gb { (0, ga, ra) } else { (1, gb, rb) })
+        self.status = match newest(a, b, |&(generation, _)| generation) {
+            Pick::Future => UpdateStatus::ReadOnly,
+            Pick::Newest(slot, (generation, record)) => {
+                self.slot = slot;
+                self.generation = generation;
+                self.record = record;
+                UpdateStatus::Loaded
             }
-            (Scan::Valid(g, r), _) => Some((0, g, r)),
-            (_, Scan::Valid(g, r)) => Some((1, g, r)),
-            _ => None,
-        };
-        self.status = if a == Scan::Future || b == Scan::Future {
-            UpdateStatus::ReadOnly
-        } else if let Some((slot, generation, record)) = pick {
-            self.slot = slot;
-            self.generation = generation;
-            self.record = record;
-            UpdateStatus::Loaded
-        } else {
-            UpdateStatus::Empty
+            Pick::Nothing => UpdateStatus::Empty,
         };
         self.status
     }
@@ -540,29 +500,19 @@ impl<I: SlotIo> UpdateStore<I> {
         })
     }
 
-    /// Write `next` to the other unit: erase, program, verify, commit,
-    /// verify. A failure keeps the previous record in memory. A record that
-    /// would lower the floor or forget a retired id is never written.
+    /// Write `next` to the other unit by the torn-write rule. A failure
+    /// keeps the previous record in memory. A record that would lower the
+    /// floor or forget a retired id is never written.
     fn save(&mut self, next: &Update) -> Result<(), UpdateError> {
-        if !self.writable() || !self.io.writable() || !self.record.kept_by(next) {
+        if !self.writable() || !self.units.writable() || !self.record.kept_by(next) {
             return Err(UpdateError::NotWritable);
         }
         let generation = self.generation + 1;
-        let slot = if self.generation == 0 {
-            0
-        } else {
-            1 - self.slot
-        };
-        let bytes = encode(generation, next);
-        let mut checked = [0u8; RECORD_BYTES];
-        let ok = self.io.erase(slot)
-            && self.io.read(slot, 0, &mut checked)
-            && checked.iter().all(|&b| b == u8::MAX)
-            && self.io.program(slot, 0, &bytes[..COMMIT_AT])
-            && self.io.program(slot, COMMIT_OFFSET, &COMMIT)
-            && self.io.read(slot, 0, &mut checked)
-            && bytes == checked;
-        if !ok {
+        let slot = target(self.generation, self.slot);
+        if !self
+            .units
+            .write(slot, &encode(generation, next), Prepare::Erase)
+        {
             self.status = UpdateStatus::Io;
             return Err(UpdateError::Io);
         }

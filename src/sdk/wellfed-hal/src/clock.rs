@@ -72,3 +72,11 @@ pub fn health() -> (Option<ClockHealth>, u32) {
     });
     (reading, clock.syncs())
 }
+
+/// Forget every sync (host tests).
+#[cfg(not(target_os = "none"))]
+pub fn reset() {
+    let _guard = IrqGuard::lock();
+    // SAFETY: interrupts are masked, so this is the only reference.
+    unsafe { *CLOCK.get() = WallClock::new() };
+}

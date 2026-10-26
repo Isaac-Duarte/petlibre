@@ -7,6 +7,11 @@ rust-version.workspace = true
 description = "The feeder's product policy, independent of hardware: the panel's child lock, pairing, the BLE setup session and the product's stores"
 publish.workspace = true
 
+[features]
+# The device conformance suite every platform's tests run; never built into
+# a firmware.
+conformance = []
+
 [dependencies]
 wellfed-core.workspace = true
 wellfed-proto.workspace = true

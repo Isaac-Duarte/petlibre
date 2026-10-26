@@ -30,6 +30,7 @@ tokio = { workspace = true, features = ["io-std", "io-util", "macros", "net", "r
 harness = []
 
 [dev-dependencies]
+wellfed-feeder = { workspace = true, features = ["conformance"] }
 ed25519-dalek = "2"
 wellfed-feeder-sim = { path = ".", features = ["harness"] }
 sha2 = "0.10"

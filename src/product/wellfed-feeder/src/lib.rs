@@ -9,6 +9,8 @@
 #![deny(unsafe_code)]
 
 pub mod api;
+#[cfg(feature = "conformance")]
+pub mod conformance;
 pub mod feed;
 pub mod feeder;
 pub mod mailbox;

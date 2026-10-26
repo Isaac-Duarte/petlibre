@@ -310,7 +310,10 @@ pub async fn serve(
     // token appears. No directory listing, upload, generic file route, redirect,
     // firmware command or firewall change exists.
     storage::write_json(&lease_path, &lease)?;
-    #[allow(clippy::print_stdout)]
+    #[expect(
+        clippy::print_stdout,
+        reason = "the operator's notice that the server is image-only"
+    )]
     {
         println!(
             "Image server only; no update requested. Stops accepting at {} or on Ctrl-C or SIGTERM; active transfers drain.",

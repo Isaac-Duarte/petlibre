@@ -177,7 +177,10 @@ enum NetworkAction {
 }
 
 #[tokio::main]
-#[allow(clippy::print_stdout)]
+#[expect(
+    clippy::print_stdout,
+    reason = "the CLI's results and reports are its stdout"
+)]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -216,7 +219,14 @@ async fn main() -> Result<()> {
         Action::Serve {
             config,
             enable_ota_trial,
-        } => serve(config, enable_ota_trial).await?,
+        } => {
+            let trial = if enable_ota_trial {
+                OtaTrial::Enabled
+            } else {
+                OtaTrial::Disabled
+            };
+            serve(config, trial).await?
+        }
         Action::Status { config } => {
             api_request(config, Method::GET, "/api/status", None::<&()>).await?
         }
@@ -359,10 +369,17 @@ async fn terminated() -> std::io::Result<()> {
     std::future::pending().await
 }
 
-async fn serve(path: PathBuf, enable_ota_trial: bool) -> Result<()> {
+/// Whether `serve` may dispatch the stock-to-replacement install trial.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OtaTrial {
+    Enabled,
+    Disabled,
+}
+
+async fn serve(path: PathBuf, trial: OtaTrial) -> Result<()> {
     // Trial dispatch must run a binary whose source can be reviewed: a clean
     // commit of every build input. Status and /health report the commit.
-    if enable_ota_trial
+    if trial == OtaTrial::Enabled
         && !BUILD.reviewable()
         && std::env::var_os(build_info::ALLOW_UNREVIEWED_ENV).is_none()
     {
@@ -386,7 +403,7 @@ async fn serve(path: PathBuf, enable_ota_trial: bool) -> Result<()> {
             .join(controller::LEDGER_FILE),
         BUILD,
     )?;
-    if enable_ota_trial {
+    if trial == OtaTrial::Enabled {
         controller.enable_ota_trial();
     }
 
@@ -444,7 +461,10 @@ async fn serve(path: PathBuf, enable_ota_trial: bool) -> Result<()> {
     outcome
 }
 
-#[allow(clippy::print_stdout)]
+#[expect(
+    clippy::print_stdout,
+    reason = "the API's answer is the command's stdout"
+)]
 async fn api_request(
     path: PathBuf,
     method: Method,

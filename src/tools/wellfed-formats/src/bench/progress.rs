@@ -226,6 +226,15 @@ pub struct RelayState {
     pub at: f64,
 }
 
+/// When a progress write reaches `current.json`: at once, for a change the
+/// page must show (a step, an outcome), or at most every 0.2 s, for the
+/// stream of tool output lines.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Flush {
+    Now,
+    Throttled,
+}
+
 /// What this process did. Disabled (no directory) in tests and for `status`.
 pub struct Status {
     directory: Option<PathBuf>,
@@ -286,7 +295,7 @@ impl Status {
             fs::create_dir_all(directory)?;
             self.log = Some(File::create(directory.join(LOG))?);
         }
-        self.write(true)
+        self.write(Flush::Now)
     }
 
     /// Mark `label` running and any running step done.
@@ -294,7 +303,7 @@ impl Status {
         let Some(state) = &mut self.state else { return };
         if self.fixed {
             state.progress = None;
-            self.write_quietly(true);
+            self.write_quietly(Flush::Now);
             return;
         }
         for s in &mut state.steps {
@@ -316,7 +325,7 @@ impl Status {
         };
         state.steps[index].set(StepState::Running);
         state.progress = None;
-        self.write_quietly(true);
+        self.write_quietly(Flush::Now);
     }
 
     /// Keep the steps [`Self::begin`] gave: children's steps no longer add
@@ -337,7 +346,7 @@ impl Status {
         {
             step.set(state);
         }
-        self.write_quietly(true);
+        self.write_quietly(Flush::Now);
     }
 
     /// One line of tool output: kept, logged, and scanned for progress counts.
@@ -369,7 +378,7 @@ impl Status {
                 at,
             });
         }
-        self.write_quietly(false);
+        self.write_quietly(Flush::Throttled);
     }
 
     pub fn capture(&mut self, output: Option<&Path>, seconds: f64) {
@@ -380,7 +389,7 @@ impl Status {
             seconds,
             started: now(),
         });
-        self.write_quietly(true);
+        self.write_quietly(Flush::Now);
     }
 
     /// Expected serial traffic of an update session, for an estimated bar.
@@ -393,7 +402,7 @@ impl Status {
             rx,
             started: Some(now()),
         });
-        self.write_quietly(true);
+        self.write_quietly(Flush::Now);
     }
 
     pub fn relay(&mut self, channel: u8, on: bool) {
@@ -412,7 +421,7 @@ impl Status {
                 let _ = replace(&path, text.as_bytes());
             }
         }
-        self.write_quietly(true);
+        self.write_quietly(Flush::Now);
     }
 
     /// The record as last written; `None` before [`Self::begin`].
@@ -424,14 +433,14 @@ impl Status {
         if let Some(state) = &mut self.state {
             state.flash_tool = Some(tool);
         }
-        self.write_quietly(true);
+        self.write_quietly(Flush::Now);
     }
 
     pub fn next(&mut self, line: String) {
         if let Some(state) = &mut self.state {
             state.next = Some(line);
         }
-        self.write_quietly(true);
+        self.write_quietly(Flush::Now);
     }
 
     pub fn finish(&mut self, code: u8, error: Option<String>) {
@@ -466,7 +475,7 @@ impl Status {
             error: state.error.clone(),
             next: state.next.clone(),
         };
-        self.write_quietly(true);
+        self.write_quietly(Flush::Now);
 
         if let Some(directory) = &self.directory
             && let Err(error) = append_history(directory, &entry)
@@ -476,17 +485,17 @@ impl Status {
     }
 
     /// Progress is advisory: a failed status write never stops a session.
-    fn write_quietly(&mut self, force: bool) {
-        if let Err(error) = self.write(force) {
+    fn write_quietly(&mut self, when: Flush) {
+        if let Err(error) = self.write(when) {
             eprintln!("Could not record bench progress: {error}");
         }
     }
 
-    pub fn write(&mut self, force: bool) -> Result<()> {
+    pub fn write(&mut self, when: Flush) -> Result<()> {
         let Some(directory) = &self.directory else {
             return Ok(());
         };
-        if !force
+        if when == Flush::Throttled
             && self
                 .written
                 .is_some_and(|at| at.elapsed().as_secs_f64() < 0.2)
@@ -571,7 +580,7 @@ mod tests {
         status.step("loader entry");
         status.step("wellfed-flash read full");
         status.line("Read 4096/8388608 bytes\n");
-        status.write(true).unwrap();
+        status.write(Flush::Now).unwrap();
 
         let read = |name| -> serde_json::Value {
             serde_json::from_str(&fs::read_to_string(tmp.path().join(name)).unwrap()).unwrap()

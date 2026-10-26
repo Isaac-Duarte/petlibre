@@ -43,6 +43,13 @@ pub enum Trial {
     NeverConfirms,
 }
 
+/// Which bank a boot runs, and whether its build is on a trial boot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Boot {
+    pub bank: u8,
+    pub trial: bool,
+}
+
 #[derive(Debug)]
 pub struct Banks {
     bank0: Vec<u8>,
@@ -99,23 +106,26 @@ impl Banks {
         bank[..8] == MARKER
     }
 
-    /// The loader's and KM0's choice at a boot: the bank, and whether its
-    /// build is in trial. `confirmed` says whether the confirmation record
-    /// names bank 1's build.
-    pub fn boot(&mut self, confirmed: bool) -> (u8, bool) {
+    /// The loader's and KM0's choice at a boot. `confirmed` says whether
+    /// the confirmation record names bank 1's build.
+    pub fn boot(&mut self, confirmed: bool) -> Boot {
+        let settled = |bank| Boot { bank, trial: false };
         if !Self::valid(&self.bank1) {
-            return (0, false);
+            return settled(0);
         }
         if confirmed {
-            return (1, false);
+            return settled(1);
         }
         if self.trials >= TRIAL_LIMIT && Self::valid(&self.bank0) {
             self.bank1[0] = 0;
             self.trials = 0;
-            return (0, false);
+            return settled(0);
         }
         self.trials += 1;
-        (1, true)
+        Boot {
+            bank: 1,
+            trial: true,
+        }
     }
 
     /// Power was lost: KM0's count goes with the backup register.

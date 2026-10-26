@@ -1109,7 +1109,6 @@ fn restore(erase: u64, blank: u64) -> Vec<u8> {
     format!("PLWRS1 restore erase_ticks={erase} blank={blank}\r\n").into_bytes()
 }
 
-#[allow(clippy::too_many_arguments)]
 fn write_done(
     cycles: u64,
     leases: u64,

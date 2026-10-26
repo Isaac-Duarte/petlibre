@@ -32,7 +32,7 @@ use wellfed_hal::ota::update::{self as update, Floor, Update};
 use wellfed_session::noise::Keypair;
 use tokio::net::{TcpStream, UdpSocket};
 
-use crate::banks::{Banks, Bus, Trial};
+use crate::banks::{Banks, Boot, Bus, Trial};
 use crate::flash::{Flash, Region};
 use crate::platform::{DeviceError, Random, SimPlatform};
 
@@ -126,7 +126,7 @@ impl Sim {
         boot_count: u32,
         mdns: Option<(UdpSocket, Ipv4Addr)>,
     ) -> Result<Self, DeviceError> {
-        let (bank, trial, build) = boot(flash, &mut banks.borrow_mut(), update_key);
+        let (Boot { bank, trial }, build) = boot(flash, &mut banks.borrow_mut(), update_key);
         // The mailbox and the interlock are RAM: a restart forgets every
         // request and chunk, and the write turn a give-way kept.
         mailbox::reset();
@@ -241,7 +241,7 @@ impl Sim {
 /// The loader's choice and KM0's trial for this boot: the bank, whether its
 /// build is in trial, and the build. A build bank 0 activated in bank 1 is
 /// the one the update store names.
-fn boot(flash: &Rc<Flash>, banks: &mut Banks, key: Option<[u8; 32]>) -> (u8, bool, [u8; 32]) {
+fn boot(flash: &Rc<Flash>, banks: &mut Banks, key: Option<[u8; 32]>) -> (Boot, [u8; 32]) {
     let mut store = UpdateStore::default();
     store.open(Region::new(flash, storage::UPDATE));
     if store.record().bank0.is_none()
@@ -259,8 +259,8 @@ fn boot(flash: &Rc<Flash>, banks: &mut Banks, key: Option<[u8; 32]>) -> (u8, boo
     let mut record = [0u8; CONFIRM_LEN];
     let confirmed = Region::new(flash, storage::CONFIRM).read(0, 0, &mut record)
         && ota::confirmed(&record, &banks.bank1_build).is_some();
-    let (bank, trial) = banks.boot(confirmed);
-    (bank, trial, banks.build(bank))
+    let booted = banks.boot(confirmed);
+    (booted, banks.build(booted.bank))
 }
 
 /// The build confirms: the floor first, then the record, as the

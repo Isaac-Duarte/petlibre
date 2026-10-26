@@ -329,6 +329,12 @@ pub unsafe fn gpio_init(pin: u32, output: bool) {
     let hook = with(|h| {
         assert!(pin < 64);
         let (port, mask) = ((pin >> 5) as usize, 1u32 << (pin & 31));
+        // The ROM's `Pinmux_Config` and `GPIO_INTMode(DISABLE)`, as
+        // `gpio_enable_outputs` models them too.
+        h.pad_control[pin as usize] &= !crate::PAD_GPIO_CLEAR;
+        if port == 0 {
+            h.gpio.int_en &= !mask;
+        }
         if output {
             h.direction[port] |= mask;
         } else {
@@ -353,6 +359,9 @@ pub unsafe fn gpio_enable_outputs(port: u32, mask: u32) {
             let pin = (port << 5 | pins.trailing_zeros()) as usize;
             pins &= pins - 1;
             h.pad_control[pin] &= !crate::PAD_GPIO_CLEAR;
+        }
+        if port == 0 {
+            h.gpio.int_en &= !mask;
         }
         h.direction[port as usize] |= mask;
         h.direction_hook

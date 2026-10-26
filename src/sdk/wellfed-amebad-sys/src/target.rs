@@ -307,6 +307,10 @@ pub unsafe fn gpio_enable_outputs(port: u32, mask: u32) {
     let gpio = (k::WELLFED_GPIOA_BASE + port * 0x400) as usize as *mut raw::GPIO_TypeDef;
     let mux = k::WELLFED_PINMUX_BASE as usize as *mut raw::PINMUX_TypeDef;
 
+    // One pin at a time, which is safe only because no pin in `mask` is an
+    // output while its pad selects another function: such a pin would
+    // start driving its latch here, one pin per write. Nothing sets a
+    // motor pin's direction except through GPIO, which selects GPIO first.
     let mut pins = mask;
     while pins != 0 {
         let pin = (port << 5 | pins.trailing_zeros()) as usize;

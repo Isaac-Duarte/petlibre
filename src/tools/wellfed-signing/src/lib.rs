@@ -41,6 +41,7 @@ use wellfed_formats::hex;
 use wellfed_formats::manifest::BuildManifest;
 use wellfed_formats::private::write_new;
 use wellfed_formats::private::{SYSTEM_RANDOM, random};
+use wellfed_formats::require;
 use wellfed_formats::review::ImageKind;
 use wellfed_image::bank::BANK1;
 use wellfed_image::review::frozen;
@@ -49,8 +50,7 @@ use sha2::{Digest, Sha256};
 
 mod error;
 
-use error::require;
-pub use error::{Error, Result};
+pub use error::{Error, FrozenError, ImageError, KeyError, Result};
 
 /// The bench key's root-relative path. Firmware builds embed its public half.
 pub const KEY_PATH: &str = "private/ota-key.json";
@@ -84,19 +84,20 @@ impl Key {
     /// Load a key file, refusing one whose public key is not its seed's.
     pub fn load(path: &Path) -> Result<Self> {
         let file: OtaKeyFile = wellfed_formats::load(path)?;
-        require(file.version == 1, "Unsupported key file version")?;
+        require(file.version == 1, || KeyError::Version {
+            version: file.version,
+        })?;
         // Every scope a key file can name must be decided here: a release
         // key is never one this signer loads from a checkout.
         match file.scope {
             KeyScope::Bench => {}
         }
-        let seed = hex::decode::<32>(&file.seed)
-            .ok_or_else(|| Error::Refused("Key file seed is not 32 hex bytes".into()))?;
+        let seed = hex::decode::<32>(&file.seed).ok_or(KeyError::Seed)?;
 
         let key = SigningKey::from_bytes(&seed);
         require(
             hex::encode(&key.verifying_key().to_bytes()) == file.public_key,
-            "Key file's public key does not match its seed",
+            || KeyError::PublicKey,
         )?;
         Ok(Self(key))
     }
@@ -120,8 +121,7 @@ impl Key {
     /// A downgrade statement: the feeder whose identity key is `device` may
     /// install `manifest` while its floor is `floor`.
     pub fn downgrade(&self, manifest: &[u8], device: &[u8; 32], floor: u32) -> Result<Vec<u8>> {
-        offer::parse_manifest(manifest)
-            .map_err(|error| Error::Refused(format!("Not a version 2 manifest: {error:?}")))?;
+        offer::parse_manifest(manifest).map_err(Error::NotManifest)?;
         let digest = offer::manifest_digest(manifest);
         Ok(self.signed(&offer::downgrade_body(&self.id(), device, &digest, floor)))
     }
@@ -159,10 +159,11 @@ impl Frozen {
     /// Open `review`, a directory under `root`'s `private/`, refusing one
     /// without `review.json` or that differs from what was frozen.
     pub fn open(root: &Path, review: &Path) -> Result<Self> {
-        require(
-            review.join("review.json").is_file(),
-            format!("{} has no review.json", review.display()),
-        )?;
+        require(review.join("review.json").is_file(), || {
+            FrozenError::NoReview {
+                review: review.to_path_buf(),
+            }
+        })?;
         let verified = frozen(&Root::new(root)?, review, &BANK1)?;
         let payload = verified.image.get(CONTAINER_HEADER..).unwrap_or_default();
 
@@ -175,17 +176,14 @@ impl Frozen {
                 let identity = manifest.startup_identity.as_deref().unwrap_or_default();
                 let build_id = id_bytes(identity)?;
                 // Every Rust-linked image prints its identity at startup.
-                require(
-                    contains(payload, identity.as_bytes()),
-                    "image.bin does not carry the reviewed build's identity",
-                )?;
+                require(contains(payload, identity.as_bytes()), || {
+                    FrozenError::NoIdentity {
+                        identity: identity.to_owned(),
+                    }
+                })?;
                 build_id
             }
-            _ => {
-                return Err(Error::Refused(
-                    "Frozen review's kind and manifest disagree".into(),
-                ));
-            }
+            _ => return Err(FrozenError::KindMismatch.into()),
         };
 
         Ok(Self {
@@ -253,10 +251,11 @@ impl Frozen {
 
     fn attended(&self, motion: Motion) -> Result<()> {
         if let Some(policy) = self.motion_policy() {
-            require(
-                motion == Motion::Attended(policy),
-                format!("Image drives the motor ({policy}); sign it only attending that policy"),
-            )?;
+            require(motion == Motion::Attended(policy), || {
+                FrozenError::Unattended {
+                    policy: policy.to_owned(),
+                }
+            })?;
         }
         Ok(())
     }
@@ -265,20 +264,15 @@ impl Frozen {
 /// The manifest fields of `container`'s bank contents, refusing what the
 /// firmware would refuse.
 fn bank_manifest(container: &[u8], version: u32, build_id: [u8; 32]) -> Result<Manifest> {
-    require(
-        container.len() > CONTAINER_HEADER + MARKER.len(),
-        "Image too short",
-    )?;
+    require(container.len() > CONTAINER_HEADER + MARKER.len(), || {
+        ImageError::TooShort
+    })?;
     let payload = &container[CONTAINER_HEADER..];
-    require(
-        payload[..MARKER.len()] == MARKER,
-        "Image payload lacks the loader marker",
-    )?;
-    let image_len =
-        u32::try_from(payload.len()).map_err(|_| Error::Refused("Image too large".into()))?;
+    require(payload[..MARKER.len()] == MARKER, || ImageError::NoMarker)?;
+    let image_len = u32::try_from(payload.len()).map_err(|_| ImageError::TooLarge)?;
     require(
         (ota::SECTOR_BYTES..=ota::BANK1_BYTES).contains(&image_len),
-        "Image outside the reviewed bank-1 size bound",
+        || ImageError::Size { bytes: image_len },
     )?;
 
     Ok(Manifest {
@@ -291,11 +285,8 @@ fn bank_manifest(container: &[u8], version: u32, build_id: [u8; 32]) -> Result<M
 }
 
 fn id_bytes(text: &str) -> Result<[u8; 32]> {
-    require(
-        hex::is_lower_hex(text, 64),
-        "Frozen review has no 64-hex build ID",
-    )?;
-    hex::decode(text).ok_or_else(|| Error::Refused("Frozen review has no 64-hex build ID".into()))
+    require(hex::is_lower_hex(text, 64), || FrozenError::BuildId)?;
+    Ok(hex::decode(text).ok_or(FrozenError::BuildId)?)
 }
 
 fn contains(haystack: &[u8], needle: &[u8]) -> bool {
@@ -457,37 +448,53 @@ mod tests {
 
         file["public_key"] = json!("00".repeat(32));
         fs::write(&old, file.to_string()).unwrap();
-        assert!(Key::load(&old).is_err());
+        assert!(matches!(
+            Key::load(&old),
+            Err(Error::Key(KeyError::PublicKey))
+        ));
     }
 
     #[test]
     fn signing_refuses_images_the_firmware_would_refuse() {
+        let refused = |image: &[u8]| bank_manifest(image, 1, [0; 32]).err();
+
         let mut no_marker = container(SECTOR, |_| 0);
         no_marker[CONTAINER_HEADER] = b'0';
-        assert!(bank_manifest(&no_marker, 1, [0; 32]).is_err());
-        assert!(bank_manifest(&container(100, |_| 0), 1, [0; 32]).is_err());
+        assert!(matches!(
+            refused(&no_marker),
+            Some(Error::Image(ImageError::NoMarker))
+        ));
+        assert!(matches!(
+            refused(&container(100, |_| 0)),
+            Some(Error::Image(ImageError::Size { bytes: 100 }))
+        ));
         let large = container(ota::BANK1_BYTES as usize + 1, |_| 0);
-        assert!(bank_manifest(&large, 1, [0; 32]).is_err());
-        assert!(bank_manifest(&container(SECTOR, |_| 0), 1, [0; 32]).is_ok());
+        assert!(matches!(
+            refused(&large),
+            Some(Error::Image(ImageError::Size { .. }))
+        ));
+        assert!(refused(&container(SECTOR, |_| 0)).is_none());
     }
 
-    fn refusal(checkout: &Path, review: &Path) -> String {
-        Frozen::open(checkout, review).unwrap_err().to_string()
+    fn refusal(checkout: &Path, review: &Path) -> Error {
+        Frozen::open(checkout, review).unwrap_err()
     }
 
     #[test]
     fn an_image_that_differs_from_its_review_is_refused() {
+        use wellfed_image::review::Error as Review;
+
         let image = build_image();
         let (checkout, review) = freeze(&image, None);
-        let refused = |text: &str| {
-            let error = refusal(checkout.path(), &review);
-            assert!(error.contains(text), "{error}");
-        };
 
         // No review.json: nothing says what was reviewed.
         let described = fs::read(review.join("review.json")).unwrap();
         fs::remove_file(review.join("review.json")).unwrap();
-        refused("no review.json");
+        let error = refusal(checkout.path(), &review);
+        assert!(
+            matches!(&error, Error::Frozen(FrozenError::NoReview { review: path }) if *path == review),
+            "{error:?}"
+        );
         fs::write(review.join("review.json"), &described).unwrap();
 
         // A swapped image: a valid container with the same identity.
@@ -495,7 +502,14 @@ mod tests {
             format!("PLFW1 start build={BUILD} bank=1").as_bytes(),
         );
         fs::write(review.join("image.bin"), &other).unwrap();
-        refused("Frozen image/review mismatch");
+        let error = refusal(checkout.path(), &review);
+        assert!(
+            matches!(
+                error,
+                Error::Review(wellfed_image::Error::Review(Review::ImageMismatch))
+            ),
+            "{error:?}"
+        );
         fs::write(review.join("image.bin"), &image).unwrap();
 
         // An edited build ID or motion policy in the manifest.
@@ -505,7 +519,14 @@ mod tests {
             manifest.replace("null", "\"fw16-pulse-v1\""),
         ] {
             fs::write(review.join("build-manifest.json"), edited).unwrap();
-            refused("Frozen manifest mismatch");
+            let error = refusal(checkout.path(), &review);
+            assert!(
+                matches!(
+                    error,
+                    Error::Review(wellfed_image::Error::Review(Review::ManifestMismatch))
+                ),
+                "{error:?}"
+            );
         }
     }
 
@@ -513,7 +534,11 @@ mod tests {
     fn a_review_of_an_image_without_its_identity_is_refused() {
         let image = wellfed_image::fixtures::image_carrying(b"no identity here");
         let (checkout, review) = freeze(&image, None);
-        assert!(refusal(checkout.path(), &review).contains("identity"));
+        let error = refusal(checkout.path(), &review);
+        assert!(
+            matches!(&error, Error::Frozen(FrozenError::NoIdentity { identity }) if identity == BUILD),
+            "{error:?}"
+        );
     }
 
     #[test]
@@ -524,8 +549,11 @@ mod tests {
         assert_eq!(frozen.motion_policy(), Some("fw16-pulse-v1"));
 
         for motion in [Motion::Refused, Motion::Attended("fw16-other-v1")] {
-            let error = frozen.offer(&key, 1, motion).unwrap_err().to_string();
-            assert!(error.contains("drives the motor"), "{error}");
+            let error = frozen.offer(&key, 1, motion).unwrap_err();
+            assert!(
+                matches!(&error, Error::Frozen(FrozenError::Unattended { policy }) if policy == "fw16-pulse-v1"),
+                "{error:?}"
+            );
         }
         assert!(
             frozen
@@ -550,6 +578,14 @@ mod tests {
         fs::write(review.join("review.json"), frozen.to_string()).unwrap();
 
         let error = refusal(checkout.path(), &review);
-        assert!(error.contains("Only original stock"), "{error}");
+        assert!(
+            matches!(
+                error,
+                Error::Review(wellfed_image::Error::Review(
+                    wellfed_image::review::Error::NotOriginalStock
+                ))
+            ),
+            "{error:?}"
+        );
     }
 }

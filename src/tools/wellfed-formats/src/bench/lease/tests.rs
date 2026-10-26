@@ -62,6 +62,17 @@ fn a_free_bench_is_taken_privately_and_freed_on_drop() {
 }
 
 #[test]
+fn a_named_private_directory_is_the_checkouts_private() {
+    let root = tempfile::tempdir().unwrap();
+
+    let lease = Lease::acquire_in(&root.path().join("private")).unwrap();
+
+    assert_eq!(on_disk(root.path()).as_ref(), Some(lease.holder()));
+    drop(lease);
+    assert_eq!(on_disk(root.path()), None);
+}
+
+#[test]
 fn a_live_holder_refuses_a_second_and_cannot_be_broken() {
     let root = tempfile::tempdir().unwrap();
     let other = Other::start();

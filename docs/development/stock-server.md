@@ -46,7 +46,7 @@ The broker once served the replacement firmware too, as a role with its own cred
 
 Install trials are recorded in `stock-ledger.json` beside the configuration, under an exclusive lock. Each trial is persisted before its one `OTA_UPGRADE` goes out and is never resent: a repeated request ID returns the stored record, and a trial in flight when the server stops or loses the broker becomes uncertain. An uncertain or failed trial blocks the next until `ota-trial-resolve` closes it from fresh evidence, which sends no command. A replacement install closes instead on `ota-trial-answered`, once the operator's client saw the served build answer its device API from bank 0 and stock has gone quiet (below).
 
-`ota-trial` and `setup-send`, which send the feeder something, first take the [bench lease](../devices/plaf103/bench.md#bench-lease) under the directory they run from, so neither goes out while another tool drives the bench. The services (`serve`, `broker`, `ota-images`) take none: they only answer, beside the command that does.
+`serve --enable-ota-trial` holds the [bench lease](../devices/plaf103/bench.md#bench-lease) beside its configuration for as long as it runs, since an install it dispatches runs for minutes; `ota-trial` only asks that server, so it takes none of its own. `setup-send` takes the lease for its one frame. A plain `serve`, `broker` and `ota-images` take none: they only answer, beside the command that drives the feeder.
 
 The ledger before FW51, `feed-ledger.json`, also held feeds and probe queries. `serve` refuses to start while it is present: check that no trial in it is submitted, uncertain or failed, then rename it.
 

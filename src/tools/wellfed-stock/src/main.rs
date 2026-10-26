@@ -239,7 +239,7 @@ async fn main() -> Result<()> {
             to,
         } => {
             use wellfed_stock::setup::{Setup, send};
-            let _lease = bench_lease()?;
+            let _lease = bench_lease(&config)?;
             let broker = broker.unwrap_or(config::load(&config)?.mqtt_listen);
             println!("Passphrase for {ssid} (read from stdin):");
             let mut password = String::new();
@@ -326,7 +326,8 @@ async fn main() -> Result<()> {
             request_id,
             server_token,
         } => {
-            let _lease = bench_lease()?;
+            // No lease of its own: the trial-enabled `serve` that dispatches
+            // the install holds the bench for its whole lifetime.
             api_request(
                 config,
                 Method::POST,
@@ -372,12 +373,18 @@ async fn terminated() -> std::io::Result<()> {
     std::future::pending().await
 }
 
-/// The bench lease under the checkout this runs from, for a command that
-/// sends the feeder something (an install request, a setup frame). The
-/// services (`serve`, `broker`, `ota-images`) take none: they only answer,
-/// and run beside the bench command that drives the feeder.
-fn bench_lease() -> Result<Lease> {
-    Lease::acquire(std::path::Path::new(".")).context("bench lease")
+/// The bench lease beside `config` (in a checkout, `private/`), for what
+/// drives the feeder: `setup-send`, and a trial-enabled `serve` for its
+/// whole lifetime, since it dispatches a multi-minute install. A plain
+/// `serve`, `broker` and `ota-images` take none: they only answer, beside
+/// the bench command that drives the feeder. Run by the bench (`itest`,
+/// `stock-ota`), `serve` descends from the holder and runs on its lease.
+fn bench_lease(config: &std::path::Path) -> Result<Lease> {
+    let path = config
+        .canonicalize()
+        .with_context(|| format!("{}", config.display()))?;
+    let directory = path.parent().context("config directory missing")?;
+    Lease::acquire_in(directory).context("bench lease")
 }
 
 /// Whether `serve` may dispatch the stock-to-replacement install trial.
@@ -403,6 +410,12 @@ async fn serve(path: PathBuf, trial: OtaTrial) -> Result<()> {
 
     let path = path.canonicalize()?;
     let config = Arc::new(config::load(&path)?);
+    // Taken before the API binds, so a trial cannot be asked of a server
+    // that does not hold the bench; held until the server stops.
+    let _lease = match trial {
+        OtaTrial::Enabled => Some(bench_lease(&path)?),
+        OtaTrial::Disabled => None,
+    };
     let listener = tokio::net::TcpListener::bind(config.http_listen)
         .await
         .context("bind loopback HTTP API")?;

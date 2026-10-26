@@ -13,9 +13,12 @@
 //! Liveness is the process, not just its pid: the kernel reuses pids, so a
 //! holder is alive only while `/proc/<pid>/stat` shows the same start time
 //! on the same boot. A process descended from the holder (the bench's
-//! `wellfed-flash` children) runs on the holder's lease: its claim is
-//! [`Claim::Inherited`] and it removes nothing when it ends, so a chained
-//! tool never deadlocks on its parent.
+//! `wellfed-flash` children, its trial-enabled `wellfed-stock serve`) runs
+//! on the holder's lease and removes nothing when it ends, so a chained tool
+//! never deadlocks on its parent. That claim is checked once, when the child
+//! starts: a child the holder leaves running after it releases (which the
+//! bench never does; it waits for or kills its children) is no longer
+//! covered.
 //!
 //! Taking, breaking and releasing the lease happen under an advisory lock on
 //! a separate guard file, so two tools racing for a free or stale lease
@@ -37,14 +40,21 @@ use crate::require;
 
 /// Root-relative: the lease file.
 pub const LEASE: &str = "private/bench.lease";
-/// Root-relative: the guard every change to the lease is made under. It
-/// stays behind empty; only its advisory lock matters.
-const GUARD: &str = "private/bench.lease.lock";
+/// Root-relative: the private directory the lease and its guard are in.
+const PRIVATE: &str = "private";
+/// The lease's name in its directory.
+const FILE: &str = "bench.lease";
+/// The guard every change to the lease is made under, beside it. It stays
+/// behind empty; only its advisory lock matters.
+const GUARD: &str = "bench.lease.lock";
 
 /// How far up the process tree a holder is looked for. A bench chain is
 /// two or three processes deep; the bound only ends a walk that /proc
 /// changes under.
 const ANCESTRY: usize = 64;
+
+/// Linux's `ESRCH`: the process went away while its /proc entry was read.
+const ESRCH: i32 = 3;
 
 /// The process holding the bench.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -91,7 +101,7 @@ pub enum Liveness {
 
 /// How this process holds the bench.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Claim {
+pub(crate) enum Claim {
     /// It took the lease and removes it when dropped.
     Owned,
     /// An ancestor holds it; this process runs as part of that run.
@@ -138,23 +148,32 @@ pub type Result<T, E = LeaseError> = std::result::Result<T, E>;
 /// The bench, held by this process until dropped.
 #[derive(Debug)]
 pub struct Lease {
-    root: PathBuf,
+    /// The private directory holding the lease and its guard.
+    directory: PathBuf,
     holder: Holder,
     claim: Claim,
 }
 
 impl Lease {
-    /// Take the bench under `root`, or join the run of an ancestor that
-    /// holds it. Refuses a live holder, a stale lease and an unreadable one.
+    /// Take the bench under the checkout `root` (its `private/`), or join
+    /// the run of an ancestor that holds it. Refuses a live holder, a stale
+    /// lease and an unreadable one.
     pub fn acquire(root: &Path) -> Result<Self> {
-        let me = Holder::current()?;
-        let _guard = Guard::take(root)?;
+        Self::acquire_in(&root.join(PRIVATE))
+    }
 
-        let path = root.join(LEASE);
+    /// [`Self::acquire`] with the lease in `directory`, for a tool that
+    /// names its private directory rather than the checkout (the stock
+    /// server's config directory, which is `private/` on the bench).
+    pub fn acquire_in(directory: &Path) -> Result<Self> {
+        let me = Holder::current()?;
+        let _guard = Guard::take(directory)?;
+
+        let path = directory.join(FILE);
         let Some(holder) = read(&path)? else {
             write_json(&path, &me)?;
             return Ok(Self {
-                root: root.to_path_buf(),
+                directory: directory.to_path_buf(),
                 holder: me,
                 claim: Claim::Owned,
             });
@@ -162,7 +181,7 @@ impl Lease {
 
         if descends_from(me.pid, &holder)? {
             return Ok(Self {
-                root: root.to_path_buf(),
+                directory: directory.to_path_buf(),
                 holder,
                 claim: Claim::Inherited,
             });
@@ -175,11 +194,13 @@ impl Lease {
     }
 
     /// The run's holder: this process, or the ancestor it inherited from.
-    pub fn holder(&self) -> &Holder {
+    #[cfg(test)]
+    pub(crate) fn holder(&self) -> &Holder {
         &self.holder
     }
 
-    pub fn claim(&self) -> Claim {
+    #[cfg(test)]
+    pub(crate) fn claim(&self) -> Claim {
         self.claim
     }
 
@@ -187,8 +208,8 @@ impl Lease {
     /// lease left behind reads as stale next time, which the operator
     /// breaks after a look at the bench.
     fn release(&self) -> Result<()> {
-        let _guard = Guard::take(&self.root)?;
-        let path = self.root.join(LEASE);
+        let _guard = Guard::take(&self.directory)?;
+        let path = self.directory.join(FILE);
         if read(&path)?.is_some_and(|held| held.token == self.holder.token) {
             fs::remove_file(path)?;
         }
@@ -204,8 +225,8 @@ impl Drop for Lease {
     }
 }
 
-/// The lease under `root` and whether its holder still runs, without
-/// taking it: for a read-only report such as `status`.
+/// The lease under the checkout `root` and whether its holder still runs,
+/// without taking it: for a read-only report such as `status`.
 pub fn inspect(root: &Path) -> Result<Option<(Holder, Liveness)>> {
     let Some(holder) = read(&root.join(LEASE))? else {
         return Ok(None);
@@ -218,9 +239,10 @@ pub fn inspect(root: &Path) -> Result<Option<(Holder, Liveness)>> {
 /// holder, one on another host, and an unreadable lease, which are the
 /// operator's to look at.
 pub fn break_stale(root: &Path) -> Result<Holder> {
-    let _guard = Guard::take(root)?;
+    let directory = root.join(PRIVATE);
+    let _guard = Guard::take(&directory)?;
 
-    let path = root.join(LEASE);
+    let path = directory.join(FILE);
     let holder = read(&path)?.ok_or(LeaseError::Free)?;
     match holder.liveness()? {
         Liveness::Gone => {}
@@ -321,11 +343,9 @@ struct Guard {
 }
 
 impl Guard {
-    fn take(root: &Path) -> Result<Self> {
-        let path = root.join(GUARD);
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
+    fn take(directory: &Path) -> Result<Self> {
+        fs::create_dir_all(directory)?;
+        let path = directory.join(GUARD);
 
         let mut options = fs::OpenOptions::new();
         options.create(true).truncate(false).write(true);
@@ -358,9 +378,8 @@ impl Stat {
         let path = stat_path(pid);
         let text = match fs::read_to_string(&path) {
             Ok(text) => text,
-            // ESRCH: the process went away while it was being read.
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-            Err(error) if error.raw_os_error() == Some(3) => return Ok(None),
+            Err(error) if error.raw_os_error() == Some(ESRCH) => return Ok(None),
             Err(error) => return Err(error.into()),
         };
         Self::parse(&text)

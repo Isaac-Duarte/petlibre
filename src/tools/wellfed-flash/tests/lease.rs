@@ -86,6 +86,7 @@ fn a_child_of_the_holder_runs_on_its_lease_and_leaves_it() {
     let root = tempfile::tempdir().unwrap();
     // This test process stands as the bench, wellfed-flash as its child.
     let held = Lease::acquire(root.path()).unwrap();
+    let (before, _) = lease::inspect(root.path()).unwrap().unwrap();
 
     let output = observe(root.path());
 
@@ -93,8 +94,10 @@ fn a_child_of_the_holder_runs_on_its_lease_and_leaves_it() {
     // missing port.
     assert_eq!(output.status.code(), Some(1), "{output:?}");
     assert_eq!(summary(&output)["status"], "failed");
-    let (holder, _) = lease::inspect(root.path()).unwrap().unwrap();
-    assert_eq!(&holder, held.holder());
+    let (after, _) = lease::inspect(root.path()).unwrap().unwrap();
+    assert_eq!(after, before);
+    assert_eq!(after.pid, std::process::id());
+    drop(held);
 }
 
 #[test]

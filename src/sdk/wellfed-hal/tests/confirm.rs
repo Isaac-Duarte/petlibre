@@ -17,6 +17,7 @@ use wellfed_hal::ota::confirm::*;
 use wellfed_hal::ota::update::{Floor, StoreSlots, Update};
 use wellfed_hal::sdk::fake;
 use wellfed_hal::stopped;
+use wellfed_hal::supervision::supervise::Feeding;
 use wellfed_hal::trial::{CONFIRM_SECTOR, identity};
 
 thread_local! {
@@ -93,11 +94,22 @@ fn record() -> Vec<u8> {
 
 /// Step with `healthy(ms)` deciding health, 500 ms apart.
 fn run(confirm: &mut Confirm, healthy: impl Fn(u32) -> bool, steps: usize) -> Vec<Record> {
+    run_fed(confirm, healthy, |_| Feeding::Unclaimed, steps)
+}
+
+/// As `run`, with `feeding(ms)` standing for the firmware's feeding owner.
+fn run_fed(
+    confirm: &mut Confirm,
+    healthy: impl Fn(u32) -> bool,
+    feeding: impl Fn(u32) -> Feeding,
+    steps: usize,
+) -> Vec<Record> {
     run_with(
         confirm,
         &mut HookedStorage::<FakeHooks>::new(),
         &mut || Floor::Unchanged,
         healthy,
+        feeding,
         steps,
     )
 }
@@ -107,6 +119,7 @@ fn run_with(
     storage: &mut impl StorageFlash,
     raise: &mut impl FnMut() -> Floor,
     healthy: impl Fn(u32) -> bool,
+    feeding: impl Fn(u32) -> Feeding,
     steps: usize,
 ) -> Vec<Record> {
     let mut provider = Provider::default();
@@ -123,6 +136,7 @@ fn run_with(
                 storage,
                 &mut *raise,
                 healthy(now),
+                feeding(now),
                 now,
             )
         };
@@ -233,6 +247,107 @@ fn arming_and_the_write_wait_for_a_feed_to_release_the_outputs() {
     assert_eq!(INTERLOCK.status().writes_deferred, 1);
 }
 
+fn arming_record(records: &[Record]) -> bool {
+    records.contains(&Record::Arming(arming::Event::Armed {
+        watchdog: true,
+        installed: true,
+    }))
+}
+
+#[test]
+fn a_build_confirms_only_once_its_feeding_owner_has_proved_itself() {
+    let _guard = start();
+    let mut confirm = Confirm::default();
+
+    // Healthy, but the owner has not proved itself: the hooks arm, so it
+    // can open, and nothing is written.
+    let records = run_fed(&mut confirm, |_| true, |_| Feeding::Pending, 400);
+    assert!(arming_record(&records), "{records:?}");
+    assert!(
+        !records
+            .iter()
+            .any(|r| matches!(r, Record::Confirmed { .. }))
+    );
+    assert!(FakeHooks::armed(), "the owner opens on the armed hooks");
+    assert_eq!(fake::with(|h| h.storage_erases[CONFIRM_SECTOR as usize]), 0);
+    // The wait leaves no attempt marker set and no write turn held: a
+    // reset now must not make the next boot skip arming, and a write may
+    // go meanwhile.
+    assert_eq!(fake::with(|h| h.backup[MARKER_REGISTER as usize]), 0);
+    assert!(!INTERLOCK.writing());
+
+    let records = run_fed(&mut confirm, |_| true, |_| Feeding::Proven, 10);
+    assert!(matches!(records.last(), Some(Record::Confirmed { .. })));
+    assert_eq!(confirmed(&record(), &identity()), Some(0));
+    assert_eq!(fake::with(|h| h.backup[MARKER_REGISTER as usize]), 0);
+    assert!(!INTERLOCK.writing());
+}
+
+#[test]
+fn a_build_whose_owner_cannot_open_never_confirms() {
+    let _guard = start();
+    let mut confirm = Confirm::default();
+    let records = run_fed(&mut confirm, |_| true, |_| Feeding::Failed, 2_000);
+
+    assert!(arming_record(&records));
+    assert!(
+        !records
+            .iter()
+            .any(|r| matches!(r, Record::Confirmed { .. }))
+    );
+    assert_eq!(fake::with(|h| h.storage_erases[CONFIRM_SECTOR as usize]), 0);
+    assert_eq!(confirmed(&record(), &identity()), None);
+}
+
+#[test]
+fn the_network_must_still_be_healthy_once_the_owner_has_proved_itself() {
+    let _guard = start();
+    let mut confirm = Confirm::default();
+    run_fed(&mut confirm, |_| true, |_| Feeding::Pending, 400);
+
+    let records = run_fed(&mut confirm, |_| false, |_| Feeding::Proven, 100);
+    assert!(records.is_empty(), "{records:?}");
+    assert_eq!(fake::with(|h| h.storage_erases[CONFIRM_SECTOR as usize]), 0);
+
+    let records = run_fed(&mut confirm, |_| true, |_| Feeding::Proven, 10);
+    assert!(matches!(records.last(), Some(Record::Confirmed { .. })));
+}
+
+#[test]
+fn nothing_arms_or_writes_into_a_reset_the_runtime_decided() {
+    let _guard = start();
+    wellfed_hal::supervision::reset();
+    let mut confirm = Confirm::default();
+    run_fed(&mut confirm, |_| true, |_| Feeding::Pending, 400);
+    assert!(FakeHooks::armed());
+
+    // The watchdog feeder stopped feeding: a reset is coming, so the record
+    // is not written into it, and the attempt marker stays clear.
+    wellfed_hal::supervision::supervised(false, 0);
+    let records = run_fed(&mut confirm, |_| true, |_| Feeding::Proven, 100);
+    assert!(records.is_empty(), "{records:?}");
+    assert_eq!(fake::with(|h| h.storage_erases[CONFIRM_SECTOR as usize]), 0);
+    assert_eq!(fake::with(|h| h.backup[MARKER_REGISTER as usize]), 0);
+
+    // A stop that ends before it is certain only delayed the write.
+    wellfed_hal::supervision::supervised(true, 500);
+    let records = run_fed(&mut confirm, |_| true, |_| Feeding::Proven, 10);
+    assert!(matches!(records.last(), Some(Record::Confirmed { .. })));
+}
+
+#[test]
+fn arming_waits_out_a_reset_the_runtime_decided() {
+    let _guard = start();
+    wellfed_hal::supervision::reset();
+    wellfed_hal::supervision::supervised(false, 0);
+    let mut confirm = Confirm::default();
+    let records = run(&mut confirm, |_| true, 400);
+
+    assert!(records.is_empty(), "{records:?}");
+    assert!(!FakeHooks::armed());
+    assert_eq!(fake::with(|h| h.backup[MARKER_REGISTER as usize]), 0);
+}
+
 type Slots = StoreSlots<FakeHooks>;
 
 fn update_store() -> UpdateStore<Slots> {
@@ -298,6 +413,7 @@ fn the_floor_rises_before_the_confirmation_sector_is_erased() {
         &mut storage,
         &mut || stage.raise_floor(),
         |_| true,
+        |_| Feeding::Unclaimed,
         200,
     );
 
@@ -319,6 +435,7 @@ fn a_floor_that_cannot_rise_leaves_the_build_unconfirmed() {
         &mut watched(),
         &mut || Floor::Failed,
         |_| true,
+        |_| Feeding::Unclaimed,
         200,
     );
     assert_eq!(
@@ -345,6 +462,7 @@ fn a_torn_record_after_the_floor_rose_confirms_on_the_next_boot() {
         &mut storage,
         &mut || stage.raise_floor(),
         |_| true,
+        |_| Feeding::Unclaimed,
         200,
     );
     assert_eq!(
@@ -370,6 +488,7 @@ fn a_torn_record_after_the_floor_rose_confirms_on_the_next_boot() {
         &mut watched(),
         &mut || stage.raise_floor(),
         |_| true,
+        |_| Feeding::Unclaimed,
         200,
     );
     assert!(matches!(

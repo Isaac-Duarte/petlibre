@@ -7,6 +7,13 @@
 //! runtime's watchdog rule is unchanged. At rest the owner holds the
 //! board, samples the inputs, and beats.
 //!
+//! A trial build confirms only once the owner has proved it can feed
+//! ([`Proof`], reported to the runtime each pass): open on its journal, any
+//! interrupted feed resolved, and at rest with every check passing for
+//! [`PROOF_MS`]. An owner that cannot open reports a failure, which resets a
+//! trial build at once so KM0 counts it. After a reset storm with nothing
+//! to fall back to (`wellfed_sdk::held`), the owner never opens.
+//!
 //! A feed comes from the device API (`wellfed_feeder::feeder::Feeds`): the
 //! loop submits it under the next journal id, answers once the owner has
 //! reserved it, and when the owner reports its result, logs what the drive
@@ -30,9 +37,10 @@
 //! a feed waits until the owner is at rest with its outputs stopped.
 //!
 //! Readiness ([`wellfed_feeder::feeder::feeding::readiness`]) starts from
-//! the owner's own reason not to feed (`Feeding::blocked`): not open yet,
-//! the journal failed, a fault, an interrupted feed being resolved, a feed
-//! in flight, or a join's turn. `submit` keeps its own checks behind it.
+//! the owner's own reason not to feed (`Feeding::blocked`): not open yet
+//! or the build not yet confirmed, the journal failed, a fault (held after
+//! a reset storm included), an interrupted feed being resolved, a feed in
+//! flight, or a join's turn. `submit` keeps its own checks behind it.
 //!
 //! Each feed is traced (`wellfed_feeder_runtime::traces`): after every
 //! owner step the loop hands what the step saw to the trace, so the trace
@@ -68,7 +76,7 @@ use wellfed_sdk::hal::owner::{
 use wellfed_sdk::hal::sdk;
 use wellfed_sdk::hal::supervision::config::{SYSTIMER_HZ, WATCHDOG};
 use wellfed_sdk::hal::supervision::events::{EventsConfig, EventsFault, PinWatch};
-use wellfed_sdk::hal::supervision::supervise::LIVENESS_MS;
+use wellfed_sdk::hal::supervision::supervise::{self, LIVENESS_MS};
 
 /// The vendor app's cap on one feed, from the stock inventory. The journal
 /// pins it: a journal written with another reads as corrupt.
@@ -205,6 +213,77 @@ pub fn may_release(in_flight: InFlight, status: &OwnerStatus) -> bool {
             | OwnerState::Stopped
     );
     in_flight == InFlight::Nothing && resting && status.stopped && status.optics_off
+}
+
+/// How long the owner rests Idle with every check passing before it has
+/// proved it can feed: a hundred of its 20 ms samples, each reading the
+/// sensors and the motor current and verifying motor STOP and the emitters
+/// off.
+pub const PROOF_MS: u32 = 2_000;
+
+/// What the owner has shown this boot, for the runtime: a trial build
+/// confirms only on [`supervise::Feeding::Proven`], and one whose owner cannot open
+/// ([`supervise::Feeding::Failed`]) is reset at once and counted.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Proof {
+    /// When the owner was first seen at rest with every check passing,
+    /// since it last was not.
+    resting_since: Option<u32>,
+}
+
+/// The owner as the loop sees it, for [`Proof::step`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Opened<'a> {
+    /// Not opened yet: the hooks are unarmed, or a lease holds the flash.
+    Not,
+    /// The journal could not be opened or created: no owner this boot.
+    JournalFailed,
+    /// Opened; `resolving` while a feed a reset interrupted is still being
+    /// recorded as uncertain.
+    Owner {
+        status: &'a OwnerStatus,
+        resolving: bool,
+    },
+}
+
+impl Proof {
+    pub fn step(&mut self, opened: Opened<'_>, now_ms: u32) -> supervise::Feeding {
+        let (status, resolving) = match opened {
+            Opened::Not => return self.pending(),
+            Opened::JournalFailed => return self.failed(),
+            Opened::Owner { status, resolving } => (status, resolving),
+        };
+        // A fault latches until a restart: setup, the journal's recovery,
+        // storage, an output or input check, or the owner's own beat.
+        if status.state == OwnerState::Fault || status.fault != OwnerFault::Ok {
+            return self.failed();
+        }
+
+        let resting = status.state == OwnerState::Idle
+            && status.supervisor_fault == EventsFault::Ok
+            && status.stopped
+            && status.optics_off
+            && !resolving;
+        if !resting {
+            return self.pending();
+        }
+        let since = *self.resting_since.get_or_insert(now_ms);
+        if now_ms.wrapping_sub(since) >= PROOF_MS {
+            supervise::Feeding::Proven
+        } else {
+            supervise::Feeding::Pending
+        }
+    }
+
+    fn pending(&mut self) -> supervise::Feeding {
+        self.resting_since = None;
+        supervise::Feeding::Pending
+    }
+
+    fn failed(&mut self) -> supervise::Feeding {
+        self.resting_since = None;
+        supervise::Feeding::Failed
+    }
 }
 
 pub const JOURNAL: JournalConfig = JournalConfig {
@@ -430,7 +509,7 @@ mod target {
     };
     use wellfed_sdk::{JournalSlots, Slot};
 
-    use super::{CONFIG, JOURNAL, Record, drive_figures};
+    use super::{CONFIG, JOURNAL, Opened, Proof, Record, drive_figures};
 
     type Journal = FeedJournal<JournalSlots>;
 
@@ -476,6 +555,8 @@ mod target {
         /// The reservation a reset interrupted, which the owner resolves as
         /// it opens: its id, until its `Fed` event is recorded.
         interrupted: Option<u64>,
+        /// What the owner has shown, for a trial's confirmation.
+        proof: Proof,
     }
 
     impl Feeding {
@@ -487,8 +568,15 @@ mod target {
             mut record: impl FnMut(Record),
             mut outcome: impl FnMut(EventBody, Option<&TraceSummary>),
         ) -> Option<u32> {
+            let now = wellfed_sdk::hal::sdk::uptime_ms();
+            // After a reset storm the owner never opens: the outputs stay
+            // as startup left them, stopped.
+            if wellfed_sdk::held() {
+                return None;
+            }
             if !self.settled {
                 if !wellfed_sdk::storage_armed() {
+                    wellfed_sdk::report_feeding(self.proof.step(Opened::Not, now));
                     return None;
                 }
                 match self.open() {
@@ -505,9 +593,16 @@ mod target {
                     None => {}
                 }
             }
+            if self.journal_failed || !self.settled {
+                let opened = if self.journal_failed {
+                    Opened::JournalFailed
+                } else {
+                    Opened::Not
+                };
+                wellfed_sdk::report_feeding(self.proof.step(opened, now));
+            }
 
             let owner = OWNER.enter()?;
-            let now = wellfed_sdk::hal::sdk::uptime_ms();
             if let (Some(current), Some(last)) = (self.current.as_mut(), self.stepped_ms) {
                 current.max_gap_ms = current.max_gap_ms.max(now.wrapping_sub(last));
             }
@@ -545,6 +640,13 @@ mod target {
 
             self.follow(&owner, &status, &mut record, &mut outcome);
             self.release(&status, &mut record);
+            if self.settled && !self.journal_failed {
+                let opened = Opened::Owner {
+                    status: &status,
+                    resolving: self.interrupted.is_some(),
+                };
+                wellfed_sdk::report_feeding(self.proof.step(opened, now));
+            }
             delay
         }
 
@@ -779,6 +881,15 @@ mod target {
             if self.journal_failed {
                 return Some(Blocked::Journal);
             }
+            // After a reset storm the owner never opens this boot.
+            if wellfed_sdk::held() {
+                return Some(Blocked::Fault);
+            }
+            // A trial build feeds once confirmed: the confirmation must
+            // never wait for a feed towards the trial's deadline.
+            if wellfed_sdk::confirming() {
+                return Some(Blocked::Starting);
+            }
             let owner = OWNER.enter();
             let Some(status) = owner.as_ref().filter(|_| self.settled).map(|o| o.status()) else {
                 return Some(Blocked::Starting);
@@ -825,6 +936,14 @@ mod target {
         /// Opens the journal (creating it on erased sectors only), then the
         /// owner on it.
         fn open(&mut self) -> Option<Record> {
+            // The `owner-fail` variant: a build whose owner cannot open, so
+            // its trial must not confirm. The journal is left untouched.
+            if cfg!(feature = "owner-fail") {
+                return Some(Record::Journal {
+                    error: JournalError::Corrupt,
+                    created: false,
+                });
+            }
             let io = JournalSlots::new();
             let mut journal = Journal::default();
             let mut error = journal.open(io, JOURNAL);

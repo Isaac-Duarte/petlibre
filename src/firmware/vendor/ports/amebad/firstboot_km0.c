@@ -87,10 +87,11 @@ __attribute__((noinline)) void wellfed_wifi_fw_start(void)
 
 u32 wellfed_amebad_trial_decide(const u8 *bank1, const u8 *bank0, const u8 *record, u32 *reg);
 
-/* Boot trial (amebad-common/src/trial.rs decides): before KM4 runs, count an
- * unconfirmed bank-1 image's boots in backup register 4 and, at the limit
- * with a valid bank 0, clear bank 1's first marker byte and reset so the
- * loader falls back to bank 0. KM4 is off, so the SDK flash lock only masks
+/* Boot trial (wellfed-hal-common/src/trial.rs decides): before KM4 runs,
+ * count an unconfirmed bank-1 image's boots in backup register 4 and, at the
+ * limit with a valid bank 0, clear bank 1's first marker byte and reset so
+ * the loader falls back to bank 0. A confirmed build's reset storm gives way
+ * the same way. KM4 is off, so the SDK flash lock only masks
  * this core's interrupts (wellfed_trial_program).
  * Physical reads go through the direct SPIC window. */
 #define WELLFED_BANK0_OFFSET 0x006000U
@@ -124,10 +125,10 @@ __attribute__((noinline)) void wellfed_trial_step(void)
     BKUP_Write(BKUP_REG4, reg);
     switch (code & 0xFFU) {
     case 0:
-        DiagPrintf("PLTRL1 bank=0\n");
+        DiagPrintf("PLTRL1 bank=0 resets=%d\n", code >> 8);
         return;
     case 1:
-        DiagPrintf("PLTRL1 confirmed=1\n");
+        DiagPrintf("PLTRL1 confirmed=1 resets=%d\n", code >> 8);
         return;
     case 2:
         DiagPrintf("PLTRL1 confirmed=0 boot=%d limit=3\n", code >> 8);
@@ -135,6 +136,14 @@ __attribute__((noinline)) void wellfed_trial_step(void)
     case 4:
         DiagPrintf("PLTRL1 error fallback=invalid boot=%d\n", code >> 8);
         return;
+    case 5:
+        /* A reset storm with nothing to fall back to: KM4 boots held. */
+        DiagPrintf("PLTRL1 storm=%d held=1\n", code >> 8);
+        return;
+    case 6:
+        /* A reset storm on a confirmed bank 1: give way as a trial does. */
+        DiagPrintf("PLTRL1 storm=%d limit=5\n", code >> 8);
+        break;
     default:
         break;
     }

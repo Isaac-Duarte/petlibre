@@ -29,6 +29,7 @@ use wellfed_feeder::feeder::{self, Feeder, NoFeeds};
 use wellfed_feeder::panel;
 use wellfed_hal::ota::mailbox;
 use wellfed_hal::ota::update::{self as update, Floor, Update};
+use wellfed_hal::trial::{self, Storm};
 use wellfed_session::noise::Keypair;
 use tokio::net::{TcpStream, UdpSocket};
 
@@ -46,12 +47,13 @@ pub const TRIAL_MS: u32 = 2_000;
 pub enum Record {
     /// The feeder's loop, as its firmware logs it.
     Feeder(feeder::Record<Infallible>),
-    /// The boot: the bank the loader chose, and whether its build is in
-    /// trial and confirmed itself.
+    /// The boot: the bank the loader chose, whether its build is in trial
+    /// and confirmed itself, and what a reset storm left it.
     Boot {
         bank: u8,
         trial: bool,
         confirmed: Option<Floor>,
+        storm: Storm,
     },
     /// The writer's turn applied a client store change.
     Keys(KeyResult),
@@ -79,10 +81,12 @@ impl fmt::Display for Record {
                 bank,
                 trial,
                 confirmed,
+                storm,
             } => write!(
                 f,
-                "boot bank={bank} trial={} confirmed={confirmed:?}",
-                u8::from(*trial)
+                "boot bank={bank} trial={} confirmed={confirmed:?} storm={}",
+                u8::from(*trial),
+                storm.name()
             ),
             Self::Keys(result) => write!(f, "keys result={result}"),
             Self::Update(record) => {
@@ -99,8 +103,14 @@ pub struct Sim {
     banks: Rc<RefCell<Banks>>,
     bank: u8,
     stage: Box<Update<Region>>,
-    /// When a build that never confirms resets.
-    trial_reset: Option<u32>,
+    /// When this boot ends in a reset nobody asked for: a build that never
+    /// confirms at its trial deadline, or one that storms.
+    fault_reset: Option<u32>,
+    /// The restart that comes is `fault_reset`'s, not one the feeder asked
+    /// for.
+    faulted: bool,
+    /// This boot has run long enough to end a storm's count.
+    settled: bool,
     /// What the boot did, for the first pass's log.
     boot: Record,
 }
@@ -126,16 +136,19 @@ impl Sim {
         boot_count: u32,
         mdns: Option<(UdpSocket, Ipv4Addr)>,
     ) -> Result<Self, DeviceError> {
-        let (Boot { bank, trial }, build) = boot(flash, &mut banks.borrow_mut(), update_key);
+        let (Boot { bank, trial, storm }, build) = boot(flash, &mut banks.borrow_mut(), update_key);
         // The mailbox and the interlock are RAM: a restart forgets every
         // request and chunk, and the write turn a give-way kept.
         mailbox::reset();
         wellfed_hal::interlock::INTERLOCK.reset();
         let store = Region::new(flash, storage::UPDATE);
         let mut stage = Box::new(Update::new(bank, build, update_key, store));
-        let confirmed = (trial && banks.borrow().trial == Trial::Confirms)
+        let behaviour = banks.borrow().trial;
+        let confirmed = (trial && behaviour != Trial::NeverConfirms)
             .then(|| confirm(flash, &mut stage, &build));
-        let trial_reset = (trial && confirmed.is_none()).then(|| now_ms.wrapping_add(TRIAL_MS));
+        let storms = behaviour == Trial::Storms && bank == 1;
+        let fault_reset =
+            ((trial && confirmed.is_none()) || storms).then(|| now_ms.wrapping_add(TRIAL_MS));
 
         let platform = SimPlatform::open(flash, random, boot_count, bank, build, mdns)?;
         Ok(Self {
@@ -144,11 +157,14 @@ impl Sim {
             banks: Rc::clone(banks),
             bank,
             stage,
-            trial_reset,
+            fault_reset,
+            faulted: false,
+            settled: false,
             boot: Record::Boot {
                 bank,
                 trial,
                 confirmed,
+                storm,
             },
         })
     }
@@ -170,7 +186,13 @@ impl Sim {
     /// Whether the feeder asked for a restart, taken once: the driver drops
     /// every connection and opens the feeder again from its flash.
     pub fn take_reboot(&mut self) -> bool {
-        self.platform().take_reboot()
+        let reboot = self.platform().take_reboot();
+        // One the feeder asked for is no fault: the runtime ends a storm's
+        // count before it.
+        if reboot && !self.faulted {
+            self.banks.borrow_mut().deliberate();
+        }
+        reboot
     }
 
     /// One gesture from the buttons, for the next pass: pairing takes it
@@ -224,10 +246,15 @@ impl Sim {
     /// has work waiting.
     fn update(&mut self, now_ms: u32, record: &mut impl FnMut(Record)) -> bool {
         if self
-            .trial_reset
+            .fault_reset
             .is_some_and(|at| wellfed_core::deadline_passed(now_ms, at))
         {
+            self.faulted = true;
             self.platform().request_reboot();
+        }
+        if !self.settled && now_ms >= trial::STABLE_MS {
+            self.settled = true;
+            self.banks.borrow_mut().settle(self.bank);
         }
         let mut banks = self.banks.borrow_mut();
         let mut bus = Bus {
@@ -263,10 +290,12 @@ fn boot(flash: &Rc<Flash>, banks: &mut Banks, key: Option<[u8; 32]>) -> (Boot, [
         banks.bank1_build = candidate.build_id;
     }
 
-    let mut record = [0u8; CONFIRM_LEN];
-    let confirmed = Region::new(flash, storage::CONFIRM).read(0, 0, &mut record)
-        && ota::confirmed(&record, &banks.bank1_build).is_some();
-    let booted = banks.boot(confirmed);
+    // An unreadable record names no build, as erased flash does.
+    let mut record = [0xffu8; CONFIRM_LEN];
+    if !Region::new(flash, storage::CONFIRM).read(0, 0, &mut record) {
+        record = [0xff; CONFIRM_LEN];
+    }
+    let booted = banks.boot(&record);
     (booted, banks.build(booted.bank))
 }
 

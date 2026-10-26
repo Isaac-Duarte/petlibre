@@ -687,6 +687,11 @@ impl WriteTurn {
         now_ms: u32,
         stopped: impl FnOnce() -> bool,
     ) -> WriteStep {
+        // No write starts into a reset the runtime decided: it would leave
+        // the attempt marker set (`supervision`).
+        if crate::supervision::writes_held() {
+            return WriteStep::Wait;
+        }
         let counted = self.since.is_some();
         if interlock.request_write(counted) {
             let start = match self.since.take() {

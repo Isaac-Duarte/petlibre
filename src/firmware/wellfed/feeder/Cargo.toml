@@ -37,6 +37,9 @@ feed-stall = []
 # 1-portion feed, 8 s for more, for the bench to watch the stop retry and
 # the watchdog.
 stop-fail = ["wellfed-sdk/stop-fail"]
+# A feeding owner that cannot open (its journal reads as failed, untouched):
+# its trial must not confirm, and falls back to bank 0.
+owner-fail = []
 # Nothing but another build identity: installed after the feeder, it goes
 # through a trial and still serves the device API.
 twin = []
@@ -82,6 +85,9 @@ summary = "Stalls the loop once in each feed, 2 s into its drive: 600 ms for one
 
 [package.metadata.wellfed.variants.stop-fail]
 summary = "Cancels each feed 2 s into its drive with STOP writes held so the stop does not take: 300 ms for one portion (the timer retries the stop until it takes, then the feed is recorded cancelled before the faulted owner resets the board), 8 s for more (only the watchdog reset ends the drive; the hold lifts by itself after 8 s)"
+
+[package.metadata.wellfed.variants.owner-fail]
+summary = "The feeding owner never opens (its journal reads as failed, and is left untouched), so the build's trial never confirms: each trial boot stops at once and KM0 counts it, then gives way to bank 0"
 
 [package.metadata.wellfed.variants.twin]
 summary = "The feeder unchanged under another build identity, so the bench's drills can install a build that goes through a trial and still serves the device API"

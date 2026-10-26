@@ -5,10 +5,15 @@
 //! (`wellfed_hal::ota::update`) on [`Bus`], with the update store on the
 //! simulator's storage image. What this models is the board around it:
 //! - **The loader** boots bank 1 while its marker is intact, else bank 0.
-//! - **KM0's trial**: a bank-1 build the confirmation record does not name
-//!   is counted at each boot; at the fourth, with bank 0 valid, KM0 clears
-//!   bank 1's first marker byte and the loader boots bank 0. A power cut
-//!   clears the count, as it clears the backup register.
+//! - **KM0's trial**, the firmware's own decision (`wellfed_hal::trial`)
+//!   on a simulated backup register: a bank-1 build the confirmation record
+//!   does not name is counted at each boot; at the fourth, with bank 0
+//!   valid, KM0 clears bank 1's first marker byte and the loader boots bank
+//!   0. A confirmed build that keeps resetting soon after each boot gives
+//!   way the same way once the resets make a storm. A power cut clears the
+//!   counts, as it clears the backup register; a restart the feeder asked
+//!   for, or a boot that ran long enough, ends a storm's count, as the
+//!   runtime does.
 //! - **A build's identity**: the one bank 0 last activated in bank 1, or
 //!   the image each bank started with.
 //!
@@ -19,13 +24,14 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use wellfed_amebad_sys::{BANK0_OFFSET, BANK1_OFFSET, SECTOR_BYTES};
-use wellfed_core::ota::{BANK1_BYTES, MARKER, image};
+use wellfed_core::ota::{BANK1_BYTES, CONFIRM_LEN, MARKER, image};
 use wellfed_core::store::update::Bank0;
 use wellfed_hal::ota::update::Flash;
+use wellfed_hal::trial::{self, Decision, Storm};
 use sha2::{Digest, Sha256};
 
 /// KM0's limit: unconfirmed boots before it gives way.
-pub const TRIAL_LIMIT: u32 = 3;
+pub const TRIAL_LIMIT: u32 = trial::LIMIT;
 const BANK0_BYTES: usize = (BANK1_OFFSET - BANK0_OFFSET) as usize;
 
 /// The builds each bank starts with.
@@ -41,13 +47,18 @@ pub enum Trial {
     /// It never confirms: each boot ends in a reset, as the supervisor's
     /// trial deadline makes it, until KM0 gives way.
     NeverConfirms,
+    /// It confirms, then every boot from bank 1 ends in a reset nobody
+    /// asked for soon after it starts, until KM0 sees a storm and gives way.
+    Storms,
 }
 
-/// Which bank a boot runs, and whether its build is on a trial boot.
+/// Which bank a boot runs, whether its build is on a trial boot, and what
+/// a reset storm left it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Boot {
     pub bank: u8,
     pub trial: bool,
+    pub storm: Storm,
 }
 
 #[derive(Debug)]
@@ -57,8 +68,8 @@ pub struct Banks {
     /// The build in bank 1, once bank 0 activated one there.
     pub bank1_build: [u8; 32],
     pub bank0_build: [u8; 32],
-    /// KM0's count of this power-on's unconfirmed bank-1 boots.
-    trials: u32,
+    /// KM0's backup register: this power-on's trial and storm counts.
+    register: u32,
     /// How a newly activated build behaves.
     pub trial: Trial,
 }
@@ -97,7 +108,7 @@ impl Banks {
             bank1,
             bank1_build: BANK1_BUILD,
             bank0_build: BANK0_BUILD,
-            trials: 0,
+            register: 0,
             trial: Trial::Confirms,
         }))
     }
@@ -106,31 +117,57 @@ impl Banks {
         bank[..8] == MARKER
     }
 
-    /// The loader's and KM0's choice at a boot. `confirmed` says whether
-    /// the confirmation record names bank 1's build.
-    pub fn boot(&mut self, confirmed: bool) -> Boot {
-        let settled = |bank| Boot { bank, trial: false };
-        if !Self::valid(&self.bank1) {
-            return settled(0);
-        }
-        if confirmed {
-            return settled(1);
-        }
-        if self.trials >= TRIAL_LIMIT && Self::valid(&self.bank0) {
-            self.bank1[0] = 0;
-            self.trials = 0;
-            return settled(0);
-        }
-        self.trials += 1;
-        Boot {
-            bank: 1,
-            trial: true,
+    /// The loader's and KM0's choice at a boot, against the confirmation
+    /// record as storage sector 4 holds it. A give-way clears bank 1's
+    /// first marker byte and boots again, as KM0's own reset does.
+    pub fn boot(&mut self, record: &[u8; CONFIRM_LEN]) -> Boot {
+        loop {
+            let bank = if Self::valid(&self.bank1) { 1 } else { 0 };
+            let identity = self.build(bank);
+            let first = |bytes: &[u8]| -> [u8; 8] {
+                let mut out = [0; 8];
+                out.copy_from_slice(&bytes[..8]);
+                out
+            };
+            // KM0's own boot count, in the register's low half.
+            let counted = (self.register & !0xffff) | (self.register.wrapping_add(1) & 0xffff);
+            let (decision, register) = trial::decide(
+                &first(&self.bank1),
+                &first(&self.bank0),
+                record,
+                counted,
+                &identity,
+            );
+            self.register = register;
+
+            let trial = match decision {
+                Decision::GiveWay | Decision::StormGiveWay { .. } => {
+                    self.bank1[0] = 0;
+                    continue;
+                }
+                Decision::Counted(_) | Decision::NoFallback(_) => true,
+                Decision::NotBank1 { .. } | Decision::Confirmed { .. } | Decision::Held { .. } => {
+                    false
+                }
+            };
+            let storm = Storm::of(trial::resets(self.register, &identity));
+            return Boot { bank, trial, storm };
         }
     }
 
-    /// Power was lost: KM0's count goes with the backup register.
+    /// Power was lost: KM0's counts go with the backup register.
     pub fn power_cut(&mut self) {
-        self.trials = 0;
+        self.register = 0;
+    }
+
+    /// The feeder restarts on purpose: not a fault, so no storm.
+    pub fn deliberate(&mut self) {
+        self.register = trial::deliberate(self.register);
+    }
+
+    /// A boot of `bank` ran long enough to end a storm's count.
+    pub fn settle(&mut self, bank: u8) {
+        self.register = trial::settled(self.register, &self.build(bank));
     }
 
     /// The build `bank` runs.

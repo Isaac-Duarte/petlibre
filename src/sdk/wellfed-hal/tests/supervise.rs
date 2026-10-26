@@ -1,5 +1,7 @@
 use wellfed_hal::supervision::beat::Beat;
-use wellfed_hal::supervision::supervise::{Inputs, LIVENESS_MS, Startup, TRIAL_DEADLINE_MS, feed};
+use wellfed_hal::supervision::supervise::{
+    Feeding, Inputs, LIVENESS_MS, Startup, TRIAL_DEADLINE_MS, feed,
+};
 
 fn running(now_ms: u32, beat: u32) -> Inputs {
     Inputs {
@@ -160,4 +162,58 @@ fn startup_codes_round_trip() {
     }
     assert_eq!(Startup::from_code(3), Startup::Failed);
     assert_eq!(Startup::from_code(u8::MAX), Startup::Failed);
+}
+
+#[test]
+fn a_trial_whose_feeding_owner_cannot_open_resets_at_once() {
+    let running = Inputs {
+        now_ms: 60_000,
+        startup: Startup::Started,
+        tasks_alive: true,
+        outputs_ok: true,
+        trial: true,
+        ..Inputs::default()
+    };
+    for feeding in [Feeding::Unclaimed, Feeding::Pending, Feeding::Proven] {
+        assert!(feed(&Inputs { feeding, ..running }), "{feeding:?}");
+    }
+    assert!(
+        !feed(&Inputs {
+            feeding: Feeding::Failed,
+            ..running
+        }),
+        "it can never prove it feeds: KM0 counts it now"
+    );
+
+    // Confirmed (this boot or before), a failed owner holds STOP rather than
+    // reset-looping.
+    let failed = Inputs {
+        feeding: Feeding::Failed,
+        ..running
+    };
+    assert!(feed(&Inputs {
+        confirmed: true,
+        ..failed
+    }));
+    assert!(feed(&Inputs {
+        trial: false,
+        ..failed
+    }));
+}
+
+#[test]
+fn only_a_proven_or_absent_owner_lets_a_trial_confirm() {
+    assert!(Feeding::Unclaimed.proven());
+    assert!(Feeding::Proven.proven());
+    assert!(!Feeding::Pending.proven());
+    assert!(!Feeding::Failed.proven());
+    for feeding in [
+        Feeding::Unclaimed,
+        Feeding::Pending,
+        Feeding::Proven,
+        Feeding::Failed,
+    ] {
+        assert_eq!(Feeding::from_code(feeding.code()), feeding);
+    }
+    assert_eq!(Feeding::from_code(9), Feeding::Failed);
 }

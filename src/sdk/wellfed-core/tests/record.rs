@@ -113,7 +113,27 @@ fn startup_and_trial_records_decode() {
         event("PLTRL1 give_way=1 marker=00 reset=1"),
         Some(Event::Trial(Trial::GiveWay))
     );
+    assert_eq!(
+        event("PLTRL1 confirmed=1 resets=2"),
+        Some(Event::Trial(Trial::Confirmed))
+    );
     assert_eq!(event("PLTRL1 bank=0"), None);
+    assert_eq!(event("PLTRL1 bank=0 resets=1"), None);
+    // A reset storm: KM0 gives way (the give-way line follows), or holds.
+    assert_eq!(
+        event("PLTRL1 storm=5 limit=5"),
+        Some(Event::Trial(Trial::Storm {
+            resets: 5,
+            held: false
+        }))
+    );
+    assert_eq!(
+        event("PLTRL1 storm=6 held=1"),
+        Some(Event::Trial(Trial::Storm {
+            resets: 6,
+            held: true
+        }))
+    );
 }
 
 #[test]

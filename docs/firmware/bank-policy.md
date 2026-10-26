@@ -51,7 +51,8 @@ The loader offers none of its own. An image with a valid marker that crashes aft
 - **Firmware-driven fallback (design, for FW11):** bank 0 holds a confirmed known-good replacement image. A new candidate in bank 1 starts unconfirmed:
   - **Count:** early on every boot, before KM4 starts, KM0 counts unconfirmed boots in a backup register. Backup registers survive the watchdog reset but not power loss, so a power cut only restarts the count.
   - **Give way:** after a bound (for example three), KM0 clears the first byte of bank 1's marker, one page program before any other core runs, and resets. The loader then boots bank 0.
-  - **Confirm:** the candidate confirms itself only after its startup report, stopped outputs and Wi-Fi (DHCP, then a DNS lookup) are healthy.
+  - **Confirm:** the candidate confirms itself only after its startup report, stopped outputs and Wi-Fi (DHCP, then a DNS lookup) are healthy. Since October 26 the link check is the LAN's (no DNS), and a firmware with a feeding owner must also have opened it on its journal, at rest with its checks passing ([what confirmation proves](ota-design.md#what-confirmation-proves)).
+  - **After confirmation:** a confirmed build that keeps resetting soon after every boot (five such resets in a row) gives way to bank 0 the same way; bank 0, or a bank 1 with nothing to fall back to, holds its outputs stopped instead, and halts if that keeps resetting too ([reset storms](ota-design.md#reset-storms)).
 
   Limits: this only helps if the candidate's KM0 code works. A broken KM0 or a broken factory configuration still needs UART. The FW05 watchdog is what turns a KM4 hang into a counted reset.
 

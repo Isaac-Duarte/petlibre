@@ -21,7 +21,8 @@ crate::named_enum! {
     pub enum Tag {
         /// Startup: `start build=… bank=…`, `result diagnostic=…`.
         Start = "PLFW1",
-        /// KM0's boot trial: `confirmed=0 boot=N limit=3`, `give_way=1`.
+        /// KM0's boot trial: `confirmed=0 boot=N limit=3`, `give_way=1`,
+        /// `storm=N limit=5` or `storm=N held=1`.
         Trial = "PLTRL1",
         /// Confirmation: `confirmed=1 healthy_ms=…`.
         Confirm = "PLCNF1",
@@ -77,8 +78,12 @@ pub enum Trial {
     Booting { boot: u32, limit: Option<u32> },
     /// Bank 1 is confirmed: no trial.
     Confirmed,
-    /// The trial ran out and bank 1 gave way to bank 0.
+    /// The trial ran out, or a reset storm came, and bank 1 gave way to bank 0.
     GiveWay,
+    /// A run of `resets` resets nobody asked for, each soon after its boot:
+    /// bank 1 gives way (its `GiveWay` follows), or, with nothing to fall
+    /// back to, KM4 boots `held`, its feeding owner never opening.
+    Storm { resets: u32, held: bool },
 }
 
 /// The running build's confirmation (`PLCNF1`).
@@ -305,6 +310,12 @@ impl<'a> Record<'a> {
 
     /// The trial's first token is a field, not a word.
     fn trial(&self) -> Option<Trial> {
+        if let Some(resets) = self.number("storm") {
+            return Some(Trial::Storm {
+                resets,
+                held: self.flag("held") == Some(true),
+            });
+        }
         if self.flag("give_way") == Some(true) {
             return Some(Trial::GiveWay);
         }

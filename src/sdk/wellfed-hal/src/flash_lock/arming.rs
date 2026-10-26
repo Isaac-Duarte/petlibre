@@ -99,6 +99,8 @@ impl Arming {
     /// address and is not otherwise borrowed.
     pub unsafe fn step<M: Mmio, H: Hooks>(&mut self, provider: *mut Provider) -> Poll {
         match self.stage {
+            // Arming sets the attempt marker: not into a decided reset.
+            Stage::Hello if crate::supervision::writes_held() => Poll::Pending(None),
             Stage::Hello => {
                 let count = sdk::backup_read(BOOT_COUNT_REGISTER).wrapping_add(1);
                 sdk::backup_write(BOOT_COUNT_REGISTER, count);

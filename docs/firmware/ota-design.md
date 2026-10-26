@@ -108,7 +108,7 @@ If anything fails before step 4, bank 1's marker is still clear, so the loader k
 Implemented on KM0 (`wellfed-hal-common/src/trial.rs`, `wellfed_trial_step` in `firstboot_km0.c`), before `km4_boot_on`:
 - **Running bank:** read from bank 1's physical marker.
 - **Confirmation:** keyed by the build identity, not the image hash, since the normal image does not know its own OTA hash. The record lives in storage sector 4 (`0x344000`). So reinstalling the build the record already names skips the trial. KM0 logs `PLTRL1 confirmed=1` straight after activation, and the build logs `PLCNF1 confirmed=1 already=1`. The integration suite saw this on hardware (October 22). A test that needs a trial must therefore install a build the record does not name.
-- **Count:** backup register 4. Bits 0–15 hold the peer boot count, bits 16–23 the trial count, and bits 24–31 an identity tag.
+- **Count:** backup register 4. Bits 0–15 hold the peer boot count, bits 16–19 the trial count, bits 20–23 the reset-storm count ([below](#reset-storms)), and bits 24–31 an identity tag. (Before October 26 the trial count took bits 16–23; it never exceeds 3, so a register from an older KM0 reads the same.)
 - **Give way:** at boot 4, only if bank 0's marker is valid, KM0 clears byte 0 and resets with its own watchdog.
 
 The program step bypasses `FLASH_Write_Lock`. After a watchdog reset, that lock's KM0 branch waits forever for an absent KM4, because `km4_status_on` still reads the HS clock bit set. This was observed on hardware, then fixed.
@@ -137,6 +137,43 @@ Physical (October 22), over the air:
 - **A hang that stops the feeder task itself** (a spin above its priority, or interrupts masked). The tick hook leaves the interrupted task and the time since the feeder last ran in backup register 2, and the next boot after a watchdog reset prints `PLSUP1 hang kind=spin|masked|stopped task=… since_ms=… suspended=…` ([silent watchdog resets](startup-diagnostics.md#silent-watchdog-resets)).
 
 **A restart leaves the network first (October 25, static analysis and host tests).** Every intentional restart (activation, give-way, a requested reboot) asks the Wi-Fi task to disconnect while the watchdog runs out, so the access point drops the association instead of rejecting the trial boot's join with status 30, after which the vendor's `wifi_connect` can hang the board into a silent reset and spend a trial boot. The feeding stops at once regardless ([leaving before a restart](startup-diagnostics.md#leaving-before-a-restart)).
+
+### What confirmation proves
+
+October 26, static analysis and host tests; not yet run on hardware. A healthy network proves the update path still works, not that the build can feed. So a trial build of a firmware with a feeding owner (`feeder`, which says so with `wellfed_sdk::claim_feeding` in its start hook) confirms only once:
+1. the runtime's own health has held for 30 s, as before: the startup probes finished, outputs verified stopped, and the link live (associated, leased, the gateway answering or never having answered);
+2. the confirmation has armed the flash hooks. The owner opens only on armed hooks, and on a trial boot this is the first arming, so the confirmation now arms and then waits. Arming and the record's write each take the write turn and set the attempt marker for themselves only, so the wait between them leaves the marker clear;
+3. the owner has proved itself (`feeding::Proof`, reported each loop pass with `wellfed_sdk::report_feeding`): opened on its journal, any feed a reset interrupted resolved as uncertain, and at rest (Idle, no owner or supervisor fault, motor STOP and the emitters off read back) for 2 s, about a hundred of its 20 ms samples, each of which reads the sensors and the motor current;
+4. and the link is still live at that moment. Then the floor rises and the record is written, as before.
+
+A firmware with no feeding owner (`blink`, `qa`, the bring-up areas) has nothing to prove and confirms on step 1 alone.
+
+A build whose owner cannot open never confirms. If the owner fails determinedly (its journal cannot be opened, or it faults in setup, recovery or a check), the runtime stops feeding the watchdog at once on a trial boot, as for a failed startup diagnostic, and the `PLSUP1 stop` line carries `feeding=3`; KM0 counts the reset, and after three gives way. If the owner just never gets there (arming skipped, a hang), the 10-minute trial deadline resets the boot. A confirmed build (or bank 0) whose owner fails holds STOP instead, as before.
+
+While a trial build is unconfirmed, the feeder refuses feeds (readiness `Blocked::Starting`), so the confirmation never waits on a feed towards the deadline. The owner proving itself takes about 2 s after arming, so a healthy trial confirms a few seconds later than before.
+
+The `owner-fail` variant of `feeder` exercises this: its owner never opens (the journal reads as failed and is left untouched), so each trial boot stops at once and the third gives way to bank 0.
+
+### Reset storms
+
+October 26, static analysis, host tests and the simulator; not yet run on hardware. Confirmation proves one boot. A confirmed build can still fault into a reset soon after every boot, and before this nothing stopped that: KM0 runs no trial for a confirmed build. Now KM0 also counts, in bits 20–23 of backup register 4, every boot that runs no trial (a confirmed bank 1, or bank 0), and KM4 gives the count back:
+- once the boot has run 10 minutes (`trial::STABLE_MS`, the trial's deadline; `PLSUP1 storm settled=1`);
+- before every restart it asks for (a reboot over the device API, an activation, a give-way, setup), since those are not faults.
+
+So the count KM0 finds at boot is the number of boots in a row that ended in a reset nobody asked for within 10 minutes of starting. Every boot reports it: `PLTRL1 confirmed=1 resets=N` or `PLTRL1 bank=0 resets=N`, and KM4's `PLSUP1 storm resets=N mode=…` when it is not zero. At 5 (`trial::STORM_LIMIT`):
+- **A confirmed bank 1 with a valid bank 0 gives way**, exactly as a failed trial does (`PLTRL1 storm=5 limit=5`, then `PLTRL1 give_way=1 …`). Bank 0 is the full feeder, and a build that faults this often is the likeliest cause; it was confirmed, so the update floor stays at its version and a fixed build must carry a higher one. The give-way leaves no count for bank 0.
+- **Otherwise** (bank 0 itself, or a confirmed bank 1 with no valid bank 0), KM4 boots **held** (`PLTRL1 storm=N held=1`, `PLSUP1 storm resets=N mode=held`): the feeding owner never opens, so the motor and emitters stay as startup left them, stopped, and readiness reports `Blocked::Fault`. The device API, the settings writer and the update stage run, so the owner can read why (the log tail carries the lines), install a fix or reboot. A held boot that runs 10 minutes keeps the count at the limit, so the feeder stays held until power is lost or the owner restarts it, which clears the count.
+- **At 8** (`HALT_LIMIT`), when held boots keep resetting too (a fault in the network stack, say), KM4 starts nothing: no task, no watchdog, outputs as `stopped::initialize` left them, until power is lost (`PLSUP1 storm resets=8 mode=halted`).
+
+So within one power-on a build that faults at every boot resets at most 14 times (6 on bank 1, then 8 on bank 0) and then stays up, stopped. Every count is in a backup register: a power cut clears it, so the next power-on starts afresh, and there is no flash record to tear. Brownout resets, which keep the backup registers, count like any other.
+
+The simulator models it (`wellfed-feeder-sim`'s banks now run the firmware's own `trial::decide`): a build that confirms and then resets soon after each boot gives way to a bank 0 that answers, with the floor where the build raised it. On hardware, the `owner-stall` variant is a storm: once confirmed it resets about 3 minutes into every boot, so KM0 gives way at the sixth boot after the one that confirmed.
+
+### The attempt marker and decided resets
+
+Every store write sets the flash attempt marker for its duration, and a boot that finds it set skips arming once per power cycle, so a write that hangs cannot reset the board over and over. FW16 found (statically) that a supervision reset could land inside a store write that started in the seconds before it, leaving the marker set, so the next boot skipped arming and the feeding owner did not open until a power cycle.
+
+Decided October 26 (static analysis and host tests): a reset the runtime decides never lands in a write it let start. From the first feeder pass that does not feed the watchdog, transient or certain, `supervision::writes_held` holds every new write: no write turn is granted, no arming starts, and an install (which holds its turn across sectors) goes no further. A transient stop holds them for under a second; a certain one until the reset. A write already running when the feeding stops has the rest of the watchdog's expiry, at least 2.4 s less a feed period, and takes tens of milliseconds. So the marker stays set only after a reset the runtime did not decide (a hang, a fault, a lease that halted), which is what it is for, and a withheld reset does not clear it. The storm breaker bounds the rest.
 
 A sector write that fails stops the install with `PLOTA1 error stage=write sector=<bank-1 sector> step=erase|program|read|readback offset=<byte> expected=<word> read=<word> reread=<word> erase_ms=…`. On a readback mismatch, the record holds the first differing word as programmed, as read back, and as read a second time with no write in between. The second read first invalidates the data-cache lines over the word, so it reads the flash rather than the line the first read filled. A 0 bit where a 1 was programmed means the erase did not finish. A word that reads `ffffffff` means the program did not take. A second read that matches means the cells are right and the read path is at fault. The install still stops: nothing is rewritten.
 

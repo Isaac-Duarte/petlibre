@@ -17,6 +17,9 @@ fn start() -> Startup {
     // measurement samples it too), so the power monitor stays off it; the
     // owner publishes power health from its own captures.
     wellfed_sdk::claim_adc();
+    // A trial build of this firmware confirms only once the feeding owner
+    // has proved it can feed (`feeding::Proof`).
+    wellfed_sdk::claim_feeding();
 
     let created = wellfed_sdk::spawn(loop_task);
     sdk::log(if created {
@@ -162,9 +165,12 @@ fn ticks_us(ticks: u32) -> u32 {
 /// is at rest, where its beat allows 10 s (`LIVENESS_MS`; 1 s only while
 /// outputs may move). Two stalls: one past the moving gap but inside the
 /// rest gap, which must change nothing, and one past the rest gap, which
-/// must end in a watchdog reset. Both wait for the armed hooks, which come only after the build
-/// confirmed itself: a reset during a trial would count against it. Every
-/// boot repeats them, so the image goes back out after the run.
+/// must end in a watchdog reset. Both wait until the build has confirmed
+/// itself: a reset during a trial would count against it. Every boot
+/// repeats them, so after confirmation the image resets about 3 minutes
+/// into every boot: a reset storm, which KM0 ends by giving way to bank 0
+/// at the sixth boot after the one that confirmed. It goes back out after
+/// the run.
 #[cfg(feature = "owner-stall")]
 mod stall {
     use core::sync::atomic::{AtomicU8, Ordering};
@@ -184,7 +190,7 @@ mod stall {
             return;
         };
         let now = sdk::uptime_ms();
-        if now < at_ms || !wellfed_sdk::storage_armed() {
+        if now < at_ms || !wellfed_sdk::storage_armed() || wellfed_sdk::confirming() {
             return;
         }
 

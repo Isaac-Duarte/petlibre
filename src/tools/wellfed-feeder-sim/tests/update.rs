@@ -308,6 +308,40 @@ fn a_dropped_connection_and_a_power_cut_both_end_installed() {
 }
 
 #[test]
+fn a_confirmed_build_that_keeps_resetting_gives_way_to_a_bank_0_that_answers() {
+    paused(async {
+        let mut rig = Rig::start().await;
+        rig.banks.borrow_mut().trial = Trial::Storms;
+        let offer = Offer::new(7, 0x77, 2 * SECTOR);
+        update(&mut rig, offer.image(), &mut Faults::default())
+            .await
+            .unwrap();
+
+        // It confirmed on its trial boot, then reset soon after that boot
+        // and each one after it, until the resets made a storm.
+        tokio::time::sleep(Duration::from_secs(30)).await;
+        assert_eq!(rig.bank().await, 0);
+        assert!(!rig.banks.borrow().bank1_valid());
+        let mut connection = rig.open().await;
+        assert_eq!(
+            rig.state(&mut connection).await.min_version,
+            7,
+            "it had confirmed: the floor stays where it raised it"
+        );
+
+        // A fixed build installs and stays.
+        rig.banks.borrow_mut().trial = Trial::Confirms;
+        let next = Offer::new(8, 0x88, 2 * SECTOR);
+        update(&mut rig, next.image(), &mut Faults::default())
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_secs(30)).await;
+        assert_eq!(rig.bank().await, 1);
+        rig.sim.stop().await;
+    });
+}
+
+#[test]
 fn a_build_that_never_confirms_gives_way_to_a_bank_0_that_answers() {
     paused(async {
         let mut rig = Rig::start().await;

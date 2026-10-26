@@ -54,8 +54,9 @@ pub mod wifi;
 
 #[cfg(target_os = "none")]
 pub use runtime::{
-    __started, JournalSlots, SdkHooks, SdkStorage, claim_adc, flash_authority, request_reset,
-    spawn, startup_done, storage_armed, watchdog_open,
+    __started, JournalSlots, SdkHooks, SdkStorage, claim_adc, claim_feeding, confirming,
+    flash_authority, held, report_feeding, request_reset, spawn, startup_done, storage_armed,
+    watchdog_open,
 };
 pub use slot::{Slot, SlotGuard};
 pub use tasks::{FIRMWARE_TASKS, Task};
@@ -63,6 +64,9 @@ pub use tasks::{FIRMWARE_TASKS, Task};
 /// The ports a firmware drives (indicators, audio, inputs). Startup,
 /// supervision, flash and updates stay the runtime's.
 pub use wellfed_hal as hal;
+
+/// What a firmware's feeding owner reports to the runtime (`report_feeding`).
+pub use wellfed_hal::supervision::supervise::Feeding;
 
 pub use wellfed_hal::startup::{LogRecord, log};
 

@@ -6,7 +6,11 @@
 //! either bank, then the service task: it samples power, confirms a healthy
 //! build with the feeder (bank 1 only), opens the settings writer, and runs
 //! the update stage (`ota::update`), which takes offers over the firmware's
-//! device API. Booted from bank 0, the build is the fallback a failed update
+//! device API. A firmware with a feeding owner confirms only once that owner
+//! has proved it can feed (`claim_feeding`, `report_feeding`), and every
+//! boot reads KM0's reset-storm count: a storm with nothing to fall back to
+//! boots held (no feeding owner) or, past the halt limit, starts nothing.
+//! Booted from bank 0, the build is the fallback a failed update
 //! lands on: it never confirms, opens the settings writer at once, so it
 //! saves and feeds, and installs offers into bank 1. Nothing opens an MQTT
 //! session. A hung runtime task stops the feeding, so a hang becomes a
@@ -25,7 +29,7 @@ use wellfed_hal::flash_lock::provider::{LeaseFault, Provider};
 use wellfed_hal::ota::confirm::{self, Confirm, HookedStorage};
 use wellfed_hal::ota::update::{self as update, Floor, SdkFlash, StoreSlots, Update};
 use wellfed_hal::supervision::beat;
-use wellfed_hal::supervision::supervise::{self, LIVENESS_MS, Startup};
+use wellfed_hal::supervision::supervise::{self, Feeding, LIVENESS_MS, Startup};
 use wellfed_hal::supervision::watchdog::Watchdog;
 use wellfed_hal::supervision::{self, config, crumb};
 use wellfed_hal::{cell::TaskCell, leds, net_status, power, rng, sdk, startup, stopped, trial};
@@ -117,9 +121,58 @@ pub fn request_reset() {
 /// feeding stops at once either way: a leave that hangs cannot hold the
 /// reset.
 fn restart() {
+    // Asked for, so not a fault: the reset-storm count ends here.
+    update_trial_register(trial::deliberate);
     supervision::stopping();
     RESTART.store(true, Ordering::Release);
 }
+
+/// Rewrites KM0's trial register (`trial::REGISTER`) with IRQs masked, so
+/// two tasks settling it cannot interleave. KM0 writes it only at boot,
+/// before KM4 runs.
+fn update_trial_register(change: impl FnOnce(u32) -> u32) {
+    let _guard = sdk::IrqGuard::lock();
+    let register = sdk::backup_read(trial::REGISTER);
+    sdk::backup_write(trial::REGISTER, change(register));
+}
+
+/// What the firmware's feeding owner has shown, as `Feeding::code`.
+static FEEDING: AtomicU8 = AtomicU8::new(Feeding::Unclaimed.code());
+
+/// The firmware runs a feeding owner, so a trial build confirms only once
+/// the owner has proved it can feed ([`report_feeding`]): opened on its
+/// journal and at rest with its checks passing. Call from the start hook.
+/// A firmware with no feeding owner never calls it, and confirms on the
+/// runtime's own health.
+pub fn claim_feeding() {
+    FEEDING.store(Feeding::Pending.code(), Ordering::Release);
+}
+
+/// What the feeding owner has shown so far: `Proven` lets a trial build
+/// confirm, and `Failed` (it cannot open this boot) resets a trial build
+/// at once so KM0 counts it. Only after [`claim_feeding`].
+pub fn report_feeding(feeding: Feeding) {
+    let claimed = FEEDING.load(Ordering::Acquire) != Feeding::Unclaimed.code();
+    if claimed && feeding != Feeding::Unclaimed {
+        FEEDING.store(feeding.code(), Ordering::Release);
+    }
+}
+
+/// This boot runs a trial build that has not confirmed yet. The firmware
+/// takes no feed meanwhile: the confirmation must never wait for one.
+pub fn confirming() -> bool {
+    TRIAL.load(Ordering::Acquire) && !CONFIRMED.load(Ordering::Acquire)
+}
+
+/// This boot follows a reset storm with nothing to fall back to
+/// (`trial::Storm::Held`): the feeding owner must not open, so the outputs
+/// stay stopped, while the device API reports why and takes an update or
+/// a reboot.
+pub fn held() -> bool {
+    HELD.load(Ordering::Acquire)
+}
+
+static HELD: AtomicBool = AtomicBool::new(false);
 
 /// Whether the feeder opened the watchdog at startup.
 pub fn watchdog_open() -> bool {
@@ -296,6 +349,8 @@ impl Hooks for SdkHooks {
 unsafe extern "C" fn feeder_task(_: *mut c_void) -> u32 {
     static PROGRESS: AtomicU32 = AtomicU32::new(0);
     static STOPPED: AtomicBool = AtomicBool::new(false);
+    // The reset-storm count was given back this boot.
+    static SETTLED: AtomicBool = AtomicBool::new(false);
     // Uptime of the last checkpoint. Each one refreshes the hardware (the
     // feed period exceeds the refresh rate limit), so a reset's host
     // timestamp, less this, times the watchdog's expiry.
@@ -336,8 +391,16 @@ unsafe extern "C" fn feeder_task(_: *mut c_void) -> u32 {
         tasks_alive: alive,
         outputs_ok: outputs.verified() || outputs.sensing(),
         owner: beat::read(),
+        feeding: Feeding::from_code(FEEDING.load(Ordering::Acquire)),
     };
     let feeding = supervise::feed(&inputs);
+    // A boot that has run this long ends any reset storm: give KM0 its
+    // count back, once.
+    if feeding && now >= trial::STABLE_MS && !SETTLED.swap(true, Ordering::Relaxed) {
+        let identity = trial::identity();
+        update_trial_register(|register| trial::settled(register, &identity));
+        sdk::log(c"PLSUP1 storm settled=1\r\n");
+    }
     // A supervision stop (a trial's deadline, a hung task) leaves the
     // network as a restart does, but only once it has outlasted the
     // progress gap and the reset is certain.
@@ -351,7 +414,7 @@ unsafe extern "C" fn feeder_task(_: *mut c_void) -> u32 {
             let mut report = startup::Report::new();
             if let Ok(line) = report.record(format_args!(
                 "PLSUP1 stop startup={} trial={} confirmed={} alive={} outputs={} restart={} \
-                 owner={} owner_age={} owner_gap={} supervised={} fed_ms={} ms={}\r\n",
+                 owner={} feeding={} owner_age={} owner_gap={} supervised={} fed_ms={} ms={}\r\n",
                 STARTUP.load(Ordering::Relaxed),
                 bit(inputs.trial),
                 bit(inputs.confirmed),
@@ -359,6 +422,7 @@ unsafe extern "C" fn feeder_task(_: *mut c_void) -> u32 {
                 bit(inputs.outputs_ok),
                 bit(RESTART.load(Ordering::Relaxed)),
                 bit(inputs.owner.is_some()),
+                inputs.feeding.code(),
                 owner_age,
                 owner_gap,
                 bit(supervised),
@@ -470,11 +534,19 @@ fn confirm_step() -> u32 {
     let healthy = net_status::read().live
         && PROBE_DONE.load(Ordering::Acquire)
         && stopped::observe().verified();
+    let feeding = Feeding::from_code(FEEDING.load(Ordering::Acquire));
 
     let mut storage = HookedStorage::<SdkHooks>::new();
     // SAFETY: the provider is a static, never borrowed (see `PROVIDER`).
     let step = unsafe {
-        confirm.step::<Hardware, SdkHooks>(provider, &mut storage, raise_floor, healthy, now)
+        confirm.step::<Hardware, SdkHooks>(
+            provider,
+            &mut storage,
+            raise_floor,
+            healthy,
+            feeding,
+            now,
+        )
     };
 
     if let Some(record) = step.record {
@@ -992,6 +1064,27 @@ pub extern "C" fn wellfed_app_start() {
             sdk::log(line);
         }
     }
+    // KM0 counted this boot in the reset-storm burst (`trial.rs`).
+    let resets = trial::resets(sdk::backup_read(trial::REGISTER), &trial::identity());
+    let storm = trial::Storm::of(resets);
+    if resets != 0 {
+        let mut report = startup::Report::new();
+        if let Ok(line) = report.record(format_args!(
+            "PLSUP1 storm resets={resets} mode={}\r\n",
+            storm.name()
+        )) {
+            sdk::log(line);
+        }
+    }
+    match storm {
+        trial::Storm::Normal => {}
+        trial::Storm::Held => HELD.store(true, Ordering::Release),
+        // Held boots kept resetting too: start nothing. The outputs stay as
+        // `stopped::initialize` left them, and with no watchdog open the
+        // board stays up, stopped, until power is lost.
+        trial::Storm::Halted => return,
+    }
+
     // Supervise from the first scheduled step, so a startup fault or
     // hang is a reset KM0 can count.
     // SAFETY: the step takes no context and keeps its state in statics.

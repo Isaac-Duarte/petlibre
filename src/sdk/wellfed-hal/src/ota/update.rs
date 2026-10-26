@@ -578,6 +578,11 @@ impl<I: SlotIo + Clone> Update<I> {
         if !self.opened {
             return next(BUSY_MS, Some(self.open()));
         }
+        // An install holds its write turn across its sectors: it goes no
+        // further into a reset the runtime decided (`supervision`).
+        if crate::supervision::writes_held() && !matches!(self.work, Work::Restarting { .. }) {
+            return next(IDLE_MS, None);
+        }
         if self.record_bank0
             && let Some(record) = self.record_step(flash, now)
         {

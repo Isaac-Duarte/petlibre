@@ -411,6 +411,37 @@ mod writes {
         ));
     }
 
+    /// A store write sets the attempt marker, and a reset that lands in one
+    /// makes the next boot skip arming: none starts while the watchdog
+    /// feeder withholds the watchdog, transiently or for good.
+    #[test]
+    fn no_write_starts_while_the_watchdog_is_withheld() {
+        use wellfed_hal::supervision::{self, config::WATCHDOG};
+
+        let interlock = Interlock::new();
+        let mut turn = WriteTurn::new();
+        supervision::reset();
+
+        supervision::supervised(false, 1000);
+        assert_eq!(turn.begin(&interlock, 1000, || true), WriteStep::Wait);
+        // Feeding again before the progress gap: the write goes.
+        supervision::supervised(true, 1500);
+        assert_eq!(
+            turn.begin(&interlock, 1500, || true),
+            WriteStep::Go(WriteStart::Free)
+        );
+        interlock.end_write();
+
+        // A stop that outlasts the gap is a certain reset: no write again,
+        // even once `feed` would say yes.
+        supervision::supervised(false, 2000);
+        supervision::supervised(false, 2000 + WATCHDOG.max_progress_gap_ms);
+        supervision::supervised(true, 9000);
+        assert_eq!(turn.begin(&interlock, 9000, || true), WriteStep::Wait);
+        assert!(!interlock.writing());
+        supervision::reset();
+    }
+
     #[test]
     fn writes_and_joins_do_not_wait_for_each_other() {
         let interlock = Interlock::new();

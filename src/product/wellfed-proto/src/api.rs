@@ -564,7 +564,8 @@ pub enum Readiness {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Blocked {
     /// The feeding owner has not opened yet (it opens once the boot's
-    /// storage is ready).
+    /// storage is ready), or a newly installed build has not confirmed
+    /// itself yet.
     Starting,
     /// The feed journal could not be opened: no feed this boot.
     Journal,

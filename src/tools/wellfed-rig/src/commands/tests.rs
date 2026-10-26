@@ -1976,6 +1976,7 @@ fn a_variant_needs_the_firmware_that_declares_it() {
     for (name, variant) in [
         ("feed-stall", Variant::FeedStall),
         ("stop-fail", Variant::StopFail),
+        ("owner-fail", Variant::OwnerFail),
     ] {
         assert_eq!(ota::parse_variant(name), Ok(variant));
         assert_eq!(

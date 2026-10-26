@@ -699,6 +699,44 @@ fn an_activation_restarts_with_both_attempt_bits_clear() {
     assert!(matches!(arm(), Poll::Armed(_)));
 }
 
+/// The install holds its write turn across sectors, so the turn's own gate
+/// does not stop it: the stage does, while the watchdog is withheld, so a
+/// reset the runtime decided never lands inside one of its writes.
+#[test]
+fn an_install_goes_no_further_while_the_watchdog_is_withheld() {
+    use wellfed_hal::supervision;
+
+    let _guard = start(0);
+    supervision::reset();
+    let mut rig = Rig::bench(0);
+    let payload = image(LEN);
+    rig.offer(&manifest(3, &payload), None).unwrap();
+    rig.push(&payload, Some(SECTOR as u32));
+    let written = rig.flash.register_seen.len();
+
+    supervision::supervised(false, 0);
+    for offset in mailbox::progress().unwrap().wanted.into_iter().flatten() {
+        let start = offset as usize;
+        let end = (start + MAX_CHUNK as usize).min(payload.len());
+        if mailbox::chunk(offset, &payload[start..end]).is_err() {
+            break;
+        }
+    }
+    rig.steps(200);
+    assert_eq!(rig.flash.register_seen.len(), written, "no write started");
+    assert!(
+        rig.records
+            .iter()
+            .all(|r| !matches!(r, Record::Stopped { .. }))
+    );
+
+    // The stop ended before it was certain: the install goes on.
+    supervision::supervised(true, 500);
+    let done = rig.push(&payload, None);
+    assert_eq!(done.phase, Phase::Activated, "{done:?}");
+    supervision::reset();
+}
+
 #[test]
 fn a_reset_inside_a_sector_write_skips_arming_once() {
     let _guard = start(0);

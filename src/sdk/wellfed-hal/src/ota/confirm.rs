@@ -3,21 +3,31 @@
 //! KM0 counts this image's boots until a record in storage sector
 //! `trial::CONFIRM_SECTOR` names its build identity (`trial.rs`). Once the
 //! image has stayed healthy for `HEALTHY_MS` (the glue's test: the network
-//! check passed, outputs verified stopped, startup probes finished), this arms the
-//! flash-lock hooks like the updater (`arming.rs`), raises the update
-//! store's floor to its version if bank 0 activated it (`ota::update`),
-//! then erases the sector, programs the record and reads it back. It holds
-//! the write turn (`interlock`) from before arming to the write's end, so
-//! none of it runs while a feed may move the outputs; the floor's store
-//! write runs under that same turn. The floor goes first: the confirmation
-//! sector is erased before each write, and a store write that fails leaves
-//! the image unconfirmed rather than confirmed with the floor behind it. An
-//! image already confirmed does nothing.
+//! check passed, outputs verified stopped, startup probes finished), this
+//! arms the flash-lock hooks like the updater (`arming.rs`). The firmware's
+//! feeding owner opens on its journal only once the hooks are armed, so the
+//! record waits after arming until the owner has proved it can feed
+//! ([`Feeding::proven`]: opened, at rest with its motor, sensor and current
+//! checks passing), with the network still healthy. A build whose owner
+//! cannot open never confirms: the trial deadline, or the supervisor's stop
+//! on an owner that failed to open, resets it, and KM0 counts the reset.
+//! A firmware with no feeding owner has nothing to prove.
 //!
-//! On a trial boot no feed can be claimed before this write: the feeding
-//! owner opens only once the hooks are armed, this is the first arming of
-//! a trial boot (the settings writer starts only after the confirmation),
-//! and this holds the write turn across it. So a feed never delays the
+//! Then this raises the update store's floor to its version if bank 0
+//! activated it (`ota::update`), erases the sector, programs the record and
+//! reads it back. Arming and the write each take the write turn
+//! (`interlock`), so neither runs while a feed may move the outputs, and
+//! each sets the attempt marker only for itself: the wait for the owner
+//! between them leaves it clear, so a reset in that wait never makes the
+//! next boot skip arming. The floor goes first: the confirmation sector is
+//! erased before each write, and a store write that fails leaves the image
+//! unconfirmed rather than confirmed with the floor behind it. An image
+//! already confirmed does nothing.
+//!
+//! On a trial boot no feed starts before this write: the owner opens only
+//! once this has armed the hooks (the settings writer starts only after the
+//! confirmation), and the firmware refuses feeds while the build is
+//! unconfirmed (`wellfed_sdk::confirming`). So a feed never delays the
 //! confirmation towards the trial deadline. A torn or failed write leaves
 //! the image unconfirmed, which only keeps KM0 counting; the next boot
 //! finds the floor already raised and writes the record again.
@@ -34,6 +44,7 @@ use crate::flash_lock::provider::Provider;
 use crate::interlock::{INTERLOCK, WRITER_POLL_MS, WriteStep, WriteTurn};
 use crate::ota::update::Floor;
 use crate::sdk;
+use crate::supervision::supervise::Feeding;
 use crate::trial::{self, CONFIRM_SECTOR};
 
 pub const POLL_MS: u32 = 500;
@@ -152,6 +163,8 @@ enum Stage {
     Check,
     Healthy,
     Arm,
+    /// Armed: the feeding owner may open; wait for its proof.
+    Proving,
     Write,
     Done,
 }
@@ -191,8 +204,9 @@ impl Confirm {
     }
 
     /// One task iteration. `healthy` is the glue's current health test,
-    /// `now` uptime in milliseconds, and `raise` raises the update store's
-    /// floor (the update stage's `raise_floor`) just before the record.
+    /// `feeding` what the firmware's feeding owner has shown, `now` uptime
+    /// in milliseconds, and `raise` raises the update store's floor (the
+    /// update stage's `raise_floor`) just before the record.
     ///
     /// # Safety
     /// `provider` is valid for the program's lifetime, stays at a fixed
@@ -203,6 +217,7 @@ impl Confirm {
         flash: &mut impl StorageFlash,
         raise: impl FnOnce() -> Floor,
         healthy: bool,
+        feeding: Feeding,
         now: u32,
     ) -> Step {
         match self.stage {
@@ -244,7 +259,11 @@ impl Confirm {
                 match unsafe { self.arming.step::<M, H>(provider) } {
                     Poll::Pending(event) => next(arming::POLL_MS, event.map(Record::Arming)),
                     Poll::Armed(event) => {
-                        self.stage = Stage::Write;
+                        // Armed for the rest of the boot; the write marks
+                        // its own attempt, as every store write does.
+                        arming::clear_attempt();
+                        self.give_turn();
+                        self.stage = Stage::Proving;
                         next(arming::POLL_MS, Some(Record::Arming(event)))
                     }
                     Poll::Failed(event) => {
@@ -254,16 +273,27 @@ impl Confirm {
                 }
             }
 
+            // The network must still be healthy when the owner has proved
+            // itself: the record vouches for both.
+            Stage::Proving => {
+                if healthy && feeding.proven() {
+                    self.stage = Stage::Write;
+                    return next(arming::POLL_MS, None);
+                }
+                next(POLL_MS, None)
+            }
+
             Stage::Write => {
                 if !self.take_turn(now) {
                     return next(POLL_MS, None);
                 }
+                arming::set_attempt();
                 let version = match raise() {
                     Floor::Raised { version } => version,
                     Floor::Unchanged => 0,
                     Floor::Failed => {
-                        self.give_turn();
                         arming::clear_attempt();
+                        self.give_turn();
                         return self.end(Record::Error {
                             stage: ErrorStage::Floor,
                         });
@@ -275,10 +305,10 @@ impl Confirm {
                     && flash.program(CONFIRM_SECTOR, 0, &record)
                     && flash.read(CONFIRM_SECTOR, 0, &mut readback)
                     && readback == record;
-                self.give_turn();
 
                 // The attempt ended in order either way, so a later boot must not skip.
                 arming::clear_attempt();
+                self.give_turn();
                 if !ok {
                     return self.end(Record::Error {
                         stage: ErrorStage::Write,

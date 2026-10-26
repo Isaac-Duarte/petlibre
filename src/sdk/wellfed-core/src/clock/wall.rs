@@ -1,20 +1,32 @@
 //! Wall clock: UTC from fixes, carried by the uptime clock between them.
 //!
-//! The feeder has no battery-backed clock, so the wall clock is invalid at
-//! every boot until a fix arrives: a sync from a client's session, or an
-//! NTP answer. Between fixes the time is carried by uptime, corrected by
-//! the uptime clock's learned rate.
+//! The feeder has no battery-backed clock, so after a power-on the wall
+//! clock is invalid until a fix arrives: a sync from a client's session, or
+//! an NTP answer. Between fixes the time is carried by uptime, corrected by
+//! the uptime clock's learned rate. Across a warm reset it is carried by
+//! the always-on RTC instead ([`WallClock::carry`], [`WallClock::resume`]).
 //!
 //! **The trusted interval.** The clock keeps an anchor that only a trusted
 //! fix sets: an owner's sync, or any fix while the clock is invalid (the
 //! first, or after expiry). From the anchor the true time lies within the
 //! anchor's error plus the rate bound times the time since: [`UNLEARNED_PPM`]
-//! before a rate is learned (the research unit's uptime clock ran a steady
-//! 735 ppm slow, two 10-minute resyncs, October 22), and once two trusted
-//! fixes far enough apart measure the rate to within [`LEARN_MAX_PPM`],
-//! the correction applies and the bound drops to [`LEARNED_FLOOR_PPM`], or
-//! to how far successive measurements disagree if that is more. The rate is
-//! learned from trusted fixes only, so a spoofed answer cannot poison it.
+//! before a rate is learned, and once two trusted fixes far enough apart
+//! measure the rate to within [`LEARN_MAX_PPM`], the correction applies and
+//! the bound drops to [`LEARNED_FLOOR_PPM`], or to how far successive
+//! measurements disagree if that is more. The rate is learned from trusted
+//! fixes only, so a spoofed answer cannot poison it: a rate measured from
+//! fixes that only had to fall inside the trusted interval could be off by
+//! that interval's width over the span, which is the unlearned bound again,
+//! so it could move the reading but never tighten the bound.
+//!
+//! **Carried across a warm reset.** The reset keeps the KM0 RTC counting
+//! seconds but loses uptime, so the trusted interval and the reading are
+//! saved at an RTC second and, after a watchdog or software reset, resumed
+//! with their error grown by the RTC's elapsed seconds at [`RTC_PPM`] plus
+//! its one-second resolution. Nothing is resumed after a power-on (the RTC
+//! restarts at 0 then), from a record that fails its check, across an RTC
+//! that went backwards, or after more than [`CARRY_MAX_S`]. The learned
+//! rate is not carried: the next boot learns it again.
 //!
 //! **The reading.** Any other fix (NTP, or a member's or the server's
 //! sync) must fall inside the trusted interval, or it is refused; inside,
@@ -26,8 +38,8 @@
 //! the trusted interval, which a later trusted fix resets.
 //!
 //! **Validity.** The clock reads invalid once its error passes
-//! [`MAX_ERROR_MS`]: about 16 h after a trusted fix unlearned, about 7-14
-//! days learned. Then the next fix of any origin sets it again. A run of
+//! [`MAX_ERROR_MS`]: about 6.6 h after a trusted fix unlearned, about 22 h
+//! learned. Then the next fix of any origin sets it again. A run of
 //! [`DISJOINT_LIMIT`] NTP answers that all miss the trusted interval means
 //! the anchor or the learned rate is wrong (or the server is): the clock
 //! forgets both and reads invalid, so it needs the time rather than
@@ -48,16 +60,32 @@ pub const MAX_UNIX_MS: u64 = 4_102_444_800_000;
 /// UTC offsets run from -12 h to +14 h.
 pub const MIN_OFFSET_S: i32 = -12 * 3600;
 pub const MAX_OFFSET_S: i32 = 14 * 3600;
-/// The rate bound before one is learned: the measured 735 ppm with margin
-/// for temperature and for another unit.
-pub const UNLEARNED_PPM: u32 = 2000;
-/// The least rate bound once learned: what a learned correction leaves to
-/// temperature and ageing.
-pub const LEARNED_FLOOR_PPM: u32 = 100;
+/// The rate bound before one is learned. The uptime clock has been
+/// measured 735 ppm slow (two 10-minute resyncs) and 2,060 ppm slow (one
+/// 17-minute NTP poll, four days later, another build); this is more than
+/// twice the worst. The cost is the validity window, `MAX_ERROR_MS` over
+/// the bound: about 6.6 h after a trusted fix.
+pub const UNLEARNED_PPM: u32 = 5000;
+/// The least rate bound once learned. The same unit's rate moved 1,325 ppm
+/// between two measurements, so a learned correction is not trusted any
+/// tighter than that until the bench shows how much it moves within a
+/// boot: about 22 h of validity.
+pub const LEARNED_FLOOR_PPM: u32 = 1500;
 /// A rate is learned only from a baseline measuring it this well.
 pub const LEARN_MAX_PPM: u32 = 50;
-/// A measured rate beyond this is a bad fix, not the oscillator.
-pub const RATE_LIMIT_PPM: i32 = 5000;
+/// A measured rate beyond this (1 %) is a bad fix, not the oscillator.
+pub const RATE_LIMIT_PPM: i32 = 10_000;
+/// The rate bound across a warm reset, carried by the KM0 RTC's 32 kHz
+/// clock. It kept 1,613 s against the host's 1,613.1 s (physical, at its
+/// one-second resolution, so within about 620 ppm); the gap is seconds, so
+/// a wide margin costs little.
+pub const RTC_PPM: u32 = 10_000;
+/// A saved clock older than this, in RTC seconds, is not resumed. A
+/// running clock is saved every few seconds, so a longer gap means a boot
+/// in between that did not save it, or an RTC that wrapped.
+pub const CARRY_MAX_S: u32 = 600;
+/// Words in a saved clock ([`WallClock::carry`]).
+pub const CARRY_WORDS: usize = 16;
 /// Allowance for a client sync's own delay on the local network.
 pub const SYNC_ERROR_MS: u32 = 1000;
 /// A clock that could be further off than this reads invalid.
@@ -71,7 +99,7 @@ pub const DISJOINT_LIMIT: u8 = 3;
 pub const MISSED_GRACE_MS: u64 = 15 * 60 * 1000;
 
 /// Parts per billion. The arithmetic stays in `i64`: an elapsed time is
-/// under 2^31 ms and a rate under 2^23 ppb, so no product overflows, and
+/// under 2^31 ms and a rate under 2^24 ppb, so no product overflows, and
 /// the KM4 has no 128-bit divide.
 const PPB: i64 = 1_000_000_000;
 
@@ -133,6 +161,52 @@ pub enum Jump {
     Step(i64),
     /// The clock moved forward (positive) or back (negative) by this much.
     Jumped(i64),
+}
+
+/// How this boot began, which decides whether a saved clock may resume.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Restart {
+    /// A power-on, brownout or deep-sleep wake: the RTC restarted with the
+    /// supply, so its count says nothing about the time since the save.
+    Cold,
+    /// A watchdog or software reset: the RTC kept counting through it.
+    Warm,
+}
+
+/// Why a saved clock was not resumed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum NoResume {
+    /// The clock already has the time.
+    Set = 0,
+    Cold = 1,
+    /// No saved clock: never saved, cleared, or memory a power-on left.
+    Empty = 2,
+    /// A record whose check, version or values are wrong.
+    Corrupt = 3,
+    /// The RTC could not be read as a count.
+    Rtc = 4,
+    /// The RTC reads earlier than the save: it restarted.
+    Backwards = 5,
+    /// More than `CARRY_MAX_S` since the save.
+    Stale = 6,
+    /// The grown error passes `MAX_ERROR_MS`.
+    Expired = 7,
+}
+
+impl NoResume {
+    /// The variant's number, as records print it.
+    pub const fn code(self) -> u8 {
+        self as u8
+    }
+}
+
+/// A saved clock resumed: the RTC seconds since the save, and the error the
+/// reading now claims.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Resumed {
+    pub gap_s: u32,
+    pub error_ms: u64,
 }
 
 /// A valid reading.
@@ -364,7 +438,8 @@ impl WallClock {
         // Beyond the rate limit before multiplying, which keeps the product
         // in range.
         let limit = i64::from(RATE_LIMIT_PPM) * 1000;
-        if gained.unsigned_abs() > span.unsigned_abs() / 100 {
+        let most = span.unsigned_abs() * u64::from(RATE_LIMIT_PPM.unsigned_abs()) / 1_000_000;
+        if gained.unsigned_abs() > most {
             return;
         }
         let measured = gained * PPB / span;
@@ -466,6 +541,203 @@ impl WallClock {
     pub fn syncs(&self) -> u32 {
         self.syncs
     }
+
+    /// The clock at uptime `now`, which the RTC reads as second `rtc_s`,
+    /// as a record to keep across a warm reset; `None` while invalid, when
+    /// the caller clears what it kept. The trusted interval and the reading
+    /// are carried with the zone hint; the rate, the sync count and the
+    /// baseline are not.
+    pub fn carry(&self, now: u32, rtc_s: u32) -> Option<[u32; CARRY_WORDS]> {
+        let (trust, centre, _) = self.current(now)?;
+        Some(
+            Carry {
+                rtc_s,
+                trust_us: trust.unix_us,
+                trust_error_us: trust.error_us,
+                centre_us: centre.unix_us,
+                hint: self.hint,
+            }
+            .encode(),
+        )
+    }
+
+    /// Resume a record [`carry`](Self::carry) made before a reset, at
+    /// uptime `now`, which the RTC reads as `rtc_s` (`None`: unreadable).
+    ///
+    /// The RTC's count since the save is the time across the reset, within
+    /// one second of resolution (both ends are whole seconds) and
+    /// `RTC_PPM` of rate. The resumed interval is a trusted one, as the
+    /// saved one was: it only ever grew from a trusted fix. It is no
+    /// baseline for a rate, so the rate is learned again from the next two
+    /// trusted fixes.
+    pub fn resume(
+        &mut self,
+        now: u32,
+        record: &[u32; CARRY_WORDS],
+        rtc_s: Option<u32>,
+        restart: Restart,
+    ) -> Result<Resumed, NoResume> {
+        if self.current(now).is_some() {
+            return Err(NoResume::Set);
+        }
+        if restart == Restart::Cold {
+            return Err(NoResume::Cold);
+        }
+        let carry = Carry::decode(record)?;
+        let rtc_s = rtc_s.ok_or(NoResume::Rtc)?;
+        let gap_s = rtc_s.checked_sub(carry.rtc_s).ok_or(NoResume::Backwards)?;
+        if gap_s > CARRY_MAX_S {
+            return Err(NoResume::Stale);
+        }
+
+        let gap_us = u64::from(gap_s) * 1_000_000;
+        // ppm of a second is a microsecond.
+        let grown_us = 1_000_000 + (u64::from(gap_s) + 1) * u64::from(RTC_PPM);
+        let error_us = carry.trust_error_us + grown_us;
+        let trust = Anchor {
+            uptime_ms: now,
+            unix_us: carry.trust_us + gap_us,
+            error_us,
+        };
+        let centre = Anchor {
+            uptime_ms: now,
+            unix_us: carry.centre_us + gap_us,
+            error_us,
+        };
+        // The record's times are inside 2026-2099 and the gap is minutes,
+        // so the sums above cannot overflow.
+        let reported_us = signed(centre.unix_us, trust.unix_us).unsigned_abs() + error_us;
+        if reported_us.div_ceil(1000) > MAX_ERROR_MS {
+            return Err(NoResume::Expired);
+        }
+
+        self.trusted(trust);
+        self.centre = Some(centre);
+        self.base = None;
+        self.forget_rate();
+        self.hint = carry.hint;
+        Ok(Resumed {
+            gap_s,
+            error_ms: reported_us.div_ceil(1000),
+        })
+    }
+}
+
+/// A clock saved for a warm reset, as 16 little-endian words: the magic,
+/// the version and flags, the RTC second, the trusted estimate and its
+/// error and the reading (each in microseconds, low word first), the zone
+/// hint, two reserved zero words, and a CRC-32 of the rest. The record
+/// lives in RAM only, so its layout may change with any build: a build
+/// that reads another's as `Corrupt` just starts unsynced.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Carry {
+    rtc_s: u32,
+    trust_us: u64,
+    trust_error_us: u64,
+    centre_us: u64,
+    hint: Option<Hint>,
+}
+
+/// `PLTC`.
+const CARRY_MAGIC: u32 = 0x4354_4c50;
+const CARRY_VERSION: u32 = 1;
+const CARRY_HINT: u32 = 1 << 16;
+
+impl Carry {
+    fn encode(&self) -> [u32; CARRY_WORDS] {
+        let split = |value: u64| {
+            let [a, b, c, d, e, f, g, h] = value.to_le_bytes();
+            [
+                u32::from_le_bytes([a, b, c, d]),
+                u32::from_le_bytes([e, f, g, h]),
+            ]
+        };
+        let hint = self.hint.unwrap_or(Hint {
+            offset_s: 0,
+            next_change_s: 0,
+            next_offset_s: 0,
+        });
+        let flags = if self.hint.is_some() { CARRY_HINT } else { 0 };
+
+        let [trust_lo, trust_hi] = split(self.trust_us);
+        let [error_lo, error_hi] = split(self.trust_error_us);
+        let [centre_lo, centre_hi] = split(self.centre_us);
+        let [change_lo, change_hi] = split(hint.next_change_s);
+        let mut words = [
+            CARRY_MAGIC,
+            CARRY_VERSION | flags,
+            self.rtc_s,
+            trust_lo,
+            trust_hi,
+            error_lo,
+            error_hi,
+            centre_lo,
+            centre_hi,
+            hint.offset_s.cast_unsigned(),
+            change_lo,
+            change_hi,
+            hint.next_offset_s.cast_unsigned(),
+            0,
+            0,
+            0,
+        ];
+        words[CARRY_WORDS - 1] = carry_check(&words);
+        words
+    }
+
+    fn decode(words: &[u32; CARRY_WORDS]) -> Result<Self, NoResume> {
+        if words[0] != CARRY_MAGIC {
+            return Err(NoResume::Empty);
+        }
+        let flags = words[1] & !0xffff;
+        let valid = words[1] & 0xffff == CARRY_VERSION
+            && flags & !CARRY_HINT == 0
+            && words[13] == 0
+            && words[14] == 0
+            && words[CARRY_WORDS - 1] == carry_check(words);
+        if !valid {
+            return Err(NoResume::Corrupt);
+        }
+
+        let join = |lo: u32, hi: u32| (u64::from(hi) << 32) | u64::from(lo);
+        let hint = Hint {
+            offset_s: words[9].cast_signed(),
+            next_change_s: join(words[10], words[11]),
+            next_offset_s: words[12].cast_signed(),
+        };
+        let offsets = MIN_OFFSET_S..=MAX_OFFSET_S;
+        let hint = if flags & CARRY_HINT == 0 {
+            None
+        } else if offsets.contains(&hint.offset_s) && offsets.contains(&hint.next_offset_s) {
+            Some(hint)
+        } else {
+            return Err(NoResume::Corrupt);
+        };
+        let carry = Self {
+            rtc_s: words[2],
+            trust_us: join(words[3], words[4]),
+            trust_error_us: join(words[5], words[6]),
+            centre_us: join(words[7], words[8]),
+            hint,
+        };
+        let times = MIN_UNIX_MS * 1000..MAX_UNIX_MS * 1000;
+        if !times.contains(&carry.trust_us)
+            || !times.contains(&carry.centre_us)
+            || carry.trust_error_us > MAX_ERROR_MS * 1000
+        {
+            return Err(NoResume::Corrupt);
+        }
+        Ok(carry)
+    }
+}
+
+/// CRC-32 of a record's words before the last.
+fn carry_check(words: &[u32; CARRY_WORDS]) -> u32 {
+    let mut bytes = [0; (CARRY_WORDS - 1) * 4];
+    for (chunk, word) in bytes.as_chunks_mut::<4>().0.iter_mut().zip(words) {
+        *chunk = word.to_le_bytes();
+    }
+    crate::store::slot::crc32(&bytes)
 }
 
 fn signed(a: u64, b: u64) -> i64 {

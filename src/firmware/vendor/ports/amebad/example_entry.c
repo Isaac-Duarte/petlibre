@@ -755,6 +755,35 @@ void wellfed_rtc_read(unsigned int *out)
     out[3] = HAL_READ32(RTC_BASE, 0x0C); /* PRER */
 }
 
+/* The wall clock's record for the next boot after a warm reset: 16 words at
+ * the top of KM4's main RAM (0x1007BFC0), which the builder's linker script
+ * takes from the heap's end (__sram_end__) and names. A watchdog or system
+ * reset leaves this RAM alone: the KM4 boot loader copies only the image's
+ * .ram_image2.entry/.text/.data, app_start clears only .bss, the heap
+ * starts below it, and the ROM, boot loader and stacks use the secure
+ * regions above 0x1007C000 and the RAM below 0x10005000. A power-on leaves
+ * whatever the cells hold, which the record's check refuses. The SDK's
+ * cache header says the D-cache writes through; the clean makes the store
+ * reach the RAM before a reset whichever way it is set. */
+extern unsigned int wellfed_time_carry[16];
+
+void wellfed_time_carry_load(unsigned int *out)
+{
+    volatile unsigned int *carry = wellfed_time_carry;
+    for (int i = 0; i < 16; i++) {
+        out[i] = carry[i];
+    }
+}
+
+void wellfed_time_carry_store(const unsigned int *words)
+{
+    volatile unsigned int *carry = wellfed_time_carry;
+    for (int i = 0; i < 16; i++) {
+        carry[i] = words[i];
+    }
+    DCache_Clean((u32)wellfed_time_carry, sizeof(unsigned int) * 16);
+}
+
 /* The NTP exchange's socket: UDP on an ephemeral port, non-blocking, or
  * -1. Datagrams go through wellfed_mdns_send and wellfed_mdns_recv, which
  * take any UDP socket. */

@@ -1206,6 +1206,8 @@ unsafe extern "C" {
     fn wellfed_gateway_ipv4() -> u32;
     fn wellfed_udp_open() -> i32;
     fn wellfed_rtc_read(out: *mut u32);
+    fn wellfed_time_carry_load(out: *mut u32);
+    fn wellfed_time_carry_store(words: *const u32);
 }
 
 /// The KM0 RTC's TR, CR, ISR and PRER registers, read only.
@@ -1215,6 +1217,24 @@ pub fn rtc_registers() -> [u32; 4] {
     // which is live for the call.
     unsafe { wellfed_rtc_read(out.as_mut_ptr()) };
     out
+}
+
+/// The words a warm reset left in `wellfed_time_carry`: whatever the
+/// last boot stored, or what a power-on left in the RAM.
+pub fn time_carry_load() -> [u32; crate::TIME_CARRY_WORDS] {
+    let mut out = [0; crate::TIME_CARRY_WORDS];
+    // SAFETY: the C shim in `example_entry.c` copies `TIME_CARRY_WORDS`
+    // words to `out`, which is live for the call.
+    unsafe { wellfed_time_carry_load(out.as_mut_ptr()) };
+    out
+}
+
+/// Store `words` in `wellfed_time_carry`, cleaned out of the data cache so
+/// a reset right after finds them in the RAM.
+pub fn time_carry_store(words: &[u32; crate::TIME_CARRY_WORDS]) {
+    // SAFETY: the C shim in `example_entry.c` reads `TIME_CARRY_WORDS`
+    // words from `words`, which is live for the call.
+    unsafe { wellfed_time_carry_store(words.as_ptr()) };
 }
 
 /// The device API's non-blocking listener on `port`, or `None`.

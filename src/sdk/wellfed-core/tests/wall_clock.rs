@@ -1,7 +1,7 @@
 use wellfed_core::clock::wall::{
-    DISJOINT_LIMIT, Fix, Jump, LEARNED_FLOOR_PPM, MAX_ERROR_MS, MIN_UNIX_MS, MISSED_GRACE_MS,
-    Occurrence, Origin, Reading, STEP_MS, SYNC_ERROR_MS, Sync, SyncError, UNLEARNED_PPM, WallClock,
-    occurrence,
+    CARRY_MAX_S, CARRY_WORDS, DISJOINT_LIMIT, Fix, Jump, LEARNED_FLOOR_PPM, MAX_ERROR_MS,
+    MIN_UNIX_MS, MISSED_GRACE_MS, NoResume, Occurrence, Origin, Reading, Restart, Resumed, STEP_MS,
+    SYNC_ERROR_MS, Sync, SyncError, UNLEARNED_PPM, WallClock, occurrence,
 };
 use wellfed_core::clock::zone::Zone;
 
@@ -59,8 +59,8 @@ fn invalid_until_the_first_sync_then_carried_by_uptime() {
         reading.local_ms(),
         Some((NOON + 60_000) as i64 - 6 * 3_600_000)
     );
-    // The sync's own second plus 2000 ppm of a minute.
-    assert_eq!(reading.error_ms, 1_120);
+    // The sync's own second plus 5000 ppm of a minute.
+    assert_eq!(reading.error_ms, 1_300);
     assert_eq!(clock.syncs(), 1);
 }
 
@@ -71,7 +71,7 @@ fn an_unlearned_clock_expires_when_its_bound_passes_two_minutes() {
     clock.sync(start, sync(NOON), Origin::Owner).unwrap();
     assert_eq!(clock.read(9_000).unwrap().unix_ms, NOON + 10_001);
 
-    // 1 s plus 2000 ppm reaches 120 s after 59 500 s, about 16.5 h.
+    // 1 s plus 5000 ppm reaches 120 s after 23 800 s, about 6.6 h.
     let limit =
         u32::try_from((MAX_ERROR_MS - 1000) * 1_000_000 / u64::from(UNLEARNED_PPM)).unwrap();
     assert!(clock.read(start.wrapping_add(limit)).is_some());
@@ -129,14 +129,14 @@ fn other_sources_move_the_reading_only_within_the_trusted_interval() {
     let mut clock = WallClock::default();
     clock.sync(0, sync(NOON), Origin::Owner).unwrap();
 
-    // Ten minutes on, the trusted interval is NOON+600 000 ± 2 200 ms. NTP
+    // Ten minutes on, the trusted interval is NOON+600 000 ± 4 000 ms. NTP
     // 1.5 s ahead with 100 ms of error lies inside: the reading moves to
     // it, but still claims the trusted interval's error and its own move.
     let now = 600_000;
     let jump = clock.fix(now, ntp(NOON + 601_500, 100)).unwrap();
     let reading = clock.read(now).unwrap();
     assert_eq!(reading.unix_ms, NOON + 601_500);
-    assert_eq!(reading.error_ms, 1_500 + 2_200);
+    assert_eq!(reading.error_ms, 1_500 + 4_000);
     assert_eq!(jump, Jump::Step(1_500));
 
     // An hour off is refused, and the clock is unchanged.
@@ -169,7 +169,7 @@ fn a_member_cannot_walk_the_clock_with_many_syncs() {
     // (the owner's second plus drift) ahead of true time, and says so.
     let truth = NOON + u64::from(now);
     let reading = clock.read(now).unwrap();
-    assert!(reading.unix_ms - truth <= 1_000 + 200 + 1);
+    assert!(reading.unix_ms - truth <= 1_000 + 500 + 1);
     honest(reading, truth, "after 1000 syncs");
 }
 
@@ -224,7 +224,7 @@ fn without_an_owner_the_attacked_clock_expires_rather_than_lie() {
         }
         let _ = clock.fix(now + 1000, ntp(truth + 1000, 20));
     }
-    assert!(expired.is_some_and(|hour| hour <= 17), "{expired:?}");
+    assert!(expired.is_some_and(|hour| hour <= 7), "{expired:?}");
 }
 
 /// The reviewer's poisoning: one spoofed answer an hour after the first
@@ -254,13 +254,48 @@ fn a_spoofed_answer_does_not_teach_the_clock_a_rate() {
     }
 }
 
-/// An uptime clock that runs 735 ppm slow, as the research unit's did.
+/// An uptime clock that runs `ppm` slow.
+fn slow_by(ppm: u64, true_elapsed_ms: u64) -> u32 {
+    u32::try_from(true_elapsed_ms - true_elapsed_ms * ppm / 1_000_000).unwrap()
+}
+
+/// An uptime clock that runs 735 ppm slow, as the research unit's did on
+/// October 22.
 fn slow(true_elapsed_ms: u64) -> u32 {
-    u32::try_from(true_elapsed_ms - true_elapsed_ms * 735 / 1_000_000).unwrap()
+    slow_by(735, true_elapsed_ms)
+}
+
+/// The bench's refusal (October 26): with the uptime clock 2,060 ppm slow,
+/// the poll 1,026 s after the first NTP fix fell outside a 2,000 ppm
+/// interval. It falls well inside the unlearned bound now, and the clock
+/// stays honest across a day of polls.
+#[test]
+fn ntp_polls_stay_inside_the_bound_at_the_measured_worst_drift() {
+    let mut clock = WallClock::default();
+    clock.fix(0, ntp(NOON, 25)).unwrap();
+
+    let step = 1_026_000u64;
+    for i in 1..=84u64 {
+        let truth = i * step;
+        let now = slow_by(2060, truth);
+        if let Some(reading) = clock.read(now) {
+            honest(reading, NOON + truth, &format!("poll {i}"));
+            assert!(clock.fix(now, ntp(NOON + truth, 25)).is_ok(), "poll {i}");
+        } else {
+            assert_eq!(clock.fix(now, ntp(NOON + truth, 25)), Ok(Jump::First));
+        }
+    }
+    let state = clock.state(slow_by(2060, 84 * step));
+    assert!(state.learned);
+    assert!(
+        (state.rate_ppb - 2_064_000).abs() < 5_000,
+        "{}",
+        state.rate_ppb
+    );
 }
 
 #[test]
-fn the_rate_is_learned_from_owner_syncs_and_the_clock_holds_for_days() {
+fn the_rate_is_learned_from_owner_syncs_and_the_clock_holds_for_a_day() {
     let mut clock = WallClock::default();
     clock.fix(0, fix(NOON, 20, Origin::Owner)).unwrap();
     assert!(!clock.state(0).learned);
@@ -283,16 +318,16 @@ fn the_rate_is_learned_from_owner_syncs_and_the_clock_holds_for_days() {
     );
     assert_eq!(state.rate_bound_ppb, LEARNED_FLOOR_PPM * 1000);
 
-    // Ten days with no source: the corrected clock is within a second of
+    // 21 hours with no source: the corrected clock is within a second of
     // the truth, and still valid with a bound under two minutes.
-    let truth = 7 * step + 10 * 24 * u64::from(HOUR_MS);
+    let truth = 7 * step + 21 * u64::from(HOUR_MS);
     let reading = clock.read(slow(truth)).unwrap();
     let off = reading.unix_ms.abs_diff(NOON + truth);
     assert!(off < 1_000, "off by {off} ms");
     assert!(reading.error_ms <= MAX_ERROR_MS);
 
-    // Fifteen days is past the bound.
-    let truth = 7 * step + 15 * 24 * u64::from(HOUR_MS);
+    // 23 hours is past the learned floor's 22.
+    let truth = 7 * step + 23 * u64::from(HOUR_MS);
     assert_eq!(clock.read(slow(truth)), None);
 }
 
@@ -302,7 +337,7 @@ fn ntp_alone_learns_the_rate_across_its_first_expiry() {
     clock.fix(0, ntp(NOON, 20)).unwrap();
 
     // Answers every 17 minutes keep the reading on time but teach nothing;
-    // after about 16 h the trusted interval expires, and the next answer is
+    // after about 6 h the trusted interval expires, and the next answer is
     // trusted, measuring the rate across the whole span.
     let step = 1_024_000u64;
     let mut learned_at = None;
@@ -318,9 +353,9 @@ fn ntp_alone_learns_the_rate_across_its_first_expiry() {
         }
     }
     // The reading follows NTP while the trusted estimate runs 735 ppm
-    // slow; the gap counts in the error, so it expires after about 12.5 h.
+    // slow; the gap counts in the error, so it expires after about 5.8 h.
     let i = learned_at.expect("learned after the first expiry");
-    assert!((42..=46).contains(&i), "learned at poll {i}");
+    assert!((20..=22).contains(&i), "learned at poll {i}");
     let state = clock.state(slow(80 * step));
     assert!(
         (state.rate_ppb - 735_000).abs() < 1_000,
@@ -427,6 +462,155 @@ fn bad_syncs_are_refused_and_leave_the_clock() {
             )
             .is_ok()
     );
+}
+
+/// An owner's sync at uptime 0, saved a minute later at RTC second 1000.
+fn saved() -> [u32; CARRY_WORDS] {
+    let mut clock = WallClock::default();
+    clock.sync(0, sync(NOON), Origin::Owner).unwrap();
+    clock.carry(60_000, 1000).expect("valid a minute on")
+}
+
+#[test]
+fn a_warm_reset_resumes_the_clock_with_the_rtc_gap_in_its_error() {
+    let mut clock = WallClock::default();
+
+    // 12 RTC seconds later, 3 s into the new boot. The saved error is the
+    // sync's second plus 5000 ppm of a minute; the gap adds the RTC's
+    // second of resolution and 1 % of 13 s.
+    let resumed = clock.resume(3_000, &saved(), Some(1012), Restart::Warm);
+    assert_eq!(
+        resumed,
+        Ok(Resumed {
+            gap_s: 12,
+            error_ms: 1_300 + 1_000 + 130,
+        })
+    );
+
+    let reading = clock.read(3_000).unwrap();
+    assert_eq!(reading.unix_ms, NOON + 72_000);
+    assert_eq!(reading.offset_s, Some(MDT));
+    for truth in [NOON + 71_000, NOON + 73_000] {
+        honest(reading, truth, "either end of the RTC's second");
+    }
+
+    // Carried on by uptime from there, unlearned, with no sync counted.
+    let state = clock.state(63_000);
+    assert_eq!(state.reading.unwrap().error_ms, 2_430 + 300);
+    assert!(!state.learned);
+    assert_eq!((state.syncs, state.last), (0, None));
+}
+
+#[test]
+fn a_resumed_clock_keeps_the_trusted_interval_and_learns_no_rate_from_it() {
+    let mut clock = WallClock::default();
+    clock
+        .resume(3_000, &saved(), Some(1012), Restart::Warm)
+        .unwrap();
+
+    // Still trusted: NTP an hour off is refused, inside it only narrows.
+    assert_eq!(
+        clock.fix(4_000, ntp(NOON + 73_000 + 3_600_000, 20)),
+        Err(SyncError::Bounded)
+    );
+    assert_eq!(
+        clock.fix(4_000, ntp(NOON + 73_500, 20)),
+        Ok(Jump::Step(500))
+    );
+    assert!(clock.read(4_000).unwrap().error_ms >= 2_430);
+
+    // The resumed anchor is no baseline: one owner sync after it teaches
+    // nothing, however far apart.
+    clock
+        .fix(4_000 + 7_200_000, fix(NOON + 7_273_500, 20, Origin::Owner))
+        .unwrap();
+    assert!(!clock.state(4_000 + 7_200_000).learned);
+}
+
+#[test]
+fn nothing_resumes_after_a_power_cut() {
+    let mut clock = WallClock::default();
+    let record = saved();
+
+    assert_eq!(
+        clock.resume(3_000, &record, Some(1012), Restart::Cold),
+        Err(NoResume::Cold)
+    );
+    // A power cut the reset cause missed: the RTC restarted at 0.
+    assert_eq!(
+        clock.resume(3_000, &record, Some(4), Restart::Warm),
+        Err(NoResume::Backwards)
+    );
+    // Memory a power-on left.
+    assert_eq!(
+        clock.resume(3_000, &[0; CARRY_WORDS], Some(1012), Restart::Warm),
+        Err(NoResume::Empty)
+    );
+    assert_eq!(
+        clock.resume(
+            3_000,
+            &[0xa5a5_a5a5; CARRY_WORDS],
+            Some(1012),
+            Restart::Warm
+        ),
+        Err(NoResume::Empty)
+    );
+    assert_eq!(clock.read(3_000), None);
+}
+
+#[test]
+fn a_stale_or_corrupt_record_is_not_resumed() {
+    let mut clock = WallClock::default();
+    let record = saved();
+
+    let gap = 1000 + CARRY_MAX_S + 1;
+    assert_eq!(
+        clock.resume(3_000, &record, Some(gap), Restart::Warm),
+        Err(NoResume::Stale)
+    );
+    assert_eq!(
+        clock.resume(3_000, &record, None, Restart::Warm),
+        Err(NoResume::Rtc)
+    );
+
+    // Any flipped bit fails the check, the check word's included.
+    for word in 1..CARRY_WORDS {
+        let mut bad = record;
+        bad[word] ^= 1 << (word % 32);
+        assert_eq!(
+            clock.resume(3_000, &bad, Some(1012), Restart::Warm),
+            Err(NoResume::Corrupt),
+            "word {word}"
+        );
+    }
+    assert_eq!(clock.read(3_000), None);
+}
+
+#[test]
+fn a_record_too_close_to_expiry_is_not_resumed() {
+    let mut clock = WallClock::default();
+    clock.sync(0, sync(NOON), Origin::Owner).unwrap();
+    // 118.5 s of error at 23 500 s; the gap's second and more pass 120 s.
+    let record = clock.carry(23_500_000, 50_000).unwrap();
+    assert!(clock.carry(23_900_000, 50_000).is_none(), "invalid by then");
+
+    let mut fresh = WallClock::default();
+    assert_eq!(
+        fresh.resume(1_000, &record, Some(50_100), Restart::Warm),
+        Err(NoResume::Expired)
+    );
+    assert_eq!(fresh.read(1_000), None);
+}
+
+#[test]
+fn a_clock_with_the_time_is_not_overwritten_by_a_record() {
+    let mut clock = WallClock::default();
+    clock.fix(0, ntp(NOON + 3_600_000, 20)).unwrap();
+    assert_eq!(
+        clock.resume(0, &saved(), Some(1012), Restart::Warm),
+        Err(NoResume::Set)
+    );
+    assert_eq!(clock.read(0).unwrap().unix_ms, NOON + 3_600_000);
 }
 
 #[test]

@@ -106,6 +106,10 @@ pub const MARKER: [u8; 8] = *b"81958711";
 /// One NOR erase sector.
 pub const SECTOR_BYTES: u32 = 0x1000;
 
+/// Words of `wellfed_time_carry`, the 64 bytes the builder's KM4 linker
+/// script leaves above the heap at the top of main RAM (`example_entry.c`).
+pub const TIME_CARRY_WORDS: usize = 16;
+
 /// Samples in one codec DMA page (16 ms at 16 kHz, 16-bit mono),
 /// `WELLFED_AUDIO_PAGE` in `example_entry.c`.
 pub const AUDIO_PAGE_SAMPLES: usize = 256;

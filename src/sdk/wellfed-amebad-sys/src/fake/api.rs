@@ -976,6 +976,14 @@ pub fn rtc_registers() -> [u32; 4] {
     with(|h| h.rtc)
 }
 
+pub fn time_carry_load() -> [u32; crate::TIME_CARRY_WORDS] {
+    with(|h| h.time_carry)
+}
+
+pub fn time_carry_store(words: &[u32; crate::TIME_CARRY_WORDS]) {
+    with(|h| h.time_carry = *words);
+}
+
 pub fn gateway() -> Option<u32> {
     with(|h| (h.gateway != 0).then_some(h.gateway))
 }

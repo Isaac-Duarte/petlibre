@@ -64,6 +64,8 @@ pub enum SdkAnchor {
     Image2LinkRule,
     #[error("Pinned RAM linker section changed")]
     RamSection,
+    #[error("Pinned KM4 RAM end changed")]
+    SramEnd,
     #[error("Pinned SDK OTA address definition changed")]
     OtaAddress,
     #[error("Pinned example source list changed")]
@@ -303,6 +305,22 @@ fn replace_once(text: &str, anchor: &str, with: &str, which: SdkAnchor) -> Resul
     Ok(text.replacen(anchor, with, 1))
 }
 
+/// Take the last 64 bytes of KM4's main RAM from the heap and name them
+/// `wellfed_time_carry`: the wall clock's record for the next boot, which
+/// must sit where neither the image load, `.bss` clearing nor the heap
+/// reaches, at the same address in every build so it survives an
+/// activation.
+fn time_carry(linker: &str) -> Result<String> {
+    let anchor = "__sram_end__ = ORIGIN(BD_RAM_NS) + LENGTH(BD_RAM_NS);";
+    replace_once(
+        linker,
+        anchor,
+        "__sram_end__ = ORIGIN(BD_RAM_NS) + LENGTH(BD_RAM_NS) - 64;\n\
+         wellfed_time_carry = __sram_end__;",
+        SdkAnchor::SramEnd,
+    )
+}
+
 /// Print the Cortex-M33 fault status and address registers before the
 /// vendor backtrace. CFSR's IMPRECISERR or a BFAR in a peripheral marks a
 /// bus fault the stacked PC does not point at. Read-only; the handler still
@@ -533,12 +551,15 @@ fn rust_overlays(
     ] {
         let relative = project(&format!("project_{}/asdk/ld/{linker}", core.dir()));
         let anchor = "*(.image2.ram.text*)";
-        let text = replace_once(
+        let mut text = replace_once(
             &pinned(sdk, &relative)?,
             anchor,
             &format!("KEEP(*(.image2.ram.text.wellfed_park))\n\t\t{anchor}"),
             SdkAnchor::RamSection,
         )?;
+        if core == Core::Hp {
+            text = time_carry(&text)?;
+        }
         overlay(sdk, &relative, &text, overrides)?;
     }
     let text = hooks::overlay(&pinned(sdk, hooks::SOURCE)?)?;
@@ -997,6 +1018,20 @@ mod tests {
         fs::write(sdk.join(FREERTOS_CONFIG), "changed").unwrap();
         recompile_on_option_change(&sdk).unwrap();
         assert!(!lfs.exists());
+    }
+
+    #[test]
+    fn the_heap_leaves_the_time_carry_above_it() {
+        let pinned = "}\n\n__sram_end__ = ORIGIN(BD_RAM_NS) + LENGTH(BD_RAM_NS);\n";
+        let text = time_carry(pinned).unwrap();
+        assert!(text.contains("+ LENGTH(BD_RAM_NS) - 64;\nwellfed_time_carry = __sram_end__;"));
+
+        for changed in [pinned.replace("BD_RAM_NS)", "BD_RAM)"), pinned.repeat(2)] {
+            assert!(matches!(
+                time_carry(&changed),
+                Err(crate::Error::Sdk(SdkError::Anchor(SdkAnchor::SramEnd)))
+            ));
+        }
     }
 
     #[test]

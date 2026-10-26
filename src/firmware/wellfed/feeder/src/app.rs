@@ -1,9 +1,11 @@
 //! The firmware's start hook and its loop task; the button service is the
 //! other of its two tasks.
 
+use wellfed_core::clock::wall::Restart;
 use wellfed_feeder::feeder::{Feeder, Feeds};
 use wellfed_feeder::panel::BUTTONS;
-use wellfed_proto::api::{Blocked, EventBody, Refusal, Source, TraceSummary};
+use wellfed_feeder::stats::reset_cause;
+use wellfed_proto::api::{Blocked, EventBody, Refusal, ResetCause, Source, TraceSummary};
 use wellfed_sdk::hal::sdk;
 use wellfed_sdk::hal::supervision::config::SYSTIMER_HZ;
 use wellfed_sdk::{Slot, Startup, log};
@@ -20,6 +22,8 @@ fn start() -> Startup {
     // A trial build of this firmware confirms only once the feeding owner
     // has proved it can feed (`feeding::Proof`).
     wellfed_sdk::claim_feeding();
+    // Before the loop or the device API can read the clock.
+    wellfed_sdk::hal::clock::resume(restart());
 
     let created = wellfed_sdk::spawn(loop_task);
     sdk::log(if created {
@@ -37,6 +41,16 @@ fn start() -> Startup {
     // once it is otherwise healthy. Nothing that reads this runs before the
     // hook returns: the runtime's service task starts after it.
     Startup::Done
+}
+
+/// Whether this boot followed a reset that kept the KM0 RTC counting: a
+/// watchdog or software reset. A power-on, a brownout or a deep-sleep wake
+/// did not, or may not have.
+fn restart() -> Restart {
+    match reset_cause(sdk::boot_reason()) {
+        ResetCause::Watchdog | ResetCause::Software => Restart::Warm,
+        ResetCause::PowerOn | ResetCause::Brownout | ResetCause::Other => Restart::Cold,
+    }
 }
 
 /// The feeding owner's step, then the pass with a Noise operation and one
@@ -122,6 +136,7 @@ fn loop_task() -> u32 {
         log(format_args!("{} {record}\r\n", record.tag()));
     });
     feeder.pass_took(ticks_us(sdk::systimer_ticks().wrapping_sub(began)));
+    wellfed_sdk::hal::clock::keep();
     // A handshake operation is the pass's costly part (one or two X25519s,
     // 25-28 ms each): during a feed the owner is stepped again at once, so
     // the gap between its steps is the pass, not the pass and the delay.

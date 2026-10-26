@@ -5,7 +5,7 @@ This board tracks the owner-visible behavior the replacement firmware needs to m
 ## Current status
 
 - **Done:** FP01 (stock feature inventory), FP11 (child lock).
-- **In progress:** FP02 (owner CLI), FP18 (server mirror, first slice on host).
+- **In progress:** FP02 (owner CLI), FP18 (server mirror, first slice on host). The server's engineering cards are on [SERVER_BOARD.md](SERVER_BOARD.md).
 - **Critical path to parity:** FW30 → FW16 → FW17 → FW18 → FP03. Nothing a pet depends on works before FW17 can feed.
 - **Startable without motion:** FP04's static pass on stock's plan records, FP09, and the reporting halves of FP12 and FP14.
 

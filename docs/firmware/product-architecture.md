@@ -31,7 +31,9 @@ The owner's target (Oct 23, 2026): the Petlibro experience, fully open and usabl
 | Installer | The Android app, and `wellfed-server` or the CLI | — |
 | Distribution | APKs and server builds as GitHub releases | App stores and F-Droid later |
 | Home Assistant | **Paused** (Oct 23) | See [Home Assistant](#home-assistant) |
-| Notifications, remote access | **Deferred**; no notifications for now | See [Deferred](#deferred) |
+| App and server | When a server is configured the app goes through it first, and straight to the feeder on the LAN only when the server is down; an uncertain write never switches path (owner, Oct 26; [server board](../../SERVER_BOARD.md#two-paths-one-feed)) | App direct only: no remote access, and each person's actions reach the audit log only through the feeder |
+| Notifications | Through the Android app's push, later; the server decides what is an alert (owner, Oct 26) | See [Deferred](#deferred) |
+| Remote access | Through a reverse proxy in front of the server, or the owner's VPN | See [Deferred](#deferred) |
 | Hardware | The PLAF103 first; a device layer generic enough for other AmebaD Petlibro models | — |
 
 ## Components
@@ -61,7 +63,7 @@ In code:
 
 ## Frontends
 
-- **Android app (Flutter).** It owns all IO through mature plugins: BLE (`flutter_blue_plus`), mDNS/NSD, sockets and joining a Wi-Fi network for the installer. All protocol logic goes through `wellfed-client` over `flutter_rust_bridge`, which also generates the Dart types. The app talks to feeders on the LAN directly, and to a `wellfed-server` over HTTP for long history and pet profiles when one exists. It can also run the stock installer: it joins stock's setup access point, sends the `DL` frame and serves the image in the foreground for about 3 minutes ([consumer installation](consumer-installation.md)).
+- **Android app (Flutter).** It owns all IO through mature plugins: BLE (`flutter_blue_plus`), mDNS/NSD, sockets and joining a Wi-Fi network for the installer. All protocol logic goes through `wellfed-client` over `flutter_rust_bridge`, which also generates the Dart types. The app talks to a `wellfed-server` over HTTP first when one exists, and to feeders on the LAN directly otherwise, or when the server is down ([two paths](../../SERVER_BOARD.md#two-paths-one-feed)). Setup, pairing and the installer always go to the feeder. It can also run the stock installer: it joins stock's setup access point, sends the `DL` frame and serves the image in the foreground for about 3 minutes ([consumer installation](consumer-installation.md)).
 - **Server web UI (Svelte, `src/web`).** A SvelteKit single-page app embedded in `wellfed-server`, sharing the bench's tokens and components, with its types generated from the server's `openapi.json` ([web UI design](../web/README.md)). Browsers reach the feeder only through the server.
 - **Two UIs.** The app and the web UI are separate codebases. That cost is accepted for a native-feeling mobile app; Rust-generated types keep their data models identical.
 - **Spike first.** Before building screens, a throwaway Android app proves the risky parts against a host-simulated feeder: BLE scanning and writes, NSD discovery on a real network, and a Noise session through `wellfed-client`.
@@ -161,7 +163,7 @@ The entity model in `wellfed-feeder` should not assume either one.
 
 ## Deferred
 
-- **Notifications.** None for now. Push on iOS and Android goes through Apple and Google services, which need credentials tied to the app's publisher, so a self-hosted server can't send them alone. The options are ntfy or UnifiedPush, a small project relay, or both.
+- **Notifications.** Later, through the Android app: the server decides what is an alert (SV70) and the app delivers it. Push on iOS and Android goes through Apple and Google services, which need credentials tied to the app's publisher, so a self-hosted server can't send them alone. The options are ntfy or UnifiedPush, a small project relay, or both.
 - **Remote access.** Only through the owner's server; the owner's VPN is one route.
 
 ## SDK work

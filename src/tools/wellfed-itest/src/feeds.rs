@@ -70,8 +70,15 @@ pub(super) fn feed_writes(ctx: &mut Ctx) -> Result<()> {
             running.feed
         );
         ctx.halted = Some(reason.clone());
+        if matches!(wait, Error::Interrupted) {
+            return Err(Error::Interrupted);
+        }
         let failure = result.err().map_or_else(String::new, |e| format!("{e}; "));
         return Err(Error::Bench(format!("{failure}{reason}")));
+    }
+    // An uncertain feed the UART never showed: nothing is safe to send.
+    if ctx.halted.is_some() {
+        return result;
     }
 
     // Put back whatever went through, whatever failed.
@@ -314,6 +321,14 @@ fn start_feed(ctx: &mut Ctx, issued: &mut Option<Issued>) -> Result<(u32, usize)
         Err(Error::Interrupted) => return Err(Error::Interrupted),
         Err(error) => {
             *issued = taken(ctx, since)?.map(|feed| Issued { feed, since });
+            if issued.is_none() {
+                // It may still be on its way to the owner, or taken
+                // unlogged: nothing tells when the outputs are free.
+                ctx.halted = Some(format!(
+                    "a feed request failed ({error}) and no feed record followed within \
+                     {RECORD_SECONDS:.0} s; nothing was restored"
+                ));
+            }
             return Err(Error::Bench(format!(
                 "The feed request failed, so the feed is uncertain and is not sent again: {error}"
             )));

@@ -92,6 +92,8 @@ struct Feeder {
     ignores_cancel: bool,
     /// A feed starts but its answer never arrives.
     loses_feed_answer: bool,
+    /// A feed request goes unanswered and no feed starts.
+    drops_feed: bool,
     /// The held session dies once a feed drives.
     held_dies_mid_feed: bool,
     /// A feed never reports its result.
@@ -137,6 +139,7 @@ impl Feeder {
             saves_during_feed: false,
             ignores_cancel: false,
             loses_feed_answer: false,
+            drops_feed: false,
             held_dies_mid_feed: false,
             feed_never_ends: false,
         }
@@ -340,6 +343,9 @@ impl Feeder {
             return Err(Error::Bench("the feeder did not answer".into()));
         }
         self.logged(ask.name());
+        if matches!(ask, Ask::Feed { .. }) && self.drops_feed {
+            return Err(Error::Bench("the feeder did not answer".into()));
+        }
         if let Ask::Feed { portions } = ask
             && self.loses_feed_answer
             && self.feeding().is_none()
@@ -1247,6 +1253,50 @@ fn a_feed_that_never_ends_stops_the_suite_without_restoring() {
     };
     assert!(reason.contains("feed 12 may still be running"), "{reason}");
     // Nothing went to the feeder after the feed but reads.
+    let after = feeder.actions.iter().position(|a| a == "release").unwrap();
+    assert!(
+        feeder.actions[after + 1..]
+            .iter()
+            .all(|a| a == "ask status" || a == "ask get-settings"),
+        "{:?}",
+        &feeder.actions[after + 1..]
+    );
+}
+
+#[test]
+fn a_lost_feed_request_with_no_feed_record_stops_the_suite_without_restoring() {
+    let mut feeder = Feeder::new(GOOD);
+    feeder.drops_feed = true;
+    let (reports, _) = suite(
+        &mut feeder,
+        &[
+            "--review",
+            "r",
+            "--feeds",
+            "--keep-going",
+            "--only",
+            "feed-writes,soak",
+            "--soak-minutes",
+            "1",
+        ],
+    );
+
+    assert_eq!(
+        verdicts(&reports),
+        [
+            ("ota-update", "pass"),
+            ("feed-writes", "fail"),
+            ("soak", "skip")
+        ]
+    );
+    let Verdict::Fail(reason) = &reports[1].verdict else {
+        unreachable!()
+    };
+    assert!(reason.contains("the feed is uncertain"), "{reason}");
+    assert_eq!(
+        feeder.actions.iter().filter(|a| *a == "ask feed").count(),
+        1
+    );
     let after = feeder.actions.iter().position(|a| a == "release").unwrap();
     assert!(
         feeder.actions[after + 1..]

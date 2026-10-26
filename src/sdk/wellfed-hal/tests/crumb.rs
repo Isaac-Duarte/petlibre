@@ -238,3 +238,64 @@ fn a_supervision_stop_marks_the_crumb_and_leaves_the_network() {
     assert_eq!(crumb.feeder, Feeder::Stopping);
     wellfed_hal::link::reset();
 }
+
+#[test]
+fn a_stop_is_certain_once_it_outlasts_the_progress_gap() {
+    use wellfed_hal::supervision::stop_certain;
+
+    assert!(!stop_certain(10_000, 10_000, 1_000));
+    assert!(!stop_certain(10_000, 10_999, 1_000));
+    assert!(stop_certain(10_000, 11_000, 1_000));
+    // Across the uptime wrap.
+    assert!(stop_certain(u32::MAX - 500, 500, 1_000));
+    assert!(!stop_certain(u32::MAX - 500, 400, 1_000));
+}
+
+#[test]
+fn a_transient_supervision_stop_keeps_the_network_and_the_crumb() {
+    use wellfed_hal::link::{self, wellfed_wifi_restarting};
+    use wellfed_hal::supervision::{self, config};
+
+    let _guard = start();
+    link::reset();
+    supervision::reset();
+    let gap = config::WATCHDOG.max_progress_gap_ms;
+
+    // Feeder passes every 250 ms: false for three of them, then feeding again.
+    supervision::supervised(true, 0);
+    for now in [250, 500, 750] {
+        supervision::supervised(false, now);
+    }
+    assert!(750 - 250 < gap);
+    supervision::supervised(true, 1_000);
+    // A later false starts its own count, not the old one's.
+    supervision::supervised(false, 1_250);
+    supervision::supervised(false, 1_250 + gap - 1);
+
+    assert_eq!(wellfed_wifi_restarting(), 0);
+    tick(c"IDLE", false);
+    let crumb = Crumb::decode(register()).expect("the hook leaves a crumb");
+    assert_eq!(crumb.feeder, Feeder::Feeding);
+}
+
+#[test]
+fn a_supervision_stop_past_the_gap_leaves_and_marks_the_crumb() {
+    use wellfed_hal::link::{self, wellfed_wifi_restarting};
+    use wellfed_hal::supervision::{self, config};
+
+    let _guard = start();
+    link::reset();
+    supervision::reset();
+    let gap = config::WATCHDOG.max_progress_gap_ms;
+
+    supervision::supervised(false, 5_000);
+    supervision::supervised(false, 5_000 + gap - 250);
+    assert_eq!(wellfed_wifi_restarting(), 0);
+    supervision::supervised(false, 5_000 + gap);
+
+    assert_eq!(wellfed_wifi_restarting(), 1);
+    tick(c"IDLE", false);
+    let crumb = Crumb::decode(register()).expect("the hook leaves a crumb");
+    assert_eq!(crumb.feeder, Feeder::Stopping);
+    link::reset();
+}

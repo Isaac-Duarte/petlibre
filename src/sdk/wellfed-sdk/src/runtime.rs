@@ -324,10 +324,12 @@ unsafe extern "C" fn feeder_task(_: *mut c_void) -> u32 {
         outputs_ok: outputs.verified() || outputs.sensing(),
         owner: beat::read(),
     };
-    if RESTART.load(Ordering::Acquire) || !supervise::feed(&inputs) {
-        // A supervision stop (a trial's deadline, a hung task) resets as
-        // surely as a restart, so it leaves the network too.
-        supervision::stopping();
+    let feeding = supervise::feed(&inputs);
+    // A supervision stop (a trial's deadline, a hung task) leaves the
+    // network as a restart does, but only once it has outlasted the
+    // progress gap and the reset is certain.
+    supervision::supervised(feeding, now);
+    if RESTART.load(Ordering::Acquire) || !feeding {
         if !STOPPED.swap(true, Ordering::Relaxed) {
             // The owner's beat age, gap and supervision; zeros with no owner.
             let (owner_age, owner_gap, supervised) = inputs.owner.map_or((0, 0, false), |b| {

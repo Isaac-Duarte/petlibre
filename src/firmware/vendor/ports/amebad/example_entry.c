@@ -65,7 +65,7 @@ enum {
 #define WELLFED_CAUSE_RESTART 4
 int wellfed_wifi_restarting(void);
 /* How long a leave waits for the driver to report the association gone:
- * inside the watchdog's shortest expiry (2.9 s) with a gateway probe's
+ * inside the watchdog's shortest expiry (2.4 s at its clock's bound) with a gateway probe's
  * second before it. */
 #define WELLFED_LEAVE_WAIT_MS 1000
 #define WELLFED_POLL_MS 50

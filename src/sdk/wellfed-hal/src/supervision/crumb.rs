@@ -10,7 +10,7 @@
 //!
 //! **Spun or masked.** While interrupts run the tick keeps counting, so
 //! `since` climbs past the feeder's 250 ms period to the watchdog's expiry
-//! (at least 2.9 s): a task spun, or held the scheduler suspended
+//! (at least 2.4 s at the clock's bounds, about 4.0 s measured): a task spun, or held the scheduler suspended
 //! (`suspended`), and the task named is the one that kept the CPU. Once
 //! interrupts are masked the tick stops too, and the register keeps the
 //! value from just before: `since` inside a feed period or so, and the task
@@ -37,13 +37,13 @@ pub const REGISTER: u32 = 2;
 /// The FreeRTOS tick period (`configTICK_RATE_HZ` 1000).
 const TICK_MS: u32 = 1;
 /// `since` is kept in steps this long: six bits reach past the watchdog's
-/// longest expiry (5.3 s).
+/// longest expiry (5.5 s).
 pub const SINCE_STEP_MS: u32 = 128;
 const SINCE_MAX: u32 = 0x3f;
 /// The feeder unseen this long (about 2 s, a whole number of steps) while
 /// the tick still ran is a spin: well past its 250 ms period and any
 /// routine stall (the 0.45–0.72 s association stall), and below the
-/// watchdog's shortest expiry less a feed period (2.65 s), so a spin that
+/// watchdog's shortest expiry less a feed period (2.18 s), so a spin that
 /// lasts until the reset always reads as one.
 pub const SPIN_MS: u32 = 16 * SINCE_STEP_MS;
 

@@ -473,7 +473,7 @@ mod tests {
         // Either is a second identity inside the window: the enrollment is
         // contested, and the status says so.
         assert!(contested.exists());
-        assert!(Enrollment::view(&config).unwrap().contested);
+        assert!(Enrollment::view(&config).unwrap().unwrap().contested);
         assert_eq!(
             auth.login(
                 "local-server-AF_NEW",

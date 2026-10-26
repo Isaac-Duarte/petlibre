@@ -136,7 +136,14 @@ async fn status(
     let mut status = state.status.borrow().clone();
     // Read beside the config at each call: the broker child writes a
     // contest while the server runs.
-    status.enrollment = Enrollment::view(&state.config_path);
+    // An unreadable record fails the status: a client must not read it as
+    // a captured device and skip the owner's check.
+    status.enrollment = Enrollment::view(&state.config_path).map_err(|error| {
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("enrollment unreadable: {error:#}"),
+        )
+    })?;
     Ok(Json(status))
 }
 

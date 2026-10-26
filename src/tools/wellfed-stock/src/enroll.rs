@@ -90,13 +90,18 @@ impl Enrollment {
 
     /// What the status document shows of the enrollment beside
     /// `config_path`: the device and its address, never its credentials.
-    pub fn view(config_path: &Path) -> Option<StockEnrollment> {
-        let record = Self::load(&Self::path(config_path)).ok().flatten()?;
-        Some(StockEnrollment {
+    /// An unreadable record is an error, not "no enrollment": shown as none,
+    /// the installer would take the feeder for a captured one and skip the
+    /// owner's check.
+    pub fn view(config_path: &Path) -> Result<Option<StockEnrollment>> {
+        let Some(record) = Self::load(&Self::path(config_path))? else {
+            return Ok(None);
+        };
+        Ok(Some(StockEnrollment {
             device: record.client_id,
             address: record.address,
             contested: Self::contested_path(config_path).exists(),
-        })
+        }))
     }
 }
 
@@ -168,6 +173,16 @@ mod tests {
                 0o600
             );
         }
+    }
+
+    #[test]
+    fn an_unreadable_record_is_an_error_not_a_captured_device() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("installer.json");
+        assert!(Enrollment::view(&config).unwrap().is_none());
+
+        fs::write(Enrollment::path(&config), "{ torn").unwrap();
+        assert!(Enrollment::view(&config).is_err());
     }
 
     #[test]

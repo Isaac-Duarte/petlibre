@@ -244,6 +244,22 @@ fn stock_bin(given: Option<&Path>) -> Result<PathBuf> {
     Ok(beside)
 }
 
+/// What reopening a promotion's session found.
+enum Reopened {
+    Session(Box<wellfed_connect::Connection>),
+    /// Bank 1 already runs the served build.
+    Activated,
+    /// The feeder did not come back in time.
+    Gone,
+}
+
+/// Whether a session answering from `bank` with `build` shows the
+/// promotion already activated. During a promotion that started on bank 0,
+/// bank 1 can only run the served build once bank 0 activated it.
+fn activated(bank: u8, build: &str, served: &str) -> bool {
+    bank == 1 && build.eq_ignore_ascii_case(served)
+}
+
 /// SIGTERM, up to [`STOP_WAIT`] to exit, then SIGKILL.
 async fn stop_child(mut child: Child) {
     let pid = child
@@ -341,7 +357,7 @@ impl Run {
                      --from-bank0 --stock-backup <stock 1.1.15 OTA image>."
                 ),
                 Step::Promote => {
-                    let outcome = self.promote().await?;
+                    let outcome = self.promote(install.build()).await?;
                     install.promoted(outcome);
                 }
                 Step::AwaitConfirm => self.await_confirm(install).await?,
@@ -674,7 +690,7 @@ impl Run {
     /// resumes on the next one (chunks are idempotent by offset, and bank 0
     /// waits a minute for the next), so a lost answer or a restart reopens
     /// the session rather than ending the promotion.
-    async fn promote(&self) -> Result<Result<(), UpdateError>> {
+    async fn promote(&self, served: &str) -> Result<Result<(), UpdateError>> {
         let payload = self
             .container
             .get(CONTAINER_HEADER..)
@@ -695,10 +711,14 @@ impl Run {
                 None if reopened >= REOPEN_MAX => return Ok(Err(UpdateError::Lost)),
                 None => {
                     reopened += 1;
-                    let Some(session) = self.reopen(&mut installer).await? else {
-                        return Ok(Err(UpdateError::Lost));
-                    };
-                    connection.insert(session)
+                    match self.reopen(&mut installer, served).await? {
+                        Reopened::Session(session) => connection.insert(*session),
+                        Reopened::Activated => {
+                            eprintln!("Bank 1 already runs the build: it was activated.");
+                            return Ok(Ok(()));
+                        }
+                        Reopened::Gone => return Ok(Err(UpdateError::Lost)),
+                    }
                 }
             };
 
@@ -742,22 +762,25 @@ impl Run {
     }
 
     /// A new session for the promotion, with the installer told which bank
-    /// answers; `None` when the feeder does not come back in time.
-    async fn reopen(
-        &self,
-        installer: &mut Installer<'_>,
-    ) -> Result<Option<wellfed_connect::Connection>> {
+    /// answers. If bank 1 answers with the served build, the activation's
+    /// answer was lost and the feeder already restarted into its trial boot:
+    /// offering the manifest there would interrupt the trial, so the
+    /// promotion counts as activated instead.
+    async fn reopen(&self, installer: &mut Installer<'_>, served: &str) -> Result<Reopened> {
         let deadline = Instant::now() + REPLACEMENT_WAIT;
         loop {
             if let Ok(mut session) = self.connect().await
                 && let Ok(Answer::Status(status)) =
                     session.ask(crate::device::random()?, &Op::Status).await
             {
+                if activated(status.bank, &status.build, served) {
+                    return Ok(Reopened::Activated);
+                }
                 installer.opened(status.bank);
-                return Ok(Some(session));
+                return Ok(Reopened::Session(Box::new(session)));
             }
             if Instant::now() >= deadline {
-                return Ok(None);
+                return Ok(Reopened::Gone);
             }
             tokio::time::sleep(POLL).await;
         }
@@ -874,6 +897,36 @@ mod tests {
         enrollment.contested = true;
         status.enrollment = Some(enrollment);
         assert_eq!(view(&status).trust, FeederTrust::Contested);
+    }
+
+    /// A session lost after the last chunk, reopened once the feeder
+    /// restarted into its trial boot, is the activation: the manifest is not
+    /// offered to bank 1 (that would read as a failure, or give way and
+    /// abandon the trial).
+    #[test]
+    fn bank_1_running_the_served_build_on_reopen_is_the_activation() {
+        let served = "ab".repeat(32);
+        assert!(activated(1, &served.to_ascii_uppercase(), &served));
+        assert!(
+            !activated(0, &served, &served),
+            "bank 0 resumes the install"
+        );
+        assert!(!activated(1, &"cd".repeat(32), &served));
+
+        // What the installer would do instead: from Receiving, a session on
+        // bank 1 goes back to offering, which is what this avoids.
+        let manifest = [0u8; 4];
+        let payload = [0u8; 4];
+        let mut installer = Installer::new(Image {
+            manifest: &manifest,
+            downgrade: None,
+            payload: &payload,
+        });
+        installer.opened(1);
+        assert!(matches!(
+            installer.poll(),
+            Next::Send(wellfed_client::update::Sent::Offer, _)
+        ));
     }
 
     #[test]

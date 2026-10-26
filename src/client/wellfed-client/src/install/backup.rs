@@ -3,17 +3,17 @@
 //! Promotion writes the replacement into bank 1, which until then holds
 //! the feeder's only copy of stock. So an install never promotes until it
 //! holds a [`VerifiedBackup`], and the only way to make one is
-//! [`VerifiedBackup::verify`]: stock 1.1.15's application payload, bare or
-//! inside an OTA container, whose SHA-256 is the pinned payload's. A damaged
-//! or partial copy cannot pass, and the check does not care where the bytes
-//! came from.
+//! [`VerifiedBackup::verify`]: stock 1.1.15's bare application payload,
+//! whose SHA-256 is the pinned payload's, or the vendor's exact OTA
+//! container, whose SHA-256 is the pinned container's. A damaged or partial
+//! copy cannot pass, and the check does not care where the bytes came from.
 //!
-//! The payload is what is pinned, not only the whole container: the bank
-//! holds the payload, and the 32-byte container header the installer
-//! rebuilds from it (lengths and byte-sum) need not match the vendor's file
-//! byte for byte, nor is it known that a factory-flashed unit was ever
-//! written from that exact container. The vendor container's own digest
-//! passes too.
+//! The payload is pinned, not only the whole container, because the bank
+//! holds the payload: a factory-flashed unit may never have been written
+//! from that exact container, and a backup read from bank 1 is a payload.
+//! A container is never taken apart, though: any header other than the
+//! vendor's over the right payload is refused, since its fields are not
+//! checked here and a restore would write it as given.
 //!
 //! Where the bytes come from is the rollback card's: the build on bank 0
 //! streams bank 1 over the device API, and the installer restores the
@@ -42,9 +42,6 @@ pub const STOCK_PAYLOAD_SHA256: [u8; 32] = [
     0xc5, 0xf9, 0x12, 0xc2, 0x04, 0xbd, 0x0a, 0xc6, 0x8e, 0x0a, 0x03, 0xa7, 0x21, 0x20, 0x70, 0x5a,
 ];
 
-/// The OTA container's header precedes the payload.
-const CONTAINER_HEADER: usize = 32;
-
 /// Why a backup does not count.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum BackupError {
@@ -63,21 +60,10 @@ pub struct VerifiedBackup {
 }
 
 impl VerifiedBackup {
-    /// Check stock's payload, bare or in an OTA container, against the pin.
+    /// Check a bare stock payload, or the exact pinned OTA container,
+    /// against the pins.
     pub fn verify(image: &[u8]) -> Result<Self, BackupError> {
-        let sha256: [u8; 32] = Sha256::digest(image).into();
-        let payload = image
-            .get(CONTAINER_HEADER..)
-            .map(|payload| <[u8; 32]>::from(Sha256::digest(payload)));
-
-        if sha256 == STOCK_OTA_SHA256
-            || sha256 == STOCK_PAYLOAD_SHA256
-            || payload == Some(STOCK_PAYLOAD_SHA256)
-        {
-            Ok(Self { _checked: () })
-        } else {
-            Err(BackupError::NotPinned { sha256 })
-        }
+        verify_against(image, &STOCK_OTA_SHA256, &STOCK_PAYLOAD_SHA256)
     }
 
     /// The stock release it restores.
@@ -90,5 +76,52 @@ impl VerifiedBackup {
     #[cfg(test)]
     pub(crate) fn for_tests() -> Self {
         Self { _checked: () }
+    }
+}
+
+/// `image` is exactly the pinned container, or exactly the pinned payload.
+/// A container is never taken apart: a header other than the vendor's
+/// (lengths, byte-sum, magic) over the right payload is refused, since
+/// nothing here checks its fields and a restore would write it as given.
+fn verify_against(
+    image: &[u8],
+    container: &[u8; 32],
+    payload: &[u8; 32],
+) -> Result<VerifiedBackup, BackupError> {
+    let sha256: [u8; 32] = Sha256::digest(image).into();
+    if sha256 == *container || sha256 == *payload {
+        Ok(VerifiedBackup { _checked: () })
+    } else {
+        Err(BackupError::NotPinned { sha256 })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Synthetic pins over synthetic bytes: the real payload is the vendor's
+    /// and stays out of the repository.
+    #[test]
+    fn only_the_exact_container_or_the_bare_payload_passes() {
+        let payload = b"stock payload, synthetic".to_vec();
+        let mut container = vec![0x11; 32];
+        container.extend_from_slice(&payload);
+        let pins = (
+            <[u8; 32]>::from(Sha256::digest(&container)),
+            <[u8; 32]>::from(Sha256::digest(&payload)),
+        );
+        let check = |image: &[u8]| verify_against(image, &pins.0, &pins.1).is_ok();
+
+        assert!(check(&container));
+        assert!(check(&payload));
+
+        // The right payload under a damaged header is refused.
+        let mut corrupt = container.clone();
+        corrupt[4] ^= 0x01;
+        assert!(!check(&corrupt));
+        // So are a truncated payload and a payload with bytes appended.
+        assert!(!check(&payload[..payload.len() - 1]));
+        assert!(!check(&[&payload[..], &[0]].concat()));
     }
 }

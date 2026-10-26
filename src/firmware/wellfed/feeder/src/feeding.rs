@@ -178,6 +178,21 @@ pub const CONFIG: OwnerConfig = OwnerConfig {
     flash: core::ptr::null_mut(),
 };
 
+/// The shortest drive between two marks' rises: 9.1 s with the hopper
+/// empty on the adapter, 9.8-9.9 s with food (bench, October 25,
+/// docs/firmware/motor-pulse.md, "Food and a full turn").
+pub const MARK_PERIOD_MIN_MS: u32 = 9100;
+
+// A homing mark is uncredited, so its window must never hold a whole
+// compartment of travel. The most forward drive that window can hold is
+// the inhibit plus every reversal's return over the ground it gave up
+// (the back-off and pause themselves move the rotor no further forward).
+const _: () = assert!(
+    CONFIG.feed.feedback_inhibit_ms
+        + CONFIG.feed.max_reverse_attempts as u32 * CONFIG.feed.reverse_ms
+        < MARK_PERIOD_MIN_MS
+);
+
 /// The longest one feed can keep the outputs from rest, and so the longest
 /// a Wi-Fi join or a storage write waits for them: the owner keeps the emitters on for at most
 /// `optics_max_on_ms` from the request, and its configuration check holds

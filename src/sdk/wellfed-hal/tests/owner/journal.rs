@@ -98,6 +98,36 @@ fn the_rotor_phase_follows_each_feed_and_the_journal() {
     f.stop();
 }
 
+/// A reboot after a completed feed reads the rotor at a mark from the
+/// journal's `Done` result, so the next feed does not home.
+#[test]
+fn a_reboot_after_a_completed_feed_reads_the_rotor_at_a_mark() {
+    let mut f = boot_with_journal(false);
+    f.start_feed();
+    f.complete();
+    assert!(f.status().result_durable);
+    assert!(f.owner.acknowledge(1));
+    f.step();
+    f.stop();
+
+    restart_with_journal(&mut f);
+    assert_eq!(f.status().state, OwnerState::Idle);
+    assert_eq!(f.status().phase, RotorPhase::AtMark);
+    assert_eq!(f.owner.submit(2, 1), SubmitResult::Enqueued);
+    f.step();
+    assert!(!f.task().request.homing);
+    f.stop();
+
+    // Before its acknowledgement the result is the journal's last as well.
+    let mut f = boot_with_journal(false);
+    f.start_feed();
+    f.complete();
+    f.stop();
+    restart_with_journal(&mut f);
+    assert_eq!(f.status().phase, RotorPhase::AtMark);
+    f.stop();
+}
+
 #[test]
 fn a_torn_result_resolves_as_uncertain_at_the_next_boot() {
     let mut f = boot_with_journal(false);

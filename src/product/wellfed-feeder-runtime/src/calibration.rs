@@ -2,7 +2,7 @@
 //! portion weighs.
 //!
 //! The device API queues a whole new calibration ([`change`]); the writer
-//! saves it to NOR (storage sectors 29 and 30) and publishes what the
+//! saves it to NOR (storage sectors 34 and 35) and publishes what the
 //! store holds ([`publish`]), which the loop reads for the portion
 //! statistics. Nothing here writes flash, and nothing here reaches the
 //! feeding owner: a weight changes what a portion is reported to weigh,
@@ -119,6 +119,11 @@ pub fn publish<I: SlotIo>(store: &CalibrationStore<I>, armed: bool) {
 
 /// Forget everything (host tests).
 pub fn reset() {
+    {
+        let _guard = IrqGuard::lock();
+        // SAFETY: interrupts are masked, so this is the only reference.
+        unsafe { *PUBLISHED.get() = Calibration::default() };
+    }
     LOADED.store(false, Ordering::Release);
     WRITABLE.store(false, Ordering::Release);
     GENERATION.store(0, Ordering::Release);

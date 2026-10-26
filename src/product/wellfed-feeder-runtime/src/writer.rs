@@ -17,7 +17,7 @@
 //! It keeps the time settings too (sectors 27 and 28,
 //! `wellfed_feeder::store::time`): the owner's zone and the NTP server,
 //! published for the loop ([`time`]), and the portion calibration (sectors
-//! 29 and 30, `wellfed_feeder::store::calibration`, [`calibration`]).
+//! 34 and 35, `wellfed_feeder::store::calibration`, [`calibration`]).
 //!
 //! It also keeps the event history (sectors 13-24,
 //! `wellfed_feeder::store::events`). It appends the records the loop queues

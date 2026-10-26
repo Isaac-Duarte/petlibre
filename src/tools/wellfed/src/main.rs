@@ -503,9 +503,18 @@ struct CalibrateArgs {
     clear: bool,
 }
 
+/// A `--weighed` or `--portion` value that is not a weight in grams.
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+#[error("{text:?} is not a weight in grams (like 9.8)")]
+struct NotGrams {
+    text: String,
+}
+
 /// Grams with up to three decimals, as milligrams.
-fn parse_grams(text: &str) -> Result<u32, String> {
-    let invalid = || format!("{text:?} is not a weight in grams (like 9.8)");
+fn parse_grams(text: &str) -> Result<u32, NotGrams> {
+    let invalid = || NotGrams {
+        text: text.to_owned(),
+    };
     let (whole, fraction) = text.split_once('.').unwrap_or((text, ""));
     if whole.is_empty() || fraction.len() > 3 || !fraction.bytes().all(|b| b.is_ascii_digit()) {
         return Err(invalid());

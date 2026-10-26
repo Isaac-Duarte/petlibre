@@ -1091,3 +1091,83 @@ fn a_jam_before_the_homing_mark_still_homes_on_it() {
         "stopped at {position}"
     );
 }
+
+/// Where a homing mark ends and a credited one begins after a reversal:
+/// the window is the inhibit plus what backing off cost, so a first mark
+/// just inside it homes and one just past it is credited, as stock credits
+/// a first mark past its plain window.
+#[test]
+fn a_first_mark_just_past_the_widened_window_is_credited() {
+    let r = FeedRequest {
+        homing: true,
+        ..request(1, 1, BowlMode::Single, Direction::D0)
+    };
+    let window = PLAF103.feedback_inhibit_ms + PLAF103.reversal_ms();
+
+    // Forward travel to the mark, jammed 0.5 s in for one reversal: the
+    // mark arrives at the travel plus the reversal's cost (and the polls
+    // the stall took to qualify).
+    for (travel, homed) in [(4_950, true), (5_050, false)] {
+        let start = PERIOD - travel;
+        let (controller, position) = jammed_from(&PLAF103, &r, start, start + 500, 1);
+        assert_eq!(controller.reverse_attempts, 1, "travel {travel}");
+        assert_eq!(
+            (controller.state, controller.reason),
+            (FeedState::Complete, FeedReason::Done),
+            "travel {travel}"
+        );
+        assert_eq!(controller.progress.completed, 1);
+        match controller.homed_ms {
+            Some(at) => {
+                assert!(homed, "travel {travel}: homed at {at} ms");
+                assert!(at < window, "travel {travel}: homed at {at} ms");
+                // The portion is the mark after the homing one.
+                assert!((2 * PERIOD..2 * PERIOD + 50).contains(&position));
+            }
+            None => {
+                assert!(!homed, "travel {travel}: credited its first mark");
+                assert!((PERIOD..PERIOD + 50).contains(&position));
+            }
+        }
+    }
+}
+
+/// A homing feed fails as any feed does: no edge for the feedback timeout,
+/// before or after its homing mark, and a mark input held LOW.
+#[test]
+fn a_homing_feed_ends_on_lost_feedback_or_a_stuck_mark() {
+    // No mark at all: nothing homed, nothing credited.
+    let mut f = begin_homing(&LIMITS, 1);
+    f.advance(30);
+    f.expect_fault(FeedReason::FeedbackTimeout);
+    assert_eq!(
+        (f.controller.homed_ms, f.controller.progress.completed),
+        (None, 0)
+    );
+
+    // Homed, then no mark: the timeout counts from the homing mark.
+    let mut f = begin_homing(&LIMITS, 1);
+    f.advance(2);
+    f.edge(false);
+    f.edge(true);
+    assert_eq!(f.controller.homed_ms, Some(2));
+    f.advance(29);
+    assert_eq!(f.controller.state, FeedState::Running);
+    f.advance(1);
+    f.expect_fault(FeedReason::FeedbackTimeout);
+    assert_eq!(f.controller.progress.completed, 0);
+
+    // The mark input LOW past any mark, as a rotor stopped inside one
+    // reads: a sensor fault, never a homing mark.
+    let settings = FeedLimits {
+        mark_low_ms: 5,
+        ..LIMITS
+    };
+    let mut f = begin_homing(&settings, 1);
+    f.sample.mark_low = true;
+    f.advance(5);
+    assert_eq!(f.controller.state, FeedState::Running);
+    f.advance(1);
+    f.expect_fault(FeedReason::Sensor);
+    assert_eq!(f.controller.homed_ms, None);
+}

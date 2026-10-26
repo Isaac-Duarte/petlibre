@@ -2,8 +2,8 @@
 
 use jiff::Timestamp;
 use wellfed_api::{
-    ClientRole, EventKind, FeederId, FeederStatus, Generation, MetricKind, Role, Settings, UserId,
-    WifiSource,
+    Blocked, ClientRole, EventKind, FeederId, FeederStatus, Generation, MetricKind, Readiness,
+    Role, Settings, UserId, WifiSource,
 };
 use wellfed_store::{
     Error, FeederRow, NewEvent, NewFeeder, NewSample, NewUser, SealedKey, Store, Synced,
@@ -331,6 +331,7 @@ async fn the_cached_status_and_settings_read_back() {
         wifi_generation: Generation(0),
         last_event: Some(9),
         sessions: 1,
+        readiness: Some(Readiness::Blocked(Blocked::Joining)),
     };
     store.record_status(id, &status, at(200)).await.unwrap();
 

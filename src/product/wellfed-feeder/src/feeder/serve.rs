@@ -27,13 +27,14 @@ use wellfed_core::ota::install::{Answer, Phase};
 use wellfed_core::ota::offer::{KeyStatement, key_id};
 use wellfed_core::tone::Tune;
 use wellfed_proto::api::{
-    self as proto, Capabilities, EventBody, Metric, PORT, Refusal, Sample, Source, Stats,
-    StatsSection, Status, TASKS_MAX, TaskStack as WireTask, UpdateRefusal, UpdateView,
+    self as proto, Capabilities, EventBody, Metric, PORT, Readiness, Refusal, Sample, Source,
+    Stats, StatsSection, Status, TASKS_MAX, TaskStack as WireTask, UpdateRefusal, UpdateView,
 };
 use wellfed_session::noise::Keypair;
 
 use super::Feeds;
 use super::events;
+use super::feeding;
 use super::lock::LockBox;
 use super::owner::{self, POLL_MS};
 use super::platform::{Accepted, Boot, Datagram, Platform, Received, TaskCount, TaskStack};
@@ -146,6 +147,8 @@ fn server_record(record: server::Record, f: &mut impl fmt::Write) -> fmt::Result
 /// What the loop hands the device API each pass.
 pub struct Inputs<'a, F> {
     pub now_ms: u32,
+    /// BLE setup mode runs: no feed starts.
+    pub setup: bool,
     pub pairing: &'a mut Pairing,
     pub identity: Option<&'a Keypair>,
     /// The panel lock, once the owner has read it.
@@ -245,16 +248,19 @@ impl<S: Copy> Serve<S> {
         })
     }
 
-    /// One pass; the delay until the next.
+    /// One pass; the delay until the next. `called` hears a client's feed
+    /// queued this pass, with what its feed call's request came to.
     pub fn step<P: Platform<Socket = S>, F: Feeds>(
         &mut self,
         platform: &mut P,
         lock: &mut LockBox,
         inputs: Inputs<'_, F>,
         mut record: impl FnMut(Record),
+        called: impl FnOnce(u32, PlayResult),
     ) -> u32 {
         let Inputs {
             now_ms,
+            setup,
             pairing,
             identity,
             locked,
@@ -301,11 +307,12 @@ impl<S: Copy> Serve<S> {
         self.accept(platform, now_ms, &mut record);
         self.receive(platform, &mut record);
 
-        // No handshake while the outputs are claimed, not only while they
-        // move: an invite's join or a recovery enrolls a key, a store write
-        // that would wait out the feed, so the invite is redeemed (and the
-        // recovery code taken) only once it can be written. Held for at most
-        // the claim's bound, as joins are.
+        // While the outputs are claimed, not only while they move, only IK
+        // session handshakes go on (until one is refused): an invite's join or a
+        // recovery enrolls a key, a store write that would wait out the
+        // feed, so the invite is redeemed (and the recovery code taken) only
+        // once it can be written. Held for at most the claim's bound, as
+        // joins are.
         let feeding = feeds.feeding() || platform.claim_in_bound(now_ms);
         // The sessions this pass opened, counted once the device lets go of
         // the statistics.
@@ -316,10 +323,12 @@ impl<S: Copy> Serve<S> {
             feeds,
             boot,
             locked,
+            setup,
             now_ms,
             ntp_last: self.time.last(),
             stats: &mut self.stats,
             tasks: &mut self.tasks,
+            call: None,
         };
         let busy = self.server.step(
             Pass {
@@ -340,6 +349,9 @@ impl<S: Copy> Serve<S> {
                 record(Record::Server(r));
             },
         );
+        if let Some((feed, result)) = device.call {
+            called(feed, result);
+        }
         for handshake_ms in opened.into_iter().flatten() {
             self.stats.opened(handshake_ms);
         }
@@ -590,12 +602,16 @@ pub struct FeederDevice<'a, P, F> {
     pub(super) feeds: &'a mut F,
     pub(super) boot: Boot,
     pub(super) locked: Option<bool>,
+    /// BLE setup mode runs.
+    pub(super) setup: bool,
     /// The pass's time, which a clock sync is anchored to.
     pub(super) now_ms: u32,
     /// What the last NTP exchange came to.
     pub(super) ntp_last: Option<NtpResult>,
     pub(super) stats: &'a mut Keeper,
     pub(super) tasks: &'a mut TaskCache,
+    /// The feed a client queued, and its feed call's request.
+    pub(super) call: Option<(u32, PlayResult)>,
 }
 
 /// How long a walk of the task stacks answers memory requests: the walk
@@ -752,8 +768,17 @@ impl<P: Platform, F: Feeds> Device for FeederDevice<'_, P, F> {
         self.platform.capabilities()
     }
 
+    fn readiness(&mut self) -> Readiness {
+        feeding::readiness(&*self.feeds, self.setup, self.platform.installing())
+    }
+
     fn feed(&mut self, portions: u8, by: Source) -> Result<u32, Refusal> {
-        self.feeds.submit(portions, by)
+        let ready = self.readiness();
+        let (result, call) = feeding::queue(self.platform, self.feeds, ready, portions, by);
+        if let (Ok(feed), Some(play)) = (result, call) {
+            self.call = Some((feed, play));
+        }
+        result
     }
 
     fn feed_reserved(&mut self, feed: u32) -> Option<Result<(), Refusal>> {

@@ -88,4 +88,4 @@ The task logs these `PLAUD1` lines:
 - **Stored clips:** playing them needs a read-only FAT reader and the SDK's Helix AAC decoder, and a 44.1 kHz codec setup;
 - PA25's role;
 - quiet windows (FW21/FW23);
-- the feed-time call once FW17 can feed.
+- the feed-time call: since FW17 the loop plays `meal` once a feed is queued and steps the speaker outside setup mode ([device API](device-api.md)); not yet heard on hardware.

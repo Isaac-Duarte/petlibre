@@ -9,7 +9,7 @@ use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::{Generation, Hex};
+use crate::{Blocked, Generation, Hex};
 
 /// What the feeder pushes to a subscribed session, or to one that asked
 /// for its log.
@@ -108,6 +108,11 @@ pub enum EventBody {
         reason: FeedReason,
         by: Source,
     },
+    /// The lasting reason the feeder cannot feed changed: the new reason,
+    /// or none once it can feed again.
+    FeedingBlocked {
+        reason: Option<Blocked>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -162,6 +167,7 @@ impl EventBody {
             Self::ClockSync { .. } => EventKind::ClockSync,
             Self::Lost { .. } => EventKind::Lost,
             Self::Fed { .. } => EventKind::Fed,
+            Self::FeedingBlocked { .. } => EventKind::FeedingBlocked,
         }
     }
 }
@@ -179,6 +185,7 @@ pub enum EventKind {
     ClockSync,
     Lost,
     Fed,
+    FeedingBlocked,
 }
 
 impl EventKind {
@@ -194,6 +201,7 @@ impl EventKind {
             Self::ClockSync => "clock_sync",
             Self::Lost => "lost",
             Self::Fed => "fed",
+            Self::FeedingBlocked => "feeding_blocked",
         }
     }
 
@@ -208,6 +216,7 @@ impl EventKind {
             Self::ClockSync,
             Self::Lost,
             Self::Fed,
+            Self::FeedingBlocked,
         ]
         .into_iter()
         .find(|kind| kind.code() == code)

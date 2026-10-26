@@ -13,8 +13,8 @@ use wellfed_core::named_enum;
 use wellfed_core::ota::offer::KeyId;
 use wellfed_core::tone::Tune as CoreTune;
 use wellfed_proto::api::{
-    self as proto, Capabilities, EventBody, Refusal, Source, Stats, StatsSection, Status,
-    UpdateView,
+    self as proto, Blocked, Capabilities, EventBody, Readiness, Refusal, Source, Stats,
+    StatsSection, Status, UpdateView,
 };
 
 /// The rest of the feeder, as the server needs it. Every call returns at
@@ -43,8 +43,16 @@ pub trait Device {
     fn keys_outcome(&mut self, ticket: u32) -> Option<KeyOutcome>;
     /// What this firmware serves beyond major version 1's first ops.
     fn capabilities(&self) -> Capabilities;
+    /// Whether a feed can start now, and why not: the one decision both
+    /// the status reports and [`Self::feed`] is asked under. A device with
+    /// no feeding owner is [`Blocked::Unserved`].
+    fn readiness(&mut self) -> Readiness {
+        Readiness::Blocked(Blocked::Unserved)
+    }
     /// Queue one feed for the feeding owner on `by`'s behalf: the number
-    /// its journal will hold it under.
+    /// its journal will hold it under. Asked only while
+    /// [`Self::readiness`] is ready; the owner still refuses one that lost
+    /// a race (a join that began since).
     fn feed(&mut self, portions: u8, by: Source) -> Result<u32, Refusal>;
     /// Whether the feed `feed` queued is durably reserved yet: `None` while
     /// it waits, or why it ended before it was.

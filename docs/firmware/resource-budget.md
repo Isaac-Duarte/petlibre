@@ -89,6 +89,8 @@ From `PLAPI1 handshake`, the worst of three runs each, timed on the 32 kHz syste
 - do at most one handshake operation per pass, across all clients, so four clients connecting at once cannot stack up to 320 ms;
 - defer handshake operations while a feed is in progress, so the feeding owner's steps are never more than one transport message apart. The motor's stop guarantees stay with the supervision and hardware timers, never with loop timing.
 
+**Since FW17 (October 26)** IK session handshakes go on during a feed, one operation a pass, with the owner stepped again right after each such pass; a refused one closes unanswered and holds the rest until the feed ends, and invites and recovery still wait. The owner's observation gap (100 ms) bounds a pass during a drive, and an operation (one or two X25519s, about 55 ms with no preemption) fits it with the owner stepped on both sides ([device API](device-api.md)). `PLOWN1 steps` measures the real gap per feed.
+
 Transport messages are cheap: about 0.9 ms to seal or open a kilobyte.
 
 ## Clients, request IDs and buffers

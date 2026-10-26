@@ -10,9 +10,9 @@ use wellfed_proto::api as proto;
 use wellfed_proto::setup as proto_setup;
 
 use crate::{
-    Answer, Capabilities, Client, ClientRole, Counters, Counts, EnrollPath, Erases, Event,
+    Answer, Blocked, Capabilities, Client, ClientRole, Counters, Counts, EnrollPath, Erases, Event,
     EventBody, FeedOutcome, FeedReason, Flash, Food, Generation, Hello, Hex, Invite, Joined,
-    LogLines, Memory, NtpResult, NtpServer, Op, OpenRefusal, Power, PowerStats, Refusal,
+    LogLines, Memory, NtpResult, NtpServer, Op, OpenRefusal, Power, PowerStats, Readiness, Refusal,
     ResetCause, Resets, Sample, SampleValue, Settings, SettingsPatch, Source, Stats, StatsSection,
     Status, TaskStack, TimeSource, TimeSync, TimeView, Tune, UpdatePhase, UpdateRefusal,
     UpdateStop, UpdateView, WifiSource, setup,
@@ -86,6 +86,48 @@ impl From<proto::Status<'_>> for Status {
             wifi_generation: Generation(wifi_generation),
             last_event,
             sessions,
+            readiness: None,
+        }
+    }
+}
+
+impl From<proto::Readiness> for Readiness {
+    fn from(readiness: proto::Readiness) -> Self {
+        match readiness {
+            proto::Readiness::Ready => Self::Ready,
+            proto::Readiness::Blocked(blocked) => Self::Blocked(blocked.into()),
+        }
+    }
+}
+
+impl From<proto::Blocked> for Blocked {
+    fn from(blocked: proto::Blocked) -> Self {
+        match blocked {
+            proto::Blocked::Starting => Self::Starting,
+            proto::Blocked::Journal => Self::Journal,
+            proto::Blocked::Fault => Self::Fault,
+            proto::Blocked::Resolving => Self::Resolving,
+            proto::Blocked::Feeding => Self::Feeding,
+            proto::Blocked::Joining => Self::Joining,
+            proto::Blocked::Updating => Self::Updating,
+            proto::Blocked::Setup => Self::Setup,
+            proto::Blocked::Unserved => Self::Unserved,
+        }
+    }
+}
+
+impl From<Blocked> for proto::Blocked {
+    fn from(blocked: Blocked) -> Self {
+        match blocked {
+            Blocked::Starting => Self::Starting,
+            Blocked::Journal => Self::Journal,
+            Blocked::Fault => Self::Fault,
+            Blocked::Resolving => Self::Resolving,
+            Blocked::Feeding => Self::Feeding,
+            Blocked::Joining => Self::Joining,
+            Blocked::Updating => Self::Updating,
+            Blocked::Setup => Self::Setup,
+            Blocked::Unserved => Self::Unserved,
         }
     }
 }
@@ -177,6 +219,9 @@ impl From<proto::EventBody> for EventBody {
                 reason: reason.into(),
                 by: by.into(),
             },
+            proto::EventBody::FeedingBlocked { reason } => Self::FeedingBlocked {
+                reason: reason.map(Blocked::from),
+            },
         }
     }
 }
@@ -228,6 +273,9 @@ impl From<EventBody> for proto::EventBody {
                 outcome: outcome.into(),
                 reason: reason.into(),
                 by: by.into(),
+            },
+            EventBody::FeedingBlocked { reason } => Self::FeedingBlocked {
+                reason: reason.map(proto::Blocked::from),
             },
         }
     }
@@ -475,6 +523,10 @@ impl From<proto::Outcome<'_>> for Answer {
             proto::Outcome::Refused(refusal) => Self::Refused(refusal.into()),
             proto::Outcome::Feeding { feed } => Self::Feeding { feed },
             proto::Outcome::Update(view) => Self::Update(view.into()),
+            proto::Outcome::FeederStatus { status, readiness } => Self::Status(Status {
+                readiness: Some(readiness.into()),
+                ..status.into()
+            }),
             proto::Outcome::Time(view) => Self::Time(view.into()),
             proto::Outcome::Stats(stats) => Self::Stats(stats.into()),
         }
@@ -926,6 +978,7 @@ impl From<proto::Capabilities> for Capabilities {
             time: bits.contains(proto::Capabilities::TIME),
             log: bits.contains(proto::Capabilities::LOG),
             stats: bits.contains(proto::Capabilities::STATS),
+            readiness: bits.contains(proto::Capabilities::READINESS),
         }
     }
 }
@@ -938,6 +991,7 @@ impl From<Capabilities> for proto::Capabilities {
             time,
             log,
             stats,
+            readiness,
         } = capabilities;
         let mut bits = proto::Capabilities::V1.0;
         if feed {
@@ -954,6 +1008,9 @@ impl From<Capabilities> for proto::Capabilities {
         }
         if stats {
             bits |= proto::Capabilities::STATS.0;
+        }
+        if readiness {
+            bits |= proto::Capabilities::READINESS.0;
         }
         Self(bits)
     }
@@ -1060,6 +1117,10 @@ mod tests {
                 reason: proto::FeedReason::FeedbackStream,
                 by,
             },
+            proto::EventBody::FeedingBlocked {
+                reason: Some(proto::Blocked::Fault),
+            },
+            proto::EventBody::FeedingBlocked { reason: None },
         ]
     }
 

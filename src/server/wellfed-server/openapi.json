@@ -728,6 +728,21 @@
           }
         }
       },
+      "Blocked": {
+        "type": "string",
+        "description": "Why a feed cannot start now.",
+        "enum": [
+          "starting",
+          "journal",
+          "fault",
+          "resolving",
+          "feeding",
+          "joining",
+          "updating",
+          "setup",
+          "unserved"
+        ]
+      },
       "ClientRole": {
         "type": "string",
         "description": "A role in the feeder's own client table.",
@@ -1031,6 +1046,31 @@
                 "type": "integer",
                 "format": "int32",
                 "minimum": 0
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The lasting reason the feeder cannot feed changed: the new reason,\nor none once it can feed again.",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "feeding_blocked"
+                ]
+              },
+              "reason": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/Blocked"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               }
             }
           }
@@ -1350,6 +1390,17 @@
               }
             ]
           },
+          "readiness": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Readiness",
+                "description": "Whether a feed can start now; absent from a feeder that does not\nreport it."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "reset_flags": {
             "type": "integer",
             "format": "int32",
@@ -1502,6 +1553,43 @@
             "description": "Always `about:blank`: `code` carries the type."
           }
         }
+      },
+      "Readiness": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "state"
+            ],
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": [
+                  "ready"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "reason",
+              "state"
+            ],
+            "properties": {
+              "reason": {
+                "$ref": "#/components/schemas/Blocked"
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "blocked"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "Whether the feeder can start a feed now: the one decision a feed\nrequest obeys too."
       },
       "Role": {
         "type": "string",

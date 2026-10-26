@@ -445,8 +445,10 @@ impl Platform for SimPlatform {
     }
 
     fn capabilities(&self) -> Capabilities {
-        // No motor: the server refuses feeds before they reach the owner.
+        // No motor: the server refuses feeds before they reach the owner,
+        // and the status says why (`Unserved`).
         Capabilities::UPDATE
+            .union(Capabilities::READINESS)
             .union(Capabilities::TIME)
             .union(Capabilities::LOG)
             .union(Capabilities::STATS)

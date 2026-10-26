@@ -17,6 +17,13 @@ pub(super) enum Remembered {
     Feeding {
         feed: u32,
     },
+    /// A feed queued under `feed` and not yet reserved: a retry waits for
+    /// its reservation as the first request did, rather than queueing a
+    /// second feed. Remembered from the moment the feed is queued, so a
+    /// client whose session ended before the answer still gets it.
+    Queued {
+        feed: u32,
+    },
     /// An update op: a retry gets the update's state now.
     Update,
 }
@@ -47,7 +54,13 @@ impl Memory {
             .map(|&(_, result)| result)
     }
 
+    /// Remember `id`'s answer, replacing what an earlier stage of the same
+    /// write left (a queued feed's reservation).
     pub(super) fn remember(&mut self, id: RequestId, result: Remembered) {
+        if let Some(entry) = self.ids.iter_mut().flatten().find(|(seen, _)| *seen == id) {
+            entry.1 = result;
+            return;
+        }
         self.ids[self.next] = Some((id, result));
         self.next = (self.next + 1) % REMEMBERED;
     }

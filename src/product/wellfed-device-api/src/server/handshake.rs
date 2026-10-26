@@ -1,8 +1,20 @@
 //! Opening a session: the clear `Open` frame, then Noise IK against the
 //! enrolled clients, or XXpsk3 for an invite. At most one handshake
-//! operation runs per pass, and none during a feed: an X25519 costs about
-//! 27 ms on the KM4, so clients connecting at once cannot stack up to hold
-//! the loop.
+//! operation runs per pass: an X25519 costs about 27 ms on the KM4, so
+//! clients connecting at once cannot stack up to hold the loop.
+//!
+//! During a feed only IK session handshakes go on, so an enrolled client
+//! can open a session and read the status or cancel the feed. Each
+//! operation costs at most two X25519s, and the loop steps the feeding
+//! owner just before the pass and again just after one ran
+//! ([`Server::handshook`]), so the owner's observations stay within its
+//! 100 ms gap. Whether the key is enrolled is known only once the client's
+//! first message is read, so anyone on the LAN can start one; to bound what
+//! that costs a feed, a session the feeder refuses during a feed is closed
+//! without the reply (two X25519s saved), and after one handshake refused
+//! or failed during a feed, the rest wait for its end. An invite's join and
+//! a recovery always wait for the feed's end: each ends in an enrollment, a
+//! store write that would wait out the feed.
 
 use super::recovery::Rescue;
 use super::request::proto_role;
@@ -30,6 +42,9 @@ impl Server {
     ) -> bool {
         for offset in 0..SESSIONS {
             let index = (self.turn + offset) % SESSIONS;
+            if self.feeding && (self.struck || !session_handshake(&self.slots[index].phase)) {
+                continue;
+            }
             let rescuing = matches!(
                 self.slots[index].phase,
                 Phase::Starting(Open::Recovery) | Phase::Recovery(Rescue::Handshake)
@@ -42,7 +57,11 @@ impl Server {
             match result {
                 Ok(false) => continue,
                 Ok(true) => {}
-                Err(reason) => self.end(index, reason, record),
+                Err(reason) => {
+                    // One costly stranger a feed: the rest wait for its end.
+                    self.struck |= self.feeding;
+                    self.end(index, reason, record);
+                }
             }
             self.turn = (index + 1) % SESSIONS;
             return true;
@@ -60,6 +79,7 @@ impl Server {
         pairing: &mut Pairing,
         record: &mut impl FnMut(Record),
     ) -> Result<bool, Reason> {
+        let feeding = self.feeding;
         let slot = &mut self.slots[index];
         match &mut slot.phase {
             Phase::Starting(open) => {
@@ -179,6 +199,11 @@ impl Server {
                         .map_err(|_| Reason::Malformed)?;
                     *refusal = admit(hello, handshake.remote_static(), &self.clients);
                     *capabilities = hello.capabilities;
+                    // During a feed a refusal is not worth its reply's two
+                    // X25519s: the connection just closes.
+                    if feeding && let Some(refused) = *refusal {
+                        return Err(refusal_reason(refused));
+                    }
                 }
                 *reply = true;
                 Ok(true)
@@ -209,11 +234,7 @@ impl Server {
             slot.phase = Phase::Closing;
             record(Record::Ended {
                 slot: slot_id(index),
-                reason: match refusal {
-                    OpenRefusal::Unknown => Reason::Unknown,
-                    OpenRefusal::Version { .. } => Reason::Version,
-                    OpenRefusal::Full => Reason::Full,
-                },
+                reason: refusal_reason(refusal),
             });
             return Ok(());
         }
@@ -312,4 +333,24 @@ pub(super) fn invite(id: u32, secret: [u8; 32]) -> proto::Invite {
 
 pub fn fingerprint(key: &[u8; 32]) -> Fingerprint {
     [key[0], key[1], key[2], key[3]]
+}
+
+const fn refusal_reason(refusal: OpenRefusal) -> Reason {
+    match refusal {
+        OpenRefusal::Unknown => Reason::Unknown,
+        OpenRefusal::Version { .. } => Reason::Version,
+        OpenRefusal::Full => Reason::Full,
+    }
+}
+
+/// An IK session handshake, the only kind that goes on during a feed.
+fn session_handshake(phase: &Phase) -> bool {
+    matches!(
+        phase,
+        Phase::Starting(Open::Session)
+            | Phase::Handshake {
+                open: Open::Session,
+                ..
+            }
+    )
 }

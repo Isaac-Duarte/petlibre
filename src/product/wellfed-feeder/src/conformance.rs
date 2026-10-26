@@ -16,10 +16,11 @@
 
 use wellfed_core::store::slot::crc32;
 use wellfed_proto::api::{
-    Capabilities, Event, EventBody, FeedOutcome, FeedReason, Refusal, Source, Stats, StatsSection,
+    Blocked, Capabilities, Event, EventBody, FeedOutcome, FeedReason, Readiness, Refusal, Source,
+    Stats, StatsSection,
 };
 
-use crate::feeder::{Feeder, NoFeeds, Platform};
+use crate::feeder::{Feeder, Feeds, NoFeeds, Platform};
 use wellfed_device_api::clients::{Label, Role};
 use wellfed_device_api::mailbox::{
     LockResult, NtpServer, Origin, SettingsFields, SettingsResult, SettingsView, TimeFields,
@@ -375,11 +376,17 @@ pub fn status_reports_the_build_and_the_time(rig: &mut impl Rig) {
 /// Without a feeding owner a feed is refused before it reaches the motor,
 /// whatever the platform claims.
 pub fn a_feeder_without_a_feeding_owner_refuses_feeds(rig: &mut impl Rig) {
-    let (capabilities, fed) = device(rig, 0, |device| {
-        (device.capabilities(), device.feed(1, Source::Feeder))
+    let (capabilities, readiness, fed) = device(rig, 0, |device| {
+        (
+            device.capabilities(),
+            device.readiness(),
+            device.feed(1, Source::Feeder),
+        )
     });
     assert!(capabilities.contains(Capabilities::UPDATE));
     assert!(capabilities.contains(Capabilities::TIME));
+    assert!(capabilities.contains(Capabilities::READINESS));
+    assert_eq!(readiness, Readiness::Blocked(Blocked::Unserved));
     assert_eq!(fed, Err(Refusal::Unavailable));
     assert_eq!(
         device(rig, 0, |device| device.feed_reserved(1)),
@@ -436,6 +443,67 @@ pub fn the_statistics_follow_the_loop(rig: &mut impl Rig) {
     }
 }
 
+/// An owner that stopped on a fault and serves no feed.
+struct Faulted;
+
+impl Feeds for Faulted {
+    fn feeding(&self) -> bool {
+        false
+    }
+
+    fn busy(&self) -> bool {
+        false
+    }
+
+    fn blocked(&self) -> Option<Blocked> {
+        Some(Blocked::Fault)
+    }
+
+    fn submit(&mut self, _: u8, _: Source) -> Result<u32, Refusal> {
+        panic!("a feed reached a faulted owner past readiness")
+    }
+
+    fn reserved(&self, _: u32) -> Option<Result<(), Refusal>> {
+        None
+    }
+
+    fn cancel(&self, _: u32) -> bool {
+        false
+    }
+}
+
+/// A lasting reason not to feed is recorded in the history once, however
+/// many passes it holds, and a feed asked for meanwhile is refused with it.
+pub fn a_lasting_reason_not_to_feed_is_recorded_once(rig: &mut impl Rig) {
+    for now_ms in [0, 20, 40] {
+        rig.feeder().pass(now_ms, &mut Faulted, |_| {});
+    }
+    let fed = {
+        let mut feeds = Faulted;
+        rig.feeder().device(60, &mut feeds).feed(1, Source::Panel)
+    };
+    assert_eq!(fed, Err(Refusal::Fault));
+    rig.write();
+
+    let blocked = EventBody::FeedingBlocked {
+        reason: Some(Blocked::Fault),
+    };
+    let mut after = None;
+    let mut seen = 0;
+    for _ in 0..TURNS {
+        match device(rig, 0, |device| device.event_after(after)) {
+            EventRead::Event(Event { seq, body, .. }) => {
+                seen += usize::from(body == blocked);
+                after = Some(seq);
+            }
+            EventRead::Wait => rig.write(),
+            EventRead::None => break,
+            EventRead::Gap { from, to } => panic!("events {from}..={to} lost"),
+        }
+    }
+    assert_eq!(seen, 1);
+}
+
 /// One test per check, each on a fresh rig from `$rig`.
 #[macro_export]
 macro_rules! conformance {
@@ -452,6 +520,7 @@ macro_rules! conformance {
             status_reports_the_build_and_the_time,
             a_feeder_without_a_feeding_owner_refuses_feeds,
             the_statistics_follow_the_loop,
+            a_lasting_reason_not_to_feed_is_recorded_once,
         );
     };
     (@tests $rig:expr; $($check:ident),* $(,)?) => {

@@ -434,6 +434,14 @@ impl Device for Feeder {
         proto::Stats::Counters(proto::Counters::default())
     }
 
+    fn readiness(&mut self) -> proto::Readiness {
+        if self.installing() {
+            proto::Readiness::Blocked(proto::Blocked::Updating)
+        } else {
+            proto::Readiness::Ready
+        }
+    }
+
     fn feed(&mut self, _portions: u8, _by: proto::Source) -> Result<u32, Refusal> {
         self.feeds += 1;
         Ok(self.feeds)

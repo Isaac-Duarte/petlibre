@@ -83,6 +83,11 @@ impl Capabilities {
     /// ([`Op::EnrollUpdateKey`], [`Op::UpdateKeyStatement`]), with
     /// [`Outcome::Update`] and [`Refusal::Update`]. Owner sessions only.
     pub const UPDATE: Self = Self(2);
+    /// Feeding readiness: [`Op::Status`] is answered
+    /// [`Outcome::FeederStatus`], which says whether a feed can start now
+    /// and why not, and [`EventBody::FeedingBlocked`] records each change
+    /// of a lasting reason.
+    pub const READINESS: Self = Self(4);
     /// The time settings and the clock's state: [`Op::GetTime`],
     /// [`Op::PutTime`] and [`Outcome::Time`].
     pub const TIME: Self = Self(8);
@@ -97,8 +102,14 @@ impl Capabilities {
     /// Every bit this crate defines: what a current client claims. A
     /// session then runs on the bits both sides claim, so a client adapts
     /// to whatever feeder it meets, however old.
-    pub const KNOWN: Self =
-        Self(Self::FEED.0 | Self::UPDATE.0 | Self::TIME.0 | Self::STATS.0 | Self::LOG.0);
+    pub const KNOWN: Self = Self(
+        Self::FEED.0
+            | Self::UPDATE.0
+            | Self::READINESS.0
+            | Self::TIME.0
+            | Self::STATS.0
+            | Self::LOG.0,
+    );
 
     pub const fn union(self, other: Self) -> Self {
         Self(self.0 | other.0)
@@ -510,6 +521,78 @@ pub enum Outcome<'a> {
     /// The section [`Op::Stats`] asked for.
     #[serde(borrow)]
     Stats(Stats<'a>),
+    /// [`Op::Status`]'s answer to a session with [`Capabilities::READINESS`]:
+    /// the status, and whether a feed can start now.
+    FeederStatus {
+        #[serde(borrow)]
+        status: Status<'a>,
+        readiness: Readiness,
+    },
+}
+
+/// Whether the feeder can start a feed now. One decision, which both
+/// [`Op::Status`] reports and [`Op::Feed`] obeys: a feed asked for while
+/// [`Self::Blocked`] is refused with [`Blocked::refusal`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Readiness {
+    Ready,
+    Blocked(Blocked),
+}
+
+/// Why a feed cannot start now.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Blocked {
+    /// The feeding owner has not opened yet (it opens once the boot's
+    /// storage is ready).
+    Starting,
+    /// The feed journal could not be opened: no feed this boot.
+    Journal,
+    /// The feeding owner stopped on a fault: no feed until the feeder
+    /// restarts.
+    Fault,
+    /// A feed a reset interrupted is being resolved as uncertain.
+    Resolving,
+    /// A feed is queued or runs.
+    Feeding,
+    /// A Wi-Fi join runs or waits for the outputs.
+    Joining,
+    /// An install holds the flash.
+    Updating,
+    /// BLE setup mode runs, which ends in a restart.
+    Setup,
+    /// This firmware has no feeding owner.
+    Unserved,
+}
+
+impl Blocked {
+    /// What a feed asked for now is refused with.
+    pub const fn refusal(self) -> Refusal {
+        match self {
+            Self::Journal | Self::Fault => Refusal::Fault,
+            Self::Unserved => Refusal::Unavailable,
+            Self::Starting
+            | Self::Resolving
+            | Self::Feeding
+            | Self::Joining
+            | Self::Updating
+            | Self::Setup => Refusal::Busy,
+        }
+    }
+
+    /// Whether the reason lasts: it holds until a restart or an operator
+    /// ends it, rather than clearing by itself within seconds or one feed.
+    /// Only a lasting reason is recorded in the history
+    /// ([`EventBody::FeedingBlocked`]), so joins and feeds do not fill it.
+    /// [`Self::Unserved`] is the build's, never a change, so the status
+    /// alone reports it.
+    pub const fn lasting(self) -> bool {
+        match self {
+            Self::Journal | Self::Fault | Self::Updating | Self::Setup => true,
+            Self::Starting | Self::Resolving | Self::Feeding | Self::Joining | Self::Unserved => {
+                false
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -778,6 +861,11 @@ pub enum EventBody {
         reason: FeedReason,
         by: Source,
     },
+    /// The lasting reason the feeder cannot feed changed ([`Blocked::lasting`]):
+    /// `Some` names the new one, `None` says it can feed again.
+    FeedingBlocked {
+        reason: Option<Blocked>,
+    },
 }
 
 impl EventBody {
@@ -787,6 +875,7 @@ impl EventBody {
     pub const fn capability(&self) -> Capabilities {
         match self {
             Self::Fed { .. } => Capabilities::FEED,
+            Self::FeedingBlocked { .. } => Capabilities::READINESS,
             Self::Boot { .. }
             | Self::Lock { .. }
             | Self::Settings { .. }
@@ -1328,6 +1417,9 @@ mod tests {
                 outcome: FeedOutcome::Uncertain,
                 reason: FeedReason::Output,
                 by: Source::Client(client),
+            },
+            EventBody::FeedingBlocked {
+                reason: Some(Blocked::Unserved),
             },
         ] {
             let mut out = [0; 16];

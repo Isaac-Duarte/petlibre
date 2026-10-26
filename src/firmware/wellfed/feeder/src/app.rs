@@ -3,7 +3,7 @@
 
 use wellfed_feeder::feeder::{Feeder, Feeds};
 use wellfed_feeder::panel::BUTTONS;
-use wellfed_proto::api::{Refusal, Source};
+use wellfed_proto::api::{Blocked, Refusal, Source};
 use wellfed_sdk::hal::sdk;
 use wellfed_sdk::hal::supervision::config::SYSTIMER_HZ;
 use wellfed_sdk::{Slot, Startup, log};
@@ -61,6 +61,10 @@ impl Feeds for Feeding {
         Feeding::busy(self)
     }
 
+    fn blocked(&self) -> Option<Blocked> {
+        Feeding::blocked(self)
+    }
+
     #[cfg(not(feature = "gap-probe"))]
     fn submit(&mut self, portions: u8, by: Source) -> Result<u32, Refusal> {
         Feeding::submit(self, portions, by, |record| {
@@ -99,7 +103,7 @@ fn loop_task() -> u32 {
     #[cfg(any(feature = "feed-stall", feature = "stop-fail"))]
     inject::step(&feeding);
     let began = sdk::systimer_ticks();
-    let feed_delay = feeding.step(
+    let mut feed_delay = feeding.step(
         |record| log(format_args!("PLOWN1 {record}\r\n")),
         |body| feeder.record_outcome(sdk::uptime_ms(), body),
     );
@@ -109,6 +113,16 @@ fn loop_task() -> u32 {
         log(format_args!("{} {record}\r\n", record.tag()));
     });
     feeder.pass_took(ticks_us(sdk::systimer_ticks().wrapping_sub(began)));
+    // A handshake operation is the pass's costly part (one or two X25519s,
+    // 25-28 ms each): during a feed the owner is stepped again at once, so
+    // the gap between its steps is the pass, not the pass and the delay.
+    if feeding.feeding() && feeder.handshook() {
+        feeding.handshook();
+        feed_delay = feeding.step(
+            |record| log(format_args!("PLOWN1 {record}\r\n")),
+            |body| feeder.record_outcome(sdk::uptime_ms(), body),
+        );
+    }
     if let Some(feed_delay) = feed_delay {
         delay_ms = delay_ms.min(feed_delay);
     }

@@ -578,6 +578,52 @@ fn messages() -> Vec<Fixture> {
             })),
             feeder,
         ),
+        (
+            "hello-readiness",
+            entry(&Hello {
+                major: 1,
+                capabilities: Capabilities::FEED
+                    .union(Capabilities::UPDATE)
+                    .union(Capabilities::READINESS),
+            }),
+            |b| decode::<Hello>(b).is_ok(),
+        ),
+        (
+            "outcome-feeder-status",
+            entry(&response(Outcome::FeederStatus {
+                status,
+                readiness: Readiness::Blocked(Blocked::Joining),
+            })),
+            feeder,
+        ),
+        (
+            "outcome-feeder-status-ready",
+            entry(&response(Outcome::FeederStatus {
+                status,
+                readiness: Readiness::Ready,
+            })),
+            feeder,
+        ),
+        (
+            "event-feeding-blocked",
+            entry(&FeederMessage::Event(Event {
+                seq: 16,
+                at: None,
+                body: EventBody::FeedingBlocked {
+                    reason: Some(Blocked::Fault),
+                },
+            })),
+            feeder,
+        ),
+        (
+            "event-feeding-ready",
+            entry(&FeederMessage::Event(Event {
+                seq: 17,
+                at: None,
+                body: EventBody::FeedingBlocked { reason: None },
+            })),
+            feeder,
+        ),
     ]
 }
 

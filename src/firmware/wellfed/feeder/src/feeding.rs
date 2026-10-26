@@ -29,6 +29,17 @@
 //! is refused `Busy` while a join runs or waits, and a join requested during
 //! a feed waits until the owner is at rest with its outputs stopped.
 //!
+//! Readiness ([`wellfed_feeder::feeder::feeding::readiness`]) starts from
+//! the owner's own reason not to feed (`Feeding::blocked`): not open yet,
+//! the journal failed, a fault, an interrupted feed being resolved, a feed
+//! in flight, or a join's turn. `submit` keeps its own checks behind it.
+//!
+//! While a feed is driven the loop steps the owner before each pass and,
+//! when the pass ran a handshake operation (a client opening a session),
+//! again at once after it, so the owner's observations stay
+//! inside its 100 ms gap; `PLOWN1 steps` reports, for each feed, the
+//! longest gap between two steps and the handshake operations it absorbed.
+//!
 //! Storage writes take the same turn: a flash lease while the outputs may
 //! move fails its stopped-outputs check and resets the board. A store write
 //! that comes during a feed waits until the outputs are released (at most
@@ -221,6 +232,13 @@ pub enum Record {
     Held { portions: u8, held: Held },
     /// Joins waited for the outputs, or went ahead past a feed's bound.
     Joins(interlock::Status),
+    /// While the feed was in flight: the longest gap between two owner
+    /// steps, and the handshake operations the loop ran.
+    Steps {
+        feed: u64,
+        max_gap_ms: u32,
+        handshakes: u32,
+    },
 }
 
 /// The most pads a `pins` record lists, so the line fits a record.
@@ -312,6 +330,14 @@ impl core::fmt::Display for Record {
                 }
                 Ok(())
             }
+            Record::Steps {
+                feed,
+                max_gap_ms,
+                handshakes,
+            } => write!(
+                f,
+                "steps id={feed} max_gap_ms={max_gap_ms} handshakes={handshakes}"
+            ),
             Record::Held { portions, held } => {
                 write!(f, "feed portions={portions} held={}", held.code())
             }
@@ -375,8 +401,8 @@ mod target {
     use wellfed_core::feed::storage::OwnerResult;
     use wellfed_core::store::feed_journal::{FeedJournal, JournalError};
     use wellfed_feeder::feed::{self, Durability};
-    use wellfed_proto::api::{EventBody, Refusal, Source};
-    use wellfed_sdk::hal::interlock::{self, INTERLOCK};
+    use wellfed_proto::api::{Blocked, EventBody, Refusal, Source};
+    use wellfed_sdk::hal::interlock::{self, INTERLOCK, Turn};
     use wellfed_sdk::hal::owner::{
         Owner, OwnerConfig, OwnerState, OwnerStatus, Step, SubmitResult,
     };
@@ -398,6 +424,10 @@ mod target {
         by: Source,
         /// The owner has reserved it in the journal.
         reserved: bool,
+        /// The longest gap between two owner steps since it was queued.
+        max_gap_ms: u32,
+        /// Handshake operations the loop ran meanwhile.
+        handshakes: u32,
     }
 
     /// The loop's half of the feeding owner: when to open it, and what it
@@ -406,6 +436,10 @@ mod target {
     pub struct Feeding {
         /// Opened, or the journal failed: nothing more to try this boot.
         settled: bool,
+        /// The journal could not be opened or created: no feed this boot.
+        journal_failed: bool,
+        /// When the owner was last stepped.
+        stepped_ms: Option<u32>,
         /// The journal was created this boot (by an attempt the owner may
         /// have refused).
         created: bool,
@@ -442,6 +476,7 @@ mod target {
                     }
                     Some(opened) => {
                         self.settled = true;
+                        self.journal_failed = matches!(opened, Record::Journal { .. });
                         record(opened);
                     }
                     None => {}
@@ -449,6 +484,11 @@ mod target {
             }
 
             let owner = OWNER.enter()?;
+            let now = wellfed_sdk::hal::sdk::uptime_ms();
+            if let (Some(current), Some(last)) = (self.current.as_mut(), self.stepped_ms) {
+                current.max_gap_ms = current.max_gap_ms.max(now.wrapping_sub(last));
+            }
+            self.stepped_ms = Some(now);
             let delay = match owner.step() {
                 Step::Wait(ms) => Some(ms),
                 Step::Stopped | Step::Refused => None,
@@ -552,6 +592,11 @@ mod target {
                 feed: result.id,
                 trace: status.trace,
             });
+            record(Record::Steps {
+                feed: result.id,
+                max_gap_ms: current.max_gap_ms,
+                handshakes: current.handshakes,
+            });
             if status.trace.pins.start.is_some() {
                 record(Record::Pins {
                     feed: result.id,
@@ -635,7 +680,12 @@ mod target {
                         feed,
                         by,
                         reserved: false,
+                        max_gap_ms: 0,
+                        handshakes: 0,
                     });
+                    // Gaps count from the first step after the feed was
+                    // queued, not from one before it.
+                    self.stepped_ms = None;
                     self.unreserved = None;
                     Ok(number)
                 }
@@ -657,7 +707,12 @@ mod target {
             match (self.current, self.unreserved) {
                 (Some(current), _) if current.feed == feed => current.reserved.then_some(Ok(())),
                 (_, Some((ended, refusal))) if ended == feed => Some(Err(refusal)),
-                // Ended after its reservation, and already recorded.
+                // Not the feed in flight nor the last one unreserved: it was
+                // reserved and has ended. A feed ends unreserved only when
+                // the owner faults before reserving it, and a faulted owner
+                // takes no feed until a restart (which empties the server's
+                // memory of ids), so no later feed can have replaced it in
+                // `unreserved`.
                 _ => Some(Ok(())),
             }
         }
@@ -678,6 +733,46 @@ mod target {
                 feed: status.result.id,
                 portions: status.result.requested,
             })
+        }
+
+        /// The pass ran a handshake operation during the feed in flight.
+        pub fn handshook(&mut self) {
+            if let Some(current) = self.current.as_mut() {
+                current.handshakes = current.handshakes.saturating_add(1);
+            }
+        }
+
+        /// The owner's own reason not to start a feed now.
+        pub fn blocked(&self) -> Option<Blocked> {
+            if self.journal_failed {
+                return Some(Blocked::Journal);
+            }
+            let owner = OWNER.enter();
+            let Some(status) = owner.as_ref().filter(|_| self.settled).map(|o| o.status()) else {
+                return Some(Blocked::Starting);
+            };
+            match status.state {
+                // A stop asked for (a restart on its way) serves no feed
+                // either, until the next boot.
+                OwnerState::Fault | OwnerState::Stopped => return Some(Blocked::Fault),
+                OwnerState::Starting => return Some(Blocked::Starting),
+                OwnerState::Idle
+                | OwnerState::Queued
+                | OwnerState::Preparing
+                | OwnerState::Feeding
+                | OwnerState::Reporting
+                | OwnerState::Terminal => {}
+            }
+            if self.interrupted.is_some() {
+                return Some(Blocked::Resolving);
+            }
+            if self.current.is_some() || status.state != OwnerState::Idle {
+                return Some(Blocked::Feeding);
+            }
+            match INTERLOCK.turn() {
+                Turn::Joining | Turn::FeedingJoinWaits => Some(Blocked::Joining),
+                Turn::Free | Turn::Feeding => None,
+            }
         }
 
         /// A feed is queued or runs: no install starts.

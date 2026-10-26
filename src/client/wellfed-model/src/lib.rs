@@ -42,7 +42,7 @@ pub use stats::{
     Counters, Counts, Erases, Flash, Food, Memory, PowerStats, ResetCause, Resets, Stats,
     StatsSection, TaskStack,
 };
-pub use status::{Power, Settings, SettingsPatch, Status, WifiSource};
+pub use status::{Blocked, Power, Readiness, Settings, SettingsPatch, Status, WifiSource};
 pub use update::{UpdatePhase, UpdateRefusal, UpdateStop, UpdateView};
 
 /// A feeder store's generation: a write names the one it read, and the

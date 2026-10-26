@@ -10,8 +10,11 @@
 //!    relock, pairing's timers, the lock indicator and BLE setup mode while
 //!    it runs ([`owner`], [`setup`]); then the reboot setup mode asks for,
 //!    and the lock it now holds for the device API ([`lock`]);
-//! 3. the device API: its sockets, the server's step and the live samples
-//!    ([`serve`]), with the time settings and the NTP exchange ([`time`]).
+//! 3. a Dispense press the panel allowed, queued for the feeding owner,
+//!    and readiness noted ([`feeding`]);
+//! 4. the device API: its sockets, the server's step and the live samples
+//!    ([`serve`]), with the time settings and the NTP exchange ([`time`]);
+//! 5. the speaker, while the feed call plays (setup mode steps it itself).
 //!
 //! The feeding owner is the platform's: the firmware steps it before the
 //! pass and hands it in as [`Feeds`], and records its `Fed` events through
@@ -19,6 +22,7 @@
 //! recorder ([`events`]).
 
 pub mod events;
+pub mod feeding;
 pub mod identity;
 pub mod lock;
 pub mod owner;
@@ -29,7 +33,7 @@ pub mod time;
 
 use core::fmt;
 
-use wellfed_proto::api::{EventBody, Refusal, Source};
+use wellfed_proto::api::{Blocked, EventBody, Readiness, Refusal, Source};
 use wellfed_session::noise::Keypair;
 
 pub use platform::Platform;
@@ -45,10 +49,14 @@ use serve::{FeederDevice, Inputs, Serve};
 /// The feeding owner, as the device API reaches it. Generic rather than
 /// `dyn`, so the calls stay direct for the firmware's stack audit.
 pub trait Feeds {
-    /// A feed is being prepared or driven: handshakes wait.
+    /// A feed is being prepared or driven: only IK session handshakes go
+    /// on, and only until one is refused or fails.
     fn feeding(&self) -> bool;
-    /// A feed is queued or runs: no install starts.
+    /// A feed is queued or runs: no install starts, and no restart.
     fn busy(&self) -> bool;
+    /// The owner's own reason not to start a feed now, if any
+    /// ([`feeding::readiness`] adds the loop's).
+    fn blocked(&self) -> Option<Blocked>;
     /// Hand one feed to the owner; the number its journal holds it under.
     fn submit(&mut self, portions: u8, by: Source) -> Result<u32, Refusal>;
     /// Whether the feed `feed` is reserved yet: `None` while it waits.
@@ -76,6 +84,10 @@ impl Feeds for NoFeeds {
         false
     }
 
+    fn blocked(&self) -> Option<Blocked> {
+        Some(Blocked::Unserved)
+    }
+
     fn submit(&mut self, _: u8, _: Source) -> Result<u32, Refusal> {
         Err(Refusal::Unavailable)
     }
@@ -99,6 +111,10 @@ pub enum Record<D> {
     Owner(owner::Record<D>),
     /// `PLAPI1`.
     Serve(serve::Record),
+    /// `PLFEED1`.
+    Feeding(feeding::Record),
+    /// The speaker's own record while the feed call plays, under its tag.
+    Driver(D),
 }
 
 impl<D: DriverRecord> Record<D> {
@@ -110,6 +126,8 @@ impl<D: DriverRecord> Record<D> {
             Self::Owner(owner::Record::Setup(_)) => "PLSET1",
             Self::Owner(_) => "PLPANEL1",
             Self::Serve(_) => "PLAPI1",
+            Self::Feeding(_) => "PLFEED1",
+            Self::Driver(record) => record.tag(),
         }
     }
 }
@@ -121,6 +139,8 @@ impl<D: DriverRecord> fmt::Display for Record<D> {
             Self::Identity(record) => identity::describe(record, f),
             Self::Owner(record) => owner::describe(record, f),
             Self::Serve(record) => serve::describe(record, f),
+            Self::Feeding(record) => feeding::describe(record, f),
+            Self::Driver(record) => fmt::Display::fmt(&record, f),
         }
     }
 }
@@ -131,6 +151,7 @@ pub struct Feeder<P: Platform> {
     owner: Owner,
     lock: LockBox,
     serve: Serve<P::Socket>,
+    readiness: feeding::Watch,
 }
 
 impl<P: Platform> Feeder<P> {
@@ -143,6 +164,7 @@ impl<P: Platform> Feeder<P> {
             owner: Owner::new(),
             lock: LockBox::new(),
             serve: Serve::new(),
+            readiness: feeding::Watch::new(),
         }
     }
 
@@ -174,6 +196,17 @@ impl<P: Platform> Feeder<P> {
         self.serve.server()
     }
 
+    /// Whether the last pass ran a handshake operation, its costly part: a
+    /// loop with a feed in flight steps the feeding owner again at once.
+    pub fn handshook(&mut self) -> bool {
+        self.serve.server().handshook()
+    }
+
+    /// Whether a feed can start now, with the feeding owner `feeds`.
+    pub fn readiness<F: Feeds>(&self, feeds: &F) -> Readiness {
+        feeding::readiness(feeds, self.owner.setup_on(), self.platform.installing())
+    }
+
     /// One pass at `now_ms`, with the feeding owner `feeds`; `record`
     /// receives what happened, in order. The delay until the next pass.
     /// The caller reads `now_ms` before the pass, so it comes before the
@@ -196,9 +229,26 @@ impl<P: Platform> Feeder<P> {
             self.identity.keypair(),
             |r| record(Record::Owner(r)),
         );
-        if self.owner.reboot_due(now_ms) {
+        // Setup mode's restart waits for a feed in flight, which it would
+        // otherwise leave uncertain; setup mode starts no feed itself.
+        if self.owner.reboot_due(now_ms) && !feeds.busy() {
             self.platform.reset();
         }
+
+        if self.owner.take_dispense() {
+            let ready = self.readiness(feeds);
+            let portions = feeding::DISPENSE_PORTIONS;
+            let (result, call) =
+                feeding::queue(&mut self.platform, feeds, ready, portions, Source::Panel);
+            record(Record::Feeding(feeding::Record::Dispense { result }));
+            if let (Ok(feed), Some(result)) = (result, call) {
+                record(Record::Feeding(feeding::Record::Call { feed, result }));
+            }
+        }
+        let ready = self.readiness(feeds);
+        self.readiness.note(&mut self.platform, now_ms, ready, |r| {
+            record(Record::Feeding(r))
+        });
 
         // Requests read what the owner holds after this step.
         let lock = self.owner.lock();
@@ -208,6 +258,7 @@ impl<P: Platform> Feeder<P> {
         self.serve.stats().presses(self.owner.presses());
         let inputs = Inputs {
             now_ms,
+            setup: self.owner.setup_on(),
             locked: lock.map(Lock::locked),
             recovery: self.owner.take_recovery(),
             signer: self.owner.take_signer(),
@@ -215,12 +266,29 @@ impl<P: Platform> Feeder<P> {
             identity: self.identity.keypair(),
             feeds,
         };
-        let serve_delay = self
-            .serve
-            .step(&mut self.platform, &mut self.lock, inputs, |r| {
-                record(Record::Serve(r));
-            });
-        delay.min(serve_delay)
+        let mut calls = None;
+        let serve_delay = self.serve.step(
+            &mut self.platform,
+            &mut self.lock,
+            inputs,
+            |r| record(Record::Serve(r)),
+            |feed, result| calls = Some((feed, result)),
+        );
+        if let Some((feed, result)) = calls {
+            record(Record::Feeding(feeding::Record::Call { feed, result }));
+        }
+
+        // After the owner and the device API, so playback never delays
+        // either; setup mode steps the speaker itself.
+        let mut speaker_delay = u32::MAX;
+        if !self.owner.setup_on() && !self.platform.speaker_idle() {
+            let step = self.platform.speaker_step();
+            if let Some(r) = step.record {
+                record(Record::Driver(r));
+            }
+            speaker_delay = step.delay_ms;
+        }
+        delay.min(serve_delay).min(speaker_delay)
     }
 
     /// Record a feed's `Fed` event, which may take the queue's reserved
@@ -248,10 +316,12 @@ impl<P: Platform> Feeder<P> {
             feeds,
             boot,
             locked: self.owner.lock().map(Lock::locked),
+            setup: self.owner.setup_on(),
             now_ms,
             ntp_last,
             stats,
             tasks,
+            call: None,
         }
     }
 }

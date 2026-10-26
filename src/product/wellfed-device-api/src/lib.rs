@@ -6,19 +6,27 @@
 //! ([`Server::tx`], [`Server::sent`]) and closes it when asked
 //! ([`Server::closing`]). Everything else happens in [`Server::step`], once
 //! per pass of the loop task:
-//! - **One handshake operation per pass,** across all slots, and none while
-//!   a feed runs: an X25519 costs about 27 ms on the KM4, so four clients
-//!   connecting at once cannot stack up to hold the loop.
+//! - **One handshake operation per pass,** across all slots: an X25519
+//!   costs about 27 ms on the KM4, so four clients connecting at once
+//!   cannot stack up to hold the loop. While a feed runs only IK session
+//!   handshakes go on, a refused one closes unanswered, and after one is
+//!   refused or fails the rest wait for the feed's end; the loop steps its
+//!   feeding owner again after each operation ([`Server::handshook`]).
 //! - **One frame per slot per pass,** and a slot writes again only once its
 //!   last frame is sent, so a flood costs only its own turn.
 //! - **Every write has an id** the server remembers per client key, so a
 //!   retry, even after a reconnect, gets the first answer instead of
-//!   running again.
+//!   running again. A feed's id is remembered from the moment the feed is
+//!   queued, so a retry on a new session waits for that feed rather than
+//!   queueing another.
 //! - **Writes carry their base generation;** a stale one is refused with
 //!   the current generation.
 //! - **A feed is answered once it is durably reserved,** with the number
 //!   the journal holds it under; its result is a `Fed` event, which only
-//!   sessions whose hello carries [`Capabilities::FEED`] are sent.
+//!   sessions whose hello carries [`Capabilities::FEED`] are sent. A feed
+//!   is asked of the device only while its [`Device::readiness`] is ready,
+//!   which `Status` also reports ([`Capabilities::READINESS`]); a restart
+//!   is refused while a feed is in flight.
 //! - **Updates are an owner's** ([`Capabilities::UPDATE`]). The device
 //!   checks an offer outside the loop (its signatures need more stack than
 //!   the loop has) and answers on a later pass. An update request waits

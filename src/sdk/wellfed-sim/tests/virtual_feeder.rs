@@ -295,6 +295,71 @@ fn faults_stop_and_finish_without_success() {
     }
 }
 
+/// The loop's handshake operations during a feed: an enrolled client's
+/// session opens while the motor drives, each operation holding the loop
+/// for up to about 80 ms (one or two X25519s, measured 25-28 ms each, with
+/// preemption). The firmware steps the owner just before such a pass and
+/// again just after it, so the owner misses at most that long. Holds of
+/// 70 ms every half second, a session opened again and again for the whole
+/// feed, leave it to complete.
+#[test]
+fn handshake_sized_holds_during_a_drive_leave_the_feed_to_complete() {
+    let mut actions = vec![act(SUBMIT, "submit", &[1, 3])];
+    for at in (1000..26_000).step_by(500) {
+        actions.push(act(at, "owner", &[0]));
+        actions.push(act(at + 70, "owner", &[1]));
+    }
+    actions.push(expect(
+        THREE_PORTIONS + 2000,
+        json!({"state": "terminal", "completed": 3, "outcome": "done", "durable": true,
+               "motor": 0, "optics": 0}),
+    ));
+    passing(actions, THREE_PORTIONS + 2100, "single");
+}
+
+/// The worst a stranger could ask during a feed, were each handshake not
+/// refused unanswered and the rest held: one operation every pass, each
+/// holding the loop about 80 ms, the owner stepped once between them. The
+/// holds start at a step (the first one may also take up to a sample
+/// period, as the firmware's never does), and the feed still completes.
+#[test]
+fn back_to_back_handshake_holds_leave_the_feed_to_complete() {
+    let mut actions = vec![act(SUBMIT, "submit", &[1, 3])];
+    let mut at = 1000;
+    while at < 26_000 {
+        actions.push(act(at, "owner", &[0]));
+        actions.push(act(at + 80, "owner", &[1]));
+        at += 81;
+    }
+    actions.push(expect(
+        THREE_PORTIONS + 2000,
+        json!({"state": "terminal", "completed": 3, "outcome": "done", "durable": true,
+               "motor": 0, "optics": 0}),
+    ));
+    passing(actions, THREE_PORTIONS + 2100, "single");
+}
+
+/// A hold past the owner's 100 ms observation gap ends the feed, stopped
+/// and recorded, never driven blind: the budget a handshake operation must
+/// stay inside, and what overrunning it costs (a failed feed, not safety).
+#[test]
+fn a_hold_past_the_observation_gap_fails_the_feed_and_stops() {
+    passing(
+        vec![
+            act(SUBMIT, "submit", &[1, 3]),
+            act(3000, "owner", &[0]),
+            act(3150, "owner", &[1]),
+            expect(
+                3300,
+                json!({"state": "terminal", "reason": "observation_gap", "durable": true,
+                       "motor": 0, "optics": 0, "completed": 0}),
+            ),
+        ],
+        3400,
+        "single",
+    );
+}
+
 /// The supervisor stops the motor within its 200 ms lease; the world's
 /// feeder feeds the watchdog until the owner's beat is a gap (1 s while
 /// outputs may move) old, and the 4 s expiry then resets the board. The

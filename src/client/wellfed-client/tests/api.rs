@@ -92,6 +92,10 @@ struct Fake {
     /// Serves `Capabilities::LOG` from `tail`.
     log: bool,
     tail: LogTail<4096>,
+    /// The feeding owner's own reason not to feed.
+    blocked: Option<proto::Blocked>,
+    /// The owner reserves no queued feed while set.
+    hold_feeds: bool,
 }
 
 /// An install receiving its first sector.
@@ -184,7 +188,9 @@ impl Fake {
             };
             self.keys_done = Some((ticket, outcome));
         }
-        self.reserved = u32::try_from(self.feeds.len()).unwrap();
+        if !self.hold_feeds {
+            self.reserved = u32::try_from(self.feeds.len()).unwrap();
+        }
     }
 
     fn table(&self) -> [Option<Client>; CLIENTS] {
@@ -298,6 +304,7 @@ impl Device for Fake {
 
     fn capabilities(&self) -> Capabilities {
         let mut capabilities = Capabilities::FEED
+            .union(Capabilities::READINESS)
             .union(Capabilities::TIME)
             .union(Capabilities::STATS);
         if self.update {
@@ -373,6 +380,17 @@ impl Device for Fake {
             now_ms,
             ntp_last: None,
         })
+    }
+
+    fn readiness(&mut self) -> proto::Readiness {
+        let blocked = if self.installing() {
+            Some(proto::Blocked::Updating)
+        } else if self.feed_active() {
+            Some(proto::Blocked::Feeding)
+        } else {
+            self.blocked
+        };
+        blocked.map_or(proto::Readiness::Ready, proto::Readiness::Blocked)
     }
 
     fn update(&mut self, request: UpdateRequest<'_>) -> Result<u32, Refusal> {
@@ -904,6 +922,218 @@ fn a_feed_answers_once_reserved_and_a_retry_never_feeds_twice() {
     assert_eq!(ended, Answer::Refused(model::Refusal::NotFound));
 }
 
+/// The first request queued the feed; its session ended before the owner
+/// reserved it, so the client never heard. The same id on a new session
+/// waits for that feed's reservation and answers with it: no second feed.
+#[test]
+fn a_feed_s_id_is_remembered_from_the_moment_it_is_queued() {
+    let mut rig = Rig::new();
+    rig.device.hold_feeds = true;
+    let mut owner = open(&mut rig, OWNER);
+    let bytes = owner
+        .session
+        .request([2; 16], &Op::Feed { portions: 2 })
+        .unwrap();
+    owner.outbox.extend(bytes);
+    for _ in 0..5 {
+        rig.deliver(owner.slot, &mut owner.outbox);
+        rig.pass();
+    }
+    assert_eq!(rig.device.feeds.len(), 1, "queued");
+    assert!(rig.server.tx(owner.slot).is_empty(), "not yet answered");
+    let records = &mut rig.records;
+    rig.server.closed(owner.slot, |r| records.push(r));
+
+    let mut owner = open(&mut rig, OWNER);
+    let bytes = owner
+        .session
+        .request([2; 16], &Op::Feed { portions: 2 })
+        .unwrap();
+    owner.outbox.extend(bytes);
+    for _ in 0..5 {
+        rig.deliver(owner.slot, &mut owner.outbox);
+        rig.pass();
+    }
+    assert!(
+        rig.server.tx(owner.slot).is_empty(),
+        "the retry waits for the first feed's reservation"
+    );
+    assert!(
+        rig.records
+            .iter()
+            .any(|r| matches!(r, Record::Retried { .. }))
+    );
+
+    rig.device.hold_feeds = false;
+    let mut answer = None;
+    run(&mut rig, &mut owner, |session| {
+        if let Some(Incoming::Answer { answer: got, .. }) = session.next_incoming().unwrap() {
+            answer = Some(got);
+        }
+        answer.is_some()
+    });
+    assert_eq!(answer, Some(Answer::Feeding { feed: 1 }));
+    assert_eq!(rig.device.feeds.len(), 1, "fed once");
+
+    // After the feed, the same id still names it.
+    let again = ask(&mut rig, &mut owner, 2, Op::Feed { portions: 2 });
+    assert_eq!(again, Answer::Feeding { feed: 1 });
+    assert_eq!(rig.device.feeds.len(), 1);
+}
+
+#[test]
+fn the_status_says_whether_a_feed_can_start_and_a_feed_obeys_it() {
+    let mut rig = Rig::new();
+    let mut owner = open(&mut rig, OWNER);
+    let readiness = |answer: Answer| match answer {
+        Answer::Status(status) => status.readiness,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(
+        readiness(ask(&mut rig, &mut owner, 1, Op::Status)),
+        Some(model::Readiness::Ready)
+    );
+
+    rig.device.blocked = Some(proto::Blocked::Fault);
+    assert_eq!(
+        readiness(ask(&mut rig, &mut owner, 2, Op::Status)),
+        Some(model::Readiness::Blocked(model::Blocked::Fault))
+    );
+    let fed = ask(&mut rig, &mut owner, 3, Op::Feed { portions: 1 });
+    assert_eq!(fed, Answer::Refused(model::Refusal::Fault));
+    rig.device.blocked = Some(proto::Blocked::Joining);
+    let fed = ask(&mut rig, &mut owner, 4, Op::Feed { portions: 1 });
+    assert_eq!(fed, Answer::Refused(model::Refusal::Busy));
+    assert!(rig.device.feeds.is_empty(), "nothing reached the owner");
+
+    // A session without the bit reads the version 1 status.
+    let slot = rig.accept().unwrap();
+    let hello = Hello {
+        major: 1,
+        capabilities: model::Capabilities {
+            readiness: false,
+            ..model::Capabilities::KNOWN
+        },
+    };
+    let (session, outbox) = Session::connect_with(
+        &Keypair::from_secret(OWNER),
+        public(FEEDER),
+        [0x78; 32],
+        hello,
+    )
+    .unwrap();
+    let mut old = Client_ {
+        slot,
+        session,
+        outbox,
+    };
+    run(&mut rig, &mut old, |session| {
+        matches!(session.next_incoming(), Ok(Some(Incoming::Opened(_))))
+    });
+    assert_eq!(readiness(ask(&mut rig, &mut old, 1, Op::Status)), None);
+}
+
+#[test]
+fn a_reboot_is_refused_while_a_feed_is_in_flight() {
+    let mut rig = Rig::new();
+    rig.device.hold_feeds = true;
+    let mut owner = open(&mut rig, OWNER);
+    let mut member = open(&mut rig, MEMBER);
+    let bytes = member
+        .session
+        .request([1; 16], &Op::Feed { portions: 1 })
+        .unwrap();
+    member.outbox.extend(bytes);
+    rig.deliver(member.slot, &mut member.outbox);
+    rig.pass();
+    assert_eq!(rig.device.feeds.len(), 1);
+
+    let reboot = ask(&mut rig, &mut owner, 2, Op::Reboot);
+    assert_eq!(reboot, Answer::Refused(model::Refusal::Busy));
+    rig.device.hold_feeds = false;
+    rig.device.write();
+    let reboot = ask(&mut rig, &mut owner, 3, Op::Reboot);
+    assert_eq!(reboot, Answer::Done { generation: None });
+}
+
+/// Once a restart is accepted no feed is asked for until it, and a feed
+/// queued meanwhile from elsewhere (a Dispense press) holds it until the
+/// feed has ended.
+#[test]
+fn a_feed_never_runs_into_an_accepted_reboot() {
+    let mut rig = Rig::new();
+    let mut owner = open(&mut rig, OWNER);
+    let reboot = ask(&mut rig, &mut owner, 1, Op::Reboot);
+    assert_eq!(reboot, Answer::Done { generation: None });
+    let fed = ask(&mut rig, &mut owner, 2, Op::Feed { portions: 1 });
+    assert_eq!(fed, Answer::Refused(model::Refusal::Busy));
+    assert!(rig.device.feeds.is_empty());
+
+    // The panel's feed, which the server never sees, is in flight at the
+    // restart's deadline.
+    rig.device.hold_feeds = true;
+    rig.device.feed(1, proto::Source::Panel).unwrap();
+    for _ in 0..(2 * wellfed_device_api::REBOOT_MS / 20) {
+        rig.pass();
+    }
+    assert!(!rig.device.rebooted, "the restart waits for the feed");
+    rig.device.hold_feeds = false;
+    rig.device.write();
+    rig.pass();
+    assert!(rig.device.rebooted);
+}
+
+/// During a feed a stranger's handshake is refused without its reply, and
+/// holds every other handshake until the feed ends; an enrolled client
+/// that connected first still opens a session and cancels the feed.
+#[test]
+fn during_a_feed_a_client_cancels_and_a_stranger_costs_one_handshake() {
+    let mut rig = Rig::new();
+    let mut member = open(&mut rig, MEMBER);
+    let feed = ask(&mut rig, &mut member, 1, Op::Feed { portions: 3 });
+    assert_eq!(feed, Answer::Feeding { feed: 1 });
+
+    rig.feeding = true;
+    let mut owner = open(&mut rig, OWNER);
+    let cancel = ask(&mut rig, &mut owner, 2, Op::CancelFeed { feed: 1 });
+    assert_eq!(cancel, Answer::Done { generation: None });
+    assert_eq!(rig.device.cancelled, [1]);
+
+    let stranger = rig.accept().unwrap();
+    let (_, mut outbox) =
+        Session::connect(&Keypair::from_secret(STRANGER), public(FEEDER), [9; 32]).unwrap();
+    rig.deliver(stranger, &mut outbox);
+    for _ in 0..10 {
+        rig.pass();
+    }
+    assert!(rig.ended(Reason::Unknown));
+    assert!(rig.server.closing(stranger), "closed, ...");
+    assert!(rig.server.tx(stranger).is_empty(), "... without the reply");
+    let records = &mut rig.records;
+    rig.server.closed(stranger, |r| records.push(r));
+
+    // The next connection waits for the feed's end, then opens.
+    let late = rig.accept().unwrap();
+    let (mut session, mut outbox) =
+        Session::connect(&Keypair::from_secret(OWNER), public(FEEDER), [8; 32]).unwrap();
+    rig.deliver(late, &mut outbox);
+    for _ in 0..10 {
+        rig.pass();
+        assert!(!rig.server.handshook(), "held for the feed");
+    }
+    rig.feeding = false;
+    let mut opened = false;
+    for _ in 0..10 {
+        rig.pass();
+        let bytes = rig.collect(late);
+        if !bytes.is_empty() {
+            session.receive(&bytes).unwrap();
+        }
+        opened |= matches!(session.next_incoming(), Ok(Some(Incoming::Opened(_))));
+    }
+    assert!(opened);
+}
+
 #[test]
 fn a_client_without_the_feed_capability_neither_feeds_nor_sees_feeds() {
     let mut rig = Rig::new();
@@ -1096,9 +1326,9 @@ fn a_subscriber_reads_every_event_after_its_cursor_and_learns_of_a_gap() {
 }
 
 #[test]
-fn one_handshake_operation_per_pass_and_none_while_feeding() {
+fn one_handshake_operation_per_pass_and_only_enrolled_ones_while_feeding() {
     let mut rig = Rig::new();
-    let mut clients: Vec<(usize, Vec<u8>)> = (0..SESSIONS)
+    let mut clients: Vec<(usize, Vec<u8>)> = (0..SESSIONS - 1)
         .map(|_| {
             let slot = rig.accept().unwrap();
             let (_, outbox) =
@@ -1106,29 +1336,33 @@ fn one_handshake_operation_per_pass_and_none_while_feeding() {
             (slot, outbox)
         })
         .collect();
+    // An invite's connection: its join would enroll a key, a store write
+    // that waits out a feed, so its handshake waits for the feed's end.
+    let invite = Invite {
+        feeder: public(FEEDER),
+        id: 77,
+        secret: [3; 32],
+    };
+    let invited = rig.accept().unwrap();
+    let (_, mut invite_outbox) =
+        Join::connect(&Keypair::from_secret(STRANGER), invite, "phone", [0x55; 32]).unwrap();
     assert_eq!(rig.accept(), None, "a fifth connection is refused");
     assert!(rig.ended(Reason::Full));
 
     for (slot, outbox) in &mut clients {
         rig.deliver(*slot, outbox);
     }
+    rig.deliver(invited, &mut invite_outbox);
     // Each slot needs its open frame read, then three operations: the
-    // handshake built, the first message read, the answer written.
+    // handshake built, the first message read, the answer written. A feed
+    // holds the outputs meanwhile: the enrolled clients still open, one
+    // operation a pass, and the loop is told after each.
     rig.pass();
     rig.feeding = true;
-    for _ in 0..10 {
-        rig.pass();
-    }
-    assert!(
-        clients
-            .iter()
-            .all(|(slot, _)| rig.server.tx(*slot).is_empty())
-    );
-
-    rig.feeding = false;
     let mut answered = 0;
-    for pass in 1..=(3 * SESSIONS) {
+    for pass in 1..=(3 * (SESSIONS - 1)) {
         rig.pass();
+        assert!(rig.server.handshook(), "pass {pass} ran an operation");
         let now = clients
             .iter()
             .filter(|(slot, _)| !rig.server.tx(*slot).is_empty())
@@ -1136,7 +1370,14 @@ fn one_handshake_operation_per_pass_and_none_while_feeding() {
         assert!(now <= pass / 3 + 1);
         answered = now;
     }
-    assert_eq!(answered, SESSIONS);
+    assert_eq!(answered, SESSIONS - 1);
+    rig.pass();
+    assert!(!rig.server.handshook(), "the invite waits for the feed");
+    assert!(rig.server.tx(invited).is_empty());
+
+    rig.feeding = false;
+    rig.pass();
+    assert!(rig.server.handshook(), "the invite goes on once it ends");
 }
 
 #[test]
@@ -1455,6 +1696,7 @@ fn a_connection_names_the_epoch_and_answers_each_request_once() {
                 time: true,
                 log: false,
                 stats: true,
+                readiness: true,
             },
             EPOCH
         )
@@ -1651,6 +1893,7 @@ fn every_body() -> Vec<EventBody> {
             EventBody::ClockSync { .. } => 6,
             EventBody::Lost { .. } => 7,
             EventBody::Fed { .. } => 8,
+            EventBody::FeedingBlocked { .. } => 9,
         }
     }
     let by = proto::Source::Panel;
@@ -1677,6 +1920,9 @@ fn every_body() -> Vec<EventBody> {
             outcome: proto::FeedOutcome::Done,
             reason: proto::FeedReason::Done,
             by,
+        },
+        EventBody::FeedingBlocked {
+            reason: Some(proto::Blocked::Fault),
         },
     ];
     let mut seen: Vec<usize> = bodies.iter().map(variant).collect();
@@ -1953,6 +2199,7 @@ fn only_an_owner_s_session_with_the_update_bit_may_update() {
             time: false,
             log: true,
             stats: true,
+            readiness: true,
         },
     };
     let slot = rig.accept().unwrap();

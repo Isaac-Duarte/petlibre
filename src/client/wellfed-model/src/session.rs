@@ -24,6 +24,9 @@ pub struct Capabilities {
     /// Statistics: the `Stats` op and answer, and the live samples beyond
     /// power and signal.
     pub stats: bool,
+    /// Feeding readiness: [`crate::Status::readiness`] and the
+    /// `FeedingBlocked` events.
+    pub readiness: bool,
 }
 
 impl Capabilities {
@@ -34,6 +37,7 @@ impl Capabilities {
         time: false,
         log: false,
         stats: false,
+        readiness: false,
     };
     /// Every feature this crate knows: what a current client claims.
     pub const KNOWN: Self = Self {
@@ -42,6 +46,7 @@ impl Capabilities {
         time: true,
         log: true,
         stats: true,
+        readiness: true,
     };
 
     /// The features both `self` and `other` claim.
@@ -53,6 +58,7 @@ impl Capabilities {
             time: self.time && other.time,
             log: self.log && other.log,
             stats: self.stats && other.stats,
+            readiness: self.readiness && other.readiness,
         }
     }
 }

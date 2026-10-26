@@ -114,6 +114,7 @@ impl Platform for Plaf103 {
             .union(Capabilities::TIME)
             .union(Capabilities::LOG)
             .union(Capabilities::STATS)
+            .union(Capabilities::READINESS)
     }
 
     fn reset(&mut self) {

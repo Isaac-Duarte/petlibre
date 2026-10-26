@@ -14,8 +14,8 @@ use crate::wifi::Credentials;
 use crate::{Device, KeyChange, REBOOT_MS, Record, UpdateRequest};
 use wellfed_core::tone::Tune as CoreTune;
 use wellfed_proto::api::{
-    self as proto, Capabilities, ClientMessage, EventBody, Op, Refusal, RequestId, Source,
-    StatsSection, Tune, UPDATE_CHUNK_MAX, UpdateRefusal, UpdateView,
+    self as proto, Capabilities, ClientMessage, EventBody, Op, Readiness, Refusal, RequestId,
+    Source, StatsSection, Tune, UPDATE_CHUNK_MAX, UpdateRefusal, UpdateView,
 };
 
 impl Server {
@@ -59,6 +59,9 @@ impl Server {
                         Reply::Invite(invite(id, secret))
                     }),
                 Remembered::Feeding { feed } => Reply::Feeding(feed),
+                Remembered::Queued { feed } => {
+                    return self.wait(index, id, action, Waiting::Feed { feed });
+                }
                 Remembered::Update => device
                     .update_view()
                     .map_or(Reply::Refused(Refusal::Unavailable), Reply::Update),
@@ -203,10 +206,17 @@ impl Server {
                     _ => Reply::Refused(Refusal::Forbidden),
                 }
             }
-            Action::Feed { .. } if device.installing() => Reply::Refused(Refusal::Busy),
-            Action::Feed { portions } => match device.feed(portions, by) {
-                Ok(feed) => return self.wait(index, id, action, Waiting::Feed { feed }),
-                Err(refusal) => Reply::Refused(refusal),
+            // A restart is due: a feed now would be cut by it.
+            Action::Feed { .. } if self.reboot_at.is_some() => Reply::Refused(Refusal::Busy),
+            Action::Feed { portions } => match device.readiness() {
+                Readiness::Blocked(blocked) => Reply::Refused(blocked.refusal()),
+                Readiness::Ready => match device.feed(portions, by) {
+                    Ok(feed) => {
+                        self.memories[memory].remember(id, Remembered::Queued { feed });
+                        return self.wait(index, id, action, Waiting::Feed { feed });
+                    }
+                    Err(refusal) => Reply::Refused(refusal),
+                },
             },
             Action::CancelFeed { feed } => {
                 if device.cancel_feed(feed) {
@@ -215,6 +225,8 @@ impl Server {
                     Reply::Refused(Refusal::NotFound)
                 }
             }
+            // A restart now would leave the feed uncertain.
+            Action::Reboot if device.feed_active() => Reply::Refused(Refusal::Busy),
             Action::Reboot => {
                 self.reboot_at = Some(now_ms.wrapping_add(REBOOT_MS));
                 Reply::Done(None)

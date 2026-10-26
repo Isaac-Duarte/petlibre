@@ -14,8 +14,8 @@ use crate::pairing::{self, Path};
 use crate::{Device, KeyChange, KeyOutcome, Reason, Record, UpdateAnswer, UpdateKeyChange};
 use wellfed_core::ota::offer::key_id;
 use wellfed_proto::api::{
-    self as proto, EventBody, FeederMessage, Outcome, Refusal, RequestId, Source, TimeView,
-    UpdateRefusal,
+    self as proto, Capabilities, EventBody, FeederMessage, Outcome, Refusal, RequestId, Source,
+    TimeView, UpdateRefusal,
 };
 
 impl Server {
@@ -185,6 +185,14 @@ impl Server {
         Ok(Some((pending.id, pending.op, outcome)))
     }
 
+    /// Whether the session on `index` and the feeder both claim `bit`.
+    fn shares<D: Device>(&self, index: usize, bit: Capabilities, device: &D) -> bool {
+        let Phase::Open { capabilities, .. } = self.slots[index].phase else {
+            return false;
+        };
+        capabilities.contains(bit) && device.capabilities().contains(bit)
+    }
+
     /// Move a pending request on to its next wait.
     fn waiting(&mut self, index: usize, next: Waiting) {
         if let Phase::Open {
@@ -232,7 +240,12 @@ impl Server {
             Reply::Status => {
                 let mut status = device.status(now_ms);
                 status.sessions = u8::try_from(self.sessions()).unwrap_or(u8::MAX);
-                Outcome::Status(status)
+                if self.shares(index, Capabilities::READINESS, device) {
+                    let readiness = device.readiness();
+                    Outcome::FeederStatus { status, readiness }
+                } else {
+                    Outcome::Status(status)
+                }
             }
             Reply::Time => match time_view(device, now_ms) {
                 Some((view, text)) => {

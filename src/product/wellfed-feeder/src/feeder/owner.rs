@@ -132,6 +132,8 @@ pub struct Owner {
     signer: Option<pairing::Event>,
     /// Gestures that ended this boot, for the statistics.
     presses: u32,
+    /// The panel allowed a Dispense press this step: one feed to queue.
+    dispense: bool,
 }
 
 impl fmt::Debug for Owner {
@@ -163,7 +165,16 @@ impl Owner {
             recovery: None,
             signer: None,
             presses: 0,
+            dispense: false,
         }
+    }
+
+    /// A Dispense press the panel allowed, taken once: the loop queues its
+    /// feed through the path a client's `Feed` takes. Presses in one step
+    /// ask for one feed; the owner would refuse a second while the first
+    /// runs anyway.
+    pub fn take_dispense(&mut self) -> bool {
+        core::mem::take(&mut self.dispense)
     }
 
     /// Gestures that ended this boot (every chord released, whatever it
@@ -252,6 +263,14 @@ impl Owner {
                 continue;
             };
             panel_event(platform, now, event, &mut record);
+            if event
+                == (Event::Asked {
+                    action: Action::Feed,
+                    allowed: true,
+                })
+            {
+                self.dispense = true;
+            }
             if event
                 == (Event::Asked {
                     action: Action::Reset,

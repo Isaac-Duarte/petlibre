@@ -31,9 +31,9 @@ pub use feeders::{AdoptFeeder, Connection, Feeder, FeederDetail, LockRequest, St
 // The feeder's own values are the model's, served as they are; the HTTP
 // API adds only what the server knows (when it received them, its own ids).
 pub use wellfed_model::{
-    ClientRole, EnrollPath, EventBody, EventKind, FeedOutcome, FeedReason, Generation, Hex,
-    MetricKind, Power, SampleValue, Settings, SettingsPatch, Source, Status as FeederStatus,
-    WifiSource,
+    Blocked, ClientRole, EnrollPath, EventBody, EventKind, FeedOutcome, FeedReason, Generation,
+    Hex, MetricKind, Power, Readiness, SampleValue, Settings, SettingsPatch, Source,
+    Status as FeederStatus, WifiSource,
 };
 pub use stream::{FeederSample, StreamEvent, StreamQuery};
 

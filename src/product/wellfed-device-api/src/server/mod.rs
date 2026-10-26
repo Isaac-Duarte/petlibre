@@ -36,7 +36,9 @@ pub struct Pass<'a, D> {
     pub device: &'a mut D,
     pub pairing: &'a mut Pairing,
     pub identity: Option<&'a Keypair>,
-    /// A feed is running: no handshake operation this pass.
+    /// A feed holds the outputs: only an IK session handshake may run this
+    /// pass, a refused one closes unanswered, and after one refused or
+    /// failed the rest wait for the feed's end (see [`Server::handshook`]).
     pub feeding: bool,
     /// Pairing's decision on a LAN recovery offer this pass: its code keyed
     /// in, or its timeout.
@@ -167,6 +169,11 @@ pub struct Server {
     cancel_signer: bool,
     /// A feed is prepared or driven this pass.
     feeding: bool,
+    /// The last step ran a handshake operation.
+    handshook: bool,
+    /// A session handshake was refused or failed during this feed: the rest
+    /// wait for its end.
+    struck: bool,
     /// The feeder's identity key, for an offer's downgrade statement.
     identity_public: Option<[u8; 32]>,
     /// The length of the request in `plain`, which update ops read again
@@ -204,6 +211,8 @@ impl Server {
             signer: None,
             cancel_signer: false,
             feeding: false,
+            handshook: false,
+            struck: false,
             identity_public: None,
             plain_len: 0,
             plain: [0; FRAME_MAX],
@@ -343,6 +352,13 @@ impl Server {
         }
     }
 
+    /// Whether the last [`Self::step`] ran a handshake operation: the
+    /// costly part of a pass (one or two X25519s), after which a loop that
+    /// feeds steps its feeding owner again at once.
+    pub fn handshook(&self) -> bool {
+        self.handshook
+    }
+
     /// One pass. Returns true while work is waiting, so the loop should
     /// step again soon.
     pub fn step<D: Device>(&mut self, pass: Pass<'_, D>, mut record: impl FnMut(Record)) -> bool {
@@ -359,6 +375,7 @@ impl Server {
         self.decision = recovery;
         self.signer = self.signer.or(signer);
         self.feeding = feeding;
+        self.struck &= feeding;
         self.identity_public = identity.map(|keys| *keys.public());
         if core::mem::take(&mut self.cancel_rescue) {
             pairing.cancel(Path::Recovery);
@@ -368,16 +385,22 @@ impl Server {
             self.signer = None;
         }
 
+        // A feed queued before the deadline (a Dispense press: the server
+        // refuses its own) holds the restart until it has ended, so the
+        // restart never leaves a feed uncertain.
         if let Some(at) = self.reboot_at
             && deadline_passed(now_ms, at)
+            && !device.feed_active()
         {
             self.reboot_at = None;
             device.reboot();
         }
 
         let mut busy = false;
-        if !feeding && let Some(identity) = identity {
-            busy |= self.handshake_turn(now_ms, identity, device, pairing, &mut record);
+        self.handshook = false;
+        if let Some(identity) = identity {
+            self.handshook = self.handshake_turn(now_ms, identity, device, pairing, &mut record);
+            busy |= self.handshook;
         }
         for index in 0..SESSIONS {
             busy |= self.session(index, now_ms, device, pairing, &mut record);

@@ -36,6 +36,42 @@ pub struct Status {
     pub last_event: Option<u64>,
     /// Open device API sessions, the server's included.
     pub sessions: u8,
+    /// Whether a feed can start now; absent from a feeder that does not
+    /// report it.
+    pub readiness: Option<Readiness>,
+}
+
+/// Whether the feeder can start a feed now: the one decision a feed
+/// request obeys too.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(tag = "state", content = "reason", rename_all = "snake_case")]
+pub enum Readiness {
+    Ready,
+    Blocked(Blocked),
+}
+
+/// Why a feed cannot start now.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Blocked {
+    /// The feeding owner has not opened yet.
+    Starting,
+    /// The feed journal could not be opened: no feed this boot.
+    Journal,
+    /// The feeding owner stopped on a fault: no feed until a restart.
+    Fault,
+    /// A feed a reset interrupted is being resolved as uncertain.
+    Resolving,
+    /// A feed is queued or runs.
+    Feeding,
+    /// A Wi-Fi join runs or waits.
+    Joining,
+    /// An install holds the flash.
+    Updating,
+    /// BLE setup mode runs, which ends in a restart.
+    Setup,
+    /// The firmware has no feeding owner.
+    Unserved,
 }
 
 /// Which Wi-Fi credentials the feeder joined with.

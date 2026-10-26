@@ -1270,7 +1270,7 @@ fn ota_refuses_a_stock_review_of_another_image() {
 /// The signer's refusal of the offered review.
 fn signing(error: &Error) -> &wellfed_signing::Error {
     match error {
-        Error::Signing { source, .. } => source,
+        Error::Signing { error, .. } => error,
         other => panic!("not a signing refusal: {other:?}"),
     }
 }

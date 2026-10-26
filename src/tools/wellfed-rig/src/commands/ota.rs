@@ -124,10 +124,10 @@ pub enum OtaError {
     NoManifest { review: String },
     /// The confirmed review's manifest, read to decide whether a status
     /// check applies; `manifest` root-relative.
-    #[error("{manifest} is unreadable: {source}")]
+    #[error("{manifest} is unreadable: {error}")]
     ManifestUnreadable {
         manifest: String,
-        source: wellfed_formats::Error,
+        error: wellfed_formats::Error,
     },
     /// `--fault give-way-only`: the push ended without the give-way.
     #[error("The give-way did not happen: {0}")]
@@ -1126,9 +1126,9 @@ impl Bench {
         // confirmation is the whole check.
         let described = self.root.join(&staged.review).join("build-manifest.json");
         let manifest: wellfed_formats::manifest::BuildManifest =
-            wellfed_formats::load(&described).map_err(|source| OtaError::ManifestUnreadable {
+            wellfed_formats::load(&described).map_err(|error| OtaError::ManifestUnreadable {
                 manifest: self.rel(&described),
-                source,
+                error,
             })?;
         if manifest.firmware.as_deref() != Some(Firmware::Feeder.name()) {
             self.note(&format!(
@@ -1159,9 +1159,9 @@ impl Bench {
         // Only a frozen review signs: its review.json binds the image, and
         // for a build the manifest that names its identity and motion.
         let review = self.root.join(&plan.review);
-        let frozen = Frozen::open(&self.root, &review).map_err(|source| Error::Signing {
+        let frozen = Frozen::open(&self.root, &review).map_err(|error| Error::Signing {
             review: self.rel(&review).into(),
-            source,
+            error,
         })?;
         let build = frozen.build_id();
         let (target, motion) = match (frozen.kind(), frozen.manifest()) {
@@ -1264,15 +1264,15 @@ impl Bench {
         self.status.step(SIGN_STEP);
         timing.ran = true;
         let signing = Instant::now();
-        let refused = |source| Error::Signing {
+        let refused = |error| Error::Signing {
             review: plan.review.clone(),
-            source,
+            error,
         };
         let key = Key::load(&self.root.join(KEY_PATH)).map_err(refused)?;
         let manifest = frozen.offer(&key, plan.version, motion).map_err(refused)?;
-        write_new(&plan.signed, &manifest).map_err(|source| Error::Signing {
+        write_new(&plan.signed, &manifest).map_err(|error| Error::Signing {
             review: plan.review.clone(),
-            source: source.into(),
+            error: error.into(),
         })?;
         timing.sign_offer = Some(signing.elapsed().as_secs_f64());
 

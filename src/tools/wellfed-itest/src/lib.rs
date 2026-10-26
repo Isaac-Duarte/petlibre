@@ -410,7 +410,7 @@ impl<'r> Ctx<'r> {
         self.note(&format!(
             "  Offered version {} ({})",
             staged.version,
-            &staged.build[..12]
+            short(&staged.build)
         ));
         let outcome = self.watch(&staged.build, since, INSTALL_SECONDS)?;
         if outcome == Outcome::Passed {
@@ -463,7 +463,7 @@ impl<'r> Ctx<'r> {
             }
             if self.rig.clock() >= deadline {
                 return Err(Error::NoOutcome {
-                    build: build[..12].into(),
+                    build: short(build).into(),
                     minutes: seconds / 60.0,
                 });
             }
@@ -606,6 +606,12 @@ impl<'r> Ctx<'r> {
         let answers = self.rig.device(&Ask::Status).is_ok();
         (!answers).then_some(Silent)
     }
+}
+
+/// A build ID's first 12 digits, as the operator compares them; a shorter
+/// ID prints whole rather than panicking mid-run.
+fn short(build: &str) -> &str {
+    build.get(..12).unwrap_or(build)
 }
 
 /// One line of JSON, for a failure message.

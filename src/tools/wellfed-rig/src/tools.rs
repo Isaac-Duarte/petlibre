@@ -110,10 +110,10 @@ pub enum ToolsError {
     #[error("{} is too short", image.display())]
     ImageTooShort { image: PathBuf },
     /// The key that signs a downgrade statement; `key` root-relative.
-    #[error("{}: {source}", key.display())]
+    #[error("{}: {error}", key.display())]
     DowngradeKey {
         key: PathBuf,
-        source: wellfed_signing::Error,
+        error: wellfed_signing::Error,
     },
     #[error("Status answered {0:?}")]
     StatusAnswer(Answer),
@@ -172,9 +172,9 @@ impl Pushing {
         let downgrade =
             match &job.downgrade {
                 Some(key) => Some(wellfed_signing::Key::load(&root.join(key)).map_err(
-                    |source| ToolsError::DowngradeKey {
+                    |error| ToolsError::DowngradeKey {
                         key: key.clone(),
-                        source,
+                        error,
                     },
                 )?),
                 None => None,
@@ -235,7 +235,7 @@ impl Installing for Pushing {
     fn stop(&mut self) {
         self.stop.store(true, Ordering::Release);
         if let Some(done) = self.done.take() {
-            let joined = done.join().unwrap_or(Err(PushError::Panicked));
+            let joined = done.join().unwrap_or_else(|_| Err(PushError::Panicked));
             self.result = Some(joined.map_err(Arc::new));
         }
     }

@@ -24,8 +24,8 @@ pub const IMAGE_BYTES: usize = (STORAGE_SECTORS * SECTOR_BYTES) as usize;
 
 #[derive(Debug, thiserror::Error)]
 pub enum FlashError {
-    #[error("read the flash image {path}: {source}")]
-    Read { path: PathBuf, source: io::Error },
+    #[error("read the flash image {path}: {error}")]
+    Read { path: PathBuf, error: io::Error },
     #[error("the flash image {path} holds {len} bytes, not {IMAGE_BYTES}")]
     Size { path: PathBuf, len: usize },
 }
@@ -51,10 +51,10 @@ impl Flash {
         let bytes = match fs::read(path) {
             Ok(bytes) => bytes,
             Err(error) if error.kind() == io::ErrorKind::NotFound => vec![0xff; IMAGE_BYTES],
-            Err(source) => {
+            Err(error) => {
                 return Err(FlashError::Read {
                     path: path.to_owned(),
-                    source,
+                    error,
                 });
             }
         };

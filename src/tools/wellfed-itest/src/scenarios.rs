@@ -23,7 +23,7 @@ use wellfed_rig::commands::ota::Outcome;
 use wellfed_rig::device::{Answer, Ask, Credentials, DeviceStatus, Intruder, Rebuffed};
 use wellfed_rig::server::NotReady;
 
-use super::{Baseline, Ctx, Fault, INSTALL_SECONDS, Result, STATUS_SECONDS, compact};
+use super::{Baseline, Ctx, Fault, INSTALL_SECONDS, Result, STATUS_SECONDS, compact, short};
 
 /// Why a scenario found the feeder other than it should be.
 #[derive(Debug, thiserror::Error)]
@@ -203,7 +203,7 @@ fn ota_update(ctx: &mut Ctx) -> Result<()> {
         if ctx.running(&build) {
             ctx.note(&format!(
                 "  {} already runs on bank 1; nothing to install",
-                &build[..12]
+                short(&build)
             ));
             ctx.baseline = Some(Baseline { build, review });
             return ctx.sync_clock();
@@ -311,17 +311,18 @@ pub(super) fn set_settings(ctx: &mut Ctx, change: SettingsPatch) -> Result<u32> 
         base,
         changes: change,
     })?;
-    if !matches!(answer, Answer::Done { .. }) {
-        return Err(ScenariosError::SettingsChange { answer }.into());
-    }
+    require(matches!(answer, Answer::Done { .. }), || {
+        ScenariosError::SettingsChange { answer }
+    })?;
     ctx.expect("PLCFG1 saved", since, SAVE_SECONDS, |e| {
         matches!(e, Event::Settings(record::Settings::Saved { generation: Some(g) }) if *g > u64::from(base))
     })?;
 
     let after = read_settings(ctx)?;
-    if !shows(&after, change) {
-        return Err(ScenariosError::ReadBack { after, change }.into());
-    }
+    require(shows(&after, change), || ScenariosError::ReadBack {
+        after,
+        change,
+    })?;
     Ok(base)
 }
 
@@ -404,10 +405,9 @@ fn settings_persist(ctx: &mut Ctx) -> Result<()> {
         stale_write(ctx, base, changed)?;
         cold_boot(ctx)?;
         let after = read_settings(ctx)?;
-        if !shows(&after, changed) {
-            return Err(ScenariosError::NotPersisted { after }.into());
-        }
-        Ok(())
+        require(shows(&after, changed), || {
+            ScenariosError::NotPersisted { after }.into()
+        })
     });
     let restored = set_settings(ctx, changes_to(&before)).map(|_| ());
     result.and(restored)
@@ -571,9 +571,9 @@ fn recovery(ctx: &mut Ctx, failing: &super::Staged, staged: &super::Staged) -> R
     ctx.rig.offer(Some(failing), Fault::None)?;
     ctx.expect("PLOTA1 activated", since, INSTALL_SECONDS, activated)?;
     let outcome = ctx.watch(&failing.build, since, INSTALL_SECONDS)?;
-    if !matches!(outcome, Outcome::FellBack { .. }) {
-        return Err(ScenariosError::NotRejected { outcome }.into());
-    }
+    require(matches!(outcome, Outcome::FellBack { .. }), || {
+        ScenariosError::NotRejected { outcome }
+    })?;
 
     // Bank 0 runs now. Each drill pushes the restore with one fault, and
     // bank 0 must stop it before the marker.
@@ -798,8 +798,4 @@ pub(super) fn restore_state(ctx: &mut Ctx, want: &DeviceState, now: &DeviceState
         ));
     }
     changed
-}
-
-fn short(build: &str) -> &str {
-    &build[..build.len().min(12)]
 }

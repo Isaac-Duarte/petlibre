@@ -42,7 +42,7 @@ use wellfed_rig::server::{STOCK_VERSION, TrialAnswer, TrialRequest};
 use super::log::events;
 use super::{
     Ctx, Fault, HEALTH_SECONDS, INSTALL_SECONDS, Report, Result, STATUS_POLL_SECONDS,
-    STATUS_SECONDS, Server, Silent, Verdict, live,
+    STATUS_SECONDS, Server, Silent, Verdict, live, short,
 };
 
 /// Why the trip through stock, or a `stock-ota` stage, stopped. Stock is
@@ -91,11 +91,6 @@ pub enum StockError {
     PromotionSkipped,
     #[error("The server did not resolve {id} within {:.0} min", SETTLE_SECONDS / 60.0)]
     Unresolved { id: String },
-}
-
-/// A build ID's first 12 digits, as the operator compares them.
-fn short(build: &str) -> &str {
-    build.get(..12).unwrap_or(build)
 }
 
 /// Stock joins the hotspot, connects and reports its attributes within a
@@ -293,7 +288,7 @@ fn request(ctx: &mut Ctx, staged: &Staged, request_id: &str) -> Result<()> {
     };
     ctx.note(&format!(
         "  Asking stock to install {} (request {request_id}); never resent",
-        &staged.build[..12]
+        short(&staged.build)
     ));
     ctx.rig.stock_trial(&trial)
 }

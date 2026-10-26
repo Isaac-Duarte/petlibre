@@ -176,9 +176,9 @@ fn program(command: &Command) -> String {
 
 /// Run a command to completion, refusing a failed exit with its stderr.
 pub(crate) fn run(command: &mut Command) -> Result<Output> {
-    let output = command.output().map_err(|source| Error::Spawn {
+    let output = command.output().map_err(|error| Error::Spawn {
         program: program(command),
-        source,
+        error,
     })?;
     if !output.status.success() {
         return Err(Error::Tool {

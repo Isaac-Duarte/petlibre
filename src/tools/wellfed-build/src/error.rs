@@ -43,8 +43,8 @@ pub enum Error {
     #[error("{} is outside {}", path.display(), base.display())]
     Outside { path: PathBuf, base: PathBuf },
     /// A tool could not be started.
-    #[error("Cannot run {program}: {source}")]
-    Spawn { program: String, source: io::Error },
+    #[error("Cannot run {program}: {error}")]
+    Spawn { program: String, error: io::Error },
     /// A tool ran and exited unsuccessfully.
     #[error("{program} failed ({status}): {stderr}")]
     Tool {

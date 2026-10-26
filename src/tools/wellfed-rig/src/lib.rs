@@ -57,19 +57,17 @@ pub enum Error {
     Interrupted,
     /// A JSON file the bench reads (its config, the server's, a review's
     /// manifest) is missing or malformed; `path` as the operator gave it.
-    #[error("{}: {source}", path.display())]
+    #[error("{}: {error}", path.display())]
     Load {
         path: PathBuf,
-        #[source]
-        source: wellfed_formats::Error,
+        error: wellfed_formats::Error,
     },
     /// Signing refused the review (it differs from what was frozen, or it
     /// moves without attendance) or the key; `review` root-relative.
-    #[error("{}: {source}", review.display())]
+    #[error("{}: {error}", review.display())]
     Signing {
         review: PathBuf,
-        #[source]
-        source: wellfed_signing::Error,
+        error: wellfed_signing::Error,
     },
     /// The server's status does not show what a wait is for, yet.
     #[error(transparent)]
@@ -100,9 +98,9 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// Read the JSON file at `relative` under `root` into its type.
 pub fn load<T: serde::de::DeserializeOwned>(root: &Path, relative: &Path) -> Result<T> {
-    wellfed_formats::load(&root.join(relative)).map_err(|source| Error::Load {
+    wellfed_formats::load(&root.join(relative)).map_err(|error| Error::Load {
         path: relative.to_path_buf(),
-        source,
+        error,
     })
 }
 

@@ -77,7 +77,7 @@ pub enum Error {
 
 impl Error {
     /// The operator's interrupt: every wait passes it on as it is.
-    pub fn interrupted(&self) -> bool {
+    pub(crate) fn interrupted(&self) -> bool {
         matches!(self, Self::Rig(wellfed_rig::Error::Interrupted))
     }
 }

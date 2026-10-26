@@ -77,10 +77,10 @@ pub enum CommandsError {
     #[error("--source is required except when overwriting bank 0")]
     SourceRequired,
     /// A target manifest that cannot be read is not taken as motionless.
-    #[error("Cannot read {manifest} to check its motion policy: {source}")]
+    #[error("Cannot read {manifest} to check its motion policy: {error}")]
     MotionPolicyUnreadable {
         manifest: String,
-        source: wellfed_formats::Error,
+        error: wellfed_formats::Error,
     },
     #[error(
         "Target drives the motor ({policy}); rerun with --attended-motion only with the owner watching"
@@ -703,10 +703,10 @@ impl Bench {
             return Ok(());
         }
 
-        let manifest: BuildManifest = wellfed_formats::load(&path).map_err(|source| {
+        let manifest: BuildManifest = wellfed_formats::load(&path).map_err(|error| {
             CommandsError::MotionPolicyUnreadable {
                 manifest: self.rel(&path),
-                source,
+                error,
             }
         })?;
         self.attended_motion(&manifest, args.attended_motion)

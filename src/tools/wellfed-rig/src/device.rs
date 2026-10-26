@@ -59,11 +59,10 @@ const ANSWER: Duration = Duration::from_secs(10);
 
 #[derive(Debug, thiserror::Error)]
 pub enum DeviceError {
-    #[error("{}: {source}", path.display())]
+    #[error("{}: {error}", path.display())]
     Keys {
         path: PathBuf,
-        #[source]
-        source: wellfed_formats::Error,
+        error: wellfed_formats::Error,
     },
     #[error("{}: the secret or a feeder identity is not 32 bytes of hex", .0.display())]
     BadKey(PathBuf),
@@ -394,9 +393,9 @@ impl Device {
     /// at `config`, both under `root`.
     pub fn open(root: &Path, keys: &Path, config: &Path) -> crate::Result<Self> {
         let file: OwnerKeyFile =
-            wellfed_formats::load(&root.join(keys)).map_err(|source| DeviceError::Keys {
+            wellfed_formats::load(&root.join(keys)).map_err(|error| DeviceError::Keys {
                 path: keys.to_path_buf(),
-                source,
+                error,
             })?;
         let secret =
             hex::decode::<32>(&file.secret).ok_or_else(|| DeviceError::BadKey(keys.into()))?;

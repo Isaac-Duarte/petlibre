@@ -341,7 +341,7 @@ fn cancel_during_feed(ctx: &mut Ctx, issued: &mut Option<Issued>) -> Result<()> 
     require(cancel == Answer::Done { generation: None }, || {
         FeedsError::CancelAnswer {
             feed,
-            answer: cancel.clone(),
+            answer: cancel,
         }
     })?;
     let result = result_at(ctx, fed, feed)?;
@@ -491,9 +491,7 @@ fn no_reset(ctx: &mut Ctx, since: usize, boots: u32) -> Result<()> {
     let restarts = ctx.log.between(since, usize::MAX, |e| {
         matches!(e, Event::Start { .. } | Event::Panic { .. })
     });
-    require(restarts.is_empty(), || FeedsError::Restarted {
-        restarts: restarts.clone(),
-    })?;
+    require(restarts.is_empty(), || FeedsError::Restarted { restarts })?;
     let status = ctx.device_status()?;
     require(status.boot_count == boots, || {
         FeedsError::BootCount {

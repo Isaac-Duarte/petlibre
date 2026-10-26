@@ -25,7 +25,7 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
 use clap::Args;
 use wellfed_core::ota;
@@ -44,7 +44,7 @@ use super::{Attendance, Bench};
 use crate::device::{DeviceStatus, Fault};
 use crate::tools::{InstallJob, Installing, PushError};
 use crate::{Error, Result};
-use wellfed_formats::bench::{CAPTURES, VERIFICATION};
+use wellfed_formats::bench::{CAPTURES, VERIFICATION, since_epoch};
 use wellfed_formats::require;
 
 /// Each capture segment; the classifier reads it once it ends.
@@ -1392,9 +1392,7 @@ impl Bench {
             }
             finished?;
             elapsed += length;
-            let ended = SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap_or_default();
+            let ended = since_epoch();
 
             let rx = fs::read(output.join("serial-rx.bin")).unwrap_or_default();
             let chunks = fs::read_to_string(output.join("serial-events.jsonl")).unwrap_or_default();

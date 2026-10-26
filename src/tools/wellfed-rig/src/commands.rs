@@ -69,7 +69,7 @@ pub enum CommandsError {
     #[error("Need cycles >= 1 and a capture longer than arming")]
     TransientBounds,
     /// A length on the command line that no wait can take.
-    #[error("{flag} {value} must be a finite, non-negative number")]
+    #[error("{flag} {value} must be a finite, non-negative number, at most a week")]
     BadLength { flag: &'static str, value: f64 },
     #[error("{tool} not found; install it before a transient session")]
     ToolMissing { tool: &'static str },
@@ -264,14 +264,14 @@ pub struct Bench {
 /// Whether the owner is watching, which a build that drives the motor
 /// after boot needs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Attendance {
+pub(crate) enum Attendance {
     Attended,
     Unattended,
 }
 
 impl Attendance {
     /// `--attended-motion`, as the command line gives it.
-    pub fn from_flag(attended_motion: bool) -> Self {
+    pub(crate) fn from_flag(attended_motion: bool) -> Self {
         if attended_motion {
             Self::Attended
         } else {
@@ -280,16 +280,26 @@ impl Attendance {
     }
 }
 
+/// The longest wait the command line may ask for. Far past any bench run,
+/// and short enough that adding it to `Instant::now()` cannot overflow.
+const LONGEST: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+
 /// A length the command line gives in seconds, refused unless it is one a
-/// wait can take: finite and not negative.
+/// wait can take: finite, not negative and at most [`LONGEST`].
 pub fn seconds_arg(flag: &'static str, value: f64) -> Result<Duration> {
-    Duration::try_from_secs_f64(value).map_err(|_| CommandsError::BadLength { flag, value }.into())
+    length(flag, value, value)
 }
 
 /// As [`seconds_arg`], for a length given in minutes.
 pub fn minutes_arg(flag: &'static str, value: f64) -> Result<Duration> {
-    Duration::try_from_secs_f64(value * 60.0)
-        .map_err(|_| CommandsError::BadLength { flag, value }.into())
+    length(flag, value, value * 60.0)
+}
+
+fn length(flag: &'static str, value: f64, seconds: f64) -> Result<Duration> {
+    Duration::try_from_secs_f64(seconds)
+        .ok()
+        .filter(|span| *span <= LONGEST)
+        .ok_or_else(|| CommandsError::BadLength { flag, value }.into())
 }
 
 impl Bench {

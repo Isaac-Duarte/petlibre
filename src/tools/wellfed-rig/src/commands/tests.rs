@@ -566,7 +566,7 @@ fn lengths_a_wait_cannot_take_are_refused() {
         minutes_arg("--minutes", 0.5).unwrap(),
         Duration::from_secs(30)
     );
-    for value in [-1.0, f64::NAN, f64::INFINITY] {
+    for value in [-1.0, f64::NAN, f64::INFINITY, 1e19] {
         let error = seconds_arg("--seconds", value).unwrap_err();
         assert!(
             matches!(
@@ -581,7 +581,7 @@ fn lengths_a_wait_cannot_take_are_refused() {
     }
     assert_eq!(
         seconds_arg("--off-seconds", -2.0).unwrap_err().to_string(),
-        "--off-seconds -2 must be a finite, non-negative number"
+        "--off-seconds -2 must be a finite, non-negative number, at most a week"
     );
 
     // Refused before the plan is looked at or a relay moves.

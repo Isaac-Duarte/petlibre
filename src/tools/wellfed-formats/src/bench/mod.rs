@@ -83,9 +83,14 @@ pub fn relative(root: &Path, path: &Path) -> String {
         .to_string()
 }
 
-/// Seconds since the Unix epoch, as the progress document records times.
-pub fn now() -> f64 {
+/// The time since the Unix epoch; zero on a clock set before it.
+pub fn since_epoch() -> std::time::Duration {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0.0, |d| d.as_secs_f64())
+        .unwrap_or_default()
+}
+
+/// Seconds since the Unix epoch, as the progress document records times.
+pub fn now() -> f64 {
+    since_epoch().as_secs_f64()
 }

@@ -33,9 +33,11 @@ pub fn sleep(cancel: &Cancel, span: Duration) -> Result<()> {
 pub enum Waited {
     /// One of the handles was cancelled.
     Cancelled,
+    /// The child exited, with this status.
     Exited(ExitStatus),
     /// `ready` held while the child still ran.
     Ready,
+    /// The deadline passed with the child still running.
     TimedOut,
 }
 

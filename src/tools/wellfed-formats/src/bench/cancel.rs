@@ -8,7 +8,8 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-/// Set once (by Ctrl-C) and never cleared: every clone sees it, so a wait
+/// Set once and never cleared (by Ctrl-C, or by an owner stopping what it
+/// started, as the capture chain does): every clone sees it, so a wait
 /// anywhere in the process ends and its sequence stops through its cleanup.
 #[derive(Debug, Clone, Default)]
 pub struct Cancel(Arc<AtomicBool>);

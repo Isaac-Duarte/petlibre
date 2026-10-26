@@ -3,8 +3,8 @@
 
 use std::sync::Mutex;
 
-use wellfed_core::store::net::{Credentials, NetStore};
 use wellfed_core::transport::{WifiResult, WifiSource};
+use wellfed_feeder::store::net::{Credentials, NetStore};
 use wellfed_hal::network::*;
 use wellfed_hal::sdk::fake;
 

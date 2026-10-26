@@ -256,7 +256,7 @@ pub fn set_primask(mask: u32) {
 
 /// # Safety
 /// The caller owns every pin it writes or reconfigures. The motor pins
-/// ([`MOTOR_MASK`](crate::MOTOR_MASK)) belong to the HAL's board and
+/// ([`MOTOR_MASK`](wellfed_board_plaf103::pins::MOTOR_MASK)) belong to the HAL's board and
 /// stopped-output owners, every other output to the port that drives it.
 pub unsafe fn gpio_port_write(port: u32, mask: u32, value: u32) {
     let hook = with(|h| {
@@ -288,7 +288,7 @@ pub fn gpio_no_pull(pin: u32) {
 
 /// # Safety
 /// The caller owns every pin it writes or reconfigures. The motor pins
-/// ([`MOTOR_MASK`](crate::MOTOR_MASK)) belong to the HAL's board and
+/// ([`MOTOR_MASK`](wellfed_board_plaf103::pins::MOTOR_MASK)) belong to the HAL's board and
 /// stopped-output owners, every other output to the port that drives it.
 pub unsafe fn gpio_init(pin: u32, output: bool) {
     let hook = with(|h| {
@@ -340,11 +340,11 @@ pub fn pad_control(pin: u32) -> u32 {
 
 /// # Safety
 /// The caller owns every pin it writes or reconfigures. The motor pins
-/// ([`MOTOR_MASK`](crate::MOTOR_MASK)) belong to the HAL's board and
+/// ([`MOTOR_MASK`](wellfed_board_plaf103::pins::MOTOR_MASK)) belong to the HAL's board and
 /// stopped-output owners, every other output to the port that drives it.
 pub unsafe fn gpio_write_bit(pin: u32, high: bool) {
     let blocked = with(|h| {
-        pin == board::IR_PB && ((high && h.blocked_optics_write) || (!high && h.blocked_optics_off))
+        pin == pins::IR_PB && ((high && h.blocked_optics_write) || (!high && h.blocked_optics_off))
     });
     if blocked {
         return;
@@ -461,7 +461,7 @@ pub fn heap_min_free() -> u32 {
 pub fn gtimer_clock_enable() {}
 
 pub fn gpio_int_config(pin: u32, enabled: bool) {
-    assert_eq!(pin, board::FEEDBACK);
+    assert_eq!(pin, pins::FEEDBACK);
     with(|h| {
         if enabled {
             h.gpio.int_mask &= !(1 << pin);
@@ -472,7 +472,7 @@ pub fn gpio_int_config(pin: u32, enabled: bool) {
 }
 
 pub fn gpio_int_mode(pin: u32, enabled: bool) {
-    assert_eq!(pin, board::FEEDBACK);
+    assert_eq!(pin, pins::FEEDBACK);
     with(|h| {
         if enabled {
             h.gpio.int_en |= 1 << pin;

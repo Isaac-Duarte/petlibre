@@ -34,6 +34,7 @@ use crate::{elapsed_ms, ticks_ms};
 use wellfed_hal::board::{self, Board, MOTOR_MASK};
 use wellfed_hal::flash::park::{self, Mmio, Reply};
 use wellfed_hal::flash_lock::provider::BOOT_COUNT_REGISTER;
+use wellfed_hal::plaf103;
 use wellfed_hal::sdk::{self, GPIO_PORT_A};
 use wellfed_hal::stopped;
 use wellfed_hal::supervision::config::{FLASH_LIMITS, SYSTIMER_HZ};
@@ -107,7 +108,11 @@ pub const STALL_BUDGET_MS: u32 = 4000;
 
 /// Inputs in record order.
 pub const INPUTS: [&str; 3] = ["food", "outlet", "feedback"];
-const INPUT_PINS: [u32; 3] = [sdk::board::FOOD, sdk::board::OUTLET, sdk::board::FEEDBACK];
+const INPUT_PINS: [u32; 3] = [
+    plaf103::pins::FOOD,
+    plaf103::pins::OUTLET,
+    plaf103::pins::FEEDBACK,
+];
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Emitters {

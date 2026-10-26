@@ -13,6 +13,7 @@ use wellfed_fw_feeder::setup;
 use wellfed_sdk::buttons::{Button, Buttons, Gesture};
 use wellfed_sdk::hal::keys::{self, Change, KeyResult, Requested};
 use wellfed_sdk::hal::leds::{self, Led};
+use wellfed_sdk::hal::plaf103;
 use wellfed_sdk::hal::sdk::{self, fake};
 use wellfed_sdk::hal::stopped;
 
@@ -174,7 +175,7 @@ fn a_refused_level_turns_the_indicator_off_for_the_boot() {
     let now = settle(&mut owner, 0, true);
 
     // Motor STOP lost: the next level is refused, and nothing retries.
-    fake::with(|h| h.output[0] &= !sdk::MOTOR_A_BIT);
+    fake::with(|h| h.output[0] &= !plaf103::pins::MOTOR_A_BIT);
     let (_, records) = step(&mut owner, now + 100, &[], Some(false), true);
     assert_eq!(
         records,

@@ -53,7 +53,7 @@ The owner's target (Oct 23, 2026): the Petlibro experience, fully open and usabl
 In code:
 
 - **SDK (`src/sdk/`):** mechanisms only. The runtime, clock and time sources, journal, feeding owner, buttons, event log, Noise transport, BLE setup mode and updater.
-- **`wellfed-feeder` (`src/product/wellfed-feeder`):** a `no_std` library with the product policy. Schedules, child lock, alerts, the history policy, and the request and entity model the API exposes. It is host-tested, and the server's simulator can reuse it.
+- **`wellfed-feeder` (`src/product/wellfed-feeder`):** a `no_std` library with the product policy. Schedules, child lock, alerts, the history policy, the request and entity model the API exposes, and the stores that keep the product's records (settings, Wi-Fi credentials, client keys, events). It is host-tested, and the server's simulator can reuse it.
 - **Firmware (`src/firmware/wellfed/feeder`):** the PLAF103's glue between the two. Another model gets its own thin firmware. It exists since FP11 with the panel's owner as its one loop task; the other owners join that loop, the feeding owner since October 25 (FW16).
 - **`wellfed-client`:** a sans-IO Rust core. It turns bytes in into bytes out (the Noise handshake, pairing, invites, requests, event-cursor sync and the installer's steps) and never opens a socket or a radio. The server drives it with tokio, the Android app with Dart IO, and WASM can run it later.
 - **`wellfed-server`:** the owner's server. Shared pieces (the Noise client, the request types, the stock install path) come out of `wellfed-local` and `wellfed-bench` into single-purpose libraries, signing moves to `wellfed-build`, and `wellfed-local` is then deleted ([tools roadmap](../development/tools-roadmap.md)).

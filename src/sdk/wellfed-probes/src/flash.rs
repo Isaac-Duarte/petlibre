@@ -3,7 +3,7 @@
 //! Stage B: announce a fresh authority session and bind the KM0 peer's READY
 //! into a `FlashCoord` only after stopped-output readback.
 //!
-//! Settings stress (owner-approved region `sdk::STORAGE_OFFSET`): with `Provider`
+//! Settings stress (owner-approved region `plaf103::STORAGE_OFFSET`): with `Provider`
 //! installed in the SDK flash-lock hooks, stress the settings store on real
 //! NOR for a physical power-cut test. Each boot opens the store and reports
 //! its status, generation and contents; every saved value is derived from its
@@ -25,7 +25,7 @@
 use wellfed_core::clock::tick::TickClock;
 use wellfed_core::feed::progress::BowlMode;
 use wellfed_core::flash_coord::{FlashCoord, FlashFault, FlashPhase, FlashReply};
-use wellfed_core::store::settings::{Settings, SettingsStatus, SettingsStore, SlotState};
+use wellfed_feeder::store::settings::{Settings, SettingsStatus, SettingsStore, SlotState};
 
 use wellfed_hal::flash::park::{self, Mmio, Reply};
 use wellfed_hal::flash::peer::MARKER_REGISTER;

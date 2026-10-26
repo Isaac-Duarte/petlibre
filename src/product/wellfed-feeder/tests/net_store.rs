@@ -1,8 +1,8 @@
 //! Stored Wi-Fi credentials: alternating saves, clear, validation, a
 //! power cut at every mutation, and a newer schema.
 
-use wellfed_core::store::net::{Credentials, NetStatus, NetStore};
 use wellfed_core::store::slot::{RECORD_BYTES, crc32};
+use wellfed_feeder::store::net::{Credentials, NetStatus, NetStore};
 use wellfed_testkit::journal_flash::{FakeJournalFlash, FlashIo, UNIT};
 
 fn open(f: &mut FakeJournalFlash) -> NetStore<FlashIo> {

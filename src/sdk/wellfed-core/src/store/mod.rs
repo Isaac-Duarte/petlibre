@@ -1,13 +1,10 @@
-//! Records kept on NOR: the feed journal, device settings, Wi-Fi
-//! credentials, the random seed, the client keys and the update store, each
-//! in two alternating erase units over the shared record layer in [`slot`], and
-//! the event history in a ring of units ([`events`]).
+//! Records kept on NOR that the SDK itself owns: the feed journal, the
+//! random seed and the update store, each in two alternating erase units over
+//! the shared record layer in [`slot`]. The product's records (settings,
+//! Wi-Fi credentials, client keys and the event ring) are
+//! `wellfed_feeder::store`'s, over the same layer.
 
-pub mod clients;
-pub mod events;
 pub mod feed_journal;
-pub mod net;
 pub mod seed;
-pub mod settings;
 pub mod slot;
 pub mod update;

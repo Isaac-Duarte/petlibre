@@ -14,7 +14,7 @@
 //! Reset, which forgets every client and draws a new identity.
 //!
 //! It also keeps the event history (sectors 13-24,
-//! `wellfed_core::store::events`). It appends the records the loop queues
+//! `wellfed_feeder::store::events`). It appends the records the loop queues
 //! and answers the device API's reads (`wellfed_hal::events`), polling
 //! faster while either waits, so a reconnecting client catches up in
 //! seconds.
@@ -31,12 +31,12 @@ use core::fmt;
 
 use wellfed_core::named_enum;
 
-use wellfed_core::store::clients::{ClientError, ClientStatus, ClientStore};
-use wellfed_core::store::events::EventLog;
-use wellfed_core::store::net::{NetStatus, NetStore};
 use wellfed_core::store::seed::{SeedStatus, SeedStore};
-use wellfed_core::store::settings::{Settings, SettingsStatus, SettingsStore};
 use wellfed_core::transport::{SettingsFields, SettingsView};
+use wellfed_feeder::store::clients::{ClientError, ClientStatus, ClientStore};
+use wellfed_feeder::store::events::EventLog;
+use wellfed_feeder::store::net::{NetStatus, NetStore};
+use wellfed_feeder::store::settings::{Settings, SettingsStatus, SettingsStore};
 use wellfed_hal::flash::park::Mmio;
 use wellfed_hal::flash_lock::arming::{self, Arming, Hooks, Poll};
 use wellfed_hal::flash_lock::provider::Provider;

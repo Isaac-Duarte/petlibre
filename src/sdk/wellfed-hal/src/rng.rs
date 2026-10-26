@@ -20,7 +20,7 @@ use wellfed_core::named_enum;
 use wellfed_core::rng::{Drbg, Pool};
 
 use crate::entropy::{self, Jitter};
-use crate::{adc, sdk};
+use crate::{adc, plaf103};
 
 /// One bit per ADC sample, in eighths: below the 1.44 bits the bench measured.
 pub const CLAIM_EIGHTHS: u32 = 8;
@@ -28,7 +28,7 @@ pub const CLAIM_EIGHTHS: u32 = 8;
 pub const SAMPLE_LIMIT: u32 = 8_192;
 /// Raw samples [`Started`] reports, for the restart check across boots.
 pub const FIRST: usize = 16;
-const CHANNEL: u32 = sdk::board::ADC_SUPPLY;
+const CHANNEL: u32 = plaf103::pins::ADC_SUPPLY;
 const POLLS: u32 = 10_000;
 /// Jitter samples mixed in as the DRBG's nonce, credited nothing.
 const JITTER: usize = 64;
@@ -141,7 +141,7 @@ fn install(drbg: Drbg) {
 #[cfg(target_os = "none")]
 fn with_generator<R>(f: impl FnOnce(&mut Option<Drbg>) -> R) -> R {
     static GENERATOR: crate::cell::TaskCell<Option<Drbg>> = crate::cell::TaskCell::new(None);
-    sdk::unscheduled(|| {
+    crate::sdk::unscheduled(|| {
         // SAFETY: with the scheduler paused no other task runs, and no
         // interrupt handler reaches the generator.
         f(unsafe { &mut *GENERATOR.get() })

@@ -36,7 +36,7 @@
 
 use core::ffi::c_uint;
 
-use crate::store::slot::{SlotIo, crc32, get_u32, put_u32};
+use wellfed_core::store::slot::{SlotIo, crc32, get_u32, put_u32};
 
 pub const RECORD_BYTES: usize = 32;
 /// [`RECORD_BYTES`] as the I/O offsets count.

@@ -13,7 +13,7 @@
 
 use core::ffi::c_uint;
 
-use crate::store::slot::{
+use wellfed_core::store::slot::{
     Bound, COMMIT, COMMIT_AT, COMMIT_OFFSET, CRC_AT, LENGTH_AT, RECORD_BYTES, RECORD_LEN, SlotIo,
     VERSION_AT, crc32, get_u16, get_u32, get_u64, put_u16, put_u32, put_u64,
 };

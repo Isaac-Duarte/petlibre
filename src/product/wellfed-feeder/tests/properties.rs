@@ -5,8 +5,8 @@
 
 mod support;
 
-use wellfed_core::store::clients::Label;
-use wellfed_core::store::net::Credentials;
+use wellfed_feeder::store::clients::Label;
+use wellfed_feeder::store::net::Credentials;
 use wellfed_proto::api::FRAME_MAX;
 use wellfed_proto::setup::{self, Request};
 use proptest::prelude::*;

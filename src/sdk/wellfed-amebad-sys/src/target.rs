@@ -11,10 +11,12 @@ use core::ffi::{CStr, c_void};
 use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+use wellfed_board_plaf103::pins::{IR_PA_BIT, IR_PB_BIT, MOTOR_MASK};
+use wellfed_board_plaf103::{STORAGE_OFFSET, STORAGE_SECTORS};
+
 use super::{
-    AUDIO_PAGE_SAMPLES, FlashMmuEntry, GpioRouting, IR_PA_BIT, IR_PB_BIT, Irq, Isr, LpClock,
-    MOTOR_MASK, SECTOR_BYTES, STORAGE_OFFSET, STORAGE_SECTORS, SYSTICK_CTRL, Systick, TaskStep,
-    TcpRecv, TransportConfig, WifiEvent, WifiPoll,
+    AUDIO_PAGE_SAMPLES, FlashMmuEntry, GpioRouting, Irq, Isr, LpClock, SECTOR_BYTES, SYSTICK_CTRL,
+    Systick, TaskStep, TcpRecv, TransportConfig, WifiEvent, WifiPoll,
 };
 use super::{Accepted, ApiRecv, Datagram};
 #[cfg(feature = "bluetooth")]
@@ -192,7 +194,7 @@ pub fn set_primask(mask: u32) {
 
 /// # Safety
 /// The caller owns every pin it writes or reconfigures. The motor pins
-/// ([`MOTOR_MASK`](crate::MOTOR_MASK)) belong to the HAL's board and
+/// ([`MOTOR_MASK`](wellfed_board_plaf103::pins::MOTOR_MASK)) belong to the HAL's board and
 /// stopped-output owners, every other output to the port that drives it.
 pub unsafe fn gpio_port_write(port: u32, mask: u32, value: u32) {
     // SAFETY: the pinned SDK routine, with plain-value arguments.
@@ -258,7 +260,7 @@ pub fn gpio_no_pull(pin: u32) {
 
 /// # Safety
 /// The caller owns every pin it writes or reconfigures. The motor pins
-/// ([`MOTOR_MASK`](crate::MOTOR_MASK)) belong to the HAL's board and
+/// ([`MOTOR_MASK`](wellfed_board_plaf103::pins::MOTOR_MASK)) belong to the HAL's board and
 /// stopped-output owners, every other output to the port that drives it.
 pub unsafe fn gpio_init(pin: u32, output: bool) {
     let mut settings = raw::GPIO_InitTypeDef {
@@ -277,7 +279,7 @@ pub unsafe fn gpio_init(pin: u32, output: bool) {
 
 /// # Safety
 /// The caller owns every pin it writes or reconfigures. The motor pins
-/// ([`MOTOR_MASK`](crate::MOTOR_MASK)) belong to the HAL's board and
+/// ([`MOTOR_MASK`](wellfed_board_plaf103::pins::MOTOR_MASK)) belong to the HAL's board and
 /// stopped-output owners, every other output to the port that drives it.
 pub unsafe fn gpio_write_bit(pin: u32, high: bool) {
     // SAFETY: the pinned SDK routine, with plain-value arguments.

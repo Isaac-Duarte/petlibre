@@ -36,9 +36,9 @@
 //! The firmware reaches the rest of the feeder through [`Device`], and the
 //! host tests through a fake of it.
 
+use crate::store::clients::{CLIENTS, Client, Label, Role};
+use crate::store::net::Credentials;
 use wellfed_core::ota::offer::{KeyId, key_id};
-use wellfed_core::store::clients::{CLIENTS, Client, Label, Role};
-use wellfed_core::store::net::Credentials;
 use wellfed_core::tone::Tune as CoreTune;
 use wellfed_core::transport::{
     LockResult, PlayResult, SettingsFields, SettingsResult, TimeFields, TimeResult, WifiResult,

@@ -24,12 +24,13 @@ use wellfed_core::feed::sensor_inputs::SensorReading;
 use wellfed_core::flash_coord::FlashCoord;
 
 use crate::adc;
-use crate::sdk::board::{
-    ADAPTER, ADC_BATTERY, ADC_CURRENT, ADC_SUPPLY, FEEDBACK, FOOD, IR_PA, IR_PB, OUTLET, bit,
+use crate::plaf103::pins::{
+    ADAPTER, ADC_BATTERY, ADC_CURRENT, ADC_SUPPLY, FEEDBACK, FOOD, IR_PA, IR_PB, MOTOR_A_BIT,
+    MOTOR_B_BIT, OUTLET, bit,
 };
 use crate::sdk::{self, GPIO_PORT_A, IrqGuard};
 
-pub use crate::sdk::MOTOR_MASK;
+pub use crate::plaf103::pins::MOTOR_MASK;
 const SENSOR_MASK: u32 = bit(OUTLET) | bit(FOOD) | bit(ADAPTER);
 const OPTICS: [u32; 2] = [IR_PA, IR_PB];
 
@@ -128,7 +129,7 @@ impl MotorPins for BoardPins {
         }
 
         let _guard = IrqGuard::lock();
-        let value = if a { sdk::MOTOR_A_BIT } else { 0 } | if b { sdk::MOTOR_B_BIT } else { 0 };
+        let value = if a { MOTOR_A_BIT } else { 0 } | if b { MOTOR_B_BIT } else { 0 };
         // SAFETY: the motor pins, which the board owns; the gate makes this
         // its only writer while the board is open.
         unsafe { sdk::gpio_port_write(GPIO_PORT_A, MOTOR_MASK, value) };

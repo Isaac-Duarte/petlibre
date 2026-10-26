@@ -11,8 +11,6 @@ use wellfed_client::connection::{
     Connection, Cursor, Event, KEEPALIVE_ID, Recovery, Resume, Timing,
 };
 use wellfed_core::buttons::{Button, Buttons, Gesture};
-use wellfed_core::store::clients::{CLIENTS, Client, Label, Role};
-use wellfed_core::store::net::Credentials;
 use wellfed_core::tone::Tune;
 use wellfed_core::transport::{
     LockResult, PlayResult, SettingsFields, SettingsResult, SettingsView, TimeFields, TimeResult,
@@ -24,6 +22,8 @@ use wellfed_feeder::api::{
 };
 use wellfed_feeder::pairing::{Config, Event as PairingEvent, Pairing};
 use wellfed_feeder::panel::Lock;
+use wellfed_feeder::store::clients::{CLIENTS, Client, Label, Role};
+use wellfed_feeder::store::net::Credentials;
 use wellfed_model as model;
 use wellfed_model::{Answer, Generation, Hello, Joined, Op, OpenRefusal, SettingsPatch};
 use wellfed_proto::api::{

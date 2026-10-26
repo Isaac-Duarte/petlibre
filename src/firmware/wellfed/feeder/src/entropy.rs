@@ -13,7 +13,7 @@
 use wellfed_core::named_enum;
 use wellfed_core::rng::Health;
 use wellfed_sdk::hal::entropy::{self, Jitter};
-use wellfed_sdk::hal::{adc, sdk};
+use wellfed_sdk::hal::{adc, plaf103};
 use wellfed_session::base64;
 
 /// Samples per record: the longest line, the jitter source's last record
@@ -33,7 +33,7 @@ const PACE_MS: u32 = 25;
 /// record may skip before its source is given up.
 const MISS_LIMIT: u32 = 1_000;
 /// The chip's internal supply channel: every AmebaD board has it.
-const ADC_CHANNEL: u32 = sdk::board::ADC_SUPPLY;
+const ADC_CHANNEL: u32 = plaf103::pins::ADC_SUPPLY;
 const ADC_POLLS: u32 = 10_000;
 
 named_enum! {

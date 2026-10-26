@@ -18,8 +18,8 @@
 //! Sans-IO, with no allocation: the host client's tests drive this same code
 //! against `wellfed-client`'s initiator.
 
-use wellfed_core::store::clients::Label;
-use wellfed_core::store::net::Credentials;
+use crate::store::clients::Label;
+use crate::store::net::Credentials;
 use wellfed_proto::setup::{Answer, PROLOGUE, REPLY_MAX, Reply, Request};
 use wellfed_session::noise::{self, Handshake, Keypair, Pattern, Role, Transport};
 use wellfed_session::setup_code::{self, Code, Exchange, Round, Side};

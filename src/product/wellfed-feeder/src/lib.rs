@@ -11,4 +11,5 @@ pub mod feed;
 pub mod pairing;
 pub mod panel;
 pub mod setup;
+pub mod store;
 pub mod update;

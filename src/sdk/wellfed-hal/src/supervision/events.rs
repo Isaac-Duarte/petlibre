@@ -22,8 +22,8 @@ use crate::board::{self, Board};
 use crate::sdk::{self, Irq, IrqGuard};
 use crate::supervision::active::active_pointer;
 
-const FEEDBACK_PIN: u32 = sdk::board::FEEDBACK;
-const FEEDBACK_MASK: u32 = sdk::board::bit(FEEDBACK_PIN);
+const FEEDBACK_PIN: u32 = crate::plaf103::pins::FEEDBACK;
+const FEEDBACK_MASK: u32 = crate::plaf103::pins::bit(FEEDBACK_PIN);
 const PRIORITY: u32 = 4;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

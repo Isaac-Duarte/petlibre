@@ -1,6 +1,6 @@
 //! The event history, carried between the loop task and the settings
 //! writer, which alone writes the ring in storage sectors 13-24
-//! (`wellfed_core::store::events`).
+//! (`wellfed_feeder::store::events`).
 //!
 //! - **Appends:** the loop queues a record with [`record`] and goes on; the
 //!   writer drains the queue with [`pending`] and [`finish_pending`]. A full
@@ -22,7 +22,7 @@
 //! Every access copies a few dozen bytes with the scheduler paused; both
 //! sides are tasks, never interrupt handlers.
 
-use wellfed_core::store::events::{BODY_BYTES, Read};
+use wellfed_feeder::store::events::{BODY_BYTES, Read};
 
 use crate::cell::TaskCell;
 use crate::sdk;

@@ -1,26 +1,27 @@
-//! Slot I/O and record encoding shared by the feed journal and settings store.
+//! Slot I/O and record encoding shared by every dual-slot store, the SDK's
+//! here and the product's in `wellfed_feeder::store`.
 //!
-//! Both keep 128-byte little-endian records in two alternating erase units,
+//! Each keeps 128-byte little-endian records in two alternating erase units,
 //! checked by CRC-32/ISO-HDLC of bytes 0..120 at 120 and committed by the
 //! `CMIT` marker at 124.
 
 pub const RECORD_BYTES: usize = 128;
 /// [`RECORD_BYTES`] as the header's length field stores it.
-pub(crate) const RECORD_LEN: u16 = 128;
-pub(crate) const COMMIT: [u8; 4] = *b"CMIT";
+pub const RECORD_LEN: u16 = 128;
+pub const COMMIT: [u8; 4] = *b"CMIT";
 
 /// The header every store's record shares after its 8-byte magic: the format
 /// version (u16) and the record length (u16).
-pub(crate) const VERSION_AT: usize = 8;
-pub(crate) const LENGTH_AT: usize = 10;
+pub const VERSION_AT: usize = 8;
+pub const LENGTH_AT: usize = 10;
 /// CRC-32 of bytes `..CRC_AT`, stored at `CRC_AT`.
-pub(crate) const CRC_AT: usize = 120;
+pub const CRC_AT: usize = 120;
 /// `COMMIT`, programmed last, after the rest of the record verified.
-pub(crate) const COMMIT_AT: usize = 124;
+pub const COMMIT_AT: usize = 124;
 /// [`COMMIT_AT`] as a slot offset.
-pub(crate) const COMMIT_OFFSET: u32 = 124;
+pub const COMMIT_OFFSET: u32 = 124;
 /// How much of a unit's erased tail a scan reads at once.
-pub(crate) const TAIL_CHUNK: u32 = 64;
+pub const TAIL_CHUNK: u32 = 64;
 
 const _: () = assert!(COMMIT_AT == CRC_AT + 4 && RECORD_BYTES == COMMIT_AT + COMMIT.len());
 const _: () = assert!(RECORD_LEN as usize == RECORD_BYTES && COMMIT_OFFSET as usize == COMMIT_AT);
@@ -49,12 +50,12 @@ pub trait SlotIo {
 
 /// A store's I/O once opened; before that, every call is refused.
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct Bound<I>(Option<I>);
+pub struct Bound<I>(Option<I>);
 
 impl<I> Bound<I> {
-    pub(crate) const NONE: Self = Self(None);
+    pub const NONE: Self = Self(None);
 
-    pub(crate) fn new(io: I) -> Self {
+    pub fn new(io: I) -> Self {
         Self(Some(io))
     }
 }
@@ -66,42 +67,42 @@ impl<I> Default for Bound<I> {
 }
 
 impl<I: SlotIo> Bound<I> {
-    pub(crate) fn unit_bytes(&self) -> u32 {
+    pub fn unit_bytes(&self) -> u32 {
         self.0.as_ref().map_or(0, SlotIo::unit_bytes)
     }
 
-    pub(crate) fn read(&self, slot: u32, offset: u32, bytes: &mut [u8]) -> bool {
+    pub fn read(&self, slot: u32, offset: u32, bytes: &mut [u8]) -> bool {
         self.0
             .as_ref()
             .is_some_and(|io| io.read(slot, offset, bytes))
     }
 
-    pub(crate) fn program(&self, slot: u32, offset: u32, bytes: &[u8]) -> bool {
+    pub fn program(&self, slot: u32, offset: u32, bytes: &[u8]) -> bool {
         self.0
             .as_ref()
             .is_some_and(|io| io.program(slot, offset, bytes))
     }
 
-    pub(crate) fn erase(&self, slot: u32) -> bool {
+    pub fn erase(&self, slot: u32) -> bool {
         self.0.as_ref().is_some_and(|io| io.erase(slot))
     }
 
-    pub(crate) fn writable(&self) -> bool {
+    pub fn writable(&self) -> bool {
         self.0.as_ref().is_some_and(SlotIo::writable)
     }
 }
 
 // Little-endian record fields at the start of `p`.
 
-pub(crate) fn put_u16(p: &mut [u8], value: u16) {
+pub fn put_u16(p: &mut [u8], value: u16) {
     p[..2].copy_from_slice(&value.to_le_bytes());
 }
 
-pub(crate) fn put_u32(p: &mut [u8], value: u32) {
+pub fn put_u32(p: &mut [u8], value: u32) {
     p[..4].copy_from_slice(&value.to_le_bytes());
 }
 
-pub(crate) fn put_u64(p: &mut [u8], value: u64) {
+pub fn put_u64(p: &mut [u8], value: u64) {
     p[..8].copy_from_slice(&value.to_le_bytes());
 }
 
@@ -111,15 +112,15 @@ fn field<const N: usize>(p: &[u8]) -> [u8; N] {
     bytes
 }
 
-pub(crate) fn get_u16(p: &[u8]) -> u16 {
+pub fn get_u16(p: &[u8]) -> u16 {
     u16::from_le_bytes(field(p))
 }
 
-pub(crate) fn get_u32(p: &[u8]) -> u32 {
+pub fn get_u32(p: &[u8]) -> u32 {
     u32::from_le_bytes(field(p))
 }
 
-pub(crate) fn get_u64(p: &[u8]) -> u64 {
+pub fn get_u64(p: &[u8]) -> u64 {
     u64::from_le_bytes(field(p))
 }
 

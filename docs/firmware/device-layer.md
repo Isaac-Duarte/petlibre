@@ -9,12 +9,12 @@ Status: static analysis (October 23, 2026); nothing ran on the feeder. This audi
 
 | What | Where | Kind |
 | --- | --- | --- |
-| Every GPIO the ports use (motor, emitters, sensor inputs, buttons, indicators, amplifier) and the board's ADC channels | `wellfed_amebad_sys::board` | board |
+| Every GPIO the ports use (motor, emitters, sensor inputs, buttons, indicators, amplifier) and the board's ADC channels | `wellfed_board_plaf103::pins` | board |
 | Flash layout: OTA banks, stock's bank table, preserve ranges | `src/firmware/devices/plaf103/layout.json`, read by the builder and its audits | unit and stock |
-| The replacement's storage region | `STORAGE_OFFSET` and `STORAGE_SECTORS` in `wellfed-amebad-sys` | unit |
+| The replacement's storage region and who owns each sector | `STORAGE_OFFSET`, `STORAGE_SECTORS` and `storage` in `wellfed-board-plaf103` | unit |
 | Build inputs: stock image, C entry and BLE ports, first-boot mains | `device.json` | board |
 
-**Single source:** before FW50 the same pin numbers sat in up to six places (the HAL's `board.rs`, `stopped.rs`, the feedback IRQ, `power.rs`, `buttons.rs`, `leds.rs`, `audio.rs`, three probes and the fake). Each now reads `board`, and the bit masks (`MOTOR_MASK`, `IR_PA_BIT`, `IR_PB_BIT`) are derived from it. A second board would start as a second module of the same shape, chosen at build time; nothing reads `board` at run time.
+**Single source:** before FW50 the same pin numbers sat in up to six places (the HAL's `board.rs`, `stopped.rs`, the feedback IRQ, `power.rs`, `buttons.rs`, `leds.rs`, `audio.rs`, three probes and the fake). Each now reads `wellfed-board-plaf103`'s `pins`, and the bit masks (`MOTOR_MASK`, `IR_PA_BIT`, `IR_PB_BIT`) are derived from it; `wellfed-amebad-sys` keeps only the SoC's bindings and its fake, which read the board crate for the panic and RAM-park output writes and the storage bounds. A second board would start as a second crate of the same shape, chosen at build time; nothing reads the board at run time.
 
 **Why not `device.json`:** the pins are compile-time constants inside `no_std` firmware, and several of them feed audited code: the stopped-output check, the panic and RAM-park output writes, and the KM0 pad-table audit. Generating them from JSON would put a code generator in front of audited binaries for no gain while there is one board. `device.json` stays the description of what the builder needs.
 
@@ -23,7 +23,7 @@ Status: static analysis (October 23, 2026); nothing ran on the feeder. This audi
 These stay where they are and are listed here instead. A second model would revisit each one.
 
 **Board, in code that is not the port layer:**
-- **Panel layout:** `wellfed_core::buttons::Buttons::from_port_b` maps PB4–PB7 to reset, mic, dispense and lock, active LOW. Core is hardware-independent and cannot depend on the SDK bindings; `board::BUTTONS` is the same order.
+- **Panel layout:** `wellfed_core::buttons::Buttons::from_port_b` maps PB4–PB7 to reset, mic, dispense and lock, active LOW. Core is hardware-independent and cannot depend on the SDK bindings; `pins::BUTTONS` is the same order.
 - **Motor gate:** the `wellfed_core::feed::motor_gate::MotorPins` trait names its arguments `pa13_high` and `pa14_high`. It is a Rust trait, so a board-neutral rename is a Rust-only change.
 - **Rust interfaces between Rust crates.** The motor pins (`MotorPins`), a store's flash (`store::slot::SlotIo`) and the owner's journal (`feed::storage::OwnerStorage`) are traits the caller's types implement, so each call is direct: the build's stack audit follows it, and no context pointer crosses it. Only what C or the SDK calls stays `extern "C"`: the flash-lock hook provider the RAM interposer installs, the interrupt handlers, and the `wellfed_*` exports.
 - **Motor driver:** the TC118AH's truth table (both inputs HIGH is brake, both LOW is refused) is in `wellfed_hal::board::motor_pair`. Which drive direction dispenses is still open (FW16).

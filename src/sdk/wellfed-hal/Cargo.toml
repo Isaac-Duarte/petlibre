@@ -19,7 +19,9 @@ bluetooth = ["wellfed-amebad-sys/bluetooth"]
 [dependencies]
 wellfed-hal-common.workspace = true
 wellfed-amebad-sys.workspace = true
+wellfed-board-plaf103.workspace = true
 wellfed-core.workspace = true
+wellfed-feeder.workspace = true
 wellfed-session.workspace = true
 # Bank 0's image is hashed before a give-way; the rounds are core's.
 sha2 = { version = "0.10", default-features = false }

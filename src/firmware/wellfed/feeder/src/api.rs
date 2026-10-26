@@ -19,8 +19,6 @@ use core::fmt;
 use wellfed_core::mdns::{self, Destination, Responder};
 use wellfed_core::ota::install::Phase;
 use wellfed_core::ota::offer::{KeyStatement, key_id};
-use wellfed_core::store::events::{BODY_BYTES, Read};
-use wellfed_core::store::net::Credentials;
 use wellfed_core::tone::Tune;
 use wellfed_core::transport::{
     LockFields, LockResult, PlayResult, SettingsFields, SettingsResult, TimeFields, TimeResult,
@@ -31,6 +29,8 @@ use wellfed_feeder::api::{
     UpdateKeyChange, UpdateRequest,
 };
 use wellfed_feeder::pairing::{self, Pairing};
+use wellfed_feeder::store::events::{BODY_BYTES, Read};
+use wellfed_feeder::store::net::Credentials;
 use wellfed_feeder::update as wire;
 use wellfed_proto::api::{
     self as proto, Capabilities, EventBody, Metric, PORT, Refusal, Sample, Source, Status,

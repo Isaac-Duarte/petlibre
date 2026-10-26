@@ -2,25 +2,26 @@
 //!
 //! Every erase and program goes through the hooked SDK flash lock, so the
 //! flash provider's lease sequence and the KM0 park apply. Sectors are
-//! indexes into the owner-approved storage region (`sdk::STORAGE_OFFSET`),
+//! indexes into the owner-approved storage region (`plaf103::STORAGE_OFFSET`),
 //! never absolute addresses.
 
 use core::marker::PhantomData;
 
 use wellfed_core::store::slot::SlotIo;
 use wellfed_hal::flash_lock::provider::Provider;
+use wellfed_hal::plaf103;
 use wellfed_hal::sdk;
 
 /// The feed journal's slots: sectors 0 and 1 (0x340000).
-pub const JOURNAL_BASE: u32 = sdk::storage::JOURNAL.first;
+pub const JOURNAL_BASE: u32 = plaf103::storage::JOURNAL.first;
 /// Settings slots within the storage region: sectors 2 and 3 (0x342000).
-pub const SETTINGS_BASE: u32 = sdk::storage::SETTINGS.first;
+pub const SETTINGS_BASE: u32 = plaf103::storage::SETTINGS.first;
 /// The generator's seed across boots, and the identity and clients.
-pub const SEED_BASE: u32 = sdk::storage::SEED.first;
-pub const CLIENTS_BASE: u32 = sdk::storage::CLIENTS.first;
+pub const SEED_BASE: u32 = plaf103::storage::SEED.first;
+pub const CLIENTS_BASE: u32 = plaf103::storage::CLIENTS.first;
 /// The event ring.
-pub const EVENTS_BASE: u32 = sdk::storage::EVENTS.first;
-pub const EVENTS_UNITS: u32 = sdk::storage::EVENTS.count;
+pub const EVENTS_BASE: u32 = plaf103::storage::EVENTS.first;
+pub const EVENTS_UNITS: u32 = plaf103::storage::EVENTS.count;
 /// Installation binding for the research unit's settings.
 pub const SETTINGS_BINDING: u64 = 0x5046_5731_3502_0001;
 /// Installation binding for the research unit's feed journal. Not a key: a

@@ -21,7 +21,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use wellfed_amebad_sys::storage;
+use wellfed_board_plaf103::storage;
 use wellfed_core::buttons::Gesture;
 use wellfed_core::ota::{self, CONFIRM_LEN};
 use wellfed_core::store::slot::SlotIo;

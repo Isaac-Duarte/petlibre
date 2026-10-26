@@ -9,17 +9,19 @@ Stock 1.1.15 can install the replacement over its own updater, with no UART writ
 | Crate | Responsibility |
 | --- | --- |
 | `wellfed-session` | `no_std` session layer the feeder and its clients share: Noise handshakes and transport, HMAC, the setup code, length-prefixed frames, and strict hex and base64 |
-| `wellfed-core` | `no_std` controller, portion accounting, sensor qualification, ADC scaling, motor gate, feedback queue, monotonic clock, journal, and flash authority |
+| `wellfed-core` | `no_std` controller, portion accounting, sensor qualification, ADC scaling, motor gate, feedback queue, monotonic clock, flash authority, and the SDK's stores (journal, seed, update store) over the shared record layer |
 | `wellfed-hal-common` | The routines both cores link: RAM parking, SDK flash hooks, the KM0 park peer, and the OTA boot-trial step. The KM0 image contains only this crate |
 | `wellfed-hal` | KM4 ports: GPIO/ADC board port, interrupt/timer supervision, watchdog, FreeRTOS owner, flash lease provider, transport, updater, build-bound startup reports, stopped outputs, and LED diagnostics. It re-exports the common crate's `flash` and `trial` |
 | `wellfed-sdk` | The KM4 runtime every firmware runs inside: the `wellfed_app_start` entry, stopped-output startup and the synthetic diagnostic, the Wi-Fi join and health transport, the watchdog feeder, FW11 confirmation, the settings writer, and the FW10 updater and offer check. Bank 0 runs only the runtime. A firmware defines its start hook with `firmware!` and creates its tasks with `spawn` |
 | `wellfed-probes` | The bench probes, once for every firmware that runs them: optics (FW13), buttons (FW20), power inputs (FW14), the motor pulse (FW16), the speaker records, and the retired flash-stress and supervision probes, kept for their host tests |
-| `wellfed-feeder` (`src/product/wellfed-feeder`) | Product policy, `no_std` and host-tested: the panel's child lock (FP11), pairing and BLE setup (FW45), and the [device API](device-api.md)'s sans-IO server (FW47); schedules and alerts later ([product architecture](product-architecture.md)) |
+| `wellfed-proto` (`src/product/wellfed-proto`) | The device protocol's messages, `no_std` and allocation-free, shared by the feeder and its clients |
+| `wellfed-feeder` (`src/product/wellfed-feeder`) | Product policy, `no_std` and host-tested: the panel's child lock (FP11), pairing and BLE setup (FW45), the [device API](device-api.md)'s sans-IO server (FW47), and the product's stores (settings, Wi-Fi credentials, client keys and the event ring) over core's record layer; schedules and alerts later ([product architecture](product-architecture.md)) |
 | `wellfed-fw-feeder` (`src/firmware/wellfed/feeder`) | The product firmware: the button service and one loop task that owns the panel, BLE setup mode and the [device API](device-api.md) with its sockets and mDNS, and steps the feeding owner (idle at STOP until feed requests exist) |
 | `wellfed-fw-qa` (`src/firmware/wellfed/qa`) | The default firmware: a [guided self-test](qa.md) of optics, power, buttons, indicators and speaker |
 | `wellfed-fw-optics`, `-buttons`, `-adc`, `-speaker`, `-motor`, `-trial` | One bring-up area each ([table](../../src/firmware/wellfed/README.md)); `motor` drives the motor only in its `pulse` variant |
 | `wellfed-fw-blink` (`src/firmware/wellfed/blink`) | The minimal firmware: one task blinks the connection indicator. The [firmware guide](../../src/firmware/wellfed/README.md) covers writing one |
 | `wellfed-amebad-sys` | Bindgen-backed KM4 calls into the pinned AmebaD SDK, and the deterministic host fake SDK used by tests and the simulator |
+| `wellfed-board-plaf103` | The PLAF103 board: every pin and ADC channel the ports use, the storage region and its sector map |
 | `wellfed-sdk-c` | The KM0 archive, and the panic handler every firmware archive links |
 | `wellfed-testkit`, `wellfed-sim` | Fake NOR journal storage and deterministic host worker |
 

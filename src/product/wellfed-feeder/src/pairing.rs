@@ -37,8 +37,8 @@
 //!
 //! [product architecture]: ../../../../docs/firmware/product-architecture.md#setup-and-pairing
 
+use crate::store::clients::Role;
 use wellfed_core::buttons::{Button, Buttons, Gesture};
-use wellfed_core::store::clients::Role;
 use wellfed_core::{deadline_passed, interval_valid, named_enum};
 use wellfed_session::setup_code::{Code, PRESSES};
 

@@ -10,7 +10,7 @@
 use std::cell::{Cell, RefCell};
 
 use wellfed_core::flash_coord::{FlashFault, FlashPhase, FlashReply};
-use wellfed_core::store::settings::{SettingsStatus, SlotState};
+use wellfed_feeder::store::settings::{SettingsStatus, SlotState};
 use wellfed_hal::bringup;
 use wellfed_hal::flash::hooks::HookTicket;
 use wellfed_hal::flash::park::{

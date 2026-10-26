@@ -14,8 +14,8 @@
 
 use core::ffi::c_uint;
 
-use crate::feed::progress::BowlMode;
-use crate::store::slot::{
+use wellfed_core::feed::progress::BowlMode;
+use wellfed_core::store::slot::{
     Bound, COMMIT, COMMIT_AT, COMMIT_OFFSET, CRC_AT, LENGTH_AT, RECORD_BYTES, RECORD_LEN, SlotIo,
     TAIL_CHUNK, VERSION_AT, crc32, get_u16, get_u32, get_u64, put_u16, put_u32, put_u64,
 };
@@ -27,7 +27,7 @@ const MAGIC: [u8; 8] = *b"PLFSET01";
 /// unit, half a typical NOR part's 100 000-cycle rating.
 pub const WEAR_LIMIT: u64 = 100_000;
 
-pub use crate::transport::MAX_VOLUME;
+pub use wellfed_core::transport::MAX_VOLUME;
 pub const MIN_UTC_OFFSET: i16 = -12 * 60;
 pub const MAX_UTC_OFFSET: i16 = 14 * 60;
 

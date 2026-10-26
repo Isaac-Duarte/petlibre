@@ -2,10 +2,10 @@
 //! across reopens, its limits, a power cut at every mutation, and a newer
 //! schema.
 
-use wellfed_core::store::clients::{
+use wellfed_core::store::slot::crc32;
+use wellfed_feeder::store::clients::{
     CLIENTS, ClientError, ClientStatus, ClientStore, Label, RECORD_BYTES, Role,
 };
-use wellfed_core::store::slot::crc32;
 use wellfed_testkit::journal_flash::{FakeJournalFlash, FlashIo};
 
 const UNIT: usize = 1024;

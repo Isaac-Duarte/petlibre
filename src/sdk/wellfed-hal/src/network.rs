@@ -22,16 +22,16 @@
 
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 
-use wellfed_core::store::net::{Credentials, NetStore};
 use wellfed_core::store::slot::SlotIo;
 use wellfed_core::transport::{WifiResult, WifiSource, WifiView};
+use wellfed_feeder::store::net::{Credentials, NetStore};
 
 use crate::cell::TaskCell;
 use crate::interlock::INTERLOCK;
 use crate::{link, sdk};
 
 /// The credential slots within the storage region (`0x345000`).
-pub const NET_BASE: u32 = sdk::storage::NET.first;
+pub const NET_BASE: u32 = crate::plaf103::storage::NET.first;
 /// Consecutive failed joins before the build's credentials take over.
 pub const FALLBACK_AFTER: u32 = 5;
 

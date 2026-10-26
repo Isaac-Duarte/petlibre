@@ -3,8 +3,8 @@
 //! and keeps, and a power cut at every mutation of an append and of the
 //! erase that makes room.
 
-use wellfed_core::store::events::{BODY_BYTES, EventError, EventLog, RECORD_BYTES, Read};
 use wellfed_core::store::slot::crc32;
+use wellfed_feeder::store::events::{BODY_BYTES, EventError, EventLog, RECORD_BYTES, Read};
 use wellfed_testkit::journal_flash::{FakeJournalFlash, FlashIo};
 
 /// Small units keep the wrap tests fast: 4 records each.

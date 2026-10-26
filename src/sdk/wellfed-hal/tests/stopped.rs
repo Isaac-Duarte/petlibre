@@ -4,6 +4,7 @@
 //! reports stopped.
 
 use wellfed_hal::board::MOTOR_MASK;
+use wellfed_hal::plaf103;
 use wellfed_hal::sdk::{self, fake};
 use wellfed_hal::stopped::{self, PA_MASK, PB_MASK};
 
@@ -11,7 +12,7 @@ fn check_preloaded() {
     fake::with(|h| {
         assert_ne!(h.lp_function & wellfed_hal::sdk::GPIO_ENABLE_BIT, 0);
         assert_ne!(h.lp_clock & wellfed_hal::sdk::GPIO_ENABLE_BIT, 0);
-        assert_eq!(h.output[0] & sdk::IR_PA_BIT, 0);
+        assert_eq!(h.output[0] & plaf103::pins::IR_PA_BIT, 0);
         assert_eq!(h.output[1] & PB_MASK, 0);
         assert_eq!(h.interrupts, 1);
     });

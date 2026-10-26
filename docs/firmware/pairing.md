@@ -113,7 +113,7 @@ Status (October 24, 2026):
 
 ## Storage sectors
 
-All storage-region sectors are now named in one table, `wellfed_amebad_sys::storage`. A compile-time check keeps the ranges disjoint and inside the region, and the existing constants read from it.
+All storage-region sectors are now named in one table, `wellfed_board_plaf103::storage`. A compile-time check keeps the ranges disjoint and inside the region, and the existing constants read from it.
 
 | Sectors | Owner |
 | --- | --- |

@@ -42,9 +42,9 @@ use wellfed_core::ota::offer::{
     self, Admitted, Context, KeyId, KeyRing, KeyStatement, Trust, admit_offer, admit_statement,
 };
 use wellfed_core::ota::{BANK1_OFFSET, MARKER, SECTOR, SECTOR_BYTES, image};
-use wellfed_core::store::clients::{CLIENTS, Client, Role};
 use wellfed_core::store::slot::SlotIo;
 use wellfed_core::store::update::{Bank0, Candidate, State, UpdateStatus, UpdateStore};
+use wellfed_feeder::store::clients::{CLIENTS, Client, Role};
 use sha2::{Digest, Sha256};
 
 use crate::flash_lock::arming::{self, Hooks};
@@ -137,7 +137,8 @@ impl<H> StoreSlots<H> {
     }
 
     fn sector(slot: u32) -> Option<u32> {
-        (slot < sdk::storage::UPDATE.count).then_some(sdk::storage::UPDATE.first + slot)
+        let update = crate::plaf103::storage::UPDATE;
+        (slot < update.count).then_some(update.first + slot)
     }
 }
 

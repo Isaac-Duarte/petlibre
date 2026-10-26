@@ -16,6 +16,6 @@ const CRATES: &[&str] = &[
     "../../client/wellfed-client",
     "../../client/wellfed-model",
     "../../sdk/wellfed-core",
-    "../../sdk/wellfed-proto",
+    "../../product/wellfed-proto",
     "../../sdk/wellfed-session",
 ];

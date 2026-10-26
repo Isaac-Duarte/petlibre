@@ -3,11 +3,11 @@
 
 use std::sync::{Mutex, MutexGuard};
 
-use wellfed_core::store::clients::{Label, Role};
-use wellfed_core::store::net::{Credentials, NetStore};
 use wellfed_core::store::slot::SlotIo;
 use wellfed_core::transport::{SettingsFields, SettingsResult, SettingsView, WifiResult};
 use wellfed_feeder::api::KeyChange;
+use wellfed_feeder::store::clients::{Label, Role};
+use wellfed_feeder::store::net::{Credentials, NetStore};
 use wellfed_fw_feeder::api::{keys_request, settings_request, wifi_request};
 use wellfed_fw_feeder::feeding::{claim_outputs, writes_queued};
 use wellfed_sdk::hal::interlock::Interlock;

@@ -8,10 +8,10 @@
 //! explicit reset.
 
 use wellfed_core::feed::progress::BowlMode;
-use wellfed_core::store::settings::{
+use wellfed_core::store::slot::{RECORD_BYTES, crc32};
+use wellfed_feeder::store::settings::{
     Settings, SettingsStatus, SettingsStore, SlotState, WEAR_LIMIT,
 };
-use wellfed_core::store::slot::{RECORD_BYTES, crc32};
 use wellfed_testkit::journal_flash::{FakeJournalFlash, FlashIo, UNIT};
 
 const BINDING: u64 = 0x5046_5731_3502_0001;

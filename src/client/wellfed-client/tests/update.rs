@@ -19,8 +19,6 @@ use wellfed_core::ota::offer::{
     self, Context, ImageKind, KeyRing, Signed, admit_offer, key_id, manifest_digest,
 };
 use wellfed_core::ota::{self, BANK1_OFFSET, MARKER, Manifest, SECTOR};
-use wellfed_core::store::clients::{CLIENTS, Client, Label, Role};
-use wellfed_core::store::net::Credentials;
 use wellfed_core::store::update::{Candidate, State, UpdateStore};
 use wellfed_core::tone::Tune;
 use wellfed_core::transport::{
@@ -31,6 +29,8 @@ use wellfed_feeder::api::{
     Device, EventRead, KeyChange, KeyOutcome, Pass, Server, UpdateAnswer, UpdateRequest,
 };
 use wellfed_feeder::pairing::{Config, Pairing};
+use wellfed_feeder::store::clients::{CLIENTS, Client, Label, Role};
+use wellfed_feeder::store::net::Credentials;
 use wellfed_feeder::update as wire;
 use wellfed_model::{self as model, Answer, Op};
 use wellfed_proto::api::{

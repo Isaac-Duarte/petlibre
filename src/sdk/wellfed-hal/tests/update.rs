@@ -797,10 +797,10 @@ fn an_owner_s_enrolled_key_signs_an_offer() {
     let _guard = start(0);
     let owner = SigningKey::from_bytes(&[0x0e; 32]);
     keys::publish_clients(
-        [wellfed_core::store::clients::Client {
+        [wellfed_feeder::store::clients::Client {
             key: owner.verifying_key().to_bytes(),
-            label: wellfed_core::store::clients::Label::new(b"laptop").unwrap(),
-            role: wellfed_core::store::clients::Role::UpdateSigner,
+            label: wellfed_feeder::store::clients::Label::new(b"laptop").unwrap(),
+            role: wellfed_feeder::store::clients::Role::UpdateSigner,
             enrolled: 1,
         }]
         .into_iter(),
@@ -981,10 +981,10 @@ fn bank_1_never_gives_way_for_a_downgrade_bank_0_could_not_check() {
     let _guard = start(1);
     let owner = SigningKey::from_bytes(&[0x0e; 32]);
     keys::publish_clients(
-        [wellfed_core::store::clients::Client {
+        [wellfed_feeder::store::clients::Client {
             key: owner.verifying_key().to_bytes(),
-            label: wellfed_core::store::clients::Label::new(b"laptop").unwrap(),
-            role: wellfed_core::store::clients::Role::UpdateSigner,
+            label: wellfed_feeder::store::clients::Label::new(b"laptop").unwrap(),
+            role: wellfed_feeder::store::clients::Role::UpdateSigner,
             enrolled: 1,
         }]
         .into_iter(),

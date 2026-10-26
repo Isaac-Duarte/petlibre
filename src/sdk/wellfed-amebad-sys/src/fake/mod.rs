@@ -15,10 +15,13 @@ use core::ffi::{CStr, c_void};
 use std::cell::RefCell;
 use std::collections::VecDeque;
 
+use wellfed_board_plaf103::STORAGE_SECTORS;
+use wellfed_board_plaf103::pins::{self, IR_PA_BIT, IR_PB_BIT, MOTOR_MASK};
+
 use super::{
     AUDIO_PAGE_SAMPLES, AUDIO_PAGES, Advertising, BleEvent, BlePoll, BleService, BleStats,
-    GpioRouting, IR_PA_BIT, IR_PB_BIT, Irq, Isr, LpClock, MOTOR_MASK, SECTOR_BYTES,
-    STORAGE_SECTORS, Systick, TaskStep, TcpRecv, TransportConfig, WifiEvent, WifiPoll, board,
+    GpioRouting, Irq, Isr, LpClock, SECTOR_BYTES, Systick, TaskStep, TcpRecv, TransportConfig,
+    WifiEvent, WifiPoll,
 };
 
 pub const GPIOA_IRQ: usize = 4;
@@ -198,7 +201,7 @@ pub struct Hardware {
     /// Bank 0's image after them (bytes past its end read erased); its
     /// first 8 bytes are `bank0_marker`'s.
     pub bank0: Vec<u8>,
-    pub storage_erases: [u32; crate::STORAGE_SECTORS as usize],
+    pub storage_erases: [u32; STORAGE_SECTORS as usize],
 
     /// The codec ring. Filled pages wait in `audio_queue` until
     /// [`play_audio`] moves them to `audio_played`.
@@ -241,7 +244,7 @@ impl Default for Hardware {
             blocked_gpio_clock: false,
 
             output: [0; 2],
-            input: [board::bit(board::OUTLET) | board::bit(board::ADAPTER), 0],
+            input: [pins::bit(pins::OUTLET) | pins::bit(pins::ADAPTER), 0],
             direction: [0; 2],
             interrupts: 0,
             polls: 0,
@@ -342,12 +345,12 @@ impl Default for Hardware {
             spins: 0,
             systick: 7,
 
-            storage: vec![u8::MAX; (crate::STORAGE_SECTORS * crate::SECTOR_BYTES) as usize],
+            storage: vec![u8::MAX; (STORAGE_SECTORS * crate::SECTOR_BYTES) as usize],
             bank1: vec![u8::MAX; 0x15_0000],
             running_bank: Some(1),
             bank0_marker: crate::MARKER,
             bank0: Vec::new(),
-            storage_erases: [0; crate::STORAGE_SECTORS as usize],
+            storage_erases: [0; STORAGE_SECTORS as usize],
 
             audio_open: false,
             audio_open_fails: false,

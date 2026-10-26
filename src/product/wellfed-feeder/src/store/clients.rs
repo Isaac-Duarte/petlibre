@@ -28,11 +28,11 @@
 
 use core::ffi::c_uint;
 
-use crate::named_enum;
-use crate::store::slot::{
+use wellfed_core::store::slot::{
     Bound, COMMIT, LENGTH_AT, SlotIo, VERSION_AT, crc32, get_u16, get_u32, get_u64, put_u16,
     put_u32, put_u64,
 };
+use wellfed_session::named_enum;
 
 pub const VERSION: u16 = 1;
 const MAGIC: [u8; 8] = *b"PLFCLI01";

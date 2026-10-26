@@ -1,0 +1,11 @@
+[package]
+license.workspace = true
+name = "wellfed-board-plaf103"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "The PLAF103 board: its pins and ADC channels, and the replacement firmware's storage sector map"
+publish.workspace = true
+
+[lints]
+workspace = true

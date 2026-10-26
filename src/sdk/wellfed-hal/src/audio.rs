@@ -26,7 +26,7 @@ use crate::sdk;
 use crate::settings;
 
 /// The amplifier enable (stock writes it HIGH around playback).
-pub const AMP_PIN: u32 = sdk::board::AMP;
+pub const AMP_PIN: u32 = crate::plaf103::pins::AMP;
 pub const POLL_MS: u32 = 20;
 /// Zero pages the amplifier gets to settle before the first note. 60 ms
 /// swallowed the 50 ms `key` tick whole while the 160 ms `alert` beeps were

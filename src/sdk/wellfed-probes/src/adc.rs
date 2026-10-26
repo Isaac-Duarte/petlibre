@@ -19,6 +19,7 @@ const _: () = assert!(SAMPLE_COUNT as usize == SAMPLES);
 use wellfed_core::feed::sensor_inputs::SensorReading;
 
 use wellfed_hal::board::Board;
+use wellfed_hal::plaf103;
 use wellfed_hal::sdk;
 use wellfed_hal::stopped;
 
@@ -229,7 +230,7 @@ impl Probe {
         let ok = self.board.capture(&mut reading)
             && self
                 .board
-                .sample_channel(sdk::board::ADC_SUPPLY, &mut supply);
+                .sample_channel(plaf103::pins::ADC_SUPPLY, &mut supply);
         let ticks = sdk::systimer_ticks().wrapping_sub(begin);
         let stopped = stopped::observe().verified();
 

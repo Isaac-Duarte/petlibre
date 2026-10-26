@@ -4,11 +4,11 @@
 use std::cell::Cell;
 use std::sync::{Mutex, MutexGuard};
 
-use wellfed_core::store::clients::{ClientStatus, Label, Role};
-use wellfed_core::store::events::Read;
 use wellfed_core::store::seed::SeedStatus;
-use wellfed_core::store::settings::SettingsStatus;
 use wellfed_core::transport::{SettingsFields, SettingsResult};
+use wellfed_feeder::store::clients::{ClientStatus, Label, Role};
+use wellfed_feeder::store::events::Read;
+use wellfed_feeder::store::settings::SettingsStatus;
 use wellfed_hal::flash::park::Mmio;
 use wellfed_hal::flash::peer::MARKER_REGISTER;
 use wellfed_hal::flash_lock::arming::Hooks;
@@ -243,8 +243,8 @@ fn an_unwritable_store_reads_but_refuses_changes() {
 
 #[test]
 fn wifi_credentials_are_saved_inside_a_marked_attempt_and_cleared() {
-    use wellfed_core::store::net::Credentials;
     use wellfed_core::transport::WifiResult;
+    use wellfed_feeder::store::net::Credentials;
     let (_guard, mut writer, mut provider) = start();
     step(&mut writer, &mut provider); // open
     step(&mut writer, &mut provider); // net open
@@ -542,8 +542,8 @@ fn queued_events_are_appended_and_read_back_after_a_reboot() {
 /// outputs, and completes it after the release, in order, with nothing lost.
 #[test]
 fn every_store_write_waits_for_a_feed_and_completes_after_it() {
-    use wellfed_core::store::net::Credentials;
     use wellfed_core::transport::WifiResult;
+    use wellfed_feeder::store::net::Credentials;
 
     let (_guard, mut writer, mut provider) = start();
     fake::with(|h| h.adc_noise = 0x5a5a_1234);

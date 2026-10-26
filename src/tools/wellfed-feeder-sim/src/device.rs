@@ -12,14 +12,10 @@
 
 use std::rc::Rc;
 
-use wellfed_amebad_sys::storage;
+use wellfed_board_plaf103::storage;
 use wellfed_core::clock::wall::{Jump, Sync, SyncError, WallClock};
 use wellfed_core::ota::install::Phase;
 use wellfed_core::ota::offer::{KeyStatement, key_id};
-use wellfed_core::store::clients::{CLIENTS, Client, ClientError, ClientStore, Label, Role};
-use wellfed_core::store::events::{BODY_BYTES, EventLog, Read};
-use wellfed_core::store::net::{Credentials, NetStore};
-use wellfed_core::store::settings::{Settings, SettingsStatus, SettingsStore};
 use wellfed_core::store::slot::crc32;
 use wellfed_core::tone::Tune;
 use wellfed_core::transport::{
@@ -29,6 +25,10 @@ use wellfed_core::transport::{
 use wellfed_feeder::api::{
     Device, EventRead, KeyChange, KeyOutcome, UpdateAnswer, UpdateKeyChange, UpdateRequest,
 };
+use wellfed_feeder::store::clients::{CLIENTS, Client, ClientError, ClientStore, Label, Role};
+use wellfed_feeder::store::events::{BODY_BYTES, EventLog, Read};
+use wellfed_feeder::store::net::{Credentials, NetStore};
+use wellfed_feeder::store::settings::{Settings, SettingsStatus, SettingsStore};
 use wellfed_feeder::update as wire;
 use wellfed_hal::ota::mailbox::{self, Answer, Request};
 use wellfed_proto::api::{
@@ -56,7 +56,7 @@ pub type Random = Box<dyn FnMut() -> Option<[u8; 32]>>;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum DeviceError {
     #[error("the client store cannot be written (status {0:?})")]
-    Clients(wellfed_core::store::clients::ClientStatus),
+    Clients(wellfed_feeder::store::clients::ClientStatus),
     #[error("the generator has no output for the identity")]
     Random,
     #[error("enroll the client: {0:?}")]

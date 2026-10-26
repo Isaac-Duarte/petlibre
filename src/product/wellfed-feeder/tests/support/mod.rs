@@ -10,8 +10,6 @@
 
 #![allow(dead_code, reason = "each consumer drives a subset")]
 
-use wellfed_core::store::clients::{CLIENTS, Client, Label, Role};
-use wellfed_core::store::net::Credentials;
 use wellfed_core::tone::Tune;
 use wellfed_core::transport::{
     LockResult, PlayResult, SettingsFields, SettingsResult, SettingsView, TimeFields, TimeResult,
@@ -22,6 +20,8 @@ use wellfed_feeder::api::{
 };
 use wellfed_feeder::pairing::{Config, Pairing};
 use wellfed_feeder::setup::{Received, Responder};
+use wellfed_feeder::store::clients::{CLIENTS, Client, Label, Role};
+use wellfed_feeder::store::net::Credentials;
 use wellfed_proto::api::{
     self as proto, Capabilities, EventBody, FRAME_MAX, FeederMessage, Hello, MESSAGE_MAX, Open,
     PROLOGUE, PROTOCOL_MAJOR, Refusal, Status, Welcome,

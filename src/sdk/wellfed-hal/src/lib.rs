@@ -9,6 +9,8 @@
 
 // The ports' public types carry SDK types, so the SDK crate is part of this API.
 pub use wellfed_amebad_sys as sdk;
+// The board the ports drive: its pins and storage sector map.
+pub use wellfed_board_plaf103 as plaf103;
 pub use wellfed_hal_common::{cell, flash, trial};
 
 #[cfg(all(target_os = "none", not(feature = "km4")))]

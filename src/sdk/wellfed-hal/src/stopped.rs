@@ -9,10 +9,11 @@
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::board::MOTOR_MASK;
+use crate::plaf103::pins::{IR_PA_BIT, IR_PB_BIT};
 use crate::sdk::{self, IrqGuard};
 
-pub const PA_MASK: u32 = MOTOR_MASK | sdk::IR_PA_BIT;
-pub const PB_MASK: u32 = sdk::IR_PB_BIT;
+pub const PA_MASK: u32 = MOTOR_MASK | IR_PA_BIT;
+pub const PB_MASK: u32 = IR_PB_BIT;
 
 /// Emitters the probe holds on under an armed supervisor budget: bit 0
 /// PA15, bit 1 PB3. Written only by that probe; read by health.
@@ -62,11 +63,11 @@ impl Snapshot {
     /// as supervised. Never true with none published.
     pub fn sensing(self) -> bool {
         let emitters = SUPERVISED.load(Ordering::Acquire);
-        let a = if emitters & 1 != 0 { sdk::IR_PA_BIT } else { 0 };
+        let a = if emitters & 1 != 0 { IR_PA_BIT } else { 0 };
         let b = if emitters & 2 != 0 { PB_MASK } else { 0 };
         emitters != 0
             && self.motor_verified()
-            && self.pa & sdk::IR_PA_BIT == a
+            && self.pa & IR_PA_BIT == a
             && self.latch_a == a
             && self.pb == b
             && self.latch_b == b
@@ -81,7 +82,7 @@ pub fn observe() -> Snapshot {
         pb: sdk::gpio_port_read(1, PB_MASK) & PB_MASK,
         dira: sdk::gpio_direction(0) & PA_MASK,
         dirb: sdk::gpio_direction(1) & PB_MASK,
-        latch_a: sdk::gpio_output_latch(0) & sdk::IR_PA_BIT,
+        latch_a: sdk::gpio_output_latch(0) & IR_PA_BIT,
         latch_b: sdk::gpio_output_latch(1) & PB_MASK,
         swd: sdk::swd_pinmux(),
     }
@@ -98,7 +99,7 @@ pub fn observe() -> Snapshot {
 /// both in one port write goes from standby straight to brake. From brake,
 /// the LOW write is a coast, still with equal inputs.
 pub(crate) fn enable_motor_stopped() {
-    use sdk::board::{MOTOR_A, MOTOR_B};
+    use crate::plaf103::pins::{MOTOR_A, MOTOR_B};
 
     // SAFETY: the motor pins, which this module and the board own: called at
     // startup and as the board opens, before its gate can drive them.
@@ -122,11 +123,11 @@ pub fn initialize() -> Snapshot {
     sdk::swd_off();
     // SAFETY: the emitter latches, which this module owns until the board opens.
     unsafe {
-        sdk::gpio_port_write(0, sdk::IR_PA_BIT, 0);
+        sdk::gpio_port_write(0, IR_PA_BIT, 0);
         sdk::gpio_port_write(1, PB_MASK, 0);
     }
     enable_motor_stopped();
-    use sdk::board::{IR_PA, IR_PB};
+    use crate::plaf103::pins::{IR_PA, IR_PB};
     for pin in [IR_PA, IR_PB] {
         // SAFETY: as above, with each latch already LOW.
         unsafe { sdk::gpio_init(pin, true) };

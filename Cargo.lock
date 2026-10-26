@@ -2244,6 +2244,7 @@ version = "0.1.0"
 dependencies = [
  "bindgen 0.72.1",
  "cortex-m",
+ "wellfed-board-plaf103",
  "wellfed-session",
 ]
 
@@ -2307,6 +2308,10 @@ dependencies = [
  "tokio",
  "uuid",
 ]
+
+[[package]]
+name = "wellfed-board-plaf103"
+version = "0.1.0"
 
 [[package]]
 name = "wellfed-build"
@@ -2409,6 +2414,7 @@ dependencies = [
  "wellfed-core",
  "wellfed-proto",
  "wellfed-session",
+ "wellfed-testkit",
  "proptest",
  "serde",
 ]
@@ -2421,6 +2427,7 @@ dependencies = [
  "clap",
  "ed25519-dalek",
  "wellfed-amebad-sys",
+ "wellfed-board-plaf103",
  "wellfed-client",
  "wellfed-connect",
  "wellfed-core",
@@ -2554,7 +2561,9 @@ version = "0.1.0"
 dependencies = [
  "ed25519-dalek",
  "wellfed-amebad-sys",
+ "wellfed-board-plaf103",
  "wellfed-core",
+ "wellfed-feeder",
  "wellfed-hal-common",
  "wellfed-session",
  "wellfed-testkit",
@@ -2567,6 +2576,7 @@ version = "0.1.0"
 dependencies = [
  "cortex-m",
  "wellfed-amebad-sys",
+ "wellfed-board-plaf103",
  "wellfed-core",
  "wellfed-session",
 ]
@@ -2642,6 +2652,7 @@ name = "wellfed-probes"
 version = "0.1.0"
 dependencies = [
  "wellfed-core",
+ "wellfed-feeder",
  "wellfed-hal",
  "wellfed-sdk",
 ]
@@ -2670,6 +2681,7 @@ name = "wellfed-sdk"
 version = "0.1.0"
 dependencies = [
  "wellfed-core",
+ "wellfed-feeder",
  "wellfed-hal",
  "wellfed-sdk-c",
  "wellfed-session",

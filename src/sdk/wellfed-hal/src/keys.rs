@@ -21,7 +21,7 @@
 use core::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 
 use wellfed_core::named_enum;
-use wellfed_core::store::clients::{CLIENTS as STORE_CLIENTS, Client, ClientError, Label, Role};
+use wellfed_feeder::store::clients::{CLIENTS as STORE_CLIENTS, Client, ClientError, Label, Role};
 
 use crate::cell::TaskCell;
 use crate::sdk;

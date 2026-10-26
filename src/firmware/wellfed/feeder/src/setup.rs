@@ -29,12 +29,12 @@
 use core::fmt;
 
 use wellfed_core::named_enum;
-use wellfed_core::store::clients::Role;
-use wellfed_core::store::net::Credentials;
 use wellfed_core::tone::Tune;
 use wellfed_core::transport::{PlayResult, WifiResult};
 use wellfed_feeder::pairing::{self, Pairing, Path};
 use wellfed_feeder::setup::{self as session, MAX_MESSAGE, Offer, Received, Responder};
+use wellfed_feeder::store::clients::Role;
+use wellfed_feeder::store::net::Credentials;
 use wellfed_proto::setup::{Enrolled, Refusal, Reply, WifiSaved};
 use wellfed_sdk::hal::audio::{self, Speaker};
 use wellfed_sdk::hal::ble::{self, BleSetup, DropReason, Link};

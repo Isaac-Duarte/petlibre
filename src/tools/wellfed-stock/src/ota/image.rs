@@ -18,14 +18,14 @@ use axum::{
     http::{HeaderMap, Method, Request, StatusCode, header},
     response::{IntoResponse, Response},
 };
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use hyper::{body::Incoming, server::conn::http1, service::service_fn};
 use hyper_util::rt::{TokioIo, TokioTimer};
 use wellfed_formats::{
     canonical,
+    manifest::BuildManifest,
     review::{ImageKind, ImageReview},
 };
-use serde::{Deserialize, Serialize};
 use tokio::{net::TcpListener, task::JoinSet};
 use uuid::Uuid;
 
@@ -39,7 +39,6 @@ const IMAGE_BYTES: usize = 1_376_288;
 /// Trial URLs are built with this port; the server cannot be moved elsewhere.
 pub const PORT: u16 = 8088;
 pub const ACCEPT_WINDOW_SECONDS: i64 = 15 * 60;
-const LEASE_FILE: &str = "ota-image-server.json";
 
 /// The one file the server holds, under its token.
 pub const ROUTE: &str = "replacement.bin";
@@ -63,39 +62,18 @@ pub fn payload(container: &[u8]) -> Result<&[u8]> {
 }
 
 /// Private record of the running image server, written beside the config.
-/// Dispatch requires its token, an unexpired accept window and a live listener.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct Lease {
-    pub token: Uuid,
-    pub peer: Ipv4Addr,
-    pub expires_at: DateTime<Utc>,
-    /// The served build's SHA-256, which the install command announces.
-    pub sha256: String,
-    /// The served build's identity: its frozen manifest's startup identity,
-    /// 64 lowercase hex, as the build's device API reports it.
-    pub build: String,
-}
+pub use wellfed_formats::local::ImageLease as Lease;
 
-impl Lease {
-    pub fn path(config_path: &Path) -> std::path::PathBuf {
-        config_path
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .join(LEASE_FILE)
-    }
-
-    /// Return the lease only when its file parses and the listener accepts TCP.
-    pub async fn current(config_path: &Path, host: std::net::IpAddr) -> Option<Self> {
-        let data = tokio::fs::read(Self::path(config_path)).await.ok()?;
-        let lease: Self = serde_json::from_slice(&data).ok()?;
-        let connect = tokio::net::TcpStream::connect((host, PORT));
-        matches!(
-            tokio::time::timeout(Duration::from_secs(1), connect).await,
-            Ok(Ok(_))
-        )
-        .then_some(lease)
-    }
+/// The lease, only when its file parses and the listener accepts TCP.
+pub async fn current(config_path: &Path, host: std::net::IpAddr) -> Option<Lease> {
+    let data = tokio::fs::read(Lease::path(config_path)).await.ok()?;
+    let lease: Lease = serde_json::from_slice(&data).ok()?;
+    let connect = tokio::net::TcpStream::connect((host, PORT));
+    matches!(
+        tokio::time::timeout(Duration::from_secs(1), connect).await,
+        Ok(Ok(_))
+    )
+    .then_some(lease)
 }
 
 /// A replacement build, loaded once from its frozen review.
@@ -105,12 +83,6 @@ pub struct Build {
     sha256: String,
     /// Recorded in the lease.
     build: String,
-}
-
-/// The one field of the frozen build manifest the image server needs.
-#[derive(Deserialize)]
-struct StartupIdentity {
-    startup_identity: Option<String>,
 }
 
 /// The startup identity the review's frozen `build-manifest.json` records,
@@ -123,7 +95,7 @@ fn build_identity(review: &Path, frozen: &ImageReview) -> Result<String> {
         "build-manifest.json does not match its review"
     );
 
-    let manifest: StartupIdentity =
+    let manifest: BuildManifest =
         serde_json::from_slice(&raw).context("parse build-manifest.json")?;
     let id = manifest.startup_identity.unwrap_or_default();
     ensure!(
@@ -488,7 +460,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let config = directory.path().join("server.json");
 
-        assert!(Lease::current(&config, host).await.is_none());
+        assert!(current(&config, host).await.is_none());
 
         let lease = Lease {
             token: Uuid::new_v4(),
@@ -499,13 +471,13 @@ mod tests {
         };
 
         storage::write_json(&Lease::path(&config), &lease).unwrap();
-        assert!(Lease::current(&config, host).await.is_none());
+        assert!(current(&config, host).await.is_none());
 
         let listener = TcpListener::bind((host, PORT)).await.unwrap();
-        assert_eq!(Lease::current(&config, host).await, Some(lease));
+        assert_eq!(current(&config, host).await, Some(lease));
 
         std::fs::write(Lease::path(&config), b"{\"token\":\"x\"}").unwrap();
-        assert!(Lease::current(&config, host).await.is_none());
+        assert!(current(&config, host).await.is_none());
 
         drop(listener);
     }

@@ -131,7 +131,7 @@ Physical (October 22), over the air:
 2. The fixed build confirmed after 30 s healthy (`PLCNF1 confirmed=1 healthy_ms=30000`).
 3. On the next cold boot KM0 reported `PLTRL1 confirmed=1`.
 
-Caution, observed: while an offer stays loaded, a candidate that keeps failing is re-downloaded after every fallback. The server now serves each offer to completion only once ([local server](../development/local-server.md)).
+Caution, observed (MQTT era): while an offer stayed loaded, a candidate that kept failing was re-downloaded after every fallback, so the server then served each offer to completion only once. The device API's client pushes each offer once and never on its own again.
 
 The original design:
 

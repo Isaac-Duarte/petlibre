@@ -139,7 +139,7 @@ async fn ota_trial_request(
     Json(input): Json<ota::trial::Input>,
 ) -> Result<Json<ota::trial::Record>, ApiError> {
     authenticate(&headers, &state)?;
-    let lease = ota::image::Lease::current(&state.config_path, state.image_host).await;
+    let lease = ota::image::current(&state.config_path, state.image_host).await;
     operation(state, |response| Request::OtaTrial(input, lease, response)).await
 }
 

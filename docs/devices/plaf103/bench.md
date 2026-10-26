@@ -247,7 +247,7 @@ sudo target/release/wellfed-local network remove                               #
 
    It is never resent.
 5. **`stock-install`:** stock's `OTA_PROGRESS` and `OTA_UPGRADE` reports are printed as they arrive, and a reported error fails the stage. Stock writes bank 0 and invalidates bank 1, so the stage passes only when the first `PLFW1 start` afterwards is the build, from **bank 0**.
-6. **`bank0-health`:** the build answers the device API from bank 0 while it waits for an update. Stock reports nothing after activating it and the build speaks no MQTT, so the run then tells the server what it saw (`POST /api/ota/trial/answered`: the build identity and bank 0 the device API reported). The server checks that against the build it served and closes the request as `replacement_healthy` once stock's telemetry has gone stale (90 s), so the run asks every 10 s for 120 s; the next request then needs no 20-minute resolution first. A server that will not close it (stock still reporting, or its version reported after the request) is noted, not failed: the next request then waits for the resolution instead.
+6. **`bank0-health`:** the build answers the device API from bank 0 while it waits for an update. Stock reports nothing after activating it and the build speaks no MQTT, so the run then tells the server what it saw (`POST /api/ota/trial/answered`: the build identity and bank 0 the device API reported). The server checks that against the build it served and closes the request as `replacement_healthy` once stock's telemetry has gone stale (90 s), so the run asks every 10 s for 120 s; the next request then needs no 20-minute resolution first. A server that will not close it (stock still reporting, or its version reported after the request) is noted, not failed: the next request then waits for the resolution instead. Unknown on hardware: whether stock posts its `softwareVersion` between taking the command and rebooting into the build. If it does, every install fails this fast path closed and waits for the resolution.
 7. **`promote`:** the same build is pushed, signed, over the device API. Bank 0 installs it into bank 1, and the trial boot confirms. The feeder ends in the normal two-bank state, with bank 0 holding the same build. `--no-promote` stops after `bank0-health`.
 
 **After it:**
@@ -272,7 +272,7 @@ From the confirmed baseline:
 1. **To stock:** the stock review, offered over the air, installs into bank 1, and its banner must appear.
 2. **On stock:** the server switches to `serve --enable-ota-trial`. The scenario waits for stock to report, so run `network apply` then, and resolves any earlier request.
 3. **Back:** stock is asked to install the baseline, which starts on bank 0 and answers the device API there (closing the server's request as `replacement_healthy`), then is promoted into bank 1. It confirms at once, since it was confirmed before.
-4. **Restore:** back to `serve` with fresh health.
+4. **Restore:** back to plain `serve`, with the baseline's device-API status fresh.
 
 `--stock` requires `--power`. A failure on stock stops the suite with a stock-aware recovery hint. Status: physical (October 23, 2026): `fw41-roundtrip-01` passed in 6 min 31 s from `qa` v84; the promotion (v86) confirmed at once. With the owner's `network apply` rules already in place, nobody had to touch the bench.
 

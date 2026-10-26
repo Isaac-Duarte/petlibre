@@ -36,7 +36,7 @@ use wellfed_bench::tools::{Capture, InstallJob, Installing};
 use wellfed_bench::{Error, Result, require, say};
 use wellfed_formats::bench::progress::StepState;
 use wellfed_formats::bench::{CAPTURES, VERIFICATION};
-use wellfed_formats::local::ServerConfig;
+use wellfed_formats::local::{ImageLease, ServerConfig};
 use wellfed_local_api::{Auth, LocalApi};
 use wellfed_relay::{POWER, STRAP};
 
@@ -55,15 +55,6 @@ struct Hotspot {
     connection: String,
 }
 
-/// `wellfed-local ota-images` writes this beside the config; only its token
-/// goes into the trial request.
-#[derive(Deserialize, PartialEq)]
-struct ImageLease {
-    token: String,
-}
-
-/// `ota-images` writes it beside the server config.
-const IMAGE_LEASE: &str = "ota-image-server.json";
 /// The fixed trial port stock's URL names (`wellfed-local` `ota::image::PORT`).
 const IMAGE_PORT: u16 = 8088;
 
@@ -521,7 +512,7 @@ impl Rig for LiveRig<'_> {
     fn images(&mut self, review: &Path) -> Result<String> {
         Self::stop(self.children.images.take());
         let config = self.bench.root.join(&self.config_arg);
-        let lease_path = config.parent().unwrap_or(Path::new(".")).join(IMAGE_LEASE);
+        let lease_path = ImageLease::path(&config);
         let read = |path: &Path| -> Option<ImageLease> {
             serde_json::from_slice(&std::fs::read(path).ok()?).ok()
         };
@@ -546,7 +537,7 @@ impl Rig for LiveRig<'_> {
         ready?;
 
         read(&lease_path)
-            .map(|lease| lease.token)
+            .map(|lease| lease.token.to_string())
             .ok_or_else(|| Error::Bench("The image server's lease disappeared".into()))
     }
 

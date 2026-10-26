@@ -526,6 +526,40 @@ fn an_answer_must_name_the_served_build_on_bank_0() {
 }
 
 #[test]
+fn a_record_from_before_the_build_was_kept_never_closes_on_an_answer() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("ledger.json");
+    let mut c = enabled(&dir);
+    let now = Utc::now();
+    let request = input();
+    submit(&mut c, request.clone(), now).unwrap();
+    drop(c);
+
+    // The ledger as an older server wrote it: no build beside the digest.
+    let mut ledger: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let trial = &mut ledger["ota_trials"][request.request_id.to_string()];
+    assert!(trial.as_object_mut().unwrap().remove("build").is_some());
+    assert!(
+        trial
+            .as_object_mut()
+            .unwrap()
+            .remove("stock_reported")
+            .is_some()
+    );
+    std::fs::write(&path, serde_json::to_vec(&ledger).unwrap()).unwrap();
+
+    let mut c = common::load(path).unwrap();
+    assert_eq!(c.status.ota_trials[0].build, None);
+    assert_eq!(
+        c.replacement_answered(answered(request.request_id), now + Duration::seconds(200)),
+        Err(Rejection::WrongBuild)
+    );
+    // The restart left it uncertain, for a resolution from version evidence.
+    assert_eq!(c.status.ota_trials[0].phase, Phase::Uncertain);
+}
+
+#[test]
 fn an_uncertain_install_still_closes_on_the_answer() {
     let dir = tempfile::tempdir().unwrap();
     let mut c = enabled(&dir);

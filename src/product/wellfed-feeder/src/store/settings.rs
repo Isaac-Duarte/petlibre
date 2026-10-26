@@ -169,36 +169,36 @@ impl<I: SlotIo> SettingsStore<I> {
     fn encode(&self, generation: u64, s: &Settings) -> [u8; RECORD_BYTES] {
         let mut p = [0u8; RECORD_BYTES];
         p[..8].copy_from_slice(&MAGIC);
-        put_u16(&mut p[VERSION_AT..], VERSION);
-        put_u16(&mut p[LENGTH_AT..], RECORD_LEN);
-        put_u64(&mut p[12..], generation);
-        put_u64(&mut p[20..], self.binding);
+        put_u16::<VERSION_AT, _>(&mut p, VERSION);
+        put_u16::<LENGTH_AT, _>(&mut p, RECORD_LEN);
+        put_u64::<12, _>(&mut p, generation);
+        put_u64::<20, _>(&mut p, self.binding);
 
         p[28] = s.bowl_mode.byte();
         p[29] = u8::from(s.lights) | (u8::from(s.sound) << 1);
         p[30] = s.volume;
-        put_u16(&mut p[32..], s.utc_offset_minutes as u16);
+        put_u16::<32, _>(&mut p, s.utc_offset_minutes as u16);
 
         let crc = crc32(&p[..CRC_AT]);
-        put_u32(&mut p[CRC_AT..], crc);
+        put_u32::<CRC_AT, _>(&mut p, crc);
         p[COMMIT_AT..].copy_from_slice(&COMMIT);
         p
     }
 
     fn decode(&self, p: &[u8; RECORD_BYTES]) -> Scan {
         if p[..8] != MAGIC
-            || usize::from(get_u16(&p[LENGTH_AT..])) != RECORD_BYTES
-            || get_u32(&p[CRC_AT..]) != crc32(&p[..CRC_AT])
+            || usize::from(get_u16::<LENGTH_AT, _>(p)) != RECORD_BYTES
+            || get_u32::<CRC_AT, _>(p) != crc32(&p[..CRC_AT])
         {
             return Scan::Invalid;
         }
 
-        let version = get_u16(&p[VERSION_AT..]);
+        let version = get_u16::<VERSION_AT, _>(p);
         if version > VERSION {
             return Scan::Future;
         }
         // Only v1 exists; an older version would be migrated here.
-        if version != VERSION || get_u64(&p[20..]) != self.binding {
+        if version != VERSION || get_u64::<20, _>(p) != self.binding {
             return Scan::Invalid;
         }
 
@@ -210,9 +210,9 @@ impl<I: SlotIo> SettingsStore<I> {
             lights: p[29] & 1 != 0,
             sound: p[29] & 2 != 0,
             volume: p[30],
-            utc_offset_minutes: get_u16(&p[32..]) as i16,
+            utc_offset_minutes: get_u16::<32, _>(p) as i16,
         };
-        let generation = get_u64(&p[12..]);
+        let generation = get_u64::<12, _>(p);
         if p[29] & !3 != 0
             || p[31] != 0
             || p[34..CRC_AT].iter().any(|&b| b != 0)

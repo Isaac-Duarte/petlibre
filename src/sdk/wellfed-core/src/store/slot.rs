@@ -92,36 +92,51 @@ impl<I: SlotIo> Bound<I> {
     }
 }
 
-// Little-endian record fields at the start of `p`.
+// Little-endian record fields at a fixed offset `AT` in a fixed-size record.
+// An offset past the record's end fails to compile, so no input can make
+// these panic.
 
-pub fn put_u16(p: &mut [u8], value: u16) {
-    p[..2].copy_from_slice(&value.to_le_bytes());
+const fn fits<const AT: usize, const N: usize, const L: usize>() {
+    assert!(AT + N <= L, "record field past the record's end");
 }
 
-pub fn put_u32(p: &mut [u8], value: u32) {
-    p[..4].copy_from_slice(&value.to_le_bytes());
+fn put<const AT: usize, const N: usize, const L: usize>(p: &mut [u8; L], bytes: [u8; N]) {
+    const { fits::<AT, N, L>() };
+    if let Some(field) = p.get_mut(AT..).and_then(<[u8]>::first_chunk_mut) {
+        *field = bytes;
+    }
 }
 
-pub fn put_u64(p: &mut [u8], value: u64) {
-    p[..8].copy_from_slice(&value.to_le_bytes());
+fn get<const AT: usize, const N: usize, const L: usize>(p: &[u8; L]) -> [u8; N] {
+    const { fits::<AT, N, L>() };
+    p.get(AT..)
+        .and_then(<[u8]>::first_chunk)
+        .copied()
+        .unwrap_or([0; N])
 }
 
-fn field<const N: usize>(p: &[u8]) -> [u8; N] {
-    let mut bytes = [0; N];
-    bytes.copy_from_slice(&p[..N]);
-    bytes
+pub fn put_u16<const AT: usize, const L: usize>(p: &mut [u8; L], value: u16) {
+    put::<AT, 2, L>(p, value.to_le_bytes());
 }
 
-pub fn get_u16(p: &[u8]) -> u16 {
-    u16::from_le_bytes(field(p))
+pub fn put_u32<const AT: usize, const L: usize>(p: &mut [u8; L], value: u32) {
+    put::<AT, 4, L>(p, value.to_le_bytes());
 }
 
-pub fn get_u32(p: &[u8]) -> u32 {
-    u32::from_le_bytes(field(p))
+pub fn put_u64<const AT: usize, const L: usize>(p: &mut [u8; L], value: u64) {
+    put::<AT, 8, L>(p, value.to_le_bytes());
 }
 
-pub fn get_u64(p: &[u8]) -> u64 {
-    u64::from_le_bytes(field(p))
+pub fn get_u16<const AT: usize, const L: usize>(p: &[u8; L]) -> u16 {
+    u16::from_le_bytes(get::<AT, 2, L>(p))
+}
+
+pub fn get_u32<const AT: usize, const L: usize>(p: &[u8; L]) -> u32 {
+    u32::from_le_bytes(get::<AT, 4, L>(p))
+}
+
+pub fn get_u64<const AT: usize, const L: usize>(p: &[u8; L]) -> u64 {
+    u64::from_le_bytes(get::<AT, 8, L>(p))
 }
 
 /// CRC-32/ISO-HDLC: reflected 0x04c11db7, init/xor-out all ones.

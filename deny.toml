@@ -61,6 +61,9 @@ deny = [
     { crate = "wellfed-relay", wrappers = ["wellfed-bench", "wellfed-itest"], reason = "the relay board is driven only by the bench and its suite" },
     { crate = "wellfed-flash", wrappers = ["wellfed-audit", "wellfed-bench", "wellfed-build"], reason = "flash writes run only as a wellfed-flash process; these link it to verify plans and reviews" },
     { crate = "wellfed-build", wrappers = ["wellfed-bench"], reason = "it links wellfed-flash" },
+    # Product policy reaches the SDK only where the product's stores are read
+    # today; no further SDK crate may take it on.
+    { crate = "wellfed-feeder", wrappers = ["wellfed-hal", "wellfed-sdk", "wellfed-probes", "wellfed-fw-feeder", "wellfed-feeder-sim", "wellfed-client"], reason = "product policy is linked only by its current dependents; the SDK takes no new product dependency" },
 ]
 
 [sources]

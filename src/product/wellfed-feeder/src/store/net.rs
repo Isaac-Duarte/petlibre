@@ -108,9 +108,9 @@ impl<I> Default for NetStore<I> {
 fn encode(generation: u64, credentials: Option<&Credentials>) -> [u8; RECORD_BYTES] {
     let mut p = [0u8; RECORD_BYTES];
     p[..8].copy_from_slice(&MAGIC);
-    put_u16(&mut p[VERSION_AT..], VERSION);
-    put_u16(&mut p[LENGTH_AT..], RECORD_LEN);
-    put_u64(&mut p[12..], generation);
+    put_u16::<VERSION_AT, _>(&mut p, VERSION);
+    put_u16::<LENGTH_AT, _>(&mut p, RECORD_LEN);
+    put_u64::<12, _>(&mut p, generation);
     if let Some(c) = credentials {
         p[20] = c.ssid_len;
         p[21] = c.psk_len;
@@ -118,7 +118,7 @@ fn encode(generation: u64, credentials: Option<&Credentials>) -> [u8; RECORD_BYT
         p[54..54 + 64].copy_from_slice(&c.psk);
     }
     let crc = crc32(&p[..CRC_AT]);
-    put_u32(&mut p[CRC_AT..], crc);
+    put_u32::<CRC_AT, _>(&mut p, crc);
     p[COMMIT_AT..].copy_from_slice(&COMMIT);
     p
 }
@@ -128,17 +128,17 @@ fn decode(p: &[u8; RECORD_BYTES]) -> Scan {
         return Scan::Erased;
     }
     if p[..8] != MAGIC
-        || usize::from(get_u16(&p[LENGTH_AT..])) != RECORD_BYTES
+        || usize::from(get_u16::<LENGTH_AT, _>(p)) != RECORD_BYTES
         || p[COMMIT_AT..] != COMMIT
-        || get_u32(&p[CRC_AT..]) != crc32(&p[..CRC_AT])
+        || get_u32::<CRC_AT, _>(p) != crc32(&p[..CRC_AT])
     {
         return Scan::Invalid;
     }
-    let version = get_u16(&p[VERSION_AT..]);
+    let version = get_u16::<VERSION_AT, _>(p);
     if version > VERSION {
         return Scan::Future;
     }
-    let generation = get_u64(&p[12..]);
+    let generation = get_u64::<12, _>(p);
     let (ssid_len, psk_len) = (usize::from(p[20]), usize::from(p[21]));
     if version != VERSION || generation == 0 || p[118..CRC_AT] != [0, 0] {
         return Scan::Invalid;

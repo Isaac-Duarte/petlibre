@@ -327,29 +327,29 @@ fn unit_id(index: usize) -> c_uint {
 fn encode(epoch: u32, record: &Record) -> [u8; RECORD_BYTES] {
     let mut bytes = [0; RECORD_BYTES];
     // `append` refuses a number past u32, so this never saturates.
-    put_u32(&mut bytes, u32::try_from(record.seq).unwrap_or(u32::MAX));
-    put_u32(&mut bytes[EPOCH_AT..], epoch);
-    put_u32(&mut bytes[AT_AT..], record.at.unwrap_or(0));
+    put_u32::<0, _>(&mut bytes, u32::try_from(record.seq).unwrap_or(u32::MAX));
+    put_u32::<EPOCH_AT, _>(&mut bytes, epoch);
+    put_u32::<AT_AT, _>(&mut bytes, record.at.unwrap_or(0));
     bytes[BODY_AT..CRC_AT].copy_from_slice(&record.body);
     let crc = crc32(&bytes[..CRC_AT]);
-    put_u32(&mut bytes[CRC_AT..], crc);
+    put_u32::<CRC_AT, _>(&mut bytes, crc);
     bytes
 }
 
 /// A record and the epoch it was written in.
 fn decode(bytes: &[u8; RECORD_BYTES]) -> Option<(u32, Record)> {
-    if get_u32(&bytes[CRC_AT..]) != crc32(&bytes[..CRC_AT]) {
+    if get_u32::<CRC_AT, _>(bytes) != crc32(&bytes[..CRC_AT]) {
         return None;
     }
-    let seq = get_u32(bytes);
+    let seq = get_u32::<0, _>(bytes);
     if seq == 0 || seq == u32::MAX {
         return None;
     }
     let mut body = [0; BODY_BYTES];
     body.copy_from_slice(&bytes[BODY_AT..CRC_AT]);
-    let at = get_u32(&bytes[AT_AT..]);
+    let at = get_u32::<AT_AT, _>(bytes);
     Some((
-        get_u32(&bytes[EPOCH_AT..]),
+        get_u32::<EPOCH_AT, _>(bytes),
         Record {
             seq: u64::from(seq),
             at: (at != 0).then_some(at),

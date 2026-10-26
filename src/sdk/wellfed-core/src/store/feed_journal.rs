@@ -200,8 +200,8 @@ impl<I: SlotIo> FeedJournal<I> {
     fn encode(&self, v: &JournalView) -> [u8; RECORD_BYTES] {
         let mut p = [0u8; RECORD_BYTES];
         p[..8].copy_from_slice(&MAGIC);
-        put_u16(&mut p[VERSION_AT..], 1);
-        put_u16(&mut p[LENGTH_AT..], RECORD_LEN);
+        put_u16::<VERSION_AT, _>(&mut p, 1);
+        put_u16::<LENGTH_AT, _>(&mut p, RECORD_LEN);
 
         p[12] = if v.recovery.pending_request {
             INTENT
@@ -216,18 +216,18 @@ impl<I: SlotIo> FeedJournal<I> {
             | (u8::from(v.recovery.phase_known) << 1)
             | (u8::from(v.result.motion_possible) << 2);
 
-        put_u64(&mut p[16..], v.sequence);
-        put_u64(&mut p[24..], self.config.binding);
-        put_u64(&mut p[32..], v.recovery.high_water_id);
+        put_u64::<16, _>(&mut p, v.sequence);
+        put_u64::<24, _>(&mut p, self.config.binding);
+        put_u64::<32, _>(&mut p, v.recovery.high_water_id);
 
-        put_u16(&mut p[40..], v.result.requested);
-        put_u16(&mut p[42..], v.result.completed);
+        put_u16::<40, _>(&mut p, v.result.requested);
+        put_u16::<42, _>(&mut p, v.result.completed);
         p[44] = v.result.outcome.byte();
         p[45] = v.result.reason.byte();
-        put_u16(&mut p[46..], self.config.max_portions);
+        put_u16::<46, _>(&mut p, self.config.max_portions);
 
         let checksum = crc32(&p[..CRC_AT]);
-        put_u32(&mut p[CRC_AT..], checksum);
+        put_u32::<CRC_AT, _>(&mut p, checksum);
         p[COMMIT_AT..].copy_from_slice(&COMMIT);
 
         p
@@ -235,33 +235,33 @@ impl<I: SlotIo> FeedJournal<I> {
 
     fn decode(&self, p: &[u8; RECORD_BYTES]) -> Option<JournalView> {
         if p[..8] != MAGIC
-            || get_u16(&p[VERSION_AT..]) != 1
-            || usize::from(get_u16(&p[LENGTH_AT..])) != RECORD_BYTES
+            || get_u16::<VERSION_AT, _>(p) != 1
+            || usize::from(get_u16::<LENGTH_AT, _>(p)) != RECORD_BYTES
             || p[12] > RESULT
             || p[13] != self.config.mode.byte()
             || p[15] > 7
-            || get_u64(&p[24..]) != self.config.binding
-            || get_u16(&p[46..]) != self.config.max_portions
+            || get_u64::<24, _>(p) != self.config.binding
+            || get_u16::<46, _>(p) != self.config.max_portions
             || !all(&p[48..CRC_AT], 0)
-            || get_u32(&p[CRC_AT..]) != crc32(&p[..CRC_AT])
+            || get_u32::<CRC_AT, _>(p) != crc32(&p[..CRC_AT])
         {
             return None;
         }
 
         let v = JournalView {
-            sequence: get_u64(&p[16..]),
+            sequence: get_u64::<16, _>(p),
             has_result: p[12] == RESULT,
             recovery: OwnerRecovery {
-                high_water_id: get_u64(&p[32..]),
+                high_water_id: get_u64::<32, _>(p),
                 direction: Direction::from_byte(p[14])?,
                 credit_next_event: p[15] & 1 != 0,
                 phase_known: p[15] & 2 != 0,
                 pending_request: p[12] == INTENT,
             },
             result: OwnerResult {
-                id: get_u64(&p[32..]),
-                requested: get_u16(&p[40..]),
-                completed: get_u16(&p[42..]),
+                id: get_u64::<32, _>(p),
+                requested: get_u16::<40, _>(p),
+                completed: get_u16::<42, _>(p),
                 outcome: OwnerOutcome::from_byte(p[44])?,
                 reason: FeedReason::from_byte(p[45])?,
                 motion_possible: p[15] & 4 != 0,
@@ -356,7 +356,7 @@ impl<I: SlotIo> FeedJournal<I> {
         if record[COMMIT_AT..] != COMMIT {
             return Some((Scan::Dirty, None));
         }
-        if get_u32(&record[CRC_AT..]) != crc32(&record[..CRC_AT]) {
+        if get_u32::<CRC_AT, _>(&record) != crc32(&record[..CRC_AT]) {
             return Some((Scan::Torn, None));
         }
 

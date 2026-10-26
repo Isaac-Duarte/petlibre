@@ -211,9 +211,9 @@ impl<I> Default for ClientStore<I> {
 fn encode(generation: u64, table: &Table) -> [u8; RECORD_BYTES] {
     let mut p = [0u8; RECORD_BYTES];
     p[..8].copy_from_slice(&MAGIC);
-    put_u16(&mut p[VERSION_AT..], VERSION);
-    put_u16(&mut p[LENGTH_AT..], RECORD_LEN);
-    put_u64(&mut p[12..], generation);
+    put_u16::<VERSION_AT, _>(&mut p, VERSION);
+    put_u16::<LENGTH_AT, _>(&mut p, RECORD_LEN);
+    put_u64::<12, _>(&mut p, generation);
     if let Some(secret) = &table.identity {
         p[IDENTITY_AT..IDENTITY_AT + 32].copy_from_slice(secret);
         p[HAS_IDENTITY_AT] = 1;
@@ -228,15 +228,15 @@ fn encode(generation: u64, table: &Table) -> [u8; RECORD_BYTES] {
         entry[..32].copy_from_slice(&client.key);
         entry[LABEL_AT..ROLE_AT].copy_from_slice(&client.label.bytes);
         entry[ROLE_AT] = client.role.code();
-        put_u64(&mut entry[ENROLLED_AT..], client.enrolled);
+        put_u64::<ENROLLED_AT, _>(entry, client.enrolled);
     }
     let crc = crc32(&p[..CRC_AT]);
-    put_u32(&mut p[CRC_AT..], crc);
+    put_u32::<CRC_AT, _>(&mut p, crc);
     p[COMMIT_AT..].copy_from_slice(&COMMIT);
     p
 }
 
-fn decode_entry(entry: &[u8]) -> Result<Option<Client>, ()> {
+fn decode_entry(entry: &[u8; ENTRY_BYTES]) -> Result<Option<Client>, ()> {
     if entry.iter().all(|&b| b == 0) {
         return Ok(None);
     }
@@ -258,7 +258,7 @@ fn decode_entry(entry: &[u8]) -> Result<Option<Client>, ()> {
         key,
         label,
         role,
-        enrolled: get_u64(&entry[ENROLLED_AT..]),
+        enrolled: get_u64::<ENROLLED_AT, _>(entry),
     }))
 }
 
@@ -269,17 +269,17 @@ fn decode(p: &[u8; RECORD_BYTES], table: &mut Table) -> Scan {
         return Scan::Erased;
     }
     if p[..8] != MAGIC
-        || usize::from(get_u16(&p[LENGTH_AT..])) != RECORD_BYTES
+        || usize::from(get_u16::<LENGTH_AT, _>(p)) != RECORD_BYTES
         || p[COMMIT_AT..] != COMMIT
-        || get_u32(&p[CRC_AT..]) != crc32(&p[..CRC_AT])
+        || get_u32::<CRC_AT, _>(p) != crc32(&p[..CRC_AT])
     {
         return Scan::Invalid;
     }
-    let version = get_u16(&p[VERSION_AT..]);
+    let version = get_u16::<VERSION_AT, _>(p);
     if version > VERSION {
         return Scan::Future;
     }
-    let generation = get_u64(&p[12..]);
+    let generation = get_u64::<12, _>(p);
     if version != VERSION
         || generation == 0
         || p[HAS_IDENTITY_AT + 1..ENTRIES_AT].iter().any(|&b| b != 0)

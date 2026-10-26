@@ -245,7 +245,7 @@ impl<I> Default for UpdateStore<I> {
 
 fn put_candidate(p: &mut [u8; RECORD_BYTES], candidate: &Candidate) {
     p[KIND_AT] = candidate.kind.code();
-    put_u32(&mut p[VERSION_FIELD_AT..], candidate.version);
+    put_u32::<VERSION_FIELD_AT, _>(p, candidate.version);
     p[DIGEST_AT..BUILD_AT].copy_from_slice(&candidate.digest);
     p[BUILD_AT..ADDED_AT].copy_from_slice(&candidate.build_id);
 }
@@ -253,10 +253,10 @@ fn put_candidate(p: &mut [u8; RECORD_BYTES], candidate: &Candidate) {
 fn encode(generation: u64, record: &Update) -> [u8; RECORD_BYTES] {
     let mut p = [0u8; RECORD_BYTES];
     p[..8].copy_from_slice(&MAGIC);
-    put_u16(&mut p[VERSION_AT..], VERSION);
-    put_u16(&mut p[LENGTH_AT..], RECORD_LEN);
-    put_u64(&mut p[12..], generation);
-    put_u32(&mut p[MIN_AT..], record.min_version);
+    put_u16::<VERSION_AT, _>(&mut p, VERSION);
+    put_u16::<LENGTH_AT, _>(&mut p, RECORD_LEN);
+    put_u64::<12, _>(&mut p, generation);
+    put_u32::<MIN_AT, _>(&mut p, record.min_version);
     p[STATE_AT] = record.state.code();
     if let Some(candidate) = record.state.candidate() {
         put_candidate(&mut p, &candidate);
@@ -277,7 +277,7 @@ fn encode(generation: u64, record: &Update) -> [u8; RECORD_BYTES] {
     }
     if let Some(bank0) = &record.bank0 {
         p[HAS_BANK0_AT] = 1;
-        put_u32(&mut p[BANK0_LEN_AT..], bank0.len);
+        put_u32::<BANK0_LEN_AT, _>(&mut p, bank0.len);
         p[BANK0_BUILD_AT..BANK0_SHA_AT].copy_from_slice(&bank0.build_id);
         p[BANK0_SHA_AT..BANK0_KEY_AT].copy_from_slice(&bank0.sha256);
         if let Some(key) = &bank0.key {
@@ -286,7 +286,7 @@ fn encode(generation: u64, record: &Update) -> [u8; RECORD_BYTES] {
         }
     }
     let crc = crc32(&p[..CRC_AT]);
-    put_u32(&mut p[CRC_AT..], crc);
+    put_u32::<CRC_AT, _>(&mut p, crc);
     p[COMMIT_AT..].copy_from_slice(&COMMIT);
     p
 }
@@ -306,17 +306,17 @@ fn decode(p: &[u8; RECORD_BYTES]) -> Scan {
         return Scan::Erased;
     }
     if p[..8] != MAGIC
-        || usize::from(get_u16(&p[LENGTH_AT..])) != RECORD_BYTES
+        || usize::from(get_u16::<LENGTH_AT, _>(p)) != RECORD_BYTES
         || p[COMMIT_AT..] != COMMIT
-        || get_u32(&p[CRC_AT..]) != crc32(&p[..CRC_AT])
+        || get_u32::<CRC_AT, _>(p) != crc32(&p[..CRC_AT])
     {
         return Scan::Invalid;
     }
-    let version = get_u16(&p[VERSION_AT..]);
+    let version = get_u16::<VERSION_AT, _>(p);
     if version > VERSION {
         return Scan::Future;
     }
-    let generation = get_u64(&p[12..]);
+    let generation = get_u64::<12, _>(p);
     if version != VERSION || generation == 0 || !zero(&p[BANK0_END..CRC_AT]) {
         return Scan::Invalid;
     }
@@ -326,7 +326,7 @@ fn decode(p: &[u8; RECORD_BYTES]) -> Scan {
 fn decode_fields(p: &[u8; RECORD_BYTES]) -> Option<Update> {
     let candidate = Candidate {
         digest: field(&p[DIGEST_AT..]),
-        version: get_u32(&p[VERSION_FIELD_AT..]),
+        version: get_u32::<VERSION_FIELD_AT, _>(p),
         build_id: field(&p[BUILD_AT..]),
         kind: ImageKind::Replacement,
     };
@@ -373,7 +373,7 @@ fn decode_fields(p: &[u8; RECORD_BYTES]) -> Option<Update> {
         0 if zero(&p[HAS_BANK0_AT..BANK0_END]) => None,
         1 if zero(&p[HAS_BANK0_KEY_AT + 1..BANK0_LEN_AT]) => Some(Bank0 {
             build_id: field(&p[BANK0_BUILD_AT..]),
-            len: get_u32(&p[BANK0_LEN_AT..]),
+            len: get_u32::<BANK0_LEN_AT, _>(p),
             sha256: field(&p[BANK0_SHA_AT..]),
             key: match p[HAS_BANK0_KEY_AT] {
                 0 if zero(&p[BANK0_KEY_AT..BANK0_END]) => None,
@@ -385,7 +385,7 @@ fn decode_fields(p: &[u8; RECORD_BYTES]) -> Option<Update> {
     };
 
     Some(Update {
-        min_version: get_u32(&p[MIN_AT..]),
+        min_version: get_u32::<MIN_AT, _>(p),
         state,
         added,
         revoked,

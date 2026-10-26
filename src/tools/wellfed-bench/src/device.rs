@@ -136,6 +136,14 @@ impl Ask {
             Self::CancelFeed { .. } => "cancel-feed",
         }
     }
+
+    /// Whether a send that failed may go again on a fresh session. The
+    /// feeder remembers a write id's outcome only once its answer resolves,
+    /// so a feed resent after a lost answer can start a second feed; a feed
+    /// or a cancel is sent once, and a failure leaves it uncertain.
+    pub fn resendable(&self) -> bool {
+        !matches!(self, Self::Feed { .. } | Self::CancelFeed { .. })
+    }
 }
 
 impl fmt::Debug for Ask {
@@ -351,13 +359,14 @@ impl Device {
         })
     }
 
-    /// One request and its answer.
+    /// One request and its answer; see [`Ask::resendable`] for which a
+    /// failure sends again.
     pub fn ask(&mut self, ask: &Ask) -> Result<Answer, DeviceError> {
         let id: RequestId = random()?;
         let reused = self.connection.is_some();
         match self.exchange(id, ask) {
             // A kept session may have died with a reboot or a bounce.
-            Err(_) if reused => self.exchange(id, ask),
+            Err(_) if reused && ask.resendable() => self.exchange(id, ask),
             other => other,
         }
     }
@@ -683,6 +692,14 @@ mod tests {
             bank0.matches("8a13e59efa15e56b").unwrap_err(),
             NotReady::OnBank(0)
         );
+    }
+
+    #[test]
+    fn feeds_and_cancels_are_never_resent() {
+        assert!(!Ask::Feed { portions: 2 }.resendable());
+        assert!(!Ask::CancelFeed { feed: 7 }.resendable());
+        assert!(Ask::SetLock { locked: true }.resendable());
+        assert!(Ask::Status.resendable());
     }
 
     #[test]

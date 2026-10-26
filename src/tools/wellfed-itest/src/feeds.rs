@@ -41,6 +41,14 @@ const CANCEL_AFTER_SECONDS: f64 = 2.0;
 /// From a cancel, or a result, to the owner's next record.
 const STOP_SECONDS: f64 = 10.0;
 
+/// A feed the owner may still be running: its id, and the UART mark from
+/// before it was asked for, where its result is looked for.
+#[derive(Debug, Clone, Copy)]
+struct Issued {
+    feed: u32,
+    since: usize,
+}
+
 pub(super) fn feed_writes(ctx: &mut Ctx) -> Result<()> {
     let before = read_settings(ctx)?;
     let status = ctx.device_status()?;
@@ -48,8 +56,23 @@ pub(super) fn feed_writes(ctx: &mut Ctx) -> Result<()> {
 
     // Held before either feed: a handshake during one is held off.
     ctx.rig.hold()?;
-    let result = held_across_feeds(ctx, &before, status.locked);
+    let mut issued = None;
+    let result = held_across_feeds(ctx, &before, status.locked, &mut issued);
     ctx.rig.release();
+
+    // A failure can leave a feed running, and nothing may be written or
+    // fed until it ends; one that does not end stops the suite.
+    if let Some(running) = issued
+        && let Err(wait) = settle(ctx, running)
+    {
+        let reason = format!(
+            "feed {} may still be running ({wait}); nothing was restored",
+            running.feed
+        );
+        ctx.halted = Some(reason.clone());
+        let failure = result.err().map_or_else(String::new, |e| format!("{e}; "));
+        return Err(Error::Bench(format!("{failure}{reason}")));
+    }
 
     // Put back whatever went through, whatever failed.
     let restored = restore(ctx, &before, status.locked);
@@ -57,17 +80,40 @@ pub(super) fn feed_writes(ctx: &mut Ctx) -> Result<()> {
     result.and(reset).and(restored)
 }
 
-fn held_across_feeds(ctx: &mut Ctx, before: &Settings, locked: Option<bool>) -> Result<()> {
+fn held_across_feeds(
+    ctx: &mut Ctx,
+    before: &Settings,
+    locked: Option<bool>,
+    issued: &mut Option<Issued>,
+) -> Result<()> {
     let answer = ctx.ask_held(&Ask::Status)?;
     require(
         matches!(answer, Answer::Status(_)),
         format!("The held session's status answered {}", compact(&answer)),
     )?;
 
-    let change = writes_during_feed(ctx, before, locked)?;
+    let change = writes_during_feed(ctx, before, locked, issued)?;
     // The change the feed refused goes through once it is over.
     set_settings(ctx, change)?;
-    cancel_during_feed(ctx)
+    cancel_during_feed(ctx, issued)
+}
+
+/// Wait for `running`'s result and the owner at rest after it.
+fn settle(ctx: &mut Ctx, running: Issued) -> Result<usize> {
+    ctx.note(&format!(
+        "  Waiting for feed {} to end before anything else",
+        running.feed
+    ));
+    let fed = ctx.expect(
+        &format!("PLOWN1 fed id={}", running.feed),
+        running.since,
+        FEED_SECONDS + STOP_SECONDS,
+        |r| fed_of(r, running.feed).is_some(),
+    )?;
+    ctx.expect("the owner at rest", fed, STOP_SECONDS, |r| {
+        owner_state(r, IDLE)
+    })?;
+    Ok(fed)
 }
 
 /// Feed on the suite's session and, while the motor drives, write on the
@@ -76,13 +122,14 @@ fn writes_during_feed(
     ctx: &mut Ctx,
     before: &Settings,
     locked: Option<bool>,
+    issued: &mut Option<Issued>,
 ) -> Result<SettingsPatch> {
     let change = SettingsPatch {
         lights: Some(!before.lights),
         ..SettingsPatch::default()
     };
-    let (feed, start) = start_feed(ctx)?;
-    let moving = ctx.expect("the motor driving", start, PREPARE_SECONDS, |r| {
+    let (feed, start) = start_feed(ctx, issued)?;
+    ctx.expect("the motor driving", start, PREPARE_SECONDS, |r| {
         owner_state(r, FEEDING)
     })?;
 
@@ -94,7 +141,7 @@ fn writes_during_feed(
         "  Held session, settings change during feed {feed}: {}",
         compact(&settings)
     ));
-    match locked {
+    let lock = match locked {
         Some(locked) => {
             let answer = ctx.ask_held(&Ask::SetLock { locked: !locked })?;
             ctx.note(&format!(
@@ -102,26 +149,21 @@ fn writes_during_feed(
                 if locked { "off" } else { "on" },
                 compact(&answer)
             ));
+            Some(answer)
         }
-        None => ctx.note("  The lock is not known yet; no lock change"),
-    }
+        None => {
+            ctx.note("  The lock is not known yet; no lock change");
+            None
+        }
+    };
     let clock = ctx.ask_held(&Ask::SyncClock)?;
     ctx.note(&format!(
         "  Held session, clock sync during feed {feed}: {}",
         compact(&clock)
     ));
 
-    // Every wait comes before any verdict, so the restore that follows a
-    // failure finds the owner at rest.
-    let fed = ctx.expect(
-        &format!("PLOWN1 fed id={feed}"),
-        moving,
-        FEED_SECONDS,
-        |r| fed_of(r, feed).is_some(),
-    )?;
-    ctx.expect("the owner at rest", fed, STOP_SECONDS, |r| {
-        owner_state(r, IDLE)
-    })?;
+    let fed = settle(ctx, Issued { feed, since: start })?;
+    *issued = None;
 
     let writes = ctx.log.between(start - 1, fed, store_write);
     require(
@@ -142,6 +184,25 @@ fn writes_during_feed(
             compact(&settings)
         ),
     )?;
+    let done = Answer::Done { generation: None };
+    if let Some(answer) = &lock {
+        require(
+            *answer == done,
+            format!(
+                "A lock change during feed {feed} answered {}",
+                compact(answer)
+            ),
+        )?;
+    }
+    require(
+        clock == done,
+        format!(
+            "A clock sync during feed {feed} answered {}",
+            compact(&clock)
+        ),
+    )?;
+    deferred_writes(ctx, start)?;
+
     let after = read_settings(ctx)?;
     require(
         changes_to(&after) == changes_to(before),
@@ -150,11 +211,49 @@ fn writes_during_feed(
             compact(&after)
         ),
     )?;
+    if let Some(locked) = locked {
+        let now = ctx.device_status()?.locked;
+        require(
+            now == Some(!locked),
+            format!(
+                "The lock reads {now:?} after a change to {} during the feed",
+                !locked
+            ),
+        )?;
+    }
     Ok(change)
 }
 
+/// The writes the interlock held back, from the `PLOWN1 interlock` records
+/// before and after `start` when the feeder logged one since: the events
+/// the lock change and the clock sync recorded wait out the feed.
+fn deferred_writes(ctx: &mut Ctx, start: usize) -> Result<()> {
+    let deferred = |lines: Vec<String>| -> Option<u32> {
+        lines.iter().rev().find_map(|line| {
+            Record::all(line)
+                .find(|r| r.tag == OWNER && r.first == "interlock")
+                .and_then(|r| r.number("writes_deferred"))
+        })
+    };
+    let interlock = |r: &Record| r.tag == OWNER && r.first == "interlock";
+    let before = deferred(ctx.log.between(0, start, interlock));
+    let Some(after) = deferred(ctx.log.between(start, usize::MAX, interlock)) else {
+        ctx.note("  No interlock record since the feed began");
+        return Ok(());
+    };
+
+    ctx.note(&format!(
+        "  Interlock: writes_deferred {} then {after}",
+        before.map_or_else(|| "unlogged".to_string(), |n| n.to_string())
+    ));
+    require(
+        after > before.unwrap_or(0),
+        format!("The interlock deferred no write during the feed (writes_deferred={after})"),
+    )
+}
+
 /// Feed again, and cancel it from the held session once the motor drives.
-fn cancel_during_feed(ctx: &mut Ctx) -> Result<()> {
+fn cancel_during_feed(ctx: &mut Ctx, issued: &mut Option<Issued>) -> Result<()> {
     // Also a keepalive: the feeder drops a session quiet for 90 s.
     let answer = ctx.ask_held(&Ask::Status)?;
     require(
@@ -162,8 +261,8 @@ fn cancel_during_feed(ctx: &mut Ctx) -> Result<()> {
         format!("The held session's status answered {}", compact(&answer)),
     )?;
 
-    let (feed, start) = start_feed(ctx)?;
-    let moving = ctx.expect("the motor driving", start, PREPARE_SECONDS, |r| {
+    let (feed, start) = start_feed(ctx, issued)?;
+    ctx.expect("the motor driving", start, PREPARE_SECONDS, |r| {
         owner_state(r, FEEDING)
     })?;
     ctx.idle(CANCEL_AFTER_SECONDS)?;
@@ -174,15 +273,8 @@ fn cancel_during_feed(ctx: &mut Ctx) -> Result<()> {
         compact(&cancel)
     ));
 
-    let fed = ctx.expect(
-        &format!("PLOWN1 fed id={feed}"),
-        moving,
-        FEED_SECONDS,
-        |r| fed_of(r, feed).is_some(),
-    )?;
-    ctx.expect("the owner at rest", fed, STOP_SECONDS, |r| {
-        owner_state(r, IDLE)
-    })?;
+    let fed = settle(ctx, Issued { feed, since: start })?;
+    *issued = None;
 
     require(
         cancel == Answer::Done { generation: None },
@@ -211,17 +303,29 @@ fn cancel_during_feed(ctx: &mut Ctx) -> Result<()> {
     Ok(())
 }
 
-/// Ask for a feed on the suite's session; its id and the mark just past
-/// the owner taking it.
-fn start_feed(ctx: &mut Ctx) -> Result<(u32, usize)> {
+/// Ask once for a feed on the suite's session; its id and the mark just
+/// past the owner taking it. From the request on, `issued` holds any feed
+/// the owner may be running. A request that fails is uncertain and never
+/// sent again: the feeder may have taken it.
+fn start_feed(ctx: &mut Ctx, issued: &mut Option<Issued>) -> Result<(u32, usize)> {
     let since = ctx.mark()?;
-    let answer = ctx.ask(&Ask::Feed { portions: PORTIONS })?;
+    let answer = match ctx.ask(&Ask::Feed { portions: PORTIONS }) {
+        Ok(answer) => answer,
+        Err(Error::Interrupted) => return Err(Error::Interrupted),
+        Err(error) => {
+            *issued = taken(ctx, since)?.map(|feed| Issued { feed, since });
+            return Err(Error::Bench(format!(
+                "The feed request failed, so the feed is uncertain and is not sent again: {error}"
+            )));
+        }
+    };
     let Answer::Feeding { feed } = answer else {
         return Err(Error::Bench(format!(
             "The feed answered {}",
             compact(&answer)
         )));
     };
+    *issued = Some(Issued { feed, since });
     ctx.note(&format!("  Feed {feed}: {PORTIONS} portions"));
 
     let id = feed.to_string();
@@ -232,6 +336,22 @@ fn start_feed(ctx: &mut Ctx) -> Result<(u32, usize)> {
         |r| r.tag == OWNER && r.first == "feed" && r.field("id") == Some(id.as_str()),
     )?;
     Ok((feed, start))
+}
+
+/// The feed the owner took since `since` without the suite hearing its
+/// answer, if its record shows one.
+fn taken(ctx: &mut Ctx, since: usize) -> Result<Option<u32>> {
+    let found = ctx.expect("PLOWN1 feed id=", since, RECORD_SECONDS, |r| {
+        r.tag == OWNER && r.first == "feed" && r.field("id").is_some()
+    });
+    let mark = match found {
+        Ok(mark) => mark,
+        Err(Error::Interrupted) => return Err(Error::Interrupted),
+        Err(_) => return Ok(None),
+    };
+    Ok(Record::all(&ctx.log.line(mark - 1).text)
+        .find(|r| r.tag == OWNER && r.first == "feed")
+        .and_then(|r| r.number("id")))
 }
 
 fn owner_state(record: &Record, state: &str) -> bool {

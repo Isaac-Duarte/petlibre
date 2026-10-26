@@ -75,6 +75,8 @@ struct Feeder {
     held: bool,
     feeding: Option<Feeding>,
     next_feed: u32,
+    /// The interlock's `writes_deferred`.
+    deferred: u32,
     actions: Vec<String>,
     notes: Vec<String>,
 
@@ -88,6 +90,12 @@ struct Feeder {
     saves_during_feed: bool,
     /// A cancel is answered but the feed runs on.
     ignores_cancel: bool,
+    /// A feed starts but its answer never arrives.
+    loses_feed_answer: bool,
+    /// The held session dies once a feed drives.
+    held_dies_mid_feed: bool,
+    /// A feed never reports its result.
+    feed_never_ends: bool,
 }
 
 impl Feeder {
@@ -119,6 +127,7 @@ impl Feeder {
             held: false,
             feeding: None,
             next_feed: 12,
+            deferred: 0,
             actions: Vec::new(),
             notes: Vec::new(),
             silent: false,
@@ -127,6 +136,9 @@ impl Feeder {
             settings_lost_on_boot: false,
             saves_during_feed: false,
             ignores_cancel: false,
+            loses_feed_answer: false,
+            held_dies_mid_feed: false,
+            feed_never_ends: false,
         }
     }
 
@@ -266,12 +278,17 @@ impl Feeder {
             2.0,
             "PLOWN1 state=4 fault=0 supervisor=0 stopped=0 optics_off=0",
         );
-        self.finish(2.0 + drive, id, portions, portions, 1, 1);
+        let end = if self.feed_never_ends {
+            f64::INFINITY
+        } else {
+            self.finish(2.0 + drive, id, portions, portions, 1, 1);
+            self.now + 2.0 + drive + 0.02
+        };
         self.feeding = Some(Feeding {
             id,
             portions,
             start: self.now + 2.0,
-            end: self.now + 2.0 + drive + 0.02,
+            end,
         });
         id
     }
@@ -323,6 +340,26 @@ impl Feeder {
             return Err(Error::Bench("the feeder did not answer".into()));
         }
         self.logged(ask.name());
+        if let Ask::Feed { portions } = ask
+            && self.loses_feed_answer
+            && self.feeding().is_none()
+        {
+            self.feed(*portions);
+            return Err(Error::Bench("the feeder did not answer".into()));
+        }
+        // An event recorded during a feed waits for it, and the interlock
+        // logs the writer's wait.
+        if matches!(ask, Ask::SetLock { .. } | Ask::SyncClock) && self.feeding().is_some() {
+            self.deferred += 1;
+            let deferred = self.deferred;
+            self.line(
+                0.3,
+                &format!(
+                    "PLOWN1 interlock refused=0 deferred=0 forced=0 waited_max_ms=0 long_joins=0 \
+                     writes_deferred={deferred} writes_forced=0 write_waited_max_ms=0 feeds_delayed=0"
+                ),
+            );
+        }
         Ok(match ask {
             Ask::Status => Answer::Status(self.device_status()),
             Ask::GetSettings => Answer::Settings(self.settings()),
@@ -541,6 +578,11 @@ impl Rig for Feeder {
     fn device(&mut self, ask: &Ask) -> Result<Answer> {
         self.deliver();
         self.actions.push(format!("ask {}", ask.name()));
+        // Only the held session writes on purpose while a feed runs.
+        if self.feeding().is_some() && matches!(ask, Ask::PutSettings { .. } | Ask::SetLock { .. })
+        {
+            self.actions.push("write during feed".into());
+        }
         self.answer(ask)
     }
 
@@ -560,6 +602,9 @@ impl Rig for Feeder {
     fn held(&mut self, ask: &Ask) -> Result<Answer> {
         self.deliver();
         self.actions.push(format!("held {}", ask.name()));
+        if self.held_dies_mid_feed && self.feeding().is_some() {
+            self.held = false;
+        }
         if !self.held {
             return Err(Error::Bench("no held session is open".into()));
         }
@@ -1056,6 +1101,11 @@ fn feed_writes_holds_a_session_across_the_feeds_and_puts_everything_back() {
         assert!(at(action) > at("ask feed"), "{action}");
     }
     assert!(at("release") > at("held cancel-feed"));
+    assert_eq!(
+        feeder.actions.iter().filter(|a| *a == "ask feed").count(),
+        2
+    );
+    assert!(!feeder.actions.iter().any(|a| a == "write during feed"));
     assert!(
         feeder
             .notes
@@ -1069,6 +1119,14 @@ fn feed_writes_holds_a_session_across_the_feeds_and_puts_everything_back() {
             .notes
             .iter()
             .any(|n| n.contains("Feed 13 cancelled with 0/2"))
+    );
+    assert!(
+        feeder
+            .notes
+            .iter()
+            .any(|n| n.contains("writes_deferred unlogged then 2")),
+        "{:#?}",
+        feeder.notes
     );
 
     // The change went through after the feed, and everything came back.
@@ -1115,4 +1173,86 @@ fn a_feeder_that_restarts_during_a_feed_fails_feed_writes() {
     };
 
     assert!(reason.starts_with("The feeder restarted"), "{reason}");
+}
+
+#[test]
+fn a_feed_whose_answer_is_lost_is_never_sent_again_and_is_waited_out() {
+    let mut feeder = Feeder::new(GOOD);
+    feeder.loses_feed_answer = true;
+    let Verdict::Fail(reason) = feed_writes(&mut feeder).verdict else {
+        panic!("{:#?}", feeder.notes);
+    };
+
+    assert!(reason.contains("the feed is uncertain"), "{reason}");
+    assert_eq!(
+        feeder.actions.iter().filter(|a| *a == "ask feed").count(),
+        1
+    );
+    assert!(!feeder.actions.iter().any(|a| a == "write during feed"));
+    // The owner's feed ended before the scenario put anything back.
+    assert!(feeder.feeding().is_none());
+    assert!(feeder.lights && !feeder.locked);
+}
+
+#[test]
+fn a_held_session_lost_mid_feed_restores_only_after_the_feed() {
+    let mut feeder = Feeder::new(GOOD);
+    feeder.held_dies_mid_feed = true;
+    let Verdict::Fail(reason) = feed_writes(&mut feeder).verdict else {
+        panic!("{:#?}", feeder.notes);
+    };
+
+    assert!(reason.contains("no held session"), "{reason}");
+    assert!(!feeder.actions.iter().any(|a| a == "write during feed"));
+    assert_eq!(
+        feeder.actions.iter().filter(|a| *a == "ask feed").count(),
+        1
+    );
+    assert!(
+        feeder
+            .notes
+            .iter()
+            .any(|n| n.contains("Waiting for feed 12 to end"))
+    );
+}
+
+#[test]
+fn a_feed_that_never_ends_stops_the_suite_without_restoring() {
+    let mut feeder = Feeder::new(GOOD);
+    feeder.feed_never_ends = true;
+    let (reports, _) = suite(
+        &mut feeder,
+        &[
+            "--review",
+            "r",
+            "--feeds",
+            "--keep-going",
+            "--only",
+            "feed-writes,soak",
+            "--soak-minutes",
+            "1",
+        ],
+    );
+
+    assert_eq!(
+        verdicts(&reports),
+        [
+            ("ota-update", "pass"),
+            ("feed-writes", "fail"),
+            ("soak", "skip")
+        ]
+    );
+    let Verdict::Fail(reason) = &reports[1].verdict else {
+        unreachable!()
+    };
+    assert!(reason.contains("feed 12 may still be running"), "{reason}");
+    // Nothing went to the feeder after the feed but reads.
+    let after = feeder.actions.iter().position(|a| a == "release").unwrap();
+    assert!(
+        feeder.actions[after + 1..]
+            .iter()
+            .all(|a| a == "ask status" || a == "ask get-settings"),
+        "{:?}",
+        &feeder.actions[after + 1..]
+    );
 }

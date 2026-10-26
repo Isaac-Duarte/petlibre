@@ -193,6 +193,10 @@ struct Ctx<'r> {
     offline: bool,
     /// Set when a wait gave up because the feeder went silent.
     went_silent: Option<Silent>,
+    /// Set by a scenario that left the feeder in a state the suite must not
+    /// act on (a feed that may still run): the run stops after it, whatever
+    /// `--keep-going` says, and nothing is restored.
+    halted: Option<String>,
 }
 
 impl<'r> Ctx<'r> {
@@ -205,6 +209,7 @@ impl<'r> Ctx<'r> {
             heard: rig.clock(),
             offline: false,
             went_silent: None,
+            halted: None,
             rig,
         }
     }
@@ -682,7 +687,12 @@ fn run(ctx: &mut Ctx, scenarios: &[&'static Scenario]) -> Result<(Vec<Report>, O
             Err(Error::Interrupted) => return Err(Error::Interrupted),
             Err(error) => Verdict::Fail(error.to_string()),
         };
-        if let Some(found) = ctx.silent() {
+        let halted = ctx.halted.take();
+        if let Some(reason) = &halted {
+            if verdict == Verdict::Pass {
+                verdict = Verdict::Fail(reason.clone());
+            }
+        } else if let Some(found) = ctx.silent() {
             if verdict == Verdict::Pass {
                 verdict = Verdict::Fail(found.0.clone());
             }
@@ -720,7 +730,9 @@ fn run(ctx: &mut Ctx, scenarios: &[&'static Scenario]) -> Result<(Vec<Report>, O
             Verdict::Pass => ctx.note(&format!("  {}: pass", scenario.name)),
             Verdict::Fail(reason) => {
                 ctx.note(&format!("  {}: FAIL: {reason}", scenario.name));
-                if silent.is_some() {
+                if let Some(reason) = &halted {
+                    stop = Some(format!("{} stopped the run: {reason}", scenario.name));
+                } else if silent.is_some() {
                     stop = Some(format!("the feeder went silent in {}", scenario.name));
                 } else if scenario.baseline {
                     stop = Some("the baseline build did not install".into());

@@ -8,12 +8,40 @@
 use std::path::Path;
 
 use crate::bank::{Layout, payload};
-use crate::error::{Result, refuse, require};
+use crate::error::Result;
 use crate::root::Root;
 use wellfed_formats::canonical::sha256;
 use wellfed_formats::lock::SdkLock;
 use wellfed_formats::manifest::BuildManifest;
+use wellfed_formats::require;
 use wellfed_formats::review::{BuildDetails, Details, ImageKind, ImageReview, ReviewKind};
+
+/// A frozen review that is incomplete or no longer matches what it froze.
+/// The signer and the rig tell these apart, so each binding is its own
+/// variant.
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("Unsupported frozen review")]
+    Unsupported,
+    #[error("Frozen image/review mismatch")]
+    ImageMismatch,
+    /// A stock review of anything but the pinned stock image, or one that
+    /// names a manifest: either could relabel a build to skip its checks.
+    #[error("Only original stock may omit a build manifest")]
+    NotOriginalStock,
+    #[error("Review details do not match the reviewed image kind")]
+    DetailsKind,
+    #[error("Frozen manifest mismatch")]
+    ManifestMismatch,
+    #[error("Unknown build profile")]
+    UnknownProfile,
+    #[error("Manifest/image mismatch")]
+    ManifestImage,
+    #[error("Frozen linked/startup/pad review missing")]
+    MissingAudits,
+    #[error("Incomplete build/mapping review")]
+    IncompleteMapping,
+}
 
 pub struct Frozen {
     pub image: Vec<u8>,
@@ -29,7 +57,7 @@ pub fn frozen(root: &Root, directory: &Path, layout: &Layout) -> Result<Frozen> 
     let review: ImageReview = serde_json::from_slice(&raw)?;
     require(
         review.schema_version == 1 && review.kind == ReviewKind::Plaf103DevelopmentImage,
-        "Unsupported frozen review",
+        || Error::Unsupported,
     )?;
 
     let image = root.private_file(&directory.join("image.bin"))?;
@@ -38,21 +66,21 @@ pub fn frozen(root: &Root, directory: &Path, layout: &Layout) -> Result<Frozen> 
         review.ota_sha256 == sha256(&image)
             && review.payload_sha256 == sha256(data)
             && u64::try_from(data.len()).is_ok_and(|bytes| bytes == review.payload_bytes),
-        "Frozen image/review mismatch",
+        || Error::ImageMismatch,
     )?;
 
     let manifest = match (review.image_kind, &review.review) {
         (ImageKind::Stock, Details::Stock { .. }) => {
             require(
                 sha256(&image) == crate::ota::STOCK_SHA256 && review.manifest_sha256.is_none(),
-                "Only original stock may omit a build manifest",
+                || Error::NotOriginalStock,
             )?;
             None
         }
         (ImageKind::Build, Details::Build(details)) => {
             Some(build(root, directory, &review, details, &image)?)
         }
-        _ => return refuse("Review details do not match the reviewed image kind"),
+        _ => return Err(Error::DetailsKind.into()),
     };
 
     Ok(Frozen {
@@ -73,11 +101,15 @@ fn build(
     let manifest_raw = root.private_file(&directory.join("build-manifest.json"))?;
     require(
         review.manifest_sha256.as_deref() == Some(&sha256(&manifest_raw)),
-        "Frozen manifest mismatch",
+        || Error::ManifestMismatch,
     )?;
 
     let m: BuildManifest = serde_json::from_slice(&manifest_raw)?;
-    let lock: SdkLock = wellfed_formats::load(&root.join("src/firmware/vendor/sdk.lock.json"))?;
+    // Read directly rather than through `wellfed_formats::load`, so a
+    // missing or malformed lock arrives as this crate's `Io` or `Json`, the
+    // kinds the flash client records apart from a refusal.
+    let lock_raw = std::fs::read(root.join("src/firmware/vendor/sdk.lock.json"))?;
+    let lock: SdkLock = serde_json::from_slice(&lock_raw)?;
     // Older builds recorded no device and named the profile
     // `plaf103-firstboot`. Bank 0's recovery image is one, and a give-way or
     // a reinstall names its review, so those still read.
@@ -87,13 +119,13 @@ fn build(
         firstboot
             && m.sdk_revision == lock.sdk.revision
             && m.toolchain_sha256 == lock.toolchain.sha256,
-        "Unknown build profile",
+        || Error::UnknownProfile,
     )?;
 
     let ota = m.artifact("OTA_All.bin");
     require(
         ota.is_some_and(|ota| ota.sha256 == sha256(image) && ota.bytes == image.len() as u64),
-        "Manifest/image mismatch",
+        || Error::ManifestImage,
     )?;
 
     let mains = &details.startup_mains;
@@ -105,7 +137,7 @@ fn build(
         startup.map(|s| &s.mains) == Some(mains)
             && names == ["hp", "lp"]
             && audit.is_some_and(|audit| details.pinmap == *audit && audit.matches_stock),
-        "Frozen linked/startup/pad review missing",
+        || Error::MissingAudits,
     )?;
 
     let banks: Vec<u8> = details.factory_mapping.iter().map(|c| c.bank).collect();
@@ -116,7 +148,7 @@ fn build(
             && m.checks.ota_checksum_matches
             && m.checks.source_snapshot_unchanged
             && m.checks.staged_sources_without_diagnostics,
-        "Incomplete build/mapping review",
+        || Error::IncompleteMapping,
     )?;
     Ok(m)
 }

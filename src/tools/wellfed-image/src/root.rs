@@ -7,7 +7,20 @@ use std::io;
 use std::os::unix::fs::DirBuilderExt;
 use std::path::{Component, Path, PathBuf};
 
-use crate::error::{Result, require};
+use wellfed_formats::require;
+
+use crate::error::Result;
+
+/// A checkout without its evidence directory, or a path outside it.
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("{} has no private/ evidence directory", root.display())]
+    NoPrivate { root: PathBuf },
+    #[error("Regular private input required")]
+    NotPrivateFile { path: PathBuf },
+    #[error("Output must be a new private directory")]
+    NotPrivateDirectory { path: PathBuf },
+}
 
 #[derive(Debug, Clone)]
 pub struct Root {
@@ -19,10 +32,7 @@ impl Root {
     pub fn new(root: &Path) -> Result<Self> {
         let root = root.canonicalize()?;
         let private = root.join("private");
-        require(
-            private.is_dir(),
-            format!("{} has no private/ evidence directory", root.display()),
-        )?;
+        require(private.is_dir(), || Error::NoPrivate { root: root.clone() })?;
         Ok(Self {
             private: private.canonicalize()?,
             root,
@@ -69,19 +79,21 @@ impl Root {
 
     /// A regular private input file.
     pub fn private_file(&self, path: &Path) -> Result<Vec<u8>> {
-        require(
-            self.is_private(path) && path.is_file(),
-            "Regular private input required",
-        )?;
+        require(self.is_private(path) && path.is_file(), || {
+            Error::NotPrivateFile {
+                path: path.to_path_buf(),
+            }
+        })?;
         Ok(fs::read(path)?)
     }
 
     /// A new private output directory.
     pub fn output_directory(&self, path: &Path) -> Result<PathBuf> {
-        require(
-            !path.is_symlink() && self.is_private(path),
-            "Output must be a new private directory",
-        )?;
+        require(!path.is_symlink() && self.is_private(path), || {
+            Error::NotPrivateDirectory {
+                path: path.to_path_buf(),
+            }
+        })?;
 
         fs::DirBuilder::new()
             .recursive(false)

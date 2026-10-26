@@ -8,7 +8,18 @@
 use wellfed_core::ota::SECTOR;
 use wellfed_formats::flash_plan::Kind;
 
-use crate::error::{Result, refuse, require};
+use wellfed_formats::require;
+
+use crate::error::Result;
+
+/// A bank this layout does not have, or an image that does not fit one.
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("Unknown bank")]
+    Unknown { bank: u8 },
+    #[error("Development image exceeds aligned bank-{bank} footprint")]
+    Footprint { bank: u8 },
+}
 
 /// One bank's region, and the other bank's first sector read as a guard.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,7 +52,7 @@ pub fn layout(bank: u8) -> Result<Layout> {
     match bank {
         0 => Ok(BANK0),
         1 => Ok(BANK1),
-        _ => refuse("Unknown bank"),
+        _ => Err(Error::Unknown { bank }.into()),
     }
 }
 
@@ -50,10 +61,7 @@ pub fn payload<'a>(image: &'a [u8], layout: &Layout) -> Result<&'a [u8]> {
     let data = crate::ota::container(image)?;
     require(
         !data.is_empty() && data.len() <= layout.end - layout.start && data.len() % SECTOR == 0,
-        format!(
-            "Development image exceeds aligned bank-{} footprint",
-            layout.bank
-        ),
+        || Error::Footprint { bank: layout.bank },
     )?;
     crate::ota::images(data)?;
     Ok(data)

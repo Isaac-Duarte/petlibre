@@ -44,33 +44,52 @@ fn frozen_reviews_bind_image_manifest_and_required_audits() {
     let accepted = frozen(&root, &directory, &BANK1).unwrap();
     assert_eq!(accepted.image, image);
 
-    let refused = || frozen(&root, &directory, &BANK1).is_err();
+    let refusal = || frozen(&root, &directory, &BANK1).err();
 
     // A changed image byte.
     let mut changed = image.clone();
     *changed.last_mut().unwrap() ^= 1;
     write(&directory.join("image.bin"), &changed);
-    assert!(refused());
+    assert!(matches!(
+        refusal(),
+        Some(crate::Error::Ota(crate::ota::Error::Checksum))
+    ));
     write(&directory.join("image.bin"), &image);
 
     // A replaced manifest.
     let manifest = fs::read(directory.join("build-manifest.json")).unwrap();
     write(&directory.join("build-manifest.json"), b"{}");
-    assert!(refused());
+    assert!(matches!(
+        refusal(),
+        Some(crate::Error::Review(Error::ManifestMismatch))
+    ));
     write(&directory.join("build-manifest.json"), &manifest);
 
     // A review that names another image, sizes with a bool, or lacks the mapping.
-    for (path, value) in [
-        ("/ota_sha256", json!("0".repeat(64))),
-        ("/payload_bytes", json!(true)),
-        ("/review/factory_mapping", json!([])),
-        ("/kind", json!("other")),
-        ("/image_kind", json!("unknown")),
-    ] {
+    type Expected = fn(&crate::Error) -> bool;
+    let cases: [(&str, Value, Expected); 5] = [
+        ("/ota_sha256", json!("0".repeat(64)), |error| {
+            matches!(error, crate::Error::Review(Error::ImageMismatch))
+        }),
+        ("/payload_bytes", json!(true), |error| {
+            matches!(error, crate::Error::Json(_))
+        }),
+        ("/review/factory_mapping", json!([]), |error| {
+            matches!(error, crate::Error::Review(Error::IncompleteMapping))
+        }),
+        ("/kind", json!("other"), |error| {
+            matches!(error, crate::Error::Review(Error::Unsupported))
+        }),
+        ("/image_kind", json!("unknown"), |error| {
+            matches!(error, crate::Error::Json(_))
+        }),
+    ];
+    for (path, value, expected) in cases {
         let mut bad = review.clone();
         *bad.pointer_mut(path).unwrap() = value;
         write(&directory.join("review.json"), bad.to_string().as_bytes());
-        assert!(refused(), "{path}");
+        let error = refusal().unwrap();
+        assert!(expected(&error), "{path}: {error:?}");
     }
 
     // The restored review is accepted again, so each refusal above came from
@@ -79,7 +98,7 @@ fn frozen_reviews_bind_image_manifest_and_required_audits() {
         &directory.join("review.json"),
         review.to_string().as_bytes(),
     );
-    assert!(!refused());
+    assert!(refusal().is_none());
 }
 
 #[test]

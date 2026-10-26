@@ -1,43 +1,28 @@
-//! The crate's error type and `require`, the guard every check goes through.
+//! The crate's error type: each module's refusals wrapped whole, so a caller
+//! tells them apart by variant and the message an operator reads is the
+//! module's own.
 //!
-//! The variants are the flash client's own, so a caller can carry a refusal
-//! over with its message and kind unchanged.
+//! `Io` and `Json` stay their own variants: the flash client records an I/O
+//! or JSON failure under its own kind and every other variant as a refusal.
 
 use std::io;
 
+use crate::{bank, ota, review, root};
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    /// A pinned check or evidence binding failed.
-    #[error("{0}")]
-    Refused(String),
+    #[error(transparent)]
+    Ota(#[from] ota::Error),
+    #[error(transparent)]
+    Bank(#[from] bank::Error),
+    #[error(transparent)]
+    Root(#[from] root::Error),
+    #[error(transparent)]
+    Review(#[from] review::Error),
     #[error("{0}")]
     Io(#[from] io::Error),
     #[error("{0}")]
     Json(#[from] serde_json::Error),
 }
 
-impl From<wellfed_formats::Error> for Error {
-    fn from(error: wellfed_formats::Error) -> Self {
-        match error {
-            wellfed_formats::Error::NotInteger => Self::Refused(error.to_string()),
-            wellfed_formats::Error::Io(error) => Self::Io(error),
-            wellfed_formats::Error::Json(error) => Self::Json(error),
-        }
-    }
-}
-
 pub type Result<T, E = Error> = std::result::Result<T, E>;
-
-/// Refuse with `message` unless `condition` holds.
-pub(crate) fn require(condition: bool, message: impl Into<String>) -> Result<()> {
-    if condition {
-        Ok(())
-    } else {
-        Err(Error::Refused(message.into()))
-    }
-}
-
-/// Refuse with `message`: the unconditional form of [`require`].
-pub(crate) fn refuse<T>(message: impl Into<String>) -> Result<T> {
-    Err(Error::Refused(message.into()))
-}

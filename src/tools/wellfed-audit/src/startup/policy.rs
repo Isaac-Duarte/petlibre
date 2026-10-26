@@ -199,6 +199,8 @@ fn bind_unclassified(
         &[
             ("fw07-scan-v1", Wifi::Scan),
             ("fw07-join-v1", Wifi::Join),
+            // Drop once no frozen review in use declares it: every image
+            // built since the gateway watch declares wifi-gateway-v1.
             ("fw07-dns-v1", Wifi::Keep),
             ("wifi-gateway-v1", Wifi::Keep),
         ],

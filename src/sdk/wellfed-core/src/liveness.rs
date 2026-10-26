@@ -45,14 +45,18 @@ pub enum Probe {
     None,
     /// The gateway answered the echo.
     Answered,
-    /// No answer within the shim's timeout, or the probe could not be sent.
+    /// Sent, and no answer within the shim's timeout.
     Silent,
     /// The lease named no gateway, so there is nothing to probe.
     NoGateway,
+    /// The echo never left: no socket (the stack's connections may all be
+    /// taken by the device API's sessions and mDNS) or the send failed. That
+    /// says nothing about the gateway, so it is no observation, never a miss.
+    Unsent,
 }
 
 impl Probe {
-    /// The shim's code: 0 none, 1 answered, 2 silent, 3 no gateway. An
+    /// The shim's code: 0 none, 1 answered, 2 silent, 3 no gateway, 4 unsent. An
     /// unknown code carries no observation and reads as none, so a shim
     /// mismatch can never make the feeder leave a working network.
     pub const fn from_code(code: i32) -> Self {
@@ -60,6 +64,7 @@ impl Probe {
             1 => Self::Answered,
             2 => Self::Silent,
             3 => Self::NoGateway,
+            4 => Self::Unsent,
             _ => Self::None,
         }
     }
@@ -177,7 +182,7 @@ impl Liveness {
         }
 
         match probe {
-            Probe::None => {}
+            Probe::None | Probe::Unsent => {}
             Probe::Answered => {
                 self.answered = true;
                 self.misses = 0;

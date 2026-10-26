@@ -89,6 +89,7 @@ fn codes_match_the_shim() {
         (1, Probe::Answered),
         (2, Probe::Silent),
         (3, Probe::NoGateway),
+        (4, Probe::Unsent),
         (-1, Probe::None),
         (99, Probe::None),
     ] {
@@ -301,4 +302,25 @@ fn the_clock_wrapping_does_not_stall_the_probes() {
 
     assert_eq!(link.run(60_000), None);
     assert_eq!(link.probes, 60_000 / PROBE_PERIOD_MS);
+}
+
+#[test]
+fn an_unsent_probe_is_no_observation() {
+    // Every connection taken (API sessions, backlog, mDNS): the echo cannot
+    // be sent, which must never count against an answering gateway.
+    let mut link = Link::joined(Probe::Answered);
+    assert_eq!(link.run(20_000), None);
+
+    link.gateway = Probe::Unsent;
+    assert_eq!(link.run(600_000), None);
+    assert!(link.machine.live());
+
+    // Nor settle a join on its own: only answers or real silence do.
+    let mut link = Link::joined(Probe::Unsent);
+    assert_eq!(link.run(600_000), None);
+    assert!(link.seen.is_empty());
+    assert!(!link.machine.live());
+    link.gateway = Probe::Answered;
+    assert_eq!(link.run(PROBE_PERIOD_MS), None);
+    assert!(link.machine.live());
 }

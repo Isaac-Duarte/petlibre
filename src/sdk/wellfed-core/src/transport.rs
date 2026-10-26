@@ -625,6 +625,8 @@ impl Write for Buffer<'_> {
 pub enum Loss {
     None,
     Link,
+    /// The link check's loss: the DHCP lease ran out or the gateway went
+    /// silent. Named for the internet DNS check it replaced; `"dns"` on the wire.
     Dns,
 }
 

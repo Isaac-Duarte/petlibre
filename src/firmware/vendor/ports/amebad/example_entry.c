@@ -64,6 +64,7 @@ enum {
     WELLFED_PROBE_ANSWERED = 1,
     WELLFED_PROBE_SILENT = 2,
     WELLFED_PROBE_NO_GATEWAY = 3,
+    WELLFED_PROBE_UNSENT = 4,
 };
 enum {
     WELLFED_WATCH_HOLD = 0,
@@ -288,10 +289,17 @@ static int wellfed_gateway(unsigned int attempt)
     TickType_t begin = xTaskGetTickCount();
     int result = gateway != 0 ? wellfed_echo(gateway, ++seq) : WELLFED_ECHO_NO_GATEWAY;
     wellfed_event(WELLFED_EV_GATEWAY, attempt, result, gateway, wellfed_ms(begin));
-    if (result == WELLFED_ECHO_NO_GATEWAY) {
+    switch (result) {
+    case 0:
+        return WELLFED_PROBE_ANSWERED;
+    case WELLFED_ECHO_NO_GATEWAY:
         return WELLFED_PROBE_NO_GATEWAY;
+    case WELLFED_ECHO_TIMEOUT:
+        return WELLFED_PROBE_SILENT;
+    default:
+        /* No socket or no send: nothing was asked of the gateway. */
+        return WELLFED_PROBE_UNSENT;
     }
-    return result == 0 ? WELLFED_PROBE_ANSWERED : WELLFED_PROBE_SILENT;
 }
 
 /* Watch a joined link until Rust says leave; the lost event's cause. */

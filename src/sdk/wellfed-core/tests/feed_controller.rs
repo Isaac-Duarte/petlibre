@@ -837,25 +837,34 @@ fn rotor_high(position: i64) -> bool {
 /// forward drive until the motor has backed off `stalls` times: the
 /// controller when it stopped, and where the rotor stopped.
 fn jammed_feed(portions: u16, jam: i64, stalls: u8) -> (FeedController, i64) {
-    let mut controller = FeedController::new(&PLAF103, 0).unwrap();
     let r = request(1, portions, BowlMode::Single, Direction::D0);
-    assert_eq!(controller.start(&r, 0, &HEALTHY), FeedStartResult::Accepted);
+    jammed(&PLAF103, &r, jam, stalls)
+}
+
+/// As `jammed_feed`, for any request: `Drive0` turns the rotor toward
+/// higher positions and `Drive1` toward lower ones, and the jam stalls the
+/// request's own direction at `jam`.
+fn jammed(limits: &FeedLimits, r: &FeedRequest, jam: i64, stalls: u8) -> (FeedController, i64) {
+    let mut controller = FeedController::new(limits, 0).unwrap();
+    assert_eq!(controller.start(r, 0, &HEALTHY), FeedStartResult::Accepted);
+    let forward = MotorCommand::drive(r.direction);
 
     let (mut position, mut stalls) = (0_i64, stalls);
     let mut last = controller.motor;
     for now in 1..120_000 {
         let motor = controller.motor;
-        if last == MotorCommand::Drive0 && motor == MotorCommand::Drive1 {
+        if last == forward && motor != forward && motor != MotorCommand::Stop {
             stalls = stalls.saturating_sub(1);
         }
         last = motor;
 
-        let stalled = motor == MotorCommand::Drive0 && stalls > 0 && position == jam;
+        let stalled = motor == forward && stalls > 0 && position == jam;
         let before = rotor_high(position);
         match motor {
-            MotorCommand::Drive0 if !stalled => position += 1,
+            _ if stalled => {}
+            MotorCommand::Drive0 => position += 1,
             MotorCommand::Drive1 => position -= 1,
-            _ => {}
+            MotorCommand::Stop => {}
         }
         let high = rotor_high(position);
 
@@ -905,6 +914,46 @@ fn a_freed_jam_anywhere_in_a_mark_period_credits_each_mark_once() {
             assert_eq!(controller.reverse_attempts, stalls, "jam at {jam}");
             assert!(
                 (last_rise..=last_rise + 1).contains(&position),
+                "jam at {jam}, {stalls} reversals: stopped at {position}"
+            );
+        }
+    }
+}
+
+/// The same in a double bowl's D1, whose boundary is the fall into a mark:
+/// after it the rotor reads LOW, so backing off that stays inside the mark
+/// recrosses nothing, and only backing out over the fall (reading HIGH)
+/// makes the next fall the same one. The request counts a portion every
+/// second fall; the first, at the start, falls in the inhibit window.
+#[test]
+fn a_freed_jam_in_a_double_bowl_d1_credits_each_fall_once() {
+    let limits = FeedLimits {
+        portion_ms: 30_000,
+        ..PLAF103
+    };
+    let r = FeedRequest {
+        credit_next_event: false,
+        ..request(1, 1, BowlMode::Double, Direction::D1)
+    };
+    let last_fall = -2 * PERIOD - 1;
+    let mut jams: Vec<i64> = (-2 * PERIOD + 1..-100).step_by(53).collect();
+    // Just past the counted fall at -PERIOD - 1, backing out over it or
+    // staying inside its mark; and just before it.
+    jams.extend([-PERIOD - 2, -PERIOD - 300, -PERIOD - 999, -PERIOD - 1100]);
+    jams.extend([-PERIOD + 600, -PERIOD]);
+
+    for stalls in 1..=3 {
+        for &jam in &jams {
+            let (controller, position) = jammed(&limits, &r, jam, stalls);
+            assert_eq!(
+                (controller.state, controller.progress.completed),
+                (FeedState::Complete, 1),
+                "jam at {jam}, {stalls} reversals: {:?}",
+                controller.reason
+            );
+            assert_eq!(controller.reverse_attempts, stalls, "jam at {jam}");
+            assert!(
+                (last_fall - 1..=last_fall).contains(&position),
                 "jam at {jam}, {stalls} reversals: stopped at {position}"
             );
         }

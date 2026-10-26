@@ -294,11 +294,12 @@ pub struct FeedController {
     /// The pause in progress follows a reversal, not a double bowl's
     /// portion.
     pub backing_off: bool,
-    /// The feedback input read LOW while backing off: the rotor went back
-    /// into a mark.
-    pub low_while_backing: bool,
-    /// The last forward edge was a portion boundary (a rise in single-bowl
-    /// mode), credited or inhibited.
+    /// While backing off, the feedback input read the level from before a
+    /// boundary (LOW before a rise, HIGH before a double bowl's D1 fall):
+    /// the rotor went back over it.
+    pub recrossed: bool,
+    /// The last forward edge in this direction was a portion boundary (a
+    /// rise, or a fall in a double bowl's D1), credited or inhibited.
     pub last_boundary: bool,
     /// The next forward boundary is one the rotor already crossed before it
     /// backed off: crossed again, it is no new portion.
@@ -367,17 +368,17 @@ impl FeedController {
     /// one mark that can come twice is the boundary the rotor crossed
     /// before backing off and recrossed while backing: backing off is
     /// shorter than a mark, so at most that one, and only if the input read
-    /// LOW meanwhile.
+    /// the level from before that boundary meanwhile.
     fn resume(&mut self, now_ms: u32) {
         self.state = FeedState::Running;
         self.motor = MotorCommand::drive(self.progress.direction);
         if self.backing_off {
-            self.skip_boundary = self.last_boundary && self.low_while_backing;
+            self.skip_boundary = self.last_boundary && self.recrossed;
         } else {
             self.inhibit_at = now_ms;
         }
         self.backing_off = false;
-        self.low_while_backing = false;
+        self.recrossed = false;
         self.resumed_at = now_ms;
         self.edge_at = now_ms;
         self.drive_changed(now_ms);
@@ -399,7 +400,7 @@ impl FeedController {
         self.state_at = now_ms;
         self.motor = MotorCommand::drive(self.progress.direction.toggled());
         self.backing_off = true;
-        self.low_while_backing = false;
+        self.recrossed = false;
         self.drive_changed(now_ms);
     }
 
@@ -409,6 +410,12 @@ impl FeedController {
         self.state_at = now_ms;
         self.motor = MotorCommand::Stop;
         self.drive_changed(now_ms);
+    }
+
+    /// The level a portion boundary ends at: a rise, but a fall in a double
+    /// bowl's D1.
+    fn boundary_high(&self) -> bool {
+        self.progress.mode == BowlMode::Single || self.progress.direction == Direction::D0
     }
 
     /// Whether the feedback input has read LOW for `mark_low_ms` of forward
@@ -476,7 +483,7 @@ impl FeedController {
         self.feedback_grace_ms = 0;
         self.reverse_attempts = 0;
         self.backing_off = false;
-        self.low_while_backing = false;
+        self.recrossed = false;
         self.last_boundary = false;
         self.skip_boundary = false;
         self.drive_changed(now_ms);
@@ -566,8 +573,9 @@ impl FeedController {
                 self.stop(FeedState::Fault, FeedReason::Sensor);
                 return;
             }
-            if self.backing_off && sample.mark_low {
-                self.low_while_backing = true;
+            // Before a rise the input reads LOW, before a fall HIGH.
+            if self.backing_off && sample.mark_low == self.boundary_high() {
+                self.recrossed = true;
             }
         }
         let overcurrent = self.over_limit >= OVERCURRENT_POLLS;
@@ -613,13 +621,12 @@ impl FeedController {
             self.edge_at = captured_at_ms;
         }
 
-        let expected_high =
-            self.progress.mode == BowlMode::Single || self.progress.direction == Direction::D0;
-        let boundary = sample.feedback_high == expected_high;
+        let boundary = sample.feedback_high == self.boundary_high();
         self.last_boundary = boundary;
         // The boundary crossed again after backing off: no portion, and its
-        // bounces fall in a window of its own.
-        if boundary && core::mem::take(&mut self.skip_boundary) {
+        // bounces fall in a window of its own. Any other edge first means
+        // the rotor was not behind that boundary, so none is skipped.
+        if core::mem::take(&mut self.skip_boundary) && boundary {
             self.inhibit_at = captured_at_ms;
             return;
         }
@@ -635,6 +642,8 @@ impl FeedController {
         if result == ProgressResult::Finished {
             self.stop(FeedState::Complete, FeedReason::Done);
         } else if result == ProgressResult::Portion && self.progress.mode == BowlMode::Double {
+            // A new direction has boundaries of the other level.
+            self.last_boundary = false;
             if self.progress.direction == Direction::D0 {
                 self.pause(now_ms);
             } else {

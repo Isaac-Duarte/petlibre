@@ -15,8 +15,8 @@
 //!   reset but not power loss. Bits 0-15 hold the KM0 boot count (the peer
 //!   session), bits 16-19 the trial count on a trial boot, or, with bit 19
 //!   set ([`STORM_STATE`]), the storm's backoff level on any other, bits
-//!   20-23 the storm count and bits 24-31 a tag from the identity, so a count
-//!   never carries over to a different image.
+//!   20-23 the storm count, bits 24-30 a tag from the identity, so a count
+//!   never carries over to a different image, and bit 31 [`FORGIVEN`].
 //!
 //! **Reset storms.** Confirmation proves one boot, not every later one: a
 //! confirmed build can still fault into a reset at every boot. So on every
@@ -45,10 +45,21 @@
 //! at idle would otherwise make a storm within minutes and give a good
 //! bank 1 away to an older build. So on a boot whose reset was a brownout
 //! ([`Reset::Brownout`]), KM0 first takes that pending reset back
-//! ([`forgiven`]); the boot itself is then counted as early as any other.
-//! A trial counts its boots in the low nibble, which this never touches: a
-//! brownout on trial still counts toward `LIMIT`, so no trial is shortened
-//! or skipped, and its give-way is unchanged.
+//! ([`decide_after`]); the boot itself is then counted as early as any
+//! other. A trial counts its boots in the low nibble, which this never
+//! touches: a brownout on trial still counts toward `LIMIT`, so no trial is
+//! shortened or skipped, and its give-way is unchanged.
+//!
+//! The brownout flag is not certain to be this boot's: the loader that
+//! backs the ROM's reset flags up into `BOOT_Reason` returns early when it
+//! finds none set, leaving the previous value, so after one real brownout a
+//! fault reset that sets no flag can read as a brownout too. So forgiveness
+//! is bounded: a boot that forgave marks the register ([`FORGIVEN`]), and
+//! the next boot forgives nothing. Of any two early resets in a row at
+//! least one counts, so a fault reaches `STORM_LIMIT` within
+//! `2 * STORM_LIMIT` early resets and `HALT_LIMIT` within `2 * HALT_LIMIT`
+//! whatever the flag reads: the storm's bounds hold, at worst twice as
+//! slow. A real pack that browns out at every boot is bounded the same way.
 //!
 //! Nothing is permanent: a feeder held or halted by a fault that clears
 //! (a run of association hangs, a battery brownout) feeds again on its own,
@@ -74,6 +85,10 @@ const FIELD_MASK: u32 = 0xf;
 pub const STORM_STATE: u32 = 0x8;
 const LEVEL_MASK: u32 = 0x7;
 const TAG_SHIFT: u32 = 24;
+const TAG_MASK: u32 = 0x7f;
+/// Bit 31: the next boot forgives no brownout. Set by a boot that forgave
+/// one, and by [`halt_over`], whose count is a hold's; any stamp clears it.
+pub const FORGIVEN: u32 = 1 << 31;
 
 /// Resets in a row, each within [`STABLE_MS`] of its boot, that make a
 /// storm: an occasional fault (a Wi-Fi driver fault every few dozen boots)
@@ -174,12 +189,16 @@ pub const fn hold_ms(level: u32) -> u32 {
 }
 
 fn tag(identity: &[u8; 32]) -> u32 {
-    u32::from(identity[0])
+    u32::from(identity[0]) & TAG_MASK
+}
+
+fn ours(register: u32, identity: &[u8; 32]) -> bool {
+    (register >> TAG_SHIFT) & TAG_MASK == tag(identity)
 }
 
 /// The register's low nibble and storm field, when its tag is this image's.
 fn fields(register: u32, identity: &[u8; 32]) -> (u32, u32) {
-    if register >> TAG_SHIFT == tag(identity) {
+    if ours(register, identity) {
         (
             (register >> NIBBLE_SHIFT) & FIELD_MASK,
             (register >> STORM_SHIFT) & FIELD_MASK,
@@ -207,23 +226,44 @@ fn storm_stamp(register: u32, identity: &[u8; 32], level: u32, storm: u32) -> u3
     )
 }
 
-/// What reset this boot, as far as the storm count cares: the ROM's
-/// brownout flag (`BIT_BOOT_BOD_RESET_HAPPEN` in `BOOT_Reason`), which the
-/// loader sets or clears on every boot.
+/// What reset this boot, as far as the storm count cares: the brownout bit
+/// (`BIT_BOOT_BOD_RESET_HAPPEN`) in `BOOT_Reason`. Not certain to be this
+/// boot's (the module's **Brownouts**), so it is trusted only boundedly.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Reset {
     Brownout,
     Other,
 }
 
-/// The register with the previous boot's pending early reset taken back
-/// when that boot ended in a brownout, else unchanged. Only the storm
-/// field moves: a trial's count, the level and the tag stay as they are.
-pub fn forgiven(register: u32, identity: &[u8; 32], reset: Reset) -> u32 {
+/// [`decide`] on a boot that `reset` started. On a brownout, the previous
+/// boot's pending early reset is taken back first, unless that boot forgave
+/// one too; the register then carries [`FORGIVEN`] for the next boot. Only
+/// the storm field moves: a trial's count, the level and the tag stay.
+pub fn decide_after(
+    bank1: &[u8; 8],
+    bank0: &[u8; 8],
+    record: &[u8; ota::CONFIRM_LEN],
+    register: u32,
+    identity: &[u8; 32],
+    reset: Reset,
+) -> (Decision, u32) {
     let (nibble, storm) = fields(register, identity);
-    match reset {
-        Reset::Brownout if storm > 0 => stamp(register, identity, nibble, storm - 1),
-        Reset::Brownout | Reset::Other => register,
+    let forgave_last = register & FORGIVEN != 0 && ours(register, identity);
+    let forgive = reset == Reset::Brownout && storm > 0 && !forgave_last;
+    let found = if forgive {
+        stamp(register, identity, nibble, storm - 1)
+    } else {
+        register
+    };
+
+    // Every value `decide` returns has the bit clear. A give-way or a
+    // trial's count leaves no storm count to protect.
+    let (decision, value) = decide(bank1, bank0, record, found, identity);
+    let counted = (value >> STORM_SHIFT) & FIELD_MASK != 0;
+    if forgive && counted {
+        (decision, value | FORGIVEN)
+    } else {
+        (decision, value)
     }
 }
 
@@ -244,7 +284,7 @@ pub fn decide(
     // An unconfirmed bank 1 is past its trial only while it has nothing to
     // fall back to: storm state under its tag means either a spent trial
     // with bank 0 invalid, or another build's count that merely shares the
-    // tag (a reinstall, or one identity byte in 256), which must never let
+    // tag (a reinstall, or one identity byte in 128), which must never let
     // a new build skip its trial. With bank 0 valid it is on trial, and a
     // nibble in storm state counts as no trial boot yet.
     let past = state && *bank0 != MARKER;
@@ -321,9 +361,11 @@ pub fn released(register: u32, identity: &[u8; 32]) -> u32 {
 
 /// The register just before a halted boot resets after [`HALT_MS`]: the
 /// next boot is held, a level longer, rather than halted again at once.
+/// The count is the hold's, not a reset's, so no brownout reading may take
+/// it back ([`FORGIVEN`]).
 pub fn halt_over(register: u32, identity: &[u8; 32]) -> u32 {
     let level = level(register, identity) + 1;
-    storm_stamp(register, identity, level, STORM_LIMIT)
+    storm_stamp(register, identity, level, STORM_LIMIT) | FORGIVEN
 }
 
 /// The register before an activation's or a give-way's restart: the next
@@ -351,7 +393,7 @@ mod exported {
 
     /// Called once by the KM0 main before `km4_boot_on`, with bank 1's and
     /// bank 0's first 8 physical bytes, the confirmation record and whether
-    /// the ROM flagged this boot's reset as a brownout (nonzero). Writes
+    /// `BOOT_Reason` carries the brownout bit (nonzero). Writes
     /// the new backup-register value to `register` and returns
     /// `Decision::code`. Flash and the register are written by the caller.
     ///
@@ -373,10 +415,8 @@ mod exported {
         };
 
         // SAFETY: the caller's contract.
-        let found = super::forgiven(unsafe { *register }, &identity, reset);
-        // SAFETY: as above.
         let (decision, value) =
-            unsafe { super::decide(&*bank1, &*bank0, &*record, found, &identity) };
+            unsafe { super::decide_after(&*bank1, &*bank0, &*record, *register, &identity, reset) };
         // SAFETY: as above.
         unsafe { *register = value };
         decision.code()

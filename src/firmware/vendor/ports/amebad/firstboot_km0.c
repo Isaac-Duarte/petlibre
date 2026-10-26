@@ -93,8 +93,9 @@ u32 wellfed_amebad_trial_decide(const u8 *bank1, const u8 *bank0, const u8 *reco
  * limit with a valid bank 0, clear bank 1's first marker byte and reset so
  * the loader falls back to bank 0. A confirmed build's reset storm gives way
  * the same way. A brownout boot takes back the previous boot's pending storm
- * count (a supply fault, not the build's); the loader backs the ROM's reset
- * flags up into BOOT_Reason on every boot, so the bit is this boot's.
+ * count (a supply fault, not the build's). The bit may be stale: the loader
+ * leaves BOOT_Reason as it was when it finds no reset flag set, so the Rust
+ * side never forgives two boots in a row.
  * KM4 is off, so the SDK flash lock only masks
  * this core's interrupts (wellfed_trial_program).
  * Physical reads go through the direct SPIC window. */

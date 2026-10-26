@@ -1523,8 +1523,9 @@ fn a_sustained_sag_or_one_under_the_cutoff_fails_the_feed() {
 }
 
 /// The floor at rest on the pack, with its hysteresis: under the floor no
-/// feed drives (it expires); recovered into the band between the floor and
-/// the clear level, still none; at the clear level the next one runs.
+/// feed drives (it ends `Failed`/`Power`); recovered into the band between
+/// the floor and the clear level, still none; at the clear level the next
+/// one runs.
 #[test]
 fn the_floor_refuses_feeds_until_the_pack_reads_the_clear_level() {
     let report = on_pack(
@@ -1535,7 +1536,7 @@ fn the_floor_refuses_feeds_until_the_pack_reads_the_clear_level() {
             act(1000, "submit", &[1, 1]),
             expect(
                 3100,
-                json!({"state": "terminal", "outcome": "expired", "motor": 0, "durable": true}),
+                json!({"state": "terminal", "outcome": "failed", "reason": "power", "motor": 0, "durable": true}),
             ),
             act(3100, "ack", &[1]),
             act(3200, "battery", &[2297]),
@@ -1543,7 +1544,7 @@ fn the_floor_refuses_feeds_until_the_pack_reads_the_clear_level() {
             act(3600, "submit", &[2, 1]),
             expect(
                 5700,
-                json!({"state": "terminal", "id": 2, "outcome": "expired"}),
+                json!({"state": "terminal", "id": 2, "outcome": "failed", "reason": "power"}),
             ),
             act(5700, "ack", &[2]),
             act(5800, "battery", &[2309]),

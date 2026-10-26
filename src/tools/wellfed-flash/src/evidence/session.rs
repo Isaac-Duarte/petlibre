@@ -9,14 +9,66 @@ use serde::de::{DeserializeOwned, IgnoredAny};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::error::{Result, refuse, require};
+use crate::error::Result;
 use crate::evidence::report::{Status, Streams, Transport};
 use crate::evidence::{self, EvidencePort, Root};
 use crate::link::protocol::{self, HELPER_SHA256, Port, ROM_SHA256, Transfer};
 use crate::link::sector::Baseline;
 use wellfed_formats::canonical::{canonical, canonical_of, sha256};
 use wellfed_formats::flash_plan::ToolHashes;
+use wellfed_formats::require;
 use wellfed_formats::session::Mode;
+
+/// Saved evidence or a reviewed plan that a session refuses to continue
+/// from, always before the port opens.
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("Report comes from a different transport than this session")]
+    TransportMismatch {
+        report: Transport,
+        session: Transport,
+    },
+
+    #[error("ROM report must refer to private evidence")]
+    RomReportNotPrivate { path: PathBuf },
+    #[error("Successful ROM inspection required")]
+    RomInspection,
+    #[error("ROM report does not identify a pinned candidate")]
+    RomCandidate,
+    #[error("Incomplete ROM sample set")]
+    RomSamples,
+    #[error("ROM serial evidence hash mismatch")]
+    RomStreams,
+
+    #[error("A completed bounded-read report is required")]
+    BoundedReadMissing,
+    #[error("Bounded-read report must refer to private evidence")]
+    BoundedReadNotPrivate { path: PathBuf },
+    #[error("Bounded-read session does not validate")]
+    BoundedReadSession,
+    #[error("Bounded-read image does not validate")]
+    BoundedReadImage,
+    #[error("Bounded-read serial evidence hash mismatch")]
+    BoundedReadStreams,
+    #[error("Bounded-read evidence does not validate")]
+    BoundedReadEvidence,
+
+    #[error("Private plan required")]
+    PlanNotPrivate { path: PathBuf },
+    #[error("Reviewed plan and hash required")]
+    ReviewedPlanMissing,
+    #[error("Reviewed plan/source/evidence differs")]
+    ReviewedPlanDiffers,
+
+    #[error("Completed inspection report required")]
+    InspectionMissing,
+    #[error("Fresh matching inspection required")]
+    InspectionStale,
+    #[error("Inspection serial evidence mismatch")]
+    InspectionStreams,
+    #[error("Inspection extent/hash differs")]
+    InspectionExtent { file: String },
+}
 
 pub const DEFAULT_HELPER: &str =
     "private/upstream/ameba-rtos-d/tools/AmebaD/Image_Tool/imgtool_flashloader_amebad.bin";
@@ -72,11 +124,12 @@ impl Context {
 
     /// Evidence from an emulated session never continues a serial one, nor
     /// the reverse.
-    pub fn same_transport(&self, report: Transport) -> Result<()> {
-        require(
-            report == self.transport(),
-            "Report comes from a different transport than this session",
-        )
+    pub fn same_transport(&self, report: Transport) -> Result<(), Error> {
+        let session = self.transport();
+        require(report == session, || Error::TransportMismatch {
+            report,
+            session,
+        })
     }
 
     /// The transport sessions record in their reports.
@@ -286,14 +339,23 @@ fn parent(path: &Path) -> PathBuf {
     path.parent().map(Path::to_path_buf).unwrap_or_default()
 }
 
-/// The saved serial streams beside a report still match its hashes.
-pub fn streams_match(root: &Root, path: &Path, streams: &Streams, message: &str) -> Result<()> {
+/// The saved serial streams beside a report still match its hashes; each
+/// kind of evidence names its own mismatch.
+pub fn streams_match<E>(
+    root: &Root,
+    path: &Path,
+    streams: &Streams,
+    mismatch: impl Fn() -> E,
+) -> Result<()>
+where
+    crate::Error: From<E>,
+{
     for (name, recorded) in [
         ("serial-rx.bin", &streams.rx_sha256),
         ("serial-tx.bin", &streams.tx_sha256),
     ] {
         let data = root.private_file(&parent(path).join(name))?;
-        require(recorded.as_deref() == Some(&sha256(&data)), message)?;
+        require(recorded.as_deref() == Some(&sha256(&data)), &mismatch)?;
     }
     Ok(())
 }
@@ -301,10 +363,9 @@ pub fn streams_match(root: &Root, path: &Path, streams: &Streams, message: &str)
 /// A successful ROM inspection that identified a pinned SDK ROM.
 pub fn validate_rom_report(context: &Context, path: &Path) -> Result<Vec<u8>> {
     let root = &context.root;
-    require(
-        root.is_private(path),
-        "ROM report must refer to private evidence",
-    )?;
+    require(root.is_private(path), || Error::RomReportNotPrivate {
+        path: path.to_path_buf(),
+    })?;
 
     let (raw, report): (_, Saved<RomResult>) = saved(root, path)?;
     context.same_transport(report.transport)?;
@@ -312,14 +373,14 @@ pub fn validate_rom_report(context: &Context, path: &Path) -> Result<Vec<u8>> {
     require(
         report.is(Status::Complete, Mode::InspectRom)
             && result.is_some_and(|r| r.returned_to_km4 == Some(true)),
-        "Successful ROM inspection required",
+        || Error::RomInspection,
     )?;
 
     let candidates = result.and_then(|r| r.matching_candidates.as_ref());
     require(
         candidates
             .is_some_and(|c| !c.is_empty() && c.values().all(|v| ROM_SHA256.contains(&v.as_str()))),
-        "ROM report does not identify a pinned candidate",
+        || Error::RomCandidate,
     )?;
 
     let expected: Vec<Option<String>> = protocol::rom_sample_addresses()
@@ -330,14 +391,9 @@ pub fn validate_rom_report(context: &Context, path: &Path) -> Result<Vec<u8>> {
         .and_then(|r| r.sampled_words.as_ref())
         .map(|words| words.iter().map(|w| w.address.clone()).collect())
         .unwrap_or_default();
-    require(sampled == expected, "Incomplete ROM sample set")?;
+    require(sampled == expected, || Error::RomSamples)?;
 
-    streams_match(
-        root,
-        path,
-        &report.streams,
-        "ROM serial evidence hash mismatch",
-    )?;
+    streams_match(root, path, &report.streams, || Error::RomStreams)?;
     Ok(raw)
 }
 
@@ -363,33 +419,27 @@ pub fn validate_status_session(
 ) -> Result<Vec<u8>> {
     let root = &context.root;
     let Some(path) = path else {
-        return refuse("A completed bounded-read report is required");
+        return Err(Error::BoundedReadMissing.into());
     };
 
-    require(
-        root.is_private(path),
-        "Bounded-read report must refer to private evidence",
-    )?;
+    require(root.is_private(path), || Error::BoundedReadNotPrivate {
+        path: path.to_path_buf(),
+    })?;
 
     let (raw, report): (_, Saved<ReadResult>) = saved(root, path)?;
     context.same_transport(report.transport)?;
     require(
         bounded_read(&report, port) && report.result.as_ref().and_then(|r| r.offset) == Some(0),
-        "Bounded-read session does not validate",
+        || Error::BoundedReadSession,
     )?;
 
     let data = fs::read(parent(path).join("flash-read.bin"))?;
     require(
         data.len() == 4096 && read_sha256(&report) == Some(&sha256(&data)),
-        "Bounded-read image does not validate",
+        || Error::BoundedReadImage,
     )?;
 
-    streams_match(
-        root,
-        path,
-        &report.streams,
-        "Bounded-read serial evidence hash mismatch",
-    )?;
+    streams_match(root, path, &report.streams, || Error::BoundedReadStreams)?;
     Ok(raw)
 }
 
@@ -405,14 +455,16 @@ pub fn validate_small_for_full(context: &Context, path: &Path, port: &str) -> Re
         root.is_private(path)
             && bounded_read(&report, port)
             && read_sha256(&report) == Some(&sha256(&image)),
-        "Bounded-read evidence does not validate",
+        || Error::BoundedReadEvidence,
     )?;
     Ok(raw)
 }
 
 /// Write a reviewed plan exclusively and durably; returns its SHA-256.
 pub fn write_plan(root: &Root, output: &Path, plan: &impl Serialize) -> Result<String> {
-    require(root.is_private(output), "Private plan required")?;
+    require(root.is_private(output), || Error::PlanNotPrivate {
+        path: output.to_path_buf(),
+    })?;
     let mut raw = canonical_of(plan)?;
     raw.push(b'\n');
     evidence::write_new(output, &raw)?;
@@ -429,14 +481,14 @@ pub fn reviewed_plan(
     expected: &impl Serialize,
 ) -> Result<Vec<u8>> {
     let (Some(path), Some(expected_sha256)) = (path, expected_sha256) else {
-        return refuse("Reviewed plan and hash required");
+        return Err(Error::ReviewedPlanMissing.into());
     };
 
     let raw = root.private_file(path)?;
     let parsed: Value = serde_json::from_slice(&raw)?;
     require(
         sha256(&raw) == expected_sha256 && canonical(&parsed)? == canonical_of(expected)?,
-        "Reviewed plan/source/evidence differs",
+        || Error::ReviewedPlanDiffers,
     )?;
     Ok(raw)
 }
@@ -477,7 +529,10 @@ pub fn acquire_region(
     drop(file);
 
     let data = fs::read(&partial)?;
-    require(data.len() == length, "Incomplete region read")?;
+    require(data.len() == length, || protocol::Error::IncompleteRegion {
+        received: data.len(),
+        length,
+    })?;
     let name = format!("{label}-{number:02}.bin");
     fs::rename(&partial, directory.join(&name))?;
     evidence::sync_directory(directory)?;
@@ -492,26 +547,30 @@ pub fn acquire_region(
 }
 
 /// The bytes of an inspection's recorded transfers, checked against their
-/// expected extents and hashes.
-pub(crate) fn inspected_transfers<const N: usize>(
+/// expected extents and hashes. Each command names its own incomplete
+/// acquisition.
+pub(crate) fn inspected_transfers<const N: usize, E>(
     root: &Root,
     path: &Path,
     report: &Saved<IgnoredAny>,
     extents: &[(usize, usize); N],
-    message: &str,
-) -> Result<[Vec<u8>; N]> {
+    incomplete: impl Fn() -> E,
+) -> Result<[Vec<u8>; N]>
+where
+    crate::Error: From<E>,
+{
     let Some([first]) = report.observations.as_deref() else {
-        return refuse(message);
+        return Err(incomplete().into());
     };
-    require(first.len() == N, message)?;
+    require(first.len() == N, &incomplete)?;
 
     let mut values = Vec::new();
     for (transfer, (offset, length)) in first.iter().zip(extents) {
         let file = transfer.file.as_deref().unwrap_or_default();
-        require(
-            !file.is_empty() && !file.contains('/'),
-            "Inspection extent/hash differs",
-        )?;
+        let differs = || Error::InspectionExtent {
+            file: file.to_string(),
+        };
+        require(!file.is_empty() && !file.contains('/'), differs)?;
 
         let value = root.private_file(&parent(path).join(file))?;
         require(
@@ -519,13 +578,13 @@ pub(crate) fn inspected_transfers<const N: usize>(
                 && transfer.bytes == u64::try_from(*length).ok()
                 && value.len() == *length
                 && transfer.sha256.as_deref() == Some(&sha256(&value)),
-            "Inspection extent/hash differs",
+            differs,
         )?;
         values.push(value);
     }
 
     let Ok(values) = values.try_into() else {
-        return refuse(message);
+        return Err(incomplete().into());
     };
     Ok(values)
 }
@@ -539,7 +598,7 @@ pub(crate) fn inspection(
 ) -> Result<(PathBuf, Saved<IgnoredAny>, String)> {
     let root = &context.root;
     let Some(path) = path else {
-        return refuse("Completed inspection report required");
+        return Err(Error::InspectionMissing.into());
     };
     let (raw, report): (_, Saved<IgnoredAny>) = saved(root, path)?;
     context.same_transport(report.transport)?;
@@ -552,15 +611,10 @@ pub(crate) fn inspection(
         report.is(Status::Complete, Mode::Inspect)
             && recorded == canonical_of(bindings)?
             && report.helper_upload_attempted == Some(false),
-        "Fresh matching inspection required",
+        || Error::InspectionStale,
     )?;
 
-    streams_match(
-        root,
-        path,
-        &report.streams,
-        "Inspection serial evidence mismatch",
-    )?;
+    streams_match(root, path, &report.streams, || Error::InspectionStreams)?;
     Ok((path.to_path_buf(), report, sha256(&raw)))
 }
 

@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::error::{Result, refuse, require};
+use crate::error::Result;
 use crate::evidence;
 use crate::evidence::report::{Session, Status, SummaryStatus, Transport};
 use crate::evidence::session::{self, Completion, Context, Outcome, ReadResult, Saved, progress};
@@ -24,7 +24,26 @@ use crate::writers::recovery::{self, Plan};
 use crate::writers::update::Evidence;
 use wellfed_formats::canonical::{canonical, sha256};
 use wellfed_formats::flash_plan::{Kind, ToolHashes};
+use wellfed_formats::require;
 use wellfed_formats::session::Mode;
+
+/// A stock recovery whose full read or reviewed plan does not bind, or a
+/// snapshot that came back short.
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("Complete full-read report from this helper session required")]
+    FullReadReport,
+    #[error("Full-read serial evidence hash mismatch")]
+    FullReadStreams,
+    #[error("Plan creation time required")]
+    CreationTime,
+    #[error("Exact reviewed plan/hash required")]
+    ReviewedPlanMissing,
+    #[error("Reviewed plan SHA256 differs")]
+    PlanHashDiffers { expected: String, actual: String },
+    #[error("Full snapshot truncated")]
+    SnapshotTruncated { bytes: usize },
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum Phase {
@@ -88,14 +107,11 @@ fn prepare_inputs(context: &Context, args: &Args) -> Result<(Baseline, Vec<u8>, 
             && result.and_then(|r| r.offset) == Some(0)
             && result.and_then(|r| r.bytes) == u64::try_from(CAPACITY).ok()
             && result.and_then(|r| r.sha256.as_deref()) == Some(&sha256(&current)),
-        "Complete full-read report from this helper session required",
+        || Error::FullReadReport,
     )?;
-    session::streams_match(
-        root,
-        &report_path,
-        &report.streams,
-        "Full-read serial evidence hash mismatch",
-    )?;
+    session::streams_match(root, &report_path, &report.streams, || {
+        Error::FullReadStreams
+    })?;
 
     let reviewed = Reviewed {
         schema_version: 1,
@@ -120,7 +136,7 @@ fn comparable(reviewed: &Value) -> Result<Vec<u8>> {
         .and_then(Value::as_object_mut);
     let Some(plan) = plan.filter(|plan| plan.get("created_utc").is_some_and(Value::is_string))
     else {
-        return refuse("Plan creation time required");
+        return Err(Error::CreationTime.into());
     };
 
     plan.remove("created_utc");
@@ -153,19 +169,20 @@ pub fn run(context: &Context, args: &Args) -> Result<Outcome> {
     }
 
     let (Some(plan), Some(expected_sha)) = (&evidence.plan, &evidence.expected_plan_sha256) else {
-        return refuse("Exact reviewed plan/hash required");
+        return Err(Error::ReviewedPlanMissing.into());
     };
 
     let raw = context.root.private_file(plan)?;
-    require(
-        sha256(&raw) == *expected_sha,
-        "Reviewed plan SHA256 differs",
-    )?;
+    let actual = sha256(&raw);
+    require(actual == *expected_sha, || Error::PlanHashDiffers {
+        expected: expected_sha.clone(),
+        actual: actual.clone(),
+    })?;
 
     let reviewed: Value = serde_json::from_slice(&raw)?;
     require(
         comparable(&reviewed)? == comparable(&serde_json::to_value(&expected)?)?,
-        "Reviewed plan/source/evidence differs",
+        || session::Error::ReviewedPlanDiffers,
     )?;
 
     let manifest = &reviewed["recovery_plan"];
@@ -261,7 +278,9 @@ fn execute(
             drop(file);
 
             let data = fs::read(&partial)?;
-            require(data.len() == CAPACITY, "Full snapshot truncated")?;
+            require(data.len() == CAPACITY, || Error::SnapshotTruncated {
+                bytes: data.len(),
+            })?;
             let name = format!("snapshot-{number:02}.bin");
             fs::rename(&partial, directory.join(&name))?;
             evidence::sync_directory(&directory)?;

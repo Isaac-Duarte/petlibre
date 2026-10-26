@@ -11,13 +11,51 @@ use std::path::Path;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::error::{Result, refuse, require};
+use crate::error::Result;
 use crate::evidence::journal::{Event, Journal};
 use crate::evidence::report::SummaryStatus;
 use crate::evidence::{Root, utc};
 use crate::link::protocol::{CAPACITY, Port, SECTOR};
 use crate::link::sector::{self, Baseline, END, MarkerCommit, Restored, START};
 use wellfed_formats::canonical::{canonical, sha256};
+use wellfed_formats::require;
+
+/// A recovery plan that would not restore exact stock bank 1 while
+/// preserving everything else, or a transaction whose snapshots or sector
+/// results leave the reviewed plan.
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("Need two exact 8 MiB snapshots")]
+    SnapshotLength { bytes: usize },
+    #[error("Factory/pre-application bytes differ; stop for investigation")]
+    FactoryDiffers,
+    #[error("Proposed bytes escape application bank 1")]
+    EscapesBank,
+    #[error("Proposed bank is not exact baseline stock")]
+    NotBaseline,
+    #[error("Target marker is still valid; refuse an in-place rewrite of a bootable bank")]
+    MarkerStillValid,
+
+    #[error("Reviewed plan required")]
+    ReviewedPlanMissing,
+    #[error("Plan differs from recomputed exact baseline/current plan")]
+    PlanDiffers,
+    #[error("Staging payload hash differs")]
+    StagingHash { offset: usize },
+
+    #[error("Fresh full snapshot differs from reviewed current image")]
+    CurrentDiffers,
+    #[error("Sector result differs from reviewed staging plan")]
+    SectorResult { offset: usize },
+    #[error("Marker sector was not staged last")]
+    MarkerNotLast { offset: usize },
+    #[error("No final snapshot was taken")]
+    NoFinalSnapshot,
+    #[error("Final preserved ranges differ from current snapshot")]
+    PreservedDiffer,
+    #[error("Final stock bank/full-image verification failed")]
+    FinalDiffers,
+}
 
 /// The plan `plan-stock-recovery.py` writes, field for field; reviewed
 /// plans bind its canonical form.
@@ -94,11 +132,12 @@ const REQUIRED_BEFORE_ANY_WRITE: [&str; 9] = [
 /// hashes and the preconditions every write must meet.
 pub fn plan(baseline: &Baseline, current: &[u8]) -> Result<Plan> {
     let baseline = baseline.bytes();
-    require(current.len() == CAPACITY, "Need two exact 8 MiB snapshots")?;
-    require(
-        current[..0x6000] == baseline[..0x6000],
-        "Factory/pre-application bytes differ; stop for investigation",
-    )?;
+    require(current.len() == CAPACITY, || Error::SnapshotLength {
+        bytes: current.len(),
+    })?;
+    require(current[..0x6000] == baseline[..0x6000], || {
+        Error::FactoryDiffers
+    })?;
 
     let mut sectors = Vec::new();
     let mut proposed = current.to_vec();
@@ -132,15 +171,14 @@ pub fn plan(baseline: &Baseline, current: &[u8]) -> Result<Plan> {
 
     require(
         proposed[..START] == current[..START] && proposed[END..] == current[END..],
-        "Proposed bytes escape application bank 1",
+        || Error::EscapesBank,
     )?;
-    require(
-        proposed[START..END] == baseline[START..END],
-        "Proposed bank is not exact baseline stock",
-    )?;
+    require(proposed[START..END] == baseline[START..END], || {
+        Error::NotBaseline
+    })?;
     require(
         sectors.is_empty() || current[START..START + 8] != baseline[START..START + 8],
-        "Target marker is still valid; refuse an in-place rewrite of a bootable bank",
+        || Error::MarkerStillValid,
     )?;
 
     // The marker sector goes last; activation is a separate no-erase pass.
@@ -205,11 +243,11 @@ pub fn validate_plan(baseline: &Baseline, current: &[u8], manifest: &Value) -> R
     let expected = plan(baseline, current)?;
     require(
         manifest.get("created_utc").is_some_and(Value::is_string),
-        "Reviewed plan required",
+        || Error::ReviewedPlanMissing,
     )?;
     require(
         without_time(manifest)? == without_time(&serde_json::to_value(&expected)?)?,
-        "Plan differs from recomputed exact baseline/current plan",
+        || Error::PlanDiffers,
     )?;
     Ok(expected)
 }
@@ -222,10 +260,11 @@ pub fn payload_files(baseline: &Baseline, plan: &Plan) -> Result<Vec<(String, Ve
         if entry.marker_withheld {
             payload[..8].fill(0xff);
         }
-        require(
-            entry.stage_sha256 == sha256(&payload),
-            "Staging payload hash differs",
-        )?;
+        require(entry.stage_sha256 == sha256(&payload), || {
+            Error::StagingHash {
+                offset: entry.offset,
+            }
+        })?;
         files.push((entry.payload.clone(), payload));
     }
 
@@ -277,10 +316,9 @@ pub fn run_transaction(
 
     let mut full = |port: &mut dyn Port| -> Result<Vec<u8>> {
         let value = snapshot(port)?;
-        require(
-            value.len() == CAPACITY,
-            "Snapshot provider must return exactly 8 MiB",
-        )?;
+        require(value.len() == CAPACITY, || sector::Error::SnapshotLength {
+            bytes: value.len(),
+        })?;
         *last.borrow_mut() = Some(value.clone());
         Ok(value)
     };
@@ -293,10 +331,7 @@ pub fn run_transaction(
             plan_sha256: sha256(&canonical(manifest)?),
         })?;
 
-        require(
-            full(port)? == current,
-            "Fresh full snapshot differs from reviewed current image",
-        )?;
+        require(full(port)? == current, || Error::CurrentDiffers)?;
         journal.append(&Event::InitialSnapshotVerified {
             sha256: sha256(current),
         })?;
@@ -315,7 +350,9 @@ pub fn run_transaction(
             let packets = if entry.stage_required { 4 } else { 0 };
             require(
                 result.after_sha256 == entry.stage_sha256 && result.program_packets == packets,
-                "Sector result differs from reviewed staging plan",
+                || Error::SectorResult {
+                    offset: entry.offset,
+                },
             )?;
             results.push(result);
         }
@@ -324,7 +361,9 @@ pub fn run_transaction(
         if let Some(last_result) = results.last() {
             require(
                 last_result.offset == START && last_result.marker_withheld,
-                "Marker sector was not staged last",
+                || Error::MarkerNotLast {
+                    offset: last_result.offset,
+                },
             )?;
             let mut append = |event: crate::evidence::journal::At| journal.append(&event);
             marker = Some(sector::commit_marker(
@@ -339,16 +378,16 @@ pub fn run_transaction(
         // The commit's last action verified a full final snapshot, and a no-op
         // plan performs nothing after the initial one; reuse it.
         let Some(after) = last.borrow().clone() else {
-            return refuse("No final snapshot was taken");
+            return Err(Error::NoFinalSnapshot.into());
         };
         require(
             after[..START] == current[..START] && after[END..] == current[END..],
-            "Final preserved ranges differ from current snapshot",
+            || Error::PreservedDiffer,
         )?;
         require(
             after[START..END] == baseline.bytes()[START..END]
                 && sha256(&after) == expected.proposed_snapshot_sha256,
-            "Final stock bank/full-image verification failed",
+            || Error::FinalDiffers,
         )?;
 
         journal.append(&Event::RecoveryVerified {

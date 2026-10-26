@@ -492,7 +492,12 @@ fn receipt(root: &Root, output: &str) -> Receipt {
 
 #[test]
 fn the_research_pin_refuses_other_baselines() {
-    assert!(Baseline::pinned(vec![0xff; CAPACITY]).is_err());
+    assert!(matches!(
+        Baseline::pinned(vec![0xff; CAPACITY]),
+        Err(crate::Error::Sector(
+            crate::link::sector::Error::UnpinnedBaseline { bytes: CAPACITY }
+        ))
+    ));
 }
 
 fn write(path: &Path, data: &[u8]) {

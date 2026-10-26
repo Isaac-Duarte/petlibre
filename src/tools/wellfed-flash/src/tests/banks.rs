@@ -89,10 +89,16 @@ fn protection_or_a_changed_guard_stops_before_any_mutation() {
     )
     .unwrap_err();
 
-    assert!(
-        error.to_string().contains("software_protected_range"),
-        "{error}"
+    let crate::Error::Status(crate::link::status::Error::Blocked { boundary, reasons }) = &error
+    else {
+        panic!("not a status block: {error}");
+    };
+    assert_eq!(*boundary, crate::evidence::journal::Boundary::BeforeErase);
+    assert_eq!(
+        reasons,
+        &[crate::link::status::Blocking::SoftwareProtectedRange]
     );
+    assert_eq!(error.kind(), crate::error::ErrorKind::Refused);
     assert!(port.0.borrow().erased.is_empty());
     let stopped = receipt(&root, "t");
     assert_eq!(stopped.terminal_event, "transaction_stopped");
@@ -180,7 +186,12 @@ fn interrupted_mode_refuses_unknown_sector_content() {
     finish.interrupted = true;
 
     // The marker sector is not staged.
-    assert!(development::images(&finish, &old).is_err());
+    assert!(matches!(
+        development::images(&finish, &old),
+        Err(crate::Error::Development(
+            development::Error::MarkerNotStaged
+        ))
+    ));
 
     let (_, staged) = development::images(&update(Some(&source), &target, BANK1), &old).unwrap();
     let mut current = old.clone();
@@ -201,7 +212,12 @@ fn interrupted_mode_refuses_unknown_sector_content() {
     let mut two = current.clone();
     partial(&mut two, changed[0], 1);
     partial(&mut two, changed[1], 1);
-    assert!(development::images(&finish, &two).is_err());
+    assert!(matches!(
+        development::images(&finish, &two),
+        Err(crate::Error::Development(
+            development::Error::PartialSectors { count: 2 }
+        ))
+    ));
 
     // One is the state a stopped program leaves.
     let mut one = current.clone();
@@ -210,7 +226,12 @@ fn interrupted_mode_refuses_unknown_sector_content() {
 
     // Anything else is refused.
     one[changed[0] + 4000] = 0;
-    assert!(development::images(&finish, &one).is_err());
+    let unknown = development::images(&finish, &one).unwrap_err();
+    assert!(matches!(
+        unknown,
+        crate::Error::Development(development::Error::UnknownSector { offset })
+            if offset == BANK1.start + changed[0]
+    ));
 }
 
 #[test]
@@ -239,8 +260,19 @@ fn bank0_update_keeps_bank1_valid_and_never_frames_outside_bank0() {
         assert_eq!(&helper.flash[START..START + 8], MARKER);
     }
 
-    assert!(development::frame(&BANK0, 1, 0x156000, &[0; 1024]).is_err());
-    assert!(development::frame(&BANK0, 1, 0x5c00, &[0; 1024]).is_err());
+    for offset in [0x156000, 0x5c00] {
+        let error = development::frame(&BANK0, 1, offset, &[0; 1024]).unwrap_err();
+        let crate::Error::Sector(crate::link::sector::Error::PacketOutside { bank, offset: at }) =
+            &error
+        else {
+            panic!("not a bounded frame: {error}");
+        };
+        assert_eq!(
+            (*bank, *at),
+            (crate::link::sector::Bank::Development(0), offset)
+        );
+        assert_eq!(error.to_string(), "Packet outside aligned bank 0");
+    }
 
     // Bank 0 requires a valid bank 1.
     let (_checkout, root) = private_root();

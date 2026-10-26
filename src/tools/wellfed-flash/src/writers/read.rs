@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
-use crate::error::{Result, refuse, require};
+use crate::error::Result;
 use crate::evidence::report::{Session, Status, Transport};
 use crate::evidence::session::{self, Completion, Context, Outcome, progress};
 use crate::link::protocol::{
@@ -18,7 +18,32 @@ use crate::link::protocol::{
 };
 use crate::link::status::{self, Assessment};
 use wellfed_formats::canonical::sha256;
+use wellfed_formats::require;
 use wellfed_formats::session::Mode as ReportMode;
+
+/// The reader's own refusals: missing or unpinned inputs before the port
+/// opens, and unstable status or an unfinished read file after.
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("Two status observations required")]
+    StatusObservations { count: usize },
+    #[error("Status observations differ; stop without retry")]
+    StatusDiffers { first: [u8; 3], second: [u8; 3] },
+    #[error("Explicit candidate ROM is required")]
+    CandidateMissing,
+    #[error("Candidate is not a pinned SDK ROM")]
+    CandidateUnpinned { path: PathBuf },
+    #[error("A reviewed successful ROM inspection report is required")]
+    RomReportMissing,
+    #[error("A completed bounded read is required first")]
+    BoundedReadMissing,
+    #[error("The pinned helper is required")]
+    HelperMissing,
+    #[error("Final file length mismatch")]
+    FinalLength { bytes: u64, length: u64 },
+    #[error("Refusing to overwrite a completed read")]
+    WouldOverwrite { path: PathBuf },
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum Mode {
@@ -139,12 +164,12 @@ pub fn inspect_status(
     }
 
     let [first, second] = observations[..] else {
-        return refuse("Two status observations required");
+        return Err(Error::StatusObservations {
+            count: observations.len(),
+        }
+        .into());
     };
-    require(
-        first == second,
-        "Status observations differ; stop without retry",
-    )?;
+    require(first == second, || Error::StatusDiffers { first, second })?;
 
     Ok(StatusInspection {
         bank1_assessment: status::assess_range(second, 0x186000, 0x2D6000)?,
@@ -164,21 +189,15 @@ pub fn run(context: &Context, args: &Args) -> Result<Outcome> {
     let mut continued = None;
 
     match args.mode {
-        Mode::Observe => require(
-            (1.0..=180.0).contains(&args.seconds),
-            "Observation must be 1-180 seconds",
-        )?,
+        Mode::Observe => protocol::observation_window(args.seconds)?,
 
         Mode::InspectRom => {
-            require(
-                !args.candidate_rom.is_empty(),
-                "Explicit candidate ROM is required",
-            )?;
+            require(!args.candidate_rom.is_empty(), || Error::CandidateMissing)?;
             for path in &args.candidate_rom {
                 let data = fs::read(path)?;
                 require(
                     data.len() == ROM_BYTES && ROM_SHA256.contains(&sha256(&data).as_str()),
-                    "Candidate is not a pinned SDK ROM",
+                    || Error::CandidateUnpinned { path: path.clone() },
                 )?;
                 candidates.push((path.display().to_string(), data));
             }
@@ -187,7 +206,7 @@ pub fn run(context: &Context, args: &Args) -> Result<Outcome> {
         Mode::Small | Mode::Full | Mode::Status => {
             helper = Some(context.helper(args.helper.as_deref())?);
             let Some(rom) = args.rom_report.as_deref() else {
-                return refuse("A reviewed successful ROM inspection report is required");
+                return Err(Error::RomReportMissing.into());
             };
             session::validate_rom_report(context, rom)?;
 
@@ -202,7 +221,7 @@ pub fn run(context: &Context, args: &Args) -> Result<Outcome> {
 
             if args.mode == Mode::Full {
                 let Some(small) = args.small_report.as_deref() else {
-                    return refuse("A completed bounded read is required first");
+                    return Err(Error::BoundedReadMissing.into());
                 };
                 let raw = session::validate_small_for_full(context, small, &args.port)?;
                 continued = Some((small, raw));
@@ -285,7 +304,7 @@ pub fn run(context: &Context, args: &Args) -> Result<Outcome> {
             Mode::Small | Mode::Full => {
                 if args.mode == Mode::Small {
                     let Some(helper) = &helper else {
-                        return refuse("The pinned helper is required");
+                        return Err(Error::HelperMissing.into());
                     };
 
                     // Require the already-observed ROM loader; never auto-enter it.
@@ -342,14 +361,17 @@ fn full_or_small(port: &mut dyn Port, directory: &Path, mode: Mode) -> Result<Fl
     output.sync_all()?;
     drop(output);
 
-    require(
-        fs::metadata(&partial)?.len() == length as u64,
-        "Final file length mismatch",
-    )?;
+    let bytes = fs::metadata(&partial)?.len();
+    require(bytes == length as u64, || Error::FinalLength {
+        bytes,
+        length: length as u64,
+    })?;
 
     // Only a complete, length-checked read takes the final name.
     let finished = directory.join("flash-read.bin");
-    require(!finished.exists(), "Refusing to overwrite a completed read")?;
+    require(!finished.exists(), || Error::WouldOverwrite {
+        path: finished.clone(),
+    })?;
     fs::rename(&partial, &finished)?;
 
     Ok(FlashRead {

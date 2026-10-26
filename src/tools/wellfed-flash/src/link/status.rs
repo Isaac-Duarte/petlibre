@@ -5,9 +5,38 @@
 
 use serde::Serialize;
 
-use crate::error::{Result, refuse, require};
+use crate::error::Result;
 use crate::evidence::journal::{Boundary, Event, Record};
 use crate::link::protocol::{self, CAPACITY, Port};
+use wellfed_formats::require;
+
+/// A status read that refuses the mutation it guards; the registers are
+/// never written to clear it.
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("Range must be within the 8 MiB main array")]
+    RangeOutside { start: usize, end: usize },
+    #[error("Flash status changed between observations; mutation refused")]
+    Unstable {
+        boundary: Boundary,
+        first: [u8; 3],
+        second: [u8; 3],
+    },
+    #[error("Flash status blocks {boundary}: {}", names(.reasons))]
+    Blocked {
+        boundary: Boundary,
+        reasons: Vec<Blocking>,
+    },
+}
+
+/// The reasons as the refusal lists them, in assessment order.
+fn names(reasons: &[Blocking]) -> String {
+    reasons
+        .iter()
+        .map(|reason| reason.name())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct Range {
@@ -134,10 +163,10 @@ pub fn decode(sr1: u8, sr2: u8, sr3: u8) -> Decoded {
 /// Whether the software status permits writing `start..end`; physical
 /// write permission is never established here.
 pub fn assess_range(registers: [u8; 3], start: usize, end: usize) -> Result<Assessment> {
-    require(
-        start < end && end <= CAPACITY,
-        "Range must be within the 8 MiB main array",
-    )?;
+    require(start < end && end <= CAPACITY, || Error::RangeOutside {
+        start,
+        end,
+    })?;
 
     let [sr1, sr2, sr3] = registers;
     let decoded = decode(sr1, sr2, sr3);
@@ -206,7 +235,12 @@ pub fn check_status(
             first,
             second,
         })?;
-        return refuse("Flash status changed between observations; mutation refused");
+        return Err(Error::Unstable {
+            boundary,
+            first,
+            second,
+        }
+        .into());
     }
 
     let assessed = assess_range(second, start, end)?;
@@ -216,15 +250,10 @@ pub fn check_status(
         assessment: assessed.clone(),
     })?;
 
-    let reasons: Vec<&str> = assessed
-        .blocking_reasons
-        .iter()
-        .map(|reason| reason.name())
-        .collect();
-    require(
-        assessed.software_preconditions_met,
-        format!("Flash status blocks {boundary}: {}", reasons.join(", ")),
-    )?;
+    require(assessed.software_preconditions_met, || Error::Blocked {
+        boundary,
+        reasons: assessed.blocking_reasons.clone(),
+    })?;
 
     Ok(assessed)
 }
@@ -258,6 +287,21 @@ mod tests {
     }
 
     #[test]
+    fn a_block_lists_its_reasons_as_journals_record_them() {
+        let blocked = Error::Blocked {
+            boundary: Boundary::BeforeErase,
+            reasons: vec![Blocking::FlashBusy, Blocking::SoftwareProtectedRange],
+        };
+        assert_eq!(
+            blocked.to_string(),
+            format!(
+                "Flash status blocks {}: flash_busy, software_protected_range",
+                Boundary::BeforeErase
+            )
+        );
+    }
+
+    #[test]
     fn assessment_names_each_blocking_reason() {
         let clear = assess_range([0, 2, 0], 0x186000, 0x2d6000).unwrap();
         assert!(clear.software_preconditions_met);
@@ -277,7 +321,13 @@ mod tests {
             busy["protected_overlap"],
             json!([{"start": 0x186000, "end_exclusive": 0x2d6000}])
         );
-        assert!(assess_range([0, 0, 0], 5, 5).is_err());
+        assert!(matches!(
+            assess_range([0, 0, 0], 5, 5),
+            Err(crate::Error::Status(Error::RangeOutside {
+                start: 5,
+                end: 5
+            }))
+        ));
     }
 
     #[test]

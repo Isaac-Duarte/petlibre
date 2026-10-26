@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 use serde::de::IgnoredAny;
 
-use crate::error::{Result, refuse, require};
+use crate::error::Result;
 use crate::evidence::journal::{Boundary, Event};
 use crate::evidence::report::{Session, Status, SummaryStatus, Transport};
 use crate::evidence::session::{
@@ -29,8 +29,42 @@ use wellfed_formats::canonical::{canonical_of, sha256};
 use wellfed_formats::flash_plan::{
     DevelopmentPlan, GiveWayBindings, GiveWayPlan, Kind, Reviewed, UpdateBindings,
 };
+use wellfed_formats::require;
 use wellfed_formats::session::Mode as ReportMode;
 use wellfed_image::review::{Frozen, frozen};
+
+/// An update or give-way whose inputs, inspection or reviewed plan do not
+/// bind, checked before serial access, or an acquisition that came back
+/// short.
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("A source review is required for bank 1")]
+    SourceReviewMissing,
+    #[error(
+        "Overwriting bank 0 needs --original-read: a full flash read pinning its current contents"
+    )]
+    OriginalReadMissing,
+    #[error("The original read must be a full 8 MiB read")]
+    OriginalReadPartial { bytes: usize },
+    #[error("The original read's factory region differs")]
+    OriginalFactoryDiffers,
+
+    #[error("Permitted inspection status pair missing")]
+    StatusPairMissing,
+    #[error("Complete region/guards required")]
+    InspectedRegions,
+    #[error("Complete guard acquisition required")]
+    InspectedGuards,
+    #[error("Operation differs before serial access")]
+    OperationDiffers,
+    #[error("Execution bindings differ before serial access")]
+    BindingsDiffer,
+
+    #[error("Incomplete region acquisition")]
+    IncompleteRegions { count: usize },
+    #[error("Incomplete guard acquisition")]
+    IncompleteGuards { count: usize },
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum Mode {
@@ -196,10 +230,9 @@ fn load(context: &Context, args: &Args) -> Result<Loaded> {
         .as_deref()
         .map(|path| frozen(root, path, &layout))
         .transpose()?;
-    require(
-        source.is_some() || layout.bank == 0,
-        "A source review is required for bank 1",
-    )?;
+    require(source.is_some() || layout.bank == 0, || {
+        Error::SourceReviewMissing
+    })?;
 
     let target = frozen(root, &args.target, &layout)?;
     let (baseline, rom, small) = continued(context, &args.evidence)?;
@@ -208,19 +241,15 @@ fn load(context: &Context, args: &Args) -> Result<Loaded> {
         Some(_) => None,
         None => {
             let Some(path) = args.original_read.as_deref() else {
-                return refuse(
-                    "Overwriting bank 0 needs --original-read: a full flash read pinning its current contents",
-                );
+                return Err(Error::OriginalReadMissing.into());
             };
             let read = root.private_file(path)?;
-            require(
-                read.len() == CAPACITY,
-                "The original read must be a full 8 MiB read",
-            )?;
-            require(
-                read[..0x6000] == baseline.bytes()[..0x6000],
-                "The original read's factory region differs",
-            )?;
+            require(read.len() == CAPACITY, || Error::OriginalReadPartial {
+                bytes: read.len(),
+            })?;
+            require(read[..0x6000] == baseline.bytes()[..0x6000], || {
+                Error::OriginalFactoryDiffers
+            })?;
             Some(read)
         }
     };
@@ -255,7 +284,7 @@ fn load(context: &Context, args: &Args) -> Result<Loaded> {
 }
 
 /// The one permitted status pair an inspection must have recorded.
-fn status_permitted(report: &Saved<IgnoredAny>) -> Result<()> {
+fn status_permitted(report: &Saved<IgnoredAny>) -> Result<(), Error> {
     let checks = report.status_checks.as_deref();
     require(
         checks.is_some_and(|c| {
@@ -267,7 +296,7 @@ fn status_permitted(report: &Saved<IgnoredAny>) -> Result<()> {
                     .and_then(|a| a.software_preconditions_met)
                     == Some(true)
         }),
-        "Permitted inspection status pair missing",
+        || Error::StatusPairMissing,
     )
 }
 
@@ -283,13 +312,10 @@ fn inspected(
         &loaded.bindings,
     )?;
 
-    let [factory, other, application] = session::inspected_transfers(
-        &context.root,
-        &path,
-        &report,
-        &loaded.extents()?,
-        "Complete region/guards required",
-    )?;
+    let [factory, other, application] =
+        session::inspected_transfers(&context.root, &path, &report, &loaded.extents()?, || {
+            Error::InspectedRegions
+        })?;
 
     development::guards(&loaded.baseline, &factory, &other, &loaded.layout, None)?;
     development::images(&loaded.update(), &application)?;
@@ -337,11 +363,11 @@ pub fn run(context: &Context, args: &Args) -> Result<Outcome> {
                 &current,
                 Some(&other),
             )?)?,
-        "Operation differs before serial access",
+        || Error::OperationDiffers,
     )?;
     require(
         canonical_of(&reviewed.bindings)? == canonical_of(&loaded.bindings)?,
-        "Execution bindings differ before serial access",
+        || Error::BindingsDiffer,
     )?;
 
     let execution = Execution {
@@ -405,8 +431,9 @@ fn session_run(
             report.update(|r| r.details.observations.push(observation))?;
             progress(&format!("Region acquisition {number} complete"));
 
+            let count = values.len();
             let Ok([factory, other, application]) = <[Vec<u8>; 3]>::try_from(values) else {
-                return refuse("Incomplete region acquisition");
+                return Err(Error::IncompleteRegions { count }.into());
             };
             Ok(Acquired {
                 application,
@@ -580,18 +607,14 @@ pub fn give_way(context: &Context, args: &GiveWayArgs) -> Result<Outcome> {
     let extents = loaded
         .extents()?
         .map(|(_, offset, length)| (offset, length));
-    let [factory, bank0, bank1] = session::inspected_transfers(
-        &context.root,
-        &path,
-        &report,
-        &extents,
-        "Complete guard acquisition required",
-    )?;
+    let [factory, bank0, bank1] =
+        session::inspected_transfers(&context.root, &path, &report, &extents, || {
+            Error::InspectedGuards
+        })?;
 
-    require(
-        factory == loaded.baseline.bytes()[..0x6000],
-        "Factory region differs from the pinned baseline",
-    )?;
+    require(factory == loaded.baseline.bytes()[..0x6000], || {
+        development::Error::FactoryDiffers
+    })?;
 
     let reviewed = Reviewed {
         bindings: loaded.bindings.clone(),
@@ -662,8 +685,9 @@ fn give_way_session(
             report.update(|r| r.details.observations.push(observation))?;
             progress(&format!("Guard acquisition {number} complete"));
 
+            let count = values.len();
             let Ok(values) = <[Vec<u8>; 3]>::try_from(values) else {
-                return refuse("Incomplete guard acquisition");
+                return Err(Error::IncompleteGuards { count }.into());
             };
             Ok(values)
         };
@@ -671,10 +695,9 @@ fn give_way_session(
         match &execution {
             None => {
                 let [factory, region, first] = acquire(&mut port)?;
-                require(
-                    factory == loaded.baseline.bytes()[..0x6000],
-                    "Factory region differs from the pinned baseline",
-                )?;
+                require(factory == loaded.baseline.bytes()[..0x6000], || {
+                    development::Error::FactoryDiffers
+                })?;
                 development::give_way_plan(&loaded.fallback, &region, &first)?;
 
                 // Written with the report at its next save.
@@ -729,12 +752,13 @@ mod tests {
     use super::*;
     use crate::evidence::Root;
     use crate::evidence::session::Pin;
+    use crate::link::protocol;
 
     fn context(checkout: &Path) -> Context {
         Context {
             root: Root::new(checkout).unwrap(),
             tool_sha256: "t".repeat(64),
-            open: Box::new(|_| refuse("No port in this test")),
+            open: Box::new(|_| Err(protocol::Error::Interrupted.into())),
             pin: Pin::Research,
         }
     }
@@ -826,7 +850,8 @@ mod tests {
                 second: [1, 0, 0],
             })
         });
-        let outcome = finish(&directory, report, refuse("No port"), None).unwrap();
+        let stopped = Err(protocol::Error::Interrupted.into());
+        let outcome = finish(&directory, report, stopped, None).unwrap();
 
         let closed = saved(&directory.join("report.json"));
         assert_eq!(
@@ -840,14 +865,14 @@ mod tests {
                                    "first": [0, 0, 0], "second": [1, 0, 0]}],
                 "application_boot_verified": false,
                 "tool": "wellfed-flash", "transport": "serial",
-                "error": "refused: No port", "end_utc": closed["end_utc"],
+                "error": "refused: Interrupted by the operator; no retry", "end_utc": closed["end_utc"],
             })
         );
         assert_eq!(outcome.completion, Completion::Stopped);
         assert_eq!(
             outcome.summary,
             json!({"status": "stopped", "mode": "inspect", "output": directory,
-                   "result": null, "error": "refused: No port"})
+                   "result": null, "error": "refused: Interrupted by the operator; no retry"})
         );
     }
 }

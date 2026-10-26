@@ -13,12 +13,42 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 use serde_json::{Map, Value};
 
-use crate::error::{ErrorKind, Result, refuse, require};
+use crate::error::{ErrorKind, Result};
 use crate::evidence::report::SummaryStatus;
 use crate::evidence::{Root, sync_directory, utc};
 use crate::link::status::Assessment;
 use wellfed_formats::canonical::{canonical, canonical_of, sha256};
 use wellfed_formats::flash_plan::{DevelopmentPlan, GiveWayPlan};
+use wellfed_formats::require;
+
+/// A journal that cannot be created or appended to, or one that does not
+/// inspect as an unbroken hash chain. Entries are numbered from zero.
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("Journal output must be a new private directory")]
+    OutputNotPrivate { path: PathBuf },
+    #[error("Journal parent must already exist")]
+    ParentMissing { path: PathBuf },
+    #[error("Journal failed previously; no append or replay")]
+    Poisoned,
+    #[error("Journal events must be objects")]
+    EventNotObject,
+    #[error("Journal events must be named")]
+    EventUnnamed,
+
+    #[error("Oversized or incomplete journal line")]
+    Truncated { bytes: usize },
+    #[error("Unexpected journal fields")]
+    UnexpectedFields { sequence: usize },
+    #[error("Unexpected journal event")]
+    UnexpectedEvent { sequence: usize },
+    #[error("Broken journal ordering/hash link")]
+    BrokenLink { sequence: usize },
+    #[error("Journal content hash mismatch")]
+    HashMismatch { sequence: usize },
+    #[error("Empty journal")]
+    Empty,
+}
 
 /// Intent events after which flash may already differ from the preimage.
 const MUTATIONS: [&str; 3] = [
@@ -266,12 +296,15 @@ impl Journal {
     /// A new private directory; an existing one is terminal, never resumed.
     pub fn create(root: &Root, output: &Path) -> Result<Self> {
         let output = std::path::absolute(output)?;
-        require(
-            !output.is_symlink() && root.is_private(&output),
-            "Journal output must be a new private directory",
-        )?;
+        require(!output.is_symlink() && root.is_private(&output), || {
+            Error::OutputNotPrivate {
+                path: output.clone(),
+            }
+        })?;
         let parent = output.parent().map(Path::to_path_buf).unwrap_or_default();
-        require(parent.is_dir(), "Journal parent must already exist")?;
+        require(parent.is_dir(), || Error::ParentMissing {
+            path: parent.clone(),
+        })?;
 
         fs::DirBuilder::new().mode(0o700).create(&output)?;
         let stream = OpenOptions::new()
@@ -299,16 +332,13 @@ impl Journal {
     /// Append one event: anything that serializes to an object with a string
     /// `event` name, normally an [`Event`] or an [`At`].
     pub fn append(&mut self, event: &impl Serialize) -> Result<()> {
-        require(
-            !self.failed,
-            "Journal failed previously; no append or replay",
-        )?;
+        require(!self.failed, || Error::Poisoned)?;
 
         let Value::Object(body) = serde_json::to_value(event)? else {
-            return refuse("Journal events must be objects");
+            return Err(Error::EventNotObject.into());
         };
         let Some(Value::String(name)) = body.get("event") else {
-            return refuse("Journal events must be named");
+            return Err(Error::EventUnnamed.into());
         };
         let mutation = MUTATIONS.contains(&name.as_str());
 
@@ -403,7 +433,7 @@ pub fn inspect(data: &[u8]) -> Result<Receipt> {
         .strip_suffix(b"\n")
         .filter(|_| data.len() <= 4 * 1024 * 1024)
     else {
-        return refuse("Oversized or incomplete journal line");
+        return Err(Error::Truncated { bytes: data.len() }.into());
     };
 
     let mut head = ZERO.to_string();
@@ -414,34 +444,34 @@ pub fn inspect(data: &[u8]) -> Result<Receipt> {
         keys.sort();
         require(
             keys == ["event", "previous_sha256", "sequence", "sha256", "utc"],
-            "Unexpected journal fields",
+            || Error::UnexpectedFields { sequence },
         )?;
 
         let name = match entry["event"].get("event") {
             Some(Value::String(name)) => name.clone(),
-            _ => return refuse("Unexpected journal event"),
+            _ => return Err(Error::UnexpectedEvent { sequence }.into()),
         };
         require(
             entry["sequence"].as_u64() == u64::try_from(sequence).ok()
                 && entry["previous_sha256"] == head.as_str(),
-            "Broken journal ordering/hash link",
+            || Error::BrokenLink { sequence },
         )?;
 
         let supplied = entry.remove("sha256");
         let digest = sha256(&canonical(&Value::Object(entry.clone()))?);
         let Some(Value::String(supplied)) = supplied.filter(|s| *s == digest.as_str()) else {
-            return refuse("Journal content hash mismatch");
+            return Err(Error::HashMismatch { sequence }.into());
         };
 
         let Some(Value::Object(event)) = entry.remove("event") else {
-            return refuse("Unexpected journal event");
+            return Err(Error::UnexpectedEvent { sequence }.into());
         };
         head = supplied;
         events.push((name, event));
     }
 
     let (Some((first, opening)), Some((last, terminal))) = (events.first(), events.last()) else {
-        return refuse("Empty journal");
+        return Err(Error::Empty.into());
     };
 
     Ok(Receipt {
@@ -499,7 +529,10 @@ mod tests {
             .unwrap();
         journal.save_report(&json!({"status": "ok"})).unwrap();
 
-        assert!(Journal::create(&root, &output).is_err());
+        assert!(matches!(
+            Journal::create(&root, &output),
+            Err(crate::Error::Io(_))
+        ));
 
         let data = fs::read(output.join("journal.jsonl")).unwrap();
         let receipt = inspect(&data).unwrap();
@@ -516,9 +549,19 @@ mod tests {
         let tampered = String::from_utf8(data.clone())
             .unwrap()
             .replace("1597440", "1597441");
-        assert!(inspect(tampered.as_bytes()).is_err());
-        assert!(inspect(&data[..data.len() - 1]).is_err());
-        assert!(inspect(b"").is_err());
+        let refusal = |data: &[u8]| match inspect(data) {
+            Err(crate::Error::Journal(error)) => error,
+            other => panic!("not a journal refusal: {other:?}"),
+        };
+        assert!(matches!(
+            refusal(tampered.as_bytes()),
+            Error::HashMismatch { sequence: 1 }
+        ));
+        assert!(matches!(
+            refusal(&data[..data.len() - 1]),
+            Error::Truncated { .. }
+        ));
+        assert!(matches!(refusal(b""), Error::Truncated { bytes: 0 }));
     }
 
     #[test]
@@ -528,8 +571,14 @@ mod tests {
         let root = Root::new(checkout.path()).unwrap();
         let mut journal = Journal::create(&root, &checkout.path().join("private/t")).unwrap();
 
-        assert!(journal.append(&json!([1])).is_err());
-        assert!(journal.append(&json!({"offset": 1})).is_err());
+        assert!(matches!(
+            journal.append(&json!([1])),
+            Err(crate::Error::Journal(Error::EventNotObject))
+        ));
+        assert!(matches!(
+            journal.append(&json!({"offset": 1})),
+            Err(crate::Error::Journal(Error::EventUnnamed))
+        ));
         assert!(journal.append(&Event::ProgramEotIntent {}).is_ok());
     }
 
@@ -538,7 +587,13 @@ mod tests {
         let checkout = tempfile::tempdir().unwrap();
         fs::create_dir(checkout.path().join("private")).unwrap();
         let root = Root::new(checkout.path()).unwrap();
-        assert!(Journal::create(&root, &checkout.path().join("elsewhere")).is_err());
-        assert!(Journal::create(&root, &checkout.path().join("private/missing/t")).is_err());
+        assert!(matches!(
+            Journal::create(&root, &checkout.path().join("elsewhere")),
+            Err(crate::Error::Journal(Error::OutputNotPrivate { .. }))
+        ));
+        assert!(matches!(
+            Journal::create(&root, &checkout.path().join("private/missing/t")),
+            Err(crate::Error::Journal(Error::ParentMissing { .. }))
+        ));
     }
 }

@@ -149,7 +149,7 @@ Cancellation during motion passed on October 25 (`feedwrites-20261025-01`, v173:
 
 ## A stalled loop and a failed stop during a feed
 
-Status: the two variants are built and their audits pass; host tests and the virtual feeder cover them (static analysis and simulation, October 26). Not yet run on hardware.
+Status: passed on hardware, October 26 (physical, unattended, hopper empty, no batteries; [result](#result-october-26)); host tests and the virtual feeder cover the same cases.
 
 Two opt-in variants of `feeder` inject one fault into each feed, 2 s (`INJECT_AFTER_MS`) into its drive, so the motor is running and past its start-up surge. They show, with real motion, the supervision that does not depend on the loop or on the stop path: the TIM2 interrupt's motor lease and its stop retry, the owner's beat, and the runtime's watchdog. The normal `feeder` image has neither: `feed-stall` is a feature of the firmware crate only, and `stop-fail` also enables `wellfed-hal`'s `stop-fail` feature, without which the injection is not compiled. Nothing else changes: no startup motion, feeds only from the device API, the same limits, the same journal and no-retry rule. The requested portions pick the case, so the bench needs no new operation:
 
@@ -205,12 +205,28 @@ About 45 minutes: three over-the-air installs to bank 1 (no bank-0 write) and fo
 
 **Pass:** for every feed, the analyzer shows one drive (D3 HIGH, clockwise) that ends where the table says: about 2.2 s for both stalls (the lease), about 2.3 s for the short failed stop, and at the reset for the long one (2 s plus at most about 7 s); the UART shows the injection record, the stop or reset, and the expected `fed` record on the right boot, with no second drive after a reset and no `PLINJ1 stall … end` or `hold lifted` after a long case. A flat analyzer capture through a drive the firmware reports is a failed capture, not evidence.
 
+### Result (October 26)
+
+Physical, unattended, hopper empty, adapter only (health `battery_mv` null). `feed-stall` v228 (`7e367b6a…`) and `stop-fail` v229 (`5166022b…`) each installed over the air to bank 1 and confirmed before any feed; the normal `feeder` v230 (`aa3c7f3f…`, the same branch) was restored and confirmed afterwards. Analyzer at the motor, 1 MHz, all eight channels; UART times are host timestamps from `PLOWN1 state=4` (drive start).
+
+| Feed | Case | Injection (UART) | Drive at the motor (D3 HIGH, D2 LOW) | Result | Reset |
+| --- | --- | --- | --- | --- | --- |
+| 26 (`fw16-stall-20261026-02`) | stall 600 ms | 2.03 s | 2,210 ms: ended about 0.18 s after the injection, by the lease | `outcome=4 reason=12 durable=1` (failed, output), `Fed` received by the client | `PLSUP1 stop owner_age=1116`, reset 3.8 s later; next boot Idle, high water 26 |
+| 27 (`fw16-stall-20261026-03`) | stall 8 s | 2.05 s | 2,227 ms: by the lease | No `stall end`: the watchdog reset the board inside the spin (`PLSUP1 stop owner_age=1043`, reset 3.8 s later). The client lost its session; next boot `fed id=27 outcome=5` (uncertain, by the feeder) | Yes |
+| 28 (`fw16-stopfail-20261026-02`) | failed stop, 300 ms | 2.03 s | 2,317 ms: about 0.29 s after the injection, at the first retry after the hold (`hold lifted=1 skipped=60`) | `outcome=2 durable=1` (cancelled), owner fault hardware, `Fed` received | `PLSUP1 stop owner_age=1076`, reset 3.8 s later; next boot Idle |
+| 29 (`fw16-stopfail-20261026-03`) | failed stop, 8 s | 2.01 s | 6,995 ms: until the reset, about 5 s after the injection | `PLSUP1 stop outputs=0 owner_age=1172`, reset 3.8 s later, no `hold lifted`; next boot `fed id=29 outcome=5` (uncertain) | Yes |
+
+- Each capture shows one drive and none after a reset; the next boots went from standby to brake with no differing read. At feed 29's reset the two leads read differently three times for 38–110 µs within 0.2 ms, as the driver's outputs went to standby under a turning motor; no drive followed.
+- No boot skipped arming; every interrupted feed resolved at the next boot and none was re-run. The client was not retried. Journal high water 29.
+- The four resets each came 3.80–3.83 s after the runtime withheld the refresh, which it had last given about 250 ms earlier (`fed_ms`): about 4.05 s from the last refresh, the 32.8 kHz of October 25.
+- The `Fed` events for feeds 26–29 are in the event history: failed, uncertain, cancelled, uncertain.
+
 ### Carried items owned by FW16
 
 | Item | Where it stands |
 | --- | --- |
-| Production watchdog clock bounds | The October 25 resets put the clock near 32.8 kHz (physical); the bounds stay 24–54 kHz. FW16 depends only on the wide bound: the long injections are sized past its 6 s ceiling, and the two long runs add two more reset timings. Narrowing the bounds is not needed for FW16; carry it to FW19, whose stop timing under motion uses them |
-| Owner-lease expiry while the loop stalls, on hardware | Closed by the `feed-stall` runs once they pass |
+| Production watchdog clock bounds | The October 25 resets put the clock near 32.8 kHz (physical); the bounds stay 24–54 kHz. FW16 depends only on the wide bound: the long injections are sized past its 6 s ceiling. The October 26 runs added four reset timings, each about 4.05 s from the last refresh (32.4–32.8 kHz). Narrowing the bounds is not needed for FW16; carry it to FW19, whose stop timing under motion uses them |
+| Owner-lease expiry while the loop stalls, on hardware | Closed (physical, October 26): both stalls ended the drive about 0.2 s after the injection, by the lease ([result](#result-october-26)) |
 | PA18 feedback | Closed (physical, October 25): PA18 is the rotor's mark sensor, one mark per portion, credited on its rise. Counting food through the outlet beam (PA16 changed as food fell, not yet qualified) goes to FW18, which measures delivered food |
 | Motor current on ADC channel 4 | Loaded readings exist (physical): scaled 59–64 mean, about 166 max empty, 82–87 mean with food, a 333 start-up surge on one poll, now ignored unless two polls agree. Scaling to milliamps needs a reference measurement of the motor's current (a meter or USB power meter in series), which is the owner's; with it, the thresholds go to FW19 |
 | Journal reservation before motion and result after a verified stop | Closed (physical, October 25): every owner feed reserved before driving and finished durably after a verified stop, cancellation during motion included, and an interrupted feed resolves as uncertain at the next boot (AR24). The failed-stop runs add the case where the stop does not verify at once |

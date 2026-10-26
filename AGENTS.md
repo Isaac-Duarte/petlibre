@@ -74,7 +74,7 @@ A skipped or missing fixture is not a passing check. `make check-app` arrives wi
 
 For an agent working an owner-assigned firmware task:
 - It may flash any flash region through the reviewed bench tools, as many times as needed.
-- For live tests it may bring the feeder hotspot up and run `wellfed-local serve`, including OTA offers, as a bounded foreground test process.
+- For live tests it may bring the feeder hotspot up and run `wellfed-stock serve` (until October 26, `wellfed-local serve`), including OTA offers, as a bounded foreground test process.
 - Afterwards it must restore the prior network and service state and record what ran.
 
 This does not cover motor motion, host firewall or system-service changes, publishing outside this repository's remote, or weakening any pinned check above.

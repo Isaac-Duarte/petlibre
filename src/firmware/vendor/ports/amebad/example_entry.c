@@ -59,7 +59,7 @@ enum {
     /* 7 was the internet DNS check; never reused. */
     WELLFED_EV_GATEWAY = 8, /* result: 0 or a WELLFED_ECHO_* failure; value: the gateway's IPv4 (host order); ms */
     WELLFED_EV_LEAVE = 9,   /* result: wifi_disconnect; value: 1 still associated at the bound; ms */
-    WELLFED_EV_AP = 10,     /* after an address: result: the channel, or -1; value: the BSSID's last 4 bytes */
+    WELLFED_EV_AP = 10,     /* after an address: result: the channel (1-14, 36-177), or -1; value: the BSSID's last 4 bytes */
     WELLFED_EV_RENEW = 11,  /* lwIP's DHCP client took a new ACK without a rejoin (renew or rebind) */
 };
 
@@ -244,8 +244,13 @@ static int wellfed_join_once(unsigned int attempt)
  * four bytes of its BSSID, which tell a home's few access points apart. */
 static void wellfed_access_point(unsigned int attempt)
 {
-    int channel = -1;
-    if (wifi_get_channel(&channel) != RTW_SUCCESS) {
+    /* wifi_get_channel takes an int * but hands it to wext_get_channel as a
+     * u8 *, so only the low byte is written: the int starts at zero for the
+     * rest to read as the channel. AmebaD is dual band, so a 2.4 GHz
+     * (1-14) or 5 GHz (36-177) channel; anything else is none (-1). */
+    int channel = 0;
+    if (wifi_get_channel(&channel) != RTW_SUCCESS ||
+        !((channel >= 1 && channel <= 14) || (channel >= 36 && channel <= 177))) {
         channel = -1;
     }
     unsigned char bssid[6] = {0};

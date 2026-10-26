@@ -199,6 +199,19 @@ fn the_link_figures_follow_the_shim_events() {
     let status = net_status::read();
     assert_eq!((status.channel, status.ap_changes), (Some(11), 1));
 
+    // A 5 GHz channel is a channel too.
+    event(WifiEvent::AP, 36, 0x5566_7788, 0);
+    assert_eq!(net_status::read().channel, Some(36));
+
+    // Channel 6 written over the low byte of a -1 (0xFFFFFF06), and values
+    // that are no channel, all read as none.
+    for result in [-250, 0, 15, 35, 178, 255, 256 + 6] {
+        event(WifiEvent::AP, result, 0x5566_7788, 0);
+        assert_eq!(net_status::read().channel, None, "result {result}");
+    }
+    event(WifiEvent::AP, 14, 0x5566_7788, 0);
+    assert_eq!(net_status::read().channel, Some(14));
+
     lost(Cause::Link);
     assert_eq!(
         net_status::read().channel,

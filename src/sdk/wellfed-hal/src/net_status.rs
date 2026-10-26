@@ -83,8 +83,7 @@ pub fn observe(event: &WifiEvent) {
             GATEWAY_ANSWERS.fetch_add(1, Ordering::Relaxed);
         }
         WifiEvent::AP => {
-            let channel = u32::try_from(event.result).unwrap_or(0);
-            CHANNEL.store(channel, Ordering::Relaxed);
+            CHANNEL.store(channel(event.result), Ordering::Relaxed);
             // An unread BSSID (0) says nothing about which one it was.
             if event.value != 0 {
                 let before = ACCESS_POINT.swap(event.value, Ordering::Relaxed);
@@ -98,6 +97,18 @@ pub fn observe(event: &WifiEvent) {
         }
         _ => {}
     }
+}
+
+/// An access point event's channel, 0 for none. The shim checks it too, but
+/// this is the decode boundary: the SDK's `wifi_get_channel` writes one byte
+/// of its `int`, so a shim that misses that sends -250 for channel 6 over a
+/// -1. Anything outside the 2.4 GHz (1-14) and 5 GHz (36-177) channels of a
+/// dual-band AmebaD reads as none rather than as a channel.
+fn channel(result: i32) -> u32 {
+    u32::try_from(result)
+        .ok()
+        .filter(|channel| matches!(channel, 1..=14 | 36..=177))
+        .unwrap_or(0)
 }
 
 /// The current join's liveness (the Wi-Fi task's watch only).

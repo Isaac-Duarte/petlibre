@@ -14,6 +14,7 @@ use wellfed_hal::board::MOTOR_MASK;
 use wellfed_hal::inject::{self, Hold, MAX_HOLD_MS};
 use wellfed_hal::owner::{OwnerFault, OwnerState};
 use wellfed_hal::sdk::fake;
+use wellfed_hal::supervision::config::SYSTIMER_HZ;
 
 /// The hold is one static for the process, unlike the per-thread fake, so
 /// the tests take turns when run as threads of one process.
@@ -68,7 +69,7 @@ fn a_hold_is_bounded_and_leaves_drive_writes_alone() {
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     fake::reset_hardware();
     inject::hold_stops(u32::MAX);
-    fake::advance(MAX_HOLD_MS / 1000 * 32_768 - 1, false);
+    fake::advance(MAX_HOLD_MS / 1000 * SYSTIMER_HZ - 1, false);
     assert!(inject::status().armed);
     fake::advance(2, false);
     assert_eq!(

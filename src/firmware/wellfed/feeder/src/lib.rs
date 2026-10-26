@@ -19,7 +19,7 @@
 //! measures how long the loop and a priority-4 task wait across Wi-Fi
 //! rejoins (`gaps`), with feeds refused. The `feed-stall` and `stop-fail`
 //! variants inject a stalled loop or a stop that does not take into each
-//! feed's drive ([`faults`]), for the bench to show the supervision that
+//! feed's drive (`faults`), for the bench to show the supervision that
 //! ends a drive without them.
 //!
 //! [product architecture]: ../../../../docs/firmware/product-architecture.md
@@ -31,6 +31,7 @@ compile_error!("wellfed-fw-feeder target builds are KM4-only");
 #[cfg(target_os = "none")]
 mod app;
 pub mod entropy;
+#[cfg(any(test, feature = "feed-stall", feature = "stop-fail"))]
 pub mod faults;
 pub mod feeding;
 pub mod gaps;

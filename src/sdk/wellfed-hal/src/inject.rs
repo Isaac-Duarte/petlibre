@@ -19,10 +19,21 @@ use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use crate::sdk;
 use crate::supervision::config::SYSTIMER_HZ;
 
-/// The longest hold: past the owner's 1 s beat and the watchdog's longest
-/// expiry (5.46 s), with margin, so a long hold shows the watchdog's reset
+/// The longest hold: past the owner's 1 s beat plus the configured ceiling
+/// on the watchdog's expiry (`WATCHDOG.max_expiry_ms`, 6 s, above its
+/// 5.46 s bound), with margin, so a long hold shows the watchdog's reset
 /// rather than its own lift, and no longer.
 pub const MAX_HOLD_MS: u32 = 10_000;
+
+/// `MAX_HOLD_MS` in SYSTIMER ticks.
+const MAX_HOLD_TICKS: u32 = MAX_HOLD_MS / 1000 * SYSTIMER_HZ;
+
+const _: () = assert!(
+    MAX_HOLD_MS.is_multiple_of(1000)
+        && MAX_HOLD_MS
+            > crate::supervision::config::WATCHDOG.max_progress_gap_ms
+                + crate::supervision::config::WATCHDOG.max_expiry_ms
+);
 
 static ARMED: AtomicBool = AtomicBool::new(false);
 static FROM: AtomicU32 = AtomicU32::new(0);
@@ -45,8 +56,7 @@ pub struct Hold {
 pub fn hold_stops(ms: u32) {
     let ms = ms.min(MAX_HOLD_MS);
     let ticks = u64::from(ms) * u64::from(SYSTIMER_HZ) / 1000;
-    // At most 10 s of a 32 kHz clock: far inside a u32.
-    let ticks = u32::try_from(ticks).unwrap_or(u32::MAX);
+    let ticks = u32::try_from(ticks).map_or(MAX_HOLD_TICKS, |t| t.min(MAX_HOLD_TICKS));
 
     let _guard = sdk::IrqGuard::lock();
     FROM.store(sdk::systimer_ticks(), Ordering::Relaxed);

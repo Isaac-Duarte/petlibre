@@ -360,8 +360,11 @@ pub enum Command {
     AdcStuck {
         args: [Flag; 1],
     },
-    /// Motor writes do not take: the pins keep what they drive, and a
-    /// write's readback fails, as the `stop-fail` variant's held STOP does.
+    /// Every motor write fails to take (drives as well as STOP): the pins keep
+    /// what they drive and each write's readback fails. Set while the motor
+    /// drives, this matches the `stop-fail` variant's held STOP, since the
+    /// faulted gate then writes nothing but STOP; the variant itself holds
+    /// only STOP.
     StopFails {
         args: [Flag; 1],
     },

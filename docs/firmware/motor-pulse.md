@@ -169,6 +169,8 @@ The lengths are pinned against the supervision bounds at compile time (`faults.r
 
 The hold only skips STOP; a drive write is untouched, and the faulted gate issues none. It is bounded twice: the variant asks for 300 ms or 8 s, and the SDK caps any hold at 10 s (`MAX_HOLD_MS`). After the hold lifts, the timer's next retry stops the motor even if the watchdog never reset, so the long case's drive is at most about 10 s (2 s before the injection plus the 8 s hold), whatever else fails. The hold is a static in RAM and starts disarmed at every boot.
 
+Both variants inject into every feed they run, whatever starts it (the device API, and the Dispense button or a schedule once those feed), so never leave one installed: put the normal `feeder` back right after the run.
+
 **The stall** spins in the loop task with interrupts enabled, like `owner-stall`, so the TIM2 interrupt and the runtime's watchdog feeder keep running while the owner is not stepped.
 
 ### Records

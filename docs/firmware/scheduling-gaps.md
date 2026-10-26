@@ -43,7 +43,7 @@ At startup, `PLGAP1 task created=1` (or `=0` if `spawn` refused the task).
 | `worst` | The longest `max` since boot, so a gap between captures loses nothing |
 | `gen` | The Wi-Fi generation, bumped by every join (DHCP address) and every loss |
 | `att` | The join attempt of the last successful scan |
-| `lost`, `dns` | Link losses and DNS losses since boot |
+| `lost`, `dns` | Losses since boot: of the association, and those the link check noticed (lease or gateway; the internet DNS check before October 25) |
 | `rejoin` | 1 when `gen` changed during the window: the link was lost or joined |
 
 The shim's own `PLWIF3` records (scan, connect, DHCP, loss, backoff, with their durations) fall between the `PLGAP1` lines and show where in a window a join ran.
@@ -83,7 +83,7 @@ Bank 1 was then restored to the reviewed `e43324be…` (v171, `ar9-restore-20261
 
 ## The interlock (static analysis and host tests)
 
-`wellfed_hal::interlock` holds whose turn it is, in one atomic the loop and the C Wi-Fi task share, with no change to the C shim. The loop claims the outputs before it submits a feed and releases them once no feed is in flight and the owner is at rest with motor STOP and the emitters off. The shim calls `wellfed_wifi_select` before each attempt and `wellfed_wifi_outcome` after it, so the select takes the join's turn and the outcome ends it: the turn covers the scan, the association and DHCP.
+`wellfed_hal::interlock` holds whose turn it is, in one atomic the loop and the C Wi-Fi task share, with no change to the C shim. The loop claims the outputs before it submits a feed and releases them once no feed is in flight and the owner is at rest with motor STOP and the emitters off. The shim calls `wellfed_wifi_select` before each attempt and `wellfed_wifi_outcome` after it, so the select takes the join's turn and the outcome ends it: the turn covers the scan, the association and DHCP. Watching a joined link takes no turn. Since October 25 that watch no longer leaves a network that has no internet, so such a network no longer costs a rejoin, and a refused feed, every few seconds ([link liveness](startup-diagnostics.md#link-liveness-without-internet-dns)).
 
 - **A feed during a join** is refused `Busy` (`PLOWN1 feed portions=… held=1`), which clients treat as final for that write id.
 - **A join during a feed** waits in the Wi-Fi task, looking again every 50 ms, and marks itself waiting: a second feed is refused (`held=2`) and the release hands the turn straight to the join, so feeds back to back cannot starve it. Joins cannot starve feeds either: an attempt ends within the shim's 10 s scan wait plus one association and one DHCP run, and attempts back off at least 1 s. The association and DHCP runs are bounded only by the vendor SDK's own timeouts inside `wifi_connect` and `LwIP_DHCP` (prebuilt, not in this repository), so the loop counts a join that holds its turn past 60 s (`LONG_JOIN_MS`, logged as `PLOWN1 interlock … long_joins=`); feeds stay refused while it does.

@@ -253,7 +253,7 @@ impl Link {
 
         if self.ready() {
             let wifi = net_status::read();
-            let losses = wifi.link_losses.wrapping_add(wifi.dns_losses);
+            let losses = wifi.link_losses.wrapping_add(wifi.check_losses);
             let trigger = if losses != self.losses_seen {
                 Some(Trigger::Change)
             } else if now.wrapping_sub(self.published_at) >= mqtt::HEALTH_PERIOD_MS {
@@ -277,7 +277,7 @@ impl Link {
         let waiting = self
             .retry
             .is_some_and(|(from, wait)| now.wrapping_sub(from) < wait);
-        if !wifi.dns_ok || waiting {
+        if !wifi.live || waiting {
             return IDLE_MS;
         }
 

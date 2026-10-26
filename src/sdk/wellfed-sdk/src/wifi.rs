@@ -1,9 +1,10 @@
 //! Bench probe on KM4: join the configured network and keep it.
 //!
 //! Starts the KM4 Wi-Fi shim (`example_entry.c`), which owns the connection:
-//! radio on, then scan, connect and DHCP, then periodic DNS lookups while it
-//! watches the link, rejoining with bounded backoff when the link drops or
-//! DNS keeps failing. This probe drains the shim's numbered event
+//! radio on, then scan, connect and DHCP, then a gateway probe every few
+//! seconds while it watches the link (`wellfed_hal::link`), rejoining with
+//! bounded backoff when the association, the lease or the gateway is lost.
+//! This probe drains the shim's numbered event
 //! ring without end and logs each event once, with stopped-output readback.
 //! The SSID and password never pass through here. Outputs stay as startup
 //! left them (STOP, emitters OFF).

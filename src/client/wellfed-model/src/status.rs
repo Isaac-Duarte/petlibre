@@ -21,7 +21,9 @@ pub struct Status {
     pub rssi: i32,
     pub wifi: WifiSource,
     pub link_losses: u32,
-    /// Losses a failed DNS check noticed rather than the link.
+    /// Losses the feeder's link check noticed (its DHCP lease ran out or
+    /// its gateway stopped answering) rather than the association. The name
+    /// is from the internet DNS check that check replaced.
     pub dns_losses: u32,
     /// The feeder's clock; `None` while it is invalid.
     pub clock: Option<Timestamp>,

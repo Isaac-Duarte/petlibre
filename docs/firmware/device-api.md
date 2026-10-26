@@ -34,7 +34,7 @@ Major version 1 is frozen: every client lives in this repository, and the event 
 - **The MQTT offer watch, bank 0's updater and its recovery-role health** (October 25): offers ride the device API, and bank 0 runs the feeder. No build opens an MQTT session; the broker stays for stock.
 
 - **Requests over MQTT.** The firmware's request parser, its reply writers, request signing (`request_auth`) and the health nonce are deleted. The normal role starts no `wellfed-net` task.
-- **Confirmation.** FW11 confirmed a trial once the MQTT session was ready. It now confirms on FW07's network check: DHCP, then a DNS lookup. Since offers moved to the API, a build that confirms takes its next offer over the same API.
+- **Confirmation.** FW11 confirmed a trial once the MQTT session was ready. It now confirms on a live link: associated, leased, and its gateway answering (or never having answered this join); no internet is involved ([link liveness](startup-diagnostics.md#link-liveness-without-internet-dns), October 25; until then a DNS lookup of `example.com`). Since offers moved to the API, a build that confirms takes its next offer over the same API.
 - **Kept until AR6:** the HAL's MQTT transport code and the broker credentials in the build (with the now unused request key, so existing private files still parse). Nothing starts the transport.
 
 ## Resources

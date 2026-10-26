@@ -88,7 +88,7 @@ The UART keeps the same information as `PLMQT1` records, so bench audits work fr
 
 No record carries the request ID, the broker address or any credential.
 
-The transport connects only while the FW07 shim reports a successful DNS lookup. It closes when the Wi-Fi generation changes (a join or a loss), and waits 1 s after a failure, doubling to 30 s, until a session reaches ready.
+The transport connects only while the Wi-Fi task reports the link live (until October 25, a successful DNS lookup; now the [gateway watch](startup-diagnostics.md#link-liveness-without-internet-dns)). It closes when the Wi-Fi generation changes (a join or a loss), and waits 1 s after a failure, doubling to 30 s, until a session reaches ready.
 
 ## Diagnostic requests
 

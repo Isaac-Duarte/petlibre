@@ -69,7 +69,7 @@ pub fn snapshot(boot: Boot, link: Link, online: bool, role: Role) -> Health {
         rssi: wifi.rssi,
         wifi_attempt: wifi.attempt,
         link_losses: wifi.link_losses,
-        dns_losses: wifi.dns_losses,
+        dns_losses: wifi.check_losses,
         last_loss: match wifi.last_loss {
             1 => Loss::Link,
             2 => Loss::Dns,

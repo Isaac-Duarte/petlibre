@@ -238,16 +238,20 @@ pub const AUDIO_PAGES: usize = 8;
 
 /// One event from the KM4 Wi-Fi shim's ring (`example_entry.c`), numbered
 /// from 1. `kind` is one of the associated constants: 1 on, 2 scan,
-/// 3 connect, 4 DHCP, 5 lost, 6 backoff, 7 DNS.
+/// 3 connect, 4 DHCP, 5 lost, 6 backoff, 8 gateway. 7 was the internet DNS
+/// check the gateway probe replaced; it is never reused.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct WifiEvent {
     pub seq: u32,
     pub kind: u32,
     pub attempt: u32,
-    /// SDK result: `RTW_SUCCESS` (0) or an error; for DHCP the `LwIP_DHCP` state.
+    /// SDK result: `RTW_SUCCESS` (0) or an error; for DHCP the `LwIP_DHCP`
+    /// state; for a loss its cause (`wellfed_core::liveness::Cause`); for a
+    /// gateway probe 0 answered or a negative failure.
     pub result: i32,
-    /// Scan: network found; DHCP: assigned IPv4; lost: ms connected; backoff: ms.
+    /// Scan: network found; DHCP: assigned IPv4; lost: ms connected;
+    /// backoff: ms; gateway: the gateway's IPv4.
     pub value: u32,
     /// Scan only: the network's RSSI (dBm) and `rtw_security_t`.
     pub rssi: i32,
@@ -262,8 +266,8 @@ impl WifiEvent {
     pub const DHCP: u32 = 4;
     pub const LOST: u32 = 5;
     pub const BACKOFF: u32 = 6;
-    /// A DNS check of the server name: `result` 0 and `value` nonzero on success.
-    pub const DNS: u32 = 7;
+    /// One ICMP echo to the lease's gateway: `result` 0 when it answered.
+    pub const GATEWAY: u32 = 8;
 }
 
 /// `wifi_event(seq)` outcome.

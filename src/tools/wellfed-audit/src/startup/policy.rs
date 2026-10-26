@@ -190,14 +190,17 @@ fn bind_unclassified(
     enum Wifi {
         Scan,
         Join,
-        Dns,
+        /// Join and keep the link. Images before the gateway watch named it
+        /// for their internet DNS check; the record format is the same.
+        Keep,
     }
     let wifi = version(
         manifest.startup_wifi_policy.as_deref(),
         &[
             ("fw07-scan-v1", Wifi::Scan),
             ("fw07-join-v1", Wifi::Join),
-            ("fw07-dns-v1", Wifi::Dns),
+            ("fw07-dns-v1", Wifi::Keep),
+            ("wifi-gateway-v1", Wifi::Keep),
         ],
         "Unknown Wi-Fi policy",
     )?;
@@ -210,8 +213,8 @@ fn bind_unclassified(
         "Wi-Fi join policy/artifact mismatch",
     )?;
     require(
-        (wifi == Some(Wifi::Dns)) == has(WIFI_DNS_MARK),
-        "Wi-Fi DNS policy/artifact mismatch",
+        (wifi == Some(Wifi::Keep)) == has(WIFI_KEEP_MARK),
+        "Wi-Fi keep policy/artifact mismatch",
     )?;
     require(
         wifi.is_none() || led,
@@ -229,8 +232,8 @@ fn bind_unclassified(
         "Transport policy/artifact mismatch",
     )?;
     require(
-        !transport || wifi == Some(Wifi::Dns),
-        "Transport requires the DNS policy",
+        !transport || wifi == Some(Wifi::Keep),
+        "Transport requires the keep policy",
     )?;
 
     let optics = version(

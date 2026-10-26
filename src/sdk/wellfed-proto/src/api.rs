@@ -525,7 +525,9 @@ pub struct Status<'a> {
     pub rssi: i32,
     pub wifi: WifiSource,
     pub link_losses: u32,
-    /// Losses noticed by a failed DNS check rather than the link.
+    /// Losses the link check noticed (the DHCP lease ran out or the gateway
+    /// stopped answering) rather than the association. The name is from the
+    /// internet DNS check that check replaced, kept for the wire.
     pub dns_losses: u32,
     /// Unix milliseconds, `None` while the clock is invalid.
     pub clock_ms: Option<u64>,

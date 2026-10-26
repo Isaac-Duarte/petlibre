@@ -151,7 +151,7 @@ pub fn build(repo: &Repo, request: &Request, toolchain: &Path) -> Result<PathBuf
         startup_shared_pad_policy: when(firstboot, "before-km4-v3"),
         startup_gpio_clock_policy: when(rust_build, "explicit-enable-v1"),
         startup_flash_handshake_policy: None,
-        startup_wifi_policy: when(firstboot, "fw07-dns-v1"),
+        startup_wifi_policy: when(firstboot, "wifi-gateway-v1"),
         // No build opens an MQTT session any more: health, requests and
         // updates go over the firmware's device API.
         startup_transport_policy: None,

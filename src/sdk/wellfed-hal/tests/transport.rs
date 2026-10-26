@@ -1,11 +1,14 @@
 //! Transport link against fake SDK sockets and a scripted broker: it
-//! waits for DNS, connects with an offline will, publishes non-retained
+//! waits for a live link, connects with an offline will, publishes non-retained
 //! health, answers only the read-only request allowlist, and on any protocol,
 //! socket or Wi-Fi failure closes with a reason and backs off.
 
 use std::sync::{Mutex, MutexGuard};
 
+use wellfed_core::liveness::{Cause, Verdict};
 use wellfed_hal::health::Boot;
+use wellfed_hal::link::wellfed_wifi_watch;
+use wellfed_hal::network::wellfed_wifi_outcome;
 use wellfed_hal::sdk::WifiEvent;
 use wellfed_hal::sdk::fake::api::FAKE_TRANSPORT;
 use wellfed_hal::sdk::fake::{self, TcpRecvScript};
@@ -31,7 +34,25 @@ fn wifi(kind: u32, result: i32, value: u32) {
     });
 }
 
-/// Joined with working DNS, outputs stopped, nothing scripted yet.
+/// The Wi-Fi task's watch, one step.
+fn watch(associated: bool, leased: bool, probe: i32) -> Option<Verdict> {
+    // SAFETY: the test is the only Wi-Fi task, between a join and its leave.
+    let code = unsafe { wellfed_wifi_watch(associated.into(), leased.into(), probe) };
+    Verdict::from_code(code)
+}
+
+/// A join, then its watch settled on the gateway's first answer.
+fn joined_and_live() {
+    wifi(4, 2, 0x0a2a_6705); // DHCP assigned
+    // SAFETY: the test is the only Wi-Fi task, and no select is running.
+    unsafe { wellfed_wifi_outcome(1) };
+    assert!(!net_status::read().live, "not live until the watch settles");
+    assert_eq!(watch(true, true, 0), Some(Verdict::Probe));
+    assert_eq!(watch(true, true, 1), Some(Verdict::Settled));
+    assert!(net_status::read().live);
+}
+
+/// Joined with a live link, outputs stopped, nothing scripted yet.
 fn start() -> (MutexGuard<'static, ()>, Link) {
     let guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     fake::reset_hardware();
@@ -40,8 +61,7 @@ fn start() -> (MutexGuard<'static, ()>, Link) {
     assert!(stopped::initialize().verified());
 
     wifi(2, 0, 1); // scan found
-    wifi(4, 2, 0x0a2a_6705); // DHCP assigned
-    wifi(7, 0, 0x5db8_d822); // DNS ok
+    joined_and_live();
 
     let boot = Boot {
         bank: 1,
@@ -117,14 +137,18 @@ fn connect(link: &mut Link) -> Vec<Record> {
 }
 
 #[test]
-fn waits_for_dns_then_connects_subscribes_and_publishes_health() {
+fn waits_for_a_live_link_then_connects_subscribes_and_publishes_health() {
     let (_guard, mut link) = start();
-    wifi(5, 0, 1000); // a link loss: DNS no longer known good
-    assert_eq!(link.step(&mut |_| panic!("no record before DNS")), IDLE_MS);
+    // The association drops: the watch clears liveness as it leaves.
+    assert_eq!(watch(false, true, 0), Some(Verdict::Leave(Cause::Link)));
+    wifi(5, 0, 1000);
+    assert_eq!(
+        link.step(&mut |_| panic!("no record before a live link")),
+        IDLE_MS
+    );
     assert!(fake::with(|h| h.tcp_tx.is_empty()));
 
-    wifi(4, 2, 0x0a2a_6705);
-    wifi(7, 0, 0x5db8_d822);
+    joined_and_live();
 
     let records = connect(&mut link);
     assert!(matches!(records[0], Record::Connect { n: 1, ok: true, .. }));
@@ -219,8 +243,8 @@ fn publishes_periodically_and_on_wifi_changes_and_pings_when_idle() {
     );
     assert!(fake::with(|h| h.uptime_ms) - base >= wellfed_core::transport::HEALTH_PERIOD_MS);
 
-    // A DNS loss ends this generation: the transport closes rather than publishing.
-    wifi(5, 1, 20_000);
+    // A gateway loss ends this generation: the transport closes rather than publishing.
+    wifi(5, i32::from(Cause::Gateway.code()), 20_000);
     let records = run(&mut link, 1);
     assert_eq!(
         records,

@@ -374,9 +374,10 @@ fn confirm_step() -> u32 {
         return 0;
     };
     let provider = PROVIDER.get();
-    // The network path the Wi-Fi probe checks (DHCP, then a DNS lookup) stands in for
-    // the broker session the normal role no longer opens.
-    let healthy = net_status::read().dns_ok
+    // A live link (associated, leased, its gateway answering) stands in for the
+    // broker session the normal role no longer opens. Nothing here needs the
+    // internet: a feeder on a LAN without a route out confirms.
+    let healthy = net_status::read().live
         && PROBE_DONE.load(Ordering::Acquire)
         && stopped::observe().verified();
 
@@ -675,7 +676,7 @@ fn kind(kind: u32) -> &'static str {
         sdk::WifiEvent::DHCP => "dhcp",
         sdk::WifiEvent::LOST => "lost",
         sdk::WifiEvent::BACKOFF => "backoff",
-        sdk::WifiEvent::DNS => "dns",
+        sdk::WifiEvent::GATEWAY => "gateway",
         _ => "unknown",
     }
 }

@@ -21,6 +21,7 @@ pub mod buttons;
 pub mod clock;
 pub mod feed;
 pub mod flash_coord;
+pub mod liveness;
 pub mod mdns;
 pub mod ota;
 pub mod record;

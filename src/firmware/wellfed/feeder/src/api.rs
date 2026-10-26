@@ -567,7 +567,7 @@ impl<F: Feeds> Device for Feeder<'_, F> {
                 WifiSource::Fallback => proto::WifiSource::Fallback,
             },
             link_losses: wifi.link_losses,
-            dns_losses: wifi.dns_losses,
+            dns_losses: wifi.check_losses,
             clock_ms: clock::health().0.map(|clock| clock.unix_ms),
             power: power::health(now_ms).map(|sample| proto::Power {
                 adapter: sample.adapter,

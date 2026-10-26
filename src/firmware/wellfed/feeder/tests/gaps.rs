@@ -30,9 +30,9 @@ fn status(generation: u32) -> Status {
         rssi: -50,
         attempt: 2,
         link_losses: 1,
-        dns_losses: 0,
+        check_losses: 0,
         last_loss: 1,
-        dns_ok: true,
+        live: true,
         generation,
     }
 }

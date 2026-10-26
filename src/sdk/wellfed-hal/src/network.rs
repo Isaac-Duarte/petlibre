@@ -28,7 +28,7 @@ use wellfed_core::transport::{WifiResult, WifiSource, WifiView};
 
 use crate::cell::TaskCell;
 use crate::interlock::INTERLOCK;
-use crate::sdk;
+use crate::{link, sdk};
 
 /// The credential slots within the storage region (`0x345000`).
 pub const NET_BASE: u32 = sdk::storage::NET.first;
@@ -287,7 +287,8 @@ pub unsafe extern "C" fn wellfed_wifi_select(out: *mut JoinCredentials) {
     }
 }
 
-/// After each join attempt: 1 when an address was assigned.
+/// After each join attempt: 1 when an address was assigned, which also
+/// starts the link's watch (`wellfed_wifi_watch`).
 ///
 /// # Safety
 /// Called only from the Wi-Fi task, which owns `JOIN`, and never while a
@@ -295,6 +296,10 @@ pub unsafe extern "C" fn wellfed_wifi_select(out: *mut JoinCredentials) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn wellfed_wifi_outcome(joined: i32) {
     INTERLOCK.end_join();
+    if joined != 0 {
+        // SAFETY: the caller's contract: the Wi-Fi task, between watches.
+        unsafe { link::joined() };
+    }
 
     // SAFETY: the caller's contract makes this the only reference to `JOIN`.
     let join = unsafe { &mut *JOIN.get() };

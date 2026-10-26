@@ -110,7 +110,7 @@ pub(crate) const ADC_MARK: &[u8] = b"PLADC1 open outputs=";
 const ADC_SUPPLY_MARK: &[u8] = b" supply=";
 const WIFI_MARK: &[u8] = b"PLWIF1 start created=";
 const WIFI_JOIN_MARK: &[u8] = b"PLWIF2 start created=";
-const WIFI_DNS_MARK: &[u8] = b"PLWIF3 start created=";
+const WIFI_KEEP_MARK: &[u8] = b"PLWIF3 start created=";
 const TRANSPORT_MARK: &[u8] = b"PLMQT1 start created=";
 /// Trial test: the watchdog resets it after startup.
 const TRIAL_RESET_MARK: &[u8] = b"PLTRL1 test=reset watchdog=";

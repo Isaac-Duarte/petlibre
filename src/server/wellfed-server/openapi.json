@@ -1311,7 +1311,7 @@
           "dns_losses": {
             "type": "integer",
             "format": "int32",
-            "description": "Losses a failed DNS check noticed rather than the link.",
+            "description": "Losses the feeder's link check noticed (its DHCP lease ran out or\nits gateway stopped answering) rather than the association. The name\nis from the internet DNS check that check replaced.",
             "minimum": 0
           },
           "faults": {

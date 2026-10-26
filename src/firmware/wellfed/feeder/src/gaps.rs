@@ -303,7 +303,7 @@ impl Windows {
                 generation: net.generation,
                 attempt: net.attempt,
                 link_losses: net.link_losses,
-                dns_losses: net.dns_losses,
+                dns_losses: net.check_losses,
                 changed,
             },
         });

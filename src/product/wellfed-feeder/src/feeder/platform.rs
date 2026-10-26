@@ -15,9 +15,10 @@ use wellfed_core::clock::zone::Rule;
 use wellfed_core::log_tail::Batch as LogBatch;
 use wellfed_core::ota::install::{Answer, Progress, Refused};
 use wellfed_core::tone::Tune;
-use wellfed_proto::api::{Capabilities, Erases, Power, Refusal, TASKS_MAX, TraceSummary};
+use wellfed_proto::api::{Capabilities, Counts, Erases, Power, Refusal, TASKS_MAX, TraceSummary};
 use wellfed_proto::trace::PAGE_MAX;
 
+use crate::stats::Totals;
 use crate::store::events::{BODY_BYTES, Read};
 use wellfed_device_api::clients::{CLIENTS, Client};
 use wellfed_device_api::mailbox::{
@@ -388,6 +389,13 @@ pub trait Platform {
     fn erases(&self) -> Erases;
     /// The event ring's fill, as the writer last published it.
     fn events_fill(&self) -> EventsFill;
+    /// The lifetime totals the stats store holds, this boot's reset
+    /// counted, as the writer published them: `None` before it opened the
+    /// store, or when the store keeps none it can write.
+    fn totals(&self) -> Option<Totals>;
+    /// This boot's counts for the writer's next save of the totals; the
+    /// loop hands them over every sample window, never writing itself.
+    fn hand_counts(&mut self, counts: Counts);
 
     // ---- The per-feed traces.
 

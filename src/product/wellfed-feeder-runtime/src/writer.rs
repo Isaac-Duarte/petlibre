@@ -30,6 +30,15 @@
 //! feed is over, is appended to the ring on the writer's next turn
 //! ([`traces`]).
 //!
+//! It keeps the lifetime statistics too (sectors 32 and 33,
+//! `wellfed_feeder::store::stats`): it loads the totals, counts this
+//! boot's reset and publishes them for the loop, and saves them with this
+//! boot's counts and erases as the boot starts (so a short boot's reset
+//! counts), in an intentional restart's grace (before the watchdog's
+//! feeding stops), and every [`SAVE_MS`] of uptime; only
+//! when nothing else is queued, never per event, and the early ones within
+//! the store's tokens.
+//!
 //! No write starts while a feed may move the outputs: a flash lease then
 //! fails its stopped-outputs check and resets the board. So each store write
 //! first takes the write turn in `wellfed_hal::interlock`. While a feed
@@ -44,17 +53,19 @@ use wellfed_core::named_enum;
 
 use wellfed_core::store::seed::{SeedStatus, SeedStore};
 use wellfed_device_api::mailbox::{SettingsFields, SettingsView};
+use wellfed_feeder::stats::{SAVE_MS, TOTAL_SECTORS, Totals, reset_cause};
 use wellfed_feeder::store::clients::{ClientError, ClientStatus, ClientStore};
 use wellfed_feeder::store::events::EventLog;
 use wellfed_feeder::store::net::{NetStatus, NetStore};
 use wellfed_feeder::store::settings::{Settings, SettingsStatus, SettingsStore};
+use wellfed_feeder::store::stats::{SaveKind, StatsStatus, StatsStore};
 use wellfed_feeder::store::time::{TimeStatus, TimeStore};
 use wellfed_feeder::store::traces::TraceRing;
 use wellfed_hal::flash::park::Mmio;
 use wellfed_hal::flash_lock::arming::{self, Arming, Hooks, Poll};
 use wellfed_hal::flash_lock::provider::Provider;
 use wellfed_hal::interlock::{INTERLOCK, WRITER_POLL_MS, WriteStep, WriteTurn};
-use wellfed_hal::{rng, sdk, settings};
+use wellfed_hal::{rng, sdk, settings, supervision};
 use wellfed_sdk::storage::{
     CLIENTS_BASE, EVENTS_BASE, EVENTS_UNITS, FlashOps, Region, SEED_BASE, SETTINGS_BASE,
     SETTINGS_BINDING, Slots, TRACES_BASE, TRACES_UNITS,
@@ -64,7 +75,7 @@ use crate::events;
 pub use crate::keys::KeyResult;
 use crate::keys::{self, Change};
 use crate::network::{self, NET_BASE};
-use crate::stats;
+use crate::stats::{self, STATS_BASE};
 use crate::time::{self, TIME_BASE};
 use crate::traces;
 use wellfed_feeder::feeder::platform::EventsFill;
@@ -152,6 +163,22 @@ pub enum Record {
         generation: u64,
     },
     TimeError {
+        stage: ErrorStage,
+    },
+    /// The lifetime statistics (sectors 32 and 33).
+    StatsOpen {
+        status: StatsStatus,
+        generation: u64,
+        /// The early saves since the last settled one, and whether a run of
+        /// them ever spent the budget, so a boot may have been missed.
+        early: u8,
+        missed: bool,
+    },
+    StatsSaved {
+        generation: u64,
+        early: u8,
+    },
+    StatsError {
         stage: ErrorStage,
     },
     /// The stored seed and the client store.
@@ -260,6 +287,21 @@ pub fn describe(record: Record, f: &mut impl fmt::Write) -> fmt::Result {
         ),
         Record::TimeSaved { generation } => write!(f, "time saved generation={generation}"),
         Record::TimeError { stage } => write!(f, "time error stage={stage}"),
+        Record::StatsOpen {
+            status,
+            generation,
+            early,
+            missed,
+        } => write!(
+            f,
+            "stats open status={} generation={generation} early={early} missed={}",
+            status.name(),
+            u8::from(missed)
+        ),
+        Record::StatsSaved { generation, early } => {
+            write!(f, "stats saved generation={generation} early={early}")
+        }
+        Record::StatsError { stage } => write!(f, "stats error stage={stage}"),
         Record::Keys {
             seed,
             mixed,
@@ -324,6 +366,27 @@ fn client_status(status: ClientStatus) -> &'static str {
     }
 }
 
+/// Why the writer saves the lifetime totals.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SaveTrigger {
+    /// The boot's own, as it starts, so its reset counts.
+    Boot,
+    /// An intentional restart was asked for.
+    Restart,
+    /// The timed save, every `SAVE_MS` of uptime.
+    Due,
+}
+
+impl SaveTrigger {
+    /// Only the timed save gives an early token back.
+    const fn kind(self) -> SaveKind {
+        match self {
+            Self::Boot | Self::Restart => SaveKind::Early,
+            Self::Due => SaveKind::Settled,
+        }
+    }
+}
+
 /// `delay_ms == 0` ends the task; `armed` reports the arming outcome once.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Step {
@@ -369,6 +432,18 @@ pub struct Writer<F> {
     events: EventLog<Region<F, EVENTS_BASE, EVENTS_UNITS>>,
     events_opened: bool,
     traces: TraceRing<Region<F, TRACES_BASE, TRACES_UNITS>>,
+    stats: StatsStore<Slots<F, STATS_BASE>>,
+    stats_opened: bool,
+    /// The stored totals with this boot's reset counted: what each save
+    /// adds this boot's figures to.
+    stats_base: Totals,
+    /// When the next settled save of the totals is due, in uptime ms;
+    /// `None` once a save failed (no retry this boot).
+    stats_due: Option<u32>,
+    /// The boot's own early save, and the intentional restart's, had their
+    /// one attempt.
+    stats_boot_saved: bool,
+    stats_restart_saved: bool,
     /// This writer's wait for the write turn.
     turn: WriteTurn,
 }
@@ -390,6 +465,12 @@ impl<F> Default for Writer<F> {
             events: EventLog::default(),
             events_opened: false,
             traces: TraceRing::default(),
+            stats: StatsStore::default(),
+            stats_opened: false,
+            stats_base: Totals::ZERO,
+            stats_due: Some(SAVE_MS),
+            stats_boot_saved: false,
+            stats_restart_saved: false,
             turn: WriteTurn::new(),
         }
     }
@@ -603,6 +684,115 @@ impl<F: FlashOps> Writer<F> {
         written.map(|(feed, _)| next(POLL_MS, Some(Record::Trace { feed, seq })))
     }
 
+    /// Open the stats store, count this boot's reset and publish the
+    /// totals: none from a store this build cannot write.
+    fn open_stats(&mut self) -> Record {
+        self.stats.open(Slots::new());
+        let mut base = self.stats.totals;
+        base.count_boot(reset_cause(sdk::boot_reason()));
+        self.stats_base = base;
+        stats::publish_totals(self.stats.writable().then_some(base));
+        Record::StatsOpen {
+            status: self.stats.status,
+            generation: self.stats.generation,
+            early: self.stats.budget.early,
+            missed: self.stats.budget.missed,
+        }
+    }
+
+    /// The save of the totals wanted now, if any: the boot's own as it
+    /// starts, an intentional restart's (in its grace, before the feeding
+    /// stops), or the timed one. A trigger the store refuses (no early token
+    /// left, or a store it cannot write) is dropped for the boot.
+    fn stats_wanted(&mut self) -> Option<SaveTrigger> {
+        let now = sdk::uptime_ms();
+        let trigger = if !self.stats_boot_saved {
+            SaveTrigger::Boot
+        } else if supervision::restart_grace() && !self.stats_restart_saved {
+            SaveTrigger::Restart
+        } else if self
+            .stats_due
+            .is_some_and(|due| wellfed_core::deadline_passed(now, due))
+        {
+            SaveTrigger::Due
+        } else {
+            return None;
+        };
+
+        if self.stats.may_save(trigger.kind()) {
+            return Some(trigger);
+        }
+        self.stats_done(trigger);
+        None
+    }
+
+    /// `trigger` has had its one attempt.
+    fn stats_done(&mut self, trigger: SaveTrigger) {
+        match trigger {
+            SaveTrigger::Boot => self.stats_boot_saved = true,
+            SaveTrigger::Restart => {
+                self.stats_restart_saved = true;
+                // Saved or not, the restart need not wait any longer.
+                supervision::restart_flushed();
+            }
+            SaveTrigger::Due => {}
+        }
+    }
+
+    /// Save the totals: the stored ones with this boot's counts, as the
+    /// loop last handed them, and this boot's erases, the save's own
+    /// included. Only on a turn with the outputs released: the turn is
+    /// asked for as never stopped, so a claim past its bound, which lets
+    /// another store's write go ahead, keeps this one waiting. A restart
+    /// waits for it only through its grace; once the feeding stops no turn
+    /// is granted, so no save starts into the reset.
+    fn save_stats(&mut self, trigger: SaveTrigger) -> Step {
+        let now = sdk::uptime_ms();
+        let WriteStep::Go(_) = self.turn.begin(&INTERLOCK, now, || false) else {
+            return self.waiting();
+        };
+        let turn = WriteHeld;
+
+        let mut erases = [0; TOTAL_SECTORS];
+        for (sector, count) in (0u32..).zip(erases.iter_mut()) {
+            *count = sdk::storage_erase_count(sector);
+        }
+        let own = STATS_BASE + self.stats.next_slot();
+        if let Some(count) = usize::try_from(own)
+            .ok()
+            .and_then(|own| erases.get_mut(own))
+        {
+            *count = count.saturating_add(1);
+        }
+        let boot = stats::counts().unwrap_or_default();
+        let totals = self
+            .stats_base
+            .plus(&boot, &erases, sdk::bank1_erase_count());
+
+        let kind = trigger.kind();
+        arming::set_attempt();
+        let saved = self.stats.save(&totals, kind);
+        arming::clear_attempt();
+        drop(turn);
+
+        self.stats_done(trigger);
+        let record = if saved {
+            if kind == SaveKind::Settled {
+                self.stats_due = Some(now.wrapping_add(SAVE_MS));
+            }
+            Record::StatsSaved {
+                generation: self.stats.generation,
+                early: self.stats.budget.early,
+            }
+        } else {
+            self.stats_due = None;
+            Record::StatsError {
+                stage: ErrorStage::Save,
+            }
+        };
+        next(POLL_MS, Some(record))
+    }
+
     fn publish_fill(&self) {
         stats::publish_fill(EventsFill {
             kept: self.events.kept(),
@@ -736,6 +926,11 @@ impl<F: FlashOps> Writer<F> {
                     };
                     return next(POLL_MS, Some(record));
                 }
+                if !self.stats_opened {
+                    self.stats_opened = true;
+                    let record = self.open_stats();
+                    return next(POLL_MS, Some(record));
+                }
                 if let Some(change) = keys::pending() {
                     let writable = self.stage == Stage::Idle && H::armed();
                     let turn = if writable {
@@ -811,6 +1006,17 @@ impl<F: FlashOps> Writer<F> {
                     let writable = self.stage == Stage::Idle && H::armed();
                     if let Some(step) = self.trace_step(writable) {
                         return step;
+                    }
+                    // The totals go last, behind every queued record.
+                    if writable
+                        && events::pending().is_none()
+                        && let Some(trigger) = self.stats_wanted()
+                    {
+                        return self.save_stats(trigger);
+                    }
+                    if !writable && supervision::restart_grace() {
+                        // Nothing to save before a restart.
+                        supervision::restart_flushed();
                     }
                     return self.events_step(writable);
                 };

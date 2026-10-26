@@ -1,5 +1,6 @@
 //! The product's records on NOR: device settings, Wi-Fi credentials, the
-//! client keys and the time settings, each a dual-slot store (`wellfed_core::store::slot`: two
+//! client keys, the time settings and the lifetime statistics, each a
+//! dual-slot store (`wellfed_core::store::slot`: two
 //! alternating erase units under one torn-write rule, with the store's own
 //! fields and recovery policy), and the event history and the per-feed
 //! traces, each in a ring of units ([`events`], [`traces`]). Each keeps its
@@ -14,5 +15,6 @@ pub mod clients;
 pub mod events;
 pub mod net;
 pub mod settings;
+pub mod stats;
 pub mod time;
 pub mod traces;

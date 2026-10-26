@@ -373,6 +373,34 @@ fn an_invited_member_joins_and_a_revoke_closes_its_session() {
     });
 }
 
+/// An image of the 32-sector region opens with the added sectors erased,
+/// keeping what it held; a partial sector or a larger image is refused.
+#[test]
+fn a_smaller_region_s_image_grows_into_erased_sectors() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("flash.bin");
+    local(async {
+        let flash = Flash::file(&path).unwrap();
+        let sim = Running::start(&flash, true).await;
+        let identity = sim.identity;
+        sim.stop().await;
+        drop(flash);
+
+        let image = std::fs::read(&path).unwrap();
+        assert_eq!(image.len(), 48 * 4096);
+        std::fs::write(&path, &image[..32 * 4096]).unwrap();
+        let flash = Flash::file(&path).unwrap();
+        let sim = Running::start(&flash, false).await;
+        assert_eq!(sim.identity, identity);
+        sim.stop().await;
+    });
+
+    for len in [32 * 4096 + 1, 49 * 4096] {
+        std::fs::write(&path, vec![0xff; len]).unwrap();
+        assert!(Flash::file(&path).is_err(), "{len}");
+    }
+}
+
 #[test]
 fn the_flash_keeps_the_identity_clients_and_history_across_restarts() {
     let dir = tempfile::tempdir().unwrap();
@@ -432,6 +460,17 @@ fn a_reboot_drops_the_sessions_and_boots_again() {
             .filter(|body| matches!(body, EventBody::Boot { .. }))
             .count();
         assert_eq!(boots, 2);
+
+        // The restart saved the lifetime totals, and the new boot counts
+        // itself on top of them.
+        let section = StatsSection::Counters;
+        let answer = owner.ask(sim.id(), &Op::Stats { section }).await.unwrap();
+        let Answer::Stats(Stats::Counters(counters)) = answer else {
+            panic!("{answer:?}");
+        };
+        assert_eq!(counters.resets.map(|resets| resets.power_on), Some(2));
+        let lifetime = counters.lifetime.expect("kept");
+        assert!(lifetime.uptime_s >= counters.boot.uptime_s, "{counters:?}");
         sim.stop().await;
     });
 }
@@ -946,7 +985,7 @@ fn an_owner_reads_the_statistics_and_their_live_metrics() {
             match stats {
                 Stats::Counters(counters) => {
                     assert_eq!(counters.boot.sessions, 1, "this session");
-                    assert_eq!(counters.lifetime, None);
+                    assert_eq!(counters.lifetime, Some(counters.boot), "a new store");
                 }
                 Stats::Flash(flash) => {
                     assert_eq!(flash.boot.storage.len(), 32);

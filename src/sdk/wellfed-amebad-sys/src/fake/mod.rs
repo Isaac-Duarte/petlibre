@@ -184,7 +184,7 @@ pub struct Hardware {
     pub spins: u32,
     pub systick: u32,
 
-    /// The 64 KiB storage region as NOR: erase sets 1s, program clears bits.
+    /// The storage region as NOR: erase sets 1s, program clears bits.
     pub storage: Vec<u8>,
     /// Bank 1's reviewed footprint, for the updater.
     pub bank1: Vec<u8>,

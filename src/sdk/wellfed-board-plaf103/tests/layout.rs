@@ -12,7 +12,10 @@ const fn at(first: u32, count: u32) -> Sectors {
 #[test]
 fn storage_region_and_sector_map_are_pinned() {
     assert_eq!(STORAGE_OFFSET, 0x34_0000);
-    assert_eq!(STORAGE_SECTORS, 32);
+    assert_eq!(STORAGE_SECTORS, 48);
+    // Grown upward only: 0x340000 stays the first sector, and the end stays
+    // under stock's settings at 0x3e8000.
+    assert_eq!(STORAGE_OFFSET + STORAGE_SECTORS * 0x1000, 0x37_0000);
 
     assert_eq!(storage::JOURNAL, at(0, 2));
     assert_eq!(storage::SETTINGS, at(2, 2));
@@ -25,6 +28,7 @@ fn storage_region_and_sector_map_are_pinned() {
     assert_eq!(storage::UPDATE, at(25, 2));
     assert_eq!(storage::TIME, at(27, 2));
     assert_eq!(storage::TRACES, at(29, 3));
+    assert_eq!(storage::STATS, at(32, 2));
 
     assert_eq!(
         storage::ALL,
@@ -40,6 +44,7 @@ fn storage_region_and_sector_map_are_pinned() {
             storage::UPDATE,
             storage::TIME,
             storage::TRACES,
+            storage::STATS,
         ]
     );
 }

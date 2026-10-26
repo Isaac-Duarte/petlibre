@@ -113,6 +113,8 @@ Transport messages are cheap: about 0.9 ms to seal or open a kilobyte.
 
 **The owner chose to extend the region (October 23)** to 32 sectors, 0x340000–0x360000. A static pass over stock 1.1.15 found no fixed or bounded computed flash access in 0x306000–0x3e8000, and all 15 full dumps of the research unit are blank there, nine of them from before the replacement ran. The area is headroom left by PetLibro's shifted SDK layout; only an oversized OTA image (over about 1.79 MB) or the UART console's `FLASH` command could reach it. Sectors 7–31 (25) are free for client keys (FW45), plans (FP03) and the 12-sector ring (FW47). The alternative was 16 sectors and about 3 days of history.
 
+**The owner grew it again (October 26)** to 48 sectors, 0x340000–0x370000, on the same evidence: 0x370000 is still 480 KiB below stock's settings at 0x3e8000, and the region grows only upward, so bank 1's room is unchanged. Sectors 32–33 hold the lifetime statistics (one 288-byte record, saved hourly and as each boot starts and at an intentional restart, those within a budget each hourly save refills by one: at most 6 erases plus 2 per hour of uptime under any crash pattern, about 8,800 a year of each sector); 34–47 are free for plans (FP03), and 29–31 hold the per-feed traces (FW55).
+
 The same pass found that stock's clock checkpoint save block-erases **0x3f0000–0x400000** (64 KiB at a time) at minute 30 and on save. It is now in `layout.json`'s preserve ranges (`clock_checkpoint_block`); nothing of ours is near it.
 
 ## mDNS
@@ -125,4 +127,4 @@ The vendor responder is 33.5 KB of code and 2.3 KB of BSS, and it creates its ow
 - **Heap:** about 120 KB in BLE setup mode, the tightest case.
 - **Tasks:** none spare by design; everything new joins the loop.
 - **Latency:** the loop's two rules above.
-- **Storage:** 25 free sectors in the extended region.
+- **Storage:** 25 free sectors in the extended region (since October 26: 48 sectors, 17 free).

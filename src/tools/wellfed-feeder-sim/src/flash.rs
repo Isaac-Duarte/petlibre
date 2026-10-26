@@ -5,8 +5,10 @@
 //! It keeps NOR's rules, as the fake SDK does: an erase sets a whole sector
 //! to `0xff`, and a program only clears bits, refusing one that would set a
 //! bit back. A file-backed image is rewritten whole after every erase and
-//! program (128 KiB, atomically), so a stopped simulator restarts with what
-//! it last committed, as a power cut leaves the feeder.
+//! program (192 KiB, atomically), so a stopped simulator restarts with what
+//! it last committed, as a power cut leaves the feeder. An image from a
+//! smaller region is extended with erased sectors, as the feeder's region
+//! grows upward into blank flash.
 
 use std::cell::RefCell;
 use std::fs;
@@ -26,7 +28,7 @@ pub const IMAGE_BYTES: usize = (STORAGE_SECTORS * SECTOR_BYTES) as usize;
 pub enum FlashError {
     #[error("read the flash image {path}: {error}")]
     Read { path: PathBuf, error: io::Error },
-    #[error("the flash image {path} holds {len} bytes, not {IMAGE_BYTES}")]
+    #[error("the flash image {path} holds {len} bytes, not whole sectors up to {IMAGE_BYTES}")]
     Size { path: PathBuf, len: usize },
 }
 
@@ -62,12 +64,14 @@ impl Flash {
                 });
             }
         };
-        if bytes.len() != IMAGE_BYTES {
+        let mut bytes = bytes;
+        if bytes.len() > IMAGE_BYTES || !bytes.len().is_multiple_of(SECTOR_BYTES as usize) {
             return Err(FlashError::Size {
                 path: path.to_owned(),
                 len: bytes.len(),
             });
         }
+        bytes.resize(IMAGE_BYTES, u8::MAX);
         Ok(Rc::new(Self {
             bytes: RefCell::new(bytes),
             file: Some(path.to_owned()),

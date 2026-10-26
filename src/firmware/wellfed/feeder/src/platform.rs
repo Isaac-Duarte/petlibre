@@ -28,10 +28,11 @@ use wellfed_feeder::feeder::platform::{
     Accepted, BleDrop, BleLink, BleStep, Boot, Check, Datagram, DriverRecord, DriverStep,
     EventSlot, EventsFill, Link, Received, TaskCount, TaskStack, TraceRead, TracesFill,
 };
+use wellfed_feeder::stats::Totals;
 use wellfed_feeder::store;
 use wellfed_feeder::store::events::{BODY_BYTES, Read};
 use wellfed_feeder_runtime::{events, keys, network, stats, time, traces};
-use wellfed_proto::api::{Capabilities, Erases, FLASH_SECTORS, Power, Refusal, TASKS_MAX};
+use wellfed_proto::api::{Capabilities, Counts, Erases, FLASH_SECTORS, Power, Refusal, TASKS_MAX};
 use wellfed_proto::trace::PAGE_MAX;
 use wellfed_sdk::hal::audio::{self, Speaker};
 use wellfed_sdk::hal::ble::{self, BleSetup, DropReason};
@@ -450,6 +451,14 @@ impl Platform for Plaf103 {
             return read;
         }
         store::traces::page(&TraceReads, TRACES_UNITS as usize, feed, offset, out)
+    }
+
+    fn totals(&self) -> Option<Totals> {
+        stats::totals()
+    }
+
+    fn hand_counts(&mut self, counts: Counts) {
+        stats::hand_counts(counts);
     }
 
     fn ble_restart(&mut self) {

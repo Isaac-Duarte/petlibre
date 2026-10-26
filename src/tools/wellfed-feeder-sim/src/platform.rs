@@ -22,6 +22,7 @@ use std::convert::Infallible;
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 use wellfed_board_plaf103::storage;
 use wellfed_core::buttons::Gesture;
@@ -44,17 +45,19 @@ use wellfed_feeder::feeder::platform::{
     Accepted, BleDrop, BleStep, Boot, Check, Datagram, DriverStep, EventSlot, EventsFill, Link,
     Received, TaskCount, TaskStack, TraceRead, TracesFill,
 };
+use wellfed_feeder::stats::{SAVE_MS, TOTAL_SECTORS, Totals, reset_cause};
 use wellfed_feeder::store::clients::{ClientError, ClientStore};
 use wellfed_feeder::store::events::{BODY_BYTES, EventLog, Read};
 use wellfed_feeder::store::net::NetStore;
 use wellfed_feeder::store::settings::{Settings, SettingsStatus, SettingsStore};
+use wellfed_feeder::store::stats::{SaveKind, StatsStore};
 use wellfed_feeder::store::time::TimeStore;
 use wellfed_feeder::store::traces::{self, TraceRing};
 use wellfed_hal::interlock::INTERLOCK;
 use wellfed_hal::ota::mailbox::{self, Request};
 use wellfed_hal::ota::signers;
 use wellfed_hal::sdk::LOG_TAIL_BYTES;
-use wellfed_proto::api::{self as proto, Capabilities, FLASH_SECTORS, TASKS_MAX};
+use wellfed_proto::api::{self as proto, Capabilities, Counts, FLASH_SECTORS, TASKS_MAX};
 use wellfed_proto::trace::PAGE_MAX;
 use tokio::net::{TcpStream, UdpSocket};
 
@@ -63,6 +66,10 @@ use crate::flash::{Flash, Region};
 /// This simulator's settings binding: a store written by one installation
 /// is not read as another's.
 const BINDING: u64 = 0x5046_5731_5349_4d01;
+
+// The stats record counts erases of every sector the region has; growing
+// the region changes the record and takes a new version of it.
+const _: () = assert!(wellfed_board_plaf103::STORAGE_SECTORS as usize == TOTAL_SECTORS);
 
 /// The supply the simulator reports: on the adapter, with no battery.
 pub(crate) const POWER: proto::Power = proto::Power {
@@ -117,13 +124,20 @@ pub struct SimPlatform {
     flash: Rc<Flash>,
     /// The image's erases when this boot opened it: the statistics count
     /// this boot's.
-    erases_before: [u32; FLASH_SECTORS],
+    erases_before: [u32; TOTAL_SECTORS],
     settings: SettingsStore<Region>,
     settings_pending: Option<SettingsFields>,
     net: NetStore<Region>,
     wifi_pending: Option<Option<Credentials>>,
     time: TimeStore<Region>,
     time_pending: Option<TimeSettings>,
+    /// The lifetime statistics, as the writer keeps them: the stored
+    /// totals with this boot counted, this boot's counts as the loop last
+    /// handed them, and when the next save is due.
+    stats: StatsStore<Region>,
+    stats_base: Totals,
+    counts: Counts,
+    stats_due: Instant,
     /// The NTP exchange's socket, on an ephemeral loopback-reachable port.
     ntp: Option<std::net::UdpSocket>,
     clients: ClientStore<Region>,
@@ -188,6 +202,11 @@ impl SimPlatform {
         net.open(Region::new(flash, storage::NET));
         let mut time = TimeStore::default();
         time.open(Region::new(flash, storage::TIME));
+        let mut stats = StatsStore::default();
+        stats.open(Region::new(flash, storage::STATS));
+        let mut stats_base = stats.totals;
+        // The simulator's boots carry no reset flags: each is a power-on.
+        stats_base.count_boot(reset_cause(0));
         let mut clients = ClientStore::default();
         clients.open(Region::new(flash, storage::CLIENTS));
         if clients.identity().is_none() {
@@ -224,6 +243,10 @@ impl SimPlatform {
             wifi_pending: None,
             time,
             time_pending: None,
+            stats,
+            stats_base,
+            counts: Counts::default(),
+            stats_due: Instant::now() + Duration::from_millis(u64::from(SAVE_MS)),
             ntp: None,
             clients,
             clients_generation: 1,
@@ -253,6 +276,9 @@ impl SimPlatform {
             log: Rc::new(LogTail::new()),
         };
         platform.publish_signers();
+        // The boot's own early save, so its reset counts however short it is.
+        let mut platform = platform;
+        platform.save_now(SaveKind::Early);
         Ok(platform)
     }
 
@@ -305,6 +331,39 @@ impl SimPlatform {
         self.accept_failed = true;
     }
 
+    /// Save the lifetime totals as the writer does: an early save at a
+    /// restart (`restarting`; the simulator's restart has no watchdog to
+    /// race), otherwise the timed save when due. A failed save makes the
+    /// store read-only for the boot, as on the feeder.
+    pub(crate) fn save_stats(&mut self, restarting: bool) {
+        let now = Instant::now();
+        if restarting {
+            self.save_now(SaveKind::Early);
+        } else if now >= self.stats_due {
+            self.save_now(SaveKind::Settled);
+            self.stats_due = now + Duration::from_millis(u64::from(SAVE_MS));
+        }
+    }
+
+    /// One save of `kind`, if the store allows it, with this boot's counts
+    /// and erases, its own erase included.
+    fn save_now(&mut self, kind: SaveKind) {
+        if !self.stats.may_save(kind) {
+            return;
+        }
+        let erases = self.flash.erases();
+        let mut boot = [0; TOTAL_SECTORS];
+        for ((out, now), before) in boot.iter_mut().zip(erases).zip(self.erases_before) {
+            *out = now.saturating_sub(before);
+        }
+        let own = storage::STATS.first + self.stats.next_slot();
+        if let Some(count) = usize::try_from(own).ok().and_then(|own| boot.get_mut(own)) {
+            *count = count.saturating_add(1);
+        }
+        let totals = self.stats_base.plus(&self.counts, &boot, 0);
+        self.stats.save(&totals, kind);
+    }
+
     /// Whether the feeder asked for a restart, taken once.
     pub(crate) fn take_reboot(&mut self) -> bool {
         core::mem::take(&mut self.reboot)
@@ -339,6 +398,7 @@ impl SimPlatform {
         if let Some(settings) = self.time_pending.take() {
             self.time.save(&settings);
         }
+        self.save_stats(false);
 
         let (ticket, change) = self.keys_pending.take()?;
         let result = match change {
@@ -873,6 +933,14 @@ impl Platform for SimPlatform {
     ) -> Result<TraceRead, proto::Refusal> {
         let units = storage::TRACES.count as usize;
         traces::page(&self.traces(), units, feed, offset, out)
+    }
+
+    fn totals(&self) -> Option<Totals> {
+        self.stats.writable().then_some(self.stats_base)
+    }
+
+    fn hand_counts(&mut self, counts: Counts) {
+        self.counts = counts;
     }
 
     fn ble_restart(&mut self) {}

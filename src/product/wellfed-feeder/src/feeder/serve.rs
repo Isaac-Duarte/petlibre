@@ -568,6 +568,8 @@ impl<S: Copy> Serve<S> {
         }
         if wellfed_core::deadline_passed(now_ms, self.next_rssi) {
             self.next_rssi = now_ms.wrapping_add(RSSI_MS);
+            // The writer saves the totals far less often than this.
+            platform.hand_counts(self.stats.counts(now_ms));
             self.server.sample(Sample {
                 at_ms: now_ms,
                 metric: Metric::Rssi(platform.link().rssi),
@@ -831,12 +833,17 @@ impl<P: Platform, F: Feeds> Device for FeederDevice<'_, P, F> {
     }
 
     fn reboot(&mut self) {
+        // The writer's restart save takes this boot's counts as they are now.
+        self.platform.hand_counts(self.stats.counts(self.now_ms));
         self.platform.reset();
     }
 
     fn stats(&mut self, section: StatsSection, now_ms: u32) -> Stats<'_> {
         match section {
-            StatsSection::Counters => Stats::Counters(self.stats.counters(now_ms)),
+            StatsSection::Counters => {
+                let stored = self.platform.totals();
+                Stats::Counters(self.stats.counters(now_ms, stored.as_ref()))
+            }
             StatsSection::Memory => {
                 let (heap_free, heap_min) = self.platform.heap();
                 let (stacks, tasks_total) = self.tasks.read(&mut *self.platform, now_ms);
@@ -856,8 +863,10 @@ impl<P: Platform, F: Feeds> Device for FeederDevice<'_, P, F> {
             }
             StatsSection::Flash => {
                 let fill = self.platform.events_fill();
+                let stored = self.platform.totals();
                 Stats::Flash(Keeper::flash(
                     self.platform.erases(),
+                    stored.as_ref(),
                     fill.kept,
                     fill.capacity,
                 ))

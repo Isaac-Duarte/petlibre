@@ -232,6 +232,9 @@ impl<P: Platform> Feeder<P> {
         // Setup mode's restart waits for a feed in flight, which it would
         // otherwise leave uncertain; setup mode starts no feed itself.
         if self.owner.reboot_due(now_ms) && !feeds.busy() {
+            // The writer's restart save takes this boot's counts as they are now.
+            let counts = self.serve.stats().counts(now_ms);
+            self.platform.hand_counts(counts);
             self.platform.reset();
         }
 

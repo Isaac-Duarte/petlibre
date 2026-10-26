@@ -184,13 +184,17 @@ impl Sim {
     }
 
     /// Whether the feeder asked for a restart, taken once: the driver drops
-    /// every connection and opens the feeder again from its flash.
+    /// every connection and opens the feeder again from its flash, after
+    /// the lifetime totals are saved.
     pub fn take_reboot(&mut self) -> bool {
         let reboot = self.platform().take_reboot();
         // One the feeder asked for is no fault: the runtime ends a storm's
         // count before it.
         if reboot && !self.faulted {
             self.banks.borrow_mut().deliberate();
+        }
+        if reboot {
+            self.platform().save_stats(true);
         }
         reboot
     }

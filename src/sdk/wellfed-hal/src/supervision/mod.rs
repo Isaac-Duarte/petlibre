@@ -39,6 +39,48 @@ pub fn stopping() {
     crate::link::leave_for_restart();
 }
 
+/// An intentional restart's grace (one the device API or setup asks for):
+/// for up to [`RESTART_GRACE_MS`] the watchdog is still fed and writes
+/// still run, so a writer can save what it keeps, then the runtime's
+/// watchdog feeder restarts ([`restart_grace_over`]). A writer that has
+/// nothing more to save says so ([`restart_flushed`]) and the restart comes
+/// at once. Saving inside the grace, before the feeding stops, keeps every
+/// write out of the reset's way (see the module documentation). A second
+/// request keeps the first one's start.
+pub fn begin_restart_grace(now_ms: u32) {
+    if !GRACE.swap(true, Ordering::AcqRel) {
+        GRACE_AT.store(now_ms, Ordering::Release);
+    }
+}
+
+/// Whether an intentional restart's grace runs: save now.
+pub fn restart_grace() -> bool {
+    GRACE.load(Ordering::Acquire) && !GRACE_ENDED.load(Ordering::Acquire)
+}
+
+/// The writer saved what the restart should keep, or has nothing to save.
+pub fn restart_flushed() {
+    FLUSHED.store(true, Ordering::Release);
+}
+
+/// The watchdog feeder's half: true once, when the grace has ended, the
+/// writer flushed or the grace ran out; the caller then restarts.
+pub fn restart_grace_over(now_ms: u32) -> bool {
+    let over = GRACE.load(Ordering::Acquire)
+        && (FLUSHED.load(Ordering::Acquire)
+            || now_ms.wrapping_sub(GRACE_AT.load(Ordering::Acquire)) >= RESTART_GRACE_MS);
+    over && !GRACE_ENDED.swap(true, Ordering::AcqRel)
+}
+
+/// The longest an intentional restart waits for the writer: a store write
+/// at its worst after a writer poll, with room to spare.
+pub const RESTART_GRACE_MS: u32 = 2_000;
+
+static GRACE: AtomicBool = AtomicBool::new(false);
+static GRACE_AT: AtomicU32 = AtomicU32::new(0);
+static FLUSHED: AtomicBool = AtomicBool::new(false);
+static GRACE_ENDED: AtomicBool = AtomicBool::new(false);
+
 /// Whether a stop that began at `since_ms` is certain to end
 /// in a reset at `now_ms`. `supervise::feed` is no latch: feeding resumes
 /// if it turns true again before the watchdog's progress gap passes, so a
@@ -85,4 +127,7 @@ pub fn writes_held() -> bool {
 pub fn reset() {
     STOP_OPEN.store(false, Ordering::Relaxed);
     STOPPING.store(false, Ordering::Relaxed);
+    GRACE.store(false, Ordering::Relaxed);
+    FLUSHED.store(false, Ordering::Relaxed);
+    GRACE_ENDED.store(false, Ordering::Relaxed);
 }

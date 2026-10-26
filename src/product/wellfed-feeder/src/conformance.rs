@@ -17,7 +17,7 @@
 use wellfed_core::store::slot::crc32;
 use wellfed_proto::api::{
     Blocked, Capabilities, CurrentUnit, Event, EventBody, FeedOutcome, FeedReason, Readiness,
-    Refusal, Source, Stats, StatsSection, TraceSummary,
+    Refusal, Resets, Source, Stats, StatsSection, TraceSummary,
 };
 
 use crate::feeder::{Feeder, Feeds, NoFeeds, Platform};
@@ -396,8 +396,8 @@ pub fn a_feeder_without_a_feeding_owner_refuses_feeds(rig: &mut impl Rig) {
 
 /// Every platform serves the statistics: each section answers as itself,
 /// the counters follow what the loop saw (a feed's result, the boot's
-/// uptime), the ring's fill counts the boot event, and no lifetime figure is
-/// claimed, since nothing stores one.
+/// uptime), the ring's fill counts the boot event, and the lifetime figures
+/// of a new stats store are this boot's alone, its power-on counted.
 pub fn the_statistics_follow_the_loop(rig: &mut impl Rig) {
     pass(rig, 0);
     rig.write();
@@ -426,14 +426,21 @@ pub fn the_statistics_follow_the_loop(rig: &mut impl Rig) {
                     ),
                     (1, 1, 2)
                 );
-                assert_eq!((counters.lifetime, counters.resets), (None, None));
+                assert_eq!(counters.lifetime, Some(counters.boot), "a new store");
+                assert_eq!(
+                    counters.resets,
+                    Some(Resets {
+                        power_on: 1,
+                        ..Resets::default()
+                    })
+                );
                 StatsSection::Counters
             }
             Stats::Memory(_) => StatsSection::Memory,
             Stats::Flash(flash) => {
                 assert!(flash.events_kept >= 1, "the boot event: {flash:?}");
                 assert!(flash.events_capacity >= flash.events_kept, "{flash:?}");
-                assert_eq!(flash.lifetime, None);
+                assert_eq!(flash.lifetime, Some(flash.boot), "a new store");
                 StatsSection::Flash
             }
             Stats::Power(_) => StatsSection::Power,

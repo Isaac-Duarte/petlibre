@@ -3,8 +3,10 @@
 //! session counts, from what a loop pass hands it.
 
 use wellfed_feeder::feeder::platform::Link;
-use wellfed_feeder::stats::{HISTORY_MS, Keeper, reset_cause};
-use wellfed_proto::api::{Metric, POWER_HISTORY, Power, ResetCause};
+use wellfed_feeder::stats::{HISTORY_MS, Keeper, TOTAL_SECTORS, Totals, reset_cause};
+use wellfed_proto::api::{
+    Counts, Erases, FLASH_SECTORS, Metric, POWER_HISTORY, Power, ResetCause, Resets,
+};
 
 fn power(adapter: bool, battery_mv: Option<u32>) -> Power {
     Power {
@@ -183,7 +185,7 @@ fn the_reset_cause_comes_from_the_rom_flags() {
     }
     let mut keeper = Keeper::new();
     keeper.boot(0x0010_0000);
-    assert_eq!(keeper.counters(0).reset, ResetCause::Watchdog);
+    assert_eq!(keeper.counters(0, None).reset, ResetCause::Watchdog);
 }
 
 #[test]
@@ -200,10 +202,60 @@ fn sessions_count_with_their_handshake_times() {
     keeper.opened(40);
     keeper.opened(140);
     keeper.presses(5);
-    let counters = keeper.counters(1_000);
+    let counters = keeper.counters(1_000, None);
     assert_eq!((counters.boot.sessions, counters.boot.presses), (2, 5));
     assert_eq!(
         (counters.handshake_max_ms, counters.handshake_mean_ms),
         (140, 90)
     );
+}
+
+/// The lifetime figures are the stored totals plus this boot's: the
+/// counts, the resets as stored (this boot's already counted), and the
+/// erases of the sectors the wire lists; none without a store.
+#[test]
+fn lifetime_figures_add_this_boot_to_the_stored_totals() {
+    let mut keeper = Keeper::new();
+    keeper.opened(40);
+    keeper.presses(2);
+    let mut stored = Totals::ZERO.plus(
+        &Counts {
+            uptime_s: 7_200,
+            sessions: 10,
+            presses: u32::MAX,
+            ..Counts::default()
+        },
+        &[3; TOTAL_SECTORS],
+        5,
+    );
+    stored.count_boot(ResetCause::Brownout);
+
+    let counters = keeper.counters(61_000, Some(&stored));
+    let lifetime = counters.lifetime.unwrap();
+    assert_eq!(
+        (lifetime.uptime_s, lifetime.sessions, lifetime.presses),
+        (7_261, 11, u32::MAX),
+        "summed, held at the top"
+    );
+    assert_eq!(
+        counters.resets,
+        Some(Resets {
+            brownout: 1,
+            ..Resets::default()
+        })
+    );
+    assert_eq!(keeper.counters(61_000, None).lifetime, None);
+
+    let mut boot = [0; FLASH_SECTORS];
+    boot[13] = 4;
+    let boot = Erases {
+        storage: boot,
+        update: 2,
+    };
+    let flash = Keeper::flash(boot, Some(&stored), 1, 2);
+    let lifetime = flash.lifetime.unwrap();
+    assert_eq!((lifetime.storage[13], lifetime.storage[0]), (7, 3));
+    assert_eq!(lifetime.update, 7);
+    assert_eq!(flash.boot, boot);
+    assert_eq!(Keeper::flash(boot, None, 1, 2).lifetime, None);
 }

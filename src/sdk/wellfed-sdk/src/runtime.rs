@@ -113,8 +113,10 @@ pub fn startup_done(done: bool) {
 /// Stops feeding the watchdog, so the platform resets and KM0 counts it,
 /// after the Wi-Fi task left the network. For reboots the device API or
 /// setup asks for, and trial tests that must behave like a hung candidate.
+/// The feeding stops after the restart's grace
+/// (`supervision::begin_restart_grace`), so the writer saves first.
 pub fn request_reset() {
-    restart();
+    supervision::begin_restart_grace(sdk::uptime_ms());
 }
 
 /// Every intentional restart: stop feeding the watchdog, and have the
@@ -451,6 +453,9 @@ unsafe extern "C" fn feeder_task(_: *mut c_void) -> u32 {
     // network as a restart does, but only once it has outlasted the
     // progress gap and the reset is certain.
     supervision::supervised(feeding, now);
+    if supervision::restart_grace_over(now) {
+        restart();
+    }
     if RESTART.load(Ordering::Acquire) || !feeding {
         if !STOPPED.swap(true, Ordering::Relaxed) {
             // The owner's beat age, gap and supervision; zeros with no owner.

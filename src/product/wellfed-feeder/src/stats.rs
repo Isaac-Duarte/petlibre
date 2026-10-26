@@ -7,20 +7,142 @@
 //! times. Nothing here starts a task, waits or reads flash; each update is
 //! a few additions, so the loop's timing and stack hold.
 //!
-//! Everything here counts since boot, in RAM: nothing is written to flash,
-//! so no figure costs a write turn or wears a sector. The wire's lifetime
-//! fields stay `None` until storage sectors are allocated to lifetime
-//! totals (the storage region has none free).
+//! Everything here counts since boot, in RAM: nothing is written to flash
+//! here, so no figure costs a write turn or wears a sector. The lifetime
+//! figures are this boot's added to the [`Totals`] the settings writer
+//! keeps in the stats store (`store::stats`), which it loads at boot and
+//! saves at most every [`SAVE_MS`], so a power cut loses at most that much
+//! of a boot's counts.
 
 use wellfed_proto::api::{
-    self as proto, Counters, Counts, CurrentUnit, EventBody, FeedOutcome, FeedStats, Food, Metric,
-    POWER_HISTORY, Power, PowerStats, ResetCause, TraceSummary,
+    self as proto, Counters, Counts, CurrentUnit, EventBody, FLASH_SECTORS, FeedOutcome, FeedStats,
+    Food, Metric, POWER_HISTORY, Power, PowerStats, ResetCause, Resets, TraceSummary,
 };
 
 use crate::feeder::platform::{Link, TracesFill};
 
 /// One point of the battery's history.
 pub const HISTORY_MS: u32 = 60 * 60_000;
+
+/// The timed (settled) saves of the lifetime totals: every this long of a
+/// boot's uptime, the first this long in. The most of a boot a power cut
+/// loses.
+pub const SAVE_MS: u32 = 60 * 60_000;
+/// The early saves' budget: each boot's own save as it starts (so its
+/// reset counts however short it is) and an intentional restart's spend a
+/// token, and each settled save gives one back. So early saves never
+/// outnumber settled ones by more than this, and the store's wear is at
+/// most this many erases plus two per hour of uptime: about 17,500 a year,
+/// 8,800 of each of its two sectors, whatever the crash pattern.
+pub const EARLY_SAVES: u8 = 6;
+
+/// The storage sectors the totals count erases of: the whole region, the
+/// board's `STORAGE_SECTORS` (which the runtime asserts). The v1 wire's
+/// [`proto::Erases`] lists only the first [`FLASH_SECTORS`]; it never
+/// gains a field, so the rest are kept here for a later variant.
+pub const TOTAL_SECTORS: usize = 48;
+
+const _: () = assert!(TOTAL_SECTORS >= FLASH_SECTORS);
+
+/// What the feeder counted over its life, up to the stats store's last
+/// save: every figure of [`Counts`], the boots by their reset's cause and
+/// the erases by storage sector and of bank 1.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Totals {
+    pub counts: Counts,
+    pub resets: Resets,
+    /// Each storage sector's erases, by its index in the region.
+    pub storage: [u32; TOTAL_SECTORS],
+    /// Bank 1's sectors, erased by updates.
+    pub update: u32,
+}
+
+impl Default for Totals {
+    fn default() -> Self {
+        Self::ZERO
+    }
+}
+
+/// Two counts' sum, field by field, held at the top rather than wrapped.
+pub fn add_counts(a: &Counts, b: &Counts) -> Counts {
+    Counts {
+        uptime_s: a.uptime_s.saturating_add(b.uptime_s),
+        feeds: a.feeds.saturating_add(b.feeds),
+        feeds_failed: a.feeds_failed.saturating_add(b.feeds_failed),
+        portions: a.portions.saturating_add(b.portions),
+        presses: a.presses.saturating_add(b.presses),
+        sessions: a.sessions.saturating_add(b.sessions),
+        reconnects: a.reconnects.saturating_add(b.reconnects),
+        dhcp_renewals: a.dhcp_renewals.saturating_add(b.dhcp_renewals),
+        outages: a.outages.saturating_add(b.outages),
+        battery_s: a.battery_s.saturating_add(b.battery_s),
+    }
+}
+
+impl Totals {
+    pub const ZERO: Self = Self {
+        counts: Counts {
+            uptime_s: 0,
+            feeds: 0,
+            feeds_failed: 0,
+            portions: 0,
+            presses: 0,
+            sessions: 0,
+            reconnects: 0,
+            dhcp_renewals: 0,
+            outages: 0,
+            battery_s: 0,
+        },
+        resets: Resets {
+            power_on: 0,
+            watchdog: 0,
+            software: 0,
+            brownout: 0,
+            other: 0,
+        },
+        storage: [0; TOTAL_SECTORS],
+        update: 0,
+    };
+
+    /// One more boot, for `cause`.
+    pub fn count_boot(&mut self, cause: ResetCause) {
+        let resets = &mut self.resets;
+        let count = match cause {
+            ResetCause::PowerOn => &mut resets.power_on,
+            ResetCause::Watchdog => &mut resets.watchdog,
+            ResetCause::Software => &mut resets.software,
+            ResetCause::Brownout => &mut resets.brownout,
+            ResetCause::Other => &mut resets.other,
+        };
+        *count = count.saturating_add(1);
+    }
+
+    /// These totals with a boot's own figures added: its `counts`, its
+    /// erases by storage sector (`storage`, as far as it reaches) and of
+    /// bank 1.
+    pub fn plus(&self, counts: &Counts, storage: &[u32], update: u32) -> Self {
+        let mut sum = *self;
+        sum.counts = add_counts(&self.counts, counts);
+        for (total, boot) in sum.storage.iter_mut().zip(storage) {
+            *total = total.saturating_add(*boot);
+        }
+        sum.update = self.update.saturating_add(update);
+        sum
+    }
+
+    /// The erases as the v1 wire carries them: the first
+    /// [`FLASH_SECTORS`].
+    pub fn erases(&self) -> proto::Erases {
+        let mut storage = [0; FLASH_SECTORS];
+        for (out, total) in storage.iter_mut().zip(self.storage) {
+            *out = total;
+        }
+        proto::Erases {
+            storage,
+            update: self.update,
+        }
+    }
+}
 
 /// Why a boot started, from the ROM's reset flags (`BOOT_Reason` bits
 /// 16-21: system, watchdog, brownout, KM4 system, KM4 watchdog, deep
@@ -481,27 +603,41 @@ impl Keeper {
         }
     }
 
-    /// The counters section.
-    pub fn counters(&self, now_ms: u32) -> Counters {
+    /// The counters section; the lifetime figures from `stored`, the
+    /// totals the stats store holds (this boot's reset counted), when it
+    /// keeps them.
+    pub fn counters(&self, now_ms: u32, stored: Option<&Totals>) -> Counters {
         let mean = self
             .handshake_total_ms
             .checked_div(u64::from(self.sessions))
             .unwrap_or(0);
+        let boot = self.counts(now_ms);
         Counters {
-            boot: self.counts(now_ms),
+            boot,
             reset: self.reset,
-            lifetime: None,
-            resets: None,
+            lifetime: stored.map(|stored| add_counts(&stored.counts, &boot)),
+            resets: stored.map(|stored| stored.resets),
             handshake_max_ms: self.handshake_max_ms,
             handshake_mean_ms: u32::try_from(mean).unwrap_or(u32::MAX),
         }
     }
 
-    /// The flash section, with the platform's event-ring figures.
-    pub fn flash(erases: proto::Erases, events_kept: u32, events_capacity: u32) -> proto::Flash {
+    /// The flash section, with the platform's event-ring figures and, when
+    /// the stats store keeps them, the `stored` totals.
+    pub fn flash(
+        erases: proto::Erases,
+        stored: Option<&Totals>,
+        events_kept: u32,
+        events_capacity: u32,
+    ) -> proto::Flash {
+        let lifetime = stored.map(|stored| {
+            stored
+                .plus(&Counts::default(), &erases.storage, erases.update)
+                .erases()
+        });
         proto::Flash {
             boot: erases,
-            lifetime: None,
+            lifetime,
             events_kept,
             events_capacity,
         }

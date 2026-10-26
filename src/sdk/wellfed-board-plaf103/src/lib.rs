@@ -54,16 +54,19 @@ pub mod pins {
     pub const IR_PB_BIT: u32 = bit(IR_PB);
 }
 
-/// Owner-approved replacement-firmware storage: 32 sectors at
-/// 0x340000-0x360000. The owner approved the first 16, then extended it with the
-/// owner's approval (October 23, 2026) for client keys, plans and the 7-day
-/// event ring. A static pass over stock 1.1.15 found no fixed or bounded
-/// computed flash access in 0x306000-0x3e8000, and every full dump of the
-/// research unit is blank there. Clear of bank 0, of a full-size bank 1
-/// (ends no later than 0x306000) and of the stock settings (0x3e8000).
+/// Owner-approved replacement-firmware storage: 48 sectors at
+/// 0x340000-0x370000. The owner approved the first 16, extended them to 32
+/// (October 23, 2026) for client keys, plans and the 7-day event ring, and
+/// to 48 (October 26) for the lifetime statistics and plans. A static pass
+/// over stock 1.1.15 found no fixed or bounded computed flash access in
+/// 0x306000-0x3e8000, and every full dump of the research unit is blank
+/// there. Clear of bank 0, of a full-size bank 1 (ends no later than
+/// 0x306000) and of the stock settings (0x3e8000). The region only ever
+/// grows upward, so a sector keeps its address and an older build, whose
+/// bound is smaller, never reaches the sectors added after it.
 /// Callers name a sector index; nothing takes a flash address.
 pub const STORAGE_OFFSET: u32 = 0x34_0000;
-pub const STORAGE_SECTORS: u32 = 32;
+pub const STORAGE_SECTORS: u32 = 48;
 
 /// Who owns each sector of the storage region, in one place. Each
 /// store keeps its sectors to itself, so a torn record is always its own.
@@ -129,9 +132,18 @@ pub mod storage {
         count: 3,
     };
 
-    /// Every allocation, in region order.
-    pub const ALL: [Sectors; 11] = [
-        JOURNAL, SETTINGS, CONFIRM, NET, SEED, CLIENTS, PLANS, EVENTS, UPDATE, TIME, TRACES,
+    /// The lifetime statistics: totals over every boot, resets by cause
+    /// and erases by sector. The first sectors past the 32-sector region, so
+    /// a build that predates them never reads or writes them.
+    pub const STATS: Sectors = Sectors {
+        first: 32,
+        count: 2,
+    };
+
+    /// Every allocation, in region order; sectors 34-47 are free (planned
+    /// for feeding plans).
+    pub const ALL: [Sectors; 12] = [
+        JOURNAL, SETTINGS, CONFIRM, NET, SEED, CLIENTS, PLANS, EVENTS, UPDATE, TIME, TRACES, STATS,
     ];
 
     const fn disjoint_and_inside() -> bool {

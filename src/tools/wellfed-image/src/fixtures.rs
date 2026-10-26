@@ -72,9 +72,13 @@ fn write(path: &Path, data: &[u8]) -> io::Result<()> {
 }
 
 /// Freeze `image` in `directory` as a first-boot build review that
-/// [`crate::review::frozen`] accepts, as a checkout whose SDK lock
-/// `checkout` gets froze it. `fields` (an object) is merged into the build
-/// manifest. Returns the review and the manifest as written.
+/// [`crate::review::frozen`] accepts. `fields` (an object) is merged into
+/// the build manifest. Returns the review and the manifest as written.
+///
+/// `checkout` gets the SDK lock the manifest's pins came from, as in the
+/// checkout that froze a real review. `frozen` never reads it; it is there
+/// so a test can bump or remove it and show that a review does not depend
+/// on the checkout's lock.
 pub fn freeze_build(
     checkout: &Path,
     directory: &Path,

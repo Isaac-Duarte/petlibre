@@ -9,7 +9,9 @@
 //! exactly as `wellfed-flash` does before it installs one
 //! (`wellfed_image::review::frozen`): the image, payload and
 //! manifest hashes, the pinned stock hash for a stock review, the first-boot
-//! profile against the SDK lock, the manifest's `OTA_All.bin`, and the
+//! profile and its recorded SDK and toolchain pins (checked against the lock
+//! at freeze time, not the checkout's current one), the manifest's
+//! `OTA_All.bin`, and the
 //! recorded audits. It also requires the image to carry the manifest's
 //! startup identity as text. The build ID and the motion policy come from
 //! that verified manifest, never from the caller, and [`Frozen::offer`]

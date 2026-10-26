@@ -17,13 +17,86 @@ use wellfed_core::feed::controller::FeedReason;
 use wellfed_core::feed::owner::OwnerState;
 use wellfed_core::feed::storage::OwnerOutcome;
 use wellfed_core::record::{Confirm, Event, Owner};
+use wellfed_formats::require;
 use wellfed_model::{Refusal, Settings, SettingsPatch};
 use wellfed_rig::device::{Answer, Ask};
-use wellfed_rig::{Error, Result, require};
 
 use super::log::events;
 use super::scenarios::{RECORD_SECONDS, changes_to, read_settings, set_settings};
-use super::{Ctx, compact};
+use super::{Ctx, Error, Result, compact};
+
+/// Why `feed-writes` failed. A feed that may still be running is its own
+/// variant, since the run stops after it.
+#[derive(Debug, thiserror::Error)]
+pub enum FeedsError {
+    /// Waiting out a feed failed (`wait`), after the scenario's own
+    /// `failure` if it had one: nothing was restored.
+    #[error(
+        "{}{}",
+        failed_first(failure.as_deref()),
+        unsettled(*feed, wait)
+    )]
+    Unsettled {
+        feed: u32,
+        wait: Box<Error>,
+        failure: Option<Box<Error>>,
+    },
+    #[error("The held session's status answered {}", compact(answer))]
+    HeldStatus { answer: Answer },
+    /// `writes` are the UART lines of the store writes.
+    #[error("Store writes during feed {feed}: {}", writes.join(" | "))]
+    StoreWrites { feed: u32, writes: Vec<String> },
+    #[error("Feed {feed} did not end Done {}/{}: {result:?}", PORTIONS, PORTIONS)]
+    NotDone { feed: u32, result: Fed },
+    #[error(
+        "A settings change during feed {feed} answered {}, not busy",
+        compact(answer)
+    )]
+    SettingsNotBusy { feed: u32, answer: Answer },
+    #[error("A lock change during feed {feed} answered {}", compact(answer))]
+    LockAnswer { feed: u32, answer: Answer },
+    #[error("A clock sync during feed {feed} answered {}", compact(answer))]
+    ClockAnswer { feed: u32, answer: Answer },
+    #[error(
+        "The settings read {} after the change the feed refused",
+        compact(after)
+    )]
+    SettingsAfter { after: Settings },
+    #[error("The lock reads {now:?} after a change to {wanted} during the feed")]
+    LockAfter { now: Option<bool>, wanted: bool },
+    #[error("The interlock deferred no write during the feed (writes_deferred={after})")]
+    NothingDeferred { after: u32 },
+    #[error("The cancel of feed {feed} answered {}", compact(answer))]
+    CancelAnswer { feed: u32, answer: Answer },
+    #[error("Feed {feed} was not cancelled: {result:?}")]
+    NotCancelled { feed: u32, result: Fed },
+    #[error("No stopped outputs logged between the cancel of feed {feed} and its result")]
+    NoStoppedOutputs { feed: u32 },
+    /// The request failed, so the feeder may have taken it: never resent.
+    #[error("The feed request failed, so the feed is uncertain and is not sent again: {error}")]
+    Uncertain { error: Box<Error> },
+    #[error("The feed answered {}", compact(answer))]
+    FeedAnswer { answer: Answer },
+    #[error("Feed {feed}'s result does not parse: {line}")]
+    Unparsed { feed: u32, line: String },
+    /// `restarts` are the UART lines of the restarts.
+    #[error("The feeder restarted: {}", restarts.join(" | "))]
+    Restarted { restarts: Vec<String> },
+    #[error("The boot count went from {before} to {after}")]
+    BootCount { before: u32, after: u32 },
+    #[error("Restoring the lock answered {}", compact(answer))]
+    LockRestore { answer: Answer },
+}
+
+/// Why the run stops after a feed left running: also what it records.
+fn unsettled(feed: u32, wait: &Error) -> String {
+    format!("feed {feed} may still be running ({wait}); nothing was restored")
+}
+
+/// The scenario's own failure ahead of a feed left running, if it had one.
+fn failed_first(failure: Option<&Error>) -> String {
+    failure.map_or_else(String::new, |error| format!("{error}; "))
+}
 
 const PORTIONS: u8 = 2;
 /// From the reservation to the motor driving: the optics and the
@@ -61,16 +134,16 @@ pub(super) fn feed_writes(ctx: &mut Ctx) -> Result<()> {
     if let Some(running) = issued
         && let Err(wait) = settle(ctx, running)
     {
-        let reason = format!(
-            "feed {} may still be running ({wait}); nothing was restored",
-            running.feed
-        );
-        ctx.halted = Some(reason.clone());
-        if matches!(wait, Error::Interrupted) {
-            return Err(Error::Interrupted);
+        ctx.halted = Some(unsettled(running.feed, &wait));
+        if wait.interrupted() {
+            return Err(wait);
         }
-        let failure = result.err().map_or_else(String::new, |e| format!("{e}; "));
-        return Err(Error::Bench(format!("{failure}{reason}")));
+        return Err(FeedsError::Unsettled {
+            feed: running.feed,
+            wait: Box::new(wait),
+            failure: result.err().map(Box::new),
+        }
+        .into());
     }
     // An uncertain feed the UART never showed: nothing is safe to send.
     if ctx.halted.is_some() {
@@ -89,16 +162,20 @@ fn held_across_feeds(
     locked: Option<bool>,
     issued: &mut Option<Issued>,
 ) -> Result<()> {
-    let answer = ctx.ask_held(&Ask::Status)?;
-    require(
-        matches!(answer, Answer::Status(_)),
-        format!("The held session's status answered {}", compact(&answer)),
-    )?;
+    held_status(ctx)?;
 
     let change = writes_during_feed(ctx, before, locked, issued)?;
     // The change the feed refused goes through once it is over.
     set_settings(ctx, change)?;
     cancel_during_feed(ctx, issued)
+}
+
+/// The held session answers a status request with the status.
+fn held_status(ctx: &mut Ctx) -> Result<()> {
+    match ctx.ask_held(&Ask::Status)? {
+        Answer::Status(_) => Ok(()),
+        answer => Err(FeedsError::HeldStatus { answer }.into()),
+    }
 }
 
 /// Wait for `running`'s result and the owner at rest after it.
@@ -169,60 +246,46 @@ fn writes_during_feed(
     *issued = None;
 
     let writes = ctx.log.between(start - 1, fed, store_write);
-    require(
-        writes.is_empty(),
-        format!("Store writes during feed {feed}: {}", writes.join(" | ")),
-    )?;
+    require(writes.is_empty(), || FeedsError::StoreWrites {
+        feed,
+        writes,
+    })?;
     let result = result_at(ctx, fed, feed)?;
     require(
         result.outcome == Some(OwnerOutcome::Done)
             && result.requested == u16::from(PORTIONS)
             && result.completed == u16::from(PORTIONS),
-        format!("Feed {feed} did not end Done {PORTIONS}/{PORTIONS}: {result:?}"),
+        || FeedsError::NotDone { feed, result },
     )?;
-    require(
-        settings == Answer::Refused(Refusal::Busy),
-        format!(
-            "A settings change during feed {feed} answered {}, not busy",
-            compact(&settings)
-        ),
-    )?;
+    require(settings == Answer::Refused(Refusal::Busy), || {
+        FeedsError::SettingsNotBusy {
+            feed,
+            answer: settings,
+        }
+    })?;
     let done = Answer::Done { generation: None };
     if let Some(answer) = &lock {
-        require(
-            *answer == done,
-            format!(
-                "A lock change during feed {feed} answered {}",
-                compact(answer)
-            ),
-        )?;
+        require(*answer == done, || FeedsError::LockAnswer {
+            feed,
+            answer: answer.clone(),
+        })?;
     }
-    require(
-        clock == done,
-        format!(
-            "A clock sync during feed {feed} answered {}",
-            compact(&clock)
-        ),
-    )?;
+    require(clock == done, || FeedsError::ClockAnswer {
+        feed,
+        answer: clock,
+    })?;
     deferred_writes(ctx, start)?;
 
     let after = read_settings(ctx)?;
-    require(
-        changes_to(&after) == changes_to(before),
-        format!(
-            "The settings read {} after the change the feed refused",
-            compact(&after)
-        ),
-    )?;
+    require(changes_to(&after) == changes_to(before), || {
+        FeedsError::SettingsAfter { after }
+    })?;
     if let Some(locked) = locked {
         let now = ctx.device_status()?.locked;
-        require(
-            now == Some(!locked),
-            format!(
-                "The lock reads {now:?} after a change to {} during the feed",
-                !locked
-            ),
-        )?;
+        require(now == Some(!locked), || FeedsError::LockAfter {
+            now,
+            wanted: !locked,
+        })?;
     }
     Ok(change)
 }
@@ -250,20 +313,15 @@ fn deferred_writes(ctx: &mut Ctx, start: usize) -> Result<()> {
         "  Interlock: writes_deferred {} then {after}",
         before.map_or_else(|| "unlogged".to_string(), |n| n.to_string())
     ));
-    require(
-        after > before.unwrap_or(0),
-        format!("The interlock deferred no write during the feed (writes_deferred={after})"),
-    )
+    require(after > before.unwrap_or(0), || {
+        FeedsError::NothingDeferred { after }.into()
+    })
 }
 
 /// Feed again, and cancel it from the held session once the motor drives.
 fn cancel_during_feed(ctx: &mut Ctx, issued: &mut Option<Issued>) -> Result<()> {
     // Also a keepalive: the feeder drops a session quiet for 90 s.
-    let answer = ctx.ask_held(&Ask::Status)?;
-    require(
-        matches!(answer, Answer::Status(_)),
-        format!("The held session's status answered {}", compact(&answer)),
-    )?;
+    held_status(ctx)?;
 
     let (feed, start) = start_feed(ctx, issued)?;
     ctx.expect("the motor driving", start, PREPARE_SECONDS, |e| {
@@ -280,24 +338,25 @@ fn cancel_during_feed(ctx: &mut Ctx, issued: &mut Option<Issued>) -> Result<()> 
     let fed = settle(ctx, Issued { feed, since: start })?;
     *issued = None;
 
-    require(
-        cancel == Answer::Done { generation: None },
-        format!("The cancel of feed {feed} answered {}", compact(&cancel)),
-    )?;
+    require(cancel == Answer::Done { generation: None }, || {
+        FeedsError::CancelAnswer {
+            feed,
+            answer: cancel.clone(),
+        }
+    })?;
     let result = result_at(ctx, fed, feed)?;
     require(
         result.outcome == Some(OwnerOutcome::Cancelled)
             && result.reason == Some(FeedReason::Cancelled),
-        format!("Feed {feed} was not cancelled: {result:?}"),
+        || FeedsError::NotCancelled { feed, result },
     )?;
     // The owner logs its outputs stopped before it reports the result.
     let stopped = ctx.log.between(since, fed, |e| {
         matches!(e, Event::Owner(Owner::State { state, stopped: true }) if *state != OwnerState::Feeding)
     });
-    require(
-        !stopped.is_empty(),
-        format!("No stopped outputs logged between the cancel of feed {feed} and its result"),
-    )?;
+    require(!stopped.is_empty(), || FeedsError::NoStoppedOutputs {
+        feed,
+    })?;
     ctx.note(&format!(
         "  Feed {feed} cancelled with {}/{PORTIONS} portions",
         result.completed
@@ -313,7 +372,7 @@ fn start_feed(ctx: &mut Ctx, issued: &mut Option<Issued>) -> Result<(u32, usize)
     let since = ctx.mark()?;
     let answer = match ctx.ask(&Ask::Feed { portions: PORTIONS }) {
         Ok(answer) => answer,
-        Err(Error::Interrupted) => return Err(Error::Interrupted),
+        Err(error) if error.interrupted() => return Err(error),
         Err(error) => {
             *issued = taken(ctx, since)?.map(|feed| Issued { feed, since });
             if issued.is_none() {
@@ -324,16 +383,14 @@ fn start_feed(ctx: &mut Ctx, issued: &mut Option<Issued>) -> Result<(u32, usize)
                      {RECORD_SECONDS:.0} s; nothing was restored"
                 ));
             }
-            return Err(Error::Bench(format!(
-                "The feed request failed, so the feed is uncertain and is not sent again: {error}"
-            )));
+            return Err(FeedsError::Uncertain {
+                error: Box::new(error),
+            }
+            .into());
         }
     };
     let Answer::Feeding { feed } = answer else {
-        return Err(Error::Bench(format!(
-            "The feed answered {}",
-            compact(&answer)
-        )));
+        return Err(FeedsError::FeedAnswer { answer }.into());
     };
     *issued = Some(Issued { feed, since });
     ctx.note(&format!("  Feed {feed}: {PORTIONS} portions"));
@@ -355,7 +412,7 @@ fn taken(ctx: &mut Ctx, since: usize) -> Result<Option<u32>> {
     });
     let mark = match found {
         Ok(mark) => mark,
-        Err(Error::Interrupted) => return Err(Error::Interrupted),
+        Err(error) if error.interrupted() => return Err(error),
         Err(_) => return Ok(None),
     };
     Ok(events(&ctx.log.line(mark - 1).text)
@@ -391,7 +448,7 @@ fn store_write(event: &Event<'_>) -> bool {
 
 /// What `PLOWN1 fed` reports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Fed {
+pub struct Fed {
     requested: u16,
     completed: u16,
     outcome: Option<OwnerOutcome>,
@@ -420,9 +477,13 @@ fn fed_of(event: &Event<'_>, feed: u32) -> Option<Fed> {
 /// The result on the line just before `mark` (an [`Ctx::expect`] result).
 fn result_at(ctx: &Ctx, mark: usize, feed: u32) -> Result<Fed> {
     let line = &ctx.log.line(mark - 1).text;
-    events(line)
-        .find_map(|e| fed_of(&e, feed))
-        .ok_or_else(|| Error::Bench(format!("Feed {feed}'s result does not parse: {line}")))
+    events(line).find_map(|e| fed_of(&e, feed)).ok_or_else(|| {
+        FeedsError::Unparsed {
+            feed,
+            line: line.clone(),
+        }
+        .into()
+    })
 }
 
 /// No restart since `since`, on the UART or in the boot count.
@@ -430,15 +491,17 @@ fn no_reset(ctx: &mut Ctx, since: usize, boots: u32) -> Result<()> {
     let restarts = ctx.log.between(since, usize::MAX, |e| {
         matches!(e, Event::Start { .. } | Event::Panic { .. })
     });
-    require(
-        restarts.is_empty(),
-        format!("The feeder restarted: {}", restarts.join(" | ")),
-    )?;
+    require(restarts.is_empty(), || FeedsError::Restarted {
+        restarts: restarts.clone(),
+    })?;
     let status = ctx.device_status()?;
-    require(
-        status.boot_count == boots,
-        format!("The boot count went from {boots} to {}", status.boot_count),
-    )
+    require(status.boot_count == boots, || {
+        FeedsError::BootCount {
+            before: boots,
+            after: status.boot_count,
+        }
+        .into()
+    })
 }
 
 /// Put back the settings and the lock as `before` and `locked` had them.
@@ -452,9 +515,8 @@ fn restore(ctx: &mut Ctx, before: &Settings, locked: Option<bool>) -> Result<()>
     if ctx.device_status()?.locked == Some(locked) {
         return Ok(());
     }
-    let answer = ctx.ask(&Ask::SetLock { locked })?;
-    require(
-        answer == Answer::Done { generation: None },
-        format!("Restoring the lock answered {}", compact(&answer)),
-    )
+    match ctx.ask(&Ask::SetLock { locked })? {
+        Answer::Done { generation: None } => Ok(()),
+        answer => Err(FeedsError::LockRestore { answer }.into()),
+    }
 }

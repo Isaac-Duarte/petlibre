@@ -18,20 +18,25 @@
 //! only the trait, so they are tested on scripted feeders without hardware.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 pub use args::{ItestArgs, StockOtaArgs};
+pub use error::{Error, Result};
 use wellfed_formats::bench::VERIFICATION;
 use wellfed_formats::bench::catalog::Need;
 use wellfed_formats::bench::progress::StepState;
 use wellfed_formats::bench::run::{Evidence, RunRecord, SUFFIX, ScenarioRecord, ScenarioVerdict};
+use wellfed_formats::require;
 use wellfed_rig::commands::ota::{self, Outcome, Staged, Target, Watch};
 use wellfed_rig::commands::{Bench, Image, OtaArgs};
 use wellfed_rig::device::{Answer, Ask, DeviceStatus, Intruder, Rebuffed};
+use wellfed_rig::say;
 use wellfed_rig::server::{StockStatus, TrialAnswer, TrialRequest};
-use wellfed_rig::{Error, Result, require, say};
+use wellfed_rig::tools::PushError;
 use serde::Serialize;
 
 mod args;
+mod error;
 mod feeds;
 mod live;
 mod log;
@@ -126,18 +131,22 @@ trait Rig {
     /// thread of its own, replacing any push still running; `None` stops it.
     fn offer(&mut self, staged: Option<&Staged>, fault: Fault) -> Result<()>;
     /// How the push ended, once it has; `Ok` once bank 1 is activated.
-    fn offered(&mut self) -> Option<std::result::Result<(), String>>;
+    fn offered(&mut self) -> Option<std::result::Result<(), Arc<PushError>>>;
     /// One device API request as the owner's key.
     fn device(&mut self, ask: &Ask) -> Result<Answer>;
     /// Open a second owner session now and hold it: the feeder admits no
     /// handshake during a feed, so only a session opened before one reaches
     /// the feeder while it runs.
     fn hold(&mut self) -> Result<()> {
-        Err(Error::Bench("This rig holds no second session".into()))
+        Err(Error::Unsupported {
+            lacks: "holds no second session",
+        })
     }
     /// One request on the held session, never reopened.
     fn held(&mut self, _ask: &Ask) -> Result<Answer> {
-        Err(Error::Bench("This rig holds no second session".into()))
+        Err(Error::Unsupported {
+            lacks: "holds no second session",
+        })
     }
     /// Close the held session.
     fn release(&mut self) {}
@@ -163,20 +172,28 @@ trait Rig {
     /// Start `ota-images` serving `review`'s build to the feeder; the URL
     /// token from its lease. Only `stock-ota` uses it.
     fn images(&mut self, _review: &Path) -> Result<String> {
-        Err(Error::Bench("This rig serves no images".into()))
+        Err(Error::Unsupported {
+            lacks: "serves no images",
+        })
     }
     /// `POST /api/ota/trial`: stock gets one `OTA_UPGRADE`, never resent.
     fn stock_trial(&mut self, _trial: &TrialRequest) -> Result<()> {
-        Err(Error::Bench("This rig sends no stock trials".into()))
+        Err(Error::Unsupported {
+            lacks: "sends no stock trials",
+        })
     }
     /// `POST /api/ota/trial/resolve`; refused until the server's evidence allows it.
     fn resolve_trial(&mut self, _request_id: &str, _note: &str) -> Result<()> {
-        Err(Error::Bench("This rig resolves no stock trials".into()))
+        Err(Error::Unsupported {
+            lacks: "resolves no stock trials",
+        })
     }
     /// `POST /api/ota/trial/answered`: `build` answered the device API from
     /// `bank` after the trial, as `note` says; sends the device nothing.
     fn trial_answered(&mut self, _answer: &TrialAnswer) -> Result<()> {
-        Err(Error::Bench("This rig closes no stock trials".into()))
+        Err(Error::Unsupported {
+            lacks: "closes no stock trials",
+        })
     }
 }
 
@@ -190,7 +207,14 @@ struct Baseline {
 
 /// A failure the suite cannot continue past: the feeder stopped answering.
 #[derive(Debug)]
-struct Silent(String);
+struct Silent;
+
+impl Silent {
+    /// As the run's record and the operator read it.
+    fn reason(&self) -> String {
+        Error::Silent.to_string()
+    }
+}
 
 struct Ctx<'r> {
     rig: &'r mut dyn Rig,
@@ -262,7 +286,10 @@ impl<'r> Ctx<'r> {
                 return Ok(index + 1);
             }
             if self.rig.clock() >= deadline {
-                return Err(Error::Bench(format!("No {what} within {seconds:.0} s")));
+                return Err(Error::NoRecord {
+                    what: what.into(),
+                    seconds,
+                });
             }
             self.alive()?;
             self.rig.wait(POLL_SECONDS)?;
@@ -282,21 +309,22 @@ impl<'r> Ctx<'r> {
             // The UART keeps draining, so its captures stay in step.
             self.pull()?;
             let verdict = self.rig.status().and_then(|status| check(&status));
-            match verdict {
+            let reason = match verdict {
                 Ok(report) => return Ok(report),
-                Err(reason) => {
-                    let reason = reason.to_string();
-                    if reason != last {
-                        self.note(&format!("  Waiting for {what}: {reason}"));
-                        last = reason;
-                    }
-                }
+                Err(reason) => reason,
+            };
+            let text = reason.to_string();
+            if text != last {
+                self.note(&format!("  Waiting for {what}: {text}"));
+                last = text;
             }
 
             if self.rig.clock() >= deadline {
-                return Err(Error::Bench(format!(
-                    "No {what} within {seconds:.0} s ({last})"
-                )));
+                return Err(Error::Waited {
+                    what: what.into(),
+                    seconds,
+                    last: Box::new(reason),
+                });
             }
             self.alive()?;
             self.rig.wait(STATUS_POLL_SECONDS)?;
@@ -319,7 +347,7 @@ impl<'r> Ctx<'r> {
     fn device_status(&mut self) -> Result<DeviceStatus> {
         match self.ask(&Ask::Status)? {
             Answer::Status(status) => Ok(status),
-            other => Err(Error::Bench(format!("Status answered {}", compact(&other)))),
+            answer => Err(Error::StatusAnswer { answer }),
         }
     }
 
@@ -334,22 +362,23 @@ impl<'r> Ctx<'r> {
         let mut last = String::new();
         loop {
             let verdict = self.device_status().and_then(|status| check(&status));
-            match verdict {
+            let reason = match verdict {
                 Ok(report) => return Ok(report),
-                Err(Error::Interrupted) => return Err(Error::Interrupted),
-                Err(reason) => {
-                    let reason = reason.to_string();
-                    if reason != last {
-                        self.note(&format!("  Waiting for {what}: {reason}"));
-                        last = reason;
-                    }
-                }
+                Err(error) if error.interrupted() => return Err(error),
+                Err(reason) => reason,
+            };
+            let text = reason.to_string();
+            if text != last {
+                self.note(&format!("  Waiting for {what}: {text}"));
+                last = text;
             }
 
             if self.rig.clock() >= deadline {
-                return Err(Error::Bench(format!(
-                    "No {what} within {seconds:.0} s ({last})"
-                )));
+                return Err(Error::Waited {
+                    what: what.into(),
+                    seconds,
+                    last: Box::new(reason),
+                });
             }
             self.alive()?;
             self.rig.wait(STATUS_POLL_SECONDS)?;
@@ -367,10 +396,7 @@ impl<'r> Ctx<'r> {
     fn sync_clock(&mut self) -> Result<()> {
         match self.ask(&Ask::SyncClock)? {
             Answer::Done { .. } => Ok(()),
-            other => Err(Error::Bench(format!(
-                "The clock sync answered {}",
-                compact(&other)
-            ))),
+            answer => Err(Error::ClockSync { answer }),
         }
     }
 
@@ -378,10 +404,7 @@ impl<'r> Ctx<'r> {
     /// update passes, falls back or fails; the device API must then agree.
     fn install(&mut self, staged: &Staged) -> Result<Outcome> {
         // The suite's scenarios need health and a trial, which stock has not.
-        require(
-            staged.target == Target::Replacement,
-            "The integration suite installs replacement builds only; offer stock with `wellfed-bench ota`",
-        )?;
+        require(staged.target == Target::Replacement, || Error::StockInstall)?;
         let since = self.mark()?;
         self.rig.offer(Some(staged), Fault::None)?;
         self.note(&format!(
@@ -435,17 +458,14 @@ impl<'r> Ctx<'r> {
             }
             // A push that ended before any UART outcome: the feeder refused
             // the offer, or reported a stop over the API.
-            if let Some(Err(error)) = self.rig.offered() {
-                return Err(Error::Bench(format!(
-                    "The update over the device API ended before any UART outcome: {error}"
-                )));
+            if let Some(Err(push)) = self.rig.offered() {
+                return Err(Error::PushEnded(push));
             }
             if self.rig.clock() >= deadline {
-                return Err(Error::Bench(format!(
-                    "No update outcome for {} within {:.0} min",
-                    &build[..12],
-                    seconds / 60.0
-                )));
+                return Err(Error::NoOutcome {
+                    build: build[..12].into(),
+                    minutes: seconds / 60.0,
+                });
             }
             self.alive()?;
             self.rig.wait(POLL_SECONDS)?;
@@ -470,9 +490,7 @@ impl<'r> Ctx<'r> {
     }
 
     fn baseline(&self) -> Result<&Baseline> {
-        self.baseline
-            .as_ref()
-            .ok_or_else(|| Error::Bench("No confirmed baseline build".into()))
+        self.baseline.as_ref().ok_or(Error::NoBaseline)
     }
 
     /// Re-sign the baseline review at the next version, for a scenario that
@@ -480,9 +498,9 @@ impl<'r> Ctx<'r> {
     fn resign(&mut self, label: &str) -> Result<Staged> {
         let review = self.baseline()?.review.clone();
         let args = self.ota_args(label, Some(review));
-        self.rig
-            .stage(&args)?
-            .ok_or_else(|| Error::Bench(format!("Signing {label} failed")))
+        self.rig.stage(&args)?.ok_or_else(|| Error::Unsigned {
+            label: label.into(),
+        })
     }
 
     /// The trial firmware's fail variant signed at the next version:
@@ -504,10 +522,7 @@ impl<'r> Ctx<'r> {
             args.firmware = Some(image.firmware);
             args.variant = image.variant;
         }
-        let staged = self
-            .rig
-            .stage(&args)?
-            .ok_or_else(|| Error::Bench(format!("Building or signing {image} failed")))?;
+        let staged = self.rig.stage(&args)?.ok_or(Error::Unbuilt { image })?;
         if args.build {
             self.images.push((image, staged.review.clone()));
         }
@@ -557,9 +572,8 @@ impl<'r> Ctx<'r> {
         }
         match self.silent() {
             Some(found) => {
-                let reason = found.0.clone();
                 self.went_silent = Some(found);
-                Err(Error::Bench(reason))
+                Err(Error::Silent)
             }
             None => Ok(()),
         }
@@ -590,11 +604,7 @@ impl<'r> Ctx<'r> {
             return None;
         }
         let answers = self.rig.device(&Ask::Status).is_ok();
-        (!answers).then(|| {
-            Silent(format!(
-                "no UART record or device API answer for {SILENT_SECONDS:.0} s"
-            ))
-        })
+        (!answers).then_some(Silent)
     }
 }
 
@@ -644,17 +654,9 @@ fn steps(args: &ItestArgs) -> Result<Vec<&'static str>> {
 fn select(args: &ItestArgs) -> Result<Vec<&'static Scenario>> {
     let only = &args.only;
     for name in only {
-        require(
-            SCENARIOS.iter().any(|s| s.name == name),
-            format!(
-                "Unknown scenario {name:?}; --list shows them ({})",
-                SCENARIOS
-                    .iter()
-                    .map(|s| s.name)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-        )?;
+        require(SCENARIOS.iter().any(|s| s.name == name), || {
+            Error::UnknownScenario { name: name.into() }
+        })?;
     }
     Ok(SCENARIOS
         .iter()
@@ -706,7 +708,7 @@ fn run(ctx: &mut Ctx, scenarios: &[&'static Scenario]) -> Result<(Vec<Report>, O
 
         let mut verdict = match result {
             Ok(()) => Verdict::Pass,
-            Err(Error::Interrupted) => return Err(Error::Interrupted),
+            Err(error) if error.interrupted() => return Err(error),
             Err(error) => Verdict::Fail(error.to_string()),
         };
         let halted = ctx.halted.take();
@@ -716,7 +718,7 @@ fn run(ctx: &mut Ctx, scenarios: &[&'static Scenario]) -> Result<(Vec<Report>, O
             }
         } else if let Some(found) = ctx.silent() {
             if verdict == Verdict::Pass {
-                verdict = Verdict::Fail(found.0.clone());
+                verdict = Verdict::Fail(found.reason());
             }
             silent = Some(found);
         } else if scenario.baseline {
@@ -728,7 +730,7 @@ fn run(ctx: &mut Ctx, scenarios: &[&'static Scenario]) -> Result<(Vec<Report>, O
                     "left the feeder changed: {}",
                     scenarios::restore_state(ctx, want, &now).join("; ")
                 )),
-                Err(Error::Interrupted) => return Err(Error::Interrupted),
+                Err(error) if error.interrupted() => return Err(error),
                 Err(error) => Some(format!(
                     "could not read the feeder's state after it: {error}"
                 )),
@@ -794,7 +796,7 @@ fn summary(
         name: name.into(),
         evidence: Evidence::Physical,
         scenarios,
-        silent: silent.map(|s| s.0.clone()),
+        silent: silent.map(Silent::reason),
         captures: captures.to_vec(),
     }
 }
@@ -889,7 +891,7 @@ pub fn itest(bench: &mut Bench, args: &ItestArgs, stock_bin: PathBuf) -> Result<
         );
     }
     if let Some(silent) = &silent {
-        say!("Stopped: {}", silent.0);
+        say!("Stopped: {}", silent.reason());
         for line in recovery_hint(&name, baseline.as_ref()) {
             say!("{line}");
         }

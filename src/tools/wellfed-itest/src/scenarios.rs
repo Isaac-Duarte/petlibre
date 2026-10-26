@@ -14,14 +14,87 @@ use wellfed_model::{OpenRefusal, Refusal, Settings, SettingsPatch, WifiSource};
 
 use std::ops::Deref;
 
+use wellfed_core::ota::install::StopStage;
 use wellfed_core::record::{self, Api, Confirm, Event, Trial, Update, Watch};
 use wellfed_formats::bench::catalog;
+use wellfed_formats::require;
+use wellfed_model::Generation;
 use wellfed_rig::commands::ota::Outcome;
 use wellfed_rig::device::{Answer, Ask, Credentials, DeviceStatus, Intruder, Rebuffed};
 use wellfed_rig::server::NotReady;
-use wellfed_rig::{Error, Result, require};
 
-use super::{Baseline, Ctx, Fault, INSTALL_SECONDS, STATUS_SECONDS, compact};
+use super::{Baseline, Ctx, Fault, INSTALL_SECONDS, Result, STATUS_SECONDS, compact};
+
+/// Why a scenario found the feeder other than it should be.
+#[derive(Debug, thiserror::Error)]
+pub enum ScenariosError {
+    #[error("Give --review DIR or --build")]
+    NoSource,
+    #[error("Building, reviewing or signing the baseline failed")]
+    BaselineUnstaged,
+    #[error("The baseline did not confirm: {outcome:?}")]
+    BaselineOutcome { outcome: Outcome },
+    #[error("The settings read answered {}", compact(answer))]
+    SettingsAnswer { answer: Answer },
+    #[error("Settings are not writable: {}", compact(settings))]
+    NotWritable { settings: Settings },
+    #[error("The settings change answered {}", compact(answer))]
+    SettingsChange { answer: Answer },
+    #[error(
+        "Settings read back {} after setting {}",
+        compact(after),
+        compact(change)
+    )]
+    ReadBack {
+        after: Settings,
+        change: SettingsPatch,
+    },
+    #[error("An unenrolled key was not refused as unknown: {rebuffed:?}")]
+    Unenrolled { rebuffed: Rebuffed },
+    #[error("A tampered handshake was not dropped: {rebuffed:?}")]
+    Tampered { rebuffed: Rebuffed },
+    #[error("After a cold boot the settings read {}", compact(after))]
+    NotPersisted { after: Settings },
+    #[error(
+        "A write from stale generation {base} was not refused as stale at {current}: {}",
+        compact(answer)
+    )]
+    NotStale {
+        base: u32,
+        current: Generation,
+        answer: Answer,
+    },
+    #[error("The stale write changed the settings: {}", compact(after))]
+    StaleChanged { after: Settings },
+    #[error("The Wi-Fi change answered {}", compact(answer))]
+    WifiChange { answer: Answer },
+    #[error("The feeder joined with {wifi:?} credentials, not the build's; clear them first")]
+    NotBuildWifi { wifi: WifiSource },
+    #[error("The feeder restarted during the outage (boot {before} then {after})")]
+    OutageRestart { before: u32, after: u32 },
+    #[error("Status reports {after} link losses, {before} before the outage")]
+    NoLinkLoss { before: u32, after: u32 },
+    #[error("The failing build was not rejected: {outcome:?}")]
+    NotRejected { outcome: Outcome },
+    #[error("The {stage} fault still activated bank 1")]
+    FaultActivated { stage: StopStage },
+    #[error("The clean download did not confirm: {outcome:?}")]
+    CleanFailed { outcome: Outcome },
+    #[error("The baseline did not come back: {outcome:?}")]
+    BaselineLost { outcome: Outcome },
+    #[error("After a cut mid-download the loader booted bank {bank:?}, not 0")]
+    CutBank { bank: Option<u8> },
+    #[error("The download resumed at {first:?} sectors instead of starting again")]
+    Resumed { first: Option<u32> },
+    #[error("The build confirmed before the trial cut")]
+    EarlyConfirm,
+    #[error("After a cut in the trial KM0 counted boot {boot:?}, not 1 again")]
+    TrialCount { boot: Option<u32> },
+    #[error("The feeder restarted {restarts} times")]
+    Restarted { restarts: usize },
+    #[error("The Wi-Fi link was lost ({before} losses, then {after})")]
+    LinkLost { before: u32, after: u32 },
+}
 
 /// One catalog entry and the code that runs it; the entry's fields read
 /// through, as `scenario.name`.
@@ -138,24 +211,24 @@ fn ota_update(ctx: &mut Ctx) -> Result<()> {
     }
 
     // Without a review, `ota_args` builds; only `--build` asks for that.
-    require(
-        ctx.args.build || ctx.args.review.is_some(),
-        "Give --review DIR or --build",
-    )?;
+    require(ctx.args.build || ctx.args.review.is_some(), || {
+        ScenariosError::NoSource
+    })?;
     let args = ctx.ota_args("good", ctx.args.review.clone());
     let staged = ctx
         .rig
         .stage(&args)?
-        .ok_or_else(|| Error::Bench("Building, reviewing or signing the baseline failed".into()))?;
+        .ok_or(ScenariosError::BaselineUnstaged)?;
 
     if ctx.running(&staged.build) {
         ctx.note("  It already runs on bank 1; nothing to install");
     } else {
         let outcome = ctx.install(&staged)?;
-        require(
-            outcome == Outcome::Passed,
-            format!("The baseline did not confirm: {outcome:?}"),
-        )?;
+        require(outcome == Outcome::Passed, || {
+            ScenariosError::BaselineOutcome {
+                outcome: outcome.clone(),
+            }
+        })?;
         ctx.rig.offer(None, Fault::None)?;
     }
 
@@ -204,17 +277,11 @@ fn clock_synced(status: &DeviceStatus, now_ms: i64) -> Result<String> {
 pub(super) fn read_settings(ctx: &mut Ctx) -> Result<Settings> {
     let settings = match ctx.ask(&Ask::GetSettings)? {
         Answer::Settings(settings) => settings,
-        other => {
-            return Err(Error::Bench(format!(
-                "The settings read answered {}",
-                compact(&other)
-            )));
-        }
+        answer => return Err(ScenariosError::SettingsAnswer { answer }.into()),
     };
-    require(
-        settings.writable,
-        format!("Settings are not writable: {}", compact(&settings)),
-    )?;
+    if !settings.writable {
+        return Err(ScenariosError::NotWritable { settings }.into());
+    }
     Ok(settings)
 }
 
@@ -244,23 +311,17 @@ pub(super) fn set_settings(ctx: &mut Ctx, change: SettingsPatch) -> Result<u32> 
         base,
         changes: change,
     })?;
-    require(
-        matches!(answer, Answer::Done { .. }),
-        format!("The settings change answered {}", compact(&answer)),
-    )?;
+    if !matches!(answer, Answer::Done { .. }) {
+        return Err(ScenariosError::SettingsChange { answer }.into());
+    }
     ctx.expect("PLCFG1 saved", since, SAVE_SECONDS, |e| {
         matches!(e, Event::Settings(record::Settings::Saved { generation: Some(g) }) if *g > u64::from(base))
     })?;
 
     let after = read_settings(ctx)?;
-    require(
-        shows(&after, change),
-        format!(
-            "Settings read back {} after setting {}",
-            compact(&after),
-            compact(&change)
-        ),
-    )?;
+    if !shows(&after, change) {
+        return Err(ScenariosError::ReadBack { after, change }.into());
+    }
     Ok(base)
 }
 
@@ -270,7 +331,9 @@ fn request_auth(ctx: &mut Ctx) -> Result<()> {
     ctx.note(&format!("  unenrolled key: {unenrolled:?}"));
     require(
         unenrolled == Rebuffed::Refused(OpenRefusal::Unknown),
-        format!("An unenrolled key was not refused as unknown: {unenrolled:?}"),
+        || ScenariosError::Unenrolled {
+            rebuffed: unenrolled,
+        },
     )?;
     ctx.expect("PLAPI1 reason=unknown-key", since, RECORD_SECONDS, |e| {
         ended_for(e, "unknown-key")
@@ -279,10 +342,9 @@ fn request_auth(ctx: &mut Ctx) -> Result<()> {
     let since = ctx.mark()?;
     let tampered = ctx.rig.intrude(Intruder::Tampered)?;
     ctx.note(&format!("  tampered handshake: {tampered:?}"));
-    require(
-        tampered == Rebuffed::Dropped,
-        format!("A tampered handshake was not dropped: {tampered:?}"),
-    )?;
+    require(tampered == Rebuffed::Dropped, || ScenariosError::Tampered {
+        rebuffed: tampered,
+    })?;
     ctx.expect("PLAPI1 reason=noise", since, RECORD_SECONDS, |e| {
         ended_for(e, "noise")
     })?;
@@ -342,10 +404,10 @@ fn settings_persist(ctx: &mut Ctx) -> Result<()> {
         stale_write(ctx, base, changed)?;
         cold_boot(ctx)?;
         let after = read_settings(ctx)?;
-        require(
-            shows(&after, changed),
-            format!("After a cold boot the settings read {}", compact(&after)),
-        )
+        if !shows(&after, changed) {
+            return Err(ScenariosError::NotPersisted { after }.into());
+        }
+        Ok(())
     });
     let restored = set_settings(ctx, changes_to(&before)).map(|_| ());
     result.and(restored)
@@ -363,22 +425,22 @@ fn stale_write(ctx: &mut Ctx, base: u32, change: SettingsPatch) -> Result<()> {
         "  A write from generation {base}: {}",
         compact(&answer)
     ));
-    require(
-        answer
-            == Answer::Refused(Refusal::Stale {
-                current: current.generation,
-            }),
-        format!(
-            "A write from stale generation {base} was not refused as stale at {}: {}",
-            current.generation,
-            compact(&answer)
-        ),
-    )?;
+    let stale = Answer::Refused(Refusal::Stale {
+        current: current.generation,
+    });
+    if answer != stale {
+        return Err(ScenariosError::NotStale {
+            base,
+            current: current.generation,
+            answer,
+        }
+        .into());
+    }
     let after = read_settings(ctx)?;
-    require(
-        after == current,
-        format!("The stale write changed the settings: {}", compact(&after)),
-    )
+    if after != current {
+        return Err(ScenariosError::StaleChanged { after }.into());
+    }
+    Ok(())
 }
 
 fn wifi_source(status: &DeviceStatus, source: WifiSource) -> Result<String> {
@@ -393,22 +455,17 @@ fn wifi_source(status: &DeviceStatus, source: WifiSource) -> Result<String> {
 /// status reports.
 fn put_wifi(ctx: &mut Ctx, wifi: Option<Credentials>) -> Result<()> {
     let base = ctx.device_status()?.wifi_generation;
-    let answer = ctx.ask(&Ask::PutWifi { base, wifi })?;
-    require(
-        matches!(answer, Answer::Done { .. }),
-        format!("The Wi-Fi change answered {}", compact(&answer)),
-    )
+    match ctx.ask(&Ask::PutWifi { base, wifi })? {
+        Answer::Done { .. } => Ok(()),
+        answer => Err(ScenariosError::WifiChange { answer }.into()),
+    }
 }
 
 fn wifi_fallback(ctx: &mut Ctx) -> Result<()> {
     let status = ctx.device_status()?;
-    require(
-        status.wifi == WifiSource::Build,
-        format!(
-            "The feeder joined with {:?} credentials, not the build's; clear them first",
-            status.wifi
-        ),
-    )?;
+    require(status.wifi == WifiSource::Build, || {
+        ScenariosError::NotBuildWifi { wifi: status.wifi }
+    })?;
 
     let result = wrong_credentials(ctx);
     let cleared = clear_credentials(ctx);
@@ -473,20 +530,19 @@ fn network_bounce(ctx: &mut Ctx) -> Result<()> {
         })?;
         ctx.device_status()
     })?;
-    require(
-        after.boot_count == before.boot_count,
-        format!(
-            "The feeder restarted during the outage (boot {} then {})",
-            before.boot_count, after.boot_count
-        ),
-    )?;
-    require(
-        after.losses > before.losses,
-        format!(
-            "Status reports {} link losses, {} before the outage",
-            after.losses, before.losses
-        ),
-    )
+    require(after.boot_count == before.boot_count, || {
+        ScenariosError::OutageRestart {
+            before: before.boot_count,
+            after: after.boot_count,
+        }
+    })?;
+    require(after.losses > before.losses, || {
+        ScenariosError::NoLinkLoss {
+            before: before.losses,
+            after: after.losses,
+        }
+        .into()
+    })
 }
 
 /// One failing trial, then the fault drills on bank 0, which it falls back
@@ -515,10 +571,9 @@ fn recovery(ctx: &mut Ctx, failing: &super::Staged, staged: &super::Staged) -> R
     ctx.rig.offer(Some(failing), Fault::None)?;
     ctx.expect("PLOTA1 activated", since, INSTALL_SECONDS, activated)?;
     let outcome = ctx.watch(&failing.build, since, INSTALL_SECONDS)?;
-    require(
-        matches!(outcome, Outcome::FellBack { .. }),
-        format!("The failing build was not rejected: {outcome:?}"),
-    )?;
+    if !matches!(outcome, Outcome::FellBack { .. }) {
+        return Err(ScenariosError::NotRejected { outcome }.into());
+    }
 
     // Bank 0 runs now. Each drill pushes the restore with one fault, and
     // bank 0 must stop it before the marker.
@@ -531,19 +586,18 @@ fn recovery(ctx: &mut Ctx, failing: &super::Staged, staged: &super::Staged) -> R
             *e == Event::Update(Update::Stopped { stage })
         })?;
         let activations = ctx.log.count(start, activated);
-        require(
-            activations == 0,
-            format!("The {stage} fault still activated bank 1"),
-        )?;
+        require(activations == 0, || ScenariosError::FaultActivated {
+            stage,
+        })?;
     }
 
     let since = ctx.mark()?;
     ctx.rig.offer(Some(staged), Fault::None)?;
     let outcome = ctx.watch(&staged.build, since, INSTALL_SECONDS)?;
-    require(
-        outcome == Outcome::Passed,
-        format!("The clean download did not confirm: {outcome:?}"),
-    )
+    if outcome != Outcome::Passed {
+        return Err(ScenariosError::CleanFailed { outcome }.into());
+    }
+    Ok(())
 }
 
 fn activated(event: &Event<'_>) -> bool {
@@ -595,10 +649,10 @@ fn ota_power_cuts(ctx: &mut Ctx) -> Result<()> {
     ctx.rig.offer(None, Fault::None)?;
     ctx.confirm(&build)?;
     result?;
-    require(
-        outcome == Outcome::Passed,
-        format!("The baseline did not come back: {outcome:?}"),
-    )
+    if outcome != Outcome::Passed {
+        return Err(ScenariosError::BaselineLost { outcome }.into());
+    }
+    Ok(())
 }
 
 fn power_cuts(ctx: &mut Ctx, staged: &super::Staged) -> Result<()> {
@@ -620,18 +674,14 @@ fn power_cuts(ctx: &mut Ctx, staged: &super::Staged) -> Result<()> {
         Event::Start { bank, .. } => bank,
         _ => None,
     });
-    require(
-        bank == Some(0),
-        format!("After a cut mid-download the loader booted bank {bank:?}, not 0"),
-    )?;
+    require(bank == Some(0), || ScenariosError::CutBank { bank })?;
     let since = ctx.expect("the download again", since, INSTALL_SECONDS, |e| {
         sectors(e).is_some()
     })?;
     let first = ctx.log.before(since, |e| sectors(&e));
-    require(
-        first.is_some_and(|n| n <= PROGRESS_SECTORS),
-        format!("The download resumed at {first:?} sectors instead of starting again"),
-    )?;
+    require(first.is_some_and(|n| n <= PROGRESS_SECTORS), || {
+        ScenariosError::Resumed { first }
+    })?;
 
     // A cut early in trial boot 1: backup registers clear on power loss, so
     // KM0 counts boot 1 again, and the build still confirms.
@@ -640,10 +690,9 @@ fn power_cuts(ctx: &mut Ctx, staged: &super::Staged) -> Result<()> {
     })?;
     ctx.idle(TRIAL_CUT_SECONDS)?;
     let confirmed = |e: &Event<'_>| matches!(e, Event::Confirm(Confirm::Confirmed { .. }));
-    require(
-        ctx.log.count(since, confirmed) == 0,
-        "The build confirmed before the trial cut",
-    )?;
+    require(ctx.log.count(since, confirmed) == 0, || {
+        ScenariosError::EarlyConfirm
+    })?;
     ctx.rig.power_cycle()?;
     let since = ctx.expect("the trial count after the cut", since, BOOT_SECONDS, |e| {
         matches!(e, Event::Trial(Trial::Booting { .. }))
@@ -652,10 +701,7 @@ fn power_cuts(ctx: &mut Ctx, staged: &super::Staged) -> Result<()> {
         Event::Trial(Trial::Booting { boot, .. }) => Some(boot),
         _ => None,
     });
-    require(
-        boot == Some(1),
-        format!("After a cut in the trial KM0 counted boot {boot:?}, not 1 again"),
-    )?;
+    require(boot == Some(1), || ScenariosError::TrialCount { boot })?;
     ctx.expect("PLCNF1 confirmed=1", since, STATUS_SECONDS, confirmed)?;
     ctx.confirm(&staged.build)
 }
@@ -685,15 +731,15 @@ fn soak(ctx: &mut Ctx) -> Result<()> {
     ));
     require(
         restarts == 0 && after.boot_count == before.boot_count,
-        format!("The feeder restarted {restarts} times"),
+        || ScenariosError::Restarted { restarts },
     )?;
-    require(
-        losses == 0,
-        format!(
-            "The Wi-Fi link was lost ({} losses, then {})",
-            before.losses, after.losses
-        ),
-    )
+    require(losses == 0, || {
+        ScenariosError::LinkLost {
+            before: before.losses,
+            after: after.losses,
+        }
+        .into()
+    })
 }
 
 /// What every scenario must leave as it found it: the settings, the Wi-Fi

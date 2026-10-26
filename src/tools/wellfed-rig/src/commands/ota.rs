@@ -24,6 +24,7 @@
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Instant;
 
 use clap::Args;
@@ -41,9 +42,10 @@ use wellfed_signing::{Frozen, Key, Motion};
 
 use super::Bench;
 use crate::device::{DeviceStatus, Fault};
-use crate::tools::{InstallJob, Installing};
-use crate::{Error, Result, require};
+use crate::tools::{InstallJob, Installing, PushError};
+use crate::{Error, Result};
 use wellfed_formats::bench::{CAPTURES, VERIFICATION};
+use wellfed_formats::require;
 
 /// Each capture segment; the classifier reads it once it ends.
 const SEGMENT_SECONDS: f64 = 60.0;
@@ -95,6 +97,114 @@ pub fn steps(source: Source) -> Vec<&'static str> {
 /// Why the bench never builds the motor firmware itself.
 const MOTION_MANUAL: &str = "drives the motor; motion builds stay manual (build and review it yourself, then use --review with --attended-motion)";
 
+/// Why an `ota` run refused before offering, or how a watched install
+/// stopped. A stop names the capture segments (`{name}-01…{last}`) that hold
+/// its evidence; none is retried.
+#[derive(Debug, thiserror::Error)]
+pub enum OtaError {
+    #[error("Review build-manifest.json has no 64-hex startup_identity")]
+    NoBuildId,
+    /// The install job takes root-relative paths under private/ only.
+    #[error("{} must be under private/", path.display())]
+    NotPrivate { path: PathBuf },
+    #[error("No version above u32::MAX")]
+    NoVersionAbove,
+    #[error("Refusing to reuse {}/{file}; pick a new name", CAPTURES)]
+    SegmentTaken { file: String },
+    #[error("--minutes must be positive")]
+    MinutesNotPositive,
+    #[error("--firmware and --variant apply to --build only")]
+    BuildOnly,
+    #[error("--variant needs the firmware that declares it (trial or feeder)")]
+    VariantFirmware,
+    #[error("Give --review DIR or --build")]
+    NoSource,
+    /// `review` root-relative.
+    #[error("{review} is a build review without a manifest")]
+    NoManifest { review: String },
+    /// The confirmed review's manifest, read to decide whether a status
+    /// check applies; `manifest` root-relative.
+    #[error("{manifest} is unreadable: {source}")]
+    ManifestUnreadable {
+        manifest: String,
+        source: wellfed_formats::Error,
+    },
+    /// `--fault give-way-only`: the push ended without the give-way.
+    #[error("The give-way did not happen: {0}")]
+    GiveWay(Arc<PushError>),
+    /// The push ended before the UART showed any outcome.
+    #[error(
+        "The update over the device API ended: {push}; bank 1 was not activated. Captures {name}-01…{last:02}"
+    )]
+    PushEnded {
+        push: Arc<PushError>,
+        name: String,
+        last: u32,
+    },
+    #[error(
+        "Fell back: KM0 rejected the trial after boot {}; bank 0's recovery role runs. Captures {name}-01…{last:02}",
+        or_unknown(*boot)
+    )]
+    FellBack {
+        boot: Option<u32>,
+        name: String,
+        last: u32,
+    },
+    #[error(
+        "Update failed at stage {stage}; bank 1 was not activated. Captures {name}-01…{last:02}"
+    )]
+    UpdateFailed {
+        stage: StopStage,
+        name: String,
+        last: u32,
+    },
+    #[error(
+        "An update attempt reset and the recovery role will not retry until a cold boot; look for a fault before the skip. Captures {name}-01…{last:02}"
+    )]
+    Skipped { name: String, last: u32 },
+    #[error(
+        "No outcome within {minutes} min; the feeder is untouched. Captures {name}-01…{last:02}"
+    )]
+    NoOutcome {
+        minutes: f64,
+        name: String,
+        last: u32,
+    },
+    /// The UART showed the confirmation, but the status kept giving `last`.
+    #[error(
+        "Confirmed on UART but the device API did not report the build within {} s ({last})",
+        HEALTH_SECONDS
+    )]
+    Unhealthy { last: Box<Error> },
+}
+
+/// A boot count, or `?` when the feeder did not say.
+fn or_unknown(value: Option<u32>) -> String {
+    value.map_or_else(|| "?".into(), |value| value.to_string())
+}
+
+/// Why `--firmware`, `--variant` or `--fault` did not parse; clap shows it.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ArgError {
+    #[error("motor {}", MOTION_MANUAL)]
+    MotorFirmware,
+    #[error("pulse {}", MOTION_MANUAL)]
+    PulseVariant,
+    #[error("unknown firmware {text:?}; use {}", Firmware::known())]
+    UnknownFirmware { text: String },
+    #[error(
+        "unknown variant {text:?}; the trial firmware has stall and fail, the feeder entropy, \
+         owner-stall, gap-probe and twin"
+    )]
+    UnknownVariant { text: String },
+    #[error("{at:?} is not a byte offset")]
+    BadOffset { at: String },
+    #[error(
+        "unknown fault {kind:?}; use corrupt, unwanted, stall or drop, with @OFFSET, or give-way-only"
+    )]
+    UnknownFault { kind: String },
+}
+
 /// A firmware `--build` may make (`src/firmware/wellfed/<name>`): none
 /// moves anything at startup, and `feeder` drives the motor only for an
 /// authenticated feed request, which the bench sends only in the
@@ -133,6 +243,12 @@ impl Firmware {
         Self::Feeder,
     ];
 
+    /// Every name `--firmware` takes, for its refusal.
+    fn known() -> String {
+        let known: Vec<&str> = Self::ALL.iter().map(|f| f.name()).collect();
+        known.join(", ")
+    }
+
     /// The firmware's directory name, which `wellfed-build --firmware`
     /// selects.
     pub(crate) fn name(self) -> &'static str {
@@ -167,17 +283,14 @@ impl Firmware {
 const BRINGUP: &str = "bringup";
 
 /// `--firmware`'s parser, with a reason for the motor firmware.
-pub fn parse_firmware(text: &str) -> std::result::Result<Firmware, String> {
+pub fn parse_firmware(text: &str) -> std::result::Result<Firmware, ArgError> {
     if text == "motor" {
-        return Err(format!("motor {MOTION_MANUAL}"));
+        return Err(ArgError::MotorFirmware);
     }
     Firmware::ALL
         .into_iter()
         .find(|firmware| firmware.name() == text)
-        .ok_or_else(|| {
-            let known: Vec<&str> = Firmware::ALL.iter().map(|f| f.name()).collect();
-            format!("unknown firmware {text:?}; use {}", known.join(", "))
-        })
+        .ok_or_else(|| ArgError::UnknownFirmware { text: text.into() })
 }
 
 /// A variant the bench may build: the trial firmware's and the feeder's.
@@ -225,7 +338,7 @@ impl Variant {
 }
 
 /// `--variant`'s parser, with a reason for the motion variant.
-pub fn parse_variant(text: &str) -> std::result::Result<Variant, String> {
+pub fn parse_variant(text: &str) -> std::result::Result<Variant, ArgError> {
     match text {
         "stall" => Ok(Variant::Stall),
         "fail" => Ok(Variant::Fail),
@@ -233,11 +346,8 @@ pub fn parse_variant(text: &str) -> std::result::Result<Variant, String> {
         "owner-stall" => Ok(Variant::OwnerStall),
         "gap-probe" => Ok(Variant::GapProbe),
         "twin" => Ok(Variant::Twin),
-        "pulse" => Err(format!("pulse {MOTION_MANUAL}")),
-        other => Err(format!(
-            "unknown variant {other:?}; the trial firmware has stall and fail, the feeder entropy, \
-             owner-stall, gap-probe and twin"
-        )),
+        "pulse" => Err(ArgError::PulseVariant),
+        other => Err(ArgError::UnknownVariant { text: other.into() }),
     }
 }
 
@@ -346,22 +456,20 @@ pub struct OtaArgs {
 }
 
 /// `--fault`'s parser.
-pub(crate) fn parse_fault(text: &str) -> std::result::Result<Fault, String> {
+pub(crate) fn parse_fault(text: &str) -> std::result::Result<Fault, ArgError> {
     if text == "give-way-only" {
         return Ok(Fault::GiveWayOnly);
     }
     let (kind, at) = text.split_once('@').unwrap_or((text, "8192"));
     let at: u32 = at
         .parse()
-        .map_err(|_| format!("{at:?} is not a byte offset"))?;
+        .map_err(|_| ArgError::BadOffset { at: at.into() })?;
     match kind {
         "corrupt" => Ok(Fault::Corrupt { at }),
         "unwanted" => Ok(Fault::Unwanted { at }),
         "stall" => Ok(Fault::Stall { at }),
         "drop" => Ok(Fault::Drop { at }),
-        other => Err(format!(
-            "unknown fault {other:?}; use corrupt, unwanted, stall or drop, with @OFFSET, or give-way-only"
-        )),
+        other => Err(ArgError::UnknownFault { kind: other.into() }),
     }
 }
 
@@ -815,10 +923,7 @@ struct OtaPlan {
 /// A frozen review's startup identity, or a refusal.
 pub fn build_id(manifest: &BuildManifest) -> Result<String> {
     let id = manifest.startup_identity.as_deref().unwrap_or_default();
-    require(
-        is_build_id(id),
-        "Review build-manifest.json has no 64-hex startup_identity",
-    )?;
+    require(is_build_id(id), || OtaError::NoBuildId)?;
     Ok(id.to_ascii_lowercase())
 }
 
@@ -834,10 +939,7 @@ impl Bench {
             .ok()
             .filter(|relative| relative.starts_with("private"))
         else {
-            return Err(Error::Bench(format!(
-                "{} must be under private/",
-                path.display()
-            )));
+            return Err(OtaError::NotPrivate { path: path.into() }.into());
         };
         Ok(relative.display().to_string())
     }
@@ -857,9 +959,7 @@ impl Bench {
                 Ok(version)
             }
             (None, Some((top, file))) => {
-                let version = top
-                    .checked_add(1)
-                    .ok_or_else(|| Error::Bench("No version above u32::MAX".into()))?;
+                let version = top.checked_add(1).ok_or(OtaError::NoVersionAbove)?;
                 say!(
                     "Version {version}: one more than {top} in {}",
                     self.rel(&file)
@@ -890,9 +990,7 @@ impl Bench {
                     .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
             });
         match used {
-            Some(file) => Err(Error::Bench(format!(
-                "Refusing to reuse {CAPTURES}/{file}; pick a new name"
-            ))),
+            Some(file) => Err(OtaError::SegmentTaken { file }.into()),
             None => Ok(()),
         }
     }
@@ -1007,11 +1105,7 @@ impl Bench {
                     say!("Bank 1 gave way; bank 0 waits for its offer");
                     return Ok(0);
                 }
-                Some(Err(error)) => {
-                    return Err(Error::Bench(format!(
-                        "The give-way did not happen: {error}"
-                    )));
-                }
+                Some(Err(push)) => return Err(OtaError::GiveWay(push).into()),
                 None if crate::interrupted() => {
                     installing.stop();
                     return Err(Error::Interrupted);
@@ -1032,8 +1126,9 @@ impl Bench {
         // confirmation is the whole check.
         let described = self.root.join(&staged.review).join("build-manifest.json");
         let manifest: wellfed_formats::manifest::BuildManifest =
-            wellfed_formats::load(&described).map_err(|error| {
-                Error::Bench(format!("{} is unreadable: {error}", self.rel(&described)))
+            wellfed_formats::load(&described).map_err(|source| OtaError::ManifestUnreadable {
+                manifest: self.rel(&described),
+                source,
             })?;
         if manifest.firmware.as_deref() != Some(Firmware::Feeder.name()) {
             self.note(&format!(
@@ -1075,10 +1170,10 @@ impl Bench {
                 (Target::Stock, Motion::Refused)
             }
             (ImageKind::Build, None) => {
-                return Err(Error::Bench(format!(
-                    "{} is a build review without a manifest",
-                    self.rel(&review)
-                )));
+                return Err(OtaError::NoManifest {
+                    review: self.rel(&review),
+                }
+                .into());
             }
             (ImageKind::Build, Some(manifest)) => {
                 self.attended_motion(manifest, args.attended_motion)?;
@@ -1101,21 +1196,21 @@ impl Bench {
     /// Every refusal `ota_stage` can make, before anything is built: the
     /// review to offer and the version to sign.
     fn ota_plan(&mut self, args: &OtaArgs, timing: &mut Timing) -> Result<OtaPlan> {
-        require(args.minutes > 0.0, "--minutes must be positive")?;
+        require(args.minutes > 0.0, || OtaError::MinutesNotPositive)?;
         // clap counts a flag as always present, so this pairing is checked here.
         require(
             args.build || (args.firmware.is_none() && args.variant.is_none()),
-            "--firmware and --variant apply to --build only",
+            || OtaError::BuildOnly,
         )?;
         require(
             args.variant
                 .is_none_or(|variant| args.firmware == Some(variant.firmware())),
-            "--variant needs the firmware that declares it (trial or feeder)",
+            || OtaError::VariantFirmware,
         )?;
         let mut review = match (&args.review, args.build) {
             (_, true) => PathBuf::from(VERIFICATION).join(format!("{}-review", args.name)),
             (Some(review), false) => review.clone(),
-            (None, false) => return Err(Error::Bench("Give --review DIR or --build".into())),
+            (None, false) => return Err(OtaError::NoSource.into()),
         };
 
         let mut build = false;
@@ -1323,12 +1418,14 @@ impl Bench {
                     self.note(&format!("  {note}"));
                 }
                 if watch.outcome().is_none()
-                    && let Some(Err(error)) = installing.finished()
+                    && let Some(Err(push)) = installing.finished()
                 {
-                    return Err(Error::Bench(format!(
-                        "The update over the device API ended: {error}; bank 1 was not activated. Captures {}-01…{n:02}",
-                        args.name
-                    )));
+                    return Err(OtaError::PushEnded {
+                        push,
+                        name: args.name.clone(),
+                        last: n,
+                    }
+                    .into());
                 }
             }
 
@@ -1347,31 +1444,37 @@ impl Bench {
                     return Ok(());
                 }
                 Some(Outcome::FellBack { boot }) => {
-                    return Err(Error::Bench(format!(
-                        "Fell back: KM0 rejected the trial after boot {}; bank 0's recovery role runs. Captures {}-01…{n:02}",
-                        boot.map_or_else(|| "?".into(), |b| b.to_string()),
-                        args.name
-                    )));
+                    return Err(OtaError::FellBack {
+                        boot: *boot,
+                        name: args.name.clone(),
+                        last: n,
+                    }
+                    .into());
                 }
                 Some(Outcome::Failed { stage }) => {
-                    return Err(Error::Bench(format!(
-                        "Update failed at stage {stage}; bank 1 was not activated. Captures {}-01…{n:02}",
-                        args.name
-                    )));
+                    return Err(OtaError::UpdateFailed {
+                        stage: *stage,
+                        name: args.name.clone(),
+                        last: n,
+                    }
+                    .into());
                 }
                 Some(Outcome::Skipped) => {
-                    return Err(Error::Bench(format!(
-                        "An update attempt reset and the recovery role will not retry until a cold boot; look for a fault before the skip. Captures {}-01…{n:02}",
-                        args.name
-                    )));
+                    return Err(OtaError::Skipped {
+                        name: args.name.clone(),
+                        last: n,
+                    }
+                    .into());
                 }
             }
         }
 
-        Err(Error::Bench(format!(
-            "No outcome within {} min; the feeder is untouched. Captures {}-01…{n:02}",
-            args.minutes, args.name
-        )))
+        Err(OtaError::NoOutcome {
+            minutes: args.minutes,
+            name: args.name.clone(),
+            last: n,
+        }
+        .into())
     }
 
     /// Poll the feeder's device API status until it shows the new build on
@@ -1401,19 +1504,20 @@ impl Bench {
                 }
                 // Only a changed reason is shown, so polling stays quiet.
                 Err(reason) => {
-                    let reason = reason.to_string();
-                    if reason != last {
-                        self.note(&format!("Waiting for status: {reason}"));
-                        last = reason;
+                    let text = reason.to_string();
+                    if text != last {
+                        self.note(&format!("Waiting for status: {text}"));
+                        last = text;
+                    }
+                    if waited >= HEALTH_SECONDS {
+                        return Err(OtaError::Unhealthy {
+                            last: Box::new(reason),
+                        }
+                        .into());
                     }
                 }
             }
 
-            if waited >= HEALTH_SECONDS {
-                return Err(Error::Bench(format!(
-                    "Confirmed on UART but the device API did not report the build within {HEALTH_SECONDS} s ({last})"
-                )));
-            }
             (self.sleep)(HEALTH_POLL_SECONDS)?;
             waited += HEALTH_POLL_SECONDS;
         }

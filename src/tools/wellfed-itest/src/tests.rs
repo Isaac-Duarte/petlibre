@@ -2,6 +2,7 @@
 //! follow the firmware's formats, on a virtual clock.
 
 use std::path::Path;
+use std::time::Duration;
 
 use wellfed_model::{Generation, OpenRefusal, Refusal, Settings, WifiSource};
 use serde_json::json;
@@ -10,6 +11,7 @@ use super::log::Log;
 use super::scenarios::ended_for;
 use super::*;
 use wellfed_rig::commands::ota::Variant;
+use wellfed_rig::device::DeviceError;
 
 const GOOD: &str = "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90";
 const FAILING: &str = "f00df00df00df00df00df00df00df00df00df00df00df00df00df00df00df00d";
@@ -361,18 +363,18 @@ impl Feeder {
     /// The device API's answer on either session.
     fn answer(&mut self, ask: &Ask) -> Result<Answer> {
         if self.silent || !self.online || self.now < self.ready_at {
-            return Err(Error::Bench("the feeder did not answer".into()));
+            return Err(DeviceError::Closed.into());
         }
         self.logged(ask.name());
         if matches!(ask, Ask::Feed { .. }) && self.drops_feed {
-            return Err(Error::Bench("the feeder did not answer".into()));
+            return Err(DeviceError::Closed.into());
         }
         if let Ask::Feed { portions } = ask
             && self.loses_feed_answer
             && self.feeding().is_none()
         {
             self.feed(*portions);
-            return Err(Error::Bench("the feeder did not answer".into()));
+            return Err(DeviceError::Closed.into());
         }
         // An event recorded during a feed waits for it, and the interlock
         // logs the writer's wait.
@@ -577,7 +579,7 @@ impl Rig for Feeder {
         Ok(())
     }
 
-    fn offered(&mut self) -> Option<std::result::Result<(), String>> {
+    fn offered(&mut self) -> Option<std::result::Result<(), Arc<PushError>>> {
         None
     }
 
@@ -597,9 +599,7 @@ impl Rig for Feeder {
         self.actions.push("hold".into());
         // No handshake while a feed holds the outputs.
         if self.feeding().is_some() {
-            return Err(Error::Bench(
-                "the feeder did not answer the handshake".into(),
-            ));
+            return Err(DeviceError::Timeout(Duration::from_secs(10)).into());
         }
         self.held = true;
         Ok(())
@@ -612,7 +612,7 @@ impl Rig for Feeder {
             self.held = false;
         }
         if !self.held {
-            return Err(Error::Bench("no held session is open".into()));
+            return Err(DeviceError::NotHeld.into());
         }
         self.answer(ask)
     }
@@ -927,11 +927,18 @@ fn only_selects_in_suite_order_and_refuses_unknown_names() {
         .collect();
     assert_eq!(names, ["ota-update", "requests", "network-bounce"]);
 
-    let error = select(&args(&["--only", "reboot"]))
-        .err()
-        .unwrap()
-        .to_string();
-    assert!(error.contains("Unknown scenario \"reboot\""), "{error}");
+    let error = select(&args(&["--only", "reboot"])).err().unwrap();
+    assert!(
+        matches!(&error, Error::UnknownScenario { name } if name == "reboot"),
+        "{error:?}"
+    );
+    // The refusal lists what --only takes.
+    assert!(
+        error
+            .to_string()
+            .starts_with("Unknown scenario \"reboot\"; --list shows them (ota-update, requests,"),
+        "{error}"
+    );
 }
 
 #[test]

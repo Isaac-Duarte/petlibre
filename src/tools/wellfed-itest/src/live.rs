@@ -22,6 +22,7 @@ use std::net::{SocketAddr, TcpStream};
 
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde::Deserialize;
@@ -30,17 +31,58 @@ use serde::de::IgnoredAny;
 use crate::args::ItestArgs;
 use wellfed_formats::bench::progress::StepState;
 use wellfed_formats::bench::{CAPTURES, VERIFICATION};
+use wellfed_formats::require;
 use wellfed_formats::stock::{ImageLease, ServerConfig};
 use wellfed_relay::{POWER, STRAP};
 use wellfed_rig::commands::Bench;
 use wellfed_rig::commands::ota::{self, OtaArgs, Staged, Target, Timing};
 use wellfed_rig::device::{Answer, Ask, Device, Intruder, Rebuffed};
+use wellfed_rig::say;
 use wellfed_rig::server::{StockStatus, TrialAnswer, TrialRequest, TrialResolve};
-use wellfed_rig::tools::{Capture, InstallJob, Installing};
-use wellfed_rig::{Error, Result, require, say};
+use wellfed_rig::tools::{Capture, CaptureFailure, InstallJob, Installing, PushError};
 use wellfed_stock_api::{Auth, StockApi};
 
-use super::{Fault, Rig, Server};
+use super::{Error, Fault, Result, Rig, Server};
+
+/// Why the live rig could not set the bench up or keep it running.
+#[derive(Debug, thiserror::Error)]
+pub enum LiveError {
+    #[error("{} has no connection", hotspot.display())]
+    NoConnection { hotspot: PathBuf },
+    #[error("UART port {port} is missing")]
+    UartMissing { port: String },
+    #[error("{} not found; cargo build --release -p wellfed-stock", path.display())]
+    StockMissing { path: PathBuf },
+    /// The suite runs its own `serve` and never shares one.
+    #[error(
+        "Something already answers on {address}; stop that serve first (the suite runs its own)"
+    )]
+    ServeRunning { address: SocketAddr },
+    #[error("nmcli: {0}")]
+    Nmcli(std::io::Error),
+    /// `stderr` as nmcli printed it, trimmed.
+    #[error("nmcli could not list connections: {stderr}")]
+    NmcliList { stderr: String },
+    #[error("nmcli connection {verb} failed: {stderr}")]
+    NmcliVerb { verb: &'static str, stderr: String },
+    /// A server child exited before it was ready; `log` root-relative.
+    #[error("{what} exited ({status}); see {log}")]
+    ChildExited {
+        what: &'static str,
+        status: std::process::ExitStatus,
+        log: String,
+    },
+    #[error("{what} did not become ready in {:.0} s", START_SECONDS)]
+    ChildTimeout { what: &'static str },
+    #[error("A power cycle needs --power")]
+    NoPower,
+    #[error("The UART capture is not running")]
+    NoCapture,
+    #[error("The UART capture stopped: {0}")]
+    CaptureStopped(Arc<CaptureFailure>),
+    #[error("The image server's lease disappeared")]
+    LeaseGone,
+}
 
 /// The observer's own limit for one capture.
 const SEGMENT_SECONDS: f64 = 180.0;
@@ -103,10 +145,9 @@ impl<'b> LiveRig<'b> {
         let name = args.name().to_string();
         let config: ServerConfig = wellfed_rig::load(&root, &args.config)?;
         let hotspot: Hotspot = wellfed_rig::load(&root, &args.hotspot)?;
-        require(
-            !hotspot.connection.is_empty(),
-            format!("{} has no connection", args.hotspot.display()),
-        )?;
+        require(!hotspot.connection.is_empty(), || LiveError::NoConnection {
+            hotspot: args.hotspot.clone(),
+        })?;
 
         let rig = Self {
             name: name.clone(),
@@ -133,27 +174,23 @@ impl<'b> LiveRig<'b> {
             bench,
         };
 
-        require(
-            Path::new(&rig.bench.config.uart_port).exists(),
-            format!("UART port {} is missing", rig.bench.config.uart_port),
-        )?;
-        require(
-            rig.stock_bin().is_file(),
-            format!(
-                "{} not found; cargo build --release -p wellfed-stock",
-                rig.stock_bin().display()
-            ),
-        )?;
+        require(Path::new(&rig.bench.config.uart_port).exists(), || {
+            LiveError::UartMissing {
+                port: rig.bench.config.uart_port.clone(),
+            }
+        })?;
+        require(rig.stock_bin().is_file(), || LiveError::StockMissing {
+            path: rig.stock_bin(),
+        })?;
         rig.bench.fresh(&rig.server_log)?;
         rig.bench.fresh(&rig.segment_path(1))?;
         require(
             rig.api
                 .get::<IgnoredAny>("/health", Auth::Anonymous)
                 .is_err(),
-            format!(
-                "Something already answers on {}; stop that serve first (the suite runs its own)",
-                rig.api.address
-            ),
+            || LiveError::ServeRunning {
+                address: rig.api.address,
+            },
         )?;
         Ok(rig)
     }
@@ -208,14 +245,10 @@ impl<'b> LiveRig<'b> {
             .args(["-t", "-f", "NAME", "connection", "show", "--active"])
             .stdin(Stdio::null())
             .output()
-            .map_err(|error| Error::Bench(format!("nmcli: {error}")))?;
-        require(
-            output.status.success(),
-            format!(
-                "nmcli could not list connections: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            ),
-        )?;
+            .map_err(LiveError::Nmcli)?;
+        require(output.status.success(), || LiveError::NmcliList {
+            stderr: String::from_utf8_lossy(&output.stderr).trim().into(),
+        })?;
         Ok(String::from_utf8_lossy(&output.stdout)
             .lines()
             .any(|line| line == self.connection))
@@ -237,26 +270,31 @@ impl<'b> LiveRig<'b> {
     }
 
     /// Wait for `ready`, failing early if `child` exits first.
-    fn until_ready(&self, child: &mut Child, what: &str, ready: impl Fn() -> bool) -> Result<()> {
+    fn until_ready(
+        &self,
+        child: &mut Child,
+        what: &'static str,
+        ready: impl Fn() -> bool,
+    ) -> Result<()> {
         let deadline = Instant::now() + Duration::from_secs_f64(START_SECONDS);
         while Instant::now() < deadline {
             if wellfed_rig::interrupted() {
-                return Err(Error::Interrupted);
+                return Err(wellfed_rig::Error::Interrupted.into());
             }
             if let Some(status) = child.try_wait()? {
-                return Err(Error::Bench(format!(
-                    "{what} exited ({status}); see {}",
-                    self.bench.rel(&self.server_log)
-                )));
+                return Err(LiveError::ChildExited {
+                    what,
+                    status,
+                    log: self.bench.rel(&self.server_log),
+                }
+                .into());
             }
             if ready() {
                 return Ok(());
             }
             std::thread::sleep(Duration::from_millis(200));
         }
-        Err(Error::Bench(format!(
-            "{what} did not become ready in {START_SECONDS:.0} s"
-        )))
+        Err(LiveError::ChildTimeout { what }.into())
     }
 
     /// `serve`; with `trial`, `--enable-ota-trial`, which refuses a binary
@@ -344,12 +382,12 @@ impl Drop for LiveRig<'_> {
 
 impl Rig for LiveRig<'_> {
     fn stage(&mut self, args: &OtaArgs) -> Result<Option<Staged>> {
-        self.bench.ota_stage(args, &mut Timing::default())
+        Ok(self.bench.ota_stage(args, &mut Timing::default())?)
     }
 
     fn review_build(&mut self, review: &Path) -> Result<String> {
         let manifest = wellfed_rig::load(&self.bench.root, &review.join("build-manifest.json"))?;
-        ota::build_id(&manifest)
+        Ok(ota::build_id(&manifest)?)
     }
 
     fn server(&mut self, server: Server) -> Result<()> {
@@ -390,7 +428,7 @@ impl Rig for LiveRig<'_> {
         Ok(())
     }
 
-    fn offered(&mut self) -> Option<std::result::Result<(), String>> {
+    fn offered(&mut self) -> Option<std::result::Result<(), Arc<PushError>>> {
         let pushing = self.pushing.as_mut()?;
         let notes = pushing.notes();
         let finished = pushing.finished();
@@ -437,34 +475,28 @@ impl Rig for LiveRig<'_> {
             .args(["connection", verb, &self.connection])
             .stdin(Stdio::null())
             .output()
-            .map_err(|error| Error::Bench(format!("nmcli: {error}")))?;
-        require(
-            output.status.success(),
-            format!(
-                "nmcli connection {verb} failed: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            ),
-        )?;
+            .map_err(LiveError::Nmcli)?;
+        require(output.status.success(), || LiveError::NmcliVerb {
+            verb,
+            stderr: String::from_utf8_lossy(&output.stderr).trim().into(),
+        })?;
         self.hotspot_up = up;
         Ok(())
     }
 
     fn power_cycle(&mut self) -> Result<()> {
-        require(self.power, "A power cycle needs --power")?;
+        require(self.power, || LiveError::NoPower)?;
         self.note("  Cold boot: supply off, then on");
         self.bench.cut_power()?;
         (self.bench.sleep)(self.bench.off_seconds)?;
-        self.bench.power_on()
+        Ok(self.bench.power_on()?)
     }
 
     fn uart(&mut self) -> Result<Vec<u8>> {
-        let capture = self
-            .capture
-            .as_mut()
-            .ok_or_else(|| Error::Bench("The UART capture is not running".into()))?;
+        let capture = self.capture.as_mut().ok_or(LiveError::NoCapture)?;
         let segments = capture.segments();
-        if let Some(reason) = capture.failure() {
-            return Err(Error::Bench(format!("The UART capture stopped: {reason}")));
+        if let Some(failure) = capture.failure() {
+            return Err(LiveError::CaptureStopped(failure).into());
         }
         for segment in segments.iter().skip(self.captures.len()) {
             self.captures.push(self.bench.rel(segment));
@@ -490,7 +522,7 @@ impl Rig for LiveRig<'_> {
     }
 
     fn wait(&mut self, seconds: f64) -> Result<()> {
-        (self.bench.sleep)(seconds)
+        Ok((self.bench.sleep)(seconds)?)
     }
 
     fn clock(&self) -> f64 {
@@ -538,7 +570,7 @@ impl Rig for LiveRig<'_> {
 
         read(&lease_path)
             .map(|lease| lease.token.to_string())
-            .ok_or_else(|| Error::Bench("The image server's lease disappeared".into()))
+            .ok_or_else(|| LiveError::LeaseGone.into())
     }
 
     fn stock_trial(&mut self, trial: &TrialRequest) -> Result<()> {

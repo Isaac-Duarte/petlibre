@@ -17,10 +17,11 @@ use std::time::{Duration, Instant};
 use wellfed_formats::canonical::sha256;
 use serde::Deserialize;
 
-use crate::device::{Answer, Ask, Device, DeviceStatus, Fault};
-use crate::{Error, Result, interrupted, require};
+use crate::device::{Answer, Ask, Device, DeviceError, DeviceStatus, Fault};
+use crate::{Error, Result, interrupted};
 use wellfed_formats::bench::progress::{FlashTool, Status};
 use wellfed_formats::bench::relative;
+use wellfed_formats::require;
 use wellfed_formats::session::Status as SessionStatus;
 use wellfed_signing::CONTAINER_HEADER;
 
@@ -85,10 +86,65 @@ pub struct InstallJob {
     pub fault: Fault,
 }
 
+/// Why a child tool or a device API answer stopped a sequence.
+#[derive(Debug, thiserror::Error)]
+pub enum ToolsError {
+    /// The serial client is a separate executable the bench never links.
+    #[error(
+        "{} not found; build it with cargo build -p wellfed-flash or pass --flash-bin",
+        path.display()
+    )]
+    FlashMissing { path: PathBuf },
+    #[error(
+        "{} not found; build it with cargo build --release -p wellfed-build or pass --build-bin",
+        path.display()
+    )]
+    BuildMissing { path: PathBuf },
+    #[error("Observer exited before holding the port")]
+    ObserverExited,
+    #[error("Observer did not hold the port in time")]
+    ObserverTimeout,
+    #[error("Observer failed; see {}", output.display())]
+    ObserverFailed { output: PathBuf },
+    /// The OTA container has no payload past its header.
+    #[error("{} is too short", image.display())]
+    ImageTooShort { image: PathBuf },
+    /// The key that signs a downgrade statement; `key` root-relative.
+    #[error("{}: {source}", key.display())]
+    DowngradeKey {
+        key: PathBuf,
+        source: wellfed_signing::Error,
+    },
+    #[error("Status answered {0:?}")]
+    StatusAnswer(Answer),
+}
+
+/// How a push ended short of activating bank 1. It is shared ([`Arc`]),
+/// since every poll of [`Installing::finished`] reports the same end and
+/// the device errors it wraps cannot be cloned.
+#[derive(Debug, thiserror::Error)]
+pub enum PushError {
+    /// The session, or the install over it, stopped.
+    #[error(transparent)]
+    Device(#[from] DeviceError),
+    /// The downgrade statement could not be signed.
+    #[error(transparent)]
+    Downgrade(#[from] wellfed_signing::Error),
+    /// Asking for the feeder's floor, which a downgrade binds, failed.
+    #[error("the feeder's floor: Err({0:?})")]
+    FloorUnasked(DeviceError),
+    /// The feeder answered the floor query with something else.
+    #[error("the feeder's floor: Ok({0:?})")]
+    FloorAnswer(Answer),
+    #[error("the install thread panicked")]
+    Panicked,
+}
+
 /// An update being pushed.
 pub trait Installing {
-    /// How it ended, once it has: `Ok` once bank 1 is activated.
-    fn finished(&mut self) -> Option<std::result::Result<(), String>>;
+    /// How it ended, once it has: `Ok` once bank 1 is activated. Every
+    /// call after the end reports it again.
+    fn finished(&mut self) -> Option<std::result::Result<(), Arc<PushError>>>;
     /// Its steps since the last call.
     fn notes(&mut self) -> Vec<String>;
     /// End it at its next poll and wait for that.
@@ -99,26 +155,30 @@ pub trait Installing {
 struct Pushing {
     stop: Arc<AtomicBool>,
     notes: mpsc::Receiver<String>,
-    done: Option<std::thread::JoinHandle<std::result::Result<(), String>>>,
-    result: Option<std::result::Result<(), String>>,
+    done: Option<std::thread::JoinHandle<std::result::Result<(), PushError>>>,
+    result: Option<std::result::Result<(), Arc<PushError>>>,
 }
 
 impl Pushing {
     fn start(root: &Path, job: &InstallJob) -> Result<Self> {
         let manifest = fs::read(root.join(&job.manifest))?;
         let container = fs::read(root.join(&job.image))?;
-        require(
-            container.len() > CONTAINER_HEADER,
-            format!("{} is too short", job.image.display()),
-        )?;
+        require(container.len() > CONTAINER_HEADER, || {
+            ToolsError::ImageTooShort {
+                image: job.image.clone(),
+            }
+        })?;
         let mut device = Device::open(root, &job.keys, &job.config)?;
-        let downgrade = match &job.downgrade {
-            Some(key) => Some(
-                wellfed_signing::Key::load(&root.join(key))
-                    .map_err(|source| Error::Bench(format!("{}: {source}", key.display())))?,
-            ),
-            None => None,
-        };
+        let downgrade =
+            match &job.downgrade {
+                Some(key) => Some(wellfed_signing::Key::load(&root.join(key)).map_err(
+                    |source| ToolsError::DowngradeKey {
+                        key: key.clone(),
+                        source,
+                    },
+                )?),
+                None => None,
+            };
         let fault = job.fault;
         let stop = Arc::new(AtomicBool::new(false));
         let (send, notes) = mpsc::channel();
@@ -131,14 +191,12 @@ impl Pushing {
                 Some(key) => {
                     let floor = match device.ask(&Ask::UpdateState) {
                         Ok(Answer::Update(view)) => view.min_version,
-                        other => return Err(format!("the feeder's floor: {other:?}")),
+                        Ok(other) => return Err(PushError::FloorAnswer(other)),
+                        Err(error) => return Err(PushError::FloorUnasked(error)),
                     };
                     note(format!("Signing a downgrade at floor {floor}"));
                     let identity = device.identity();
-                    Some(
-                        key.downgrade(&manifest, &identity, floor)
-                            .map_err(|error| error.to_string())?,
-                    )
+                    Some(key.downgrade(&manifest, &identity, floor)?)
                 }
                 None => None,
             };
@@ -147,9 +205,7 @@ impl Pushing {
                 downgrade: statement.as_deref(),
                 payload: &container[CONTAINER_HEADER..],
             };
-            device
-                .install(image, fault, &stopping, &mut note)
-                .map_err(|error| error.to_string())
+            Ok(device.install(image, fault, &stopping, &mut note)?)
         });
         Ok(Self {
             stop,
@@ -161,12 +217,12 @@ impl Pushing {
 }
 
 impl Installing for Pushing {
-    fn finished(&mut self) -> Option<std::result::Result<(), String>> {
+    fn finished(&mut self) -> Option<std::result::Result<(), Arc<PushError>>> {
         if self.result.is_none() && self.done.as_ref().is_some_and(|d| d.is_finished()) {
             let joined = self.done.take().map(std::thread::JoinHandle::join);
             self.result = Some(match joined {
-                Some(Ok(result)) => result,
-                _ => Err("the install thread panicked".into()),
+                Some(Ok(result)) => result.map_err(Arc::new),
+                _ => Err(Arc::new(PushError::Panicked)),
             });
         }
         self.result.clone()
@@ -179,7 +235,8 @@ impl Installing for Pushing {
     fn stop(&mut self) {
         self.stop.store(true, Ordering::Release);
         if let Some(done) = self.done.take() {
-            self.result = Some(done.join().unwrap_or_else(|_| Err("panicked".into())));
+            let joined = done.join().unwrap_or(Err(PushError::Panicked));
+            self.result = Some(joined.map_err(Arc::new));
         }
     }
 }
@@ -240,10 +297,30 @@ fn observe_report(directory: &Path) -> Result<ObserveReport> {
 pub trait Capture {
     /// The segment directories started so far, in order.
     fn segments(&mut self) -> Vec<PathBuf>;
-    /// Why the chain stopped on its own (an observe failed, a name was taken).
-    fn failure(&mut self) -> Option<String>;
+    /// Why the chain stopped on its own (an observe failed, a name was
+    /// taken); every call after the stop reports it again.
+    fn failure(&mut self) -> Option<Arc<CaptureFailure>>;
     /// Stop the running observe and the chain; safe to repeat.
     fn stop(&mut self);
+}
+
+/// Why a capture chain stopped on its own. Shared ([`Arc`]) because every
+/// later check of the chain reports the same stop.
+#[derive(Debug, thiserror::Error)]
+pub enum CaptureFailure {
+    /// Segments are never reused, so a taken one ends the chain.
+    #[error("Refusing to reuse {}", segment.display())]
+    NameTaken { segment: PathBuf },
+    #[error("wellfed-flash: {0}")]
+    Spawn(std::io::Error),
+    #[error("observe: {0}")]
+    Wait(std::io::Error),
+    /// The `n`th observe (from 1) exited unsuccessfully.
+    #[error("Observe segment {n} exited {status}")]
+    Exited {
+        n: u32,
+        status: std::process::ExitStatus,
+    },
 }
 
 pub trait Analyzer {
@@ -308,13 +385,9 @@ fn flash_tool(root: &Path, path: &Path) -> Option<FlashTool> {
 
 impl Processes {
     fn flash_command(&self) -> Result<Command> {
-        require(
-            self.flash_bin.is_file(),
-            format!(
-                "{} not found; build it with cargo build -p wellfed-flash or pass --flash-bin",
-                self.flash_bin.display()
-            ),
-        )?;
+        require(self.flash_bin.is_file(), || ToolsError::FlashMissing {
+            path: self.flash_bin.clone(),
+        })?;
         let mut command = Command::new(&self.flash_bin);
         command
             .current_dir(&self.root)
@@ -411,13 +484,9 @@ fn stream_both(mut command: Command, status: &mut Status) -> Result<i32> {
 
 impl Processes {
     fn build_command(&self) -> Result<Command> {
-        require(
-            self.build_bin.is_file(),
-            format!(
-                "{} not found; build it with cargo build --release -p wellfed-build or pass --build-bin",
-                self.build_bin.display()
-            ),
-        )?;
+        require(self.build_bin.is_file(), || ToolsError::BuildMissing {
+            path: self.build_bin.clone(),
+        })?;
         let mut command = Command::new(&self.build_bin);
         command.current_dir(&self.root);
         Ok(command)
@@ -445,9 +514,7 @@ impl Tools for Processes {
                 return Err(Error::Interrupted);
             }
             if observer.child.try_wait()?.is_some() {
-                return Err(Error::Bench(
-                    "Observer exited before holding the port".into(),
-                ));
+                return Err(ToolsError::ObserverExited.into());
             }
             let running = observe_report(output)
                 .is_ok_and(|report| report.status == Some(SessionStatus::Running));
@@ -458,9 +525,7 @@ impl Tools for Processes {
         }
 
         observer.kill();
-        Err(Error::Bench(
-            "Observer did not hold the port in time".into(),
-        ))
+        Err(ToolsError::ObserverTimeout.into())
     }
 
     fn flash(&mut self, args: &[String], status: &mut Status) -> Result<i32> {
@@ -480,7 +545,7 @@ impl Tools for Processes {
         };
         match device.ask(&Ask::Status)? {
             Answer::Status(status) => Ok(status),
-            other => Err(Error::Bench(format!("Status answered {other:?}"))),
+            other => Err(ToolsError::StatusAnswer(other).into()),
         }
     }
 
@@ -528,8 +593,7 @@ impl Tools for Processes {
             for n in 1.. {
                 let output = segment(n);
                 if output.exists() {
-                    chain.fail(format!("Refusing to reuse {}", output.display()));
-                    return;
+                    return chain.fail(CaptureFailure::NameTaken { segment: output });
                 }
                 let mut command = Command::new(&flash);
                 command.current_dir(&root).arg("--root").arg(&root);
@@ -542,7 +606,7 @@ impl Tools for Processes {
                     .spawn();
                 let mut child = match child {
                     Ok(child) => child,
-                    Err(error) => return chain.fail(format!("wellfed-flash: {error}")),
+                    Err(error) => return chain.fail(CaptureFailure::Spawn(error)),
                 };
                 chain.started(output);
 
@@ -555,11 +619,11 @@ impl Tools for Processes {
                     match child.try_wait() {
                         Ok(Some(status)) => break status,
                         Ok(None) => std::thread::sleep(Duration::from_millis(50)),
-                        Err(error) => return chain.fail(format!("observe: {error}")),
+                        Err(error) => return chain.fail(CaptureFailure::Wait(error)),
                     }
                 };
                 if !status.success() {
-                    return chain.fail(format!("Observe segment {n} exited {status}"));
+                    return chain.fail(CaptureFailure::Exited { n, status });
                 }
             }
         });
@@ -611,7 +675,7 @@ impl Tools for Processes {
 #[derive(Default)]
 struct Chained {
     segments: Mutex<Vec<PathBuf>>,
-    failure: Mutex<Option<String>>,
+    failure: Mutex<Option<Arc<CaptureFailure>>>,
     stop: AtomicBool,
 }
 
@@ -623,8 +687,8 @@ impl Chained {
             .push(output);
     }
 
-    fn fail(&self, reason: String) {
-        *self.failure.lock().unwrap_or_else(|e| e.into_inner()) = Some(reason);
+    fn fail(&self, reason: CaptureFailure) {
+        *self.failure.lock().unwrap_or_else(|e| e.into_inner()) = Some(Arc::new(reason));
     }
 
     fn stopping(&self) -> bool {
@@ -646,7 +710,7 @@ impl Capture for Chain {
             .clone()
     }
 
-    fn failure(&mut self) -> Option<String> {
+    fn failure(&mut self) -> Option<Arc<CaptureFailure>> {
         self.shared
             .failure
             .lock()
@@ -676,10 +740,9 @@ struct Observing {
 impl Observer for Observing {
     fn finish(&mut self) -> Result<Observation> {
         let code = exit_code(self.child.wait()?);
-        require(
-            code == 0,
-            format!("Observer failed; see {}", self.output.display()),
-        )?;
+        require(code == 0, || ToolsError::ObserverFailed {
+            output: self.output.clone(),
+        })?;
 
         let report = observe_report(&self.output)?;
         Ok(report.result.unwrap_or_default())
@@ -822,7 +885,10 @@ echo '{"status":"complete","result":{"bytes":7}}' > "$8/report.json""#,
             .err()
             .unwrap();
 
-        assert!(error.to_string().contains("exited before holding the port"));
+        assert!(
+            matches!(error, Error::Tool(ToolsError::ObserverExited)),
+            "{error:?}"
+        );
     }
 
     /// A chain over a stand-in observe that records one line per segment
@@ -872,10 +938,15 @@ echo '{"status":"complete","result":{"bytes":7}}' > "$8/report.json""#,
             assert_eq!(*segment, tmp.path().join(format!("uart-{:02}", n + 1)));
             assert!(segment.join("serial-rx.bin").is_file());
         }
+        let failure = capture.failure().unwrap();
         assert!(
-            capture.failure().unwrap().contains("segment 3 exited"),
-            "{:?}",
-            capture.failure()
+            matches!(*failure, CaptureFailure::Exited { n: 3, .. }),
+            "{failure:?}"
+        );
+        // What the suite's run record keeps of the stop.
+        assert_eq!(
+            failure.to_string(),
+            "Observe segment 3 exited exit status: 3"
         );
     }
 
@@ -904,7 +975,11 @@ echo '{"status":"complete","result":{"bytes":7}}' > "$8/report.json""#,
         until(|| capture.failure().is_some());
 
         assert!(capture.segments().is_empty());
-        assert!(capture.failure().unwrap().starts_with("Refusing to reuse"));
+        let failure = capture.failure().unwrap();
+        assert!(
+            matches!(&*failure, CaptureFailure::NameTaken { segment } if *segment == tmp.path().join("uart-01")),
+            "{failure:?}"
+        );
     }
 
     #[test]
@@ -950,7 +1025,10 @@ echo '{"status":"complete","result":{"bytes":7}}' > "$8/report.json""#,
 
         tools.build_bin = tmp.path().join("absent");
         let error = tools.build_query(&[]).unwrap_err();
-        assert!(error.to_string().contains("--build-bin"));
+        assert!(
+            matches!(&error, Error::Tool(ToolsError::BuildMissing { path }) if *path == tools.build_bin),
+            "{error:?}"
+        );
     }
 
     #[test]
@@ -966,6 +1044,17 @@ echo '{"status":"complete","result":{"bytes":7}}' > "$8/report.json""#,
         let mut status = Status::disabled();
 
         let error = tools.flash(&[], &mut status).unwrap_err();
-        assert!(error.to_string().contains("cargo build -p wellfed-flash"));
+        assert!(
+            matches!(&error, Error::Tool(ToolsError::FlashMissing { .. })),
+            "{error:?}"
+        );
+        // The operator is told how to get the client.
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "{} not found; build it with cargo build -p wellfed-flash or pass --flash-bin",
+                tools.flash_bin.display()
+            )
+        );
     }
 }

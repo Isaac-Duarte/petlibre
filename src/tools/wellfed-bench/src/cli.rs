@@ -340,7 +340,7 @@ fn record_start(
     bench: &mut Bench,
     command: &Command,
     status_dir: PathBuf,
-) -> wellfed_rig::Result<()> {
+) -> wellfed_itest::Result<()> {
     let label = command.label();
     let steps: Vec<&str> = match command {
         Command::Capture { .. } => vec!["capture"],
@@ -368,9 +368,14 @@ fn record_start(
     Ok(())
 }
 
-fn dispatch(bench: &mut Bench, command: &Command, stock_bin: PathBuf) -> wellfed_rig::Result<u8> {
+/// Run the command: the suite's on `wellfed-itest`, the rest on the rig.
+fn dispatch(
+    bench: &mut Bench,
+    command: &Command,
+    stock_bin: PathBuf,
+) -> wellfed_itest::Result<u8> {
     let captures = bench.root.join(wellfed_formats::bench::CAPTURES);
-    match command {
+    let ran = match command {
         Command::Status => bench.status_report(),
         Command::Off => bench.off(),
         Command::On => bench.on(),
@@ -389,9 +394,10 @@ fn dispatch(bench: &mut Bench, command: &Command, stock_bin: PathBuf) -> wellfed
         Command::StockPrepare(args) => bench.stock_prepare(args),
         Command::StockExecute(args) => bench.stock_execute(args),
         Command::Ota(args) => bench.ota(args),
-        Command::Itest(args) => wellfed_itest::itest(bench, args, stock_bin),
-        Command::StockOta(args) => wellfed_itest::stock_ota(bench, args, stock_bin),
-    }
+        Command::Itest(args) => return wellfed_itest::itest(bench, args, stock_bin),
+        Command::StockOta(args) => return wellfed_itest::stock_ota(bench, args, stock_bin),
+    };
+    Ok(ran?)
 }
 
 #[cfg(test)]

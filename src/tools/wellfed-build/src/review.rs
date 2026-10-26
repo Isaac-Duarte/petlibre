@@ -18,6 +18,7 @@ use wellfed_emu::factory::{self, Entry};
 use wellfed_formats::canonical::{canonical_of, sha256};
 use wellfed_formats::manifest::BuildManifest;
 use wellfed_formats::private::{sync_directory, write_new};
+use wellfed_formats::require;
 use wellfed_formats::review::{
     BuildDetails, Details, FactoryRun, ImageKind, ImageReview, MappingCase, ReviewKind,
     SCHEMA_VERSION, Stop,
@@ -28,7 +29,68 @@ use wellfed_image::root::Root;
 use crate::identity::current_inputs;
 use crate::image::audit_build;
 use crate::platform::{Linked, amebad};
-use crate::{Device, Error, Firmware, Profile, Repo, Result, digest, require, revision};
+use crate::{Device, Firmware, Profile, Repo, Result, digest, revision};
+
+/// Why an image could not be frozen as a review. Each is terminal: nothing
+/// is written until every check passed.
+#[derive(Debug, thiserror::Error)]
+pub enum ReviewError {
+    #[error("New private output required")]
+    Output,
+    #[error("Pinned stock image required")]
+    Stock,
+    #[error("Private build required")]
+    PrivateBuild,
+    #[error("Development image exceeds aligned bank-1 footprint")]
+    Footprint { bytes: usize },
+    #[error("Only the reviewed PLAF103 UART startup profile is supported")]
+    Profile { device: String, profile: String },
+    #[error("Build manifest names no firmware; rebuild it")]
+    NoFirmware,
+    #[error("Unexpected SDK/toolchain")]
+    SdkToolchain,
+    #[error("SDK worktree revision differs")]
+    SdkRevision,
+    #[error("Build inputs are stale or incomplete; rebuild before review")]
+    StaleInputs,
+    #[error("Build input differs")]
+    Input { name: String },
+    #[error("SDK overlay differs")]
+    Overlay { name: String },
+    #[error("Both core packages must exactly compose the OTA payload")]
+    Composition,
+    #[error("Duplicate core archive")]
+    DuplicateCore { core: String },
+    #[error("Compiled archive differs")]
+    Archive { path: String },
+    #[error("Both compiled cores required")]
+    Cores,
+    #[error("Linked-code audits differ from build manifest")]
+    Audits,
+    #[error("Linked pad table differs")]
+    PadTable,
+    /// The audits and emulation take long enough for an edit to land.
+    #[error("Build changed during review")]
+    Changed,
+    #[error("Artifact changed during review")]
+    ArtifactChanged { path: String },
+    #[error("Build artifact differs")]
+    Artifact { path: String },
+    #[error("Incomplete packaged artifacts")]
+    Artifacts,
+    #[error("Manifest file escapes its root")]
+    Escapes { name: String },
+    #[error("Missing km4_xip image")]
+    NoKm4Xip,
+    #[error("Actual factory instructions reject diagnostic headers")]
+    FactoryCheck { bank: u8 },
+    #[error("Unexpected factory mapper sequence")]
+    MapperSequence { bank: u8 },
+    #[error("Factory mapping does not cover packaged diagnostic")]
+    Mapping { bank: u8, core: usize },
+    #[error("Single-valid diagnostic bank selection differs")]
+    Selection { bank: u8 },
+}
 
 /// Bank 1's extent; a development image must fit it sector-aligned.
 const BANK_BYTES: usize = 0x15_0000;
@@ -50,25 +112,21 @@ const SCOPE: &str =
 pub fn freeze(repo: &Repo, kind: ImageKind, build: &Path, output: &Path) -> Result<ImageReview> {
     let root = Root::new(&repo.root)?;
     let (output, build) = (repo.root.join(output), repo.root.join(build));
-    require(
-        !output.exists() && root.is_private(&output),
-        "New private output required",
-    )?;
+    require(!output.exists() && root.is_private(&output), || {
+        ReviewError::Output
+    })?;
 
     let (image, manifest, review) = match kind {
         ImageKind::Stock => {
             let image = fs::read(Device::new(repo, DEVICE)?.stock(repo)?.image)?;
-            require(
-                sha256(&image) == STOCK_SHA256,
-                "Pinned stock image required",
-            )?;
+            require(sha256(&image) == STOCK_SHA256, || ReviewError::Stock)?;
             let details = Details::Stock {
                 stock_sha256: STOCK_SHA256.into(),
             };
             (image, None, details)
         }
         ImageKind::Build => {
-            require(root.is_private(&build), "Private build required")?;
+            require(root.is_private(&build), || ReviewError::PrivateBuild)?;
             let (image, manifest, details) = review(repo, &build)?;
             (image, Some(manifest), Details::Build(Box::new(details)))
         }
@@ -109,7 +167,9 @@ pub fn bank_payload(image: &[u8]) -> Result<&[u8]> {
     let payload = container(image)?;
     require(
         !payload.is_empty() && payload.len() <= BANK_BYTES && payload.len() % SECTOR == 0,
-        "Development image exceeds aligned bank-1 footprint",
+        || ReviewError::Footprint {
+            bytes: payload.len(),
+        },
     )?;
     images(payload)?;
     Ok(payload)
@@ -123,42 +183,37 @@ fn review(repo: &Repo, build: &Path) -> Result<(Vec<u8>, Vec<u8>, BuildDetails)>
     let lock = amebad::lock(repo)?;
     require(
         m.device == DEVICE && m.profile == Profile::Firstboot.name(),
-        "Only the reviewed PLAF103 UART startup profile is supported",
+        || ReviewError::Profile {
+            device: m.device.clone(),
+            profile: m.profile.clone(),
+        },
     )?;
     let device = Device::new(repo, &m.device)?;
     let Some(firmware) = m.firmware.as_deref() else {
-        return Err(Error::Refused(
-            "Build manifest names no firmware; rebuild it".into(),
-        ));
+        return Err(ReviewError::NoFirmware.into());
     };
     let firmware = Firmware::new(repo, firmware)?;
     require(
         m.sdk_revision == lock.sdk.revision && m.toolchain_sha256 == lock.toolchain.sha256,
-        "Unexpected SDK/toolchain",
+        || ReviewError::SdkToolchain,
     )?;
     let sdk = build.join("sdk");
-    require(
-        revision(&sdk)? == m.sdk_revision,
-        "SDK worktree revision differs",
-    )?;
+    require(revision(&sdk)? == m.sdk_revision, || {
+        ReviewError::SdkRevision
+    })?;
 
     // Inputs, overlays, artifacts and archives, each re-hashed.
     let inputs = current_inputs(repo, &device, Profile::Firstboot, &firmware)?;
-    require(
-        m.inputs == inputs,
-        "Build inputs are stale or incomplete; rebuild before review",
-    )?;
+    require(m.inputs == inputs, || ReviewError::StaleInputs)?;
     for (name, expected) in &m.inputs {
-        require(
-            digest(&local(&repo.root, name)?)? == *expected,
-            "Build input differs",
-        )?;
+        require(digest(&local(&repo.root, name)?)? == *expected, || {
+            ReviewError::Input { name: name.clone() }
+        })?;
     }
     for (name, expected) in &m.sdk_overrides {
-        require(
-            digest(&local(&sdk, name)?)? == *expected,
-            "SDK overlay differs",
-        )?;
+        require(digest(&local(&sdk, name)?)? == *expected, || {
+            ReviewError::Overlay { name: name.clone() }
+        })?;
     }
     let files = artifacts(build, &m)?;
     let file = |name: &str| files.get(name).map_or(&[][..], Vec::as_slice);
@@ -167,20 +222,23 @@ fn review(repo: &Repo, build: &Path) -> Result<(Vec<u8>, Vec<u8>, BuildDetails)>
     require(
         payload == file("km0_km4_image2.bin")
             && payload == [file("km0_image2_all.bin"), file("km4_image2_all.bin")].concat(),
-        "Both core packages must exactly compose the OTA payload",
+        || ReviewError::Composition,
     )?;
     let mut cores: Vec<&str> = Vec::new();
     for archive in &m.compiled_archives {
-        require(
-            !cores.contains(&archive.core.as_str()),
-            "Duplicate core archive",
-        )?;
+        require(!cores.contains(&archive.core.as_str()), || {
+            ReviewError::DuplicateCore {
+                core: archive.core.clone(),
+            }
+        })?;
         let path = local(build, &archive.path)?;
-        require(digest(&path)? == archive.sha256, "Compiled archive differs")?;
+        require(digest(&path)? == archive.sha256, || ReviewError::Archive {
+            path: archive.path.clone(),
+        })?;
         cores.push(&archive.core);
     }
     cores.sort_unstable();
-    require(cores == ["KM0", "KM4"], "Both compiled cores required")?;
+    require(cores == ["KM0", "KM4"], || ReviewError::Cores)?;
 
     // The linked-code audits, rerun, must be the ones the build recorded.
     let Linked::Amebad(fresh) = audit_build(repo, build)?;
@@ -189,11 +247,11 @@ fn review(repo: &Repo, build: &Path) -> Result<(Vec<u8>, Vec<u8>, BuildDetails)>
         recorded.firstboot_startup_audit.as_ref() == Some(&fresh.firstboot_startup_audit)
             && recorded.ram_park_audit.as_ref() == Some(&fresh.ram_park_audit)
             && recorded.sdk_hook_audit.as_ref() == Some(&fresh.sdk_hook_audit),
-        "Linked-code audits differ from build manifest",
+        || ReviewError::Audits,
     )?;
     require(
         recorded.km0_pinmap_audit.as_ref() == Some(&fresh.km0_pinmap_audit),
-        "Linked pad table differs",
+        || ReviewError::PadTable,
     )?;
 
     let (baseline, rom) = factory::inputs(&repo.root)?;
@@ -203,12 +261,14 @@ fn review(repo: &Repo, build: &Path) -> Result<(Vec<u8>, Vec<u8>, BuildDetails)>
     require(
         fs::read(build.join("manifest.json"))? == raw
             && current_inputs(repo, &device, Profile::Firstboot, &firmware)? == inputs,
-        "Build changed during review",
+        || ReviewError::Changed,
     )?;
     for artifact in &m.artifacts {
         require(
             digest(&local(build, &artifact.path)?)? == artifact.sha256,
-            "Artifact changed during review",
+            || ReviewError::ArtifactChanged {
+                path: artifact.path.clone(),
+            },
         )?;
     }
 
@@ -230,14 +290,16 @@ fn artifacts(build: &Path, m: &BuildManifest) -> Result<BTreeMap<String, Vec<u8>
         let data = fs::read(&path)?;
         require(
             data.len() as u64 == artifact.bytes && sha256(&data) == artifact.sha256,
-            "Build artifact differs",
+            || ReviewError::Artifact {
+                path: artifact.path.clone(),
+            },
         )?;
         let name = path.file_name().map(|n| n.to_string_lossy().into_owned());
         files.insert(name.unwrap_or_default(), data);
     }
     require(
         files.len() == m.artifacts.len() && files.keys().eq(ARTIFACTS),
-        "Incomplete packaged artifacts",
+        || ReviewError::Artifacts,
     )?;
     Ok(files)
 }
@@ -247,7 +309,7 @@ fn local(parent: &Path, name: &str) -> Result<PathBuf> {
     let path = parent.join(name).canonicalize()?;
     require(
         path.starts_with(parent.canonicalize()?) && path.is_file(),
-        "Manifest file escapes its root",
+        || ReviewError::Escapes { name: name.into() },
     )?;
     Ok(path)
 }
@@ -261,7 +323,7 @@ pub fn mapping_cases(current: &[u8], rom: &[u8], image: &[u8]) -> Result<Vec<Map
         .iter()
         .find(|region| region.name == "km4_xip")
         .map(|region| region.payload_header_offset)
-        .ok_or_else(|| Error::Refused("Missing km4_xip image".into()))?;
+        .ok_or(ReviewError::NoKm4Xip)?;
 
     let mut cases = Vec::new();
     for (bank, start) in (0u8..).zip(BANKS) {
@@ -275,11 +337,11 @@ pub fn mapping_cases(current: &[u8], rom: &[u8], image: &[u8]) -> Result<Vec<Map
         let checked = factory::execute(&fixture, rom, Entry::Check(bank))?;
         require(
             checked.stop == Stop::Returned && checked.result == 1,
-            "Actual factory instructions reject diagnostic headers",
+            || ReviewError::FactoryCheck { bank },
         )?;
         require(
             checked.configs.len() == 4 && checked.commands == [[0, 1], [1, 1]],
-            "Unexpected factory mapper sequence",
+            || ReviewError::MapperSequence { bank },
         )?;
         let cores = [
             (0x0C00_0000u32, start, split),
@@ -288,14 +350,14 @@ pub fn mapping_cases(current: &[u8], rom: &[u8], image: &[u8]) -> Result<Vec<Map
         for (index, (virtual_start, physical, length)) in cores.into_iter().enumerate() {
             require(
                 maps(&checked, index, virtual_start, physical, length),
-                "Factory mapping does not cover packaged diagnostic",
+                || ReviewError::Mapping { bank, core: index },
             )?;
         }
 
         let chosen = factory::execute(&fixture, rom, Entry::Select)?;
         require(
             chosen.stop == Stop::Selected && chosen.result == u32::from(bank) + 1,
-            "Single-valid diagnostic bank selection differs",
+            || ReviewError::Selection { bank },
         )?;
         cases.push(MappingCase {
             bank,
@@ -331,6 +393,7 @@ fn maps(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Error;
 
     #[test]
     fn payload_must_be_a_valid_container_that_fits_the_aligned_bank() {
@@ -350,16 +413,28 @@ mod tests {
 
         let output = scratch.path().join("output");
         let error = freeze(&repo, ImageKind::Build, &build, &output).unwrap_err();
-        assert!(error.to_string().contains("startup profile"), "{error}");
+        assert!(
+            matches!(
+                &error,
+                Error::Review(ReviewError::Profile { profile, .. }) if profile == "bringup"
+            ),
+            "{error}"
+        );
         assert!(!output.exists());
     }
 
     #[test]
     fn output_outside_private_is_refused() {
         let repo = Repo::here().unwrap();
+        // A checkout without private/ is refused before the output is read.
+        fs::create_dir_all(repo.root.join("private")).unwrap();
         let outside = tempfile::tempdir().unwrap();
         let output = outside.path().join("review");
-        assert!(freeze(&repo, ImageKind::Stock, Path::new("unused"), &output).is_err());
+        let error = freeze(&repo, ImageKind::Stock, Path::new("unused"), &output).unwrap_err();
+        assert!(
+            matches!(error, Error::Review(ReviewError::Output)),
+            "{error:?}"
+        );
         assert!(!output.exists());
     }
 }

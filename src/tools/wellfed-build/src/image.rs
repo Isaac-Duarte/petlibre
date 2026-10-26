@@ -11,11 +11,27 @@ use std::path::{Path, PathBuf};
 
 use chrono::{SecondsFormat, Utc};
 use wellfed_formats::manifest::{BuildChecks, BuildManifest};
+use wellfed_formats::require;
 
 use crate::environment::{Rust, rust_compiler};
 use crate::identity::{Subject, current_inputs, ota_public_key, source_identity};
 use crate::platform::{Job, Linked};
-use crate::{Device, Error, Firmware, Profile, Repo, Result, Stage, Variant, require};
+use crate::{Device, Firmware, Profile, Repo, Result, Stage, Variant};
+
+/// Why a build request or a finished build was refused.
+#[derive(Debug, thiserror::Error)]
+pub enum ImageError {
+    #[error("Image variants apply to the firstboot profile only")]
+    VariantProfile,
+    /// The vendor recipes take minutes, and an editor may touch the tree
+    /// meanwhile.
+    #[error("Sources changed during the build; rerun before trusting these outputs")]
+    SourcesChanged,
+    #[error("Selected rustc changed during the build")]
+    CompilerChanged,
+    #[error("The build manifest names no firmware; rebuild it")]
+    NoFirmware,
+}
 
 /// Remove a previous build's manifest before anything else, so a failed
 /// build never leaves one describing other outputs.
@@ -44,12 +60,11 @@ impl<'a> Request<'a> {
         firmware: &'a Firmware,
         variant: Option<&'a Variant>,
     ) -> Result<Self> {
-        require(
-            variant.is_none() || profile.has(Stage::Firstboot),
-            "Image variants apply to the firstboot profile only",
-        )?;
+        require(variant.is_none() || profile.has(Stage::Firstboot), || {
+            ImageError::VariantProfile
+        })?;
         if profile.has(Stage::Rust) {
-            firmware.require_device(device.name())?;
+            firmware.check_device(device.name())?;
         }
 
         Ok(Self {
@@ -99,15 +114,15 @@ pub fn build(repo: &Repo, request: &Request, toolchain: &Path) -> Result<PathBuf
     };
     let identity = source_identity(&subject, &expected, ota_key.as_deref())?;
 
-    let recheck = || {
+    let recheck = || -> Result<()> {
         require(
             current_inputs(repo, device, profile, firmware)? == expected,
-            "Sources changed during the build; rerun before trusting these outputs",
+            || ImageError::SourcesChanged,
         )?;
         if let Some(rust) = &rust {
             require(
                 rust_compiler(repo, &rust.environment)? == rust.compiler,
-                "Selected rustc changed during the build",
+                || ImageError::CompilerChanged,
             )?;
         }
         Ok(())
@@ -200,9 +215,7 @@ pub fn build(repo: &Repo, request: &Request, toolchain: &Path) -> Result<PathBuf
 pub fn audit_build(repo: &Repo, build: &Path) -> Result<Linked> {
     let manifest: BuildManifest = wellfed_formats::load(&build.join("manifest.json"))?;
     let Some(name) = manifest.firmware.as_deref() else {
-        return Err(Error::Refused(
-            "The build manifest names no firmware; rebuild it".into(),
-        ));
+        return Err(ImageError::NoFirmware.into());
     };
     let device = Device::new(repo, &manifest.device)?;
     let firmware = Firmware::new(repo, name)?;

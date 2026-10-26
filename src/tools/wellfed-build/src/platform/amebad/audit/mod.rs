@@ -21,7 +21,7 @@ use serde::Serialize;
 
 use super::{Core, PROJECT, binutils};
 use crate::device::StockPaths;
-use crate::{Error, Firmware, Repo, Result, relative, text};
+use crate::{Firmware, Repo, Result, relative, text};
 
 pub mod hooks;
 pub(crate) mod layout;
@@ -49,8 +49,18 @@ pub(crate) static DIRECT_BRANCH: LazyLock<Regex> = LazyLock::new(|| {
 pub(crate) static HEADING: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^([0-9a-f]+) <([^>]+)>:$").expect("heading pattern"));
 
-pub(crate) fn refuse<T>(message: impl Into<String>) -> Result<T> {
-    Err(Error::Refused(message.into()))
+/// What the audits' shared readers of tool output refuse: each audit fails
+/// closed on output it cannot read.
+#[derive(Debug, thiserror::Error)]
+pub enum AuditError {
+    #[error("Not a hex number: {text}")]
+    NotHex { text: String },
+    #[error("Offset out of range: {value:#x}")]
+    Offset { value: u64 },
+    #[error("Expected one linked KM0 pmap_func symbol")]
+    PmapSymbol { found: usize },
+    #[error("No {core} archive")]
+    NoArchive { core: Core },
 }
 
 /// Run a binutils tool and return its stdout.
@@ -65,12 +75,12 @@ pub fn hex(value: u64) -> String {
 
 pub fn parse_hex(text: &str) -> Result<u64> {
     u64::from_str_radix(text.trim_start_matches("0x"), 16)
-        .map_err(|_| Error::Refused(format!("Not a hex number: {text}")))
+        .map_err(|_| AuditError::NotHex { text: text.into() }.into())
 }
 
 /// A listed size or file offset as an index into the bytes it describes.
 pub(crate) fn index(value: u64) -> Result<usize> {
-    usize::try_from(value).map_err(|_| Error::Refused(format!("Offset out of range: {value:#x}")))
+    usize::try_from(value).map_err(|_| AuditError::Offset { value }.into())
 }
 
 /// The little-endian word at `at`, if `data` holds one there.
@@ -116,7 +126,10 @@ pub(crate) fn pmap_address(sdk: &Path, binutils: &Binutils) -> Result<u64> {
         .collect();
     match matches[..] {
         [address] => parse_hex(address),
-        _ => refuse("Expected one linked KM0 pmap_func symbol"),
+        _ => Err(AuditError::PmapSymbol {
+            found: matches.len(),
+        }
+        .into()),
     }
 }
 
@@ -176,7 +189,7 @@ pub(crate) fn archive_record(
     sdk: &Path,
 ) -> Result<ArchiveRecord> {
     let Some((_, object)) = objects.iter().find(|(c, _)| *c == core) else {
-        return refuse(format!("No {} archive", core.name()));
+        return Err(AuditError::NoArchive { core }.into());
     };
 
     Ok(ArchiveRecord {

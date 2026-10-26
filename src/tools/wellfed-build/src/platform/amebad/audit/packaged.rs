@@ -11,9 +11,23 @@ use wellfed_formats::layout::Hex;
 use wellfed_image::ota::Image;
 use regex::Regex;
 
-use super::{index, parse_hex, refuse, tool};
+use super::{index, parse_hex, tool};
 use crate::platform::amebad::Core;
-use crate::{Result, require, sha256};
+use crate::{Result, sha256};
+use wellfed_formats::require;
+
+/// Why a core's linked text differs from what was packaged.
+#[derive(Debug, thiserror::Error)]
+pub enum PackagedError {
+    #[error("No packaged region {region}")]
+    NoRegion { region: String },
+    #[error("ELF text is outside packaged region: {section}")]
+    OutsideRegion { section: String },
+    #[error("ELF text does not match packaged image: {section}")]
+    Differs { section: String },
+    #[error("Expected exactly the packaged XIP and RAM text sections")]
+    Sections { found: Vec<String> },
+}
 
 static TEXT_SECTION: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
@@ -55,7 +69,10 @@ pub(crate) fn verify(
             }
         );
         let Some(region) = regions.iter().find(|r| r.name == region_name) else {
-            return refuse(format!("No packaged region {region_name}"));
+            return Err(PackagedError::NoRegion {
+                region: region_name,
+            }
+            .into());
         };
         let runtime = parse_hex(&region.runtime_address)?;
 
@@ -65,12 +82,17 @@ pub(crate) fn verify(
         let Some(relative) = relative
             .filter(|r| size > 0 && offset + size <= data.len() && r + size <= region.body_bytes)
         else {
-            return refuse(format!("ELF text is outside packaged region: {name}"));
+            return Err(PackagedError::OutsideRegion {
+                section: name.into(),
+            }
+            .into());
         };
         let start = region.payload_header_offset + 32 + relative;
         require(
             payload.get(start..start + size) == Some(&data[offset..offset + size]),
-            format!("ELF text does not match packaged image: {name}"),
+            || PackagedError::Differs {
+                section: name.into(),
+            },
         )?;
 
         checked.push(PackagedText {
@@ -85,7 +107,9 @@ pub(crate) fn verify(
     sections.sort();
     require(
         checked.len() == 2 && sections == [".ram_image2.text", ".xip_image2.text"],
-        "Expected exactly the packaged XIP and RAM text sections",
+        || PackagedError::Sections {
+            found: sections.iter().map(|s| s.to_string()).collect(),
+        },
     )?;
     Ok(checked)
 }

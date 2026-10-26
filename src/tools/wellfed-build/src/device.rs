@@ -8,14 +8,31 @@
 use std::fs;
 use std::path::PathBuf;
 
-use crate::catalog::DeviceEntry;
 use wellfed_formats::device::{DeviceConfig, Stock};
+use wellfed_formats::require;
 
+use crate::catalog::DeviceEntry;
 use crate::platform::Platform;
-use crate::{Error, Profile, Repo, Result, checked_name, require};
+use crate::{Profile, Repo, Result, checked_name};
 
 /// The directory every device lives in.
 const DEVICES: &str = "src/firmware/devices";
+
+/// Why a device could not be chosen or lacks what a profile needs.
+#[derive(Debug, thiserror::Error)]
+pub enum DeviceError {
+    #[error("No device named {name} under {DEVICES}/")]
+    Unknown { name: String },
+    #[error("Device {name} has an unknown schema version")]
+    SchemaVersion { name: String },
+    #[error("No devices under {DEVICES}/")]
+    None,
+    /// With several boards, a build names its own rather than have one guessed.
+    #[error("Name the device with --device: {}", names.join(", "))]
+    Ambiguous { names: Vec<String> },
+    #[error("Device {name} has no verified stock image and layout yet")]
+    NoStock { name: String },
+}
 
 /// The stock evidence of a device, as checkout paths.
 #[derive(Debug, Clone)]
@@ -36,16 +53,14 @@ impl Device {
     pub fn new(repo: &Repo, name: &str) -> Result<Self> {
         let name = checked_name("Device", name)?;
         let path = repo.path(&format!("{DEVICES}/{name}/device.json"));
-        require(
-            path.is_file(),
-            format!("No device named {name} under {DEVICES}/"),
-        )?;
+        require(path.is_file(), || DeviceError::Unknown {
+            name: name.into(),
+        })?;
 
         let config: DeviceConfig = wellfed_formats::load(&path)?;
-        require(
-            config.schema_version == 1,
-            format!("Device {name} has an unknown schema version"),
-        )?;
+        require(config.schema_version == 1, || DeviceError::SchemaVersion {
+            name: name.into(),
+        })?;
         Ok(Self {
             name: name.to_string(),
             config,
@@ -76,13 +91,10 @@ impl Device {
         let mut devices = Self::all(repo)?;
         match devices.len() {
             1 => Ok(devices.remove(0)),
-            0 => Err(Error::Refused(format!("No devices under {DEVICES}/"))),
+            0 => Err(DeviceError::None.into()),
             _ => {
-                let names: Vec<&str> = devices.iter().map(|d| d.name()).collect();
-                Err(Error::Refused(format!(
-                    "Name the device with --device: {}",
-                    names.join(", ")
-                )))
+                let names = devices.into_iter().map(|d| d.name).collect();
+                Err(DeviceError::Ambiguous { names }.into())
             }
         }
     }
@@ -109,10 +121,10 @@ impl Device {
     /// Its stock image and layout, which the stock-layout stage needs.
     pub(crate) fn stock(&self, repo: &Repo) -> Result<StockPaths> {
         let Some(Stock { image, layout }) = &self.config.stock else {
-            return Err(Error::Refused(format!(
-                "Device {} has no verified stock image and layout yet",
-                self.name
-            )));
+            return Err(DeviceError::NoStock {
+                name: self.name.clone(),
+            }
+            .into());
         };
         Ok(StockPaths {
             image: repo.path(image),
@@ -155,7 +167,13 @@ mod tests {
     #[test]
     fn unknown_and_unsafe_names_are_refused() {
         let repo = Repo::here().unwrap();
-        assert!(Device::new(&repo, "no-such-board").is_err());
-        assert!(Device::new(&repo, "../plaf103").is_err());
+        assert!(matches!(
+            Device::new(&repo, "no-such-board"),
+            Err(crate::Error::Device(DeviceError::Unknown { name })) if name == "no-such-board"
+        ));
+        assert!(matches!(
+            Device::new(&repo, "../plaf103"),
+            Err(crate::Error::Name { kind: "Device", .. })
+        ));
     }
 }

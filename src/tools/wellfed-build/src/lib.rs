@@ -24,6 +24,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+use wellfed_formats::require;
 use sha2::{Digest, Sha256};
 
 pub mod catalog;
@@ -37,9 +38,29 @@ pub mod platform;
 pub mod review;
 
 pub use device::Device;
-pub use error::{Error, Result, require};
+pub use error::{Error, Result};
+// Every module's refusals, nameable from the root so a caller can match them.
+pub use device::DeviceError;
+pub use environment::EnvironmentError;
+pub use firmware::FirmwareError;
 pub use firmware::{Firmware, Variant};
+pub use identity::IdentityError;
+pub use image::ImageError;
 pub(crate) use wellfed_formats::canonical::sha256;
+pub use platform::amebad::AmebadError;
+pub use platform::amebad::audit::AuditError;
+pub use platform::amebad::audit::hooks::HookError;
+pub use platform::amebad::audit::layout::LayoutError;
+pub use platform::amebad::audit::mains::MainsError;
+pub use platform::amebad::audit::packaged::PackagedError;
+pub use platform::amebad::audit::park::ParkError;
+pub use platform::amebad::audit::pinmap::PinmapError;
+pub use platform::amebad::audit::stack::StackError;
+pub use platform::amebad::audit::writes::WritesError;
+pub use platform::amebad::credentials::CredentialsError;
+pub use platform::amebad::sdk::{SdkAnchor, SdkError, StagedFile};
+pub use platform::amebad::toolchain::ToolchainError;
+pub use review::ReviewError;
 
 /// The build profiles, from the unchanged SDK example to the reviewed
 /// UART-only first-boot image. Each adds stages to the one before.
@@ -95,13 +116,16 @@ impl Profile {
 
 /// `name` as a device or firmware directory name: lowercase letters,
 /// digits and dashes, so it never leaves its parent directory.
-pub(crate) fn checked_name<'a>(kind: &str, name: &'a str) -> Result<&'a str> {
+pub(crate) fn checked_name<'a>(kind: &'static str, name: &'a str) -> Result<&'a str> {
     require(
         !name.is_empty()
             && name
                 .bytes()
                 .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'),
-        format!("{kind} names are lowercase letters, digits and dashes: {name:?}"),
+        || Error::Name {
+            kind,
+            name: name.to_string(),
+        },
     )?;
     Ok(name)
 }
@@ -168,8 +192,7 @@ pub(crate) fn run(command: &mut Command) -> Result<Output> {
 
 /// A command's stdout as text.
 pub(crate) fn text(command: &mut Command) -> Result<String> {
-    String::from_utf8(run(command)?.stdout)
-        .map_err(|_| Error::Refused("Tool output is not UTF-8".into()))
+    String::from_utf8(run(command)?.stdout).map_err(|_| Error::NotUtf8)
 }
 
 /// `git -C directory`, with every `GIT_*` variable of this process
@@ -203,7 +226,10 @@ pub(crate) fn revision(directory: &Path) -> Result<String> {
 pub(crate) fn relative(path: &Path, base: &Path) -> Result<String> {
     path.strip_prefix(base)
         .map(|p| p.to_string_lossy().into_owned())
-        .map_err(|_| Error::Refused(format!("{} is outside {}", path.display(), base.display())))
+        .map_err(|_| Error::Outside {
+            path: path.to_path_buf(),
+            base: base.to_path_buf(),
+        })
 }
 
 /// An executable on `path` (a `PATH` value), as `shutil.which` finds it.

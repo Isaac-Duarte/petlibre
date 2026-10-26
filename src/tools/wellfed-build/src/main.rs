@@ -16,7 +16,7 @@ use wellfed_build::catalog::Catalog;
 use wellfed_build::identity::{SourceId, current_inputs, source_id};
 use wellfed_build::image::{Request, audit_build, build};
 use wellfed_build::review::freeze;
-use wellfed_build::{Device, Firmware, Profile, Repo, Result, Variant};
+use wellfed_build::{Device, Firmware, Profile, Repo, Variant};
 use wellfed_formats::review::ImageKind;
 use wellfed_signing::{self as signing, Frozen, Key, Motion};
 
@@ -170,6 +170,30 @@ struct Target {
     variant: Option<String>,
 }
 
+/// What a command stops on: a refused argument, or the builder's, the
+/// signer's or a file's error, each shown as its own message.
+#[derive(Debug, thiserror::Error)]
+enum Failure {
+    /// A hex argument of the wrong length or alphabet.
+    #[error("--{flag} is not {characters} hex characters")]
+    Hex {
+        flag: &'static str,
+        characters: usize,
+    },
+    #[error(transparent)]
+    Build(#[from] wellfed_build::Error),
+    #[error(transparent)]
+    Signing(#[from] signing::Error),
+    #[error(transparent)]
+    Formats(#[from] wellfed_formats::Error),
+    #[error("{0}")]
+    Io(#[from] std::io::Error),
+    #[error("{0}")]
+    Json(#[from] serde_json::Error),
+}
+
+type Result<T, E = Failure> = std::result::Result<T, E>;
+
 /// A target, resolved against the checkout.
 struct Resolved {
     device: Device,
@@ -285,8 +309,9 @@ fn run(command: Command) -> Result<()> {
             floor,
             output,
         } => {
-            let device = wellfed_formats::hex::decode::<32>(&device).ok_or_else(|| {
-                wellfed_build::Error::Refused("--device is not 64 hex characters".into())
+            let device = wellfed_formats::hex::decode::<32>(&device).ok_or(Failure::Hex {
+                flag: "device",
+                characters: 64,
             })?;
             let manifest = std::fs::read(repo.root.join(manifest))?;
             let key = Key::load(&repo.root.join(key))?;
@@ -303,8 +328,9 @@ fn run(command: Command) -> Result<()> {
             key_id,
             output,
         } => {
-            let id = wellfed_formats::hex::decode::<8>(&key_id).ok_or_else(|| {
-                wellfed_build::Error::Refused("--key-id is not 16 hex characters".into())
+            let id = wellfed_formats::hex::decode::<8>(&key_id).ok_or(Failure::Hex {
+                flag: "key-id",
+                characters: 16,
             })?;
             let statement = Key::load(&repo.root.join(key))?.revoke(&id);
             let output = repo.root.join(output);
@@ -316,8 +342,9 @@ fn run(command: Command) -> Result<()> {
             public,
             output,
         } => {
-            let added = wellfed_formats::hex::decode::<32>(&public).ok_or_else(|| {
-                wellfed_build::Error::Refused("--public is not 64 hex characters".into())
+            let added = wellfed_formats::hex::decode::<32>(&public).ok_or(Failure::Hex {
+                flag: "public",
+                characters: 64,
             })?;
             let statement = Key::load(&repo.root.join(key))?.add_key(&added);
             let output = repo.root.join(output);

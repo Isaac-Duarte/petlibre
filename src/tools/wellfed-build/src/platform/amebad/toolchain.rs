@@ -12,16 +12,52 @@ use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
 use wellfed_formats::lock::{SdkLock, ToolchainLock};
+use wellfed_formats::require;
 
 use super::{TOOL_LOCK, lock, source, toolchains};
-use crate::{Error, Repo, Result, digest, git, require, revision, run, text, which};
+use crate::{Repo, Result, digest, git, revision, run, text, which};
+
+/// Why the pinned SDK checkout or toolchain was refused. A refused tree is
+/// left as it is for review, never repaired in place.
+#[derive(Debug, thiserror::Error)]
+pub enum ToolchainError {
+    #[error("Toolchain file pins do not describe the pinned SDK archive")]
+    Pins,
+    #[error("Pinned toolchain file is missing or escapes its directory: {name}")]
+    Missing { name: String },
+    #[error("Pinned toolchain file changed: {name}; reinstall after review")]
+    Changed { name: String },
+    #[error("Toolchain archive link escapes its directory: {}", path.display())]
+    LinkEscapes { path: PathBuf },
+    #[error("Toolchain archive has a special file: {}", path.display())]
+    SpecialFile { path: PathBuf },
+    #[error("Empty toolchain directory")]
+    EmptyDirectory,
+    #[error("Partial or unexpected toolchain tree; review and remove it: {}", path.display())]
+    Partial { path: PathBuf },
+    #[error("Toolchain archive has entries outside its pinned directory")]
+    Entries,
+    #[error("This initial toolchain setup supports Linux x86_64 only")]
+    Host,
+    #[error("Missing host tool: {tool}")]
+    HostTool { tool: &'static str },
+    #[error("SDK checkout does not match sdk.lock.json; left unchanged")]
+    SdkRevision,
+    #[error("Toolchain checksum mismatch: {}", path.display())]
+    Checksum { path: PathBuf },
+    #[error(
+        "Cannot execute Realtek's i686 compiler; check the host's 32-bit \
+         Linux loader and runtime libraries"
+    )]
+    Compiler,
+}
 
 /// Per-file hashes of the executables the SDK build and audits invoke.
 pub(crate) fn toolchain_lock(repo: &Repo, lock: &SdkLock) -> Result<BTreeMap<String, String>> {
     let pinned: ToolchainLock = wellfed_formats::load(&repo.path(TOOL_LOCK))?;
     require(
         pinned.archive_sha256 == lock.toolchain.sha256 && !pinned.files.is_empty(),
-        "Toolchain file pins do not describe the pinned SDK archive",
+        || ToolchainError::Pins,
     )?;
     Ok(pinned.files)
 }
@@ -32,14 +68,11 @@ pub(crate) fn verify_toolchain(toolchain: &Path, pins: &BTreeMap<String, String>
     for (name, expected) in pins {
         let path = fs::canonicalize(toolchain.join(name)).ok();
         let Some(path) = path.filter(|p| p.starts_with(&base) && p.is_file()) else {
-            return Err(Error::Refused(format!(
-                "Pinned toolchain file is missing or escapes its directory: {name}"
-            )));
+            return Err(ToolchainError::Missing { name: name.clone() }.into());
         };
-        require(
-            &digest(&path)? == expected,
-            format!("Pinned toolchain file changed: {name}; reinstall after review"),
-        )?;
+        require(&digest(&path)? == expected, || ToolchainError::Changed {
+            name: name.clone(),
+        })?;
     }
     Ok(())
 }
@@ -68,20 +101,15 @@ fn check_tree(directory: &Path, base: &Path) -> Result<()> {
         if kind.is_symlink() {
             let target = fs::read_link(&path)?;
             let resolved = normalize(&path.parent().unwrap_or(base).join(&target));
-            require(
-                !target.is_absolute() && resolved.starts_with(base),
-                format!(
-                    "Toolchain archive link escapes its directory: {}",
-                    path.display()
-                ),
-            )?;
+            require(!target.is_absolute() && resolved.starts_with(base), || {
+                ToolchainError::LinkEscapes { path: path.clone() }
+            })?;
         } else if kind.is_dir() {
             check_tree(&path, base)?;
         } else {
-            require(
-                kind.is_file(),
-                format!("Toolchain archive has a special file: {}", path.display()),
-            )?;
+            require(kind.is_file(), || ToolchainError::SpecialFile {
+                path: path.clone(),
+            })?;
         }
     }
     Ok(())
@@ -99,15 +127,13 @@ fn extract_toolchain(
         .components()
         .next()
         .map(|c| c.as_os_str().to_owned())
-        .ok_or_else(|| Error::Refused("Empty toolchain directory".into()))?;
+        .ok_or(ToolchainError::EmptyDirectory)?;
     let installed = destination.join(&top);
-    require(
-        fs::symlink_metadata(&installed).is_err(),
-        format!(
-            "Partial or unexpected toolchain tree; review and remove it: {}",
-            installed.display()
-        ),
-    )?;
+    require(fs::symlink_metadata(&installed).is_err(), || {
+        ToolchainError::Partial {
+            path: installed.clone(),
+        }
+    })?;
 
     // Only this run's staging directory is removed, also on failure.
     let staging = tempfile::Builder::new()
@@ -127,7 +153,7 @@ fn extract_toolchain(
                         .components()
                         .all(|c| matches!(c, Component::Normal(_) | Component::CurDir))
             }),
-        "Toolchain archive has entries outside its pinned directory",
+        || ToolchainError::Entries,
     )?;
     run(Command::new("tar")
         .args(["-xjf"])
@@ -146,14 +172,13 @@ fn extract_toolchain(
 pub(crate) fn bootstrap(repo: &Repo) -> Result<PathBuf> {
     require(
         cfg!(target_os = "linux") && cfg!(target_arch = "x86_64"),
-        "This initial toolchain setup supports Linux x86_64 only",
+        || ToolchainError::Host,
     )?;
     let path = std::env::var("PATH").ok();
     for tool in ["git", "make", "bash", "tar", "curl"] {
-        require(
-            which(tool, path.as_deref()).is_some(),
-            format!("Missing host tool: {tool}"),
-        )?;
+        require(which(tool, path.as_deref()).is_some(), || {
+            ToolchainError::HostTool { tool }
+        })?;
     }
 
     let lock = lock(repo)?;
@@ -169,10 +194,9 @@ pub(crate) fn bootstrap(repo: &Repo) -> Result<PathBuf> {
         )?;
         git(&source, &["checkout", "--detach", "FETCH_HEAD"])?;
     }
-    require(
-        revision(&source)? == lock.sdk.revision,
-        "SDK checkout does not match sdk.lock.json; left unchanged",
-    )?;
+    require(revision(&source)? == lock.sdk.revision, || {
+        ToolchainError::SdkRevision
+    })?;
 
     let toolchains = toolchains(repo);
     fs::create_dir_all(&toolchains)?;
@@ -191,16 +215,18 @@ pub(crate) fn bootstrap(repo: &Repo) -> Result<PathBuf> {
             .args(["--connect-timeout", "60", "--output"])
             .arg(&partial)
             .arg(&lock.toolchain.url))?;
-        require(
-            digest(&partial)? == lock.toolchain.sha256,
-            format!("Toolchain checksum mismatch: {}", partial.display()),
-        )?;
+        require(digest(&partial)? == lock.toolchain.sha256, || {
+            ToolchainError::Checksum {
+                path: partial.clone(),
+            }
+        })?;
         fs::rename(&partial, &archive)?;
     }
-    require(
-        digest(&archive)? == lock.toolchain.sha256,
-        format!("Toolchain checksum mismatch: {}", archive.display()),
-    )?;
+    require(digest(&archive)? == lock.toolchain.sha256, || {
+        ToolchainError::Checksum {
+            path: archive.clone(),
+        }
+    })?;
 
     let pins = toolchain_lock(repo, &lock)?;
     let toolchain = toolchains.join(&lock.toolchain.directory);
@@ -214,13 +240,7 @@ pub(crate) fn bootstrap(repo: &Repo) -> Result<PathBuf> {
         .output()
         .ok()
         .filter(|output| output.status.success())
-        .ok_or_else(|| {
-            Error::Refused(
-                "Cannot execute Realtek's i686 compiler; check the host's 32-bit \
-                 Linux loader and runtime libraries"
-                    .into(),
-            )
-        })?;
+        .ok_or(ToolchainError::Compiler)?;
     println!(
         "{}",
         String::from_utf8_lossy(&version.stdout)
@@ -234,7 +254,7 @@ pub(crate) fn bootstrap(repo: &Repo) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sha256;
+    use crate::{Error, sha256};
 
     const DIRECTORY: &str = "asdk-6.4.1/linux/newlib";
 
@@ -279,16 +299,23 @@ mod tests {
         verify_toolchain(&toolchain, &pins()).unwrap();
 
         // An existing (possibly partial) tree is never extracted over.
-        let error = extract_toolchain(&archive, &destination, DIRECTORY, &pins()).unwrap_err();
-        assert!(error.to_string().contains("Partial"));
+        assert!(matches!(
+            extract_toolchain(&archive, &destination, DIRECTORY, &pins()),
+            Err(Error::Toolchain(ToolchainError::Partial { path }))
+                if path == destination.join("asdk-6.4.1")
+        ));
 
         let gcc = toolchain.join("bin/arm-none-eabi-gcc");
         fs::write(&gcc, b"modified").unwrap();
-        let error = verify_toolchain(&toolchain, &pins()).unwrap_err();
-        assert!(error.to_string().contains("changed"));
+        assert!(matches!(
+            verify_toolchain(&toolchain, &pins()),
+            Err(Error::Toolchain(ToolchainError::Changed { name })) if name == "bin/arm-none-eabi-gcc"
+        ));
         fs::remove_file(&gcc).unwrap();
-        let error = verify_toolchain(&toolchain, &pins()).unwrap_err();
-        assert!(error.to_string().contains("missing"));
+        assert!(matches!(
+            verify_toolchain(&toolchain, &pins()),
+            Err(Error::Toolchain(ToolchainError::Missing { name })) if name == "bin/arm-none-eabi-gcc"
+        ));
     }
 
     #[test]
@@ -318,7 +345,11 @@ mod tests {
         fs::create_dir_all(inside.join("bin")).unwrap();
         std::os::unix::fs::symlink("../../outside", inside.join("bin/escape")).unwrap();
         assert!(check_tree(base.path(), base.path()).is_ok());
-        assert!(check_tree(&inside, &inside).is_err());
+        assert!(matches!(
+            check_tree(&inside, &inside),
+            Err(Error::Toolchain(ToolchainError::LinkEscapes { path }))
+                if path == inside.join("bin/escape")
+        ));
     }
 
     #[test]
@@ -327,6 +358,9 @@ mod tests {
         let mut lock = lock(&repo).unwrap();
         assert!(!toolchain_lock(&repo, &lock).unwrap().is_empty());
         lock.toolchain.sha256 = "0".repeat(64);
-        assert!(toolchain_lock(&repo, &lock).is_err());
+        assert!(matches!(
+            toolchain_lock(&repo, &lock),
+            Err(Error::Toolchain(ToolchainError::Pins))
+        ));
     }
 }

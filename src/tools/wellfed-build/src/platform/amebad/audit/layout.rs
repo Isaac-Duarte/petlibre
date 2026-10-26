@@ -12,27 +12,50 @@ use wellfed_formats::layout::{Hex, Layout};
 use wellfed_image::ota::{STOCK_SHA256, container, images};
 
 use super::word;
-use crate::{Result, require, sha256};
+use crate::{Result, sha256};
+use wellfed_formats::require;
+
+/// Why the stock layout, its reference image or a candidate was refused.
+#[derive(Debug, thiserror::Error)]
+pub enum LayoutError {
+    #[error("Unsupported layout/reference identity")]
+    Identity,
+    #[error("Stock reference is not the verified PLAF103 1.1.15 image")]
+    Reference,
+    #[error("Invalid bank offsets")]
+    BankOffsets,
+    #[error("Layout bank offsets do not match the verified stock table")]
+    BankTable,
+    #[error("Unsupported candidate size cap")]
+    SizeCap,
+    #[error("Candidate exceeds the known stock reference footprint")]
+    Footprint,
+    #[error("Candidate crosses the next bank start")]
+    CrossesBank,
+    #[error("Unsupported sector alignment")]
+    Alignment,
+    #[error("Candidate overlaps known preserved data: {ranges:?}")]
+    Preserved { ranges: Vec<String> },
+}
 
 pub(crate) fn audit(image: &Path, stock: &Path, layout: &Path) -> Result<LayoutAudit> {
     let layout: Layout = wellfed_formats::load(layout)?;
     require(
         layout.schema_version == 1 && layout.stock_sha256 == STOCK_SHA256,
-        "Unsupported layout/reference identity",
+        || LayoutError::Identity,
     )?;
 
     let stock = fs::read(stock)?;
     require(
         layout.stock_bytes == stock.len() as u64 && sha256(&stock) == STOCK_SHA256,
-        "Stock reference is not the verified PLAF103 1.1.15 image",
+        || LayoutError::Reference,
     )?;
     let reference = container(&stock)?;
 
     let offsets: Vec<u64> = layout.ota_bank_offsets.iter().map(|o| o.0).collect();
-    require(
-        offsets.len() == 2 && offsets[0] < offsets[1],
-        "Invalid bank offsets",
-    )?;
+    require(offsets.len() == 2 && offsets[0] < offsets[1], || {
+        LayoutError::BankOffsets
+    })?;
     let mapped = layout.flash_mapping_base.0;
     let table = (0x17040 + layout.bank_table_runtime_address.0)
         .checked_sub(0x0E00_0020)
@@ -41,46 +64,38 @@ pub(crate) fn audit(image: &Path, stock: &Path, layout: &Path) -> Result<LayoutA
     require(
         word(&stock, table) == Some(mapped + offsets[0])
             && word(&stock, table + 4) == Some(mapped + offsets[1]),
-        "Layout bank offsets do not match the verified stock table",
+        || LayoutError::BankTable,
     )?;
     require(
         layout.candidate_payload_cap_bytes == reference.len() as u64,
-        "Unsupported candidate size cap",
+        || LayoutError::SizeCap,
     )?;
 
-    require(
-        fs::metadata(image)?.len() <= stock.len() as u64,
-        "Candidate exceeds the known stock reference footprint",
-    )?;
+    require(fs::metadata(image)?.len() <= stock.len() as u64, || {
+        LayoutError::Footprint
+    })?;
     let data = fs::read(image)?;
     let payload = container(&data)?;
-    require(
-        payload.len() <= reference.len(),
-        "Candidate exceeds the known stock reference footprint",
-    )?;
-    require(
-        payload.len() as u64 <= offsets[1] - offsets[0],
-        "Candidate crosses the next bank start",
-    )?;
+    require(payload.len() <= reference.len(), || LayoutError::Footprint)?;
+    require(payload.len() as u64 <= offsets[1] - offsets[0], || {
+        LayoutError::CrossesBank
+    })?;
     require(
         layout.sector_bytes == 4096 && payload.len() % 4096 == 0,
-        "Unsupported sector alignment",
+        || LayoutError::Alignment,
     )?;
     let image_regions = images(payload)?;
 
     let mut placements = Vec::new();
     for (bank_index, start) in offsets.iter().enumerate() {
         let end = start + payload.len() as u64;
-        let overlaps: Vec<&str> = layout
+        let ranges: Vec<String> = layout
             .known_preserve_ranges
             .iter()
             .filter(|range| *start < range.end_exclusive.0 && range.start.0 < end)
-            .map(|range| range.name.as_str())
+            .map(|range| range.name.clone())
             .collect();
-        require(
-            overlaps.is_empty(),
-            format!("Candidate overlaps known preserved data: {overlaps:?}"),
-        )?;
+        require(ranges.is_empty(), || LayoutError::Preserved { ranges })?;
         placements.push(Placement {
             bank_index,
             flash_offset: Hex(*start),

@@ -13,10 +13,21 @@ use std::path::PathBuf;
 use wellfed_formats::credentials::OtaKeyFile;
 use wellfed_formats::hex::is_lower_hex;
 use wellfed_formats::manifest::IdentitySnapshot;
+use wellfed_formats::require;
 
-use crate::{
-    Device, Error, Firmware, Profile, Repo, Result, Stage, Variant, digest, relative, require,
-};
+use crate::{Device, Firmware, Profile, Repo, Result, Stage, Variant, digest, relative};
+
+/// Why the source identity could not be bound.
+#[derive(Debug, thiserror::Error)]
+pub enum IdentityError {
+    /// The inputs are listed by Git, so a source tree without it has none.
+    #[error("Source identity requires a Git checkout of this repository")]
+    NoCheckout,
+    #[error("No Rust firmware sources found for the source identity")]
+    NoSources,
+    #[error("Update key file needs a 64-character lowercase hex public key")]
+    PublicKey,
+}
 
 /// Crates linked into, or testing, every firmware build: the whole SDK and the
 /// product crates it links (the device protocol and the product's stores). The
@@ -55,9 +66,7 @@ fn rust_sources(repo: &Repo, dirs: &[&str]) -> Result<Vec<PathBuf>> {
         .output()
         .ok()
         .filter(|output| output.status.success())
-        .ok_or_else(|| {
-            Error::Refused("Source identity requires a Git checkout of this repository".into())
-        })?
+        .ok_or(IdentityError::NoCheckout)?
         .stdout;
 
     let mut paths: Vec<PathBuf> = String::from_utf8_lossy(&listing)
@@ -74,10 +83,7 @@ fn rust_sources(repo: &Repo, dirs: &[&str]) -> Result<Vec<PathBuf>> {
     paths.sort();
     paths.dedup();
 
-    require(
-        !paths.is_empty(),
-        "No Rust firmware sources found for the source identity",
-    )?;
+    require(!paths.is_empty(), || IdentityError::NoSources)?;
     Ok(paths)
 }
 
@@ -138,10 +144,9 @@ pub(crate) fn ota_public_key(repo: &Repo, profile: Profile) -> Result<Option<Str
     }
 
     let key: OtaKeyFile = wellfed_formats::load(&path)?;
-    require(
-        is_lower_hex(&key.public_key, 64),
-        "Update key file needs a 64-character lowercase hex public key",
-    )?;
+    require(is_lower_hex(&key.public_key, 64), || {
+        IdentityError::PublicKey
+    })?;
     Ok(Some(key.public_key))
 }
 

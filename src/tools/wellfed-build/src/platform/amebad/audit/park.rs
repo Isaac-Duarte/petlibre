@@ -18,10 +18,45 @@ use regex::Regex;
 use super::packaged;
 use super::{
     ADDRESSED, Archives, Binutils, DIRECT_BRANCH, INSTRUCTION, archive_record, elf, hex, ota_image,
-    parse_hex, refuse, tool,
+    parse_hex, tool,
 };
+use crate::Result;
 use crate::platform::amebad::Core;
-use crate::{Result, require};
+use wellfed_formats::require;
+
+/// Why a RAM parking routine is not a retained leaf. Locations are the
+/// instruction addresses the listing names.
+#[derive(Debug, thiserror::Error)]
+pub enum ParkError {
+    #[error("Unparsed parking instruction/data")]
+    Unparsed { line: String },
+    #[error("Instruction outside expected function")]
+    Outside { location: u64 },
+    #[error("Flash/XIP literal in RAM parking code")]
+    FlashLiteral { location: u64, value: u64 },
+    #[error("Unsupported instruction/call in RAM parking code: {line}")]
+    Unsupported { line: String },
+    #[error("Indirect branch in RAM parking code")]
+    IndirectBranch { location: u64 },
+    #[error("Flash/XIP address formed by movw/movt in RAM parking code")]
+    FlashAddress { location: u64, value: u64 },
+    #[error("Indirect PC destination in RAM parking code")]
+    PcDestination { location: u64 },
+    #[error("Indirect PC write in RAM parking code")]
+    PcWrite { location: u64 },
+    #[error("Unexpected system-register access")]
+    SystemRegister { location: u64 },
+    #[error("Branch leaves RAM parking function")]
+    Branch { location: u64 },
+    #[error("Literal load leaves RAM parking function")]
+    Literal { location: u64 },
+    #[error("Missing parking instructions/barriers")]
+    Barriers { instructions: u32, barriers: u32 },
+    #[error("Parking function is not in application RAM: {name}")]
+    Placement { name: &'static str },
+    #[error("Missing retained parking functions in {core}")]
+    Missing { core: Core },
+}
 
 pub(crate) const SYMBOLS: [&str; 6] = [
     "wellfed_amebad_flash_park_publish",
@@ -107,19 +142,18 @@ pub fn check_leaf(
     for line in disassembly.lines() {
         let Some(m) = INSTRUCTION.captures(line) else {
             if ADDRESSED.is_match(line) {
-                return refuse("Unparsed parking instruction/data");
+                return Err(ParkError::Unparsed { line: line.into() }.into());
             }
             continue;
         };
         let (location, mnemonic, operands) = (parse_hex(&m[1])?, &m[2], &m[3]);
-        require(inside(location), "Instruction outside expected function")?;
+        require(inside(location), || ParkError::Outside { location })?;
 
         if mnemonic == ".word" {
             let value = parse_hex(operands.split_whitespace().next().unwrap_or_default())?;
-            require(
-                !FLASH_MAPPING.contains(&value),
-                "Flash/XIP literal in RAM parking code",
-            )?;
+            require(!FLASH_MAPPING.contains(&value), || {
+                ParkError::FlashLiteral { location, value }
+            })?;
             continue;
         }
 
@@ -134,12 +168,10 @@ pub fn check_leaf(
             || conditional == "bx"
             || IT.is_match(base))
         {
-            return refuse(format!(
-                "Unsupported instruction/call in RAM parking code: {line}"
-            ));
+            return Err(ParkError::Unsupported { line: line.into() }.into());
         }
         if conditional == "bx" && operands.trim() != "lr" {
-            return refuse("Indirect branch in RAM parking code");
+            return Err(ParkError::IndirectBranch { location }.into());
         }
 
         let code = operands.split(';').next().unwrap_or_default();
@@ -149,31 +181,25 @@ pub fn check_leaf(
             low_halves.insert(fields[0].into(), low & 0xffff);
         } else if let (Some(high), "movt") = (operand, conditional) {
             let value = (high & 0xffff) << 16 | low_halves.remove(fields[0]).unwrap_or(0);
-            require(
-                !FLASH_MAPPING.contains(&value),
-                "Flash/XIP address formed by movw/movt in RAM parking code",
-            )?;
+            require(!FLASH_MAPPING.contains(&value), || {
+                ParkError::FlashAddress { location, value }
+            })?;
         } else if !fields[0].is_empty() {
             // Any other write to the register discards a pending low half.
             low_halves.remove(fields[0]);
         }
 
-        require(
-            fields[0] != "pc",
-            "Indirect PC destination in RAM parking code",
-        )?;
+        require(fields[0] != "pc", || ParkError::PcDestination { location })?;
         let returns = base == "pop" || (base.starts_with("ldm") && code.starts_with("sp!,"));
         let literal_load = base.starts_with("ldr") && code.contains("[pc,");
-        require(
-            !PC.is_match(code) || returns || literal_load,
-            "Indirect PC write in RAM parking code",
-        )?;
+        require(!PC.is_match(code) || returns || literal_load, || {
+            ParkError::PcWrite { location }
+        })?;
         if base == "mrs" {
             let register = operands.rsplit(',').next().unwrap_or_default();
-            require(
-                register.trim().eq_ignore_ascii_case("primask"),
-                "Unexpected system-register access",
-            )?;
+            require(register.trim().eq_ignore_ascii_case("primask"), || {
+                ParkError::SystemRegister { location }
+            })?;
         }
 
         if branch {
@@ -181,30 +207,30 @@ pub fn check_leaf(
                 .captures(operands)
                 .map(|t| parse_hex(&t[1]))
                 .transpose()?;
-            require(
-                target.is_some_and(inside),
-                "Branch leaves RAM parking function",
-            )?;
+            require(target.is_some_and(inside), || ParkError::Branch {
+                location,
+            })?;
         }
         if operands.contains("[pc,") {
             let literal = LITERAL
                 .captures(operands)
                 .map(|l| parse_hex(&l[1]))
                 .transpose()?;
-            require(
-                literal.is_some_and(inside),
-                "Literal load leaves RAM parking function",
-            )?;
+            require(literal.is_some_and(inside), || ParkError::Literal {
+                location,
+            })?;
         }
 
         count += 1;
         barriers += u32::from(mnemonic == "dsb");
     }
 
-    require(
-        count > 0 && barriers >= minimum_barriers,
-        "Missing parking instructions/barriers",
-    )?;
+    require(count > 0 && barriers >= minimum_barriers, || {
+        ParkError::Barriers {
+            instructions: count,
+            barriers,
+        }
+    })?;
     Ok(Leaf {
         instructions: count,
         barriers,
@@ -238,17 +264,15 @@ pub(crate) fn audit(sdk: &Path, binutils: &Binutils, objects: &Archives) -> Resu
             if fields.len() == 6
                 && let Some(&name) = expected.iter().find(|n| **n == fields[5])
             {
-                require(
-                    fields[2] == "F" && fields[3] == ".ram_image2.text",
-                    format!("Parking function is not in application RAM: {name}"),
-                )?;
+                require(fields[2] == "F" && fields[3] == ".ram_image2.text", || {
+                    ParkError::Placement { name }
+                })?;
                 symbols.insert(name, (parse_hex(fields[0])?, parse_hex(fields[4])?));
             }
         }
-        require(
-            symbols.len() == expected.len(),
-            format!("Missing retained parking functions in {}", core.name()),
-        )?;
+        require(symbols.len() == expected.len(), || ParkError::Missing {
+            core,
+        })?;
 
         let mut functions = BTreeMap::new();
         for (name, (address, size)) in symbols {
@@ -301,6 +325,7 @@ pub(crate) fn audit(sdk: &Path, binutils: &Binutils, objects: &Archives) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Error;
 
     const ADDRESS: u64 = 0x1000_5000;
 
@@ -320,9 +345,12 @@ mod tests {
         check_leaf(&lines.concat(), ADDRESS, 4 * (body.len() as u64 + 4), 3)
     }
 
-    fn refused(body: &[&str], message: &str) {
-        let error = check(body).unwrap_err().to_string();
-        assert!(error.contains(message), "{body:?}: {error}");
+    /// The park refusal of a listing that must be refused.
+    fn rejection(body: &[&str]) -> ParkError {
+        match check(body) {
+            Err(Error::Park(error)) => error,
+            other => panic!("{body:?}: {other:?}"),
+        }
     }
 
     #[test]
@@ -349,9 +377,10 @@ mod tests {
             0x0E00_0020,
             0x0FFF_FFFF,
         ] {
-            refused(
-                &[&format!("{value:08x} .word 0x{value:08x}")],
-                "Flash/XIP literal",
+            let error = rejection(&[&format!("{value:08x} .word 0x{value:08x}")]);
+            assert!(
+                matches!(error, ParkError::FlashLiteral { value: found, .. } if found == value),
+                "{error}"
             );
         }
         for value in [0x07FF_FFFFu64, 0x1000_0000, 0x4800_2014] {
@@ -375,7 +404,11 @@ mod tests {
             &["f6c0 0300 movteq r3, #2048 ; 0x800"],
         ];
         for body in cases {
-            refused(body, "movw/movt");
+            let error = rejection(body);
+            assert!(
+                matches!(error, ParkError::FlashAddress { .. }),
+                "{body:?}: {error}"
+            );
         }
     }
 
@@ -403,7 +436,7 @@ mod tests {
             "ed90 0a00 vldr s0, [r0]".into(),
             "f000 ????".into(),
         ] {
-            assert!(check(&[&instruction]).is_err(), "{instruction}");
+            rejection(&[&instruction]);
         }
     }
 }

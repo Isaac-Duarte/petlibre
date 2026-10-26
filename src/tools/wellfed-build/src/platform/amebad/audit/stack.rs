@@ -37,8 +37,88 @@ use wellfed_formats::audit::{StackAudit, TaskBound};
 use regex::Regex;
 
 use super::writes::{demangle, loaded};
-use super::{HEADING, refuse, tool};
+use super::{HEADING, tool};
 use crate::{Firmware, Repo, Result};
+
+/// Why the stack audit could not bound a task, or refused how the firmware
+/// starts its tasks. Function names are demangled, as the messages print
+/// them.
+#[derive(Debug, thiserror::Error)]
+pub enum StackError {
+    /// Task creations or declarations neither reader matched.
+    #[error(
+        "{count} task creations do not have the shape the stack audit reads \
+         (#[wellfed_sdk::task(name = \"name\", stack = WORDS, priority = N)] on a plain \
+         function, or the runtime's task_create(c\"name\", WORDS, priority, entry)): keep \
+         the arguments in that order, the priority a literal and the entry a plain \
+         function name"
+    )]
+    Shape { count: usize },
+    #[error(
+        "Task {task} starts the generic {entry}{generic}: the stack audit cannot find its \
+         symbol, so start it through a non-generic entry function"
+    )]
+    Generic {
+        task: String,
+        entry: String,
+        generic: String,
+    },
+    #[error(
+        "Task {task}'s stack size {size} is neither a literal nor a `const NAME: u16` the \
+         stack audit can read"
+    )]
+    StackSize { task: String, size: String },
+    #[error("The flash hooks link, but no provider callback the runtime installs")]
+    NoCallback,
+    #[error("Provider callbacks link, but no flash-hook site calls them: update HOOK_SITES")]
+    NoHookSite,
+    #[error("The flash-hook callback {callback} reaches an unbounded indirect call in {call}")]
+    CallbackUnbounded { callback: String, call: String },
+    #[error("Ambiguous task entry {entry}: {symbols:?}")]
+    AmbiguousEntry { entry: String, symbols: Vec<String> },
+    #[error(
+        "Task {task} reaches an unbounded indirect call in {call}: give it a class in the \
+         stack audit or call it directly"
+    )]
+    Unbounded { task: String, call: String },
+    /// `path` is the start of the deepest call path, up to twelve functions.
+    #[error(
+        "Task {task} may overflow: static bound {bound} bytes of {stack} (margin {:.0}%); \
+         deepest path {:?}",
+        MARGIN * 100.0,
+        &path[..path.len().min(6)]
+    )]
+    Overflow {
+        task: String,
+        bound: u64,
+        stack: u64,
+        path: Vec<String>,
+    },
+    #[error("No application task entries found in the linked image")]
+    NoTasks,
+    #[error(
+        "{count} uses of spawn are not wellfed_sdk::spawn(entry): start each task by that \
+         call, so the stack audit can read it"
+    )]
+    SpawnUses { count: usize },
+    #[error(
+        "The firmware spawns {entry}, which no #[wellfed_sdk::task] in its own sources \
+         declares: declare the task in the firmware crate, so the stack audit reads its stack"
+    )]
+    Undeclared { entry: String },
+    #[error(
+        "The firmware creates a task with task_create: declare it with \
+         #[wellfed_sdk::task] and start it with wellfed_sdk::spawn"
+    )]
+    TaskCreate,
+    #[error(
+        "The firmware starts {} tasks ({tasks:?}); the runtime leaves it {limit} of the \
+         SDK's eight slots",
+        tasks.len(),
+        limit = FIRMWARE_TASKS
+    )]
+    TooMany { tasks: Vec<String> },
+}
 
 /// The SDK runtime's task table.
 pub(crate) const RUNTIME_SOURCE: &str = "src/sdk/wellfed-sdk/src/runtime.rs";
@@ -233,14 +313,10 @@ fn tasks(source: &str) -> Result<BTreeMap<String, (String, u64)>> {
         TASK.captures_iter(source).count() + DECLARED.captures_iter(source).count(),
     );
     if sites != matched {
-        return refuse(format!(
-            "{} task creations do not have the shape the stack audit reads \
-             (#[wellfed_sdk::task(name = \"name\", stack = WORDS, priority = N)] on a plain \
-             function, or the runtime's task_create(c\"name\", WORDS, priority, entry)): keep \
-             the arguments in that order, the priority a literal and the entry a plain \
-             function name",
-            sites - matched.min(sites)
-        ));
+        return Err(StackError::Shape {
+            count: sites - matched.min(sites),
+        }
+        .into());
     }
 
     let mut found = BTreeMap::new();
@@ -250,18 +326,19 @@ fn tasks(source: &str) -> Result<BTreeMap<String, (String, u64)>> {
     {
         let (task, entry) = (&c[1], &c[3]);
         if let Some(generic) = c.get(4) {
-            return refuse(format!(
-                "Task {task} starts the generic {entry}{}: the stack audit cannot find its \
-                 symbol, so start it through a non-generic entry function",
-                generic.as_str()
-            ));
+            return Err(StackError::Generic {
+                task: task.into(),
+                entry: entry.into(),
+                generic: generic.as_str().into(),
+            }
+            .into());
         }
         let Some(words) = constants.get(&c[2]).copied().or_else(|| c[2].parse().ok()) else {
-            return refuse(format!(
-                "Task {task}'s stack size {} is neither a literal nor a `const NAME: u16` the \
-                 stack audit can read",
-                &c[2]
-            ));
+            return Err(StackError::StackSize {
+                task: task.into(),
+                size: c[2].into(),
+            }
+            .into());
         };
         found.insert(entry.to_string(), (task.to_string(), words * 4));
     }
@@ -554,16 +631,8 @@ impl<'a> Graph<'a> {
             .collect();
         match (hooks, callbacks.is_empty()) {
             (false, true) => return Ok(0),
-            (true, true) => {
-                return refuse(
-                    "The flash hooks link, but no provider callback the runtime installs",
-                );
-            }
-            (false, false) => {
-                return refuse(
-                    "Provider callbacks link, but no flash-hook site calls them: update HOOK_SITES",
-                );
-            }
+            (true, true) => return Err(StackError::NoCallback.into()),
+            (false, false) => return Err(StackError::NoHookSite.into()),
             (true, false) => {}
         }
 
@@ -573,11 +642,11 @@ impl<'a> Graph<'a> {
             let ((depth, _, nested), _) = self.worst(callback, Charges { fmt, hook: 0 });
             unbounded.extend(nested);
             if let Some(rust) = unbounded.iter().find(|name| name.starts_with("_R")) {
-                return refuse(format!(
-                    "The flash-hook callback {} reaches an unbounded indirect call in {}",
-                    demangle(callback),
-                    demangle(rust)
-                ));
+                return Err(StackError::CallbackUnbounded {
+                    callback: demangle(callback),
+                    call: demangle(rust),
+                }
+                .into());
             }
             best = best.max(depth);
         }
@@ -635,28 +704,35 @@ pub(crate) fn audit(elf: &Path, objdump: &Path, sources: &TaskSources) -> Result
             // Not linked in this variant.
             [] => continue,
             [symbol] => symbol,
-            _ => return refuse(format!("Ambiguous task entry {entry}: {symbols:?}")),
+            _ => {
+                return Err(StackError::AmbiguousEntry {
+                    entry,
+                    symbols: symbols.clone(),
+                }
+                .into());
+            }
         };
 
         let (charges, mut unbounded) = graph.charges(symbol, hook);
         let ((depth, path, direct), cut) = graph.worst(symbol, charges);
         unbounded.extend(direct);
         if let Some(rust) = unbounded.iter().find(|name| name.starts_with("_R")) {
-            return refuse(format!(
-                "Task {task} reaches an unbounded indirect call in {}: give it a class in the \
-                 stack audit or call it directly",
-                demangle(rust)
-            ));
+            return Err(StackError::Unbounded {
+                task,
+                call: demangle(rust),
+            }
+            .into());
         }
         let bound = depth + OVERHEAD;
         let path: Vec<String> = path.iter().take(12).map(|n| demangle(n)).collect();
         if bound as f64 > stack as f64 * (1.0 - MARGIN) {
-            return refuse(format!(
-                "Task {task} may overflow: static bound {bound} bytes of {stack} (margin {:.0}%); \
-                 deepest path {:?}",
-                MARGIN * 100.0,
-                &path[..path.len().min(6)]
-            ));
+            return Err(StackError::Overflow {
+                task,
+                bound,
+                stack,
+                path,
+            }
+            .into());
         }
         rows.insert(
             task,
@@ -673,7 +749,7 @@ pub(crate) fn audit(elf: &Path, objdump: &Path, sources: &TaskSources) -> Result
     }
 
     if rows.is_empty() {
-        return refuse("No application task entries found in the linked image");
+        return Err(StackError::NoTasks.into());
     }
     Ok(StackAudit {
         tasks: rows,
@@ -708,20 +784,19 @@ fn spawned_tasks_are_declared(own: &str) -> Result<()> {
         .collect();
     let mentions = SPAWN_WORD.find_iter(&code).count();
     if mentions != spawned.len() {
-        return refuse(format!(
-            "{} uses of spawn are not wellfed_sdk::spawn(entry): start each task by that \
-             call, so the stack audit can read it",
-            mentions - spawned.len().min(mentions)
-        ));
+        return Err(StackError::SpawnUses {
+            count: mentions - spawned.len().min(mentions),
+        }
+        .into());
     }
     if let Some(entry) = spawned
         .iter()
         .find(|entry| !declared.contains(entry.as_str()))
     {
-        return refuse(format!(
-            "The firmware spawns {entry}, which no #[wellfed_sdk::task] in its own sources \
-             declares: declare the task in the firmware crate, so the stack audit reads its stack"
-        ));
+        return Err(StackError::Undeclared {
+            entry: entry.clone(),
+        }
+        .into());
     }
     Ok(())
 }
@@ -733,10 +808,7 @@ fn spawned_tasks_are_declared(own: &str) -> Result<()> {
 /// not count against the share at run time.
 fn firmware_tasks(sources: &TaskSources, linked: impl Fn(&str) -> bool) -> Result<Vec<String>> {
     if CREATE_WORD.is_match(&LINE_COMMENT.replace_all(&sources.own, "")) {
-        return refuse(
-            "The firmware creates a task with task_create: declare it with \
-             #[wellfed_sdk::task] and start it with wellfed_sdk::spawn",
-        );
+        return Err(StackError::TaskCreate.into());
     }
     spawned_tasks_are_declared(&sources.own)?;
 
@@ -746,11 +818,7 @@ fn firmware_tasks(sources: &TaskSources, linked: impl Fn(&str) -> bool) -> Resul
         .map(|(_, (task, _))| task)
         .collect();
     if found.len() > FIRMWARE_TASKS {
-        return refuse(format!(
-            "The firmware starts {} tasks ({found:?}); the runtime leaves it {FIRMWARE_TASKS} of the \
-             SDK's eight slots",
-            found.len()
-        ));
+        return Err(StackError::TooMany { tasks: found }.into());
     }
     Ok(found)
 }
@@ -758,6 +826,15 @@ fn firmware_tasks(sources: &TaskSources, linked: impl Fn(&str) -> bool) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Error;
+
+    /// The stack refusal of a result that must be refused.
+    fn stack_error<T: std::fmt::Debug>(result: Result<T>) -> StackError {
+        match result {
+            Err(Error::Stack(error)) => error,
+            other => panic!("{other:?}"),
+        }
+    }
 
     /// A task the SDK creates outside these files would link unaudited.
     #[test]
@@ -814,10 +891,11 @@ mod tests {
             "an unused service links no task"
         );
 
-        let refused = firmware_tasks(&sources(&four), |_| true)
-            .unwrap_err()
-            .to_string();
-        assert!(refused.contains("starts 5 tasks"), "{refused}");
+        let error = stack_error(firmware_tasks(&sources(&four), |_| true));
+        assert!(
+            matches!(&error, StackError::TooMany { tasks } if tasks.len() == 5),
+            "{error}"
+        );
     }
 
     /// A task whose declaration the audit cannot read would link with its
@@ -836,27 +914,29 @@ mod tests {
             format!("{declared}// spawn in a comment is not a call\nwellfed_sdk::spawn(a_task);");
         assert_eq!(firmware_tasks(&own(&fine), |_| true).unwrap(), ["fw-a"]);
 
-        for (shape, why) in [
-            (
-                "wellfed_sdk::spawn(wellfed_probes::x_task);",
-                "uses of spawn",
-            ),
-            ("wellfed_sdk::spawn(x_task);", "spawns x_task"),
-            (
-                "use wellfed_sdk::spawn as go;\ngo(a_task);",
-                "uses of spawn",
-            ),
+        for (shape, undeclared) in [
+            ("wellfed_sdk::spawn(wellfed_probes::x_task);", false),
+            ("wellfed_sdk::spawn(x_task);", true),
+            ("use wellfed_sdk::spawn as go;\ngo(a_task);", false),
             (
                 "#[cfg_attr(feature = \"x\", wellfed_sdk::task(name = \"fw-x\", stack = 512, priority = 2))]\n\
                  fn x_task() -> u32 { 0 }\nwellfed_sdk::spawn(x_task);",
-                "spawns x_task",
+                true,
             ),
         ] {
             let text = format!("{declared}{shape}");
-            let refused = firmware_tasks(&own(&text), |_| true)
-                .unwrap_err()
-                .to_string();
-            assert!(refused.contains(why), "{shape}: {refused}");
+            let error = stack_error(firmware_tasks(&own(&text), |_| true));
+            if undeclared {
+                assert!(
+                    matches!(&error, StackError::Undeclared { entry } if entry == "x_task"),
+                    "{shape}: {error}"
+                );
+            } else {
+                assert!(
+                    matches!(&error, StackError::SpawnUses { count: 1 }),
+                    "{shape}: {error}"
+                );
+            }
         }
     }
 
@@ -870,21 +950,19 @@ mod tests {
                 .into(),
         };
 
-        let refused = firmware_tasks(&sources, |_| true).unwrap_err().to_string();
-        assert!(
-            refused.contains("creates a task with task_create"),
-            "{refused}"
-        );
+        assert!(matches!(
+            stack_error(firmware_tasks(&sources, |_| true)),
+            StackError::TaskCreate
+        ));
 
         let named = TaskSources {
             own: "unsafe { sdk::task_create(name, 512, 2, raw_task, ptr::null_mut()) };".into(),
             ..sources
         };
-        let refused = firmware_tasks(&named, |_| true).unwrap_err().to_string();
-        assert!(
-            refused.contains("creates a task with task_create"),
-            "{refused}"
-        );
+        assert!(matches!(
+            stack_error(firmware_tasks(&named, |_| true)),
+            StackError::TaskCreate
+        ));
     }
 
     const LISTING: &str = "\
@@ -942,13 +1020,23 @@ mod tests {
     #[test]
     fn a_task_the_audit_cannot_resolve_is_refused() {
         let generic = "sdk::task_create(c\"wellfed-gen\", 2048, 3, generic_step::<S>, state);";
-        let refused = tasks(generic).unwrap_err().to_string();
-        assert!(refused.contains("generic generic_step::<S>"), "{refused}");
+        let error = stack_error(tasks(generic));
+        assert!(
+            matches!(
+                &error,
+                StackError::Generic { entry, generic, .. }
+                    if entry == "generic_step" && generic == "::<S>"
+            ),
+            "{error}"
+        );
 
         let unknown = "#[wellfed_sdk::task(name = \"wellfed-x\", stack = ELSEWHERE_WORDS, priority = 2)]\n\
                        fn x_task() -> u32 {";
-        let refused = tasks(unknown).unwrap_err().to_string();
-        assert!(refused.contains("ELSEWHERE_WORDS"), "{refused}");
+        let error = stack_error(tasks(unknown));
+        assert!(
+            matches!(&error, StackError::StackSize { size, .. } if size == "ELSEWHERE_WORDS"),
+            "{error}"
+        );
 
         for shape in [
             "sdk::task_create(c\"wellfed-x\", 512, PRIORITY, x_task, ptr::null_mut());",
@@ -958,8 +1046,11 @@ mod tests {
             "#[task(name = \"wellfed-x\", stack = 512, priority = 2)]\nstatic X: u32 = 0;",
             "const X: Task = Task::__new(c\"wellfed-x\", 512, 2, x_task);",
         ] {
-            let refused = tasks(shape).unwrap_err().to_string();
-            assert!(refused.contains("1 task creations"), "{shape}: {refused}");
+            let error = stack_error(tasks(shape));
+            assert!(
+                matches!(error, StackError::Shape { count: 1 }),
+                "{shape}: {error}"
+            );
         }
     }
 
@@ -1108,7 +1199,10 @@ mod tests {
         );
         assert_ne!(listing, CLASSES);
         let functions = link(frames(&listing).into_iter().collect());
-        assert!(Graph::new(&functions, &[]).hook_charge().is_err());
+        assert!(matches!(
+            stack_error(Graph::new(&functions, &[]).hook_charge()),
+            StackError::CallbackUnbounded { .. }
+        ));
     }
 
     #[test]
@@ -1118,7 +1212,10 @@ mod tests {
     7000:\tb5f0      \tpush\t{r4, r5, r6, r7, lr}
 ";
         let functions = link(frames(listing).into_iter().collect());
-        assert!(Graph::new(&functions, &[]).hook_charge().is_err());
+        assert!(matches!(
+            stack_error(Graph::new(&functions, &[]).hook_charge()),
+            StackError::NoHookSite
+        ));
     }
 
     #[test]
@@ -1129,6 +1226,9 @@ mod tests {
     6002:\t4790      \tblx\tr2
 ";
         let functions = link(frames(listing).into_iter().collect());
-        assert!(Graph::new(&functions, &[]).hook_charge().is_err());
+        assert!(matches!(
+            stack_error(Graph::new(&functions, &[]).hook_charge()),
+            StackError::NoCallback
+        ));
     }
 }

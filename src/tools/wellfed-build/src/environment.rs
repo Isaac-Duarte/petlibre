@@ -13,10 +13,31 @@ use std::process::Command;
 use std::sync::LazyLock;
 
 use wellfed_formats::manifest::RustCompiler;
+use wellfed_formats::require;
 use regex::Regex;
 
 use crate::platform::TARGETS;
-use crate::{Error, Repo, Result, require, text, which};
+use crate::{Repo, Result, text, which};
+
+/// An override that would change the firmware compilation, or a compiler
+/// other than the pinned one.
+#[derive(Debug, thiserror::Error)]
+pub enum EnvironmentError {
+    /// Environment variables, sorted, that a firmware build refuses.
+    #[error("Unset compiler/profile overrides before a firmware build: {}", names.join(", "))]
+    Overrides { names: Vec<String> },
+    /// The dotted keys of a cargo configuration file that a build refuses.
+    #[error(
+        "Cargo configuration overrides firmware compilation in {}: {}",
+        path.display(),
+        keys.join(", ")
+    )]
+    CargoConfig { path: PathBuf, keys: Vec<String> },
+    #[error("rustc selected from the repository does not match rust-toolchain.toml")]
+    Channel,
+    #[error("rustc printed nothing")]
+    NoVersion,
+}
 
 const RUST_ENVIRONMENT: [&str; 13] = [
     "RUSTFLAGS",
@@ -186,24 +207,14 @@ fn forbidden_cargo_key(key: &[String], inline: bool) -> bool {
 /// any cargo configuration file that applies.
 pub(crate) fn rust_environment(root: &Path, environment: Environment) -> Result<Environment> {
     let names = forbidden_variables(&environment);
-    require(
-        names.is_empty(),
-        format!(
-            "Unset compiler/profile overrides before a firmware build: {}",
-            names.join(", ")
-        ),
-    )?;
+    require(names.is_empty(), || EnvironmentError::Overrides { names })?;
 
     for path in cargo_config_files(root, &environment) {
-        let found = cargo_config_overrides(&String::from_utf8_lossy(&fs::read(&path)?));
-        require(
-            found.is_empty(),
-            format!(
-                "Cargo configuration overrides firmware compilation in {}: {}",
-                path.display(),
-                found.join(", ")
-            ),
-        )?;
+        let keys = cargo_config_overrides(&String::from_utf8_lossy(&fs::read(&path)?));
+        require(keys.is_empty(), || EnvironmentError::CargoConfig {
+            path,
+            keys,
+        })?;
     }
     Ok(environment)
 }
@@ -231,10 +242,9 @@ pub(crate) fn rust_compiler(repo: &Repo, environment: &Environment) -> Result<Ru
     )?;
     let channel = CHANNEL.captures(&pinned).map(|c| c[1].to_string());
     let release = RELEASE.captures(&verbose).map(|c| c[1].to_string());
-    require(
-        channel.is_some() && channel == release,
-        "rustc selected from the repository does not match rust-toolchain.toml",
-    )?;
+    require(channel.is_some() && channel == release, || {
+        EnvironmentError::Channel
+    })?;
 
     let path = match which("rustup", environment.get("PATH").map(String::as_str)) {
         Some(_) => Some(
@@ -250,10 +260,7 @@ pub(crate) fn rust_compiler(repo: &Repo, environment: &Environment) -> Result<Ru
         ),
         None => None,
     };
-    let version = verbose
-        .lines()
-        .next()
-        .ok_or_else(|| Error::Refused("rustc printed nothing".into()))?;
+    let version = verbose.lines().next().ok_or(EnvironmentError::NoVersion)?;
     Ok(RustCompiler {
         version: version.to_string(),
         verbose: verbose.trim().lines().map(str::to_string).collect(),
@@ -264,6 +271,7 @@ pub(crate) fn rust_compiler(repo: &Repo, environment: &Environment) -> Result<Ru
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Error;
 
     fn clean() -> Environment {
         [("PATH", "/usr/bin"), ("HOME", "/nonexistent")]
@@ -287,7 +295,13 @@ mod tests {
             let mut environment = clean();
             environment.insert(name.into(), "x".into());
             let error = rust_environment(root.path(), environment).unwrap_err();
-            assert!(error.to_string().contains(name), "{name}: {error}");
+            assert!(
+                matches!(
+                    &error,
+                    Error::Environment(EnvironmentError::Overrides { names }) if names == &[name]
+                ),
+                "{name}: {error}"
+            );
         }
 
         let mut host = clean();
@@ -342,10 +356,11 @@ mod tests {
         )
         .unwrap();
 
-        let error = rust_environment(root.path(), clean())
-            .unwrap_err()
-            .to_string();
-        assert!(error.contains("profile.firmware.lto"), "{error}");
-        assert!(error.contains("config.toml"), "{error}");
+        let error = rust_environment(root.path(), clean()).unwrap_err();
+        let Error::Environment(EnvironmentError::CargoConfig { path, keys }) = &error else {
+            panic!("{error}");
+        };
+        assert_eq!(keys, &["profile.firmware.lto"]);
+        assert_eq!(path, &config.join("config.toml"));
     }
 }

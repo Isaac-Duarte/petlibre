@@ -15,10 +15,39 @@ use regex::Regex;
 
 use super::{
     Archives, Binutils, DIRECT_BRANCH, HEADING, INSTRUCTION, archive_record, elf, hex, index,
-    parse_hex, refuse, tool, word,
+    parse_hex, tool, word,
 };
+use crate::Result;
 use crate::platform::amebad::Core;
-use crate::{Result, require};
+use wellfed_formats::require;
+
+/// Why the flash-hook overlay or its routing audit refused.
+#[derive(Debug, thiserror::Error)]
+pub enum HookError {
+    #[error("Expected exactly one pinned SDK definition: {name}")]
+    Definition { name: &'static str },
+    #[error("Ambiguous SDK hook symbol: {name}")]
+    Ambiguous { name: String },
+    #[error("Missing SDK hook symbols: {}", names.join(", "))]
+    Missing { names: Vec<&'static str> },
+    #[error("Hook address is not in initialized ELF bytes")]
+    Uninitialized { address: u64 },
+    #[error("IPC table is too short")]
+    ShortTable { bytes: u64 },
+    #[error("Flash IPC table bypasses the public hook")]
+    IpcBypass,
+    #[error("SDK caller bypasses hook: {caller} -> {legacy}")]
+    Bypass {
+        caller: String,
+        legacy: &'static str,
+    },
+    #[error("Missing visible wrapper route to legacy hook")]
+    NoRoute,
+    #[error("SDK hook function is outside application RAM: {name}")]
+    FunctionPlacement { name: &'static str },
+    #[error("SDK hook state is outside internal application RAM: {name}")]
+    StatePlacement { name: &'static str },
+}
 
 pub(crate) const SOURCE: &str =
     "component/soc/realtek/amebad/fwlib/ram_common/rtl8721d_flash_ram.c";
@@ -62,10 +91,9 @@ pub(crate) fn overlay(source: &str) -> Result<String> {
     let mut source = source.to_string();
     for (public, legacy) in RENAMES {
         let pattern = Regex::new(&format!(r"(?m)^(void\s+){}(\s*\()", regex::escape(public)))?;
-        require(
-            pattern.find_iter(&source).count() == 1,
-            format!("Expected exactly one pinned SDK definition: {public}"),
-        )?;
+        require(pattern.find_iter(&source).count() == 1, || {
+            HookError::Definition { name: public }
+        })?;
         source = pattern
             .replace(&source, |c: &regex::Captures| {
                 format!("{}{legacy}{}", &c[1], &c[2])
@@ -87,10 +115,9 @@ pub fn symbols(elf: &Path, objdump: &Path) -> Result<BTreeMap<String, Symbol>> {
             continue;
         }
         let name = fields[5].to_string();
-        require(
-            !selected.contains_key(&name),
-            format!("Ambiguous SDK hook symbol: {name}"),
-        )?;
+        require(!selected.contains_key(&name), || HookError::Ambiguous {
+            name: name.clone(),
+        })?;
         selected.insert(
             name,
             Symbol {
@@ -102,15 +129,12 @@ pub fn symbols(elf: &Path, objdump: &Path) -> Result<BTreeMap<String, Symbol>> {
         );
     }
 
-    let missing: Vec<&str> = wanted
+    let missing: Vec<&'static str> = wanted
         .iter()
         .filter(|name| !selected.contains_key(**name))
         .copied()
         .collect();
-    require(
-        missing.is_empty(),
-        format!("Missing SDK hook symbols: {}", missing.join(", ")),
-    )?;
+    require(missing.is_empty(), || HookError::Missing { names: missing })?;
     Ok(selected)
 }
 
@@ -129,7 +153,7 @@ pub fn file_offset(elf: &Path, objdump: &Path, address: u64, size: u64) -> Resul
             }
         }
     }
-    refuse("Hook address is not in initialized ELF bytes")
+    Err(HookError::Uninitialized { address }.into())
 }
 
 /// The pinned IPC_INIT_TABLE has three 32-bit members per entry; channel
@@ -140,12 +164,14 @@ pub fn verify_ipc_table(
     names: &BTreeMap<String, Symbol>,
 ) -> Result<u64> {
     let table = &names["ipc_init_config"];
-    require(table.bytes >= 36, "IPC table is too short")?;
+    require(table.bytes >= 36, || HookError::ShortTable {
+        bytes: table.bytes,
+    })?;
     let at = file_offset(elf, objdump, table.address + 28, 4)?;
     let public = names["FLASH_Write_IPC_Int"].address | 1;
     match word(&fs::read(elf)?, at) {
         Some(pointer) if pointer == public => Ok(pointer),
-        _ => refuse("Flash IPC table bypasses the public hook"),
+        _ => Err(HookError::IpcBypass.into()),
     }
 }
 
@@ -179,10 +205,10 @@ pub fn legacy_routes(disassembly: &str) -> Result<Routes> {
         };
 
         let caller = owner.as_deref().unwrap_or("None");
-        require(
-            caller == *public,
-            format!("SDK caller bypasses hook: {caller} -> {legacy}"),
-        )?;
+        require(caller == *public, || HookError::Bypass {
+            caller: caller.into(),
+            legacy,
+        })?;
         if let Some(calls) = routes.get_mut(legacy) {
             calls.push(Route {
                 caller: caller.to_string(),
@@ -191,10 +217,9 @@ pub fn legacy_routes(disassembly: &str) -> Result<Routes> {
         }
     }
 
-    require(
-        routes.values().all(|calls| !calls.is_empty()),
-        "Missing visible wrapper route to legacy hook",
-    )?;
+    require(routes.values().all(|calls| !calls.is_empty()), || {
+        HookError::NoRoute
+    })?;
     Ok(routes)
 }
 
@@ -210,14 +235,14 @@ pub(crate) fn audit(sdk: &Path, binutils: &Binutils, objects: &Archives) -> Resu
             let symbol = &names[name];
             require(
                 symbol.kind == "F" && symbol.section == ".ram_image2.text",
-                format!("SDK hook function is outside application RAM: {name}"),
+                || HookError::FunctionPlacement { name },
             )?;
         }
         for name in STATE {
             let symbol = &names[name];
             require(
                 symbol.kind == "O" && symbol.section == ".ram_image2.bss",
-                format!("SDK hook state is outside internal application RAM: {name}"),
+                || HookError::StatePlacement { name },
             )?;
         }
 
@@ -258,6 +283,7 @@ pub(crate) fn audit(sdk: &Path, binutils: &Binutils, objects: &Archives) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Error;
 
     const PINNED: &str = "void FLASH_Write_Lock(void)\n{\n}\nvoid FLASH_Write_Unlock(void)\n{\n}\n\
                           void FLASH_Write_IPC_Int(VOID *Data, u32 IrqStatus, u32 ChanNum)\n{\n\
@@ -276,9 +302,13 @@ mod tests {
     #[test]
     fn missing_or_duplicate_sdk_definition_is_rejected() {
         for (public, _) in RENAMES {
-            assert!(overlay(&format!("{PINNED}\nvoid {public}(void) {{}}\n")).is_err());
             let renamed = PINNED.replace(&format!("void {public}("), "void unrelated_hook(");
-            assert!(overlay(&renamed).is_err());
+            for source in [format!("{PINNED}\nvoid {public}(void) {{}}\n"), renamed] {
+                assert!(matches!(
+                    overlay(&source),
+                    Err(Error::Hooks(HookError::Definition { name })) if name == public
+                ));
+            }
         }
     }
 
@@ -296,7 +326,15 @@ mod tests {
         let bypass = format!(
             "{wrapped}00000000 <unmediated_sdk_caller>:\n 0:\tf000 f800 \tbl\t10000100 <wellfed_sdk_flash_legacy_lock>\n"
         );
-        let error = legacy_routes(&bypass).unwrap_err().to_string();
-        assert!(error.contains("bypasses hook"), "{error}");
+        let error = legacy_routes(&bypass).unwrap_err();
+        assert!(
+            matches!(
+                &error,
+                Error::Hooks(HookError::Bypass { caller, legacy })
+                    if caller == "unmediated_sdk_caller"
+                        && *legacy == "wellfed_sdk_flash_legacy_lock"
+            ),
+            "{error}"
+        );
     }
 }

@@ -10,13 +10,57 @@
 use std::collections::BTreeMap;
 use std::fs;
 
-use crate::catalog::{FirmwareEntry, VariantEntry};
+use wellfed_formats::require;
 use serde::Deserialize;
 
-use crate::{Error, Repo, Result, checked_name, require};
+use crate::catalog::{FirmwareEntry, VariantEntry};
+use crate::{Repo, Result, checked_name};
 
 /// The firmware directory every firmware crate lives in.
 const FIRMWARES: &str = "src/firmware/wellfed";
+
+/// Why a firmware, its declaration or a requested variant was refused.
+#[derive(Debug, thiserror::Error)]
+pub enum FirmwareError {
+    #[error("No firmware named {name} under {FIRMWARES}/")]
+    Unknown {
+        name: String,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("Firmware {name}'s Cargo.toml: {source}")]
+    Manifest {
+        name: String,
+        #[source]
+        source: toml::de::Error,
+    },
+    #[error("Firmware {name} must be the package {package}")]
+    Package { name: String, package: String },
+    #[error("Firmware {name} has no [package.metadata.wellfed] table")]
+    Undeclared { name: String },
+    #[error("Firmware {name} declares no devices")]
+    NoDevices { name: String },
+    /// Only a variant's policies are limited to first-boot builds, so only
+    /// a variant may name a motion policy.
+    #[error("Firmware {name}'s normal image names a motion policy; make it a variant")]
+    NormalMotion { name: String },
+    #[error("Firmware {name}'s variant {variant} has no Cargo feature of that name")]
+    NoFeature { name: String, variant: String },
+    #[error("Firmware {name} does not build for {device} (it declares {})", declared.join(", "))]
+    Device {
+        name: String,
+        device: String,
+        declared: Vec<String>,
+    },
+    #[error("Firmware {name} has no image variants")]
+    NoVariants { name: String },
+    #[error("Firmware {name} has no variant {variant}; it has {}", known.join(", "))]
+    UnknownVariant {
+        name: String,
+        variant: String,
+        known: Vec<String>,
+    },
+}
 
 /// The startup policies a firmware's image carries: the manifest records
 /// them, and the startup audit checks each against the image's markers, so
@@ -109,44 +153,49 @@ impl Firmware {
     pub fn new(repo: &Repo, name: &str) -> Result<Self> {
         let name = checked_name("Firmware", name)?;
         let path = repo.path(&format!("{FIRMWARES}/{name}/Cargo.toml"));
-        let text = fs::read_to_string(&path)
-            .map_err(|_| Error::Refused(format!("No firmware named {name} under {FIRMWARES}/")))?;
+        let text = fs::read_to_string(&path).map_err(|source| FirmwareError::Unknown {
+            name: name.into(),
+            source,
+        })?;
 
         Self::parse(name, &text)
     }
 
     fn parse(name: &str, text: &str) -> Result<Self> {
-        let manifest: Manifest = toml::from_str(text)
-            .map_err(|error| Error::Refused(format!("Firmware {name}'s Cargo.toml: {error}")))?;
+        let manifest: Manifest =
+            toml::from_str(text).map_err(|source| FirmwareError::Manifest {
+                name: name.into(),
+                source,
+            })?;
         let package = format!("wellfed-fw-{name}");
-        require(
-            manifest.package.name == package,
-            format!("Firmware {name} must be the package {package}"),
-        )?;
+        require(manifest.package.name == package, || {
+            FirmwareError::Package {
+                name: name.into(),
+                package,
+            }
+        })?;
         let Some(declaration) = manifest.package.metadata.wellfed else {
-            return Err(Error::Refused(format!(
-                "Firmware {name} has no [package.metadata.wellfed] table"
-            )));
+            return Err(FirmwareError::Undeclared { name: name.into() }.into());
         };
-        require(
-            !declaration.devices.is_empty(),
-            format!("Firmware {name} declares no devices"),
-        )?;
+        require(!declaration.devices.is_empty(), || {
+            FirmwareError::NoDevices { name: name.into() }
+        })?;
         // Policies reach the manifest of first-boot builds only, and only a
         // variant is limited to those, so a motion image must be a variant:
         // otherwise a non-first-boot build could drive the motor with no
         // motion policy for the bench's attended-motion gate to see.
-        require(
-            declaration.policies.motion.is_none(),
-            format!("Firmware {name}'s normal image names a motion policy; make it a variant"),
-        )?;
+        require(declaration.policies.motion.is_none(), || {
+            FirmwareError::NormalMotion { name: name.into() }
+        })?;
 
         let mut variants = Vec::new();
         for (variant, declared) in declaration.variants {
-            require(
-                manifest.features.contains_key(&variant),
-                format!("Firmware {name}'s variant {variant} has no Cargo feature of that name"),
-            )?;
+            require(manifest.features.contains_key(&variant), || {
+                FirmwareError::NoFeature {
+                    name: name.into(),
+                    variant: variant.clone(),
+                }
+            })?;
             variants.push(Variant {
                 name: variant,
                 summary: declared.summary,
@@ -187,15 +236,15 @@ impl Firmware {
     }
 
     /// Refused unless the firmware declares `device`.
-    pub fn require_device(&self, device: &str) -> Result<()> {
-        require(
-            self.devices.iter().any(|d| d == device),
-            format!(
-                "Firmware {} does not build for {device} (it declares {})",
-                self.name,
-                self.devices.join(", ")
-            ),
-        )
+    pub fn check_device(&self, device: &str) -> Result<()> {
+        require(self.devices.iter().any(|d| d == device), || {
+            FirmwareError::Device {
+                name: self.name.clone(),
+                device: device.into(),
+                declared: self.devices.clone(),
+            }
+        })?;
+        Ok(())
     }
 
     /// The declared variant `name`.
@@ -205,16 +254,18 @@ impl Firmware {
             .find(|v| v.name == name)
             .cloned()
             .ok_or_else(|| {
-                let known: Vec<&str> = self.variants.iter().map(|v| v.name.as_str()).collect();
-                Error::Refused(if known.is_empty() {
-                    format!("Firmware {} has no image variants", self.name)
+                let known: Vec<String> = self.variants.iter().map(|v| v.name.clone()).collect();
+                let firmware = self.name.clone();
+                if known.is_empty() {
+                    FirmwareError::NoVariants { name: firmware }.into()
                 } else {
-                    format!(
-                        "Firmware {} has no variant {name}; it has {}",
-                        self.name,
-                        known.join(", ")
-                    )
-                })
+                    FirmwareError::UnknownVariant {
+                        name: firmware,
+                        variant: name.into(),
+                        known,
+                    }
+                    .into()
+                }
             })
     }
 
@@ -260,6 +311,7 @@ impl Firmware {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Error;
 
     const MANIFEST: &str = r#"
 [package]
@@ -298,35 +350,61 @@ quiet = { summary = "No probes" }
     #[test]
     fn undeclared_names_are_refused() {
         let firmware = Firmware::parse("demo", MANIFEST).unwrap();
-        let error = firmware.variant("speaker").unwrap_err().to_string();
-        assert!(error.contains("pulse, quiet"), "{error}");
-        firmware.require_device("plaf103").unwrap();
-        assert!(firmware.require_device("plaf203").is_err());
+        let error = firmware.variant("speaker").unwrap_err();
+        assert!(
+            matches!(
+                &error,
+                Error::Firmware(FirmwareError::UnknownVariant { variant, known, .. })
+                    if variant == "speaker" && known == &["pulse", "quiet"]
+            ),
+            "{error}"
+        );
+        firmware.check_device("plaf103").unwrap();
+        assert!(matches!(
+            firmware.check_device("plaf203"),
+            Err(Error::Firmware(FirmwareError::Device { device, .. })) if device == "plaf203"
+        ));
     }
 
     #[test]
     fn declarations_are_checked() {
+        let firmware_error = |text: &str| match Firmware::parse("demo", text) {
+            Err(Error::Firmware(error)) => error,
+            other => panic!("{other:?}"),
+        };
+
         let renamed = MANIFEST.replace("wellfed-fw-demo", "wellfed-fw-other");
-        assert!(Firmware::parse("demo", &renamed).is_err());
+        assert!(matches!(
+            firmware_error(&renamed),
+            FirmwareError::Package { package, .. } if package == "wellfed-fw-demo"
+        ));
 
         let featureless = MANIFEST.replace("quiet = []\n", "");
-        let error = Firmware::parse("demo", &featureless)
-            .unwrap_err()
-            .to_string();
-        assert!(error.contains("no Cargo feature"), "{error}");
+        assert!(matches!(
+            firmware_error(&featureless),
+            FirmwareError::NoFeature { variant, .. } if variant == "quiet"
+        ));
 
         let misspelt = MANIFEST.replace("optics =", "optic =");
-        assert!(Firmware::parse("demo", &misspelt).is_err());
+        assert!(matches!(
+            firmware_error(&misspelt),
+            FirmwareError::Manifest { .. }
+        ));
 
         let moving = MANIFEST.replace(
             "policies = { optics = \"fw13-optics-v2\" }",
             "policies = { motion = \"fw16-pulse-v1\" }",
         );
-        let error = Firmware::parse("demo", &moving).unwrap_err().to_string();
-        assert!(error.contains("make it a variant"), "{error}");
+        assert!(matches!(
+            firmware_error(&moving),
+            FirmwareError::NormalMotion { .. }
+        ));
 
         let undeclared = "[package]\nname = \"wellfed-fw-demo\"\n";
-        assert!(Firmware::parse("demo", undeclared).is_err());
+        assert!(matches!(
+            firmware_error(undeclared),
+            FirmwareError::Undeclared { .. }
+        ));
     }
 
     #[test]

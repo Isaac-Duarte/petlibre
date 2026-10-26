@@ -13,7 +13,7 @@ use wellfed_build::identity::current_inputs;
 use wellfed_build::image::audit_build;
 use wellfed_build::platform::amebad::audit::{self, Binutils, elf, hex, hooks, mains, park, tool};
 use wellfed_build::platform::amebad::{Core, PROJECT, binutils};
-use wellfed_build::{Device, Firmware, Profile, Repo};
+use wellfed_build::{Device, Error, Firmware, HookError, MainsError, Profile, Repo};
 use serde_json::Value;
 
 struct Build {
@@ -148,8 +148,15 @@ fn hook_bypasses_in_real_listings_and_tables_are_refused() {
             let bypass = format!(
                 "{listing}\n00000000 <unmediated_sdk_caller>:\n 0: f000 f800 bl {address:x} <{legacy}>\n"
             );
-            let error = hooks::legacy_routes(&bypass).unwrap_err().to_string();
-            assert!(error.contains("bypasses hook"), "{core} {legacy}: {error}");
+            let error = hooks::legacy_routes(&bypass).unwrap_err();
+            assert!(
+                matches!(
+                    &error,
+                    Error::Hooks(HookError::Bypass { caller, legacy: bypassed })
+                        if caller == "unmediated_sdk_caller" && *bypassed == legacy
+                ),
+                "{core} {legacy}: {error}"
+            );
         }
 
         let directory = tempfile::tempdir_in(&build.dir).unwrap();
@@ -160,11 +167,9 @@ fn hook_bypasses_in_real_listings_and_tables_are_refused() {
         damaged[at..at + 4].copy_from_slice(&legacy.to_le_bytes());
         let path = directory.path().join("bypassed.axf");
         fs::write(&path, damaged).unwrap();
-        let error = hooks::verify_ipc_table(&path, &objdump, &names)
-            .unwrap_err()
-            .to_string();
+        let error = hooks::verify_ipc_table(&path, &objdump, &names).unwrap_err();
         assert!(
-            error.contains("bypasses the public hook"),
+            matches!(error, Error::Hooks(HookError::IpcBypass)),
             "{core}: {error}"
         );
     }
@@ -255,8 +260,14 @@ fn a_corrupted_veneer_target_is_refused() {
     data[at + 12..at + 16].copy_from_slice(&wrong.to_le_bytes());
     fs::write(&elf, data).unwrap();
 
-    let error = mains::audit(copy.path(), &build.binutils)
-        .unwrap_err()
-        .to_string();
-    assert!(error.contains("veneer"), "{error}");
+    let error = mains::audit(copy.path(), &build.binutils).unwrap_err();
+    assert!(
+        matches!(
+            error,
+            Error::Mains(MainsError::Veneer {
+                name: "vTaskStartScheduler"
+            })
+        ),
+        "{error}"
+    );
 }

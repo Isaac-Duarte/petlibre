@@ -9,7 +9,19 @@ use wellfed_formats::credentials::WifiCredential;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 
-use crate::{Error, Result, require};
+use wellfed_formats::require;
+
+use crate::Result;
+
+/// Why the private Wi-Fi file was refused. Neither variant carries a value
+/// from the file: it holds the network's passphrase.
+#[derive(Debug, thiserror::Error)]
+pub enum CredentialsError {
+    #[error("Wi-Fi credentials need string ssid and password")]
+    Shape,
+    #[error("Wi-Fi credentials need a 1-32 byte SSID and an 8-63 byte passphrase")]
+    Size,
+}
 
 const BANNER: &str = "/* Generated from a private file by wellfed-build; never tracked. */\n";
 
@@ -37,11 +49,10 @@ fn object<T: DeserializeOwned>(raw: &[u8]) -> serde_json::Result<T> {
 
 /// The Wi-Fi header; refuses anything but a WPA2-sized passphrase.
 pub(crate) fn wifi_header(raw: &[u8]) -> Result<String> {
-    let WifiCredential { ssid, password } = object(raw)
-        .map_err(|_| Error::Refused("Wi-Fi credentials need string ssid and password".into()))?;
+    let WifiCredential { ssid, password } = object(raw).map_err(|_| CredentialsError::Shape)?;
     require(
         (1..=32).contains(&ssid.len()) && (8..=63).contains(&password.len()),
-        "Wi-Fi credentials need a 1-32 byte SSID and an 8-63 byte passphrase",
+        || CredentialsError::Size,
     )?;
 
     Ok(format!(
@@ -64,10 +75,26 @@ mod tests {
         for bad in [
             r#"{"ssid": "", "password": "longenough"}"#,
             r#"{"ssid": "lab", "password": "short"}"#,
+        ] {
+            assert!(
+                matches!(
+                    wifi_header(bad.as_bytes()),
+                    Err(crate::Error::Credentials(CredentialsError::Size))
+                ),
+                "{bad}"
+            );
+        }
+        for bad in [
             r#"{"ssid": 1, "password": "longenough"}"#,
             r#"["lab", "longenough"]"#,
         ] {
-            assert!(wifi_header(bad.as_bytes()).is_err(), "{bad}");
+            assert!(
+                matches!(
+                    wifi_header(bad.as_bytes()),
+                    Err(crate::Error::Credentials(CredentialsError::Shape))
+                ),
+                "{bad}"
+            );
         }
     }
 }

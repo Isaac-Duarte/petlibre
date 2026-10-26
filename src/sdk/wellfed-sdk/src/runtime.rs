@@ -46,7 +46,9 @@ unsafe extern "Rust" {
     /// unarmed, logs its own `PLCFG1` records, and returns the delay to its
     /// next step, 0 to end. The store schema is the product's, so the
     /// product's runtime crate defines it and every firmware links that
-    /// crate; a firmware that links none does not link.
+    /// crate; a firmware that links none does not link. The definition
+    /// (`wellfed_feeder_runtime::writer`) must keep this signature: the
+    /// linker does not compare Rust signatures, so it pins its own.
     ///
     /// # Safety
     /// Called only from the service task; `provider` is the runtime's fixed

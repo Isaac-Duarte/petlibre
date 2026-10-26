@@ -27,6 +27,9 @@ use wellfed_hal::cell::TaskCell;
 use wellfed_hal::ota::signers;
 use wellfed_hal::sdk;
 
+// Every update key the store can hold reaches the update stage.
+const _: () = assert!(STORE_CLIENTS <= signers::SIGNERS);
+
 /// Who holds `PENDING`, as `STATE` stores it.
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]

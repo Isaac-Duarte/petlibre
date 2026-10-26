@@ -170,6 +170,8 @@ impl<P: Platform> Feeder<P> {
 
     /// One pass at `now_ms`, with the feeding owner `feeds`; `record`
     /// receives what happened, in order. The delay until the next pass.
+    /// The caller reads `now_ms` before the pass, so it comes before the
+    /// identity step (an X25519 derivation when a new identity arrives).
     pub fn pass<F: Feeds>(
         &mut self,
         now_ms: u32,

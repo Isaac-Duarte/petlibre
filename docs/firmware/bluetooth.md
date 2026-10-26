@@ -112,7 +112,7 @@ Host: `wellfed setup --ssid NAME` (the owner's CLI) reads the passphrase from st
   - `wellfed-client/tests/setup.rs`: the client against the feeder's responder through BLE framing (keys exchanged, the code proven, the Wi-Fi only after), a mistyped code stopping the client before its Wi-Fi, a `Done` without the proof rejected, refusals, a tampered handshake and a foreign prologue failing closed.
   - `feeder/tests/setup.rs`: setup mode in the loop against the fake peripheral and a scripted writer (code keyed in, proof, enroll, Wi-Fi save, `Done`, reboot); a wrong code enrolling nothing and timing out; a tick per press then `coin`, or `alert` for a wrong code, and silence with `sound` off; an unanswered ask; a client that leaves; a foreign first message; mains-only advertising and the idle reboot.
   - `wellfed-hal/tests/ble.rs`: advertising on request only, framed messages held until consumed, oversized frames and long sessions dropped, the radio failure.
-  - `wellfed-hal/tests/network.rs` covers the mid-boot save being joined with a fresh count.
+  - `wellfed-feeder-runtime/tests/network.rs` covers the mid-boot save being joined with a fresh count.
 
 ## Open questions for the bench
 

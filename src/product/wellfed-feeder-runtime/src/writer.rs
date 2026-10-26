@@ -725,7 +725,9 @@ impl fmt::Display for Line {
 }
 
 /// The SDK runtime's settings stage: one writer step, logged as a `PLCFG1`
-/// record; the delay to the next, 0 to end.
+/// record; the delay to the next, 0 to end. Its signature must match the
+/// runtime's `extern "Rust"` declaration in `wellfed-sdk`'s `runtime.rs`
+/// (the linker does not check it); the assertion below pins it.
 ///
 /// # Safety
 /// Called only from the service task, with the runtime's fixed provider,
@@ -750,3 +752,6 @@ pub unsafe fn wellfed_store_step(provider: *mut Provider) -> u32 {
     }
     step.delay_ms
 }
+
+#[cfg(target_os = "none")]
+const _: unsafe fn(*mut Provider) -> u32 = wellfed_store_step;

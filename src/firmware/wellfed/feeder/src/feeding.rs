@@ -669,6 +669,17 @@ mod target {
                 && OWNER.enter().is_some_and(|owner| owner.cancel(feed))
         }
 
+        /// The feed whose motor the owner is driving, for the
+        /// fault-injection variants.
+        #[cfg(any(feature = "feed-stall", feature = "stop-fail"))]
+        pub fn driving(&self) -> Option<crate::faults::Driving> {
+            let status = OWNER.enter()?.status();
+            (status.state == OwnerState::Feeding).then_some(crate::faults::Driving {
+                feed: status.result.id,
+                portions: status.result.requested,
+            })
+        }
+
         /// A feed is queued or runs: no install starts.
         pub fn busy(&self) -> bool {
             self.current.is_some() || self.feeding()

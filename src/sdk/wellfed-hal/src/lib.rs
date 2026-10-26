@@ -35,6 +35,11 @@ pub mod link;
 pub mod rng;
 pub mod settings;
 
+// The `stop-fail` bench variant's STOP that does not take; never in a
+// product image.
+#[cfg(feature = "stop-fail")]
+pub mod inject;
+
 pub mod flash_lock;
 pub mod health;
 pub mod interlock;

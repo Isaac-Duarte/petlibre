@@ -15,6 +15,9 @@ sdk = ["wellfed-amebad-sys/sdk"]
 km4 = ["wellfed-hal-common/km4", "wellfed-amebad-sys/km4"]
 # BLE setup; needs a Bluetooth firmware's image.
 bluetooth = ["wellfed-amebad-sys/bluetooth"]
+# Motor STOP writes that do not take while a hold is armed (`inject`).
+# Only the feeder's `stop-fail` bench variant sets it.
+stop-fail = []
 
 [dependencies]
 wellfed-hal-common.workspace = true
@@ -32,3 +35,9 @@ sha2 = "0.10"
 
 [lints]
 workspace = true
+
+# The injected failed stop, over the owner; `make check-rust` runs it with
+# the feature.
+[[test]]
+name = "inject"
+required-features = ["stop-fail"]

@@ -13,6 +13,9 @@ km4 = ["wellfed-hal/km4", "wellfed-hal/sdk"]
 # Trial test: a candidate whose startup fails on a determined error.
 # Only the bring-up firmware's `fail` variant sets it.
 trial-fail = []
+# A motor STOP that does not take, on demand (`hal::inject`). Only the
+# feeder's `stop-fail` variant sets it.
+stop-fail = ["wellfed-hal/stop-fail"]
 # The BLE peripheral. A firmware enables it with `bluetooth = true`
 # in its metadata, which links the device's BLE source.
 bluetooth = ["wellfed-hal/bluetooth"]

@@ -64,7 +64,7 @@ Open: the feedback input. The direction was seen in the first owner feed: [clock
 
 ## Not covered
 
-Lease expiry with a stalled owner was host-tested and FW05-measured, but not under real motion; this session gives the first real-motion data. Cancellation, failed stop, the journal-reserved feed, portions and reverse recovery belong to the full FW16 owner path and FW19. That owner runs inside `feeder`'s loop, and since v164 the device API feeds through it, so later motor tests run over the air: see [feeds through the owner](#feeds-through-the-owner).
+Lease expiry with a stalled owner was host-tested and FW05-measured, but not under real motion; this session gave the first real-motion data, and the `feed-stall` variant tests the lease under motion ([below](#a-stalled-loop-and-a-failed-stop-during-a-feed)). Cancellation, failed stop, the journal-reserved feed, portions and reverse recovery belong to the full FW16 owner path and FW19. That owner runs inside `feeder`'s loop, and since v164 the device API feeds through it, so later motor tests run over the air: see [feeds through the owner](#feeds-through-the-owner).
 
 ## Feeds through the owner
 
@@ -145,5 +145,73 @@ PLOWN1 edges id=9 at=7840L,9037H,16970L,18156H,26047L,27221H
 
 These marks, the start-up surge and the driving current are the virtual feeder's plant (`wellfed_sim::plant`), which runs the owner under these limits ([development guide](../development/README.md#work-on-a-component)).
 
-Left for FW16: cancellation during motion, the motor lease under a stalled loop during a feed, and a failed stop.
+Cancellation during motion passed on October 25 (`feedwrites-20261025-01`, v173: feed 18 cancelled 2 s into its drive, `outcome=2 reason=2`, outputs stopped). Left for FW16: the motor lease under a stalled loop during a feed, and a failed stop ([below](#a-stalled-loop-and-a-failed-stop-during-a-feed)).
+
+## A stalled loop and a failed stop during a feed
+
+Status: the two variants are built and their audits pass; host tests and the virtual feeder cover them (static analysis and simulation, October 26). Not yet run on hardware.
+
+Two opt-in variants of `feeder` inject one fault into each feed, 2 s (`INJECT_AFTER_MS`) into its drive, so the motor is running and past its start-up surge. They show, with real motion, the supervision that does not depend on the loop or on the stop path: the TIM2 interrupt's motor lease and its stop retry, the owner's beat, and the runtime's watchdog. The normal `feeder` image has neither: `feed-stall` is a feature of the firmware crate only, and `stop-fail` also enables `wellfed-hal`'s `stop-fail` feature, without which the injection is not compiled. Nothing else changes: no startup motion, feeds only from the device API, the same limits, the same journal and no-retry rule. The requested portions pick the case, so the bench needs no new operation:
+
+| Variant, request | Fault | What ends the drive | Then |
+| --- | --- | --- | --- |
+| `feed-stall`, 1 portion | The loop spins 600 ms, interrupts enabled | The motor lease: the timer interrupt stops the motor 200 ms after the owner's last renewal (`MotorGateFault::Expired`) | The owner, stepped again, finds its supervisor faulted and records the feed failed (`outcome=4 reason=12`) durably. A faulted owner never beats again, so 1 s after its last beat the runtime withholds the watchdog and the board resets; the next boot is Idle with nothing pending |
+| `feed-stall`, 2–3 portions | The loop spins 8 s | The motor lease, as above | The beat lapses 1 s after the last one and the watchdog resets the board inside the spin; the next boot resolves the feed as uncertain (`outcome=5`) under its id and never re-runs it |
+| `stop-fail`, 1 portion | STOP writes held 300 ms, then the feed cancelled | The timer interrupt's stop retry, every 10 ms, the first one after the hold lifts | The cancellation is recorded durably (`outcome=2`, owner fault hardware), then the faulted owner's lapsed beat resets the board |
+| `stop-fail`, 2–3 portions | STOP writes held 8 s, then the feed cancelled | The watchdog reset: the owner stops beating once its stop fails, the runtime withholds the refresh after the 1 s gap, and the reset puts the motor pins in their reset state (the driver's standby) | The next boot resolves the feed as uncertain |
+
+The lengths are pinned against the supervision bounds at compile time (`faults.rs`): the short ones between the 200 ms motor lease and the 1 s beat, the long ones past the beat plus the 6 s ceiling on the watchdog's expiry (its bounds are 2.4–5.5 s, measured about 4 s).
+
+**Where the failed stop is injected, and why there.** The only place that writes the motor pins while the board is open is the board's pin write (`BoardPins::write_pair`), which writes the pair and reads it back. With a hold armed (`wellfed_hal::inject`), that write skips a STOP, leaves the pins as they are, and does the readback as always; the pins still drive, so the write fails its readback exactly as a pad that did not follow its latch would. Everything downstream is the product's own failure handling, unchanged: the gate latches an I/O fault with the applied state unknown, the supervisor faults its outputs, the timer interrupt retries the stop every tick, the owner faults hardware, keeps its result back until a stop verifies, and stops beating; the runtime's watchdog check reads the pins (`stopped::observe`) and the beat. This point was chosen over the others:
+- **Skipping the owner's stop request** (the controller or `quiet`) would only exercise the owner: the gate would still stop the motor at its lease, so nothing independent would be shown.
+- **Re-driving the pins behind the board's back** (a write from the loop after the stop) bypasses the readback the board relies on, and models a second writer the board does not have; the gate would believe STOP and only the runtime's pin check would catch it.
+- **Changing pin modes or masking the timer** puts the driver's inputs or the supervision itself in a state the product never sees, and could leave the motor in an unknown mode.
+
+The hold only skips STOP; a drive write is untouched, and the faulted gate issues none. It is bounded twice: the variant asks for 300 ms or 8 s, and the SDK caps any hold at 10 s (`MAX_HOLD_MS`). After the hold lifts, the timer's next retry stops the motor even if the watchdog never reset, so the long case's drive is at most about 10 s (2 s before the injection plus the 8 s hold), whatever else fails. The hold is a static in RAM and starts disarmed at every boot.
+
+**The stall** spins in the loop task with interrupts enabled, like `owner-stall`, so the TIM2 interrupt and the runtime's watchdog feeder keep running while the owner is not stepped.
+
+### Records
+
+Besides the usual `PLOWN1` lines (the state changes, `fed`, `edges`, `pins`) and the runtime's `PLSUP1 stop … owner_age= owner_gap= supervised=` when it withholds the watchdog:
+- `PLINJ1 inject id= fault= severity= ms=`: fault 1 stall, 2 failed stop; severity 1 short, 2 long; `ms` the spin or the hold.
+- `PLINJ1 stall id= end ms=`: the loop came back from its spin. After a long stall this line means the watchdog did not reset the board: a failure.
+- `PLINJ1 stop id= cancel=`: the hold is armed and the feed cancelled.
+- `PLINJ1 hold lifted= skipped=`: the hold ended by itself, and how many STOP writes it skipped (the timer's retries, about one per 10 ms, and the owner's). After a long hold this line means the watchdog did not reset the board: a failure.
+
+### Host and simulation coverage
+
+- `wellfed-hal`'s `tests/inject.rs` (built with `--features stop-fail`; `make check-rust` runs it): a held stop keeps driving and the owner holds its result and stops beating; the first timer retry after the hold stops the motor and the cancellation is recorded durably; a hold is capped and never touches a drive write.
+- The virtual feeder (`wellfed-sim`, the `stop_fails` command models the same failed readback): a 600 ms stall stops by the lease within 220 ms and records the feed failed, then resets with nothing pending; a 300 ms failed stop is stopped by the first retry after it and recorded cancelled; a stop that never takes drives until the watchdog reset, which comes 1 s plus an expiry inside the bounds after the cancel, and the next boot resolves the feed as uncertain. The 8 s stall was already covered (`stalled_owner_independent_timer_and_watchdog_reset`).
+- `faults.rs`: each feed is injected once, 2 s into its own drive, with the severity its portions choose.
+
+### Bench plan (unattended motion: hopper empty, D cells out, at most 3 portions)
+
+About 45 minutes: three over-the-air installs to bank 1 (no bank-0 write) and four feeds, each driving at most about 10 s.
+
+1. **Before.** `wellfed-bench status`: relay 1 on, UART relays closed, no capture or server running; the hotspot up; the feeder answers at its address with the `feeder` build confirmed on bank 1. Note the journal's high water from `wellfed status`.
+2. **Install `feed-stall`:** `wellfed-bench ota fw16-stall-20261026-01 --build --firmware feeder --variant feed-stall` from the main checkout's root (or `--root` to it), and wait for the build to confirm. A reset during the trial would count against it, so no feed runs before the confirmation.
+3. **Each feed** (names `fw16-stall-20261026-NN`, `fw16-stopfail-20261026-NN`):
+   1. Start a 180 s UART capture: `wellfed-bench capture NAME-uart --seconds 180`.
+   2. Start the logic analyzer on all eight channels: `sigrok-cli --driver fx2lafw --config samplerate=1M --time 60000 --channels D0,D1,D2,D3,D4,D5,D6,D7 --output-format binary --output-file private/captures/NAME-la.bin`.
+   3. `wellfed feed --portions N --address 10.42.103.172`. In a long case the board resets mid-feed and the client loses its session without a `Fed` event: the feed is uncertain, and is never sent again.
+   4. Watch the UART for the expected records. **Stop condition:** a drive still running 1 s after it should have ended (3 s after `PLOWN1 state=4` for the stalls and the short failed stop, 11 s for the long failed stop, past the hold's own bound), or any motion after a reset, means power off at once: `wellfed-bench off` (after the capture ends, or `boot` cuts power itself), then stop and report.
+   5. After the reset, the next boot must show `PLOWN1 open` (the hooks armed) before anything else runs. If arming was skipped (a store write was in progress at the reset, the once-per-power-cycle rule), a `wellfed-bench boot` power cycle lets the owner open; the pending feed then resolves.
+   6. `wellfed events --address …` shows the `Fed` event: failed, cancelled or uncertain as the table says.
+4. **Order:** `feed-stall` with 1 portion, then 2; install `stop-fail` (`fw16-stopfail-20261026-01`), then 1 portion, then 2.
+5. **Restore:** install the normal `feeder` from the branch's base (`--build --firmware feeder`), wait for its confirmation, check `wellfed-bench status`, and leave the hotspot up with no capture or server running.
+
+**Pass:** for every feed, the analyzer shows one drive (D3 HIGH, clockwise) that ends where the table says: about 2.2 s for both stalls (the lease), about 2.3 s for the short failed stop, and at the reset for the long one (2 s plus at most about 7 s); the UART shows the injection record, the stop or reset, and the expected `fed` record on the right boot, with no second drive after a reset and no `PLINJ1 stall … end` or `hold lifted` after a long case. A flat analyzer capture through a drive the firmware reports is a failed capture, not evidence.
+
+### Carried items owned by FW16
+
+| Item | Where it stands |
+| --- | --- |
+| Production watchdog clock bounds | The October 25 resets put the clock near 32.8 kHz (physical); the bounds stay 24–54 kHz. FW16 depends only on the wide bound: the long injections are sized past its 6 s ceiling, and the two long runs add two more reset timings. Narrowing the bounds is not needed for FW16; carry it to FW19, whose stop timing under motion uses them |
+| Owner-lease expiry while the loop stalls, on hardware | Closed by the `feed-stall` runs once they pass |
+| PA18 feedback | Closed (physical, October 25): PA18 is the rotor's mark sensor, one mark per portion, credited on its rise. Counting food through the outlet beam (PA16 changed as food fell, not yet qualified) goes to FW18, which measures delivered food |
+| Motor current on ADC channel 4 | Loaded readings exist (physical): scaled 59–64 mean, about 166 max empty, 82–87 mean with food, a 333 start-up surge on one poll, now ignored unless two polls agree. Scaling to milliamps needs a reference measurement of the motor's current (a meter or USB power meter in series), which is the owner's; with it, the thresholds go to FW19 |
+| Journal reservation before motion and result after a verified stop | Closed (physical, October 25): every owner feed reserved before driving and finished durably after a verified stop, cancellation during motion included, and an interrupted feed resolves as uncertain at the next boot (AR24). The failed-stop runs add the case where the stop does not verify at once |
+
+**Static finding:** a supervision reset that lands while a store write holds the flash (the event ring's write of the `Fed` event, in the seconds between a short case's result and its reset) leaves the attempt marker set, so the next boot skips arming and the owner does not open until a power cycle. The product's resets have the same exposure; the bench plan checks for it. Whether a reset the runtime itself withheld should clear the marker is FW58's call (reset storms and what confirmation proves).
 

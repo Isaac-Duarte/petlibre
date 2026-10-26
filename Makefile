@@ -17,12 +17,17 @@ check: check-rust check-deps check-cross check-virtual-feeder check-docs
 PRODUCTION_LINTS = -D clippy::unwrap_used -D clippy::cast_possible_truncation \
 	-D clippy::needless_pass_by_value -D unreachable_pub
 
+# The last three lines check the `stop-fail` bench variant's injection in
+# wellfed-hal, which no workspace build enables.
 check-rust:
 	cargo fmt --all -- --check
 	cargo clippy --locked --workspace --all-targets -- -D warnings
 	cargo clippy --locked --workspace --lib --bins -- -D warnings $(PRODUCTION_LINTS)
 	cargo nextest run --locked --workspace --all-targets
 	cargo test --locked --workspace --doc
+	cargo clippy --locked -p wellfed-hal --features stop-fail --all-targets -- -D warnings
+	cargo clippy --locked -p wellfed-hal --features stop-fail --lib -- -D warnings $(PRODUCTION_LINTS)
+	cargo nextest run --locked -p wellfed-hal --features stop-fail --test inject
 
 # Licenses, advisories, duplicate versions and sources (deny.toml), then the
 # out-of-workspace fuzz crate's own lockfile under its own policy. Advisories

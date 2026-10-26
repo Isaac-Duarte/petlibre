@@ -130,9 +130,17 @@ impl MotorPins for BoardPins {
 
         let _guard = IrqGuard::lock();
         let value = if a { MOTOR_A_BIT } else { 0 } | if b { MOTOR_B_BIT } else { 0 };
-        // SAFETY: the motor pins, which the board owns; the gate makes this
-        // its only writer while the board is open.
-        unsafe { sdk::gpio_port_write(GPIO_PORT_A, MOTOR_MASK, value) };
+        // The `stop-fail` variant's STOP that does not take: the readback
+        // below then fails as for a pad that did not follow its latch.
+        #[cfg(feature = "stop-fail")]
+        let skipped = stopped && crate::inject::stop_skipped();
+        #[cfg(not(feature = "stop-fail"))]
+        let skipped = false;
+        if !skipped {
+            // SAFETY: the motor pins, which the board owns; the gate makes
+            // this its only writer while the board is open.
+            unsafe { sdk::gpio_port_write(GPIO_PORT_A, MOTOR_MASK, value) };
+        }
         let verified = sdk::gpio_port_read(GPIO_PORT_A, MOTOR_MASK) & MOTOR_MASK == value;
         if !verified {
             // The board faults after this call; within it, no later write drives.

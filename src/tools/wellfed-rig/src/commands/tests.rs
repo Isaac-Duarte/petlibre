@@ -1973,6 +1973,16 @@ fn a_variant_needs_the_firmware_that_declares_it() {
     assert_eq!(Variant::OwnerStall.firmware(), Firmware::Feeder);
     assert_eq!(ota::parse_variant("gap-probe"), Ok(Variant::GapProbe));
     assert_eq!(Variant::GapProbe.firmware(), Firmware::Feeder);
+    for (name, variant) in [
+        ("feed-stall", Variant::FeedStall),
+        ("stop-fail", Variant::StopFail),
+    ] {
+        assert_eq!(ota::parse_variant(name), Ok(variant));
+        assert_eq!(
+            (variant.name(), variant.firmware()),
+            (name, Firmware::Feeder)
+        );
+    }
 }
 
 #[test]

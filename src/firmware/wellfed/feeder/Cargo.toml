@@ -21,6 +21,13 @@ entropy = []
 owner-stall = []
 # Measure the loop's and a priority-4 task's scheduling gaps; feeds refused.
 gap-probe = []
+# Stall the loop once, 2 s into each feed's drive: 600 ms for a 1-portion
+# feed, 8 s for more, for the bench to watch the motor lease and the beat.
+feed-stall = []
+# Make each feed's stop not take, 2 s into its drive: held 300 ms for a
+# 1-portion feed, 8 s for more, for the bench to watch the stop retry and
+# the watchdog.
+stop-fail = ["wellfed-sdk/stop-fail"]
 # Nothing but another build identity: installed after the feeder, it goes
 # through a trial and still serves the device API.
 twin = []
@@ -60,6 +67,12 @@ summary = "Stalls the loop 3 s at 2 minutes and 12 s at 3 minutes; at rest the f
 
 [package.metadata.wellfed.variants.gap-probe]
 summary = "Logs the scheduling gaps of the loop and of a priority-4 probe task every 10 s, with the Wi-Fi counters, for comparing them across rejoins; feeds are refused"
+
+[package.metadata.wellfed.variants.feed-stall]
+summary = "Stalls the loop once in each feed, 2 s into its drive: 600 ms for one portion (the motor lease stops the drive and the feed is recorded failed before the faulted owner resets the board), 8 s for more (the lapsed beat resets the board mid-feed and the next boot resolves the feed as uncertain)"
+
+[package.metadata.wellfed.variants.stop-fail]
+summary = "Cancels each feed 2 s into its drive with STOP writes held so the stop does not take: 300 ms for one portion (the timer retries the stop until it takes, then the feed is recorded cancelled before the faulted owner resets the board), 8 s for more (only the watchdog reset ends the drive; the hold lifts by itself after 8 s)"
 
 [package.metadata.wellfed.variants.twin]
 summary = "The feeder unchanged under another build identity, so the bench's drills can install a build that goes through a trial and still serves the device API"

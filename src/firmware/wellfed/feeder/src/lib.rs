@@ -17,7 +17,10 @@
 //! estimate, the `owner-stall` variant stalls the loop on purpose, for the
 //! bench to watch the owner's beat lapse, and the `gap-probe` variant
 //! measures how long the loop and a priority-4 task wait across Wi-Fi
-//! rejoins (`gaps`), with feeds refused.
+//! rejoins (`gaps`), with feeds refused. The `feed-stall` and `stop-fail`
+//! variants inject a stalled loop or a stop that does not take into each
+//! feed's drive ([`faults`]), for the bench to show the supervision that
+//! ends a drive without them.
 //!
 //! [product architecture]: ../../../../docs/firmware/product-architecture.md
 #![cfg_attr(target_os = "none", no_std)]
@@ -28,6 +31,7 @@ compile_error!("wellfed-fw-feeder target builds are KM4-only");
 #[cfg(target_os = "none")]
 mod app;
 pub mod entropy;
+pub mod faults;
 pub mod feeding;
 pub mod gaps;
 pub mod platform;

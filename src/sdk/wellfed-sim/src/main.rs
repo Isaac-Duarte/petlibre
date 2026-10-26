@@ -947,6 +947,9 @@ unsafe fn execute(world: *mut World, command: Command) -> u64 {
             Command::Owner { args: [run] } => (*world).run_owner = run.0,
             Command::Timer { args: [run] } => (*world).run_timer = run.0,
             Command::AdcStuck { args: [stuck] } => fake::with(|h| h.stuck = stuck.0),
+            Command::StopFails { args: [fails] } => {
+                fake::with(|h| h.blocked_motor_write = fails.0);
+            }
             Command::Current { args: [level] } => (*world).held_current = Some(level.0),
             Command::Battery { args: [level] } => fake::with(|h| h.battery_adc = level.0),
 

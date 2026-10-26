@@ -194,7 +194,7 @@ pub enum ArgError {
     UnknownFirmware { text: String },
     #[error(
         "unknown variant {text:?}; the trial firmware has stall and fail, the feeder entropy, \
-         owner-stall, gap-probe and twin"
+         owner-stall, gap-probe, feed-stall, stop-fail and twin"
     )]
     UnknownVariant { text: String },
     #[error("{at:?} is not a byte offset")]
@@ -309,6 +309,12 @@ pub enum Variant {
     /// The feeder logging the loop's and a priority-4 task's scheduling
     /// gaps, with feeds refused; no motion.
     GapProbe,
+    /// The feeder stalling its loop once in each feed's drive; moves the
+    /// motor only for a feed request, like the feeder.
+    FeedStall,
+    /// The feeder making each feed's stop not take for a while; moves the
+    /// motor only for a feed request, like the feeder.
+    StopFail,
     /// The feeder unchanged under another build identity, so installing it
     /// after the baseline goes through a trial and still serves the device
     /// API.
@@ -324,6 +330,8 @@ impl Variant {
             Self::Entropy => "entropy",
             Self::OwnerStall => "owner-stall",
             Self::GapProbe => "gap-probe",
+            Self::FeedStall => "feed-stall",
+            Self::StopFail => "stop-fail",
             Self::Twin => "twin",
         }
     }
@@ -332,7 +340,12 @@ impl Variant {
     pub(crate) fn firmware(self) -> Firmware {
         match self {
             Self::Stall | Self::Fail => Firmware::Trial,
-            Self::Entropy | Self::OwnerStall | Self::GapProbe | Self::Twin => Firmware::Feeder,
+            Self::Entropy
+            | Self::OwnerStall
+            | Self::GapProbe
+            | Self::FeedStall
+            | Self::StopFail
+            | Self::Twin => Firmware::Feeder,
         }
     }
 }
@@ -345,6 +358,8 @@ pub fn parse_variant(text: &str) -> std::result::Result<Variant, ArgError> {
         "entropy" => Ok(Variant::Entropy),
         "owner-stall" => Ok(Variant::OwnerStall),
         "gap-probe" => Ok(Variant::GapProbe),
+        "feed-stall" => Ok(Variant::FeedStall),
+        "stop-fail" => Ok(Variant::StopFail),
         "twin" => Ok(Variant::Twin),
         "pulse" => Err(ArgError::PulseVariant),
         other => Err(ArgError::UnknownVariant { text: other.into() }),
@@ -414,8 +429,8 @@ pub struct OtaArgs {
     /// speaker, blink, trial or feeder.
     #[arg(long, value_parser = parse_firmware)]
     pub firmware: Option<Firmware>,
-    /// Variant for --build: stall or fail with --firmware trial, entropy, owner-stall or
-    /// gap-probe with --firmware feeder.
+    /// Variant for --build: stall or fail with --firmware trial, entropy, owner-stall,
+    /// gap-probe, feed-stall, stop-fail or twin with --firmware feeder.
     #[arg(long, value_parser = parse_variant)]
     pub variant: Option<Variant>,
     /// wellfed-stock config (root-relative): its hotspot interface and

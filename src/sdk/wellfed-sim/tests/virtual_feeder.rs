@@ -325,6 +325,110 @@ fn stalled_owner_independent_timer_and_watchdog_reset() {
     assert!((3000 + 1000 + 2426..=3000 + 1000 + 5460).contains(&reset[0]));
 }
 
+/// When the motor first read stopped at or after `from`.
+fn stopped_at(report: &Value, from: u64) -> u64 {
+    events(report, "outputs")
+        .filter(|e| e["motor"] == 0)
+        .filter_map(|e| e["at_ms"].as_u64())
+        .find(|&at| at >= from)
+        .expect("the motor stopped")
+}
+
+/// The `feed-stall` variant's short stall: the loop holds 600 ms, past the
+/// 200 ms motor lease and inside the 1 s beat. The supervisor stops the
+/// motor; the owner, stepped again, records the feed failed (output)
+/// durably, and its lapsed beat then resets the board, whose next boot is
+/// idle with nothing pending.
+#[test]
+fn a_stall_inside_the_beat_stops_by_the_lease_and_records_the_feed() {
+    let report = passing(
+        vec![
+            act(SUBMIT, "submit", &[1, 1]),
+            act(2200, "owner", &[0]),
+            act(2800, "owner", &[1]),
+            expect(
+                2900,
+                json!({"boots": 1, "state": "fault", "fault": "hardware", "outcome": "failed",
+                       "reason": "output", "durable": true, "pending": false, "motor": 0}),
+            ),
+            expect(
+                10_000,
+                json!({"boots": 2, "state": "idle", "pending": false, "high_water_id": 1,
+                       "motor": 0}),
+            ),
+        ],
+        10_100,
+        "single",
+    );
+
+    let stopped = stopped_at(&report, 2200);
+    assert!((2200..=2200 + 200 + 20).contains(&stopped), "{stopped}");
+}
+
+/// The `stop-fail` variant's short hold: a cancel's stop does not take for
+/// 300 ms. The timer interrupt retries it every tick and the first retry
+/// after the hold stops the motor; the cancellation is then recorded
+/// durably, before the faulted owner's lapsed beat resets the board.
+#[test]
+fn a_stop_that_does_not_take_is_retried_until_it_does() {
+    let report = passing(
+        vec![
+            act(SUBMIT, "submit", &[1, 1]),
+            act(2200, "stop_fails", &[1]),
+            act(2200, "cancel", &[1]),
+            expect(2490, json!({"motor": 1, "durable": false})),
+            act(2500, "stop_fails", &[0]),
+            expect(
+                2600,
+                json!({"boots": 1, "state": "fault", "fault": "hardware",
+                       "outcome": "cancelled", "durable": true, "motor": 0}),
+            ),
+            expect(
+                10_000,
+                json!({"boots": 2, "state": "idle", "pending": false}),
+            ),
+        ],
+        10_100,
+        "single",
+    );
+
+    let stopped = stopped_at(&report, 2200);
+    assert!((2500..=2500 + 10).contains(&stopped), "{stopped}");
+}
+
+/// The `stop-fail` variant's long hold: no stop takes. Only the watchdog
+/// ends the drive: the owner's beat lapses 1 s after its last, and the
+/// expiry follows. The next boot resolves the feed as uncertain.
+#[test]
+fn a_stop_that_never_takes_ends_in_the_watchdog_reset() {
+    let report = passing(
+        vec![
+            act(SUBMIT, "submit", &[1, 2]),
+            act(2200, "stop_fails", &[1]),
+            act(2200, "cancel", &[1]),
+            expect(3000, json!({"boots": 1, "motor": 1, "durable": false})),
+            expect(
+                10_000,
+                json!({"boots": 2, "state": "terminal", "outcome": "uncertain",
+                       "durable": true, "pending": false, "motor": 0}),
+            ),
+        ],
+        10_100,
+        "single",
+    );
+
+    let reset = events(&report, "watchdog_reset_requested")
+        .map(|e| e["at_ms"].as_u64().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(reset.len(), 1);
+    assert!((2200 + 1000 + 2426 - 20..=2200 + 1000 + 5460).contains(&reset[0]));
+    assert_eq!(
+        stopped_at(&report, 2200),
+        reset[0],
+        "driving until the reset"
+    );
+}
+
 #[test]
 fn reboot_after_completion_rejects_replay_and_accepts_new_id() {
     passing(

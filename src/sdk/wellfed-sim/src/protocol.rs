@@ -360,6 +360,11 @@ pub enum Command {
     AdcStuck {
         args: [Flag; 1],
     },
+    /// Motor writes do not take: the pins keep what they drive, and a
+    /// write's readback fails, as the `stop-fail` variant's held STOP does.
+    StopFails {
+        args: [Flag; 1],
+    },
     /// Hold the current channel at this reading, as a jam would, in place
     /// of the plant's.
     Current {

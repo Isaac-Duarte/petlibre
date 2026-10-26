@@ -94,6 +94,8 @@ fn loop_task() -> u32 {
     gap_probe::LOOP.wake(sdk::systimer_ticks());
     #[cfg(feature = "owner-stall")]
     stall::step();
+    #[cfg(any(feature = "feed-stall", feature = "stop-fail"))]
+    inject::step(&feeding);
     let feed_delay = feeding.step(
         |record| log(format_args!("PLOWN1 {record}\r\n")),
         |body| feeder.record_outcome(sdk::uptime_ms(), body),
@@ -158,6 +160,120 @@ mod stall {
         }
         sdk::log(c"PLOWN1 stall end=1\r\n");
         DONE.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+/// The `feed-stall` and `stop-fail` variants: one fault in each feed's
+/// drive, chosen by `faults::Trigger`, injected before the owner's step so
+/// a cancel it asks for is taken in the same pass. Every boot is armed,
+/// so the image goes back out after the run.
+#[cfg(any(feature = "feed-stall", feature = "stop-fail"))]
+mod inject {
+    use wellfed_sdk::hal::sdk;
+    use wellfed_sdk::{Slot, log};
+
+    use crate::faults::{Fault, Injection, Trigger};
+    use crate::feeding::Feeding;
+
+    #[cfg(all(feature = "feed-stall", feature = "stop-fail"))]
+    compile_error!("feed-stall and stop-fail are separate variants");
+
+    #[cfg(feature = "feed-stall")]
+    const FAULT: Fault = Fault::Stall;
+    #[cfg(feature = "stop-fail")]
+    const FAULT: Fault = Fault::FailedStop;
+
+    /// The loop task's.
+    static TRIGGER: Slot<Trigger> = Slot::filled(Trigger::new(FAULT));
+
+    pub fn step(feeding: &Feeding) {
+        let Some(mut trigger) = TRIGGER.enter() else {
+            return;
+        };
+        #[cfg(feature = "stop-fail")]
+        hold::report();
+
+        let Some(injection) = trigger.step(feeding.driving(), sdk::uptime_ms()) else {
+            return;
+        };
+        log(format_args!(
+            "PLINJ1 inject id={} fault={} severity={} ms={}\r\n",
+            injection.feed,
+            injection.fault.code(),
+            injection.severity.code(),
+            injection.ms()
+        ));
+        match injection.fault {
+            Fault::Stall => stall(&injection),
+            #[cfg(feature = "stop-fail")]
+            Fault::FailedStop => hold::fail_stop(feeding, &injection),
+            #[cfg(not(feature = "stop-fail"))]
+            Fault::FailedStop => {}
+        }
+    }
+
+    /// Spins with interrupts enabled, so the supervision timer and the
+    /// runtime's watchdog feeder run while the owner is not stepped.
+    fn stall(injection: &Injection) {
+        let from = sdk::uptime_ms();
+        while sdk::uptime_ms().wrapping_sub(from) < injection.ms() {
+            core::hint::spin_loop();
+        }
+
+        // After a long stall, only a loop the watchdog did not reset gets here.
+        log(format_args!(
+            "PLINJ1 stall id={} end ms={}\r\n",
+            injection.feed,
+            sdk::uptime_ms().wrapping_sub(from)
+        ));
+    }
+
+    /// The failed stop: STOP writes held, then the feed cancelled, so the
+    /// stop the owner asks for, and every retry until the hold lifts, fails
+    /// its readback.
+    #[cfg(feature = "stop-fail")]
+    mod hold {
+        use core::sync::atomic::{AtomicBool, Ordering};
+
+        use wellfed_sdk::hal::inject;
+        use wellfed_sdk::log;
+
+        use crate::faults::Injection;
+        use crate::feeding::Feeding;
+
+        /// A hold is armed whose end is not yet logged.
+        static WATCHING: AtomicBool = AtomicBool::new(false);
+
+        pub fn fail_stop(feeding: &Feeding, injection: &Injection) {
+            inject::hold_stops(injection.ms());
+            WATCHING.store(true, Ordering::Relaxed);
+
+            let cancelled = u32::try_from(injection.feed).is_ok_and(|feed| feeding.cancel(feed));
+            log(format_args!(
+                "PLINJ1 stop id={} cancel={}\r\n",
+                injection.feed,
+                u8::from(cancelled)
+            ));
+        }
+
+        /// Logs the hold's end, with how many STOP writes it skipped: the
+        /// timer interrupt's retries, one a tick, and the owner's own.
+        pub fn report() {
+            if !WATCHING.load(Ordering::Relaxed) {
+                return;
+            }
+            let hold = inject::status();
+            if hold.armed {
+                return;
+            }
+
+            WATCHING.store(false, Ordering::Relaxed);
+            log(format_args!(
+                "PLINJ1 hold lifted={} skipped={}\r\n",
+                u8::from(hold.lifted),
+                hold.skipped
+            ));
+        }
     }
 }
 

@@ -261,11 +261,7 @@ async fn main() -> Result<()> {
                 (State::Device(config), _) => (config.mqtt_listen, DeviceAuth::device(&config)),
                 (State::Unenrolled(config), Some(minutes)) => (
                     config.mqtt_listen,
-                    DeviceAuth::enrolling(
-                        &config,
-                        Enrollment::path(&path),
-                        Duration::from_secs(minutes * 60),
-                    ),
+                    DeviceAuth::enrolling(&config, &path, Duration::from_secs(minutes * 60)),
                 ),
                 (State::Unenrolled(_), None) => {
                     bail!("no feeder is enrolled; pass --enroll-minutes to admit one")

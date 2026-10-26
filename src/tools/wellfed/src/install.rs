@@ -27,14 +27,14 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use clap::Args;
 use wellfed_client::install::{
-    Install, Provision, Replacement, Requested, SETUP_ADDRESS, SetupFrame, Step, StockPower,
-    StockView, VerifiedBackup,
+    FeederTrust, Install, Provision, Replacement, Requested, SETUP_ADDRESS, SetupFrame, Step,
+    StockPower, StockView, VerifiedBackup, manifest_version,
 };
-use wellfed_client::update::{Image, Installer, Next};
+use wellfed_client::update::{Image, InstallError as UpdateError, Installer, Next};
 use wellfed_formats::bench::lease::Lease;
 use wellfed_formats::manifest::BuildManifest;
 use wellfed_formats::stock::{
-    ImageLease, ServerConfig, StockStatus, TrialAnswer, TrialPhase, TrialRequest,
+    ImageLease, OtaReport, ServerConfig, StockStatus, TrialAnswer, TrialPhase, TrialRequest,
 };
 use wellfed_model::{Answer, Op};
 use wellfed_proto::api::PORT;
@@ -62,6 +62,11 @@ const CLOSE_WAIT: Duration = Duration::from_secs(150);
 const CONFIRM_WAIT: Duration = Duration::from_secs(6 * 60);
 /// The image server's lease appears within seconds of its start.
 const IMAGES_WAIT: Duration = Duration::from_secs(30);
+/// How long a child process gets to exit after SIGTERM.
+const STOP_WAIT: Duration = Duration::from_secs(5);
+/// Sessions the promotion reopens at most: a feeder that keeps dropping
+/// them is not coming back.
+const REOPEN_MAX: u32 = 20;
 /// The OTA container's header precedes the bank contents.
 const CONTAINER_HEADER: usize = 32;
 
@@ -166,10 +171,11 @@ pub(crate) async fn run(args: InstallArgs) -> Result<()> {
         }
     };
 
+    let version = manifest_version(&manifest).context("--manifest is not a signed manifest")?;
     let mut install = if args.from_bank0 {
-        Install::from_bank0(&build)
+        Install::from_bank0(&build, version)
     } else {
-        Install::new(provision(&args, &config)?, &build)?
+        Install::new(provision(&args, &config)?, &build, version)?
     };
     if let Some(backup) = backup {
         install.backup(backup);
@@ -238,6 +244,44 @@ fn stock_bin(given: Option<&Path>) -> Result<PathBuf> {
     Ok(beside)
 }
 
+/// SIGTERM, up to [`STOP_WAIT`] to exit, then SIGKILL.
+async fn stop_child(mut child: Child) {
+    let pid = child
+        .id()
+        .and_then(|id| i32::try_from(id).ok())
+        .and_then(rustix::process::Pid::from_raw);
+    if let Some(pid) = pid
+        && rustix::process::kill_process(pid, rustix::process::Signal::TERM).is_ok()
+        && tokio::time::timeout(STOP_WAIT, child.wait()).await.is_ok()
+    {
+        return;
+    }
+    let _ = child.kill().await;
+}
+
+/// Whether the owner recognizes the feeder the broker trusted. Trust on
+/// first use admits whichever stock-shaped client reached the broker first;
+/// a host on the LAN that won that race could otherwise be walked through
+/// the whole install, so the owner checks the device ID (on the feeder's
+/// label or in the vendor app) and the address (the router's client list)
+/// before anything is sent.
+fn recognized(trust: &FeederTrust) -> Result<bool> {
+    let (device, address) = match trust {
+        FeederTrust::Enrolled { device, address } => (device, address),
+        // The bench: its credentials came from a capture of this feeder.
+        FeederTrust::Captured => return Ok(true),
+        FeederTrust::Contested => return Ok(false),
+    };
+    eprintln!(
+        "The broker trusted feeder {device}, connecting from {address}. Is this your feeder? [y/N]"
+    );
+    let mut line = String::new();
+    std::io::stdin()
+        .read_line(&mut line)
+        .context("read standard input")?;
+    Ok(matches!(line.trim(), "y" | "Y" | "yes"))
+}
+
 /// Wait for the owner to press Enter after `prompt`.
 fn confirm(prompt: &str) -> Result<()> {
     eprintln!("{prompt} Then press Enter.");
@@ -254,12 +298,19 @@ impl Run {
             match install.step() {
                 Step::SendFrame(frame) => {
                     self.serve().await?;
-                    self.send_frame(&frame)?;
+                    self.send_frame(frame.bytes())?;
                     install.frame_sent();
                 }
                 Step::AwaitStock => {
                     self.serve().await?;
                     self.await_stock(install).await?;
+                }
+                Step::ConfirmFeeder(trust) => {
+                    if recognized(&trust)? {
+                        install.feeder_confirmed();
+                    } else {
+                        install.feeder_rejected();
+                    }
                 }
                 Step::RequestInstall => {
                     let outcome = self.request().await?;
@@ -326,13 +377,16 @@ impl Run {
         Ok(())
     }
 
+    /// Stop the image server, then `serve`. Each gets SIGTERM and a bounded
+    /// wait first: `serve` stops its broker child on SIGTERM (a SIGKILL
+    /// would orphan it on the MQTT port, its enrollment window maybe still
+    /// open), and `ota-images` removes its lease.
     async fn stop(&mut self) {
         for child in [self.images.take(), self.serve.take()]
             .into_iter()
             .flatten()
         {
-            let mut child = child;
-            let _ = child.kill().await;
+            stop_child(child).await;
         }
     }
 
@@ -410,13 +464,15 @@ impl Run {
         };
         let answered = self.api.post::<IgnoredAny>("/api/ota/trial", &body);
 
-        let recorded = self
-            .stock_status()
-            .ok()
-            .and_then(|status| status.trial(&id.to_string()).map(|trial| trial.phase));
+        // Refused only on the server's word and a ledger read that shows no
+        // record; anything unread is uncertain.
+        let recorded = match self.stock_status() {
+            Ok(status) => Ok(status.trial(&id.to_string()).map(|trial| trial.phase)),
+            Err(error) => Err(error),
+        };
         Ok(match (answered, recorded) {
-            (Ok(_), _) | (_, Some(TrialPhase::Submitted)) => Requested::Sent,
-            (Err(ApiError::Refused { .. }), None) => Requested::Refused,
+            (Ok(_), _) | (_, Ok(Some(TrialPhase::Submitted))) => Requested::Sent,
+            (Err(ApiError::Refused { .. }), Ok(None)) => Requested::Refused,
             _ => Requested::Uncertain,
         })
     }
@@ -455,7 +511,7 @@ impl Run {
         let mut shown = None;
         while Instant::now() < deadline {
             if let Ok(status) = self.stock_status() {
-                let report = status.ota_reports.last();
+                let report = latest_report(&status, &id);
                 if let Some(progress) = report.and_then(|report| report.progress) {
                     install.stock_progress(progress);
                 }
@@ -613,9 +669,12 @@ impl Run {
         }
     }
 
-    /// Push the signed update from bank 0 until bank 1 is activated; the
-    /// manifest's version, or the update's own error.
-    async fn promote(&self) -> Result<Result<u32, wellfed_client::update::InstallError>> {
+    /// Push the signed update from bank 0 until bank 1 is activated, or the
+    /// update's own error. A dropped session loses nothing: the installer
+    /// resumes on the next one (chunks are idempotent by offset, and bank 0
+    /// waits a minute for the next), so a lost answer or a restart reopens
+    /// the session rather than ending the promotion.
+    async fn promote(&self) -> Result<Result<(), UpdateError>> {
         let payload = self
             .container
             .get(CONTAINER_HEADER..)
@@ -627,22 +686,36 @@ impl Run {
         });
 
         eprintln!("Promoting: bank 0 writes the replacement into bank 1.");
-        let mut connection = self.connect().await?;
-        let bank = match connection
-            .ask(crate::device::random()?, &Op::Status)
-            .await?
-        {
-            Answer::Status(status) => status.bank,
-            other => bail!("the feeder answered {other:?} to a status request"),
-        };
-        installer.opened(bank);
+        let mut connection = None;
+        let mut reopened = 0;
         let mut written = 0;
         loop {
+            let session = match &mut connection {
+                Some(session) => session,
+                None if reopened >= REOPEN_MAX => return Ok(Err(UpdateError::Lost)),
+                None => {
+                    reopened += 1;
+                    let Some(session) = self.reopen(&mut installer).await? else {
+                        return Ok(Err(UpdateError::Lost));
+                    };
+                    connection.insert(session)
+                }
+            };
+
             match installer.poll() {
                 Next::Send(sent, op) => {
-                    let answer = connection.ask(crate::device::random()?, &op).await?;
-                    // An answer the installer rejects ends the install; poll says so.
-                    let _ = installer.answer(sent, &answer);
+                    match session.ask(crate::device::random()?, &op).await {
+                        // An answer the installer rejects ends the install;
+                        // the next poll says so.
+                        Ok(answer) => {
+                            let _ = installer.answer(sent, &answer);
+                        }
+                        Err(error) => {
+                            eprintln!("  The session dropped ({error}); resuming on a new one.");
+                            installer.lost();
+                            connection = None;
+                        }
+                    }
                     if let Some(view) = installer.view()
                         && view.written / 65_536 != written / 65_536
                     {
@@ -652,17 +725,41 @@ impl Run {
                 }
                 Next::Wait => tokio::time::sleep(Duration::from_millis(200)).await,
                 Next::Activated => {
-                    let version = installer.view().map_or(0, |view| view.version);
-                    eprintln!("Activated version {version}: the feeder restarts into bank 1.");
-                    return Ok(Ok(version));
+                    eprintln!("Activated: the feeder restarts into bank 1.");
+                    return Ok(Ok(()));
                 }
                 Next::Failed(error) => return Ok(Err(error)),
-                // From bank 0 the offer installs directly; a feeder that
-                // gives way was on bank 1, which this run never is.
-                Next::Reconnect | Next::Cancelled => {
-                    return Ok(Err(wellfed_client::update::InstallError::Lost));
+                // Bank 1 gave way (a feeder that answered from bank 1):
+                // reconnect once it has restarted into bank 0.
+                Next::Reconnect => {
+                    installer.lost();
+                    connection = None;
+                    tokio::time::sleep(POLL).await;
                 }
+                Next::Cancelled => return Ok(Err(UpdateError::Lost)),
             }
+        }
+    }
+
+    /// A new session for the promotion, with the installer told which bank
+    /// answers; `None` when the feeder does not come back in time.
+    async fn reopen(
+        &self,
+        installer: &mut Installer<'_>,
+    ) -> Result<Option<wellfed_connect::Connection>> {
+        let deadline = Instant::now() + REPLACEMENT_WAIT;
+        loop {
+            if let Ok(mut session) = self.connect().await
+                && let Ok(Answer::Status(status)) =
+                    session.ask(crate::device::random()?, &Op::Status).await
+            {
+                installer.opened(status.bank);
+                return Ok(Some(session));
+            }
+            if Instant::now() >= deadline {
+                return Ok(None);
+            }
+            tokio::time::sleep(POLL).await;
         }
     }
 
@@ -696,6 +793,16 @@ impl Run {
     }
 }
 
+/// Stock's latest OTA report on request `id`: one naming it, or naming
+/// none, received since the request was recorded. The server keeps reports
+/// from earlier requests too.
+fn latest_report<'a>(status: &'a StockStatus, id: &str) -> Option<&'a OtaReport> {
+    let since = status.trial(id)?.created_at;
+    status.ota_reports.iter().rev().find(|report| {
+        report.received_at >= since && report.message_id.as_deref().is_none_or(|m| m == id)
+    })
+}
+
 /// The steps' view of stock, from the server's status document.
 fn view(status: &StockStatus) -> StockView {
     let attribute = |name: &str| status.attributes.get(name);
@@ -709,6 +816,14 @@ fn view(status: &StockStatus) -> StockView {
         power: attribute("powerType")
             .and_then(serde_json::Value::as_u64)
             .map(StockPower::from_type),
+        trust: match &status.enrollment {
+            None => FeederTrust::Captured,
+            Some(enrollment) if enrollment.contested => FeederTrust::Contested,
+            Some(enrollment) => FeederTrust::Enrolled {
+                device: enrollment.device.clone(),
+                address: enrollment.address.to_string(),
+            },
+        },
     }
 }
 
@@ -741,6 +856,69 @@ mod tests {
         let fresh = view(&status);
         assert_eq!(fresh.version.as_deref(), Some("1.1.15"));
         assert!(fresh.online);
+        assert_eq!(fresh.trust, FeederTrust::Captured);
+
+        let mut enrollment = wellfed_formats::stock::StockEnrollment {
+            device: "AF_NEW".into(),
+            address: "192.168.4.20".parse().unwrap(),
+            contested: false,
+        };
+        status.enrollment = Some(enrollment.clone());
+        assert_eq!(
+            view(&status).trust,
+            FeederTrust::Enrolled {
+                device: "AF_NEW".into(),
+                address: "192.168.4.20".into()
+            }
+        );
+        enrollment.contested = true;
+        status.enrollment = Some(enrollment);
+        assert_eq!(view(&status).trust, FeederTrust::Contested);
+    }
+
+    #[test]
+    fn progress_is_read_only_from_this_request_s_reports() {
+        use wellfed_formats::stock::{OtaCommand, TrialInput, TrialRecord};
+
+        let id = uuid::Uuid::from_u128(7);
+        let at = |seconds| chrono::DateTime::from_timestamp(seconds, 0).unwrap();
+        let report = |seconds, message: Option<&str>, progress| OtaReport {
+            received_at: at(seconds),
+            command: OtaCommand::Progress,
+            message_id: message.map(str::to_string),
+            phase: None,
+            state: None,
+            progress: Some(progress),
+            code: None,
+            error_code: None,
+        };
+        let status = StockStatus {
+            ota_trials: vec![TrialRecord {
+                sequence: 1,
+                input: TrialInput {
+                    request_id: id,
+                    server_token: id,
+                },
+                created_at: at(100),
+                updated_at: at(100),
+                phase: TrialPhase::Submitted,
+                download_reported: false,
+                resolution_note: None,
+                image_sha256: String::new(),
+                build: None,
+                stock_reported: false,
+            }],
+            ota_reports: vec![
+                report(150, Some(&id.to_string()), 40),
+                // An earlier request's, and one from before this request.
+                report(160, Some("other"), 90),
+                report(50, None, 80),
+            ],
+            ..StockStatus::default()
+        };
+        let latest = latest_report(&status, &id.to_string()).unwrap();
+        assert_eq!(latest.progress, Some(40));
+        assert!(latest_report(&status, "unknown").is_none());
     }
 
     #[test]

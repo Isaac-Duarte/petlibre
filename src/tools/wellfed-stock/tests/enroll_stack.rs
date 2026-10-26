@@ -143,12 +143,38 @@ async fn the_first_stock_feeder_enrolls_and_is_then_the_only_one() {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     assert!(online, "the enrolled feeder's report reached the server");
+    let status = |http_client: reqwest::Client, token: String| async move {
+        http_client
+            .get(format!("http://{http}/api/status"))
+            .bearer_auth(token)
+            .send()
+            .await
+            .unwrap()
+            .json::<serde_json::Value>()
+            .await
+            .unwrap()
+    };
+    let shown = status(http_client.clone(), config.api_token.clone()).await;
+    assert_eq!(shown["enrollment"]["device"], DEVICE);
+    assert_eq!(shown["enrollment"]["contested"], false);
+    assert!(shown["enrollment"].get("password").is_none());
 
-    // A second feeder, or a guess at the first's password, is refused.
+    // A second feeder, or a guess at the first's password, is refused, and
+    // inside the window it contests the enrollment: no install is sent.
     let (_other, mut other_events) = stock(listen, "AF_SECOND_FEEDER", "its-own-password");
     assert!(!admitted(&mut other_events).await);
     let (_guess, mut guess_events) = stock(listen, DEVICE, "guess");
     assert!(!admitted(&mut guess_events).await);
+    let shown = status(http_client.clone(), config.api_token.clone()).await;
+    assert_eq!(shown["enrollment"]["contested"], true);
+    let refused = http_client
+        .post(format!("http://{http}/api/ota/trial"))
+        .bearer_auth(&config.api_token)
+        .json(&json!({"request_id": uuid::Uuid::new_v4(), "server_token": uuid::Uuid::new_v4()}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(refused.status(), reqwest::StatusCode::CONFLICT);
 
     reporter.abort();
     session.abort();

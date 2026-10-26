@@ -25,6 +25,7 @@ use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::{
     controller::{Rejection, Status},
+    enroll::Enrollment,
     mqtt::Request,
     ota,
 };
@@ -132,7 +133,11 @@ async fn status(
     headers: HeaderMap,
 ) -> Result<Json<Status>, ApiError> {
     authenticate(&headers, &state)?;
-    Ok(Json(state.status.borrow().clone()))
+    let mut status = state.status.borrow().clone();
+    // Read beside the config at each call: the broker child writes a
+    // contest while the server runs.
+    status.enrollment = Enrollment::view(&state.config_path);
+    Ok(Json(status))
 }
 
 async fn ota_trial_request(
@@ -141,6 +146,13 @@ async fn ota_trial_request(
     Json(input): Json<ota::trial::Input>,
 ) -> Result<Json<ota::trial::Record>, ApiError> {
     authenticate(&headers, &state)?;
+    // Which of two feeders is the owner's cannot be told; nothing is sent.
+    if Enrollment::contested_path(&state.config_path).exists() {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "the enrollment is contested: another device tried the broker during the window",
+        ));
+    }
     let lease = ota::image::current(&state.config_path, state.image_host).await;
     operation(state, |response| Request::OtaTrial(input, lease, response)).await
 }

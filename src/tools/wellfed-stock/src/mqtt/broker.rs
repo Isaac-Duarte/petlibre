@@ -17,7 +17,7 @@
 use std::{
     future::Future,
     net::{IpAddr, SocketAddr},
-    path::PathBuf,
+    path::{Path, PathBuf},
     pin::Pin,
     sync::{Arc, Mutex, PoisonError},
     time::{Duration, Instant},
@@ -39,7 +39,7 @@ use tracing::{info, warn};
 
 use crate::{
     config::{self, Config, InstallConfig},
-    enroll::Enrollment,
+    enroll::{Contest, Enrollment},
     mqtt::compat::{self, Peers},
 };
 
@@ -54,6 +54,8 @@ struct Device {
 /// Where a first-use identity is recorded, and until when one may be.
 struct Window {
     record: PathBuf,
+    /// Where a second identity inside the window is noted.
+    contested: PathBuf,
     until: Instant,
 }
 
@@ -84,12 +86,13 @@ impl DeviceAuth {
 
     /// An installer's broker: no device until the first stock feeder
     /// connects within `window`, which is then recorded at `record`.
-    pub fn enrolling(config: &InstallConfig, record: PathBuf, window: Duration) -> Self {
+    pub fn enrolling(config: &InstallConfig, config_path: &Path, window: Duration) -> Self {
         Self {
             server_password: config.server_password.clone(),
             device: Mutex::new(None),
             window: Some(Window {
-                record,
+                record: Enrollment::path(config_path),
+                contested: Enrollment::contested_path(config_path),
                 until: Instant::now() + window,
             }),
             peers: Peers::default(),
@@ -130,7 +133,33 @@ impl DeviceAuth {
         } else if is_server {
             Some("server")
         } else {
+            self.contest(client_id, username, password, peer);
             None
+        }
+    }
+
+    /// A stock-shaped identity other than the enrolled one, inside the
+    /// window: the enrollment can no longer be trusted, so it is marked
+    /// contested and the server refuses to install.
+    fn contest(&self, client_id: &str, username: &str, password: &[u8], peer: Option<IpAddr>) {
+        let Some(window) = &self.window else {
+            return;
+        };
+        if Instant::now() >= window.until || !Enrollment::plausible(client_id, username, password) {
+            return;
+        }
+        warn!(
+            device = client_id,
+            ?peer,
+            "a second feeder tried the broker during enrollment"
+        );
+        let contest = Contest {
+            client_id: client_id.into(),
+            address: peer,
+            at: Utc::now(),
+        };
+        if let Err(error) = contest.record(&window.contested) {
+            warn!(%error, "contest not recorded");
         }
     }
 
@@ -402,8 +431,10 @@ mod tests {
     #[test]
     fn the_first_stock_feeder_in_the_window_enrolls_and_is_pinned() {
         let dir = tempfile::tempdir().unwrap();
-        let record = Enrollment::path(&dir.path().join("server.json"));
-        let auth = DeviceAuth::enrolling(&installer(), record.clone(), Duration::from_secs(60));
+        let config = dir.path().join("server.json");
+        let record = Enrollment::path(&config);
+        let contested = Enrollment::contested_path(&config);
+        let auth = DeviceAuth::enrolling(&installer(), &config, Duration::from_secs(60));
         let server = "s".repeat(32);
 
         // No server login, no topics, before a device is known.
@@ -436,8 +467,13 @@ mod tests {
             auth.login("AF_NEW", "stock", b"its-own", PEER),
             Some("device")
         );
+        assert!(!contested.exists());
         assert_eq!(auth.login("AF_NEW", "stock", b"guess", PEER), None);
         assert_eq!(auth.login("AF_OTHER", "stock", b"its-own", PEER), None);
+        // Either is a second identity inside the window: the enrollment is
+        // contested, and the status says so.
+        assert!(contested.exists());
+        assert!(Enrollment::view(&config).unwrap().contested);
         assert_eq!(
             auth.login(
                 "local-server-AF_NEW",
@@ -453,13 +489,14 @@ mod tests {
     #[test]
     fn nobody_enrolls_after_the_window_or_over_an_existing_record() {
         let dir = tempfile::tempdir().unwrap();
-        let record = Enrollment::path(&dir.path().join("server.json"));
-        let closed = DeviceAuth::enrolling(&installer(), record.clone(), Duration::ZERO);
+        let config = dir.path().join("server.json");
+        let record = Enrollment::path(&config);
+        let closed = DeviceAuth::enrolling(&installer(), &config, Duration::ZERO);
         assert_eq!(closed.login("AF_NEW", "stock", b"pw", PEER), None);
         assert!(!record.exists());
 
         std::fs::write(&record, "{}").unwrap();
-        let open = DeviceAuth::enrolling(&installer(), record, Duration::from_secs(60));
+        let open = DeviceAuth::enrolling(&installer(), &config, Duration::from_secs(60));
         assert_eq!(open.login("AF_NEW", "stock", b"pw", PEER), None);
     }
 }

@@ -24,6 +24,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
+use wellfed_formats::stock::StockEnrollment;
 use serde::{Deserialize, Serialize};
 
 use crate::{config, storage};
@@ -80,6 +81,49 @@ impl Enrollment {
     /// Record this identity at `path`; refused if any record exists there.
     pub fn create(&self, path: &Path) -> Result<()> {
         storage::write_new_json(path, self)
+    }
+
+    /// The contest marker beside `config_path` (`installer.contested.json`).
+    pub fn contested_path(config_path: &Path) -> PathBuf {
+        config_path.with_extension(CONTESTED_EXTENSION)
+    }
+
+    /// What the status document shows of the enrollment beside
+    /// `config_path`: the device and its address, never its credentials.
+    pub fn view(config_path: &Path) -> Option<StockEnrollment> {
+        let record = Self::load(&Self::path(config_path)).ok().flatten()?;
+        Some(StockEnrollment {
+            device: record.client_id,
+            address: record.address,
+            contested: Self::contested_path(config_path).exists(),
+        })
+    }
+}
+
+/// The marker's extension: written when a second stock-shaped identity
+/// tried the broker while the enrollment window was open.
+const CONTESTED_EXTENSION: &str = "contested.json";
+
+/// A second identity seen inside the window. Trust on first use cannot
+/// tell which of two feeders on the LAN is the owner's: a host that raced
+/// the real feeder could be walked through the whole install, so the run
+/// must stop. Its credentials are not kept.
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Contest {
+    pub client_id: String,
+    pub address: Option<IpAddr>,
+    pub at: DateTime<Utc>,
+}
+
+impl Contest {
+    /// Mark the enrollment beside the record at `contested` as contested;
+    /// the first contest is kept.
+    pub fn record(&self, contested: &Path) -> Result<()> {
+        if contested.exists() {
+            return Ok(());
+        }
+        storage::write_new_json(contested, self)
     }
 }
 

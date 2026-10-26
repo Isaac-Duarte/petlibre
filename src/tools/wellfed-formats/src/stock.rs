@@ -37,6 +37,23 @@ pub struct StockStatus {
     pub ota_trial_enabled: bool,
     /// Newest first.
     pub ota_trials: Vec<TrialRecord>,
+    /// The feeder the broker trusted on first use, for an installer's
+    /// config; `None` for a captured device.
+    pub enrollment: Option<StockEnrollment>,
+}
+
+/// A feeder trusted on first use, as the status document shows it: no
+/// credentials.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StockEnrollment {
+    /// Its client ID, which is its device ID.
+    pub device: String,
+    /// Where it first connected from.
+    pub address: std::net::IpAddr,
+    /// Another stock-shaped identity tried the broker inside the window:
+    /// the server refuses an install, since which is the owner's feeder
+    /// cannot be told.
+    pub contested: bool,
 }
 
 impl StockStatus {

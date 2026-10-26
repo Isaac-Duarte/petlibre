@@ -43,6 +43,7 @@ wellfed-store = { path = "src/server/wellfed-store" }
 wellfed-service = { path = "src/server/wellfed-service" }
 wellfed-formats = { path = "src/tools/wellfed-formats" }
 wellfed-stock = { path = "src/tools/wellfed-stock" }
+wellfed-stock-api = { path = "src/tools/wellfed-stock-api" }
 wellfed-emu = { path = "src/tools/wellfed-emu" }
 wellfed-image = { path = "src/tools/wellfed-image" }
 wellfed-signing = { path = "src/tools/wellfed-signing" }

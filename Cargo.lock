@@ -2234,6 +2234,7 @@ dependencies = [
  "wellfed-proto",
  "wellfed-session",
  "wellfed-stock-api",
+ "rustix",
  "serde",
  "serde_json",
  "tempfile",

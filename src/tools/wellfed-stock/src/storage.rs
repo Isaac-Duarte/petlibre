@@ -17,8 +17,19 @@ pub fn write_json(path: &Path, value: &impl Serialize) -> Result<()> {
         .with_context(|| format!("write {}", path.display()))
 }
 
-/// Write a new private file; refuses to replace an existing one.
+/// Write a new private file; refuses to replace an existing one. The file
+/// appears whole or not at all: the bytes go to a temporary file beside it
+/// first, which is then hard-linked into place (a link never replaces), so
+/// a reader polling for it never sees it half written, and a writer killed
+/// partway leaves no empty file that would refuse the next attempt.
 pub fn write_new_json(path: &Path, value: &impl Serialize) -> Result<()> {
+    let name = path
+        .file_name()
+        .with_context(|| format!("{} names no file", path.display()))?;
+    let mut temporary = name.to_owned();
+    temporary.push(format!(".{}.tmp", std::process::id()));
+    let temporary = path.with_file_name(temporary);
+
     let mut options = fs::OpenOptions::new();
     options.create_new(true).write(true);
     #[cfg(unix)]
@@ -26,24 +37,22 @@ pub fn write_new_json(path: &Path, value: &impl Serialize) -> Result<()> {
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
-
     let mut file = options
-        .open(path)
-        .with_context(|| format!("create {}", path.display()))?;
+        .open(&temporary)
+        .with_context(|| format!("create {}", temporary.display()))?;
 
     let result = (|| {
         serde_json::to_writer_pretty(&mut file, value)?;
         file.write_all(b"\n")?;
         file.sync_all()?;
+        fs::hard_link(&temporary, path).with_context(|| format!("create {}", path.display()))?;
         if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
             fs::File::open(parent)?.sync_all()?;
         }
         Ok(())
     })();
 
-    if result.is_err() {
-        let _ = fs::remove_file(path);
-    }
+    let _ = fs::remove_file(&temporary);
     result
 }
 

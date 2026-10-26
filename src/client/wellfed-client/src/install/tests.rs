@@ -2,6 +2,8 @@ use super::*;
 
 const BUILD: &str = "ab12000000000000000000000000000000000000000000000000000000000000";
 const OTHER: &str = "cd34000000000000000000000000000000000000000000000000000000000000";
+/// The signed manifest's version the runs below promote to.
+const VERSION: u32 = 9;
 
 fn frame() -> SetupFrame {
     SetupFrame {
@@ -13,24 +15,38 @@ fn frame() -> SetupFrame {
     }
 }
 
+fn enrolled() -> FeederTrust {
+    FeederTrust::Enrolled {
+        device: "AF_NEW".into(),
+        address: "192.168.4.20".into(),
+    }
+}
+
 fn ready() -> StockView {
     StockView {
         online: true,
         version: Some(STOCK_VERSION.into()),
         power: Some(StockPower::Adapter),
+        trust: enrolled(),
     }
 }
 
-/// A run carried to `step`, with each earlier step answered as it should be.
+fn fresh() -> Install {
+    Install::new(Provision::Done, BUILD, VERSION).unwrap()
+}
+
+/// A run carried to `phase`, with each earlier step answered as it should be.
 fn run_to(phase: Phase) -> Install {
-    let mut install = Install::new(Provision::Done, BUILD).unwrap();
+    let mut install = fresh();
     let steps = [
+        Phase::ConfirmFeeder,
         Phase::Request,
         Phase::AwaitInstall,
         Phase::Pair,
         Phase::ReadStatus,
         Phase::CloseTrial,
         Phase::Backup,
+        Phase::Promote,
         Phase::AwaitConfirm,
     ];
     for at in steps {
@@ -38,7 +54,11 @@ fn run_to(phase: Phase) -> Install {
             break;
         }
         match at {
-            Phase::Request => install.stock(&ready()).unwrap(),
+            Phase::ConfirmFeeder => install.stock(&ready()).unwrap(),
+            Phase::Request => {
+                assert_eq!(install.step(), Step::ConfirmFeeder(enrolled()));
+                install.feeder_confirmed();
+            }
             Phase::AwaitInstall => {
                 assert_eq!(install.step(), Step::RequestInstall);
                 install.requested(Requested::Sent);
@@ -50,13 +70,11 @@ fn run_to(phase: Phase) -> Install {
                 bank: 0,
             }),
             Phase::Backup => install.trial_closed(),
-            _ => {
+            Phase::Promote => {
                 install.backup(VerifiedBackup::for_tests());
                 assert_eq!(install.step(), Step::Promote);
-                if phase != Phase::Promote {
-                    install.promoted(Ok(7));
-                }
             }
+            _ => install.promoted(Ok(())),
         }
     }
     assert_eq!(install.phase(), phase);
@@ -113,30 +131,47 @@ fn values_stock_would_misread_are_refused() {
     f.id = "9".repeat(30);
     assert_eq!(f.encode().unwrap().len(), 6 + 4 + 32 + 64 + 100 + 30 + 1);
 
-    // The passphrase never reaches a log line.
-    assert!(!format!("{f:?}").contains("pppp"));
-
     // A run with a bad frame never starts.
     let mut bad = frame();
     bad.id = "0".into();
     assert_eq!(
-        Install::new(Provision::Frame(bad), BUILD).err(),
+        Install::new(Provision::Frame(bad), BUILD, VERSION).err(),
         Some(FrameError::Id)
     );
 }
 
 #[test]
+fn the_passphrase_never_reaches_a_debug_line() {
+    let mut f = frame();
+    f.password = "hunter2-secret".into();
+    assert!(!format!("{f:?}").contains("hunter2"));
+
+    let mut install = Install::new(Provision::Frame(f), BUILD, VERSION).unwrap();
+    assert!(!format!("{install:?}").contains("hunter2"));
+    let step = install.step();
+    assert!(!format!("{step:?}").contains("hunter2"));
+    let Step::SendFrame(bytes) = step else {
+        panic!("the frame goes first");
+    };
+    assert!(bytes.bytes().windows(7).any(|window| window == b"hunter2"));
+    // Debug prints bytes as numbers, so look for those too.
+    assert!(!format!("{install:?}").contains("104, 117, 110"));
+}
+
+#[test]
 fn a_whole_run_goes_from_the_frame_to_a_confirmed_replacement() {
-    let mut install = Install::new(Provision::Frame(frame()), BUILD).unwrap();
+    let mut install = Install::new(Provision::Frame(frame()), BUILD, VERSION).unwrap();
 
     let Step::SendFrame(bytes) = install.step() else {
         panic!("the frame goes first");
     };
-    assert_eq!(bytes, frame().encode().unwrap());
+    assert_eq!(bytes.bytes(), frame().encode().unwrap());
     assert_eq!(install.step(), Step::AwaitStock, "the frame goes once");
     install.frame_sent();
 
     install.stock(&ready()).unwrap();
+    assert_eq!(install.step(), Step::ConfirmFeeder(enrolled()));
+    install.feeder_confirmed();
     assert_eq!(install.step(), Step::RequestInstall);
     install.requested(Requested::Sent);
     assert_eq!(install.step(), Step::AwaitInstall);
@@ -157,7 +192,7 @@ fn a_whole_run_goes_from_the_frame_to_a_confirmed_replacement() {
     assert_eq!(install.step(), Step::Backup);
     install.backup(VerifiedBackup::for_tests());
     assert_eq!(install.step(), Step::Promote);
-    install.promoted(Ok(9));
+    install.promoted(Ok(()));
     assert_eq!(install.step(), Step::AwaitConfirm);
 
     // The trial boot answers before it has confirmed: wait.
@@ -165,15 +200,15 @@ fn a_whole_run_goes_from_the_frame_to_a_confirmed_replacement() {
         build: BUILD,
         bank: 1,
     };
-    install.confirmed(running, 8);
+    install.confirmed(running, VERSION - 1);
     assert_eq!(install.step(), Step::AwaitConfirm);
-    install.confirmed(running, 9);
+    install.confirmed(running, VERSION);
     assert_eq!(install.step(), Step::Done);
 }
 
 #[test]
-fn stock_is_asked_once_and_only_when_ready() {
-    let mut install = Install::new(Provision::Done, BUILD).unwrap();
+fn stock_is_asked_once_and_only_when_ready_and_confirmed() {
+    let mut install = fresh();
     let offline = StockView {
         online: false,
         ..ready()
@@ -192,6 +227,12 @@ fn stock_is_asked_once_and_only_when_ready() {
     assert_eq!(install.step(), Step::AwaitStock);
 
     install.stock(&ready()).unwrap();
+    // Until the owner recognizes the feeder, nothing is asked of it.
+    for _ in 0..3 {
+        assert_eq!(install.step(), Step::ConfirmFeeder(enrolled()));
+        install.requested(Requested::Sent);
+    }
+    install.feeder_confirmed();
     assert_eq!(install.step(), Step::RequestInstall);
     // Until the outcome comes, and after it, the request never comes again.
     for _ in 0..3 {
@@ -203,8 +244,30 @@ fn stock_is_asked_once_and_only_when_ready() {
 }
 
 #[test]
+fn a_contested_or_unrecognized_enrollment_sends_nothing() {
+    let contested = StockView {
+        trust: FeederTrust::Contested,
+        ..ready()
+    };
+
+    let mut early = fresh();
+    early.stock(&contested).unwrap();
+    assert_eq!(early.step(), Step::Failed(InstallError::Contested));
+
+    // A second identity seen while the owner is still checking also ends it.
+    let mut checking = run_to(Phase::ConfirmFeeder);
+    checking.stock(&contested).unwrap();
+    checking.feeder_confirmed();
+    assert_eq!(checking.step(), Step::Failed(InstallError::Contested));
+
+    let mut rejected = run_to(Phase::ConfirmFeeder);
+    rejected.feeder_rejected();
+    assert_eq!(rejected.step(), Step::Failed(InstallError::FeederRejected));
+}
+
+#[test]
 fn another_stock_version_ends_the_run() {
-    let mut install = Install::new(Provision::Done, BUILD).unwrap();
+    let mut install = fresh();
     let newer = StockView {
         version: Some("1.1.16".into()),
         ..ready()
@@ -233,7 +296,7 @@ fn a_refused_or_uncertain_request_ends_the_run_without_asking_again() {
 }
 
 #[test]
-fn stock_s_refusal_ends_the_run() {
+fn stock_s_refusal_ends_the_run_even_before_the_request_s_outcome() {
     let mut install = run_to(Phase::AwaitInstall);
     install.stock_refused(Some(0x2003));
     assert_eq!(
@@ -242,52 +305,36 @@ fn stock_s_refusal_ends_the_run() {
     );
     install.stock_gone();
     assert!(matches!(install.step(), Step::Failed(_)));
+
+    let mut asking = run_to(Phase::Request);
+    assert_eq!(asking.step(), Step::RequestInstall);
+    asking.stock_refused(None);
+    asking.requested(Requested::Sent);
+    assert_eq!(
+        asking.step(),
+        Step::Failed(InstallError::StockRefused { code: None })
+    );
 }
 
 #[test]
-fn only_the_served_build_on_bank_0_moves_on() {
-    for (build, bank) in [(OTHER, 0), (BUILD, 1)] {
-        let mut install = run_to(Phase::ReadStatus);
-        install.replacement(Replacement { build, bank });
-        assert_eq!(
-            install.step(),
-            Step::Failed(InstallError::WrongReplacement {
-                reported: build.into(),
-                bank
-            })
-        );
-    }
-}
-
-#[test]
-fn promotion_is_refused_without_a_verified_backup() {
-    let mut install = run_to(Phase::Backup);
-    // However often the caller asks, without a backup the step stays.
-    for _ in 0..3 {
-        assert_eq!(install.step(), Step::Backup);
-        install.promoted(Ok(9));
-        assert_eq!(install.phase(), Phase::Backup);
-    }
-
-    // A backup given early (before the install began) counts as well.
-    let mut early = Install::new(Provision::Done, BUILD).unwrap();
-    early.backup(VerifiedBackup::for_tests());
-    early.stock(&ready()).unwrap();
-    assert_eq!(early.step(), Step::RequestInstall);
-    early.requested(Requested::Sent);
-    early.stock_gone();
-    early.paired();
-    early.replacement(Replacement {
-        build: BUILD,
+fn only_the_served_build_moves_on() {
+    let mut install = run_to(Phase::ReadStatus);
+    install.replacement(Replacement {
+        build: OTHER,
         bank: 0,
     });
-    early.trial_closed();
-    assert_eq!(early.step(), Step::Promote);
+    assert_eq!(
+        install.step(),
+        Step::Failed(InstallError::WrongReplacement {
+            reported: OTHER.into(),
+            bank: 0
+        })
+    );
 }
 
 #[test]
 fn a_run_resumed_on_bank_0_asks_stock_nothing_and_still_needs_the_backup() {
-    let mut install = Install::from_bank0(&BUILD.to_ascii_uppercase());
+    let mut install = Install::from_bank0(&BUILD.to_ascii_uppercase(), VERSION);
     assert_eq!(install.step(), Step::Pair);
     install.paired();
     install.replacement(Replacement {
@@ -301,20 +348,63 @@ fn a_run_resumed_on_bank_0_asks_stock_nothing_and_still_needs_the_backup() {
 }
 
 #[test]
-fn only_the_pinned_stock_image_is_a_backup() {
+fn a_run_resumed_after_activation_only_waits_for_the_confirmation() {
+    let mut install = Install::from_bank0(BUILD, VERSION);
+    install.paired();
+    let running = Replacement {
+        build: BUILD,
+        bank: 1,
+    };
+    install.replacement(running);
+    assert_eq!(install.step(), Step::AwaitConfirm);
+    install.confirmed(running, VERSION);
+    assert_eq!(install.step(), Step::Done);
+}
+
+#[test]
+fn promotion_is_refused_without_a_verified_backup() {
+    let mut install = run_to(Phase::Backup);
+    // However often the caller asks, without a backup the step stays.
+    for _ in 0..3 {
+        assert_eq!(install.step(), Step::Backup);
+        install.promoted(Ok(()));
+        assert_eq!(install.phase(), Phase::Backup);
+    }
+
+    // A backup given early (before the install began) counts as well.
+    let mut early = fresh();
+    early.backup(VerifiedBackup::for_tests());
+    early.stock(&ready()).unwrap();
+    early.feeder_confirmed();
+    assert_eq!(early.step(), Step::RequestInstall);
+    early.requested(Requested::Sent);
+    early.stock_gone();
+    early.paired();
+    early.replacement(Replacement {
+        build: BUILD,
+        bank: 0,
+    });
+    early.trial_closed();
+    assert_eq!(early.step(), Step::Promote);
+}
+
+#[test]
+fn only_the_pinned_stock_payload_is_a_backup() {
     let error = VerifiedBackup::verify(b"not stock").unwrap_err();
     assert!(matches!(error, BackupError::NotPinned { sha256 } if sha256 != STOCK_OTA_SHA256));
     assert!(VerifiedBackup::verify(&[]).is_err());
     assert_eq!(VerifiedBackup::for_tests().version(), STOCK_VERSION);
 
-    // The same digest the device layout and the image profile pin.
-    let hex: String = STOCK_OTA_SHA256
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
+    // The same digests the device layout, the image profile and the stock
+    // review pin.
+    let hex = |digest: [u8; 32]| -> String { digest.iter().map(|b| format!("{b:02x}")).collect() };
     assert_eq!(
-        hex,
+        hex(STOCK_OTA_SHA256),
         "05147476fc70c91cc77ad7da6d6772376b2081d460ac7b1912e2d73868a09498"
+    );
+    assert_eq!(
+        hex(STOCK_PAYLOAD_SHA256),
+        "802ef6204c2dce8af8b74d78c5b58b1dc5f912c204bd0ac68e0a03a72120705a"
     );
 }
 
@@ -341,7 +431,7 @@ fn a_failed_promotion_or_a_fallback_ends_the_run() {
             build: OTHER,
             bank: 1,
         },
-        7,
+        VERSION,
     );
     assert_eq!(
         install.step(),
@@ -366,7 +456,7 @@ fn giving_up_names_the_wait() {
             build: BUILD,
             bank: 1,
         },
-        7,
+        VERSION,
     );
     done.gave_up();
     assert_eq!(done.step(), Step::Done, "a finished run stays finished");
@@ -378,10 +468,12 @@ fn answers_out_of_turn_change_nothing() {
     install.paired();
     install.stock_gone();
     install.trial_closed();
+    install.feeder_confirmed();
     install.replacement(Replacement {
         build: BUILD,
         bank: 0,
     });
     install.requested(Requested::Sent);
+    install.stock_refused(None);
     assert_eq!(install.step(), Step::AwaitStock);
 }

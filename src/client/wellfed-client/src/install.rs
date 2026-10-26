@@ -11,22 +11,28 @@
 //!    trusts on first use; nothing captured, nothing redirected.
 //! 2. **Stock ready:** stock reports 1.1.15 on its adapter, the same
 //!    conditions its own precheck and the server's trial gate hold.
-//! 3. **Request:** one `OTA_UPGRADE`, never resent. A refused precheck can
+//! 3. **Confirm the feeder:** trust on first use admits whichever stock-
+//!    shaped client reached the broker first, so the owner checks the
+//!    enrolled device ID and address before anything is sent to it. A second
+//!    identity seen inside the enrollment window ends the run.
+//! 4. **Request:** one `OTA_UPGRADE`, never resent. A refused precheck can
 //!    erase stock's OTA status sector and an uncertain request may still be
 //!    downloading, so whatever happens to it ends this run; a new run
 //!    starts only after the server has resolved it.
-//! 4. **Install:** stock downloads the image, checks its byte-sum, writes
+//! 5. **Install:** stock downloads the image, checks its byte-sum, writes
 //!    bank 0 and restarts into the replacement, which then answers the
 //!    device API from bank 0.
-//! 5. **Pair:** the installer becomes the replacement's owner through
+//! 6. **Pair:** the installer becomes the replacement's owner through
 //!    pairing (the setup code keyed in on the panel, over BLE or the LAN
 //!    recovery window). A key the build already knows counts.
-//! 6. **Bank 0:** the device API names the served build on bank 0, and the
-//!    stock server is told so it closes its record.
-//! 7. **Backup:** promotion overwrites bank 1, the feeder's only copy of
+//! 7. **Bank 0:** the device API names the served build on bank 0, and the
+//!    stock server is told so it closes its record. A run resumed after an
+//!    earlier one activated bank 1 finds the build there and only waits for
+//!    its confirmation.
+//! 8. **Backup:** promotion overwrites bank 1, the feeder's only copy of
 //!    stock, so it waits for a [`VerifiedBackup`]. There is no way past this
 //!    step without one.
-//! 8. **Promote:** the signed update ([`crate::update::Installer`]) writes
+//! 9. **Promote:** the signed update ([`crate::update::Installer`]) writes
 //!    bank 1 from bank 0, and its trial boot confirms on bank 1.
 //!
 //! A step that fails ends the run ([`Step::Failed`]); nothing is retried
@@ -37,10 +43,20 @@
 pub mod backup;
 pub mod frame;
 
-pub use backup::{BackupError, STOCK_OTA_SHA256, STOCK_VERSION, VerifiedBackup};
+pub use backup::{
+    BackupError, STOCK_OTA_SHA256, STOCK_PAYLOAD_SHA256, STOCK_VERSION, VerifiedBackup,
+};
 pub use frame::{FrameError, SETUP_ADDRESS, SetupFrame};
 
 use crate::update::InstallError as UpdateError;
+
+/// The version a signed update manifest promotes to, which the run waits
+/// to see confirmed; `None` for bytes that are not a manifest.
+pub fn manifest_version(manifest: &[u8]) -> Option<u32> {
+    wellfed_core::ota::offer::parse_manifest(manifest)
+        .ok()
+        .map(|signed| signed.manifest.version)
+}
 
 /// How stock is pointed at the installer's broker.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -50,6 +66,23 @@ pub enum Provision {
     /// Stock already connects to the installer's broker (provisioned by an
     /// earlier frame, or on the bench).
     Done,
+}
+
+/// An encoded setup frame. It carries the Wi-Fi passphrase in plaintext,
+/// so its `Debug` shows only its length.
+#[derive(Clone, PartialEq, Eq)]
+pub struct FrameBytes(Vec<u8>);
+
+impl FrameBytes {
+    pub fn bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl core::fmt::Debug for FrameBytes {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "FrameBytes({} bytes)", self.0.len())
+    }
 }
 
 /// What stock reports for its power source (`powerType`).
@@ -69,6 +102,19 @@ impl StockPower {
     }
 }
 
+/// How the installer's broker knows the feeder it serves.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FeederTrust {
+    /// Its credentials came from a capture (the bench).
+    Captured,
+    /// Trusted on first use: its own client ID (its device ID) and the
+    /// address it connected from, for the owner to check.
+    Enrolled { device: String, address: String },
+    /// Another stock-shaped identity tried the broker inside the enrollment
+    /// window: which one is the owner's feeder cannot be told.
+    Contested,
+}
+
 /// The installer's view of stock, from its broker's session.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StockView {
@@ -77,6 +123,7 @@ pub struct StockView {
     /// The version it last reported, if it reported one recently.
     pub version: Option<String>,
     pub power: Option<StockPower>,
+    pub trust: FeederTrust,
 }
 
 /// Why stock may not be asked yet; the install waits.
@@ -95,7 +142,7 @@ pub enum StockNotReady {
 pub enum Requested {
     /// The server persisted it and handed it to stock's session.
     Sent,
-    /// The server refused it before sending anything.
+    /// The server refused it, and its ledger shows no record of it.
     Refused,
     /// It may or may not have reached stock.
     Uncertain,
@@ -114,6 +161,7 @@ pub struct Replacement<'a> {
 pub enum Phase {
     Provision,
     AwaitStock,
+    ConfirmFeeder,
     Request,
     AwaitInstall,
     Pair,
@@ -132,6 +180,12 @@ pub enum InstallError {
     #[error("stock reports version {0}; only {STOCK_VERSION} is installed from")]
     UnsupportedVersion(String),
     #[error(
+        "a second device tried the installer's broker during enrollment; nothing was sent: remove the enrollment and run again on a network only the feeder joins"
+    )]
+    Contested,
+    #[error("the owner did not recognize the enrolled feeder; nothing was sent to it")]
+    FeederRejected,
+    #[error(
         "the server refused the install request without sending it; stock is unchanged, and a new run may ask again once the reason is fixed"
     )]
     RequestRefused,
@@ -141,9 +195,11 @@ pub enum InstallError {
     RequestUncertain,
     #[error("stock refused or failed the install (error {code:?}); it keeps running stock")]
     StockRefused { code: Option<u32> },
-    #[error("build {reported} answers on bank {bank}, not the served build on bank 0")]
+    #[error("build {reported} answers on bank {bank}, not the served build")]
     WrongReplacement { reported: String, bank: u8 },
-    #[error("the promotion stopped: {0}; the feeder keeps running bank 0, stock still in bank 1")]
+    #[error(
+        "the promotion stopped: {0}; the feeder keeps running bank 0, but bank 1 may be partly overwritten: the verified backup is now the copy of stock"
+    )]
     Promotion(UpdateError),
     #[error("bank 1's trial boot fell back to bank 0")]
     FellBack,
@@ -159,9 +215,12 @@ pub enum Step {
     /// With this host joined to stock's setup access point, send these bytes
     /// once to [`SETUP_ADDRESS`] over UDP, then call
     /// [`Install::frame_sent`]. Never resent: stock applies a frame once.
-    SendFrame(Vec<u8>),
+    SendFrame(FrameBytes),
     /// Serve the broker and report stock with [`Install::stock`].
     AwaitStock,
+    /// Show the owner how the broker knows the feeder; then
+    /// [`Install::feeder_confirmed`] or [`Install::feeder_rejected`].
+    ConfirmFeeder(FeederTrust),
     /// Serve the image and ask stock once to install it; report with
     /// [`Install::requested`]. Comes once per run.
     RequestInstall,
@@ -194,10 +253,11 @@ pub enum Step {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Stage {
-    Provision(Vec<u8>),
+    Provision(FrameBytes),
     /// The frame is out; waiting for the caller to say so.
     FrameOut,
     AwaitStock,
+    ConfirmFeeder(FeederTrust),
     Request,
     Requesting,
     AwaitInstall,
@@ -206,9 +266,7 @@ enum Stage {
     CloseTrial,
     Backup,
     Promote,
-    AwaitConfirm {
-        version: u32,
-    },
+    AwaitConfirm,
     Done,
     Failed(InstallError),
 }
@@ -219,6 +277,8 @@ pub struct Install {
     stage: Stage,
     /// The served build's identity, lowercase hex.
     build: String,
+    /// The signed manifest's version, which bank 1 must confirm.
+    version: u32,
     backup: Option<VerifiedBackup>,
     /// Stock's latest download progress, percent.
     progress: Option<u8>,
@@ -228,30 +288,30 @@ pub struct Install {
 }
 
 impl Install {
-    /// A run that installs `build` (the served image's identity, 64 hex).
-    /// A frame whose values stock would misread is refused here, before
-    /// anything is sent.
-    pub fn new(provision: Provision, build: &str) -> Result<Self, FrameError> {
+    /// A run that installs `build` (the served image's identity, 64 hex)
+    /// and promotes it at `version` (its signed manifest's, see
+    /// [`manifest_version`]). A frame whose values stock would misread is
+    /// refused here, before anything is sent.
+    pub fn new(provision: Provision, build: &str, version: u32) -> Result<Self, FrameError> {
         let stage = match provision {
-            Provision::Frame(frame) => Stage::Provision(frame.encode()?),
+            Provision::Frame(frame) => Stage::Provision(FrameBytes(frame.encode()?)),
             Provision::Done => Stage::AwaitStock,
         };
-        Ok(Self {
-            stage,
-            build: build.to_ascii_lowercase(),
-            backup: None,
-            progress: None,
-            sent: false,
-        })
+        Ok(Self::at(stage, build, version))
     }
 
-    /// A run that resumes with the replacement already on bank 0 (stock
-    /// installed it in an earlier run, which stopped before promotion):
-    /// it starts at pairing, and stock is not asked anything.
-    pub fn from_bank0(build: &str) -> Self {
+    /// A run that resumes with the replacement already installed by stock
+    /// in an earlier run, which stopped before promotion or before its
+    /// confirmation: it starts at pairing, and stock is not asked anything.
+    pub fn from_bank0(build: &str, version: u32) -> Self {
+        Self::at(Stage::Pair, build, version)
+    }
+
+    fn at(stage: Stage, build: &str, version: u32) -> Self {
         Self {
-            stage: Stage::Pair,
+            stage,
             build: build.to_ascii_lowercase(),
+            version,
             backup: None,
             progress: None,
             sent: false,
@@ -267,6 +327,7 @@ impl Install {
                 Step::SendFrame(frame)
             }
             Stage::FrameOut | Stage::AwaitStock => Step::AwaitStock,
+            Stage::ConfirmFeeder(trust) => Step::ConfirmFeeder(trust.clone()),
             Stage::Request => {
                 self.stage = Stage::Requesting;
                 Step::RequestInstall
@@ -282,7 +343,7 @@ impl Install {
             }
             Stage::Backup => Step::Backup,
             Stage::Promote => Step::Promote,
-            Stage::AwaitConfirm { .. } => Step::AwaitConfirm,
+            Stage::AwaitConfirm => Step::AwaitConfirm,
             Stage::Done => Step::Done,
             Stage::Failed(error) => Step::Failed(error.clone()),
         }
@@ -293,6 +354,7 @@ impl Install {
         match self.stage {
             Stage::Provision(_) | Stage::FrameOut => Phase::Provision,
             Stage::AwaitStock => Phase::AwaitStock,
+            Stage::ConfirmFeeder(_) => Phase::ConfirmFeeder,
             Stage::Request | Stage::Requesting => Phase::Request,
             Stage::AwaitInstall => Phase::AwaitInstall,
             Stage::Pair => Phase::Pair,
@@ -300,7 +362,7 @@ impl Install {
             Stage::CloseTrial => Phase::CloseTrial,
             Stage::Backup => Phase::Backup,
             Stage::Promote => Phase::Promote,
-            Stage::AwaitConfirm { .. } => Phase::AwaitConfirm,
+            Stage::AwaitConfirm => Phase::AwaitConfirm,
             Stage::Done => Phase::Done,
             // Failed is reported through `step`; its phase was the last.
             Stage::Failed(_) => Phase::Done,
@@ -329,10 +391,21 @@ impl Install {
         }
     }
 
-    /// Stock as the broker sees it. Ready moves the run to its one
-    /// request; a version other than [`STOCK_VERSION`] ends it.
+    /// Stock as the broker sees it. Ready moves the run to the owner's check
+    /// of the feeder; a version other than [`STOCK_VERSION`], or a contested
+    /// enrollment, ends it.
     pub fn stock(&mut self, view: &StockView) -> Result<(), StockNotReady> {
-        if !matches!(self.stage, Stage::AwaitStock | Stage::FrameOut) {
+        if !matches!(
+            self.stage,
+            Stage::AwaitStock | Stage::FrameOut | Stage::ConfirmFeeder(_)
+        ) {
+            return Ok(());
+        }
+        if view.trust == FeederTrust::Contested {
+            self.stage = Stage::Failed(InstallError::Contested);
+            return Ok(());
+        }
+        if matches!(self.stage, Stage::ConfirmFeeder(_)) {
             return Ok(());
         }
         if !view.online {
@@ -348,8 +421,22 @@ impl Install {
         if view.power != Some(StockPower::Adapter) {
             return Err(StockNotReady::NotOnAdapter);
         }
-        self.stage = Stage::Request;
+        self.stage = Stage::ConfirmFeeder(view.trust.clone());
         Ok(())
+    }
+
+    /// The owner recognized the feeder [`Step::ConfirmFeeder`] showed.
+    pub fn feeder_confirmed(&mut self) {
+        if matches!(self.stage, Stage::ConfirmFeeder(_)) {
+            self.stage = Stage::Request;
+        }
+    }
+
+    /// The owner did not recognize it: nothing is sent.
+    pub fn feeder_rejected(&mut self) {
+        if matches!(self.stage, Stage::ConfirmFeeder(_)) {
+            self.stage = Stage::Failed(InstallError::FeederRejected);
+        }
     }
 
     /// What became of the request [`Step::RequestInstall`] asked for.
@@ -373,9 +460,9 @@ impl Install {
     }
 
     /// Stock reported an error for the install (its own refusal, or the
-    /// server's record of one).
+    /// server's record of one), even before the request's outcome came.
     pub fn stock_refused(&mut self, code: Option<u32>) {
-        if self.stage == Stage::AwaitInstall {
+        if matches!(self.stage, Stage::AwaitInstall | Stage::Requesting) {
             self.stage = Stage::Failed(InstallError::StockRefused { code });
         }
     }
@@ -397,24 +484,22 @@ impl Install {
     }
 
     /// The replacement's status after pairing: the served build on bank 0
-    /// moves on; anything else ends the run.
+    /// moves on, and on bank 1 (an earlier run activated it) only its
+    /// confirmation is left; anything else ends the run.
     pub fn replacement(&mut self, status: Replacement<'_>) {
         if self.stage != Stage::ReadStatus {
             return;
         }
         let reported = status.build.to_ascii_lowercase();
-        self.stage = if reported == self.build && status.bank == 0 {
-            // Only a request this run sent left a record to close.
-            if self.sent {
-                Stage::CloseTrial
-            } else {
-                Stage::Backup
-            }
-        } else {
-            Stage::Failed(InstallError::WrongReplacement {
+        self.stage = match status.bank {
+            _ if reported != self.build => Stage::Failed(InstallError::WrongReplacement {
                 reported,
                 bank: status.bank,
-            })
+            }),
+            // Only a request this run sent left a record to close.
+            0 if self.sent => Stage::CloseTrial,
+            0 => Stage::Backup,
+            _ => Stage::AwaitConfirm,
         };
     }
 
@@ -432,14 +517,14 @@ impl Install {
         self.backup = Some(backup);
     }
 
-    /// The promotion's outcome: bank 1 activated at `version` (the signed
-    /// manifest's), or the update's own error.
-    pub fn promoted(&mut self, outcome: Result<u32, UpdateError>) {
+    /// The promotion's outcome: bank 1 activated, or the update's own
+    /// error.
+    pub fn promoted(&mut self, outcome: Result<(), UpdateError>) {
         if self.stage != Stage::Promote {
             return;
         }
         self.stage = match outcome {
-            Ok(version) => Stage::AwaitConfirm { version },
+            Ok(()) => Stage::AwaitConfirm,
             Err(error) => Stage::Failed(InstallError::Promotion(error)),
         };
     }
@@ -449,16 +534,16 @@ impl Install {
     /// bank 1 runs the build and has confirmed the promoted version; a
     /// trial boot still deciding waits.
     pub fn confirmed(&mut self, status: Replacement<'_>, confirmed_version: u32) {
-        let Stage::AwaitConfirm { version } = self.stage else {
+        if self.stage != Stage::AwaitConfirm {
             return;
-        };
+        }
         let reported = status.build.to_ascii_lowercase();
         match status.bank {
             0 => self.stage = Stage::Failed(InstallError::FellBack),
             _ if reported != self.build => {
                 self.stage = Stage::Failed(InstallError::WrongPromotion { reported });
             }
-            _ if confirmed_version >= version => self.stage = Stage::Done,
+            _ if confirmed_version >= self.version => self.stage = Stage::Done,
             _ => {}
         }
     }

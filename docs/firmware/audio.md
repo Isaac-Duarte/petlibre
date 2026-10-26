@@ -42,7 +42,7 @@ A tune is queued only through `audio::request`, which answers `Started`, `Muted`
 
 ## Speaker firmware
 
-`wellfed-build build --profile firstboot --firmware speaker` (or `wellfed-bench ota NAME --build --firmware speaker`) builds the `speaker` firmware: the tune task, which plays the startup chime. Motion is untouched, and OTA, recovery and confirmation work as in every firmware.
+`wellfed-build build --profile firstboot --firmware bringup --variant speaker` (or `wellfed-bench ota NAME --build --firmware speaker`) builds the bring-up firmware's `speaker` variant: the tune task, which plays the startup chime. Motion is untouched, and OTA, recovery and confirmation work as in every firmware.
 
 **Network audio stream (deleted October 25, 2026; in Git history).** The firmware also ran a stream task (`wellfed-hal/src/stream.rs`, task `wellfed-spk`). Its only key was the FW08 request key, which went with the broker credentials, and its only client, `wellfed-local speak`, was removed with FW51, so the stream went too. What it did, as the reference firmware's `speaker` variant:
 - **Handshake:** the task listens on TCP 7700, one client at a time. It sends a `PLSPK1` hello with a fresh challenge, and the client answers with a header (sample rate 8, 16, 32 or 48 kHz) and an HMAC under the FW08 request key (`wellfed-core/src/speaker_stream.rs`). The feeder replies with one status byte: `ok`, `unauthenticated`, `bad_header`, `busy` or `muted`. An image without a request key refuses every stream.

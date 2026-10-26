@@ -4,7 +4,7 @@ Status: run once on hardware, October 24 (owner present; [result](#first-run-oct
 
 ## What the image does
 
-`wellfed-build build --profile firstboot --firmware motor --variant pulse` builds the `motor` firmware's `pulse` variant. It records `startup_motion_policy: fw16-pulse-v1` (declared in `src/firmware/wellfed/motor/Cargo.toml`) and `variant: pulse` in the manifest and gets its own build ID. The motor firmware's normal image adds no task, and the builder refuses a motion policy outside a variant, so nothing else can drive the motor. The bench never builds it.
+`wellfed-build build --profile firstboot --firmware bringup --variant pulse` builds the bring-up firmware's `pulse` variant. It records `startup_motion_policy: fw16-pulse-v1` (declared in `src/firmware/wellfed/bringup/Cargo.toml`) and `variant: pulse` in the manifest and gets its own build ID. The bring-up firmware's normal image adds no task, its other variants start no motor task, and the builder refuses a motion policy outside a variant, so nothing else can drive the motor. The bench never builds it.
 
 After the LED probe, the pulse probe (`src/sdk/wellfed-probes/src/pulse.rs`):
 1. Skips everything unless this is a clean cold boot: reset reason 0 and its backup-register marker clear.

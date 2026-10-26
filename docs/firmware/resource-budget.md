@@ -12,7 +12,7 @@ The `feeder` image as of FW44:
 - **BLE setup mode:** the `setup` variant started `BleSetup` in the loop from boot. The normal image links the stack but never starts it. FW45 retired the variant (October 24): setup mode now starts on the owner's gesture, at the same cost.
 
 Not linked yet, and costed from other builds instead:
-- **Feeding owner:** the `motor` firmware with and without its `pulse` variant.
+- **Feeding owner:** the bring-up firmware's normal image and its `pulse` variant.
 - **mDNS:** the vendor library, `lib_mdns.a`.
 - **Device API protocol (FW47):** no socket is opened, because pairing and keys are FW45's.
 

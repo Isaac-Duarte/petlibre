@@ -1,4 +1,4 @@
-//! The firmware's start hook and its one task: the chime and tunes.
+//! The `speaker` variant's start hook and its one task: the chime and tunes.
 
 use core::ffi::c_void;
 
@@ -6,9 +6,7 @@ use wellfed_probes::speaker::Audio;
 use wellfed_sdk::Slot;
 use wellfed_sdk::hal::{audio, sdk};
 
-wellfed_sdk::firmware!(start);
-
-fn start() {
+pub(super) fn start() {
     // The task does not bind the KM0 flash handshake.
     wellfed_sdk::startup_done(true);
 

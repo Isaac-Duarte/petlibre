@@ -14,7 +14,7 @@ A build is a **profile** of a **firmware** on a **device**:
 
 ```sh
 wellfed-build build --profile firstboot [--device plaf103] [--firmware qa] [--variant fail]
-make -C src/firmware/vendor firstboot DEVICE=plaf103 FIRMWARE=trial VARIANT=fail
+make -C src/firmware/vendor firstboot DEVICE=plaf103 FIRMWARE=bringup VARIANT=fail
 wellfed-build list    # the devices, and each firmware's devices and variants, as JSON
 ```
 

@@ -146,7 +146,24 @@ impl Firmware {
             Self::Feeder => "feeder",
         }
     }
+
+    /// What `wellfed-build` builds for it: the firmware and, for a bring-up
+    /// area, the variant of the bring-up firmware that is that area. The
+    /// bench keeps naming the areas as firmwares, as its sessions always have.
+    fn build(self) -> (&'static str, Option<&'static str>) {
+        match self {
+            Self::Optics | Self::Buttons | Self::Adc | Self::Speaker => {
+                (BRINGUP, Some(self.name()))
+            }
+            Self::Trial => (BRINGUP, None),
+            Self::Qa | Self::Blink | Self::Feeder => (self.name(), None),
+        }
+    }
 }
+
+/// The bring-up firmware, whose variants are the bring-up areas and the
+/// trial images.
+const BRINGUP: &str = "bringup";
 
 /// `--firmware`'s parser, with a reason for the motor firmware.
 pub(crate) fn parse_firmware(text: &str) -> std::result::Result<Firmware, String> {
@@ -245,11 +262,14 @@ impl Image {
         }
     }
 
-    /// `--firmware <name> [--variant <name>]` for `wellfed-build`.
-    fn args(self) -> Vec<String> {
-        let mut args = vec!["--firmware".to_string(), self.firmware.name().to_string()];
-        if let Some(variant) = self.variant {
-            args.extend(["--variant".to_string(), variant.name().to_string()]);
+    /// `--firmware <name> [--variant <name>]` for `wellfed-build`. Only
+    /// the trial firmware and the feeder take a bench variant, and neither
+    /// is a bring-up area, so at most one of the two names a variant.
+    pub(crate) fn args(self) -> Vec<String> {
+        let (firmware, area) = self.firmware.build();
+        let mut args = vec!["--firmware".to_string(), firmware.to_string()];
+        if let Some(variant) = self.variant.map(Variant::name).or(area) {
+            args.extend(["--variant".to_string(), variant.to_string()]);
         }
         args
     }

@@ -1,0 +1,68 @@
+[package]
+license.workspace = true
+name = "wellfed-fw-bringup"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "Experimental PLAF103 bring-up firmware on the Wellfed SDK: one probe or trial test per image variant"
+publish.workspace = true
+
+# The KM4 archive wellfed-build links into the image.
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+[features]
+# KM4 target builds with the pinned SDK bindings.
+km4 = ["wellfed-sdk/km4", "wellfed-feeder-runtime/km4", "wellfed-probes/km4"]
+# The variants declared below; only `wellfed-build --variant` sets one, and
+# an image takes at most one.
+optics = []
+buttons = []
+adc = []
+speaker = []
+pulse = []
+stall = []
+fail = ["wellfed-sdk/trial-fail"]
+
+[dependencies]
+wellfed-feeder-runtime.workspace = true
+wellfed-sdk.workspace = true
+wellfed-probes.workspace = true
+
+[lints]
+workspace = true
+
+# What wellfed-build reads. The normal image adds nothing; each variant
+# brings up one area. Variants apply to first-boot builds only, which always
+# record their policies in the manifest: the startup audit checks the optics
+# and ADC policies against the image's markers, `wellfed-audit adc` reads the
+# ADC one to parse the samples, and the bench's attended-motion gate sees the
+# pulse's motion policy on every image that can drive the motor.
+[package.metadata.wellfed]
+devices = ["plaf103"]
+
+[package.metadata.wellfed.variants.optics]
+summary = "The optics probe, once per boot"
+policies = { optics = "fw13-optics-v2" }
+
+[package.metadata.wellfed.variants.buttons]
+summary = "The panel buttons: raw lines and the SDK button service's gestures, logged for as long as the build runs"
+
+[package.metadata.wellfed.variants.adc]
+summary = "The power inputs, read-only, sampled once a second"
+policies = { adc = "fw14-adc-v2" }
+
+[package.metadata.wellfed.variants.speaker]
+summary = "The startup chime and the tune player"
+
+[package.metadata.wellfed.variants.pulse]
+summary = "The first supervised motor pulse, once per cold boot"
+policies = { motion = "fw16-pulse-v1" }
+
+[package.metadata.wellfed.variants.stall]
+summary = "Boot-trial test: stops feeding the watchdog right after startup, before it could confirm"
+policies = { trial = "fw11-reset-v1" }
+
+[package.metadata.wellfed.variants.fail]
+summary = "Boot-trial test: startup fails on a determined error"
+policies = { trial = "fw11-fail-v1" }

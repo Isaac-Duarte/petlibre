@@ -343,9 +343,7 @@ quiet = { summary = "No probes" }
     fn the_checked_in_firmwares_declare_themselves() {
         let repo = Repo::here().unwrap();
         let firmwares = Firmware::all(&repo).unwrap();
-        for name in [
-            "qa", "optics", "buttons", "adc", "speaker", "motor", "trial", "blink", "feeder",
-        ] {
+        for name in ["qa", "bringup", "blink", "feeder"] {
             let firmware = firmwares.iter().find(|f| f.name() == name);
             assert!(firmware.is_some(), "{name}");
             assert_eq!(
@@ -354,5 +352,69 @@ quiet = { summary = "No probes" }
                 "{name}"
             );
         }
+    }
+
+    /// The bring-up areas are variants of one firmware, each with the
+    /// policies the area's image has always carried.
+    #[test]
+    fn the_bringup_variants_keep_their_policies() {
+        let repo = Repo::here().unwrap();
+        let bringup = Firmware::new(&repo, "bringup").unwrap();
+        assert_eq!(*bringup.policies(None), Policies::default());
+
+        let policy = |variant: &str| {
+            let variant = bringup.variant(variant).unwrap();
+            bringup.policies(Some(&variant)).clone()
+        };
+        let some = |value: &str| Some(value.to_string());
+        for (variant, expected) in [
+            (
+                "optics",
+                Policies {
+                    optics: some("fw13-optics-v2"),
+                    ..Policies::default()
+                },
+            ),
+            ("buttons", Policies::default()),
+            (
+                "adc",
+                Policies {
+                    adc: some("fw14-adc-v2"),
+                    ..Policies::default()
+                },
+            ),
+            ("speaker", Policies::default()),
+            (
+                "pulse",
+                Policies {
+                    motion: some("fw16-pulse-v1"),
+                    ..Policies::default()
+                },
+            ),
+            (
+                "stall",
+                Policies {
+                    trial: some("fw11-reset-v1"),
+                    ..Policies::default()
+                },
+            ),
+            (
+                "fail",
+                Policies {
+                    trial: some("fw11-fail-v1"),
+                    ..Policies::default()
+                },
+            ),
+        ] {
+            assert_eq!(policy(variant), expected, "{variant}");
+        }
+
+        let motion: Vec<&str> = bringup
+            .variants
+            .iter()
+            .filter(|v| v.motion())
+            .map(Variant::name)
+            .collect();
+        assert_eq!(motion, ["pulse"]);
     }
 }

@@ -38,8 +38,8 @@ baseline bringup device firstboot: $(BUILD)
 
 test:
 	cargo test --locked -p wellfed-session -p wellfed-core -p wellfed-hal-common -p wellfed-hal -p wellfed-sdk -p wellfed-sdk-c -p wellfed-probes \
-		-p wellfed-fw-qa -p wellfed-fw-optics -p wellfed-fw-buttons -p wellfed-fw-adc \
-		-p wellfed-fw-speaker -p wellfed-fw-motor -p wellfed-fw-trial -p wellfed-fw-blink -p wellfed-fw-feeder -p wellfed-feeder -p wellfed-feeder-runtime -p wellfed-board-plaf103
+		-p wellfed-fw-qa -p wellfed-fw-bringup \
+		-p wellfed-fw-blink -p wellfed-fw-feeder -p wellfed-feeder -p wellfed-feeder-runtime -p wellfed-board-plaf103
 
 .PHONY: FORCE
 FORCE:

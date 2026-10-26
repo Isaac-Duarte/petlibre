@@ -1,11 +1,12 @@
 //! EXPERIMENTAL bench probes for the PLAF103, shared by the firmwares that
-//! run them: each single-purpose bring-up firmware runs one, and the QA
+//! run them: each variant of the bring-up firmware runs one, and the QA
 //! firmware runs several in sequence.
 //!
 //! A probe is a step function over its own state; the firmware owns the task
 //! that steps it (the build's stack audit finds tasks only in the firmware's
 //! own sources). Each probe reads back stopped motor outputs; only the motor
-//! pulse probe ever drives the motor, and only the `motor` firmware runs it.
+//! pulse probe ever drives the motor, and only the bring-up firmware's `pulse`
+//! variant runs it.
 //! The supervision probe is retained for its host tests; no firmware links
 //! it. The settings store's stress probe lives with the store it stresses
 //! (`wellfed-feeder-runtime`).

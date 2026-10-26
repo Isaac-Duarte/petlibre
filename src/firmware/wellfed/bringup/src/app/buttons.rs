@@ -1,5 +1,6 @@
-//! The firmware's start hook and its one task, which logs the raw lines and
-//! reads the button service's gestures, as a firmware's owner task would.
+//! The `buttons` variant's start hook and its one task, which logs the raw
+//! lines and reads the button service's gestures, as a firmware's owner task
+//! would.
 
 use core::ffi::c_void;
 
@@ -8,9 +9,7 @@ use wellfed_sdk::Slot;
 use wellfed_sdk::buttons::Config;
 use wellfed_sdk::hal::sdk;
 
-wellfed_sdk::firmware!(start);
-
-fn start() {
+pub(super) fn start() {
     // Neither the probe nor the service binds the KM0 flash handshake, so the
     // runtime may confirm once it is otherwise healthy.
     wellfed_sdk::startup_done(true);

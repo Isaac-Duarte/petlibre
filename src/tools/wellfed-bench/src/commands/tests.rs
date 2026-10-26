@@ -1506,7 +1506,7 @@ fn ota_build_builds_reviews_offers_and_checks_health_in_order() {
     assert_eq!(
         calls.ran,
         [
-            "build build --profile firstboot --firmware trial --variant stall",
+            "build build --profile firstboot --firmware bringup --variant stall",
             "build review build --build private/firmware-build/plaf103/firstboot --output private/verification/unit-review",
             "install private/verification/unit-v1.manifest private/verification/unit-review/image.bin",
             "status private/wellfed-owner.json",
@@ -1570,7 +1570,7 @@ fn ota_build_reuses_a_review_of_the_same_sources() {
             "source-id",
             "--image",
             "--firmware",
-            "trial",
+            "bringup",
             "--variant",
             "stall"
         ]]
@@ -1684,6 +1684,51 @@ fn the_motor_firmware_and_its_variant_are_refused() {
     assert_eq!(Firmware::Speaker.name(), "speaker");
     assert!(ota::parse_variant("fw14-adc").is_err());
     assert!(ota::parse_firmware("reference").is_err());
+}
+
+/// The bench's firmware names predate the bring-up firmware's variants, so
+/// each still names the image it always did.
+#[test]
+fn bench_names_resolve_to_the_builders_firmware_and_variant() {
+    for (image, expected) in [
+        (Image::of(Firmware::Qa), &["--firmware", "qa"][..]),
+        (
+            Image::of(Firmware::Optics),
+            &["--firmware", "bringup", "--variant", "optics"],
+        ),
+        (
+            Image::of(Firmware::Buttons),
+            &["--firmware", "bringup", "--variant", "buttons"],
+        ),
+        (
+            Image::of(Firmware::Adc),
+            &["--firmware", "bringup", "--variant", "adc"],
+        ),
+        (
+            Image::of(Firmware::Speaker),
+            &["--firmware", "bringup", "--variant", "speaker"],
+        ),
+        (Image::of(Firmware::Blink), &["--firmware", "blink"]),
+        (Image::of(Firmware::Trial), &["--firmware", "bringup"]),
+        (
+            Image::trial(Variant::Stall),
+            &["--firmware", "bringup", "--variant", "stall"],
+        ),
+        (
+            Image::trial(Variant::Fail),
+            &["--firmware", "bringup", "--variant", "fail"],
+        ),
+        (Image::of(Firmware::Feeder), &["--firmware", "feeder"]),
+        (
+            Image {
+                firmware: Firmware::Feeder,
+                variant: Some(Variant::Twin),
+            },
+            &["--firmware", "feeder", "--variant", "twin"],
+        ),
+    ] {
+        assert_eq!(image.args(), expected, "{image}");
+    }
 }
 
 #[test]

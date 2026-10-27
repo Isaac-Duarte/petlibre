@@ -423,7 +423,7 @@ fn a_key_that_never_joins_is_settled_at_its_invites_deadline() {
             waiting_for_its_invite(&service.phones(&ada.user).await.unwrap())
         })
         .await;
-        clock.advance(Duration::from_secs(u64::from(invite.seconds) + 10));
+        clock.advance(Duration::from_secs(u64::from(invite.seconds) + 120));
 
         until("the key is forgotten", || async {
             service.phones(&ada.user).await.unwrap().is_empty()

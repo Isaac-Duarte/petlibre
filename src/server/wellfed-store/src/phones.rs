@@ -153,20 +153,51 @@ impl Store {
         Ok(recorded)
     }
 
-    /// Set the key's invite deadline, once the feeder has said it.
-    pub async fn set_invite_until(
+    /// Move the key's invite deadline from `expected`, the bound this
+    /// request recorded, to `until`, once the feeder has said it or no
+    /// invite was made. Only while the deadline is still `expected`: a
+    /// request for the same key that raised it since keeps its own bound,
+    /// so a deadline is never lowered below a live invite's. Whether it
+    /// moved.
+    pub async fn settle_invite_until(
         &self,
         feeder: FeederId,
         key: &[u8; 32],
+        expected: Timestamp,
         until: Timestamp,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let key = key.as_slice();
+        let expected = millis(expected);
         let until = millis(until);
-        sqlx::query!(
-            "UPDATE phone_keys SET invite_until_ms = ? WHERE feeder_id = ? AND key = ?",
+        let done = sqlx::query!(
+            "UPDATE phone_keys SET invite_until_ms = ?
+             WHERE feeder_id = ? AND key = ? AND invite_until_ms = ?",
             until,
             feeder.0,
             key,
+            expected,
+        )
+        .execute(&self.writer)
+        .await?;
+        Ok(done.rows_affected() == 1)
+    }
+
+    /// Forget a key this request recorded new, once no invite was made for
+    /// it: only while its deadline is still the bound it recorded, `expected`.
+    pub async fn unrecord_phone(
+        &self,
+        feeder: FeederId,
+        key: &[u8; 32],
+        expected: Timestamp,
+    ) -> Result<()> {
+        let key = key.as_slice();
+        let expected = millis(expected);
+        sqlx::query!(
+            "DELETE FROM phone_keys
+             WHERE feeder_id = ? AND key = ? AND invite_until_ms = ? AND revoke IS NULL",
+            feeder.0,
+            key,
+            expected,
         )
         .execute(&self.writer)
         .await?;

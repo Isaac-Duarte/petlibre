@@ -67,10 +67,16 @@ async fn a_key_asked_for_again_raises_its_deadline_and_another_tokens_is_taken()
         Recorded::Taken
     );
 
-    store
-        .set_invite_until(feeder, &[1; 32], at(60))
+    let stale = store
+        .settle_invite_until(feeder, &[1; 32], at(50), at(60))
         .await
         .unwrap();
+    assert!(!stale, "another request's bound is not lowered");
+    let settled = store
+        .settle_invite_until(feeder, &[1; 32], at(100), at(60))
+        .await
+        .unwrap();
+    assert!(settled);
     let set = store.phone(feeder, &[1; 32]).await.unwrap().unwrap();
     assert_eq!(set.invite_until, at(60));
 }

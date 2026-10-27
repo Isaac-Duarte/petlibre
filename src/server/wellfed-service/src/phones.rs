@@ -44,7 +44,7 @@ use crate::{
 const INVITE_BOUND: SignedDuration = SignedDuration::from_secs(65_535);
 /// Added to the deadline the feeder states, which it counts from when it
 /// made the invite, a little after the server last read its clock.
-const INVITE_MARGIN: SignedDuration = SignedDuration::from_secs(5);
+const INVITE_MARGIN: SignedDuration = SignedDuration::from_secs(60);
 
 impl Service {
     /// An invite for the caller's own phone, which joins the feeder with
@@ -90,6 +90,7 @@ impl Service {
 
         let store = &self.shared.store;
         let now = self.shared.clock.now();
+        let bound = now + INVITE_BOUND;
         let phone = NewPhone {
             feeder: id,
             key,
@@ -97,7 +98,7 @@ impl Service {
             token,
             role,
             invited: now,
-            invite_until: now + INVITE_BOUND,
+            invite_until: bound,
         };
         // The deadline to restore if no invite was made: none for a new key.
         let before = match store.record_phone(&phone).await? {
@@ -120,7 +121,7 @@ impl Service {
             Ok(recorded) => match (recorded.outcome, recorded.invite) {
                 (CommandOutcome::Invited { .. }, Some(made)) => made,
                 (CommandOutcome::Refused { refusal }, _) => {
-                    self.unrecord(before, id, &key).await?;
+                    self.unrecord(before, id, &key, bound).await?;
                     return Err(CommandError::Refused(refusal).into());
                 }
                 _ => return Err(CommandError::Unexpected.into()),
@@ -129,7 +130,7 @@ impl Service {
             // bound, so a phone that joins with it is still this account's.
             Err(error @ Error::Command(CommandError::Unknown)) => return Err(error),
             Err(error) => {
-                self.unrecord(before, id, &key).await?;
+                self.unrecord(before, id, &key, bound).await?;
                 return Err(error);
             }
         };
@@ -137,7 +138,7 @@ impl Service {
             + SignedDuration::from_secs(i64::from(made.seconds))
             + INVITE_MARGIN;
         let until = before.map_or(deadline, |before| before.max(deadline));
-        store.set_invite_until(id, &key, until).await?;
+        store.settle_invite_until(id, &key, bound, until).await?;
 
         // The account may have lost its key while the invite was made.
         self.reconcile_phones().await?;
@@ -177,19 +178,21 @@ impl Service {
     }
 
     /// Undo this request's record once no invite was made for it: forget a
-    /// key it recorded, or put back the deadline a key asked again had.
+    /// key it recorded, or put back the deadline a key asked again had,
+    /// unless another request for the key has raised it since.
     async fn unrecord(
         &self,
         before: Option<Timestamp>,
         id: FeederId,
         key: &[u8; 32],
+        bound: Timestamp,
     ) -> Result<()> {
         let store = &self.shared.store;
         match before {
-            None => {
-                store.forget_client(id, key).await?;
+            None => store.unrecord_phone(id, key, bound).await?,
+            Some(until) => {
+                store.settle_invite_until(id, key, bound, until).await?;
             }
-            Some(until) => store.set_invite_until(id, key, until).await?,
         }
         Ok(())
     }

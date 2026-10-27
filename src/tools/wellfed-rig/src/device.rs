@@ -653,6 +653,9 @@ impl Device {
                 note("Stopping: cancelling the install on the feeder".into());
                 installer.cancel();
                 cancelling = Some(Instant::now());
+                // The injected chunk is moot once the install is cancelled,
+                // and resent until taken it would go ahead of the cancel.
+                unwanted = None;
             }
             if cancelling.is_some_and(|since| since.elapsed() > ANSWER) {
                 return Err(DeviceError::Stopped);
@@ -766,7 +769,9 @@ impl Device {
                             // Only update ops are outstanding here, so the
                             // plaintext holds no secret.
                             note(format!(
-                                "A feeder message did not decode ({garbled} of {GARBLED_MAX} allowed) on bank {bank}: {evidence}; outstanding {}; resuming on a new session",
+                                "A feeder message did not decode ({garbled} of {GARBLED_MAX} allowed) on bank {bank}: {} bytes, starting {}; outstanding {}; resuming on a new session",
+                                evidence.len,
+                                hex::encode(evidence.prefix()),
                                 outstanding(&out, unwanted)
                             ));
                             lost = true;
@@ -988,7 +993,6 @@ fn wait(time: Duration, stop: &AtomicBool) -> Result<(), DeviceError> {
     Ok(())
 }
 
-/// Read what arrives within `time` into the session.
 /// The install's requests still unanswered, for a garbled message's note:
 /// which one the garbled answer could have been.
 fn outstanding(
@@ -1006,6 +1010,7 @@ fn outstanding(
     }
 }
 
+/// Read what arrives within `time` into the session.
 fn read_for(connection: &mut Connection, time: Duration) -> Result<(), DeviceError> {
     read(connection, Instant::now() + time)
 }

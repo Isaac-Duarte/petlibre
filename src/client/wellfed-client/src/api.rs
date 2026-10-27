@@ -74,9 +74,10 @@ pub const GARBLED_PREFIX: usize = 32;
 /// reads right ones wrong.
 ///
 /// It is the message's plaintext, which never holds session keys, but an
-/// invite's answer carries the invite's secret: log it only where no such
-/// answer can be outstanding.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// invite's answer carries the invite's secret: so neither `Debug` nor any
+/// error text shows the bytes, and only [`Self::prefix`] reads them, for a
+/// caller that knows no such answer can be outstanding.
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Garbled {
     /// The whole plaintext's length.
     pub len: usize,
@@ -100,9 +101,11 @@ impl Garbled {
     }
 }
 
-impl std::fmt::Display for Garbled {
+impl std::fmt::Debug for Garbled {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} bytes, starting {}", self.len, Lower(self.prefix()))
+        f.debug_struct("Garbled")
+            .field("len", &self.len)
+            .finish_non_exhaustive()
     }
 }
 
@@ -564,6 +567,25 @@ mod tests {
             out.extend(frame(&message[..sealed]).unwrap());
         }
         out
+    }
+
+    /// A garbled invite answer may hold the invite's secret: the error's
+    /// `Debug` and text name only the length.
+    #[test]
+    fn a_garbled_message_s_bytes_stay_out_of_the_error_s_debug_and_text() {
+        let secret = [0xa7; 40];
+        let error = Error::Malformed(Garbled::of(&secret));
+
+        let shown = format!("{error:?} {error}");
+
+        assert!(shown.contains("len: 40"), "{shown}");
+        for byte in ["a7", "A7", "167"] {
+            assert!(!shown.contains(byte), "{shown}");
+        }
+        let Error::Malformed(garbled) = error else {
+            unreachable!()
+        };
+        assert_eq!(garbled.prefix(), &secret[..GARBLED_PREFIX]);
     }
 
     #[test]

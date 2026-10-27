@@ -30,7 +30,7 @@ The board's indicator writes (`wellfed_hal::leds::show`, checked by `leds::shown
 
 The check runs during feeds, up to once per blink edge per light, so it holds the interrupt lock only for what it needs: five register reads (both ports' directions, the latch, one input sample, the pad), with no stopped-output snapshot and none of the probe's 64 extra input samples. The write holds it for the direction reads and one port write. That is the worst case the supervision timer waits (static analysis, not measured; each read is an SDK or ROM call of a few instructions).
 
-A steady light is checked only when it changes: a level that drifts afterwards (a pad reconfigured, a latch flipped) goes unnoticed until the light's next change, when its check fails and the lights go dark. Startup still enables the indicators only from verified stopped outputs and leaves them LOW.
+A steady light is checked only when it changes, so a drift afterwards goes unnoticed until the light's next change. Even then only some drifts are caught: a lost direction refuses the next write and a reconfigured pad fails the next check, either way darkening the lights, but a flipped latch is simply overwritten by the next write, which then checks clean, so it is never reported. Startup still enables the indicators only from verified stopped outputs and leaves them LOW.
 
 ## The feeder's mapping (provisional)
 

@@ -190,8 +190,8 @@ impl Platform for Plaf103 {
 
     fn indicator_check(&mut self, light: Light, on: bool) -> Check {
         match leds::shown(led(light), on) {
-            // Port A has no input readback: a level whose latch, pad,
-            // directions and stopped outputs agree is accepted.
+            // Port A has no input readback: a level whose latch, pad and
+            // directions agree is accepted; stopped outputs are not required.
             Decision::Verified | Decision::OutputOnly => Check::Held,
             Decision::InputMismatch => Check::InputMismatch,
             Decision::Abort => Check::Abort,

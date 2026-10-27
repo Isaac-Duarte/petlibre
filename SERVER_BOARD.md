@@ -88,12 +88,12 @@ What the first slice gets right, and where it will not scale as features land.
 
 ## Target architecture
 
-A crate per runtime or dependency boundary, a module per domain inside it. A new domain (pets, alerts) is a module and some tables, not a crate, unless it brings its own runtime (tasks), a heavy dependency (`reqwest`) or a consumer outside the server.
+Folded into the [API design](docs/api/README.md#crates) (SV01), which is now authoritative, with [SERVER_SPEC.md](SERVER_SPEC.md#crate-layout)'s changes: the hub lives in the service, and the store keeps its single writer connection. A crate per runtime or dependency boundary, a module per domain inside it. A new domain (pets, alerts) is a module and some tables, not a crate, unless it brings its own runtime (tasks), a heavy dependency (`reqwest`) or a consumer outside the server.
 
 ```text
 src/server/wellfed-api       HTTP bodies, error codes, OpenAPI schemas; a module per resource. Builds for Android
 src/server/wellfed-store     SQL only; a module per table group, one Store. Raw rows plus projections
-src/server/wellfed-mirror    the per-feeder runtime: connect, sync, ingest and projections, the command lanes, the hub
+src/server/wellfed-mirror    the per-feeder runtime: connect, sync, ingest and projections, the command lanes, a per-feeder broadcast
 src/server/wellfed-releases  fetch, upload and verify releases, the release cache, the install driver
 src/server/wellfed-service   the use cases: accounts, household, commands and their journal, pets and food,
                               derived views, alerts, audit, export
@@ -114,7 +114,7 @@ wellfed (the CLI) ─► wellfed-server-client ─► wellfed-api
           └─► wellfed-connect (the device API, as today)
 ```
 
-- **`wellfed-mirror`** owns every task that holds a feeder session. Its surface is small: start and stop a feeder, its link state, `ask` (one answer or unknown), a long-operation lane, and the hub. The service never sees a socket; the mirror never sees a user.
+- **`wellfed-mirror`** owns every task that holds a feeder session. Its surface is small: start and stop a feeder, its link state, `ask` (one answer or unknown), a long-operation lane, and a per-feeder broadcast of typed mirror events. The hub that merges it with command results and alerts is the service's. The service never sees a socket; the mirror never sees a user.
 - **`wellfed-store`** stays one crate, so the sqlx offline metadata and the migrations stay in one place, split into `users`, `feeders`, `history`, `samples`, `owner` (pets and foods), `commands`, `releases` and `jobs` modules.
 - **Derived views** are a service module over the store's projections. They are pure functions of typed rows, with "now" and the household zone passed in, so they are tested without a database.
 - **The service's errors split by domain** (`AccountError`, `CommandError`, …), wrapped in its `Error`, as the [Rust standard](docs/development/rust.md) asks of a module with several refusals.
@@ -122,8 +122,9 @@ wellfed (the CLI) ─► wellfed-server-client ─► wellfed-api
 ## Current status
 
 - **Done:** the first slice (FP18, Oct 24, host simulation): setup and login, adoption by invite, the mirror, settings, lock, history pages and the stream.
-- **Ready:** SV01–SV05, SV09.
-- **Next:** the foundations, in this order: SV01, SV02, SV03, SV04, SV05, SV06, then SV07 and SV08. They change no behavior. SV09 runs as soon as the bench is free, and always before SV07, so the current server meets the research unit before the mirror is reshaped (owner, Oct 26: the firmware run holds the bench, so SV01–SV05 go first). SV19 runs when no firmware run is editing `src/client/`.
+- **Done (foundations):** SV01 (the architecture in the API design, its arrows checked by `cargo xtask check-repository`) and SV02 (server dependencies from the workspace), static analysis, Oct 26.
+- **Ready:** SV03–SV05, SV09.
+- **Next:** the foundations, in this order: SV03, SV04, SV05, SV06, then SV07 and SV08. They change no behavior. SV09 runs as soon as the bench is free, and always before SV07, so the current server meets the research unit before the mirror is reshaped (owner, Oct 26: the firmware run holds the bench, so SV01–SV05 go first). SV19 runs when no firmware run is editing `src/client/`.
 - **Then:** the command plane (SV20, SV21) and the public setup's accounts (SV30–SV32), the CLI on the server API (SV34), then data, owner data and releases.
 - **Critical path to a feed from the web UI:** SV07 → SV20 → SV21. FW17 (feeds that survive a reboot) is done.
 - **Waiting on firmware:** SV13 (FW54, FW55, FW62), SV23 (FP03), SV52 (FW42, FW43).
@@ -132,13 +133,13 @@ wellfed (the CLI) ─► wellfed-server-client ─► wellfed-api
 
 | Card | Status | Evidence | Prerequisites | Finish line |
 | --- | --- | --- | --- | --- |
-| **SV01 Server architecture record** | Ready | — | — | The [target architecture](#target-architecture) and the [decisions](#decisions-owner-october-26) move into the [API design](docs/api/README.md#crates): the crate map, the allowed dependencies, the "crate per runtime or dependency boundary" rule, the service returning `wellfed-api` bodies, migrations squashed until the first release, and the [two-path rule](#two-paths-one-feed). The dependency rules are enforced through cargo-deny `wrappers` or `cargo xtask check-repository`, so nothing above the store links sqlx and nothing below the server links axum. |
-| **SV02 Workspace dependencies** | Ready | — | — | Every server dependency comes from `[workspace.dependencies]` (finding 9); `make check-deps` passes with no new duplicate. |
+| **SV01 Server architecture record** | Done | Static analysis: the [API design](docs/api/README.md#crates) holds the crate map, the rule, the [allowed dependencies](docs/api/README.md#allowed-dependencies), the service's `wellfed-api` bodies, squashed migrations and the [two-path rule](docs/api/README.md#two-paths-one-feed); `cargo xtask check-repository` checks the arrows from `cargo metadata` (xtask `layers::tests::{the_drawn_layers_pass, each_broken_rule_names_its_edge, axum_through_the_api_is_named_from_every_crate_above_it, a_crate_that_does_not_exist_yet_is_held_to_its_arrows, metadata_kinds_decide_what_links}`), and refused a probe that gave `wellfed-service` sqlx and axum | — | The [target architecture](#target-architecture) and the [decisions](#decisions-owner-october-26) move into the [API design](docs/api/README.md#crates): the crate map, the allowed dependencies, the "crate per runtime or dependency boundary" rule, the service returning `wellfed-api` bodies, migrations squashed until the first release, and the [two-path rule](#two-paths-one-feed). The dependency rules are enforced through cargo-deny `wrappers` or `cargo xtask check-repository`, so nothing above the store links sqlx and nothing below the server links axum. |
+| **SV02 Workspace dependencies** | Done | Static analysis: the 15 crates pinned in the server's manifests (`argon2`, `axum-extra`, `chacha20poly1305`, `futures-util`, `getrandom`, `http-body-util`, `reqwest`, `sha2`, `tokio-stream`, `tokio-util`, `tower`, `tower-http`, `tracing`, `tracing-subscriber`, `utoipa-axum`) come from `[workspace.dependencies]`; `Cargo.lock` resolves unchanged, so `make check-deps` adds no duplicate | — | Every server dependency comes from `[workspace.dependencies]` (finding 9); `make check-deps` passes with no new duplicate. |
 | **SV03 Store modules** | Ready | — | — | `wellfed-store` splits into a module per table group, with the conversion helpers (`millis`, `to_i64`, …) in one module. The pre-migration backup takes its time from the caller (finding 8). Migrations `0001` and `0002` squash into one (no release yet). Store tests pass unchanged in what they assert. |
 | **SV04 Routes and extractors** | Ready | — | — | `wellfed-server` has a route module per resource, matching `wellfed-api`'s modules, and typed extractors for `If-Match` (a `Generation`) and `Idempotency-Key` (required or optional per route) that document themselves in the OpenAPI. `openapi.json` changes only where the extractors make it more exact. |
 | **SV05 Server test kit** | Ready | — | — | `wellfed-server-testkit` holds what every server test builds: a temp store, a fixed `Clock` and a seeded `Random`, the simulator over TCP, and the server run in process. HTTP goes through `src/client/wellfed-server-client`, created here: a typed client over `wellfed-api` with a cookie or a token, which the CLI uses later (SV34), so the tests and the CLI cannot disagree with the routes. Service and API tests split into a file per domain. |
 | **SV06 One clock** | Planned | — | SV03 | No server crate reads the wall clock outside `SystemClock`; the hub's epoch comes through `Clock` (finding 8). Clippy `disallowed_methods` on `Timestamp::now` and `SystemTime::now` in the server crates keeps it that way. |
-| **SV07 `wellfed-mirror`** | Planned | — | SV01, SV05, SV09 | The per-feeder tasks, ingest, the command channel and the hub move out of `wellfed-service` into `wellfed-mirror`, behind the surface the [target architecture](#target-architecture) names. The command surface is final here: `ask` for a short command, and a handle for a long operation that yields between its steps, both served one at a time for now, so SV22 changes only what is behind them. SV09's findings shape the reconnect and link state. The service keeps users and the use cases, and its error enum splits by domain. Every service and end-to-end test passes unchanged in what it asserts. |
+| **SV07 `wellfed-mirror`** | Planned | — | SV01, SV05, SV09 | The per-feeder tasks, ingest and the command channel move out of `wellfed-service` into `wellfed-mirror` (the hub stays in the service, which merges the mirror's per-feeder broadcast with its own results: [spec](SERVER_SPEC.md#crate-layout)), behind the surface the [target architecture](#target-architecture) names. The command surface is final here: `ask` for a short command, and a handle for a long operation that yields between its steps, both served one at a time for now, so SV22 changes only what is behind them. SV09's findings shape the reconnect and link state. The service keeps users and the use cases, and its error enum splits by domain. Every service and end-to-end test passes unchanged in what it asserts. |
 | **SV08 File size guard** | Planned | — | SV03, SV05, SV07 | `cargo xtask check-repository` refuses a file in `src/server/` over 400 lines, or over 600 under `tests/`. SV03, SV05 and SV07 split the server's four that are over at `bb244c8` (`wellfed-store/src/lib.rs` 767, `wellfed-service/tests/service.rs` 721, `feeder.rs` 480, `feeders.rs` 416); none is exempt when the card closes. SV19 extends the guard to `src/client/`. |
 | **SV09 Current server on the bench** | Ready | — | — | **Bench**, before the foundations: today's server adopts the research unit by invite, mirrors its history, changes settings and the lock, and keeps the history whole across a server restart, a feeder power cut and a Wi-Fi drop. No motion. Findings on reconnect, discovery, cursor sync and one command at a time are recorded here and feed SV07 and SV22. Run under the owner's bench authorization, with the prior network and service state restored and recorded. |
 | **SV19 Client file splits** | Planned | — | SV08 | The guard covers `src/client/` too. The eight client files over at `3549cc07` split: `wellfed-client/tests/api.rs` 2927 and `tests/update.rs` 1185, `wellfed-model/src/convert.rs` 1602, `wellfed-client/src/api.rs` 594, `src/install.rs` 560, `src/install/tests.rs` 479 (a unit-test module under `src/`, so the 400 limit) and `src/connection.rs` 466, `wellfed-connect/src/lib.rs` 446. The firmware run keeps growing them, so the card recounts when it starts. Runs only while no firmware run edits `src/client/`, since the firmware cards change these files too. None is exempt when the card closes. |
@@ -213,8 +214,8 @@ wellfed (the CLI) ─► wellfed-server-client ─► wellfed-api
 
 | Card | Status |
 | --- | --- |
-| SV01 Server architecture record | 🟢 Ready |
-| SV02 Workspace dependencies | 🟢 Ready |
+| SV01 Server architecture record | ✅ Done |
+| SV02 Workspace dependencies | ✅ Done |
 | SV03 Store modules | 🟢 Ready |
 | SV04 Routes and extractors | 🟢 Ready |
 | SV05 Server test kit | 🟢 Ready |

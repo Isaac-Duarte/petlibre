@@ -5,15 +5,18 @@
 //!
 //! `check-repository` checks local documentation links, portable repository
 //! inputs, that no Python returns under `src/`, and the source rules (raw
-//! output writers only through the HAL's owners, no board card ids). It is
-//! a maintenance check, not a secret scanner or a licensing audit.
+//! output writers only through the HAL's owners, no board card ids), then
+//! the server's crate layering from `cargo metadata`. It is a maintenance
+//! check, not a secret scanner or a licensing audit.
 
 #![forbid(unsafe_code)]
 
 mod fuzz;
+mod layers;
 mod repository;
 
-use std::path::PathBuf;
+use std::fmt::Write as _;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
@@ -45,11 +48,38 @@ enum Task {
     },
 }
 
+/// Why `check-repository` could not run its checks at all.
+#[derive(Debug, thiserror::Error)]
+enum CheckError {
+    #[error("could not list the checkout")]
+    Files(#[from] std::io::Error),
+    #[error("could not check the crate layering")]
+    Layers(#[from] layers::Error),
+}
+
+/// The file checks, then the server's crate layering from `cargo metadata`.
+fn check_repository(root: &Path) -> Result<repository::Summary, CheckError> {
+    let mut summary = repository::check(root)?;
+    summary.errors.extend(layers::check(root)?);
+    Ok(summary)
+}
+
+/// An error and each of its causes, on one line.
+fn chain(error: &dyn std::error::Error) -> String {
+    let mut text = error.to_string();
+    let mut cause = error.source();
+    while let Some(next) = cause {
+        let _ = write!(text, ": {next}");
+        cause = next.source();
+    }
+    text
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
 
     match cli.task {
-        Task::CheckRepository => match repository::check(&cli.root) {
+        Task::CheckRepository => match check_repository(&cli.root) {
             Ok(summary) if summary.errors.is_empty() => {
                 println!(
                     "Repository check passed: {} files, {} local documentation links.",
@@ -62,7 +92,7 @@ fn main() -> ExitCode {
                 ExitCode::from(1)
             }
             Err(error) => {
-                eprintln!("check-repository: {error}");
+                eprintln!("check-repository: {}", chain(&error));
                 ExitCode::from(2)
             }
         },

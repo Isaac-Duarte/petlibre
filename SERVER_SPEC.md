@@ -114,3 +114,7 @@ Questions a parked card raises, for the owner.
 ## Run log
 
 Each deviation from the board's rules or this spec, with its reason.
+
+- **SV01, arrows as a table.** The diagram's arrows are enforced as an explicit table of the workspace crates each server crate may take (in the API design), not their transitive closure, so the binary cannot reach past the service into the mirror. Edges the diagram leaves implicit are rows: the mirror takes `wellfed-api`, `wellfed-model`, `wellfed-client`, `wellfed-proto` and `wellfed-session`; the service takes `wellfed-store`, `wellfed-api`, `wellfed-model` and `wellfed-formats` (export); the test kit takes what it builds. The service also keeps `wellfed-client`, `wellfed-connect`, `wellfed-proto` and `wellfed-session` until SV07 moves the feeder tasks, which then removes them from the table.
+- **SV01, rule scope.** Dev-dependencies are exempt from the arrows (tests build simulated feeders and whole servers) but not from the sqlx rule. "Below the server" for axum includes `wellfed-server-client`. The `wellfed-api` allow-list covers its direct dependencies; a new one needs an Android build check by hand, since `make check` builds no Android target.
+- **SV02, scope.** Only the server crates' pins moved. Host tools that pin the same versions (`wellfed-stock`'s `reqwest` and `tracing`, the tools' `sha2` 0.11) keep their own lines, to stay out of the firmware run's manifests; they can take the workspace entries later with no version change.

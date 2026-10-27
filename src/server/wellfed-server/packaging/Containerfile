@@ -1,0 +1,59 @@
+# syntax=docker/dockerfile:1
+#
+# wellfed-server as a static musl binary, and as a container image that
+# holds only that binary and the CA certificates its GitHub release checks
+# need. Built from the repository root:
+#
+#   docker build -f src/server/wellfed-server/packaging/Containerfile -t wellfed-server .
+#
+# The `dist` stage is the release binaries alone, for both targets:
+#
+#   docker build -f src/server/wellfed-server/packaging/Containerfile \
+#       --target dist --output type=local,dest=dist/server .
+#
+# The build stage runs on the build machine's own platform and cross-links
+# with zig, so an arm64 image builds on an x86_64 host with no emulation:
+# the arm64 stages only copy files.
+#
+# See docs/api/README.md#packaging for running it (host networking for mDNS
+# discovery, or `--no-discovery` on a bridged network).
+
+ARG RUST_IMAGE=docker.io/library/rust:1.99.1-alpine3.24
+
+FROM --platform=$BUILDPLATFORM ${RUST_IMAGE} AS build
+RUN apk add --no-cache ca-certificates cargo-zigbuild zig
+# The toolchain the image ships, not the repository's rust-toolchain.toml,
+# whose firmware targets this build never needs.
+ENV RUSTUP_TOOLCHAIN=1.99.1 CARGO_INCREMENTAL=0
+RUN rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl
+WORKDIR /src
+COPY Cargo.toml Cargo.lock ./
+COPY .cargo .cargo
+COPY src src
+RUN cargo zigbuild --release --locked -p wellfed-server \
+        --target x86_64-unknown-linux-musl --target aarch64-unknown-linux-musl
+RUN mkdir -p /dist/amd64 /dist/arm64 /rootfs/data /rootfs/tmp /rootfs/etc/ssl/certs \
+ && cp target/x86_64-unknown-linux-musl/release/wellfed-server /dist/amd64/ \
+ && cp target/aarch64-unknown-linux-musl/release/wellfed-server /dist/arm64/ \
+ && cp /etc/ssl/certs/ca-certificates.crt /rootfs/etc/ssl/certs/ \
+ && chown 65532:65532 /rootfs/data && chmod 0700 /rootfs/data && chmod 1777 /rootfs/tmp
+
+# The release binaries, named by target.
+FROM scratch AS dist
+COPY --from=build /dist/amd64/wellfed-server /wellfed-server-x86_64-unknown-linux-musl
+COPY --from=build /dist/arm64/wellfed-server /wellfed-server-aarch64-unknown-linux-musl
+
+# The binary, CA certificates for the release checks, and a /tmp for
+# SQLite's temporary files; the zone database is built into the binary.
+FROM scratch AS image
+ARG TARGETARCH
+COPY --from=build /rootfs/ /
+COPY --from=build /dist/${TARGETARCH}/wellfed-server /usr/local/bin/wellfed-server
+# Not root, and nothing but the data directory is written.
+USER 65532:65532
+ENV WELLFED_SERVER_DATA=/data \
+    WELLFED_SERVER_LISTEN=0.0.0.0:8080 \
+    SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+VOLUME /data
+EXPOSE 8080
+ENTRYPOINT ["/usr/local/bin/wellfed-server"]

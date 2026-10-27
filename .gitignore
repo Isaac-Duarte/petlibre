@@ -26,3 +26,6 @@ node_modules/
 /src/web/apps/site/build/
 .claude/
 skills-lock.json
+
+# The server's release binaries (make server-dist)
+/dist/

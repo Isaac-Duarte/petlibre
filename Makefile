@@ -1,4 +1,4 @@
-.PHONY: help check check-rust check-deps check-cross check-virtual-feeder check-docs check-fixtures ui check-web sqlx-prepare
+.PHONY: help check check-rust check-deps check-cross check-virtual-feeder check-docs check-fixtures ui check-web sqlx-prepare server-dist server-image check-server-release
 
 help:
 	@echo "check: formatting, Clippy, Rust tests, cross-builds, simulator, repository checks"
@@ -7,6 +7,8 @@ help:
 	@echo "ui: build the web page (pnpm in src/web/) that wellfed-dashboard embeds with --features ui"
 	@echo "check-web: web types, unit tests, build, then the page end to end against wellfed-bench --ui"
 	@echo "sqlx-prepare: regenerate the server store's query metadata (.sqlx/) after changing a query or migration"
+	@echo "server-dist / server-image: the server's static release binaries in dist/server/ and its container image (docker or podman)"
+	@echo "check-server-release: the release check against dist/server/ and the image"
 	@echo "Checks do not open serial ports, change routing, or send device commands."
 
 check: check-rust check-deps check-cross check-virtual-feeder check-docs
@@ -87,3 +89,23 @@ sqlx-prepare:
 	touch $(STORE)/src/lib.rs
 	DATABASE_URL=sqlite://$(STORE_DB) SQLX_OFFLINE_DIR=$(CURDIR)/$(STORE)/.sqlx cargo check --locked -p wellfed-store
 	rm -f $(STORE_DB)
+
+# The server's release: static musl binaries for x86_64 and aarch64 in
+# dist/server/, and the container image, both built in a container so the
+# host needs only docker or podman (CONTAINER=podman). Never part of
+# `check`. check-server-release runs the release check against this host's
+# binary from dist/server/ and against the image; `check` already runs it
+# against the debug build. docs/api/README.md#packaging.
+CONTAINER ?= docker
+SERVER_CONTAINERFILE = src/server/wellfed-server/packaging/Containerfile
+SERVER_DIST = dist/server
+SERVER_IMAGE ?= wellfed-server
+server-dist:
+	$(CONTAINER) build -f $(SERVER_CONTAINERFILE) --target dist --output type=local,dest=$(SERVER_DIST) .
+
+server-image:
+	$(CONTAINER) build -f $(SERVER_CONTAINERFILE) -t $(SERVER_IMAGE) .
+
+check-server-release:
+	WELLFED_RELEASE_SERVER=$(CURDIR)/$(SERVER_DIST)/wellfed-server-$$(uname -m)-unknown-linux-musl cargo nextest run --locked -p wellfed-server --test release
+	WELLFED_RELEASE_IMAGE=$(SERVER_IMAGE) WELLFED_RELEASE_RUNTIME=$(CONTAINER) cargo nextest run --locked -p wellfed-server --test release --run-ignored only

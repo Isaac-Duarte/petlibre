@@ -339,6 +339,54 @@ trusted_proxies = ["127.0.0.1"]   # the proxy's address, or its range
 - **What a member's phone needs.** The server's public URL (`https://feeder.example.org`), an account (an owner adds it with a temporary password; the member logs in and sets their own), and a token made from that login for the phone (`POST /tokens`, shown once), which the app sends as `Authorization: Bearer`. A token is judged alone, needs no cookie or `Origin`, and is revoked on its own if the phone is lost. A phone that should keep feeding with the server down also holds its own feeder key, which works only on the home network ([two paths](#two-paths-one-feed)).
 - **Without a proxy.** On the LAN the server is reached directly (`listen = "0.0.0.0:8080"`), over plain HTTP, with no `Secure` cookie; leave `trusted_proxies` empty. A VPN into the home network is the other way in from outside, and needs no proxy.
 
+### Packaging
+
+Each GitHub release carries the server as one static binary per target, `wellfed-server-x86_64-unknown-linux-musl` and `wellfed-server-aarch64-unknown-linux-musl`, and the same binary in a container image. Both run the server as described above; what differs is where the data directory lives and who owns it.
+
+- **The data directory.** Everything is in it: `server.db`, `server.toml`, `keys/server.key`, `releases/` and `backups/` ([configuration](#configuration)). The key file is linked into place with a hard link, so the directory must be on a filesystem that has them: any local one does, while some network and FUSE mounts do not, and the first start then fails with a write error. Keep it on local disk, or on a volume whose driver supports hard links.
+- **Backups and the key.** The daily copies and those an owner asks for are in `backups/` inside the data directory, beside the database, and they leave out the key ([backups](#backups)). Back up the data directory as a whole, or at least `keys/server.key` once and `backups/` regularly, to somewhere off the machine: a restored `server.db` opens only with its key. Under the systemd unit the directory is `/var/lib/wellfed-server`; in the image it is the volume at `/data`.
+- **Building the release.** `make server-dist` builds both binaries into `dist/server/`, and `make server-image` the image (`CONTAINER=podman` for podman). Both run [`packaging/Containerfile`](../../src/server/wellfed-server/packaging/Containerfile): a `rust:1.99.1-alpine3.24` stage on the build machine's own platform links both targets with zig (`cargo zigbuild`), so the aarch64 binary and the arm64 image build on an x86_64 host with no emulation (`docker buildx build --platform linux/amd64,linux/arm64` for a multi-arch image). rustls with its aws-lc provider and the bundled SQLite both build for musl this way (checked October 27, 2026, both targets). Without a container, a host with zig and `cargo-zigbuild` runs the same `cargo zigbuild --release --locked -p wellfed-server --target x86_64-unknown-linux-musl --target aarch64-unknown-linux-musl` after `rustup target add` for both; a plain `cargo build --target x86_64-unknown-linux-musl` also needs a musl C compiler (`musl-gcc`, or Alpine's own gcc) for aws-lc and SQLite.
+- **The release check.** `wellfed-server`'s `tests/release.rs` starts the server as a separate process on a fresh temporary data directory, sets the household up, adopts the simulated feeder by address with `--no-discovery`, reads readiness and the feeder's live status, takes a backup, stops it with SIGTERM (a clean exit, as systemd and container runtimes stop it), and starts it again to reconnect by the stored address. `make check` runs it against the debug build. `make check-server-release` runs it against this host's binary in `dist/server/` (`WELLFED_RELEASE_SERVER=<binary>`) and then against the image (`WELLFED_RELEASE_IMAGE=<image>`, `WELLFED_RELEASE_RUNTIME=docker|podman`, an ignored test, so the gate never needs a container runtime). Nothing in either is left running.
+
+#### systemd
+
+[`packaging/wellfed-server.service`](../../src/server/wellfed-server/packaging/wellfed-server.service) is an example unit for the static binary:
+
+```sh
+sudo install -m 0755 wellfed-server-x86_64-unknown-linux-musl /usr/local/bin/wellfed-server
+sudo install -m 0644 wellfed-server.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now wellfed-server
+```
+
+- **Its user.** `DynamicUser=yes` makes a user for the unit alone, which owns only `StateDirectory=wellfed-server` (`/var/lib/wellfed-server`, mode 0700, files 0600 through `UMask=0077`). The rest of the system is read-only or hidden (`ProtectSystem=strict`, `ProtectHome`, `PrivateTmp`, `PrivateDevices`, no capabilities, `@system-service` system calls only); `systemd-analyze security` rates it 1.3. Address families are limited to IPv4, IPv6, Unix and netlink, which mDNS needs to list the interfaces it browses on.
+- **Settings.** Put `server.toml` in `/var/lib/wellfed-server/` (as root; the next start reads it), or set `WELLFED_SERVER_*` variables with `systemctl edit wellfed-server`. It listens on `127.0.0.1:8080` until `listen` says otherwise.
+- **Discovery works.** The unit shares the host's network, so mDNS finds feeders whose address changed.
+- **`reset-owner`** runs as the unit's user, with the server stopped: `sudo systemctl stop wellfed-server`, then `sudo systemd-run --pty --wait -p DynamicUser=yes -p User=wellfed-server -p StateDirectory=wellfed-server /usr/local/bin/wellfed-server --data /var/lib/wellfed-server reset-owner`, then start it again.
+
+#### Container
+
+The image (`FROM scratch`) holds the binary, the CA certificates its GitHub release checks need and an empty `/tmp`; the zone database is built into the binary. It runs as uid 65532, keeps its data in the volume at `/data` (`WELLFED_SERVER_DATA`) and listens on `0.0.0.0:8080` (`WELLFED_SERVER_LISTEN`); arguments after the image name are the server's flags.
+
+- **Host networking, for discovery.** mDNS is multicast, which a container's bridge network does not pass, so run it on the host's network to keep discovery:
+
+  ```sh
+  docker run -d --name wellfed-server --restart unless-stopped \
+      --network host -v wellfed-server:/data wellfed-server
+  ```
+
+  It then listens on the host's port 8080 directly (set `WELLFED_SERVER_LISTEN=127.0.0.1:8080` when a proxy on the host is the only way in).
+- **A bridged network, by address.** Without host networking, turn discovery off and give every feeder's address when adopting it (`address` in `POST /feeders`: an IP address, the API's port by default, or `IP:port`; a DNS name is not resolved):
+
+  ```sh
+  docker run -d --name wellfed-server --restart unless-stopped \
+      -p 8080:8080 -v wellfed-server:/data wellfed-server --no-discovery
+  ```
+
+  The server then adopts and reconnects at the stored address only, and adopting with no address is refused (`400 invalid`). A feeder whose address changes stays offline until it is back at that address, so give each feeder a fixed address (a DHCP reservation). The feeders must be reachable from the container: a bridge network routes out to the LAN, but not back in, which the feeder API never needs.
+- **The volume.** A named volume (as above) or a bind mount of a local directory owned by uid 65532 (`--user` picks another uid; with rootless podman, `--userns=keep-id` maps yours). It must support hard links (above).
+- **Behind a proxy in another container,** list that container network's range in `trusted_proxies` ([behind a reverse proxy](#behind-a-reverse-proxy)).
+
 ## Releases
 
 Built Oct 26 (host simulation). `wellfed-releases` keeps the signed updates an owner may install; nothing installs from here (that is `POST /feeders/{id}/install`).

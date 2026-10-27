@@ -1,0 +1,67 @@
+# An example unit for the static wellfed-server binary. Copy the binary to
+# /usr/local/bin and this file to /etc/systemd/system, then
+# `systemctl enable --now wellfed-server`. docs/api/README.md#packaging has the
+# rest: the settings file, reset-owner under this unit's user, and backups.
+#
+# The data directory is /var/lib/wellfed-server (StateDirectory): the
+# database, server.toml, keys/server.key, releases/ and backups/. Its key
+# file is placed with a hard link, so it must sit on a filesystem that has
+# them (any local one does).
+
+[Unit]
+Description=Wellfed server
+Documentation=https://github.com/Isaac-Duarte/wellfed/blob/master/docs/api/README.md#packaging
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=exec
+ExecStart=/usr/local/bin/wellfed-server --data %S/wellfed-server
+# 127.0.0.1:8080 unless set here or as `listen` in server.toml; 0.0.0.0
+# serves the household's other devices.
+#Environment=WELLFED_SERVER_LISTEN=0.0.0.0:8080
+# On SIGTERM it closes the feeder sessions and the database.
+TimeoutStopSec=30s
+Restart=on-failure
+RestartSec=5s
+
+# A user made for this unit alone, owning only its state directory.
+DynamicUser=yes
+User=wellfed-server
+StateDirectory=wellfed-server
+StateDirectoryMode=0700
+UMask=0077
+
+# Nothing else of the system is written or seen.
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+DevicePolicy=closed
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+CapabilityBoundingSet=
+AmbientCapabilities=
+NoNewPrivileges=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+# TCP to the feeders and the API, UDP multicast for mDNS discovery, and
+# netlink to list the interfaces mDNS browses on.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

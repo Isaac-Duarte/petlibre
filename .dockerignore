@@ -1,0 +1,13 @@
+# The container build (src/server/wellfed-server/packaging/Containerfile)
+# copies only the workspace's sources: never builds, private evidence or
+# agent checkouts.
+*
+!Cargo.toml
+!Cargo.lock
+!.cargo/
+!src/
+src/web/
+src/app/
+src/fuzz/
+**/target/
+**/node_modules/

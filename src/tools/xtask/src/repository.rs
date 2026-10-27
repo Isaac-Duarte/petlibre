@@ -137,6 +137,7 @@ pub(crate) fn check(root: &Path) -> io::Result<Summary> {
     for name in &names {
         check_file(&root, name, &mut summary);
     }
+    check_release_toolchain(&root, &mut summary);
 
     Ok(summary)
 }
@@ -167,21 +168,6 @@ fn check_file(root: &Path, name: &str, summary: &mut Summary) {
         summary.errors.push(format!(
             "{name}: binary/evidence files need explicit provenance review"
         ));
-    }
-    if name == SERVER_CONTAINERFILE {
-        let read = |file: &str| fs::read_to_string(root.join(file));
-        match (read(SERVER_CONTAINERFILE), read("rust-toolchain.toml")) {
-            (Ok(containerfile), Ok(toolchain)) => {
-                for missing in unpinned_toolchain(&containerfile, &toolchain) {
-                    summary.errors.push(format!(
-                        "{name}: lacks `{missing}`; build releases with rust-toolchain.toml's channel"
-                    ));
-                }
-            }
-            (Err(error), _) | (_, Err(error)) => summary.errors.push(format!(
-                "{name}: cannot compare its toolchain with rust-toolchain.toml: {error}"
-            )),
-        }
     }
     if !TEXT.contains(&extension) {
         return;
@@ -281,8 +267,56 @@ fn unpinned_toolchain(containerfile: &str, toolchain: &str) -> Vec<String> {
         format!("RUSTUP_TOOLCHAIN={channel}"),
     ]
     .into_iter()
-    .filter(|wanted| !containerfile.contains(wanted.as_str()))
+    .zip([
+        names_image(containerfile, &channel),
+        selects(containerfile, &channel),
+    ])
+    .filter(|(_, present)| !present)
+    .map(|(wanted, _)| wanted)
     .collect()
+}
+
+/// A whole token naming `rust:<channel>-alpine`, after any registry path or
+/// `ARG` name, with nothing but an Alpine release (`3.24`) after it, so channel
+/// 1.99.1 is not met by 1.99.10.
+fn names_image(containerfile: &str, channel: &str) -> bool {
+    let image = format!("rust:{channel}-alpine");
+
+    containerfile.split_whitespace().any(|token| {
+        let reference = token.rsplit(['/', '=']).next().unwrap_or(token);
+        reference
+            .strip_prefix(image.as_str())
+            .is_some_and(|alpine| alpine.chars().all(|c| c.is_ascii_digit() || c == '.'))
+    })
+}
+
+/// A whole `RUSTUP_TOOLCHAIN=<channel>` token.
+fn selects(containerfile: &str, channel: &str) -> bool {
+    let selected = format!("RUSTUP_TOOLCHAIN={channel}");
+
+    containerfile
+        .split_whitespace()
+        .any(|token| token == selected)
+}
+
+/// The release Containerfile builds with rust-toolchain.toml's channel. It is
+/// read whether or not the listing has it, so a deleted or renamed
+/// Containerfile fails the check instead of skipping it.
+fn check_release_toolchain(root: &Path, summary: &mut Summary) {
+    let read = |file: &str| fs::read_to_string(root.join(file));
+
+    match (read(SERVER_CONTAINERFILE), read("rust-toolchain.toml")) {
+        (Ok(containerfile), Ok(toolchain)) => {
+            for missing in unpinned_toolchain(&containerfile, &toolchain) {
+                summary.errors.push(format!(
+                    "{SERVER_CONTAINERFILE}: lacks `{missing}`; build releases with rust-toolchain.toml's channel"
+                ));
+            }
+        }
+        (Err(error), _) | (_, Err(error)) => summary.errors.push(format!(
+            "{SERVER_CONTAINERFILE}: cannot compare its toolchain with rust-toolchain.toml: {error}"
+        )),
+    }
 }
 
 /// The root's settings (its non-comment lines) that a nested clippy.toml lacks.
@@ -643,9 +677,14 @@ mod tests {
         let toolchain = "[toolchain]\nchannel = \"1.99.1\"\nprofile = \"minimal\"\n";
         let pinned = "ARG RUST_IMAGE=docker.io/library/rust:1.99.1-alpine3.24\nENV RUSTUP_TOOLCHAIN=1.99.1 CARGO_INCREMENTAL=0\n";
         let stale = "ARG RUST_IMAGE=docker.io/library/rust:1.98.0-alpine3.24\nENV RUSTUP_TOOLCHAIN=1.99.1\n";
+        let longer = "ARG RUST_IMAGE=docker.io/library/rust:1.99.10-alpine3.24\nENV RUSTUP_TOOLCHAIN=1.99.10\n";
 
         assert!(unpinned_toolchain(pinned, toolchain).is_empty());
         assert_eq!(unpinned_toolchain(stale, toolchain), ["rust:1.99.1-alpine"]);
+        assert_eq!(
+            unpinned_toolchain(longer, toolchain),
+            ["rust:1.99.1-alpine", "RUSTUP_TOOLCHAIN=1.99.1"]
+        );
         assert_eq!(
             unpinned_toolchain(pinned, "[toolchain]\n"),
             ["a channel in rust-toolchain.toml"]

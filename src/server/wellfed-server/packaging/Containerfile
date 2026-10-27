@@ -22,6 +22,8 @@
 ARG RUST_IMAGE=docker.io/library/rust:1.99.1-alpine3.24
 
 FROM --platform=$BUILDPLATFORM ${RUST_IMAGE} AS build
+# Alpine drops superseded package revisions, so when a pin stops resolving,
+# bump it to the revision the image's Alpine release now carries.
 RUN apk add --no-cache ca-certificates cargo-zigbuild=0.23.4-r0 zig=0.16.0-r1
 # The toolchain the image ships, without rust-toolchain.toml's firmware
 # targets, which this build never needs.

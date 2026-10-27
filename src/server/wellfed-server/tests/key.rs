@@ -92,6 +92,21 @@ fn an_interrupted_move_finishes() {
     assert!(!data.path().join("config.json").exists());
 }
 
+/// A start stopped after linking the key into place and before removing
+/// the staged copy: the next one removes it.
+#[test]
+fn a_leftover_staged_key_is_removed() {
+    let data = tempfile::tempdir().unwrap();
+    let (key, _) = sealing_key(data.path(), &SeededRandom::new(1)).unwrap();
+    let staged = key_path(data.path()).with_extension("key.new");
+    std::fs::hard_link(key_path(data.path()), &staged).unwrap();
+
+    let (again, source) = sealing_key(data.path(), &SeededRandom::new(2)).unwrap();
+
+    assert_eq!((again, source), (key, KeySource::Read));
+    assert!(!staged.exists());
+}
+
 #[test]
 fn two_different_keys_are_refused() {
     let data = tempfile::tempdir().unwrap();

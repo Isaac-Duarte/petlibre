@@ -128,6 +128,9 @@ pub fn sealing_key(data: &Path, random: &dyn Random) -> Result<([u8; 32], KeySou
                 path.display()
             );
         }
+        // A start stopped between linking the key into place and removing
+        // the staged copy leaves a second copy of the secret.
+        remove(&path.with_extension("key.new"), Missing::Allowed)?;
         return Ok((key, KeySource::Read));
     }
 

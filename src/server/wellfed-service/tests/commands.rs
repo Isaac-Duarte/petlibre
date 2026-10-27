@@ -6,17 +6,12 @@ use std::time::Duration;
 
 use wellfed_api::{
     Connection as Link, EventBody, EventKind, EventQuery, Generation, SettingsPatch, Source,
-    StreamEvent, User,
+    StreamEvent,
 };
 use wellfed_server_testkit::feeder::{self, Relay};
 use wellfed_server_testkit::fixed::NOW_MS;
-use wellfed_server_testkit::{TestService, WAIT, config, local, owner_user, until};
+use wellfed_server_testkit::{TestService, WAIT, ada, config, local, owner_user, until};
 use wellfed_service::{Error, IdempotencyKey, Invalid, Resume};
-
-/// The household user a write comes from.
-fn ada() -> User {
-    owner_user(1, "ada")
-}
 
 fn locks() -> EventQuery {
     EventQuery {

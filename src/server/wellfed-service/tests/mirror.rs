@@ -4,16 +4,11 @@
 
 use std::time::Duration;
 
-use wellfed_api::{Connection as Link, EventBody, EventQuery, Source, StreamEvent, User};
+use wellfed_api::{Connection as Link, EventBody, EventQuery, Source, StreamEvent};
 use wellfed_model::{Answer, Op};
 use wellfed_server_testkit::feeder::{self, Flash, open_owner};
-use wellfed_server_testkit::{TestService, WAIT, config, local, owner_user};
+use wellfed_server_testkit::{TestService, WAIT, ada, config, local};
 use wellfed_service::Error;
-
-/// The household user a write comes from.
-fn ada() -> User {
-    owner_user(1, "ada")
-}
 
 #[test]
 fn history_recorded_while_the_server_was_down_arrives_on_restart() {

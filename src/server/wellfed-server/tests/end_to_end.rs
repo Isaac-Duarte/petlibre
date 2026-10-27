@@ -2,12 +2,14 @@
 //! speaking the device API (Noise over TCP) to the simulated feeder.
 
 use wellfed_api::{
-    AdoptFeeder, ClientRole, Connection, Credentials, EventBody, EventKind, EventQuery, Settings,
-    SettingsPatch, Source, StreamEvent, StreamQuery,
+    AdoptFeeder, ClientRole, Connection, EventBody, EventKind, EventQuery, Settings, SettingsPatch,
+    Source, StreamEvent, StreamQuery,
 };
 use wellfed_server_client::reqwest::header::ETAG;
-use wellfed_server_client::{Error, Method, StatusCode, Update, Updates, decode, expect_status};
-use wellfed_server_testkit::{TestServer, WAIT, feeder, local, until};
+use wellfed_server_client::{
+    Error, Lock, Method, StatusCode, Update, Updates, decode, expect_status,
+};
+use wellfed_server_testkit::{TestServer, WAIT, ada_login, feeder, local, until};
 use uuid::Uuid;
 
 /// The next update, failing the test when the stream ends or breaks.
@@ -22,12 +24,7 @@ fn an_owner_adopts_a_feeder_and_works_it_over_http() {
         let server = TestServer::start().await;
         let mut http = server.client();
 
-        http.setup(&Credentials {
-            name: "ada".into(),
-            password: "correct horse".into(),
-        })
-        .await
-        .unwrap();
+        http.setup(&ada_login()).await.unwrap();
 
         let kitchen = http
             .adopt(&AdoptFeeder {
@@ -90,7 +87,7 @@ fn an_owner_adopts_a_feeder_and_works_it_over_http() {
         assert_eq!(*current, changed);
 
         let lock = Uuid::from_u128(0x0192c5d0_1111_7000_8000_000000000003);
-        http.set_lock(kitchen, false, lock).await.unwrap();
+        http.set_lock(kitchen, Lock::Unlocked, lock).await.unwrap();
 
         // The lock's event and a power sample reach the stream.
         let (mut lock_seen, mut power_seen, mut first) = (None, false, None);
@@ -98,13 +95,13 @@ fn an_owner_adopts_a_feeder_and_works_it_over_http() {
             while !(lock_seen.is_some() && power_seen) {
                 let Update { id, event } = next(&mut updates).await;
                 if first.is_none() {
-                    first.clone_from(&id);
+                    first = Some(id.clone());
                 }
                 match event {
                     StreamEvent::Event { event, .. }
                         if matches!(event.body, EventBody::Lock { locked: false, .. }) =>
                     {
-                        lock_seen = id;
+                        lock_seen = Some(id);
                     }
                     StreamEvent::Sample { .. } => power_seen = true,
                     _ => {}
@@ -124,12 +121,12 @@ fn an_owner_adopts_a_feeder_and_works_it_over_http() {
         tokio::time::timeout(WAIT, async {
             loop {
                 let Update { id, event } = next(&mut replay).await;
-                assert_ne!(id.as_ref(), Some(&first), "replay starts after the id");
+                assert_ne!(id, first, "replay starts after the id");
                 assert!(
                     !matches!(event, StreamEvent::Sample { .. }),
                     "not asked for"
                 );
-                if id == lock_seen {
+                if Some(&id) == lock_seen.as_ref() {
                     return;
                 }
             }
@@ -141,7 +138,7 @@ fn an_owner_adopts_a_feeder_and_works_it_over_http() {
             .await
             .unwrap();
         let Update { id, event } = next(&mut stale).await;
-        assert_eq!((id.as_deref(), event), (Some(""), StreamEvent::Resync));
+        assert_eq!((id.as_str(), event), ("", StreamEvent::Resync));
 
         let locks = EventQuery {
             kind: Some(EventKind::Lock),

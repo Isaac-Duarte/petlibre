@@ -9,8 +9,8 @@ pub enum Error {
     Base(Url),
     #[error("could not build the HTTP client")]
     Build(#[source] reqwest::Error),
-    /// The request failed on the way, or its answer was cut off. A write
-    /// may have run: retry it under the same key.
+    /// The request failed on the way, or its answer was cut off. A keyed
+    /// write may have run: retry it under the same key, never a new one.
     #[error("the request to the server failed")]
     Http(#[from] reqwest::Error),
     /// The server refused, with its typed reason.

@@ -11,6 +11,14 @@ use uuid::Uuid;
 
 use crate::{Client, Error, decode, expect_status, is_problem};
 
+/// What a lock request asks of the feeder's panel.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Lock {
+    /// The panel's buttons do nothing.
+    Locked,
+    Unlocked,
+}
+
 /// The header a write's key travels in.
 const IDEMPOTENCY_KEY: &str = "Idempotency-Key";
 
@@ -76,11 +84,13 @@ impl Client {
     }
 
     /// Lock or unlock the feeder's panel. A retry carries the same `key`.
-    pub async fn set_lock(&self, id: FeederId, locked: bool, key: Uuid) -> Result<(), Error> {
+    pub async fn set_lock(&self, id: FeederId, lock: Lock, key: Uuid) -> Result<(), Error> {
         let response = self
             .api(Method::POST, &format!("/feeders/{id}/lock"))
             .header(IDEMPOTENCY_KEY, key.to_string())
-            .json(&LockRequest { locked })
+            .json(&LockRequest {
+                locked: lock == Lock::Locked,
+            })
             .send()
             .await?;
         expect_status(response, StatusCode::NO_CONTENT).await?;

@@ -2,9 +2,9 @@
 //! status. Most of these requests are ones the typed client cannot make,
 //! so they go through its escape hatch with the same session and origin.
 
-use wellfed_api::{Credentials, ErrorCode, EventQuery, FeederId, StreamQuery};
+use wellfed_api::{ErrorCode, EventQuery, FeederId, StreamQuery};
 use wellfed_server_client::{Method, StatusCode, expect_status};
-use wellfed_server_testkit::{TestServer, refused};
+use wellfed_server_testkit::{TestServer, ada_login, refused, refused_for};
 use serde_json::json;
 use uuid::Uuid;
 
@@ -15,13 +15,7 @@ const NOBODY: FeederId = FeederId(Uuid::from_u128(0x0192c5d0_0000_7000_8000_0000
 async fn bad_requests_come_back_as_typed_problems() {
     let server = TestServer::start().await;
     let mut client = server.client();
-    client
-        .setup(&Credentials {
-            name: "ada".into(),
-            password: "correct horse".into(),
-        })
-        .await
-        .unwrap();
+    client.setup(&ada_login()).await.unwrap();
 
     let unknown = format!("/api/v1/feeders/{NOBODY}");
     let cases = [
@@ -88,8 +82,8 @@ async fn bad_requests_come_back_as_typed_problems() {
             request = request.json(&body);
         }
         let response = request.send().await.unwrap();
-        eprintln!("{method} {path}");
-        refused(expect_status(response, StatusCode::OK).await, status, code);
+        let answer = expect_status(response, StatusCode::OK).await;
+        refused_for(&format!("{method} {path}"), answer, status, code);
     }
 
     // The typed calls that can carry the same faults meet the same answers.

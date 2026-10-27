@@ -1,17 +1,12 @@
 //! Adopting a feeder by invite, the connect sequence, and a feeder that
 //! no longer knows the server.
 
-use wellfed_api::{AdoptFeeder, ClientRole, Connection as Link, EventBody, EventQuery, User};
+use wellfed_api::{AdoptFeeder, ClientRole, Connection as Link, EventBody, EventQuery};
 use wellfed_model::{Answer, Op};
 use wellfed_server_testkit::feeder::{self, invite, open_owner};
 use wellfed_server_testkit::fixed::NOW_MS;
-use wellfed_server_testkit::{TestService, local, owner_user};
+use wellfed_server_testkit::{TestService, ada, local};
 use wellfed_service::{Error, Invalid};
-
-/// The household user a write comes from.
-fn ada() -> User {
-    owner_user(1, "ada")
-}
 
 #[test]
 fn an_adopted_feeder_connects_syncs_its_clock_and_mirrors_its_history() {

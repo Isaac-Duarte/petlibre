@@ -2,17 +2,10 @@
 //! and a write from its own origin. These requests leave out what the
 //! client sends, so they go through its underlying HTTP client.
 
-use wellfed_api::{Credentials, ErrorCode, SetupState};
+use wellfed_api::{ErrorCode, SetupState};
 use wellfed_server_client::reqwest::header::{HOST, ORIGIN};
 use wellfed_server_client::{StatusCode, decode, expect_status};
-use wellfed_server_testkit::{TestServer, refused};
-
-fn ada() -> Credentials {
-    Credentials {
-        name: "ada".into(),
-        password: "correct horse".into(),
-    }
-}
+use wellfed_server_testkit::{TestServer, ada_login, refused};
 
 /// A DNS-rebinding page sends its own name as `Host` and `Origin`, which
 /// match each other; the name is not one the server answers to.
@@ -26,7 +19,7 @@ async fn a_request_for_another_host_is_refused() {
         .post(client.url("/api/v1/setup"))
         .header(HOST, "rebound.example:8080")
         .header(ORIGIN, "http://rebound.example:8080")
-        .json(&ada())
+        .json(&ada_login())
         .send()
         .await
         .unwrap();
@@ -50,7 +43,10 @@ async fn a_write_from_another_origin_is_refused() {
     let client = server.client();
 
     for origin in [None, Some("http://evil.example")] {
-        let mut request = client.http().post(client.url("/api/v1/setup")).json(&ada());
+        let mut request = client
+            .http()
+            .post(client.url("/api/v1/setup"))
+            .json(&ada_login());
         if let Some(origin) = origin {
             request = request.header(ORIGIN, origin);
         }

@@ -1,10 +1,10 @@
 //! Following `GET /api/v1/stream`, the server's Server-Sent Events.
 //!
 //! [`Parser`] reads the event-stream format without IO, and [`Updates`]
-//! drives it over a response body. Each update keeps the SSE `id` it came
-//! with: a client that reconnects sends the last one back as
-//! `Last-Event-ID` and gets what it missed, or a `resync` whose empty id
-//! clears it.
+//! drives it over a response body. Each update carries the stream's last
+//! event ID as of that update, as a browser's `EventSource` keeps it: a
+//! client that reconnects sends it back as `Last-Event-ID` and gets what it
+//! missed, or a `resync` whose empty id clears it.
 
 use std::collections::VecDeque;
 
@@ -19,9 +19,10 @@ use crate::{Client, Error, expect_status};
 /// One update from the stream.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Update {
-    /// The block's `id` field: the position to resume after, or empty when
-    /// the client must start afresh. `None` when the block had none.
-    pub id: Option<String>,
+    /// The last event ID: the position to resume after, from this block's
+    /// `id` field or the latest before it. Empty when the client must start
+    /// afresh, or before the server has named one.
+    pub id: String,
     pub event: StreamEvent,
 }
 
@@ -87,10 +88,10 @@ impl Updates {
     }
 }
 
-/// One dispatched block: its `id` field and its joined `data` lines.
+/// One dispatched block: the last event ID and its joined `data` lines.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Block {
-    id: Option<String>,
+    id: String,
     data: String,
 }
 
@@ -104,13 +105,17 @@ impl Block {
 }
 
 /// The `text/event-stream` format, read incrementally: bytes in, blocks
-/// out. Lines end in LF or CRLF (the server never sends a bare CR);
-/// comments, `event` and `retry` fields are skipped, and a block without
-/// `data` dispatches nothing.
+/// out. A leading byte-order mark is dropped, and lines end in LF or CRLF
+/// (the server never sends a bare CR). The last event ID persists across
+/// blocks, so a block with only an `id` moves it; comments, `event` and
+/// `retry` fields are skipped, and a block whose data is empty dispatches
+/// nothing.
 #[derive(Debug, Default)]
 pub(crate) struct Parser {
+    /// Whether the first line has begun, past any byte-order mark.
+    started: bool,
     line: Vec<u8>,
-    id: Option<String>,
+    last_id: String,
     data: Option<String>,
 }
 
@@ -128,6 +133,12 @@ impl Parser {
             if line.last() == Some(&b'\r') {
                 line.pop();
             }
+            if !self.started {
+                self.started = true;
+                if line.starts_with(BOM) {
+                    line.drain(..BOM.len());
+                }
+            }
             if let Some(block) = self.line(&String::from_utf8_lossy(&line)) {
                 blocks.push(block);
             }
@@ -138,8 +149,11 @@ impl Parser {
 
     fn line(&mut self, line: &str) -> Option<Block> {
         if line.is_empty() {
-            let id = self.id.take();
-            return self.data.take().map(|data| Block { id, data });
+            let data = self.data.take().filter(|data| !data.is_empty())?;
+            return Some(Block {
+                id: self.last_id.clone(),
+                data,
+            });
         }
 
         let (field, value) = line.split_once(':').unwrap_or((line, ""));
@@ -152,7 +166,7 @@ impl Parser {
                 }
                 None => self.data = Some(value.to_owned()),
             },
-            "id" if !value.contains('\0') => self.id = Some(value.to_owned()),
+            "id" if !value.contains('\0') => value.clone_into(&mut self.last_id),
             // A comment (empty field), `event`, `retry` or unknown.
             _ => {}
         }
@@ -160,13 +174,16 @@ impl Parser {
     }
 }
 
+/// UTF-8's byte-order mark, which may open a stream.
+const BOM: &[u8] = b"\xef\xbb\xbf";
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn block(id: Option<&str>, data: &str) -> Block {
+    fn block(id: &str, data: &str) -> Block {
         Block {
-            id: id.map(Into::into),
+            id: id.into(),
             data: data.into(),
         }
     }
@@ -174,13 +191,10 @@ mod tests {
     #[test]
     fn blocks_dispatch_on_a_blank_line_with_their_fields_in_any_order() {
         let mut parser = Parser::default();
-        let text = "data: {\"type\":\"resync\"}\nid:\n\n: keep-alive\n\nid: 7-1\r\ndata:a\r\ndata: b\r\n\r\n";
+        let text = "\u{feff}data: {\"type\":\"resync\"}\nid:\n\n: keep-alive\n\nid: 7-1\r\ndata:a\r\ndata: b\r\n\r\n";
         assert_eq!(
             parser.push(text.as_bytes()),
-            [
-                block(Some(""), "{\"type\":\"resync\"}"),
-                block(Some("7-1"), "a\nb"),
-            ]
+            [block("", "{\"type\":\"resync\"}"), block("7-1", "a\nb"),]
         );
     }
 
@@ -189,23 +203,31 @@ mod tests {
         let mut parser = Parser::default();
         assert_eq!(parser.push(b"id: 1-2\nda"), []);
         assert_eq!(parser.push(b"ta: x\n"), []);
-        assert_eq!(parser.push(b"\n"), [block(Some("1-2"), "x")]);
+        assert_eq!(parser.push(b"\n"), [block("1-2", "x")]);
+    }
+
+    #[test]
+    fn the_last_event_id_persists_and_empty_data_dispatches_nothing() {
+        let mut parser = Parser::default();
+        assert_eq!(parser.push(b"data: y\n\n"), [block("", "y")], "none yet");
         assert_eq!(parser.push(b"id: 3\n\n"), [], "no data, no block");
-        assert_eq!(parser.push(b"data: y\n\n"), [block(None, "y")]);
+        assert_eq!(parser.push(b"data:\n\n"), [], "empty data, no block");
+        assert_eq!(parser.push(b"data: z\n\n"), [block("3", "z")]);
+        assert_eq!(parser.push(b"id\ndata: w\n\n"), [block("", "w")]);
     }
 
     #[test]
     fn a_block_decodes_to_its_update() {
-        let resync = block(Some(""), "{\"type\":\"resync\"}").update();
+        let resync = block("", "{\"type\":\"resync\"}").update();
         assert_eq!(
             resync.ok(),
             Some(Update {
-                id: Some(String::new()),
+                id: String::new(),
                 event: StreamEvent::Resync,
             })
         );
         assert!(matches!(
-            block(None, "nonsense").update(),
+            block("", "nonsense").update(),
             Err(Error::Decode(_))
         ));
     }

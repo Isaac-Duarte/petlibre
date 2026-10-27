@@ -28,7 +28,7 @@ use std::fmt::Debug;
 use std::future::Future;
 use std::time::Duration;
 
-use wellfed_api::{ErrorCode, Role, User, UserId};
+use wellfed_api::{Credentials, ErrorCode, Role, User, UserId};
 use wellfed_server_client::StatusCode;
 use tokio::task::LocalSet;
 use uuid::Uuid;
@@ -65,8 +65,21 @@ where
     assert!(polled.is_ok(), "{what}: not within {WAIT:?}");
 }
 
-/// A household owner with id `n`, the user a service-level write comes
+/// The household's first owner, the user a service-level write comes
 /// from.
+pub fn ada() -> User {
+    owner_user(1, "ada")
+}
+
+/// The first owner's login.
+pub fn ada_login() -> Credentials {
+    Credentials {
+        name: "ada".into(),
+        password: "correct horse".into(),
+    }
+}
+
+/// A household owner with id `n`.
 pub fn owner_user(n: u128, name: &str) -> User {
     User {
         id: UserId(Uuid::from_u128(n)),
@@ -83,14 +96,29 @@ pub fn refused<T: Debug>(
     status: StatusCode,
     code: ErrorCode,
 ) {
+    refused_for("the request", result, status, code);
+}
+
+/// [`refused`], naming the request in the failure: one row of a table.
+#[track_caller]
+pub fn refused_for<T: Debug>(
+    request: &str,
+    result: Result<T, wellfed_server_client::Error>,
+    status: StatusCode,
+    code: ErrorCode,
+) {
     match result {
         Err(wellfed_server_client::Error::Problem {
             status: got,
             problem,
         }) => {
-            assert_eq!((got, problem.code), (status, code), "{problem:?}");
-            assert_eq!(problem.status, status.as_u16(), "{problem:?}");
+            assert_eq!(
+                (got, problem.code),
+                (status, code),
+                "{request}: {problem:?}"
+            );
+            assert_eq!(problem.status, status.as_u16(), "{request}: {problem:?}");
         }
-        other => panic!("expected {status} {code:?}, got {other:?}"),
+        other => panic!("{request}: expected {status} {code:?}, got {other:?}"),
     }
 }

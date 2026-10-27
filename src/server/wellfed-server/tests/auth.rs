@@ -5,14 +5,7 @@ use wellfed_api::{Credentials, ErrorCode, Role, SetupState};
 use wellfed_server_client::reqwest::Response;
 use wellfed_server_client::reqwest::header::SET_COOKIE;
 use wellfed_server_client::{Auth, Method, StatusCode, expect_status};
-use wellfed_server_testkit::{TestServer, refused};
-
-fn ada() -> Credentials {
-    Credentials {
-        name: "ada".into(),
-        password: "correct horse".into(),
-    }
-}
+use wellfed_server_testkit::{TestServer, ada_login, refused};
 
 /// The session cookie's value from a login's answer, which must keep it
 /// from scripts and other sites.
@@ -45,7 +38,7 @@ async fn the_first_visitor_becomes_owner_and_setup_closes() {
 
     let response = client
         .request(Method::POST, "/api/v1/setup")
-        .json(&ada())
+        .json(&ada_login())
         .send()
         .await
         .unwrap();
@@ -60,7 +53,7 @@ async fn the_first_visitor_becomes_owner_and_setup_closes() {
     );
     let mut client = client.with_auth(Some(Auth::Session(session)));
     refused(
-        client.clone().setup(&ada()).await,
+        server.client().setup(&ada_login()).await,
         StatusCode::CONFLICT,
         ErrorCode::SetupClosed,
     );
@@ -69,7 +62,7 @@ async fn the_first_visitor_becomes_owner_and_setup_closes() {
     // The typed client holds the session a setup or login opens.
     client.logout().await.unwrap();
     assert_eq!(client.auth(), None);
-    assert_eq!(client.login(&ada()).await.unwrap(), user);
+    assert_eq!(client.login(&ada_login()).await.unwrap(), user);
     assert!(matches!(client.auth(), Some(Auth::Session(_))));
     assert_eq!(client.session().await.unwrap(), user);
     server.stop().await;
@@ -78,7 +71,7 @@ async fn the_first_visitor_becomes_owner_and_setup_closes() {
 #[tokio::test]
 async fn login_and_logout_open_and_end_a_session() {
     let server = TestServer::start().await;
-    server.client().setup(&ada()).await.unwrap();
+    server.client().setup(&ada_login()).await.unwrap();
 
     let anonymous = server.client();
     refused(
@@ -88,7 +81,7 @@ async fn login_and_logout_open_and_end_a_session() {
     );
     let wrong = Credentials {
         password: "wrong horse".into(),
-        ..ada()
+        ..ada_login()
     };
     refused(
         anonymous.clone().login(&wrong).await,
@@ -98,7 +91,7 @@ async fn login_and_logout_open_and_end_a_session() {
 
     let response = anonymous
         .request(Method::POST, "/api/v1/session")
-        .json(&ada())
+        .json(&ada_login())
         .send()
         .await
         .unwrap();

@@ -27,6 +27,7 @@ mod feeders;
 mod stream;
 
 use std::fmt;
+use std::time::Duration;
 
 use wellfed_api::{PREFIX, Problem, SESSION_COOKIE};
 use reqwest::header::{self, HeaderValue};
@@ -34,8 +35,14 @@ use reqwest::{RequestBuilder, Response};
 use serde::de::DeserializeOwned;
 
 pub use error::Error;
+pub use feeders::Lock;
 pub use reqwest::{self, Method, StatusCode, Url};
 pub use stream::{Update, Updates};
+
+/// How long a connection to the server may take to open. A server on the
+/// LAN answers in milliseconds; a request's own time is the caller's to
+/// bound, since an event stream stays open for good.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// How a client proves who it is.
 #[derive(Clone, PartialEq, Eq)]
@@ -70,15 +77,20 @@ pub struct Client {
 
 impl Client {
     /// A client of the server at `base`, an `http` or `https` URL such as
-    /// `http://192.0.2.7:8080`, with no credentials yet.
+    /// `http://192.0.2.7:8080` (a path is kept as a prefix, for a server
+    /// behind a reverse proxy), with no credentials yet.
     pub fn new(base: &Url) -> Result<Self, Error> {
-        if !matches!(base.scheme(), "http" | "https") || base.host().is_none() {
+        let http_url = matches!(base.scheme(), "http" | "https") && base.host().is_some();
+        if !http_url || base.query().is_some() || base.fragment().is_some() {
             return Err(Error::Base(base.clone()));
         }
         let origin = HeaderValue::from_str(&base.origin().ascii_serialization())
             .map_err(|_| Error::Base(base.clone()))?;
 
-        let http = reqwest::Client::builder().build().map_err(Error::Build)?;
+        let http = reqwest::Client::builder()
+            .connect_timeout(CONNECT_TIMEOUT)
+            .build()
+            .map_err(Error::Build)?;
 
         Ok(Self {
             http,
@@ -165,12 +177,21 @@ pub async fn decode<T: DeserializeOwned>(
     Ok(serde_json::from_slice(&response.bytes().await?)?)
 }
 
-/// Whether `response` carries an RFC 9457 problem.
+/// Whether `response` carries an RFC 9457 problem, whatever parameters
+/// (`; charset=utf-8`) its media type has.
 fn is_problem(response: &Response) -> bool {
     response
         .headers()
         .get(header::CONTENT_TYPE)
-        .is_some_and(|kind| kind.as_bytes() == b"application/problem+json")
+        .and_then(|kind| kind.to_str().ok())
+        .is_some_and(is_problem_type)
+}
+
+fn is_problem_type(content_type: &str) -> bool {
+    let media = content_type.split(';').next().unwrap_or_default();
+    media
+        .trim()
+        .eq_ignore_ascii_case("application/problem+json")
 }
 
 #[cfg(test)]
@@ -195,8 +216,27 @@ mod tests {
         assert_eq!(request.headers()[header::ORIGIN], "http://192.0.2.7:8080");
         assert_eq!(request.headers()[header::COOKIE], "wellfed_session=abc");
 
-        for base in ["ftp://192.0.2.7", "unix:/run/server.sock"] {
+        for base in [
+            "ftp://192.0.2.7",
+            "unix:/run/server.sock",
+            "http://192.0.2.7/?a=1",
+            "http://192.0.2.7/#top",
+        ] {
             assert!(matches!(open(base), Err(Error::Base(_))), "{base}");
+        }
+    }
+
+    #[test]
+    fn a_problem_is_its_media_type_with_any_parameters() {
+        for kind in [
+            "application/problem+json",
+            "application/problem+json; charset=utf-8",
+            "Application/Problem+JSON ;charset=UTF-8",
+        ] {
+            assert!(is_problem_type(kind), "{kind}");
+        }
+        for kind in ["application/json", "application/problem+jsonx", ""] {
+            assert!(!is_problem_type(kind), "{kind}");
         }
     }
 

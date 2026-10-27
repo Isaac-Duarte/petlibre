@@ -117,13 +117,25 @@ pub(super) async fn login(args: LoginArgs, path: &Path, out: Output) -> Result<S
         id: created.token.id,
         secret: created.secret,
     };
-    private::write_json(path, &file)
-        .with_context(|| format!("write the token file {}", path.display()))?;
+    let written = private::write_json(path, &file)
+        .with_context(|| format!("write the token file {}", path.display()));
 
-    // The token is kept; the session that made it is not needed again.
+    // A token no file holds could never be revoked from here, so it goes
+    // through the session that made it.
+    if written.is_err()
+        && let Err(error) = client.revoke_token(file.id).await
+    {
+        eprintln!(
+            "The new token {} was not revoked ({error}); revoke it with `wellfed server tokens revoke`.",
+            file.id
+        );
+    }
+
+    // The session that made the token is not needed again.
     if let Err(error) = client.logout().await {
         eprintln!("The login session did not end ({error}); it expires on its own.");
     }
+    written?;
 
     // The token's secret is the file's alone: the body printed is the
     // token as the server lists it.

@@ -211,7 +211,8 @@ pub struct Connection {
     outbox: Outbox,
     /// Pushed messages not yet taken by [`Self::next`].
     queued: VecDeque<Pushed>,
-    /// Answers, or their absence, not yet taken by [`Self::ask`].
+    /// Answers, or their absence, not yet taken by [`Self::ask`] or
+    /// [`Self::receive`].
     answers: VecDeque<(RequestId, Option<Answer>)>,
 }
 
@@ -382,7 +383,7 @@ impl Connection {
             if let Some(message) = self.queued.pop_front() {
                 return Ok(message);
             }
-            // Only `ask` waits for answers; one it gave up on is dropped.
+            // Answers belong to `ask` and `receive`; one given up on is dropped.
             self.answers.clear();
             if deadline <= Instant::now() {
                 return Err(Error::Timeout);

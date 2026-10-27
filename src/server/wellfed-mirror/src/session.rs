@@ -151,14 +151,14 @@ impl Task {
         }
         self.keep_time(connection, lanes).await?;
 
-        if let Answer::Status(status) = self.ask(connection, lanes, &Op::Status).await? {
+        if let Answer::Status(status) = self.read(connection, lanes, &Op::Status).await? {
             let now = self.shared.clock.now();
             self.shared
                 .store
                 .record_status(self.id, &status, now)
                 .await?;
         }
-        if let Answer::Settings(settings) = self.ask(connection, lanes, &Op::GetSettings).await? {
+        if let Answer::Settings(settings) = self.read(connection, lanes, &Op::GetSettings).await? {
             let now = self.shared.clock.now();
             self.shared
                 .store
@@ -192,11 +192,14 @@ impl Task {
             .map_or(TimeZone::UTC, |zone| zone.tz().clone());
         let sync = wellfed_client::time::sync(now, &zone);
         match self.ask(connection, lanes, &Op::TimeSync(sync)).await? {
-            Answer::Done { .. } => debug!("clock set"),
-            Answer::Refused(refusal) => {
+            None => {
+                warn!(feeder = %self.id, "no answer to the clock in time; set at the next sync")
+            }
+            Some(Answer::Done { .. }) => debug!("clock set"),
+            Some(Answer::Refused(refusal)) => {
                 warn!("the feeder refused the clock: {refusal:?}");
             }
-            other => warn!("unexpected answer to the clock: {other:?}"),
+            Some(other) => warn!("unexpected answer to the clock: {other:?}"),
         }
         Ok(())
     }
@@ -216,12 +219,16 @@ impl Task {
         };
 
         let view = match self.ask(connection, lanes, &Op::GetTime).await? {
-            Answer::Time(view) => view,
-            Answer::Refused(refusal) => {
+            None => {
+                warn!(feeder = %self.id, "no answer to the time settings in time; read at the next sync");
+                return Ok(());
+            }
+            Some(Answer::Time(view)) => view,
+            Some(Answer::Refused(refusal)) => {
                 debug!(feeder = %self.id, "the feeder serves no time settings: {refusal:?}");
                 return Ok(());
             }
-            other => {
+            Some(other) => {
                 warn!(feeder = %self.id, "unexpected answer to the time settings: {other:?}");
                 return Ok(());
             }
@@ -238,30 +245,51 @@ impl Task {
             },
         };
         match self.ask(connection, lanes, &put).await? {
-            Answer::Done { .. } => info!(feeder = %self.id, zone = zone.name(), rule, "zone set"),
-            Answer::Refused(Refusal::Forbidden) => info!(
+            None => {
+                warn!(feeder = %self.id, "no answer to the zone in time; checked at the next sync")
+            }
+            Some(Answer::Done { .. }) => {
+                info!(feeder = %self.id, zone = zone.name(), rule, "zone set")
+            }
+            Some(Answer::Refused(Refusal::Forbidden)) => info!(
                 feeder = %self.id,
                 "the server's key may not set the feeder's zone; its clock syncs carry the \
                  zone's next change"
             ),
-            Answer::Refused(refusal) => {
+            Some(Answer::Refused(refusal)) => {
                 warn!(feeder = %self.id, "the feeder refused the zone: {refusal:?}");
             }
-            other => warn!(feeder = %self.id, "unexpected answer to the zone: {other:?}"),
+            Some(other) => warn!(feeder = %self.id, "unexpected answer to the zone: {other:?}"),
         }
         Ok(())
     }
 
-    /// One request of the task's own, and its answer. The commands in
-    /// flight meanwhile are answered and what the feeder pushes is stored,
-    /// as the loop would; no new command goes out until this is answered.
-    /// No answer in time ends the session.
-    async fn ask(
+    /// A read of the connect sequence: with no command in flight yet, no
+    /// answer in time means the feeder is not serving, and ends the session.
+    async fn read(
         &self,
         connection: &mut Connection,
         lanes: &mut Lanes,
         op: &Op,
     ) -> Result<Answer, End> {
+        self.ask(connection, lanes, op)
+            .await?
+            .ok_or(End::Lost(wellfed_connect::Error::Timeout))
+    }
+
+    /// One request of the task's own, and its answer: `None` when none came
+    /// in time. The commands in flight meanwhile are answered and what the
+    /// feeder pushes is stored, as the loop would; no new command goes out
+    /// until this is answered. The feeder answers in order, so this one
+    /// may wait behind a slow write on a lane; running out of time then does
+    /// not end the session, which would make the lanes' writes in flight
+    /// unknown. Its late answer is dropped.
+    async fn ask(
+        &self,
+        connection: &mut Connection,
+        lanes: &mut Lanes,
+        op: &Op,
+    ) -> Result<Option<Answer>, End> {
         let id = self.shared.random()?;
         connection.request(id, op).map_err(End::Lost)?;
         loop {
@@ -269,9 +297,7 @@ impl Task {
                 Ok(Received::Answer {
                     id: answered,
                     answer,
-                }) if answered == id => {
-                    return answer.ok_or(End::Lost(wellfed_connect::Error::Timeout));
-                }
+                }) if answered == id => return Ok(answer),
                 Ok(Received::Answer { id, answer }) => lanes.answered(id, answer, connection)?,
                 Ok(Received::Pushed(pushed)) => self.apply(pushed).await?,
                 // The session's own answer timer reports it unanswered.

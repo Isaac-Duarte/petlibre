@@ -1,18 +1,22 @@
 //! The command lanes against the simulated feeder: a long operation takes
 //! turns with short commands, a short command waits at most one step, and
-//! a cut session leaves every request in flight unknown.
+//! a cut session leaves every request in flight unknown; the task's own
+//! clock and zone requests share the session with the lanes.
 
 mod support;
 
 use std::cell::{Cell, RefCell};
 use std::time::Duration;
 
-use wellfed_mirror::AskError;
+use wellfed_api::ClientRole;
+use wellfed_connect::ANSWER;
+use wellfed_mirror::{AskError, MirrorEvent, Zone};
 use wellfed_model::{Answer, Op};
 use wellfed_server_testkit::feeder::{self, Relay};
+use wellfed_server_testkit::fixed::FixedClock;
 use wellfed_server_testkit::{TempStore, WAIT, local};
 
-use support::{ID, mirrored};
+use support::{ID, mirrored, mirrored_as};
 
 #[test]
 fn a_long_operation_takes_turns_with_short_commands() {
@@ -150,10 +154,14 @@ fn a_feed_or_status_during_a_long_operation_is_answered_before_its_next_step() {
 }
 
 /// A long operation sends its steps back to back while status reads keep
-/// arriving: each read is answered with at most one step finished between
-/// its asking and its answer.
+/// arriving, so the two lanes are in flight together again and again:
+/// every step and every read gets the answer to its own request, none is
+/// lost, and no read waits out the operation. The order between a read
+/// and the next step is pinned by the stalled-feeder tests above; here
+/// the feeder answers at once, so the count of steps a read saw finish is
+/// a bound, not a check of the lanes' order.
 #[test]
-fn under_a_burst_of_steps_a_short_command_waits_at_most_one_step() {
+fn under_a_burst_of_steps_every_command_gets_its_own_answer() {
     const STEPS: u8 = 60;
     const READS: u8 = 12;
 
@@ -169,12 +177,14 @@ fn under_a_burst_of_steps_a_short_command_waits_at_most_one_step() {
 
         let steps = async {
             for step in 0..STEPS {
-                let op = if step % 2 == 0 {
-                    Op::GetSettings
+                let answer = if step % 2 == 0 {
+                    let answer = long.step([step; 16], Op::GetSettings).await;
+                    matches!(answer, Ok(Answer::Settings(_)))
                 } else {
-                    Op::Status
+                    let answer = long.step([step; 16], Op::Status).await;
+                    matches!(answer, Ok(Answer::Status(_)))
                 };
-                long.step([step; 16], op).await.unwrap();
+                assert!(answer, "step {step} got another request's answer");
                 done.set(done.get() + 1);
             }
         };
@@ -278,6 +288,87 @@ fn a_command_under_an_id_in_flight_waits_for_its_answer() {
         assert!(matches!(step, Ok(Answer::Settings(_))), "{step:?}");
         assert!(matches!(short, Ok(Answer::Status(_))), "{short:?}");
         drop(long);
+        mirror.shutdown().await;
+        store.close().await;
+        sim.stop().await;
+    });
+}
+
+/// The feeder stalls with a lock write in flight when the household's zone
+/// changes, so the task's own clock and zone requests queue behind the
+/// write. Each answer reaches its own request: the write gets its `Done`,
+/// and the zone rule the task read and set is on the feeder.
+#[test]
+fn the_tasks_own_requests_and_a_write_in_flight_each_get_their_own_answer() {
+    local(async {
+        let temp = TempStore::new();
+        let store = temp.open().await;
+        let sim = feeder::start().await;
+        let relay = Relay::start(sim.address).await;
+        let address = relay.address.to_string();
+        // Only an owner's key may set the feeder's zone.
+        let (mirror, _updates) = mirrored_as(&store, &sim, &address, WAIT, ClientRole::Owner).await;
+        let zone = Zone::new("Europe/Berlin", FixedClock.now()).unwrap();
+        let rule = zone.rule().expect("Berlin has a rule").to_owned();
+
+        relay.pause();
+        let write = mirror.ask(ID, [2; 16], Op::SetLock { locked: false });
+        let change = async {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            mirror.set_zone(zone);
+            tokio::time::sleep(Duration::from_millis(150)).await;
+            relay.resume();
+        };
+        let (write, ()) = tokio::join!(write, change);
+
+        assert_eq!(write, Ok(Answer::Done { generation: None }));
+        let time = mirror.ask(ID, [3; 16], Op::GetTime).await;
+        let Ok(Answer::Time(view)) = time else {
+            panic!("the feeder's time settings: {time:?}");
+        };
+        assert_eq!(view.zone, Some(rule));
+        mirror.shutdown().await;
+        store.close().await;
+        sim.stop().await;
+    });
+}
+
+/// The feeder stalls past the session's answer window with a lock write
+/// in flight and the task's own clock request queued behind it. The write
+/// is unknown, as any request unanswered in time is; the clock request
+/// running out of time does not end the session, and the next command is
+/// served on it. The callers' own window is longer here, so the write's
+/// outcome is the session's.
+#[test]
+fn the_tasks_own_request_unanswered_in_time_keeps_the_session() {
+    local(async {
+        let temp = TempStore::new();
+        let store = temp.open().await;
+        let sim = feeder::start().await;
+        let relay = Relay::start(sim.address).await;
+        let address = relay.address.to_string();
+        let (mirror, mut updates) = mirrored(&store, &sim, &address, ANSWER * 2).await;
+        let zone = Zone::new("Europe/Berlin", FixedClock.now()).unwrap();
+
+        relay.pause();
+        let write = mirror.ask(ID, [2; 16], Op::SetLock { locked: false });
+        let change = async {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            mirror.set_zone(zone);
+            tokio::time::sleep(ANSWER + Duration::from_millis(500)).await;
+            relay.resume();
+        };
+        let (write, ()) = tokio::join!(write, change);
+        assert_eq!(write, Err(AskError::Unknown));
+
+        let status = mirror.ask(ID, [3; 16], Op::Status).await;
+        assert!(matches!(status, Ok(Answer::Status(_))), "{status:?}");
+        while let Ok(update) = updates.try_recv() {
+            assert!(
+                !matches!(update, MirrorEvent::Link(_)),
+                "the session ended: {update:?}"
+            );
+        }
         mirror.shutdown().await;
         store.close().await;
         sim.stop().await;

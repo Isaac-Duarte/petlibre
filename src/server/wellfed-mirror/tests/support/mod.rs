@@ -36,6 +36,17 @@ pub async fn mirrored(
     address: &str,
     answer: Duration,
 ) -> (Mirror, Receiver<MirrorEvent>) {
+    mirrored_as(store, sim, address, answer, ClientRole::Server).await
+}
+
+/// [`mirrored`], with the mirror's key enrolled as `role`.
+pub async fn mirrored_as(
+    store: &Store,
+    sim: &Running,
+    address: &str,
+    answer: Duration,
+    role: ClientRole,
+) -> (Mirror, Receiver<MirrorEvent>) {
     let mirror = Mirror::new(
         store.clone(),
         config(answer),
@@ -52,13 +63,13 @@ pub async fn mirrored(
         mirror.refresh_projections().await.unwrap(),
         Refresh::Current
     );
-    let invite = feeder::invite(sim, ClientRole::Server).await;
+    let invite = feeder::invite(sim, role).await;
     let invite = Invite::parse(&invite).expect("the kit's invite parses");
     let identity = invite.feeder;
     let at = mirror.locate(identity, Some(address)).await.unwrap();
     let secret = [0x33; 32];
     let enrolled = mirror.enroll(invite, "test", at, secret).await.unwrap();
-    assert_eq!(enrolled.role, ClientRole::Server);
+    assert_eq!(enrolled.role, role);
 
     // The mirror reads the cursor from the feeder's row; the key it uses
     // is the one it is given, so the stored one is a stand-in.

@@ -70,6 +70,7 @@ mod tests {
             seq: 1,
             key: [1; 16],
             user: UserId(Uuid::from_u128(1)),
+            token: None,
             feeder: FeederId(Uuid::from_u128(2)),
             kind,
             body_hash: [3; 32],

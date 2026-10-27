@@ -40,6 +40,7 @@ fn command(key: u8, feeder: FeederId) -> NewCommand {
     NewCommand {
         key: [key; 16],
         user: UserId(Uuid::from_u128(5)),
+        token: None,
         feeder,
         kind: CommandKind::Lock,
         body_hash: [key; 32],

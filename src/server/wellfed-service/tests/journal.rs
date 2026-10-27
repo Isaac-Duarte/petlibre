@@ -62,13 +62,13 @@ fn a_retry_after_the_feeders_ring_moved_returns_the_first_answer() {
 
         let first: IdempotencyKey = [0xa0; 16];
         service
-            .set_lock(&ada(), id, true, Some(first))
+            .set_lock(&ada().into(), id, true, Some(first))
             .await
             .unwrap();
         for n in 0..33_u8 {
             let locked = n % 2 == 1;
             service
-                .set_lock(&ada(), id, locked, Some([n; 16]))
+                .set_lock(&ada().into(), id, locked, Some([n; 16]))
                 .await
                 .unwrap();
         }
@@ -77,7 +77,7 @@ fn a_retry_after_the_feeders_ring_moved_returns_the_first_answer() {
         // The panel ends unlocked: the first write, sent again, would lock
         // it and record a 35th event.
         service
-            .set_lock(&ada(), id, true, Some(first))
+            .set_lock(&ada().into(), id, true, Some(first))
             .await
             .unwrap();
         settle_locks(service, id, 34).await;
@@ -108,7 +108,7 @@ fn a_restart_between_send_and_answer_leaves_the_write_unknown() {
         let key: IdempotencyKey = [0x5e; 16];
         let sending = {
             let service = server.service().clone();
-            tokio::spawn(async move { service.set_lock(&ada(), id, true, Some(key)).await })
+            tokio::spawn(async move { service.set_lock(&ada().into(), id, true, Some(key)).await })
         };
         until("the write is journalled", || async {
             let page = server.service().commands(&ada(), all()).await.unwrap();
@@ -137,7 +137,10 @@ fn a_restart_between_send_and_answer_leaves_the_write_unknown() {
         assert_eq!(page.items, [entry]);
 
         server.link(id, Link::Online).await;
-        service.set_lock(&ada(), id, true, Some(key)).await.unwrap();
+        service
+            .set_lock(&ada().into(), id, true, Some(key))
+            .await
+            .unwrap();
         let entry = service.command(&ada(), key).await.unwrap();
         assert_eq!(entry.state, CommandState::Answered);
         settle_locks(service, id, 1).await;
@@ -174,7 +177,7 @@ fn a_retry_while_the_first_attempt_is_in_flight_sends_nothing() {
         let key: IdempotencyKey = [0x1f; 16];
         let first = {
             let service = service.clone();
-            tokio::spawn(async move { service.set_lock(&ada(), id, true, Some(key)).await })
+            tokio::spawn(async move { service.set_lock(&ada().into(), id, true, Some(key)).await })
         };
         entry_in(service, key, CommandState::Sent).await;
 
@@ -182,7 +185,7 @@ fn a_retry_while_the_first_attempt_is_in_flight_sends_nothing() {
         // until the answer deadline, 12 s.
         let retried = tokio::time::timeout(
             Duration::from_secs(2),
-            service.set_lock(&ada(), id, true, Some(key)),
+            service.set_lock(&ada().into(), id, true, Some(key)),
         )
         .await
         .expect("a retry of a write in flight sends nothing and waits for nothing");
@@ -218,7 +221,7 @@ fn a_write_whose_caller_left_is_still_answered_in_the_journal() {
         let key: IdempotencyKey = [0x2f; 16];
         let caller = {
             let service = service.clone();
-            tokio::spawn(async move { service.set_lock(&ada(), id, true, Some(key)).await })
+            tokio::spawn(async move { service.set_lock(&ada().into(), id, true, Some(key)).await })
         };
         entry_in(service, key, CommandState::Sent).await;
         caller.abort();
@@ -229,7 +232,10 @@ fn a_write_whose_caller_left_is_still_answered_in_the_journal() {
         let entry = service.command(&ada(), key).await.unwrap();
         assert_eq!(entry.outcome, Some(CommandOutcome::Done));
         settle_locks(service, id, 1).await;
-        service.set_lock(&ada(), id, true, Some(key)).await.unwrap();
+        service
+            .set_lock(&ada().into(), id, true, Some(key))
+            .await
+            .unwrap();
         settle_locks(service, id, 1).await;
         server.shutdown().await;
         sim.stop().await;
@@ -252,6 +258,7 @@ fn a_write_left_sent_by_a_crash_is_unknown_at_the_next_start() {
             .journal(&NewCommand {
                 key,
                 user: ada().id,
+                token: None,
                 feeder: id,
                 kind: CommandKind::Lock,
                 body_hash: [0; 32],
@@ -288,7 +295,10 @@ fn a_key_reused_for_another_request_is_refused_unsent() {
         let service = server.service();
 
         let key: IdempotencyKey = [0x77; 16];
-        service.set_lock(&ada(), id, true, Some(key)).await.unwrap();
+        service
+            .set_lock(&ada().into(), id, true, Some(key))
+            .await
+            .unwrap();
         let settings = service.settings(id).await.unwrap();
         let patch = SettingsPatch {
             volume: Some(10),
@@ -296,14 +306,16 @@ fn a_key_reused_for_another_request_is_refused_unsent() {
         };
 
         let reused = [
-            service.set_lock(&ada(), id, false, Some(key)).await,
+            service.set_lock(&ada().into(), id, false, Some(key)).await,
             service
-                .put_settings(&ada(), id, settings.generation, patch, Some(key))
+                .put_settings(&ada().into(), id, settings.generation, patch, Some(key))
                 .await
                 .map(drop),
-            service.set_lock(&ada(), second, true, Some(key)).await,
             service
-                .set_lock(&owner_user(2, "bob"), id, true, Some(key))
+                .set_lock(&ada().into(), second, true, Some(key))
+                .await,
+            service
+                .set_lock(&owner_user(2, "bob").into(), id, true, Some(key))
                 .await,
         ];
         for result in reused {
@@ -336,8 +348,14 @@ fn every_write_is_journalled_and_an_unsent_one_frees_its_key() {
         server.link(id, Link::Online).await;
         let service = server.service();
 
-        service.set_lock(&ada(), id, true, None).await.unwrap();
-        service.set_lock(&ada(), id, false, None).await.unwrap();
+        service
+            .set_lock(&ada().into(), id, true, None)
+            .await
+            .unwrap();
+        service
+            .set_lock(&ada().into(), id, false, None)
+            .await
+            .unwrap();
         let page = service.commands(&ada(), all()).await.unwrap();
         assert_eq!(page.items.len(), 2);
         assert_ne!(page.items[0].key, page.items[1].key);
@@ -351,7 +369,7 @@ fn every_write_is_journalled_and_an_unsent_one_frees_its_key() {
         server.link(id, Link::Offline).await;
         let key: IdempotencyKey = [0x0f; 16];
         assert!(matches!(
-            service.set_lock(&ada(), id, true, Some(key)).await,
+            service.set_lock(&ada().into(), id, true, Some(key)).await,
             Err(Error::Command(CommandError::Offline))
         ));
         assert!(matches!(
@@ -380,16 +398,16 @@ fn each_user_reads_their_own_entries_and_an_owner_reads_all() {
 
         for n in 0..3_u8 {
             service
-                .set_lock(&cy, id, n % 2 == 0, Some([0x30 + n; 16]))
+                .set_lock(&cy.clone().into(), id, n % 2 == 0, Some([0x30 + n; 16]))
                 .await
                 .unwrap();
         }
         service
-            .set_lock(&dee, id, true, Some([0x40; 16]))
+            .set_lock(&dee.clone().into(), id, true, Some([0x40; 16]))
             .await
             .unwrap();
         service
-            .set_lock(&ada(), id, false, Some([0x50; 16]))
+            .set_lock(&ada().into(), id, false, Some([0x50; 16]))
             .await
             .unwrap();
 

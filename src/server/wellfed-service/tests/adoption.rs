@@ -85,7 +85,7 @@ fn a_revoked_server_key_is_refused() {
         assert!(matches!(
             server
                 .service()
-                .set_lock(&ada(), id, true, Some([3; 16]))
+                .set_lock(&ada().into(), id, true, Some([3; 16]))
                 .await,
             Err(Error::Command(CommandError::Offline))
         ));

@@ -12,7 +12,7 @@ use utoipa::ToSchema;
 pub enum ErrorCode {
     /// The first owner exists; setup is closed.
     SetupClosed,
-    /// No valid session.
+    /// No valid session or token.
     Unauthenticated,
     BadCredentials,
     /// The account is past its expiry: it cannot log in and its sessions
@@ -20,6 +20,9 @@ pub enum ErrorCode {
     AccountDisabled,
     /// This user's role may not do that.
     Forbidden,
+    /// Only a login, not a token, may do that: making a token, so a leaked
+    /// one cannot make more that outlive its revocation.
+    SessionRequired,
     /// The change would leave the household without an owner.
     LastOwner,
     /// Another account has that name.
@@ -27,7 +30,8 @@ pub enum ErrorCode {
     /// The zone is real, but no POSIX rule describes it (it changes
     /// irregularly), so a feeder could not keep it; `detail` names it.
     ZoneUnsupported,
-    /// A cookie-authenticated write came from another origin.
+    /// A cookie-authenticated write came from another origin. A write
+    /// with a bearer token needs no `Origin`.
     CrossOrigin,
     /// The request named a host this server does not answer to: an IP
     /// address, `localhost` or a name it was started with.

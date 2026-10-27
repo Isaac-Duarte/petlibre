@@ -29,6 +29,7 @@ mod health;
 mod household;
 mod releases;
 mod stream;
+mod tokens;
 mod users;
 
 use std::fmt;
@@ -134,6 +135,8 @@ impl Client {
     /// The server refuses a cookie-authenticated write whose `Origin` is
     /// not its own, to stop other sites' pages; this client is not a
     /// page, so it names the server's origin as the server's own pages do.
+    /// A token-authenticated write needs no `Origin`, and carries it all
+    /// the same.
     pub fn request(&self, method: Method, path: &str) -> RequestBuilder {
         let request = self
             .http

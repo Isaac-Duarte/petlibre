@@ -177,8 +177,8 @@ impl Store {
         Ok(Change::Done)
     }
 
-    /// Delete a user, and with them their sessions, unless they are the
-    /// last owner.
+    /// Delete a user, and with them their sessions and tokens, unless
+    /// they are the last owner.
     pub async fn delete_user(&self, id: UserId) -> Result<Change> {
         let mut tx = self.writer.begin().await?;
         if let Some(refused) = guard_owner(&mut tx, id, None).await? {
@@ -359,7 +359,7 @@ async fn guard_owner(
     Ok((owners.count <= 1).then_some(Change::LastOwner))
 }
 
-fn user(id: Uuid, name: String, role: &str, expires_ms: Option<i64>) -> Result<User> {
+pub(crate) fn user(id: Uuid, name: String, role: &str, expires_ms: Option<i64>) -> Result<User> {
     Ok(User {
         id: UserId(id),
         name,

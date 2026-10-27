@@ -1003,7 +1003,7 @@
         "tags": [
           "auth"
         ],
-        "summary": "Change one's own password, given the current one. Every other session\nof the account ends; this one stays.",
+        "summary": "Change one's own password, given the current one. Every other session\nof the account ends; this one stays, and so do the account's tokens.",
         "operationId": "change_password",
         "requestBody": {
           "content": {
@@ -1219,6 +1219,143 @@
         }
       }
     },
+    "/api/v1/tokens": {
+      "get": {
+        "tags": [
+          "tokens"
+        ],
+        "summary": "The caller's own tokens, or everyone's for an owner, oldest first. A\ntoken's secret is never listed.",
+        "operationId": "tokens",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Token"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "tokens"
+        ],
+        "summary": "Make a token for the logged-in user's device. The answer holds its\nsecret, the only time the server shows it; the token lasts until\nrevoked, or until its expiry if it has one.",
+        "operationId": "create_token",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewToken"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "no-store"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedToken"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid: a name, or an expiry already past",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "session_required: a token cannot make another",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tokens/{id}": {
+      "delete": {
+        "tags": [
+          "tokens"
+        ],
+        "summary": "Revoke a token: the caller's own, or anyone's for an owner. Another\nuser's is not found.",
+        "operationId": "revoke_token",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/TokenId"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/users": {
       "get": {
         "tags": [
@@ -1315,7 +1452,7 @@
         "tags": [
           "users"
         ],
-        "summary": "Delete an account and end its sessions. Its phones' feeder keys are\nrevoked separately.",
+        "summary": "Delete an account, ending its sessions and revoking its tokens. Its\nphones' feeder keys are revoked separately.",
         "operationId": "delete_user",
         "parameters": [
           {
@@ -1364,7 +1501,7 @@
         "tags": [
           "users"
         ],
-        "summary": "Change an account's role, expiry or password. Setting a password ends\nthat user's sessions (an owner's own, all but the one asking);\nextending a disabled account enables it.",
+        "summary": "Change an account's role, expiry or password. A role applies to the\nuser's tokens at once. Setting a password ends that user's sessions (an\nowner's own, all but the one asking) and leaves their tokens; extending\na disabled account enables it, and its tokens with it.",
         "operationId": "update_user",
         "parameters": [
           {
@@ -1686,6 +1823,17 @@
           "state": {
             "$ref": "#/components/schemas/CommandState"
           },
+          "token": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TokenId",
+                "description": "The token it came through; `None` for a browser session."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "updated": {
             "type": "string",
             "format": "date-time",
@@ -1806,6 +1954,26 @@
           "refused"
         ]
       },
+      "CreatedToken": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Token"
+          },
+          {
+            "type": "object",
+            "required": [
+              "secret"
+            ],
+            "properties": {
+              "secret": {
+                "type": "string",
+                "description": "What the client sends as `Authorization: Bearer <secret>`. The\nserver keeps only its hash, so a lost secret is revoked and made\nagain."
+              }
+            }
+          }
+        ],
+        "description": "A token just made, with its secret: the only time the server shows it."
+      },
       "Credentials": {
         "type": "object",
         "description": "A name and password, to log in.",
@@ -1840,6 +2008,7 @@
           "bad_credentials",
           "account_disabled",
           "forbidden",
+          "session_required",
           "last_owner",
           "name_taken",
           "zone_unsupported",
@@ -2698,6 +2867,27 @@
         "properties": {
           "locked": {
             "type": "boolean"
+          }
+        }
+      },
+      "NewToken": {
+        "type": "object",
+        "description": "A token to make, for the user asking.",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "expires": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When it stops; it lasts until revoked when absent. The account's\nown expiry stops it sooner."
+          },
+          "name": {
+            "type": "string",
+            "description": "The device it is for (`Ada's phone`): 1-64 characters."
           }
         }
       },
@@ -3590,6 +3780,53 @@
           "12h"
         ]
       },
+      "Token": {
+        "type": "object",
+        "description": "A token as it is listed: never its secret.",
+        "required": [
+          "id",
+          "user",
+          "name",
+          "created"
+        ],
+        "properties": {
+          "created": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expires": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When it stops; `None` lasts until revoked."
+          },
+          "id": {
+            "$ref": "#/components/schemas/TokenId"
+          },
+          "last_used": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When it last authenticated a request, to the minute; `None` until\nit is first used."
+          },
+          "name": {
+            "type": "string",
+            "description": "The device it is for."
+          },
+          "user": {
+            "$ref": "#/components/schemas/UserId",
+            "description": "Whose it is: it acts as this user, with their role as it is now."
+          }
+        }
+      },
+      "TokenId": {
+        "type": "string",
+        "format": "uuid"
+      },
       "Units": {
         "type": "string",
         "description": "How weights are shown.",
@@ -3680,6 +3917,10 @@
     {
       "name": "users",
       "description": "The household's accounts, managed by owners"
+    },
+    {
+      "name": "tokens",
+      "description": "Bearer tokens for phones and the CLI, each user's own"
     },
     {
       "name": "household",

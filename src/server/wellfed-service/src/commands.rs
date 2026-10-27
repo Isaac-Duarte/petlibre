@@ -5,13 +5,13 @@
 
 use wellfed_api::{
     CommandKind, CommandOutcome, FeederDetail, FeederId, FeederRefusal, Generation, LockRequest,
-    Settings, SettingsPatch, StatusSnapshot, User,
+    Settings, SettingsPatch, StatusSnapshot,
 };
 use wellfed_model::{Answer, Op};
 use serde::Serialize;
 
 use crate::journal::Write;
-use crate::{CommandError, Error, IdempotencyKey, Invalid, RequestId, Result, Service};
+use crate::{Caller, CommandError, Error, IdempotencyKey, Invalid, RequestId, Result, Service};
 
 /// A settings change as it is hashed into the journal: the base it names
 /// is part of the request.
@@ -77,7 +77,7 @@ impl Service {
     /// change still happened, and a retry reads them again.
     pub async fn put_settings(
         &self,
-        user: &User,
+        caller: &Caller,
         id: FeederId,
         base: Generation,
         patch: SettingsPatch,
@@ -94,7 +94,7 @@ impl Service {
         };
         let recorded = self
             .journaled(Write {
-                user,
+                caller,
                 feeder: id,
                 kind: CommandKind::Settings,
                 body: &body,
@@ -134,7 +134,7 @@ impl Service {
 
     pub async fn set_lock(
         &self,
-        user: &User,
+        caller: &Caller,
         id: FeederId,
         locked: bool,
         key: Option<IdempotencyKey>,
@@ -143,7 +143,7 @@ impl Service {
 
         let recorded = self
             .journaled(Write {
-                user,
+                caller,
                 feeder: id,
                 kind: CommandKind::Lock,
                 body: &LockRequest { locked },

@@ -35,7 +35,7 @@ fn settings_change_against_the_current_generation_only() {
             ..SettingsPatch::default()
         };
         let changed = service
-            .put_settings(&ada(), id, settings.generation, patch, Some([1; 16]))
+            .put_settings(&ada().into(), id, settings.generation, patch, Some([1; 16]))
             .await
             .unwrap();
         assert_eq!(changed.volume, 30);
@@ -43,13 +43,13 @@ fn settings_change_against_the_current_generation_only() {
 
         // A retry under the same id is answered once, not applied again.
         let retried = service
-            .put_settings(&ada(), id, settings.generation, patch, Some([1; 16]))
+            .put_settings(&ada().into(), id, settings.generation, patch, Some([1; 16]))
             .await
             .unwrap();
         assert_eq!(retried, changed);
 
         let stale = service
-            .put_settings(&ada(), id, settings.generation, patch, Some([2; 16]))
+            .put_settings(&ada().into(), id, settings.generation, patch, Some([2; 16]))
             .await;
         let Err(Error::Command(CommandError::Stale(current))) = stale else {
             panic!("{stale:?}");
@@ -62,7 +62,7 @@ fn settings_change_against_the_current_generation_only() {
         };
         assert!(matches!(
             service
-                .put_settings(&ada(), id, changed.generation, loud, Some([3; 16]))
+                .put_settings(&ada().into(), id, changed.generation, loud, Some([3; 16]))
                 .await,
             Err(Error::Invalid(Invalid::Volume))
         ));
@@ -70,7 +70,9 @@ fn settings_change_against_the_current_generation_only() {
         // The settings change's key names that change: reused for a lock,
         // or by another user, it is refused, and nothing is sent.
         assert!(matches!(
-            service.set_lock(&ada(), id, false, Some([1; 16])).await,
+            service
+                .set_lock(&ada().into(), id, false, Some([1; 16]))
+                .await,
             Err(Error::Command(CommandError::KeyReused))
         ));
         let bob = owner_user(2, "bob");
@@ -80,12 +82,24 @@ fn settings_change_against_the_current_generation_only() {
         };
         assert!(matches!(
             service
-                .put_settings(&bob, id, changed.generation, louder, Some([1; 16]))
+                .put_settings(
+                    &bob.clone().into(),
+                    id,
+                    changed.generation,
+                    louder,
+                    Some([1; 16])
+                )
                 .await,
             Err(Error::Command(CommandError::KeyReused))
         ));
         let theirs = service
-            .put_settings(&bob, id, changed.generation, louder, Some([4; 16]))
+            .put_settings(
+                &bob.clone().into(),
+                id,
+                changed.generation,
+                louder,
+                Some([4; 16]),
+            )
             .await
             .unwrap();
         assert_eq!(theirs.generation, Generation(changed.generation.0 + 1));
@@ -107,11 +121,11 @@ fn a_lock_change_is_recorded_once_and_published_live() {
 
         let key: IdempotencyKey = [9; 16];
         service
-            .set_lock(&ada(), id, false, Some(key))
+            .set_lock(&ada().into(), id, false, Some(key))
             .await
             .unwrap();
         service
-            .set_lock(&ada(), id, false, Some(key))
+            .set_lock(&ada().into(), id, false, Some(key))
             .await
             .unwrap();
 
@@ -164,11 +178,14 @@ fn an_unanswered_write_is_unknown_and_its_retry_applies_once() {
         relay.pause();
         let key = Some([0x51; 16]);
         assert!(matches!(
-            service.set_lock(&ada(), id, false, key).await,
+            service.set_lock(&ada().into(), id, false, key).await,
             Err(Error::Command(CommandError::Unknown))
         ));
         relay.resume();
-        service.set_lock(&ada(), id, false, key).await.unwrap();
+        service
+            .set_lock(&ada().into(), id, false, key)
+            .await
+            .unwrap();
 
         let count = || async { service.events(id, locks()).await.unwrap().events.len() };
         until("the lock is recorded", || async { count().await > 0 }).await;

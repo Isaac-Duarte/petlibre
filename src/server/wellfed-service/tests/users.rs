@@ -201,7 +201,7 @@ fn a_user_changes_their_own_password() {
             password: "my own secret".into(),
         };
         assert!(matches!(
-            service.change_password(&vic, &here, wrong).await,
+            service.change_password(&vic, Some(&here), wrong).await,
             Err(Error::Account(AccountError::BadCredentials))
         ));
         let short = PasswordChange {
@@ -209,7 +209,7 @@ fn a_user_changes_their_own_password() {
             password: "too short".into(),
         };
         assert!(matches!(
-            service.change_password(&vic, &here, short).await,
+            service.change_password(&vic, Some(&here), short).await,
             Err(Error::Invalid(Invalid::Password))
         ));
         assert!(service.authenticate(&there).await.unwrap().is_some());
@@ -218,7 +218,10 @@ fn a_user_changes_their_own_password() {
             current: "temporary pass".into(),
             password: "my own secret".into(),
         };
-        service.change_password(&vic, &here, change).await.unwrap();
+        service
+            .change_password(&vic, Some(&here), change)
+            .await
+            .unwrap();
         assert!(service.authenticate(&here).await.unwrap().is_some());
         assert_eq!(service.authenticate(&there).await.unwrap(), None);
         assert!(matches!(

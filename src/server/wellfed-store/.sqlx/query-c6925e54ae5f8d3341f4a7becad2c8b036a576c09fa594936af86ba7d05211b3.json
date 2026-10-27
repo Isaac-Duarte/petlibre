@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO tokens (id, token_hash, user_id, name, created_ms, expires_ms)\n             VALUES (?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": []
+  },
+  "hash": "c6925e54ae5f8d3341f4a7becad2c8b036a576c09fa594936af86ba7d05211b3"
+}

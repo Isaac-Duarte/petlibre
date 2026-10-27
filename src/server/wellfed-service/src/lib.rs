@@ -6,7 +6,10 @@
 //!
 //! - **Accounts** are owners, members and viewers; [`can`] holds what each
 //!   may do, and the server asks it per route. A session lasts from its
-//!   last use, and an account past its expiry is disabled.
+//!   last use, and an account past its expiry is disabled. A phone or the
+//!   CLI authenticates with a bearer token instead: its user's, with no
+//!   role of its own, so a [`Caller`] is a user and the token they came
+//!   through.
 //! - **The household** holds the zone every feeder keeps, as a POSIX rule
 //!   the mirror gives each one.
 //! - **Feeders** are adopted by redeeming an invite with a key the server
@@ -25,7 +28,8 @@
 //!   verified the same way, and kept until an owner installs one.
 //!
 //! Each domain has its own error enum ([`AccountError`],
-//! [`HouseholdError`], [`FeederError`], [`CommandError`]), wrapped in [`Error`]. Time and randomness come in
+//! [`TokenError`], [`HouseholdError`], [`FeederError`], [`CommandError`]),
+//! wrapped in [`Error`]. Time and randomness come in
 //! through [`Clock`] and [`Random`], so tests can fix them.
 //!
 //! [API design]: ../../../../docs/api/README.md
@@ -42,6 +46,7 @@ mod keys;
 mod permissions;
 mod releases;
 mod sessions;
+mod tokens;
 mod updates;
 mod users;
 
@@ -58,7 +63,9 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use uuid::Uuid;
 
-pub use error::{AccountError, CommandError, Error, FeederError, HouseholdError, Invalid, Result};
+pub use error::{
+    AccountError, CommandError, Error, FeederError, HouseholdError, Invalid, Result, TokenError,
+};
 pub use hub::{Hub, Resume, Stamped, StreamId, Subscription};
 pub use permissions::{Permission, can};
 pub use wellfed_mirror::{
@@ -69,6 +76,7 @@ pub use wellfed_releases::{
     MAX_FILE as RELEASE_MAX, Source as ReleaseFeed,
 };
 pub use sessions::SessionToken;
+pub use tokens::{BearerToken, Caller};
 pub use users::reset_owner;
 
 /// A device request id.

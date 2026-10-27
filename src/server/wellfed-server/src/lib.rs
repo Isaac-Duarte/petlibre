@@ -53,6 +53,7 @@ pub(crate) struct AppState {
     tags(
         (name = routes::TAG_AUTH, description = "First-owner setup and login"),
         (name = routes::TAG_USERS, description = "The household's accounts, managed by owners"),
+        (name = routes::TAG_TOKENS, description = "Bearer tokens for phones and the CLI, each user's own"),
         (name = routes::TAG_HOUSEHOLD, description = "The household's name, units, time format and zone"),
         (name = routes::TAG_FEEDERS, description = "Adopted feeders, their settings, lock and history"),
         (name = routes::TAG_HEALTH, description = "Liveness for anyone, readiness for an owner"),
@@ -63,7 +64,9 @@ pub(crate) struct AppState {
 struct ApiDoc;
 
 fn router() -> OpenApiRouter<AppState> {
-    use routes::{auth, commands, events, feeders, health, household, releases, stream, users};
+    use routes::{
+        auth, commands, events, feeders, health, household, releases, stream, tokens, users,
+    };
 
     let small = OpenApiRouter::new()
         .routes(routes!(auth::setup_state, auth::setup))
@@ -75,6 +78,8 @@ fn router() -> OpenApiRouter<AppState> {
         ))
         .routes(routes!(users::users, users::create_user))
         .routes(routes!(users::update_user, users::delete_user))
+        .routes(routes!(tokens::tokens, tokens::create_token))
+        .routes(routes!(tokens::revoke_token))
         .routes(routes!(household::household, household::update_household))
         .routes(routes!(feeders::feeders, feeders::adopt))
         .routes(routes!(feeders::feeder))

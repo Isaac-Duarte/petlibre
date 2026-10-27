@@ -10,8 +10,6 @@ use wellfed_api::{Credentials, PasswordChange, Problem, Setup, SetupState, User}
 use super::{ApiResult, JsonBody, TAG_AUTH, insert};
 use crate::AppState;
 use crate::auth::{self, Allowed, Auth, need};
-use crate::error::ApiError;
-use wellfed_api::ErrorCode;
 
 /// Whether a fresh server is waiting for its first owner, and the host's
 /// zone, which the setup page offers as the household's.
@@ -54,8 +52,8 @@ pub(crate) async fn setup(
         (status = 403, body = Problem, description = "account_disabled"),
     ),
 )]
-pub(crate) async fn session(Auth(user): Auth) -> Json<User> {
-    Json(user)
+pub(crate) async fn session(Auth(caller): Auth) -> Json<User> {
+    Json(caller.user)
 }
 
 /// Log in. The session lasts 30 days from its last use.
@@ -80,7 +78,7 @@ pub(crate) async fn login(
 }
 
 /// Change one's own password, given the current one. Every other session
-/// of the account ends; this one stays.
+/// of the account ends; this one stays, and so do the account's tokens.
 #[utoipa::path(
     patch,
     path = "/session",
@@ -94,16 +92,14 @@ pub(crate) async fn login(
 )]
 pub(crate) async fn change_password(
     State(state): State<AppState>,
-    Allowed(user, _): Allowed<need::OwnAccount>,
+    Allowed(caller, _): Allowed<need::OwnAccount>,
     headers: HeaderMap,
     WithRejection(Json(change), _): JsonBody<PasswordChange>,
 ) -> ApiResult<StatusCode> {
-    // The extractor found this session, so the cookie is there.
-    let session =
-        auth::session_token(&headers).ok_or(ApiError::Code(ErrorCode::Unauthenticated, None))?;
+    let session = auth::session(&headers);
     state
         .service
-        .change_password(&user, &session, change)
+        .change_password(&caller.user, session.as_ref(), change)
         .await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -114,7 +110,7 @@ pub(crate) async fn logout(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> ApiResult<Response> {
-    if let Some(token) = auth::session_token(&headers) {
+    if let Some(token) = auth::session(&headers) {
         state.service.logout(&token).await?;
     }
 

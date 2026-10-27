@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
-use crate::{FeederId, FeederRefusal, UserId};
+use crate::{FeederId, FeederRefusal, TokenId, UserId};
 
 /// What a journalled write asked of the feeder.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
@@ -109,6 +109,8 @@ pub struct Command {
     pub key: Uuid,
     /// Who sent it.
     pub user: UserId,
+    /// The token it came through; `None` for a browser session.
+    pub token: Option<TokenId>,
     pub feeder: FeederId,
     pub kind: CommandKind,
     pub state: CommandState,

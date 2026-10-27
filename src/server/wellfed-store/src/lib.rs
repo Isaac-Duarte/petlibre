@@ -26,6 +26,7 @@ mod history;
 mod migrate;
 mod projections;
 mod samples;
+mod tokens;
 mod users;
 
 use std::path::Path;
@@ -41,6 +42,7 @@ pub use feeders::{FeederRow, FeederState, NewFeeder, SealedKey, Synced};
 pub use history::{EventRow, NewEvent};
 pub use projections::{Boot, ClockSync, Feed, LockChange, PROJECTION_VERSION, Projected, Refresh};
 pub use samples::{NewSample, SampleRow};
+pub use tokens::{NewToken, TokenUse};
 pub use users::{Change, Login, NewUser, SessionRow};
 
 /// How long a connection waits on a lock before failing.

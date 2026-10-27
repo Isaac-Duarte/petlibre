@@ -22,7 +22,7 @@ pub enum Permission {
     InviteOwnPhone,
     /// The user's own commands and audit entries.
     OwnHistory,
-    /// The user's own account: their password.
+    /// The user's own account: their password and their tokens.
     OwnAccount,
     /// Everyone's commands and audit entries.
     AllHistory,

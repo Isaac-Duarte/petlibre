@@ -6,6 +6,14 @@
 //! use plain HTTP on the LAN, where browsers omit Fetch Metadata, so
 //! `Origin` is the check that always applies.
 //!
+//! A phone or the CLI sends `Authorization: Bearer <token>` instead, and
+//! its writes need no `Origin`: a browser attaches a cookie to another
+//! site's request on its own, but never an `Authorization` header, which a
+//! page could set only through a CORS preflight this server never grants.
+//! A request that carries `Authorization` is authenticated by it alone,
+//! never by a cookie beside it, so skipping the check for it cannot let a
+//! cookie through unchecked.
+//!
 //! Comparing `Origin` with `Host` does not stop DNS rebinding, where an
 //! attacker's own name points at this server and so appears in both. So
 //! every request must also name a host the server answers to: an IP
@@ -18,34 +26,77 @@ use std::time::Duration;
 
 use axum::extract::{FromRequestParts, Request, State};
 use axum::http::request::Parts;
-use axum::http::{HeaderMap, header};
+use axum::http::{HeaderMap, HeaderValue, header};
 use axum::middleware::Next;
 use axum::response::Response;
 use axum_extra::extract::CookieJar;
-use wellfed_api::{ErrorCode, SESSION_COOKIE as COOKIE, User};
-use wellfed_service::{Permission, SessionToken, can};
+use wellfed_api::{BEARER, ErrorCode, SESSION_COOKIE as COOKIE};
+use wellfed_service::{BearerToken, Caller, Permission, SessionToken, can};
 
 use crate::AppState;
 use crate::error::ApiError;
 
-/// The logged-in user.
-pub(crate) struct Auth(pub(crate) User);
+/// What a request authenticates with.
+pub(crate) enum Credential {
+    Session(SessionToken),
+    Token(BearerToken),
+}
+
+impl Credential {
+    /// Who it stands for while it holds.
+    pub(crate) async fn caller(&self, state: &AppState) -> Result<Option<Caller>, ApiError> {
+        Ok(match self {
+            Self::Session(token) => state.service.authenticate(token).await?.map(Caller::from),
+            Self::Token(token) => state.service.authenticate_token(token).await?,
+        })
+    }
+}
+
+/// The request's credential: its `Authorization` header when it has one,
+/// otherwise its session cookie. A malformed `Authorization` is no
+/// credential at all, never a fall back to the cookie.
+pub(crate) fn credential(headers: &HeaderMap) -> Option<Credential> {
+    if let Some(value) = headers.get(header::AUTHORIZATION) {
+        return bearer(value).map(Credential::Token);
+    }
+    let jar = CookieJar::from_headers(headers);
+    jar.get(COOKIE)
+        .map(|cookie| Credential::Session(SessionToken::new(cookie.value().to_owned())))
+}
+
+/// The session a request came with, when that is how it authenticates.
+pub(crate) fn session(headers: &HeaderMap) -> Option<SessionToken> {
+    match credential(headers) {
+        Some(Credential::Session(token)) => Some(token),
+        Some(Credential::Token(_)) | None => None,
+    }
+}
+
+fn bearer(value: &HeaderValue) -> Option<BearerToken> {
+    let (scheme, secret) = value.to_str().ok()?.split_once(' ')?;
+    let secret = secret.trim();
+    (scheme.eq_ignore_ascii_case(BEARER) && !secret.is_empty())
+        .then(|| BearerToken::new(secret.to_owned()))
+}
+
+/// The caller: a logged-in user, or a token's.
+pub(crate) struct Auth(pub(crate) Caller);
 
 impl FromRequestParts<AppState> for Auth {
     type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, ApiError> {
         let unauthenticated = || ApiError::Code(ErrorCode::Unauthenticated, None);
-        let token = session_token(&parts.headers).ok_or_else(unauthenticated)?;
-        let user = state.service.authenticate(&token).await?;
-        user.map(Self).ok_or_else(unauthenticated)
+        let credential = credential(&parts.headers).ok_or_else(unauthenticated)?;
+        let caller = credential.caller(state).await?;
+        caller.map(Self).ok_or_else(unauthenticated)
     }
 }
 
-/// The logged-in user, whose role [`can`] do `P`'s permission: each route
-/// names the one it needs (`Allowed<need::Control>`), and the service's
-/// table decides.
-pub(crate) struct Allowed<P>(pub(crate) User, pub(crate) PhantomData<P>);
+/// The caller, whose role [`can`] do `P`'s permission: each route names
+/// the one it needs (`Allowed<need::Control>`), and the service's table
+/// decides. A token has no role of its own: its user's, as it is now.
+pub(crate) struct Allowed<P>(pub(crate) Caller, pub(crate) PhantomData<P>);
 
 /// A permission a route names as a type.
 pub(crate) trait Needs {
@@ -56,14 +107,15 @@ impl<P: Needs> FromRequestParts<AppState> for Allowed<P> {
     type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, ApiError> {
-        let Auth(user) = Auth::from_request_parts(parts, state).await?;
-        if !can(user.role, P::PERMISSION) {
+        let Auth(caller) = Auth::from_request_parts(parts, state).await?;
+        let role = caller.user.role;
+        if !can(role, P::PERMISSION) {
             return Err(ApiError::Code(
                 ErrorCode::Forbidden,
-                Some(format!("a {} may not do that", user.role.code())),
+                Some(format!("a {} may not do that", role.code())),
             ));
         }
-        Ok(Self(user, PhantomData))
+        Ok(Self(caller, PhantomData))
     }
 }
 
@@ -86,12 +138,6 @@ pub(crate) mod need {
     needs!(
         Read, Control, OwnHistory, OwnAccount, Users, Household, Adopt, ServerData
     );
-}
-
-pub(crate) fn session_token(headers: &HeaderMap) -> Option<SessionToken> {
-    let jar = CookieJar::from_headers(headers);
-    jar.get(COOKIE)
-        .map(|cookie| SessionToken::new(cookie.value().to_owned()))
 }
 
 /// How long a browser keeps the session cookie: the longest browsers
@@ -162,9 +208,12 @@ pub(crate) async fn known_host(
 }
 
 /// Refuse a write from another site. Reads pass: they change nothing, and
-/// `SameSite=Strict` keeps the cookie off cross-site requests anyway.
+/// `SameSite=Strict` keeps the cookie off cross-site requests anyway. A
+/// write with a bearer token passes: no other site's page can send one.
 pub(crate) async fn same_origin(request: Request, next: Next) -> Result<Response, ApiError> {
-    if !request.method().is_safe() && !from_this_server(request.headers()) {
+    let headers = request.headers();
+    let token = matches!(credential(headers), Some(Credential::Token(_)));
+    if !request.method().is_safe() && !token && !from_this_server(headers) {
         return Err(ApiError::Code(
             ErrorCode::CrossOrigin,
             Some("a write must come from this server's own pages".into()),
@@ -233,6 +282,30 @@ mod tests {
         ] {
             assert!(!hosts.allows(host), "{host}");
         }
+    }
+
+    #[test]
+    fn an_authorization_header_is_the_only_credential_when_sent() {
+        let cookie = ("cookie", "wellfed_session=00ff");
+        let kind = |pairs: &[(&'static str, &'static str)]| match credential(&headers(pairs)) {
+            Some(Credential::Session(token)) => Some(("session", token.as_str().to_owned())),
+            Some(Credential::Token(token)) => Some(("token", token.as_str().to_owned())),
+            None => None,
+        };
+
+        assert_eq!(kind(&[cookie]), Some(("session", "00ff".into())));
+        assert_eq!(
+            kind(&[cookie, ("authorization", "Bearer plt_ab")]),
+            Some(("token", "plt_ab".into()))
+        );
+        assert_eq!(
+            kind(&[("authorization", "bearer  plt_ab ")]),
+            Some(("token", "plt_ab".into()))
+        );
+        for odd in ["Bearer", "Bearer ", "Basic YWRh", "plt_ab"] {
+            assert_eq!(kind(&[cookie, ("authorization", odd)]), None, "{odd}");
+        }
+        assert_eq!(kind(&[]), None);
     }
 
     #[test]

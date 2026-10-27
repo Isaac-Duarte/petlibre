@@ -3,7 +3,7 @@
 //! deleted only while nothing of it can have reached the feeder.
 
 use jiff::Timestamp;
-use wellfed_api::{CommandKind, CommandOutcome, CommandState, FeederId, UserId};
+use wellfed_api::{CommandKind, CommandOutcome, CommandState, FeederId, TokenId, UserId};
 use uuid::Uuid;
 
 use crate::convert::{from_i64, millis, timestamp, to_i64};
@@ -13,6 +13,8 @@ use crate::{Error, Result, Store};
 pub struct NewCommand {
     pub key: [u8; 16],
     pub user: UserId,
+    /// The token it came through; `None` for a browser session.
+    pub token: Option<TokenId>,
     pub feeder: FeederId,
     pub kind: CommandKind,
     /// SHA-256 of the request's canonical JSON.
@@ -29,6 +31,7 @@ pub struct CommandRow {
     pub seq: u64,
     pub key: [u8; 16],
     pub user: UserId,
+    pub token: Option<TokenId>,
     pub feeder: FeederId,
     pub kind: CommandKind,
     pub body_hash: [u8; 32],
@@ -71,14 +74,17 @@ impl Store {
         let request = command.request_id.as_slice();
         let state = CommandState::Sent.code();
         let sent = millis(command.sent);
+        let token = command.token.map(|token| token.0);
 
         let mut tx = self.writer.begin().await?;
         let done = sqlx::query!(
             "INSERT INTO commands
-                 (key, user_id, feeder_id, kind, body_hash, request_id, boot_count, state, sent_ms, updated_ms)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9) ON CONFLICT (key) DO NOTHING",
+                 (key, user_id, token_id, feeder_id, kind, body_hash, request_id, boot_count, state,
+                  sent_ms, updated_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10) ON CONFLICT (key) DO NOTHING",
             key,
             command.user.0,
+            token,
             command.feeder.0,
             kind,
             hash,
@@ -96,8 +102,8 @@ impl Store {
 
         let found = sqlx::query_as!(
             Raw,
-            r#"SELECT seq, key, user_id AS "user_id: Uuid", feeder_id AS "feeder_id: Uuid", kind,
-                      body_hash, request_id, boot_count, state, outcome, feed, sent_ms, updated_ms
+            r#"SELECT seq, key, user_id AS "user_id: Uuid", token_id AS "token_id: Uuid",
+                      feeder_id AS "feeder_id: Uuid", kind, body_hash, request_id, boot_count, state, outcome, feed, sent_ms, updated_ms
                FROM commands WHERE key = ?"#,
             key
         )
@@ -191,8 +197,8 @@ impl Store {
         let key = key.as_slice();
         let found = sqlx::query_as!(
             Raw,
-            r#"SELECT seq, key, user_id AS "user_id: Uuid", feeder_id AS "feeder_id: Uuid", kind,
-                      body_hash, request_id, boot_count, state, outcome, feed, sent_ms, updated_ms
+            r#"SELECT seq, key, user_id AS "user_id: Uuid", token_id AS "token_id: Uuid",
+                      feeder_id AS "feeder_id: Uuid", kind, body_hash, request_id, boot_count, state, outcome, feed, sent_ms, updated_ms
                FROM commands WHERE key = ?"#,
             key
         )
@@ -212,8 +218,8 @@ impl Store {
             .map_or(Ok(0), |after| to_i64(after, "cursor"))?;
         let rows = sqlx::query_as!(
             Raw,
-            r#"SELECT seq, key, user_id AS "user_id: Uuid", feeder_id AS "feeder_id: Uuid", kind,
-                      body_hash, request_id, boot_count, state, outcome, feed, sent_ms, updated_ms
+            r#"SELECT seq, key, user_id AS "user_id: Uuid", token_id AS "token_id: Uuid",
+                      feeder_id AS "feeder_id: Uuid", kind, body_hash, request_id, boot_count, state, outcome, feed, sent_ms, updated_ms
                FROM commands
                WHERE (?1 IS NULL OR user_id = ?1) AND (?2 IS NULL OR feeder_id = ?2)
                  AND (?3 IS NULL OR state = ?3) AND seq > ?4
@@ -236,6 +242,7 @@ struct Raw {
     seq: i64,
     key: Vec<u8>,
     user_id: Uuid,
+    token_id: Option<Uuid>,
     feeder_id: Uuid,
     kind: String,
     body_hash: Vec<u8>,
@@ -265,6 +272,7 @@ impl TryFrom<Raw> for CommandRow {
                 .try_into()
                 .map_err(|_| Error::Corrupt("command key"))?,
             user: UserId(raw.user_id),
+            token: raw.token_id.map(TokenId),
             feeder: FeederId(raw.feeder_id),
             kind: CommandKind::from_code(&raw.kind).ok_or(Error::Corrupt("command kind"))?,
             body_hash: raw

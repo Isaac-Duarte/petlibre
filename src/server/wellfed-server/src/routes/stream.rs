@@ -5,7 +5,8 @@
 //! it missed or a `resync`. A subscriber that falls behind the hub also
 //! gets a `resync` rather than a silent hole. Every stream ends when the
 //! server shuts down, so shutdown never waits on an open browser tab, and
-//! within [`SESSION_CHECK`] of its session ending (logout or expiry).
+//! within [`SESSION_CHECK`] of its session or token ending (logout,
+//! revocation or expiry).
 
 use std::convert::Infallible;
 use std::sync::Arc;
@@ -17,16 +18,16 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use axum_extra::extract::WithRejection;
 use futures_util::{Stream, StreamExt, stream};
 use wellfed_api::{ErrorCode, MetricKind, Problem, StreamEvent, StreamQuery};
-use wellfed_service::{Resume, SessionToken, Stamped, StreamId};
+use wellfed_service::{Resume, Stamped, StreamId};
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 
 use super::TAG_FEEDERS;
 use crate::AppState;
-use crate::auth::{self, Allowed, need};
+use crate::auth::{self, Allowed, Credential, need};
 use crate::error::ApiError;
 
-/// How often an open stream checks that its session still holds.
+/// How often an open stream checks that its session or token still holds.
 const SESSION_CHECK: Duration = Duration::from_secs(60);
 
 /// Live updates for every feeder: events, gaps, connection changes, and
@@ -84,7 +85,7 @@ pub(crate) async fn stream(
     });
 
     let shutdown = state.shutdown.clone();
-    let session = session_ended(state, auth::session_token(&headers));
+    let session = session_ended(state, auth::credential(&headers));
     let events = stream::iter(first).chain(live).take_until(async move {
         tokio::select! {
             () = shutdown.cancelled() => {}
@@ -94,15 +95,15 @@ pub(crate) async fn stream(
     Ok(Sse::new(events).keep_alive(KeepAlive::default()))
 }
 
-/// Resolves once the stream's session no longer authenticates. A store
+/// Resolves once the stream's credential no longer authenticates. A store
 /// failure ends the stream too; the client reconnects and is checked again.
-async fn session_ended(state: AppState, token: Option<SessionToken>) {
-    let Some(token) = token else {
+async fn session_ended(state: AppState, credential: Option<Credential>) {
+    let Some(credential) = credential else {
         return;
     };
     loop {
         tokio::time::sleep(SESSION_CHECK).await;
-        if !matches!(state.service.authenticate(&token).await, Ok(Some(_))) {
+        if !matches!(credential.caller(&state).await, Ok(Some(_))) {
             return;
         }
     }

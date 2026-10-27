@@ -14,6 +14,8 @@ pub enum Error {
     #[error(transparent)]
     Account(#[from] AccountError),
     #[error(transparent)]
+    Token(#[from] TokenError),
+    #[error(transparent)]
     Household(#[from] HouseholdError),
     #[error(transparent)]
     Feeder(#[from] FeederError),
@@ -56,6 +58,10 @@ pub enum Invalid {
     CommandLimit,
     #[error("not a cursor this server gave")]
     CommandCursor,
+    #[error("a token's name is 1-64 characters")]
+    TokenName,
+    #[error("a token's expiry is in the future")]
+    TokenExpiry,
 }
 
 /// Setup, login, sessions and the accounts owners manage.
@@ -85,6 +91,15 @@ pub enum AccountError {
     Hashing,
     #[error("a session's expiry is past the latest time the clock can show")]
     Expiry,
+}
+
+/// Bearer tokens.
+#[derive(Debug, thiserror::Error)]
+pub enum TokenError {
+    #[error("no such token")]
+    NotFound,
+    #[error("only a login makes a token: a token cannot make another")]
+    SessionRequired,
 }
 
 /// The household's settings.

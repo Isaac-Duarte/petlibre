@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT seq, key, user_id AS \"user_id: Uuid\", feeder_id AS \"feeder_id: Uuid\", kind,\n                      body_hash, request_id, boot_count, state, outcome, feed, sent_ms, updated_ms\n               FROM commands WHERE key = ?",
+  "query": "SELECT seq, key, user_id AS \"user_id: Uuid\", token_id AS \"token_id: Uuid\",\n                      feeder_id AS \"feeder_id: Uuid\", kind, body_hash, request_id, boot_count, state, outcome, feed, sent_ms, updated_ms\n               FROM commands WHERE key = ?",
   "describe": {
     "columns": [
       {
@@ -37,8 +37,19 @@
         }
       },
       {
-        "name": "feeder_id: Uuid",
+        "name": "token_id: Uuid",
         "ordinal": 3,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "commands",
+            "name": "token_id"
+          }
+        }
+      },
+      {
+        "name": "feeder_id: Uuid",
+        "ordinal": 4,
         "type_info": "Blob",
         "origin": {
           "Table": {
@@ -49,7 +60,7 @@
       },
       {
         "name": "kind",
-        "ordinal": 4,
+        "ordinal": 5,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -60,7 +71,7 @@
       },
       {
         "name": "body_hash",
-        "ordinal": 5,
+        "ordinal": 6,
         "type_info": "Blob",
         "origin": {
           "Table": {
@@ -71,7 +82,7 @@
       },
       {
         "name": "request_id",
-        "ordinal": 6,
+        "ordinal": 7,
         "type_info": "Blob",
         "origin": {
           "Table": {
@@ -82,7 +93,7 @@
       },
       {
         "name": "boot_count",
-        "ordinal": 7,
+        "ordinal": 8,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -93,7 +104,7 @@
       },
       {
         "name": "state",
-        "ordinal": 8,
+        "ordinal": 9,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -104,7 +115,7 @@
       },
       {
         "name": "outcome",
-        "ordinal": 9,
+        "ordinal": 10,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -115,7 +126,7 @@
       },
       {
         "name": "feed",
-        "ordinal": 10,
+        "ordinal": 11,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -126,7 +137,7 @@
       },
       {
         "name": "sent_ms",
-        "ordinal": 11,
+        "ordinal": 12,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -137,7 +148,7 @@
       },
       {
         "name": "updated_ms",
-        "ordinal": 12,
+        "ordinal": 13,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -154,6 +165,7 @@
       false,
       false,
       false,
+      true,
       false,
       false,
       false,
@@ -166,5 +178,5 @@
       false
     ]
   },
-  "hash": "38099dc5cf6b8addb151207a5e94c5cf5e0df18d4df300e5963250e31f4ba80a"
+  "hash": "b8387c359a732d02219fce9e3d89e3bcd95fead2f55aab5645a73ee7a97db33d"
 }

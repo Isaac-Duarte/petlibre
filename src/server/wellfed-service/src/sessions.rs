@@ -36,7 +36,7 @@ const PASSWORD_MIN: usize = 10;
 
 /// How stale a session's last use may be before a request records it
 /// again, so a busy page does not write on every request.
-const TOUCH: Duration = Duration::from_secs(60);
+pub(crate) const TOUCH: Duration = Duration::from_secs(60);
 
 /// The household a setup makes, besides its zone.
 const HOUSEHOLD: &str = "Home";
@@ -189,11 +189,12 @@ impl Service {
     }
 
     /// Change `user`'s own password, given the current one, and end their
-    /// other sessions; `session`, the one they asked on, stays.
+    /// other sessions; `session`, the one they asked on, stays. Their
+    /// tokens stay too: each is revoked on its own.
     pub async fn change_password(
         &self,
         user: &User,
-        session: &SessionToken,
+        session: Option<&SessionToken>,
         change: PasswordChange,
     ) -> Result<()> {
         password(&change.password)?;
@@ -211,7 +212,7 @@ impl Service {
             return Err(AccountError::NotFound.into());
         }
         store
-            .delete_sessions_of(user.id, session.hash().as_ref())
+            .delete_sessions_of(user.id, session.and_then(SessionToken::hash).as_ref())
             .await?;
         Ok(())
     }

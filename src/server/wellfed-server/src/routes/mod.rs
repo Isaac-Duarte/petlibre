@@ -10,6 +10,7 @@ pub(crate) mod health;
 pub(crate) mod household;
 pub(crate) mod releases;
 pub(crate) mod stream;
+pub(crate) mod tokens;
 pub(crate) mod users;
 
 use axum::Json;
@@ -28,6 +29,7 @@ pub(crate) const TAG_COMMANDS: &str = "commands";
 pub(crate) const TAG_HOUSEHOLD: &str = "household";
 pub(crate) const TAG_USERS: &str = "users";
 pub(crate) const TAG_RELEASES: &str = "releases";
+pub(crate) const TAG_TOKENS: &str = "tokens";
 
 type ApiResult<T> = Result<T, ApiError>;
 type JsonBody<T> = WithRejection<Json<T>, ApiError>;

@@ -1,0 +1,122 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT tokens.id AS \"token_id: Uuid\", tokens.name AS token_name,\n                      tokens.created_ms, tokens.last_used_ms, tokens.expires_ms AS token_expires_ms,\n                      users.id AS \"user_id: Uuid\", users.name AS user_name, users.role,\n                      users.expires_ms AS user_expires_ms\n               FROM tokens JOIN users ON users.id = tokens.user_id\n               WHERE tokens.token_hash = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "token_id: Uuid",
+        "ordinal": 0,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "tokens",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "token_name",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "tokens",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "created_ms",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "tokens",
+            "name": "created_ms"
+          }
+        }
+      },
+      {
+        "name": "last_used_ms",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "tokens",
+            "name": "last_used_ms"
+          }
+        }
+      },
+      {
+        "name": "token_expires_ms",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "tokens",
+            "name": "expires_ms"
+          }
+        }
+      },
+      {
+        "name": "user_id: Uuid",
+        "ordinal": 5,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "user_name",
+        "ordinal": 6,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "role",
+        "ordinal": 7,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "role"
+          }
+        }
+      },
+      {
+        "name": "user_expires_ms",
+        "ordinal": 8,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "expires_ms"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "1d220a597c56f06b3c2fd3cd41a2606e77f4ab4c11326a2985a5b7248d448673"
+}

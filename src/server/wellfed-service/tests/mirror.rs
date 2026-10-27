@@ -75,7 +75,9 @@ fn a_feeder_that_goes_away_is_offline_until_it_returns() {
         sim.stop().await;
         server.link(id, Link::Offline).await;
         assert!(matches!(
-            service.set_lock(&ada(), id, false, Some([5; 16])).await,
+            service
+                .set_lock(&ada().into(), id, false, Some([5; 16]))
+                .await,
             Err(Error::Command(CommandError::Offline))
         ));
         assert!(matches!(
@@ -88,7 +90,7 @@ fn a_feeder_that_goes_away_is_offline_until_it_returns() {
         let sim = feeder::restart(&flash, address).await;
         server.link(id, Link::Online).await;
         service
-            .set_lock(&ada(), id, false, Some([5; 16]))
+            .set_lock(&ada().into(), id, false, Some([5; 16]))
             .await
             .unwrap();
 

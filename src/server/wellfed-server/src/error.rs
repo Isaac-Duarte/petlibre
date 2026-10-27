@@ -7,7 +7,8 @@ use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use wellfed_api::{ErrorCode, FeederRefusal, Problem, Settings};
 use wellfed_service::{
-    AccountError, CommandError, Error, FeederError, HouseholdError, ReleaseError, ZoneError,
+    AccountError, CommandError, Error, FeederError, HouseholdError, ReleaseError, TokenError,
+    ZoneError,
 };
 
 /// A request's failure.
@@ -112,6 +113,10 @@ fn service(error: &Error) -> (ErrorCode, Option<String>, Option<FeederRefusal>) 
                 return internal(error);
             }
         },
+        Error::Token(token) => match token {
+            TokenError::NotFound => ErrorCode::NotFound,
+            TokenError::SessionRequired => ErrorCode::SessionRequired,
+        },
         Error::Household(household) => match household {
             HouseholdError::NotSetUp => ErrorCode::NotFound,
             HouseholdError::Zone(ZoneError::Unknown(_)) => ErrorCode::Invalid,
@@ -198,9 +203,10 @@ fn status(code: ErrorCode) -> StatusCode {
         | ErrorCode::LastOwner
         | ErrorCode::NameTaken => StatusCode::CONFLICT,
         ErrorCode::Unauthenticated | ErrorCode::BadCredentials => StatusCode::UNAUTHORIZED,
-        ErrorCode::Forbidden | ErrorCode::CrossOrigin | ErrorCode::AccountDisabled => {
-            StatusCode::FORBIDDEN
-        }
+        ErrorCode::Forbidden
+        | ErrorCode::SessionRequired
+        | ErrorCode::CrossOrigin
+        | ErrorCode::AccountDisabled => StatusCode::FORBIDDEN,
         ErrorCode::ZoneUnsupported => StatusCode::UNPROCESSABLE_ENTITY,
         ErrorCode::UnknownHost => StatusCode::MISDIRECTED_REQUEST,
         ErrorCode::NotFound => StatusCode::NOT_FOUND,

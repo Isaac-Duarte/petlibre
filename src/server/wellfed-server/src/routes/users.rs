@@ -52,9 +52,10 @@ pub(crate) async fn create_user(
     Ok((StatusCode::CREATED, Json(user)))
 }
 
-/// Change an account's role, expiry or password. Setting a password ends
-/// that user's sessions (an owner's own, all but the one asking);
-/// extending a disabled account enables it.
+/// Change an account's role, expiry or password. A role applies to the
+/// user's tokens at once. Setting a password ends that user's sessions (an
+/// owner's own, all but the one asking) and leaves their tokens; extending
+/// a disabled account enables it, and its tokens with it.
 #[utoipa::path(
     patch,
     path = "/users/{id}",
@@ -76,16 +77,16 @@ pub(crate) async fn update_user(
     WithRejection(Path(id), _): UserPath,
     WithRejection(Json(patch), _): JsonBody<UserPatch>,
 ) -> ApiResult<Json<User>> {
-    let session = auth::session_token(&headers);
+    let session = auth::session(&headers);
     let user = state
         .service
-        .update_user(&actor, session.as_ref(), id, patch)
+        .update_user(&actor.user, session.as_ref(), id, patch)
         .await?;
     Ok(Json(user))
 }
 
-/// Delete an account and end its sessions. Its phones' feeder keys are
-/// revoked separately.
+/// Delete an account, ending its sessions and revoking its tokens. Its
+/// phones' feeder keys are revoked separately.
 #[utoipa::path(
     delete,
     path = "/users/{id}",

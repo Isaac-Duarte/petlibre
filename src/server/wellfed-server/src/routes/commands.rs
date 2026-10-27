@@ -27,10 +27,10 @@ use crate::error::ApiError;
 )]
 pub(crate) async fn commands(
     State(state): State<AppState>,
-    Allowed(user, _): Allowed<need::OwnHistory>,
+    Allowed(caller, _): Allowed<need::OwnHistory>,
     WithRejection(Query(query), _): WithRejection<Query<CommandQuery>, ApiError>,
 ) -> ApiResult<Json<CommandPage>> {
-    Ok(Json(state.service.commands(&user, query).await?))
+    Ok(Json(state.service.commands(&caller.user, query).await?))
 }
 
 /// One write, by the `Idempotency-Key` it was sent under. Another user's
@@ -48,8 +48,13 @@ pub(crate) async fn commands(
 )]
 pub(crate) async fn command(
     State(state): State<AppState>,
-    Allowed(user, _): Allowed<need::OwnHistory>,
+    Allowed(caller, _): Allowed<need::OwnHistory>,
     WithRejection(Path(key), _): WithRejection<Path<Uuid>, ApiError>,
 ) -> ApiResult<Json<Command>> {
-    Ok(Json(state.service.command(&user, key.into_bytes()).await?))
+    Ok(Json(
+        state
+            .service
+            .command(&caller.user, key.into_bytes())
+            .await?,
+    ))
 }

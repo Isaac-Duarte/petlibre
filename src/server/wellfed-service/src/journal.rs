@@ -36,7 +36,8 @@ use uuid::Uuid;
 
 use self::retry::{Retry, retry};
 use crate::{
-    CommandError, Error, IdempotencyKey, Invalid, Permission, RequestId, Result, Service, can,
+    Caller, CommandError, Error, IdempotencyKey, Invalid, Permission, RequestId, Result, Service,
+    can,
 };
 
 mod retry;
@@ -48,7 +49,8 @@ const CURSOR_MAX: u64 = i64::MAX.unsigned_abs();
 
 /// A write to send through the journal.
 pub(crate) struct Write<'a, B> {
-    pub(crate) user: &'a User,
+    /// Who sent it, and the token it came through.
+    pub(crate) caller: &'a Caller,
     pub(crate) feeder: FeederId,
     pub(crate) kind: CommandKind,
     /// The request as the client sent it: its canonical hash tells a
@@ -136,7 +138,7 @@ impl Service {
         };
         let body = canonical_of(write.body).map_err(CommandError::Body)?;
         let body_hash: [u8; 32] = Sha256::digest(body).into();
-        let request = write_id(write.user, write.feeder, write.kind, &key);
+        let request = write_id(&write.caller.user, write.feeder, write.kind, &key);
         let boot_count = self
             .shared
             .store
@@ -147,7 +149,8 @@ impl Service {
 
         let entry = NewCommand {
             key,
-            user: write.user.id,
+            user: write.caller.user.id,
+            token: write.caller.token,
             feeder: write.feeder,
             kind: write.kind,
             body_hash,
@@ -316,6 +319,7 @@ fn view(row: CommandRow) -> Command {
     Command {
         key: Uuid::from_bytes(row.key),
         user: row.user,
+        token: row.token,
         feeder: row.feeder,
         kind: row.kind,
         state: row.state,

@@ -112,7 +112,7 @@ pub(crate) async fn settings(
 )]
 pub(crate) async fn put_settings(
     State(state): State<AppState>,
-    Allowed(user, _): Allowed<need::Control>,
+    Allowed(caller, _): Allowed<need::Control>,
     WithRejection(Path(id), _): IdPath,
     IfMatch(base): IfMatch,
     OptionalIdempotencyKey(key): OptionalIdempotencyKey,
@@ -120,7 +120,7 @@ pub(crate) async fn put_settings(
 ) -> ApiResult<Response> {
     let settings = state
         .service
-        .put_settings(&user, id, base, patch, key)
+        .put_settings(&caller, id, base, patch, key)
         .await?;
     Ok(tagged(settings))
 }
@@ -142,14 +142,14 @@ pub(crate) async fn put_settings(
 )]
 pub(crate) async fn lock(
     State(state): State<AppState>,
-    Allowed(user, _): Allowed<need::Control>,
+    Allowed(caller, _): Allowed<need::Control>,
     WithRejection(Path(id), _): IdPath,
     OptionalIdempotencyKey(key): OptionalIdempotencyKey,
     WithRejection(Json(request), _): JsonBody<LockRequest>,
 ) -> ApiResult<StatusCode> {
     state
         .service
-        .set_lock(&user, id, request.locked, key)
+        .set_lock(&caller, id, request.locked, key)
         .await?;
     Ok(StatusCode::NO_CONTENT)
 }

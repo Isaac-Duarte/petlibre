@@ -21,6 +21,7 @@ mod health;
 mod household;
 mod releases;
 mod stream;
+mod tokens;
 mod users;
 
 use std::fmt;
@@ -48,6 +49,7 @@ pub use releases::{
     ReleaseSigner, ReleaseSource,
 };
 pub use stream::{FeederSample, StreamEvent, StreamQuery};
+pub use tokens::{BEARER, CreatedToken, NewToken, Token, TokenId};
 pub use users::{NewUser, UserPatch};
 
 /// The prefix every resource lives under.

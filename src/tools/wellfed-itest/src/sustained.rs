@@ -1039,7 +1039,6 @@ fn reset_cause(ctx: &mut Ctx, want: ResetCause) -> Result<()> {
     })
 }
 
-/// No lifetime count is below what it was.
 /// A lifetime reading and the boot's own counts from the same answer. The
 /// feeder reports its lifetime figures as the totals its store held when
 /// the boot opened plus this boot's counts, so `total` less `boot` is that
@@ -1089,6 +1088,7 @@ impl Lifetime {
     }
 }
 
+/// No lifetime count is below what it was.
 fn never_back(before: &Counts, after: &Counts) -> bool {
     after.uptime_s >= before.uptime_s
         && after.feeds >= before.feeds

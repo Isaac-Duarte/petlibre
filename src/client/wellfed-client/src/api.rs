@@ -36,7 +36,7 @@ pub enum Error {
     #[error("the feeder sent a message the session did not expect")]
     Unexpected,
     #[error("the feeder's message does not decode")]
-    Malformed,
+    Malformed(Garbled),
     #[error("a frame announces {0} bytes, more than the device API carries")]
     TooLong(usize),
     #[error("the message does not fit one frame")]
@@ -62,6 +62,47 @@ pub enum Error {
 impl From<noise::Error> for Error {
     fn from(error: noise::Error) -> Self {
         Self::Noise(error)
+    }
+}
+
+/// Bytes of an undecodable message kept for the evidence.
+pub const GARBLED_PREFIX: usize = 32;
+
+/// What a message that authenticated but did not decode held: its length
+/// and first bytes. It authenticated, so the feeder sealed exactly these
+/// bytes; they tell a feeder that sealed wrong bytes from a client that
+/// reads right ones wrong.
+///
+/// It is the message's plaintext, which never holds session keys, but an
+/// invite's answer carries the invite's secret: log it only where no such
+/// answer can be outstanding.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Garbled {
+    /// The whole plaintext's length.
+    pub len: usize,
+    prefix: [u8; GARBLED_PREFIX],
+}
+
+impl Garbled {
+    fn of(plain: &[u8]) -> Self {
+        let mut prefix = [0; GARBLED_PREFIX];
+        let kept = plain.len().min(GARBLED_PREFIX);
+        prefix[..kept].copy_from_slice(&plain[..kept]);
+        Self {
+            len: plain.len(),
+            prefix,
+        }
+    }
+
+    /// The first bytes, up to [`GARBLED_PREFIX`].
+    pub fn prefix(&self) -> &[u8] {
+        &self.prefix[..self.len.min(GARBLED_PREFIX)]
+    }
+}
+
+impl std::fmt::Display for Garbled {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} bytes, starting {}", self.len, Lower(self.prefix()))
     }
 }
 
@@ -253,8 +294,8 @@ impl Session {
             return Ok(None);
         };
         let Some(epoch) = self.epoch else {
-            let welcome: Welcome<'_> =
-                wellfed_proto::decode(&plain).map_err(|_| Error::Malformed)?;
+            let welcome: Welcome<'_> = wellfed_proto::decode(&plain)
+                .map_err(|_| Error::Malformed(Garbled::of(&plain)))?;
             return Ok(Some(match welcome {
                 Welcome::Open {
                     major: _,
@@ -280,7 +321,7 @@ impl Session {
         };
 
         let message: FeederMessage<'_> =
-            wellfed_proto::decode(&plain).map_err(|_| Error::Malformed)?;
+            wellfed_proto::decode(&plain).map_err(|_| Error::Malformed(Garbled::of(&plain)))?;
         Ok(Some(match message {
             FeederMessage::Response { id, result } => Incoming::Answer {
                 id,
@@ -476,8 +517,8 @@ impl Join {
 
         let transport = self.transport.as_mut().ok_or(Error::Unexpected)?;
         let len = transport.open(&message, &mut plain)?;
-        let joined: wellfed_proto::api::Joined =
-            wellfed_proto::decode(&plain[..len]).map_err(|_| Error::Malformed)?;
+        let joined: wellfed_proto::api::Joined = wellfed_proto::decode(&plain[..len])
+            .map_err(|_| Error::Malformed(Garbled::of(&plain[..len])))?;
         Ok(Some(JoinStep::Done(joined.into())))
     }
 }

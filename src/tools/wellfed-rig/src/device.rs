@@ -27,7 +27,7 @@
 
 use std::fmt;
 use std::io::{ErrorKind, Read, Write};
-use std::net::{IpAddr, SocketAddr, TcpStream};
+use std::net::{IpAddr, Shutdown, SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -636,7 +636,7 @@ impl Device {
         // One session for the push: a kept one would hold a slot it never uses.
         self.connection = None;
         let mut connection = self.reach(REACH, stop)?;
-        let bank = self.bank(&mut connection)?;
+        let mut bank = self.bank(&mut connection)?;
         note(format!("Session open on bank {bank}"));
         installer.opened(bank);
         let mut out: Vec<(RequestId, Sent, Instant)> = Vec::new();
@@ -761,10 +761,13 @@ impl Device {
                         // garbled answer, which a new session resumes past
                         // as it does a dropped one. The feeder's readback
                         // and whole-image hash still guard what is written.
-                        Err(SessionError::Malformed) if garbled < GARBLED_MAX => {
+                        Err(SessionError::Malformed(evidence)) if garbled < GARBLED_MAX => {
                             garbled += 1;
+                            // Only update ops are outstanding here, so the
+                            // plaintext holds no secret.
                             note(format!(
-                                "A feeder message did not decode ({garbled} of {GARBLED_MAX} allowed); resuming on a new session"
+                                "A feeder message did not decode ({garbled} of {GARBLED_MAX} allowed) on bank {bank}: {evidence}; outstanding {}; resuming on a new session",
+                                outstanding(&out, unwanted)
                             ));
                             lost = true;
                             break;
@@ -816,9 +819,25 @@ impl Device {
                 }
                 installer.lost();
                 self.connection = None;
+                // Closed now, not when the next session replaces it: the
+                // feeder frees the slot rather than holding it through the
+                // wait. A connection the feeder already dropped has nothing
+                // left to close.
+                let _ = connection.stream.shutdown(Shutdown::Both);
                 std::thread::sleep(Duration::from_secs(2));
-                connection = self.reach(REACH, stop)?;
-                let bank = self.bank(&mut connection)?;
+                connection = match cancelling {
+                    // The stop is what the cancel answers, so it does not
+                    // end the reconnect: the cancel goes again, within its
+                    // own deadline, or no candidate is known to be freed.
+                    Some(since) => self
+                        .reach(
+                            ANSWER.saturating_sub(since.elapsed()),
+                            &AtomicBool::new(false),
+                        )
+                        .map_err(|_| DeviceError::Stopped)?,
+                    None => self.reach(REACH, stop)?,
+                };
+                bank = self.bank(&mut connection)?;
                 note(format!("Session open again on bank {bank}"));
                 installer.opened(bank);
             }
@@ -970,6 +989,23 @@ fn wait(time: Duration, stop: &AtomicBool) -> Result<(), DeviceError> {
 }
 
 /// Read what arrives within `time` into the session.
+/// The install's requests still unanswered, for a garbled message's note:
+/// which one the garbled answer could have been.
+fn outstanding(
+    out: &[(RequestId, Sent, Instant)],
+    unwanted: Option<(u32, Option<RequestId>)>,
+) -> String {
+    let mut sent: Vec<String> = out.iter().map(|(_, sent, _)| format!("{sent:?}")).collect();
+    if let Some((ahead, Some(_))) = unwanted {
+        sent.push(format!("unwanted Chunk({ahead})"));
+    }
+    if sent.is_empty() {
+        "none".into()
+    } else {
+        sent.join(", ")
+    }
+}
+
 fn read_for(connection: &mut Connection, time: Duration) -> Result<(), DeviceError> {
     read(connection, Instant::now() + time)
 }

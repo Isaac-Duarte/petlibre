@@ -122,6 +122,24 @@ fn a_database_without_its_key_is_refused() {
     assert!(!key_path(data.path()).exists());
 }
 
+/// A key directory others could enter, made before the key, is closed
+/// before the key goes in.
+#[cfg(unix)]
+#[test]
+fn a_loose_key_directory_is_tightened() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let data = tempfile::tempdir().unwrap();
+    let dir = data.path().join(KEY_DIR);
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    sealing_key(data.path(), &SeededRandom::new(1)).unwrap();
+
+    assert_eq!(mode(&dir), 0o700);
+    assert_eq!(mode(&key_path(data.path())), 0o600);
+}
+
 #[test]
 fn a_short_key_file_is_refused() {
     let data = tempfile::tempdir().unwrap();

@@ -62,7 +62,9 @@ pub enum ConfigError {
 pub enum InvalidValue {
     #[error("a label is 1-16 bytes with no NUL; {len} bytes were given")]
     Label { len: usize },
-    #[error("`{name}` is not a host name (letters, digits, `-` and `.`, up to 253)")]
+    #[error(
+        "`{name}` is not a host name (dot-separated labels of 1-63 letters, digits and inner `-`, up to 253 in all)"
+    )]
     HostName { name: String },
 }
 
@@ -190,8 +192,11 @@ impl TryFrom<String> for HostName {
     type Error = InvalidValue;
 
     fn try_from(name: String) -> Result<Self, InvalidValue> {
+        // RFC 1123 labels: 1-63 letters, digits and inner hyphens.
         let labels_ok = name.split('.').all(|label| {
-            !label.is_empty()
+            (1..=63).contains(&label.len())
+                && !label.starts_with('-')
+                && !label.ends_with('-')
                 && label
                     .bytes()
                     .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
@@ -235,13 +240,11 @@ pub struct Overrides {
     pub label: Option<Label>,
     /// Whether a feeder whose address fails is looked up over mDNS
     /// (`discovery`; default mdns).
-    #[arg(
-        long,
-        env = "WELLFED_SERVER_DISCOVERY",
-        conflicts_with = "no_discovery"
-    )]
+    #[arg(long, env = "WELLFED_SERVER_DISCOVERY")]
     pub discovery: Option<Discovery>,
-    /// Never look feeders up over mDNS: `--discovery off`.
+    /// Never look feeders up over mDNS: `--discovery off`, over
+    /// `--discovery` and its variable. Not a conflict with them, since clap
+    /// counts a set variable as given and would refuse the pair.
     #[arg(long)]
     pub no_discovery: bool,
     /// A reverse proxy whose forwarded headers are believed

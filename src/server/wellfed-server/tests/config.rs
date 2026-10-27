@@ -173,7 +173,6 @@ fn flags_check_their_values() {
     assert!(parse(&["--label", "a-label-longer-than-16"]).is_err());
     assert!(parse(&["--host", "evil.example:80"]).is_err());
     assert!(parse(&["--raw-sample-days", "0"]).is_err());
-    assert!(parse(&["--discovery", "off", "--no-discovery"]).is_err());
     assert_eq!(
         flags(&["--discovery", "off"]).discovery,
         Some(Discovery::Off)
@@ -185,6 +184,55 @@ fn flags_check_their_values() {
             "b.lan".parse().unwrap()
         ]
     );
+}
+
+/// `--no-discovery` wins over `--discovery`, given as a flag or set in the
+/// environment, rather than conflicting with it.
+#[test]
+fn no_discovery_wins_over_discovery() {
+    let data = tempfile::tempdir().unwrap();
+    std::fs::write(data.path().join(FILE), "discovery = \"mdns\"").unwrap();
+
+    let config = ServerConfig::load(
+        data.path(),
+        flags(&["--discovery", "mdns", "--no-discovery"]),
+    )
+    .unwrap();
+    assert_eq!(config.discovery, Discovery::Off);
+
+    // clap counts a set variable as given, so run the binary with one set.
+    // A bad settings file stops it right after the flags parse, before it
+    // makes a key or listens.
+    std::fs::write(data.path().join(FILE), "listen = 8080").unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_wellfed-server"))
+        .arg("--data")
+        .arg(data.path())
+        .arg("--no-discovery")
+        .env("WELLFED_SERVER_DISCOVERY", "mdns")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success());
+    assert!(stderr.contains("`listen` is invalid"), "{stderr}");
+}
+
+#[test]
+fn a_host_name_is_dns_labels() {
+    for name in ["feeder.lan", "a-b.c", "x", &"a".repeat(63)] {
+        assert!(name.parse::<HostName>().is_ok(), "{name}");
+    }
+    for name in [
+        "",
+        "feeder..lan",
+        "-feeder.lan",
+        "feeder-.lan",
+        "feeder.lan.",
+        "feeder lan",
+        &"a".repeat(64),
+        &["a"; 128].join("."),
+    ] {
+        assert!(name.parse::<HostName>().is_err(), "{name}");
+    }
 }
 
 /// Each refusal names the key it is about.

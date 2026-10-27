@@ -10,6 +10,9 @@
 //! key and finishes the move; two different keys are refused, since only
 //! one of them opens the stored feeder keys.
 //!
+//! An existing `keys` directory that others could read or enter is
+//! tightened to 0700 when a key is written into it, and the change logged.
+//!
 //! A database with no key file is refused rather than given a new key,
 //! which could not open its feeder keys: that is a backup restored without
 //! the key, or a key file lost.
@@ -44,6 +47,23 @@ pub enum KeyError {
         #[source]
         source: std::io::Error,
     },
+    #[error("remove {}", path.display())]
+    Remove {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    /// Making a change in this directory durable failed.
+    #[error("sync {}", path.display())]
+    Sync {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    /// Another start wrote the key file while this one was making its own;
+    /// neither is replaced.
+    #[error("{} appeared while this start was writing it; start again", path.display())]
+    Exists { path: PathBuf },
     #[error("{} holds {len} bytes, not a 32-byte key", path.display())]
     Length { path: PathBuf, len: usize },
     #[error("{} is not the old key file", path.display())]
@@ -131,7 +151,7 @@ pub fn sealing_key(data: &Path, random: &dyn Random) -> Result<([u8; 32], KeySou
         }
     };
 
-    write_key(&dir, &path, &key)?;
+    write_key(data, &dir, &path, &key)?;
     if source == KeySource::Moved {
         remove_old(&old_path, data)?;
         tracing::info!(
@@ -184,59 +204,125 @@ fn read_old(path: &Path) -> Result<Option<[u8; 32]>, KeyError> {
     Ok(Some(file.key.0))
 }
 
-/// Write the key beside its final name and rename it into place, so a
-/// crash leaves either no key file or a whole one, never a short one.
-fn write_key(dir: &Path, path: &Path, key: &[u8; 32]) -> Result<(), KeyError> {
-    let failed = |path: &Path| {
+/// Write the key beside its final name and link it into place, so a crash
+/// leaves either no key file or a whole one, never a short one. A link,
+/// unlike a rename, never replaces a key file another start made meanwhile.
+fn write_key(data: &Path, dir: &Path, path: &Path, key: &[u8; 32]) -> Result<(), KeyError> {
+    let staged = path.with_extension("key.new");
+    let write = |path: &Path| {
         let path = path.to_owned();
         move |source| KeyError::Write { path, source }
     };
-    let staged = path.with_extension("key.new");
 
     let mut builder = std::fs::DirBuilder::new();
     builder.recursive(true);
     #[cfg(unix)]
     std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
-    builder.create(dir).map_err(failed(dir))?;
+    builder.create(dir).map_err(write(dir))?;
+    private_dir(dir)?;
+    // The directory's own entry must last before the database that needs
+    // its key is created.
+    sync_dir(data)?;
 
     // A staged file from an interrupted start may have been made with other
     // permissions; `mode` applies only to a file this call creates.
-    match std::fs::remove_file(&staged) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(source) => return Err(failed(&staged)(source)),
-    }
+    remove(&staged, Missing::Allowed)?;
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-    let mut file = options.open(&staged).map_err(failed(&staged))?;
+    let mut file = options.open(&staged).map_err(write(&staged))?;
     file.write_all(key)
         .and_then(|()| file.sync_all())
-        .map_err(failed(&staged))?;
+        .map_err(write(&staged))?;
 
-    std::fs::rename(&staged, path).map_err(failed(path))?;
-    sync_dir(dir).map_err(failed(dir))
+    let linked = std::fs::hard_link(&staged, path);
+    remove(&staged, Missing::Refused)?;
+    match linked {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            return Err(KeyError::Exists {
+                path: path.to_owned(),
+            });
+        }
+        Err(source) => return Err(write(path)(source)),
+    }
+    sync_dir(dir)
 }
 
-fn remove_old(old: &Path, data: &Path) -> Result<(), KeyError> {
-    std::fs::remove_file(old).map_err(|source| KeyError::Write {
-        path: old.to_owned(),
-        source,
-    })?;
-    sync_dir(data).map_err(|source| KeyError::Write {
-        path: data.to_owned(),
-        source,
-    })
-}
-
-/// Make a rename or removal in `dir` durable.
-fn sync_dir(dir: &Path) -> std::io::Result<()> {
+/// Tighten an existing key directory that others could read or enter to
+/// 0700, rather than refuse it: the server's own user owns it, so this is a
+/// fix the owner would make anyway, and it is logged.
+fn private_dir(dir: &Path) -> Result<(), KeyError> {
     #[cfg(unix)]
-    std::fs::File::open(dir)?.sync_all()?;
-    // Elsewhere a directory cannot be opened to sync; the rename is as
-    // durable as the platform makes it.
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mode = std::fs::metadata(dir)
+            .map_err(|source| KeyError::Read {
+                path: dir.to_owned(),
+                source,
+            })?
+            .permissions()
+            .mode();
+        if mode & 0o077 != 0 {
+            std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)).map_err(
+                |source| KeyError::Write {
+                    path: dir.to_owned(),
+                    source,
+                },
+            )?;
+            tracing::warn!(
+                "{} was mode {:o}; tightened it to 700",
+                dir.display(),
+                mode & 0o777
+            );
+        }
+    }
     #[cfg(not(unix))]
     let _ = dir;
     Ok(())
+}
+
+fn remove_old(old: &Path, data: &Path) -> Result<(), KeyError> {
+    remove(old, Missing::Refused)?;
+    sync_dir(data)
+}
+
+/// Whether [`remove`] accepts a file that is already gone.
+#[derive(Clone, Copy)]
+enum Missing {
+    Allowed,
+    Refused,
+}
+
+fn remove(path: &Path, missing: Missing) -> Result<(), KeyError> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error)
+            if error.kind() == std::io::ErrorKind::NotFound
+                && matches!(missing, Missing::Allowed) =>
+        {
+            Ok(())
+        }
+        Err(source) => Err(KeyError::Remove {
+            path: path.to_owned(),
+            source,
+        }),
+    }
+}
+
+/// Make a link, rename or removal in `dir` durable.
+fn sync_dir(dir: &Path) -> Result<(), KeyError> {
+    let sync = || -> std::io::Result<()> {
+        #[cfg(unix)]
+        std::fs::File::open(dir)?.sync_all()?;
+        Ok(())
+    };
+    // Elsewhere a directory cannot be opened to sync; a change in it is as
+    // durable as the platform makes it.
+    sync().map_err(|source| KeyError::Sync {
+        path: dir.to_owned(),
+        source,
+    })
 }

@@ -227,7 +227,9 @@ impl<S: Copy, const SLOTS: usize> Indicators<S, SLOTS> {
         };
 
         let sequence = self.next_sequence;
-        self.next_sequence += 1;
+        // Wrapping only so no build can panic here: at one request per
+        // millisecond, 64 bits last 584 million years, far past any boot.
+        self.next_sequence = self.next_sequence.wrapping_add(1);
         *slot = Some(Entry {
             request,
             sequence,

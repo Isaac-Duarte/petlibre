@@ -297,9 +297,9 @@ fn the_indicator_service_drives_lights_while_the_motor_runs_and_emitters_are_lit
         } else {
             Decision::OutputOnly
         };
-        assert_eq!(leds::observe(led).shown(true), expected);
+        assert_eq!(leds::shown(led, true), expected);
         assert!(leds::show(led, false));
-        assert_eq!(leds::observe(led).shown(false), expected);
+        assert_eq!(leds::shown(led, false), expected);
     }
     fake::with(|h| {
         assert_eq!(
@@ -315,7 +315,7 @@ fn the_indicator_service_drives_lights_while_the_motor_runs_and_emitters_are_lit
     // A latch that did not take still fails its check.
     fake::with(|h| h.blocked_gpio_write[0] = 1 << Led::Lock.pin());
     assert!(leds::show(Led::Lock, true));
-    assert_eq!(leds::observe(Led::Lock).shown(true), Decision::Abort);
+    assert_eq!(leds::shown(Led::Lock, true), Decision::Abort);
 
     // A pin no longer an output refuses the request and darkens them all.
     fake::with(|h| {

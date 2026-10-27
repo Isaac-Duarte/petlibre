@@ -26,7 +26,11 @@ Only PB22's color (red) is recorded; the other three colors are for the owner's 
 
 The service runs in the loop task, so it adds no FreeRTOS task (the firmware's limit is two). A step is a few comparisons over at most a dozen slots and, per light that changes, one masked port write under the interrupt lock and, a settle later, one readback. It takes no motor lease and no flash lease.
 
-The board's indicator writes (`wellfed_hal::leds::show`, checked by `Readback::shown`) do not require stopped outputs, unlike the bring-up probe's `leds::request`: a feed runs the motor and the emitters, and the lights must neither freeze nor fail then. What keeps that safe is that the write is one masked write of indicator bits only, under the interrupt lock, so it cannot interleave with the supervision timer's motor writes; a compile-time assertion keeps the indicator masks disjoint from the motor and emitter masks, and a host test checks that no motor or emitter bit moves while every light is driven during a simulated feed. The checks of latch, pad, direction and (PB22) input stay as they were. Startup still enables the indicators only from verified stopped outputs and leaves them LOW.
+The board's indicator writes (`wellfed_hal::leds::show`, checked by `leds::shown`) do not require stopped outputs, unlike the bring-up probe's `leds::request`: a feed runs the motor and the emitters, and the lights must neither freeze nor fail then. What keeps that safe is that the write is one masked write of indicator bits only, under the interrupt lock, so it cannot interleave with the supervision timer's motor writes; a compile-time assertion keeps the indicator masks disjoint from the motor and emitter masks, and a host test checks that no motor or emitter bit moves while every light is driven during a simulated feed. The checks of latch, pad, direction and (PB22) input stay as they were.
+
+The check runs during feeds, up to once per blink edge per light, so it holds the interrupt lock only for what it needs: five register reads (both ports' directions, the latch, one input sample, the pad), with no stopped-output snapshot and none of the probe's 64 extra input samples. The write holds it for the direction reads and one port write. That is the worst case the supervision timer waits (static analysis, not measured; each read is an SDK or ROM call of a few instructions).
+
+A steady light is checked only when it changes: a level that drifts afterwards (a pad reconfigured, a latch flipped) goes unnoticed until the light's next change, when its check fails and the lights go dark. Startup still enables the indicators only from verified stopped outputs and leaves them LOW.
 
 ## The feeder's mapping (provisional)
 
@@ -67,4 +71,4 @@ Hardware first, then this check; nothing here moves the motor except step 7, whi
 8. **Refused press.** With a feed refused (for example during an install, or with the battery hold), press Dispense on an unlocked panel. Owner: the warning icon flashes quickly for about 3 s.
 9. **Warning color and steady fault** come with FW19's `sensor-fault` variant on the bench (its third feed holds a fault): owner, the warning icon is lit steady and red.
 
-Record which steps passed, each icon's color, and any `PLIND1 fail` line. A `fail` line means the lights stayed off for that boot, which is the designed response, not a pass.
+Record which steps passed, each icon's color, and any `PLIND1 fail` line; watch especially for `fail light=fault`, since PB22 is the one pad with input readback and the only light whose check can catch an input mismatch. A `fail` line means the lights stayed off for that boot, which is the designed response, not a pass.

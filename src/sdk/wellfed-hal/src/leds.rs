@@ -107,7 +107,7 @@ const _: () = assert!(
 /// supervision timer's motor writes, and its mask holds only indicator
 /// bits (checked at compile time above). An indicator pin that is no
 /// longer an output refuses the request and turns every indicator off.
-/// The caller waits [`SETTLE_MS`] and checks with [`Readback::shown`].
+/// The caller waits [`SETTLE_MS`] and checks with [`shown`].
 pub fn show(led: Led, high: bool) -> bool {
     let _guard = IrqGuard::lock();
     if !directions() {
@@ -167,17 +167,6 @@ impl Readback {
         }
     }
 
-    /// The decision for a level [`show`] wrote: the same checks of latch,
-    /// pad, direction and input, but not the stopped outputs, which a feed
-    /// legitimately leaves.
-    pub fn shown(self, high: bool) -> Decision {
-        Self {
-            stopped_ok: true,
-            ..self
-        }
-        .decision(high)
-    }
-
     /// True only for an input-verified level.
     pub fn matches(self, high: bool) -> bool {
         self.decision(high) == Decision::Verified
@@ -205,6 +194,29 @@ pub fn observe(led: Led) -> Readback {
         stopped_ok: stopped::observe().verified(),
         pad: sdk::pad_control(pin),
     }
+}
+
+/// Check a level [`show`] wrote: latch, pad, direction and (PB22) one input
+/// read, as [`Readback::decision`] judges them, but not the stopped outputs,
+/// which a feed legitimately leaves. It runs during feeds, up to once per
+/// blink edge per light, so it holds the interrupt lock only for what the
+/// decision needs: five register reads (two directions, the latch, one
+/// input sample, the pad), against the probe's [`observe`] with its 64
+/// extra input samples and the stopped-output snapshot.
+pub fn shown(led: Led, high: bool) -> Decision {
+    let _guard = IrqGuard::lock();
+    let pin = led.pin();
+    Readback {
+        latch_high: sdk::gpio_output_latch(pin >> 5) & (1 << (pin & 31)) != 0,
+        input_high: sdk::gpio_read_bit(pin),
+        input_highs: 0,
+        input_readable: led.input_readable(),
+        directions_ok: directions(),
+        // Not required on this path: see `show`.
+        stopped_ok: true,
+        pad: sdk::pad_control(pin),
+    }
+    .decision(high)
 }
 
 pub const SETTLE_MS: u32 = 10;

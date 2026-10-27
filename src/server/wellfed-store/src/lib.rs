@@ -94,7 +94,8 @@ impl Store {
 
     /// A trivial query on the writer and on a reader, for readiness: the
     /// writer is the one connection every write waits for, and the readers
-    /// serve every page.
+    /// serve every page. So it waits for the writer behind any write in
+    /// progress.
     pub async fn ping(&self) -> Result<()> {
         for pool in [&self.writer, &self.reader] {
             sqlx::query!(r#"SELECT 1 AS "one!: i64""#)

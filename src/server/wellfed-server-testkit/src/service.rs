@@ -4,11 +4,16 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use argon2::Argon2;
+use argon2::password_hash::{PasswordHasher, SaltString};
 use jiff::tz::TimeZone;
-use wellfed_api::{AdoptFeeder, ClientRole, Connection, EventBody, EventQuery, FeederId};
+use wellfed_api::{
+    AdoptFeeder, ClientRole, Connection, Credentials, EventBody, EventQuery, FeederId, Role, UserId,
+};
 use wellfed_service::{Config, Discovery, Service, Timing};
-use wellfed_store::Store;
+use wellfed_store::{NewUser, Store};
 use tempfile::TempDir;
+use uuid::Uuid;
 
 use crate::feeder::{self, Running};
 use crate::fixed::{FixedClock, SeededRandom};
@@ -50,6 +55,32 @@ impl TempStore {
         Store::open(&self.path(), FixedClock.now())
             .await
             .expect("open the test database")
+    }
+
+    /// A fresh database whose one account is a member who logs in with
+    /// `login`. No route makes a member yet, so the store does, as setup
+    /// would with the member's role; once one does, this goes through it.
+    pub async fn with_member(login: &Credentials) -> Self {
+        let temp = Self::new();
+        let store = temp.open().await;
+        let salt = SaltString::encode_b64(&[0x11; 16]).expect("sixteen bytes make a salt");
+        let hash = Argon2::default()
+            .hash_password(login.password.as_bytes(), &salt)
+            .expect("hash the member's password")
+            .to_string();
+        let created = store
+            .create_first_owner(NewUser {
+                id: UserId(Uuid::from_u128(2)),
+                name: &login.name,
+                password_hash: &hash,
+                role: Role::Member,
+                created: FixedClock.now(),
+            })
+            .await
+            .expect("store the member");
+        assert!(created, "a fresh database takes its first account");
+        store.close().await;
+        temp
     }
 }
 

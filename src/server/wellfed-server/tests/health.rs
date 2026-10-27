@@ -1,17 +1,12 @@
 //! Liveness for anyone, readiness for an owner, and the request id every
 //! answer carries.
 
-use argon2::Argon2;
-use argon2::password_hash::{PasswordHasher, SaltString};
-use wellfed_api::{
-    ClientRole, Connection, Credentials, ErrorCode, FeederLink, Role, StoreState, UserId,
-};
+use wellfed_api::{ClientRole, Connection, Credentials, ErrorCode, FeederLink, Role, StoreState};
 use wellfed_server_client::reqwest::Response;
 use wellfed_server_client::reqwest::header::HOST;
 use wellfed_server_client::{Method, StatusCode};
 use wellfed_server_testkit::fixed::FixedClock;
 use wellfed_server_testkit::{TempStore, TestServer, ada_login, config, feeder, local, refused};
-use wellfed_store::NewUser;
 use uuid::Uuid;
 
 const REQUEST_ID: &str = "x-request-id";
@@ -23,30 +18,9 @@ fn bob_login() -> Credentials {
     }
 }
 
-/// A server whose one account is bob, a member. No route makes a member
-/// yet, so the store does, as setup would with the member's role.
+/// A server whose one account is bob, a member.
 async fn with_a_member() -> TestServer {
-    let temp = TempStore::new();
-    let store = temp.open().await;
-    let salt = SaltString::encode_b64(&[0x11; 16]).unwrap();
-    let hash = Argon2::default()
-        .hash_password(bob_login().password.as_bytes(), &salt)
-        .unwrap()
-        .to_string();
-    let created = store
-        .create_first_owner(NewUser {
-            id: UserId(Uuid::from_u128(2)),
-            name: "bob",
-            password_hash: &hash,
-            role: Role::Member,
-            created: FixedClock.now(),
-        })
-        .await
-        .unwrap();
-    assert!(created);
-    store.close().await;
-
-    TestServer::open(temp, config()).await
+    TestServer::open(TempStore::with_member(&bob_login()).await, config()).await
 }
 
 /// The answer's request id.
@@ -172,5 +146,38 @@ async fn every_answer_carries_a_request_id() {
         .await
         .unwrap();
     assert_eq!(request_id(&proxied), "proxy-7f3a");
+    server.stop().await;
+}
+
+/// An id the request brings is kept only when it is short and plain; any
+/// other is replaced with a fresh one, so a client cannot fill or garble
+/// the log with it.
+#[tokio::test]
+async fn a_long_or_odd_request_id_is_replaced() {
+    let server = TestServer::start().await;
+    let client = server.client();
+    let longest = "a".repeat(64);
+
+    for kept in ["proxy.7f3a_B-9", longest.as_str()] {
+        let response = client
+            .request(Method::GET, "/health")
+            .header(REQUEST_ID, kept)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(request_id(&response), kept);
+    }
+
+    let too_long = "a".repeat(65);
+    for replaced in [too_long.as_str(), "two words", "a/b", "id=\"x\"", ""] {
+        let response = client
+            .request(Method::GET, "/health")
+            .header(REQUEST_ID, replaced)
+            .send()
+            .await
+            .unwrap();
+        let id = request_id(&response);
+        assert!(Uuid::parse_str(&id).is_ok(), "{replaced:?} became {id:?}");
+    }
     server.stop().await;
 }

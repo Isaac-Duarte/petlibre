@@ -8,6 +8,7 @@ description = "What every server test builds: a temp store, a fixed clock and se
 publish.workspace = true
 
 [dependencies]
+argon2 = { workspace = true, features = ["std"] }
 axum.workspace = true
 jiff.workspace = true
 wellfed-api.workspace = true

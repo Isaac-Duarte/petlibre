@@ -2794,7 +2794,6 @@ name = "wellfed-server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "argon2",
  "axum",
  "axum-extra",
  "clap",
@@ -2839,6 +2838,7 @@ dependencies = [
 name = "wellfed-server-testkit"
 version = "0.1.0"
 dependencies = [
+ "argon2",
  "axum",
  "jiff",
  "wellfed-api",

@@ -85,9 +85,10 @@ pub fn app(service: Service, shutdown: CancellationToken, hosts: Hosts) -> Route
     };
     let (router, _) = router().split_for_parts();
 
-    // Each layer wraps the ones above it. The id is set outermost, so the
-    // trace span carries it, and copied onto the answer inside the span,
-    // so a refusal from the host, origin or size checks carries it too.
+    // Each layer wraps the ones above it. A request's own id is screened
+    // and then the id is set, both outside the trace layer, so its span
+    // carries the id. The id is copied onto the answer inside the span, so
+    // a refusal from the host, origin or size checks carries it too.
     router
         .layer(axum::middleware::from_fn(auth::same_origin))
         .layer(axum::middleware::from_fn_with_state(
@@ -98,6 +99,7 @@ pub fn app(service: Service, shutdown: CancellationToken, hosts: Hosts) -> Route
         .layer(PropagateRequestIdLayer::new(request_id::HEADER))
         .layer(TraceLayer::new_for_http().make_span_with(request_id::span))
         .layer(SetRequestIdLayer::new(request_id::HEADER, MakeRequestUuid))
+        .layer(axum::middleware::map_request(request_id::screen))
         .with_state(state)
 }
 

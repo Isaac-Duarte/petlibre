@@ -33,7 +33,6 @@ utoipa-axum.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
-argon2 = { workspace = true, features = ["std"] }
 wellfed-server-client.workspace = true
 wellfed-server-testkit.workspace = true
 tempfile.workspace = true

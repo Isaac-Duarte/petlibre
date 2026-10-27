@@ -30,12 +30,18 @@ pub const HISTORY_MS: u32 = 60 * 60_000;
 /// loses.
 pub const SAVE_MS: u32 = 60 * 60_000;
 /// The early saves' budget: each boot's own save as it starts (so its
-/// reset counts however short it is) and an intentional restart's spend a
-/// token, and each settled save gives one back. So early saves never
-/// outnumber settled ones by more than this, and the store's wear is at
-/// most this many erases plus two per hour of uptime: about 17,500 a year,
-/// 8,800 of each of its two sectors, whatever the crash pattern.
+/// reset counts however short it is) and an intentional restart's within
+/// `RESTART_SETTLED_MS` of boot spend a token, and each settled save gives
+/// one back. So early saves never outnumber settled ones by more than
+/// this, and with no later restarts the store's wear is at most this many
+/// erases plus two per hour of uptime: about 17,500 a year, 8,800 of each
+/// of its two sectors, whatever the crash pattern.
 pub const EARLY_SAVES: u8 = 6;
+/// A boot this old has a settled stretch behind it: an intentional
+/// restart's save then spends no early token, so an owner's restart keeps
+/// its boot's counts however spent the budget is. Each such save needs
+/// this much uptime first, so restarts add at most six erases an hour.
+pub const RESTART_SETTLED_MS: u32 = 10 * 60_000;
 
 /// The storage sectors the totals count erases of: the whole region, the
 /// board's `STORAGE_SECTORS` (which the runtime asserts). The v1 wire's

@@ -143,6 +143,8 @@ pub struct SimPlatform {
     stats_base: Totals,
     counts: Counts,
     stats_due: Instant,
+    /// When this boot opened, for a restart's save kind.
+    booted: Instant,
     calibration: CalibrationStore<Region>,
     calibration_pending: Option<Calibration>,
     /// The NTP exchange's socket, on an ephemeral loopback-reachable port.
@@ -259,6 +261,7 @@ impl SimPlatform {
             stats_base,
             counts: Counts::default(),
             stats_due: Instant::now() + Duration::from_millis(u64::from(SAVE_MS)),
+            booted: Instant::now(),
             calibration,
             calibration_pending: None,
             ntp: None,
@@ -352,14 +355,15 @@ impl SimPlatform {
         self.accept_failed = true;
     }
 
-    /// Save the lifetime totals as the writer does: an early save at a
-    /// restart (`restarting`; the simulator's restart has no watchdog to
-    /// race), otherwise the timed save when due. A failed save makes the
+    /// Save the lifetime totals as the writer does: a restart's save
+    /// (`restarting`; the simulator's restart has no watchdog to race), of
+    /// the kind its uptime gives, otherwise the timed save when due. A failed save makes the
     /// store read-only for the boot, as on the feeder.
     pub(crate) fn save_stats(&mut self, restarting: bool) {
         let now = Instant::now();
         if restarting {
-            self.save_now(SaveKind::Early);
+            let uptime = now.duration_since(self.booted).as_millis();
+            self.save_now(SaveKind::restart(u32::try_from(uptime).unwrap_or(u32::MAX)));
         } else if now >= self.stats_due {
             self.save_now(SaveKind::Settled);
             self.stats_due = now + Duration::from_millis(u64::from(SAVE_MS));

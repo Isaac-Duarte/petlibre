@@ -400,10 +400,12 @@ enum SaveTrigger {
 }
 
 impl SaveTrigger {
-    /// Only the timed save gives an early token back.
-    const fn kind(self) -> SaveKind {
+    /// Only the timed save gives an early token back, and a restart's
+    /// spends one only early in a boot (`SaveKind::restart`).
+    const fn kind(self, uptime_ms: u32) -> SaveKind {
         match self {
-            Self::Boot | Self::Restart => SaveKind::Early,
+            Self::Boot => SaveKind::Early,
+            Self::Restart => SaveKind::restart(uptime_ms),
             Self::Due => SaveKind::Settled,
         }
     }
@@ -777,7 +779,7 @@ impl<F: FlashOps> Writer<F> {
             return None;
         };
 
-        if self.stats.may_save(trigger.kind()) {
+        if self.stats.may_save(trigger.kind(now)) {
             return Some(trigger);
         }
         self.stats_done(trigger);
@@ -827,7 +829,7 @@ impl<F: FlashOps> Writer<F> {
             .stats_base
             .plus(&boot, &erases, sdk::bank1_erase_count());
 
-        let kind = trigger.kind();
+        let kind = trigger.kind(now);
         arming::set_attempt();
         let saved = self.stats.save(&totals, kind);
         arming::clear_attempt();

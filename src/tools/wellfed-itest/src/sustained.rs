@@ -463,9 +463,11 @@ impl Run {
     ) -> Result<()> {
         let (feed, start) = self.ask_feed(ctx, portions)?;
 
-        let (mark, fed) = result(ctx, feed, start, FEED_WAIT + STOP_WAIT)?;
+        let (_, fed) = result(ctx, feed, start, FEED_WAIT + STOP_WAIT)?;
         expect.check(feed, fed)?;
-        ctx.expect("the owner at rest", mark, STOP_WAIT, |e| {
+        // From the feed's start, not its result: a fault's state change is
+        // logged as the supervisor stops the drive, before the result.
+        ctx.expect("the owner at rest", start, STOP_WAIT, |e| {
             feeds::owner_state(e, rest)
         })?;
         no_restart(ctx, start, "a feed")

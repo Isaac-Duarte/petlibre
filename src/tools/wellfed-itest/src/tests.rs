@@ -397,11 +397,13 @@ impl Feeder {
                 return id;
             }
             (SENSOR, _) => {
-                // The ADC lost: failed, and the owner holds the fault.
+                // The ADC lost: failed, and the owner holds the fault. As
+                // the feeder logs it, the fault state comes before the
+                // result.
                 self.line(2.0, driving);
                 self.line(
                     4.0,
-                    "PLOWN1 state=6 fault=0 supervisor=0 stopped=1 optics_off=1",
+                    "PLOWN1 state=7 fault=7 supervisor=3 stopped=1 optics_off=1",
                 );
                 self.line(
                     4.01,
@@ -410,10 +412,6 @@ impl Feeder {
                          durable=1 drive_ms=2000 rising=0 falling=0 first_edge_ms=none \
                          current_max=168 current_mean=59 samples=60"
                     ),
-                );
-                self.line(
-                    4.02,
-                    "PLOWN1 state=7 fault=7 supervisor=0 stopped=1 optics_off=1",
                 );
                 self.faulted = true;
                 self.feeding = Some(Feeding {

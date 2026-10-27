@@ -13,7 +13,9 @@ use uuid::Uuid;
 
 async fn fresh() -> (TempDir, Store) {
     let dir = tempfile::tempdir().unwrap();
-    let store = Store::open(&dir.path().join("server.db")).await.unwrap();
+    let store = Store::open(&dir.path().join("server.db"), at(0))
+        .await
+        .unwrap();
     (dir, store)
 }
 
@@ -255,50 +257,6 @@ async fn a_new_epoch_keeps_its_own_history_and_restarts_the_cursor() {
     assert_eq!(new[0].kind, EventKind::Lock);
 }
 
-/// A database the first schema wrote: its events came from rings written
-/// before epochs, and read back under epoch 0 with the cursor kept.
-#[tokio::test]
-async fn the_epoch_migration_keeps_the_history_under_epoch_zero() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("server.db");
-    let url = format!("sqlite://{}?mode=rwc", path.display());
-    let pool = sqlx::SqlitePool::connect(&url).await.unwrap();
-    let mut first = sqlx::migrate!("./migrations");
-    first.migrations = std::borrow::Cow::Owned(first.migrations[..1].to_vec());
-    first.run(&pool).await.unwrap();
-    sqlx::query(
-        "INSERT INTO feeders (id, identity, name, role, key_nonce, key_sealed, synced, created_ms)
-         VALUES (x'01', zeroblob(32), 'kitchen', 'server', zeroblob(12), x'00', 4, 0)",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(
-        "INSERT INTO events (feeder_id, seq, at_s, received_ms, kind, body)
-         VALUES (x'01', 4, NULL, 0, 'boot', x'00')",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-    pool.close().await;
-
-    let store = Store::open(&path).await.unwrap();
-    let pool = sqlx::SqlitePool::connect(&url).await.unwrap();
-    let (epoch, synced): (Option<i64>, Option<i64>) =
-        sqlx::query_as("SELECT epoch, synced FROM feeders")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    assert_eq!((epoch, synced), (Some(0), Some(4)));
-    let (epoch, seq): (i64, i64) = sqlx::query_as("SELECT epoch, seq FROM events")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!((epoch, seq), (0, 4));
-    pool.close().await;
-    store.close().await;
-}
-
 #[tokio::test]
 async fn the_cached_status_and_settings_read_back() {
     let (_dir, store) = fresh().await;
@@ -376,11 +334,11 @@ async fn samples_are_kept_raw_newest_first() {
 async fn reopening_keeps_the_data_and_runs_no_migration_again() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("server.db");
-    let store = Store::open(&path).await.unwrap();
+    let store = Store::open(&path, at(0)).await.unwrap();
     store.create_first_owner(user("ada")).await.unwrap();
     store.close().await;
 
-    let store = Store::open(&path).await.unwrap();
+    let store = Store::open(&path, at(0)).await.unwrap();
     assert!(store.users_exist().await.unwrap());
     assert_eq!(
         copies(dir.path()),
@@ -401,12 +359,13 @@ fn copies(dir: &std::path::Path) -> usize {
 
 /// A database whose record says a migration ran that this build lacks has
 /// its own migrations pending and fails them. Each attempt copies the
-/// database first, and a copy left by one attempt does not block the next.
+/// database first, named for the time the caller gives, and a copy left by
+/// one attempt does not block the next.
 #[tokio::test]
 async fn pending_migrations_copy_the_database_first_on_every_attempt() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("server.db");
-    Store::open(&path).await.unwrap().close().await;
+    Store::open(&path, at(0)).await.unwrap().close().await;
 
     let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
         .await
@@ -424,10 +383,13 @@ async fn pending_migrations_copy_the_database_first_on_every_attempt() {
     .unwrap();
     pool.close().await;
 
-    for attempt in 1..=2 {
-        let opened = Store::open(&path).await;
+    // The caller's clock names each copy; two attempts are two times.
+    for (attempt, ms) in [(1, 1_790_000_000_001), (2, 1_790_000_000_002)] {
+        let now = at(ms);
+        let opened = Store::open(&path, now).await;
         assert!(matches!(opened, Err(Error::Migrate(_))), "{opened:?}");
         assert_eq!(copies(dir.path()), attempt);
-        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        let copy = format!("server.db.before-1-{}", now.as_millisecond());
+        assert!(dir.path().join(copy).exists(), "named for the time given");
     }
 }

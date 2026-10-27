@@ -14,7 +14,9 @@ use anyhow::{Context, Result, bail};
 use clap::Parser;
 use jiff::tz::TimeZone;
 use wellfed_api::Hex;
-use wellfed_service::{Config, Discovery, Random, Service, SystemClock, SystemRandom, Timing};
+use wellfed_service::{
+    Clock, Config, Discovery, Random, Service, SystemClock, SystemRandom, Timing,
+};
 use wellfed_store::Store;
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
@@ -60,7 +62,7 @@ async fn main() -> Result<()> {
 
     std::fs::create_dir_all(&cli.data).with_context(|| format!("create {}", cli.data.display()))?;
     let key = config_key(&cli.data.join("config.json"))?;
-    let store = Store::open(&cli.data.join("server.db"))
+    let store = Store::open(&cli.data.join("server.db"), SystemClock.now())
         .await
         .context("open the database")?;
     let config = Config {

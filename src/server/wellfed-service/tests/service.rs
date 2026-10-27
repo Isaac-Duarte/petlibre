@@ -95,7 +95,9 @@ impl Server {
     }
 
     async fn open(dir: &TempDir) -> Service {
-        let store = Store::open(&dir.path().join("server.db")).await.unwrap();
+        let store = Store::open(&dir.path().join("server.db"), Fixed.now())
+            .await
+            .unwrap();
         Service::start(store, config(), Arc::new(Fixed), Arc::new(SystemRandom))
             .await
             .unwrap()
@@ -618,7 +620,9 @@ fn the_clock_is_set_again_on_schedule_and_samples_are_kept() {
     local(async {
         let sim = Running::start(&Flash::memory(), Some(*owner().public())).await;
         let dir = tempfile::tempdir().unwrap();
-        let store = Store::open(&dir.path().join("server.db")).await.unwrap();
+        let store = Store::open(&dir.path().join("server.db"), Fixed.now())
+            .await
+            .unwrap();
         let mut config = config();
         config.timing.time_sync = Duration::from_millis(300);
         let service = Service::start(store, config, Arc::new(Fixed), Arc::new(SystemRandom))
@@ -653,7 +657,7 @@ fn the_clock_is_set_again_on_schedule_and_samples_are_kept() {
         .await
         .expect("three clock syncs and a sample");
 
-        let reader = Store::open(&server.dir.path().join("server.db"))
+        let reader = Store::open(&server.dir.path().join("server.db"), Fixed.now())
             .await
             .unwrap();
         let sample = sample.unwrap();
@@ -673,7 +677,9 @@ fn an_unanswered_write_is_unknown_and_its_retry_applies_once() {
         let sim = Running::start(&Flash::memory(), Some(*owner().public())).await;
         let relay = Relay::start(sim.address).await;
         let dir = tempfile::tempdir().unwrap();
-        let store = Store::open(&dir.path().join("server.db")).await.unwrap();
+        let store = Store::open(&dir.path().join("server.db"), Fixed.now())
+            .await
+            .unwrap();
         let mut config = config();
         config.timing.answer = Duration::from_millis(500);
         let service = Service::start(store, config, Arc::new(Fixed), Arc::new(SystemRandom))

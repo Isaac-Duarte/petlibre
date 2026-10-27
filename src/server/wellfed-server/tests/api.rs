@@ -9,7 +9,7 @@ use axum::body::Body;
 use axum::http::{HeaderMap, Method, Request, StatusCode, header};
 use http_body_util::BodyExt;
 use jiff::tz::TimeZone;
-use wellfed_service::{Config, Discovery, Service, SystemClock, SystemRandom, Timing};
+use wellfed_service::{Clock, Config, Discovery, Service, SystemClock, SystemRandom, Timing};
 use wellfed_store::Store;
 use serde_json::{Value, json};
 use tempfile::TempDir;
@@ -27,7 +27,9 @@ struct Api {
 impl Api {
     async fn start() -> Self {
         let dir = tempfile::tempdir().unwrap();
-        let store = Store::open(&dir.path().join("server.db")).await.unwrap();
+        let store = Store::open(&dir.path().join("server.db"), SystemClock.now())
+            .await
+            .unwrap();
         let config = Config {
             key: [7; 32],
             zone: TimeZone::UTC,

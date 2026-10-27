@@ -15,7 +15,7 @@ use wellfed_client::api::Invite;
 use wellfed_feeder_sim::flash::Flash;
 use wellfed_feeder_sim::harness::Running;
 use wellfed_model::{Answer, ClientRole, Op};
-use wellfed_service::{Config, Discovery, Service, SystemClock, SystemRandom, Timing};
+use wellfed_service::{Clock, Config, Discovery, Service, SystemClock, SystemRandom, Timing};
 use wellfed_session::noise::Keypair;
 use wellfed_store::Store;
 use reqwest::StatusCode;
@@ -38,7 +38,9 @@ fn local(test: impl Future<Output = ()>) {
 
 /// The server on a free localhost port.
 async fn serve(dir: &tempfile::TempDir) -> (SocketAddr, Service, CancellationToken) {
-    let store = Store::open(&dir.path().join("server.db")).await.unwrap();
+    let store = Store::open(&dir.path().join("server.db"), SystemClock.now())
+        .await
+        .unwrap();
     let config = Config {
         key: [7; 32],
         zone: TimeZone::UTC,

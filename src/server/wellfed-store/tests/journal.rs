@@ -90,24 +90,35 @@ async fn an_answer_is_never_downgraded_and_only_an_unsent_entry_is_dropped() {
     let refused = CommandOutcome::Refused {
         refusal: FeederRefusal::Busy,
     };
-    store
-        .answer_command(&[1; 16], &refused, at(20))
-        .await
-        .unwrap();
-    store.command_unknown(&[1; 16], at(30)).await.unwrap();
+    assert!(
+        store
+            .answer_command(&[1; 16], &refused, at(20))
+            .await
+            .unwrap()
+    );
+    assert!(!store.command_unknown(&[1; 16], at(30)).await.unwrap());
     store.forget_unsent(&[1; 16]).await.unwrap();
     let answered = store.command(&[1; 16]).await.unwrap().unwrap();
     assert_eq!(answered.state, CommandState::Answered);
-    assert_eq!(answered.outcome, Some(refused));
+    assert_eq!(answered.outcome, Some(refused.clone()));
     assert_eq!(answered.updated, at(20));
 
-    store.command_unknown(&[2; 16], at(30)).await.unwrap();
+    assert!(store.command_unknown(&[2; 16], at(30)).await.unwrap());
     store.forget_unsent(&[2; 16]).await.unwrap();
     let unknown = store.command(&[2; 16]).await.unwrap().unwrap();
     assert_eq!(unknown.state, CommandState::Unknown);
 
     store.forget_unsent(&[3; 16]).await.unwrap();
     assert_eq!(store.command(&[3; 16]).await.unwrap(), None);
+
+    // An entry that is gone changes nothing, and says so.
+    assert!(
+        !store
+            .answer_command(&[3; 16], &refused, at(40))
+            .await
+            .unwrap()
+    );
+    assert!(!store.command_unknown(&[3; 16], at(40)).await.unwrap());
 }
 
 #[tokio::test]

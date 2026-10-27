@@ -23,6 +23,10 @@ pub enum CommandKind {
     Settings,
     /// Locking or unlocking the panel.
     Lock,
+    /// A feed. One whose outcome is unknown is never sent again: the
+    /// feeder's memory of request ids does not outlive a reboot, so an
+    /// uncertain feed is resolved from its history instead.
+    Feed,
 }
 
 impl CommandKind {
@@ -31,6 +35,7 @@ impl CommandKind {
         match self {
             Self::Settings => "settings",
             Self::Lock => "lock",
+            Self::Feed => "feed",
         }
     }
 
@@ -38,6 +43,7 @@ impl CommandKind {
         match code {
             "settings" => Some(Self::Settings),
             "lock" => Some(Self::Lock),
+            "feed" => Some(Self::Feed),
             _ => None,
         }
     }
@@ -47,7 +53,8 @@ impl CommandKind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CommandState {
-    /// Recorded and handed to the feeder; no answer yet.
+    /// Recorded and handed to the feeder; no answer yet. A retry while it
+    /// is in flight is answered unknown and sends nothing.
     Sent,
     /// The feeder answered; `outcome` is its answer.
     Answered,

@@ -145,6 +145,96 @@ fn a_restart_between_send_and_answer_leaves_the_write_unknown() {
     });
 }
 
+/// Wait until `key`'s entry is in `state`.
+async fn entry_in(service: &Service, key: IdempotencyKey, state: CommandState) {
+    until(&format!("the entry is {state:?}"), || async {
+        service
+            .command(&ada(), key)
+            .await
+            .is_ok_and(|entry| entry.state == state)
+    })
+    .await;
+}
+
+/// A retry that arrives while the first attempt is still in flight is
+/// answered unknown and sends nothing; the first attempt's answer is the
+/// one recorded, and the panel locks once.
+#[test]
+fn a_retry_while_the_first_attempt_is_in_flight_sends_nothing() {
+    local(async {
+        let sim = feeder::start().await;
+        let relay = Relay::start(sim.address).await;
+        let server = TestService::start().await;
+        let id = server.adopt_at(&sim, &relay.address.to_string()).await;
+        server.link(id, Link::Online).await;
+        let service = server.service();
+
+        relay.pause();
+        let key: IdempotencyKey = [0x1f; 16];
+        let first = {
+            let service = service.clone();
+            tokio::spawn(async move { service.set_lock(&ada(), id, true, Some(key)).await })
+        };
+        entry_in(service, key, CommandState::Sent).await;
+
+        // Answered at once: a resend would wait on the stalled feeder
+        // until the answer deadline, 12 s.
+        let retried = tokio::time::timeout(
+            Duration::from_secs(2),
+            service.set_lock(&ada(), id, true, Some(key)),
+        )
+        .await
+        .expect("a retry of a write in flight sends nothing and waits for nothing");
+        assert!(
+            matches!(retried, Err(Error::Command(CommandError::Unknown))),
+            "{retried:?}"
+        );
+        relay.resume();
+        first.await.unwrap().unwrap();
+
+        let entry = service.command(&ada(), key).await.unwrap();
+        assert_eq!(entry.state, CommandState::Answered);
+        assert_eq!(entry.outcome, Some(CommandOutcome::Done));
+        settle_locks(service, id, 1).await;
+        server.shutdown().await;
+        sim.stop().await;
+    });
+}
+
+/// A caller that stops waiting mid-send does not stop the write: it is
+/// sent, and its answer is recorded for a retry or a read by key.
+#[test]
+fn a_write_whose_caller_left_is_still_answered_in_the_journal() {
+    local(async {
+        let sim = feeder::start().await;
+        let relay = Relay::start(sim.address).await;
+        let server = TestService::start().await;
+        let id = server.adopt_at(&sim, &relay.address.to_string()).await;
+        server.link(id, Link::Online).await;
+        let service = server.service();
+
+        relay.pause();
+        let key: IdempotencyKey = [0x2f; 16];
+        let caller = {
+            let service = service.clone();
+            tokio::spawn(async move { service.set_lock(&ada(), id, true, Some(key)).await })
+        };
+        entry_in(service, key, CommandState::Sent).await;
+        caller.abort();
+        assert!(caller.await.unwrap_err().is_cancelled());
+        relay.resume();
+
+        entry_in(service, key, CommandState::Answered).await;
+        let entry = service.command(&ada(), key).await.unwrap();
+        assert_eq!(entry.outcome, Some(CommandOutcome::Done));
+        settle_locks(service, id, 1).await;
+        service.set_lock(&ada(), id, true, Some(key)).await.unwrap();
+        settle_locks(service, id, 1).await;
+        server.shutdown().await;
+        sim.stop().await;
+    });
+}
+
 /// A server that dies with a write `sent` (no graceful stop records its
 /// fate) finds it at the next start and marks it unknown.
 #[test]
@@ -394,14 +484,33 @@ fn each_user_reads_their_own_entries_and_an_owner_reads_all() {
                 Err(Error::Invalid(got)) if got == want
             ));
         }
-        let bad = CommandQuery {
-            after: Some("x".into()),
+        // Past the largest row number SQLite holds is no cursor either.
+        let past = (i64::MAX.unsigned_abs() + 1).to_string();
+        for after in ["x".to_owned(), "-1".to_owned(), past] {
+            let bad = CommandQuery {
+                after: Some(after.clone()),
+                ..CommandQuery::default()
+            };
+            assert!(
+                matches!(
+                    service.commands(&ada(), bad).await,
+                    Err(Error::Invalid(Invalid::CommandCursor))
+                ),
+                "{after}"
+            );
+        }
+        let last = CommandQuery {
+            after: Some(i64::MAX.to_string()),
             ..CommandQuery::default()
         };
-        assert!(matches!(
-            service.commands(&ada(), bad).await,
-            Err(Error::Invalid(Invalid::CommandCursor))
-        ));
+        assert!(
+            service
+                .commands(&ada(), last)
+                .await
+                .unwrap()
+                .items
+                .is_empty()
+        );
         server.shutdown().await;
         sim.stop().await;
     });

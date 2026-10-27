@@ -4,16 +4,23 @@
 //! The feeder dedups writes by device request id, but only the last 32
 //! per client, and every user shares the server's key: a retry that
 //! arrives after 32 other writes would run again. So a retry reads the
-//! journal first. An answered write returns its recorded outcome and never
-//! reaches the feeder; one whose outcome is unknown goes out again under
-//! the request id it was first sent under, which the feeder answers from
-//! memory if it ran it. A key that already names another request is
-//! refused and nothing is sent.
+//! journal first ([`retry`]):
 //!
-//! The send runs in a task of its own, so the entry reaches its answer or
-//! `unknown` even when the caller stops waiting. A server that stops
-//! before then leaves the entry `sent`, and the next start marks it
-//! `unknown`: the feeder may have run it, so it is never called failed.
+//! - An answered write returns its recorded outcome and never reaches the
+//!   feeder.
+//! - A `sent` write is in flight: the start marks every leftover `sent`
+//!   entry unknown, so inside a running server only the attempt that made
+//!   the entry sends it. A retry meanwhile is answered unknown, unsent.
+//! - An unknown write goes out again under the request id it was first sent
+//!   under, which the feeder answers from memory if it ran it, but only for
+//!   a kind whose [`resend`] rule allows it. A feed never goes out again.
+//!   A settings change resent after the feeder's ring has moved on runs
+//!   again against its base, which the first run moved past, so it comes
+//!   back as a stale refusal although the change was made.
+//!
+//! A key that already names another request is refused and nothing is
+//! sent. The send runs in a task of its own, so the entry reaches its
+//! answer or `unknown` even when the caller stops waiting.
 
 use wellfed_api::{
     Command, CommandKind, CommandOutcome, CommandPage, CommandQuery, CommandState, FeederId, Role,
@@ -25,12 +32,15 @@ use wellfed_model::{Answer, Op};
 use wellfed_store::{CommandFilter, CommandRow, Journaled, NewCommand};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
+use tracing::warn;
 use uuid::Uuid;
 
 use crate::{CommandError, Error, IdempotencyKey, Invalid, RequestId, Result, Service};
 
 const PAGE: u32 = 100;
 const PAGE_MAX: u32 = 1000;
+/// Past every stored row number (SQLite integers are `i64`).
+const CURSOR_MAX: u64 = i64::MAX.unsigned_abs();
 
 /// A write to send through the journal.
 pub(crate) struct Write<'a, B> {
@@ -59,6 +69,53 @@ enum Attempt {
     Retry,
 }
 
+/// Whether a write whose outcome is unknown may go out again under its
+/// request id.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Resend {
+    /// The feeder answers a repeated id from memory, and a write that
+    /// left it runs again harmlessly or is refused as stale.
+    SameId,
+    /// Never: an uncertain write of this kind is resolved, not resent.
+    Never,
+}
+
+/// The resend rule of each kind. The match is exhaustive, so a new kind
+/// cannot be journalled without choosing one.
+const fn resend(kind: CommandKind) -> Resend {
+    match kind {
+        CommandKind::Settings | CommandKind::Lock => Resend::SameId,
+        // The feeder's memory of a feed's id ends at a reboot.
+        CommandKind::Feed => Resend::Never,
+    }
+}
+
+/// What a retry does with its key's entry.
+#[derive(Debug, PartialEq, Eq)]
+enum Retry {
+    /// Answer with the recorded outcome; nothing is sent.
+    Replay(CommandOutcome),
+    /// Send it again under its request id.
+    Resend(RequestId),
+    /// Answer unknown; nothing is sent.
+    Unknown,
+}
+
+/// The retry of `row`'s request, its key and body already matched.
+fn retry(row: &CommandRow) -> Retry {
+    match row.state {
+        CommandState::Answered | CommandState::Resolved => {
+            row.outcome.clone().map_or(Retry::Unknown, Retry::Replay)
+        }
+        // Another attempt in this server is sending it.
+        CommandState::Sent => Retry::Unknown,
+        CommandState::Unknown => match resend(row.kind) {
+            Resend::SameId => Retry::Resend(row.request_id),
+            Resend::Never => Retry::Unknown,
+        },
+    }
+}
+
 impl Service {
     /// One entry: the caller's own, or anyone's for an owner. Another
     /// user's entry is not found, so a member learns nothing of it.
@@ -79,7 +136,10 @@ impl Service {
         }
         let after = query
             .after
-            .map(|after| after.parse::<u64>().map_err(|_| Invalid::CommandCursor))
+            .map(|after| match after.parse::<u64>() {
+                Ok(after) if after <= CURSOR_MAX => Ok(after),
+                _ => Err(Invalid::CommandCursor),
+            })
             .transpose()?;
 
         // One more than the page shows whether another page follows.
@@ -146,12 +206,10 @@ impl Service {
                 if !same {
                     return Err(CommandError::KeyReused.into());
                 }
-                match row.state {
-                    CommandState::Answered | CommandState::Resolved => {
-                        let outcome = row.outcome.ok_or(CommandError::Unknown)?;
-                        return Ok(Recorded { key, outcome });
-                    }
-                    CommandState::Sent | CommandState::Unknown => (row.request_id, Attempt::Retry),
+                match retry(&row) {
+                    Retry::Replay(outcome) => return Ok(Recorded { key, outcome }),
+                    Retry::Unknown => return Err(CommandError::Unknown.into()),
+                    Retry::Resend(request) => (request, Attempt::Retry),
                 }
             }
         };
@@ -171,7 +229,10 @@ impl Service {
     /// Replace a recorded outcome: the settings read back after a change.
     pub(crate) async fn amend(&self, key: &IdempotencyKey, outcome: &CommandOutcome) -> Result<()> {
         let now = self.shared.clock.now();
-        Ok(self.shared.store.answer_command(key, outcome, now).await?)
+        if !self.shared.store.answer_command(key, outcome, now).await? {
+            warn!(key = %Uuid::from_bytes(*key), "no journal entry took the settings read back");
+        }
+        Ok(())
     }
 
     /// Mark the writes a stopped server left `sent` unknown.
@@ -179,7 +240,7 @@ impl Service {
         let now = self.shared.clock.now();
         let interrupted = self.shared.store.interrupt_commands(now).await?;
         if interrupted > 0 {
-            tracing::warn!("{interrupted} writes sent before the last stop are unknown");
+            warn!("{interrupted} writes sent before the last stop are unknown");
         }
         Ok(())
     }
@@ -205,15 +266,16 @@ impl Service {
             // An answer that fits no write: what the feeder did is not
             // known from it.
             Ok(_) => {
-                store.command_unknown(&key, now).await?;
+                self.unknown(&key, now).await?;
                 return Err(CommandError::Unexpected.into());
             }
             Err(AskError::Unknown) => {
-                store.command_unknown(&key, now).await?;
+                self.unknown(&key, now).await?;
                 return Err(CommandError::Unknown.into());
             }
             // Never sent: a first attempt leaves no entry, so the key is
-            // free for the same write later.
+            // free for the same write later. Only the first attempt sends
+            // while the entry is `sent`, so no other attempt is using it.
             Err(unsent @ (AskError::NotRunning | AskError::Offline | AskError::Unsendable)) => {
                 if matches!(attempt, Attempt::First) {
                     store.forget_unsent(&key).await?;
@@ -221,8 +283,22 @@ impl Service {
                 return Err(Error::from(unsent));
             }
         };
-        store.answer_command(&key, &outcome, now).await?;
+        if !store.answer_command(&key, &outcome, now).await? {
+            warn!(key = %Uuid::from_bytes(key), "the feeder answered a write the journal no longer holds open");
+        }
         Ok(outcome)
+    }
+
+    /// Mark `key`'s entry unknown. An entry another attempt answered stays
+    /// answered; one that is gone is logged.
+    async fn unknown(&self, key: &IdempotencyKey, now: jiff::Timestamp) -> Result<()> {
+        if !self.shared.store.command_unknown(key, now).await? {
+            let state = self.shared.store.command(key).await?.map(|row| row.state);
+            if state != Some(CommandState::Answered) {
+                warn!(key = %Uuid::from_bytes(*key), ?state, "an unanswered write's entry was not open");
+            }
+        }
+        Ok(())
     }
 }
 
@@ -247,6 +323,7 @@ const fn kind_code(kind: CommandKind) -> u8 {
     match kind {
         CommandKind::Settings => 1,
         CommandKind::Lock => 2,
+        CommandKind::Feed => 3,
     }
 }
 
@@ -262,5 +339,65 @@ fn view(row: CommandRow) -> Command {
         boot_count: row.boot_count,
         sent: row.sent,
         updated: row.updated,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use jiff::Timestamp;
+    use wellfed_api::{FeederRefusal, UserId};
+
+    use super::*;
+
+    fn entry(
+        kind: CommandKind,
+        state: CommandState,
+        outcome: Option<CommandOutcome>,
+    ) -> CommandRow {
+        CommandRow {
+            seq: 1,
+            key: [1; 16],
+            user: UserId(Uuid::from_u128(1)),
+            feeder: FeederId(Uuid::from_u128(2)),
+            kind,
+            body_hash: [3; 32],
+            request_id: [4; 16],
+            boot_count: Some(5),
+            state,
+            outcome,
+            feed: None,
+            sent: Timestamp::UNIX_EPOCH,
+            updated: Timestamp::UNIX_EPOCH,
+        }
+    }
+
+    /// A feed whose outcome is unknown is answered unknown and never sent
+    /// again, whatever the feeder may still remember of its id.
+    #[test]
+    fn an_unknown_feed_is_never_resent() {
+        let feed = entry(CommandKind::Feed, CommandState::Unknown, None);
+
+        assert_eq!(resend(CommandKind::Feed), Resend::Never);
+        assert_eq!(retry(&feed), Retry::Unknown);
+    }
+
+    #[test]
+    fn a_retry_replays_an_answer_waits_out_a_send_and_resends_only_by_rule() {
+        let refused = CommandOutcome::Refused {
+            refusal: FeederRefusal::Busy,
+        };
+        for kind in [CommandKind::Settings, CommandKind::Lock, CommandKind::Feed] {
+            let answered = entry(kind, CommandState::Answered, Some(refused.clone()));
+            assert_eq!(retry(&answered), Retry::Replay(refused.clone()), "{kind:?}");
+            let resolved = entry(kind, CommandState::Resolved, Some(CommandOutcome::Done));
+            assert_eq!(retry(&resolved), Retry::Replay(CommandOutcome::Done));
+            let in_flight = entry(kind, CommandState::Sent, None);
+            assert_eq!(retry(&in_flight), Retry::Unknown, "{kind:?}");
+        }
+
+        for kind in [CommandKind::Settings, CommandKind::Lock] {
+            let unknown = entry(kind, CommandState::Unknown, None);
+            assert_eq!(retry(&unknown), Retry::Resend([4; 16]), "{kind:?}");
+        }
     }
 }

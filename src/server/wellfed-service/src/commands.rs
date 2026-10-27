@@ -120,6 +120,11 @@ impl Service {
                     .await?;
                 Ok(settings)
             }
+            // A stale refusal's answer is the current settings, read now,
+            // so its replay needs the feeder online: offline it is
+            // `Offline`, which is true of the write too (it was refused and
+            // nothing ran), and a later retry replays it again. A cached
+            // copy would offer a base that may be stale itself.
             CommandOutcome::Refused {
                 refusal: FeederRefusal::Stale,
             } => Err(CommandError::Stale(self.read_settings(id).await?).into()),

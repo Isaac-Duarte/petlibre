@@ -108,18 +108,19 @@ impl Store {
     }
 
     /// Record the feeder's answer. An entry already resolved from the
-    /// history keeps its resolution.
+    /// history keeps its resolution. Whether an entry changed: `false`
+    /// when there is none under `key`, or it is resolved.
     pub async fn answer_command(
         &self,
         key: &[u8; 16],
         outcome: &CommandOutcome,
         at: Timestamp,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let key = key.as_slice();
         let json = serde_json::to_string(outcome).map_err(|e| Error::Json("outcome", e))?;
         let (answered, resolved) = (CommandState::Answered.code(), CommandState::Resolved.code());
         let at = millis(at);
-        sqlx::query!(
+        let done = sqlx::query!(
             "UPDATE commands SET state = ?1, outcome = ?2, updated_ms = ?3
              WHERE key = ?4 AND state != ?5",
             answered,
@@ -130,16 +131,18 @@ impl Store {
         )
         .execute(&self.writer)
         .await?;
-        Ok(())
+        Ok(done.rows_affected() == 1)
     }
 
     /// No answer came for a write that may have reached the feeder. An
-    /// entry another attempt already answered stays answered.
-    pub async fn command_unknown(&self, key: &[u8; 16], at: Timestamp) -> Result<()> {
+    /// entry another attempt already answered stays answered. Whether an
+    /// entry changed: `false` when there is none under `key`, or it is
+    /// answered or resolved.
+    pub async fn command_unknown(&self, key: &[u8; 16], at: Timestamp) -> Result<bool> {
         let key = key.as_slice();
         let (sent, unknown) = (CommandState::Sent.code(), CommandState::Unknown.code());
         let at = millis(at);
-        sqlx::query!(
+        let done = sqlx::query!(
             "UPDATE commands SET state = ?1, updated_ms = ?2 WHERE key = ?3 AND state IN (?4, ?1)",
             unknown,
             at,
@@ -148,7 +151,7 @@ impl Store {
         )
         .execute(&self.writer)
         .await?;
-        Ok(())
+        Ok(done.rows_affected() == 1)
     }
 
     /// Drop the entry of a write that was never sent (the feeder was

@@ -76,8 +76,8 @@ struct ApiDoc;
 
 fn router() -> OpenApiRouter<AppState> {
     use routes::{
-        audit, auth, backups, commands, events, feeders, feeds, foods, health, household, installs,
-        pets, releases, samples, stream, tokens, users,
+        audit, auth, backups, commands, diagnostics, events, feeders, feeds, foods, health,
+        household, installs, pets, releases, samples, stream, tokens, users,
     };
 
     let small = OpenApiRouter::new()
@@ -102,6 +102,9 @@ fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(installs::install, installs::install_state))
         .routes(routes!(events::events))
         .routes(routes!(samples::samples))
+        .routes(routes!(diagnostics::trace))
+        .routes(routes!(diagnostics::stats))
+        .routes(routes!(diagnostics::log))
         .routes(routes!(commands::commands))
         .routes(routes!(commands::command))
         .routes(routes!(audit::audit))

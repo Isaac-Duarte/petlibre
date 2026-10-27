@@ -176,7 +176,8 @@ impl Task {
                 }
                 MirrorEvent::Sample(FeederSample::new(sample, received))
             }
-            // The server never asks for the log, so none comes.
+            // This session never asks for the log: a tail has a session
+            // of its own (`log.rs`).
             Pushed::Log(_) => return Ok(()),
         };
         // No subscriber is fine: the store holds it.

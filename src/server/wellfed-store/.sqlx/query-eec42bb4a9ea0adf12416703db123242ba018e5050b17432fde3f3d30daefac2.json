@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT f.feed AS \"feed!\" FROM feeds f\n               WHERE f.feeder_id = ?1 AND f.epoch = ?2\n                 AND f.feed > (SELECT MAX(feed) FROM feeds WHERE feeder_id = ?1 AND epoch = ?2) - ?3\n                 AND NOT EXISTS (\n                     SELECT 1 FROM feed_traces t\n                     WHERE t.feeder_id = ?1 AND t.epoch = ?2 AND t.feed = f.feed\n                 )\n               ORDER BY f.feed DESC",
+  "describe": {
+    "columns": [
+      {
+        "name": "feed!",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "feeds",
+            "name": "feed"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "eec42bb4a9ea0adf12416703db123242ba018e5050b17432fde3f3d30daefac2"
+}

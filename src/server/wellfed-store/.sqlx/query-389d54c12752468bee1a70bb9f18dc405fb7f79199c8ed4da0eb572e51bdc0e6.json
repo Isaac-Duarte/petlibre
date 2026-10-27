@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO feeder_stats (feeder_id, section, received_ms, boot_count, stats)\n             VALUES (?, ?, ?, ?, ?)\n             ON CONFLICT (feeder_id, section) DO UPDATE SET received_ms = excluded.received_ms,\n                 boot_count = excluded.boot_count, stats = excluded.stats",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "389d54c12752468bee1a70bb9f18dc405fb7f79199c8ed4da0eb572e51bdc0e6"
+}

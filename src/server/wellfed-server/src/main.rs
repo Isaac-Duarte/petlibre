@@ -20,8 +20,8 @@ use clap::{Parser, Subcommand};
 use jiff::tz::TimeZone;
 use wellfed_server::config::{BACKUPS, DATABASE, Overrides, RELEASES, ServerConfig};
 use wellfed_service::{
-    Backups, Clock, Config, ReleaseFeed, ReleaseKeys, ReleasesConfig, Service, SystemClock,
-    SystemRandom, Timing,
+    Backups, Clock, Config, Diagnostics, ReleaseFeed, ReleaseKeys, ReleasesConfig, Service,
+    SystemClock, SystemRandom, Timing,
 };
 use wellfed_store::Store;
 use tokio_util::sync::CancellationToken;
@@ -75,6 +75,7 @@ async fn main() -> Result<()> {
         label: settings.label.into(),
         discovery: settings.discovery.into(),
         timing: Timing::default(),
+        diagnostics: Diagnostics::default(),
         releases: ReleasesConfig {
             dir: cli.data.join(RELEASES),
             keys: ReleaseKeys {

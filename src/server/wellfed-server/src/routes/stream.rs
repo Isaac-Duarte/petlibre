@@ -95,7 +95,7 @@ pub(crate) async fn stream(
 
 /// Resolves once the stream's credential no longer authenticates. A store
 /// failure ends the stream too; the client reconnects and is checked again.
-async fn session_ended(state: AppState, credential: Option<Credential>) {
+pub(crate) async fn session_ended(state: AppState, credential: Option<Credential>) {
     let Some(credential) = credential else {
         return;
     };

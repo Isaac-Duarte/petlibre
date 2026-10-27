@@ -137,7 +137,17 @@ pub(crate) mod need {
     }
 
     needs!(
-        Read, Feed, Control, OwnHistory, OwnAccount, Users, Household, OwnerData, Adopt, ServerData
+        Read,
+        Feed,
+        Control,
+        OwnHistory,
+        OwnAccount,
+        Users,
+        Household,
+        OwnerData,
+        FeederAdmin,
+        Adopt,
+        ServerData,
     );
 }
 

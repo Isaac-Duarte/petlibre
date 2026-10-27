@@ -102,6 +102,11 @@ impl Block {
             event: serde_json::from_str(&self.data)?,
         })
     }
+
+    /// The block's data, read as JSON.
+    pub(crate) fn json<T: serde::de::DeserializeOwned>(&self) -> Result<T, Error> {
+        Ok(serde_json::from_str(&self.data)?)
+    }
 }
 
 /// The `text/event-stream` format, read incrementally: bytes in, blocks

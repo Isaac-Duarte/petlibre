@@ -12,7 +12,9 @@ pub use wellfed_feeder_sim::banks::Banks;
 pub use wellfed_feeder_sim::flash::Flash;
 pub use wellfed_feeder_sim::harness::{Relay, Running};
 pub use wellfed_feeder_sim::serve::Control;
-use wellfed_model::{Answer, ClientRole, Op};
+use wellfed_model::{Answer, ClientRole, Op, TraceSummary};
+use wellfed_proto::api as proto;
+use wellfed_proto::trace;
 use wellfed_session::noise::Keypair;
 
 use crate::release;
@@ -91,4 +93,71 @@ pub async fn invite(sim: &Running, role: ClientRole) -> String {
         secret: invite.secret.0,
     }
     .text()
+}
+
+/// Put a trace of feed `feed` (a whole one-portion drive) into the
+/// simulator's trace ring on `flash`, as the feeder's settings writer
+/// appends one once a feed is over: the simulator has no motor to trace,
+/// but serves what its ring holds. Its summary, as a client reads it.
+pub fn store_trace(flash: &Rc<Flash>, feed: u32) -> TraceSummary {
+    let mut body = trace::Writer::<{ trace::BODY_MAX }>::new();
+    let entries = [
+        trace::Entry::Battery {
+            at_ms: 0,
+            mv: 4_810,
+        },
+        trace::Entry::Motor {
+            at_ms: 0,
+            motor: trace::Motor::Drive0,
+        },
+        trace::Entry::Current {
+            at_ms: 30,
+            value: 64,
+        },
+        trace::Entry::Beams {
+            at_ms: 60,
+            outlet_clear: false,
+            food: true,
+        },
+        trace::Entry::Current {
+            at_ms: 60,
+            value: 71,
+        },
+        trace::Entry::Mark {
+            at_ms: 180,
+            edges: 1,
+            high: true,
+        },
+        trace::Entry::Motor {
+            at_ms: 200,
+            motor: trace::Motor::Stop,
+        },
+    ];
+    for entry in entries {
+        body.push(entry);
+    }
+    let summary = proto::TraceSummary {
+        feed,
+        requested: 1,
+        completed: 1,
+        outcome: proto::FeedOutcome::Done,
+        reason: proto::FeedReason::Done,
+        drive_ms: 200,
+        samples: 2,
+        unit: proto::CurrentUnit::Scaled,
+        current_peak: 71,
+        current_mean: Some(67),
+        rising: 1,
+        falling: 0,
+        first_edge_ms: Some(180),
+        beam_breaks: 1,
+        reversals: 0,
+        battery_rest_mv: Some(4_810),
+        battery_min_mv: Some(4_790),
+        stride: 1,
+        truncated: false,
+    };
+    wellfed_feeder_sim::harness::store_trace(flash, &summary, body.bytes())
+        .expect("the simulator's trace ring takes the trace");
+    summary.into()
 }

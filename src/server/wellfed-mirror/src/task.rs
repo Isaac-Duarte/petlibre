@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use wellfed_api::{Connection as Link, FeederId};
 use wellfed_connect::Connection;
+use wellfed_model::Capabilities;
 use wellfed_session::noise::Keypair;
 use tokio::sync::{Semaphore, broadcast, mpsc, watch};
 use tokio::task::JoinHandle;
@@ -15,10 +16,11 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use tracing::{Instrument, debug, info, info_span, warn};
 
+use crate::collect::Collector;
 use crate::command::Command;
 use crate::ingest::Batch;
 use crate::session::End;
-use crate::{ConnectError, Feeder, MirrorEvent, Shared, Unreachable, Zone, connect};
+use crate::{ConnectError, Diagnostics, Feeder, MirrorEvent, Shared, Unreachable, Zone, connect};
 
 /// Commands waiting for the task; more wait in `send`.
 const COMMANDS: usize = 16;
@@ -30,16 +32,39 @@ pub(crate) struct Handle {
     /// The short lane.
     pub(crate) commands: mpsc::Sender<Command>,
     /// The long lane, for the [`crate::Operation`] holding the turn.
+    pub(crate) long: LongLane,
+    pub(crate) link: watch::Receiver<Link>,
+    /// The open session; `None` between sessions.
+    opened: watch::Receiver<Option<Opened>>,
+    /// Who the feeder is and the server's key on it, for a session of the
+    /// debug log's own.
+    pub(crate) identity: [u8; 32],
+    pub(crate) keys: Keypair,
+    /// Where the task last reached the feeder.
+    pub(crate) address: watch::Receiver<Option<String>>,
+    updates: broadcast::Sender<MirrorEvent>,
+    pub(crate) cancel: CancellationToken,
+    task: JoinHandle<()>,
+    collector: Option<JoinHandle<()>>,
+}
+
+/// The long lane and its turn: whoever holds the turn's one permit sends
+/// steps.
+#[derive(Clone)]
+pub(crate) struct LongLane {
     pub(crate) steps: mpsc::Sender<Command>,
     pub(crate) link: watch::Receiver<Link>,
-    /// The epoch the open session's history counts in; `None` between
-    /// sessions.
-    epoch: watch::Receiver<Option<u32>>,
-    /// The long-operation turn: one permit.
     pub(crate) turn: Arc<Semaphore>,
-    updates: broadcast::Sender<MirrorEvent>,
-    cancel: CancellationToken,
-    task: JoinHandle<()>,
+}
+
+/// What the open session told the task about the feeder.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Opened {
+    /// The epoch its history counts in.
+    pub(crate) epoch: u32,
+    pub(crate) capabilities: Capabilities,
+    /// Its boot count, once its status is read.
+    pub(crate) boot_count: Option<u32>,
 }
 
 impl Handle {
@@ -48,7 +73,7 @@ impl Handle {
     }
 
     pub(crate) fn epoch(&self) -> Option<u32> {
-        *self.epoch.borrow()
+        self.opened.borrow().map(|opened| opened.epoch)
     }
 
     pub(crate) fn subscribe(&self) -> broadcast::Receiver<MirrorEvent> {
@@ -60,8 +85,11 @@ impl Handle {
     /// handle drops.
     pub(crate) async fn stop(self) {
         self.cancel.cancel();
-        // The task returns on cancellation; a panic in it has ended it too.
+        // The tasks return on cancellation; a panic in one has ended it too.
         let _ = self.task.await;
+        if let Some(collector) = self.collector {
+            let _ = collector.await;
+        }
     }
 }
 
@@ -75,18 +103,38 @@ pub(crate) fn spawn(
     let (commands, receiver) = mpsc::channel(COMMANDS);
     let (steps, step_receiver) = mpsc::channel(STEPS);
     let (link, watching) = watch::channel(Link::Offline);
-    let (epoch, epochs) = watch::channel(None);
+    let (opened, opens) = watch::channel(None);
+    let (address, addresses) = watch::channel(feeder.address.clone());
+    let keys = Keypair::from_secret(feeder.secret);
+    let long = LongLane {
+        steps,
+        link: watching.clone(),
+        turn: Arc::new(Semaphore::new(1)),
+    };
+    let collector = match shared.config.diagnostics {
+        Diagnostics::Read { stats_every } => Some(Collector {
+            shared: Arc::clone(&shared),
+            id: feeder.id,
+            long: long.clone(),
+            opened: opens.clone(),
+            updates: updates.subscribe(),
+            stats_every,
+            cancel: cancel.clone(),
+        }),
+        Diagnostics::Off => None,
+    };
     let task = Task {
         zone: shared.zone.subscribe(),
         shared,
         id: feeder.id,
         identity: feeder.identity,
-        keys: Keypair::from_secret(feeder.secret),
+        keys: keys.clone(),
         address: feeder.address,
+        reached: address,
         commands: receiver,
         steps: step_receiver,
         link,
-        epoch,
+        opened,
         updates: updates.clone(),
         cancel: cancel.clone(),
         batch: Batch::default(),
@@ -94,18 +142,24 @@ pub(crate) fn spawn(
     // Every line the task logs, its session's and its commands' included,
     // is written under the feeder's span, so it names the feeder. The span
     // has no parent: a feeder adopted over HTTP would otherwise log under
-    // that one request's span for as long as it runs.
+    // that one request's span for as long as it runs. The collector logs
+    // under the same span.
     let span = info_span!(parent: None, "feeder", id = %task.id);
+    let collector =
+        collector.map(|collector| tasks.spawn(collector.run().instrument(span.clone())));
     let task = tasks.spawn(task.run().instrument(span));
     Handle {
         commands,
-        steps,
+        long,
         link: watching,
-        epoch: epochs,
-        turn: Arc::new(Semaphore::new(1)),
+        opened: opens,
+        identity: feeder.identity,
+        keys,
+        address: addresses,
         updates,
         cancel,
         task,
+        collector,
     }
 }
 
@@ -115,12 +169,14 @@ pub(crate) struct Task {
     identity: [u8; 32],
     keys: Keypair,
     address: Option<String>,
+    /// Where the feeder was last reached, for the debug log's session.
+    reached: watch::Sender<Option<String>>,
     pub(crate) commands: mpsc::Receiver<Command>,
     pub(crate) steps: mpsc::Receiver<Command>,
     /// The household's zone, watched for changes while a session is open.
     pub(crate) zone: watch::Receiver<Option<Arc<Zone>>>,
     link: watch::Sender<Link>,
-    pub(crate) epoch: watch::Sender<Option<u32>>,
+    pub(crate) opened: watch::Sender<Option<Opened>>,
     pub(crate) updates: broadcast::Sender<MirrorEvent>,
     pub(crate) cancel: CancellationToken,
     /// Samples received and not yet written.
@@ -147,6 +203,7 @@ impl Task {
                 Ok((connection, address)) => {
                     info!(%address, build = connection.build(), "connected");
                     self.address = Some(address.to_string());
+                    self.reached.send_replace(self.address.clone());
                     let opened_at = Instant::now();
                     let end = self.serve(connection).await;
                     // Only a session that lasted resets the backoff, so a
@@ -173,7 +230,7 @@ impl Task {
                     Link::Offline
                 }
             };
-            self.epoch.send_replace(None);
+            self.opened.send_replace(None);
             self.set(link);
 
             let wait = match link {

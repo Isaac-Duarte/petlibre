@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use wellfed_api::FeederId;
-use wellfed_mirror::{Config, Discovery, Feeder, Mirror, Timing};
+use wellfed_mirror::{Config, Diagnostics, Discovery, Feeder, Mirror, Timing};
 use wellfed_server_testkit::fixed::{FixedClock, SeededRandom};
 use wellfed_server_testkit::{TempStore, until};
 use tokio_util::sync::CancellationToken;
@@ -68,6 +68,7 @@ async fn every_line_from_a_feeder_task_names_the_feeder() {
                 answer: Duration::from_secs(1),
                 sample_wait: Duration::from_millis(100),
             },
+            diagnostics: Diagnostics::Off,
         },
         Arc::new(FixedClock),
         Arc::new(SeededRandom::fresh()),

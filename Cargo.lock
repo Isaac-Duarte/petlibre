@@ -2872,6 +2872,7 @@ dependencies = [
  "wellfed-core",
  "wellfed-feeder-sim",
  "wellfed-model",
+ "wellfed-proto",
  "wellfed-server",
  "wellfed-server-client",
  "wellfed-service",

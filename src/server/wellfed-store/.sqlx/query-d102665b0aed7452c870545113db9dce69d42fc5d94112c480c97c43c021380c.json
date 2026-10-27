@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO feed_traces (feeder_id, epoch, feed, fetched_ms, summary, stored, body, refusal)\n             VALUES (?, ?, ?, ?, ?, ?, ?, ?)\n             ON CONFLICT (feeder_id, epoch, feed) DO UPDATE SET\n                 fetched_ms = excluded.fetched_ms, summary = excluded.summary,\n                 stored = excluded.stored, body = excluded.body, refusal = excluded.refusal",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 8
+    },
+    "nullable": []
+  },
+  "hash": "d102665b0aed7452c870545113db9dce69d42fc5d94112c480c97c43c021380c"
+}

@@ -13,6 +13,7 @@ use wellfed_model::{Answer, Op};
 use tokio::sync::{OwnedSemaphorePermit, mpsc, oneshot, watch};
 use tokio::time::{Duration, Instant, timeout_at};
 
+use crate::task::LongLane;
 use crate::{AskError, Mirror, Random, RequestId};
 
 /// One request for the feeder, and where its answer goes.
@@ -71,24 +72,37 @@ impl Mirror {
     /// Wait for the feeder's long-operation turn. The turn lasts until the
     /// [`Operation`] is dropped.
     pub async fn operation(&self, id: FeederId) -> Result<Operation, AskError> {
-        let (steps, link, turn) = {
+        let long = {
             let handles = self.handles();
             let handle = handles.get(&id).ok_or(AskError::NotRunning)?;
-            (
-                handle.steps.clone(),
-                handle.link.clone(),
-                Arc::clone(&handle.turn),
-            )
+            handle.long.clone()
         };
-        let turn = turn
+        long.operation(
+            self.shared.config.timing.answer,
+            Arc::clone(&self.shared.random),
+        )
+        .await
+    }
+}
+
+impl LongLane {
+    /// Wait for the turn, and hold it in an [`Operation`] whose steps wait
+    /// `answer` each.
+    pub(crate) async fn operation(
+        self,
+        answer: Duration,
+        random: Arc<dyn Random>,
+    ) -> Result<Operation, AskError> {
+        let turn = self
+            .turn
             .acquire_owned()
             .await
             .map_err(|_| AskError::NotRunning)?;
         Ok(Operation {
-            steps,
-            link,
-            answer: self.shared.config.timing.answer,
-            random: Arc::clone(&self.shared.random),
+            steps: self.steps,
+            link: self.link,
+            answer,
+            random,
             _turn: turn,
         })
     }

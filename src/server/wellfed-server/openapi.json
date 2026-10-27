@@ -706,6 +706,66 @@
         }
       }
     },
+    "/api/v1/feeders/{id}/feeds/{feed}/trace": {
+      "get": {
+        "tags": [
+          "feeders"
+        ],
+        "summary": "A feed's trace: what its drive measured, poll by poll, as the server\nfetched it after the feed's `Fed` event. `404` until it has been\nfetched; a feeder that kept no trace of the feed leaves `missing`.",
+        "operationId": "trace",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/FeederId"
+            }
+          },
+          {
+            "name": "feed",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "epoch",
+            "in": "query",
+            "description": "The epoch the feed belongs to; the newest one with a trace of that\nnumber when absent.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedTrace"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/feeders/{id}/food": {
       "get": {
         "tags": [
@@ -1100,6 +1160,63 @@
           },
           "504": {
             "description": "outcome_unknown: retry with the same key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/feeders/{id}/log": {
+      "get": {
+        "tags": [
+          "feeders"
+        ],
+        "summary": "The feeder's debug log, live, as Server-Sent Events: from the oldest\nline it keeps, or from now when another owner already follows it. The\nserver tails the log only while someone follows, and stores none of\nit. The stream ends when the feeder's tail does; follow again. The\nserver's key must be an owner's on the feeder, or the feeder refuses\nit `forbidden`.",
+        "operationId": "log",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/FeederId"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/LogEvent"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -1595,6 +1712,45 @@
           },
           "504": {
             "description": "outcome_unknown: retry with the same key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/feeders/{id}/stats": {
+      "get": {
+        "tags": [
+          "feeders"
+        ],
+        "summary": "The latest read of each statistics section the feeder serves the\nserver, its lifetime counters among them.",
+        "operationId": "stats",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/FeederId"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeederStats"
+                }
+              }
+            }
+          },
+          "404": {
             "content": {
               "application/json": {
                 "schema": {
@@ -4201,6 +4357,57 @@
           "refused"
         ]
       },
+      "CounterStats": {
+        "type": "object",
+        "required": [
+          "boot",
+          "reset",
+          "handshake_max_ms",
+          "handshake_mean_ms"
+        ],
+        "properties": {
+          "boot": {
+            "$ref": "#/components/schemas/StatsCounts",
+            "description": "Since this boot."
+          },
+          "handshake_max_ms": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "handshake_mean_ms": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "lifetime": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/StatsCounts",
+                "description": "Over the feeder's life, this boot's included; `None` while the\nfeeder has not read its store, or cannot."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reset": {
+            "$ref": "#/components/schemas/ResetCause",
+            "description": "Why this boot started."
+          },
+          "resets": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Resets",
+                "description": "Boots by their reset's cause, over the feeder's life."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
       "CreatedToken": {
         "allOf": [
           {
@@ -4236,6 +4443,14 @@
             "type": "string"
           }
         }
+      },
+      "CurrentUnit": {
+        "type": "string",
+        "description": "What a trace's current readings count in.",
+        "enum": [
+          "scaled",
+          "milli_amps"
+        ]
       },
       "EnrollPath": {
         "type": "string",
@@ -4662,6 +4877,135 @@
           }
         }
       },
+      "FeedStats": {
+        "type": "object",
+        "description": "This boot's feeds, from their traces.",
+        "required": [
+          "traced",
+          "drive_ms",
+          "samples",
+          "unit",
+          "current_peak",
+          "rising",
+          "falling",
+          "beam_breaks",
+          "reversals",
+          "kept",
+          "capacity",
+          "unsaved"
+        ],
+        "properties": {
+          "beam_breaks": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "capacity": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "current_mean": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "current_peak": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "drive_ms": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "falling": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "kept": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Traces the feeder's storage ring holds, and the most it is sure to.",
+            "minimum": 0
+          },
+          "last": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TraceSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reversals": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "rising": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "samples": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "traced": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "unit": {
+            "$ref": "#/components/schemas/CurrentUnit"
+          },
+          "unsaved": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Traces that never reached storage.",
+            "minimum": 0
+          }
+        }
+      },
+      "FeedTrace": {
+        "type": "object",
+        "description": "One feed's trace as the server fetched it after the feed's `Fed`\nevent.",
+        "required": [
+          "epoch",
+          "feed",
+          "fetched",
+          "record"
+        ],
+        "properties": {
+          "epoch": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The history the feed's `Fed` event belongs to.",
+            "minimum": 0
+          },
+          "feed": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "fetched": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the server read it."
+          },
+          "record": {
+            "$ref": "#/components/schemas/TraceRecord"
+          }
+        }
+      },
       "Feeder": {
         "type": "object",
         "required": [
@@ -4871,6 +5215,21 @@
           }
         }
       },
+      "FeederStats": {
+        "type": "object",
+        "description": "The latest read of each statistics section the feeder serves the\nserver.",
+        "required": [
+          "sections"
+        ],
+        "properties": {
+          "sections": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StatsRead"
+            }
+          }
+        }
+      },
       "FeederStatus": {
         "type": "object",
         "description": "What the feeder reports about itself.",
@@ -4994,6 +5353,63 @@
           },
           "wifi_generation": {
             "$ref": "#/components/schemas/Generation"
+          }
+        }
+      },
+      "FlashErases": {
+        "type": "object",
+        "required": [
+          "storage",
+          "update"
+        ],
+        "properties": {
+          "storage": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            },
+            "description": "Each storage sector's erases, by its index in the region."
+          },
+          "update": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Bank 1's sectors, erased by updates.",
+            "minimum": 0
+          }
+        }
+      },
+      "FlashStats": {
+        "type": "object",
+        "required": [
+          "boot",
+          "events_kept",
+          "events_capacity"
+        ],
+        "properties": {
+          "boot": {
+            "$ref": "#/components/schemas/FlashErases"
+          },
+          "events_capacity": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "events_kept": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "lifetime": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/FlashErases"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       },
@@ -5140,6 +5556,39 @@
               "null"
             ],
             "format": "date-time"
+          }
+        }
+      },
+      "FoodStats": {
+        "type": "object",
+        "required": [
+          "emptied",
+          "refilled"
+        ],
+        "properties": {
+          "emptied": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "feeds_since_refill": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "present": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "refilled": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
           }
         }
       },
@@ -5586,6 +6035,68 @@
           }
         }
       },
+      "LogEvent": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Record lines the feeder logged, oldest first.",
+            "required": [
+              "seq",
+              "dropped",
+              "lines",
+              "kind"
+            ],
+            "properties": {
+              "dropped": {
+                "type": "integer",
+                "format": "int32",
+                "description": "Lines the feeder overwrote before it sent them.",
+                "minimum": 0
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "lines"
+                ]
+              },
+              "lines": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "seq": {
+                "type": "integer",
+                "format": "int32",
+                "description": "The last line's number this boot.",
+                "minimum": 0
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "This follower fell behind and missed `batches` batches of lines.",
+            "required": [
+              "batches",
+              "kind"
+            ],
+            "properties": {
+              "batches": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "lagged"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "One message of a followed debug log."
+      },
       "LoginFailure": {
         "type": "string",
         "description": "Why a login failed after its password was checked.",
@@ -5593,6 +6104,39 @@
           "bad_password",
           "disabled"
         ]
+      },
+      "MemoryStats": {
+        "type": "object",
+        "required": [
+          "heap_free",
+          "heap_min",
+          "tasks",
+          "tasks_total"
+        ],
+        "properties": {
+          "heap_free": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "heap_min": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "tasks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TaskStack"
+            }
+          },
+          "tasks_total": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The tasks the RTOS runs: more than `tasks` lists when they did not\nall fit.",
+            "minimum": 0
+          }
+        }
       },
       "NewFood": {
         "type": "object",
@@ -5877,6 +6421,52 @@
           }
         }
       },
+      "PortionStats": {
+        "type": "object",
+        "description": "The portions since this boot, and what they weigh by the calibration.",
+        "required": [
+          "portions",
+          "homed",
+          "outlet_breaks"
+        ],
+        "properties": {
+          "delivered_mg": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "What was delivered by the calibration, never what the pet ate.",
+            "minimum": 0
+          },
+          "homed": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Feeds that began with an uncredited homing mark.",
+            "minimum": 0
+          },
+          "outlet_breaks": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Outlet-beam breaks seen during feeds: a lower bound, sampled every\n10 ms.",
+            "minimum": 0
+          },
+          "portion_mg": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "portions": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Credited by the feedback sensor, one a mark.",
+            "minimum": 0
+          }
+        }
+      },
       "Power": {
         "type": "object",
         "required": [
@@ -5891,6 +6481,72 @@
               "integer",
               "null"
             ],
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "PowerStats": {
+        "type": "object",
+        "required": [
+          "adapter_changes",
+          "outages",
+          "battery_s",
+          "battery_mv",
+          "period_s"
+        ],
+        "properties": {
+          "adapter": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "adapter_changes": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "battery_max_mv": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "battery_min_mv": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "battery_mv": {
+            "type": "array",
+            "items": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
+            },
+            "description": "The battery at the end of each period, oldest first."
+          },
+          "battery_s": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "outages": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "period_s": {
+            "type": "integer",
             "format": "int32",
             "minimum": 0
           }
@@ -6285,6 +6941,54 @@
           }
         ],
         "description": "Where a release came from."
+      },
+      "ResetCause": {
+        "type": "string",
+        "description": "Why a boot started.",
+        "enum": [
+          "power_on",
+          "watchdog",
+          "software",
+          "brownout",
+          "other"
+        ]
+      },
+      "Resets": {
+        "type": "object",
+        "required": [
+          "power_on",
+          "watchdog",
+          "software",
+          "brownout",
+          "other"
+        ],
+        "properties": {
+          "brownout": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "other": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "power_on": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "software": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "watchdog": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
       },
       "Role": {
         "type": "string",
@@ -6748,6 +7452,268 @@
           "other"
         ]
       },
+      "Stats": {
+        "oneOf": [
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CounterStats"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "section"
+                ],
+                "properties": {
+                  "section": {
+                    "type": "string",
+                    "enum": [
+                      "counters"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/MemoryStats"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "section"
+                ],
+                "properties": {
+                  "section": {
+                    "type": "string",
+                    "enum": [
+                      "memory"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/FlashStats"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "section"
+                ],
+                "properties": {
+                  "section": {
+                    "type": "string",
+                    "enum": [
+                      "flash"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PowerStats"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "section"
+                ],
+                "properties": {
+                  "section": {
+                    "type": "string",
+                    "enum": [
+                      "power"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/FoodStats"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "section"
+                ],
+                "properties": {
+                  "section": {
+                    "type": "string",
+                    "enum": [
+                      "food"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/FeedStats"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "section"
+                ],
+                "properties": {
+                  "section": {
+                    "type": "string",
+                    "enum": [
+                      "feeds"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PortionStats"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "section"
+                ],
+                "properties": {
+                  "section": {
+                    "type": "string",
+                    "enum": [
+                      "portions"
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ],
+        "description": "One section of the statistics."
+      },
+      "StatsCounts": {
+        "type": "object",
+        "required": [
+          "uptime_s",
+          "feeds",
+          "feeds_failed",
+          "portions",
+          "presses",
+          "sessions",
+          "reconnects",
+          "dhcp_renewals",
+          "outages",
+          "battery_s"
+        ],
+        "properties": {
+          "battery_s": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "dhcp_renewals": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "feeds": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "feeds_failed": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "outages": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "portions": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "presses": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "reconnects": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "sessions": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "uptime_s": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "StatsRead": {
+        "type": "object",
+        "required": [
+          "section",
+          "received",
+          "stats"
+        ],
+        "properties": {
+          "boot_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The feeder's boot it was read in, when known: a count \"since this\nboot\" starts again at each.",
+            "minimum": 0
+          },
+          "received": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the server read it."
+          },
+          "section": {
+            "$ref": "#/components/schemas/StatsSection"
+          },
+          "stats": {
+            "$ref": "#/components/schemas/Stats"
+          }
+        }
+      },
+      "StatsSection": {
+        "type": "string",
+        "description": "What a `Stats` request asks for.",
+        "enum": [
+          "counters",
+          "memory",
+          "flash",
+          "power",
+          "food",
+          "feeds",
+          "portions"
+        ]
+      },
       "StatusSnapshot": {
         "type": "object",
         "required": [
@@ -6927,6 +7893,24 @@
           }
         ]
       },
+      "TaskStack": {
+        "type": "object",
+        "required": [
+          "name",
+          "free_min"
+        ],
+        "properties": {
+          "free_min": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The fewest free stack bytes since the task started.",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
       "TimeFormat": {
         "type": "string",
         "description": "How times of day are shown.",
@@ -6981,6 +7965,347 @@
       "TokenId": {
         "type": "string",
         "format": "uuid"
+      },
+      "Trace": {
+        "type": "object",
+        "description": "A whole trace.",
+        "required": [
+          "summary",
+          "stored",
+          "entries"
+        ],
+        "properties": {
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TraceEntry"
+            }
+          },
+          "stored": {
+            "type": "boolean"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/TraceSummary"
+          }
+        }
+      },
+      "TraceEntry": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "The motor current at one poll.",
+            "required": [
+              "at_ms",
+              "value",
+              "kind"
+            ],
+            "properties": {
+              "at_ms": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "current"
+                ]
+              },
+              "value": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Feedback edges since the last mark entry; `at_ms` is the last one's.",
+            "required": [
+              "at_ms",
+              "edges",
+              "high",
+              "kind"
+            ],
+            "properties": {
+              "at_ms": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "edges": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "high": {
+                "type": "boolean"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "mark"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The beams as one poll read them, when they changed.",
+            "required": [
+              "at_ms",
+              "outlet_clear",
+              "food",
+              "kind"
+            ],
+            "properties": {
+              "at_ms": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "food": {
+                "type": "boolean"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "beams"
+                ]
+              },
+              "outlet_clear": {
+                "type": "boolean"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The battery pack, when it moved.",
+            "required": [
+              "at_ms",
+              "mv",
+              "kind"
+            ],
+            "properties": {
+              "at_ms": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "battery"
+                ]
+              },
+              "mv": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "at_ms",
+              "motor",
+              "kind"
+            ],
+            "properties": {
+              "at_ms": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "motor"
+                ]
+              },
+              "motor": {
+                "$ref": "#/components/schemas/TraceMotor"
+              }
+            }
+          }
+        ],
+        "description": "One entry of a trace's body."
+      },
+      "TraceMotor": {
+        "type": "string",
+        "description": "The motor command as the feeder's controller gave it.",
+        "enum": [
+          "stop",
+          "drive0",
+          "drive1"
+        ]
+      },
+      "TraceRecord": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "trace",
+              "state"
+            ],
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": [
+                  "stored"
+                ]
+              },
+              "trace": {
+                "$ref": "#/components/schemas/Trace"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The feeder had no trace of the feed (its ring had moved on, or a\nrestart lost it), and said so.",
+            "required": [
+              "refusal",
+              "state"
+            ],
+            "properties": {
+              "refusal": {
+                "$ref": "#/components/schemas/FeederRefusal"
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "missing"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "TraceSummary": {
+        "type": "object",
+        "description": "What a feed's drive measured, from every poll.",
+        "required": [
+          "feed",
+          "requested",
+          "completed",
+          "outcome",
+          "reason",
+          "drive_ms",
+          "samples",
+          "unit",
+          "current_peak",
+          "rising",
+          "falling",
+          "beam_breaks",
+          "reversals",
+          "stride",
+          "truncated"
+        ],
+        "properties": {
+          "battery_min_mv": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "battery_rest_mv": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "beam_breaks": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "completed": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "current_mean": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "current_peak": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "drive_ms": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "falling": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "feed": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "first_edge_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/FeedOutcome"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/FeedReason"
+          },
+          "requested": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "reversals": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "rising": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "samples": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Polls that read the current while the motor was driven.",
+            "minimum": 0
+          },
+          "stride": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The body keeps every `stride`th poll's current reading.",
+            "minimum": 0
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "The body ends before the drive did."
+          },
+          "unit": {
+            "$ref": "#/components/schemas/CurrentUnit"
+          }
+        }
       },
       "Units": {
         "type": "string",

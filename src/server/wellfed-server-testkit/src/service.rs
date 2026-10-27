@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use wellfed_api::{AdoptFeeder, ClientRole, Connection, EventBody, EventQuery, FeederId};
 use wellfed_service::{
-    Backups, Clock, Config, Discovery, ReleaseKeys, ReleasesConfig, Service, Timing,
+    Backups, Clock, Config, Diagnostics, Discovery, ReleaseKeys, ReleasesConfig, Service, Timing,
 };
 use wellfed_store::Store;
 use tempfile::TempDir;
@@ -35,6 +35,9 @@ pub fn config() -> Config {
             sample_wait: Duration::from_millis(100),
             session: Duration::from_secs(3600),
         },
+        // The diagnostics' own tests turn them on: elsewhere their reads
+        // would share the lanes and the seeded ids with what is tested.
+        diagnostics: Diagnostics::Off,
         releases: ReleasesConfig {
             dir: PathBuf::from("releases"),
             keys: ReleaseKeys::default(),

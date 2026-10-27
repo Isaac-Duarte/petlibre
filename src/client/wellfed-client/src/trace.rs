@@ -25,6 +25,15 @@ pub enum TraceError {
     Malformed(#[from] Malformed),
 }
 
+/// A whole trace as the feeder sent it, its body in the feeder's own
+/// encoding, for a host that keeps it as sent.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RawTrace {
+    pub summary: TraceSummary,
+    pub stored: bool,
+    pub body: Vec<u8>,
+}
+
 /// One trace being read.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Pages {
@@ -55,6 +64,15 @@ impl Pages {
     /// Take the answer to [`Self::next_op`]: the whole trace once its last
     /// page is in, `None` while more pages remain.
     pub fn take(&mut self, answer: Answer) -> Result<Option<Trace>, TraceError> {
+        let Some(raw) = self.take_raw(answer)? else {
+            return Ok(None);
+        };
+        Ok(Some(Trace::decode(raw.summary, raw.stored, &raw.body)?))
+    }
+
+    /// As [`Self::take`], with the body left in the feeder's encoding,
+    /// unchecked: [`Trace::decode`] reads it.
+    pub fn take_raw(&mut self, answer: Answer) -> Result<Option<RawTrace>, TraceError> {
         let page = match answer {
             Answer::FeedTrace(page) => page,
             Answer::Refused(refusal) => return Err(TraceError::Refused(refusal)),
@@ -89,7 +107,11 @@ impl Pages {
                 Ok(None)
             };
         }
-        Ok(Some(Trace::decode(summary, stored, &self.body)?))
+        Ok(Some(RawTrace {
+            summary,
+            stored,
+            body: std::mem::take(&mut self.body),
+        }))
     }
 }
 

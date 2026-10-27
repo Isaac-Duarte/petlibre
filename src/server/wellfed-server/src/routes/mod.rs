@@ -6,6 +6,7 @@ pub(crate) mod audit;
 pub(crate) mod auth;
 pub(crate) mod backups;
 pub(crate) mod commands;
+pub(crate) mod diagnostics;
 pub(crate) mod events;
 pub(crate) mod feeders;
 pub(crate) mod feeds;

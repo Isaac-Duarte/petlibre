@@ -30,7 +30,7 @@ use tracing::{debug, info, warn};
 
 use crate::RandomFailed;
 use crate::lanes::{Lane, Lanes};
-use crate::task::Task;
+use crate::task::{Opened, Task};
 
 /// How long the task waits on a quiet feeder before looking again; the
 /// connection keeps the session alive meanwhile.
@@ -151,7 +151,11 @@ impl Task {
             seq: synced.seq,
         });
         let resume = connection.subscribe(from, true).await.map_err(End::Lost)?;
-        self.epoch.send_replace(Some(connection.epoch()));
+        self.opened.send_replace(Some(Opened {
+            epoch: connection.epoch(),
+            capabilities: connection.capabilities(),
+            boot_count: None,
+        }));
         if resume == Resume::Restarted {
             warn!(
                 epoch = connection.epoch(),
@@ -161,6 +165,11 @@ impl Task {
         self.keep_time(connection, lanes).await?;
 
         if let Answer::Status(status) = self.read(connection, lanes, &Op::Status).await? {
+            self.opened.send_modify(|opened| {
+                if let Some(opened) = opened {
+                    opened.boot_count = Some(status.boot_count);
+                }
+            });
             let now = self.shared.clock.now();
             self.shared
                 .store

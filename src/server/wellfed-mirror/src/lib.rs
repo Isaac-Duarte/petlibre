@@ -23,6 +23,13 @@
 //!   [`MirrorEvent`]s (events, gaps, samples and link changes): an event
 //!   or gap after it is stored, a sample as it arrives, ahead of its
 //!   batch's write. The service merges the broadcasts into its stream.
+//! - **Traces and statistics** are read on the long lane, so never ahead of
+//!   a feed or a status read: each feed's trace after its `Fed` event, and
+//!   every statistics section at each connect and then periodically
+//!   ([`Diagnostics`]). Both are stored beside the history.
+//! - **The debug log** is tailed over a session of its own, opened for the
+//!   first owner who follows it ([`Mirror::follow_log`]) and closed once
+//!   the last has left. None of it is stored.
 //!
 //! The mirror knows feeders by id, identity, key and address. It knows
 //! nothing of users, alerts or stream ids, and the request ids it sends for
@@ -32,12 +39,14 @@
 //! [API design]: ../../../../docs/api/README.md
 #![forbid(unsafe_code)]
 
+mod collect;
 mod command;
 mod connect;
 mod error;
 mod ingest;
 mod install;
 mod lanes;
+mod log;
 mod session;
 mod task;
 mod time;
@@ -56,7 +65,7 @@ use tokio_util::task::TaskTracker;
 
 pub use command::Operation;
 pub use connect::Enrolled;
-pub use error::{AskError, ConnectError, Unreachable};
+pub use error::{AskError, ConnectError, LogError, Unreachable};
 pub use ingest::{stored_event, stored_sample};
 pub use install::{PushError, Pushed, Update, UpdateError};
 pub use wellfed_client::api::{Invite, InviteText};
@@ -81,6 +90,26 @@ pub enum Discovery {
 pub struct Config {
     pub discovery: Discovery,
     pub timing: Timing,
+    pub diagnostics: Diagnostics,
+}
+
+/// Whether each feeder's feed traces and statistics are read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Diagnostics {
+    /// Each feed's trace after its `Fed` event, and the statistics at each
+    /// connect and then every `stats_every`.
+    Read {
+        stats_every: Duration,
+    },
+    Off,
+}
+
+impl Default for Diagnostics {
+    fn default() -> Self {
+        Self::Read {
+            stats_every: Duration::from_secs(3600),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -175,6 +204,8 @@ impl Shared {
 pub struct Mirror {
     shared: Arc<Shared>,
     feeders: Arc<Mutex<HashMap<FeederId, task::Handle>>>,
+    /// Each followed debug log, by feeder: one tail at a time.
+    logs: Arc<tokio::sync::Mutex<HashMap<FeederId, log::Tail>>>,
     cancel: CancellationToken,
     tasks: TaskTracker,
 }
@@ -204,6 +235,7 @@ impl Mirror {
                 zone: watch::Sender::new(None),
             }),
             feeders: Arc::new(Mutex::new(HashMap::new())),
+            logs: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             cancel,
             tasks: TaskTracker::new(),
         }

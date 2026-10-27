@@ -16,6 +16,7 @@ mod audit;
 mod auth;
 mod backups;
 mod commands;
+mod diagnostics;
 mod error;
 mod events;
 mod feeders;
@@ -42,6 +43,7 @@ pub use backups::{Backup, BackupPage};
 pub use commands::{
     Command, CommandKind, CommandOutcome, CommandPage, CommandQuery, CommandState, FeedRequest,
 };
+pub use diagnostics::{FeedTrace, FeederStats, LogEvent, StatsRead, TraceQuery, TraceRecord};
 pub use error::{ErrorCode, FeederRefusal, Problem};
 pub use events::{EventPage, EventQuery, FeederEvent, Gap};
 pub use feeders::{AdoptFeeder, Connection, Feeder, FeederDetail, LockRequest, StatusSnapshot};
@@ -55,9 +57,10 @@ pub use installs::{Install, InstallFailure, InstallRequest, InstallState};
 // The feeder's own values are the model's, served as they are; the HTTP
 // API adds only what the server knows (when it received them, its own ids).
 pub use wellfed_model::{
-    Blocked, ClientRole, EnrollPath, EventBody, EventKind, FeedOutcome, FeedReason, Generation,
-    Hex, MetricKind, Power, Readiness, SampleValue, Settings, SettingsPatch, Source,
-    Status as FeederStatus, WifiSource,
+    Blocked, ClientRole, CurrentUnit, EnrollPath, EventBody, EventKind, FeedOutcome, FeedReason,
+    Food as FoodStats, Generation, Hex, MetricKind, Power, Readiness, SampleValue, Settings,
+    SettingsPatch, Source, Stats, StatsSection, Status as FeederStatus, Trace, TraceEntry,
+    TraceSummary, WifiSource,
 };
 pub use pets::{NewPet, NewWeight, Pet, PetLink, PetPatch, Species, Weight, WeightPage};
 pub use releases::{

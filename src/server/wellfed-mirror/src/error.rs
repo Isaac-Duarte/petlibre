@@ -25,6 +25,24 @@ pub enum AskError {
 #[error("reach the feeder: {0}")]
 pub struct Unreachable(pub(crate) wellfed_connect::Error);
 
+/// Why a feeder's debug log could not be followed. Nothing it asks for
+/// changes the feeder, so none of these leaves anything uncertain.
+#[derive(Debug, thiserror::Error)]
+pub enum LogError {
+    #[error("no such feeder")]
+    NotRunning,
+    #[error("the server has no session with the feeder")]
+    Offline,
+    #[error(transparent)]
+    Connect(#[from] ConnectError),
+    #[error("the feeder refused: {0:?}")]
+    Refused(Refusal),
+    #[error("the feeder did not answer the log request in time")]
+    Unanswered,
+    #[error("the feeder answered the log request with something else")]
+    Unexpected,
+}
+
 /// Why a feeder could not be located, or an invite redeemed.
 #[derive(Debug, thiserror::Error)]
 pub enum ConnectError {

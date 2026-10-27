@@ -167,6 +167,10 @@ pub enum FeederError {
     UndecodableSample,
     #[error("a feeder key does not open with this server's key")]
     Unseal,
+    #[error("the server holds no trace of that feed")]
+    NoTrace,
+    #[error("the feeder did not answer the log request in time")]
+    LogUnanswered,
 }
 
 /// Pets, foods and refills: the owner data the feeders do not hold.

@@ -58,6 +58,7 @@
 mod audit;
 mod backups;
 mod commands;
+mod diagnostics;
 mod error;
 mod feeders;
 mod feeds;
@@ -95,6 +96,7 @@ use tokio_util::task::TaskTracker;
 use uuid::Uuid;
 
 pub use backups::{BackupError, Backups};
+pub use diagnostics::LogFollow;
 pub use error::{
     AccountError, CommandError, Error, FeederError, HouseholdError, InstallError, Invalid,
     OwnerDataError, Result, TokenError,
@@ -102,7 +104,7 @@ pub use error::{
 pub use hub::{Hub, Resume, Stamped, StreamId, Subscription};
 pub use permissions::{Permission, can};
 pub use wellfed_mirror::{
-    Clock, Discovery, Random, RandomFailed, SystemClock, SystemRandom, ZoneError,
+    Clock, Diagnostics, Discovery, Random, RandomFailed, SystemClock, SystemRandom, ZoneError,
 };
 pub use wellfed_releases::{
     Added as ReleaseAdded, Config as ReleasesConfig, Error as ReleaseError, Keys as ReleaseKeys,
@@ -127,6 +129,8 @@ pub struct Config {
     pub label: String,
     pub discovery: Discovery,
     pub timing: Timing,
+    /// Whether each feeder's feed traces and statistics are read.
+    pub diagnostics: Diagnostics,
     /// The release cache, the keys a release may be signed with, and
     /// whether releases are fetched.
     pub releases: ReleasesConfig,
@@ -143,6 +147,7 @@ impl std::fmt::Debug for Config {
             .field("label", &self.label)
             .field("discovery", &self.discovery)
             .field("timing", &self.timing)
+            .field("diagnostics", &self.diagnostics)
             .field("releases", &self.releases)
             .field("raw_sample_days", &self.raw_sample_days)
             .field("backups", &self.backups)
@@ -163,6 +168,7 @@ impl Config {
                 answer: timing.answer,
                 sample_wait: timing.sample_wait,
             },
+            diagnostics: self.diagnostics,
         }
     }
 }

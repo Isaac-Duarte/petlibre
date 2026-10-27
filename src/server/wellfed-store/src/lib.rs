@@ -17,13 +17,16 @@
 //! for the views to query, and rebuilt from the raw rows when the
 //! projection code changes. Each sample carries its number beside its
 //! bytes, and hourly rollups of the numbers outlive the raw rows the
-//! owner's retention removes.
+//! owner's retention removes. Feed traces and statistics are read from the
+//! feeder apart from its history, so they are kept beside it, never
+//! rebuilt.
 
 #![forbid(unsafe_code)]
 
 mod audit;
 mod commands;
 mod convert;
+mod diagnostics;
 mod feeders;
 mod feeds;
 mod foods;
@@ -48,6 +51,7 @@ use sqlx::sqlite::{
 
 pub use audit::{AuditFilter, AuditRecord, AuditRow, NewAudit};
 pub use commands::{CommandFilter, CommandRow, Journaled, NewCommand};
+pub use diagnostics::{FoodReading, RawTrace, StatsRow, TraceFound, TraceRow};
 pub use feeders::{FeederRow, FeederState, NewFeeder, SealedKey, Synced};
 pub use foods::FoodSet;
 pub use history::{EventRow, NewEvent};

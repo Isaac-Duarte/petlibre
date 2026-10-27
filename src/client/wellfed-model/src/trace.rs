@@ -3,11 +3,12 @@
 //! start.
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use crate::{FeedOutcome, FeedReason};
 
 /// What a trace's current readings count in.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CurrentUnit {
     /// The current channel as stock scales it: proportional to the motor
@@ -18,7 +19,7 @@ pub enum CurrentUnit {
 }
 
 /// What a feed's drive measured, from every poll.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct TraceSummary {
     pub feed: u32,
     pub requested: u8,
@@ -45,7 +46,7 @@ pub struct TraceSummary {
 }
 
 /// One page of a trace's body, as the feeder answers `FeedTrace`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct TracePage {
     pub summary: TraceSummary,
     /// The trace is in the feeder's storage.
@@ -56,7 +57,7 @@ pub struct TracePage {
 }
 
 /// The motor command as the feeder's controller gave it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TraceMotor {
     Stop,
@@ -66,7 +67,7 @@ pub enum TraceMotor {
 }
 
 /// One entry of a trace's body.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TraceEntry {
     /// The motor current at one poll.
@@ -98,7 +99,7 @@ pub enum TraceEntry {
 }
 
 /// A whole trace.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct Trace {
     pub summary: TraceSummary,
     pub stored: bool,

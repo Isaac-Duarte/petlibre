@@ -1,0 +1,98 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT epoch, feed, fetched_ms, summary, stored, body, refusal FROM feed_traces\n               WHERE feeder_id = ?1 AND feed = ?2 AND (?3 IS NULL OR epoch = ?3)\n               ORDER BY epoch DESC LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "epoch",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "feed_traces",
+            "name": "epoch"
+          }
+        }
+      },
+      {
+        "name": "feed",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "feed_traces",
+            "name": "feed"
+          }
+        }
+      },
+      {
+        "name": "fetched_ms",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "feed_traces",
+            "name": "fetched_ms"
+          }
+        }
+      },
+      {
+        "name": "summary",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "feed_traces",
+            "name": "summary"
+          }
+        }
+      },
+      {
+        "name": "stored",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "feed_traces",
+            "name": "stored"
+          }
+        }
+      },
+      {
+        "name": "body",
+        "ordinal": 5,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "feed_traces",
+            "name": "body"
+          }
+        }
+      },
+      {
+        "name": "refusal",
+        "ordinal": 6,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "feed_traces",
+            "name": "refusal"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "af90891233bc8b88dc00ede9fb75ea883a6809d4a799cbab7b07984af080b681"
+}

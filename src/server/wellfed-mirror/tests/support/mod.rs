@@ -6,7 +6,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use wellfed_api::{ClientRole, Connection as Link, FeederId};
-use wellfed_mirror::{Config, Discovery, Feeder, Invite, Mirror, MirrorEvent, Timing};
+use wellfed_mirror::{
+    Config, Diagnostics, Discovery, Feeder, Invite, Mirror, MirrorEvent, Timing,
+};
 use wellfed_server_testkit::WAIT;
 use wellfed_server_testkit::feeder::{self, Running};
 use wellfed_server_testkit::fixed::{FixedClock, SeededRandom};
@@ -16,8 +18,10 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 pub const ID: FeederId = FeederId(Uuid::from_u128(7));
+/// The mirror's key on the feeder.
+pub const SECRET: [u8; 32] = [0x33; 32];
 
-fn config(answer: Duration) -> Config {
+fn config(answer: Duration, diagnostics: Diagnostics) -> Config {
     Config {
         discovery: Discovery::Off,
         timing: Timing {
@@ -27,6 +31,7 @@ fn config(answer: Duration) -> Config {
             answer,
             sample_wait: Duration::from_millis(100),
         },
+        diagnostics,
     }
 }
 
@@ -49,9 +54,22 @@ pub async fn mirrored_as(
     answer: Duration,
     role: ClientRole,
 ) -> (Mirror, Receiver<MirrorEvent>) {
+    mirrored_with(store, sim, address, answer, role, Diagnostics::Off).await
+}
+
+/// [`mirrored_as`], reading the feeder's traces and statistics as
+/// `diagnostics` says.
+pub async fn mirrored_with(
+    store: &Store,
+    sim: &Running,
+    address: &str,
+    answer: Duration,
+    role: ClientRole,
+    diagnostics: Diagnostics,
+) -> (Mirror, Receiver<MirrorEvent>) {
     let mirror = Mirror::new(
         store.clone(),
-        config(answer),
+        config(answer, diagnostics),
         Arc::new(FixedClock),
         Arc::new(SeededRandom::fresh()),
         CancellationToken::new(),
@@ -78,7 +96,7 @@ pub async fn mirrored_as(
     let invite = Invite::parse(&invite).expect("the kit's invite parses");
     let identity = invite.feeder;
     let at = mirror.locate(identity, Some(address)).await.unwrap();
-    let secret = [0x33; 32];
+    let secret = SECRET;
     let enrolled = mirror.enroll(invite, "test", at, secret).await.unwrap();
     assert_eq!(enrolled.role, role);
 

@@ -1,0 +1,86 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT received_ms, boot_count, present, emptied, refilled, feeds_since_refill\n             FROM food_readings WHERE feeder_id = ? AND received_ms >= ? AND received_ms < ?\n             ORDER BY received_ms, rowid",
+  "describe": {
+    "columns": [
+      {
+        "name": "received_ms",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "food_readings",
+            "name": "received_ms"
+          }
+        }
+      },
+      {
+        "name": "boot_count",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "food_readings",
+            "name": "boot_count"
+          }
+        }
+      },
+      {
+        "name": "present",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "food_readings",
+            "name": "present"
+          }
+        }
+      },
+      {
+        "name": "emptied",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "food_readings",
+            "name": "emptied"
+          }
+        }
+      },
+      {
+        "name": "refilled",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "food_readings",
+            "name": "refilled"
+          }
+        }
+      },
+      {
+        "name": "feeds_since_refill",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "food_readings",
+            "name": "feeds_since_refill"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "570ff7df2ae901de86afb69534d57456b32fd17274197eeecc85fd35fd17f9e8"
+}

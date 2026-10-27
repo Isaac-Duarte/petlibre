@@ -136,11 +136,11 @@ fn service(error: &Error) -> (ErrorCode, Option<String>, Option<FeederRefusal>) 
             ) => ErrorCode::ZoneUnsupported,
         },
         Error::Feeder(feeder) => match feeder {
-            FeederError::NotFound => ErrorCode::NotFound,
+            FeederError::NotFound | FeederError::NoTrace => ErrorCode::NotFound,
             FeederError::AlreadyAdopted => ErrorCode::AlreadyAdopted,
             FeederError::Invite(_) => ErrorCode::Invalid,
             FeederError::InviteExpired => ErrorCode::InviteExpired,
-            FeederError::Unreachable(_) => ErrorCode::Unreachable,
+            FeederError::Unreachable(_) | FeederError::LogUnanswered => ErrorCode::Unreachable,
             FeederError::Refused(refusal) => {
                 return (ErrorCode::FeederRefused, detail, Some(*refusal));
             }

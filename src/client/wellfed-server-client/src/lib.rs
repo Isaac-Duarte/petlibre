@@ -25,6 +25,7 @@ mod audit;
 mod auth;
 mod backups;
 mod commands;
+mod diagnostics;
 mod error;
 mod feeders;
 mod feeds;
@@ -45,6 +46,7 @@ use reqwest::header::{self, HeaderValue};
 use reqwest::{RequestBuilder, Response};
 use serde::de::DeserializeOwned;
 
+pub use diagnostics::LogBatches;
 pub use error::Error;
 pub use feeders::Lock;
 /// The API's bodies, for a caller that may not depend on `wellfed-api`

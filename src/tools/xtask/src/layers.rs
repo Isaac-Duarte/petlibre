@@ -74,6 +74,7 @@ const ARROWS: [(&str, &[&str]); 8] = [
             "wellfed-client",
             "wellfed-connect",
             "wellfed-model",
+            "wellfed-proto",
             "wellfed-session",
             "wellfed-core",
         ],

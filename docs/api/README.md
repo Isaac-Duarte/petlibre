@@ -53,7 +53,8 @@ src/server/wellfed-service   the use cases: accounts and auth, household, comman
 src/server/wellfed-server    the binary: config, axum routers per resource, the auth extractors, SSE, the jobs
                               supervisor, the embedded web UI
 src/server/wellfed-server-testkit  a temp store, a fixed clock and random, the simulator harness, the server in process
-src/app/                      Flutter app, plus a thin flutter_rust_bridge crate over wellfed-client, wellfed-model and wellfed-api
+src/app/                      Flutter app, plus a thin flutter_rust_bridge crate (wellfed-app-bridge) over wellfed-client,
+                              wellfed-model and wellfed-api
 ```
 
 The server's crates follow one rule: **a crate per runtime or dependency boundary, a module per domain inside it.** A new domain (pets, alerts) is a module and some tables, not a crate, unless it brings its own runtime (tasks), a heavy dependency (`reqwest`) or a consumer outside the server. That is why the mirror (the feeder tasks), the releases (`reqwest` and the verifier) and the HTTP client (the CLI) are crates and accounts or alerts are not.
@@ -78,8 +79,8 @@ wellfed (the CLI) ─► wellfed-server-client ─► wellfed-api
 `cargo xtask check-repository` enforces the arrows from `cargo metadata` (all features, every platform), and each error names the edge or path that breaks them:
 
 - **SQL stays in the store.** No crate but `wellfed-store` depends on sqlx, in its tests included.
-- **HTTP stays in the binary.** Nothing below `wellfed-server` (the api, store, mirror, releases, service and the server client) links axum by any path.
-- **The arrows as drawn.** Each server crate's normal and build dependencies on workspace crates come from its row below; a crate outside the server takes a server crate only as the CLI takes `wellfed-server-client`. Dev-dependencies are exempt, since a test may build a simulated feeder or a whole server. The rows name crates that do not exist yet, so each is checked from its first manifest; changing a row changes this table and the check together.
+- **HTTP stays in the binary.** Nothing below `wellfed-server` (the api, store, mirror, releases, service and the server client) links axum, or any of axum's own crates (`axum-core`, `axum-extra`), by any path.
+- **The arrows as drawn.** Each server crate's normal and build dependencies on workspace crates come from its row below; a crate outside the server takes a server crate only where drawn: the CLI takes `wellfed-server-client`, and the app's `wellfed-app-bridge` takes `wellfed-api`. Dev-dependencies are exempt, since a test may build a simulated feeder or a whole server. The rows name crates that do not exist yet, so each is checked from its first manifest; changing a row changes this table and the check together.
 - **`wellfed-api` on Android.** Its own dependencies come from an allow-list (`jiff`, `wellfed-model`, `serde`, `utoipa`, `uuid`), so it keeps building for the app's Android library. `make check` builds no Android target.
 
 | Crate | May depend on (workspace crates) |

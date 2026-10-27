@@ -87,8 +87,12 @@ const ARROWS: [(&str, &[&str]); 8] = [
 ];
 
 /// The only edges into a server crate from a crate outside the server: the
-/// CLI speaks the server's API through its typed client.
-const INTO_SERVER: [(&str, &str); 1] = [("wellfed", "wellfed-server-client")];
+/// CLI speaks the server's API through its typed client, and the app's
+/// flutter_rust_bridge crate hands `wellfed-api`'s types to Dart.
+const INTO_SERVER: [(&str, &str); 2] = [
+    ("wellfed", "wellfed-server-client"),
+    ("wellfed-app-bridge", API),
+];
 
 /// The crates below the binary, which must not link axum by any path.
 const BELOW_SERVER: [&str; 6] = [
@@ -224,14 +228,14 @@ impl Graph {
         self.edges.get(id).map_or(&[], Vec::as_slice)
     }
 
-    /// The shortest linked path from `from` to a package named `target`, as
-    /// package names, or `None` when it is not linked.
-    fn linked_path(&self, from: &str, target: &str) -> Option<Vec<String>> {
+    /// The shortest linked path from `from` to a package whose name
+    /// `target` accepts, as package names, or `None` when none is linked.
+    fn linked_path(&self, from: &str, target: impl Fn(&str) -> bool) -> Option<Vec<String>> {
         let mut parent: BTreeMap<&str, &str> = BTreeMap::new();
         let mut queue = VecDeque::from([from]);
 
         while let Some(id) = queue.pop_front() {
-            if self.name(id) == target {
+            if id != from && target(self.name(id)) {
                 let mut path = vec![self.name(id).to_string()];
                 let mut at = id;
                 while let Some(&up) = parent.get(at) {
@@ -275,6 +279,12 @@ pub(crate) fn check(root: &Path) -> Result<Vec<String>, Error> {
 
     let metadata: Metadata = serde_json::from_slice(&output.stdout)?;
     Ok(rules(&Graph::from_metadata(metadata)?))
+}
+
+/// axum or one of its own crates (`axum-core`, `axum-extra`, …): linking any
+/// of them brings HTTP below the binary.
+fn is_axum(name: &str) -> bool {
+    name.starts_with("axum")
 }
 
 /// Every broken rule, each naming the edge (or path) that breaks it.
@@ -321,7 +331,7 @@ fn rules(graph: &Graph) -> Vec<String> {
         }
 
         if BELOW_SERVER.contains(&from)
-            && let Some(path) = graph.linked_path(member, "axum")
+            && let Some(path) = graph.linked_path(member, is_axum)
         {
             errors.push(format!(
                 "dependency rule: {}: nothing below wellfed-server links axum",
@@ -423,8 +433,7 @@ mod tests {
             ("wellfed-dashboard", "wellfed-api", Use::Links),
             // axum through another crate, below the binary.
             ("wellfed-mirror", "wellfed-store", Use::Links),
-            ("wellfed-mirror", "axum-extra", Use::Links),
-            ("axum-extra", "axum", Use::Links),
+            ("wellfed-mirror", "utoipa-axum", Use::Links),
             // A test of a crate outside the server may take any of them.
             ("wellfed-stock", "wellfed-server-client", Use::TestsOnly),
         ]);
@@ -436,7 +445,7 @@ mod tests {
             [
                 "dependency rule: wellfed-api → reqwest: not on wellfed-api's allow-list (jiff, wellfed-model, serde, utoipa, uuid); it builds for Android",
                 "dependency rule: wellfed-dashboard → wellfed-api is not an allowed edge into the server's crates",
-                "dependency rule: wellfed-mirror → axum-extra → axum: nothing below wellfed-server links axum",
+                "dependency rule: wellfed-mirror → utoipa-axum → axum: nothing below wellfed-server links axum",
                 "dependency rule: wellfed-server → sqlx: only wellfed-store depends on sqlx",
                 "dependency rule: wellfed-server → wellfed-mirror is not an allowed edge; wellfed-server may depend on wellfed-service, wellfed-api, wellfed-store",
                 "dependency rule: wellfed-service → sqlx: only wellfed-store depends on sqlx",
@@ -463,6 +472,26 @@ mod tests {
                 "dependency rule: wellfed-server-client → wellfed-api → utoipa-axum → axum: nothing below wellfed-server links axum",
                 "dependency rule: wellfed-service → wellfed-store → wellfed-api → utoipa-axum → axum: nothing below wellfed-server links axum",
                 "dependency rule: wellfed-store → wellfed-api → utoipa-axum → axum: nothing below wellfed-server links axum",
+            ]
+        );
+    }
+
+    #[test]
+    fn axum_s_own_crates_count_as_axum() {
+        let mut edges = layered();
+        edges.extend([
+            ("wellfed-service", "wellfed-mirror", Use::Links),
+            ("wellfed-mirror", "axum-core", Use::Links),
+            ("wellfed-app-bridge", "wellfed-api", Use::Links),
+        ]);
+        let mut members = MEMBERS.to_vec();
+        members.extend(["wellfed-mirror", "wellfed-app-bridge"]);
+
+        assert_eq!(
+            rules(&graph(&members, &edges)),
+            [
+                "dependency rule: wellfed-mirror → axum-core: nothing below wellfed-server links axum",
+                "dependency rule: wellfed-service → wellfed-mirror → axum-core: nothing below wellfed-server links axum",
             ]
         );
     }

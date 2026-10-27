@@ -40,6 +40,10 @@ pub use stream::{FeederSample, StreamEvent, StreamQuery};
 /// The prefix every resource lives under.
 pub const PREFIX: &str = "/api/v1";
 
+/// The cookie a login sets: an opaque session token, `HttpOnly` and
+/// `SameSite=Strict`. A non-browser client sends it back as it came.
+pub const SESSION_COOKIE: &str = "wellfed_session";
+
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, ToSchema,
 )]

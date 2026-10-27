@@ -30,15 +30,8 @@ utoipa-axum.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
-http-body-util.workspace = true
-wellfed-client.workspace = true
-wellfed-connect.workspace = true
-wellfed-feeder-sim = { workspace = true, features = ["harness"] }
-wellfed-model.workspace = true
-wellfed-session.workspace = true
-reqwest = { workspace = true, features = ["cookies", "json", "stream"] }
-tempfile.workspace = true
-tower = { workspace = true, features = ["util"] }
+wellfed-server-client.workspace = true
+wellfed-server-testkit.workspace = true
 
 [lints]
 workspace = true

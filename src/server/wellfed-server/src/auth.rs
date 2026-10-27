@@ -21,13 +21,11 @@ use axum::http::{HeaderMap, header};
 use axum::middleware::Next;
 use axum::response::Response;
 use axum_extra::extract::CookieJar;
-use wellfed_api::{ErrorCode, Role, User};
+use wellfed_api::{ErrorCode, Role, SESSION_COOKIE as COOKIE, User};
 use wellfed_service::SessionToken;
 
 use crate::AppState;
 use crate::error::ApiError;
-
-pub(crate) const COOKIE: &str = "wellfed_session";
 
 /// The logged-in user.
 pub(crate) struct Auth(pub(crate) User);

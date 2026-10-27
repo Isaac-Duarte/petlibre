@@ -41,6 +41,9 @@ wellfed-feeder-sim = { path = "src/tools/wellfed-feeder-sim" }
 wellfed-api = { path = "src/server/wellfed-api" }
 wellfed-store = { path = "src/server/wellfed-store" }
 wellfed-service = { path = "src/server/wellfed-service" }
+wellfed-server = { path = "src/server/wellfed-server" }
+wellfed-server-client = { path = "src/client/wellfed-server-client" }
+wellfed-server-testkit = { path = "src/server/wellfed-server-testkit" }
 wellfed-formats = { path = "src/tools/wellfed-formats" }
 wellfed-stock = { path = "src/tools/wellfed-stock" }
 wellfed-stock-api = { path = "src/tools/wellfed-stock-api" }

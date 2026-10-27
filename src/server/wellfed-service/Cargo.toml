@@ -27,9 +27,7 @@ tracing.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
-wellfed-feeder-sim = { workspace = true, features = ["harness"] }
-tempfile.workspace = true
-tokio = { workspace = true, features = ["net"] }
+wellfed-server-testkit.workspace = true
 
 [lints]
 workspace = true

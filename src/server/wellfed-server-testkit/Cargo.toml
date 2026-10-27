@@ -1,0 +1,29 @@
+[package]
+license.workspace = true
+name = "wellfed-server-testkit"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "What every server test builds: a temp store, a fixed clock and seeded random, the simulated feeder, and the server in process"
+publish.workspace = true
+
+[dependencies]
+axum.workspace = true
+jiff.workspace = true
+wellfed-api.workspace = true
+wellfed-client.workspace = true
+wellfed-connect.workspace = true
+wellfed-feeder-sim = { workspace = true, features = ["harness"] }
+wellfed-model.workspace = true
+wellfed-server.workspace = true
+wellfed-server-client.workspace = true
+wellfed-service.workspace = true
+wellfed-session.workspace = true
+wellfed-store.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["net", "rt", "time"] }
+tokio-util.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,30 @@
+[package]
+license.workspace = true
+name = "wellfed-mirror"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "The server's per-feeder runtime: each feeder's session, history sync and ingest into the store, the command channel and a broadcast of what each feeder sends. No users, no HTTP"
+publish.workspace = true
+
+[dependencies]
+getrandom.workspace = true
+jiff.workspace = true
+wellfed-api.workspace = true
+wellfed-client.workspace = true
+wellfed-connect.workspace = true
+wellfed-model.workspace = true
+wellfed-proto.workspace = true
+wellfed-session.workspace = true
+wellfed-store.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
+tokio-util = { workspace = true, features = ["rt"] }
+tracing.workspace = true
+
+[dev-dependencies]
+wellfed-server-testkit.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true

@@ -6,7 +6,7 @@ use axum::extract::rejection::{JsonRejection, PathRejection, QueryRejection};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use wellfed_api::{ErrorCode, FeederRefusal, Problem, Settings};
-use wellfed_service::Error;
+use wellfed_service::{AccountError, CommandError, Error, FeederError};
 
 /// A request's failure.
 #[derive(Debug)]
@@ -44,7 +44,7 @@ impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let (code, detail, refusal) = match self {
             Self::Code(code, detail) => (code, detail, None),
-            Self::Service(Error::Stale(settings)) => return stale(settings),
+            Self::Service(Error::Command(CommandError::Stale(settings))) => return stale(settings),
             Self::Service(error) => service(&error),
         };
         let status = status(code);
@@ -77,29 +77,47 @@ fn stale(settings: Settings) -> Response {
 
 fn service(error: &Error) -> (ErrorCode, Option<String>, Option<FeederRefusal>) {
     let detail = Some(error.to_string());
-    match error {
-        Error::SetupClosed => (ErrorCode::SetupClosed, detail, None),
-        Error::BadCredentials => (ErrorCode::BadCredentials, detail, None),
-        Error::Invalid(_) | Error::Invite(_) => (ErrorCode::Invalid, detail, None),
-        Error::NotFound => (ErrorCode::NotFound, detail, None),
-        Error::AlreadyAdopted => (ErrorCode::AlreadyAdopted, detail, None),
-        Error::InviteExpired => (ErrorCode::InviteExpired, detail, None),
-        Error::Unreachable(_) => (ErrorCode::Unreachable, detail, None),
-        Error::Offline => (ErrorCode::FeederOffline, detail, None),
-        Error::Unknown => (ErrorCode::OutcomeUnknown, detail, None),
-        Error::Refused(refusal) => (ErrorCode::FeederRefused, detail, Some(*refusal)),
-        // Handled before: it carries the current resource.
-        Error::Stale(_) => (ErrorCode::Internal, None, None),
-        Error::Store(_)
-        | Error::Unexpected
-        | Error::Undecodable(_)
-        | Error::Random
-        | Error::Hash(_)
-        | Error::Unseal => {
-            tracing::error!("{error}");
-            (ErrorCode::Internal, None, None)
-        }
-    }
+    let code = match error {
+        Error::Invalid(_) => ErrorCode::Invalid,
+        Error::Account(account) => match account {
+            AccountError::SetupClosed => ErrorCode::SetupClosed,
+            AccountError::BadCredentials => ErrorCode::BadCredentials,
+            AccountError::Hash(_) | AccountError::Hashing | AccountError::Expiry => {
+                return internal(error);
+            }
+        },
+        Error::Feeder(feeder) => match feeder {
+            FeederError::NotFound => ErrorCode::NotFound,
+            FeederError::AlreadyAdopted => ErrorCode::AlreadyAdopted,
+            FeederError::Invite(_) => ErrorCode::Invalid,
+            FeederError::InviteExpired => ErrorCode::InviteExpired,
+            FeederError::Unreachable(_) => ErrorCode::Unreachable,
+            FeederError::Refused(refusal) => {
+                return (ErrorCode::FeederRefused, detail, Some(*refusal));
+            }
+            FeederError::Lookup | FeederError::Undecodable(_) | FeederError::Unseal => {
+                return internal(error);
+            }
+        },
+        Error::Command(command) => match command {
+            CommandError::Offline => ErrorCode::FeederOffline,
+            CommandError::Unknown => ErrorCode::OutcomeUnknown,
+            CommandError::Refused(refusal) => {
+                return (ErrorCode::FeederRefused, detail, Some(*refusal));
+            }
+            // Handled before: it carries the current resource.
+            CommandError::Stale(_) => return (ErrorCode::Internal, None, None),
+            CommandError::Unexpected => return internal(error),
+        },
+        Error::Store(_) | Error::Random(_) => return internal(error),
+    };
+    (code, detail, None)
+}
+
+/// A failure of the server's own: logged, and answered without its detail.
+fn internal(error: &Error) -> (ErrorCode, Option<String>, Option<FeederRefusal>) {
+    tracing::error!("{error}");
+    (ErrorCode::Internal, None, None)
 }
 
 fn status(code: ErrorCode) -> StatusCode {
@@ -131,7 +149,9 @@ mod tests {
     /// not "try again" (503) but a refusal like any other.
     #[test]
     fn a_busy_refusal_is_final_for_its_key() {
-        let response = ApiError::Service(Error::Refused(FeederRefusal::Busy)).into_response();
+        let refused = CommandError::Refused(FeederRefusal::Busy);
+
+        let response = ApiError::Service(refused.into()).into_response();
 
         assert_eq!(response.status(), StatusCode::CONFLICT);
     }

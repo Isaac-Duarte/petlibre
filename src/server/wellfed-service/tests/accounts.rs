@@ -2,7 +2,7 @@
 
 use wellfed_api::{Credentials, Role};
 use wellfed_server_testkit::{TestService, local};
-use wellfed_service::{Error, Invalid};
+use wellfed_service::{AccountError, Error, Invalid};
 
 #[test]
 fn the_first_owner_sets_up_once_and_logs_in() {
@@ -28,7 +28,7 @@ fn the_first_owner_sets_up_once_and_logs_in() {
         assert!(!service.setup_open().await.unwrap());
         assert!(matches!(
             service.setup(credentials.clone()).await,
-            Err(Error::SetupClosed)
+            Err(Error::Account(AccountError::SetupClosed))
         ));
         assert_eq!(
             service.authenticate(&token).await.unwrap(),
@@ -41,7 +41,7 @@ fn the_first_owner_sets_up_once_and_logs_in() {
         };
         assert!(matches!(
             service.login(wrong).await,
-            Err(Error::BadCredentials)
+            Err(Error::Account(AccountError::BadCredentials))
         ));
         let nobody = Credentials {
             name: "bob".into(),
@@ -49,7 +49,7 @@ fn the_first_owner_sets_up_once_and_logs_in() {
         };
         assert!(matches!(
             service.login(nobody).await,
-            Err(Error::BadCredentials)
+            Err(Error::Account(AccountError::BadCredentials))
         ));
         let (again, second) = service.login(credentials).await.unwrap();
         assert_eq!(again, user);

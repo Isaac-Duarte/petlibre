@@ -6,7 +6,7 @@ use wellfed_model::{Answer, Op};
 use wellfed_server_testkit::feeder::{self, invite, open_owner};
 use wellfed_server_testkit::fixed::NOW_MS;
 use wellfed_server_testkit::{TestService, ada, local};
-use wellfed_service::{Error, Invalid};
+use wellfed_service::{CommandError, Error, FeederError, Invalid};
 
 #[test]
 fn an_adopted_feeder_connects_syncs_its_clock_and_mirrors_its_history() {
@@ -50,7 +50,10 @@ fn an_adopted_feeder_connects_syncs_its_clock_and_mirrors_its_history() {
             name: "again".into(),
             address: Some(sim.address.to_string()),
         });
-        assert!(matches!(again.await, Err(Error::AlreadyAdopted)));
+        assert!(matches!(
+            again.await,
+            Err(Error::Feeder(FeederError::AlreadyAdopted))
+        ));
         server.shutdown().await;
         sim.stop().await;
     });
@@ -84,7 +87,7 @@ fn a_revoked_server_key_is_refused() {
                 .service()
                 .set_lock(&ada(), id, true, Some([3; 16]))
                 .await,
-            Err(Error::Offline)
+            Err(Error::Command(CommandError::Offline))
         ));
         server.shutdown().await;
         sim.stop().await;
@@ -116,11 +119,11 @@ fn an_invite_for_a_member_is_adopted_with_that_role_and_bad_input_is_refused() {
         };
         assert!(matches!(
             service.adopt(request("nonsense", Some("127.0.0.1"))).await,
-            Err(Error::Invite(_))
+            Err(Error::Feeder(FeederError::Invite(_)))
         ));
         assert!(matches!(
             service.adopt(request(&used, None)).await,
-            Err(Error::AlreadyAdopted)
+            Err(Error::Feeder(FeederError::AlreadyAdopted))
         ));
         let other = feeder::start().await;
         let fresh = invite(&other, ClientRole::Server).await;

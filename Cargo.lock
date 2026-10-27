@@ -2677,6 +2677,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "wellfed-mirror"
+version = "0.1.0"
+dependencies = [
+ "getrandom 0.3.4",
+ "jiff",
+ "wellfed-api",
+ "wellfed-client",
+ "wellfed-connect",
+ "wellfed-model",
+ "wellfed-proto",
+ "wellfed-server-testkit",
+ "wellfed-session",
+ "wellfed-store",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "wellfed-model"
 version = "0.1.0"
 dependencies = [
@@ -2840,15 +2861,12 @@ version = "0.1.0"
 dependencies = [
  "argon2",
  "chacha20poly1305",
- "getrandom 0.3.4",
  "jiff",
  "wellfed-api",
- "wellfed-client",
- "wellfed-connect",
+ "wellfed-formats",
+ "wellfed-mirror",
  "wellfed-model",
- "wellfed-proto",
  "wellfed-server-testkit",
- "wellfed-session",
  "wellfed-store",
  "sha2 0.11.1",
  "thiserror",

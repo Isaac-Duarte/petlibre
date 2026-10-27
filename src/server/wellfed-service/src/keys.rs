@@ -7,7 +7,7 @@ use chacha20poly1305::{ChaCha20Poly1305, Key, KeyInit, Nonce};
 use wellfed_api::FeederId;
 use wellfed_store::SealedKey;
 
-use crate::{Error, Result};
+use crate::{FeederError, Result};
 
 pub(crate) fn seal(
     key: &[u8; 32],
@@ -25,7 +25,7 @@ pub(crate) fn seal(
                 aad: &aad,
             },
         )
-        .map_err(|_| Error::Unseal)?;
+        .map_err(|_| FeederError::Unseal)?;
     Ok(SealedKey { nonce, sealed })
 }
 
@@ -44,8 +44,8 @@ pub(crate) fn open(
                 aad: &aad,
             },
         )
-        .map_err(|_| Error::Unseal)?;
-    secret.try_into().map_err(|_| Error::Unseal)
+        .map_err(|_| FeederError::Unseal)?;
+    Ok(secret.try_into().map_err(|_| FeederError::Unseal)?)
 }
 
 fn bound(feeder: FeederId, identity: &[u8; 32]) -> [u8; 48] {

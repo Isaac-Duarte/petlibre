@@ -8,7 +8,7 @@ use wellfed_api::{Connection as Link, EventBody, EventQuery, Source, StreamEvent
 use wellfed_model::{Answer, Op};
 use wellfed_server_testkit::feeder::{self, Flash, open_owner};
 use wellfed_server_testkit::{TestService, WAIT, ada, config, local};
-use wellfed_service::Error;
+use wellfed_service::{CommandError, Error};
 
 #[test]
 fn history_recorded_while_the_server_was_down_arrives_on_restart() {
@@ -76,9 +76,12 @@ fn a_feeder_that_goes_away_is_offline_until_it_returns() {
         server.link(id, Link::Offline).await;
         assert!(matches!(
             service.set_lock(&ada(), id, false, Some([5; 16])).await,
-            Err(Error::Offline)
+            Err(Error::Command(CommandError::Offline))
         ));
-        assert!(matches!(service.settings(id).await, Err(Error::Offline)));
+        assert!(matches!(
+            service.settings(id).await,
+            Err(Error::Command(CommandError::Offline))
+        ));
         let detail = service.feeder(id).await.unwrap();
         assert!(!detail.status.unwrap().live, "the cached status, marked");
 

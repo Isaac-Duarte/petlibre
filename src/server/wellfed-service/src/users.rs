@@ -11,11 +11,11 @@ use std::sync::OnceLock;
 use argon2::Argon2;
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use wellfed_api::{Credentials, Role, User, UserId};
-use wellfed_session::hex::{self, Lower};
+use wellfed_formats::hex;
 use wellfed_store::NewUser;
 use sha2::{Digest, Sha256};
 
-use crate::{Error, Invalid, Result, Service};
+use crate::{AccountError, Invalid, Result, Service};
 
 /// Password hashes computed at once.
 const HASHING: usize = 2;
@@ -36,7 +36,11 @@ impl SessionToken {
 
     /// The stored form; `None` for a token this server could not have made.
     fn hash(&self) -> Option<[u8; 32]> {
-        let bytes = hex::decode_array::<32>(self.0.as_bytes())?;
+        // Lowercase only: the one spelling this server writes.
+        if !hex::is_lower_hex(&self.0, 64) {
+            return None;
+        }
+        let bytes = hex::decode::<32>(&self.0)?;
         Some(Sha256::digest(bytes).into())
     }
 }
@@ -61,7 +65,7 @@ impl Service {
             return Err(Invalid::Password.into());
         }
         if !self.setup_open().await? {
-            return Err(Error::SetupClosed);
+            return Err(AccountError::SetupClosed.into());
         }
 
         let salt = self.shared.random::<16>()?;
@@ -83,7 +87,7 @@ impl Service {
             })
             .await?;
         if !created {
-            return Err(Error::SetupClosed);
+            return Err(AccountError::SetupClosed.into());
         }
         let token = self.open_session(user.id).await?;
         Ok((user, token))
@@ -100,7 +104,7 @@ impl Service {
 
         let matches = blocking(move || Ok(verify_password(&credentials.password, &hash))).await?;
         let (Some(user), true) = (user, matches) else {
-            return Err(Error::BadCredentials);
+            return Err(AccountError::BadCredentials.into());
         };
         let token = self.open_session(user.id).await?;
         Ok((user, token))
@@ -127,13 +131,13 @@ impl Service {
 
     async fn open_session(&self, user: UserId) -> Result<SessionToken> {
         let secret = self.shared.random::<32>()?;
-        let token = SessionToken(Lower(&secret).to_string());
+        let token = SessionToken(hex::encode(&secret));
         let hash: [u8; 32] = Sha256::digest(secret).into();
 
         let now = self.shared.clock.now();
         let expires = now
             .checked_add(self.shared.config.timing.session)
-            .map_err(|_| Error::Unexpected)?;
+            .map_err(|_| AccountError::Expiry)?;
         self.shared.store.delete_expired_sessions(now).await?;
         self.shared
             .store
@@ -152,10 +156,10 @@ fn user_name(name: &str) -> Result<&str> {
 }
 
 fn hash_password(password: &str, salt: &[u8; 16]) -> Result<String> {
-    let salt = SaltString::encode_b64(salt).map_err(Error::Hash)?;
+    let salt = SaltString::encode_b64(salt).map_err(AccountError::Hash)?;
     let hash = Argon2::default()
         .hash_password(password.as_bytes(), &salt)
-        .map_err(Error::Hash)?;
+        .map_err(AccountError::Hash)?;
     Ok(hash.to_string())
 }
 
@@ -189,11 +193,11 @@ async fn blocking<T: Send + 'static>(
 ) -> Result<T> {
     // The permit goes with the work: a caller that gives up leaves the hash
     // running, and it still counts.
-    let permit = HASHERS.acquire().await.map_err(|_| Error::Unexpected)?;
+    let permit = HASHERS.acquire().await.map_err(|_| AccountError::Hashing)?;
     tokio::task::spawn_blocking(move || {
         let _permit = permit;
         work()
     })
     .await
-    .map_err(|_| Error::Unexpected)?
+    .map_err(|_| AccountError::Hashing)?
 }

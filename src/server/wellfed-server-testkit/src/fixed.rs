@@ -3,7 +3,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use jiff::Timestamp;
-use wellfed_service::{Clock, Random};
+use wellfed_service::{Clock, Random, RandomFailed};
 
 /// The instant a [`FixedClock`] shows, in Unix milliseconds: inside the
 /// feeder clock's accepted range, so a clock sync from it is applied.
@@ -57,7 +57,7 @@ impl SeededRandom {
 }
 
 impl Random for SeededRandom {
-    fn fill(&self, out: &mut [u8]) -> wellfed_service::Result<()> {
+    fn fill(&self, out: &mut [u8]) -> Result<(), RandomFailed> {
         for chunk in out.chunks_mut(8) {
             let word = self.word().to_le_bytes();
             chunk.copy_from_slice(&word[..chunk.len()]);

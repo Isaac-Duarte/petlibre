@@ -59,12 +59,6 @@ const ARROWS: [(&str, &[&str]); 8] = [
             API,
             "wellfed-model",
             "wellfed-formats",
-            // The feeder tasks still live in the service until the mirror
-            // crate takes them; these four leave with them.
-            "wellfed-client",
-            "wellfed-connect",
-            "wellfed-proto",
-            "wellfed-session",
         ],
     ),
     ("wellfed-server", &["wellfed-service", API, STORE]),
@@ -368,10 +362,11 @@ mod tests {
         graph
     }
 
-    const MEMBERS: [&str; 12] = [
+    const MEMBERS: [&str; 13] = [
         "wellfed",
         "wellfed-api",
         "wellfed-store",
+        "wellfed-mirror",
         "wellfed-service",
         "wellfed-server",
         "wellfed-model",
@@ -394,8 +389,11 @@ mod tests {
             ("wellfed-store", "wellfed-api", Links),
             ("wellfed-store", "sqlx", Links),
             ("wellfed-store", "tempfile", TestsOnly),
+            ("wellfed-mirror", "wellfed-store", Links),
+            ("wellfed-mirror", "wellfed-connect", Links),
+            ("wellfed-mirror", "wellfed-feeder-sim", TestsOnly),
+            ("wellfed-service", "wellfed-mirror", Links),
             ("wellfed-service", "wellfed-store", Links),
-            ("wellfed-service", "wellfed-connect", Links),
             ("wellfed-service", "wellfed-feeder-sim", TestsOnly),
             ("wellfed-connect", "wellfed-client", Links),
             ("wellfed-server", "wellfed-service", Links),
@@ -437,11 +435,9 @@ mod tests {
             // A test of a crate outside the server may take any of them.
             ("wellfed-stock", "wellfed-server-client", Use::TestsOnly),
         ]);
-        let mut members = MEMBERS.to_vec();
-        members.push("wellfed-mirror");
 
         assert_eq!(
-            rules(&graph(&members, &edges)),
+            rules(&graph(&MEMBERS, &edges)),
             [
                 "dependency rule: wellfed-api → reqwest: not on wellfed-api's allow-list (jiff, wellfed-model, serde, utoipa, uuid); it builds for Android",
                 "dependency rule: wellfed-dashboard → wellfed-api is not an allowed edge into the server's crates",
@@ -449,7 +445,9 @@ mod tests {
                 "dependency rule: wellfed-server → sqlx: only wellfed-store depends on sqlx",
                 "dependency rule: wellfed-server → wellfed-mirror is not an allowed edge; wellfed-server may depend on wellfed-service, wellfed-api, wellfed-store",
                 "dependency rule: wellfed-service → sqlx: only wellfed-store depends on sqlx",
+                "dependency rule: wellfed-service → wellfed-mirror → utoipa-axum → axum: nothing below wellfed-server links axum",
                 "dependency rule: wellfed-store → wellfed-service is not an allowed edge; wellfed-store may depend on wellfed-api",
+                "dependency rule: wellfed-store → wellfed-service → wellfed-mirror → utoipa-axum → axum: nothing below wellfed-server links axum",
             ]
         );
     }
@@ -469,6 +467,7 @@ mod tests {
             axum,
             [
                 "dependency rule: wellfed-api → utoipa-axum → axum: nothing below wellfed-server links axum",
+                "dependency rule: wellfed-mirror → wellfed-store → wellfed-api → utoipa-axum → axum: nothing below wellfed-server links axum",
                 "dependency rule: wellfed-server-client → wellfed-api → utoipa-axum → axum: nothing below wellfed-server links axum",
                 "dependency rule: wellfed-service → wellfed-store → wellfed-api → utoipa-axum → axum: nothing below wellfed-server links axum",
                 "dependency rule: wellfed-store → wellfed-api → utoipa-axum → axum: nothing below wellfed-server links axum",
@@ -480,12 +479,11 @@ mod tests {
     fn axum_s_own_crates_count_as_axum() {
         let mut edges = layered();
         edges.extend([
-            ("wellfed-service", "wellfed-mirror", Use::Links),
             ("wellfed-mirror", "axum-core", Use::Links),
             ("wellfed-app-bridge", "wellfed-api", Use::Links),
         ]);
         let mut members = MEMBERS.to_vec();
-        members.extend(["wellfed-mirror", "wellfed-app-bridge"]);
+        members.push("wellfed-app-bridge");
 
         assert_eq!(
             rules(&graph(&members, &edges)),
@@ -500,20 +498,20 @@ mod tests {
     fn a_crate_that_does_not_exist_yet_is_held_to_its_arrows() {
         let mut edges = layered();
         edges.extend([
-            ("wellfed-mirror", "wellfed-service", Use::Links),
-            ("wellfed-mirror", "axum", Use::Links),
+            ("wellfed-releases", "wellfed-service", Use::Links),
+            ("wellfed-releases", "axum", Use::Links),
         ]);
         let mut members = MEMBERS.to_vec();
-        members.push("wellfed-mirror");
+        members.push("wellfed-releases");
 
         let errors = rules(&graph(&members, &edges));
 
         assert!(errors.contains(
-            &"dependency rule: wellfed-mirror → wellfed-service is not an allowed edge; wellfed-mirror may depend on wellfed-store, wellfed-api, wellfed-connect, wellfed-client, wellfed-model, wellfed-proto, wellfed-session".to_string()
+            &"dependency rule: wellfed-releases → wellfed-service is not an allowed edge; wellfed-releases may depend on wellfed-store, wellfed-api, wellfed-client, wellfed-model".to_string()
         ), "{errors:?}");
         assert!(
             errors.contains(
-                &"dependency rule: wellfed-mirror → axum: nothing below wellfed-server links axum"
+                &"dependency rule: wellfed-releases → axum: nothing below wellfed-server links axum"
                     .to_string()
             ),
             "{errors:?}"

@@ -11,7 +11,7 @@ use wellfed_api::{
 use wellfed_server_testkit::feeder::{self, Relay};
 use wellfed_server_testkit::fixed::NOW_MS;
 use wellfed_server_testkit::{TestService, WAIT, ada, config, local, owner_user, until};
-use wellfed_service::{Error, IdempotencyKey, Invalid, Resume};
+use wellfed_service::{CommandError, Error, IdempotencyKey, Invalid, Resume};
 
 fn locks() -> EventQuery {
     EventQuery {
@@ -51,7 +51,7 @@ fn settings_change_against_the_current_generation_only() {
         let stale = service
             .put_settings(&ada(), id, settings.generation, patch, Some([2; 16]))
             .await;
-        let Err(Error::Stale(current)) = stale else {
+        let Err(Error::Command(CommandError::Stale(current))) = stale else {
             panic!("{stale:?}");
         };
         assert_eq!(current, changed);
@@ -165,7 +165,7 @@ fn an_unanswered_write_is_unknown_and_its_retry_applies_once() {
         let key = Some([0x51; 16]);
         assert!(matches!(
             service.set_lock(&ada(), id, false, key).await,
-            Err(Error::Unknown)
+            Err(Error::Command(CommandError::Unknown))
         ));
         relay.resume();
         service.set_lock(&ada(), id, false, key).await.unwrap();

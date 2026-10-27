@@ -1,158 +1,58 @@
 //! The owner's server domain logic ([API design]): household users, the
-//! adopted feeders and one connection task per feeder. It sees neither HTTP
-//! nor SQL: the server crate maps requests onto these methods, and
-//! `wellfed-store` holds the data.
+//! adopted feeders and the commands sent to them. It sees neither HTTP,
+//! SQL nor a feeder session: the server crate maps requests onto these
+//! methods, `wellfed-store` holds the data, and `wellfed-mirror` runs
+//! each feeder's session.
 //!
 //! - **Feeders** are adopted by redeeming an invite with a key the server
 //!   makes for that feeder, so the feeder's history names the server. The
-//!   key is sealed with the config's key before it is stored.
-//! - **Each feeder's task** ([`feeder`]) keeps a session open, reconnecting
-//!   with jittered backoff. On every connect it first subscribes after the
-//!   newest event it holds, so its own outages lose nothing, then sets the
-//!   feeder's clock (the only time source until the feeder keeps its own),
-//!   and records every event and sample as the feeder sent it.
-//! - **Commands** reach the task through a channel. One that is not
-//!   answered in time is [`Error::Unknown`], never a failure: the feeder may
-//!   have run it, and a retry under the same request id gets its first
-//!   answer.
+//!   key is sealed with the config's key before it is stored, and opened
+//!   only to hand it to the mirror.
+//! - **Commands** go through the mirror. One that is not answered in time
+//!   is [`CommandError::Unknown`], never a failure: the feeder may have run
+//!   it, and a retry under the same key gets its first answer.
 //! - **Live updates** go through the [`Hub`], which the server's event
-//!   stream reads.
+//!   stream reads: each feeder's mirror broadcast is forwarded into it,
+//!   and the hub assigns the stream ids.
 //!
-//! Time and randomness come in through [`Clock`] and [`Random`], so tests
-//! can fix them.
+//! Each domain has its own error enum ([`AccountError`], [`FeederError`],
+//! [`CommandError`]), wrapped in [`Error`]. Time and randomness come in
+//! through [`Clock`] and [`Random`], so tests can fix them.
 //!
 //! [API design]: ../../../../docs/api/README.md
 #![forbid(unsafe_code)]
 
-mod feeder;
+mod commands;
+mod error;
 mod feeders;
 mod hub;
 mod keys;
+mod updates;
 mod users;
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
-use wellfed_api::{FeederId, FeederRefusal, Settings};
-use wellfed_client::api::InviteText;
+use wellfed_api::{Connection as Link, FeederId};
+use wellfed_mirror::Mirror;
 use wellfed_store::Store;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use uuid::Uuid;
 
+pub use error::{AccountError, CommandError, Error, FeederError, Invalid, Result};
 pub use hub::{Hub, Resume, Stamped, StreamId, Subscription};
+pub use wellfed_mirror::{Clock, Discovery, Random, RandomFailed, SystemClock, SystemRandom};
 pub use users::SessionToken;
 
 /// A device request id.
-pub(crate) type RequestId = wellfed_proto::api::RequestId;
+pub(crate) type RequestId = wellfed_mirror::RequestId;
 
 /// A client's `Idempotency-Key`: a retried write carries the same one.
 pub type IdempotencyKey = [u8; 16];
-
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    #[error(transparent)]
-    Store(#[from] wellfed_store::Error),
-    #[error("setup is closed: an account exists")]
-    SetupClosed,
-    #[error("wrong name or password")]
-    BadCredentials,
-    #[error("{0}")]
-    Invalid(#[from] Invalid),
-    #[error("{0}")]
-    Invite(#[from] InviteText),
-    #[error("no such feeder")]
-    NotFound,
-    #[error("that feeder is already adopted")]
-    AlreadyAdopted,
-    #[error("the feeder dropped the invite: unknown, used or expired")]
-    InviteExpired,
-    #[error("reach the feeder: {0}")]
-    Unreachable(wellfed_connect::Error),
-    #[error("the server has no session with the feeder")]
-    Offline,
-    #[error("no answer in time: retry with the same key")]
-    Unknown,
-    #[error("the feeder refused: {0:?}")]
-    Refused(FeederRefusal),
-    #[error("the settings moved on to generation {}", .0.generation)]
-    Stale(Settings),
-    #[error("the feeder sent an answer that does not fit the request")]
-    Unexpected,
-    #[error("stored event {0} does not decode")]
-    Undecodable(u64),
-    #[error("the system random generator failed")]
-    Random,
-    #[error("hash a password: {0}")]
-    Hash(argon2::password_hash::Error),
-    #[error("a feeder key does not open with this server's key")]
-    Unseal,
-}
-
-pub type Result<T, E = Error> = std::result::Result<T, E>;
-
-/// A field that failed the server's checks.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
-pub enum Invalid {
-    #[error("a user name is 1-64 characters")]
-    UserName,
-    #[error("a password is at least 8 characters")]
-    Password,
-    #[error("a feeder name is 1-64 characters")]
-    FeederName,
-    #[error("the address is not an IP or IP:port")]
-    Address,
-    #[error("give the feeder's address: discovery is off")]
-    AddressRequired,
-    #[error("the volume is 0-100")]
-    Volume,
-    #[error("a page holds 1-500 events")]
-    Limit,
-    #[error("the server's label is 1-16 bytes with no NUL")]
-    Label,
-    #[error("an event cursor is at most 2^63 - 1")]
-    Cursor,
-}
-
-/// The wall clock.
-pub trait Clock: Send + Sync + 'static {
-    fn now(&self) -> Timestamp;
-}
-
-pub struct SystemClock;
-
-impl Clock for SystemClock {
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "the one place a server crate reads the wall clock"
-    )]
-    fn now(&self) -> Timestamp {
-        Timestamp::now()
-    }
-}
-
-/// Secret bytes: keys, session tokens, request ids, salts.
-pub trait Random: Send + Sync + 'static {
-    fn fill(&self, out: &mut [u8]) -> Result<()>;
-}
-
-pub struct SystemRandom;
-
-impl Random for SystemRandom {
-    fn fill(&self, out: &mut [u8]) -> Result<()> {
-        getrandom::fill(out).map_err(|_| Error::Random)
-    }
-}
-
-/// Whether a feeder whose address fails is looked up over mDNS.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Discovery {
-    Mdns,
-    Off,
-}
 
 pub struct Config {
     /// Seals the server's feeder keys at rest.
@@ -175,6 +75,23 @@ impl std::fmt::Debug for Config {
     }
 }
 
+impl Config {
+    /// What the mirror needs of it: no key, no label, no logins.
+    fn mirror(&self) -> wellfed_mirror::Config {
+        let timing = self.timing;
+        wellfed_mirror::Config {
+            zone: self.zone.clone(),
+            discovery: self.discovery,
+            timing: wellfed_mirror::Timing {
+                retry_min: timing.retry_min,
+                retry_max: timing.retry_max,
+                time_sync: timing.time_sync,
+                answer: timing.answer,
+            },
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Timing {
     /// The first reconnect delay, doubled after each failure.
@@ -191,17 +108,18 @@ pub struct Timing {
 
 impl Default for Timing {
     fn default() -> Self {
+        let mirror = wellfed_mirror::Timing::default();
         Self {
-            retry_min: Duration::from_secs(1),
-            retry_max: Duration::from_secs(60),
-            time_sync: Duration::from_secs(6 * 3600),
-            answer: wellfed_connect::ANSWER + Duration::from_secs(5),
+            retry_min: mirror.retry_min,
+            retry_max: mirror.retry_max,
+            time_sync: mirror.time_sync,
+            answer: mirror.answer,
             session: Duration::from_secs(30 * 24 * 3600),
         }
     }
 }
 
-/// What every task shares.
+/// What every use case shares.
 struct Shared {
     store: Store,
     config: Config,
@@ -234,7 +152,10 @@ fn time_ordered(at: Timestamp, bits: &[u8; 10]) -> Uuid {
 #[derive(Clone)]
 pub struct Service {
     shared: Arc<Shared>,
-    feeders: Arc<Mutex<HashMap<FeederId, feeder::Handle>>>,
+    mirror: Mirror,
+    /// Each feeder's link as the stream last told it, so a list never
+    /// shows a state the stream has not.
+    links: Arc<Mutex<HashMap<FeederId, Link>>>,
     adopting: Arc<tokio::sync::Mutex<()>>,
     cancel: CancellationToken,
     tasks: TaskTracker,
@@ -247,7 +168,7 @@ impl std::fmt::Debug for Service {
 }
 
 impl Service {
-    /// Start a task for every adopted feeder.
+    /// Start mirroring every adopted feeder.
     pub async fn start(
         store: Store,
         config: Config,
@@ -258,6 +179,15 @@ impl Service {
         if label.is_empty() || label.len() > 16 || label.contains(&0) {
             return Err(Invalid::Label.into());
         }
+
+        let cancel = CancellationToken::new();
+        let mirror = Mirror::new(
+            store.clone(),
+            config.mirror(),
+            Arc::clone(&clock),
+            Arc::clone(&random),
+            cancel.child_token(),
+        );
         let hub = Hub::new(clock.now());
         let service = Self {
             shared: Arc::new(Shared {
@@ -267,11 +197,13 @@ impl Service {
                 random,
                 hub,
             }),
-            feeders: Arc::new(Mutex::new(HashMap::new())),
+            mirror,
+            links: Arc::new(Mutex::new(HashMap::new())),
             adopting: Arc::new(tokio::sync::Mutex::new(())),
-            cancel: CancellationToken::new(),
+            cancel,
             tasks: TaskTracker::new(),
         };
+
         users::prepare().await?;
         for row in service.shared.store.feeders().await? {
             service.spawn(&row)?;
@@ -282,6 +214,7 @@ impl Service {
     /// Stop every task and wait for them, then close the store.
     pub async fn shutdown(&self) {
         self.cancel.cancel();
+        self.mirror.shutdown().await;
         self.tasks.close();
         self.tasks.wait().await;
         self.shared.store.close().await;
@@ -300,6 +233,15 @@ impl Service {
     pub(crate) fn request_id(&self) -> Result<RequestId> {
         self.shared.random()
     }
+
+    fn links(&self) -> MutexGuard<'_, HashMap<FeederId, Link>> {
+        lock(&self.links)
+    }
+}
+
+/// Insertions are whole, so a poisoned map is still consistent.
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 #[cfg(test)]

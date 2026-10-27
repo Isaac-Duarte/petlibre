@@ -4,20 +4,17 @@ name = "wellfed-service"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
-description = "The owner's server domain logic: users, feeder connections and event sync. No HTTP, no SQL"
+description = "The owner's server domain logic: users, adopted feeders, the commands sent to them and the live stream's hub. No HTTP, no SQL, no feeder sessions"
 publish.workspace = true
 
 [dependencies]
 argon2 = { workspace = true, features = ["std"] }
 chacha20poly1305 = { workspace = true, features = ["alloc"] }
-getrandom.workspace = true
 jiff.workspace = true
 wellfed-api.workspace = true
-wellfed-client.workspace = true
-wellfed-connect.workspace = true
+wellfed-formats.workspace = true
+wellfed-mirror.workspace = true
 wellfed-model.workspace = true
-wellfed-proto.workspace = true
-wellfed-session.workspace = true
 wellfed-store.workspace = true
 sha2.workspace = true
 thiserror.workspace = true

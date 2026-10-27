@@ -86,7 +86,7 @@ impl Service {
         if patch.volume.is_some_and(|volume| volume > 100) {
             return Err(Invalid::Volume.into());
         }
-        self.row(id).await?;
+        self.live_row(id).await?;
 
         let body = SettingsChange {
             base,
@@ -131,6 +131,7 @@ impl Service {
             CommandOutcome::Refused { refusal } => Err(CommandError::Refused(refusal).into()),
             CommandOutcome::Feeding { .. }
             | CommandOutcome::Fed { .. }
+            | CommandOutcome::Invited { .. }
             | CommandOutcome::Unrecorded => Err(CommandError::Unexpected.into()),
         }
     }
@@ -142,7 +143,7 @@ impl Service {
         locked: bool,
         key: Option<IdempotencyKey>,
     ) -> Result<()> {
-        self.row(id).await?;
+        self.live_row(id).await?;
 
         let recorded = self
             .journaled(Write {
@@ -154,15 +155,7 @@ impl Service {
                 op: Op::SetLock { locked },
             })
             .await?;
-
-        match recorded.outcome {
-            CommandOutcome::Done => Ok(()),
-            CommandOutcome::Refused { refusal } => Err(CommandError::Refused(refusal).into()),
-            CommandOutcome::Settings { .. }
-            | CommandOutcome::Feeding { .. }
-            | CommandOutcome::Fed { .. }
-            | CommandOutcome::Unrecorded => Err(CommandError::Unexpected.into()),
-        }
+        done(&recorded.outcome)
     }
 
     async fn read_settings(&self, id: FeederId) -> Result<Settings> {
@@ -180,13 +173,26 @@ impl Service {
 
     /// Send a read to the feeder through the mirror and wait for its
     /// answer.
-    async fn ask(&self, id: FeederId, request: RequestId, op: Op) -> Result<Answer> {
+    pub(crate) async fn ask(&self, id: FeederId, request: RequestId, op: Op) -> Result<Answer> {
         Ok(self.mirror.ask(id, request, op).await?)
     }
 }
 
+/// A write that takes effect or is refused, and has no answer beyond.
+pub(crate) fn done(outcome: &CommandOutcome) -> Result<()> {
+    match outcome {
+        CommandOutcome::Done => Ok(()),
+        CommandOutcome::Refused { refusal } => Err(CommandError::Refused(*refusal).into()),
+        CommandOutcome::Settings { .. }
+        | CommandOutcome::Feeding { .. }
+        | CommandOutcome::Fed { .. }
+        | CommandOutcome::Invited { .. }
+        | CommandOutcome::Unrecorded => Err(CommandError::Unexpected.into()),
+    }
+}
+
 /// The error for an answer that is not the one asked for.
-fn refused(answer: &Answer) -> Error {
+pub(crate) fn refused(answer: &Answer) -> Error {
     let error = match answer {
         Answer::Refused(refusal) => CommandError::Refused((*refusal).into()),
         _ => CommandError::Unexpected,

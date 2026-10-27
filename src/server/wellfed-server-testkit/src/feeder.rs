@@ -12,7 +12,7 @@ pub use wellfed_feeder_sim::banks::Banks;
 pub use wellfed_feeder_sim::flash::Flash;
 pub use wellfed_feeder_sim::harness::{Relay, Running};
 pub use wellfed_feeder_sim::serve::Control;
-use wellfed_model::{Answer, ClientRole, Op, TraceSummary};
+use wellfed_model::{Answer, ClientRole, Joined, Op, TraceSummary};
 use wellfed_proto::api as proto;
 use wellfed_proto::trace;
 use wellfed_session::noise::Keypair;
@@ -169,4 +169,40 @@ pub fn store_trace(flash: &Rc<Flash>, feed: u32) -> TraceSummary {
     wellfed_feeder_sim::harness::store_trace(flash, &summary, body.bytes())
         .expect("the simulator's trace ring takes the trace");
     summary.into()
+}
+
+/// A phone's public key, from its secret.
+pub fn phone_key(secret: [u8; 32]) -> [u8; 32] {
+    *Keypair::from_secret(secret).public()
+}
+
+/// Join the simulator as a phone with `secret`, redeeming `invite` (the
+/// text the server's phone invite answered): the role it enrolled with.
+pub async fn join_phone(sim: &Running, invite: &str, secret: [u8; 32]) -> ClientRole {
+    let invite = Invite::parse(invite).expect("the server's invite parses");
+    let keys = Keypair::from_secret(secret);
+    let joined = wellfed_connect::join(&keys, invite, "phone", sim.address, [0x77; 32])
+        .await
+        .expect("the phone redeems the invite");
+    match joined {
+        Joined::Enrolled { role } => role,
+        Joined::Refused(refusal) => panic!("the feeder refused the phone: {refusal:?}"),
+    }
+}
+
+/// The public keys in the simulator's client table, as its owner reads
+/// them.
+pub async fn client_keys(sim: &Running) -> Vec<[u8; 32]> {
+    static IDS: AtomicU8 = AtomicU8::new(0x10);
+    let id = [IDS.fetch_add(1, Ordering::Relaxed); 16];
+
+    let mut connection = open_owner(sim).await;
+    let answer = connection
+        .ask(id, &Op::ListClients)
+        .await
+        .expect("the simulator lists its clients");
+    let Answer::Clients(clients) = answer else {
+        panic!("a client list answered {answer:?}");
+    };
+    clients.into_iter().map(|client| client.key.0).collect()
 }

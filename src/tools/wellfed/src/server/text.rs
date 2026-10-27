@@ -123,6 +123,9 @@ pub(super) fn outcome(outcome: &CommandOutcome) -> String {
         CommandOutcome::Settings { settings: s } => format!("settings: {}", settings(s)),
         CommandOutcome::Refused { refusal } => format!("refused: {}", word(refusal)),
         CommandOutcome::Feeding { feed } => format!("feed {feed} running"),
+        CommandOutcome::Invited { invite, seconds } => {
+            format!("invite {invite} made, live {seconds} s")
+        }
         CommandOutcome::Fed {
             feed,
             requested,

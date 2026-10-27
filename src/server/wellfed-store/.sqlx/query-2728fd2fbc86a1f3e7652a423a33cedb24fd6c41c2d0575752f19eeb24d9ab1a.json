@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT key FROM kept_clients WHERE feeder_id = ? ORDER BY kept_ms",
+  "describe": {
+    "columns": [
+      {
+        "name": "key",
+        "ordinal": 0,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "kept_clients",
+            "name": "key"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "2728fd2fbc86a1f3e7652a423a33cedb24fd6c41c2d0575752f19eeb24d9ab1a"
+}

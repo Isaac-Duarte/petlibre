@@ -2,7 +2,10 @@
 //! journal entry once the feeder has reserved the feed, and the result
 //! reaches the stream and `GET /commands/{key}`. Two submits under one key
 //! feed once, a key reused for another feed is `422`, a member may feed
-//! and a viewer may not, and a cancel goes through the journal.
+//! and a viewer may not, a cancel goes through the journal, and a feed
+//! whose answer is lost is settled from its `Fed` event, never resent.
+
+use std::time::Duration;
 
 use wellfed_api::{
     AdoptFeeder, ClientRole, Command, CommandKind, CommandOutcome, CommandState, Connection,
@@ -10,8 +13,10 @@ use wellfed_api::{
     Role, StreamEvent, StreamQuery,
 };
 use wellfed_server_client::{Client, Method, StatusCode, Updates};
-use wellfed_server_testkit::feeder::{self, Control, Flash, Running};
-use wellfed_server_testkit::{TestServer, WAIT, ada_setup, local, refused, refused_for, until};
+use wellfed_server_testkit::feeder::{self, Control, Flash, Relay, Running};
+use wellfed_server_testkit::{
+    TestServer, WAIT, ada_setup, config, local, refused, refused_for, until,
+};
 use uuid::Uuid;
 
 fn key(n: u128) -> Uuid {
@@ -221,6 +226,70 @@ fn a_member_feeds_and_cancels_through_the_journal_and_a_viewer_may_not() {
             })
         );
         assert_eq!(feeder::feeds(&flash), 1);
+        server.stop().await;
+        sim.stop().await;
+    });
+}
+
+/// The server's half of the two-path rule over HTTP: a feed whose answer
+/// is lost is answered `outcome_unknown`, a retry under its key sends
+/// nothing, and the feed is settled from its `Fed` event, readable by key
+/// and reported on the stream, so a client resolves it without resending
+/// it on either path.
+#[test]
+fn a_feed_whose_answer_is_lost_is_unknown_never_resent_and_settled_from_its_fed_event() {
+    local(async {
+        let flash = Flash::memory();
+        let sim = feeder::start_on(&flash).await;
+        let relay = Relay::start(sim.address).await;
+        let mut config = config();
+        config.timing.answer = Duration::from_secs(2);
+        let server = TestServer::start_with(config).await;
+        let mut http = server.client();
+        http.setup(&ada_setup()).await.unwrap();
+        let kitchen = http
+            .adopt(&AdoptFeeder {
+                invite: feeder::invite(&sim, ClientRole::Server).await,
+                name: "kitchen".into(),
+                address: Some(relay.address.to_string()),
+            })
+            .await
+            .unwrap()
+            .id;
+        online(&http).await;
+        let mut updates = http.stream(&StreamQuery::default(), None).await.unwrap();
+
+        relay.hold_answers();
+        refused(
+            http.feed(kitchen, 1, key(7)).await,
+            StatusCode::GATEWAY_TIMEOUT,
+            ErrorCode::OutcomeUnknown,
+        );
+        let entry = http.command(key(7)).await.unwrap();
+        assert_eq!((entry.state, entry.feed), (CommandState::Unknown, None));
+        refused_for(
+            "a retry of the unknown feed",
+            http.feed(kitchen, 1, key(7)).await,
+            StatusCode::GATEWAY_TIMEOUT,
+            ErrorCode::OutcomeUnknown,
+        );
+
+        relay.cut();
+        relay.resume();
+        let settled = tokio::time::timeout(WAIT, next_resolved(&mut updates))
+            .await
+            .expect("the feed's settlement reaches the stream");
+        let fed = CommandOutcome::Fed {
+            feed: 1,
+            requested: 1,
+            completed: 1,
+            outcome: FeedOutcome::Done,
+            reason: FeedReason::Done,
+        };
+        assert_eq!((settled.key, settled.outcome.clone()), (key(7), Some(fed)));
+        assert_eq!(http.command(key(7)).await.unwrap(), settled);
+        assert_eq!(http.feed(kitchen, 1, key(7)).await.unwrap(), settled);
+        assert_eq!(feeder::feeds(&flash), 1, "fed once");
         server.stop().await;
         sim.stop().await;
     });

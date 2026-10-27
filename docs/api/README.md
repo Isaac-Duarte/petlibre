@@ -184,6 +184,10 @@ The danger is a retry that crosses paths: the server and the phone send differen
 
 This costs the server an operation for everything the app does, and the feeder a client slot per phone (8 slots: the server, the CLI and up to six phones).
 
+The server enforces its half. A write whose answer was lost is answered `504 outcome_unknown` and kept unknown under its `Idempotency-Key`: a retry under that key reads the journal and sends nothing new for a feed. A feed is settled from its `Fed` event (by its number, or the one unclaimed `Fed` event after it), readable at `GET /commands/{key}` and reported on the stream as a `command` event, so a client resolves a feed it lost on either path without resending it. The app's half (holding an uncertain write to its path) is the app's.
+
+Every device operation the app makes has a server route, or a stated reason it has none, in `wellfed_service::parity`: an exhaustive match over `Op`, so a new operation does not build until it is given one, and a test checks each route is in `openapi.json`. Routes that need the feeder's owner role (Wi-Fi, reboot, revoking a client, a phone's invite, the zone's rule, installs) need the server adopted with an owner's invite; with the `server` role the feeder refuses them `forbidden` ([open question](../../SERVER_SPEC.md#open-questions)).
+
 ### First resources
 
 ```text
@@ -201,7 +205,12 @@ GET    /api/v1/feeders/{id}/plans            PUT with If-Match
 GET    /api/v1/feeders/{id}/settings         PATCH with If-Match
 GET    /api/v1/feeders/{id}/events           ?after=&limit=&kind=
 GET    /api/v1/feeders/{id}/samples          ?metric=&from=&to=&resolution=raw|hour
-GET    /api/v1/feeders/{id}/clients          clients the feeder knows; DELETE revokes
+GET    /api/v1/feeders/{id}/clients          clients the feeder knows, and whose each is   DELETE /clients/{key} revokes, POST /clients/{key}/keep
+POST   /api/v1/feeders/{id}/invites          an invite for the caller's own phone (a token of an owner or member with no expiry)
+GET    /api/v1/phones                        the phones' keys the server invited, and any revoke still owed
+PUT    /api/v1/feeders/{id}/wifi             If-Match with the status's wifi_generation (owners)
+POST   /api/v1/feeders/{id}/reboot           never resent when unknown (owners)   POST /play: a tune
+DELETE /api/v1/feeders/{id}                  remove: revoke the server's key, archive; adopting again restores it
 GET    /api/v1/feeders/{id}/food             food remaining and refill estimate (derived)
 GET    /api/v1/pets/{id}/intake              grams and calories against target  ?from=&to=
 GET    /api/v1/commands                      the command journal  ?feeder=&state=&after=&limit=
@@ -244,7 +253,7 @@ GET    /health                               no auth; liveness and version
 `wellfed server …` speaks this API through `wellfed-server-client` alone (it reaches the bodies as `wellfed_server_client::api`), beside the device commands, and each command takes one path ([two paths, one feed](#two-paths-one-feed)).
 
 - **Login.** `wellfed server login --server URL --name NAME` reads the password from standard input, opens a session, makes a token, keeps it in `private/wellfed-server.json` (`--token-file`) mode 0600 beside the device API's key file, and ends the session. `logout` revokes the token and deletes the file. Every other verb sends the token.
-- **Verbs.** `feeders`, `status`, `settings`, `lock`, `feed` and `cancel-feed` (each takes `--feeder` with an id or a name when the server holds more than one), `events` (with `--follow` over the stream), `command <key>` and `commands` (the journal), `users` (list, a role or an expiry, delete; adding an account needs a login), `tokens` (list, revoke), `releases` (list, upload, check), `install` (a release, followed on the stream to its end; without one, the last install) and `stock` (the kept backup, the feeder's banks and the last restore; `read`, `upload <file>`, `export --output <file>`, and `restore --version <n>`, which signs here, see [stock](#stock-backup-and-restore)). `clients`, `revoke`, `reboot` and `export` join as their routes land.
+- **Verbs.** `feeders`, `status`, `settings`, `lock`, `feed` and `cancel-feed` (each takes `--feeder` with an id or a name when the server holds more than one), `events` (with `--follow` over the stream), `command <key>` and `commands` (the journal), `users` (list, a role or an expiry, delete; adding an account needs a login), `tokens` (list, revoke), `releases` (list, upload, check), `install` (a release, followed on the stream to its end; without one, the last install), `stock` (the kept backup, the feeder's banks and the last restore; `read`, `upload <file>`, `export --output <file>`, and `restore --version <n>`, which signs here, see [stock](#stock-backup-and-restore)), `clients` (whose each client is), `revoke` (a client by at least 8 hex digits of its key) and `reboot` (never sent again when its outcome is unknown). `export` joins as its route lands.
 - **Output.** Text by default; with `--json`, the API's bodies, one per line, a refusal's problem included. The exit status is 0 on success, 1 on an error and 3 when an outcome is unknown.
 - **Uncertain writes.** A write goes out once under a fresh `Idempotency-Key`. When its outcome is unknown (`504 outcome_unknown`, a `500`, or an answer lost on the way) the command prints the key and `wellfed server command <key>`, exits 3, and sends nothing more: not again under a new key, and never over the device API. `command <key>` reads the entry the feeder's history settles, exiting 3 until it does. A feed waits on the stream for its result, opened before the feed is sent; an `uncertain` or `unrecorded` result exits 3 too.
 

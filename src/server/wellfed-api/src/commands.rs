@@ -34,6 +34,18 @@ pub enum CommandKind {
     Feed,
     /// Stopping a feed that runs.
     Cancel,
+    /// An invite for the caller's own phone.
+    Invite,
+    /// Revoking one of the feeder's clients.
+    Revoke,
+    /// The feeder's Wi-Fi credentials.
+    Wifi,
+    /// Restarting the feeder.
+    Reboot,
+    /// Playing a tune.
+    Play,
+    /// Revoking the server's own key as the feeder is removed.
+    Remove,
 }
 
 impl CommandKind {
@@ -44,17 +56,31 @@ impl CommandKind {
             Self::Lock => "lock",
             Self::Feed => "feed",
             Self::Cancel => "cancel",
+            Self::Invite => "invite",
+            Self::Revoke => "revoke",
+            Self::Wifi => "wifi",
+            Self::Reboot => "reboot",
+            Self::Play => "play",
+            Self::Remove => "remove",
         }
     }
 
+    /// Every kind, in the order they were added.
+    pub const ALL: [Self; 10] = [
+        Self::Settings,
+        Self::Lock,
+        Self::Feed,
+        Self::Cancel,
+        Self::Invite,
+        Self::Revoke,
+        Self::Wifi,
+        Self::Reboot,
+        Self::Play,
+        Self::Remove,
+    ];
+
     pub fn from_code(code: &str) -> Option<Self> {
-        match code {
-            "settings" => Some(Self::Settings),
-            "lock" => Some(Self::Lock),
-            "feed" => Some(Self::Feed),
-            "cancel" => Some(Self::Cancel),
-            _ => None,
-        }
+        Self::ALL.into_iter().find(|kind| kind.code() == code)
     }
 }
 
@@ -109,6 +135,9 @@ pub enum CommandOutcome {
     Settings { settings: Settings },
     /// The feeder refused it; nothing ran.
     Refused { refusal: FeederRefusal },
+    /// The feeder made the invite under this number, for this many
+    /// seconds. Its secret went to the caller alone and is not kept.
+    Invited { invite: u32, seconds: u16 },
     /// The feeder reserved the feed under this number and runs it; its
     /// result follows as `fed`.
     Feeding { feed: u32 },
@@ -134,7 +163,11 @@ impl CommandOutcome {
     pub const fn feed(&self) -> Option<u32> {
         match self {
             Self::Feeding { feed } | Self::Fed { feed, .. } => Some(*feed),
-            Self::Done | Self::Settings { .. } | Self::Refused { .. } | Self::Unrecorded => None,
+            Self::Done
+            | Self::Settings { .. }
+            | Self::Refused { .. }
+            | Self::Invited { .. }
+            | Self::Unrecorded => None,
         }
     }
 }

@@ -16,7 +16,8 @@ const NEWEST: u64 = i64::MAX.unsigned_abs();
 
 impl Service {
     /// Adopt a feeder: redeem the invite with a new key of the server's
-    /// own, store the key sealed, and start mirroring the feeder.
+    /// own, store the key sealed, and start mirroring the feeder. A feeder
+    /// that was removed comes back under its id, its history continuing.
     ///
     /// Adoptions run one at a time: two racing for one feeder would both
     /// enroll a key, and the loser's would hold a client slot on the feeder
@@ -25,9 +26,11 @@ impl Service {
         let name = feeder_name(&request.name)?;
         let invite = Invite::parse(&request.invite).map_err(FeederError::from)?;
         let _one_at_a_time = self.adopting.lock().await;
-        if self.shared.store.feeder_adopted(&invite.feeder).await? {
-            return Err(FeederError::AlreadyAdopted.into());
-        }
+        let archived = match self.shared.store.feeder_by_identity(&invite.feeder).await? {
+            Some(id) if self.row(id).await?.archived.is_some() => Some(id),
+            Some(_) => return Err(FeederError::AlreadyAdopted.into()),
+            None => None,
+        };
         let identity = invite.feeder;
         let address = self
             .mirror
@@ -38,23 +41,30 @@ impl Service {
         let label = &self.shared.config.label;
         let enrolled = self.mirror.enroll(invite, label, address, secret).await?;
 
-        let id = FeederId(self.shared.new_id()?);
+        let id = match archived {
+            Some(id) => id,
+            None => FeederId(self.shared.new_id()?),
+        };
         let nonce = self.shared.random()?;
         let sealed = keys::seal(&self.shared.config.key, id, &identity, &secret, nonce)?;
         let address = address.to_string();
-        let inserted = self
-            .shared
-            .store
-            .insert_feeder(NewFeeder {
-                id,
-                identity,
-                name,
-                role: enrolled.role,
-                address: Some(&address),
-                key: sealed,
-                created: self.shared.clock.now(),
-            })
-            .await;
+        let feeder = NewFeeder {
+            id,
+            identity,
+            name,
+            role: enrolled.role,
+            address: Some(&address),
+            key: sealed,
+            created: self.shared.clock.now(),
+        };
+        let inserted = match archived {
+            Some(_) => match self.shared.store.readopt_feeder(feeder).await {
+                Ok(true) => Ok(()),
+                Ok(false) => Err(wellfed_store::Error::Duplicate("feeder")),
+                Err(error) => Err(error),
+            },
+            None => self.shared.store.insert_feeder(feeder).await,
+        };
         if let Err(error) = inserted {
             // The feeder holds the key now, but the server cannot use it.
             warn!(
@@ -126,9 +136,21 @@ impl Service {
         })
     }
 
+    /// The feeder as the server holds it, archived or not: a removed
+    /// feeder's history stays readable.
     pub(crate) async fn row(&self, id: FeederId) -> Result<FeederRow> {
         let row = self.shared.store.feeder(id).await?;
         row.ok_or_else(|| FeederError::NotFound.into())
+    }
+
+    /// The feeder, refused [`FeederError::Archived`] once it is removed:
+    /// what is sent to a feeder needs it mirrored.
+    pub(crate) async fn live_row(&self, id: FeederId) -> Result<FeederRow> {
+        let row = self.row(id).await?;
+        if row.archived.is_some() {
+            return Err(FeederError::Archived.into());
+        }
+        Ok(row)
     }
 
     pub(crate) fn view(&self, row: FeederRow) -> Feeder {
@@ -142,6 +164,7 @@ impl Service {
             connection,
             synced: row.synced.map(|synced| synced.seq),
             epoch: row.synced.map(|synced| synced.epoch),
+            archived: row.archived,
         }
     }
 }

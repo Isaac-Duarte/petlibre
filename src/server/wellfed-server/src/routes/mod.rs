@@ -2,9 +2,11 @@
 //! Each parses, authorizes, calls one service method and maps the result;
 //! the OpenAPI document comes from their annotations.
 
+pub(crate) mod admin;
 pub(crate) mod audit;
 pub(crate) mod auth;
 pub(crate) mod backups;
+pub(crate) mod clients;
 pub(crate) mod commands;
 pub(crate) mod diagnostics;
 pub(crate) mod events;

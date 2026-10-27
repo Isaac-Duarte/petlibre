@@ -24,6 +24,13 @@
 //!   it. Every write is recorded in the command journal before it is sent,
 //!   so a retry under the same key gets its first answer from the journal,
 //!   however many writes the feeder has seen since.
+//! - **Phones** of owners and members keep a key of their own on each
+//!   feeder, from an invite the server makes and records as their
+//!   account's and token's; an account change that takes their direct
+//!   access away revokes those keys on every feeder, retried at each
+//!   reconnect until it lands. The feeders' clients, Wi-Fi, restart and
+//!   removal go through the journal like every write, and [`parity`]
+//!   gives every device operation its route or the reason it has none.
 //! - **Feeds** are journalled writes answered with the feeder's number for
 //!   the feed, and settled from the feeder's history: its `Fed` event. An
 //!   uncertain feed is never sent again.
@@ -50,16 +57,20 @@
 //!   run. The server's supervisor decides when.
 //!
 //! Each domain has its own error enum ([`AccountError`],
-//! [`TokenError`], [`HouseholdError`], [`FeederError`], [`CommandError`],
-//! [`InstallError`], [`StockError`], [`OwnerDataError`]), wrapped in [`Error`]. Time and randomness come in
-//! through [`Clock`] and [`Random`], so tests can fix them.
+//! [`TokenError`], [`HouseholdError`], [`FeederError`], [`ClientError`],
+//! [`CommandError`], [`InstallError`], [`StockError`], [`OwnerDataError`]),
+//! wrapped in [`Error`]. Time and randomness come in through [`Clock`] and
+//! [`Random`], so tests can fix them.
 //!
 //! [API design]: ../../../../docs/api/README.md
 #![forbid(unsafe_code)]
 
+mod admin;
 mod audit;
 mod backups;
+mod clients;
 mod commands;
+mod config;
 mod diagnostics;
 mod error;
 mod feeders;
@@ -74,8 +85,10 @@ mod journal;
 mod keys;
 mod limits;
 mod page;
+mod parity;
 mod permissions;
 mod pets;
+mod phones;
 mod releases;
 mod samples;
 mod sessions;
@@ -85,7 +98,6 @@ mod updates;
 mod users;
 
 use std::collections::HashMap;
-use std::num::NonZeroU32;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
@@ -99,12 +111,14 @@ use tokio_util::task::TaskTracker;
 use uuid::Uuid;
 
 pub use backups::{BackupError, Backups};
+pub use config::{Config, Timing};
 pub use diagnostics::LogFollow;
 pub use error::{
-    AccountError, CommandError, Error, FeederError, HouseholdError, InstallError, Invalid,
-    OwnerDataError, Result, StockError, TokenError,
+    AccountError, ClientError, CommandError, Error, FeederError, HouseholdError, InstallError,
+    Invalid, OwnerDataError, Result, StockError, TokenError,
 };
 pub use hub::{Hub, Resume, Stamped, StreamId, Subscription};
+pub use parity::{Method, NoRoute, Parity, parity};
 pub use permissions::{Permission, can};
 pub use wellfed_mirror::{
     Clock, Diagnostics, Discovery, Random, RandomFailed, SystemClock, SystemRandom, ZoneError,
@@ -122,89 +136,6 @@ pub(crate) type RequestId = wellfed_mirror::RequestId;
 
 /// A client's `Idempotency-Key`: a retried write carries the same one.
 pub type IdempotencyKey = [u8; 16];
-
-pub struct Config {
-    /// Seals the server's feeder keys at rest.
-    pub key: [u8; 32],
-    /// The host's IANA zone, offered at setup as the household's.
-    pub host_zone: Option<String>,
-    /// The label the server enrolls under on each feeder (1-16 bytes).
-    pub label: String,
-    pub discovery: Discovery,
-    pub timing: Timing,
-    /// Whether each feeder's feed traces and statistics are read.
-    pub diagnostics: Diagnostics,
-    /// The release cache, the keys a release may be signed with, and
-    /// whether releases are fetched.
-    pub releases: ReleasesConfig,
-    /// How many days raw samples are kept; forever when `None`. Hourly
-    /// rollups are always kept.
-    pub raw_sample_days: Option<NonZeroU32>,
-    pub backups: Backups,
-}
-
-impl std::fmt::Debug for Config {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Config")
-            .field("host_zone", &self.host_zone)
-            .field("label", &self.label)
-            .field("discovery", &self.discovery)
-            .field("timing", &self.timing)
-            .field("diagnostics", &self.diagnostics)
-            .field("releases", &self.releases)
-            .field("raw_sample_days", &self.raw_sample_days)
-            .field("backups", &self.backups)
-            .finish_non_exhaustive()
-    }
-}
-
-impl Config {
-    /// What the mirror needs of it: no key, no label, no logins.
-    fn mirror(&self) -> wellfed_mirror::Config {
-        let timing = self.timing;
-        wellfed_mirror::Config {
-            discovery: self.discovery,
-            timing: wellfed_mirror::Timing {
-                retry_min: timing.retry_min,
-                retry_max: timing.retry_max,
-                time_sync: timing.time_sync,
-                answer: timing.answer,
-                sample_wait: timing.sample_wait,
-            },
-            diagnostics: self.diagnostics,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct Timing {
-    /// The first reconnect delay, doubled after each failure.
-    pub retry_min: Duration,
-    pub retry_max: Duration,
-    /// How often a connected feeder's clock is set again.
-    pub time_sync: Duration,
-    /// How long a caller waits for a command's answer: the connection's
-    /// own answer timeout, and some room to queue behind another command.
-    pub answer: Duration,
-    /// The longest a received sample waits to be written with others.
-    pub sample_wait: Duration,
-    /// How long a login lasts after its last use.
-    pub session: Duration,
-}
-
-impl Default for Timing {
-    fn default() -> Self {
-        let mirror = wellfed_mirror::Timing::default();
-        Self {
-            retry_min: mirror.retry_min,
-            retry_max: mirror.retry_max,
-            time_sync: mirror.time_sync,
-            answer: mirror.answer,
-            sample_wait: mirror.sample_wait,
-            session: Duration::from_secs(30 * 24 * 3600),
-        }
-    }
-}
 
 /// What every use case shares.
 struct Shared {
@@ -251,6 +182,7 @@ pub struct Service {
     /// Held while a feeder's feeds are settled from its history, so its
     /// watcher and a feed's answer take turns.
     resolving: Arc<Mutex<HashMap<FeederId, Arc<tokio::sync::Mutex<()>>>>>,
+    revocations: phones::Revocations,
     adopting: Arc<tokio::sync::Mutex<()>>,
     /// Household changes run one at a time, so the stored zone and the
     /// mirror's are always the last change's.
@@ -309,6 +241,7 @@ impl Service {
             links: Arc::new(Mutex::new(HashMap::new())),
             fingerprints: Arc::new(Mutex::new(HashMap::new())),
             resolving: Arc::new(Mutex::new(HashMap::new())),
+            revocations: phones::Revocations::default(),
             adopting: Arc::new(tokio::sync::Mutex::new(())),
             household: Arc::new(tokio::sync::Mutex::new(())),
             backing_up: Arc::new(tokio::sync::Mutex::new(())),
@@ -326,8 +259,13 @@ impl Service {
         // build of the projections.
         service.mirror.refresh_projections().await?;
         service.mirror.refresh_samples().await?;
+        // Marked before the feeders connect, which revokes them.
+        let now = service.shared.clock.now();
+        service.shared.store.reconcile_phones(now).await?;
         for row in service.shared.store.feeders().await? {
-            service.spawn(&row).await?;
+            if row.archived.is_none() {
+                service.spawn(&row).await?;
+            }
         }
         Ok(service)
     }

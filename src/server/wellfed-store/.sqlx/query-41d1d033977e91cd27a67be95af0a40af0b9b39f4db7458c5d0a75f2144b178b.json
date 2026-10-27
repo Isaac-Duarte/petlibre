@@ -1,0 +1,134 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT feeder_id AS \"feeder_id: Uuid\", key, user_id AS \"user_id: Uuid\",\n                      token_id AS \"token_id: Uuid\", role, invited_ms, invite_until_ms,\n                      revoke, revoke_ms, attempt\n               FROM phone_keys WHERE feeder_id = ? AND key = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "feeder_id: Uuid",
+        "ordinal": 0,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "phone_keys",
+            "name": "feeder_id"
+          }
+        }
+      },
+      {
+        "name": "key",
+        "ordinal": 1,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "phone_keys",
+            "name": "key"
+          }
+        }
+      },
+      {
+        "name": "user_id: Uuid",
+        "ordinal": 2,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "phone_keys",
+            "name": "user_id"
+          }
+        }
+      },
+      {
+        "name": "token_id: Uuid",
+        "ordinal": 3,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "phone_keys",
+            "name": "token_id"
+          }
+        }
+      },
+      {
+        "name": "role",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "phone_keys",
+            "name": "role"
+          }
+        }
+      },
+      {
+        "name": "invited_ms",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "phone_keys",
+            "name": "invited_ms"
+          }
+        }
+      },
+      {
+        "name": "invite_until_ms",
+        "ordinal": 6,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "phone_keys",
+            "name": "invite_until_ms"
+          }
+        }
+      },
+      {
+        "name": "revoke",
+        "ordinal": 7,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "phone_keys",
+            "name": "revoke"
+          }
+        }
+      },
+      {
+        "name": "revoke_ms",
+        "ordinal": 8,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "phone_keys",
+            "name": "revoke_ms"
+          }
+        }
+      },
+      {
+        "name": "attempt",
+        "ordinal": 9,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "phone_keys",
+            "name": "attempt"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "41d1d033977e91cd27a67be95af0a40af0b9b39f4db7458c5d0a75f2144b178b"
+}

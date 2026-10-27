@@ -77,8 +77,8 @@ struct ApiDoc;
 
 fn router() -> OpenApiRouter<AppState> {
     use routes::{
-        audit, auth, backups, commands, diagnostics, events, feeders, feeds, foods, health,
-        household, installs, pets, releases, samples, stock, stream, tokens, users,
+        admin, audit, auth, backups, clients, commands, diagnostics, events, feeders, feeds, foods,
+        health, household, installs, pets, releases, samples, stock, stream, tokens, users,
     };
 
     let small = OpenApiRouter::new()
@@ -95,9 +95,17 @@ fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(tokens::revoke_token))
         .routes(routes!(household::household, household::update_household))
         .routes(routes!(feeders::feeders, feeders::adopt))
-        .routes(routes!(feeders::feeder))
+        .routes(routes!(feeders::feeder, admin::remove))
         .routes(routes!(feeders::settings, feeders::put_settings))
         .routes(routes!(feeders::lock))
+        .routes(routes!(clients::clients))
+        .routes(routes!(clients::revoke_client))
+        .routes(routes!(clients::keep_client))
+        .routes(routes!(clients::invite_phone))
+        .routes(routes!(clients::phones))
+        .routes(routes!(admin::put_wifi))
+        .routes(routes!(admin::reboot))
+        .routes(routes!(admin::play))
         .routes(routes!(feeds::feed))
         .routes(routes!(feeds::cancel))
         .routes(routes!(installs::install, installs::install_state))

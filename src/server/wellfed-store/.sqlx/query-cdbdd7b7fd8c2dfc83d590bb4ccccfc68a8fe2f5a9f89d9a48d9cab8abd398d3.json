@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM kept_clients WHERE feeder_id = ? AND key = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "cdbdd7b7fd8c2dfc83d590bb4ccccfc68a8fe2f5a9f89d9a48d9cab8abd398d3"
+}

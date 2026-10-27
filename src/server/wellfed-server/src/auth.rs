@@ -140,6 +140,7 @@ pub(crate) mod need {
         Read,
         Feed,
         Control,
+        InviteOwnPhone,
         OwnHistory,
         OwnAccount,
         Users,

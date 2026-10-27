@@ -30,19 +30,21 @@ use wellfed_api::{
 };
 use wellfed_formats::canonical::canonical_of;
 use wellfed_mirror::AskError;
-use wellfed_model::{Answer, Op};
+use wellfed_model::{Answer, Invite, Op};
 use wellfed_store::{CommandFilter, CommandRow, Journaled, NewCommand, Synced};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use tracing::warn;
 use uuid::Uuid;
 
+use self::id::write_id;
 use self::retry::{Retry, retry};
 use crate::{
     Caller, CommandError, Error, IdempotencyKey, Invalid, Permission, RequestId, Result, Service,
     can,
 };
 
+mod id;
 mod retry;
 
 const PAGE: u32 = 100;
@@ -68,6 +70,9 @@ pub(crate) struct Write<'a, B> {
 pub(crate) struct Recorded {
     pub(crate) key: IdempotencyKey,
     pub(crate) outcome: CommandOutcome,
+    /// An invite's secret, from a fresh answer only: the journal never
+    /// holds it.
+    pub(crate) invite: Option<Invite>,
 }
 
 /// Whether this attempt made the entry: only then may a send that never
@@ -189,7 +194,13 @@ impl Service {
                     return Err(CommandError::KeyReused.into());
                 }
                 match retry(&row) {
-                    Retry::Replay(outcome) => return Ok(Recorded { key, outcome }),
+                    Retry::Replay(outcome) => {
+                        return Ok(Recorded {
+                            key,
+                            outcome,
+                            invite: None,
+                        });
+                    }
                     Retry::Unknown => return Err(CommandError::Unknown.into()),
                     Retry::Resend(request) => (request, Attempt::Retry),
                 }
@@ -202,16 +213,18 @@ impl Service {
         let sending = self
             .tasks
             .spawn(async move { service.send(key, feeder, request, op, attempt).await });
-        let Ok(outcome) = sending.await else {
+        let Ok(sent) = sending.await else {
             // The task died with the write possibly sent and nothing
             // recorded: say unknown now rather than leave it `sent`, which
             // a retry would take for a send still in flight.
             self.unknown_best_effort(&key).await;
             return Err(CommandError::Unknown.into());
         };
+        let (outcome, invite) = sent?;
         Ok(Recorded {
             key,
-            outcome: outcome?,
+            outcome,
+            invite,
         })
     }
 
@@ -244,7 +257,8 @@ impl Service {
         Ok(())
     }
 
-    /// Send one attempt and record what came of it.
+    /// Send one attempt and record what came of it: the outcome, and an
+    /// invite's secret beside it.
     async fn send(
         &self,
         key: IdempotencyKey,
@@ -252,13 +266,21 @@ impl Service {
         request: RequestId,
         op: Op,
         attempt: Attempt,
-    ) -> Result<CommandOutcome> {
+    ) -> Result<(CommandOutcome, Option<Invite>)> {
         let answer = self.mirror.ask(feeder, request, op).await;
         let store = &self.shared.store;
         let now = self.shared.clock.now();
 
+        let mut invite = None;
         let outcome = match answer {
             Ok(Answer::Done { .. }) => CommandOutcome::Done,
+            Ok(Answer::Invite(made)) => {
+                invite = Some(made);
+                CommandOutcome::Invited {
+                    invite: made.id,
+                    seconds: made.seconds,
+                }
+            }
             Ok(Answer::Refused(refusal)) => CommandOutcome::Refused {
                 refusal: refusal.into(),
             },
@@ -303,7 +325,7 @@ impl Service {
             self.tasks
                 .spawn(async move { service.reconcile_best_effort(feeder).await });
         }
-        Ok(outcome)
+        Ok((outcome, invite))
     }
 
     /// Tell the stream that `key`'s entry changed, as it now stands. A
@@ -333,32 +355,6 @@ impl Service {
             }
         }
         Ok(())
-    }
-}
-
-/// The device request id for a write. The feeder remembers writes by id
-/// alone and every user shares the server's key, so the id is bound to who
-/// sent it, to which feeder, to what kind of write and to its key.
-fn write_id(user: &User, feeder: FeederId, kind: CommandKind, key: &IdempotencyKey) -> RequestId {
-    let digest = Sha256::new()
-        .chain_update(b"wellfed-server write v1")
-        .chain_update(user.id.0.as_bytes())
-        .chain_update(feeder.0.as_bytes())
-        .chain_update([kind_code(kind)])
-        .chain_update(key)
-        .finalize();
-    let mut request = [0; 16];
-    request.copy_from_slice(&digest[..16]);
-    request
-}
-
-/// A write's kind as it is hashed into its request id: these never change.
-const fn kind_code(kind: CommandKind) -> u8 {
-    match kind {
-        CommandKind::Settings => 1,
-        CommandKind::Lock => 2,
-        CommandKind::Feed => 3,
-        CommandKind::Cancel => 4,
     }
 }
 

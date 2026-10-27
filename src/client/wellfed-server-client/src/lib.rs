@@ -24,6 +24,7 @@
 mod audit;
 mod auth;
 mod backups;
+mod clients;
 mod commands;
 mod diagnostics;
 mod error;

@@ -72,6 +72,9 @@ pub use error::{AskError, ConnectError, LogError, Unreachable};
 pub use ingest::{stored_event, stored_sample};
 pub use install::{BankReadError, PushError, Pushed, ReadError, Restore, Update, UpdateError};
 pub use wellfed_client::api::{Invite, InviteText};
+/// HMAC-SHA256, for the service's keyed digests: the workspace's one
+/// implementation, which the service reaches through the mirror.
+pub use wellfed_session::mac::hmac_sha256;
 pub use time::{Clock, Random, RandomFailed, SystemClock, SystemRandom};
 pub use zone::{Zone, ZoneError};
 
@@ -162,10 +165,16 @@ impl std::fmt::Debug for Feeder {
 }
 
 impl Feeder {
+    /// The server's public key on the feeder: how its client list shows
+    /// the server.
+    pub fn public(&self) -> [u8; 32] {
+        *Keypair::from_secret(self.secret).public()
+    }
+
     /// How the feeder's history names the server (`Source::Client`): the
     /// first 4 bytes of the server's public key on it.
     pub fn fingerprint(&self) -> [u8; 4] {
-        let public = *Keypair::from_secret(self.secret).public();
+        let public = self.public();
         [public[0], public[1], public[2], public[3]]
     }
 }

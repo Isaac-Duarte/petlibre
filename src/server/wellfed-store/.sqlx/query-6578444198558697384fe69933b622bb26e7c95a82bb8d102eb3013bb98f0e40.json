@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT token_id AS \"token_id: Uuid\", invite_until_ms, revoke\n               FROM phone_keys WHERE feeder_id = ? AND key = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "token_id: Uuid",
+        "ordinal": 0,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "phone_keys",
+            "name": "token_id"
+          }
+        }
+      },
+      {
+        "name": "invite_until_ms",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "phone_keys",
+            "name": "invite_until_ms"
+          }
+        }
+      },
+      {
+        "name": "revoke",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "phone_keys",
+            "name": "revoke"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true,
+      false,
+      true
+    ]
+  },
+  "hash": "6578444198558697384fe69933b622bb26e7c95a82bb8d102eb3013bb98f0e40"
+}

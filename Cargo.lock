@@ -2825,6 +2825,7 @@ dependencies = [
  "futures-util",
  "jiff",
  "wellfed-api",
+ "wellfed-model",
  "wellfed-server-client",
  "wellfed-server-testkit",
  "wellfed-service",

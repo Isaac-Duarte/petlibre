@@ -15,6 +15,7 @@
 mod audit;
 mod auth;
 mod backups;
+mod clients;
 mod commands;
 mod diagnostics;
 mod error;
@@ -41,6 +42,10 @@ use uuid::Uuid;
 pub use audit::{AuditAction, AuditEntry, AuditPage, LoginFailure};
 pub use auth::{Credentials, PasswordChange, Role, Setup, SetupState, User};
 pub use backups::{Backup, BackupPage};
+pub use clients::{
+    ClientOwner, FeederClient, KeyRemoval, NewPhoneInvite, PhoneInvite, PhoneKey, PlayRequest,
+    Removal, RevokeAttempt, RevokeReason, Revoking, TuneName, WifiChange, WifiCredentials,
+};
 pub use commands::{
     Command, CommandKind, CommandOutcome, CommandPage, CommandQuery, CommandState, FeedRequest,
 };

@@ -381,7 +381,9 @@ fn settled(entry: &Command) -> Result<Settled> {
         None | Some(CommandOutcome::Feeding { .. } | CommandOutcome::Unrecorded) => {
             Ok(Settled::Unknown)
         }
-        Some(CommandOutcome::Done | CommandOutcome::Settings { .. }) => Ok(Settled::Known),
+        Some(
+            CommandOutcome::Done | CommandOutcome::Settings { .. } | CommandOutcome::Invited { .. },
+        ) => Ok(Settled::Known),
         Some(CommandOutcome::Refused { refusal }) => {
             bail!("the feeder refused it: {}", text::word(refusal))
         }

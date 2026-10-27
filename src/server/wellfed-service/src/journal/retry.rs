@@ -22,10 +22,27 @@ enum Resend {
 const fn resend(kind: CommandKind) -> Resend {
     match kind {
         // A cancel names its feed: run again, it stops nothing new, and
-        // once the feed has ended it is refused `NotFound`.
-        CommandKind::Settings | CommandKind::Lock | CommandKind::Cancel => Resend::SameId,
+        // once the feed has ended it is refused `NotFound`. A revoke run
+        // again finds the key gone (`NotFound`). A Wi-Fi change names its
+        // base, as a settings change does. A tune played twice is only
+        // heard twice.
+        CommandKind::Settings
+        | CommandKind::Lock
+        | CommandKind::Cancel
+        | CommandKind::Revoke
+        | CommandKind::Wifi
+        | CommandKind::Play => Resend::SameId,
         // The feeder's memory of a feed's id ends at a reboot.
         CommandKind::Feed => Resend::Never,
+        // An invite's secret is not kept, so a resend could only make a
+        // second invite nobody holds: the caller asks for a new one.
+        CommandKind::Invite => Resend::Never,
+        // A restart forgets the ids, so a reboot resent after one would
+        // restart the feeder again; the boot count says whether it ran.
+        CommandKind::Reboot => Resend::Never,
+        // The feeder is archived as its key is revoked, and nothing sends
+        // to an archived feeder.
+        CommandKind::Remove => Resend::Never,
     }
 }
 
@@ -102,13 +119,7 @@ mod tests {
         let refused = CommandOutcome::Refused {
             refusal: FeederRefusal::Busy,
         };
-        let every = [
-            CommandKind::Settings,
-            CommandKind::Lock,
-            CommandKind::Feed,
-            CommandKind::Cancel,
-        ];
-        for kind in every {
+        for kind in CommandKind::ALL {
             let answered = entry(kind, CommandState::Answered, Some(refused.clone()));
             assert_eq!(retry(&answered), Retry::Replay(refused.clone()), "{kind:?}");
             let resolved = entry(kind, CommandState::Resolved, Some(CommandOutcome::Done));
@@ -117,13 +128,30 @@ mod tests {
             assert_eq!(retry(&in_flight), Retry::Unknown, "{kind:?}");
         }
 
-        for kind in [
-            CommandKind::Settings,
-            CommandKind::Lock,
-            CommandKind::Cancel,
-        ] {
+        for kind in CommandKind::ALL {
             let unknown = entry(kind, CommandState::Unknown, None);
-            assert_eq!(retry(&unknown), Retry::Resend([4; 16]), "{kind:?}");
+            let want = match resend(kind) {
+                Resend::SameId => Retry::Resend([4; 16]),
+                Resend::Never => Retry::Unknown,
+            };
+            assert_eq!(retry(&unknown), want, "{kind:?}");
         }
+        let resent = CommandKind::ALL.map(resend);
+        assert_eq!(
+            resent,
+            [
+                Resend::SameId,
+                Resend::SameId,
+                Resend::Never,
+                Resend::SameId,
+                Resend::Never,
+                Resend::SameId,
+                Resend::SameId,
+                Resend::Never,
+                Resend::SameId,
+                Resend::Never,
+            ],
+            "the rule of each kind, in the order of CommandKind::ALL"
+        );
     }
 }

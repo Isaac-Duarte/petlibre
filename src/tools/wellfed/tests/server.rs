@@ -1,18 +1,18 @@
 //! `wellfed server …` as a process against the server in process and the
 //! simulated feeder: the login and its token file, a feed, `--json`, the
 //! exit statuses, a feed whose answer is lost, which exits 3 with its key
-//! and is never sent again, an install followed to its end, and the
-//! feeder's stock backup read, shown and exported, and never signed when
-//! it is not stock's pinned image.
+//! and is never sent again, an install followed to its end, the feeder's
+//! stock backup read, shown and exported, and never signed when it is not
+//! stock's pinned image, and a feeder's clients and restart.
 
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 use wellfed_server_client::api::{
-    AdoptFeeder, ClientRole, Command, CommandOutcome, CommandState, Connection, ErrorCode,
-    FeedOutcome, Feeder, FeederId, Install, InstallState, Problem, StockBackup, StockSource,
-    StockState,
+    AdoptFeeder, ClientOwner, ClientRole, Command, CommandOutcome, CommandState, Connection,
+    ErrorCode, FeedOutcome, Feeder, FeederClient, FeederId, Hex, Install, InstallState, Problem,
+    StockBackup, StockSource, StockState,
 };
 use wellfed_server_client::{Client, Uploaded};
 use wellfed_server_testkit::feeder::{self, Banks, Flash, Relay, Running};
@@ -247,6 +247,59 @@ fn an_uncertain_feed_exits_3_with_its_key_and_is_never_resent() {
 
         // One feed: the CLI never sent it again.
         assert_eq!(feeder::feeds(&flash), 1);
+        server.stop().await;
+        sim.stop().await;
+    });
+}
+
+/// `clients` lists whose each client is, `revoke` drops one by a prefix of
+/// its key, and `reboot` restarts the feeder, on a server adopted with an
+/// owner's invite.
+#[test]
+fn clients_revoke_and_reboot_go_through_the_server() {
+    local(async {
+        let sim = feeder::start().await;
+        let server = TestServer::start().await;
+        let mut http = server.client();
+        http.setup(&ada_setup()).await.unwrap();
+        let request = AdoptFeeder {
+            invite: feeder::invite(&sim, ClientRole::Owner).await,
+            name: "kitchen".into(),
+            address: Some(sim.address.to_string()),
+        };
+        http.adopt(&request).await.unwrap();
+        until("the server connects to the feeder", || async {
+            http.feeders().await.unwrap()[0].connection == Connection::Online
+        })
+        .await;
+        let home = Home::new();
+        home.login(&server).await.exited(0);
+
+        // A client that joined at the feeder, not through the server.
+        let invite = feeder::invite(&sim, ClientRole::Member).await;
+        feeder::join_phone(&sim, &invite, [9; 32]).await;
+        let stranger = Hex(feeder::phone_key([9; 32])).to_string();
+
+        let listed = home.run(&["clients", "--json"], "").await;
+        let clients: Vec<Vec<FeederClient>> = listed.exited(0).bodies();
+        let theirs = clients[0]
+            .iter()
+            .find(|client| client.key.to_string() == stranger)
+            .unwrap();
+        assert_eq!(theirs.owner, ClientOwner::Unowned);
+        let text = home.run(&["clients"], "").await;
+        assert!(text.exited(0).stdout.contains("the server"));
+
+        home.run(&["revoke", "abc"], "").await.exited(1);
+        home.run(&["revoke", &stranger[..12]], "").await.exited(0);
+        assert!(
+            !feeder::client_keys(&sim)
+                .await
+                .contains(&feeder::phone_key([9; 32]))
+        );
+
+        let restarted = home.run(&["reboot"], "").await;
+        assert!(restarted.exited(0).stdout.contains("restarts"));
         server.stop().await;
         sim.stop().await;
     });

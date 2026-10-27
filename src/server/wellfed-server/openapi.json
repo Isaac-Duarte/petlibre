@@ -404,6 +404,303 @@
             }
           }
         }
+      },
+      "delete": {
+        "tags": [
+          "feeders"
+        ],
+        "summary": "Remove the feeder from the server: revoke the phone keys still owed a\nrevoke on it and the server's own key, stop mirroring it and archive\nit, whether or not the revokes landed, which the answer says. Its history, samples and journal stay readable;\nadopting it again brings it back with them.",
+        "operationId": "remove",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/FeederId"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Removal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden: owners only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "feeder_archived: already removed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/feeders/{id}/clients": {
+      "get": {
+        "tags": [
+          "feeders"
+        ],
+        "summary": "The feeder's clients, read from it, each with whose it is to the\nserver: its own key, a phone it invited, one an owner kept, or unowned.",
+        "operationId": "clients",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/FeederId"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/FeederClient"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden: owners only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "feeder_archived, or feeder_refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "feeder_offline",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "outcome_unknown",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/feeders/{id}/clients/{key}": {
+      "delete": {
+        "tags": [
+          "feeders"
+        ],
+        "summary": "Revoke one of the feeder's clients. A phone's key is forgotten with it.\nThe feeder lets only an owner's key revoke: a server adopted with the\n`server` role is refused `forbidden`.",
+        "operationId": "revoke_client",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/FeederId"
+            }
+          },
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "A UUID; a retry with the same key is answered once",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "400": {
+            "description": "invalid: the server's own key (remove the feeder instead)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden: owners only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "feeder_archived, or feeder_refused (not_found: no such client)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "feeder_offline",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "outcome_unknown: retry with the same key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/feeders/{id}/clients/{key}/keep": {
+      "post": {
+        "tags": [
+          "feeders"
+        ],
+        "summary": "Keep a client the server did not invite, so it is no longer listed as\nunowned. Nothing is sent to the feeder.",
+        "operationId": "keep_client",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/FeederId"
+            }
+          },
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "403": {
+            "description": "forbidden: owners only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "feeder_archived",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/feeders/{id}/events": {
@@ -1089,6 +1386,95 @@
         }
       }
     },
+    "/api/v1/feeders/{id}/invites": {
+      "post": {
+        "tags": [
+          "feeders"
+        ],
+        "summary": "An invite for the caller's own phone, which joins the feeder with the\nkey it names, on the LAN, with its account's role. Only a phone's\ntoken gets one, for an owner or a member with no expiry on the account\nor the token. One key per token: the token's other key on the feeder\nis revoked. The invite holds a secret, is shown once and is never\nresent: a caller that lost it asks again.",
+        "operationId": "invite_phone",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/FeederId"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewPhoneInvite"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PhoneInvite"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden (a viewer), token_required or direct_key_refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "client_key_taken, feeder_archived, or feeder_refused (forbidden: the server's key is not an owner's)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "feeder_offline",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "outcome_unknown: ask for a new invite",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/feeders/{id}/lock": {
       "post": {
         "tags": [
@@ -1217,6 +1603,178 @@
             }
           },
           "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/feeders/{id}/play": {
+      "post": {
+        "tags": [
+          "feeders"
+        ],
+        "summary": "Play a tune now; refused `muted` while the sound setting is off. The\nfirmware steps its speaker only in setup mode for now, so it refuses\n`unavailable` in the loop.",
+        "operationId": "play",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/FeederId"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "A UUID; a retry with the same key is answered once",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlayRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {},
+          "403": {
+            "description": "forbidden: a viewer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "feeder_archived, or feeder_refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "feeder_offline",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "outcome_unknown: retry with the same key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/feeders/{id}/reboot": {
+      "post": {
+        "tags": [
+          "feeders"
+        ],
+        "summary": "Restart the feeder; refused `busy` while a feed is queued or runs. One\nwhose outcome is unknown is never resent: the boot count says whether\nit ran.",
+        "operationId": "reboot",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/FeederId"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "A UUID; a retry with the same key is answered once",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "403": {
+            "description": "forbidden: owners only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "feeder_archived, or feeder_refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "feeder_offline",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "outcome_unknown: never resent",
             "content": {
               "application/json": {
                 "schema": {
@@ -2155,6 +2713,130 @@
         }
       }
     },
+    "/api/v1/feeders/{id}/wifi": {
+      "put": {
+        "tags": [
+          "feeders"
+        ],
+        "summary": "Store Wi-Fi credentials for the feeder's next join, or clear them, if\nits Wi-Fi store is still at the generation in `If-Match` (the status's\n`wifi_generation`). The passphrase is never stored or echoed. A change\nwhose answer was lost and is retried after the feeder restarted can be\nanswered `stale` though it ran: the status's `wifi_generation` says.",
+        "operationId": "put_wifi",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/FeederId"
+            }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "The generation the change is based on",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "examples": [
+                "\"7\""
+              ],
+              "pattern": "^\"?[0-9]+\"?$"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "A UUID; a retry with the same key is answered once",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WifiChange"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {},
+          "400": {
+            "description": "invalid: an SSID or passphrase out of range",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden: owners only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "feeder_archived, or feeder_refused (stale: read the status again; forbidden: the server's key is not an owner's)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "428": {
+            "description": "precondition_required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "feeder_offline",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "outcome_unknown: retry with the same key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/foods": {
       "get": {
         "tags": [
@@ -3015,6 +3697,38 @@
             }
           },
           "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/phones": {
+      "get": {
+        "tags": [
+          "feeders"
+        ],
+        "summary": "The phone keys the server invited: everyone's for an owner, one's own\nfor anyone else. A key being revoked shows why and what its last\nattempt came to, so a feeder that still holds it is reported.",
+        "operationId": "phones",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PhoneKey"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
             "content": {
               "application/json": {
                 "schema": {
@@ -4469,6 +5183,96 @@
           "battery"
         ]
       },
+      "ClientOwner": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "The server's own key.",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "server"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A phone the server invited for this account, through this token.",
+            "required": [
+              "user",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "phone"
+                ]
+              },
+              "revoking": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/Revoking",
+                    "description": "Set once the key is to be revoked and until it is."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "token": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/TokenId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "user": {
+                "$ref": "#/components/schemas/UserId"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A client the server did not invite, which an owner chose to keep\n(the owner's CLI, say).",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "kept"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A client the server did not invite: an owner keeps or revokes it.",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "unowned"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "Whose a feeder's client is, as the server knows it."
+      },
       "ClientRole": {
         "type": "string",
         "description": "A role in the feeder's own client table.",
@@ -4569,7 +5373,13 @@
           "settings",
           "lock",
           "feed",
-          "cancel"
+          "cancel",
+          "invite",
+          "revoke",
+          "wifi",
+          "reboot",
+          "play",
+          "remove"
         ]
       },
       "CommandOutcome": {
@@ -4624,6 +5434,33 @@
                 "enum": [
                   "refused"
                 ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The feeder made the invite under this number, for this many\nseconds. Its secret went to the caller alone and is not kept.",
+            "required": [
+              "invite",
+              "seconds",
+              "result"
+            ],
+            "properties": {
+              "invite": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "result": {
+                "type": "string",
+                "enum": [
+                  "invited"
+                ]
+              },
+              "seconds": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
               }
             }
           },
@@ -4877,6 +5714,10 @@
           "precondition_required",
           "too_large",
           "already_adopted",
+          "feeder_archived",
+          "token_required",
+          "direct_key_refused",
+          "client_key_taken",
           "invite_expired",
           "unreachable",
           "feeder_offline",
@@ -5421,6 +6262,14 @@
             ],
             "description": "Where the server last reached it."
           },
+          "archived": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When it was removed from the server; `None` while it is mirrored."
+          },
           "connection": {
             "$ref": "#/components/schemas/Connection"
           },
@@ -5455,6 +6304,31 @@
             "format": "int64",
             "description": "The newest event the server holds, `None` before the first.",
             "minimum": 0
+          }
+        }
+      },
+      "FeederClient": {
+        "type": "object",
+        "description": "One client the feeder has enrolled, and whose it is to the server.",
+        "required": [
+          "key",
+          "label",
+          "role",
+          "owner"
+        ],
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "Its public key."
+          },
+          "label": {
+            "type": "string"
+          },
+          "owner": {
+            "$ref": "#/components/schemas/ClientOwner"
+          },
+          "role": {
+            "$ref": "#/components/schemas/ClientRole"
           }
         }
       },
@@ -6468,6 +7342,45 @@
           }
         }
       },
+      "KeyRemoval": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "The feeder dropped it.",
+            "required": [
+              "result"
+            ],
+            "properties": {
+              "result": {
+                "type": "string",
+                "enum": [
+                  "revoked"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "It could not be revoked: the feeder still holds the key, and its\nowner revokes it on the feeder (`wellfed revoke`).",
+            "required": [
+              "attempt",
+              "result"
+            ],
+            "properties": {
+              "attempt": {
+                "$ref": "#/components/schemas/RevokeAttempt"
+              },
+              "result": {
+                "type": "string",
+                "enum": [
+                  "failed"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "What came of revoking the server's own key on a feeder being removed."
+      },
       "LockRequest": {
         "type": "object",
         "required": [
@@ -6644,6 +7557,18 @@
           },
           "species": {
             "$ref": "#/components/schemas/Species"
+          }
+        }
+      },
+      "NewPhoneInvite": {
+        "type": "object",
+        "description": "An invite for the caller's own phone, which joins the feeder with it on\nthe LAN. The phone sends the public key it will join with, so the\nserver knows the client as this account's once it enrolls.",
+        "required": [
+          "key"
+        ],
+        "properties": {
+          "key": {
+            "type": "string"
           }
         }
       },
@@ -6862,6 +7787,107 @@
                 "type": "null"
               }
             ]
+          }
+        }
+      },
+      "PhoneInvite": {
+        "type": "object",
+        "description": "A single-use invite for the caller's phone. The text holds the secret\nthe phone's handshake needs, so it is shown once and never stored.",
+        "required": [
+          "invite",
+          "role",
+          "seconds"
+        ],
+        "properties": {
+          "address": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Where the server last reached the feeder."
+          },
+          "invite": {
+            "type": "string",
+            "description": "`wellfed-invite:1:…`, redeemed by the phone at the feeder."
+          },
+          "role": {
+            "$ref": "#/components/schemas/ClientRole",
+            "description": "The role the phone joins with: its account's."
+          },
+          "seconds": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How long the feeder holds the invite.",
+            "minimum": 0
+          }
+        }
+      },
+      "PhoneKey": {
+        "type": "object",
+        "description": "A phone's key on a feeder, as the server recorded it when it made the\nphone's invite.",
+        "required": [
+          "feeder",
+          "key",
+          "user",
+          "role",
+          "invited",
+          "invite_until"
+        ],
+        "properties": {
+          "feeder": {
+            "$ref": "#/components/schemas/FeederId"
+          },
+          "invite_until": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Until when an invite made for it may still be redeemed: the feeder\ndoes not bind an invite to a key, so a revoke that finds no such\nclient before then is tried again."
+          },
+          "invited": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "key": {
+            "type": "string"
+          },
+          "revoking": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Revoking",
+                "description": "Set once the key is to be revoked and until it is."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "role": {
+            "$ref": "#/components/schemas/ClientRole",
+            "description": "The role it was invited with."
+          },
+          "token": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TokenId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "user": {
+            "$ref": "#/components/schemas/UserId"
+          }
+        }
+      },
+      "PlayRequest": {
+        "type": "object",
+        "description": "A tune to play now.",
+        "required": [
+          "tune"
+        ],
+        "properties": {
+          "tune": {
+            "$ref": "#/components/schemas/TuneName"
           }
         }
       },
@@ -7386,6 +8412,31 @@
         ],
         "description": "Where a release came from."
       },
+      "Removal": {
+        "type": "object",
+        "description": "A feeder the server no longer mirrors. Its history, samples and journal\nstay readable; adopting it again continues them.",
+        "required": [
+          "feeder",
+          "key",
+          "phones_owed"
+        ],
+        "properties": {
+          "feeder": {
+            "$ref": "#/components/schemas/Feeder"
+          },
+          "key": {
+            "$ref": "#/components/schemas/KeyRemoval",
+            "description": "Whether the feeder dropped the server's own key."
+          },
+          "phones_owed": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PhoneKey"
+            },
+            "description": "Phone keys still owed a revoke on the feeder, which removing it\ntried first. Adopting it again resumes revoking them; until then\nits owner revokes them on the feeder (`wellfed revoke`)."
+          }
+        }
+      },
       "ResetCause": {
         "type": "string",
         "description": "Why a boot started.",
@@ -7431,6 +8482,119 @@
             "type": "integer",
             "format": "int32",
             "minimum": 0
+          }
+        }
+      },
+      "RevokeAttempt": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "The server had no session with the feeder; nothing was sent.",
+            "required": [
+              "result"
+            ],
+            "properties": {
+              "result": {
+                "type": "string",
+                "enum": [
+                  "offline"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "No answer came in time: the feeder may have dropped the key.",
+            "required": [
+              "result"
+            ],
+            "properties": {
+              "result": {
+                "type": "string",
+                "enum": [
+                  "unknown"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The feeder refused: `forbidden` when the server's key is not an\nowner's.",
+            "required": [
+              "refusal",
+              "result"
+            ],
+            "properties": {
+              "refusal": {
+                "$ref": "#/components/schemas/FeederRefusal"
+              },
+              "result": {
+                "type": "string",
+                "enum": [
+                  "refused"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The feeder holds no such client yet, but the key's invite may still\nbe redeemed until `until`: tried again when a client joins, at\n`until`, and on each reconnect.",
+            "required": [
+              "until",
+              "result"
+            ],
+            "properties": {
+              "result": {
+                "type": "string",
+                "enum": [
+                  "invite_live"
+                ]
+              },
+              "until": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          }
+        ],
+        "description": "Why an attempt to revoke a key, or the server's own, did not land."
+      },
+      "RevokeReason": {
+        "type": "string",
+        "description": "Why a phone's key is revoked.",
+        "enum": [
+          "deleted",
+          "demoted",
+          "expiring",
+          "token_revoked",
+          "replaced"
+        ]
+      },
+      "Revoking": {
+        "type": "object",
+        "description": "A phone key the server is revoking: tried at once, and again each time\nthe feeder reconnects, until the feeder has dropped it.",
+        "required": [
+          "reason",
+          "since"
+        ],
+        "properties": {
+          "last": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RevokeAttempt",
+                "description": "What the last attempt came to; `None` before the first."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reason": {
+            "$ref": "#/components/schemas/RevokeReason"
+          },
+          "since": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },
@@ -8900,6 +10064,18 @@
           }
         }
       },
+      "TuneName": {
+        "type": "string",
+        "description": "The feeder's tunes.",
+        "enum": [
+          "chime",
+          "meal",
+          "coin",
+          "alert",
+          "test",
+          "twinkle"
+        ]
+      },
       "Units": {
         "type": "string",
         "description": "How weights are shown.",
@@ -9055,6 +10231,40 @@
               "null"
             ],
             "description": "The `after` for the next page; `None` at the end."
+          }
+        }
+      },
+      "WifiChange": {
+        "type": "object",
+        "description": "The feeder's Wi-Fi credentials for its next join, or `null` to clear\nthem.",
+        "properties": {
+          "wifi": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/WifiCredentials"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "WifiCredentials": {
+        "type": "object",
+        "description": "A network the feeder joins.",
+        "required": [
+          "ssid",
+          "psk"
+        ],
+        "properties": {
+          "psk": {
+            "type": "string",
+            "description": "8-63 printable ASCII characters (WPA2-PSK). Never stored, logged or\nechoed."
+          },
+          "ssid": {
+            "type": "string",
+            "description": "1-32 bytes."
           }
         }
       },

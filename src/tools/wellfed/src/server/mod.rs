@@ -3,9 +3,10 @@
 //!
 //! `login` keeps a bearer token beside the device API's key file, and every
 //! other verb sends it. The device verbs (`feeders`, `status`, `settings`,
-//! `lock`, `feed`, `cancel-feed`, `events`) reach the feeders the server
-//! holds, through its command journal; the rest (`command`, `commands`,
-//! `users`, `tokens`, `releases`, `install`, `stock`) only the server has.
+//! `lock`, `feed`, `cancel-feed`, `events`, `clients`, `revoke`, `reboot`)
+//! reach the feeders the server holds, through its command journal; the
+//! rest (`command`, `commands`, `users`, `tokens`, `releases`, `install`,
+//! `stock`) only the server has.
 //!
 //! Output is text by default, and with `--json` the API's bodies, one JSON
 //! document per line (a refusal's problem included). The exit status is 0
@@ -21,6 +22,7 @@
 //! [API design]: ../../../../../docs/api/README.md#the-cli-on-the-server
 
 mod accounts;
+mod clients;
 mod feeders;
 mod install;
 mod login;
@@ -74,6 +76,13 @@ enum Verb {
     Feed(feeders::FeedArgs),
     /// Stop a running feed.
     CancelFeed(feeders::CancelFeedArgs),
+    /// The feeder's clients, and whose each is. Owners only.
+    Clients(feeders::Which),
+    /// Revoke one of the feeder's clients. Owners only.
+    Revoke(clients::RevokeArgs),
+    /// Restart the feeder; never sent again when its outcome is unknown.
+    /// Owners only.
+    Reboot(feeders::Which),
     /// The feeder's history as the server holds it, and with --follow its
     /// new events.
     Events(feeders::EventsArgs),
@@ -125,6 +134,9 @@ async fn verb(verb: Verb, token_file: &Path, out: Output) -> Result<Settled> {
         Verb::Lock(args) => feeders::lock(&client()?, args, out).await,
         Verb::Feed(args) => feeders::feed(&client()?, args, out).await,
         Verb::CancelFeed(args) => feeders::cancel_feed(&client()?, args, out).await,
+        Verb::Clients(which) => clients::clients(&client()?, &which, out).await,
+        Verb::Revoke(args) => clients::revoke(&client()?, args, out).await,
+        Verb::Reboot(which) => clients::reboot(&client()?, &which, out).await,
         Verb::Events(args) => feeders::events(&client()?, args, out).await,
         Verb::Command(args) => feeders::command(&client()?, &args, out).await,
         Verb::Commands(args) => feeders::commands(&client()?, args, out).await,

@@ -7,8 +7,8 @@ use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use wellfed_api::{ErrorCode, FeederRefusal, Problem, Settings};
 use wellfed_service::{
-    AccountError, CommandError, Error, FeederError, HouseholdError, InstallError, OwnerDataError,
-    ReleaseError, StockError, TokenError, ZoneError,
+    AccountError, ClientError, CommandError, Error, FeederError, HouseholdError, InstallError,
+    OwnerDataError, ReleaseError, StockError, TokenError, ZoneError,
 };
 
 /// A request's failure.
@@ -138,6 +138,7 @@ fn service(error: &Error) -> (ErrorCode, Option<String>, Option<FeederRefusal>) 
         Error::Feeder(feeder) => match feeder {
             FeederError::NotFound | FeederError::NoTrace => ErrorCode::NotFound,
             FeederError::AlreadyAdopted => ErrorCode::AlreadyAdopted,
+            FeederError::Archived => ErrorCode::FeederArchived,
             FeederError::Invite(_) => ErrorCode::Invalid,
             FeederError::InviteExpired => ErrorCode::InviteExpired,
             FeederError::Unreachable(_) | FeederError::LogUnanswered => ErrorCode::Unreachable,
@@ -150,6 +151,12 @@ fn service(error: &Error) -> (ErrorCode, Option<String>, Option<FeederRefusal>) 
             | FeederError::Unseal => {
                 return internal(error);
             }
+        },
+        Error::Client(client) => match client {
+            ClientError::TokenRequired => ErrorCode::TokenRequired,
+            ClientError::DirectKeyRefused => ErrorCode::DirectKeyRefused,
+            ClientError::KeyTaken => ErrorCode::ClientKeyTaken,
+            ClientError::OwnKey => ErrorCode::Invalid,
         },
         Error::OwnerData(owner_data) => match owner_data {
             OwnerDataError::PetNotFound
@@ -243,13 +250,17 @@ fn status(code: ErrorCode) -> StatusCode {
         | ErrorCode::LastOwner
         | ErrorCode::NameTaken
         | ErrorCode::FoodInUse
-        | ErrorCode::NoCurrentFood => StatusCode::CONFLICT,
+        | ErrorCode::NoCurrentFood
+        | ErrorCode::FeederArchived
+        | ErrorCode::ClientKeyTaken => StatusCode::CONFLICT,
         ErrorCode::Unauthenticated | ErrorCode::BadCredentials => StatusCode::UNAUTHORIZED,
         ErrorCode::LoginLimited => StatusCode::TOO_MANY_REQUESTS,
         ErrorCode::Forbidden
         | ErrorCode::SessionRequired
         | ErrorCode::CrossOrigin
-        | ErrorCode::AccountDisabled => StatusCode::FORBIDDEN,
+        | ErrorCode::AccountDisabled
+        | ErrorCode::TokenRequired
+        | ErrorCode::DirectKeyRefused => StatusCode::FORBIDDEN,
         ErrorCode::ZoneUnsupported => StatusCode::UNPROCESSABLE_ENTITY,
         ErrorCode::UnknownHost => StatusCode::MISDIRECTED_REQUEST,
         ErrorCode::NotFound => StatusCode::NOT_FOUND,

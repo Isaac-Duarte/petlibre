@@ -9,6 +9,135 @@
     "version": "0.1.0"
   },
   "paths": {
+    "/api/v1/commands": {
+      "get": {
+        "tags": [
+          "commands"
+        ],
+        "summary": "The journal, oldest first: the caller's own writes, or everyone's for\nan owner. `state=unknown` lists the writes whose outcome is uncertain.",
+        "operationId": "commands",
+        "parameters": [
+          {
+            "name": "feeder",
+            "in": "query",
+            "description": "One feeder's writes only.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "description": "Writes in this state only: `unknown` is the uncertain list.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/CommandState"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "description": "The previous page's `next`, as it came.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "At most this many (1-1000, default 100).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid: a bad limit or cursor",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/commands/{key}": {
+      "get": {
+        "tags": [
+          "commands"
+        ],
+        "summary": "One write, by the `Idempotency-Key` it was sent under. Another user's\nis not found, unless the caller is an owner.",
+        "operationId": "command",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Command"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/feeders": {
       "get": {
         "tags": [
@@ -913,6 +1042,177 @@
           "update_signer"
         ]
       },
+      "Command": {
+        "type": "object",
+        "description": "One journalled write.",
+        "required": [
+          "key",
+          "user",
+          "feeder",
+          "kind",
+          "state",
+          "sent",
+          "updated"
+        ],
+        "properties": {
+          "boot_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The feeder's boot count when it was sent, as the server last read\nit; `None` before the server read the feeder's status.",
+            "minimum": 0
+          },
+          "feed": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "A feed's number in the feeder's journal.",
+            "minimum": 0
+          },
+          "feeder": {
+            "$ref": "#/components/schemas/FeederId"
+          },
+          "key": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The `Idempotency-Key` it was sent under; the server draws one for\na write sent without."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/CommandKind"
+          },
+          "outcome": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CommandOutcome",
+                "description": "The feeder's answer, once `answered`."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sent": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When it was recorded, before it was sent."
+          },
+          "state": {
+            "$ref": "#/components/schemas/CommandState"
+          },
+          "updated": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When its state last changed."
+          },
+          "user": {
+            "$ref": "#/components/schemas/UserId",
+            "description": "Who sent it."
+          }
+        }
+      },
+      "CommandKind": {
+        "type": "string",
+        "description": "What a journalled write asked of the feeder.",
+        "enum": [
+          "settings",
+          "lock",
+          "feed"
+        ]
+      },
+      "CommandOutcome": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "It took effect.",
+            "required": [
+              "result"
+            ],
+            "properties": {
+              "result": {
+                "type": "string",
+                "enum": [
+                  "done"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A settings change took effect, and these are the settings the\nserver read back after it.",
+            "required": [
+              "settings",
+              "result"
+            ],
+            "properties": {
+              "result": {
+                "type": "string",
+                "enum": [
+                  "settings"
+                ]
+              },
+              "settings": {
+                "$ref": "#/components/schemas/Settings"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The feeder refused it; nothing ran.",
+            "required": [
+              "refusal",
+              "result"
+            ],
+            "properties": {
+              "refusal": {
+                "$ref": "#/components/schemas/FeederRefusal"
+              },
+              "result": {
+                "type": "string",
+                "enum": [
+                  "refused"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "What the feeder answered a write."
+      },
+      "CommandPage": {
+        "type": "object",
+        "description": "A page of the journal, oldest first.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Command"
+            }
+          },
+          "next": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The `after` for the next page; `None` at the end."
+          }
+        }
+      },
+      "CommandState": {
+        "type": "string",
+        "description": "Where a journalled write stands.",
+        "enum": [
+          "sent",
+          "answered",
+          "unknown",
+          "resolved"
+        ]
+      },
       "Connection": {
         "type": "string",
         "description": "The server's session with a feeder.",
@@ -969,6 +1269,7 @@
           "feeder_offline",
           "feeder_refused",
           "outcome_unknown",
+          "key_reused",
           "internal"
         ]
       },
@@ -2389,6 +2690,10 @@
     {
       "name": "health",
       "description": "Liveness for anyone, readiness for an owner"
+    },
+    {
+      "name": "commands",
+      "description": "The command journal: every write sent through the server"
     }
   ]
 }

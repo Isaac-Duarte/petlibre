@@ -6,7 +6,7 @@
 //! refuses to replace anything, and `lock` gives one server process exclusive
 //! ownership of a ledger.
 
-use std::{fs, io::Write, path::Path};
+use std::{fs, path::Path};
 
 use anyhow::{Context, Result};
 use serde::Serialize;
@@ -23,37 +23,10 @@ pub fn write_json(path: &Path, value: &impl Serialize) -> Result<()> {
 /// a reader polling for it never sees it half written, and a writer killed
 /// partway leaves no empty file that would refuse the next attempt.
 pub fn write_new_json(path: &Path, value: &impl Serialize) -> Result<()> {
-    let name = path
-        .file_name()
-        .with_context(|| format!("{} names no file", path.display()))?;
-    let mut temporary = name.to_owned();
-    temporary.push(format!(".{}.tmp", std::process::id()));
-    let temporary = path.with_file_name(temporary);
-
-    let mut options = fs::OpenOptions::new();
-    options.create_new(true).write(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options
-        .open(&temporary)
-        .with_context(|| format!("create {}", temporary.display()))?;
-
-    let result = (|| {
-        serde_json::to_writer_pretty(&mut file, value)?;
-        file.write_all(b"\n")?;
-        file.sync_all()?;
-        fs::hard_link(&temporary, path).with_context(|| format!("create {}", path.display()))?;
-        if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
-            fs::File::open(parent)?.sync_all()?;
-        }
-        Ok(())
-    })();
-
-    let _ = fs::remove_file(&temporary);
-    result
+    let mut text = serde_json::to_vec_pretty(value)?;
+    text.push(b'\n');
+    wellfed_formats::private::write_new_whole(path, &text)
+        .with_context(|| format!("create {}", path.display()))
 }
 
 /// Hold an exclusive process lock beside the ledger for the controller lifetime.

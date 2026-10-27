@@ -86,6 +86,9 @@ pub enum ReadError {
     Order { offset: u32 },
     #[error("the feeder's page ended before bank 1 did")]
     Short,
+    /// A page whose bytes run past the bank's end.
+    #[error("the feeder's page at {offset} runs past the end of bank 1")]
+    Overrun { offset: u32 },
 }
 
 /// Bank 1 being read a page at a time. Reads change nothing on the feeder,
@@ -144,7 +147,7 @@ impl Bank1Reader {
         match self.bank.len().cmp(&(STOCK_PAYLOAD_LEN as usize)) {
             core::cmp::Ordering::Less => Ok(None),
             core::cmp::Ordering::Equal => Ok(Some(core::mem::take(&mut self.bank))),
-            core::cmp::Ordering::Greater => Err(ReadError::Order { offset }),
+            core::cmp::Ordering::Greater => Err(ReadError::Overrun { offset }),
         }
     }
 }
@@ -424,6 +427,11 @@ mod tests {
             Err(ReadError::Order { offset: 8 })
         );
         assert_eq!(reader.take(page(0, &[])), Err(ReadError::Short));
+        let past = vec![1; STOCK_PAYLOAD_LEN as usize + 1];
+        assert_eq!(
+            reader.take(page(0, &past)),
+            Err(ReadError::Overrun { offset: 0 })
+        );
         assert_eq!(
             reader.take(Answer::Bank1(Bank1Page {
                 offset: 0,

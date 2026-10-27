@@ -41,6 +41,32 @@ pub fn write_new(path: &Path, data: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// Create `path` whole or not at all; refuses to replace an existing file.
+/// The bytes go to a temporary file beside it first, which is then
+/// hard-linked into place (a link never replaces), so a reader never sees
+/// it half written, and a writer killed partway leaves no partial file that
+/// would refuse the next attempt.
+pub fn write_new_whole(path: &Path, data: &[u8]) -> Result<()> {
+    let name = path
+        .file_name()
+        .ok_or_else(|| std::io::Error::other("the path names no file"))?;
+    let mut temporary = name.to_owned();
+    temporary.push(format!(".{}.tmp", std::process::id()));
+    let temporary = path.with_file_name(temporary);
+
+    write_new(&temporary, data)?;
+    let result = (|| {
+        fs::hard_link(&temporary, path)?;
+        if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+            fs::File::open(parent)?.sync_all()?;
+        }
+        Ok(())
+    })();
+
+    let _ = fs::remove_file(&temporary);
+    result
+}
+
 /// Fsync a directory, so the entries just created in it are durable.
 pub fn sync_directory(path: &Path) -> Result<()> {
     fs::File::open(path)?.sync_all()?;
@@ -98,6 +124,16 @@ mod tests {
             let mode = fs::metadata(&path).unwrap().permissions().mode();
             assert_eq!(mode & 0o777, 0o600);
         }
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1, "no temp left");
+    }
+
+    #[test]
+    fn a_new_file_appears_whole_and_is_never_replaced() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("copy.bin");
+        write_new_whole(&path, b"first").unwrap();
+        assert!(write_new_whole(&path, b"second").is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"first");
         assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1, "no temp left");
     }
 }

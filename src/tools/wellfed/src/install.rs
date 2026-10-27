@@ -28,7 +28,7 @@ use anyhow::{Context, Result, bail};
 use clap::Args;
 use wellfed_client::install::{
     CONTAINER_HEADER, FeederTrust, Install, Provision, Replacement, Requested, SETUP_ADDRESS,
-    SetupFrame, Step, StockBackup, StockPower, StockView, VerifiedBackup, manifest_version,
+    SetupFrame, Step, StockBackup, StockPower, StockView, manifest_version,
 };
 use wellfed_client::update::{Image, InstallError as UpdateError};
 use wellfed_formats::bench::lease::Lease;
@@ -144,6 +144,9 @@ struct Run {
     peer: Option<IpAddr>,
     /// The feeder's identity, once its key is known.
     identity: Option<[u8; 32]>,
+    /// The `--stock-backup` copy, kept under `--backups` before promotion
+    /// once the feeder's identity is known.
+    given: Option<StockBackup>,
 }
 
 pub(crate) async fn run(args: InstallArgs) -> Result<()> {
@@ -161,7 +164,7 @@ pub(crate) async fn run(args: InstallArgs) -> Result<()> {
     let backup = match &args.stock_backup {
         Some(path) => {
             let image = std::fs::read(path).with_context(|| format!("read {}", path.display()))?;
-            Some(VerifiedBackup::verify(&image).context("--stock-backup")?)
+            Some(StockBackup::open(image).context("--stock-backup")?)
         }
         None => {
             eprintln!(
@@ -178,8 +181,8 @@ pub(crate) async fn run(args: InstallArgs) -> Result<()> {
     } else {
         Install::new(provision(&args, &config)?, &build, version)?
     };
-    if let Some(backup) = backup {
-        install.backup(backup);
+    if let Some(backup) = &backup {
+        install.backup(backup.verified());
     }
 
     let mut run = Run {
@@ -195,6 +198,7 @@ pub(crate) async fn run(args: InstallArgs) -> Result<()> {
         request: None,
         peer: None,
         identity: None,
+        given: backup,
     };
     let result = run.drive(&mut install).await;
     run.stop().await;
@@ -353,6 +357,7 @@ impl Run {
                     install.backup(backup.verified());
                 }
                 Step::Promote => {
+                    self.keep_given()?;
                     let outcome = self.promote(install.build()).await?;
                     install.promoted(outcome);
                 }
@@ -618,6 +623,24 @@ impl Run {
         eprintln!("Paired with feeder {} ({text}).", fingerprint(&identity));
         self.identity = Some(identity);
         install.paired();
+        Ok(())
+    }
+
+    /// Keep the `--stock-backup` copy as a backup read from the feeder is
+    /// kept, before the promotion overwrites the feeder's own.
+    fn keep_given(&mut self) -> Result<()> {
+        let Some(backup) = self.given.take() else {
+            return Ok(());
+        };
+        let identity = self
+            .identity
+            .context("the feeder's identity is not known yet")?;
+        let path = crate::backup::path(&self.args.backups, &identity);
+        crate::backup::keep(&path, &backup).context(
+            "Promotion refused: the --stock-backup copy could not be kept; the feeder \
+             runs the replacement from bank 0 and still holds stock in bank 1",
+        )?;
+        eprintln!("Kept the --stock-backup copy at {}.", path.display());
         Ok(())
     }
 

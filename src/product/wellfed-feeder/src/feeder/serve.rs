@@ -36,14 +36,6 @@ use wellfed_proto::api::{
 use wellfed_proto::trace::PAGE_MAX;
 use wellfed_session::noise::Keypair;
 
-/// The answer page buffer: a trace's page or a bank-1 page, whichever is
-/// larger.
-pub(super) const PAGE_BYTES: usize = if PAGE_MAX > BANK1_PAGE_MAX {
-    PAGE_MAX
-} else {
-    BANK1_PAGE_MAX
-};
-
 use super::Feeds;
 use super::events;
 use super::feeding;
@@ -64,6 +56,14 @@ use wellfed_device_api::wifi::Credentials;
 use wellfed_device_api::{
     self as server, Device, EventRead, KeyChange, KeyOutcome, Pass, SESSIONS, Server, UpdateAnswer,
     UpdateKeyChange, UpdateRequest,
+};
+
+/// The answer page buffer: a trace's page or a bank-1 page, whichever is
+/// larger.
+pub(super) const PAGE_BYTES: usize = if PAGE_MAX > BANK1_PAGE_MAX {
+    PAGE_MAX
+} else {
+    BANK1_PAGE_MAX
 };
 
 /// A listener or mDNS socket that failed is opened again after this.

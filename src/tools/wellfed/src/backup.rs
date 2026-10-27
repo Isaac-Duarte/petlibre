@@ -12,10 +12,12 @@
 //! "Restore stock" signs that container as the stock image (only the
 //! pinned container signs) with a downgrade statement bound to the feeder
 //! and its floor, and pushes it as any update goes: bank 1 gives way, bank
-//! 0 writes stock into bank 1 and activates it. The offer is sent once and
-//! never again behind the owner's back; a feeder that stops answering once
-//! it went out leaves the result uncertain, since stock serves no device
-//! API to ask.
+//! 0 writes stock into bank 1 and activates it. Within the push the shared
+//! installer offers again where the update protocol needs it (after bank
+//! 1 gives way, or on a new session while bank 0 is not yet installing),
+//! but nothing re-offers once the push has returned: a refusal ends the
+//! restore, and a feeder that stops answering after an offer went out
+//! leaves the result uncertain, since stock serves no device API to ask.
 //!
 //! [rollback]: ../../../../docs/firmware/consumer-installation.md#rollback
 
@@ -155,8 +157,13 @@ pub(crate) fn load(path: &Path) -> Result<Option<StockBackup>> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error).with_context(|| format!("read {}", path.display())),
     };
-    let backup = StockBackup::open(bytes)
-        .with_context(|| format!("{}: not stock {STOCK_VERSION}'s image", path.display()))?;
+    let backup = StockBackup::open(bytes).with_context(|| {
+        format!(
+            "{0} is not stock {STOCK_VERSION}'s image (damaged, partial or foreign); \
+             delete {0} to read the backup from the feeder again",
+            path.display()
+        )
+    })?;
     Ok(Some(backup))
 }
 
@@ -175,7 +182,8 @@ pub(crate) fn keep(path: &Path, backup: &StockBackup) -> Result<()> {
     let directory = path.parent().context("a backup path has a directory")?;
     std::fs::create_dir_all(directory)
         .with_context(|| format!("create {}", directory.display()))?;
-    wellfed_formats::private::write_new(path, backup.bytes())
+    // Whole or not at all: a partial file would refuse every later run.
+    wellfed_formats::private::write_new_whole(path, backup.bytes())
         .with_context(|| format!("write {}", path.display()))
 }
 
@@ -238,7 +246,7 @@ fn export(path: &Path, output: &Path) -> Result<()> {
     let Some(backup) = load(path)? else {
         bail!("no stock backup kept at {}", path.display());
     };
-    wellfed_formats::private::write_new(output, backup.bytes())
+    wellfed_formats::private::write_new_whole(output, backup.bytes())
         .with_context(|| format!("write {}", output.display()))?;
     eprintln!(
         "Exported stock {STOCK_VERSION} ({}) to {}.",

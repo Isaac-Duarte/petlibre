@@ -176,7 +176,10 @@ fn the_debug_log_is_refused_when_the_servers_key_is_not_an_owners() {
         let kitchen = adopt(&http, &sim, ClientRole::Server).await;
 
         let refused = http.follow_log(kitchen).await;
-        let Err(wellfed_server_client::Error::Problem { status, problem }) = refused else {
+        let Err(wellfed_server_client::Error::Problem {
+            status, problem, ..
+        }) = refused
+        else {
             panic!("the feeder refused the server's key: {refused:?}");
         };
         assert_eq!(status, StatusCode::CONFLICT);

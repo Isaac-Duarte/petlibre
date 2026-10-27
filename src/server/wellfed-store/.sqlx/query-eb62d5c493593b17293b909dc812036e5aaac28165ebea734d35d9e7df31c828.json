@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT users.id AS \"id: Uuid\", users.name, users.role\n               FROM sessions JOIN users ON users.id = sessions.user_id\n               WHERE sessions.token_hash = ? AND sessions.expires_ms > ?",
+  "query": "SELECT id AS \"id: Uuid\", name, role, expires_ms FROM users WHERE id = ?",
   "describe": {
     "columns": [
       {
@@ -35,16 +35,28 @@
             "name": "role"
           }
         }
+      },
+      {
+        "name": "expires_ms",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "expires_ms"
+          }
+        }
       }
     ],
     "parameters": {
-      "Right": 2
+      "Right": 1
     },
     "nullable": [
       false,
       false,
-      false
+      false,
+      true
     ]
   },
-  "hash": "3c4ce4999f6cb0b5b60ba355b0751d3a0baf76d1a4ff4b024e12fd594049d467"
+  "hash": "eb62d5c493593b17293b909dc812036e5aaac28165ebea734d35d9e7df31c828"
 }

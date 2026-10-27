@@ -1,25 +1,23 @@
 //! First-owner setup and the session.
 
-use wellfed_api::{Credentials, SESSION_COOKIE, SetupState, User};
+use wellfed_api::{Credentials, PasswordChange, SESSION_COOKIE, Setup, SetupState, User};
 use reqwest::header::{self, HeaderMap};
 use reqwest::{Method, StatusCode};
 
 use crate::{Auth, Client, Error, decode, expect_status};
 
 impl Client {
-    /// Whether the server is waiting for its first owner.
+    /// Whether the server is waiting for its first owner, and the zone to
+    /// offer for the household.
     pub async fn setup_state(&self) -> Result<SetupState, Error> {
         let response = self.api(Method::GET, "/setup").send().await?;
         decode(response, StatusCode::OK).await
     }
 
-    /// Create the first owner, and hold their session.
-    pub async fn setup(&mut self, credentials: &Credentials) -> Result<User, Error> {
-        let response = self
-            .api(Method::POST, "/setup")
-            .json(credentials)
-            .send()
-            .await?;
+    /// Create the first owner and the household, and hold the owner's
+    /// session.
+    pub async fn setup(&mut self, setup: &Setup) -> Result<User, Error> {
+        let response = self.api(Method::POST, "/setup").json(setup).send().await?;
         self.open_session(response, StatusCode::CREATED).await
     }
 
@@ -37,6 +35,18 @@ impl Client {
     pub async fn session(&self) -> Result<User, Error> {
         let response = self.api(Method::GET, "/session").send().await?;
         decode(response, StatusCode::OK).await
+    }
+
+    /// Change the logged-in user's own password. Their other sessions end;
+    /// this client's stays.
+    pub async fn change_password(&self, change: &PasswordChange) -> Result<(), Error> {
+        let response = self
+            .api(Method::PATCH, "/session")
+            .json(change)
+            .send()
+            .await?;
+        expect_status(response, StatusCode::NO_CONTENT).await?;
+        Ok(())
     }
 
     /// End the session the client holds, and drop it.

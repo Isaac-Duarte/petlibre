@@ -7,7 +7,7 @@ use wellfed_api::{EventPage, EventQuery, FeederId, Problem};
 
 use super::{ApiResult, IdPath, TAG_FEEDERS};
 use crate::AppState;
-use crate::auth::Auth;
+use crate::auth::{Allowed, need};
 use crate::error::ApiError;
 
 /// The feeder's history as the server holds it, oldest first.
@@ -20,7 +20,7 @@ use crate::error::ApiError;
 )]
 pub(crate) async fn events(
     State(state): State<AppState>,
-    _: Auth,
+    _: Allowed<need::Read>,
     WithRejection(Path(id), _): IdPath,
     WithRejection(Query(query), _): WithRejection<Query<EventQuery>, ApiError>,
 ) -> ApiResult<Json<EventPage>> {

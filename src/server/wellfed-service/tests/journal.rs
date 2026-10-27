@@ -20,6 +20,7 @@ fn member(n: u128, name: &str) -> User {
         id: UserId(Uuid::from_u128(n)),
         name: name.into(),
         role: Role::Member,
+        expires: None,
     }
 }
 

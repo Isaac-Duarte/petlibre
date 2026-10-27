@@ -4,6 +4,11 @@
 //! methods, `wellfed-store` holds the data, and `wellfed-mirror` runs
 //! each feeder's session.
 //!
+//! - **Accounts** are owners, members and viewers; [`can`] holds what each
+//!   may do, and the server asks it per route. A session lasts from its
+//!   last use, and an account past its expiry is disabled.
+//! - **The household** holds the zone every feeder keeps, as a POSIX rule
+//!   the mirror gives each one.
 //! - **Feeders** are adopted by redeeming an invite with a key the server
 //!   makes for that feeder, so the feeder's history names the server. The
 //!   key is sealed with the config's key before it is stored, and opened
@@ -17,8 +22,8 @@
 //!   stream reads: each feeder's mirror broadcast is forwarded into it,
 //!   and the hub assigns the stream ids.
 //!
-//! Each domain has its own error enum ([`AccountError`], [`FeederError`],
-//! [`CommandError`]), wrapped in [`Error`]. Time and randomness come in
+//! Each domain has its own error enum ([`AccountError`],
+//! [`HouseholdError`], [`FeederError`], [`CommandError`]), wrapped in [`Error`]. Time and randomness come in
 //! through [`Clock`] and [`Random`], so tests can fix them.
 //!
 //! [API design]: ../../../../docs/api/README.md
@@ -28,9 +33,12 @@ mod commands;
 mod error;
 mod feeders;
 mod health;
+mod household;
 mod hub;
 mod journal;
 mod keys;
+mod permissions;
+mod sessions;
 mod updates;
 mod users;
 
@@ -39,7 +47,6 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use jiff::Timestamp;
-use jiff::tz::TimeZone;
 use wellfed_api::{Connection as Link, FeederId};
 use wellfed_mirror::Mirror;
 use wellfed_store::Store;
@@ -47,10 +54,14 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use uuid::Uuid;
 
-pub use error::{AccountError, CommandError, Error, FeederError, Invalid, Result};
+pub use error::{AccountError, CommandError, Error, FeederError, HouseholdError, Invalid, Result};
 pub use hub::{Hub, Resume, Stamped, StreamId, Subscription};
-pub use wellfed_mirror::{Clock, Discovery, Random, RandomFailed, SystemClock, SystemRandom};
-pub use users::SessionToken;
+pub use permissions::{Permission, can};
+pub use wellfed_mirror::{
+    Clock, Discovery, Random, RandomFailed, SystemClock, SystemRandom, ZoneError,
+};
+pub use sessions::SessionToken;
+pub use users::reset_owner;
 
 /// A device request id.
 pub(crate) type RequestId = wellfed_mirror::RequestId;
@@ -61,8 +72,8 @@ pub type IdempotencyKey = [u8; 16];
 pub struct Config {
     /// Seals the server's feeder keys at rest.
     pub key: [u8; 32],
-    /// The zone the feeders' clocks are set to.
-    pub zone: TimeZone,
+    /// The host's IANA zone, offered at setup as the household's.
+    pub host_zone: Option<String>,
     /// The label the server enrolls under on each feeder (1-16 bytes).
     pub label: String,
     pub discovery: Discovery,
@@ -72,6 +83,7 @@ pub struct Config {
 impl std::fmt::Debug for Config {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Config")
+            .field("host_zone", &self.host_zone)
             .field("label", &self.label)
             .field("discovery", &self.discovery)
             .field("timing", &self.timing)
@@ -84,7 +96,6 @@ impl Config {
     fn mirror(&self) -> wellfed_mirror::Config {
         let timing = self.timing;
         wellfed_mirror::Config {
-            zone: self.zone.clone(),
             discovery: self.discovery,
             timing: wellfed_mirror::Timing {
                 retry_min: timing.retry_min,
@@ -106,7 +117,7 @@ pub struct Timing {
     /// How long a caller waits for a command's answer: the connection's
     /// own answer timeout, and some room to queue behind another command.
     pub answer: Duration,
-    /// How long a login lasts.
+    /// How long a login lasts after its last use.
     pub session: Duration,
 }
 
@@ -163,6 +174,9 @@ pub struct Service {
     /// shows a state the stream has not.
     links: Arc<Mutex<HashMap<FeederId, Link>>>,
     adopting: Arc<tokio::sync::Mutex<()>>,
+    /// Household changes run one at a time, so the stored zone and the
+    /// mirror's are always the last change's.
+    household: Arc<tokio::sync::Mutex<()>>,
     cancel: CancellationToken,
     tasks: TaskTracker,
 }
@@ -208,12 +222,14 @@ impl Service {
             mirror,
             links: Arc::new(Mutex::new(HashMap::new())),
             adopting: Arc::new(tokio::sync::Mutex::new(())),
+            household: Arc::new(tokio::sync::Mutex::new(())),
             cancel,
             tasks: TaskTracker::new(),
         };
 
-        users::prepare().await?;
+        sessions::prepare().await?;
         service.interrupt_commands().await?;
+        service.load_zone().await?;
         for row in service.shared.store.feeders().await? {
             service.spawn(&row).await?;
         }
@@ -233,7 +249,7 @@ impl Service {
         &self.shared.hub
     }
 
-    /// How long a login lasts.
+    /// How long a login lasts after its last use.
     pub fn session_lifetime(&self) -> Duration {
         self.shared.config.timing.session
     }

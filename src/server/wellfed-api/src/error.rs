@@ -13,8 +13,18 @@ pub enum ErrorCode {
     /// No valid session.
     Unauthenticated,
     BadCredentials,
+    /// The account is past its expiry: it cannot log in and its sessions
+    /// stop, until an owner extends or deletes it.
+    AccountDisabled,
     /// This user's role may not do that.
     Forbidden,
+    /// The change would leave the household without an owner.
+    LastOwner,
+    /// Another account has that name.
+    NameTaken,
+    /// The zone is real, but no POSIX rule describes it (it changes
+    /// irregularly), so a feeder could not keep it; `detail` names it.
+    ZoneUnsupported,
     /// A cookie-authenticated write came from another origin.
     CrossOrigin,
     /// The request named a host this server does not answer to: an IP

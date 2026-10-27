@@ -1,6 +1,6 @@
 //! Household accounts: the first owner's setup, login and logout.
 
-use wellfed_api::{Credentials, Role};
+use wellfed_api::{Credentials, Role, Setup};
 use wellfed_server_testkit::{TestService, local};
 use wellfed_service::{AccountError, Error, Invalid};
 
@@ -11,23 +11,29 @@ fn the_first_owner_sets_up_once_and_logs_in() {
         let service = server.service();
         assert!(service.setup_open().await.unwrap());
 
-        let weak = Credentials {
+        let weak = Setup {
             name: "ada".into(),
-            password: "short".into(),
+            password: "nine char".into(),
+            zone: "UTC".into(),
         };
         assert!(matches!(
             service.setup(weak).await,
             Err(Error::Invalid(Invalid::Password))
         ));
-        let credentials = Credentials {
+        let setup = Setup {
             name: " ada ".into(),
             password: "correct horse".into(),
+            zone: "UTC".into(),
         };
-        let (user, token) = service.setup(credentials.clone()).await.unwrap();
+        let credentials = Credentials {
+            name: "ada".into(),
+            password: setup.password.clone(),
+        };
+        let (user, token) = service.setup(setup.clone()).await.unwrap();
         assert_eq!((user.name.as_str(), user.role), ("ada", Role::Owner));
         assert!(!service.setup_open().await.unwrap());
         assert!(matches!(
-            service.setup(credentials.clone()).await,
+            service.setup(setup).await,
             Err(Error::Account(AccountError::SetupClosed))
         ));
         assert_eq!(

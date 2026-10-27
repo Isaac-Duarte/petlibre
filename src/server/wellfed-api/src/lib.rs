@@ -18,7 +18,9 @@ mod error;
 mod events;
 mod feeders;
 mod health;
+mod household;
 mod stream;
+mod users;
 
 use std::fmt;
 
@@ -26,12 +28,13 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-pub use auth::{Credentials, Role, SetupState, User};
+pub use auth::{Credentials, PasswordChange, Role, Setup, SetupState, User};
 pub use commands::{Command, CommandKind, CommandOutcome, CommandPage, CommandQuery, CommandState};
 pub use error::{ErrorCode, FeederRefusal, Problem};
 pub use events::{EventPage, EventQuery, FeederEvent, Gap};
 pub use feeders::{AdoptFeeder, Connection, Feeder, FeederDetail, LockRequest, StatusSnapshot};
 pub use health::{FeederLink, Health, Job, JobOutcome, JobRun, ServerStatus, StoreState};
+pub use household::{Household, HouseholdPatch, TimeFormat, Units};
 // The feeder's own values are the model's, served as they are; the HTTP
 // API adds only what the server knows (when it received them, its own ids).
 pub use wellfed_model::{
@@ -40,6 +43,7 @@ pub use wellfed_model::{
     Status as FeederStatus, WifiSource,
 };
 pub use stream::{FeederSample, StreamEvent, StreamQuery};
+pub use users::{NewUser, UserPatch};
 
 /// The prefix every resource lives under.
 pub const PREFIX: &str = "/api/v1";

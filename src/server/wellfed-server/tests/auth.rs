@@ -5,7 +5,7 @@ use wellfed_api::{Credentials, ErrorCode, Role, SetupState};
 use wellfed_server_client::reqwest::Response;
 use wellfed_server_client::reqwest::header::SET_COOKIE;
 use wellfed_server_client::{Auth, Method, StatusCode, expect_status};
-use wellfed_server_testkit::{TestServer, ada_login, refused};
+use wellfed_server_testkit::{TestServer, ada_login, ada_setup, refused};
 
 /// The session cookie's value from a login's answer, which must keep it
 /// from scripts and other sites.
@@ -25,12 +25,15 @@ async fn the_first_visitor_becomes_owner_and_setup_closes() {
     let client = server.client();
     assert_eq!(
         client.setup_state().await.unwrap(),
-        SetupState { open: true }
+        SetupState {
+            open: true,
+            zone: Some("UTC".into())
+        }
     );
 
     let response = client
         .request(Method::POST, "/api/v1/setup")
-        .json(&ada_login())
+        .json(&ada_setup())
         .send()
         .await
         .unwrap();
@@ -41,11 +44,14 @@ async fn the_first_visitor_becomes_owner_and_setup_closes() {
 
     assert_eq!(
         client.setup_state().await.unwrap(),
-        SetupState { open: false }
+        SetupState {
+            open: false,
+            zone: Some("UTC".into())
+        }
     );
     let mut client = client.with_auth(Some(Auth::Session(session)));
     refused(
-        server.client().setup(&ada_login()).await,
+        server.client().setup(&ada_setup()).await,
         StatusCode::CONFLICT,
         ErrorCode::SetupClosed,
     );
@@ -63,7 +69,7 @@ async fn the_first_visitor_becomes_owner_and_setup_closes() {
 #[tokio::test]
 async fn login_and_logout_open_and_end_a_session() {
     let server = TestServer::start().await;
-    server.client().setup(&ada_login()).await.unwrap();
+    server.client().setup(&ada_setup()).await.unwrap();
 
     let anonymous = server.client();
     refused(

@@ -60,7 +60,6 @@ async fn every_line_from_a_feeder_task_names_the_feeder() {
     let mirror = Mirror::new(
         temp.open().await,
         Config {
-            zone: jiff::tz::TimeZone::UTC,
             discovery: Discovery::Off,
             timing: Timing {
                 retry_min: Duration::from_millis(20),

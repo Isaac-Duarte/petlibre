@@ -26,7 +26,9 @@ mod commands;
 mod error;
 mod feeders;
 mod health;
+mod household;
 mod stream;
+mod users;
 
 use std::fmt;
 use std::time::Duration;

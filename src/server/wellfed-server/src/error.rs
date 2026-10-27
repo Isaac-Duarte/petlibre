@@ -6,7 +6,7 @@ use axum::extract::rejection::{JsonRejection, PathRejection, QueryRejection};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use wellfed_api::{ErrorCode, FeederRefusal, Problem, Settings};
-use wellfed_service::{AccountError, CommandError, Error, FeederError};
+use wellfed_service::{AccountError, CommandError, Error, FeederError, HouseholdError, ZoneError};
 
 /// A request's failure.
 #[derive(Debug)]
@@ -82,9 +82,24 @@ fn service(error: &Error) -> (ErrorCode, Option<String>, Option<FeederRefusal>) 
         Error::Account(account) => match account {
             AccountError::SetupClosed => ErrorCode::SetupClosed,
             AccountError::BadCredentials => ErrorCode::BadCredentials,
+            AccountError::Disabled => ErrorCode::AccountDisabled,
+            AccountError::NotFound => ErrorCode::NotFound,
+            AccountError::NameTaken => ErrorCode::NameTaken,
+            AccountError::LastOwner => ErrorCode::LastOwner,
+            // Only `reset-owner`, on the host, picks an owner by name.
+            AccountError::NotAnOwner(_) | AccountError::NoOwner | AccountError::OwnerAmbiguous => {
+                ErrorCode::Invalid
+            }
             AccountError::Hash(_) | AccountError::Hashing | AccountError::Expiry => {
                 return internal(error);
             }
+        },
+        Error::Household(household) => match household {
+            HouseholdError::NotSetUp => ErrorCode::NotFound,
+            HouseholdError::Zone(ZoneError::Unknown(_)) => ErrorCode::Invalid,
+            HouseholdError::Zone(
+                ZoneError::NoRule(_) | ZoneError::Unsupported { .. } | ZoneError::Irregular { .. },
+            ) => ErrorCode::ZoneUnsupported,
         },
         Error::Feeder(feeder) => match feeder {
             FeederError::NotFound => ErrorCode::NotFound,
@@ -124,9 +139,15 @@ fn internal(error: &Error) -> (ErrorCode, Option<String>, Option<FeederRefusal>)
 
 fn status(code: ErrorCode) -> StatusCode {
     match code {
-        ErrorCode::SetupClosed | ErrorCode::AlreadyAdopted => StatusCode::CONFLICT,
+        ErrorCode::SetupClosed
+        | ErrorCode::AlreadyAdopted
+        | ErrorCode::LastOwner
+        | ErrorCode::NameTaken => StatusCode::CONFLICT,
         ErrorCode::Unauthenticated | ErrorCode::BadCredentials => StatusCode::UNAUTHORIZED,
-        ErrorCode::Forbidden | ErrorCode::CrossOrigin => StatusCode::FORBIDDEN,
+        ErrorCode::Forbidden | ErrorCode::CrossOrigin | ErrorCode::AccountDisabled => {
+            StatusCode::FORBIDDEN
+        }
+        ErrorCode::ZoneUnsupported => StatusCode::UNPROCESSABLE_ENTITY,
         ErrorCode::UnknownHost => StatusCode::MISDIRECTED_REQUEST,
         ErrorCode::NotFound => StatusCode::NOT_FOUND,
         ErrorCode::Invalid => StatusCode::BAD_REQUEST,
@@ -157,5 +178,27 @@ mod tests {
         let response = ApiError::Service(refused.into()).into_response();
 
         assert_eq!(response.status(), StatusCode::CONFLICT);
+    }
+
+    /// A real zone no POSIX rule describes is `422 zone_unsupported`; a
+    /// name the tzdb does not know is a plain `400 invalid`.
+    #[test]
+    fn a_zone_is_refused_by_kind() {
+        let irregular = ZoneError::Irregular {
+            name: "Asia/Gaza".into(),
+            rule: "EET-2EEST".into(),
+            at: jiff::Timestamp::UNIX_EPOCH,
+        };
+        let unknown = ZoneError::Unknown("Mars/Olympus".into());
+
+        let code = |zone| service(&HouseholdError::Zone(zone).into());
+        let (code_irregular, detail, _) = code(irregular);
+        assert_eq!(code_irregular, ErrorCode::ZoneUnsupported);
+        assert!(detail.is_some_and(|detail| detail.contains("Asia/Gaza")));
+        assert_eq!(
+            status(ErrorCode::ZoneUnsupported),
+            StatusCode::UNPROCESSABLE_ENTITY
+        );
+        assert_eq!(code(unknown).0, ErrorCode::Invalid);
     }
 }

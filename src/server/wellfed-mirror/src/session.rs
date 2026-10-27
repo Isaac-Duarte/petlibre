@@ -5,22 +5,27 @@
 //!    feeder recorded while the server was away arrives first (the session
 //!    starts from the oldest event kept when the feeder's ring is a new
 //!    one, under a new epoch);
-//! 2. set the feeder's clock;
-//! 3. read its status and settings into the store's cache.
+//! 2. set the feeder's clock, in the household's zone;
+//! 3. give the feeder the zone's POSIX rule, if its time settings hold
+//!    another, so it follows DST on its own;
+//! 4. read its status and settings into the store's cache.
 //!
 //! Then it serves commands, events and samples until the session ends, and
-//! sets the clock again every [`Timing::time_sync`]. The feeder shows online
+//! sets the clock and checks the rule again every [`Timing::time_sync`] and
+//! whenever the household's zone changes. A feeder offline at the change
+//! gets the new zone in its next connect sequence. The feeder shows online
 //! only once the connect sequence is done, so no command waits behind it.
 //!
 //! [`Timing::time_sync`]: crate::Timing::time_sync
 
 use std::time::Duration;
 
+use jiff::tz::TimeZone;
 use wellfed_api::Connection as Link;
 use wellfed_connect::{Connection, Cursor, Resume};
-use wellfed_model::{Answer, Op};
+use wellfed_model::{Answer, Op, Refusal, TimeChanges};
 use tokio::time::Instant;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use crate::RandomFailed;
 use crate::task::Task;
@@ -63,9 +68,10 @@ impl From<RandomFailed> for End {
 impl Task {
     /// Serve one open session until it ends.
     pub(crate) async fn serve(&mut self, mut connection: Connection) -> End {
+        let cancel = self.cancel.clone();
         let started = tokio::select! {
             biased;
-            () = self.cancel.cancelled() => Err(End::Cancelled),
+            () = cancel.cancelled() => Err(End::Cancelled),
             started = self.start(&mut connection) => started,
         };
         if let Err(end) = started {
@@ -75,6 +81,9 @@ impl Task {
 
         let every = self.shared.config.timing.time_sync;
         let mut next_sync = Instant::now() + every;
+        // The sender lives as long as the mirror; should it go, the zone
+        // simply stops changing.
+        let mut zone_open = true;
         loop {
             let step = tokio::select! {
                 biased;
@@ -89,8 +98,15 @@ impl Task {
                 },
                 () = tokio::time::sleep_until(next_sync) => {
                     next_sync += every;
-                    self.sync_time(&mut connection).await
+                    self.keep_time(&mut connection).await
                 }
+                changed = self.zone.changed(), if zone_open => match changed {
+                    Ok(()) => self.keep_time(&mut connection).await,
+                    Err(_) => {
+                        zone_open = false;
+                        Ok(())
+                    }
+                },
                 message = connection.next(QUIET) => match message {
                     Ok(pushed) => self.apply(pushed).await,
                     Err(wellfed_connect::Error::Timeout) => Ok(()),
@@ -105,7 +121,7 @@ impl Task {
 
     /// The connect sequence: history first, then the clock, then the
     /// cached status and settings.
-    async fn start(&self, connection: &mut Connection) -> Result<(), End> {
+    async fn start(&mut self, connection: &mut Connection) -> Result<(), End> {
         let Some(row) = self.shared.store.feeder(self.id).await? else {
             return Err(End::Cancelled);
         };
@@ -120,7 +136,7 @@ impl Task {
                 "the feeder's history is a new one; mirroring it from its oldest event"
             );
         }
-        self.sync_time(connection).await?;
+        self.keep_time(connection).await?;
 
         if let Answer::Status(status) = self.ask(connection, &Op::Status).await? {
             let now = self.shared.clock.now();
@@ -139,16 +155,74 @@ impl Task {
         Ok(())
     }
 
-    /// Set the feeder's clock to this server's, in the configured zone.
-    async fn sync_time(&self, connection: &mut Connection) -> Result<(), End> {
+    /// Set the feeder's clock and its zone's rule.
+    async fn keep_time(&mut self, connection: &mut Connection) -> Result<(), End> {
+        self.sync_time(connection).await?;
+        self.push_zone(connection).await
+    }
+
+    /// Set the feeder's clock to this server's, in the household's zone.
+    async fn sync_time(&mut self, connection: &mut Connection) -> Result<(), End> {
         let now = self.shared.clock.now();
-        let sync = wellfed_client::time::sync(now, &self.shared.config.zone);
+        // Seen here, so a change already applied does not fire again.
+        let zone = self.zone.borrow_and_update().clone();
+        let zone = zone
+            .as_deref()
+            .map_or(TimeZone::UTC, |zone| zone.tz().clone());
+        let sync = wellfed_client::time::sync(now, &zone);
         match self.ask(connection, &Op::TimeSync(sync)).await? {
             Answer::Done { .. } => debug!("clock set"),
             Answer::Refused(refusal) => {
                 warn!("the feeder refused the clock: {refusal:?}");
             }
             other => warn!("unexpected answer to the clock: {other:?}"),
+        }
+        Ok(())
+    }
+
+    /// Give the feeder the household zone's rule when its time settings
+    /// hold another. Nothing here is a feed: a write that is lost or
+    /// refused is tried again at the next sync or connect, under a new id,
+    /// from the time settings read then.
+    async fn push_zone(&mut self, connection: &mut Connection) -> Result<(), End> {
+        let zone = self.zone.borrow_and_update().clone();
+        let Some((zone, rule)) = zone.as_deref().and_then(|z| Some((z, z.rule()?))) else {
+            return Ok(());
+        };
+
+        let view = match self.ask(connection, &Op::GetTime).await? {
+            Answer::Time(view) => view,
+            Answer::Refused(refusal) => {
+                debug!(feeder = %self.id, "the feeder serves no time settings: {refusal:?}");
+                return Ok(());
+            }
+            other => {
+                warn!(feeder = %self.id, "unexpected answer to the time settings: {other:?}");
+                return Ok(());
+            }
+        };
+        if view.zone.as_deref() == Some(rule) {
+            return Ok(());
+        }
+
+        let put = Op::PutTime {
+            base: view.generation,
+            changes: TimeChanges {
+                zone: Some(rule.to_owned()),
+                ntp: None,
+            },
+        };
+        match self.ask(connection, &put).await? {
+            Answer::Done { .. } => info!(feeder = %self.id, zone = zone.name(), rule, "zone set"),
+            Answer::Refused(Refusal::Forbidden) => info!(
+                feeder = %self.id,
+                "the server's key may not set the feeder's zone; its clock syncs carry the \
+                 zone's next change"
+            ),
+            Answer::Refused(refusal) => {
+                warn!(feeder = %self.id, "the feeder refused the zone: {refusal:?}");
+            }
+            other => warn!(feeder = %self.id, "unexpected answer to the zone: {other:?}"),
         }
         Ok(())
     }

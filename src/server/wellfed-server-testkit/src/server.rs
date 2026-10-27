@@ -5,11 +5,13 @@ use std::net::{Ipv4Addr, SocketAddr};
 
 use wellfed_server::Hosts;
 use wellfed_server_client::{Client, Url};
-use wellfed_service::{Config, Service};
+use std::sync::Arc;
+
+use wellfed_service::{Clock, Config, Service};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-use crate::service::{TempStore, TestService, config};
+use crate::service::{TestService, config};
 
 /// The server, serving until [`Self::stop`].
 #[derive(Debug)]
@@ -27,13 +29,15 @@ impl TestServer {
     }
 
     pub async fn start_with(config: Config) -> Self {
-        Self::open(TempStore::new(), config).await
+        Self::serve(TestService::start_with(config).await).await
     }
 
-    /// The server with `config` on `store`, which a test may have filled
-    /// through the store first.
-    pub async fn open(store: TempStore, config: Config) -> Self {
-        let service = TestService::open(store, config).await;
+    /// The server with [`config`] on a fresh store, reading `clock`.
+    pub async fn start_with_clock(clock: Arc<dyn Clock>) -> Self {
+        Self::serve(TestService::start_with_clock(clock).await).await
+    }
+
+    async fn serve(service: TestService) -> Self {
         let shutdown = CancellationToken::new();
         let app = wellfed_server::app(
             service.service().clone(),

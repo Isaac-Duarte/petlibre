@@ -4,16 +4,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use argon2::Argon2;
-use argon2::password_hash::{PasswordHasher, SaltString};
-use jiff::tz::TimeZone;
-use wellfed_api::{
-    AdoptFeeder, ClientRole, Connection, Credentials, EventBody, EventQuery, FeederId, Role, UserId,
-};
-use wellfed_service::{Config, Discovery, Service, Timing};
-use wellfed_store::{NewUser, Store};
+use wellfed_api::{AdoptFeeder, ClientRole, Connection, EventBody, EventQuery, FeederId};
+use wellfed_service::{Clock, Config, Discovery, Service, Timing};
+use wellfed_store::Store;
 use tempfile::TempDir;
-use uuid::Uuid;
 
 use crate::feeder::{self, Running};
 use crate::fixed::{FixedClock, SeededRandom};
@@ -24,7 +18,7 @@ use crate::until;
 pub fn config() -> Config {
     Config {
         key: [0x42; 32],
-        zone: TimeZone::UTC,
+        host_zone: Some("UTC".into()),
         label: "test-server".into(),
         discovery: Discovery::Off,
         timing: Timing {
@@ -56,32 +50,6 @@ impl TempStore {
             .await
             .expect("open the test database")
     }
-
-    /// A fresh database whose one account is a member who logs in with
-    /// `login`. No route makes a member yet, so the store does, as setup
-    /// would with the member's role; once one does, this goes through it.
-    pub async fn with_member(login: &Credentials) -> Self {
-        let temp = Self::new();
-        let store = temp.open().await;
-        let salt = SaltString::encode_b64(&[0x11; 16]).expect("sixteen bytes make a salt");
-        let hash = Argon2::default()
-            .hash_password(login.password.as_bytes(), &salt)
-            .expect("hash the member's password")
-            .to_string();
-        let created = store
-            .create_first_owner(NewUser {
-                id: UserId(Uuid::from_u128(2)),
-                name: &login.name,
-                password_hash: &hash,
-                role: Role::Member,
-                created: FixedClock.now(),
-            })
-            .await
-            .expect("store the member");
-        assert!(created, "a fresh database takes its first account");
-        store.close().await;
-        temp
-    }
 }
 
 impl Default for TempStore {
@@ -107,13 +75,22 @@ impl TestService {
         Self::open(TempStore::new(), config).await
     }
 
+    /// The service with [`config`] on a fresh store, reading `clock`.
+    pub async fn start_with_clock(clock: Arc<dyn Clock>) -> Self {
+        Self::open_with_clock(TempStore::new(), config(), clock).await
+    }
+
     /// The service with `config` on `store`, which may hold a previous
     /// run's data. Each start draws from a seed of its own.
     pub async fn open(store: TempStore, config: Config) -> Self {
+        Self::open_with_clock(store, config, Arc::new(FixedClock)).await
+    }
+
+    async fn open_with_clock(store: TempStore, config: Config, clock: Arc<dyn Clock>) -> Self {
         let service = Service::start(
             store.open().await,
             config,
-            Arc::new(FixedClock),
+            clock,
             Arc::new(SeededRandom::fresh()),
         )
         .await
@@ -148,16 +125,22 @@ impl TestService {
     /// Adopt `sim` by an invite for the server, reaching it at `address`
     /// (a relay in front of it, say).
     pub async fn adopt_at(&self, sim: &Running, address: &str) -> FeederId {
+        self.adopt_as(sim, address, ClientRole::Server).await
+    }
+
+    /// Adopt `sim` at `address` by an invite for `role`: an owner's key is
+    /// one the feeder lets set its time settings.
+    pub async fn adopt_as(&self, sim: &Running, address: &str, role: ClientRole) -> FeederId {
         let feeder = self
             .service
             .adopt(AdoptFeeder {
-                invite: feeder::invite(sim, ClientRole::Server).await,
+                invite: feeder::invite(sim, role).await,
                 name: "kitchen".into(),
                 address: Some(address.into()),
             })
             .await
             .expect("the service adopts the simulator");
-        assert_eq!(feeder.role, ClientRole::Server);
+        assert_eq!(feeder.role, role);
         feeder.id
     }
 

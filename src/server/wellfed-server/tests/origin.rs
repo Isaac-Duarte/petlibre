@@ -5,7 +5,7 @@
 use wellfed_api::{ErrorCode, SetupState};
 use wellfed_server_client::reqwest::header::{HOST, ORIGIN};
 use wellfed_server_client::{StatusCode, decode, expect_status};
-use wellfed_server_testkit::{TestServer, ada_login, refused};
+use wellfed_server_testkit::{TestServer, ada_setup, refused};
 
 /// A DNS-rebinding page sends its own name as `Host` and `Origin`, which
 /// match each other; the name is not one the server answers to.
@@ -19,7 +19,7 @@ async fn a_request_for_another_host_is_refused() {
         .post(client.url("/api/v1/setup"))
         .header(HOST, "rebound.example:8080")
         .header(ORIGIN, "http://rebound.example:8080")
-        .json(&ada_login())
+        .json(&ada_setup())
         .send()
         .await
         .unwrap();
@@ -31,7 +31,10 @@ async fn a_request_for_another_host_is_refused() {
 
     assert_eq!(
         client.setup_state().await.unwrap(),
-        SetupState { open: true },
+        SetupState {
+            open: true,
+            zone: Some("UTC".into())
+        },
         "nothing was created"
     );
     server.stop().await;
@@ -46,7 +49,7 @@ async fn a_write_from_another_origin_is_refused() {
         let mut request = client
             .http()
             .post(client.url("/api/v1/setup"))
-            .json(&ada_login());
+            .json(&ada_setup());
         if let Some(origin) = origin {
             request = request.header(ORIGIN, origin);
         }
@@ -65,7 +68,10 @@ async fn a_write_from_another_origin_is_refused() {
         .unwrap();
     assert_eq!(
         decode::<SetupState>(read, StatusCode::OK).await.unwrap(),
-        SetupState { open: true },
+        SetupState {
+            open: true,
+            zone: Some("UTC".into())
+        },
         "reads need no origin, and nothing was created"
     );
     server.stop().await;

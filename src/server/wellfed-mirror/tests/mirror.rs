@@ -23,7 +23,6 @@ const ID: FeederId = FeederId(Uuid::from_u128(7));
 
 fn config(answer: Duration) -> Config {
     Config {
-        zone: jiff::tz::TimeZone::UTC,
         discovery: Discovery::Off,
         timing: Timing {
             retry_min: Duration::from_millis(50),

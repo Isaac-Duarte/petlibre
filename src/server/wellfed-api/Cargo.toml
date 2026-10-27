@@ -14,5 +14,8 @@ serde.workspace = true
 utoipa = { workspace = true, features = ["uuid", "jiff_0_2"] }
 uuid = { workspace = true, features = ["serde"] }
 
+[dev-dependencies]
+serde_json.workspace = true
+
 [lints]
 workspace = true

@@ -13,7 +13,7 @@ use wellfed_api::{
 
 use super::{ApiResult, IdPath, JsonBody, TAG_FEEDERS, insert};
 use crate::AppState;
-use crate::auth::{Auth, Owner};
+use crate::auth::{Allowed, need};
 use crate::extract::{IfMatch, OptionalIdempotencyKey};
 
 /// The adopted feeders, with the server's connection to each.
@@ -25,7 +25,7 @@ use crate::extract::{IfMatch, OptionalIdempotencyKey};
 )]
 pub(crate) async fn feeders(
     State(state): State<AppState>,
-    _: Auth,
+    _: Allowed<need::Read>,
 ) -> ApiResult<Json<Vec<Feeder>>> {
     Ok(Json(state.service.feeders().await?))
 }
@@ -47,7 +47,7 @@ pub(crate) async fn feeders(
 )]
 pub(crate) async fn adopt(
     State(state): State<AppState>,
-    _: Owner,
+    _: Allowed<need::Adopt>,
     WithRejection(Json(request), _): JsonBody<AdoptFeeder>,
 ) -> ApiResult<(StatusCode, Json<Feeder>)> {
     let feeder = state.service.adopt(request).await?;
@@ -65,7 +65,7 @@ pub(crate) async fn adopt(
 )]
 pub(crate) async fn feeder(
     State(state): State<AppState>,
-    _: Auth,
+    _: Allowed<need::Read>,
     WithRejection(Path(id), _): IdPath,
 ) -> ApiResult<Json<FeederDetail>> {
     Ok(Json(state.service.feeder(id).await?))
@@ -86,7 +86,7 @@ pub(crate) async fn feeder(
 )]
 pub(crate) async fn settings(
     State(state): State<AppState>,
-    _: Auth,
+    _: Allowed<need::Read>,
     WithRejection(Path(id), _): IdPath,
 ) -> ApiResult<Response> {
     let settings = state.service.settings(id).await?;
@@ -112,7 +112,7 @@ pub(crate) async fn settings(
 )]
 pub(crate) async fn put_settings(
     State(state): State<AppState>,
-    Auth(user): Auth,
+    Allowed(user, _): Allowed<need::Control>,
     WithRejection(Path(id), _): IdPath,
     IfMatch(base): IfMatch,
     OptionalIdempotencyKey(key): OptionalIdempotencyKey,
@@ -142,7 +142,7 @@ pub(crate) async fn put_settings(
 )]
 pub(crate) async fn lock(
     State(state): State<AppState>,
-    Auth(user): Auth,
+    Allowed(user, _): Allowed<need::Control>,
     WithRejection(Path(id), _): IdPath,
     OptionalIdempotencyKey(key): OptionalIdempotencyKey,
     WithRejection(Json(request), _): JsonBody<LockRequest>,

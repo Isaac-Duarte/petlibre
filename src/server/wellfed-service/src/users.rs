@@ -1,203 +1,165 @@
-//! Household users: first-owner setup, login and browser sessions.
+//! The household's accounts, as owners manage them: never leaving the
+//! household without an owner, and ending a user's sessions when their
+//! password changes or their account is deleted.
 //!
-//! Passwords are argon2id hashes, computed off the async threads and at
-//! most [`HASHING`] at a time: each takes about 19 MiB, and logins need no
-//! account, so a flood of them must queue rather than exhaust memory. A
-//! session token is 32 random bytes the browser holds; the store keeps its
-//! SHA-256, so a copied database holds no live session.
+//! An owner's account never expires, so the household cannot lose its last
+//! owner to time either. A disabled account's sessions are ended when it is
+//! extended, so only a new login opens one.
 
-use std::sync::OnceLock;
-
-use argon2::Argon2;
-use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
-use wellfed_api::{Credentials, Role, User, UserId};
+use wellfed_api::{NewUser, Role, User, UserId, UserPatch};
 use wellfed_formats::hex;
-use wellfed_store::NewUser;
-use sha2::{Digest, Sha256};
+use wellfed_store::{Change, Store};
 
-use crate::{AccountError, Invalid, Result, Service};
-
-/// Password hashes computed at once.
-const HASHING: usize = 2;
-static HASHERS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(HASHING);
-
-/// A browser session's secret, as its cookie carries it.
-#[derive(Clone, PartialEq, Eq)]
-pub struct SessionToken(String);
-
-impl SessionToken {
-    pub fn new(text: String) -> Self {
-        Self(text)
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-
-    /// The stored form; `None` for a token this server could not have made.
-    fn hash(&self) -> Option<[u8; 32]> {
-        // Lowercase only: the one spelling this server writes.
-        if !hex::is_lower_hex(&self.0, 64) {
-            return None;
-        }
-        let bytes = hex::decode::<32>(&self.0)?;
-        Some(Sha256::digest(bytes).into())
-    }
-}
-
-impl std::fmt::Debug for SessionToken {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SessionToken").finish_non_exhaustive()
-    }
-}
+use crate::sessions::{self, disabled, hash_password, password, user_name};
+use crate::{AccountError, Invalid, Random, Result, Service, SessionToken};
 
 impl Service {
-    /// Whether a fresh server is waiting for its first owner.
-    pub async fn setup_open(&self) -> Result<bool> {
-        Ok(!self.shared.store.users_exist().await?)
+    /// Every account, by name.
+    pub async fn users(&self) -> Result<Vec<User>> {
+        Ok(self.shared.store.users().await?)
     }
 
-    /// Create the first owner and log them in. Refused once any user
-    /// exists, even when two setups race.
-    pub async fn setup(&self, credentials: Credentials) -> Result<(User, SessionToken)> {
-        let name = user_name(&credentials.name)?;
-        if credentials.password.chars().count() < 8 {
-            return Err(Invalid::Password.into());
-        }
-        if !self.setup_open().await? {
-            return Err(AccountError::SetupClosed.into());
-        }
+    pub async fn create_user(&self, request: NewUser) -> Result<User> {
+        let name = user_name(&request.name)?;
+        password(&request.password)?;
+        owner_never_expires(request.role, request.expires)?;
 
-        let salt = self.shared.random::<16>()?;
-        let hash = blocking(move || hash_password(&credentials.password, &salt)).await?;
+        let hash = self.hash_password(request.password).await?;
         let user = User {
             id: UserId(self.shared.new_id()?),
             name: name.to_owned(),
-            role: Role::Owner,
+            role: request.role,
+            expires: request.expires,
         };
         let created = self
             .shared
             .store
-            .create_first_owner(NewUser {
+            .create_user(wellfed_store::NewUser {
                 id: user.id,
                 name: &user.name,
                 password_hash: &hash,
                 role: user.role,
+                expires: user.expires,
                 created: self.shared.clock.now(),
             })
-            .await?;
-        if !created {
-            return Err(AccountError::SetupClosed.into());
+            .await;
+        match created {
+            Ok(()) => Ok(user),
+            Err(wellfed_store::Error::Duplicate(_)) => Err(AccountError::NameTaken.into()),
+            Err(error) => Err(error.into()),
         }
-        let token = self.open_session(user.id).await?;
-        Ok((user, token))
     }
 
-    /// Check a name and password and open a session. An unknown name costs
-    /// the same hash as a wrong password, so timing does not reveal names.
-    pub async fn login(&self, credentials: Credentials) -> Result<(User, SessionToken)> {
-        let login = self.shared.store.login(credentials.name.trim()).await?;
-        let (user, hash) = match login {
-            Some(login) => (Some(login.user), login.password_hash),
-            None => (None, decoy()?.to_owned()),
+    /// Change a user's role, expiry or password, as `actor` (an owner)
+    /// on the session `session`.
+    pub async fn update_user(
+        &self,
+        actor: &User,
+        session: Option<&SessionToken>,
+        id: UserId,
+        patch: UserPatch,
+    ) -> Result<User> {
+        let current = self.user(id).await?;
+        let updated = User {
+            role: patch.role.unwrap_or(current.role),
+            expires: patch.expires.unwrap_or(current.expires),
+            ..current.clone()
+        };
+        owner_never_expires(updated.role, updated.expires)?;
+        let hash = match patch.password {
+            Some(new) => {
+                password(&new)?;
+                Some(self.hash_password(new).await?)
+            }
+            None => None,
         };
 
-        let matches = blocking(move || Ok(verify_password(&credentials.password, &hash))).await?;
-        let (Some(user), true) = (user, matches) else {
-            return Err(AccountError::BadCredentials.into());
-        };
-        let token = self.open_session(user.id).await?;
-        Ok((user, token))
-    }
-
-    pub async fn logout(&self, token: &SessionToken) -> Result<()> {
-        if let Some(hash) = token.hash() {
-            self.shared.store.delete_session(&hash).await?;
-        }
-        Ok(())
-    }
-
-    /// The user a session token belongs to, while it lasts.
-    pub async fn authenticate(&self, token: &SessionToken) -> Result<Option<User>> {
-        let Some(hash) = token.hash() else {
-            return Ok(None);
-        };
-        Ok(self
-            .shared
-            .store
-            .session_user(&hash, self.shared.clock.now())
-            .await?)
-    }
-
-    async fn open_session(&self, user: UserId) -> Result<SessionToken> {
-        let secret = self.shared.random::<32>()?;
-        let token = SessionToken(hex::encode(&secret));
-        let hash: [u8; 32] = Sha256::digest(secret).into();
-
+        let store = &self.shared.store;
+        changed(store.update_user(id, updated.role, updated.expires).await?)?;
         let now = self.shared.clock.now();
-        let expires = now
-            .checked_add(self.shared.config.timing.session)
-            .map_err(|_| AccountError::Expiry)?;
-        self.shared.store.delete_expired_sessions(now).await?;
-        self.shared
-            .store
-            .create_session(&hash, user, now, expires)
-            .await?;
-        Ok(token)
+        let enabled = disabled(&current, now) && !disabled(&updated, now);
+        let reset = hash.is_some();
+        if let Some(hash) = hash {
+            store.set_password(id, &hash).await?;
+        }
+
+        // Whoever held the old password is logged out: everywhere when an
+        // owner sets someone else's temporary one, and everywhere but here
+        // when they set their own.
+        let keep = session
+            .filter(|_| actor.id == id)
+            .and_then(SessionToken::hash);
+        if enabled || reset {
+            store.delete_sessions_of(id, keep.as_ref()).await?;
+        }
+        Ok(updated)
+    }
+
+    /// Delete a user and end their sessions.
+    pub async fn delete_user(&self, id: UserId) -> Result<()> {
+        changed(self.shared.store.delete_user(id).await?)
+    }
+
+    async fn user(&self, id: UserId) -> Result<User> {
+        let user = self.shared.store.user(id).await?;
+        user.ok_or_else(|| AccountError::NotFound.into())
     }
 }
 
-fn user_name(name: &str) -> Result<&str> {
-    let name = name.trim();
-    if name.is_empty() || name.chars().count() > 64 {
-        return Err(Invalid::UserName.into());
+/// Give a locked-out owner a new temporary password, straight on the
+/// database (`wellfed-server reset-owner`), and end their sessions. The
+/// owner is `name`, or the only owner when it is `None`.
+pub async fn reset_owner(
+    store: &Store,
+    name: Option<&str>,
+    random: &dyn Random,
+) -> Result<(User, String)> {
+    let users = store.users().await?;
+    let owner = match name {
+        Some(name) => {
+            let user = users.into_iter().find(|user| user.name == name.trim());
+            let user = user.ok_or(AccountError::NotFound)?;
+            if user.role != Role::Owner {
+                return Err(AccountError::NotAnOwner(user.name).into());
+            }
+            user
+        }
+        None => {
+            let mut owners = users.into_iter().filter(|user| user.role == Role::Owner);
+            match (owners.next(), owners.next()) {
+                (Some(owner), None) => owner,
+                (None, _) => return Err(AccountError::NoOwner.into()),
+                (Some(_), Some(_)) => return Err(AccountError::OwnerAmbiguous.into()),
+            }
+        }
+    };
+
+    let mut secret = [0; 10];
+    random.fill(&mut secret)?;
+    let mut salt = [0; 16];
+    random.fill(&mut salt)?;
+    let password = hex::encode(&secret);
+    let typed = password.clone();
+    let hash = sessions::blocking(move || hash_password(&typed, &salt)).await?;
+
+    if !store.set_password(owner.id, &hash).await? {
+        return Err(AccountError::NotFound.into());
     }
-    Ok(name)
+    store.delete_sessions_of(owner.id, None).await?;
+    Ok((owner, password))
 }
 
-fn hash_password(password: &str, salt: &[u8; 16]) -> Result<String> {
-    let salt = SaltString::encode_b64(salt).map_err(AccountError::Hash)?;
-    let hash = Argon2::default()
-        .hash_password(password.as_bytes(), &salt)
-        .map_err(AccountError::Hash)?;
-    Ok(hash.to_string())
-}
-
-fn verify_password(password: &str, hash: &str) -> bool {
-    PasswordHash::new(hash).is_ok_and(|hash| {
-        Argon2::default()
-            .verify_password(password.as_bytes(), &hash)
-            .is_ok()
-    })
-}
-
-/// Build the decoy now, so the first login with an unknown name takes no
-/// longer than any other.
-pub(crate) async fn prepare() -> Result<()> {
-    blocking(|| decoy().map(drop)).await
-}
-
-/// A hash no password matches, checked when the name is unknown.
-fn decoy() -> Result<&'static str> {
-    static DECOY: OnceLock<String> = OnceLock::new();
-    if let Some(hash) = DECOY.get() {
-        return Ok(hash);
+fn owner_never_expires(role: Role, expires: Option<jiff::Timestamp>) -> Result<()> {
+    if role == Role::Owner && expires.is_some() {
+        return Err(Invalid::OwnerExpires.into());
     }
-    let hash = hash_password("not a password anyone has", &[0x5a; 16])?;
-    Ok(DECOY.get_or_init(|| hash))
+    Ok(())
 }
 
-/// Run CPU-bound work off the async threads.
-async fn blocking<T: Send + 'static>(
-    work: impl FnOnce() -> Result<T> + Send + 'static,
-) -> Result<T> {
-    // The permit goes with the work: a caller that gives up leaves the hash
-    // running, and it still counts.
-    let permit = HASHERS.acquire().await.map_err(|_| AccountError::Hashing)?;
-    tokio::task::spawn_blocking(move || {
-        let _permit = permit;
-        work()
-    })
-    .await
-    .map_err(|_| AccountError::Hashing)?
+fn changed(change: Change) -> Result<()> {
+    match change {
+        Change::Done => Ok(()),
+        Change::NotFound => Err(AccountError::NotFound.into()),
+        Change::LastOwner => Err(AccountError::LastOwner.into()),
+    }
 }

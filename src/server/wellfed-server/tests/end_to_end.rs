@@ -9,7 +9,7 @@ use wellfed_server_client::reqwest::header::ETAG;
 use wellfed_server_client::{
     Error, Lock, Method, StatusCode, Update, Updates, decode, expect_status,
 };
-use wellfed_server_testkit::{TestServer, WAIT, ada_login, feeder, local, until};
+use wellfed_server_testkit::{TestServer, WAIT, ada_setup, feeder, local, until};
 use uuid::Uuid;
 
 /// The next update, failing the test when the stream ends or breaks.
@@ -24,7 +24,7 @@ fn an_owner_adopts_a_feeder_and_works_it_over_http() {
         let server = TestServer::start().await;
         let mut http = server.client();
 
-        http.setup(&ada_login()).await.unwrap();
+        http.setup(&ada_setup()).await.unwrap();
 
         let kitchen = http
             .adopt(&AdoptFeeder {

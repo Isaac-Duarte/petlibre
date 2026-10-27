@@ -5,9 +5,10 @@
 //!   jittered backoff and, when its address fails, finding the feeder over
 //!   mDNS. On every connect it first subscribes after the newest event the
 //!   store holds, so its own outages lose nothing, then sets the feeder's
-//!   clock (the only time source until the feeder keeps its own), and
-//!   records every event and sample as the feeder sent it: one store
-//!   transaction per event, with the cursor.
+//!   clock in the household's [`Zone`] and gives it the zone's POSIX rule,
+//!   so it follows DST with the server down. It records every event and
+//!   sample as the feeder sent it: one store transaction per event, with
+//!   the cursor.
 //! - **Commands** reach the task through a channel. A short one is
 //!   [`Mirror::ask`]; a long operation holds an [`Operation`] and sends its
 //!   steps one at a time, so other commands run between them. One that is
@@ -33,15 +34,15 @@ mod ingest;
 mod session;
 mod task;
 mod time;
+mod zone;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
-use jiff::tz::TimeZone;
 use wellfed_api::{Connection as Link, FeederEvent, FeederId, FeederSample, Gap};
 use wellfed_store::Store;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, watch};
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
@@ -51,6 +52,7 @@ pub use error::{AskError, ConnectError, Unreachable};
 pub use ingest::stored_event;
 pub use wellfed_client::api::{Invite, InviteText};
 pub use time::{Clock, Random, RandomFailed, SystemClock, SystemRandom};
+pub use zone::{Zone, ZoneError};
 
 /// A device request id: the feeder answers a repeated one from memory.
 pub type RequestId = wellfed_proto::api::RequestId;
@@ -66,20 +68,10 @@ pub enum Discovery {
     Off,
 }
 
+#[derive(Debug)]
 pub struct Config {
-    /// The zone the feeders' clocks are set to.
-    pub zone: TimeZone,
     pub discovery: Discovery,
     pub timing: Timing,
-}
-
-impl std::fmt::Debug for Config {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Config")
-            .field("discovery", &self.discovery)
-            .field("timing", &self.timing)
-            .finish_non_exhaustive()
-    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -142,6 +134,9 @@ pub(crate) struct Shared {
     config: Config,
     clock: Arc<dyn Clock>,
     random: Arc<dyn Random>,
+    /// The household's zone; `None` before there is a household, when the
+    /// clock syncs are in UTC.
+    zone: watch::Sender<Option<Arc<Zone>>>,
 }
 
 impl Shared {
@@ -183,6 +178,7 @@ impl Mirror {
                 config,
                 clock,
                 random,
+                zone: watch::Sender::new(None),
             }),
             feeders: Arc::new(Mutex::new(HashMap::new())),
             cancel,
@@ -226,6 +222,12 @@ impl Mirror {
         };
         handle.stop().await;
         true
+    }
+
+    /// Set every feeder's clock in `zone` from now on, and give each the
+    /// zone's rule: an online feeder at once, the others when they connect.
+    pub fn set_zone(&self, zone: Zone) {
+        self.shared.zone.send_replace(Some(Arc::new(zone)));
     }
 
     /// The feeder's session state, or `None` when it is not mirrored.

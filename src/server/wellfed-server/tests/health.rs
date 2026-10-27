@@ -1,12 +1,14 @@
 //! Liveness for anyone, readiness for an owner, and the request id every
 //! answer carries.
 
-use wellfed_api::{ClientRole, Connection, Credentials, ErrorCode, FeederLink, Role, StoreState};
+use wellfed_api::{
+    ClientRole, Connection, Credentials, ErrorCode, FeederLink, NewUser, Role, StoreState,
+};
 use wellfed_server_client::reqwest::Response;
 use wellfed_server_client::reqwest::header::HOST;
 use wellfed_server_client::{Method, StatusCode};
 use wellfed_server_testkit::fixed::FixedClock;
-use wellfed_server_testkit::{TempStore, TestServer, ada_login, config, feeder, local, refused};
+use wellfed_server_testkit::{TestServer, ada_setup, feeder, local, refused};
 use uuid::Uuid;
 
 const REQUEST_ID: &str = "x-request-id";
@@ -18,9 +20,20 @@ fn bob_login() -> Credentials {
     }
 }
 
-/// A server whose one account is bob, a member.
+/// A server whose owner, ada, has made bob a member.
 async fn with_a_member() -> TestServer {
-    TestServer::open(TempStore::with_member(&bob_login()).await, config()).await
+    let server = TestServer::start().await;
+    let mut owner = server.client();
+    owner.setup(&ada_setup()).await.unwrap();
+    let Credentials { name, password } = bob_login();
+    let bob = NewUser {
+        name,
+        password,
+        role: Role::Member,
+        expires: None,
+    };
+    owner.create_user(&bob).await.unwrap();
+    server
 }
 
 /// The answer's request id.
@@ -46,7 +59,7 @@ async fn readiness_is_for_an_owner_only() {
         ErrorCode::Unauthenticated,
     );
     let mut owner = server.client();
-    owner.setup(&ada_login()).await.unwrap();
+    owner.setup(&ada_setup()).await.unwrap();
     owner.status().await.unwrap();
     server.stop().await;
 
@@ -69,7 +82,7 @@ fn readiness_shows_the_store_each_feeders_link_and_the_jobs() {
         let sim = feeder::start().await;
         let server = TestServer::start().await;
         let mut owner = server.client();
-        owner.setup(&ada_login()).await.unwrap();
+        owner.setup(&ada_setup()).await.unwrap();
 
         let empty = owner.status().await.unwrap();
         assert_eq!(empty.version, env!("CARGO_PKG_VERSION"));

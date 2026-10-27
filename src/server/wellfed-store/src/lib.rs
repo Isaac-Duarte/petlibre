@@ -36,7 +36,7 @@ pub use commands::{CommandFilter, CommandRow, Journaled, NewCommand};
 pub use feeders::{FeederRow, FeederState, NewFeeder, SealedKey, Synced};
 pub use history::{EventRow, NewEvent};
 pub use samples::{NewSample, SampleRow};
-pub use users::{Login, NewUser};
+pub use users::{Change, Login, NewUser, SessionRow};
 
 /// How long a connection waits on a lock before failing.
 const BUSY: Duration = Duration::from_secs(5);

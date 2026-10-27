@@ -6,7 +6,7 @@ use wellfed_api::{
     ErrorCode, PREFIX,
 };
 use wellfed_server_client::{Lock, Method, StatusCode};
-use wellfed_server_testkit::{TestServer, ada_login, feeder, local, refused, refused_for, until};
+use wellfed_server_testkit::{TestServer, ada_setup, feeder, local, refused, refused_for, until};
 use uuid::Uuid;
 
 fn key(n: u128) -> Uuid {
@@ -19,7 +19,7 @@ fn the_journal_reads_by_key_and_in_pages() {
         let sim = feeder::start().await;
         let server = TestServer::start().await;
         let mut http = server.client();
-        http.setup(&ada_login()).await.unwrap();
+        http.setup(&ada_setup()).await.unwrap();
         let kitchen = http
             .adopt(&AdoptFeeder {
                 invite: feeder::invite(&sim, ClientRole::Server).await,

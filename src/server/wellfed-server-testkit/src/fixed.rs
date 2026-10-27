@@ -1,6 +1,8 @@
 //! Time and randomness a test can repeat.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
+use std::time::Duration;
 
 use jiff::Timestamp;
 use wellfed_service::{Clock, Random, RandomFailed};
@@ -22,6 +24,37 @@ impl FixedClock {
 impl Clock for FixedClock {
     fn now(&self) -> Timestamp {
         FixedClock::now(*self)
+    }
+}
+
+/// A clock that starts at [`NOW_MS`] and moves only when a test moves it.
+/// Clones share the time.
+#[derive(Clone, Debug)]
+pub struct ManualClock(Arc<AtomicI64>);
+
+impl ManualClock {
+    pub fn new() -> Self {
+        Self(Arc::new(AtomicI64::new(NOW_MS)))
+    }
+
+    /// Move the clock on by `by`.
+    pub fn advance(&self, by: Duration) {
+        let by =
+            i64::try_from(by.as_millis()).expect("a test moves the clock by less than 2^63 ms");
+        self.0.fetch_add(by, Ordering::Relaxed);
+    }
+}
+
+impl Default for ManualClock {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Clock for ManualClock {
+    fn now(&self) -> Timestamp {
+        Timestamp::from_millisecond(self.0.load(Ordering::Relaxed))
+            .expect("a test keeps the clock in jiff's range")
     }
 }
 

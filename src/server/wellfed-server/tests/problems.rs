@@ -4,7 +4,7 @@
 
 use wellfed_api::{ErrorCode, EventQuery, FeederId, StreamQuery};
 use wellfed_server_client::{Method, StatusCode, expect_status};
-use wellfed_server_testkit::{TestServer, ada_login, refused, refused_for};
+use wellfed_server_testkit::{TestServer, ada_setup, refused, refused_for};
 use serde_json::json;
 use uuid::Uuid;
 
@@ -15,7 +15,7 @@ const NOBODY: FeederId = FeederId(Uuid::from_u128(0x0192c5d0_0000_7000_8000_0000
 async fn bad_requests_come_back_as_typed_problems() {
     let server = TestServer::start().await;
     let mut client = server.client();
-    client.setup(&ada_login()).await.unwrap();
+    client.setup(&ada_setup()).await.unwrap();
 
     let unknown = format!("/api/v1/feeders/{NOBODY}");
     let cases = [

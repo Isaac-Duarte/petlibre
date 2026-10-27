@@ -2342,6 +2342,7 @@ dependencies = [
  "jiff",
  "wellfed-model",
  "serde",
+ "serde_json",
  "utoipa",
  "uuid",
 ]
@@ -2682,6 +2683,7 @@ version = "0.1.0"
 dependencies = [
  "getrandom 0.3.4",
  "jiff",
+ "jiff-tzdb",
  "wellfed-api",
  "wellfed-client",
  "wellfed-connect",
@@ -2838,7 +2840,6 @@ dependencies = [
 name = "wellfed-server-testkit"
 version = "0.1.0"
 dependencies = [
- "argon2",
  "axum",
  "jiff",
  "wellfed-api",

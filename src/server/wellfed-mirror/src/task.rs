@@ -17,7 +17,7 @@ use tracing::{Instrument, debug, info, info_span, warn};
 
 use crate::command::Command;
 use crate::session::End;
-use crate::{ConnectError, Feeder, MirrorEvent, Shared, Unreachable, connect};
+use crate::{ConnectError, Feeder, MirrorEvent, Shared, Unreachable, Zone, connect};
 
 /// Commands waiting for the task; more wait in `send`.
 const COMMANDS: usize = 16;
@@ -62,6 +62,7 @@ pub(crate) fn spawn(
     let (commands, receiver) = mpsc::channel(COMMANDS);
     let (link, watching) = watch::channel(Link::Offline);
     let task = Task {
+        zone: shared.zone.subscribe(),
         shared,
         id: feeder.id,
         identity: feeder.identity,
@@ -95,6 +96,8 @@ pub(crate) struct Task {
     keys: Keypair,
     address: Option<String>,
     pub(crate) commands: mpsc::Receiver<Command>,
+    /// The household's zone, watched for changes while a session is open.
+    pub(crate) zone: watch::Receiver<Option<Arc<Zone>>>,
     link: watch::Sender<Link>,
     pub(crate) updates: broadcast::Sender<MirrorEvent>,
     pub(crate) cancel: CancellationToken,

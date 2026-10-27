@@ -23,8 +23,7 @@
 //! answer or `unknown` even when the caller stops waiting.
 
 use wellfed_api::{
-    Command, CommandKind, CommandOutcome, CommandPage, CommandQuery, CommandState, FeederId, Role,
-    User,
+    Command, CommandKind, CommandOutcome, CommandPage, CommandQuery, CommandState, FeederId, User,
 };
 use wellfed_formats::canonical::canonical_of;
 use wellfed_mirror::AskError;
@@ -36,7 +35,9 @@ use tracing::warn;
 use uuid::Uuid;
 
 use self::retry::{Retry, retry};
-use crate::{CommandError, Error, IdempotencyKey, Invalid, RequestId, Result, Service};
+use crate::{
+    CommandError, Error, IdempotencyKey, Invalid, Permission, RequestId, Result, Service, can,
+};
 
 mod retry;
 
@@ -78,7 +79,9 @@ impl Service {
     pub async fn command(&self, user: &User, key: IdempotencyKey) -> Result<Command> {
         let row = self.shared.store.command(&key).await?;
         match row {
-            Some(row) if user.role == Role::Owner || row.user == user.id => Ok(view(row)),
+            Some(row) if can(user.role, Permission::AllHistory) || row.user == user.id => {
+                Ok(view(row))
+            }
             _ => Err(CommandError::NoEntry.into()),
         }
     }
@@ -103,7 +106,7 @@ impl Service {
             .shared
             .store
             .commands(CommandFilter {
-                user: (user.role != Role::Owner).then_some(user.id),
+                user: (!can(user.role, Permission::AllHistory)).then_some(user.id),
                 feeder: query.feeder,
                 state: query.state,
                 after,

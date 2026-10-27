@@ -12,6 +12,7 @@
 //! address, `localhost`, or a name it was started with ([`Hosts`]). A
 //! rebinding page can only use its own name, which is none of these.
 
+use std::marker::PhantomData;
 use std::net::IpAddr;
 use std::time::Duration;
 
@@ -21,8 +22,8 @@ use axum::http::{HeaderMap, header};
 use axum::middleware::Next;
 use axum::response::Response;
 use axum_extra::extract::CookieJar;
-use wellfed_api::{ErrorCode, Role, SESSION_COOKIE as COOKIE, User};
-use wellfed_service::SessionToken;
+use wellfed_api::{ErrorCode, SESSION_COOKIE as COOKIE, User};
+use wellfed_service::{Permission, SessionToken, can};
 
 use crate::AppState;
 use crate::error::ApiError;
@@ -41,22 +42,50 @@ impl FromRequestParts<AppState> for Auth {
     }
 }
 
-/// The logged-in user, who must be an owner.
-pub(crate) struct Owner;
+/// The logged-in user, whose role [`can`] do `P`'s permission: each route
+/// names the one it needs (`Allowed<need::Control>`), and the service's
+/// table decides.
+pub(crate) struct Allowed<P>(pub(crate) User, pub(crate) PhantomData<P>);
 
-impl FromRequestParts<AppState> for Owner {
+/// A permission a route names as a type.
+pub(crate) trait Needs {
+    const PERMISSION: Permission;
+}
+
+impl<P: Needs> FromRequestParts<AppState> for Allowed<P> {
     type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, ApiError> {
         let Auth(user) = Auth::from_request_parts(parts, state).await?;
-        if user.role != Role::Owner {
+        if !can(user.role, P::PERMISSION) {
             return Err(ApiError::Code(
                 ErrorCode::Forbidden,
-                Some("only an owner may do that".into()),
+                Some(format!("a {} may not do that", user.role.code())),
             ));
         }
-        Ok(Self)
+        Ok(Self(user, PhantomData))
     }
+}
+
+/// The routes' permissions, one type each.
+pub(crate) mod need {
+    use wellfed_service::Permission;
+
+    use super::Needs;
+
+    macro_rules! needs {
+        ($($name:ident),* $(,)?) => {$(
+            pub(crate) enum $name {}
+
+            impl Needs for $name {
+                const PERMISSION: Permission = Permission::$name;
+            }
+        )*};
+    }
+
+    needs!(
+        Read, Control, OwnHistory, OwnAccount, Users, Household, Adopt, ServerData
+    );
 }
 
 pub(crate) fn session_token(headers: &HeaderMap) -> Option<SessionToken> {
@@ -65,10 +94,16 @@ pub(crate) fn session_token(headers: &HeaderMap) -> Option<SessionToken> {
         .map(|cookie| SessionToken::new(cookie.value().to_owned()))
 }
 
+/// How long a browser keeps the session cookie: the longest browsers
+/// allow. The server ends a session a fixed time after its last use, so the
+/// cookie must outlive any session rather than end a fixed time after the
+/// login.
+const COOKIE_LIFETIME: Duration = Duration::from_secs(400 * 24 * 3600);
+
 /// The `Set-Cookie` value that carries a new session. The token is hex, so
 /// it needs no quoting.
-pub(crate) fn session_cookie(token: &SessionToken, lifetime: Duration) -> String {
-    let max_age = lifetime.as_secs();
+pub(crate) fn session_cookie(token: &SessionToken) -> String {
+    let max_age = COOKIE_LIFETIME.as_secs();
     format!(
         "{COOKIE}={}; HttpOnly; SameSite=Strict; Path=/; Max-Age={max_age}",
         token.as_str()

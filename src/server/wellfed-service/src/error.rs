@@ -3,7 +3,7 @@
 //! enum rather than growing one list.
 
 use wellfed_api::{FeederRefusal, Settings};
-use wellfed_mirror::{AskError, ConnectError, InviteText, RandomFailed, Unreachable};
+use wellfed_mirror::{AskError, ConnectError, InviteText, RandomFailed, Unreachable, ZoneError};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -13,6 +13,8 @@ pub enum Error {
     Invalid(#[from] Invalid),
     #[error(transparent)]
     Account(#[from] AccountError),
+    #[error(transparent)]
+    Household(#[from] HouseholdError),
     #[error(transparent)]
     Feeder(#[from] FeederError),
     #[error(transparent)]
@@ -28,8 +30,12 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 pub enum Invalid {
     #[error("a user name is 1-64 characters")]
     UserName,
-    #[error("a password is at least 8 characters")]
+    #[error("a password is at least 10 characters")]
     Password,
+    #[error("an owner's account does not expire: remove the expiry, or pick another role")]
+    OwnerExpires,
+    #[error("a household name is 1-64 characters")]
+    HouseholdName,
     #[error("a feeder name is 1-64 characters")]
     FeederName,
     #[error("the address is not an IP or IP:port")]
@@ -50,19 +56,42 @@ pub enum Invalid {
     CommandCursor,
 }
 
-/// Setup, login and sessions.
+/// Setup, login, sessions and the accounts owners manage.
 #[derive(Debug, thiserror::Error)]
 pub enum AccountError {
     #[error("setup is closed: an account exists")]
     SetupClosed,
     #[error("wrong name or password")]
     BadCredentials,
+    #[error("the account is past its expiry: an owner can extend it")]
+    Disabled,
+    #[error("no such user")]
+    NotFound,
+    #[error("that name is taken")]
+    NameTaken,
+    #[error("the household would have no owner left")]
+    LastOwner,
+    #[error("{0} is not an owner")]
+    NotAnOwner(String),
+    #[error("the household has no owner")]
+    NoOwner,
+    #[error("the household has several owners: name one")]
+    OwnerAmbiguous,
     #[error("hash a password: {0}")]
     Hash(argon2::password_hash::Error),
     #[error("the password hashing task stopped before it finished")]
     Hashing,
     #[error("a session's expiry is past the latest time the clock can show")]
     Expiry,
+}
+
+/// The household's settings.
+#[derive(Debug, thiserror::Error)]
+pub enum HouseholdError {
+    #[error("the household is made at setup")]
+    NotSetUp,
+    #[error(transparent)]
+    Zone(ZoneError),
 }
 
 /// Adopting feeders and reading what the server holds of them.

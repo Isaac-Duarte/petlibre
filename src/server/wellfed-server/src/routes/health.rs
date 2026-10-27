@@ -6,7 +6,7 @@ use wellfed_api::{Health, Problem, ServerStatus};
 
 use super::TAG_HEALTH;
 use crate::AppState;
-use crate::auth::Owner;
+use crate::auth::{Allowed, need};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -37,6 +37,9 @@ pub(crate) async fn health() -> Json<Health> {
         (status = 403, body = Problem, description = "forbidden: owners only"),
     ),
 )]
-pub(crate) async fn status(State(state): State<AppState>, _: Owner) -> Json<ServerStatus> {
+pub(crate) async fn status(
+    State(state): State<AppState>,
+    _: Allowed<need::ServerData>,
+) -> Json<ServerStatus> {
     Json(state.service.status(VERSION).await)
 }

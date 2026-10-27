@@ -23,7 +23,7 @@ use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 
 use super::TAG_FEEDERS;
 use crate::AppState;
-use crate::auth::{self, Auth};
+use crate::auth::{self, Allowed, need};
 use crate::error::ApiError;
 
 /// How often an open stream checks that its session still holds.
@@ -47,7 +47,7 @@ const SESSION_CHECK: Duration = Duration::from_secs(60);
 )]
 pub(crate) async fn stream(
     State(state): State<AppState>,
-    _: Auth,
+    _: Allowed<need::Read>,
     headers: HeaderMap,
     WithRejection(Query(query), _): WithRejection<Query<StreamQuery>, ApiError>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ApiError> {

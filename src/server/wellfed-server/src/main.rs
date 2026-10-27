@@ -6,12 +6,15 @@
 //! (`keys/server.key`). The first start makes that key; back it up apart
 //! from the database's backups: the database alone cannot open the feeder
 //! keys.
+//!
+//! `wellfed-server reset-owner` gives a locked-out owner a new temporary
+//! password, straight on the database, and prints it.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use jiff::tz::TimeZone;
 use wellfed_server::config::{DATABASE, Overrides, ServerConfig};
 use wellfed_service::{Clock, Config, Service, SystemClock, SystemRandom, Timing};
@@ -27,6 +30,19 @@ struct Cli {
     data: PathBuf,
     #[command(flatten)]
     overrides: Overrides,
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Give an owner who is locked out a new temporary password, and end
+    /// their sessions. Runs on the database whether or not the server is.
+    ResetOwner {
+        /// The owner's name; needed only when the household has several.
+        #[arg(long)]
+        name: Option<String>,
+    },
 }
 
 #[tokio::main]
@@ -37,6 +53,9 @@ async fn main() -> Result<()> {
         )
         .init();
     let cli = Cli::parse();
+    if let Some(Command::ResetOwner { name }) = cli.command {
+        return reset_owner(&cli.data, name.as_deref()).await;
+    }
 
     std::fs::create_dir_all(&cli.data).with_context(|| format!("create {}", cli.data.display()))?;
     let settings = ServerConfig::load(&cli.data, cli.overrides)?;
@@ -46,7 +65,8 @@ async fn main() -> Result<()> {
         .context("open the database")?;
     let config = Config {
         key,
-        zone: TimeZone::system(),
+        // Offered at setup only: the household's zone is the feeders'.
+        host_zone: TimeZone::system().iana_name().map(str::to_owned),
         label: settings.label.into(),
         discovery: settings.discovery.into(),
         timing: Timing::default(),
@@ -72,6 +92,22 @@ async fn main() -> Result<()> {
         .await
         .context("serve")?;
     service.shutdown().await;
+    Ok(())
+}
+
+/// Print a new password for the owner, on an existing database only.
+async fn reset_owner(data: &std::path::Path, name: Option<&str>) -> Result<()> {
+    let path = data.join(DATABASE);
+    anyhow::ensure!(path.exists(), "no database at {}", path.display());
+    let store = Store::open(&path, SystemClock.now())
+        .await
+        .context("open the database")?;
+
+    let reset = wellfed_service::reset_owner(&store, name, &SystemRandom).await;
+    store.close().await;
+    let (owner, password) = reset.context("reset the owner's password")?;
+    println!("{}'s temporary password: {password}", owner.name);
+    println!("Log in with it, then set your own on your account.");
     Ok(())
 }
 

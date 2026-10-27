@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use super::{ApiResult, TAG_COMMANDS};
 use crate::AppState;
-use crate::auth::Auth;
+use crate::auth::{Allowed, need};
 use crate::error::ApiError;
 
 /// The journal, oldest first: the caller's own writes, or everyone's for
@@ -27,7 +27,7 @@ use crate::error::ApiError;
 )]
 pub(crate) async fn commands(
     State(state): State<AppState>,
-    Auth(user): Auth,
+    Allowed(user, _): Allowed<need::OwnHistory>,
     WithRejection(Query(query), _): WithRejection<Query<CommandQuery>, ApiError>,
 ) -> ApiResult<Json<CommandPage>> {
     Ok(Json(state.service.commands(&user, query).await?))
@@ -48,7 +48,7 @@ pub(crate) async fn commands(
 )]
 pub(crate) async fn command(
     State(state): State<AppState>,
-    Auth(user): Auth,
+    Allowed(user, _): Allowed<need::OwnHistory>,
     WithRejection(Path(key), _): WithRejection<Path<Uuid>, ApiError>,
 ) -> ApiResult<Json<Command>> {
     Ok(Json(state.service.command(&user, key.into_bytes()).await?))

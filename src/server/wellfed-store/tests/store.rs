@@ -4,11 +4,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use jiff::Timestamp;
 use wellfed_api::{
-    Blocked, ClientRole, EventKind, FeederId, FeederStatus, Generation, MetricKind, Readiness,
-    Role, Settings, UserId, WifiSource,
+    Blocked, ClientRole, EventKind, FeederId, FeederStatus, Generation, Household, MetricKind,
+    Readiness, Role, Settings, TimeFormat, Units, UserId, WifiSource,
 };
 use wellfed_store::{
-    Error, FeederRow, NewEvent, NewFeeder, NewSample, NewUser, SealedKey, Store, Synced,
+    Change, Error, FeederRow, NewEvent, NewFeeder, NewSample, NewUser, SealedKey, Store, Synced,
 };
 use tempfile::TempDir;
 use uuid::Uuid;
@@ -38,7 +38,17 @@ fn user(name: &str) -> NewUser<'_> {
         name,
         password_hash: "$argon2id$hash",
         role: Role::Owner,
+        expires: None,
         created: at(1_000),
+    }
+}
+
+fn household() -> Household {
+    Household {
+        name: "Home".into(),
+        units: Units::Grams,
+        time_format: TimeFormat::H24,
+        zone: "Europe/Berlin".into(),
     }
 }
 
@@ -81,8 +91,18 @@ async fn only_the_first_owner_is_created_by_setup() {
     let (_dir, store) = fresh().await;
     assert!(!store.users_exist().await.unwrap());
 
-    assert!(store.create_first_owner(user("ada")).await.unwrap());
-    assert!(!store.create_first_owner(user("bob")).await.unwrap());
+    assert!(
+        store
+            .create_first_owner(user("ada"), &household())
+            .await
+            .unwrap()
+    );
+    assert!(
+        !store
+            .create_first_owner(user("bob"), &household())
+            .await
+            .unwrap()
+    );
 
     assert!(store.users_exist().await.unwrap());
     let login = store.login("ada").await.unwrap().unwrap();
@@ -93,46 +113,149 @@ async fn only_the_first_owner_is_created_by_setup() {
 }
 
 #[tokio::test]
-async fn a_session_ends_at_its_expiry_or_logout() {
+async fn a_session_is_used_idles_out_or_logs_out() {
     let (_dir, store) = fresh().await;
     let new = user("ada");
     let id = new.id;
-    store.create_first_owner(new).await.unwrap();
-    let (live, expired) = ([1; 32], [2; 32]);
-    store
-        .create_session(&live, id, at(0), at(10_000))
-        .await
-        .unwrap();
-    store
-        .create_session(&expired, id, at(0), at(5_000))
-        .await
-        .unwrap();
+    store.create_first_owner(new, &household()).await.unwrap();
+    let (live, idle) = ([1; 32], [2; 32]);
+    store.create_session(&live, id, at(5_000)).await.unwrap();
+    store.create_session(&idle, id, at(0)).await.unwrap();
 
-    let user = store.session_user(&live, at(6_000)).await.unwrap().unwrap();
-    assert_eq!(user.id, id);
-    assert!(
-        store
-            .session_user(&expired, at(6_000))
-            .await
-            .unwrap()
-            .is_none()
-    );
-    assert!(
-        store
-            .session_user(&[3; 32], at(6_000))
-            .await
-            .unwrap()
-            .is_none()
-    );
+    let session = store.session(&live).await.unwrap().unwrap();
+    assert_eq!((session.user.id, session.last_used), (id, at(5_000)));
+    assert!(store.session(&[3; 32]).await.unwrap().is_none());
+    store.touch_session(&live, at(9_000)).await.unwrap();
+    store.touch_session(&live, at(8_000)).await.unwrap();
+    let session = store.session(&live).await.unwrap().unwrap();
+    assert_eq!(session.last_used, at(9_000), "a use never moves it back");
 
-    assert_eq!(store.delete_expired_sessions(at(6_000)).await.unwrap(), 1);
+    assert_eq!(store.delete_idle_sessions(at(1_000)).await.unwrap(), 1);
+    assert!(store.session(&idle).await.unwrap().is_none());
     store.delete_session(&live).await.unwrap();
+    assert!(store.session(&live).await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn setup_writes_the_household_with_the_owner() {
+    let (_dir, store) = fresh().await;
+    assert_eq!(store.household().await.unwrap(), None);
+
+    store
+        .create_first_owner(user("ada"), &household())
+        .await
+        .unwrap();
+    assert_eq!(store.household().await.unwrap(), Some(household()));
+
+    let changed = Household {
+        units: Units::Ounces,
+        time_format: TimeFormat::H12,
+        zone: "America/Denver".into(),
+        ..household()
+    };
+    store.set_household(&changed).await.unwrap();
+    assert_eq!(store.household().await.unwrap(), Some(changed));
+}
+
+#[tokio::test]
+async fn users_are_listed_changed_and_deleted_but_never_the_last_owner() {
+    let (_dir, store) = fresh().await;
+    let ada = user("ada");
+    let ada_id = ada.id;
+    store.create_first_owner(ada, &household()).await.unwrap();
+    let bob = NewUser {
+        role: Role::Member,
+        expires: Some(at(50_000)),
+        ..user("bob")
+    };
+    let bob_id = bob.id;
+    store.create_user(bob).await.unwrap();
+    assert!(matches!(
+        store.create_user(user("bob")).await,
+        Err(Error::Duplicate("user"))
+    ));
+
+    let users = store.users().await.unwrap();
+    let names: Vec<_> = users.iter().map(|u| (u.name.as_str(), u.role)).collect();
+    assert_eq!(names, [("ada", Role::Owner), ("bob", Role::Member)]);
+    assert_eq!(users[1].expires, Some(at(50_000)));
+
+    // The only owner can be neither demoted nor deleted.
+    assert_eq!(
+        store.update_user(ada_id, Role::Member, None).await.unwrap(),
+        Change::LastOwner
+    );
+    assert_eq!(store.delete_user(ada_id).await.unwrap(), Change::LastOwner);
+    assert_eq!(
+        store.update_user(ada_id, Role::Owner, None).await.unwrap(),
+        Change::Done,
+        "an owner staying one is no change of owners"
+    );
+
+    // With a second owner, either may go.
+    assert_eq!(
+        store.update_user(bob_id, Role::Owner, None).await.unwrap(),
+        Change::Done
+    );
+    assert_eq!(
+        store.update_user(ada_id, Role::Viewer, None).await.unwrap(),
+        Change::Done
+    );
+    assert_eq!(
+        store.user(ada_id).await.unwrap().unwrap().role,
+        Role::Viewer
+    );
+
+    store.create_session(&[4; 32], ada_id, at(0)).await.unwrap();
+    assert!(store.set_password(ada_id, "$argon2id$new").await.unwrap());
+    assert_eq!(
+        store.login("ada").await.unwrap().unwrap().password_hash,
+        "$argon2id$new"
+    );
+    assert_eq!(store.delete_user(ada_id).await.unwrap(), Change::Done);
     assert!(
+        store.session(&[4; 32]).await.unwrap().is_none(),
+        "their sessions went with them"
+    );
+    assert_eq!(store.delete_user(ada_id).await.unwrap(), Change::NotFound);
+    assert_eq!(
+        store.update_user(ada_id, Role::Member, None).await.unwrap(),
+        Change::NotFound
+    );
+    assert!(!store.set_password(ada_id, "x").await.unwrap());
+}
+
+#[tokio::test]
+async fn ending_a_users_sessions_leaves_the_others() {
+    let (_dir, store) = fresh().await;
+    let ada = user("ada");
+    let ada_id = ada.id;
+    store.create_first_owner(ada, &household()).await.unwrap();
+    let bob = user("bob");
+    let bob_id = bob.id;
+    store.create_user(bob).await.unwrap();
+    for (token, id) in [([1; 32], ada_id), ([2; 32], ada_id), ([3; 32], bob_id)] {
+        store.create_session(&token, id, at(0)).await.unwrap();
+    }
+
+    assert_eq!(
         store
-            .session_user(&live, at(6_000))
+            .delete_sessions_of(ada_id, Some(&[2; 32]))
             .await
-            .unwrap()
-            .is_none()
+            .unwrap(),
+        1,
+        "all but the one kept"
+    );
+    assert!(store.session(&[1; 32]).await.unwrap().is_none());
+    assert!(store.session(&[2; 32]).await.unwrap().is_some());
+    assert_eq!(store.delete_sessions_of(ada_id, None).await.unwrap(), 1);
+    assert!(
+        store.session(&[3; 32]).await.unwrap().is_some(),
+        "bob's stays"
+    );
+    assert_eq!(
+        store.password_hash(bob_id).await.unwrap().as_deref(),
+        Some("$argon2id$hash")
     );
 }
 
@@ -344,7 +467,10 @@ async fn reopening_keeps_the_data_and_runs_no_migration_again() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("server.db");
     let store = Store::open(&path, at(0)).await.unwrap();
-    store.create_first_owner(user("ada")).await.unwrap();
+    store
+        .create_first_owner(user("ada"), &household())
+        .await
+        .unwrap();
     store.close().await;
 
     let store = Store::open(&path, at(0)).await.unwrap();

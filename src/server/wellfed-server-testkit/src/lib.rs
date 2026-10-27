@@ -28,7 +28,7 @@ use std::fmt::Debug;
 use std::future::Future;
 use std::time::Duration;
 
-use wellfed_api::{Credentials, ErrorCode, Role, User, UserId};
+use wellfed_api::{Credentials, ErrorCode, Role, Setup, User, UserId};
 use wellfed_server_client::StatusCode;
 use tokio::task::LocalSet;
 use uuid::Uuid;
@@ -79,12 +79,26 @@ pub fn ada_login() -> Credentials {
     }
 }
 
+/// The first owner's setup, in the zone the household's feeders keep.
+pub fn ada_setup() -> Setup {
+    let Credentials { name, password } = ada_login();
+    Setup {
+        name,
+        password,
+        zone: ZONE.into(),
+    }
+}
+
+/// The household's zone at setup.
+pub const ZONE: &str = "Europe/Berlin";
+
 /// A household owner with id `n`.
 pub fn owner_user(n: u128, name: &str) -> User {
     User {
         id: UserId(Uuid::from_u128(n)),
         name: name.into(),
         role: Role::Owner,
+        expires: None,
     }
 }
 

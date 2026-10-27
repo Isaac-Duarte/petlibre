@@ -634,6 +634,93 @@
         }
       }
     },
+    "/api/v1/household": {
+      "get": {
+        "tags": [
+          "household"
+        ],
+        "summary": "The household, as every user's pages show it.",
+        "operationId": "household",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Household"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "household"
+        ],
+        "summary": "Change the household. A new zone goes to every feeder as its POSIX rule:\nthe online ones now, the others when they reconnect.",
+        "operationId": "update_household",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HouseholdPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Household"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid: a name, or an unknown zone",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden: owners only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "zone_unsupported: no POSIX rule describes the zone",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/session": {
       "get": {
         "tags": [
@@ -659,6 +746,16 @@
                 }
               }
             }
+          },
+          "403": {
+            "description": "account_disabled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
           }
         }
       },
@@ -666,7 +763,7 @@
         "tags": [
           "auth"
         ],
-        "summary": "Log in.",
+        "summary": "Log in. The session lasts 30 days from its last use.",
         "operationId": "login",
         "requestBody": {
           "content": {
@@ -698,6 +795,16 @@
                 }
               }
             }
+          },
+          "403": {
+            "description": "account_disabled: past its expiry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
           }
         }
       },
@@ -710,6 +817,46 @@
         "responses": {
           "204": {}
         }
+      },
+      "patch": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Change one's own password, given the current one. Every other session\nof the account ends; this one stays.",
+        "operationId": "change_password",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordChange"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {},
+          "400": {
+            "description": "invalid: a password under 10 characters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "bad_credentials: not the current password",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/setup": {
@@ -717,7 +864,7 @@
         "tags": [
           "auth"
         ],
-        "summary": "Whether a fresh server is waiting for its first owner.",
+        "summary": "Whether a fresh server is waiting for its first owner, and the host's\nzone, which the setup page offers as the household's.",
         "operationId": "setup_state",
         "responses": {
           "200": {
@@ -735,13 +882,13 @@
         "tags": [
           "auth"
         ],
-        "summary": "Create the first owner and log them in. Closed once any account exists.",
+        "summary": "Create the first owner and the household in its zone, and log the owner\nin. Closed once any account exists.",
         "operationId": "setup",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/Credentials"
+                "$ref": "#/components/schemas/Setup"
               }
             }
           },
@@ -758,8 +905,28 @@
               }
             }
           },
+          "400": {
+            "description": "invalid: a name, a password under 10 characters, or an unknown zone",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
           "409": {
             "description": "setup_closed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "zone_unsupported: no POSIX rule describes the zone",
             "content": {
               "application/json": {
                 "schema": {
@@ -860,6 +1027,225 @@
             }
           },
           "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users": {
+      "get": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Every account, by name.",
+        "operationId": "users",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/User"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden: owners only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Add an account, with a temporary password the owner passes on.",
+        "operationId": "create_user",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewUser"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/User"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid: a name, a password under 10 characters, or an owner with an expiry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden: owners only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "name_taken",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/{id}": {
+      "delete": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Delete an account and end its sessions. Its phones' feeder keys are\nrevoked separately.",
+        "operationId": "delete_user",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/UserId"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "403": {
+            "description": "forbidden: owners only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "last_owner",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Change an account's role, expiry or password. Setting a password ends\nthat user's sessions (an owner's own, all but the one asking);\nextending a disabled account enables it.",
+        "operationId": "update_user",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/UserId"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/User"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid: a password under 10 characters, or an owner with an expiry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden: owners only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "last_owner: the household's only owner keeps the role",
             "content": {
               "application/json": {
                 "schema": {
@@ -1225,19 +1611,17 @@
       },
       "Credentials": {
         "type": "object",
-        "description": "A name and password: the first owner's at setup, anyone's at login.",
+        "description": "A name and password, to log in.",
         "required": [
           "name",
           "password"
         ],
         "properties": {
           "name": {
-            "type": "string",
-            "description": "1-64 characters."
+            "type": "string"
           },
           "password": {
-            "type": "string",
-            "description": "At least 8 characters."
+            "type": "string"
           }
         }
       },
@@ -1257,7 +1641,11 @@
           "setup_closed",
           "unauthenticated",
           "bad_credentials",
+          "account_disabled",
           "forbidden",
+          "last_owner",
+          "name_taken",
+          "zone_unsupported",
           "cross_origin",
           "unknown_host",
           "not_found",
@@ -1994,6 +2382,70 @@
           }
         }
       },
+      "Household": {
+        "type": "object",
+        "required": [
+          "name",
+          "units",
+          "time_format",
+          "zone"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "1-64 characters."
+          },
+          "time_format": {
+            "$ref": "#/components/schemas/TimeFormat"
+          },
+          "units": {
+            "$ref": "#/components/schemas/Units"
+          },
+          "zone": {
+            "type": "string",
+            "description": "The IANA zone, by its canonical name. Every feeder keeps it as a\nPOSIX rule, so its clock and plans follow DST with the server down."
+          }
+        }
+      },
+      "HouseholdPatch": {
+        "type": "object",
+        "description": "A change to the household; an absent field is left as it is. A new\nzone goes to every feeder: those offline get it when they reconnect.",
+        "properties": {
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "time_format": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TimeFormat"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "units": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Units"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "zone": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "An IANA zone; one a POSIX rule cannot describe is refused\n`zone_unsupported`."
+          }
+        }
+      },
       "Job": {
         "type": "string",
         "description": "The server's background jobs.",
@@ -2045,6 +2497,54 @@
         "properties": {
           "locked": {
             "type": "boolean"
+          }
+        }
+      },
+      "NewUser": {
+        "type": "object",
+        "description": "A new account.",
+        "required": [
+          "name",
+          "password",
+          "role"
+        ],
+        "properties": {
+          "expires": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When the account stops (a pet sitter's); never when absent. An\nowner's account cannot expire."
+          },
+          "name": {
+            "type": "string",
+            "description": "1-64 characters, unique."
+          },
+          "password": {
+            "type": "string",
+            "description": "At least 10 characters: a temporary one the owner passes on."
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          }
+        }
+      },
+      "PasswordChange": {
+        "type": "object",
+        "description": "A user changing their own password: `PATCH /session`.",
+        "required": [
+          "current",
+          "password"
+        ],
+        "properties": {
+          "current": {
+            "type": "string",
+            "description": "The password the user logs in with now."
+          },
+          "password": {
+            "type": "string",
+            "description": "At least 10 characters."
           }
         }
       },
@@ -2148,10 +2648,11 @@
       },
       "Role": {
         "type": "string",
-        "description": "What a household user may do through the server. Members feed and edit\nsettings; owners also manage users, tokens, feeders and installs.",
+        "description": "What a household user may do through the server. Owners do everything;\nmembers also feed and change settings and the lock; viewers read status\nand history and write nothing.",
         "enum": [
           "owner",
-          "member"
+          "member",
+          "viewer"
         ]
       },
       "SampleValue": {
@@ -2443,6 +2944,29 @@
           }
         }
       },
+      "Setup": {
+        "type": "object",
+        "description": "The first owner and the household's zone.",
+        "required": [
+          "name",
+          "password",
+          "zone"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "1-64 characters."
+          },
+          "password": {
+            "type": "string",
+            "description": "At least 10 characters."
+          },
+          "zone": {
+            "type": "string",
+            "description": "The household's IANA zone (`Europe/Berlin`). Every feeder keeps its\nPOSIX rule, so a zone the rule cannot describe is refused\n`zone_unsupported`."
+          }
+        }
+      },
       "SetupState": {
         "type": "object",
         "description": "Whether a fresh server is waiting for its first owner.",
@@ -2452,6 +2976,13 @@
         "properties": {
           "open": {
             "type": "boolean"
+          },
+          "zone": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The server host's IANA zone, when it has one: the setup page offers\nit as the household's zone."
           }
         }
       },
@@ -2644,6 +3175,22 @@
           }
         ]
       },
+      "TimeFormat": {
+        "type": "string",
+        "description": "How times of day are shown.",
+        "enum": [
+          "24h",
+          "12h"
+        ]
+      },
+      "Units": {
+        "type": "string",
+        "description": "How weights are shown.",
+        "enum": [
+          "grams",
+          "ounces"
+        ]
+      },
       "User": {
         "type": "object",
         "required": [
@@ -2652,6 +3199,14 @@
           "role"
         ],
         "properties": {
+          "expires": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When the account stops: past it, its sessions no longer work and it\ncannot log in, until an owner extends or deletes it. Owners never\nexpire."
+          },
           "id": {
             "$ref": "#/components/schemas/UserId"
           },
@@ -2666,6 +3221,38 @@
       "UserId": {
         "type": "string",
         "format": "uuid"
+      },
+      "UserPatch": {
+        "type": "object",
+        "description": "A change to an account; an absent field is left as it is.",
+        "properties": {
+          "expires": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "A time sets or moves the expiry, `null` removes it. Extending a\ndisabled account enables it again."
+          },
+          "password": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A temporary password (at least 10 characters). Setting another\nuser's ends their sessions."
+          },
+          "role": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Role",
+                "description": "Demoting the last owner is refused `last_owner`."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
       },
       "WifiSource": {
         "type": "string",
@@ -2682,6 +3269,14 @@
     {
       "name": "auth",
       "description": "First-owner setup and login"
+    },
+    {
+      "name": "users",
+      "description": "The household's accounts, managed by owners"
+    },
+    {
+      "name": "household",
+      "description": "The household's name, units, time format and zone"
     },
     {
       "name": "feeders",

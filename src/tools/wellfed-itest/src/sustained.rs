@@ -324,7 +324,8 @@ struct Run {
     asked: BTreeSet<u32>,
     feeds: u32,
     boot: Boot,
-    lifetime: Option<Counts>,
+    /// The last lifetime figures, with the boot counts read beside them.
+    lifetime: Option<Lifetime>,
     heap: Option<HeapBase>,
     figures: Figures,
     /// The injected-fault variant bank 1 holds until its restore confirms.
@@ -380,7 +381,7 @@ impl Run {
                 start: None,
                 base: counters.boot,
             },
-            lifetime: counters.lifetime,
+            lifetime: Lifetime::of(&counters),
             heap: None,
             variant: None,
             figures: Figures::default(),
@@ -767,13 +768,14 @@ impl Run {
         );
         require(got == want, || SustainedError::Counters { got, want })?;
 
-        if let (Some(before), Some(after)) = (self.lifetime, counters.lifetime) {
-            require(never_back(&before, &after), || SustainedError::Lifetime {
-                before,
-                after,
+        let now = Lifetime::of(&counters);
+        if let (Some(before), Some(after)) = (self.lifetime, now) {
+            require(after.holds_after(&before), || SustainedError::Lifetime {
+                before: before.total,
+                after: after.total,
             })?;
         }
-        self.lifetime = counters.lifetime.or(self.lifetime);
+        self.lifetime = now.or(self.lifetime);
         Ok(())
     }
 
@@ -1038,6 +1040,55 @@ fn reset_cause(ctx: &mut Ctx, want: ResetCause) -> Result<()> {
 }
 
 /// No lifetime count is below what it was.
+/// A lifetime reading and the boot's own counts from the same answer. The
+/// feeder reports its lifetime figures as the totals its store held when
+/// the boot opened plus this boot's counts, so `total` less `boot` is that
+/// stored base, fixed for the boot.
+#[derive(Clone, Copy, Debug)]
+struct Lifetime {
+    total: Counts,
+    boot: Counts,
+}
+
+impl Lifetime {
+    fn of(counters: &Counters) -> Option<Self> {
+        counters.lifetime.map(|total| Self {
+            total,
+            boot: counters.boot,
+        })
+    }
+
+    /// Within one boot the figures only grow. Across a reset only the
+    /// stored base must: once the store's early-save budget is spent, a
+    /// restart's save is refused and what the last boot counted since its
+    /// last save is lost by design (the totals are then lower bounds), but
+    /// totals the store held are never lost. A boot is the same while its
+    /// uptime has not gone back.
+    fn holds_after(&self, before: &Self) -> bool {
+        if self.boot.uptime_s >= before.boot.uptime_s {
+            never_back(&before.total, &self.total)
+        } else {
+            never_back(&before.stored(), &self.stored())
+        }
+    }
+
+    fn stored(&self) -> Counts {
+        let (t, b) = (&self.total, &self.boot);
+        Counts {
+            uptime_s: t.uptime_s.saturating_sub(b.uptime_s),
+            feeds: t.feeds.saturating_sub(b.feeds),
+            feeds_failed: t.feeds_failed.saturating_sub(b.feeds_failed),
+            portions: t.portions.saturating_sub(b.portions),
+            presses: t.presses.saturating_sub(b.presses),
+            sessions: t.sessions.saturating_sub(b.sessions),
+            reconnects: t.reconnects.saturating_sub(b.reconnects),
+            dhcp_renewals: t.dhcp_renewals.saturating_sub(b.dhcp_renewals),
+            outages: t.outages.saturating_sub(b.outages),
+            battery_s: t.battery_s.saturating_sub(b.battery_s),
+        }
+    }
+}
+
 fn never_back(before: &Counts, after: &Counts) -> bool {
     after.uptime_s >= before.uptime_s
         && after.feeds >= before.feeds
@@ -1088,5 +1139,43 @@ fn time(ctx: &mut Ctx) -> Result<TimeView> {
             answer,
         }
         .into()),
+    }
+}
+
+#[cfg(test)]
+mod lifetime_tests {
+    use super::*;
+
+    fn reading(stored_feeds: u32, boot_feeds: u32, boot_uptime_s: u32) -> Lifetime {
+        let boot = Counts {
+            feeds: boot_feeds,
+            uptime_s: boot_uptime_s,
+            ..Counts::default()
+        };
+        Lifetime {
+            total: Counts {
+                feeds: stored_feeds + boot_feeds,
+                uptime_s: 400 + boot_uptime_s,
+                ..Counts::default()
+            },
+            boot,
+        }
+    }
+
+    #[test]
+    fn within_a_boot_the_lifetime_figures_only_grow() {
+        let before = reading(4, 3, 1200);
+
+        assert!(reading(4, 4, 1230).holds_after(&before));
+        assert!(!reading(3, 3, 1230).holds_after(&before));
+    }
+
+    #[test]
+    fn a_reset_may_lose_the_unsaved_boot_but_never_the_stored_totals() {
+        // October 27: a reboot at rest with the early-save budget spent.
+        let before = reading(4, 4, 1300);
+
+        assert!(reading(4, 0, 20).holds_after(&before));
+        assert!(!reading(3, 0, 20).holds_after(&before));
     }
 }

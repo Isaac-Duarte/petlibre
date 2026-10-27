@@ -11,7 +11,8 @@ use wellfed_formats::hex;
 use wellfed_store::{Change, Store};
 
 use crate::sessions::{self, disabled, hash_password, password, user_name};
-use crate::{AccountError, Invalid, Random, Result, Service, SessionToken};
+use crate::tokens::session_only;
+use crate::{AccountError, Caller, Invalid, Random, Result, Service, SessionToken};
 
 impl Service {
     /// Every account, by name.
@@ -19,7 +20,10 @@ impl Service {
         Ok(self.shared.store.users().await?)
     }
 
-    pub async fn create_user(&self, request: NewUser) -> Result<User> {
+    /// Add an account, as `caller` (an owner) from a login: a token could
+    /// otherwise make an owner who logs in and mints tokens of their own.
+    pub async fn create_user(&self, caller: &Caller, request: NewUser) -> Result<User> {
+        session_only(caller)?;
         let name = user_name(&request.name)?;
         password(&request.password)?;
         owner_never_expires(request.role, request.expires)?;
@@ -51,14 +55,19 @@ impl Service {
     }
 
     /// Change a user's role, expiry or password, as `actor` (an owner)
-    /// on the session `session`.
+    /// on the session `session`. Setting a password takes a login: a token
+    /// could otherwise set one and log in as that user.
     pub async fn update_user(
         &self,
-        actor: &User,
+        actor: &Caller,
         session: Option<&SessionToken>,
         id: UserId,
         patch: UserPatch,
     ) -> Result<User> {
+        if patch.password.is_some() {
+            session_only(actor)?;
+        }
+        let actor = &actor.user;
         let current = self.user(id).await?;
         let updated = User {
             role: patch.role.unwrap_or(current.role),

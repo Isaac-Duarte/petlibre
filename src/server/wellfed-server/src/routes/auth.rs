@@ -79,6 +79,7 @@ pub(crate) async fn login(
 
 /// Change one's own password, given the current one. Every other session
 /// of the account ends; this one stays, and so do the account's tokens.
+/// Only from a login, never a token.
 #[utoipa::path(
     patch,
     path = "/session",
@@ -88,6 +89,7 @@ pub(crate) async fn login(
         (status = 204),
         (status = 400, body = Problem, description = "invalid: a password under 10 characters"),
         (status = 401, body = Problem, description = "bad_credentials: not the current password"),
+        (status = 403, body = Problem, description = "session_required: not from a token"),
     ),
 )]
 pub(crate) async fn change_password(
@@ -99,7 +101,7 @@ pub(crate) async fn change_password(
     let session = auth::session(&headers);
     state
         .service
-        .change_password(&caller.user, session.as_ref(), change)
+        .change_password(&caller, session.as_ref(), change)
         .await?;
     Ok(StatusCode::NO_CONTENT)
 }

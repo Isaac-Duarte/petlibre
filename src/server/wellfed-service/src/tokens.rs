@@ -12,8 +12,9 @@
 //! tokens refused, though kept, until an owner extends it. A token lasts
 //! until it is revoked, or until its own expiry if it was given one.
 //!
-//! Only a login makes a token, so revoking a leaked token is enough: it
-//! cannot have made others.
+//! Only a login makes a token, sets a password or adds an account, so
+//! revoking a leaked token is enough: it cannot have made other tokens,
+//! nor a password or an account to log in with and make them.
 
 use wellfed_api::{CreatedToken, NewToken, Token, TokenId, User};
 use wellfed_formats::hex;
@@ -76,6 +77,15 @@ impl std::fmt::Debug for BearerToken {
     }
 }
 
+/// Refuse a token's caller [`TokenError::SessionRequired`]: what a leaked
+/// token could turn into a login of its own takes a login.
+pub(crate) fn session_only(caller: &Caller) -> Result<()> {
+    if caller.token.is_some() {
+        return Err(TokenError::SessionRequired.into());
+    }
+    Ok(())
+}
+
 impl Service {
     /// The caller a bearer token stands for, while it lasts, and its use
     /// recorded. An expired or unknown token is `None`; one whose account is
@@ -111,9 +121,7 @@ impl Service {
     /// Make a token for the caller, who logged in: a token cannot make
     /// another. The secret is in the answer and nowhere else.
     pub async fn create_token(&self, caller: &Caller, new: NewToken) -> Result<CreatedToken> {
-        if caller.token.is_some() {
-            return Err(TokenError::SessionRequired.into());
-        }
+        session_only(caller)?;
         let name = new.name.trim();
         if name.is_empty() || name.chars().count() > NAME_MAX {
             return Err(Invalid::TokenName.into());

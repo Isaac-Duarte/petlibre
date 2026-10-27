@@ -30,7 +30,8 @@ pub(crate) async fn users(
     Ok(Json(state.service.users().await?))
 }
 
-/// Add an account, with a temporary password the owner passes on.
+/// Add an account, with a temporary password the owner passes on. Only
+/// from a login, never a token.
 #[utoipa::path(
     post,
     path = "/users",
@@ -39,20 +40,21 @@ pub(crate) async fn users(
     responses(
         (status = 201, body = User),
         (status = 400, body = Problem, description = "invalid: a name, a password under 10 characters, or an owner with an expiry"),
-        (status = 403, body = Problem, description = "forbidden: owners only"),
+        (status = 403, body = Problem, description = "forbidden: owners only; session_required: not from a token"),
         (status = 409, body = Problem, description = "name_taken"),
     ),
 )]
 pub(crate) async fn create_user(
     State(state): State<AppState>,
-    _: Allowed<need::Users>,
+    Allowed(caller, _): Allowed<need::Users>,
     WithRejection(Json(request), _): JsonBody<NewUser>,
 ) -> ApiResult<(StatusCode, Json<User>)> {
-    let user = state.service.create_user(request).await?;
+    let user = state.service.create_user(&caller, request).await?;
     Ok((StatusCode::CREATED, Json(user)))
 }
 
-/// Change an account's role, expiry or password. A role applies to the
+/// Change an account's role, expiry or password; a password only from a
+/// login, never a token. A role applies to the
 /// user's tokens at once. Setting a password ends that user's sessions (an
 /// owner's own, all but the one asking) and leaves their tokens; extending
 /// a disabled account enables it, and its tokens with it.
@@ -65,7 +67,7 @@ pub(crate) async fn create_user(
     responses(
         (status = 200, body = User),
         (status = 400, body = Problem, description = "invalid: a password under 10 characters, or an owner with an expiry"),
-        (status = 403, body = Problem, description = "forbidden: owners only"),
+        (status = 403, body = Problem, description = "forbidden: owners only; session_required: a password from a token"),
         (status = 404, body = Problem),
         (status = 409, body = Problem, description = "last_owner: the household's only owner keeps the role"),
     ),
@@ -80,7 +82,7 @@ pub(crate) async fn update_user(
     let session = auth::session(&headers);
     let user = state
         .service
-        .update_user(&actor.user, session.as_ref(), id, patch)
+        .update_user(&actor, session.as_ref(), id, patch)
         .await?;
     Ok(Json(user))
 }

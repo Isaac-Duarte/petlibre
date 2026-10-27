@@ -8,7 +8,7 @@ use jiff::Timestamp;
 use wellfed_api::{Credentials, NewUser, PasswordChange, Role, User, UserPatch};
 use wellfed_server_testkit::fixed::{ManualClock, SeededRandom};
 use wellfed_server_testkit::{TestService, ada_login, ada_setup, local};
-use wellfed_service::{AccountError, Error, Invalid, Service, SessionToken, reset_owner};
+use wellfed_service::{AccountError, Caller, Error, Invalid, Service, SessionToken, reset_owner};
 
 const HOUR: Duration = Duration::from_secs(3600);
 
@@ -28,6 +28,11 @@ fn login(name: &str, password: &str) -> Credentials {
     }
 }
 
+/// An owner asking from a login, as account changes must.
+fn from_login() -> Caller {
+    wellfed_server_testkit::ada().into()
+}
+
 async fn setup(service: &Service) -> (User, SessionToken) {
     service.setup(ada_setup()).await.unwrap()
 }
@@ -40,12 +45,12 @@ fn owners_add_change_and_delete_users_but_never_the_last_owner() {
         let (ada, _) = setup(service).await;
 
         let bob = service
-            .create_user(new_user("bob", Role::Member, None))
+            .create_user(&from_login(), new_user("bob", Role::Member, None))
             .await
             .unwrap();
         assert!(matches!(
             service
-                .create_user(new_user(" bob ", Role::Viewer, None))
+                .create_user(&from_login(), new_user(" bob ", Role::Viewer, None))
                 .await,
             Err(Error::Account(AccountError::NameTaken))
         ));
@@ -54,12 +59,12 @@ fn owners_add_change_and_delete_users_but_never_the_last_owner() {
             ..new_user("cy", Role::Member, None)
         };
         assert!(matches!(
-            service.create_user(short).await,
+            service.create_user(&from_login(), short).await,
             Err(Error::Invalid(Invalid::Password))
         ));
         let expiring_owner = new_user("cy", Role::Owner, Some(Timestamp::UNIX_EPOCH));
         assert!(matches!(
-            service.create_user(expiring_owner).await,
+            service.create_user(&from_login(), expiring_owner).await,
             Err(Error::Invalid(Invalid::OwnerExpires))
         ));
         let names: Vec<_> = service.users().await.unwrap();
@@ -72,7 +77,7 @@ fn owners_add_change_and_delete_users_but_never_the_last_owner() {
         };
         assert!(matches!(
             service
-                .update_user(&ada, None, ada.id, demote.clone())
+                .update_user(&ada.clone().into(), None, ada.id, demote.clone())
                 .await,
             Err(Error::Account(AccountError::LastOwner))
         ));
@@ -87,12 +92,12 @@ fn owners_add_change_and_delete_users_but_never_the_last_owner() {
             ..UserPatch::default()
         };
         let bob = service
-            .update_user(&ada, None, bob.id, promote)
+            .update_user(&ada.clone().into(), None, bob.id, promote)
             .await
             .unwrap();
         assert_eq!(bob.role, Role::Owner);
         let ada = service
-            .update_user(&ada, None, ada.id, demote)
+            .update_user(&ada.clone().into(), None, ada.id, demote)
             .await
             .unwrap();
         assert_eq!(ada.role, Role::Member);
@@ -113,7 +118,7 @@ fn deleting_a_user_ends_their_sessions() {
         let service = server.service();
         setup(service).await;
         let bob = service
-            .create_user(new_user("bob", Role::Viewer, None))
+            .create_user(&from_login(), new_user("bob", Role::Viewer, None))
             .await
             .unwrap();
         let (_, token) = service.login(login("bob", "temporary pass")).await.unwrap();
@@ -133,7 +138,7 @@ fn a_password_change_ends_the_users_other_sessions() {
         let service = server.service();
         let (ada, ada_token) = setup(service).await;
         let bob = service
-            .create_user(new_user("bob", Role::Member, None))
+            .create_user(&from_login(), new_user("bob", Role::Member, None))
             .await
             .unwrap();
         let (_, bob_token) = service.login(login("bob", "temporary pass")).await.unwrap();
@@ -143,7 +148,7 @@ fn a_password_change_ends_the_users_other_sessions() {
             ..UserPatch::default()
         };
         service
-            .update_user(&ada, None, bob.id, reset)
+            .update_user(&ada.clone().into(), None, bob.id, reset)
             .await
             .unwrap();
         assert_eq!(service.authenticate(&bob_token).await.unwrap(), None);
@@ -164,7 +169,7 @@ fn a_password_change_ends_the_users_other_sessions() {
             ..UserPatch::default()
         };
         service
-            .update_user(&ada, Some(&ada_token), ada.id, own)
+            .update_user(&ada.clone().into(), Some(&ada_token), ada.id, own)
             .await
             .unwrap();
         assert!(service.authenticate(&ada_token).await.unwrap().is_some());
@@ -174,7 +179,9 @@ fn a_password_change_ends_the_users_other_sessions() {
             ..UserPatch::default()
         };
         assert!(matches!(
-            service.update_user(&ada, None, ada.id, short).await,
+            service
+                .update_user(&ada.clone().into(), None, ada.id, short)
+                .await,
             Err(Error::Invalid(Invalid::Password))
         ));
         server.shutdown().await;
@@ -190,7 +197,7 @@ fn a_user_changes_their_own_password() {
         let service = server.service();
         setup(service).await;
         service
-            .create_user(new_user("vic", Role::Viewer, None))
+            .create_user(&from_login(), new_user("vic", Role::Viewer, None))
             .await
             .unwrap();
         let (vic, here) = service.login(login("vic", "temporary pass")).await.unwrap();
@@ -201,7 +208,9 @@ fn a_user_changes_their_own_password() {
             password: "my own secret".into(),
         };
         assert!(matches!(
-            service.change_password(&vic, Some(&here), wrong).await,
+            service
+                .change_password(&vic.clone().into(), Some(&here), wrong)
+                .await,
             Err(Error::Account(AccountError::BadCredentials))
         ));
         let short = PasswordChange {
@@ -209,7 +218,9 @@ fn a_user_changes_their_own_password() {
             password: "too short".into(),
         };
         assert!(matches!(
-            service.change_password(&vic, Some(&here), short).await,
+            service
+                .change_password(&vic.clone().into(), Some(&here), short)
+                .await,
             Err(Error::Invalid(Invalid::Password))
         ));
         assert!(service.authenticate(&there).await.unwrap().is_some());
@@ -219,7 +230,7 @@ fn a_user_changes_their_own_password() {
             password: "my own secret".into(),
         };
         service
-            .change_password(&vic, Some(&here), change)
+            .change_password(&vic.clone().into(), Some(&here), change)
             .await
             .unwrap();
         assert!(service.authenticate(&here).await.unwrap().is_some());
@@ -244,7 +255,10 @@ fn an_expired_account_is_disabled_until_an_owner_extends_it() {
         let (ada, _) = setup(service).await;
         let expires = clock_now(&clock) + HOUR / 2;
         let sitter = service
-            .create_user(new_user("sitter", Role::Member, Some(expires)))
+            .create_user(
+                &from_login(),
+                new_user("sitter", Role::Member, Some(expires)),
+            )
             .await
             .unwrap();
         let (_, token) = service
@@ -275,7 +289,7 @@ fn an_expired_account_is_disabled_until_an_owner_extends_it() {
             ..UserPatch::default()
         };
         service
-            .update_user(&ada, None, sitter.id, extend)
+            .update_user(&ada.clone().into(), None, sitter.id, extend)
             .await
             .unwrap();
         assert_eq!(
@@ -294,7 +308,7 @@ fn an_expired_account_is_disabled_until_an_owner_extends_it() {
         };
         assert!(matches!(
             service
-                .update_user(&ada, None, sitter.id, expiring_owner)
+                .update_user(&ada.clone().into(), None, sitter.id, expiring_owner)
                 .await,
             Err(Error::Invalid(Invalid::OwnerExpires))
         ));
@@ -336,7 +350,7 @@ fn reset_owner_gives_the_sole_owner_a_new_password() {
         let (ada, token) = setup(server.service()).await;
         server
             .service()
-            .create_user(new_user("bob", Role::Member, None))
+            .create_user(&from_login(), new_user("bob", Role::Member, None))
             .await
             .unwrap();
         let temp = server.stop().await;
@@ -372,7 +386,7 @@ fn reset_owner_gives_the_sole_owner_a_new_password() {
         };
         let bob = service.users().await.unwrap()[1].clone();
         service
-            .update_user(&ada, None, bob.id, promote)
+            .update_user(&ada.clone().into(), None, bob.id, promote)
             .await
             .unwrap();
         let temp = server.stop().await;

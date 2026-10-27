@@ -348,6 +348,72 @@ async fn a_token_cannot_make_another() {
     server.stop().await;
 }
 
+/// A stolen owner's token cannot turn itself into a login: setting any
+/// password and adding an account take a session, as making a token does.
+#[tokio::test]
+async fn a_token_cannot_set_a_password_or_add_an_account() {
+    let server = TestServer::start().await;
+    let (owner, ada) = owner(&server).await;
+    let (_, bob) = account(&server, &owner, "bob", Role::Member).await;
+    let (phone, _) = phone(&server, &owner, None).await;
+    let session_required = |what, result: Result<_, _>| {
+        refused_for(
+            what,
+            result.map(drop),
+            StatusCode::FORBIDDEN,
+            ErrorCode::SessionRequired,
+        );
+    };
+
+    let reset = UserPatch {
+        password: Some("stolen password".into()),
+        ..UserPatch::default()
+    };
+    session_required("own reset", phone.update_user(ada.id, &reset).await);
+    session_required("other's reset", phone.update_user(bob.id, &reset).await);
+    let change = wellfed_api::PasswordChange {
+        current: "correct horse".into(),
+        password: "stolen password".into(),
+    };
+    session_required(
+        "own change",
+        phone.change_password(&change).await.map(|()| ada.clone()),
+    );
+    let new = NewUser {
+        name: "mallory".into(),
+        password: "stolen password".into(),
+        role: Role::Owner,
+        expires: None,
+    };
+    session_required("new account", phone.create_user(&new).await);
+
+    // Nothing changed: the old passwords still log in, and no account was
+    // added. A token's other owner writes still go through.
+    let mut again = server.client();
+    again
+        .login(&wellfed_server_testkit::ada_login())
+        .await
+        .unwrap();
+    let names: Vec<_> = owner
+        .users()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|user| user.name)
+        .collect();
+    assert_eq!(names, ["ada", "bob"]);
+    let demote = UserPatch {
+        role: Some(Role::Viewer),
+        ..UserPatch::default()
+    };
+    assert_eq!(
+        phone.update_user(bob.id, &demote).await.unwrap().role,
+        Role::Viewer
+    );
+    owner.update_user(bob.id, &reset).await.unwrap();
+    server.stop().await;
+}
+
 /// A token carries its user, not a role: a role change applies to it at
 /// once, and deleting the user stops it.
 #[tokio::test]

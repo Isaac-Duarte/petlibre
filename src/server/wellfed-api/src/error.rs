@@ -20,8 +20,9 @@ pub enum ErrorCode {
     AccountDisabled,
     /// This user's role may not do that.
     Forbidden,
-    /// Only a login, not a token, may do that: making a token, so a leaked
-    /// one cannot make more that outlive its revocation.
+    /// Only a login, not a token, may do that: making a token, setting a
+    /// password or adding an account, so a leaked token cannot turn itself
+    /// into a login or more tokens that outlive its revocation.
     SessionRequired,
     /// The change would leave the household without an owner.
     LastOwner,

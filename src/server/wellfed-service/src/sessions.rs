@@ -25,7 +25,8 @@ use wellfed_mirror::Zone;
 use wellfed_store::NewUser;
 use sha2::{Digest, Sha256};
 
-use crate::{AccountError, HouseholdError, Invalid, Result, Service};
+use crate::tokens::session_only;
+use crate::{AccountError, Caller, HouseholdError, Invalid, Result, Service};
 
 /// Password hashes computed at once.
 const HASHING: usize = 2;
@@ -188,15 +189,18 @@ impl Service {
         Ok(Some(session.user))
     }
 
-    /// Change `user`'s own password, given the current one, and end their
-    /// other sessions; `session`, the one they asked on, stays. Their
-    /// tokens stay too: each is revoked on its own.
+    /// Change the caller's own password, given the current one, and end
+    /// their other sessions; `session`, the one they asked on, stays. Their
+    /// tokens stay too: each is revoked on its own. It takes a login, as
+    /// every password change does.
     pub async fn change_password(
         &self,
-        user: &User,
+        caller: &Caller,
         session: Option<&SessionToken>,
         change: PasswordChange,
     ) -> Result<()> {
+        session_only(caller)?;
+        let user = &caller.user;
         password(&change.password)?;
         let store = &self.shared.store;
         let hash = store.password_hash(user.id).await?;

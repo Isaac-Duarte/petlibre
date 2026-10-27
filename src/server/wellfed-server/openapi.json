@@ -1003,7 +1003,7 @@
         "tags": [
           "auth"
         ],
-        "summary": "Change one's own password, given the current one. Every other session\nof the account ends; this one stays, and so do the account's tokens.",
+        "summary": "Change one's own password, given the current one. Every other session\nof the account ends; this one stays, and so do the account's tokens.\nOnly from a login, never a token.",
         "operationId": "change_password",
         "requestBody": {
           "content": {
@@ -1029,6 +1029,16 @@
           },
           "401": {
             "description": "bad_credentials: not the current password",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "session_required: not from a token",
             "content": {
               "application/json": {
                 "schema": {
@@ -1392,7 +1402,7 @@
         "tags": [
           "users"
         ],
-        "summary": "Add an account, with a temporary password the owner passes on.",
+        "summary": "Add an account, with a temporary password the owner passes on. Only\nfrom a login, never a token.",
         "operationId": "create_user",
         "requestBody": {
           "content": {
@@ -1425,7 +1435,7 @@
             }
           },
           "403": {
-            "description": "forbidden: owners only",
+            "description": "forbidden: owners only; session_required: not from a token",
             "content": {
               "application/json": {
                 "schema": {
@@ -1501,7 +1511,7 @@
         "tags": [
           "users"
         ],
-        "summary": "Change an account's role, expiry or password. A role applies to the\nuser's tokens at once. Setting a password ends that user's sessions (an\nowner's own, all but the one asking) and leaves their tokens; extending\na disabled account enables it, and its tokens with it.",
+        "summary": "Change an account's role, expiry or password; a password only from a\nlogin, never a token. A role applies to the\nuser's tokens at once. Setting a password ends that user's sessions (an\nowner's own, all but the one asking) and leaves their tokens; extending\na disabled account enables it, and its tokens with it.",
         "operationId": "update_user",
         "parameters": [
           {
@@ -1544,7 +1554,7 @@
             }
           },
           "403": {
-            "description": "forbidden: owners only",
+            "description": "forbidden: owners only; session_required: a password from a token",
             "content": {
               "application/json": {
                 "schema": {

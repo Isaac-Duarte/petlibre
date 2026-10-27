@@ -619,7 +619,7 @@ impl Run {
             "Pair with the replacement: on its panel (unlocked), hold Lock, then Dispense, \
              to open the recovery window.",
         )?;
-        let (identity, text) = crate::recover(&mut self.key, address).await?;
+        let (identity, text) = crate::pairing::recover(&mut self.key, address).await?;
         eprintln!("Paired with feeder {} ({text}).", fingerprint(&identity));
         self.identity = Some(identity);
         install.paired();

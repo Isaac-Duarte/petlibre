@@ -2313,6 +2313,8 @@ dependencies = [
  "wellfed-formats",
  "wellfed-model",
  "wellfed-proto",
+ "wellfed-server-client",
+ "wellfed-server-testkit",
  "wellfed-session",
  "wellfed-signing",
  "wellfed-stock-api",

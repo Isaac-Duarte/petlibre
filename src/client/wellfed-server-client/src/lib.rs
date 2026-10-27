@@ -45,6 +45,9 @@ use serde::de::DeserializeOwned;
 
 pub use error::Error;
 pub use feeders::Lock;
+/// The API's bodies, for a caller that may not depend on `wellfed-api`
+/// itself: the CLI reaches the server through this crate alone.
+pub use wellfed_api as api;
 pub use releases::Uploaded;
 pub use reqwest::{self, Method, StatusCode, Url};
 pub use stream::{Update, Updates};

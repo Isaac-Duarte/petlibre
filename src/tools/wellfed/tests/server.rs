@@ -1,0 +1,247 @@
+//! `wellfed server …` as a process against the server in process and the
+//! simulated feeder: the login and its token file, a feed, `--json`, the
+//! exit statuses, and a feed whose answer is lost, which exits 3 with its
+//! key and is never sent again.
+
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
+
+use wellfed_server_client::Client;
+use wellfed_server_client::api::{
+    AdoptFeeder, ClientRole, Command, CommandOutcome, CommandState, Connection, ErrorCode,
+    FeedOutcome, Feeder, FeederId, Problem,
+};
+use wellfed_server_testkit::feeder::{self, Flash, Relay, Running};
+use wellfed_server_testkit::{TestServer, ada_login, ada_setup, config, local, until};
+use tokio::io::AsyncWriteExt;
+use uuid::Uuid;
+
+/// What one run of the CLI printed, and how it exited.
+struct Ran {
+    code: Option<i32>,
+    stdout: String,
+    stderr: String,
+}
+
+impl Ran {
+    #[track_caller]
+    fn exited(&self, code: i32) -> &Self {
+        assert_eq!(self.code, Some(code), "{}\n{}", self.stdout, self.stderr);
+        self
+    }
+
+    /// Each line of standard output as one JSON body.
+    fn bodies<T: serde::de::DeserializeOwned>(&self) -> Vec<T> {
+        self.stdout
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("each line is one body"))
+            .collect()
+    }
+}
+
+/// The CLI's token file, in a directory `login` creates.
+struct Home(tempfile::TempDir);
+
+impl Home {
+    fn new() -> Self {
+        Self(tempfile::tempdir().expect("a temporary directory"))
+    }
+
+    fn token_file(&self) -> PathBuf {
+        self.0.path().join("private").join("wellfed-server.json")
+    }
+
+    /// Run `wellfed server <args>` with this token file, `stdin` on its
+    /// standard input. Awaited, so the server and the simulator keep
+    /// running on this test's thread meanwhile.
+    async fn run(&self, args: &[&str], stdin: &str) -> Ran {
+        let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_wellfed"))
+            .arg("server")
+            .args(args)
+            .arg("--token-file")
+            .arg(self.token_file())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .expect("the CLI starts");
+
+        let mut input = child.stdin.take().expect("a piped standard input");
+        input
+            .write_all(stdin.as_bytes())
+            .await
+            .expect("write stdin");
+        drop(input);
+
+        let output = child.wait_with_output().await.expect("the CLI ends");
+        Ran {
+            code: output.status.code(),
+            stdout: String::from_utf8(output.stdout).expect("UTF-8 output"),
+            stderr: String::from_utf8(output.stderr).expect("UTF-8 errors"),
+        }
+    }
+
+    async fn login(&self, server: &TestServer) -> Ran {
+        let url = format!("http://{}", server.address());
+        let password = format!("{}\n", ada_login().password);
+        self.run(&["login", "--server", &url, "--name", "ada"], &password)
+            .await
+    }
+}
+
+/// Adopt `sim` reached at `address` over HTTP, and wait until the server
+/// is connected.
+async fn adopt(http: &Client, sim: &Running, address: String) -> FeederId {
+    let request = AdoptFeeder {
+        invite: feeder::invite(sim, ClientRole::Server).await,
+        name: "kitchen".into(),
+        address: Some(address),
+    };
+    let id = http.adopt(&request).await.unwrap().id;
+    until("the server connects to the feeder", || async {
+        http.feeders().await.unwrap()[0].connection == Connection::Online
+    })
+    .await;
+    id
+}
+
+fn mode(path: &Path) -> u32 {
+    std::fs::metadata(path).unwrap().permissions().mode() & 0o777
+}
+
+#[test]
+fn a_login_keeps_a_private_token_that_feeds_and_logout_revokes_it() {
+    local(async {
+        let flash = Flash::memory();
+        let sim = feeder::start_on(&flash).await;
+        let server = TestServer::start().await;
+        let mut http = server.client();
+        http.setup(&ada_setup()).await.unwrap();
+        let kitchen = adopt(&http, &sim, sim.address.to_string()).await;
+        let home = Home::new();
+
+        // A wrong password: the problem as the body, exit 1, no file.
+        let url = format!("http://{}", server.address());
+        let wrong = ["login", "--server", &url, "--name", "ada", "--json"];
+        let refused = home.run(&wrong, "not the password\n").await;
+        let problems: Vec<Problem> = refused.exited(1).bodies();
+        assert_eq!(problems[0].code, ErrorCode::BadCredentials);
+        assert!(!home.token_file().exists());
+
+        // The token is kept mode 0600, and the login session is ended.
+        home.login(&server).await.exited(0);
+        assert_eq!(mode(&home.token_file()), 0o600);
+        let tokens = http.tokens().await.unwrap();
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].name, "wellfed-cli");
+        let again = home.login(&server).await;
+        assert!(again.exited(1).stderr.contains("already logged in"));
+
+        let listed = home.run(&["feeders", "--json"], "").await;
+        let feeders: Vec<Vec<Feeder>> = listed.exited(0).bodies();
+        assert_eq!(feeders[0].len(), 1);
+        assert_eq!(feeders[0][0].id, kitchen);
+
+        // A feed with --json: the entry the feeder reserved, then the one
+        // its history settled, both journalled under the token.
+        let fed = home.run(&["feed", "--portions", "2", "--json"], "").await;
+        let entries: Vec<Command> = fed.exited(0).bodies();
+        assert_eq!(entries.len(), 2, "{}", fed.stdout);
+        assert_eq!(entries[0].feed, Some(1));
+        let settled = &entries[1];
+        assert_eq!(settled.key, entries[0].key);
+        assert_eq!(settled.state, CommandState::Resolved);
+        let Some(CommandOutcome::Fed {
+            completed, outcome, ..
+        }) = settled.outcome
+        else {
+            panic!("{settled:?}");
+        };
+        assert_eq!((completed, outcome), (2, FeedOutcome::Done));
+        assert_eq!(settled.token, Some(tokens[0].id));
+        assert_eq!(feeder::feeds(&flash), 1);
+
+        // The same as text.
+        let fed = home.run(&["feed", "--feeder", "kitchen"], "").await;
+        let text = &fed.exited(0).stdout;
+        assert!(text.contains("Feed 2 started"), "{text}");
+        assert!(text.contains("feed 2: 1 of 1 portions, done"), "{text}");
+        assert_eq!(feeder::feeds(&flash), 2);
+
+        let status = home.run(&["status"], "").await;
+        assert!(status.exited(0).stdout.contains("kitchen"));
+        home.run(&["status", "--feeder", "attic"], "")
+            .await
+            .exited(1);
+
+        // Logout revokes the token and deletes the file.
+        home.run(&["logout"], "").await.exited(0);
+        assert!(!home.token_file().exists());
+        assert!(http.tokens().await.unwrap().is_empty());
+        let out = home.run(&["feeders"], "").await;
+        assert!(out.exited(1).stderr.contains("not logged in"));
+
+        server.stop().await;
+        sim.stop().await;
+    });
+}
+
+#[test]
+fn an_uncertain_feed_exits_3_with_its_key_and_is_never_resent() {
+    local(async {
+        let flash = Flash::memory();
+        let sim = feeder::start_on(&flash).await;
+        let relay = Relay::start(sim.address).await;
+        // The server gives up on an answer after 2 s, not 12.
+        let mut quick = config();
+        quick.timing.answer = std::time::Duration::from_secs(2);
+        let server = TestServer::start_with(quick).await;
+        let mut http = server.client();
+        http.setup(&ada_setup()).await.unwrap();
+        adopt(&http, &sim, relay.address.to_string()).await;
+        let home = Home::new();
+        home.login(&server).await.exited(0);
+
+        // The feeder takes the feed, but its answer never comes back.
+        relay.hold_answers();
+        let lost = home.run(&["feed"], "").await;
+        let text = &lost.exited(3).stdout;
+        let key = text
+            .lines()
+            .find_map(|line| line.strip_prefix("Key: "))
+            .and_then(|key| Uuid::parse_str(key).ok())
+            .unwrap_or_else(|| panic!("the key is printed: {text}"));
+        assert!(text.contains(&format!("wellfed server command {key}")));
+        assert_eq!(
+            http.command(key).await.unwrap().state,
+            CommandState::Unknown
+        );
+        home.run(&["command", &key.to_string()], "").await.exited(3);
+
+        // Once the server reconnects, the feeder's history settles it.
+        relay.cut();
+        relay.resume();
+        until("the feed is settled", || async {
+            http.command(key)
+                .await
+                .is_ok_and(|entry| entry.state == CommandState::Resolved)
+        })
+        .await;
+        let resolved = home.run(&["command", &key.to_string(), "--json"], "").await;
+        let entries: Vec<Command> = resolved.exited(0).bodies();
+        assert!(matches!(
+            entries[0].outcome,
+            Some(CommandOutcome::Fed {
+                outcome: FeedOutcome::Done,
+                ..
+            })
+        ));
+
+        // One feed: the CLI never sent it again.
+        assert_eq!(feeder::feeds(&flash), 1);
+        server.stop().await;
+        sim.stop().await;
+    });
+}

@@ -1,57 +1,55 @@
 //! `wellfed`, the owner's command line ([tools roadmap]).
 //!
-//! `wellfed setup` pairs this computer with a feeder in BLE setup mode
-//!: it shows a one-time code for the owner to key in on the feeder's
-//! buttons, and once the feeder has proven the code it gives the feeder
-//! Wi-Fi, enrolls this computer's key as an owner and records the feeder's
-//! identity.
-//! The protocol is `wellfed-client`'s, the same the Android app runs.
+//! It speaks two paths, and a command takes exactly one of them, never a
+//! fallback between them: a write whose outcome is unknown on one path is
+//! never resent on the other ([two paths, one feed]).
 //!
-//! The other commands open a session on the device API: Noise over
-//! TCP to the feeder found over mDNS, as a key it enrolled. They print the
-//! feeder's answers as JSON.
+//! - **The device API.** `wellfed setup` pairs this computer with a
+//!   feeder in BLE setup mode (`pairing`): it shows a one-time code for the
+//!   owner to key in on the feeder's buttons, and once the feeder has proven
+//!   the code it gives the feeder Wi-Fi, enrolls this computer's key as an
+//!   owner and records the feeder's identity. The protocol is
+//!   `wellfed-client`'s, the same the Android app runs. The other device
+//!   commands open a session on the device API, Noise over TCP to the feeder
+//!   found over mDNS, as a key it enrolled, and print the feeder's answers
+//!   as JSON: `configure`, `history`, `feeding` and `access`.
+//! - **The owner's server.** `wellfed server …` (the `server` module)
+//!   speaks the server's HTTP API through `wellfed-server-client`, with
+//!   the token `wellfed server login` keeps.
 //!
 //! `wellfed install` takes a feeder from stock 1.1.15 to the replacement
 //! (the `install` module), running `wellfed-stock` beside it for stock's
 //! side.
 //!
 //! [tools roadmap]: ../../../../docs/development/tools-roadmap.md
+//! [two paths, one feed]: ../../../../docs/api/README.md#two-paths-one-feed
 
 #![forbid(unsafe_code)]
 
+mod access;
 mod backup;
 mod ble;
+mod configure;
 mod device;
+mod feeding;
+mod history;
 mod install;
 mod keys;
+mod pairing;
 mod push;
+mod server;
 mod trace;
 
 use std::io::BufRead;
 use std::path::PathBuf;
-use std::time::Duration;
+use std::process::ExitCode;
 
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use wellfed_client::api::Invite;
-use wellfed_client::setup::{Ask, Credentials, Session, Step, panel_position};
-use wellfed_client::trace::Pages;
-use wellfed_formats::private;
-use wellfed_model::setup::{Enrolled, Refusal, Reply, WifiSaved};
-use wellfed_model::{
-    self as model, Answer, ClientRole, EventBody, Joined, NtpServer, Op, Pushed, SettingsPatch,
-    StatsSection, TimeChanges, Wifi,
-};
-use wellfed_session::setup_code::Code;
+use wellfed_model::{Answer, Op};
 
-use crate::ble::Link;
 use crate::device::Connection;
 use crate::keys::{OwnerKey, fingerprint};
-
-/// The feeder answers each handshake message at once.
-const HANDSHAKE_WAIT: Duration = Duration::from_secs(10);
-/// Beyond the feeder's own confirmation window, for the reply to arrive.
-const CONFIRM_SLACK: Duration = Duration::from_secs(10);
 
 #[derive(Parser)]
 #[command(version, about = "The owner's command line for a Wellfed feeder")]
@@ -63,50 +61,50 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Pair with a feeder in BLE setup mode and give it Wi-Fi.
-    Setup(SetupArgs),
+    Setup(pairing::SetupArgs),
     /// The feeder's status.
     Status(Target),
     /// Read the settings, or change them (against the generation just read).
-    Settings(SettingsArgs),
+    Settings(configure::SettingsArgs),
     /// Lock or unlock the panel.
-    Lock(LockArgs),
+    Lock(configure::LockArgs),
     /// Store or clear the network the feeder joins next.
-    Wifi(WifiArgs),
+    Wifi(configure::WifiArgs),
     /// Set the feeder's clock from this computer's, with its time zone's
     /// offsets; or, with --zone or --ntp, change the time settings; or,
     /// with --show, read them and the clock's state.
-    Time(TimeArgs),
+    Time(configure::TimeArgs),
     /// The feeder's history, and with --follow its live events and samples.
-    Events(EventsArgs),
+    Events(history::EventsArgs),
     /// The feeder's debug log (the record lines its UART prints), and with
     /// --follow each new line. Owners only.
-    Logs(LogsArgs),
+    Logs(history::LogsArgs),
     /// Mint a single-use invite for another client.
-    Invite(InviteArgs),
+    Invite(access::InviteArgs),
     /// Redeem an invite with this computer's key.
-    Join(JoinArgs),
+    Join(access::JoinArgs),
     /// The enrolled clients.
     Clients(Target),
     /// Revoke a client; its open sessions close.
-    Revoke(RevokeArgs),
+    Revoke(access::RevokeArgs),
     /// Dispense portions, and wait for the feed's result.
-    Feed(FeedArgs),
+    Feed(feeding::FeedArgs),
     /// Stop a running feed.
-    CancelFeed(CancelFeedArgs),
+    CancelFeed(feeding::CancelFeedArgs),
     /// Restart the feeder.
     Reboot(Target),
     /// The feeder's statistics: counters, memory, flash, power, food, feeds
     /// and portions.
-    Stats(StatsArgs),
+    Stats(history::StatsArgs),
     /// What one feed's drive measured: its current, marks, beams, battery
     /// and motor commands over time, from the feeder's RAM or its storage.
-    Trace(TraceArgs),
+    Trace(history::TraceArgs),
     /// Read the portion calibration and where the rotor rests, or store
     /// what a portion weighs, from a scale's reading of counted portions
     /// (docs/firmware/calibration.md).
-    Calibrate(CalibrateArgs),
+    Calibrate(configure::CalibrateArgs),
     /// Become an owner again through the feeder's recovery window.
-    Recover(RecoverArgs),
+    Recover(pairing::RecoverArgs),
     /// Install the replacement on a feeder running stock 1.1.15: point stock
     /// at this computer, have it install the build into bank 0, pair as its
     /// owner, and (with a verified stock backup) promote it to bank 1.
@@ -118,62 +116,45 @@ enum Command {
     /// Install the stock backup over the replacement: signed as stock,
     /// pushed as any update, then the feeder runs stock from bank 1.
     RestoreStock(Box<backup::RestoreArgs>),
+    /// The owner's server: log in, then the feeders, feeds and accounts it
+    /// holds, over its HTTP API rather than the device API.
+    Server(server::ServerArgs),
 }
 
-#[derive(Args)]
-struct SetupArgs {
-    /// The network the feeder should join; the passphrase is read from
-    /// standard input. Without it the feeder keeps its Wi-Fi.
-    #[arg(long)]
-    ssid: Option<String>,
-    /// How the feeder lists this computer (1-16 bytes); kept in the key file.
-    #[arg(long)]
-    label: Option<String>,
-    /// This computer's client key, created on first use.
-    #[arg(long, default_value = "private/wellfed-owner.json")]
-    keys: PathBuf,
-    /// The feeder's Bluetooth address; otherwise the first in setup mode.
-    #[arg(long)]
-    address: Option<bluer::Address>,
-}
-
-fn main() -> Result<()> {
+/// Exits 0 on success and 1 on an error; `wellfed server` also exits 3
+/// when a write's outcome is unknown.
+fn main() -> Result<ExitCode> {
     let cli = Cli::parse();
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    match cli.command {
-        Command::Setup(args) => runtime.block_on(setup(args)),
+
+    let device = match cli.command {
+        Command::Server(args) => return runtime.block_on(server::run(args)),
+        Command::Setup(args) => runtime.block_on(pairing::setup(args)),
         Command::Status(target) => runtime.block_on(ask_and_print(&target, &Op::Status)),
-        Command::Settings(args) => runtime.block_on(settings_command(args)),
-        Command::Lock(args) => runtime.block_on(ask_and_print(
-            &args.target,
-            &Op::SetLock {
-                locked: args.state.on(),
-            },
-        )),
-        Command::Wifi(args) => runtime.block_on(wifi_command(args)),
-        Command::Time(args) => runtime.block_on(time_command(args)),
-        Command::Events(args) => runtime.block_on(events_command(args)),
-        Command::Logs(args) => runtime.block_on(logs_command(args)),
-        Command::Invite(args) => runtime.block_on(invite_command(args)),
-        Command::Join(args) => runtime.block_on(join_command(args)),
-        Command::Clients(target) => runtime.block_on(clients_command(target)),
-        Command::Revoke(args) => runtime.block_on(revoke_command(args)),
-        Command::Feed(args) => runtime.block_on(feed_command(args)),
-        Command::CancelFeed(args) => runtime.block_on(ask_and_print(
-            &args.target,
-            &Op::CancelFeed { feed: args.feed },
-        )),
+        Command::Settings(args) => runtime.block_on(configure::settings_command(args)),
+        Command::Lock(args) => runtime.block_on(configure::lock_command(args)),
+        Command::Wifi(args) => runtime.block_on(configure::wifi_command(args)),
+        Command::Time(args) => runtime.block_on(configure::time_command(args)),
+        Command::Events(args) => runtime.block_on(history::events_command(args)),
+        Command::Logs(args) => runtime.block_on(history::logs_command(args)),
+        Command::Invite(args) => runtime.block_on(access::invite_command(args)),
+        Command::Join(args) => runtime.block_on(access::join_command(args)),
+        Command::Clients(target) => runtime.block_on(access::clients_command(target)),
+        Command::Revoke(args) => runtime.block_on(access::revoke_command(args)),
+        Command::Feed(args) => runtime.block_on(feeding::feed_command(args)),
+        Command::CancelFeed(args) => runtime.block_on(feeding::cancel_feed_command(args)),
         Command::Reboot(target) => runtime.block_on(ask_and_print(&target, &Op::Reboot)),
-        Command::Calibrate(args) => runtime.block_on(calibrate_command(args)),
-        Command::Stats(args) => runtime.block_on(stats_command(args)),
-        Command::Trace(args) => runtime.block_on(trace_command(args)),
-        Command::Recover(args) => runtime.block_on(recover_command(args)),
+        Command::Calibrate(args) => runtime.block_on(configure::calibrate_command(args)),
+        Command::Stats(args) => runtime.block_on(history::stats_command(args)),
+        Command::Trace(args) => runtime.block_on(history::trace_command(args)),
+        Command::Recover(args) => runtime.block_on(pairing::recover_command(args)),
         Command::Install(args) => runtime.block_on(install::run(*args)),
         Command::Backup(args) => runtime.block_on(backup::command(args)),
         Command::RestoreStock(args) => runtime.block_on(backup::restore(*args)),
-    }
+    };
+    device.map(|()| ExitCode::SUCCESS)
 }
 
 /// The passphrase, from standard input without echoing it anywhere.
@@ -185,111 +166,6 @@ fn passphrase() -> Result<String> {
         .read_line(&mut line)
         .context("read the passphrase")?;
     Ok(line.trim_end_matches(['\r', '\n']).to_string())
-}
-
-async fn setup(args: SetupArgs) -> Result<()> {
-    let wifi = match args.ssid {
-        Some(ssid) => Some(Credentials::new(ssid.into_bytes(), passphrase()?)?),
-        None => None,
-    };
-    let mut key = OwnerKey::open(&args.keys, args.label.as_deref(), OwnerKey::system())?;
-    let ask = Ask {
-        label: key.label().to_string(),
-        wifi,
-    };
-    let random = OwnerKey::system();
-    let ephemeral: [u8; 32] = private::random(random).context("read the system random source")?;
-    let seed: [u8; 32] = private::random(random).context("read the system random source")?;
-    let bits: [u8; 2] = private::random(random).context("read the system random source")?;
-    let code = Code::from_bits(u16::from_le_bytes(bits));
-    let mut session = Session::new(key.keypair(), ephemeral, ask, code, seed)?;
-
-    let mut link = Link::open(args.address).await?;
-    let result = exchange(&mut session, &mut link).await;
-    link.close().await;
-    let enrolled = result?;
-
-    let Some(identity) = session.feeder_key() else {
-        bail!("the feeder never proved the code");
-    };
-    key.remember(&identity)?;
-    println!(
-        "Paired with feeder {} ({}); it reboots now without BLE.",
-        fingerprint(&identity),
-        enrolled
-    );
-    Ok(())
-}
-
-/// Run the session to its end; the outcome as text.
-async fn exchange(session: &mut Session, link: &mut Link) -> Result<String> {
-    link.send(&session.start()?).await?;
-    let mut wait = HANDSHAKE_WAIT;
-    loop {
-        let message = link.receive(wait).await?;
-        match session.receive(&message)? {
-            Step::Send(bytes) => link.send(&bytes).await?,
-            Step::Reply(reply) => match outcome(reply) {
-                SetupOutcome::EnterCode(seconds) => {
-                    eprintln!("{}", instructions(session.code(), seconds));
-                    wait = Duration::from_secs(seconds.into()) + CONFIRM_SLACK;
-                }
-                SetupOutcome::Done(text) => return Ok(text),
-                SetupOutcome::Refused(text) => bail!("the feeder refused: {text}"),
-            },
-        }
-    }
-}
-
-/// The code as the owner keys it in: button positions, then their names.
-fn instructions(code: Code, seconds: u16) -> String {
-    let presses = code.presses();
-    let positions: Vec<String> = presses
-        .iter()
-        .map(|&b| panel_position(b).to_string())
-        .collect();
-    let names: Vec<&str> = presses.iter().map(|b| b.as_str()).collect();
-    format!(
-        "Within {seconds} s, press these buttons on the feeder one at a time \
-         (numbered from the left: 1 Lock, 2 Dispense, 3 Mic, 4 Reset):\n\n    \
-         {}\n    ({})\n\nThe code proves this computer is talking to that feeder; \
-         it is used once.",
-        positions.join(" "),
-        names.join(", ")
-    )
-}
-
-enum SetupOutcome {
-    EnterCode(u16),
-    Done(String),
-    Refused(&'static str),
-}
-
-fn outcome(reply: Reply) -> SetupOutcome {
-    match reply {
-        Reply::EnterCode { seconds } => SetupOutcome::EnterCode(seconds),
-        Reply::Done { enrolled, wifi } => SetupOutcome::Done(format!(
-            "{}, {}",
-            match enrolled {
-                Enrolled::New => "enrolled as an owner",
-                Enrolled::Already => "already enrolled",
-            },
-            match wifi {
-                WifiSaved::Saved => "Wi-Fi saved for its next join",
-                WifiSaved::Unchanged => "Wi-Fi unchanged",
-            }
-        )),
-        Reply::Refused(refusal) => SetupOutcome::Refused(match refusal {
-            Refusal::Busy => "another setup is waiting for its code",
-            Refusal::Unconfirmed => "the code was not keyed in in time",
-            Refusal::WrongCode => {
-                "the code keyed in does not match: mistyped, or another device is relaying"
-            }
-            Refusal::Full => "every client slot is taken; revoke one first",
-            Refusal::NotWritable => "its store cannot be written now",
-            Refusal::Invalid => "it rejected the label or the Wi-Fi credentials",
-        }),
-    }
 }
 
 /// Which feeder, and with which key.
@@ -317,272 +193,6 @@ impl Toggle {
     const fn on(self) -> bool {
         matches!(self, Self::On)
     }
-}
-
-#[derive(Args)]
-struct SettingsArgs {
-    #[command(flatten)]
-    target: Target,
-    #[arg(long)]
-    lights: Option<Toggle>,
-    #[arg(long)]
-    sound: Option<Toggle>,
-    /// 0-100.
-    #[arg(long)]
-    volume: Option<u8>,
-}
-
-#[derive(Args)]
-struct LockArgs {
-    #[command(flatten)]
-    target: Target,
-    state: Toggle,
-}
-
-#[derive(Args)]
-struct WifiArgs {
-    #[command(flatten)]
-    target: Target,
-    /// The network to store; the passphrase is read from standard input.
-    #[arg(long, conflicts_with = "clear")]
-    ssid: Option<String>,
-    /// Forget the stored network; the build's applies again.
-    #[arg(long)]
-    clear: bool,
-}
-
-#[derive(Args)]
-struct TimeArgs {
-    #[command(flatten)]
-    target: Target,
-    /// The feeder's time zone, an IANA name (`America/Denver`), or
-    /// `system` for this computer's; sent as the zone's POSIX rule.
-    #[arg(long, conflicts_with = "clear_zone")]
-    zone: Option<String>,
-    /// Forget the zone; local time then follows the syncs' offsets.
-    #[arg(long)]
-    clear_zone: bool,
-    /// Where the feeder asks for the time: `off`, `gateway`, `gateway:PORT`,
-    /// `IP` or `IP:PORT` (port 123 unless named).
-    #[arg(long, value_parser = parse_ntp)]
-    ntp: Option<NtpServer>,
-    /// Read the time settings and the clock's state.
-    #[arg(long, conflicts_with_all = ["zone", "clear_zone", "ntp"])]
-    show: bool,
-}
-
-/// An NTP server as `--ntp` takes it.
-fn parse_ntp(text: &str) -> Result<NtpServer, String> {
-    const PORT: u16 = 123;
-    let port = |text: Option<&str>| match text {
-        None => Ok(PORT),
-        Some(port) => match port.parse::<u16>() {
-            Ok(0) | Err(_) => Err(format!("{port:?} is not a port")),
-            Ok(port) => Ok(port),
-        },
-    };
-    let (host, port_text) = match text.split_once(':') {
-        Some((host, port)) => (host, Some(port)),
-        None => (text, None),
-    };
-    match host {
-        "off" if port_text.is_none() => Ok(NtpServer::Off),
-        "gateway" => Ok(NtpServer::Gateway {
-            port: port(port_text)?,
-        }),
-        _ => match host.parse() {
-            Ok(ip) => Ok(NtpServer::Address {
-                ip,
-                port: port(port_text)?,
-            }),
-            Err(_) => Err(format!(
-                "{text:?} is not off, gateway[:PORT] or an IPv4 address[:PORT]"
-            )),
-        },
-    }
-}
-
-#[derive(Args)]
-struct EventsArgs {
-    #[command(flatten)]
-    target: Target,
-    /// Start after this sequence number, in the feeder's current epoch
-    /// (default: the oldest kept).
-    #[arg(long)]
-    after: Option<u64>,
-    /// Keep the session open and print new events (and samples) as they
-    /// happen.
-    #[arg(long)]
-    follow: bool,
-    #[arg(long)]
-    samples: bool,
-}
-
-#[derive(Args)]
-struct LogsArgs {
-    #[command(flatten)]
-    target: Target,
-    /// Start after this line number of the feeder's current boot (default:
-    /// the oldest line its RAM tail keeps, a few KB). Lines count from 1
-    /// each boot, and the feeder cannot tell an earlier boot's number below
-    /// this boot's newest from its own: after a restart, start without it.
-    #[arg(long)]
-    after: Option<u32>,
-    /// Keep the session open and print new lines as the feeder logs them.
-    #[arg(long)]
-    follow: bool,
-}
-
-#[derive(Args)]
-struct FeedArgs {
-    #[command(flatten)]
-    target: Target,
-    #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u8).range(1..))]
-    portions: u8,
-}
-
-#[derive(Args)]
-struct CancelFeedArgs {
-    #[command(flatten)]
-    target: Target,
-    /// The feed's number, as `wellfed feed` printed it.
-    feed: u32,
-}
-
-#[derive(Args)]
-struct StatsArgs {
-    #[command(flatten)]
-    target: Target,
-    /// One section; repeat for several (default: every section).
-    #[arg(long, value_enum)]
-    section: Vec<Section>,
-}
-
-#[derive(Clone, Copy, ValueEnum)]
-enum Section {
-    Counters,
-    Memory,
-    Flash,
-    Power,
-    Food,
-    Feeds,
-    Portions,
-}
-
-impl Section {
-    const fn model(self) -> StatsSection {
-        match self {
-            Self::Counters => StatsSection::Counters,
-            Self::Memory => StatsSection::Memory,
-            Self::Flash => StatsSection::Flash,
-            Self::Power => StatsSection::Power,
-            Self::Food => StatsSection::Food,
-            Self::Feeds => StatsSection::Feeds,
-            Self::Portions => StatsSection::Portions,
-        }
-    }
-}
-
-#[derive(Args)]
-struct TraceArgs {
-    #[command(flatten)]
-    target: Target,
-    /// The feed, as `wellfed feed` and the `Fed` event number it.
-    feed: u32,
-    /// The whole trace as JSON, instead of a summary and one line an entry.
-    #[arg(long)]
-    json: bool,
-}
-
-#[derive(Args)]
-struct CalibrateArgs {
-    #[command(flatten)]
-    target: Target,
-    /// What the counted portions weighed together, in grams (`98.4`): the
-    /// scale's reading of the bowl, less the empty bowl.
-    #[arg(long, value_parser = parse_grams, requires = "portions")]
-    weighed: Option<u32>,
-    /// How many portions that food is: the `completed` counts of the feeds
-    /// that dropped it.
-    #[arg(long, requires = "weighed")]
-    portions: Option<u32>,
-    /// One portion's weight in grams, when already known.
-    #[arg(long, value_parser = parse_grams, conflicts_with_all = ["weighed", "clear"])]
-    portion: Option<u32>,
-    /// Forget the stored weight.
-    #[arg(long, conflicts_with = "weighed")]
-    clear: bool,
-}
-
-/// A `--weighed` or `--portion` value that is not a weight in grams.
-#[derive(Debug, PartialEq, Eq, thiserror::Error)]
-#[error("{text:?} is not a weight in grams (like 9.8)")]
-struct NotGrams {
-    text: String,
-}
-
-/// Grams with up to three decimals, as milligrams.
-fn parse_grams(text: &str) -> Result<u32, NotGrams> {
-    let invalid = || NotGrams {
-        text: text.to_owned(),
-    };
-    let (whole, fraction) = text.split_once('.').unwrap_or((text, ""));
-    if whole.is_empty() || fraction.len() > 3 || !fraction.bytes().all(|b| b.is_ascii_digit()) {
-        return Err(invalid());
-    }
-    let whole: u32 = whole.parse().map_err(|_| invalid())?;
-    let padded = format!("{fraction:0<3}");
-    let fraction: u32 = padded.parse().map_err(|_| invalid())?;
-    whole
-        .checked_mul(1000)
-        .and_then(|mg| mg.checked_add(fraction))
-        .ok_or_else(invalid)
-}
-
-/// The mean of `portions` portions that weighed `weighed_mg` together,
-/// rounded to the milligram.
-fn mean_mg(weighed_mg: u32, portions: u32) -> Result<u32> {
-    if portions == 0 {
-        bail!("--portions must count at least one portion");
-    }
-    let mean = (u64::from(weighed_mg) + u64::from(portions) / 2) / u64::from(portions);
-    Ok(u32::try_from(mean)?)
-}
-
-#[derive(Clone, Copy, ValueEnum)]
-enum InviteRole {
-    Owner,
-    Member,
-    Server,
-}
-
-#[derive(Args)]
-struct InviteArgs {
-    #[command(flatten)]
-    target: Target,
-    #[arg(long, value_enum, default_value = "member")]
-    role: InviteRole,
-}
-
-#[derive(Args)]
-struct JoinArgs {
-    /// The invite as `wellfed invite` printed it.
-    invite: String,
-    /// The key that joins, created on first use.
-    #[arg(long, default_value = "private/wellfed-owner.json")]
-    keys: PathBuf,
-    #[arg(long)]
-    label: Option<String>,
-    #[arg(long)]
-    address: Option<String>,
-}
-
-#[derive(Args)]
-struct RevokeArgs {
-    #[command(flatten)]
-    target: Target,
-    /// The client's key, as a hex prefix of at least 8 digits.
-    client: String,
 }
 
 async fn connect(target: &Target) -> Result<(OwnerKey, [u8; 32], Connection)> {
@@ -619,461 +229,6 @@ fn print_answer(answer: &Answer) -> Result<()> {
     Ok(())
 }
 
-async fn settings_command(args: SettingsArgs) -> Result<()> {
-    let changes = SettingsPatch {
-        lights: args.lights.map(Toggle::on),
-        sound: args.sound.map(Toggle::on),
-        volume: args.volume,
-    };
-    if changes == SettingsPatch::default() {
-        return ask_and_print(&args.target, &Op::GetSettings).await;
-    }
-    let (_, _, mut connection) = connect(&args.target).await?;
-    let Answer::Settings(settings) = connection.ask(&Op::GetSettings).await? else {
-        bail!("the feeder did not return its settings");
-    };
-    let answer = connection
-        .ask(&Op::PutSettings {
-            base: settings.generation,
-            changes,
-        })
-        .await?;
-    print_answer(&answer)
-}
-
-async fn wifi_command(args: WifiArgs) -> Result<()> {
-    let passphrase = match &args.ssid {
-        Some(_) => Some(passphrase()?),
-        None if args.clear => None,
-        None => bail!("pass --ssid or --clear"),
-    };
-    let (_, _, mut connection) = connect(&args.target).await?;
-    let Answer::Status(status) = connection.ask(&Op::Status).await? else {
-        bail!("the feeder did not return its status");
-    };
-    let wifi = match (args.ssid, passphrase) {
-        (Some(ssid), Some(psk)) => Some(Wifi {
-            ssid: ssid.into_bytes(),
-            psk,
-        }),
-        _ => None,
-    };
-    let answer = connection
-        .ask(&Op::PutWifi {
-            base: status.wifi_generation,
-            wifi,
-        })
-        .await?;
-    print_answer(&answer)
-}
-
-/// Each section asked for, one answer each, as JSON.
-async fn stats_command(args: StatsArgs) -> Result<()> {
-    let (_, _, mut connection) = connect(&args.target).await?;
-    // An op the feeder predates would end the session rather than be
-    // refused, so ask only a feeder that claims the statistics.
-    if !connection.capabilities().stats {
-        bail!("this feeder's build serves no statistics; update it first");
-    }
-    let sections: Vec<StatsSection> = if args.section.is_empty() {
-        // A feeder that predates a section is not asked for it.
-        let capabilities = connection.capabilities();
-        StatsSection::ALL
-            .into_iter()
-            .filter(|&section| section != StatsSection::Feeds || capabilities.traces)
-            .filter(|&section| section != StatsSection::Portions || capabilities.calibration)
-            .collect()
-    } else {
-        args.section.iter().map(|section| section.model()).collect()
-    };
-    if sections.contains(&StatsSection::Feeds) && !connection.capabilities().traces {
-        bail!("this feeder's build keeps no feed traces; update it first");
-    }
-    for section in sections {
-        let answer = connection.ask(&Op::Stats { section }).await?;
-        print_answer(&answer)?;
-    }
-    Ok(())
-}
-
-/// One feed's trace, read a page at a time.
-async fn trace_command(args: TraceArgs) -> Result<()> {
-    let (_, _, mut connection) = connect(&args.target).await?;
-    // As for the statistics: a feeder that predates the op would end the
-    // session on it.
-    if !connection.capabilities().traces {
-        bail!("this feeder's build keeps no feed traces; update it first");
-    }
-    let mut pages = Pages::new(args.feed);
-    let trace = loop {
-        let answer = connection.ask(&pages.next_op()).await?;
-        if let Some(trace) = pages.take(answer).context("read the trace")? {
-            break trace;
-        }
-    };
-    if args.json {
-        return print_json(&trace);
-    }
-    print!("{}", trace::Text(&trace));
-    Ok(())
-}
-
-async fn calibrate_command(args: CalibrateArgs) -> Result<()> {
-    let portion_mg = match (args.weighed, args.portions, args.portion, args.clear) {
-        (Some(weighed), Some(portions), None, false) => Some(Some(mean_mg(weighed, portions)?)),
-        (None, None, Some(portion), false) => Some(Some(portion)),
-        (None, None, None, true) => Some(None),
-        _ => None,
-    };
-
-    let (_, _, mut connection) = connect(&args.target).await?;
-    // An op the feeder predates would end the session rather than be
-    // refused, so ask only a feeder that claims the calibration.
-    if !connection.capabilities().calibration {
-        bail!("this feeder's build keeps no calibration; update it first");
-    }
-    let Answer::Calibration(view) = connection.ask(&Op::GetCalibration).await? else {
-        bail!("the feeder did not return its calibration");
-    };
-    let Some(portion_mg) = portion_mg else {
-        print_json(&view)?;
-        let portions = Op::Stats {
-            section: StatsSection::Portions,
-        };
-        return print_answer(&connection.ask(&portions).await?);
-    };
-
-    if let Some(mg) = portion_mg {
-        eprintln!("One portion: {mg} mg.");
-    }
-    let calibration = model::Calibration {
-        portion_mg,
-        ..view.calibration
-    };
-    let answer = connection
-        .ask(&Op::PutCalibration {
-            base: view.generation,
-            calibration,
-        })
-        .await?;
-    if answer == Answer::Refused(model::Refusal::Invalid) {
-        bail!("refused: a portion must weigh 1-50 g");
-    }
-    print_answer(&answer)
-}
-
-async fn time_command(args: TimeArgs) -> Result<()> {
-    let now = jiff::Timestamp::now();
-    if args.show {
-        return ask_and_print(&args.target, &Op::GetTime).await;
-    }
-    let zone = match (args.zone.as_deref(), args.clear_zone) {
-        (_, true) => Some(String::new()),
-        (None, false) => None,
-        (Some(name), false) => {
-            let name = match name {
-                "system" => jiff::tz::TimeZone::system()
-                    .iana_name()
-                    .context("this computer's time zone has no IANA name")?
-                    .to_owned(),
-                name => name.to_owned(),
-            };
-            let host = jiff::tz::TimeZone::get(&name).ok();
-            Some(wellfed_client::time::rule(&name, now, host.as_ref())?)
-        }
-    };
-    if zone.is_none() && args.ntp.is_none() {
-        let sync = wellfed_client::time::sync(now, &jiff::tz::TimeZone::system());
-        return ask_and_print(&args.target, &Op::TimeSync(sync)).await;
-    }
-
-    let (_, _, mut connection) = connect(&args.target).await?;
-    let Answer::Time(view) = connection.ask(&Op::GetTime).await? else {
-        bail!("the feeder did not return its time settings (a build without them?)");
-    };
-    let answer = connection
-        .ask(&Op::PutTime {
-            base: view.generation,
-            changes: TimeChanges {
-                zone,
-                ntp: args.ntp,
-            },
-        })
-        .await?;
-    print_answer(&answer)
-}
-
-async fn events_command(args: EventsArgs) -> Result<()> {
-    let (_, _, mut connection) = connect(&args.target).await?;
-    connection
-        .subscribe(args.after, args.samples && args.follow)
-        .await?;
-    // Without --follow, stop once the backlog has been quiet for a moment.
-    let wait = if args.follow {
-        Duration::from_secs(3600)
-    } else {
-        Duration::from_secs(2)
-    };
-    loop {
-        // The session keeps itself alive, so a quiet hour is no failure.
-        let pushed = match connection.next(wait).await {
-            Ok(Some(pushed)) => pushed,
-            Ok(None) if args.follow => continue,
-            Ok(None) => return Ok(()),
-            Err(error) => return Err(error),
-        };
-        println!("{}", serde_json::to_string(&pushed)?);
-    }
-}
-
-/// The lines as the feeder logged them, one per line on standard output;
-/// lines the feeder overwrote before sending are counted on standard error.
-async fn logs_command(args: LogsArgs) -> Result<()> {
-    let (_, _, mut connection) = connect(&args.target).await?;
-    match connection.ask(&Op::TailLog { after: args.after }).await? {
-        Answer::Done { .. } => {}
-        Answer::Refused(model::Refusal::Unavailable) => {
-            bail!("this feeder's build keeps no log (it lacks the log capability)")
-        }
-        Answer::Refused(refusal) => bail!("refused: {refusal:?}"),
-        other => bail!("unexpected answer {other:?}"),
-    }
-    // Without --follow, stop once the tail has been sent and is quiet, or
-    // after a bound: a feeder logging steadily is never quiet.
-    let wait = if args.follow {
-        Duration::from_secs(3600)
-    } else {
-        Duration::from_secs(2)
-    };
-    let until = std::time::Instant::now() + LOGS_BOUND;
-    loop {
-        if !args.follow && std::time::Instant::now() >= until {
-            return Ok(());
-        }
-        let pushed = match connection.next(wait).await? {
-            Some(pushed) => pushed,
-            None if args.follow => continue,
-            None => return Ok(()),
-        };
-        let Pushed::Log(batch) = pushed else {
-            continue;
-        };
-        if batch.dropped > 0 {
-            eprintln!("({} lines not in the tail)", batch.dropped);
-        }
-        for line in batch.lines {
-            println!("{line}");
-        }
-    }
-}
-
-/// How long `logs` without `--follow` reads: the whole tail is a few
-/// frames, sent within a second.
-const LOGS_BOUND: Duration = Duration::from_secs(10);
-
-/// Longer than any feed the owner's limits allow.
-const FEED_WAIT: Duration = Duration::from_secs(120);
-
-/// One feed under a fresh id, never retried: a feed whose answer is lost
-/// may have run. Prints the answer, then the feed's `Fed` event.
-async fn feed_command(args: FeedArgs) -> Result<()> {
-    let (_, _, mut connection) = connect(&args.target).await?;
-    let Answer::Status(status) = connection.ask(&Op::Status).await? else {
-        bail!("the feeder did not answer with its status");
-    };
-    // Only events after this one can be the feed's.
-    connection.subscribe(status.last_event, false).await?;
-
-    let answer = connection
-        .ask(&Op::Feed {
-            portions: args.portions,
-        })
-        .await?;
-    print_json(&answer)?;
-    let Answer::Feeding { feed } = answer else {
-        bail!("the feeder did not start the feed: {answer:?}");
-    };
-
-    loop {
-        let Some(message) = connection.next(FEED_WAIT).await? else {
-            bail!(
-                "no result for feed {feed} after {} s; `wellfed events` shows it once recorded",
-                FEED_WAIT.as_secs()
-            );
-        };
-        if let Pushed::Event(event) = message
-            && matches!(event.body, EventBody::Fed { feed: ended, .. } if ended == feed)
-        {
-            return print_json(&event);
-        }
-    }
-}
-
-async fn invite_command(args: InviteArgs) -> Result<()> {
-    let role = match args.role {
-        InviteRole::Owner => ClientRole::Owner,
-        InviteRole::Member => ClientRole::Member,
-        InviteRole::Server => ClientRole::Server,
-    };
-    let (_, identity, mut connection) = connect(&args.target).await?;
-    match connection.ask(&Op::CreateInvite { role }).await? {
-        Answer::Invite(invite) => {
-            let text = Invite {
-                feeder: identity,
-                id: invite.id,
-                secret: invite.secret.0,
-            }
-            .text();
-            println!("{text}");
-            eprintln!(
-                "Single use, for the next {} s; anyone holding it joins as {role:?}.",
-                invite.seconds
-            );
-            Ok(())
-        }
-        Answer::Refused(refusal) => bail!("refused: {refusal:?}"),
-        other => bail!("unexpected answer {other:?}"),
-    }
-}
-
-async fn join_command(args: JoinArgs) -> Result<()> {
-    let invite = Invite::parse(&args.invite)?;
-    let mut key = OwnerKey::open(&args.keys, args.label.as_deref(), OwnerKey::system())?;
-    let address = device::locate(&invite.feeder, args.address.as_deref())?;
-    let joined = wellfed_connect::join(
-        key.keypair(),
-        invite,
-        key.label(),
-        address,
-        device::random()?,
-    )
-    .await
-    .map_err(|error| match error {
-        wellfed_connect::Error::Closed => {
-            anyhow::anyhow!("the feeder closed the connection (an unknown or expired invite)")
-        }
-        other => other.into(),
-    })?;
-    match joined {
-        Joined::Enrolled { role } => {
-            key.remember(&invite.feeder)?;
-            println!("Joined feeder {} as {role:?}.", fingerprint(&invite.feeder));
-            Ok(())
-        }
-        Joined::Refused(refusal) => bail!("refused: {refusal:?}"),
-    }
-}
-
-async fn clients_command(target: Target) -> Result<()> {
-    let (_, _, mut connection) = connect(&target).await?;
-    let Answer::Clients(clients) = connection.ask(&Op::ListClients).await? else {
-        bail!("the feeder did not list its clients");
-    };
-    for client in &clients {
-        println!(
-            "{}  {:<6?}  {}{}",
-            client.key,
-            client.role,
-            client.label,
-            if client.you { "  (this key)" } else { "" }
-        );
-    }
-    Ok(())
-}
-
-async fn revoke_command(args: RevokeArgs) -> Result<()> {
-    if args.client.len() < 8 {
-        bail!("give at least 8 hex digits of the client's key");
-    }
-    let (_, _, mut connection) = connect(&args.target).await?;
-    let Answer::Clients(clients) = connection.ask(&Op::ListClients).await? else {
-        bail!("the feeder did not list its clients");
-    };
-    let matches: Vec<[u8; 32]> = clients
-        .iter()
-        .filter(|c| c.key.to_string().starts_with(&args.client))
-        .map(|c| c.key.0)
-        .collect();
-    let [key] = matches.as_slice() else {
-        bail!("{} clients match {}", matches.len(), args.client);
-    };
-    let answer = connection.ask(&Op::RevokeClient { key: *key }).await?;
-    print_answer(&answer)
-}
-
-#[derive(Args)]
-struct RecoverArgs {
-    /// The feeder's address (ip or ip:port): recovery is for a client that
-    /// knows no feeder, so there is no identity to look up over mDNS.
-    #[arg(long)]
-    address: String,
-    /// This computer's client key, created on first use.
-    #[arg(long, default_value = "private/wellfed-owner.json")]
-    keys: PathBuf,
-    #[arg(long)]
-    label: Option<String>,
-}
-
-/// LAN recovery: with the feeder's recovery window open (Lock and Dispense
-/// held on an unlocked panel), run the setup exchange over the device API
-/// and become an owner once the code is keyed in.
-async fn recover_command(args: RecoverArgs) -> Result<()> {
-    let mut key = OwnerKey::open(&args.keys, args.label.as_deref(), OwnerKey::system())?;
-    let address = wellfed_connect::parse_address(&args.address).context("--address")?;
-    let (identity, text) = recover(&mut key, address).await?;
-    println!("Recovered feeder {} ({text}).", fingerprint(&identity));
-    Ok(())
-}
-
-/// Enroll `key` as an owner through the feeder's recovery window at
-/// `address`, the owner keying in the code shown; the feeder's identity,
-/// remembered in the key file, and what the feeder said.
-async fn recover(key: &mut OwnerKey, address: std::net::SocketAddr) -> Result<([u8; 32], String)> {
-    let random = OwnerKey::system();
-    let ephemeral: [u8; 32] = private::random(random).context("read the system random source")?;
-    let seed: [u8; 32] = private::random(random).context("read the system random source")?;
-    let bits: [u8; 2] = private::random(random).context("read the system random source")?;
-    let ask = Ask {
-        label: key.label().to_string(),
-        wifi: None,
-    };
-    let session = Session::new(
-        key.keypair(),
-        ephemeral,
-        ask,
-        Code::from_bits(u16::from_le_bytes(bits)),
-        seed,
-    )?;
-
-    let mut recovery = wellfed_connect::Recovery::open(address, session)
-        .await
-        .with_context(|| format!("connect to {address}"))?;
-    let mut wait = HANDSHAKE_WAIT;
-    let text = loop {
-        let reply = match recovery.reply(wait).await {
-            Err(wellfed_connect::Error::Closed) => {
-                bail!("the feeder closed the connection: is its recovery window open?")
-            }
-            Err(wellfed_connect::Error::Timeout) => bail!("the feeder did not answer in time"),
-            other => other?,
-        };
-        match outcome(reply) {
-            SetupOutcome::EnterCode(seconds) => {
-                eprintln!("{}", instructions(recovery.session().code(), seconds));
-                wait = Duration::from_secs(seconds.into()) + CONFIRM_SLACK;
-            }
-            SetupOutcome::Done(text) => break text,
-            SetupOutcome::Refused(text) => bail!("the feeder refused: {text}"),
-        }
-    };
-
-    let Some(identity) = recovery.session().feeder_key() else {
-        bail!("the feeder never proved the code");
-    };
-    key.remember(&identity)?;
-    Ok((identity, text))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1100,38 +255,12 @@ mod tests {
         // Resuming on bank 0 sends no frame.
         let resumed = [&install[..6], &["--from-bank0", "--ssid", "Home"]].concat();
         assert!(Cli::try_parse_from(resumed).is_err());
-    }
 
-    #[test]
-    fn grams_parse_to_milligrams() {
-        assert_eq!(parse_grams("9.8"), Ok(9_800));
-        assert_eq!(parse_grams("98.425"), Ok(98_425));
-        assert_eq!(parse_grams("12"), Ok(12_000));
-        for bad in ["", ".5", "9.8765", "9,8", "-1", "1e3", "9.x"] {
-            assert!(parse_grams(bad).is_err(), "{bad}");
-        }
-        assert_eq!(mean_mg(98_400, 10).unwrap(), 9_840);
-        assert_eq!(mean_mg(10_000, 3).unwrap(), 3_333);
-        assert!(mean_mg(1_000, 0).is_err());
-    }
-
-    #[test]
-    fn ntp_servers_parse() {
-        assert_eq!(parse_ntp("off"), Ok(NtpServer::Off));
-        assert_eq!(parse_ntp("gateway"), Ok(NtpServer::Gateway { port: 123 }));
-        assert_eq!(
-            parse_ntp("gateway:1123"),
-            Ok(NtpServer::Gateway { port: 1123 })
-        );
-        assert_eq!(
-            parse_ntp("10.42.103.1:1123"),
-            Ok(NtpServer::Address {
-                ip: [10, 42, 103, 1].into(),
-                port: 1123
-            })
-        );
-        for bad in ["off:123", "gateway:0", "pool.ntp.org", "10.42.103.1:x"] {
-            assert!(parse_ntp(bad).is_err(), "{bad}");
-        }
+        // A server command parses whole, its flags after the verb.
+        let feed = ["wellfed", "server", "feed", "--portions", "2", "--json"];
+        assert!(matches!(
+            Cli::try_parse_from(feed).map(|cli| cli.command),
+            Ok(Command::Server(_))
+        ));
     }
 }

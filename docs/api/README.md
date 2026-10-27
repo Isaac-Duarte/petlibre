@@ -231,6 +231,15 @@ GET    /health                               no auth; liveness and version
 - **Passwords** have at least 10 characters and no other rule. An owner adds an account with a temporary password and can set another for anyone, which ends that user's sessions. Any user changes their own with `PATCH /session` and the current password, which ends their other sessions and keeps the one asking. A sole owner locked out runs `wellfed-server --data DIR reset-owner` on the host, which prints a new temporary password.
 - **The server has its own feeder key** per feeder, enrolled by invite like any client, so the feeder's audit shows "server (on behalf of user X)".
 
+### The CLI on the server
+
+`wellfed server …` speaks this API through `wellfed-server-client` alone (it reaches the bodies as `wellfed_server_client::api`), beside the device commands, and each command takes one path ([two paths, one feed](#two-paths-one-feed)).
+
+- **Login.** `wellfed server login --server URL --name NAME` reads the password from standard input, opens a session, makes a token, keeps it in `private/wellfed-server.json` (`--token-file`) mode 0600 beside the device API's key file, and ends the session. `logout` revokes the token and deletes the file. Every other verb sends the token.
+- **Verbs.** `feeders`, `status`, `settings`, `lock`, `feed` and `cancel-feed` (each takes `--feeder` with an id or a name when the server holds more than one), `events` (with `--follow` over the stream), `command <key>` and `commands` (the journal), `users` (list, a role or an expiry, delete; adding an account needs a login), `tokens` (list, revoke) and `releases` (list, upload, check). `clients`, `revoke`, `reboot`, `install` and `export` join as their routes land.
+- **Output.** Text by default; with `--json`, the API's bodies, one per line, a refusal's problem included. The exit status is 0 on success, 1 on an error and 3 when an outcome is unknown.
+- **Uncertain writes.** A write goes out once under a fresh `Idempotency-Key`. When its outcome is unknown (`504 outcome_unknown`, a `500`, or an answer lost on the way) the command prints the key and `wellfed server command <key>`, exits 3, and sends nothing more: not again under a new key, and never over the device API. `command <key>` reads the entry the feeder's history settles, exiting 3 until it does. A feed waits on the stream for its result, opened before the feed is sent; an `uncertain` or `unrecorded` result exits 3 too.
+
 ## Storage
 
 - **SQLite in WAL mode.** One writer connection beside a small read pool. Every write goes through that connection, so writes never contend; a household's one to five feeders need no writer task in front of it.

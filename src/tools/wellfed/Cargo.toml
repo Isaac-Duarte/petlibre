@@ -18,6 +18,7 @@ wellfed-connect.workspace = true
 wellfed-formats.workspace = true
 wellfed-model.workspace = true
 wellfed-proto.workspace = true
+wellfed-server-client.workspace = true
 wellfed-session.workspace = true
 wellfed-signing.workspace = true
 wellfed-stock-api.workspace = true
@@ -30,6 +31,7 @@ uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]
 chrono = { version = "0.4.45", default-features = false, features = ["std"] }
+wellfed-server-testkit.workspace = true
 tempfile.workspace = true
 
 [lints]

@@ -496,6 +496,13 @@ impl Rig for LiveRig<'_> {
         Ok(self.bench.power_on()?)
     }
 
+    fn kill(&mut self) -> Result<()> {
+        require(self.power, || LiveError::NoPower)?;
+        self.note("  Relay 1 off: the feeder stays unpowered");
+        // `restore` only ever switches the supply off, so it stays off.
+        Ok(self.bench.cut_power()?)
+    }
+
     fn uart(&mut self) -> Result<Vec<u8>> {
         let capture = self.capture.as_mut().ok_or(LiveError::NoCapture)?;
         let segments = capture.segments();

@@ -4,12 +4,16 @@
 use std::path::Path;
 use std::time::Duration;
 
-use wellfed_model::{Generation, OpenRefusal, Refusal, Settings, WifiSource};
+use wellfed_model::{
+    Counters, Counts, Generation, Memory, NtpServer, OpenRefusal, Refusal, ResetCause, Settings,
+    Stats, StatsSection, TimeView, WifiSource,
+};
 use serde_json::json;
 
 use super::log::Log;
 use super::scenarios::ended_for;
 use super::*;
+use wellfed_core::feed::storage::OwnerOutcome;
 use wellfed_rig::commands::ota::Variant;
 use wellfed_rig::device::DeviceError;
 
@@ -17,8 +21,15 @@ const GOOD: &str = "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e
 const FAILING: &str = "f00df00df00df00df00df00df00df00df00df00df00df00df00df00df00df00d";
 const TWIN: &str = "7e157e157e157e157e157e157e157e157e157e157e157e157e157e157e157e15";
 const OLD: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+const JAM: &str = "1a111a111a111a111a111a111a111a111a111a111a111a111a111a111a111a11";
+const SENSOR: &str = "5e115e115e115e115e115e115e115e115e115e115e115e115e115e115e115e11";
+const STALL: &str = "57a157a157a157a157a157a157a157a157a157a157a157a157a157a157a157a1";
 
 enum Event {
+    /// The feeder restarts, for `cause`.
+    Restart(ResetCause),
+    /// An activation reset into bank 1, logged by the install itself.
+    Booted,
     Line(String),
     Running(String),
     /// The device API answers, or not (a boot, a lost hotspot).
@@ -84,8 +95,29 @@ struct Feeder {
     deferred: u32,
     actions: Vec<String>,
     notes: Vec<String>,
+    /// Why the running boot started.
+    reset: ResetCause,
+    /// This boot's counts, and the feeder's over its life.
+    counts: Counts,
+    lifetime: Counts,
+    heap: u32,
+    /// The owner holds a fault until a restart.
+    faulted: bool,
+    /// A feed a reset interrupts, resolved as uncertain at the next boot.
+    interrupted: Option<u32>,
+    /// How far the clock is behind the host's, and the bound it states.
+    clock_skew_ms: i64,
+    clock_error_ms: u32,
+    /// Relay 1 was cut for good.
+    killed: bool,
 
     // Faults to inject.
+    /// The counters miss one feed.
+    miscounts: bool,
+    /// Each memory reading has 6 KiB less free.
+    leaks: bool,
+    /// A feed a reset interrupted is handed to the owner again.
+    reruns_interrupted: bool,
     silent: bool,
     admits_strangers: bool,
     settings_lost_on_boot: bool,
@@ -138,6 +170,18 @@ impl Feeder {
             deferred: 0,
             actions: Vec::new(),
             notes: Vec::new(),
+            reset: ResetCause::PowerOn,
+            counts: Counts::default(),
+            lifetime: Counts::default(),
+            heap: 140_000,
+            faulted: false,
+            interrupted: None,
+            clock_skew_ms: 300,
+            clock_error_ms: 1_000,
+            killed: false,
+            miscounts: false,
+            leaks: false,
+            reruns_interrupted: false,
             silent: false,
             admits_strangers: false,
             volume_drifts: false,
@@ -169,7 +213,15 @@ impl Feeder {
         due.sort_by(|a, b| a.0.total_cmp(&b.0));
         for (_, event) in due {
             match event {
+                Event::Restart(cause) => self.boot_as(cause),
+                Event::Booted => {
+                    self.boots += 1;
+                    self.counts = Counts::default();
+                    self.reset = ResetCause::Software;
+                    self.faulted = false;
+                }
                 Event::Line(text) => {
+                    self.counted(&text);
                     self.uart.extend_from_slice(b"[sdk] ");
                     self.uart.extend_from_slice(text.as_bytes());
                     self.uart.extend_from_slice(b"\r\n");
@@ -185,6 +237,25 @@ impl Feeder {
                     if let Some((offer, fault)) = self.offered.clone() {
                         self.push(self.now, &offer, fault);
                     }
+                }
+            }
+        }
+    }
+
+    /// A result counts once it is logged, as the feeder counts its `Fed`
+    /// event: one a reset drops never counts.
+    fn counted(&mut self, text: &str) {
+        use wellfed_core::record::{Event as Record, Owner};
+        for event in super::log::events(text) {
+            if let Record::Owner(Owner::Fed {
+                outcome, completed, ..
+            }) = event
+            {
+                let failed = u32::from(outcome != Some(OwnerOutcome::Done));
+                for counts in [&mut self.counts, &mut self.lifetime] {
+                    counts.feeds += 1;
+                    counts.feeds_failed += failed;
+                    counts.portions += u32::from(completed);
                 }
             }
         }
@@ -230,6 +301,7 @@ impl Feeder {
                 &format!("PLFW1 start build={build} bank=1 reset=0x0 mmu=1"),
             );
             self.line(delay + 106.0, "PLCNF1 confirmed=1 already=1");
+            self.at(delay + 105.0, Event::Booted);
             self.at(delay + 106.0, Event::Running(build.into()));
             return;
         }
@@ -237,6 +309,7 @@ impl Feeder {
             delay + 105.0,
             &format!("PLFW1 start build={build} bank=1 reset=0x0 mmu=1"),
         );
+        self.at(delay + 105.0, Event::Booted);
         // The build runs from the moment it logs its confirmation, as on the
         // bench, where a firmware without the device API has only that line.
         self.line(delay + 106.0, "PLTRL1 confirmed=0 boot=1 limit=3");
@@ -273,9 +346,7 @@ impl Feeder {
             wifi: self.source,
             losses: self.losses,
             // As the firmware keeps it: 300 ms behind the host after a sync.
-            clock_ms: self
-                .synced
-                .then(|| u64::try_from(self.unix_ms() - 300).unwrap()),
+            clock_ms: self.clock_ms(),
             settings_generation: self.generation,
             wifi_generation: self.wifi_generation,
             locked: Some(self.locked),
@@ -287,7 +358,13 @@ impl Feeder {
         self.feeding.filter(|feed| self.now < feed.end)
     }
 
-    /// The owner's records for feed `id`, from its reservation to Idle.
+    fn clock_ms(&self) -> Option<u64> {
+        self.synced
+            .then(|| u64::try_from(self.unix_ms() - self.clock_skew_ms).unwrap())
+    }
+
+    /// The owner's records for feed `id`, from its reservation to Idle, as
+    /// the running build's injected faults have it end.
     fn feed(&mut self, portions: u8) -> u32 {
         let id = self.next_feed;
         self.next_feed += 1;
@@ -300,15 +377,93 @@ impl Feeder {
             0.2,
             "PLOWN1 state=3 fault=0 supervisor=0 stopped=1 optics_off=0",
         );
-        self.line(
-            2.0,
-            "PLOWN1 state=4 fault=0 supervisor=0 stopped=0 optics_off=0",
-        );
-        let end = if self.feed_never_ends {
-            f64::INFINITY
-        } else {
-            self.finish(2.0 + drive, id, portions, portions, 1, 1);
-            self.now + 2.0 + drive + 0.02
+        let driving = "PLOWN1 state=4 fault=0 supervisor=0 stopped=0 optics_off=0";
+        // (seconds to the result, completed, outcome, reason) for a fault
+        // the build injects.
+        let injected = match (self.running.as_str(), portions) {
+            (JAM, 1) => Some((11.5, 1, 1, 1)),
+            (JAM, 2) => Some((7.2, 0, 4, 10)),
+            (JAM, _) => Some((6.1, 0, 4, 8)),
+            (SENSOR, 1) => Some((11.0, 0, 4, 6)),
+            (SENSOR, 2) => {
+                // The outlet reads blocked: failed before any drive.
+                self.finish(1.0, id, portions, 0, 4, 9);
+                self.feeding = Some(Feeding {
+                    id,
+                    portions,
+                    start: self.now + 1.0,
+                    end: self.now + 1.02,
+                });
+                return id;
+            }
+            (SENSOR, _) => {
+                // The ADC lost: failed, and the owner holds the fault.
+                self.line(2.0, driving);
+                self.line(
+                    4.0,
+                    "PLOWN1 state=6 fault=0 supervisor=0 stopped=1 optics_off=1",
+                );
+                self.line(
+                    4.01,
+                    &format!(
+                        "PLOWN1 fed id={id} requested={portions} completed=0 outcome=4 reason=8 \
+                         durable=1 drive_ms=2000 rising=0 falling=0 first_edge_ms=none \
+                         current_max=168 current_mean=59 samples=60"
+                    ),
+                );
+                self.line(
+                    4.02,
+                    "PLOWN1 state=7 fault=7 supervisor=0 stopped=1 optics_off=1",
+                );
+                self.faulted = true;
+                self.feeding = Some(Feeding {
+                    id,
+                    portions,
+                    start: self.now + 2.0,
+                    end: self.now + 4.02,
+                });
+                return id;
+            }
+            (STALL, 1) => {
+                // The motor lease stops the drive, then the faulted owner
+                // resets the board.
+                self.line(2.0, driving);
+                self.finish(2.7, id, portions, 0, 4, 12);
+                self.at(6.0, Event::Restart(ResetCause::Watchdog));
+                self.feeding = Some(Feeding {
+                    id,
+                    portions,
+                    start: self.now + 2.0,
+                    end: self.now + 2.72,
+                });
+                return id;
+            }
+            (STALL, _) => {
+                // The lapsed beat resets the board mid-drive.
+                self.line(2.0, driving);
+                self.interrupted = Some(id);
+                self.at(10.0, Event::Restart(ResetCause::Watchdog));
+                self.feeding = Some(Feeding {
+                    id,
+                    portions,
+                    start: self.now + 2.0,
+                    end: self.now + 10.0,
+                });
+                return id;
+            }
+            _ => None,
+        };
+        self.line(2.0, driving);
+        let end = match injected {
+            _ if self.feed_never_ends => f64::INFINITY,
+            Some((after, completed, outcome, reason)) => {
+                self.finish(after, id, portions, completed, outcome, reason);
+                self.now + after + 0.02
+            }
+            None => {
+                self.finish(2.0 + drive, id, portions, portions, 1, 1);
+                self.now + 2.0 + drive + 0.02
+            }
         };
         self.feeding = Some(Feeding {
             id,
@@ -450,6 +605,41 @@ impl Feeder {
                 Answer::Done { generation: None }
             }
             Ask::Feed { .. } if self.feeding().is_some() => Answer::Refused(Refusal::Busy),
+            Ask::Feed { .. } if self.faulted => Answer::Refused(Refusal::Fault),
+            Ask::Reboot if self.feeding().is_some() => Answer::Refused(Refusal::Busy),
+            Ask::Reboot => {
+                self.at(1.0, Event::Restart(ResetCause::Software));
+                Answer::Done { generation: None }
+            }
+            Ask::GetTime => Answer::Time(Box::new(self.time())),
+            Ask::Stats {
+                section: StatsSection::Counters,
+            } => {
+                let mut boot = self.counts;
+                if self.miscounts {
+                    boot.feeds = boot.feeds.saturating_sub(1);
+                }
+                Answer::Stats(Box::new(Stats::Counters(Counters {
+                    boot,
+                    reset: self.reset,
+                    lifetime: Some(self.lifetime),
+                    ..Counters::default()
+                })))
+            }
+            Ask::Stats {
+                section: StatsSection::Memory,
+            } => {
+                if self.leaks {
+                    self.heap -= 6 * 1024;
+                }
+                Answer::Stats(Box::new(Stats::Memory(Memory {
+                    heap_free: self.heap,
+                    heap_min: self.heap - 10_000,
+                    tasks: Vec::new(),
+                    tasks_total: 3,
+                })))
+            }
+            Ask::Stats { .. } => Answer::Unexpected,
             Ask::Feed { portions } => Answer::Feeding {
                 feed: self.feed(*portions),
             },
@@ -471,18 +661,72 @@ impl Feeder {
         self.line(0.5, &format!("PLAPI1 request slot=0 op={op} result=ok"));
     }
 
+    fn time(&self) -> TimeView {
+        TimeView {
+            generation: Generation(3),
+            writable: true,
+            zone: None,
+            ntp: NtpServer::Off,
+            clock_ms: self.clock_ms(),
+            error_ms: self.synced.then_some(self.clock_error_ms),
+            offset_s: None,
+            rate_ppb: 0,
+            rate_bound_ppb: 5_000_000,
+            learned: false,
+            syncs: 1,
+            last: None,
+            last_age_s: None,
+            ntp_last: None,
+        }
+    }
+
     fn boot(&mut self) {
+        self.boot_as(ResetCause::PowerOn);
+    }
+
+    /// A restart for `cause`: only a power cut loses the clock, and a feed
+    /// it interrupted is resolved as uncertain once the owner opens.
+    fn boot_as(&mut self, cause: ResetCause) {
+        if self.interrupted.is_some() {
+            // The interrupted feed's own records die with it.
+            self.pending.retain(
+                |(_, event)| !matches!(event, Event::Line(text) if text.starts_with("PLOWN1")),
+            );
+        }
+        self.feeding = None;
+        self.faulted = false;
+        self.reset = cause;
+        self.counts = Counts::default();
         self.line(
             3.0,
             &format!("PLFW1 start build={} bank=1 reset=0x0 mmu=1", self.running),
         );
+        if let Some(id) = self.interrupted.take() {
+            self.line(
+                6.0,
+                &format!(
+                    "PLOWN1 fed id={id} requested=3 completed=0 outcome=5 reason=0 durable=1 \
+                     drive_ms=0 rising=0 falling=0 first_edge_ms=none current_max=0 \
+                     current_mean=none samples=0"
+                ),
+            );
+            self.line(
+                6.01,
+                "PLOWN1 state=1 fault=0 supervisor=0 stopped=1 optics_off=1",
+            );
+            if self.reruns_interrupted {
+                self.line(6.5, &format!("PLOWN1 feed id={id} portions=3 submit=0"));
+            }
+        }
         if self.settings_lost_on_boot {
             self.lights = true;
             self.sound = true;
             self.volume = 40;
         }
         self.boots += 1;
-        self.synced = false;
+        if cause == ResetCause::PowerOn {
+            self.synced = false;
+        }
 
         // Stored credentials that never join cost five attempts first.
         let ready = if self.stored { 200.0 } else { 20.0 };
@@ -507,9 +751,18 @@ impl Rig for Feeder {
         let failing = args.variant == Some(Variant::Fail)
             || review.to_string_lossy().ends_with("-fail-review");
         let twin = args.variant == Some(Variant::Twin) || review.to_string_lossy().contains("twin");
+        let named = |variant: Variant, label: &str| {
+            args.variant == Some(variant)
+                || review
+                    .to_string_lossy()
+                    .ends_with(&format!("-{label}-review"))
+        };
         let build = match (failing, twin) {
             (true, _) => FAILING,
             (_, true) => TWIN,
+            _ if named(Variant::FeedJam, "jam") => JAM,
+            _ if named(Variant::SensorFault, "sensor") => SENSOR,
+            _ if named(Variant::FeedStall, "stall") => STALL,
             _ => GOOD,
         };
         self.actions
@@ -649,6 +902,11 @@ impl Rig for Feeder {
 
     fn power_cycle(&mut self) -> Result<()> {
         self.actions.push("power cycle".into());
+        if let Some(feed) = self.feeding() {
+            self.interrupted = Some(feed.id);
+            self.boot();
+            return Ok(());
+        }
         let since = self
             .installing
             .clone()
@@ -683,6 +941,14 @@ impl Rig for Feeder {
             }
             _ => self.boot(),
         }
+        Ok(())
+    }
+
+    fn kill(&mut self) -> Result<()> {
+        self.actions.push("kill".into());
+        self.killed = true;
+        self.online = false;
+        self.pending.clear();
         Ok(())
     }
 
@@ -749,6 +1015,9 @@ fn the_full_suite_passes_on_a_well_behaved_feeder() {
         "soak",
         "--soak-minutes",
         "5",
+        // Every fault of the sustained run once.
+        "--sustained-cycles",
+        "8",
     ];
     let (reports, silent) = suite(&mut feeder, &flags);
 
@@ -776,6 +1045,7 @@ fn the_full_suite_passes_on_a_well_behaved_feeder() {
     assert!(!feeder.locked && !feeder.held);
     assert_eq!(feeder.server, "serve");
     assert!(feeder.offered.is_none());
+    assert!(!feeder.killed);
     // The baseline's clock was set, and only the scripted strangers knocked.
     assert!(feeder.actions.iter().any(|a| a == "ask time-sync"));
     assert_eq!(
@@ -823,9 +1093,123 @@ fn tiers_take_on_more_of_the_suite() {
     };
 
     assert_eq!(names("smoke"), ["ota-update", "requests", "request-auth"]);
-    assert_eq!(names("standard").len(), SCENARIOS.len() - 1);
+    assert_eq!(names("standard").len(), SCENARIOS.len() - 2);
     assert!(!names("standard").contains(&"soak"));
+    assert!(!names("standard").contains(&"sustained"));
     assert_eq!(names("soak").len(), SCENARIOS.len());
+}
+
+/// The sustained run alone, on the baseline already running.
+fn sustained(feeder: &mut Feeder, cycles: &str) -> Report {
+    let (reports, _) = suite(
+        feeder,
+        &[
+            "--power",
+            "--build",
+            "--destructive",
+            "--feeds",
+            "--only",
+            "sustained",
+            "--sustained-cycles",
+            cycles,
+        ],
+    );
+    assert_eq!(reports[0].verdict, Verdict::Pass, "{:#?}", feeder.notes);
+    reports[1].clone()
+}
+
+/// The run's halt reason, after checking relay 1 was cut.
+fn halted(feeder: &Feeder, report: &Report) -> String {
+    let Verdict::Fail(reason) = &report.verdict else {
+        panic!("{report:?}\n{:#?}", feeder.notes);
+    };
+    assert!(feeder.killed, "relay 1 was not cut: {reason}");
+    reason.clone()
+}
+
+#[test]
+fn the_sustained_rotation_takes_every_fault_twice_in_sixteen_cycles() {
+    use super::sustained::Step;
+    assert_eq!(args(&[]).sustained_cycles, 16);
+    for step in Step::ROTATION {
+        let times = Step::ROTATION
+            .iter()
+            .cycle()
+            .take(16)
+            .filter(|s| **s == step)
+            .count();
+        assert_eq!(times, 2, "{step:?}");
+    }
+}
+
+#[test]
+fn a_sustained_run_feeds_through_every_fault_and_ends_on_the_baseline() {
+    let mut feeder = Feeder::new(GOOD);
+    let report = sustained(&mut feeder, "8");
+
+    assert_eq!(report.verdict, Verdict::Pass, "{:#?}", feeder.notes);
+    assert_eq!(feeder.running, GOOD);
+    assert!(!feeder.killed);
+    // Each variant went on and came off, and every feed asked at most 3.
+    for variant in ["jam", "sensor", "stall"] {
+        assert!(
+            feeder
+                .actions
+                .iter()
+                .any(|a| a.starts_with("stage run1-s0") && a.contains(variant)),
+            "{variant}"
+        );
+    }
+    // Both cuts landed in a feed, and every cycle passed its checks.
+    let noted = |text: &str| feeder.notes.iter().filter(|n| n.contains(text)).count();
+    assert_eq!(noted("Cutting the supply with feed"), 2);
+    assert_eq!(noted("reserved, not yet driving"), 1);
+    assert_eq!(noted("passed:"), 8, "{:#?}", feeder.notes);
+    assert!(feeder.actions.iter().any(|a| a == "ask reboot"));
+    assert!(feeder.actions.iter().any(|a| a == "hotspot down"));
+    // Half-hour cycles: eight of them take at least four hours.
+    assert!(report.took >= Duration::from_secs(8 * 30 * 60));
+}
+
+#[test]
+fn an_unplanned_restart_at_rest_halts_the_sustained_run_with_relay_1_cut() {
+    let mut feeder = Feeder::new(GOOD);
+    // Well into the first cycle's rest between feeds.
+    feeder.at(400.0, Event::Restart(ResetCause::Watchdog));
+    let report = sustained(&mut feeder, "2");
+
+    let reason = halted(&feeder, &report);
+    assert!(reason.contains("rest"), "{reason}");
+}
+
+#[test]
+fn counters_that_miss_a_feed_halt_the_sustained_run() {
+    let mut feeder = Feeder::new(GOOD);
+    feeder.miscounts = true;
+    let report = sustained(&mut feeder, "1");
+
+    let reason = halted(&feeder, &report);
+    assert!(reason.contains("counters read"), "{reason}");
+}
+
+#[test]
+fn a_heap_that_keeps_falling_halts_the_sustained_run() {
+    let mut feeder = Feeder::new(GOOD);
+    feeder.leaks = true;
+    let report = sustained(&mut feeder, "2");
+
+    let reason = halted(&feeder, &report);
+    assert!(reason.contains("Free heap fell"), "{reason}");
+}
+
+#[test]
+fn a_clock_outside_its_stated_bound_halts_the_sustained_run() {
+    let mut feeder = Feeder::new(GOOD);
+    feeder.clock_skew_ms = 5_000;
+    let report = sustained(&mut feeder, "1");
+
+    let reason = halted(&feeder, &report);
+    assert!(reason.contains("outside its 1000 ms bound"), "{reason}");
 }
 
 #[test]
@@ -850,6 +1234,17 @@ fn a_scenario_that_leaves_the_feeder_changed_fails_and_is_put_right() {
         "{reason}"
     );
     assert_eq!(feeder.volume, 40);
+}
+
+#[test]
+fn a_feed_handed_to_the_owner_again_after_a_cut_halts_the_sustained_run() {
+    let mut feeder = Feeder::new(GOOD);
+    feeder.reruns_interrupted = true;
+    // Cycle 3 cuts the supply with a feed reserved.
+    let report = sustained(&mut feeder, "3");
+
+    let reason = halted(&feeder, &report);
+    assert!(reason.contains("2 owner records and 1 results"), "{reason}");
 }
 
 #[test]

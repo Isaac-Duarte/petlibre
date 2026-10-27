@@ -90,6 +90,26 @@ impl Log {
             .collect()
     }
 
+    /// What `pick` finds in each record at or after `since`, with its
+    /// line's index, in order.
+    pub(super) fn records<T>(
+        &self,
+        since: usize,
+        pick: impl Fn(Event<'_>) -> Option<T>,
+    ) -> Vec<(usize, T)> {
+        let since = since.min(self.lines.len());
+        self.lines[since..]
+            .iter()
+            .enumerate()
+            .flat_map(|(offset, line)| {
+                events(&line.text)
+                    .filter_map(&pick)
+                    .map(move |found| (since + offset, found))
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
     /// When the last record of any kind arrived.
     pub(super) fn last_record_at(&self) -> Option<Duration> {
         self.lines

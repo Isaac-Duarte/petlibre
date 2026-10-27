@@ -311,6 +311,10 @@ impl Rig for StockFeeder {
         unreachable!()
     }
 
+    fn kill(&mut self) -> Result<()> {
+        unreachable!()
+    }
+
     fn uart(&mut self) -> Result<Vec<u8>> {
         self.release();
         if self.on_stock

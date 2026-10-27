@@ -152,6 +152,7 @@ fn rig_args(args: &StockOtaArgs) -> ItestArgs {
         only: Vec::new(),
         tier: Tier::Smoke,
         soak_minutes: 0.0,
+        sustained_cycles: 1,
         list: false,
         power: args.power,
         destructive: false,

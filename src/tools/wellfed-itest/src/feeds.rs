@@ -103,21 +103,21 @@ fn failed_first(failure: Option<&Error>) -> String {
 const PORTIONS: u8 = 2;
 /// From the reservation to the motor driving: the optics and the
 /// supervisor come up first.
-const PREPARE_WAIT: Duration = Duration::from_secs(30);
+pub(super) const PREPARE_WAIT: Duration = Duration::from_secs(30);
 /// About 9 s a portion on the bench, well inside the owner's own cap.
-const FEED_WAIT: Duration = Duration::from_secs(90);
+pub(super) const FEED_WAIT: Duration = Duration::from_secs(90);
 /// Into the drive before the cancel: before the first portion's mark,
 /// about 7.8 s in on the bench.
 const CANCEL_AFTER: Duration = Duration::from_secs(2);
 /// From a cancel, or a result, to the owner's next record.
-const STOP_WAIT: Duration = Duration::from_secs(10);
+pub(super) const STOP_WAIT: Duration = Duration::from_secs(10);
 
 /// A feed the owner may still be running: its id, and the UART mark from
 /// before it was asked for, where its result is looked for.
 #[derive(Debug, Clone, Copy)]
-struct Issued {
-    feed: u32,
-    since: usize,
+pub(super) struct Issued {
+    pub feed: u32,
+    pub since: usize,
 }
 
 pub(super) fn feed_writes(ctx: &mut Ctx) -> Result<()> {
@@ -181,7 +181,7 @@ fn held_status(ctx: &mut Ctx) -> Result<()> {
 }
 
 /// Wait for `running`'s result and the owner at rest after it.
-fn settle(ctx: &mut Ctx, running: Issued) -> Result<usize> {
+pub(super) fn settle(ctx: &mut Ctx, running: Issued) -> Result<usize> {
     ctx.note(&format!(
         "  Waiting for feed {} to end before anything else",
         running.feed
@@ -210,7 +210,7 @@ fn writes_during_feed(
         lights: Some(!before.lights),
         ..SettingsPatch::default()
     };
-    let (feed, start) = start_feed(ctx, issued)?;
+    let (feed, start) = start_feed(ctx, issued, PORTIONS)?;
     ctx.expect("the motor driving", start, PREPARE_WAIT, |e| {
         owner_state(e, OwnerState::Feeding)
     })?;
@@ -325,7 +325,7 @@ fn cancel_during_feed(ctx: &mut Ctx, issued: &mut Option<Issued>) -> Result<()> 
     // Also a keepalive: the feeder drops a session quiet for 90 s.
     held_status(ctx)?;
 
-    let (feed, start) = start_feed(ctx, issued)?;
+    let (feed, start) = start_feed(ctx, issued, PORTIONS)?;
     ctx.expect("the motor driving", start, PREPARE_WAIT, |e| {
         owner_state(e, OwnerState::Feeding)
     })?;
@@ -370,9 +370,13 @@ fn cancel_during_feed(ctx: &mut Ctx, issued: &mut Option<Issued>) -> Result<()> 
 /// past the owner taking it. From the request on, `issued` holds any feed
 /// the owner may be running. A request that fails is uncertain and never
 /// sent again: the feeder may have taken it.
-fn start_feed(ctx: &mut Ctx, issued: &mut Option<Issued>) -> Result<(u32, usize)> {
+pub(super) fn start_feed(
+    ctx: &mut Ctx,
+    issued: &mut Option<Issued>,
+    portions: u8,
+) -> Result<(u32, usize)> {
     let since = ctx.mark()?;
-    let answer = match ctx.ask(&Ask::Feed { portions: PORTIONS }) {
+    let answer = match ctx.ask(&Ask::Feed { portions }) {
         Ok(answer) => answer,
         Err(error) if error.interrupted() => return Err(error),
         Err(error) => {
@@ -396,7 +400,7 @@ fn start_feed(ctx: &mut Ctx, issued: &mut Option<Issued>) -> Result<(u32, usize)
         return Err(FeedsError::FeedAnswer { answer }.into());
     };
     *issued = Some(Issued { feed, since });
-    ctx.note(&format!("  Feed {feed}: {PORTIONS} portions"));
+    ctx.note(&format!("  Feed {feed}: {portions} portions"));
 
     let start = ctx.expect(&format!("PLOWN1 feed id={feed}"), since, RECORD_WAIT, |e| {
         submitted(e) == Some(u64::from(feed))
@@ -421,14 +425,14 @@ fn taken(ctx: &mut Ctx, since: usize) -> Result<Option<u32>> {
 }
 
 /// The feed a `PLOWN1 feed id=` record hands to the owner.
-fn submitted(event: &Event<'_>) -> Option<u64> {
+pub(super) fn submitted(event: &Event<'_>) -> Option<u64> {
     match *event {
         Event::Owner(Owner::Submitted { id }) => Some(id),
         _ => None,
     }
 }
 
-fn owner_state(event: &Event<'_>, state: OwnerState) -> bool {
+pub(super) fn owner_state(event: &Event<'_>, state: OwnerState) -> bool {
     matches!(event, Event::Owner(Owner::State { state: s, .. }) if *s == state)
 }
 
@@ -449,14 +453,14 @@ fn store_write(event: &Event<'_>) -> bool {
 /// What `PLOWN1 fed` reports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Fed {
-    requested: u16,
-    completed: u16,
-    outcome: Option<OwnerOutcome>,
-    reason: Option<FeedReason>,
+    pub requested: u16,
+    pub completed: u16,
+    pub outcome: Option<OwnerOutcome>,
+    pub reason: Option<FeedReason>,
 }
 
 /// `event` as feed `feed`'s result, if it is one.
-fn fed_of(event: &Event<'_>, feed: u32) -> Option<Fed> {
+pub(super) fn fed_of(event: &Event<'_>, feed: u32) -> Option<Fed> {
     match *event {
         Event::Owner(Owner::Fed {
             id,
@@ -475,7 +479,7 @@ fn fed_of(event: &Event<'_>, feed: u32) -> Option<Fed> {
 }
 
 /// The result on the line just before `mark` (an [`Ctx::expect`] result).
-fn result_at(ctx: &Ctx, mark: usize, feed: u32) -> Result<Fed> {
+pub(super) fn result_at(ctx: &Ctx, mark: usize, feed: u32) -> Result<Fed> {
     let line = &ctx.log.line(mark - 1).text;
     events(line).find_map(|e| fed_of(&e, feed)).ok_or_else(|| {
         FeedsError::Unparsed {

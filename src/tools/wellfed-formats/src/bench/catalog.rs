@@ -69,7 +69,7 @@ pub struct Scenario {
 }
 
 /// The whole suite, in run order.
-pub const SCENARIOS: [Scenario; 11] = [
+pub const SCENARIOS: [Scenario; 12] = [
     Scenario {
         name: "ota-update",
         about: "install the build under test over the air and see it confirm",
@@ -145,6 +145,15 @@ pub const SCENARIOS: [Scenario; 11] = [
         about: "status every 30 s for --soak-minutes with no restart, link loss or missed answer",
         tier: Tier::Soak,
         needs: &[],
+        baseline: false,
+    },
+    Scenario {
+        name: "sustained",
+        about: "--sustained-cycles half-hour cycles of feeds every 10 min, each with one fault: \
+                writes and a cancel mid-feed, a reboot, power cuts while reserved and driving, \
+                an outage mid-feed, the jam, sensor and stall variants, update power cuts",
+        tier: Tier::Soak,
+        needs: &[Need::Power, Need::Build, Need::Destructive, Need::Feeds],
         baseline: false,
     },
 ];

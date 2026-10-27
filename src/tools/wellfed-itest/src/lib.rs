@@ -43,6 +43,7 @@ mod live;
 mod log;
 mod scenarios;
 mod stock;
+mod sustained;
 #[cfg(test)]
 mod tests;
 
@@ -177,6 +178,10 @@ trait Rig {
     fn hotspot(&mut self, hotspot: Hotspot) -> Result<()>;
     /// Cut the feeder's supply, wait, restore it: a cold boot.
     fn power_cycle(&mut self) -> Result<()>;
+    /// Cut the feeder's supply and leave it off, whatever it was when the
+    /// run began: how a halted unattended run ends, with relay 1 as the
+    /// kill switch.
+    fn kill(&mut self) -> Result<()>;
     /// UART bytes received since the last call.
     fn uart(&mut self) -> Result<Vec<u8>>;
     /// An interruptible wait.

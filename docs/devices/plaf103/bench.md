@@ -139,9 +139,10 @@ target/release/wellfed-bench itest itest-20261022-02 --build --power         # s
 target/release/wellfed-bench itest itest-20261022-03 --build --power --destructive --tier soak --soak-minutes 120
 target/release/wellfed-bench itest itest-20261022-04 --review private/verification/<review> --only requests,request-auth
 target/release/wellfed-bench itest itest-20261025-01 --review private/verification/<review> --only feed-writes --feeds
+target/release/wellfed-bench itest itest-20261027-01 --build --power --destructive --feeds --only sustained   # the 8-hour run
 ```
 
-**Tiers.** `--tier smoke` runs `ota-update`, `requests` and `request-auth`, which takes minutes once the build under test is running. `standard` (the default) runs the whole functional suite. `soak` adds long runs. `--only` picks scenarios whatever their tier.
+**Tiers.** `--tier smoke` runs `ota-update`, `requests` and `request-auth`, which takes minutes once the build under test is running. `standard` (the default) runs the whole functional suite. `soak` adds the long runs, `soak` and `sustained`. `--only` picks scenarios whatever their tier; the [sustained run](#sustained-run) is meant to run alone.
 
 **Builds.** `--build` first asks `wellfed-build source-id --image` for the identity a build of these sources would embed. That identity covers every source input, the firmware, the variant and the update key. If a complete review with that `startup_identity` is already in `private/verification`, the suite signs it rather than building again. `wellfed-bench ota --build` does the same, and `--rebuild` builds anyway. So after the first run on unchanged sources, neither the build under test nor the trial firmware's `fail` image is rebuilt.
 
@@ -157,6 +158,7 @@ target/release/wellfed-bench itest itest-20261025-01 --review private/verificati
 | `ota-recovery` | The trial firmware's `fail` image installs and fails its trial, and KM0 gives way to bank 0, which answers the device API. The suite then pushes the re-signed baseline to it with one fault each, in its own transfer: a flipped byte → `stage=hash`, a chunk ahead of the wanted ones → `order`, 75 s of silence → `timeout`, none of them activating. Bank 0 keeps answering after each stop. A clean push then confirms and restores the baseline, so the fallback needs no restore install of its own. | `--build --power` |
 | `ota-power-cuts` | Installs the feeder's `twin` variant (the same firmware under another build identity, so it still serves the device API). It has to be a build the feeder has not confirmed, because a confirmed one skips the trial. Two cuts follow. **Mid-download** (48 sectors in), the next boot must be bank 0, and when the push offers again its first progress record must show the download starting again. **10 s into trial boot 1**, before the 30 s confirmation, KM0 must count boot 1 again (backup registers clear on power loss), and the build must still confirm. A cut during activation itself is not attempted, since the marker write and reset take milliseconds. The re-signed baseline then goes back on. | `--build --power --destructive` |
 | `soak` | A device API status every 30 s for `--soak-minutes` (default 60). It fails on any restart, any Wi-Fi loss or any missed answer, and reports the slowest. | soak tier |
+| `sustained` | `--sustained-cycles` (default 16) half-hour cycles of feeds every 10 minutes, each cycle opening with one fault from a fixed rotation; any failed check cuts relay 1 and halts. Defined [below](#sustained-run). | soak tier, `--build --power --destructive --feeds` |
 
 A scenario whose flag is missing is reported as **skipped**, never as passed. `--destructive` requires `--power`. The design recovers from both power cuts over the air (FW10, FW11); if it ever does not, recovery is the UART flash the suite prints.
 
@@ -168,7 +170,7 @@ A scenario whose flag is missing is reported as **skipped**, never as passed. `-
 - starts the UART capture;
 - starts `wellfed-stock serve --config private/server.json` as a child.
 
-Updates go over the device API, pushed on a thread of their own while the scenario reads the UART; `serve` stays up for stock's broker. The suite talks to the feeder over the device API as the key in `--keys` (default `private/wellfed-owner.json`), found over mDNS or, while the bench host's firewall drops UDP 5353, through the hotspot's neighbour table and `target_mac`. All server output goes to `private/verification/NAME-servers.log`. At the end, or on an error or Ctrl+C, the suite stops its children and puts the hotspot and the supply back as it found them. Without `--power` the relay board is never opened. The suite never flashes over UART and never changes the firewall or routing. Motion builds are not offered, and only `feed-writes`, under `--feeds`, asks the feeder to feed (the owner approved unattended feeds on October 25, 2026).
+Updates go over the device API, pushed on a thread of their own while the scenario reads the UART; `serve` stays up for stock's broker. The suite talks to the feeder over the device API as the key in `--keys` (default `private/wellfed-owner.json`), found over mDNS or, while the bench host's firewall drops UDP 5353, through the hotspot's neighbour table and `target_mac`. All server output goes to `private/verification/NAME-servers.log`. At the end, or on an error or Ctrl+C, the suite stops its children and puts the hotspot and the supply back as it found them, except after a `sustained` halt, which leaves the supply off. Without `--power` the relay board is never opened. The suite never flashes over UART and never changes the firewall or routing. Startup-motion builds are not offered. Only `feed-writes` and `sustained`, under `--feeds`, ask the feeder to feed (the owner approved unattended feeds on October 25, 2026, and set their limits on October 26: hopper empty, D cells out, at most 3 portions a feed); `sustained` also installs the `feed-jam`, `sensor-fault` and `feed-stall` variants, which move the motor only for a feed request.
 
 **Failures.** A failed scenario stops the rest (they are recorded as skipped), unless `--keep-going` is given. Scenarios that change device state restore it on failure too, while the feeder still answers. If there is no `PL…` record, no device API answer and no fresh bank-0 health for 180 s, the feeder counts as silent; every wait checks this, so an unpowered feeder stops an install watch within 3 minutes rather than at its 15-minute deadline. Only the wrong-credential wait in `wifi-fallback`, where the feeder is unreachable on purpose, is exempt. The suite then stops whatever `--keep-going` says, prints the last confirmed review and the `flash-prepare` command to recover it over UART, and exits 2. A scenario failure exits 1.
 
@@ -194,6 +196,54 @@ The runs below used the two separate scenarios.
 - Further harness fixes on hardware: refusal records trail their replies by about half a second, so the suite waits for them. A feeder the suite has just powered on is heard before it is offered its own build (`same=1`).
 
 **Physical, first suite:** `itest-20261022-06 --build --power` passed all eight scenarios in 26 minutes (OTA v28–v32). The good build (`877b2c9b…`) confirmed. `request-auth` saw three refusals on the UART. The Wi-Fi fallback took about 2 minutes. `trial-fallback` counted trial boots 1–3, and KM0 gave way. `ota-faults` saw `stage=hash`, `range` and `timeout`, then a clean install. The bench state came back as found. Runs 01–05 found the harness bugs fixed above: no silence check during waits, the capture gap and offset during the forger, stale health after a cold boot. They also found that the `fail` variant no longer passed the link audit, because its constant failure let LTO drop the image's writers. **Host:** the scenarios, the UART log and the HTTP parsing run against a scripted feeder that emits the firmware's record formats and models the boot window.
+
+### Sustained run
+
+FW27's defined sustained run is the `sustained` scenario (`src/tools/wellfed-itest/src/sustained.rs`). This definition is static (the code and this text); the scenario passes against the scripted feeder (simulation, October 26), and has not yet run on hardware.
+
+```sh
+target/release/wellfed-bench itest itest-YYYYMMDD-NN --build --power --destructive --feeds --only sustained \
+  | tee private/verification/itest-YYYYMMDD-NN-console.log
+# a shakedown of every fault once (4 h): add --sustained-cycles 8
+```
+
+**Before it starts (the owner's unattended motion rules, October 26):** hopper empty, the D cells out so relay 1 is the kill switch, nobody at the bench, and the bench lease free. The build under test is this checkout's `feeder` (`--build`); the run also builds the `feed-jam`, `sensor-fault`, `feed-stall` and `twin` variants once and re-signs them later. Each install and each restore signs one manifest version: 8 per rotation of eight cycles, about 17 for the full run with the baseline's. The logic analyzer may stay clipped on; it plays no part.
+
+**Length and cadence.** 16 cycles of 30 minutes, 8 hours. Each cycle first runs its fault step, then feeds the baseline at once and again every 10 minutes while the cycle lasts (at least one feed a cycle), with a device API status every 30 s in between. Baseline feeds ask for 1, 2, 3, 1, … portions; no feed in the run asks for more than 3. By the simulation's timings that is about 70 feeds (36 in eight cycles), fewer on hardware, where an install takes about 4 minutes rather than 2.5; at about 9 s a portion that is under 25 minutes of drive in 8 hours.
+
+**The rotation.** Cycle n takes step n mod 8, so the full run takes each twice:
+
+| Cycle | Step | What it injects | How it must end |
+| --- | --- | --- | --- |
+| 1, 9 | `feed-writes` | The [scenario](#integration-suite) as it stands: settings, lock and clock writes from a held session during a 2-portion feed, then a cancel 2 s into the next | Its own checks; its feeds join the run's journal |
+| 2, 10 | Reboot | A `Reboot` request at rest | One restart into the baseline; reset cause `software`; the clock still valid (FW46's warm carry); no drive after the boot |
+| 3, 11 | Cut while reserved | A 3-portion feed, relay 1 cut as soon as the owner logs `feed id=` (the journal has reserved it; the drive has not started) | The next boot logs `fed id=N outcome=5` (uncertain) once; reset cause `power_on`; no drive after the boot; the run syncs the clock again |
+| 4, 12 | `feed-jam` | Installs the variant (a trial, then confirmation), feeds 1, 2 and 3 portions, then puts the baseline back | 1: Done with 1 portion (one reversal); 2: Failed, `Overcurrent`; 3: Failed, `Sensor`; the owner Idle after each |
+| 5, 13 | Cut mid-drive | A 3-portion feed, relay 1 cut 4 s into its drive | As the reserved cut |
+| 6, 14 | `sensor-fault` | Installs the variant, feeds 1, 2 and 3 portions, asks for one more, reboots, puts the baseline back | 1: Failed, `FeedbackTimeout`; 2: Failed, `Outlet`, no drive; 3: Failed, `Sensor`, the owner then in `Fault`; the extra feed refused `Fault`; the reboot clears the hold |
+| 7, 15 | Outage mid-feed | The hotspot down for 60 s from 4 s into a 3-portion drive | The feed ends Done with 3 portions on the UART; no restart; the link losses grew; the device API answers again within 180 s |
+| 8, 16 | `feed-stall`, then `ota-power-cuts` | Installs the variant: a 1-portion feed (600 ms loop stall) and a 2-portion feed (8 s stall); then the two update power cuts, mid-download and early in the twin's trial; the baseline back | 1: Failed, `Output`, then one restart; 2: one watchdog restart and `outcome=5` at the next boot; then `ota-power-cuts`' own checks |
+
+**Pass criteria.** The run passes only if all 16 cycles pass every check. Each check reads evidence an existing tool or record already produces:
+
+| Criterion | Evidence | Check |
+| --- | --- | --- |
+| No feed sent twice, none run twice | The suite's own requests (`Ask::Feed` is never resent) and the `PLOWN1 feed id=` and `fed id=` records | Each feed id the run was given has exactly one owner record and exactly one result, before or after a restart; no result names an id the run never asked for; ids only grow |
+| Every feed ends as its step says | `PLOWN1 fed id=N … outcome= reason= completed=` | The outcomes in the table above; baseline feeds Done with every portion |
+| Uncertain feeds are resolved, not retried | `fed id=N outcome=5` after the restart, and no `state=4` | A cut or a stall's reset leaves exactly one uncertain result and no drive in the boot that follows |
+| Counters agree with the journal | `Stats { Counters }` (FW54) | This boot's `feeds`, `feeds_failed` and `portions` equal the sum of this boot's `fed` records on the UART; FW62's lifetime counts never go back |
+| No unexpected restart, panic or fault | `PLFW1 start`, `PLPNC1`, `PLTRL1 storm=` and `give_way=1` on the UART; the status `boot_count` | None at rest or during a feed; each planned restart shows exactly one start record, and a warm one moves the boot count by one (it lives in a backup register a power cut clears); `Stats { Counters }.reset` names the planned cause; no `PLPNC1` anywhere in the run |
+| No motion at rest | `PLOWN1 state=4` | None outside a feed the run asked for |
+| Memory | `Stats { Memory }` (FW54), after each baseline feed | Least free heap at least 64 KiB (provisional: half the 141,792 B FW44 measured, static); free heap within 8 KiB of the first reading in the same boot of the same build |
+| Clock | `GetTime` (FW46), after each feed | When valid: error bound at most 120 s, and the host's time within that bound plus 2 s; valid after a reboot; an invalid clock (after a cut, or an expiry) is synced and counted |
+| Updates install and confirm during the run | The install watch (`PLOTA1`, `PLTRL1`, `PLCNF1`) and the status build | Each variant and each restore of the baseline ends `Passed`; `ota-power-cuts` passes |
+| The feeder stays reachable and as it was | Status every 30 s; the device state check | Every status answered, no Wi-Fi loss at rest, and after every step the baseline on bank 1 with the run's settings and Wi-Fi source |
+
+Each cycle ends with a note of the figures so far (feeds, polls and the slowest answer, least free heap, the largest clock skew and bound, clock syncs); with the UART captures and `NAME-itest.json` they are the run's evidence.
+
+**Stop conditions.** Any failed check, a feed whose result does not arrive within 100 s, a silent feeder (180 s), an install that does not confirm, and the operator's Ctrl+C all halt the run the same way: the suite cuts relay 1 and leaves it off, runs no further cycle or scenario, puts the hotspot back as it found it, and records why. Nothing is restored on the feeder; a person looks before power returns. The [UART recovery](#integration-suite) applies if the feeder then does not boot.
+
+**Kept out of the unattended run (the owner's).** Real food: portion weights, food through the outlet beam and FW18's weighing session. Real jams with food in the rotor, taped or blocked sensors, a full hopper. Batteries: the D cells, adapter changes, brownout and the low-voltage floor (FW26), so the run has no low-power step. Button presses (Dispense during a feed) and LED observation (FW23). The `stop-fail` variant's 8 s held stop and `owner-stall` stay out too: the first leaves the motor driving until the watchdog, and both ran on October 26 (FW16, physical). DHCP-server loss without an access-point loss, and lease expiry, need a host network change, which the authorization does not cover.
 
 ## Stock and back
 

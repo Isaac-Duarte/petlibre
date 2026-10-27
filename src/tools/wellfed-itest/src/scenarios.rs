@@ -148,7 +148,7 @@ const fn same(a: &str, b: &str) -> bool {
 }
 
 /// The scenarios in catalog order; a test holds the two orders together.
-pub(super) const SCENARIOS: [Scenario; 11] = [
+pub(super) const SCENARIOS: [Scenario; 12] = [
     Scenario::new("ota-update", ota_update),
     Scenario::new("requests", requests),
     Scenario::new("request-auth", request_auth),
@@ -160,6 +160,7 @@ pub(super) const SCENARIOS: [Scenario; 11] = [
     Scenario::new("ota-power-cuts", ota_power_cuts),
     Scenario::new("stock-roundtrip", super::stock::roundtrip),
     Scenario::new("soak", soak),
+    Scenario::new("sustained", super::sustained::sustained),
 ];
 
 /// Stored by `wifi-fallback`: an SSID nothing broadcasts, so every join
@@ -170,7 +171,7 @@ const WRONG_PSK: &str = "itest-not-a-passphrase";
 /// The NOR settings writer saves within a second or two of a change.
 const SAVE_WAIT: Duration = Duration::from_secs(30);
 /// From power-on to the first startup record.
-const BOOT_WAIT: Duration = Duration::from_secs(60);
+pub(super) const BOOT_WAIT: Duration = Duration::from_secs(60);
 /// Five failed joins of the stored network, then the build's join.
 const FALLBACK_WAIT: Duration = Duration::from_secs(8 * 60);
 /// From the offer to bank 1's give-way: its checks, then the answer's way out.
@@ -186,9 +187,9 @@ const PROGRESS_SECTORS: u32 = 16;
 const TRIAL_CUT_AFTER: Duration = Duration::from_secs(10);
 /// The Wi-Fi probe notices a lost access point within a beacon timeout or
 /// two; the outage outlasts it.
-const OUTAGE: Duration = Duration::from_secs(60);
+pub(super) const OUTAGE: Duration = Duration::from_secs(60);
 /// The join retries back off to 30 s; joining takes a few more.
-const REJOIN_WAIT: Duration = Duration::from_secs(180);
+pub(super) const REJOIN_WAIT: Duration = Duration::from_secs(180);
 /// The host and the feeder clocks agree this closely just after a sync.
 const SKEW_MS: i64 = 5_000;
 /// A full download (about 100 s) and the hash check, or a stall's retries.
@@ -388,7 +389,7 @@ fn cold_boot(ctx: &mut Ctx) -> Result<usize> {
 }
 
 /// `build` started on bank 1.
-fn started(event: &Event<'_>, build: &str) -> bool {
+pub(super) fn started(event: &Event<'_>, build: &str) -> bool {
     matches!(event, Event::Start { build: b, bank: Some(1) } if b.eq_ignore_ascii_case(build))
 }
 
@@ -611,24 +612,30 @@ fn sectors(event: &Event<'_>) -> Option<u32> {
     }
 }
 
-fn is_start(event: &Event<'_>) -> bool {
+pub(super) fn is_start(event: &Event<'_>) -> bool {
     matches!(event, Event::Start { .. })
 }
 
 fn ota_power_cuts(ctx: &mut Ctx) -> Result<()> {
+    update_power_cuts(ctx, "cut")
+}
+
+/// The two update power cuts, signing their images under `label`-twin and
+/// `label`-restore: `sustained` runs them more than once.
+pub(super) fn update_power_cuts(ctx: &mut Ctx, label: &str) -> Result<()> {
     let build = ctx.baseline()?.build.clone();
     // The feeder skips the trial for a build it has confirmed before, so the
     // cuts happen while it installs the feeder's twin (the same firmware
     // under another identity, which still serves the device API), which it
     // has not; the baseline goes back on afterwards, pushed to the twin.
     let twin = ctx.image(
-        "cut-twin",
+        &format!("{label}-twin"),
         wellfed_rig::commands::Image {
             firmware: wellfed_rig::commands::Firmware::Feeder,
             variant: Some(wellfed_rig::commands::Variant::Twin),
         },
     )?;
-    let restore = ctx.resign("cut-restore")?;
+    let restore = ctx.resign(&format!("{label}-restore"))?;
 
     let result = power_cuts(ctx, &twin);
     let since = ctx.mark()?;

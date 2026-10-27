@@ -20,6 +20,7 @@ use crate::feeds::FeedsError;
 use crate::live::LiveError;
 use crate::scenarios::ScenariosError;
 use crate::stock::StockError;
+use crate::sustained::SustainedError;
 use crate::{SCENARIOS, SILENCE, compact};
 
 #[derive(Debug, thiserror::Error)]
@@ -32,6 +33,8 @@ pub enum Error {
     Feeds(#[from] FeedsError),
     #[error(transparent)]
     Stock(#[from] StockError),
+    #[error(transparent)]
+    Sustained(#[from] SustainedError),
     #[error(transparent)]
     Live(#[from] LiveError),
 

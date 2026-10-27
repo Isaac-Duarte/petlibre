@@ -39,8 +39,8 @@ use wellfed_formats::hex;
 use wellfed_formats::owner::OwnerKeyFile;
 use wellfed_formats::private::{self, SYSTEM_RANDOM};
 use wellfed_model::{
-    Generation, Op, OpenRefusal, Refusal, Settings, SettingsPatch, Status, UpdateView, Wifi,
-    WifiSource,
+    Generation, Op, OpenRefusal, Refusal, Settings, SettingsPatch, Stats, StatsSection, Status,
+    TimeView, UpdateView, Wifi, WifiSource,
 };
 use wellfed_proto::api::{PORT, RequestId};
 use wellfed_session::noise::Keypair;
@@ -139,6 +139,14 @@ pub enum Ask {
     /// Stop any install and forget the recorded candidate, so bank 0 takes
     /// another manifest.
     CancelUpdate,
+    /// Restart the feeder at rest; refused during a feed.
+    Reboot,
+    /// The time settings and the clock's state, with its error bound.
+    GetTime,
+    /// One section of the feeder's statistics.
+    Stats {
+        section: StatsSection,
+    },
 }
 
 impl Ask {
@@ -154,6 +162,9 @@ impl Ask {
             Self::CancelFeed { .. } => "cancel-feed",
             Self::UpdateState => "update-state",
             Self::CancelUpdate => "cancel-update",
+            Self::Reboot => "reboot",
+            Self::GetTime => "get-time",
+            Self::Stats { .. } => "stats",
         }
     }
 
@@ -161,11 +172,12 @@ impl Ask {
     /// feeder remembers a write id's outcome only once its answer resolves,
     /// so a feed resent after a lost answer can start a second feed; a feed
     /// or a cancel (of a feed or an update) is sent once, and a failure
-    /// leaves it uncertain.
+    /// leaves it uncertain. So is a reboot: one resent after the restart it
+    /// asked for would restart the feeder again.
     pub fn resendable(&self) -> bool {
         !matches!(
             self,
-            Self::Feed { .. } | Self::CancelFeed { .. } | Self::CancelUpdate
+            Self::Feed { .. } | Self::CancelFeed { .. } | Self::CancelUpdate | Self::Reboot
         )
     }
 }
@@ -198,7 +210,9 @@ pub enum Answer {
         feed: u32,
     },
     Update(UpdateView),
-    /// An answer no [`Ask`] expects (clients, an invite, the time view).
+    Time(Box<TimeView>),
+    Stats(Box<Stats>),
+    /// An answer no [`Ask`] expects (clients, an invite, a trace).
     Unexpected,
 }
 
@@ -214,10 +228,10 @@ impl Answer {
             Model::Refused(refusal) => Self::Refused(refusal),
             Model::Feeding { feed } => Self::Feeding { feed },
             Model::Update(view) => Self::Update(view),
+            Model::Time(view) => Self::Time(Box::new(view)),
+            Model::Stats(stats) => Self::Stats(Box::new(stats)),
             Model::Clients(_)
             | Model::Invite(_)
-            | Model::Time(_)
-            | Model::Stats(_)
             | Model::FeedTrace(_)
             | Model::Calibration(_)
             | Model::Bank1(_) => Self::Unexpected,
@@ -529,6 +543,9 @@ impl Device {
             Ask::CancelFeed { feed } => Op::CancelFeed { feed: *feed },
             Ask::UpdateState => Op::UpdateState,
             Ask::CancelUpdate => Op::CancelUpdate,
+            Ask::Reboot => Op::Reboot,
+            Ask::GetTime => Op::GetTime,
+            Ask::Stats { section } => Op::Stats { section: *section },
         };
         let bytes = connection.session.request(id, &op)?;
         connection.stream.write_all(&bytes)?;

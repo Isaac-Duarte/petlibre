@@ -55,18 +55,28 @@ pub fn local(test: impl Future<Output = ()>) {
 
 /// Wait until `check` holds, polling, for at most [`WAIT`]. Panics naming
 /// `what` when it never does.
-pub async fn until<F, Fut>(what: &str, mut check: F)
+pub async fn until<F, Fut>(what: &str, check: F)
 where
     F: FnMut() -> Fut,
     Fut: Future<Output = bool>,
 {
-    let polled = tokio::time::timeout(WAIT, async {
+    until_within(what, WAIT, check).await;
+}
+
+/// [`until`] for something that takes its own time before the server can
+/// see it, such as the simulator's periodic samples: at most `limit`.
+pub async fn until_within<F, Fut>(what: &str, limit: Duration, mut check: F)
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = bool>,
+{
+    let polled = tokio::time::timeout(limit, async {
         while !check().await {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     })
     .await;
-    assert!(polled.is_ok(), "{what}: not within {WAIT:?}");
+    assert!(polled.is_ok(), "{what}: not within {limit:?}");
 }
 
 /// The household's first owner, the user a service-level write comes

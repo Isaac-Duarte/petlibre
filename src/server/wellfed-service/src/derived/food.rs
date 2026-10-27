@@ -77,7 +77,7 @@ fn unrecorded_refill(readings: &[&FoodReading]) -> Option<Timestamp> {
                         && after.food.refilled > before.food.refilled));
             found.then_some(after.received)
         })
-        .last()
+        .next_back()
 }
 
 fn estimate(inputs: &FoodInputs<'_>, refill: &Refill, readings: &[&FoodReading]) -> FoodEstimate {

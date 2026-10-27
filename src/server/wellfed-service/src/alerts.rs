@@ -30,7 +30,7 @@ use wellfed_api::{
 use wellfed_mirror::MirrorEvent;
 use wellfed_store::{Acked, AlertFilter, NewAlert};
 use tokio::sync::broadcast::Receiver;
-use tokio::sync::broadcast::error::RecvError;
+use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 use tracing::{Instrument, info_span, warn};
 
 use crate::page::{self, after_seq};
@@ -71,6 +71,14 @@ impl Alerting {
 }
 
 impl Service {
+    /// Since when the alert watcher has seen the feeder without a session,
+    /// by the service's clock: the time the offline rule counts from. The
+    /// feeder list can show a link before the watcher has taken it, so a
+    /// test that moves the clock waits for this first.
+    pub fn offline_since(&self, feeder: FeederId) -> Option<Timestamp> {
+        self.alerting.offline_since(feeder)
+    }
+
     /// A page of alerts, oldest first.
     pub async fn alerts(&self, query: AlertQuery) -> Result<AlertPage> {
         let paging = PageQuery {
@@ -127,7 +135,8 @@ impl Service {
     }
 
     /// Follow the feeder's mirror broadcast: note its link, and evaluate
-    /// whenever its link or history moves.
+    /// whenever its link or history moves. Updates already waiting are
+    /// taken together, so a sync of many events is one evaluation.
     pub(crate) fn watch_alerts(&self, id: FeederId, mut updates: Receiver<MirrorEvent>) {
         let service = self.clone();
         let cancel = self.cancel.child_token();
@@ -140,22 +149,53 @@ impl Service {
                     update = updates.recv() => update,
                 };
                 let now = service.shared.clock.now();
-                match update {
-                    Ok(MirrorEvent::Link(link)) => service.alerting.link(id, link, now),
-                    Ok(MirrorEvent::Event(_) | MirrorEvent::Gap(_)) => {}
-                    Ok(MirrorEvent::Sample(_)) => continue,
-                    Err(RecvError::Lagged(_)) => {
-                        updates = updates.resubscribe();
-                        if let Some(link) = service.mirror.link(id) {
-                            service.alerting.link(id, link, now);
-                        }
+                let mut moved = match service.note(id, &update, &mut updates, now) {
+                    Some(moved) => moved,
+                    None => return,
+                };
+                loop {
+                    let waiting = match updates.try_recv() {
+                        Ok(update) => Ok(update),
+                        Err(TryRecvError::Empty) => break,
+                        Err(TryRecvError::Lagged(missed)) => Err(RecvError::Lagged(missed)),
+                        Err(TryRecvError::Closed) => Err(RecvError::Closed),
+                    };
+                    match service.note(id, &waiting, &mut updates, now) {
+                        Some(more) => moved |= more,
+                        None => return,
                     }
-                    Err(RecvError::Closed) => return,
                 }
-                service.evaluate_best_effort(id, now).await;
+                if moved {
+                    service.evaluate_best_effort(id, now).await;
+                }
             }
         };
         self.tasks.spawn(watching.instrument(span));
+    }
+
+    /// Take one update of the feeder's broadcast: whether it may move an
+    /// alert, or `None` once the broadcast has closed.
+    fn note(
+        &self,
+        id: FeederId,
+        update: &Result<MirrorEvent, RecvError>,
+        updates: &mut Receiver<MirrorEvent>,
+        now: Timestamp,
+    ) -> Option<bool> {
+        match update {
+            Ok(MirrorEvent::Link(link)) => self.alerting.link(id, *link, now),
+            Ok(MirrorEvent::Event(_) | MirrorEvent::Gap(_)) => {}
+            Ok(MirrorEvent::Sample(_)) => return Some(false),
+            // What was missed is in the store; only the link is read again.
+            Err(RecvError::Lagged(_)) => {
+                *updates = updates.resubscribe();
+                if let Some(link) = self.mirror.link(id) {
+                    self.alerting.link(id, link, now);
+                }
+            }
+            Err(RecvError::Closed) => return None,
+        }
+        Some(true)
     }
 
     /// Evaluate every feeder once a minute, by the service's clock.

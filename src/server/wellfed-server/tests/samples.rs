@@ -1,6 +1,8 @@
 //! A feeder's samples over HTTP: raw with their numbers, in pages, and by
 //! the hour. The jobs that keep them are the service's tests.
 
+use std::time::Duration;
+
 use jiff::SignedDuration;
 use wellfed_api::{
     AdoptFeeder, ClientRole, Connection, ErrorCode, FeederId, MetricKind, PREFIX, RawSample,
@@ -8,7 +10,12 @@ use wellfed_api::{
 };
 use wellfed_server_client::{Client, Method, StatusCode};
 use wellfed_server_testkit::fixed::FixedClock;
-use wellfed_server_testkit::{TestServer, ada_setup, feeder, local, refused, refused_for, until};
+use wellfed_server_testkit::{
+    TestServer, WAIT, ada_setup, feeder, local, refused, refused_for, until, until_within,
+};
+
+/// How often the simulator sends a power sample.
+const POWER_PERIOD: Duration = Duration::from_secs(5);
 
 fn query(resolution: Resolution) -> SampleQuery {
     SampleQuery {
@@ -46,11 +53,14 @@ async fn mirrored(server: &TestServer, sim: &feeder::Running, n: usize) -> (Clie
         http.feeders().await.unwrap()[0].connection == Connection::Online
     })
     .await;
-    // The simulator sends power every 5 s; each is written within the
-    // test config's batch wait.
+    // Each sample is written within the test config's batch wait, but the
+    // simulator only sends one every period: `n` of them take `n` periods
+    // before the server can store the last.
     let mut all = query(Resolution::Raw);
     all.limit = Some(1000);
-    until("power samples are stored", || async {
+    let periods = u32::try_from(n).expect("a test asks for a few samples");
+    let limit = WAIT + POWER_PERIOD * periods;
+    until_within("power samples are stored", limit, || async {
         raw(&http, id, &all).await.0.len() >= n
     })
     .await;

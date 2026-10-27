@@ -5,7 +5,7 @@ use jiff::Timestamp;
 use wellfed_api::{
     Alert, AlertCondition, AlertId, AlertState, CommandKind, CommandOutcome, CommandState,
     Connection as Link, FeedOutcome, FeedReason, FeederId, FoodStats, Hex, Install, InstallFailure,
-    InstallId, InstallState, Source, UserId,
+    InstallId, InstallState, InstallTarget, Source, UserId,
 };
 use wellfed_store::{CommandRow, Feed, FoodReading, Projected};
 use uuid::Uuid;
@@ -240,7 +240,9 @@ fn a_failed_install_is_an_alert_until_the_next_install() {
     let install = |n: u128, state, failure| Install {
         id: InstallId(Uuid::from_u128(n)),
         feeder: FEEDER,
-        release: Hex([0; 32]),
+        target: InstallTarget::Release {
+            release: Hex([0; 32]),
+        },
         version: 2,
         by: UserId(Uuid::from_u128(2)),
         started: at(0),

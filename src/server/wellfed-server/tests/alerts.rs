@@ -14,6 +14,7 @@ use wellfed_server_client::{Client, StatusCode, Updates};
 use wellfed_server_testkit::feeder::{self, Flash};
 use wellfed_server_testkit::fixed::ManualClock;
 use wellfed_server_testkit::{TestServer, WAIT, ada_setup, local, refused, until};
+use wellfed_service::Clock;
 use uuid::Uuid;
 
 const PASSWORD: &str = "temporary pass";
@@ -41,18 +42,20 @@ async fn connection(http: &Client) -> Connection {
     http.feeders().await.unwrap()[0].connection
 }
 
-/// The next alert update on the stream.
+/// The next alert update on the stream, within [`WAIT`] overall: a feeder
+/// that is down keeps reconnecting, so other updates never stop coming.
 async fn next_alert(updates: &mut Updates) -> Alert {
-    loop {
-        let update = tokio::time::timeout(WAIT, updates.next())
-            .await
-            .expect("an update in time")
-            .expect("the stream is open")
-            .unwrap();
-        if let StreamEvent::Alert { alert } = update.event {
-            return alert;
+    let alert = async {
+        loop {
+            let update = updates.next().await.expect("the stream is open").unwrap();
+            if let StreamEvent::Alert { alert } = update.event {
+                return alert;
+            }
         }
-    }
+    };
+    tokio::time::timeout(WAIT, alert)
+        .await
+        .expect("an alert in time")
 }
 
 fn open() -> AlertQuery {
@@ -92,6 +95,13 @@ fn an_offline_feeder_raises_an_alert_an_owner_acknowledges_and_its_return_clears
         sim.stop().await;
         until("the server sees the feeder go", || async {
             connection(&owner).await != Connection::Online
+        })
+        .await;
+        // The alert watcher dates the outage by the clock when it takes the
+        // link, which can be after the feeder list shows it.
+        let went = clock.now();
+        until("the alert watcher dates the outage", || async {
+            server.service().offline_since(feeder) == Some(went)
         })
         .await;
         clock.advance(Duration::from_secs(5 * 60));

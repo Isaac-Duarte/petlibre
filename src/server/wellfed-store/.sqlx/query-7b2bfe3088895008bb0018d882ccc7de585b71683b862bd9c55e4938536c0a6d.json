@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO boots (feeder_id, epoch, seq, bank, reset_flags, at_s, received_ms)\n                 VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": []
+  },
+  "hash": "7b2bfe3088895008bb0018d882ccc7de585b71683b862bd9c55e4938536c0a6d"
+}

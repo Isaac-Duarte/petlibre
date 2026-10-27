@@ -1,20 +1,22 @@
 //! Ingest: what the feeder pushes, stored as it sent it and then
-//! broadcast. An event is stored (moving the cursor, in one transaction)
-//! before it is broadcast, and a store failure ends the session, so the
-//! reconnect replays whatever was not stored.
+//! broadcast. An event is stored (with its projection and the cursor, in
+//! one transaction) before it is broadcast, and a store failure ends the
+//! session, so the reconnect replays whatever was not stored.
 //!
 //! Event bodies and sample values are kept in the feeder's own encoding
-//! (postcard of the wire types), and [`stored_event`] is the way back.
+//! (postcard of the wire types), and [`stored_event`] is the way back. The
+//! store projects the decoded event it is handed, and rebuilds its
+//! projections from the stored bodies through [`Mirror::refresh_projections`].
 
 use wellfed_api::{FeederEvent, FeederSample, Gap};
 use wellfed_model::{Event, EventBody, Pushed};
 use wellfed_proto::api as proto;
-use wellfed_store::{EventRow, NewEvent, NewSample};
-use tracing::warn;
+use wellfed_store::{EventRow, NewEvent, NewSample, Refresh};
+use tracing::{info, warn};
 
-use crate::MirrorEvent;
 use crate::session::{End, Failure};
 use crate::task::Task;
+use crate::{Mirror, MirrorEvent};
 
 /// Room for an encoded event body (16 bytes on the feeder) or sample.
 const RAW: usize = 32;
@@ -22,14 +24,39 @@ const RAW: usize = 32;
 /// A stored event of `epoch` as the feeder sent it, or `None` when its
 /// body does not decode.
 pub fn stored_event(epoch: u32, row: &EventRow) -> Option<FeederEvent> {
-    let body: proto::EventBody = wellfed_proto::decode(&row.body).ok()?;
     let event = Event {
         epoch,
         seq: row.seq,
         at: row.at,
-        body: EventBody::from(body),
+        body: stored_body(&row.body)?,
     };
     Some(FeederEvent::new(event, row.received))
+}
+
+/// A stored body as the event it encodes, or `None` when it does not
+/// decode.
+pub(crate) fn stored_body(raw: &[u8]) -> Option<EventBody> {
+    let body: proto::EventBody = wellfed_proto::decode(raw).ok()?;
+    Some(EventBody::from(body))
+}
+
+impl Mirror {
+    /// Rebuild the store's projections from the stored events when the
+    /// projection code changed since they were built. Call it before
+    /// starting any feeder, so ingest never writes beside a stale build.
+    pub async fn refresh_projections(&self) -> wellfed_store::Result<Refresh> {
+        let refresh = self.shared.store.refresh_projections(stored_body).await?;
+        if let Refresh::Rebuilt { events, undecoded } = refresh {
+            info!(events, "projections rebuilt from the stored events");
+            if undecoded > 0 {
+                warn!(
+                    undecoded,
+                    "stored events that do not decode project nothing"
+                );
+            }
+        }
+        Ok(refresh)
+    }
 }
 
 impl Task {
@@ -51,8 +78,8 @@ impl Task {
                             seq: event.seq,
                             at: event.at,
                             received,
-                            kind: event.body.kind(),
-                            body: &raw[..len],
+                            body: event.body,
+                            raw: &raw[..len],
                         },
                     )
                     .await?;

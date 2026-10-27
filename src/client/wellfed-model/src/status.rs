@@ -77,6 +77,41 @@ pub enum Blocked {
     Battery,
 }
 
+impl Blocked {
+    pub const ALL: [Self; 10] = [
+        Self::Starting,
+        Self::Journal,
+        Self::Fault,
+        Self::Resolving,
+        Self::Feeding,
+        Self::Joining,
+        Self::Updating,
+        Self::Setup,
+        Self::Unserved,
+        Self::Battery,
+    ];
+
+    /// The stored spelling, the same as the JSON one.
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::Starting => "starting",
+            Self::Journal => "journal",
+            Self::Fault => "fault",
+            Self::Resolving => "resolving",
+            Self::Feeding => "feeding",
+            Self::Joining => "joining",
+            Self::Updating => "updating",
+            Self::Setup => "setup",
+            Self::Unserved => "unserved",
+            Self::Battery => "battery",
+        }
+    }
+
+    pub fn from_code(code: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|reason| reason.code() == code)
+    }
+}
+
 /// Which Wi-Fi credentials the feeder joined with.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]

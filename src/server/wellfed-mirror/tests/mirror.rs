@@ -7,13 +7,16 @@ use std::cell::RefCell;
 use std::sync::Arc;
 use std::time::Duration;
 
-use wellfed_api::{ClientRole, Connection as Link, EventBody, EventKind, FeederEvent, FeederId};
+use jiff::Timestamp;
+use wellfed_api::{
+    ClientRole, Connection as Link, EventBody, EventKind, FeederEvent, FeederId, Source,
+};
 use wellfed_mirror::{AskError, Config, Discovery, Feeder, Invite, Mirror, MirrorEvent, Timing};
 use wellfed_model::{Answer, Op};
 use wellfed_server_testkit::feeder::{self, Relay, Running};
 use wellfed_server_testkit::fixed::{FixedClock, SeededRandom};
 use wellfed_server_testkit::{TempStore, WAIT, local, until};
-use wellfed_store::{NewFeeder, SealedKey, Store};
+use wellfed_store::{NewFeeder, Refresh, SealedKey, Store};
 use tokio::sync::broadcast::Receiver;
 use tokio::sync::broadcast::error::TryRecvError;
 use tokio_util::sync::CancellationToken;
@@ -47,6 +50,15 @@ async fn mirrored(
         Arc::new(FixedClock),
         Arc::new(SeededRandom::fresh()),
         CancellationToken::new(),
+    );
+    let fresh = Refresh::Rebuilt {
+        events: 0,
+        undecoded: 0,
+    };
+    assert_eq!(mirror.refresh_projections().await.unwrap(), fresh);
+    assert_eq!(
+        mirror.refresh_projections().await.unwrap(),
+        Refresh::Current
     );
     let invite = feeder::invite(sim, ClientRole::Server).await;
     let invite = Invite::parse(&invite).expect("the kit's invite parses");
@@ -142,6 +154,12 @@ fn an_answered_command_and_its_event_are_stored_before_they_are_broadcast() {
             }
         };
         assert_eq!(locks(&store, event.epoch).await, [false], "stored first");
+        let projected = || store.lock_changes(ID, Timestamp::MIN, Timestamp::MAX);
+        let changes = projected().await.unwrap();
+        assert_eq!(changes.len(), 1, "projected with it");
+        assert_eq!((changes[0].epoch, changes[0].seq), (event.epoch, event.seq));
+        assert!(!changes[0].value.locked);
+        assert!(matches!(changes[0].value.by, Source::Client { .. }));
 
         // The same request id is answered from the feeder's memory.
         let again = mirror.ask(ID, [1; 16], lock).await.unwrap();
@@ -149,6 +167,7 @@ fn an_answered_command_and_its_event_are_stored_before_they_are_broadcast() {
         let status = mirror.ask(ID, [2; 16], Op::Status).await.unwrap();
         assert!(matches!(status, Answer::Status(_)));
         assert_eq!(locks(&store, event.epoch).await, [false], "once");
+        assert_eq!(projected().await.unwrap(), changes, "projected once");
 
         mirror.shutdown().await;
         store.close().await;

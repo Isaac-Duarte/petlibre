@@ -1,0 +1,74 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT epoch AS \"epoch!\", seq AS \"seq!\", reason, at_s, received_ms\n             FROM blocked_changes WHERE feeder_id = ? AND received_ms >= ? AND received_ms < ?\n             ORDER BY received_ms, epoch, seq",
+  "describe": {
+    "columns": [
+      {
+        "name": "epoch!",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "blocked_changes",
+            "name": "epoch"
+          }
+        }
+      },
+      {
+        "name": "seq!",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "blocked_changes",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "name": "reason",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocked_changes",
+            "name": "reason"
+          }
+        }
+      },
+      {
+        "name": "at_s",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "blocked_changes",
+            "name": "at_s"
+          }
+        }
+      },
+      {
+        "name": "received_ms",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "blocked_changes",
+            "name": "received_ms"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      null,
+      null,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "02855f4428483e433aaf7bf41747bedb356ee9113dbce4f2244729eb17d55c28"
+}

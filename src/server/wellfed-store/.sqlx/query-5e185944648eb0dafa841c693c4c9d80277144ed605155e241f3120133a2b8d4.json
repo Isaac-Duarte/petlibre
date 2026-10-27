@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO feeds (feeder_id, epoch, feed, seq, source, client, requested,\n                                    completed, outcome, reason, at_s, received_ms)\n                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n                 ON CONFLICT (feeder_id, epoch, feed) DO UPDATE SET\n                     seq = excluded.seq, source = excluded.source, client = excluded.client,\n                     requested = excluded.requested, completed = excluded.completed,\n                     outcome = excluded.outcome, reason = excluded.reason,\n                     at_s = excluded.at_s, received_ms = excluded.received_ms\n                 WHERE excluded.seq > feeds.seq",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 12
+    },
+    "nullable": []
+  },
+  "hash": "5e185944648eb0dafa841c693c4c9d80277144ed605155e241f3120133a2b8d4"
+}

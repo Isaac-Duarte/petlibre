@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM lock_changes",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "c50c08aad5a522bac0e3e7ff0764198539359655d6a48c1ff550d8d6981bac68"
+}

@@ -1,0 +1,98 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT epoch AS \"epoch!\", seq AS \"seq!\", source, client, jump_ms, at_s, received_ms\n             FROM clock_syncs WHERE feeder_id = ? AND received_ms >= ? AND received_ms < ?\n             ORDER BY received_ms, epoch, seq",
+  "describe": {
+    "columns": [
+      {
+        "name": "epoch!",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "clock_syncs",
+            "name": "epoch"
+          }
+        }
+      },
+      {
+        "name": "seq!",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "clock_syncs",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "name": "source",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "clock_syncs",
+            "name": "source"
+          }
+        }
+      },
+      {
+        "name": "client",
+        "ordinal": 3,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "clock_syncs",
+            "name": "client"
+          }
+        }
+      },
+      {
+        "name": "jump_ms",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "clock_syncs",
+            "name": "jump_ms"
+          }
+        }
+      },
+      {
+        "name": "at_s",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "clock_syncs",
+            "name": "at_s"
+          }
+        }
+      },
+      {
+        "name": "received_ms",
+        "ordinal": 6,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "clock_syncs",
+            "name": "received_ms"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      null,
+      null,
+      false,
+      true,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "77d0b9fbeeed6cd5acb191617dc4b2491b61b8307f3b22924c36b28a9c76c67b"
+}

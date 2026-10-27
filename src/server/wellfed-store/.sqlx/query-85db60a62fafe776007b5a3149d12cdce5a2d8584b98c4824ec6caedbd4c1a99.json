@@ -1,0 +1,98 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT epoch AS \"epoch!\", seq AS \"seq!\", locked, source, client, at_s, received_ms\n             FROM lock_changes WHERE feeder_id = ? AND received_ms >= ? AND received_ms < ?\n             ORDER BY received_ms, epoch, seq",
+  "describe": {
+    "columns": [
+      {
+        "name": "epoch!",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "lock_changes",
+            "name": "epoch"
+          }
+        }
+      },
+      {
+        "name": "seq!",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "lock_changes",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "name": "locked",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "lock_changes",
+            "name": "locked"
+          }
+        }
+      },
+      {
+        "name": "source",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "lock_changes",
+            "name": "source"
+          }
+        }
+      },
+      {
+        "name": "client",
+        "ordinal": 4,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "lock_changes",
+            "name": "client"
+          }
+        }
+      },
+      {
+        "name": "at_s",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "lock_changes",
+            "name": "at_s"
+          }
+        }
+      },
+      {
+        "name": "received_ms",
+        "ordinal": 6,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "lock_changes",
+            "name": "received_ms"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      null,
+      null,
+      false,
+      false,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "85db60a62fafe776007b5a3149d12cdce5a2d8584b98c4824ec6caedbd4c1a99"
+}

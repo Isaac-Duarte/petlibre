@@ -245,6 +245,9 @@ impl Service {
         sessions::prepare().await?;
         service.interrupt_commands().await?;
         service.load_zone().await?;
+        // Before any feeder task ingests, so none writes beside a stale
+        // build of the projections.
+        service.mirror.refresh_projections().await?;
         for row in service.shared.store.feeders().await? {
             service.spawn(&row).await?;
         }

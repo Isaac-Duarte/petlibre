@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO projection_version (id, version) VALUES (0, ?)\n             ON CONFLICT (id) DO UPDATE SET version = excluded.version",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "5006e6969deccf47c3232cec1eb745f11fe6dd3a573be141f450c4619c9f7993"
+}

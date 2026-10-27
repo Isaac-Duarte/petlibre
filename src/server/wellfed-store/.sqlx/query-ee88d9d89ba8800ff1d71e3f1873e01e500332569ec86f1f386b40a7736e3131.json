@@ -1,0 +1,86 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT feeder_id, epoch, seq, at_s, received_ms, body FROM events\n                   WHERE ?1 IS NULL OR (feeder_id, epoch, seq) > (?1, ?2, ?3)\n                   ORDER BY feeder_id, epoch, seq LIMIT ?4",
+  "describe": {
+    "columns": [
+      {
+        "name": "feeder_id",
+        "ordinal": 0,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "events",
+            "name": "feeder_id"
+          }
+        }
+      },
+      {
+        "name": "epoch",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "events",
+            "name": "epoch"
+          }
+        }
+      },
+      {
+        "name": "seq",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "events",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "name": "at_s",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "events",
+            "name": "at_s"
+          }
+        }
+      },
+      {
+        "name": "received_ms",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "events",
+            "name": "received_ms"
+          }
+        }
+      },
+      {
+        "name": "body",
+        "ordinal": 5,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "events",
+            "name": "body"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "ee88d9d89ba8800ff1d71e3f1873e01e500332569ec86f1f386b40a7736e3131"
+}

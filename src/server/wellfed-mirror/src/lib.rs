@@ -8,7 +8,7 @@
 //!   clock in the household's [`Zone`] and gives it the zone's POSIX rule,
 //!   so it follows DST with the server down. It records every event and
 //!   sample as the feeder sent it: one store transaction per event, with
-//!   the cursor.
+//!   its projections and the cursor.
 //! - **Commands** reach the task through a channel. A short one is
 //!   [`Mirror::ask`]; a long operation holds an [`Operation`] and sends its
 //!   steps one at a time, so other commands run between them. One that is

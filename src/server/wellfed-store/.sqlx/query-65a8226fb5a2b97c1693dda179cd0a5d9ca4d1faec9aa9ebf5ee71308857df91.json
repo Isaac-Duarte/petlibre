@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO lock_changes (feeder_id, epoch, seq, locked, source, client, at_s,\n                                           received_ms)\n                 VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 8
+    },
+    "nullable": []
+  },
+  "hash": "65a8226fb5a2b97c1693dda179cd0a5d9ca4d1faec9aa9ebf5ee71308857df91"
+}

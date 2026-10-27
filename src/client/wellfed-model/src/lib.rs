@@ -108,4 +108,33 @@ mod tests {
         assert!(serde_json::from_str::<Hex<2>>("\"AB01\"").is_err());
         assert!(serde_json::from_str::<Hex<2>>("\"ab\"").is_err());
     }
+
+    /// The server stores these codes, and its JSON shows the same values,
+    /// so the two spellings never drift apart.
+    #[test]
+    fn stored_codes_are_the_json_spellings() {
+        fn check<T: Serialize + Copy>(all: &[T], code: fn(T) -> &'static str) {
+            for &value in all {
+                let json = serde_json::to_string(&value).unwrap();
+                assert_eq!(json, format!("\"{}\"", code(value)));
+            }
+        }
+
+        check(&FeedOutcome::ALL, FeedOutcome::code);
+        check(&FeedReason::ALL, FeedReason::code);
+        check(&Blocked::ALL, Blocked::code);
+        check(&EventKind::ALL, EventKind::code);
+        for kind in EventKind::ALL {
+            assert_eq!(EventKind::from_code(kind.code()), Some(kind));
+        }
+        for outcome in FeedOutcome::ALL {
+            assert_eq!(FeedOutcome::from_code(outcome.code()), Some(outcome));
+        }
+        for reason in FeedReason::ALL {
+            assert_eq!(FeedReason::from_code(reason.code()), Some(reason));
+        }
+        for blocked in Blocked::ALL {
+            assert_eq!(Blocked::from_code(blocked.code()), Some(blocked));
+        }
+    }
 }

@@ -4,8 +4,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use jiff::Timestamp;
 use wellfed_api::{
-    Blocked, ClientRole, EventKind, FeederId, FeederStatus, Generation, Household, MetricKind,
-    Readiness, Role, Settings, TimeFormat, Units, UserId, WifiSource,
+    Blocked, ClientRole, EventBody, EventKind, FeederId, FeederStatus, Generation, Household,
+    MetricKind, Readiness, Role, Settings, Source, TimeFormat, Units, UserId, WifiSource,
 };
 use wellfed_store::{
     Change, Error, FeederRow, NewEvent, NewFeeder, NewSample, NewUser, SealedKey, Store, Synced,
@@ -75,14 +75,27 @@ async fn adopt(store: &Store, identity: u8) -> FeederId {
 /// The feeder's ring epoch in most tests.
 const EPOCH: u32 = 7;
 
+/// An event of `kind` (a boot or a lock), whose stored bytes the store
+/// keeps as given.
 fn event(seq: u64, kind: EventKind) -> NewEvent<'static> {
+    let body = match kind {
+        EventKind::Boot => EventBody::Boot {
+            bank: 1,
+            reset_flags: 0,
+        },
+        EventKind::Lock => EventBody::Lock {
+            locked: true,
+            by: Source::Panel,
+        },
+        other => panic!("no test body for {other:?}"),
+    };
     NewEvent {
         epoch: EPOCH,
         seq,
         at: Some(at(1_700_000_000_000)),
         received: at(1_700_000_000_500),
-        kind,
-        body: &[0, 1, 2],
+        body,
+        raw: &[0, 1, 2],
     }
 }
 

@@ -163,6 +163,70 @@ pub enum FeedReason {
     Output,
 }
 
+impl FeedOutcome {
+    pub const ALL: [Self; 5] = [
+        Self::Done,
+        Self::Cancelled,
+        Self::Expired,
+        Self::Failed,
+        Self::Uncertain,
+    ];
+
+    /// The stored spelling, the same as the JSON one.
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::Done => "done",
+            Self::Cancelled => "cancelled",
+            Self::Expired => "expired",
+            Self::Failed => "failed",
+            Self::Uncertain => "uncertain",
+        }
+    }
+
+    pub fn from_code(code: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|outcome| outcome.code() == code)
+    }
+}
+
+impl FeedReason {
+    pub const ALL: [Self; 12] = [
+        Self::Done,
+        Self::Cancelled,
+        Self::Clock,
+        Self::ObservationGap,
+        Self::Timeout,
+        Self::NoFeedback,
+        Self::Power,
+        Self::Sensor,
+        Self::Outlet,
+        Self::Overcurrent,
+        Self::FeedbackStream,
+        Self::Output,
+    ];
+
+    /// The stored spelling, the same as the JSON one.
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::Done => "done",
+            Self::Cancelled => "cancelled",
+            Self::Clock => "clock",
+            Self::ObservationGap => "observation_gap",
+            Self::Timeout => "timeout",
+            Self::NoFeedback => "no_feedback",
+            Self::Power => "power",
+            Self::Sensor => "sensor",
+            Self::Outlet => "outlet",
+            Self::Overcurrent => "overcurrent",
+            Self::FeedbackStream => "feedback_stream",
+            Self::Output => "output",
+        }
+    }
+
+    pub fn from_code(code: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|reason| reason.code() == code)
+    }
+}
+
 impl EventBody {
     pub const fn kind(&self) -> EventKind {
         match self {
@@ -199,6 +263,20 @@ pub enum EventKind {
 }
 
 impl EventKind {
+    pub const ALL: [Self; 11] = [
+        Self::Boot,
+        Self::Lock,
+        Self::Settings,
+        Self::Wifi,
+        Self::Enrolled,
+        Self::Revoked,
+        Self::ClockSync,
+        Self::Lost,
+        Self::Fed,
+        Self::FeedingBlocked,
+        Self::Supply,
+    ];
+
     /// The stored spelling, the same as the JSON one.
     pub const fn code(self) -> &'static str {
         match self {
@@ -217,21 +295,7 @@ impl EventKind {
     }
 
     pub fn from_code(code: &str) -> Option<Self> {
-        [
-            Self::Boot,
-            Self::Lock,
-            Self::Settings,
-            Self::Wifi,
-            Self::Enrolled,
-            Self::Revoked,
-            Self::ClockSync,
-            Self::Lost,
-            Self::Fed,
-            Self::FeedingBlocked,
-            Self::Supply,
-        ]
-        .into_iter()
-        .find(|kind| kind.code() == code)
+        Self::ALL.into_iter().find(|kind| kind.code() == code)
     }
 }
 

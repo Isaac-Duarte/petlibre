@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM clock_syncs",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "d8ae214594e4646e512fb6657379a8b5c3e9c8853c0124e836ce2e769b0d74bd"
+}

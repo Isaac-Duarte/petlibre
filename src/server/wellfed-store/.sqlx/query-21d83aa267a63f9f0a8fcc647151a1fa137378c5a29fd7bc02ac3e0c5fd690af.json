@@ -1,0 +1,86 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT epoch AS \"epoch!\", seq AS \"seq!\", bank, reset_flags, at_s, received_ms\n             FROM boots WHERE feeder_id = ? AND received_ms >= ? AND received_ms < ?\n             ORDER BY received_ms, epoch, seq",
+  "describe": {
+    "columns": [
+      {
+        "name": "epoch!",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "boots",
+            "name": "epoch"
+          }
+        }
+      },
+      {
+        "name": "seq!",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "boots",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "name": "bank",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "boots",
+            "name": "bank"
+          }
+        }
+      },
+      {
+        "name": "reset_flags",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "boots",
+            "name": "reset_flags"
+          }
+        }
+      },
+      {
+        "name": "at_s",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "boots",
+            "name": "at_s"
+          }
+        }
+      },
+      {
+        "name": "received_ms",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "boots",
+            "name": "received_ms"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      null,
+      null,
+      false,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "21d83aa267a63f9f0a8fcc647151a1fa137378c5a29fd7bc02ac3e0c5fd690af"
+}

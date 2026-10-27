@@ -11,8 +11,11 @@
 //! types; the conversions between Rust and SQLite values live in
 //! `convert`. Times cross this boundary as [`jiff::Timestamp`] and are
 //! stored as Unix milliseconds. Event bodies and sample values are stored
-//! as the feeder sent them (postcard bytes), so the mirror is raw; the
-//! service decodes them.
+//! as the feeder sent them (postcard bytes), so the mirror is raw. Beside
+//! the raw events, each event's typed projection (feeds, lock changes,
+//! boots, clock syncs, feeding blocked) is written in the same transaction
+//! for the views to query, and rebuilt from the raw rows when the
+//! projection code changes.
 
 #![forbid(unsafe_code)]
 
@@ -21,6 +24,7 @@ mod convert;
 mod feeders;
 mod history;
 mod migrate;
+mod projections;
 mod samples;
 mod users;
 
@@ -35,6 +39,7 @@ use sqlx::sqlite::{
 pub use commands::{CommandFilter, CommandRow, Journaled, NewCommand};
 pub use feeders::{FeederRow, FeederState, NewFeeder, SealedKey, Synced};
 pub use history::{EventRow, NewEvent};
+pub use projections::{Boot, ClockSync, Feed, LockChange, PROJECTION_VERSION, Projected, Refresh};
 pub use samples::{NewSample, SampleRow};
 pub use users::{Change, Login, NewUser, SessionRow};
 

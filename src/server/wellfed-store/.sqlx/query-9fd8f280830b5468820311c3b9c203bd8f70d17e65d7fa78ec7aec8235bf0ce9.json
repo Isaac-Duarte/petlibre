@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM boots",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "9fd8f280830b5468820311c3b9c203bd8f70d17e65d7fa78ec7aec8235bf0ce9"
+}

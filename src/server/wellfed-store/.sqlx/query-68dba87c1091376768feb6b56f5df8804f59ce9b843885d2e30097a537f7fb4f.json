@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO blocked_changes (feeder_id, epoch, seq, reason, at_s, received_ms)\n                 VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": []
+  },
+  "hash": "68dba87c1091376768feb6b56f5df8804f59ce9b843885d2e30097a537f7fb4f"
+}

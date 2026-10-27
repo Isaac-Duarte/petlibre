@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO clock_syncs (feeder_id, epoch, seq, source, client, jump_ms, at_s,\n                                          received_ms)\n                 VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 8
+    },
+    "nullable": []
+  },
+  "hash": "08c93f467319cc38b2681593431962ccaceee261352fdf723ac6af0c1ca217f4"
+}

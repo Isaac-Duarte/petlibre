@@ -3,9 +3,10 @@
 //! transaction as each insert so a reconnect never skips or repeats one.
 
 use jiff::Timestamp;
-use wellfed_api::{EventKind, FeederId, Gap};
+use wellfed_api::{EventBody, EventKind, FeederId, Gap};
 
-use crate::convert::{from_i64, millis, timestamp, to_i64};
+use crate::convert::{from_i64, millis, seconds, timestamp, to_i64};
+use crate::projections::{Place, project};
 use crate::{Error, Result, Store};
 
 pub struct NewEvent<'a> {
@@ -14,9 +15,10 @@ pub struct NewEvent<'a> {
     pub seq: u64,
     pub at: Option<Timestamp>,
     pub received: Timestamp,
-    pub kind: EventKind,
-    /// The body's postcard bytes.
-    pub body: &'a [u8],
+    /// The event, decoded once, for its kind and its projection.
+    pub body: EventBody,
+    /// The body as the feeder encoded it (postcard bytes): what is stored.
+    pub raw: &'a [u8],
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -29,15 +31,16 @@ pub struct EventRow {
 }
 
 impl Store {
-    /// Record one event and move the feeder's cursor past it, together.
-    /// An event already held changes nothing; whether it was new. An event
-    /// of another epoch than the cursor's moves the cursor to it.
+    /// Record one event, its projection and the feeder's cursor past it,
+    /// together. An event already held changes nothing; whether it was
+    /// new. An event of another epoch than the cursor's moves the cursor
+    /// to it.
     pub async fn record_event(&self, id: FeederId, event: NewEvent<'_>) -> Result<bool> {
         let epoch = event.epoch;
         let seq = to_i64(event.seq, "event sequence")?;
         let at = event.at.map(|at| at.as_second());
         let received = millis(event.received);
-        let kind = event.kind.code();
+        let kind = event.body.kind().code();
 
         let mut tx = self.writer.begin().await?;
         let done = sqlx::query!(
@@ -49,13 +52,23 @@ impl Store {
             at,
             received,
             kind,
-            event.body,
+            event.raw,
         )
         .execute(&mut *tx)
         .await?;
+        let new = done.rows_affected() == 1;
+        if new {
+            let place = Place {
+                epoch,
+                seq,
+                at_s: at,
+                received_ms: received,
+            };
+            project(&mut tx, id, place, event.body).await?;
+        }
         advance(&mut tx, id, epoch, seq).await?;
         tx.commit().await?;
-        Ok(done.rows_affected() == 1)
+        Ok(new)
     }
 
     /// Record that `from..=to` are lost, and move the cursor past them.
@@ -117,12 +130,7 @@ impl Store {
             .map(|row| {
                 Ok(EventRow {
                     seq: from_i64(row.seq, "event sequence")?,
-                    at: row
-                        .at_s
-                        .map(|s| {
-                            Timestamp::from_second(s).map_err(|_| Error::Corrupt("event time"))
-                        })
-                        .transpose()?,
+                    at: seconds(row.at_s)?,
                     received: timestamp(row.received_ms)?,
                     kind: EventKind::from_code(&row.kind).ok_or(Error::Corrupt("event kind"))?,
                     body: row.body,

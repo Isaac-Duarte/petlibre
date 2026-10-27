@@ -103,7 +103,8 @@ pub enum SaveKind {
     /// An intentional restart's once the boot has run `RESTART_SETTLED_MS`:
     /// it neither takes a token nor gives one back, so a spent budget never
     /// costs an owner's restart its counts, and each such save has a
-    /// settled stretch of uptime behind it.
+    /// settled stretch of uptime behind it. Only [`SaveKind::restart`]
+    /// gives it, from the boot's uptime.
     Restart,
 }
 

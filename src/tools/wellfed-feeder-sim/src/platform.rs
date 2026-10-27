@@ -357,8 +357,9 @@ impl SimPlatform {
 
     /// Save the lifetime totals as the writer does: a restart's save
     /// (`restarting`; the simulator's restart has no watchdog to race), of
-    /// the kind its uptime gives, otherwise the timed save when due. A failed save makes the
-    /// store read-only for the boot, as on the feeder.
+    /// the kind its uptime gives, otherwise the timed save when due. A
+    /// failed save makes the store read-only for the boot, as on the
+    /// feeder.
     pub(crate) fn save_stats(&mut self, restarting: bool) {
         let now = Instant::now();
         if restarting {

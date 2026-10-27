@@ -103,9 +103,7 @@ fn early_saves_take_tokens_a_settled_save_gives_one_back() {
 
 /// A restart's save early in a boot spends a token like any early save;
 /// once the boot has run `RESTART_SETTLED_MS` it is outside the budget, so
-/// an owner's restart keeps its counts with the budget spent (October 27:
-/// the bench's short boots had spent it, and a reboot lost its boot's
-/// counts).
+/// an owner's restart keeps its counts with the budget spent.
 #[test]
 fn a_settled_boots_restart_saves_with_the_budget_spent() {
     assert_eq!(SaveKind::restart(RESTART_SETTLED_MS - 1), Early);

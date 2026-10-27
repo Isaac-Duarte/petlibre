@@ -40,7 +40,9 @@ pub const EARLY_SAVES: u8 = 6;
 /// A boot this old has a settled stretch behind it: an intentional
 /// restart's save then spends no early token, so an owner's restart keeps
 /// its boot's counts however spent the budget is. Each such save needs
-/// this much uptime first, so restarts add at most six erases an hour.
+/// this much uptime first, so restarts add at most six erases an hour: a
+/// client restarting the feeder every ten minutes for a year would add
+/// about 52,600 erases, 26,300 a sector, three times the budget's bound.
 pub const RESTART_SETTLED_MS: u32 = 10 * 60_000;
 
 /// The storage sectors the totals count erases of: the whole region, the

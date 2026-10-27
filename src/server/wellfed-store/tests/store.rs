@@ -1,5 +1,7 @@
 //! The store against a fresh SQLite file per test.
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use jiff::Timestamp;
 use wellfed_api::{
     Blocked, ClientRole, EventKind, FeederId, FeederStatus, Generation, MetricKind, Readiness,
@@ -19,13 +21,20 @@ async fn fresh() -> (TempDir, Store) {
     (dir, store)
 }
 
+/// A new id for each call: the store doesn't care how ids are made, and a
+/// test reads no clock.
+fn fresh_id() -> Uuid {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    Uuid::from_u128(u128::from(NEXT.fetch_add(1, Ordering::Relaxed)))
+}
+
 fn at(ms: i64) -> Timestamp {
     Timestamp::from_millisecond(ms).unwrap()
 }
 
 fn user(name: &str) -> NewUser<'_> {
     NewUser {
-        id: UserId(Uuid::now_v7()),
+        id: UserId(fresh_id()),
         name,
         password_hash: "$argon2id$hash",
         role: Role::Owner,
@@ -34,7 +43,7 @@ fn user(name: &str) -> NewUser<'_> {
 }
 
 async fn adopt(store: &Store, identity: u8) -> FeederId {
-    let id = FeederId(Uuid::now_v7());
+    let id = FeederId(fresh_id());
     store
         .insert_feeder(NewFeeder {
             id,
@@ -136,7 +145,7 @@ async fn a_feeder_is_adopted_once_and_reads_back_whole() {
     assert!(!store.feeder_adopted(&[0xbb; 32]).await.unwrap());
     let again = store
         .insert_feeder(NewFeeder {
-            id: FeederId(Uuid::now_v7()),
+            id: FeederId(fresh_id()),
             identity: [0xaa; 32],
             name: "again",
             role: ClientRole::Member,
@@ -165,7 +174,7 @@ async fn a_feeder_is_adopted_once_and_reads_back_whole() {
     };
     assert_eq!(store.feeder(id).await.unwrap(), Some(want.clone()));
     assert_eq!(store.feeders().await.unwrap(), [want]);
-    assert_eq!(store.feeder(FeederId(Uuid::now_v7())).await.unwrap(), None);
+    assert_eq!(store.feeder(FeederId(fresh_id())).await.unwrap(), None);
 }
 
 #[tokio::test]

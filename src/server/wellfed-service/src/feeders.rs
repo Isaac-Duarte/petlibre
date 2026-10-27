@@ -18,7 +18,6 @@ use sha2::{Digest, Sha256};
 use tokio::sync::oneshot;
 use tokio::time::{Instant, timeout_at};
 use tracing::warn;
-use uuid::Uuid;
 
 use crate::feeder::{self, Command, Handle};
 use crate::{Discovery, Error, IdempotencyKey, Invalid, RequestId, Result, Service, keys};
@@ -72,7 +71,7 @@ impl Service {
             Joined::Refused(refusal) => return Err(Error::Refused(refusal.into())),
         };
 
-        let id = FeederId(Uuid::now_v7());
+        let id = FeederId(self.shared.new_id()?);
         let nonce = self.shared.random()?;
         let sealed = keys::seal(&self.shared.config.key, id, &invite.feeder, &secret, nonce)?;
         let address = address.to_string();

@@ -19,7 +19,6 @@ uuid.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
-uuid = { workspace = true, features = ["v7"] }
 
 [lints]
 workspace = true

@@ -41,6 +41,7 @@ use wellfed_client::api::InviteText;
 use wellfed_store::Store;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
+use uuid::Uuid;
 
 pub use hub::{Hub, Resume, Stamped, StreamId, Subscription};
 pub use users::SessionToken;
@@ -215,6 +216,18 @@ impl Shared {
         self.random.fill(&mut out)?;
         Ok(out)
     }
+
+    /// A new time-ordered id (UUIDv7), its time from the service's clock and
+    /// its counter and random bits from its generator, so a test that fixes
+    /// both gets the same ids every run.
+    fn new_id(&self) -> Result<Uuid> {
+        Ok(time_ordered(self.clock.now(), &self.random()?))
+    }
+}
+
+fn time_ordered(at: Timestamp, bits: &[u8; 10]) -> Uuid {
+    let millis = at.as_millisecond().unsigned_abs();
+    uuid::Builder::from_unix_timestamp_millis(millis, bits).into_uuid()
 }
 
 /// The running service: cheap to clone, one per server.
@@ -286,5 +299,23 @@ impl Service {
     /// A fresh request id.
     pub(crate) fn request_id(&self) -> Result<RequestId> {
         self.shared.random()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_id_carries_the_clocks_time_and_the_random_bits() {
+        let at = Timestamp::from_millisecond(1_790_000_000_123).unwrap();
+
+        let id = time_ordered(at, &[0xab; 10]);
+
+        assert_eq!(id.get_version_num(), 7);
+        let (seconds, nanos) = id.get_timestamp().unwrap().to_unix();
+        assert_eq!((seconds, nanos), (1_790_000_000, 123_000_000));
+        assert_eq!(id, time_ordered(at, &[0xab; 10]), "fixed inputs, fixed id");
+        assert_ne!(id, time_ordered(at, &[0xcd; 10]));
     }
 }

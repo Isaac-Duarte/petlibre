@@ -14,7 +14,6 @@ use wellfed_api::{Credentials, Role, User, UserId};
 use wellfed_session::hex::{self, Lower};
 use wellfed_store::NewUser;
 use sha2::{Digest, Sha256};
-use uuid::Uuid;
 
 use crate::{Error, Invalid, Result, Service};
 
@@ -68,7 +67,7 @@ impl Service {
         let salt = self.shared.random::<16>()?;
         let hash = blocking(move || hash_password(&credentials.password, &salt)).await?;
         let user = User {
-            id: UserId(Uuid::now_v7()),
+            id: UserId(self.shared.new_id()?),
             name: name.to_owned(),
             role: Role::Owner,
         };

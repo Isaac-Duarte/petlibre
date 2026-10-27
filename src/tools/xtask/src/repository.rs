@@ -197,12 +197,26 @@ fn check_file(root: &Path, name: &str, summary: &mut Summary) {
     }
 
     if name == SERVER_CLIPPY {
-        let root_settings = fs::read_to_string(root.join("clippy.toml")).unwrap_or_default();
-        for missing in missing_settings(&root_settings, &content) {
-            summary.errors.push(format!(
-                "{name}: lacks the root clippy.toml's `{missing}`; Clippy reads only the nearest file"
-            ));
+        match fs::read_to_string(root.join("clippy.toml")) {
+            Ok(root_settings) => {
+                for missing in missing_settings(&root_settings, &content) {
+                    summary.errors.push(format!(
+                        "{name}: lacks the root clippy.toml's `{missing}`; Clippy reads only the nearest file"
+                    ));
+                }
+            }
+            Err(error) => summary.errors.push(format!(
+                "{name}: cannot read the root clippy.toml it must repeat: {error}"
+            )),
         }
+    } else if name.starts_with("src/server/")
+        && relative
+            .file_name()
+            .is_some_and(|f| f == "clippy.toml" || f == ".clippy.toml")
+    {
+        summary.errors.push(format!(
+            "{name}: would replace {SERVER_CLIPPY} and its one-clock rule; keep server settings there"
+        ));
     }
 
     if extension == "md" {
@@ -224,6 +238,8 @@ fn check_file(root: &Path, name: &str, summary: &mut Summary) {
 }
 
 /// The root's settings (its non-comment lines) that a nested clippy.toml lacks.
+/// Lines are compared whole, which assumes every root setting fits on one
+/// line; a multi-line array there would need a TOML-aware comparison.
 fn missing_settings<'a>(root: &'a str, nested: &str) -> Vec<&'a str> {
     let nested: Vec<&str> = nested.lines().map(str::trim).collect();
 
@@ -462,6 +478,35 @@ mod tests {
             ["avoid-breaking-exported-api = false"]
         );
         assert!(missing_settings(root, &format!("{root}disallowed-methods = []\n")).is_empty());
+    }
+
+    #[test]
+    fn the_server_clippy_toml_needs_the_root_one_and_no_other_beside_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        fs::create_dir_all(root.join("src/server/wellfed-store")).unwrap();
+        fs::write(root.join(SERVER_CLIPPY), "disallowed-methods = []\n").unwrap();
+        fs::write(root.join("src/server/wellfed-store/clippy.toml"), "\n").unwrap();
+        let mut summary = Summary {
+            files: 0,
+            links: 0,
+            errors: Vec::new(),
+        };
+
+        check_file(&root, SERVER_CLIPPY, &mut summary);
+        check_file(&root, "src/server/wellfed-store/clippy.toml", &mut summary);
+
+        assert_eq!(summary.errors.len(), 2);
+        assert!(
+            summary.errors[0]
+                .starts_with("src/server/clippy.toml: cannot read the root clippy.toml"),
+            "{}",
+            summary.errors[0]
+        );
+        assert_eq!(
+            summary.errors[1],
+            "src/server/wellfed-store/clippy.toml: would replace src/server/clippy.toml and its one-clock rule; keep server settings there"
+        );
     }
 
     #[test]

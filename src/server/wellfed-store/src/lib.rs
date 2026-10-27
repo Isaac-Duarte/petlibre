@@ -21,6 +21,7 @@
 
 #![forbid(unsafe_code)]
 
+mod audit;
 mod commands;
 mod convert;
 mod feeders;
@@ -45,6 +46,7 @@ use sqlx::sqlite::{
     SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions, SqliteSynchronous,
 };
 
+pub use audit::{AuditFilter, AuditRecord, AuditRow, NewAudit};
 pub use commands::{CommandFilter, CommandRow, Journaled, NewCommand};
 pub use feeders::{FeederRow, FeederState, NewFeeder, SealedKey, Synced};
 pub use foods::FoodSet;

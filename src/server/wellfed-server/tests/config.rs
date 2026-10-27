@@ -6,7 +6,7 @@ use std::path::Path;
 
 use clap::Parser;
 use wellfed_server::config::{
-    ConfigError, Discovery, FILE, HostName, Label, Overrides, ServerConfig, UpdateKey,
+    ConfigError, Discovery, FILE, HostName, Label, Overrides, ProxyRange, ServerConfig, UpdateKey,
 };
 
 /// The server's flags alone, as `wellfed-server` takes them.
@@ -14,6 +14,10 @@ use wellfed_server::config::{
 struct Flags {
     #[command(flatten)]
     overrides: Overrides,
+}
+
+fn range(text: &str) -> ProxyRange {
+    text.parse().unwrap()
 }
 
 fn flags(args: &[&str]) -> Overrides {
@@ -62,7 +66,7 @@ fn the_example_file_parses() {
     let config = ServerConfig::parse(Path::new("server.example.toml"), text).unwrap();
 
     assert_eq!(config.hosts, ["feeder.lan".parse::<HostName>().unwrap()]);
-    assert_eq!(config.trusted_proxies, [IpAddr::from(Ipv4Addr::LOCALHOST)]);
+    assert_eq!(config.trusted_proxies, [range("127.0.0.1")]);
     assert_eq!(config.retention.raw_sample_days, Some(days(90)));
     assert!(!config.releases.fetch);
     assert_eq!(config.backups.keep, days(7));
@@ -78,7 +82,7 @@ listen = "0.0.0.0:9000"
 hosts = ["Feeder.LAN", "pets.home.arpa"]
 label = "kitchen-server"
 discovery = "off"
-trusted_proxies = ["10.0.0.2", "::1"]
+trusted_proxies = ["10.0.0.2", "::1", "172.16.0.0/12"]
 
 [retention]
 raw_sample_days = 30
@@ -107,11 +111,11 @@ keep = 3
     assert_eq!(config.discovery, Discovery::Off);
     assert_eq!(
         config.trusted_proxies,
-        [
-            "10.0.0.2".parse::<IpAddr>().unwrap(),
-            "::1".parse().unwrap()
-        ]
+        [range("10.0.0.2"), range("::1"), range("172.16.0.0/12")]
     );
+    let docker = &config.trusted_proxies[2];
+    assert!(docker.contains(IpAddr::from([172, 18, 0, 5])));
+    assert!(!docker.contains(IpAddr::from([172, 32, 0, 5])));
     assert_eq!(config.retention.raw_sample_days, Some(days(30)));
     assert!(config.releases.fetch);
     assert_eq!(config.releases.project_keys, [UpdateKey([0x33; 32])]);
@@ -168,7 +172,7 @@ owner_keys = ["1111111111111111111111111111111111111111111111111111111111111111"
     assert_eq!(config.backups.keep, days(2));
     assert_eq!(
         config.trusted_proxies,
-        ["10.0.0.2".parse::<IpAddr>().unwrap()],
+        [range("10.0.0.2")],
         "a flag not given keeps the file's value"
     );
 }
@@ -182,6 +186,12 @@ fn flags_check_their_values() {
     assert!(parse(&["--label", "a-label-longer-than-16"]).is_err());
     assert!(parse(&["--host", "evil.example:80"]).is_err());
     assert!(parse(&["--raw-sample-days", "0"]).is_err());
+    assert!(parse(&["--trusted-proxy", "10.0.0.0/33"]).is_err());
+    assert!(parse(&["--trusted-proxy", "proxy.lan"]).is_err());
+    assert_eq!(
+        flags(&["--trusted-proxy", "10.0.0.0/8,::1"]).trusted_proxies,
+        [range("10.0.0.0/8"), range("::1")]
+    );
     assert_eq!(
         flags(&["--discovery", "off"]).discovery,
         Some(Discovery::Off)
@@ -256,7 +266,7 @@ fn a_bad_value_names_its_field() {
     );
     assert_eq!(invalid_field("discovery = \"sometimes\""), "discovery");
     assert_eq!(
-        invalid_field("trusted_proxies = [\"10.0.0.0/8\"]"),
+        invalid_field("trusted_proxies = [\"10.0.0.0/33\"]"),
         "trusted_proxies[0]"
     );
     assert_eq!(

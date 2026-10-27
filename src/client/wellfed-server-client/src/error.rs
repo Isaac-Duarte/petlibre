@@ -1,6 +1,8 @@
 //! Every way a call to the server fails.
 
 use wellfed_api::{ErrorCode, Problem, Settings};
+use std::time::Duration;
+
 use reqwest::{StatusCode, Url};
 
 #[derive(Debug, thiserror::Error)]
@@ -13,11 +15,13 @@ pub enum Error {
     /// write may have run: retry it under the same key, never a new one.
     #[error("the request to the server failed")]
     Http(#[from] reqwest::Error),
-    /// The server refused, with its typed reason.
+    /// The server refused, with its typed reason. `retry_after` is the
+    /// wait its `Retry-After` named, as on `429 login_limited`.
     #[error("the server answered {status}: {}", problem.title)]
     Problem {
         status: StatusCode,
         problem: Box<Problem>,
+        retry_after: Option<Duration>,
     },
     /// An edit named a generation the settings have moved past; these are
     /// the current settings.
@@ -35,6 +39,14 @@ pub enum Error {
 }
 
 impl Error {
+    /// How long the server asked to wait before trying again.
+    pub fn retry_after(&self) -> Option<Duration> {
+        match self {
+            Self::Problem { retry_after, .. } => *retry_after,
+            _ => None,
+        }
+    }
+
     /// The problem's code, when the server refused with one.
     pub fn code(&self) -> Option<ErrorCode> {
         match self {

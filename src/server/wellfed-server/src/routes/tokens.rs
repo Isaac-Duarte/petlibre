@@ -77,6 +77,6 @@ pub(crate) async fn revoke_token(
     Allowed(caller, _): Allowed<need::OwnAccount>,
     WithRejection(Path(id), _): WithRejection<Path<TokenId>, ApiError>,
 ) -> ApiResult<StatusCode> {
-    state.service.revoke_token(&caller.user, id).await?;
+    state.service.revoke_token(&caller, id).await?;
     Ok(StatusCode::NO_CONTENT)
 }

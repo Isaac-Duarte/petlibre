@@ -3,7 +3,7 @@
 
 use std::net::{Ipv4Addr, SocketAddr};
 
-use wellfed_server::Hosts;
+use wellfed_server::{Hosts, TrustedProxies};
 use wellfed_server_client::{Client, Url};
 use std::sync::Arc;
 
@@ -37,12 +37,27 @@ impl TestServer {
         Self::serve(TestService::start_with_clock(clock).await).await
     }
 
+    /// The server with [`config`] on a fresh store, reading `clock` and
+    /// believing the forwarded headers of `proxies`.
+    pub async fn start_behind(clock: Arc<dyn Clock>, proxies: &[&str]) -> Self {
+        let proxies = proxies
+            .iter()
+            .map(|range| range.parse().expect("a test's proxy range parses"));
+        let service = TestService::start_with_clock(clock).await;
+        Self::serve_behind(service, TrustedProxies::new(proxies)).await
+    }
+
     async fn serve(service: TestService) -> Self {
+        Self::serve_behind(service, TrustedProxies::default()).await
+    }
+
+    async fn serve_behind(service: TestService, proxies: TrustedProxies) -> Self {
         let shutdown = CancellationToken::new();
         let app = wellfed_server::app(
             service.service().clone(),
             shutdown.clone(),
             Hosts::default(),
+            proxies,
         );
 
         let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
@@ -53,10 +68,13 @@ impl TestServer {
             .expect("a bound listener has an address");
         let stop = shutdown.clone();
         let served = tokio::spawn(async move {
-            axum::serve(listener, app)
-                .with_graceful_shutdown(async move { stop.cancelled().await })
-                .await
-                .expect("the server serves until shut down");
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .with_graceful_shutdown(async move { stop.cancelled().await })
+            .await
+            .expect("the server serves until shut down");
         });
 
         Self {

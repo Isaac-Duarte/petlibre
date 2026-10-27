@@ -6,11 +6,11 @@
 //! down. A zone no rule describes is refused, since a feeder could not keep
 //! it.
 
-use wellfed_api::{Household, HouseholdPatch};
+use wellfed_api::{AuditAction, Household, HouseholdPatch};
 use wellfed_mirror::Zone;
 use tracing::error;
 
-use crate::{HouseholdError, Invalid, Result, Service};
+use crate::{Caller, HouseholdError, Invalid, Result, Service};
 
 impl Service {
     pub async fn household(&self) -> Result<Household> {
@@ -18,9 +18,13 @@ impl Service {
         household.ok_or_else(|| HouseholdError::NotSetUp.into())
     }
 
-    /// Change the household. A new zone goes to every feeder: the online
-    /// ones now, the others when they reconnect.
-    pub async fn update_household(&self, patch: HouseholdPatch) -> Result<Household> {
+    /// Change the household, as `caller` (an owner). A new zone goes to
+    /// every feeder: the online ones now, the others when they reconnect.
+    pub async fn update_household(
+        &self,
+        caller: &Caller,
+        patch: HouseholdPatch,
+    ) -> Result<Household> {
         let _one_at_a_time = self.household.lock().await;
         let mut household = self.household().await?;
         if let Some(name) = patch.name {
@@ -45,6 +49,10 @@ impl Service {
         if let Some(zone) = zone {
             self.mirror.set_zone(zone);
         }
+        let action = AuditAction::HouseholdChanged {
+            household: household.clone(),
+        };
+        self.record(caller, action).await;
         Ok(household)
     }
 

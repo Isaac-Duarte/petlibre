@@ -103,9 +103,9 @@ pub(crate) async fn update_user(
 )]
 pub(crate) async fn delete_user(
     State(state): State<AppState>,
-    _: Allowed<need::Users>,
+    Allowed(caller, _): Allowed<need::Users>,
     WithRejection(Path(id), _): UserPath,
 ) -> ApiResult<StatusCode> {
-    state.service.delete_user(id).await?;
+    state.service.delete_user(&caller, id).await?;
     Ok(StatusCode::NO_CONTENT)
 }

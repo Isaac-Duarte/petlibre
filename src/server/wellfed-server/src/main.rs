@@ -11,6 +11,7 @@
 //! `wellfed-server reset-owner` gives a locked-out owner a new temporary
 //! password, straight on the database, and prints it.
 
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -104,7 +105,19 @@ async fn main() -> Result<()> {
 
     let shutdown = CancellationToken::new();
     let hosts = wellfed_server::Hosts::new(settings.hosts.into_iter().map(String::from));
-    let app = wellfed_server::app(service.clone(), shutdown.clone(), hosts);
+    if !settings.trusted_proxies.is_empty() {
+        let proxies: Vec<String> = settings
+            .trusted_proxies
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        tracing::info!(
+            "believing forwarded client addresses and schemes from {}",
+            proxies.join(", ")
+        );
+    }
+    let proxies = wellfed_server::TrustedProxies::new(settings.trusted_proxies);
+    let app = wellfed_server::app(service.clone(), shutdown.clone(), hosts, proxies);
     let listener = tokio::net::TcpListener::bind(settings.listen)
         .await
         .with_context(|| format!("listen on {}", settings.listen))?;
@@ -112,12 +125,17 @@ async fn main() -> Result<()> {
     let jobs = wellfed_server::jobs::spawn(service.clone(), service.clock(), shutdown.clone());
 
     let stop = shutdown.clone();
-    let served = axum::serve(listener, app)
-        .with_graceful_shutdown(async move {
-            stopped().await;
-            stop.cancel();
-        })
-        .await;
+    // Each request knows its connection's address: logins are limited by
+    // the client's.
+    let served = axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(async move {
+        stopped().await;
+        stop.cancel();
+    })
+    .await;
 
     // The jobs stop before the service, so none is cut off by the store
     // closing under it.
@@ -137,7 +155,7 @@ async fn reset_owner(data: &std::path::Path, name: Option<&str>) -> Result<()> {
         .await
         .context("open the database")?;
 
-    let reset = wellfed_service::reset_owner(&store, name, &SystemRandom).await;
+    let reset = wellfed_service::reset_owner(&store, name, &SystemRandom, SystemClock.now()).await;
     store.close().await;
     let (owner, password) = reset.context("reset the owner's password")?;
     println!("{}'s temporary password: {password}", owner.name);

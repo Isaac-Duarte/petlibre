@@ -12,6 +12,7 @@
 //! hold on every request; the expiry job only clears what they would
 //! refuse, so the table does not keep dead sessions.
 
+use std::net::IpAddr;
 use std::sync::OnceLock;
 use std::time::Duration;
 
@@ -19,8 +20,8 @@ use argon2::Argon2;
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use jiff::Timestamp;
 use wellfed_api::{
-    Credentials, Household, PasswordChange, Role, Setup, SetupState, TimeFormat, Units, User,
-    UserId,
+    AuditAction, Credentials, Household, LoginFailure, PasswordChange, Role, Setup, SetupState,
+    TimeFormat, Units, User, UserId,
 };
 use wellfed_formats::hex;
 use wellfed_mirror::Zone;
@@ -134,27 +135,61 @@ impl Service {
 
         self.mirror.set_zone(zone);
         let token = self.open_session(user.id).await?;
+        self.record_as(Some(&user), None, AuditAction::Setup).await;
         Ok((user, token))
     }
 
-    /// Check a name and password and open a session. An unknown name costs
-    /// the same hash as a wrong password, so timing does not reveal names;
-    /// a disabled account is told so only with its right password.
-    pub async fn login(&self, credentials: Credentials) -> Result<(User, SessionToken)> {
-        let login = self.shared.store.login(credentials.name.trim()).await?;
+    /// Check a name and password from the client at `from` and open a
+    /// session. An unknown name costs the same hash as a wrong password, so
+    /// the hash's time does not reveal names; a wrong password for a real
+    /// account also writes its audit row, a difference far inside the
+    /// hash's own jitter at five tries a minute per name. A disabled
+    /// account is told so only with its right password. Failed logins are
+    /// limited per name and per address ([`AccountError::Limited`]).
+    pub async fn login(
+        &self,
+        credentials: Credentials,
+        from: IpAddr,
+    ) -> Result<(User, SessionToken)> {
+        let name = credentials.name.trim();
+        let attempt = self
+            .limits
+            .attempt(name, from, self.shared.clock.now())
+            .map_err(|limited| AccountError::Limited {
+                retry_after: limited.retry_after,
+            })?;
+
+        let login = self.shared.store.login(name).await?;
         let (user, hash) = match login {
             Some(login) => (Some(login.user), login.password_hash),
             None => (None, decoy()?.to_owned()),
         };
-
         let matches = blocking(move || Ok(verify_password(&credentials.password, &hash))).await?;
-        let (Some(user), true) = (user, matches) else {
+
+        let Some(user) = user else {
             return Err(AccountError::BadCredentials.into());
         };
-        if disabled(&user, self.shared.clock.now()) {
-            return Err(AccountError::Disabled.into());
+        let failure = if !matches {
+            Some(LoginFailure::BadPassword)
+        } else if disabled(&user, self.shared.clock.now()) {
+            Some(LoginFailure::Disabled)
+        } else {
+            None
+        };
+        if let Some(reason) = failure {
+            let action = AuditAction::LoginFailed { from, reason };
+            self.record_as(Some(&user), None, action).await;
+            return Err(match reason {
+                LoginFailure::BadPassword => AccountError::BadCredentials,
+                LoginFailure::Disabled => AccountError::Disabled,
+            }
+            .into());
         }
+
+        self.limits.succeeded(attempt, self.shared.clock.now());
         let token = self.open_session(user.id).await?;
+        self.record_as(Some(&user), None, AuditAction::Login { from })
+            .await;
         Ok((user, token))
     }
 
@@ -220,6 +255,11 @@ impl Service {
         store
             .delete_sessions_of(user.id, session.and_then(SessionToken::hash).as_ref())
             .await?;
+        let action = AuditAction::PasswordSet {
+            account: user.id,
+            name: user.name.clone(),
+        };
+        self.record(caller, action).await;
         Ok(())
     }
 

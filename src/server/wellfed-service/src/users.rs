@@ -6,9 +6,10 @@
 //! owner to time either. A disabled account's sessions are ended when it is
 //! extended, so only a new login opens one.
 
-use wellfed_api::{NewUser, Role, User, UserId, UserPatch};
+use jiff::Timestamp;
+use wellfed_api::{AuditAction, NewUser, Role, User, UserId, UserPatch};
 use wellfed_formats::hex;
-use wellfed_store::{Change, Store};
+use wellfed_store::{Change, NewAudit, Store};
 
 use crate::sessions::{self, disabled, hash_password, password, user_name};
 use crate::tokens::session_only;
@@ -48,10 +49,19 @@ impl Service {
             })
             .await;
         match created {
-            Ok(()) => Ok(user),
-            Err(wellfed_store::Error::Duplicate(_)) => Err(AccountError::NameTaken.into()),
-            Err(error) => Err(error.into()),
+            Ok(()) => {}
+            Err(wellfed_store::Error::Duplicate(_)) => return Err(AccountError::NameTaken.into()),
+            Err(error) => return Err(error.into()),
         }
+
+        let action = AuditAction::UserCreated {
+            account: user.id,
+            name: user.name.clone(),
+            role: user.role,
+            expires: user.expires,
+        };
+        self.record(caller, action).await;
+        Ok(user)
     }
 
     /// Change a user's role, expiry or password, as `actor` (an owner)
@@ -67,6 +77,7 @@ impl Service {
         if patch.password.is_some() {
             session_only(actor)?;
         }
+        let caller = actor;
         let actor = &actor.user;
         let current = self.user(id).await?;
         let updated = User {
@@ -101,12 +112,35 @@ impl Service {
         if enabled || reset {
             store.delete_sessions_of(id, keep.as_ref()).await?;
         }
+
+        let (account, name) = (updated.id, updated.name.clone());
+        if (updated.role, updated.expires) != (current.role, current.expires) {
+            let action = AuditAction::UserChanged {
+                account,
+                name: name.clone(),
+                role: updated.role,
+                expires: updated.expires,
+            };
+            self.record(caller, action).await;
+        }
+        if reset {
+            self.record(caller, AuditAction::PasswordSet { account, name })
+                .await;
+        }
         Ok(updated)
     }
 
-    /// Delete a user and end their sessions.
-    pub async fn delete_user(&self, id: UserId) -> Result<()> {
-        changed(self.shared.store.delete_user(id).await?)
+    /// Delete a user and end their sessions, as `caller` (an owner).
+    pub async fn delete_user(&self, caller: &Caller, id: UserId) -> Result<()> {
+        let user = self.user(id).await?;
+        changed(self.shared.store.delete_user(id).await?)?;
+
+        let action = AuditAction::UserDeleted {
+            account: id,
+            name: user.name,
+        };
+        self.record(caller, action).await;
+        Ok(())
     }
 
     async fn user(&self, id: UserId) -> Result<User> {
@@ -117,11 +151,13 @@ impl Service {
 
 /// Give a locked-out owner a new temporary password, straight on the
 /// database (`wellfed-server reset-owner`), and end their sessions. The
-/// owner is `name`, or the only owner when it is `None`.
+/// owner is `name`, or the only owner when it is `None`. The audit log
+/// records it at `now`, as the host's.
 pub async fn reset_owner(
     store: &Store,
     name: Option<&str>,
     random: &dyn Random,
+    now: Timestamp,
 ) -> Result<(User, String)> {
     let users = store.users().await?;
     let owner = match name {
@@ -155,10 +191,28 @@ pub async fn reset_owner(
         return Err(AccountError::NotFound.into());
     }
     store.delete_sessions_of(owner.id, None).await?;
+    let action = AuditAction::PasswordSet {
+        account: owner.id,
+        name: owner.name.clone(),
+    };
+    let recorded = store
+        .record_audit(NewAudit {
+            at: now,
+            user: None,
+            user_name: None,
+            token: None,
+            action: &action,
+        })
+        .await;
+    // The password is set: losing it to a failed audit write would leave
+    // the owner locked out with no way to learn it.
+    if let Err(failure) = recorded {
+        tracing::error!(%failure, "the reset was made but not recorded in the audit log");
+    }
     Ok((owner, password))
 }
 
-fn owner_never_expires(role: Role, expires: Option<jiff::Timestamp>) -> Result<()> {
+fn owner_never_expires(role: Role, expires: Option<Timestamp>) -> Result<()> {
     if role == Role::Owner && expires.is_some() {
         return Err(Invalid::OwnerExpires.into());
     }

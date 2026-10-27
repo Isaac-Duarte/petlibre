@@ -1,0 +1,278 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT audit.seq, audit.at_ms, audit.user_id AS \"user_id: Uuid\", audit.user_name,\n                      audit.token_id AS \"token_id: Uuid\", audit.action,\n                      commands.seq AS \"c_seq?\", commands.key AS \"c_key?\",\n                      commands.user_id AS \"c_user?: Uuid\", commands.token_id AS \"c_token?: Uuid\",\n                      commands.feeder_id AS \"c_feeder?: Uuid\", commands.kind AS \"c_kind?\",\n                      commands.body_hash AS \"c_body_hash?\", commands.request_id AS \"c_request_id?\",\n                      commands.boot_count AS \"c_boot_count?\",\n                      commands.history_epoch AS \"c_history_epoch?\",\n                      commands.history_seq AS \"c_history_seq?\", commands.state AS \"c_state?\",\n                      commands.outcome AS \"c_outcome?\", commands.feed AS \"c_feed?\",\n                      commands.sent_ms AS \"c_sent_ms?\", commands.updated_ms AS \"c_updated_ms?\"\n               FROM audit LEFT JOIN commands ON commands.seq = audit.command_seq\n               WHERE (?1 IS NULL OR audit.user_id = ?1) AND audit.seq > ?2\n               ORDER BY audit.seq LIMIT ?3",
+  "describe": {
+    "columns": [
+      {
+        "name": "seq",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "audit",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "name": "at_ms",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "audit",
+            "name": "at_ms"
+          }
+        }
+      },
+      {
+        "name": "user_id: Uuid",
+        "ordinal": 2,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "audit",
+            "name": "user_id"
+          }
+        }
+      },
+      {
+        "name": "user_name",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "audit",
+            "name": "user_name"
+          }
+        }
+      },
+      {
+        "name": "token_id: Uuid",
+        "ordinal": 4,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "audit",
+            "name": "token_id"
+          }
+        }
+      },
+      {
+        "name": "action",
+        "ordinal": 5,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "audit",
+            "name": "action"
+          }
+        }
+      },
+      {
+        "name": "c_seq?",
+        "ordinal": 6,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "commands",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "name": "c_key?",
+        "ordinal": 7,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "commands",
+            "name": "key"
+          }
+        }
+      },
+      {
+        "name": "c_user?: Uuid",
+        "ordinal": 8,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "commands",
+            "name": "user_id"
+          }
+        }
+      },
+      {
+        "name": "c_token?: Uuid",
+        "ordinal": 9,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "commands",
+            "name": "token_id"
+          }
+        }
+      },
+      {
+        "name": "c_feeder?: Uuid",
+        "ordinal": 10,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "commands",
+            "name": "feeder_id"
+          }
+        }
+      },
+      {
+        "name": "c_kind?",
+        "ordinal": 11,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "commands",
+            "name": "kind"
+          }
+        }
+      },
+      {
+        "name": "c_body_hash?",
+        "ordinal": 12,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "commands",
+            "name": "body_hash"
+          }
+        }
+      },
+      {
+        "name": "c_request_id?",
+        "ordinal": 13,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "commands",
+            "name": "request_id"
+          }
+        }
+      },
+      {
+        "name": "c_boot_count?",
+        "ordinal": 14,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "commands",
+            "name": "boot_count"
+          }
+        }
+      },
+      {
+        "name": "c_history_epoch?",
+        "ordinal": 15,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "commands",
+            "name": "history_epoch"
+          }
+        }
+      },
+      {
+        "name": "c_history_seq?",
+        "ordinal": 16,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "commands",
+            "name": "history_seq"
+          }
+        }
+      },
+      {
+        "name": "c_state?",
+        "ordinal": 17,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "commands",
+            "name": "state"
+          }
+        }
+      },
+      {
+        "name": "c_outcome?",
+        "ordinal": 18,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "commands",
+            "name": "outcome"
+          }
+        }
+      },
+      {
+        "name": "c_feed?",
+        "ordinal": 19,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "commands",
+            "name": "feed"
+          }
+        }
+      },
+      {
+        "name": "c_sent_ms?",
+        "ordinal": 20,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "commands",
+            "name": "sent_ms"
+          }
+        }
+      },
+      {
+        "name": "c_updated_ms?",
+        "ordinal": 21,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "commands",
+            "name": "updated_ms"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "06b0d061247da7775efc7eb3994ab8964deb608ea9837a846cc8a9b6b3a2db93"
+}

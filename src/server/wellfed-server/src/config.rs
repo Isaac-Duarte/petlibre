@@ -11,12 +11,14 @@
 //! to them. Values are checked while the file is read, so a bad one is
 //! refused with its key's path and its line, not later by whatever uses it.
 
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{Ipv4Addr, SocketAddr};
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use serde::Deserialize;
+
+pub use crate::proxy::ProxyRange;
 
 mod releases;
 
@@ -90,9 +92,10 @@ pub struct ServerConfig {
     /// The label the server enrolls under on each feeder.
     pub label: Label,
     pub discovery: Discovery,
-    /// Reverse proxies whose `X-Forwarded-*` headers are believed. None by
-    /// default: a request's scheme and address are its own connection's.
-    pub trusted_proxies: Vec<IpAddr>,
+    /// Reverse proxies whose forwarded headers are believed: addresses or
+    /// CIDR ranges. None by default: a request's scheme and address are
+    /// its own connection's.
+    pub trusted_proxies: Vec<ProxyRange>,
     pub retention: Retention,
     pub releases: Releases,
     pub backups: Backups,
@@ -252,15 +255,15 @@ pub struct Overrides {
     /// counts a set variable as given and would refuse the pair.
     #[arg(long)]
     pub no_discovery: bool,
-    /// A reverse proxy whose forwarded headers are believed
-    /// (`trusted_proxies`). Repeat for more.
+    /// A reverse proxy whose forwarded headers are believed, as an address
+    /// or a CIDR range (`trusted_proxies`). Repeat for more.
     #[arg(
         long = "trusted-proxy",
         env = "WELLFED_SERVER_TRUSTED_PROXIES",
         value_delimiter = ',',
-        value_name = "ADDRESS"
+        value_name = "ADDRESS[/BITS]"
     )]
-    pub trusted_proxies: Vec<IpAddr>,
+    pub trusted_proxies: Vec<ProxyRange>,
     /// Days raw samples are kept (`retention.raw_sample_days`; default
     /// forever).
     #[arg(long, env = "WELLFED_SERVER_RAW_SAMPLE_DAYS")]
@@ -280,7 +283,7 @@ struct File {
     hosts: Option<Vec<HostName>>,
     label: Option<Label>,
     discovery: Option<Discovery>,
-    trusted_proxies: Option<Vec<IpAddr>>,
+    trusted_proxies: Option<Vec<ProxyRange>>,
     #[serde(default)]
     retention: RetentionFile,
     #[serde(default)]

@@ -101,6 +101,9 @@ pub enum AccountError {
     SetupClosed,
     #[error("wrong name or password")]
     BadCredentials,
+    #[error("too many failed logins: try again in {} s", retry_after.as_secs())]
+    /// `retry_after` is whole seconds.
+    Limited { retry_after: std::time::Duration },
     #[error("the account is past its expiry: an owner can extend it")]
     Disabled,
     #[error("no such user")]

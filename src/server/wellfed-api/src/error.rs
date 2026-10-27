@@ -15,6 +15,10 @@ pub enum ErrorCode {
     /// No valid session or token.
     Unauthenticated,
     BadCredentials,
+    /// Too many failed logins for this name or from this address (5 a
+    /// minute per name, 20 per address). `Retry-After` says when the next
+    /// is taken. No account is locked, and sessions and tokens carry on.
+    LoginLimited,
     /// The account is past its expiry: it cannot log in and its sessions
     /// stop, until an owner extends or deletes it.
     AccountDisabled,

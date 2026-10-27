@@ -9,6 +9,67 @@
     "version": "0.1.0"
   },
   "paths": {
+    "/api/v1/audit": {
+      "get": {
+        "tags": [
+          "audit"
+        ],
+        "summary": "Who did what through the server, oldest first: every write sent to a\nfeeder (with its state and outcome as they stand) and every account\nchange, logins and failed logins included. The caller's own entries,\nor everyone's for an owner.",
+        "operationId": "audit",
+        "parameters": [
+          {
+            "name": "after",
+            "in": "query",
+            "description": "The previous page's `next`, as it came.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "At most this many (1-1000, default 100).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid: a bad limit or cursor",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/backups": {
       "get": {
         "tags": [
@@ -2639,7 +2700,7 @@
         "tags": [
           "auth"
         ],
-        "summary": "Log in. The session lasts 30 days from its last use.",
+        "summary": "Log in. The session lasts 30 days from its last use. Failed logins are\nlimited to 5 a minute per name and 20 a minute per address; no account\nis ever locked.",
         "operationId": "login",
         "requestBody": {
           "content": {
@@ -2653,7 +2714,7 @@
         },
         "responses": {
           "200": {
-            "description": "The session cookie is set",
+            "description": "The session cookie is set, `Secure` behind a trusted HTTPS proxy",
             "content": {
               "application/json": {
                 "schema": {
@@ -2674,6 +2735,26 @@
           },
           "403": {
             "description": "account_disabled: past its expiry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "login_limited: too many failed logins for the name or from the address",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer",
+                  "format": "int64",
+                  "minimum": 0
+                },
+                "description": "Seconds until the next login is taken"
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -3344,6 +3425,340 @@
           }
         }
       },
+      "AuditAction": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "A write sent to a feeder, as the journal holds it now: its state\nand outcome follow it until it settles.",
+            "required": [
+              "command",
+              "kind"
+            ],
+            "properties": {
+              "command": {
+                "$ref": "#/components/schemas/Command"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "command"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The first owner and the household were made.",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "setup"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A login from `from`, the client's address.",
+            "required": [
+              "from",
+              "kind"
+            ],
+            "properties": {
+              "from": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "login"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A login with this account's name that failed. A login refused by\nthe limits before its password was checked is not recorded.",
+            "required": [
+              "from",
+              "reason",
+              "kind"
+            ],
+            "properties": {
+              "from": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "login_failed"
+                ]
+              },
+              "reason": {
+                "$ref": "#/components/schemas/LoginFailure"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "account",
+              "name",
+              "role",
+              "kind"
+            ],
+            "properties": {
+              "account": {
+                "$ref": "#/components/schemas/UserId"
+              },
+              "expires": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "user_created"
+                ]
+              },
+              "name": {
+                "type": "string"
+              },
+              "role": {
+                "$ref": "#/components/schemas/Role"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A role or expiry changed.",
+            "required": [
+              "account",
+              "name",
+              "role",
+              "kind"
+            ],
+            "properties": {
+              "account": {
+                "$ref": "#/components/schemas/UserId"
+              },
+              "expires": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "user_changed"
+                ]
+              },
+              "name": {
+                "type": "string"
+              },
+              "role": {
+                "$ref": "#/components/schemas/Role"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A password set: the user's own, or an owner's temporary one for\nthem, or the host's `reset-owner`.",
+            "required": [
+              "account",
+              "name",
+              "kind"
+            ],
+            "properties": {
+              "account": {
+                "$ref": "#/components/schemas/UserId"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "password_set"
+                ]
+              },
+              "name": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "account",
+              "name",
+              "kind"
+            ],
+            "properties": {
+              "account": {
+                "$ref": "#/components/schemas/UserId"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "user_deleted"
+                ]
+              },
+              "name": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A token made for `account` (always the caller's own), named\n`token_name` for its device.",
+            "required": [
+              "token",
+              "account",
+              "token_name",
+              "kind"
+            ],
+            "properties": {
+              "account": {
+                "$ref": "#/components/schemas/UserId"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "token_created"
+                ]
+              },
+              "token": {
+                "$ref": "#/components/schemas/TokenId"
+              },
+              "token_name": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "token",
+              "account",
+              "token_name",
+              "kind"
+            ],
+            "properties": {
+              "account": {
+                "$ref": "#/components/schemas/UserId"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "token_revoked"
+                ]
+              },
+              "token": {
+                "$ref": "#/components/schemas/TokenId"
+              },
+              "token_name": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The household's settings, as they now stand.",
+            "required": [
+              "household",
+              "kind"
+            ],
+            "properties": {
+              "household": {
+                "$ref": "#/components/schemas/Household"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "household_changed"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "What happened. A change names the account it changed (`account`, with\nits `name`) and its new values."
+      },
+      "AuditEntry": {
+        "type": "object",
+        "description": "One thing that happened.",
+        "required": [
+          "at",
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/AuditAction"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When it happened; for a command, when it was recorded, before it\nwas sent."
+          },
+          "token": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TokenId",
+                "description": "The token it came through; `None` for a browser session."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "user": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/UserId",
+                "description": "Who did it. `None` only for a password the host's `reset-owner`\nset."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "user_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Their name when it happened, kept after the account is deleted."
+          }
+        }
+      },
+      "AuditPage": {
+        "type": "object",
+        "description": "A page of the log, oldest first.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AuditEntry"
+            }
+          },
+          "next": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The `after` for the next page; `None` at the end."
+          }
+        }
+      },
       "Backup": {
         "type": "object",
         "description": "One copy of the database.",
@@ -3838,6 +4253,7 @@
           "setup_closed",
           "unauthenticated",
           "bad_credentials",
+          "login_limited",
           "account_disabled",
           "forbidden",
           "session_required",
@@ -5169,6 +5585,14 @@
             "type": "boolean"
           }
         }
+      },
+      "LoginFailure": {
+        "type": "string",
+        "description": "Why a login failed after its password was checked.",
+        "enum": [
+          "bad_password",
+          "disabled"
+        ]
       },
       "NewFood": {
         "type": "object",
@@ -6755,6 +7179,10 @@
     {
       "name": "commands",
       "description": "The command journal: every write sent through the server"
+    },
+    {
+      "name": "audit",
+      "description": "Who did what through the server: the journal and account changes"
     },
     {
       "name": "releases",

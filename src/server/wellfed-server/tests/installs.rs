@@ -277,7 +277,9 @@ fn a_feeder_adopted_for_the_server_role_is_refused() {
         let rig = Rig::start(ClientRole::Server).await;
 
         match rig.http.install(rig.feeder, rig.release.id).await {
-            Err(Error::Problem { status, problem }) => {
+            Err(Error::Problem {
+                status, problem, ..
+            }) => {
                 assert_eq!(status, StatusCode::CONFLICT);
                 assert_eq!(problem.code, ErrorCode::FeederRefused);
                 assert_eq!(problem.refusal, Some(FeederRefusal::Forbidden));

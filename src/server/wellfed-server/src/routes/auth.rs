@@ -10,6 +10,7 @@ use wellfed_api::{Credentials, PasswordChange, Problem, Setup, SetupState, User}
 use super::{ApiResult, JsonBody, TAG_AUTH, insert};
 use crate::AppState;
 use crate::auth::{self, Allowed, Auth, need};
+use crate::proxy::Remote;
 
 /// Whether a fresh server is waiting for its first owner, and the host's
 /// zone, which the setup page offers as the household's.
@@ -34,10 +35,11 @@ pub(crate) async fn setup_state(State(state): State<AppState>) -> ApiResult<Json
 )]
 pub(crate) async fn setup(
     State(state): State<AppState>,
+    remote: Remote,
     WithRejection(Json(setup), _): JsonBody<Setup>,
 ) -> ApiResult<Response> {
     let (user, token) = state.service.setup(setup).await?;
-    let cookie = auth::session_cookie(&token);
+    let cookie = auth::session_cookie(&token, remote.scheme);
     Ok(with_cookie(StatusCode::CREATED, &cookie, user))
 }
 
@@ -56,24 +58,29 @@ pub(crate) async fn session(Auth(caller): Auth) -> Json<User> {
     Json(caller.user)
 }
 
-/// Log in. The session lasts 30 days from its last use.
+/// Log in. The session lasts 30 days from its last use. Failed logins are
+/// limited to 5 a minute per name and 20 a minute per address; no account
+/// is ever locked.
 #[utoipa::path(
     post,
     path = "/session",
     tag = TAG_AUTH,
     request_body = Credentials,
     responses(
-        (status = 200, body = User, description = "The session cookie is set"),
+        (status = 200, body = User, description = "The session cookie is set, `Secure` behind a trusted HTTPS proxy"),
         (status = 401, body = Problem, description = "bad_credentials"),
         (status = 403, body = Problem, description = "account_disabled: past its expiry"),
+        (status = 429, body = Problem, description = "login_limited: too many failed logins for the name or from the address",
+            headers(("Retry-After" = u64, description = "Seconds until the next login is taken"))),
     ),
 )]
 pub(crate) async fn login(
     State(state): State<AppState>,
+    remote: Remote,
     WithRejection(Json(credentials), _): JsonBody<Credentials>,
 ) -> ApiResult<Response> {
-    let (user, token) = state.service.login(credentials).await?;
-    let cookie = auth::session_cookie(&token);
+    let (user, token) = state.service.login(credentials, remote.address).await?;
+    let cookie = auth::session_cookie(&token, remote.scheme);
     Ok(with_cookie(StatusCode::OK, &cookie, user))
 }
 
@@ -110,6 +117,7 @@ pub(crate) async fn change_password(
 #[utoipa::path(delete, path = "/session", tag = TAG_AUTH, responses((status = 204)))]
 pub(crate) async fn logout(
     State(state): State<AppState>,
+    remote: Remote,
     headers: HeaderMap,
 ) -> ApiResult<Response> {
     if let Some(token) = auth::session(&headers) {
@@ -117,7 +125,8 @@ pub(crate) async fn logout(
     }
 
     let mut response = StatusCode::NO_CONTENT.into_response();
-    insert(&mut response, header::SET_COOKIE, &auth::cleared_cookie());
+    let cleared = auth::cleared_cookie(remote.scheme);
+    insert(&mut response, header::SET_COOKIE, &cleared);
     Ok(response)
 }
 

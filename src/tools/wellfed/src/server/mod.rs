@@ -217,7 +217,9 @@ impl Output {
         }
 
         match client {
-            Error::Problem { status, problem } => anyhow!("{}", refusal(*status, problem)),
+            Error::Problem {
+                status, problem, ..
+            } => anyhow!("{}", refusal(*status, problem)),
             _ => error,
         }
     }
@@ -295,6 +297,7 @@ mod tests {
                 refusal: None,
                 release: None,
             }),
+            retry_after: None,
         }
     }
 

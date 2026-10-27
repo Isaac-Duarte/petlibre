@@ -21,6 +21,7 @@
 //! [API design]: ../../../../docs/api/README.md
 #![forbid(unsafe_code)]
 
+mod audit;
 mod auth;
 mod backups;
 mod commands;
@@ -175,10 +176,17 @@ pub async fn expect_status(response: Response, expected: StatusCode) -> Result<R
     }
 
     if is_problem(&response) {
+        let retry_after = response
+            .headers()
+            .get(header::RETRY_AFTER)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|seconds| seconds.trim().parse().ok())
+            .map(Duration::from_secs);
         let problem: Problem = serde_json::from_slice(&response.bytes().await?)?;
         return Err(Error::Problem {
             status,
             problem: Box::new(problem),
+            retry_after,
         });
     }
     Err(Error::Unexpected { status, expected })

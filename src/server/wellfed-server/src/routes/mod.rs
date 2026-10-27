@@ -2,6 +2,7 @@
 //! Each parses, authorizes, calls one service method and maps the result;
 //! the OpenAPI document comes from their annotations.
 
+pub(crate) mod audit;
 pub(crate) mod auth;
 pub(crate) mod backups;
 pub(crate) mod commands;
@@ -32,6 +33,7 @@ pub(crate) const TAG_AUTH: &str = "auth";
 pub(crate) const TAG_FEEDERS: &str = "feeders";
 pub(crate) const TAG_HEALTH: &str = "health";
 pub(crate) const TAG_COMMANDS: &str = "commands";
+pub(crate) const TAG_AUDIT: &str = "audit";
 pub(crate) const TAG_HOUSEHOLD: &str = "household";
 pub(crate) const TAG_USERS: &str = "users";
 pub(crate) const TAG_RELEASES: &str = "releases";

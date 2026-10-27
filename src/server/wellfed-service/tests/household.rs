@@ -8,7 +8,7 @@ use wellfed_server_testkit::feeder::{self, Flash, Running, open_owner};
 use std::time::Duration;
 
 use wellfed_server_testkit::{TestService, ZONE, ada_setup, config, local, until};
-use wellfed_service::{Error, HouseholdError, Invalid, ZoneError};
+use wellfed_service::{Caller, Error, HouseholdError, Invalid, ZoneError};
 
 const BERLIN: &str = "CET-1CEST,M3.5.0,M10.5.0/3";
 const DENVER: &str = "MST7MDT,M3.2.0,M11.1.0";
@@ -22,6 +22,11 @@ async fn feeder_zone(sim: &Running) -> Option<String> {
         panic!("{answer:?}");
     };
     view.zone
+}
+
+/// The owner, changing the household.
+fn owner() -> Caller {
+    wellfed_server_testkit::ada().into()
 }
 
 /// A request id no other request of the owner's used, so a write's
@@ -74,7 +79,7 @@ fn setup_makes_the_household_and_an_owner_changes_it() {
             time_format: Some(TimeFormat::H12),
             zone: Some("america/denver".into()),
         };
-        let changed = service.update_household(patch).await.unwrap();
+        let changed = service.update_household(&owner(), patch).await.unwrap();
         assert_eq!(changed.name, "Lovelace");
         assert_eq!(changed.zone, "America/Denver", "the canonical name");
         assert_eq!(service.household().await.unwrap(), changed);
@@ -84,7 +89,7 @@ fn setup_makes_the_household_and_an_owner_changes_it() {
             ..HouseholdPatch::default()
         };
         assert!(matches!(
-            service.update_household(unnamed).await,
+            service.update_household(&owner(), unnamed).await,
             Err(Error::Invalid(Invalid::HouseholdName))
         ));
         server.shutdown().await;
@@ -109,7 +114,7 @@ fn an_unknown_zone_is_refused_by_name() {
             ..HouseholdPatch::default()
         };
         assert!(matches!(
-            service.update_household(unknown).await,
+            service.update_household(&owner(), unknown).await,
             Err(Error::Household(HouseholdError::Zone(ZoneError::Unknown(
                 _
             ))))
@@ -133,7 +138,11 @@ fn every_feeder_keeps_the_households_zone_and_a_change_reaches_it() {
             zone: Some("America/Denver".into()),
             ..HouseholdPatch::default()
         };
-        server.service().update_household(denver).await.unwrap();
+        server
+            .service()
+            .update_household(&owner(), denver)
+            .await
+            .unwrap();
         holds(&sim, DENVER).await;
 
         server.shutdown().await;
@@ -157,7 +166,11 @@ fn a_feeder_offline_at_the_change_gets_the_zone_when_it_returns() {
             zone: Some("America/Denver".into()),
             ..HouseholdPatch::default()
         };
-        server.service().update_household(denver).await.unwrap();
+        server
+            .service()
+            .update_household(&owner(), denver)
+            .await
+            .unwrap();
 
         let sim = feeder::restart(&flash, address).await;
         server.link(id, Link::Online).await;
@@ -221,7 +234,11 @@ fn the_zone_is_kept_across_a_server_restart() {
             zone: Some("America/Denver".into()),
             ..HouseholdPatch::default()
         };
-        server.service().update_household(denver).await.unwrap();
+        server
+            .service()
+            .update_household(&owner(), denver)
+            .await
+            .unwrap();
         holds(&sim, DENVER).await;
         let store = server.stop().await;
 

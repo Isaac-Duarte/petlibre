@@ -12,6 +12,7 @@
 //! [API design]: ../../../../docs/api/README.md
 #![forbid(unsafe_code)]
 
+mod audit;
 mod auth;
 mod backups;
 mod commands;
@@ -35,6 +36,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
+pub use audit::{AuditAction, AuditEntry, AuditPage, LoginFailure};
 pub use auth::{Credentials, PasswordChange, Role, Setup, SetupState, User};
 pub use backups::{Backup, BackupPage};
 pub use commands::{

@@ -9,7 +9,10 @@
 //!   last use, and an account past its expiry is disabled. A phone or the
 //!   CLI authenticates with a bearer token instead: its user's, with no
 //!   role of its own, so a [`Caller`] is a user and the token they came
-//!   through.
+//!   through. Failed logins are limited per name and per address, and
+//!   never lock an account.
+//! - **The audit log** is the command journal and the account changes,
+//!   each user's own or everyone's for an owner.
 //! - **The household** holds the zone every feeder keeps, as a POSIX rule
 //!   the mirror gives each one.
 //! - **Feeders** are adopted by redeeming an invite with a key the server
@@ -52,6 +55,7 @@
 //! [API design]: ../../../../docs/api/README.md
 #![forbid(unsafe_code)]
 
+mod audit;
 mod backups;
 mod commands;
 mod error;
@@ -65,6 +69,7 @@ mod installs;
 mod jobs;
 mod journal;
 mod keys;
+mod limits;
 mod page;
 mod permissions;
 mod pets;
@@ -245,6 +250,8 @@ pub struct Service {
     backing_up: Arc<tokio::sync::Mutex<()>>,
     /// The one install the server runs at a time.
     installing: installs::Slot,
+    /// Failed logins per name and per address.
+    limits: Arc<limits::Limits>,
     cancel: CancellationToken,
     tasks: TaskTracker,
 }
@@ -297,6 +304,7 @@ impl Service {
             household: Arc::new(tokio::sync::Mutex::new(())),
             backing_up: Arc::new(tokio::sync::Mutex::new(())),
             installing: installs::Slot::default(),
+            limits: Arc::new(limits::Limits::default()),
             cancel,
             tasks: TaskTracker::new(),
         };

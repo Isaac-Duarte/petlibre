@@ -17,13 +17,17 @@ mod error;
 mod extract;
 pub mod jobs;
 pub mod key;
+mod proxy;
 mod request_id;
 mod routes;
+
+use std::sync::Arc;
 
 pub use auth::Hosts;
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use wellfed_service::{RELEASE_MAX, Service};
+pub use proxy::{ProxyRange, TrustedProxies};
 use tokio_util::sync::CancellationToken;
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
@@ -42,6 +46,8 @@ pub(crate) struct AppState {
     /// Ends every open event stream.
     shutdown: CancellationToken,
     hosts: Hosts,
+    /// Whose forwarded headers name the client and its scheme.
+    proxies: Arc<TrustedProxies>,
 }
 
 #[derive(OpenApi)]
@@ -59,6 +65,7 @@ pub(crate) struct AppState {
         (name = routes::TAG_FEEDERS, description = "Adopted feeders, their settings, lock, feeds and history"),
         (name = routes::TAG_HEALTH, description = "Liveness for anyone, readiness for an owner"),
         (name = routes::TAG_COMMANDS, description = "The command journal: every write sent through the server"),
+        (name = routes::TAG_AUDIT, description = "Who did what through the server: the journal and account changes"),
         (name = routes::TAG_RELEASES, description = "Verified releases kept for installs: fetched or uploaded"),
         (name = routes::TAG_PETS, description = "Pets, their weight logs and the feeders that serve them"),
         (name = routes::TAG_FOODS, description = "Foods, the food each feeder serves over time, and refills"),
@@ -69,8 +76,8 @@ struct ApiDoc;
 
 fn router() -> OpenApiRouter<AppState> {
     use routes::{
-        auth, backups, commands, events, feeders, feeds, foods, health, household, installs, pets,
-        releases, samples, stream, tokens, users,
+        audit, auth, backups, commands, events, feeders, feeds, foods, health, household, installs,
+        pets, releases, samples, stream, tokens, users,
     };
 
     let small = OpenApiRouter::new()
@@ -97,6 +104,7 @@ fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(samples::samples))
         .routes(routes!(commands::commands))
         .routes(routes!(commands::command))
+        .routes(routes!(audit::audit))
         .routes(routes!(stream::stream))
         .routes(routes!(health::status))
         .routes(routes!(releases::releases))
@@ -124,13 +132,24 @@ fn router() -> OpenApiRouter<AppState> {
 }
 
 /// The API, serving `service` under any IP address, `localhost` and
-/// `hosts`. Cancelling `shutdown` ends the open event streams, so a
-/// graceful shutdown can finish.
-pub fn app(service: Service, shutdown: CancellationToken, hosts: Hosts) -> Router {
+/// `hosts`, and believing the forwarded headers of `proxies` alone.
+/// Cancelling `shutdown` ends the open event streams, so a graceful
+/// shutdown can finish.
+///
+/// Serve it with its connections' addresses
+/// (`into_make_service_with_connect_info::<SocketAddr>`): a login is
+/// limited by its client's address, and refused without one.
+pub fn app(
+    service: Service,
+    shutdown: CancellationToken,
+    hosts: Hosts,
+    proxies: TrustedProxies,
+) -> Router {
     let state = AppState {
         service,
         shutdown,
         hosts,
+        proxies: Arc::new(proxies),
     };
     let (router, _) = router().split_for_parts();
 

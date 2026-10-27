@@ -39,8 +39,8 @@ pub(crate) async fn household(
 )]
 pub(crate) async fn update_household(
     State(state): State<AppState>,
-    _: Allowed<need::Household>,
+    Allowed(caller, _): Allowed<need::Household>,
     WithRejection(Json(patch), _): JsonBody<HouseholdPatch>,
 ) -> ApiResult<Json<Household>> {
-    Ok(Json(state.service.update_household(patch).await?))
+    Ok(Json(state.service.update_household(&caller, patch).await?))
 }

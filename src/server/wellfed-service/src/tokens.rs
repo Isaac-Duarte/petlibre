@@ -16,7 +16,7 @@
 //! revoking a leaked token is enough: it cannot have made other tokens,
 //! nor a password or an account to log in with and make them.
 
-use wellfed_api::{CreatedToken, NewToken, Token, TokenId, User};
+use wellfed_api::{AuditAction, CreatedToken, NewToken, Token, TokenId, User};
 use wellfed_formats::hex;
 use sha2::{Digest, Sha256};
 
@@ -152,6 +152,13 @@ impl Service {
                 expires: token.expires,
             })
             .await?;
+
+        let action = AuditAction::TokenCreated {
+            token: token.id,
+            account: token.user,
+            token_name: token.name.clone(),
+        };
+        self.record(caller, action).await;
         Ok(CreatedToken {
             token,
             secret: format!("{PREFIX}{}", hex::encode(&secret)),
@@ -164,15 +171,26 @@ impl Service {
         Ok(self.shared.store.tokens(whose).await?)
     }
 
-    /// Revoke a token: the user's own, or anyone's for an owner. Another
-    /// user's is not found, so a member learns nothing of it.
-    pub async fn revoke_token(&self, user: &User, id: TokenId) -> Result<()> {
+    /// Revoke a token: the caller's own, or anyone's for an owner.
+    /// Another user's is not found, so a member learns nothing of it.
+    pub async fn revoke_token(&self, caller: &Caller, id: TokenId) -> Result<()> {
+        let user = &caller.user;
         let token = self.shared.store.token(id).await?;
-        let theirs =
-            token.is_some_and(|token| token.user == user.id || can(user.role, Permission::Users));
-        if !theirs || !self.shared.store.delete_token(id).await? {
+        let Some(token) =
+            token.filter(|token| token.user == user.id || can(user.role, Permission::Users))
+        else {
+            return Err(TokenError::NotFound.into());
+        };
+        if !self.shared.store.delete_token(id).await? {
             return Err(TokenError::NotFound.into());
         }
+
+        let action = AuditAction::TokenRevoked {
+            token: id,
+            account: token.user,
+            token_name: token.name,
+        };
+        self.record(caller, action).await;
         Ok(())
     }
 }

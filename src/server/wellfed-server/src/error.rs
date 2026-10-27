@@ -60,6 +60,12 @@ impl IntoResponse for ApiError {
             Self::Service(Error::Release(release)) => release.refusal(),
             _ => None,
         };
+        let retry_after = match &self {
+            Self::Service(Error::Account(AccountError::Limited { retry_after })) => {
+                Some(retry_after.as_secs())
+            }
+            _ => None,
+        };
         let (code, detail, refusal) = match self {
             Self::Code(code, detail) => (code, detail, None),
             Self::Service(Error::Command(CommandError::Stale(settings))) => return stale(settings),
@@ -76,10 +82,14 @@ impl IntoResponse for ApiError {
             release,
         };
         let mut response = (status, Json(problem)).into_response();
-        response.headers_mut().insert(
+        let headers = response.headers_mut();
+        headers.insert(
             header::CONTENT_TYPE,
             HeaderValue::from_static("application/problem+json"),
         );
+        if let Some(seconds) = retry_after {
+            headers.insert(header::RETRY_AFTER, HeaderValue::from(seconds));
+        }
         response
     }
 }
@@ -101,6 +111,7 @@ fn service(error: &Error) -> (ErrorCode, Option<String>, Option<FeederRefusal>) 
         Error::Account(account) => match account {
             AccountError::SetupClosed => ErrorCode::SetupClosed,
             AccountError::BadCredentials => ErrorCode::BadCredentials,
+            AccountError::Limited { .. } => ErrorCode::LoginLimited,
             AccountError::Disabled => ErrorCode::AccountDisabled,
             AccountError::NotFound => ErrorCode::NotFound,
             AccountError::NameTaken => ErrorCode::NameTaken,
@@ -226,6 +237,7 @@ fn status(code: ErrorCode) -> StatusCode {
         | ErrorCode::FoodInUse
         | ErrorCode::NoCurrentFood => StatusCode::CONFLICT,
         ErrorCode::Unauthenticated | ErrorCode::BadCredentials => StatusCode::UNAUTHORIZED,
+        ErrorCode::LoginLimited => StatusCode::TOO_MANY_REQUESTS,
         ErrorCode::Forbidden
         | ErrorCode::SessionRequired
         | ErrorCode::CrossOrigin

@@ -29,6 +29,7 @@ mod service;
 
 use std::fmt::Debug;
 use std::future::Future;
+use std::net::{IpAddr, Ipv4Addr};
 use std::time::Duration;
 
 use wellfed_api::{Credentials, ErrorCode, Role, Setup, User, UserId};
@@ -92,6 +93,9 @@ pub fn ada_setup() -> Setup {
     }
 }
 
+/// The address a service test logs in from.
+pub const HERE: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
+
 /// The household's zone at setup.
 pub const ZONE: &str = "Europe/Berlin";
 
@@ -128,6 +132,7 @@ pub fn refused_for<T: Debug>(
         Err(wellfed_server_client::Error::Problem {
             status: got,
             problem,
+            ..
         }) => {
             assert_eq!(
                 (got, problem.code),

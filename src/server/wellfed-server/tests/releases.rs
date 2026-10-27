@@ -39,7 +39,9 @@ async fn owner(server: &TestServer) -> Client {
 #[track_caller]
 fn refused_as(result: Result<Uploaded, Error>, want: ReleaseRefusal) {
     match result {
-        Err(Error::Problem { status, problem }) => {
+        Err(Error::Problem {
+            status, problem, ..
+        }) => {
             assert_eq!(
                 (status, problem.code, problem.release),
                 (

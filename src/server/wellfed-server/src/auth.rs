@@ -35,6 +35,7 @@ use wellfed_service::{BearerToken, Caller, Permission, SessionToken, can};
 
 use crate::AppState;
 use crate::error::ApiError;
+use crate::proxy::Scheme;
 
 /// What a request authenticates with.
 pub(crate) enum Credential {
@@ -146,19 +147,31 @@ pub(crate) mod need {
 /// login.
 const COOKIE_LIFETIME: Duration = Duration::from_secs(400 * 24 * 3600);
 
-/// The `Set-Cookie` value that carries a new session. The token is hex, so
-/// it needs no quoting.
-pub(crate) fn session_cookie(token: &SessionToken) -> String {
+/// The `Set-Cookie` value that carries a new session, `Secure` when the
+/// client reached a trusted proxy over HTTPS. The token is hex, so it
+/// needs no quoting.
+pub(crate) fn session_cookie(token: &SessionToken, scheme: Scheme) -> String {
     let max_age = COOKIE_LIFETIME.as_secs();
     format!(
-        "{COOKIE}={}; HttpOnly; SameSite=Strict; Path=/; Max-Age={max_age}",
-        token.as_str()
+        "{COOKIE}={}; HttpOnly; SameSite=Strict; Path=/; Max-Age={max_age}{}",
+        token.as_str(),
+        secure(scheme),
     )
 }
 
 /// The `Set-Cookie` value that ends one.
-pub(crate) fn cleared_cookie() -> String {
-    format!("{COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0")
+pub(crate) fn cleared_cookie(scheme: Scheme) -> String {
+    format!(
+        "{COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0{}",
+        secure(scheme)
+    )
+}
+
+const fn secure(scheme: Scheme) -> &'static str {
+    match scheme {
+        Scheme::Https => "; Secure",
+        Scheme::Http => "",
+    }
 }
 
 /// The names this server answers to besides IP addresses and `localhost`,

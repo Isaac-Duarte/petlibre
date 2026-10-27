@@ -5,9 +5,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use jiff::Timestamp;
-use wellfed_api::{Credentials, NewUser, PasswordChange, Role, User, UserPatch};
-use wellfed_server_testkit::fixed::{ManualClock, SeededRandom};
-use wellfed_server_testkit::{TestService, ada_login, ada_setup, local};
+use wellfed_api::{
+    AuditAction, Credentials, NewUser, PageQuery, PasswordChange, Role, User, UserPatch,
+};
+use wellfed_server_testkit::fixed::{FixedClock, ManualClock, SeededRandom};
+use wellfed_server_testkit::{HERE, TestService, ada_login, ada_setup, local};
 use wellfed_service::{AccountError, Caller, Error, Invalid, Service, SessionToken, reset_owner};
 
 const HOUR: Duration = Duration::from_secs(3600);
@@ -82,7 +84,7 @@ fn owners_add_change_and_delete_users_but_never_the_last_owner() {
             Err(Error::Account(AccountError::LastOwner))
         ));
         assert!(matches!(
-            service.delete_user(ada.id).await,
+            service.delete_user(&from_login(), ada.id).await,
             Err(Error::Account(AccountError::LastOwner))
         ));
 
@@ -101,9 +103,9 @@ fn owners_add_change_and_delete_users_but_never_the_last_owner() {
             .await
             .unwrap();
         assert_eq!(ada.role, Role::Member);
-        service.delete_user(ada.id).await.unwrap();
+        service.delete_user(&from_login(), ada.id).await.unwrap();
         assert!(matches!(
-            service.delete_user(ada.id).await,
+            service.delete_user(&from_login(), ada.id).await,
             Err(Error::Account(AccountError::NotFound))
         ));
         assert_eq!(service.users().await.unwrap(), [bob]);
@@ -121,10 +123,13 @@ fn deleting_a_user_ends_their_sessions() {
             .create_user(&from_login(), new_user("bob", Role::Viewer, None))
             .await
             .unwrap();
-        let (_, token) = service.login(login("bob", "temporary pass")).await.unwrap();
+        let (_, token) = service
+            .login(login("bob", "temporary pass"), HERE)
+            .await
+            .unwrap();
         assert!(service.authenticate(&token).await.unwrap().is_some());
 
-        service.delete_user(bob.id).await.unwrap();
+        service.delete_user(&from_login(), bob.id).await.unwrap();
 
         assert_eq!(service.authenticate(&token).await.unwrap(), None);
         server.shutdown().await;
@@ -141,7 +146,10 @@ fn a_password_change_ends_the_users_other_sessions() {
             .create_user(&from_login(), new_user("bob", Role::Member, None))
             .await
             .unwrap();
-        let (_, bob_token) = service.login(login("bob", "temporary pass")).await.unwrap();
+        let (_, bob_token) = service
+            .login(login("bob", "temporary pass"), HERE)
+            .await
+            .unwrap();
 
         let reset = UserPatch {
             password: Some("another temporary".into()),
@@ -153,17 +161,17 @@ fn a_password_change_ends_the_users_other_sessions() {
             .unwrap();
         assert_eq!(service.authenticate(&bob_token).await.unwrap(), None);
         assert!(matches!(
-            service.login(login("bob", "temporary pass")).await,
+            service.login(login("bob", "temporary pass"), HERE).await,
             Err(Error::Account(AccountError::BadCredentials))
         ));
         service
-            .login(login("bob", "another temporary"))
+            .login(login("bob", "another temporary"), HERE)
             .await
             .unwrap();
 
         // An owner setting their own keeps the session they asked on and
         // ends the others.
-        let (_, elsewhere) = service.login(ada_login()).await.unwrap();
+        let (_, elsewhere) = service.login(ada_login(), HERE).await.unwrap();
         let own = UserPatch {
             password: Some("a better horse".into()),
             ..UserPatch::default()
@@ -200,8 +208,14 @@ fn a_user_changes_their_own_password() {
             .create_user(&from_login(), new_user("vic", Role::Viewer, None))
             .await
             .unwrap();
-        let (vic, here) = service.login(login("vic", "temporary pass")).await.unwrap();
-        let (_, there) = service.login(login("vic", "temporary pass")).await.unwrap();
+        let (vic, here) = service
+            .login(login("vic", "temporary pass"), HERE)
+            .await
+            .unwrap();
+        let (_, there) = service
+            .login(login("vic", "temporary pass"), HERE)
+            .await
+            .unwrap();
 
         let wrong = PasswordChange {
             current: "not the password".into(),
@@ -236,10 +250,13 @@ fn a_user_changes_their_own_password() {
         assert!(service.authenticate(&here).await.unwrap().is_some());
         assert_eq!(service.authenticate(&there).await.unwrap(), None);
         assert!(matches!(
-            service.login(login("vic", "temporary pass")).await,
+            service.login(login("vic", "temporary pass"), HERE).await,
             Err(Error::Account(AccountError::BadCredentials))
         ));
-        service.login(login("vic", "my own secret")).await.unwrap();
+        service
+            .login(login("vic", "my own secret"), HERE)
+            .await
+            .unwrap();
         server.shutdown().await;
     });
 }
@@ -262,7 +279,7 @@ fn an_expired_account_is_disabled_until_an_owner_extends_it() {
             .await
             .unwrap();
         let (_, token) = service
-            .login(login("sitter", "temporary pass"))
+            .login(login("sitter", "temporary pass"), HERE)
             .await
             .unwrap();
 
@@ -272,11 +289,11 @@ fn an_expired_account_is_disabled_until_an_owner_extends_it() {
             Err(Error::Account(AccountError::Disabled))
         ));
         assert!(matches!(
-            service.login(login("sitter", "temporary pass")).await,
+            service.login(login("sitter", "temporary pass"), HERE).await,
             Err(Error::Account(AccountError::Disabled))
         ));
         assert!(matches!(
-            service.login(login("sitter", "wrong password")).await,
+            service.login(login("sitter", "wrong password"), HERE).await,
             Err(Error::Account(AccountError::BadCredentials))
         ));
         assert!(
@@ -298,7 +315,7 @@ fn an_expired_account_is_disabled_until_an_owner_extends_it() {
             "the old session does not come back"
         );
         service
-            .login(login("sitter", "temporary pass"))
+            .login(login("sitter", "temporary pass"), HERE)
             .await
             .unwrap();
 
@@ -357,15 +374,17 @@ fn reset_owner_gives_the_sole_owner_a_new_password() {
 
         let store = temp.open().await;
         let random = SeededRandom::fresh();
-        let (owner, password) = reset_owner(&store, None, &random).await.unwrap();
+        let (owner, password) = reset_owner(&store, None, &random, FixedClock.now())
+            .await
+            .unwrap();
         assert_eq!(owner, ada);
         assert!(password.len() >= 10, "{password}");
         assert!(matches!(
-            reset_owner(&store, Some("bob"), &random).await,
+            reset_owner(&store, Some("bob"), &random, FixedClock.now()).await,
             Err(Error::Account(AccountError::NotAnOwner(name))) if name == "bob"
         ));
         assert!(matches!(
-            reset_owner(&store, Some("nobody"), &random).await,
+            reset_owner(&store, Some("nobody"), &random, FixedClock.now()).await,
             Err(Error::Account(AccountError::NotFound))
         ));
         store.close().await;
@@ -374,10 +393,28 @@ fn reset_owner_gives_the_sole_owner_a_new_password() {
         let service = server.service();
         assert_eq!(service.authenticate(&token).await.unwrap(), None);
         assert!(matches!(
-            service.login(ada_login()).await,
+            service.login(ada_login(), HERE).await,
             Err(Error::Account(AccountError::BadCredentials))
         ));
-        service.login(login("ada", &password)).await.unwrap();
+        service.login(login("ada", &password), HERE).await.unwrap();
+        let log = service.audit(&ada, PageQuery::default()).await.unwrap();
+        let reset = log
+            .items
+            .iter()
+            .find(|entry| matches!(entry.action, AuditAction::PasswordSet { .. }))
+            .expect("the reset is in the audit log");
+        assert_eq!(
+            (reset.user, reset.user_name.as_deref(), &reset.action),
+            (
+                None,
+                None,
+                &AuditAction::PasswordSet {
+                    account: ada.id,
+                    name: "ada".into(),
+                }
+            ),
+            "the host's"
+        );
 
         // With two owners, the host names one.
         let promote = UserPatch {
@@ -392,10 +429,12 @@ fn reset_owner_gives_the_sole_owner_a_new_password() {
         let temp = server.stop().await;
         let store = temp.open().await;
         assert!(matches!(
-            reset_owner(&store, None, &random).await,
+            reset_owner(&store, None, &random, FixedClock.now()).await,
             Err(Error::Account(AccountError::OwnerAmbiguous))
         ));
-        let (owner, _) = reset_owner(&store, Some("bob"), &random).await.unwrap();
+        let (owner, _) = reset_owner(&store, Some("bob"), &random, FixedClock.now())
+            .await
+            .unwrap();
         assert_eq!(owner.name, "bob");
         store.close().await;
     });

@@ -18,9 +18,12 @@ label = "wellfed-server"
 # reconnects by address only (a bridged container network).
 discovery = "mdns"
 
-# Reverse proxies whose X-Forwarded-For and X-Forwarded-Proto headers are
-# believed: the scheme for `Secure` cookies and the client's address for
-# login limits. (Default: none.)
+# Reverse proxies whose forwarded headers (X-Forwarded-For and
+# X-Forwarded-Proto, or Forwarded) are believed: the scheme for `Secure`
+# cookies and the client's address for login limits and the audit log.
+# Addresses or CIDR ranges ("172.16.0.0/12" for a container network). List
+# only the proxy itself: anyone listed can claim to be any client.
+# (Default: none.)
 trusted_proxies = ["127.0.0.1"]
 
 [retention]

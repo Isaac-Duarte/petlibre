@@ -6,11 +6,34 @@
 //! down. A zone no rule describes is refused, since a feeder could not keep
 //! it.
 
-use wellfed_api::{AuditAction, Household, HouseholdPatch};
-use wellfed_mirror::Zone;
+use wellfed_api::{AuditAction, ErrorCode, Household, HouseholdPatch};
+use wellfed_mirror::{Zone, ZoneError};
 use tracing::error;
 
-use crate::{Caller, HouseholdError, Invalid, Result, Service};
+use crate::{Caller, Invalid, Result, Service};
+
+/// The household's settings.
+#[derive(Debug, thiserror::Error)]
+pub enum HouseholdError {
+    #[error("the household is made at setup")]
+    NotSetUp,
+    #[error(transparent)]
+    Zone(ZoneError),
+}
+
+impl HouseholdError {
+    /// A real zone no POSIX rule describes is `zone_unsupported`; a name the
+    /// tzdb does not know is a plain `invalid`.
+    pub(crate) fn code(&self) -> ErrorCode {
+        match self {
+            Self::NotSetUp => ErrorCode::NotFound,
+            Self::Zone(ZoneError::Unknown(_)) => ErrorCode::Invalid,
+            Self::Zone(
+                ZoneError::NoRule(_) | ZoneError::Unsupported { .. } | ZoneError::Irregular { .. },
+            ) => ErrorCode::ZoneUnsupported,
+        }
+    }
+}
 
 impl Service {
     pub async fn household(&self) -> Result<Household> {
@@ -25,7 +48,7 @@ impl Service {
         caller: &Caller,
         patch: HouseholdPatch,
     ) -> Result<Household> {
-        let _one_at_a_time = self.household.lock().await;
+        let _one_at_a_time = self.owner_data.household.lock().await;
         let mut household = self.household().await?;
         if let Some(name) = patch.name {
             household.name = household_name(&name)?.to_owned();

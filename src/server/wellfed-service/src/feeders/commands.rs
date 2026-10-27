@@ -4,14 +4,51 @@
 //! the same key is answered once and never applied twice.
 
 use wellfed_api::{
-    CommandKind, CommandOutcome, FeederDetail, FeederId, FeederRefusal, Generation, LockRequest,
-    Settings, SettingsPatch, StatusSnapshot,
+    CommandKind, CommandOutcome, ErrorCode, FeederDetail, FeederId, FeederRefusal, Generation,
+    LockRequest, Settings, SettingsPatch, StatusSnapshot,
 };
 use wellfed_model::{Answer, Op};
 use serde::Serialize;
 
-use crate::journal::Write;
-use crate::{Caller, CommandError, Error, IdempotencyKey, Invalid, RequestId, Result, Service};
+use crate::feeders::journal::Write;
+use crate::{Caller, Error, IdempotencyKey, Invalid, Reply, RequestId, Result, Service};
+
+/// A command sent to a feeder, and its answer.
+#[derive(Debug, thiserror::Error)]
+pub enum CommandError {
+    #[error("the server has no session with the feeder")]
+    Offline,
+    #[error("no answer in time: retry with the same key")]
+    Unknown,
+    #[error("the feeder refused: {0:?}")]
+    Refused(FeederRefusal),
+    #[error("the settings moved on to generation {}", .0.generation)]
+    Stale(Settings),
+    #[error("the feeder sent an answer that does not fit the request")]
+    Unexpected,
+    #[error("the Idempotency-Key already names another request; nothing was sent")]
+    KeyReused,
+    #[error("no command under that key")]
+    NoEntry,
+    #[error("hash a request body: {0}")]
+    Body(wellfed_formats::Error),
+}
+
+impl CommandError {
+    pub(crate) fn reply(&self) -> Reply {
+        let code = match self {
+            Self::Offline => ErrorCode::FeederOffline,
+            Self::Unknown => ErrorCode::OutcomeUnknown,
+            Self::Refused(_) => ErrorCode::FeederRefused,
+            Self::KeyReused => ErrorCode::KeyReused,
+            Self::NoEntry => ErrorCode::NotFound,
+            // The server answers a stale edit with the current settings,
+            // not a problem.
+            Self::Stale(_) | Self::Unexpected | Self::Body(_) => return Reply::Internal,
+        };
+        Reply::Code(code)
+    }
+}
 
 /// A settings change as it is hashed into the journal: the base it names
 /// is part of the request.

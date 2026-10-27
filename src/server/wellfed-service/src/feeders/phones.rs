@@ -35,7 +35,7 @@ use tokio::sync::broadcast::Receiver;
 use tokio::sync::broadcast::error::RecvError;
 use tracing::{Instrument, info, info_span, warn};
 
-use crate::journal::Write;
+use crate::feeders::journal::Write;
 use crate::{
     Caller, ClientError, CommandError, Error, FeederError, Permission, Result, Service, can, lock,
 };
@@ -249,7 +249,7 @@ impl Service {
     async fn try_revoke_owed(&self, id: FeederId) -> Result<()> {
         // One pass per feeder at a time: an account change and a reconnect
         // may both start one.
-        let turn = Arc::clone(lock(&self.revocations.turns).entry(id).or_default());
+        let turn = Arc::clone(lock(&self.feeders.revocations.turns).entry(id).or_default());
         let _turn = turn.lock().await;
         let store = &self.shared.store;
 
@@ -296,7 +296,7 @@ impl Service {
     /// deadline, unless a wake no later is already set.
     fn wake_at(&self, id: FeederId, at: Timestamp) {
         {
-            let mut wakes = lock(&self.revocations.wakes);
+            let mut wakes = lock(&self.feeders.revocations.wakes);
             if wakes.get(&id).is_some_and(|set| *set <= at) {
                 return;
             }
@@ -312,7 +312,7 @@ impl Service {
                 () = service.shared.clock.sleep_until(at) => {}
             }
             {
-                let mut wakes = lock(&service.revocations.wakes);
+                let mut wakes = lock(&service.feeders.revocations.wakes);
                 if wakes.get(&id) == Some(&at) {
                     wakes.remove(&id);
                 }

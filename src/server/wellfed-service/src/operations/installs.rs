@@ -20,15 +20,33 @@
 use std::sync::{Arc, Mutex};
 
 use wellfed_api::{
-    ClientRole, Connection as Link, FeederId, FeederRefusal, Install, InstallFailure, InstallId,
-    InstallRequest, InstallState, InstallTarget, StreamEvent,
+    ClientRole, Connection as Link, ErrorCode, FeederId, FeederRefusal, Install, InstallFailure,
+    InstallId, InstallRequest, InstallState, InstallTarget, StreamEvent,
 };
 use wellfed_mirror::{PushError, Pushed, Restore, Update, UpdateError};
 use wellfed_model::{Refusal, UpdateView};
 use wellfed_releases::{STOCK_VERSION, StockBackup};
 use tracing::{Instrument, info, info_span, warn};
 
-use crate::{Caller, CommandError, InstallError, Result, Service, lock};
+use crate::{Caller, CommandError, Result, Service, lock};
+
+/// Installs, one at a time per server.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum InstallError {
+    #[error("another install is running: one runs at a time")]
+    Running,
+    #[error("no install has run on that feeder")]
+    None,
+}
+
+impl InstallError {
+    pub(crate) fn code(self) -> ErrorCode {
+        match self {
+            Self::Running => ErrorCode::InstallRunning,
+            Self::None => ErrorCode::NotFound,
+        }
+    }
+}
 
 /// Progress reaches the stream each time this many more bytes are written.
 const PROGRESS_STEP: u32 = 32 * 1024;
@@ -127,7 +145,7 @@ impl Service {
     /// Take the slot for `install` (refused while another runs), keep it,
     /// and push `offer` in the background.
     pub(crate) async fn begin(&self, install: Install, offer: Offer) -> Result<Install> {
-        let claim = Claim::take(&self.installing, install)?;
+        let claim = Claim::take(&self.operations.installing, install)?;
         self.shared.store.save_install(&install).await?;
         match install.target {
             InstallTarget::Release { release } => info!(
@@ -164,7 +182,7 @@ impl Service {
 
     /// The running install, if it is the feeder `id`'s.
     pub(crate) fn running_on(&self, id: FeederId) -> Option<Install> {
-        lock(&self.installing)
+        lock(&self.operations.installing)
             .running
             .filter(|install| install.feeder == id)
     }
@@ -172,7 +190,7 @@ impl Service {
     /// `last` as it ended, if its end is held in memory rather than in the
     /// store.
     pub(crate) fn unsaved(&self, last: Install) -> Install {
-        let installs = lock(&self.installing);
+        let installs = lock(&self.operations.installing);
         let unsaved = installs.unsaved.iter().find(|ended| ended.id == last.id);
         unsaved.copied().unwrap_or(last)
     }

@@ -1,9 +1,15 @@
-//! The service's refusals: an enum per domain, wrapped in [`Error`], so a
-//! handler's mapping names each domain's cases and a new domain adds an
-//! enum rather than growing one list.
+//! The service's refusals: an enum per domain, kept beside its domain and
+//! wrapped in [`Error`], so a new domain adds an enum rather than growing
+//! one list. Each domain also says how its refusals are answered
+//! ([`Reply`]), so the code a client sees is decided where the refusal is.
 
-use wellfed_api::{FeederRefusal, Settings};
-use wellfed_mirror::{AskError, ConnectError, InviteText, RandomFailed, Unreachable, ZoneError};
+use wellfed_api::{ErrorCode, FeederRefusal};
+use wellfed_mirror::{AskError, ConnectError, RandomFailed};
+
+use crate::{
+    AccountError, BackupError, ClientError, CommandError, ExportError, FeederError, HouseholdError,
+    InstallError, OwnerDataError, StockError, TokenError,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -34,12 +40,57 @@ pub enum Error {
     #[error(transparent)]
     Release(#[from] wellfed_releases::Error),
     #[error(transparent)]
-    Backup(#[from] crate::BackupError),
+    Backup(#[from] BackupError),
     #[error(transparent)]
-    Export(#[from] crate::ExportError),
+    Export(#[from] ExportError),
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
+
+/// How a refusal is answered.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Reply {
+    /// The caller's to act on: the code, with the error's message as the
+    /// detail.
+    Code(ErrorCode),
+    /// As [`Reply::Code`], but its cause (a status, a TLS failure, the
+    /// database's own words) is only in the error's sources, which the
+    /// server logs as a warning.
+    Warn(ErrorCode),
+    /// The server's own failure: logged with its sources, and answered
+    /// `internal` with no detail.
+    Internal,
+}
+
+impl Error {
+    pub fn reply(&self) -> Reply {
+        match self {
+            Self::Invalid(_) => Reply::Code(ErrorCode::Invalid),
+            Self::Account(account) => account.reply(),
+            Self::Token(token) => Reply::Code(token.code()),
+            Self::Household(household) => Reply::Code(household.code()),
+            Self::Feeder(feeder) => feeder.reply(),
+            Self::Client(client) => Reply::Code(client.code()),
+            Self::OwnerData(owner_data) => Reply::Code(owner_data.code()),
+            Self::Command(command) => command.reply(),
+            Self::Install(install) => Reply::Code(install.code()),
+            Self::Stock(stock) => stock.reply(),
+            Self::Release(release) => crate::operations::releases::reply(release),
+            Self::Export(export) => export.reply(),
+            Self::Store(_) | Self::Random(_) | Self::Backup(_) => Reply::Internal,
+        }
+    }
+
+    /// What the feeder said when it refused, for a refusal that is the
+    /// feeder's.
+    pub fn refusal(&self) -> Option<FeederRefusal> {
+        match self {
+            Self::Feeder(FeederError::Refused(refusal))
+            | Self::Command(CommandError::Refused(refusal)) => Some(*refusal),
+            _ => None,
+        }
+    }
+}
 
 /// A field that failed the server's checks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
@@ -102,165 +153,6 @@ pub enum Invalid {
     Ssid,
     #[error("a WPA2 passphrase is 8-63 printable ASCII characters")]
     Psk,
-}
-
-/// Setup, login, sessions and the accounts owners manage.
-#[derive(Debug, thiserror::Error)]
-pub enum AccountError {
-    #[error("setup is closed: an account exists")]
-    SetupClosed,
-    #[error("wrong name or password")]
-    BadCredentials,
-    #[error("too many failed logins: try again in {} s", retry_after.as_secs())]
-    /// `retry_after` is whole seconds.
-    Limited { retry_after: std::time::Duration },
-    #[error("the account is past its expiry: an owner can extend it")]
-    Disabled,
-    #[error("no such user")]
-    NotFound,
-    #[error("that name is taken")]
-    NameTaken,
-    #[error("the household would have no owner left")]
-    LastOwner,
-    #[error("{0} is not an owner")]
-    NotAnOwner(String),
-    #[error("the household has no owner")]
-    NoOwner,
-    #[error("the household has several owners: name one")]
-    OwnerAmbiguous,
-    #[error("hash a password: {0}")]
-    Hash(argon2::password_hash::Error),
-    #[error("the password hashing task stopped before it finished")]
-    Hashing,
-    #[error("a session's expiry is past the latest time the clock can show")]
-    Expiry,
-}
-
-/// Bearer tokens.
-#[derive(Debug, thiserror::Error)]
-pub enum TokenError {
-    #[error("no such token")]
-    NotFound,
-    #[error("only a login makes a token: a token cannot make another")]
-    SessionRequired,
-}
-
-/// The household's settings.
-#[derive(Debug, thiserror::Error)]
-pub enum HouseholdError {
-    #[error("the household is made at setup")]
-    NotSetUp,
-    #[error(transparent)]
-    Zone(ZoneError),
-}
-
-/// Adopting feeders and reading what the server holds of them.
-#[derive(Debug, thiserror::Error)]
-pub enum FeederError {
-    #[error("no such feeder")]
-    NotFound,
-    #[error("that feeder is already adopted")]
-    AlreadyAdopted,
-    #[error("the feeder was removed: adopt it again to send it anything")]
-    Archived,
-    #[error(transparent)]
-    Invite(#[from] InviteText),
-    #[error("the feeder dropped the invite: unknown, used or expired")]
-    InviteExpired,
-    #[error(transparent)]
-    Unreachable(#[from] Unreachable),
-    #[error("the feeder refused: {0:?}")]
-    Refused(FeederRefusal),
-    #[error("the mDNS lookup stopped before it answered")]
-    Lookup,
-    #[error("stored event {0} does not decode")]
-    Undecodable(u64),
-    #[error("a stored sample does not decode")]
-    UndecodableSample,
-    #[error("a feeder key does not open with this server's key")]
-    Unseal,
-    #[error("the server holds no trace of that feed")]
-    NoTrace,
-    #[error("the feeder did not answer the log request in time")]
-    LogUnanswered,
-}
-
-/// A feeder's clients and the phones' own keys.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
-pub enum ClientError {
-    #[error("only a phone's token gets an invite for a phone: sign in on the phone")]
-    TokenRequired,
-    #[error(
-        "an account or token with an expiry holds no key of its own: it reaches the feeders through the server"
-    )]
-    DirectKeyRefused,
-    #[error("that key is already one of the feeder's clients, or another phone's")]
-    KeyTaken,
-    #[error("that is the server's own key: remove the feeder to revoke it")]
-    OwnKey,
-}
-
-/// Pets, foods and refills: the owner data the feeders do not hold.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
-pub enum OwnerDataError {
-    #[error("no such pet")]
-    PetNotFound,
-    #[error("no such entry in the pet's weight log")]
-    WeightNotFound,
-    #[error("that feeder does not serve the pet")]
-    NotAssigned,
-    #[error("no such food")]
-    FoodNotFound,
-    #[error("a feeder's food history names the food: past feeds' calories use it")]
-    FoodInUse,
-    #[error("no such refill on that feeder")]
-    RefillNotFound,
-    #[error("the feeder has no food set, so a full bag weighs nothing known: set its food first")]
-    NoCurrentFood,
-}
-
-/// A command sent to a feeder, and its answer.
-#[derive(Debug, thiserror::Error)]
-pub enum CommandError {
-    #[error("the server has no session with the feeder")]
-    Offline,
-    #[error("no answer in time: retry with the same key")]
-    Unknown,
-    #[error("the feeder refused: {0:?}")]
-    Refused(FeederRefusal),
-    #[error("the settings moved on to generation {}", .0.generation)]
-    Stale(Settings),
-    #[error("the feeder sent an answer that does not fit the request")]
-    Unexpected,
-    #[error("the Idempotency-Key already names another request; nothing was sent")]
-    KeyReused,
-    #[error("no command under that key")]
-    NoEntry,
-    #[error("hash a request body: {0}")]
-    Body(wellfed_formats::Error),
-}
-
-/// Installs, one at a time per server.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
-pub enum InstallError {
-    #[error("another install is running: one runs at a time")]
-    Running,
-    #[error("no install has run on that feeder")]
-    None,
-}
-
-/// The feeder's stock backup and its restore.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
-pub enum StockError {
-    #[error("the restore does not offer the kept backup: {0}")]
-    Mismatch(wellfed_releases::RestoreError),
-    #[error("the kept backup is larger than any bank")]
-    Size,
-    #[error(
-        "the feeder runs from bank 0 with stock in bank 1, and no verified backup of it is kept: \
-         read it from the feeder or upload the installer's copy before installing"
-    )]
-    BackupNeeded,
 }
 
 /// A mirror refusal in the service's domains. Only `Unknown` may have

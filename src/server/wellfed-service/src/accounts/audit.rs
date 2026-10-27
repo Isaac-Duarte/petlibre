@@ -11,7 +11,7 @@ use wellfed_api::{AuditAction, AuditEntry, AuditPage, PageQuery, User};
 use wellfed_store::{AuditFilter, AuditRecord, AuditRow, NewAudit};
 use tracing::error;
 
-use crate::journal::view;
+use crate::feeders::journal::view;
 use crate::{Caller, Permission, Result, Service, can, page};
 
 impl Service {

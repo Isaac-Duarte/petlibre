@@ -2,10 +2,30 @@
 //! checked for on the project's GitHub releases, through
 //! `wellfed-releases`, with the time from the service's clock.
 
-use wellfed_api::{Release, ReleaseCheck, ReleasePage, ReleaseQuery};
+use wellfed_api::{ErrorCode, Release, ReleaseCheck, ReleasePage, ReleaseQuery};
 use wellfed_model::Hex;
 
-use crate::{ReleaseAdded, Result, Service};
+use crate::{ReleaseAdded, ReleaseError, Reply, Result, Service};
+
+pub(crate) fn reply(error: &ReleaseError) -> Reply {
+    match error {
+        ReleaseError::Refused(_) => Reply::Code(ErrorCode::ReleaseRefused),
+        ReleaseError::FetchDisabled => Reply::Code(ErrorCode::FetchDisabled),
+        ReleaseError::Unreachable(_) | ReleaseError::Listing(_) | ReleaseError::ListingTooLarge => {
+            Reply::Warn(ErrorCode::ReleasesUnreachable)
+        }
+        ReleaseError::NotFound => Reply::Code(ErrorCode::NotFound),
+        ReleaseError::Stock(_) => Reply::Code(ErrorCode::StockRefused),
+        ReleaseError::StockDiffers => Reply::Code(ErrorCode::StockDiffers),
+        ReleaseError::NoStock | ReleaseError::StockDamaged => Reply::Code(ErrorCode::NoStockBackup),
+        ReleaseError::Cursor | ReleaseError::Limit { .. } => Reply::Code(ErrorCode::Invalid),
+        ReleaseError::Changed
+        | ReleaseError::Client(_)
+        | ReleaseError::Cache { .. }
+        | ReleaseError::Entry { .. }
+        | ReleaseError::Task => Reply::Internal,
+    }
+}
 
 impl Service {
     /// A page of the cached releases, newest version first.

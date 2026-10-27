@@ -17,8 +17,8 @@ use tokio::sync::broadcast::error::RecvError;
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, info_span};
 
-use crate::commands::done;
-use crate::journal::{Write, view};
+use crate::feeders::commands::done;
+use crate::feeders::journal::{Write, view};
 use crate::{Caller, CommandError, IdempotencyKey, Result, Service};
 
 mod history;

@@ -16,13 +16,33 @@
 //! revoking a leaked token is enough: it cannot have made other tokens,
 //! nor a password or an account to log in with and make them.
 
-use wellfed_api::{AuditAction, CreatedToken, NewToken, RevokeReason, Token, TokenId, User};
+use wellfed_api::{
+    AuditAction, CreatedToken, ErrorCode, NewToken, RevokeReason, Token, TokenId, User,
+};
 use wellfed_formats::hex;
 use wellfed_store::Whose;
 use sha2::{Digest, Sha256};
 
-use crate::sessions::{TOUCH, disabled};
-use crate::{AccountError, Invalid, Permission, Result, Service, TokenError, can};
+use crate::accounts::sessions::{TOUCH, disabled};
+use crate::{AccountError, Invalid, Permission, Result, Service, can};
+
+/// Bearer tokens.
+#[derive(Debug, thiserror::Error)]
+pub enum TokenError {
+    #[error("no such token")]
+    NotFound,
+    #[error("only a login makes a token: a token cannot make another")]
+    SessionRequired,
+}
+
+impl TokenError {
+    pub(crate) fn code(&self) -> ErrorCode {
+        match self {
+            Self::NotFound => ErrorCode::NotFound,
+            Self::SessionRequired => ErrorCode::SessionRequired,
+        }
+    }
+}
 
 /// What every secret starts with, so it is recognisable in a config file
 /// or a leak scan, and never mistaken for a session's.

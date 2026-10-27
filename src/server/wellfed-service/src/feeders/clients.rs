@@ -5,15 +5,42 @@
 //! refused `forbidden` by the feeder.
 
 use wellfed_api::{
-    ClientOwner, CommandKind, CommandOutcome, FeederClient, FeederId, FeederRefusal, Hex,
+    ClientOwner, CommandKind, CommandOutcome, ErrorCode, FeederClient, FeederId, FeederRefusal, Hex,
 };
 use wellfed_model::{Answer, Client, Op};
 use wellfed_store::FeederRow;
 use serde::Serialize;
 
-use crate::commands::{done, refused};
-use crate::journal::Write;
-use crate::{Caller, ClientError, IdempotencyKey, Result, Service, keys};
+use crate::feeders::commands::{done, refused};
+use crate::feeders::journal::Write;
+use crate::feeders::keys;
+use crate::{Caller, IdempotencyKey, Result, Service};
+
+/// A feeder's clients and the phones' own keys.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum ClientError {
+    #[error("only a phone's token gets an invite for a phone: sign in on the phone")]
+    TokenRequired,
+    #[error(
+        "an account or token with an expiry holds no key of its own: it reaches the feeders through the server"
+    )]
+    DirectKeyRefused,
+    #[error("that key is already one of the feeder's clients, or another phone's")]
+    KeyTaken,
+    #[error("that is the server's own key: remove the feeder to revoke it")]
+    OwnKey,
+}
+
+impl ClientError {
+    pub(crate) fn code(self) -> ErrorCode {
+        match self {
+            Self::TokenRequired => ErrorCode::TokenRequired,
+            Self::DirectKeyRefused => ErrorCode::DirectKeyRefused,
+            Self::KeyTaken => ErrorCode::ClientKeyTaken,
+            Self::OwnKey => ErrorCode::Invalid,
+        }
+    }
+}
 
 /// A revoke as it is hashed into the journal.
 #[derive(Serialize)]

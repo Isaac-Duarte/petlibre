@@ -14,9 +14,9 @@ use serde::Serialize;
 use tokio::sync::broadcast::Receiver;
 use tokio::sync::broadcast::error::RecvError;
 
-use crate::commands::done;
-use crate::journal::Write;
-use crate::phones::own_revoke;
+use crate::feeders::commands::done;
+use crate::feeders::journal::Write;
+use crate::feeders::phones::own_revoke;
 use crate::{Caller, IdempotencyKey, Invalid, Result, Service};
 
 /// A Wi-Fi change as it is hashed into the journal. The passphrase goes
@@ -154,7 +154,7 @@ impl Service {
     /// un-archives it and resumes the owed revokes. Runs beside no
     /// adoption, so a re-adoption cannot interleave with it.
     pub async fn remove_feeder(&self, caller: &Caller, id: FeederId) -> Result<Removal> {
-        let _one_at_a_time = self.adopting.lock().await;
+        let _one_at_a_time = self.feeders.adopting.lock().await;
         let row = self.live_row(id).await?;
         let own = self.own_key(&row)?;
         // The server's key is the last that can revoke them.

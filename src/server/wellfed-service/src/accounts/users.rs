@@ -11,9 +11,9 @@ use wellfed_api::{AuditAction, NewUser, RevokeReason, Role, User, UserId, UserPa
 use wellfed_formats::hex;
 use wellfed_store::{Change, NewAudit, Store, Whose};
 
-use crate::phones::revocation;
-use crate::sessions::{self, disabled, hash_password, password, user_name};
-use crate::tokens::session_only;
+use crate::accounts::sessions::{self, disabled, hash_password, password, user_name};
+use crate::accounts::tokens::session_only;
+use crate::feeders::phones::revocation;
 use crate::{AccountError, Caller, Invalid, Random, Result, Service, SessionToken};
 
 impl Service {

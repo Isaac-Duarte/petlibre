@@ -28,7 +28,7 @@ use wellfed_mirror::Zone;
 use wellfed_store::NewUser;
 use sha2::{Digest, Sha256};
 
-use crate::tokens::session_only;
+use crate::accounts::tokens::session_only;
 use crate::{AccountError, Caller, HouseholdError, Invalid, Result, Service};
 
 /// Password hashes computed at once.
@@ -101,7 +101,7 @@ impl Service {
         }
 
         let hash = self.hash_password(setup.password).await?;
-        let _one_at_a_time = self.household.lock().await;
+        let _one_at_a_time = self.owner_data.household.lock().await;
         let user = User {
             id: UserId(self.shared.new_id()?),
             name: name.to_owned(),
@@ -153,6 +153,7 @@ impl Service {
     ) -> Result<(User, SessionToken)> {
         let name = credentials.name.trim();
         let attempt = self
+            .accounts
             .limits
             .attempt(name, from, self.shared.clock.now())
             .map_err(|limited| AccountError::Limited {
@@ -192,7 +193,9 @@ impl Service {
             .into());
         }
 
-        self.limits.succeeded(attempt, self.shared.clock.now());
+        self.accounts
+            .limits
+            .succeeded(attempt, self.shared.clock.now());
         let token = self.open_session(user.id).await?;
         self.record_as(Some(&user), None, AuditAction::Login { from })
             .await;

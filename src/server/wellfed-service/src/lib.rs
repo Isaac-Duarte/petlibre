@@ -65,74 +65,43 @@
 //! [API design]: ../../../../docs/api/README.md
 #![forbid(unsafe_code)]
 
-mod admin;
-mod audit;
-mod backups;
-mod clients;
-mod commands;
+mod accounts;
 mod config;
-mod diagnostics;
 mod error;
-mod export;
 mod feeders;
-mod feeds;
-mod foods;
-mod health;
-mod household;
 mod hub;
-mod import;
-mod installs;
-mod jobs;
-mod journal;
-mod keys;
-mod limits;
+mod operations;
+mod owner_data;
 mod page;
-mod parity;
-mod permissions;
-mod pets;
-mod phones;
-mod releases;
-mod samples;
-mod sessions;
-mod stock;
-mod tokens;
-mod updates;
-mod users;
 
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
-use jiff::Timestamp;
-use wellfed_api::{Connection as Link, FeederId};
-use wellfed_mirror::Mirror;
-use wellfed_releases::Releases;
-use wellfed_store::Store;
-use tokio_util::sync::CancellationToken;
-use tokio_util::task::TaskTracker;
-use uuid::Uuid;
-
-pub use backups::{BackupError, Backups};
-pub use config::{Config, Timing};
-pub use diagnostics::LogFollow;
-pub use error::{
-    AccountError, ClientError, CommandError, Error, FeederError, HouseholdError, InstallError,
-    Invalid, OwnerDataError, Result, StockError, TokenError,
+pub use accounts::{
+    AccountError, BearerToken, Caller, Permission, SessionToken, TokenError, can, reset_owner,
 };
-pub use export::{CHUNK as EXPORT_CHUNK, ExportError};
+pub use config::{Config, Timing};
+pub use error::{Error, Invalid, Reply, Result};
+pub use feeders::{
+    ClientError, CommandError, FeederError, LogFollow, Method, NoRoute, Parity, parity,
+};
 pub use hub::{Hub, Resume, Stamped, StreamId, Subscription};
-pub use parity::{Method, NoRoute, Parity, parity};
-pub use permissions::{Permission, can};
+use jiff::Timestamp;
+pub use operations::{BackupError, Backups, EXPORT_CHUNK, ExportError, InstallError, StockError};
+pub use owner_data::{HouseholdError, OwnerDataError};
+use wellfed_mirror::Mirror;
 pub use wellfed_mirror::{
     Clock, Diagnostics, Discovery, Random, RandomFailed, SystemClock, SystemRandom, ZoneError,
 };
+use wellfed_releases::Releases;
 pub use wellfed_releases::{
     Added as ReleaseAdded, Config as ReleasesConfig, Error as ReleaseError, Keys as ReleaseKeys,
     MAX_FILE as RELEASE_MAX, Source as ReleaseFeed, StockConfig, StockPins,
 };
-pub use sessions::SessionToken;
-pub use tokens::{BearerToken, Caller};
-pub use users::reset_owner;
+use wellfed_store::Store;
+use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
+use uuid::Uuid;
 
 /// A device request id.
 pub(crate) type RequestId = wellfed_mirror::RequestId;
@@ -177,28 +146,10 @@ pub struct Service {
     shared: Arc<Shared>,
     mirror: Mirror,
     releases: Arc<Releases>,
-    /// Each feeder's link as the stream last told it, so a list never
-    /// shows a state the stream has not.
-    links: Arc<Mutex<HashMap<FeederId, Link>>>,
-    /// How each mirrored feeder's history names the server.
-    fingerprints: Arc<Mutex<HashMap<FeederId, [u8; 4]>>>,
-    /// Held while a feeder's feeds are settled from its history, so its
-    /// watcher and a feed's answer take turns.
-    resolving: Arc<Mutex<HashMap<FeederId, Arc<tokio::sync::Mutex<()>>>>>,
-    revocations: phones::Revocations,
-    adopting: Arc<tokio::sync::Mutex<()>>,
-    /// Household changes run one at a time, so the stored zone and the
-    /// mirror's are always the last change's.
-    household: Arc<tokio::sync::Mutex<()>>,
-    /// Backups are taken one at a time.
-    backing_up: Arc<tokio::sync::Mutex<()>>,
-    /// Held by the export being written: one runs at a time, so exports
-    /// hold at most one reader and one snapshot.
-    exporting: Arc<tokio::sync::Mutex<()>>,
-    /// The one install the server runs at a time.
-    installing: installs::Slot,
-    /// Failed logins per name and per address.
-    limits: Arc<limits::Limits>,
+    accounts: accounts::State,
+    feeders: feeders::State,
+    owner_data: owner_data::State,
+    operations: operations::State,
     cancel: CancellationToken,
     tasks: TaskTracker,
 }
@@ -244,21 +195,15 @@ impl Service {
             }),
             mirror,
             releases: Arc::new(releases),
-            links: Arc::new(Mutex::new(HashMap::new())),
-            fingerprints: Arc::new(Mutex::new(HashMap::new())),
-            resolving: Arc::new(Mutex::new(HashMap::new())),
-            revocations: phones::Revocations::default(),
-            adopting: Arc::new(tokio::sync::Mutex::new(())),
-            household: Arc::new(tokio::sync::Mutex::new(())),
-            backing_up: Arc::new(tokio::sync::Mutex::new(())),
-            exporting: Arc::new(tokio::sync::Mutex::new(())),
-            installing: installs::Slot::default(),
-            limits: Arc::new(limits::Limits::default()),
+            accounts: accounts::State::default(),
+            feeders: feeders::State::default(),
+            owner_data: owner_data::State::default(),
+            operations: operations::State::default(),
             cancel,
             tasks: TaskTracker::new(),
         };
 
-        sessions::prepare().await?;
+        accounts::sessions::prepare().await?;
         service.interrupt_commands().await?;
         service.interrupt_installs().await?;
         service.load_zone().await?;
@@ -298,15 +243,6 @@ impl Service {
     /// A fresh request id.
     pub(crate) fn request_id(&self) -> Result<RequestId> {
         self.shared.random()
-    }
-
-    fn links(&self) -> MutexGuard<'_, HashMap<FeederId, Link>> {
-        lock(&self.links)
-    }
-
-    /// How the feeder's history names the server, once it is mirrored.
-    fn fingerprint(&self, id: FeederId) -> Option<[u8; 4]> {
-        lock(&self.fingerprints).get(&id).copied()
     }
 }
 

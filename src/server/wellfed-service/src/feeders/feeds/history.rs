@@ -93,7 +93,7 @@ impl Service {
     async fn reconcile(&self, id: FeederId) -> Result<()> {
         // One at a time per feeder: its watcher and a feed's answer both
         // call this.
-        let turn = Arc::clone(lock(&self.resolving).entry(id).or_default());
+        let turn = Arc::clone(lock(&self.feeders.resolving).entry(id).or_default());
         let _turn = turn.lock().await;
         let store = &self.shared.store;
         let open = store.open_feeds(id).await?;

@@ -1,178 +1,104 @@
-//! Adopting feeders, and reading them and their history as the server
-//! holds it.
+//! The adopted feeders and everything sent to them: adoption, the commands
+//! and the journal every write goes through, feeds, the feeders' clients
+//! and the phones' own keys, what an owner administers, debug logs, and
+//! each feeder's updates forwarded from the mirror into the hub.
 
-use wellfed_api::{AdoptFeeder, Connection as Link, EventPage, EventQuery, Feeder, FeederId, Hex};
-use wellfed_formats::hex;
-use wellfed_mirror::Invite;
-use wellfed_store::{FeederRow, NewFeeder};
-use tracing::warn;
+mod admin;
+mod clients;
+pub(crate) mod commands;
+mod diagnostics;
+mod feeder;
+mod feeds;
+pub(crate) mod journal;
+mod keys;
+mod parity;
+pub(crate) mod phones;
+mod updates;
 
-use crate::{Error, FeederError, Invalid, Result, Service, keys};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, MutexGuard};
 
-const PAGE: u32 = 100;
-const PAGE_MAX: u32 = 500;
-/// Past every stored sequence number (SQLite integers are `i64`).
-const NEWEST: u64 = i64::MAX.unsigned_abs();
+use wellfed_api::{Connection as Link, ErrorCode, FeederId, FeederRefusal};
+use wellfed_mirror::{InviteText, Unreachable};
+
+pub use clients::ClientError;
+pub use commands::CommandError;
+pub use diagnostics::LogFollow;
+pub use parity::{Method, NoRoute, Parity, parity};
+
+use crate::{Reply, Service, lock};
+
+/// What the service keeps of the feeders between requests.
+#[derive(Clone, Default)]
+pub(crate) struct State {
+    /// Each feeder's link as the stream last told it, so a list never
+    /// shows a state the stream has not.
+    links: Arc<Mutex<HashMap<FeederId, Link>>>,
+    /// How each mirrored feeder's history names the server.
+    fingerprints: Arc<Mutex<HashMap<FeederId, [u8; 4]>>>,
+    /// Held while a feeder's feeds are settled from its history, so its
+    /// watcher and a feed's answer take turns.
+    resolving: Arc<Mutex<HashMap<FeederId, Arc<tokio::sync::Mutex<()>>>>>,
+    revocations: phones::Revocations,
+    adopting: Arc<tokio::sync::Mutex<()>>,
+}
 
 impl Service {
-    /// Adopt a feeder: redeem the invite with a new key of the server's
-    /// own, store the key sealed, and start mirroring the feeder. A feeder
-    /// that was removed comes back under its id, its history continuing.
-    ///
-    /// Adoptions run one at a time: two racing for one feeder would both
-    /// enroll a key, and the loser's would hold a client slot on the feeder
-    /// with nothing on the server to use it.
-    pub async fn adopt(&self, request: AdoptFeeder) -> Result<Feeder> {
-        let name = feeder_name(&request.name)?;
-        let invite = Invite::parse(&request.invite).map_err(FeederError::from)?;
-        let _one_at_a_time = self.adopting.lock().await;
-        let archived = match self.shared.store.feeder_by_identity(&invite.feeder).await? {
-            Some(id) if self.row(id).await?.archived.is_some() => Some(id),
-            Some(_) => return Err(FeederError::AlreadyAdopted.into()),
-            None => None,
-        };
-        let identity = invite.feeder;
-        let address = self
-            .mirror
-            .locate(identity, request.address.as_deref())
-            .await?;
-
-        let secret = self.shared.random::<32>()?;
-        let label = &self.shared.config.label;
-        let enrolled = self.mirror.enroll(invite, label, address, secret).await?;
-
-        let id = match archived {
-            Some(id) => id,
-            None => FeederId(self.shared.new_id()?),
-        };
-        let nonce = self.shared.random()?;
-        let sealed = keys::seal(&self.shared.config.key, id, &identity, &secret, nonce)?;
-        let address = address.to_string();
-        let feeder = NewFeeder {
-            id,
-            identity,
-            name,
-            role: enrolled.role,
-            address: Some(&address),
-            key: sealed,
-            created: self.shared.clock.now(),
-        };
-        let inserted = match archived {
-            Some(_) => match self.shared.store.readopt_feeder(feeder).await {
-                Ok(true) => Ok(()),
-                Ok(false) => Err(wellfed_store::Error::Duplicate("feeder")),
-                Err(error) => Err(error),
-            },
-            None => self.shared.store.insert_feeder(feeder).await,
-        };
-        if let Err(error) = inserted {
-            // The feeder holds the key now, but the server cannot use it.
-            warn!(
-                "feeder {} enrolled this server's key ({}) but it was not stored: {error}; \
-                 revoke that client on the feeder",
-                hex::encode(&identity[..4]),
-                hex::encode(&enrolled.public[..4]),
-            );
-            return Err(match error {
-                wellfed_store::Error::Duplicate(_) => FeederError::AlreadyAdopted.into(),
-                other => other.into(),
-            });
-        }
-
-        let row = self.row(id).await?;
-        self.spawn(&row).await?;
-        Ok(self.view(row))
+    fn links(&self) -> MutexGuard<'_, HashMap<FeederId, Link>> {
+        lock(&self.feeders.links)
     }
 
-    pub async fn feeders(&self) -> Result<Vec<Feeder>> {
-        let rows = self.shared.store.feeders().await?;
-        Ok(rows.into_iter().map(|row| self.view(row)).collect())
-    }
-
-    /// A page of the feeder's history as the server holds it.
-    pub async fn events(&self, id: FeederId, query: EventQuery) -> Result<EventPage> {
-        let limit = query.limit.unwrap_or(PAGE);
-        if !(1..=PAGE_MAX).contains(&limit) {
-            return Err(Invalid::Limit.into());
-        }
-        if query.after.is_some_and(|after| after > NEWEST) {
-            return Err(Invalid::Cursor.into());
-        }
-        let row = self.row(id).await?;
-        let Some(epoch) = query.epoch.or(row.synced.map(|synced| synced.epoch)) else {
-            return Ok(EventPage {
-                epoch: None,
-                events: Vec::new(),
-                gaps: Vec::new(),
-                next: None,
-            });
-        };
-
-        let rows = self
-            .shared
-            .store
-            .events(id, epoch, query.after, limit, query.kind)
-            .await?;
-        let full = u32::try_from(rows.len()).is_ok_and(|len| len == limit);
-        let events = rows
-            .iter()
-            .map(|row| {
-                wellfed_mirror::stored_event(epoch, row)
-                    .ok_or(Error::Feeder(FeederError::Undecodable(row.seq)))
-            })
-            .collect::<Result<Vec<_>>>()?;
-
-        let next = events.last().map(|event| event.seq).filter(|_| full);
-        let gaps = self
-            .shared
-            .store
-            .gaps(id, epoch, query.after, next.unwrap_or(NEWEST))
-            .await?;
-        Ok(EventPage {
-            epoch: Some(epoch),
-            events,
-            gaps,
-            next,
-        })
-    }
-
-    /// The feeder as the server holds it, archived or not: a removed
-    /// feeder's history stays readable.
-    pub(crate) async fn row(&self, id: FeederId) -> Result<FeederRow> {
-        let row = self.shared.store.feeder(id).await?;
-        row.ok_or_else(|| FeederError::NotFound.into())
-    }
-
-    /// The feeder, refused [`FeederError::Archived`] once it is removed:
-    /// what is sent to a feeder needs it mirrored.
-    pub(crate) async fn live_row(&self, id: FeederId) -> Result<FeederRow> {
-        let row = self.row(id).await?;
-        if row.archived.is_some() {
-            return Err(FeederError::Archived.into());
-        }
-        Ok(row)
-    }
-
-    pub(crate) fn view(&self, row: FeederRow) -> Feeder {
-        let connection = self.links().get(&row.id).copied().unwrap_or(Link::Offline);
-        Feeder {
-            id: row.id,
-            name: row.name,
-            identity: Hex(row.identity),
-            role: row.role,
-            address: row.address,
-            connection,
-            synced: row.synced.map(|synced| synced.seq),
-            epoch: row.synced.map(|synced| synced.epoch),
-            archived: row.archived,
-        }
+    /// How the feeder's history names the server, once it is mirrored.
+    fn fingerprint(&self, id: FeederId) -> Option<[u8; 4]> {
+        lock(&self.feeders.fingerprints).get(&id).copied()
     }
 }
 
-fn feeder_name(name: &str) -> Result<&str> {
-    let name = name.trim();
-    if name.is_empty() || name.chars().count() > 64 {
-        return Err(Invalid::FeederName.into());
+/// Adopting feeders and reading what the server holds of them.
+#[derive(Debug, thiserror::Error)]
+pub enum FeederError {
+    #[error("no such feeder")]
+    NotFound,
+    #[error("that feeder is already adopted")]
+    AlreadyAdopted,
+    #[error("the feeder was removed: adopt it again to send it anything")]
+    Archived,
+    #[error(transparent)]
+    Invite(#[from] InviteText),
+    #[error("the feeder dropped the invite: unknown, used or expired")]
+    InviteExpired,
+    #[error(transparent)]
+    Unreachable(#[from] Unreachable),
+    #[error("the feeder refused: {0:?}")]
+    Refused(FeederRefusal),
+    #[error("the mDNS lookup stopped before it answered")]
+    Lookup,
+    #[error("stored event {0} does not decode")]
+    Undecodable(u64),
+    #[error("a stored sample does not decode")]
+    UndecodableSample,
+    #[error("a feeder key does not open with this server's key")]
+    Unseal,
+    #[error("the server holds no trace of that feed")]
+    NoTrace,
+    #[error("the feeder did not answer the log request in time")]
+    LogUnanswered,
+}
+
+impl FeederError {
+    pub(crate) fn reply(&self) -> Reply {
+        let code = match self {
+            Self::NotFound | Self::NoTrace => ErrorCode::NotFound,
+            Self::AlreadyAdopted => ErrorCode::AlreadyAdopted,
+            Self::Archived => ErrorCode::FeederArchived,
+            Self::Invite(_) => ErrorCode::Invalid,
+            Self::InviteExpired => ErrorCode::InviteExpired,
+            Self::Unreachable(_) | Self::LogUnanswered => ErrorCode::Unreachable,
+            Self::Refused(_) => ErrorCode::FeederRefused,
+            Self::Lookup | Self::Undecodable(_) | Self::UndecodableSample | Self::Unseal => {
+                return Reply::Internal;
+            }
+        };
+        Reply::Code(code)
     }
-    Ok(name)
 }

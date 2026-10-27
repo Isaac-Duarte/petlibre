@@ -17,7 +17,7 @@
 //! serves no device API.
 
 use wellfed_api::{
-    ClientRole, Connection as Link, FeederId, FeederRefusal, Install, InstallTarget,
+    ClientRole, Connection as Link, ErrorCode, FeederId, FeederRefusal, Install, InstallTarget,
     StockBackup as StockView, StockFeeder, StockRestore, StockState,
 };
 use wellfed_mirror::{BankReadError, ReadError};
@@ -25,10 +25,34 @@ use wellfed_model::{Answer, Op, UpdatePhase};
 use wellfed_releases::{DOWNGRADE_LEN, MANIFEST_LEN, Taken};
 use tracing::{info, warn};
 
-use crate::installs::Offer;
+use crate::operations::installs::Offer;
 use crate::{
-    Caller, CommandError, InstallError, Permission, ReleaseAdded, Result, Service, StockError, can,
+    Caller, CommandError, InstallError, Permission, ReleaseAdded, Reply, Result, Service, can,
 };
+
+/// The feeder's stock backup and its restore.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum StockError {
+    #[error("the restore does not offer the kept backup: {0}")]
+    Mismatch(wellfed_releases::RestoreError),
+    #[error("the kept backup is larger than any bank")]
+    Size,
+    #[error(
+        "the feeder runs from bank 0 with stock in bank 1, and no verified backup of it is kept: \
+         read it from the feeder or upload the installer's copy before installing"
+    )]
+    BackupNeeded,
+}
+
+impl StockError {
+    pub(crate) fn reply(self) -> Reply {
+        match self {
+            Self::Mismatch(_) => Reply::Code(ErrorCode::RestoreMismatch),
+            Self::BackupNeeded => Reply::Code(ErrorCode::StockBackupNeeded),
+            Self::Size => Reply::Internal,
+        }
+    }
+}
 
 // The API spells the restore's parts at the lengths the feeder reads.
 const _: () = assert!(wellfed_api::MANIFEST_LEN == MANIFEST_LEN);

@@ -17,7 +17,8 @@ use tokio::sync::broadcast::error::RecvError;
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, info_span, warn};
 
-use crate::{Hub, Result, Service, keys, lock};
+use crate::feeders::keys;
+use crate::{Hub, Result, Service, lock};
 
 impl Service {
     /// Open the feeder's key, start mirroring it, and forward its updates.
@@ -30,7 +31,7 @@ impl Service {
             secret,
             address: row.address.clone(),
         };
-        lock(&self.fingerprints).insert(row.id, feeder.fingerprint());
+        lock(&self.feeders.fingerprints).insert(row.id, feeder.fingerprint());
         let updates = self.mirror.start(feeder).await;
         if let Some(feeds) = self.mirror.subscribe(row.id) {
             self.watch_feeds(row.id, feeds);
@@ -44,7 +45,7 @@ impl Service {
         let forward = Forward {
             hub: Arc::clone(&self.shared.hub),
             current: Box::new(move || mirror.link(id)),
-            links: Arc::clone(&self.links),
+            links: Arc::clone(&self.feeders.links),
             id,
         };
         // Under the same span as the mirror's task (no parent, as there), so

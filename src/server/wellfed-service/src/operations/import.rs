@@ -20,7 +20,7 @@ use wellfed_api::{Imported, ImportedTable};
 use wellfed_formats::export::{Item, Reader};
 use tracing::info;
 
-use crate::export::ExportError;
+use crate::operations::export::ExportError;
 use crate::{Result, Service};
 
 /// What an imported account's password hash is: none, which no password

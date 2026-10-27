@@ -14,7 +14,7 @@
 use std::sync::Arc;
 
 use futures_util::{Stream, TryStreamExt};
-use wellfed_api::ExportFormat;
+use wellfed_api::{ErrorCode, ExportFormat};
 use wellfed_formats::export::{
     ArchiveError, END, Encoding, FORMAT_VERSION, MANIFEST, Manifest, Row, Table, TableFile,
     TableSum, file_header, file_name, header, padding,
@@ -24,7 +24,7 @@ use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 
-use crate::{Result, Service};
+use crate::{Reply, Result, Service};
 
 /// The most bytes one chunk of the archive holds.
 pub const CHUNK: usize = 64 * 1024;
@@ -57,6 +57,23 @@ pub enum ExportError {
     Stopped,
 }
 
+impl ExportError {
+    pub(crate) fn reply(&self) -> Reply {
+        match self {
+            Self::ImportClosed => Reply::Code(ErrorCode::ImportClosed),
+            Self::Running => Reply::Code(ErrorCode::ExportRunning),
+            Self::Archive(_) => Reply::Code(ErrorCode::ArchiveInvalid),
+            // The database's own words stay in the log; the detail names
+            // the table.
+            Self::Rejected { .. } => Reply::Warn(ErrorCode::ArchiveInvalid),
+            // The client stopped sending; it reads no answer.
+            Self::Upload(_) => Reply::Code(ErrorCode::Invalid),
+            // Only ever the end of an export body, never an answer.
+            Self::Manifest(_) | Self::Changed(_) | Self::Stopped => Reply::Internal,
+        }
+    }
+}
+
 impl Service {
     /// The archive, in `format`, as a stream of chunks. `version` is the
     /// server's, for the manifest. The tables are counted before this
@@ -73,7 +90,7 @@ impl Service {
             ExportFormat::Json => Encoding::Json,
             ExportFormat::Csv => Encoding::Csv,
         };
-        let Ok(slot) = Arc::clone(&self.exporting).try_lock_owned() else {
+        let Ok(slot) = Arc::clone(&self.operations.exporting).try_lock_owned() else {
             return Err(ExportError::Running.into());
         };
         let mut snapshot = self.shared.store.snapshot().await?;

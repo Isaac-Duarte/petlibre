@@ -1,15 +1,13 @@
-//! Every failure as RFC 9457 `application/problem+json`, mapped in one
-//! place from the service's errors and axum's rejections.
+//! Every failure as RFC 9457 `application/problem+json`: the service's
+//! errors with the code each domain gives its refusals, and axum's
+//! rejections.
 
 use axum::Json;
 use axum::extract::rejection::{BytesRejection, JsonRejection, PathRejection, QueryRejection};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use wellfed_api::{ErrorCode, FeederRefusal, Problem, Settings};
-use wellfed_service::{
-    AccountError, ClientError, CommandError, Error, ExportError, FeederError, HouseholdError,
-    InstallError, OwnerDataError, ReleaseError, StockError, TokenError, ZoneError,
-};
+use wellfed_service::{AccountError, CommandError, Error, Reply};
 
 /// A request's failure.
 #[derive(Debug)]
@@ -104,139 +102,20 @@ fn stale(settings: Settings) -> Response {
     response
 }
 
+/// The service decides each refusal's code ([`Error::reply`]); this adds
+/// what HTTP needs: the detail, the feeder's refusal, and the log.
 fn service(error: &Error) -> (ErrorCode, Option<String>, Option<FeederRefusal>) {
-    let detail = Some(error.to_string());
-    let code = match error {
-        Error::Invalid(_) => ErrorCode::Invalid,
-        Error::Account(account) => match account {
-            AccountError::SetupClosed => ErrorCode::SetupClosed,
-            AccountError::BadCredentials => ErrorCode::BadCredentials,
-            AccountError::Limited { .. } => ErrorCode::LoginLimited,
-            AccountError::Disabled => ErrorCode::AccountDisabled,
-            AccountError::NotFound => ErrorCode::NotFound,
-            AccountError::NameTaken => ErrorCode::NameTaken,
-            AccountError::LastOwner => ErrorCode::LastOwner,
-            // Only `reset-owner`, on the host, picks an owner by name.
-            AccountError::NotAnOwner(_) | AccountError::NoOwner | AccountError::OwnerAmbiguous => {
-                ErrorCode::Invalid
-            }
-            AccountError::Hash(_) | AccountError::Hashing | AccountError::Expiry => {
-                return internal(error);
-            }
-        },
-        Error::Token(token) => match token {
-            TokenError::NotFound => ErrorCode::NotFound,
-            TokenError::SessionRequired => ErrorCode::SessionRequired,
-        },
-        Error::Household(household) => match household {
-            HouseholdError::NotSetUp => ErrorCode::NotFound,
-            HouseholdError::Zone(ZoneError::Unknown(_)) => ErrorCode::Invalid,
-            HouseholdError::Zone(
-                ZoneError::NoRule(_) | ZoneError::Unsupported { .. } | ZoneError::Irregular { .. },
-            ) => ErrorCode::ZoneUnsupported,
-        },
-        Error::Feeder(feeder) => match feeder {
-            FeederError::NotFound | FeederError::NoTrace => ErrorCode::NotFound,
-            FeederError::AlreadyAdopted => ErrorCode::AlreadyAdopted,
-            FeederError::Archived => ErrorCode::FeederArchived,
-            FeederError::Invite(_) => ErrorCode::Invalid,
-            FeederError::InviteExpired => ErrorCode::InviteExpired,
-            FeederError::Unreachable(_) | FeederError::LogUnanswered => ErrorCode::Unreachable,
-            FeederError::Refused(refusal) => {
-                return (ErrorCode::FeederRefused, detail, Some(*refusal));
-            }
-            FeederError::Lookup
-            | FeederError::Undecodable(_)
-            | FeederError::UndecodableSample
-            | FeederError::Unseal => {
-                return internal(error);
-            }
-        },
-        Error::Client(client) => match client {
-            ClientError::TokenRequired => ErrorCode::TokenRequired,
-            ClientError::DirectKeyRefused => ErrorCode::DirectKeyRefused,
-            ClientError::KeyTaken => ErrorCode::ClientKeyTaken,
-            ClientError::OwnKey => ErrorCode::Invalid,
-        },
-        Error::OwnerData(owner_data) => match owner_data {
-            OwnerDataError::PetNotFound
-            | OwnerDataError::WeightNotFound
-            | OwnerDataError::NotAssigned
-            | OwnerDataError::FoodNotFound
-            | OwnerDataError::RefillNotFound => ErrorCode::NotFound,
-            OwnerDataError::FoodInUse => ErrorCode::FoodInUse,
-            OwnerDataError::NoCurrentFood => ErrorCode::NoCurrentFood,
-        },
-        Error::Command(command) => match command {
-            CommandError::Offline => ErrorCode::FeederOffline,
-            CommandError::Unknown => ErrorCode::OutcomeUnknown,
-            CommandError::Refused(refusal) => {
-                return (ErrorCode::FeederRefused, detail, Some(*refusal));
-            }
-            // Handled before: it carries the current resource.
-            CommandError::Stale(_) => return (ErrorCode::Internal, None, None),
-            CommandError::KeyReused => ErrorCode::KeyReused,
-            CommandError::NoEntry => ErrorCode::NotFound,
-            CommandError::Unexpected | CommandError::Body(_) => return internal(error),
-        },
-        Error::Install(install) => match install {
-            InstallError::Running => ErrorCode::InstallRunning,
-            InstallError::None => ErrorCode::NotFound,
-        },
-        Error::Stock(stock) => match stock {
-            StockError::Mismatch(_) => ErrorCode::RestoreMismatch,
-            StockError::BackupNeeded => ErrorCode::StockBackupNeeded,
-            StockError::Size => return internal(error),
-        },
-        Error::Release(release) => match release {
-            ReleaseError::Refused(_) => ErrorCode::ReleaseRefused,
-            ReleaseError::FetchDisabled => ErrorCode::FetchDisabled,
-            ReleaseError::Unreachable(_)
-            | ReleaseError::Listing(_)
-            | ReleaseError::ListingTooLarge => {
-                // The cause (a status, a TLS failure) is only in the chain.
-                tracing::warn!("{}", Chain(release));
-                ErrorCode::ReleasesUnreachable
-            }
-            ReleaseError::NotFound => ErrorCode::NotFound,
-            ReleaseError::Stock(_) => ErrorCode::StockRefused,
-            ReleaseError::StockDiffers => ErrorCode::StockDiffers,
-            ReleaseError::NoStock | ReleaseError::StockDamaged => ErrorCode::NoStockBackup,
-            ReleaseError::Cursor | ReleaseError::Limit { .. } => ErrorCode::Invalid,
-            ReleaseError::Changed
-            | ReleaseError::Client(_)
-            | ReleaseError::Cache { .. }
-            | ReleaseError::Entry { .. }
-            | ReleaseError::Task => {
-                tracing::error!("{}", Chain(release));
-                return (ErrorCode::Internal, None, None);
-            }
-        },
-        Error::Backup(backup) => {
-            // The cause (a full disk, a permission) is only in the chain.
-            tracing::error!("{}", Chain(backup));
-            return (ErrorCode::Internal, None, None);
+    match error.reply() {
+        Reply::Code(code) => (code, Some(error.to_string()), error.refusal()),
+        Reply::Warn(code) => {
+            tracing::warn!("{}", Chain(error));
+            (code, Some(error.to_string()), error.refusal())
         }
-        Error::Export(export) => match export {
-            ExportError::ImportClosed => ErrorCode::ImportClosed,
-            ExportError::Running => ErrorCode::ExportRunning,
-            ExportError::Archive(_) => ErrorCode::ArchiveInvalid,
-            ExportError::Rejected { .. } => {
-                // The database's own words stay in the log; the detail names
-                // the table.
-                tracing::warn!("import: {}", Chain(export));
-                ErrorCode::ArchiveInvalid
-            }
-            // The client stopped sending; it reads no answer.
-            ExportError::Upload(_) => ErrorCode::Invalid,
-            // Only ever the end of an export body, never an answer.
-            ExportError::Manifest(_) | ExportError::Changed(_) | ExportError::Stopped => {
-                return internal(error);
-            }
-        },
-        Error::Store(_) | Error::Random(_) => return internal(error),
-    };
-    (code, detail, None)
+        Reply::Internal => {
+            tracing::error!("{}", Chain(error));
+            (ErrorCode::Internal, None, None)
+        }
+    }
 }
 
 /// An error and each of its sources, for the log.
@@ -252,12 +131,6 @@ impl std::fmt::Display for Chain<'_> {
         }
         Ok(())
     }
-}
-
-/// A failure of the server's own: logged, and answered without its detail.
-fn internal(error: &Error) -> (ErrorCode, Option<String>, Option<FeederRefusal>) {
-    tracing::error!("{error}");
-    (ErrorCode::Internal, None, None)
 }
 
 fn status(code: ErrorCode) -> StatusCode {
@@ -309,6 +182,8 @@ fn status(code: ErrorCode) -> StatusCode {
 
 #[cfg(test)]
 mod tests {
+    use wellfed_service::{HouseholdError, ZoneError};
+
     use super::*;
 
     /// A retry with the same key replays the refusal, so a busy feeder is

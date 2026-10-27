@@ -104,7 +104,7 @@ impl Service {
     /// Copy the database as taken at `now`, then drop the oldest copies
     /// past the count kept. Copies are taken one at a time.
     pub(crate) async fn backup_at(&self, now: Timestamp) -> Result<Backup> {
-        let _turn = self.backing_up.lock().await;
+        let _turn = self.operations.backing_up.lock().await;
         let config = self.shared.config.backups.clone();
         // Named to the second, so its time is the second it was taken in.
         let taken = Timestamp::from_second(now.as_second()).map_err(|_| BackupError::Time(now))?;

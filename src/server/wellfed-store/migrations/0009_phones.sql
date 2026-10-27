@@ -4,7 +4,11 @@
 ALTER TABLE feeders ADD COLUMN archived_ms INTEGER;
 
 -- Each phone key the server made an invite for, recorded before the invite
--- is asked for, so a phone that joins is always attributed. `user_id` and
+-- is asked for, so a phone that joins with it is attributed. The feeder
+-- does not bind an invite to a key, so until `invite_until_ms` (the last
+-- invite's deadline, or a bound while its answer is unknown) the key may
+-- still join: a revoke answered `not_found` before then is not settled.
+-- `user_id` and
 -- `token_id` carry no foreign key: a deleted account's keys must still be
 -- revoked. `revoke` is why the key is being revoked (null while it
 -- stands); the row goes once the feeder has dropped the key. `attempt` is
@@ -16,6 +20,7 @@ CREATE TABLE phone_keys (
     token_id BLOB,
     role TEXT NOT NULL,
     invited_ms INTEGER NOT NULL,
+    invite_until_ms INTEGER NOT NULL,
     revoke TEXT,
     revoke_ms INTEGER,
     attempt TEXT,

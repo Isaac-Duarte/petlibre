@@ -48,7 +48,7 @@ pub use feeders::{FeederRow, FeederState, NewFeeder, SealedKey, Synced};
 pub use foods::FoodSet;
 pub use history::{EventRow, NewEvent};
 pub use pets::WeightCursor;
-pub use phones::{NewPhone, Whose};
+pub use phones::{NewPhone, Recorded, Whose};
 pub use projections::{Boot, ClockSync, Feed, LockChange, PROJECTION_VERSION, Projected, Refresh};
 pub use samples::{NewSample, SampleRow};
 pub use tokens::{NewToken, TokenUse};

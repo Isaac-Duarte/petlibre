@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT feeder_id AS \"feeder_id: Uuid\", key, user_id AS \"user_id: Uuid\",\n                      token_id AS \"token_id: Uuid\", role, invited_ms, revoke, revoke_ms, attempt\n               FROM phone_keys WHERE ?1 IS NULL OR user_id = ?1\n               ORDER BY invited_ms, feeder_id, key",
+  "query": "SELECT feeder_id AS \"feeder_id: Uuid\", key, user_id AS \"user_id: Uuid\",\n                      token_id AS \"token_id: Uuid\", role, invited_ms, invite_until_ms,\n                      revoke, revoke_ms, attempt\n               FROM phone_keys WHERE ?1 IS NULL OR user_id = ?1\n               ORDER BY invited_ms, feeder_id, key",
   "describe": {
     "columns": [
       {
@@ -70,8 +70,19 @@
         }
       },
       {
-        "name": "revoke",
+        "name": "invite_until_ms",
         "ordinal": 6,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "phone_keys",
+            "name": "invite_until_ms"
+          }
+        }
+      },
+      {
+        "name": "revoke",
+        "ordinal": 7,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -82,7 +93,7 @@
       },
       {
         "name": "revoke_ms",
-        "ordinal": 7,
+        "ordinal": 8,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -93,7 +104,7 @@
       },
       {
         "name": "attempt",
-        "ordinal": 8,
+        "ordinal": 9,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -113,10 +124,11 @@
       true,
       false,
       false,
+      false,
       true,
       true,
       true
     ]
   },
-  "hash": "e180f095aed1727b819392fa3e8be676c095916164b0d760c84de8664cdd4455"
+  "hash": "5b60358b87cf85f1b4826103a640545ac18bc29723bb6d4776ce248fbd2077bc"
 }

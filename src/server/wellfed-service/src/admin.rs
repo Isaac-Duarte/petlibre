@@ -8,10 +8,9 @@ use wellfed_api::{
     CommandKind, Connection as Link, FeederId, Generation, KeyRemoval, PlayRequest, Removal,
     RevokeAttempt, TuneName, WifiChange,
 };
-use wellfed_mirror::MirrorEvent;
+use wellfed_mirror::{MirrorEvent, hmac_sha256};
 use wellfed_model::{Op, Tune, Wifi};
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 use tokio::sync::broadcast::Receiver;
 use tokio::sync::broadcast::error::RecvError;
 
@@ -21,8 +20,8 @@ use crate::phones::own_revoke;
 use crate::{Caller, IdempotencyKey, Invalid, Result, Service};
 
 /// A Wi-Fi change as it is hashed into the journal. The passphrase goes
-/// in only as a digest keyed by the server's key, so the journal (which an
-/// export carries) cannot be searched for a weak one.
+/// in only as an HMAC under a subkey of the server's key, so the journal
+/// (which an export carries) cannot be searched for a weak one.
 #[derive(Serialize)]
 struct WifiBody {
     base: Generation,
@@ -38,6 +37,12 @@ impl Service {
     /// Store Wi-Fi credentials for the feeder's next join, or clear them,
     /// if its Wi-Fi store is still at `base` (the status's
     /// `wifi_generation`). A stale base is refused `stale` by the feeder.
+    ///
+    /// A change whose answer was lost is resent under its write id, which
+    /// the feeder remembers only until it restarts: a resend after a
+    /// restart finds the generation already moved by the change itself, so
+    /// it is recorded `stale` though the change ran. The status's
+    /// `wifi_generation` says which.
     pub async fn put_wifi(
         &self,
         caller: &Caller,
@@ -61,11 +66,10 @@ impl Service {
             base,
             ssid: change.wifi.as_ref().map(|wifi| wifi.ssid.clone()),
             psk: change.wifi.as_ref().map(|wifi| {
-                let digest = Sha256::new()
-                    .chain_update(b"wellfed-server wifi v1")
-                    .chain_update(self.shared.config.key)
-                    .chain_update(wifi.psk.as_bytes())
-                    .finalize();
+                // A subkey of its own, so this digest never shares a key
+                // with the sealing of the feeder keys.
+                let subkey = hmac_sha256(&self.shared.config.key, &[b"wellfed-server wifi v1"]);
+                let digest = hmac_sha256(&subkey, &[wifi.psk.as_bytes()]);
                 wellfed_formats::hex::encode(&digest)
             }),
         };
@@ -141,17 +145,21 @@ impl Service {
         done(&recorded.outcome)
     }
 
-    /// Remove the feeder: revoke the server's own key on it, stop
-    /// mirroring it and archive it, whether or not the revoke landed, which
-    /// the answer says. The feeder ends the session of a key it revokes
-    /// before answering, so the revoke is confirmed by the feeder refusing
-    /// the server's reconnect. Its history, samples and journal stay readable, and
-    /// adopting it again un-archives it. Runs beside no adoption, so a
-    /// re-adoption cannot interleave with it.
+    /// Remove the feeder: revoke the phone keys still owed a revoke on it,
+    /// then the server's own key, stop mirroring it and archive it, whether
+    /// or not the revokes landed, which the answer says. The feeder ends
+    /// the session of a key it revokes before answering, so the server's
+    /// own revoke is confirmed by the feeder refusing the reconnect. Its
+    /// history, samples and journal stay readable, and adopting it again
+    /// un-archives it and resumes the owed revokes. Runs beside no
+    /// adoption, so a re-adoption cannot interleave with it.
     pub async fn remove_feeder(&self, caller: &Caller, id: FeederId) -> Result<Removal> {
         let _one_at_a_time = self.adopting.lock().await;
         let row = self.live_row(id).await?;
         let own = self.own_key(&row)?;
+        // The server's key is the last that can revoke them.
+        self.revoke_owed(id).await;
+        let phones_owed = self.shared.store.revoking(id).await?;
         // Subscribed before the revoke goes out, so the refused reconnect
         // that confirms it cannot be missed.
         let updates = self.mirror.subscribe(id);
@@ -179,7 +187,11 @@ impl Service {
         let now = self.shared.clock.now();
         self.shared.store.archive_feeder(id, now).await?;
         let feeder = self.view(self.row(id).await?);
-        Ok(Removal { feeder, key })
+        Ok(Removal {
+            feeder,
+            key,
+            phones_owed,
+        })
     }
 
     /// Whether the feeder refused the server's next handshake within an

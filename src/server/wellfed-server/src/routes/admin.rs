@@ -14,7 +14,9 @@ use crate::extract::{IfMatch, OptionalIdempotencyKey};
 
 /// Store Wi-Fi credentials for the feeder's next join, or clear them, if
 /// its Wi-Fi store is still at the generation in `If-Match` (the status's
-/// `wifi_generation`). The passphrase is never stored or echoed.
+/// `wifi_generation`). The passphrase is never stored or echoed. A change
+/// whose answer was lost and is retried after the feeder restarted can be
+/// answered `stale` though it ran: the status's `wifi_generation` says.
 #[utoipa::path(
     put,
     path = "/feeders/{id}/wifi",
@@ -103,9 +105,9 @@ pub(crate) async fn play(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Remove the feeder from the server: revoke the server's key on it,
-/// stop mirroring it and archive it, whether or not the revoke landed,
-/// which the answer says. Its history, samples and journal stay readable;
+/// Remove the feeder from the server: revoke the phone keys still owed a
+/// revoke on it and the server's own key, stop mirroring it and archive
+/// it, whether or not the revokes landed, which the answer says. Its history, samples and journal stay readable;
 /// adopting it again brings it back with them.
 #[utoipa::path(
     delete,

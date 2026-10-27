@@ -4,7 +4,9 @@
 //! owner's key revoke, so a server adopted with the `server` role is
 //! refused `forbidden` by the feeder.
 
-use wellfed_api::{ClientOwner, CommandKind, FeederClient, FeederId, Hex};
+use wellfed_api::{
+    ClientOwner, CommandKind, CommandOutcome, FeederClient, FeederId, FeederRefusal, Hex,
+};
 use wellfed_model::{Answer, Client, Op};
 use wellfed_store::FeederRow;
 use serde::Serialize;
@@ -63,8 +65,9 @@ impl Service {
         Ok(self.shared.store.keep_client(id, &key, now).await?)
     }
 
-    /// Revoke one of the feeder's clients through the journal. The
-    /// server's own key is refused: removing the feeder revokes it.
+    /// Revoke one of the feeder's clients through the journal; one the
+    /// feeder no longer holds counts as revoked. The server's own key is
+    /// refused: removing the feeder revokes it.
     pub async fn revoke_client(
         &self,
         caller: &Caller,
@@ -87,7 +90,14 @@ impl Service {
                 op: Op::RevokeClient { key },
             })
             .await?;
-        done(&recorded.outcome)?;
+        // A client already gone is revoked: a retry after the first
+        // landed, or a revoke from elsewhere.
+        let gone = CommandOutcome::Refused {
+            refusal: FeederRefusal::NotFound,
+        };
+        if recorded.outcome != gone {
+            done(&recorded.outcome)?;
+        }
         self.shared.store.forget_client(id, &key).await?;
         Ok(())
     }

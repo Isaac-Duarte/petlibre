@@ -2,14 +2,18 @@
 //! member's token with no expiry, recorded as the account's, listed as its
 //! client, and revoked on every feeder when the account is deleted,
 //! demoted or given an expiry, or the token is revoked, retried at the
-//! feeder's next connect until it lands.
+//! feeder's next connect until it lands; a key whose invite is still live
+//! is revoked once it joins, and forgotten at the invite's deadline.
+
+use std::sync::Arc;
+use std::time::Duration;
 
 use wellfed_api::{
     ClientOwner, ClientRole, Connection as Link, FeederId, FeederRefusal, Hex, NewPhoneInvite,
     NewToken, NewUser, PhoneKey, RevokeAttempt, RevokeReason, Role, User, UserPatch,
 };
 use wellfed_server_testkit::feeder::{self, Flash, Running};
-use wellfed_server_testkit::fixed::FixedClock;
+use wellfed_server_testkit::fixed::{FixedClock, ManualClock};
 use wellfed_server_testkit::{TestService, ada_setup, local, until};
 use wellfed_service::{Caller, ClientError, CommandError, Error, Service};
 
@@ -353,6 +357,144 @@ fn a_revoke_owed_to_an_offline_feeder_lands_when_it_reconnects() {
 
         let sim = feeder::restart(&flash, address).await;
         revoked(service, &sim, 30).await;
+        server.shutdown().await;
+        sim.stop().await;
+    });
+}
+
+/// Whether a phone key is owed a revoke whose invite may still be redeemed.
+fn waiting_for_its_invite(phones: &[PhoneKey]) -> bool {
+    phones.iter().any(|phone| {
+        let last = phone.revoking.as_ref().and_then(|revoking| revoking.last);
+        matches!(last, Some(RevokeAttempt::InviteLive { .. }))
+    })
+}
+
+/// The feeder holds no key for an invite not yet redeemed, and does not
+/// bind the invite to a key: a revoke owed before the phone joins waits
+/// for it, and lands when it joins.
+#[test]
+fn a_key_revoked_before_its_phone_joins_is_revoked_once_it_joins() {
+    local(async {
+        let (sim, server, id) = started(ClientRole::Owner).await;
+        let service = server.service();
+        let ada = phone_user(service, "ada", Role::Owner).await;
+        let bob = phone_user(service, "bob", Role::Member).await;
+        let invite = service
+            .invite_phone(&bob, id, invite_for(40))
+            .await
+            .unwrap();
+
+        service.delete_user(bob.user.id).await.unwrap();
+        until("the revoke waits for the invite", || async {
+            waiting_for_its_invite(&service.phones(&ada.user).await.unwrap())
+        })
+        .await;
+        feeder::join_phone(&sim, &invite.invite, secret(40)).await;
+
+        revoked(service, &sim, 40).await;
+        server.shutdown().await;
+        sim.stop().await;
+    });
+}
+
+/// An owed key whose invite was never redeemed is forgotten once the
+/// invite's deadline has passed, tried again then.
+#[test]
+fn a_key_that_never_joins_is_settled_at_its_invites_deadline() {
+    local(async {
+        let sim = feeder::start().await;
+        let clock = ManualClock::new();
+        let server = TestService::start_with_clock(Arc::new(clock.clone())).await;
+        let id = server
+            .adopt_as(&sim, &sim.address.to_string(), ClientRole::Owner)
+            .await;
+        server.link(id, Link::Online).await;
+        let service = server.service();
+        let ada = phone_user(service, "ada", Role::Owner).await;
+        let bob = phone_user(service, "bob", Role::Member).await;
+        let invite = service
+            .invite_phone(&bob, id, invite_for(41))
+            .await
+            .unwrap();
+
+        service.delete_user(bob.user.id).await.unwrap();
+        until("the revoke waits for the invite", || async {
+            waiting_for_its_invite(&service.phones(&ada.user).await.unwrap())
+        })
+        .await;
+        clock.advance(Duration::from_secs(u64::from(invite.seconds) + 10));
+
+        until("the key is forgotten", || async {
+            service.phones(&ada.user).await.unwrap().is_empty()
+        })
+        .await;
+        server.shutdown().await;
+        sim.stop().await;
+    });
+}
+
+/// A revoke owed when the server stops is still owed when it starts again,
+/// and lands when the feeder returns.
+#[test]
+fn an_owed_revoke_survives_a_server_restart() {
+    local(async {
+        let flash = Flash::memory();
+        let sim = feeder::start_on(&flash).await;
+        let address = sim.address;
+        let server = TestService::start().await;
+        let id = server
+            .adopt_as(&sim, &address.to_string(), ClientRole::Owner)
+            .await;
+        server.link(id, Link::Online).await;
+        let service = server.service();
+        let ada = phone_user(service, "ada", Role::Owner).await;
+        let cy = phone_user(service, "cy", Role::Member).await;
+        join(service, &sim, id, &cy, 42).await;
+
+        sim.stop().await;
+        server.link(id, Link::Offline).await;
+        service.delete_user(cy.user.id).await.unwrap();
+        until("the revoke is owed", || async {
+            let phones = service.phones(&ada.user).await.unwrap();
+            phones.iter().any(|phone| {
+                let last = phone.revoking.as_ref().and_then(|revoking| revoking.last);
+                last == Some(RevokeAttempt::Offline)
+            })
+        })
+        .await;
+
+        let server = TestService::reopen(server.stop().await).await;
+        let sim = feeder::restart(&flash, address).await;
+        revoked(server.service(), &sim, 42).await;
+        server.shutdown().await;
+        sim.stop().await;
+    });
+}
+
+/// Removing a feeder tries the owed revokes first, and names the keys
+/// still owed: here one whose invite may yet be redeemed.
+#[test]
+fn a_removal_names_the_phone_keys_still_owed() {
+    local(async {
+        let (sim, server, id) = started(ClientRole::Owner).await;
+        let service = server.service();
+        let ada = phone_user(service, "ada", Role::Owner).await;
+        let bob = phone_user(service, "bob", Role::Member).await;
+        service
+            .invite_phone(&bob, id, invite_for(43))
+            .await
+            .unwrap();
+        service.delete_user(bob.user.id).await.unwrap();
+
+        let removal = service.remove_feeder(&ada, id).await.unwrap();
+
+        let owed: Vec<_> = removal
+            .phones_owed
+            .iter()
+            .map(|phone| phone.key.0)
+            .collect();
+        assert_eq!(owed, [feeder::phone_key(secret(43))]);
         server.shutdown().await;
         sim.stop().await;
     });

@@ -94,6 +94,10 @@ pub struct PhoneKey {
     /// The role it was invited with.
     pub role: ClientRole,
     pub invited: Timestamp,
+    /// Until when an invite made for it may still be redeemed: the feeder
+    /// does not bind an invite to a key, so a revoke that finds no such
+    /// client before then is tried again.
+    pub invite_until: Timestamp,
     /// Set once the key is to be revoked and until it is.
     pub revoking: Option<Revoking>,
 }
@@ -162,6 +166,10 @@ pub enum RevokeAttempt {
     /// The feeder refused: `forbidden` when the server's key is not an
     /// owner's.
     Refused { refusal: FeederRefusal },
+    /// The feeder holds no such client yet, but the key's invite may still
+    /// be redeemed until `until`: tried again when a client joins, at
+    /// `until`, and on each reconnect.
+    InviteLive { until: Timestamp },
 }
 
 /// The feeder's Wi-Fi credentials for its next join, or `null` to clear
@@ -214,6 +222,10 @@ pub struct Removal {
     pub feeder: Feeder,
     /// Whether the feeder dropped the server's own key.
     pub key: KeyRemoval,
+    /// Phone keys still owed a revoke on the feeder, which removing it
+    /// tried first. Adopting it again resumes revoking them; until then
+    /// its owner revokes them on the feeder (`wellfed revoke`).
+    pub phones_owed: Vec<PhoneKey>,
 }
 
 /// What came of revoking the server's own key on a feeder being removed.

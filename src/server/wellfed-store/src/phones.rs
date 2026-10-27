@@ -10,6 +10,8 @@ use uuid::Uuid;
 use crate::convert::{millis, timestamp};
 use crate::{Error, Result, Store};
 
+mod reconcile;
+
 /// A phone key about to be invited.
 pub struct NewPhone {
     pub feeder: FeederId,
@@ -18,6 +20,21 @@ pub struct NewPhone {
     pub token: TokenId,
     pub role: ClientRole,
     pub invited: Timestamp,
+    /// A bound on the invite's deadline while its answer is pending.
+    pub invite_until: Timestamp,
+}
+
+/// What [`Store::record_phone`] found.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Recorded {
+    /// The key is new: recorded.
+    New,
+    /// The key is already this token's, and not being revoked: asked again
+    /// (a lost invite), its deadline raised to the new bound. `until` is
+    /// the deadline it had.
+    Again { until: Timestamp },
+    /// The key is another token's, or being revoked: nothing changed.
+    Taken,
 }
 
 /// Whose phone keys [`Store::revoke_phones`] marks.
@@ -41,6 +58,7 @@ struct Raw {
     token_id: Option<Uuid>,
     role: String,
     invited_ms: i64,
+    invite_until_ms: i64,
     revoke: Option<String>,
     revoke_ms: Option<i64>,
     attempt: Option<String>,
@@ -73,32 +91,86 @@ impl TryFrom<Raw> for PhoneKey {
             token: raw.token_id.map(TokenId),
             role: ClientRole::from_code(&raw.role).ok_or(Error::Corrupt("phone role"))?,
             invited: timestamp(raw.invited_ms)?,
+            invite_until: timestamp(raw.invite_until_ms)?,
             revoking,
         })
     }
 }
 
 impl Store {
-    /// Record a phone key before its invite is asked for; whether it was
-    /// new. A key already recorded is left as it is, for the caller to
-    /// judge.
-    pub async fn record_phone(&self, phone: &NewPhone) -> Result<bool> {
+    /// Record a phone key for `phone.token` before its invite is asked
+    /// for, unless another token holds it or it is being revoked.
+    pub async fn record_phone(&self, phone: &NewPhone) -> Result<Recorded> {
         let key = phone.key.as_slice();
         let role = phone.role.code();
         let invited = millis(phone.invited);
-        let done = sqlx::query!(
-            "INSERT INTO phone_keys (feeder_id, key, user_id, token_id, role, invited_ms)
-             VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
+        let until = millis(phone.invite_until);
+        let mut tx = self.writer.begin().await?;
+        let existing = sqlx::query!(
+            r#"SELECT token_id AS "token_id: Uuid", invite_until_ms, revoke
+               FROM phone_keys WHERE feeder_id = ? AND key = ?"#,
             phone.feeder.0,
             key,
-            phone.user.0,
-            phone.token.0,
-            role,
-            invited,
+        )
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        let recorded = match existing {
+            None => {
+                sqlx::query!(
+                    "INSERT INTO phone_keys
+                         (feeder_id, key, user_id, token_id, role, invited_ms, invite_until_ms)
+                     VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    phone.feeder.0,
+                    key,
+                    phone.user.0,
+                    phone.token.0,
+                    role,
+                    invited,
+                    until,
+                )
+                .execute(&mut *tx)
+                .await?;
+                Recorded::New
+            }
+            Some(row) if row.token_id == Some(phone.token.0) && row.revoke.is_none() => {
+                sqlx::query!(
+                    "UPDATE phone_keys SET invite_until_ms = MAX(invite_until_ms, ?)
+                     WHERE feeder_id = ? AND key = ?",
+                    until,
+                    phone.feeder.0,
+                    key,
+                )
+                .execute(&mut *tx)
+                .await?;
+                Recorded::Again {
+                    until: timestamp(row.invite_until_ms)?,
+                }
+            }
+            Some(_) => Recorded::Taken,
+        };
+        tx.commit().await?;
+        Ok(recorded)
+    }
+
+    /// Set the key's invite deadline, once the feeder has said it.
+    pub async fn set_invite_until(
+        &self,
+        feeder: FeederId,
+        key: &[u8; 32],
+        until: Timestamp,
+    ) -> Result<()> {
+        let key = key.as_slice();
+        let until = millis(until);
+        sqlx::query!(
+            "UPDATE phone_keys SET invite_until_ms = ? WHERE feeder_id = ? AND key = ?",
+            until,
+            feeder.0,
+            key,
         )
         .execute(&self.writer)
         .await?;
-        Ok(done.rows_affected() == 1)
+        Ok(())
     }
 
     pub async fn phone(&self, feeder: FeederId, key: &[u8; 32]) -> Result<Option<PhoneKey>> {
@@ -106,7 +178,8 @@ impl Store {
         let row = sqlx::query_as!(
             Raw,
             r#"SELECT feeder_id AS "feeder_id: Uuid", key, user_id AS "user_id: Uuid",
-                      token_id AS "token_id: Uuid", role, invited_ms, revoke, revoke_ms, attempt
+                      token_id AS "token_id: Uuid", role, invited_ms, invite_until_ms,
+                      revoke, revoke_ms, attempt
                FROM phone_keys WHERE feeder_id = ? AND key = ?"#,
             feeder.0,
             key,
@@ -122,7 +195,8 @@ impl Store {
         let rows = sqlx::query_as!(
             Raw,
             r#"SELECT feeder_id AS "feeder_id: Uuid", key, user_id AS "user_id: Uuid",
-                      token_id AS "token_id: Uuid", role, invited_ms, revoke, revoke_ms, attempt
+                      token_id AS "token_id: Uuid", role, invited_ms, invite_until_ms,
+                      revoke, revoke_ms, attempt
                FROM phone_keys WHERE ?1 IS NULL OR user_id = ?1
                ORDER BY invited_ms, feeder_id, key"#,
             user,
@@ -137,7 +211,8 @@ impl Store {
         let rows = sqlx::query_as!(
             Raw,
             r#"SELECT feeder_id AS "feeder_id: Uuid", key, user_id AS "user_id: Uuid",
-                      token_id AS "token_id: Uuid", role, invited_ms, revoke, revoke_ms, attempt
+                      token_id AS "token_id: Uuid", role, invited_ms, invite_until_ms,
+                      revoke, revoke_ms, attempt
                FROM phone_keys WHERE feeder_id = ? ORDER BY invited_ms, key"#,
             feeder.0,
         )

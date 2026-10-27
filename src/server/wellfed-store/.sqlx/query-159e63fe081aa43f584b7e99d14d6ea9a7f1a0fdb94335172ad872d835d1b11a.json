@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE phone_keys SET revoke = 'deleted', revoke_ms = ?\n               WHERE revoke IS NULL AND user_id NOT IN (SELECT id FROM users)\n               RETURNING feeder_id AS \"feeder_id: Uuid\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "feeder_id: Uuid",
+        "ordinal": 0,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "phone_keys",
+            "name": "feeder_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "159e63fe081aa43f584b7e99d14d6ea9a7f1a0fdb94335172ad872d835d1b11a"
+}

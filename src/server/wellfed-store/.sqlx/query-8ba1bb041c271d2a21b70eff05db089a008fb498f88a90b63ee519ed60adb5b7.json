@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE phone_keys SET invite_until_ms = ? WHERE feeder_id = ? AND key = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "8ba1bb041c271d2a21b70eff05db089a008fb498f88a90b63ee519ed60adb5b7"
+}

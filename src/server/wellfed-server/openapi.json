@@ -290,7 +290,7 @@
         "tags": [
           "feeders"
         ],
-        "summary": "Remove the feeder from the server: revoke the server's key on it,\nstop mirroring it and archive it, whether or not the revoke landed,\nwhich the answer says. Its history, samples and journal stay readable;\nadopting it again brings it back with them.",
+        "summary": "Remove the feeder from the server: revoke the phone keys still owed a\nrevoke on it and the server's own key, stop mirroring it and archive\nit, whether or not the revokes landed, which the answer says. Its history, samples and journal stay readable;\nadopting it again brings it back with them.",
         "operationId": "remove",
         "parameters": [
           {
@@ -1805,7 +1805,7 @@
         "tags": [
           "feeders"
         ],
-        "summary": "Store Wi-Fi credentials for the feeder's next join, or clear them, if\nits Wi-Fi store is still at the generation in `If-Match` (the status's\n`wifi_generation`). The passphrase is never stored or echoed.",
+        "summary": "Store Wi-Fi credentials for the feeder's next join, or clear them, if\nits Wi-Fi store is still at the generation in `If-Match` (the status's\n`wifi_generation`). The passphrase is never stored or echoed. A change\nwhose answer was lost and is retried after the feeder restarted can be\nanswered `stale` though it ran: the status's `wifi_generation` says.",
         "operationId": "put_wifi",
         "parameters": [
           {
@@ -5791,11 +5791,17 @@
           "key",
           "user",
           "role",
-          "invited"
+          "invited",
+          "invite_until"
         ],
         "properties": {
           "feeder": {
             "$ref": "#/components/schemas/FeederId"
+          },
+          "invite_until": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Until when an invite made for it may still be redeemed: the feeder\ndoes not bind an invite to a key, so a revoke that finds no such\nclient before then is tried again."
           },
           "invited": {
             "type": "string",
@@ -6228,7 +6234,8 @@
         "description": "A feeder the server no longer mirrors. Its history, samples and journal\nstay readable; adopting it again continues them.",
         "required": [
           "feeder",
-          "key"
+          "key",
+          "phones_owed"
         ],
         "properties": {
           "feeder": {
@@ -6237,6 +6244,13 @@
           "key": {
             "$ref": "#/components/schemas/KeyRemoval",
             "description": "Whether the feeder dropped the server's own key."
+          },
+          "phones_owed": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PhoneKey"
+            },
+            "description": "Phone keys still owed a revoke on the feeder, which removing it\ntried first. Adopting it again resumes revoking them; until then\nits owner revokes them on the feeder (`wellfed revoke`)."
           }
         }
       },
@@ -6288,6 +6302,26 @@
                 "enum": [
                   "refused"
                 ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The feeder holds no such client yet, but the key's invite may still\nbe redeemed until `until`: tried again when a client joins, at\n`until`, and on each reconnect.",
+            "required": [
+              "until",
+              "result"
+            ],
+            "properties": {
+              "result": {
+                "type": "string",
+                "enum": [
+                  "invite_live"
+                ]
+              },
+              "until": {
+                "type": "string",
+                "format": "date-time"
               }
             }
           }

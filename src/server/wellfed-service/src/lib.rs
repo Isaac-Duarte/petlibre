@@ -230,6 +230,9 @@ pub struct Service {
     /// Held while a feeder's owed phone-key revokes are sent, so an
     /// account change and a reconnect take turns.
     revoking: Arc<Mutex<HashMap<FeederId, Arc<tokio::sync::Mutex<()>>>>>,
+    /// When each feeder's owed revokes are next tried for an invite's
+    /// deadline, so one wake serves every key waiting on that feeder.
+    revoke_wakes: Arc<Mutex<HashMap<FeederId, Timestamp>>>,
     adopting: Arc<tokio::sync::Mutex<()>>,
     /// Household changes run one at a time, so the stored zone and the
     /// mirror's are always the last change's.
@@ -283,6 +286,7 @@ impl Service {
             fingerprints: Arc::new(Mutex::new(HashMap::new())),
             resolving: Arc::new(Mutex::new(HashMap::new())),
             revoking: Arc::new(Mutex::new(HashMap::new())),
+            revoke_wakes: Arc::new(Mutex::new(HashMap::new())),
             adopting: Arc::new(tokio::sync::Mutex::new(())),
             household: Arc::new(tokio::sync::Mutex::new(())),
             cancel,
@@ -295,6 +299,9 @@ impl Service {
         // Before any feeder task ingests, so none writes beside a stale
         // build of the projections.
         service.mirror.refresh_projections().await?;
+        // Marked before the feeders connect, which revokes them.
+        let now = service.shared.clock.now();
+        service.shared.store.reconcile_phones(now).await?;
         for row in service.shared.store.feeders().await? {
             if row.archived.is_none() {
                 service.spawn(&row).await?;

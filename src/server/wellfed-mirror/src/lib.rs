@@ -54,6 +54,9 @@ pub use connect::Enrolled;
 pub use error::{AskError, ConnectError, Unreachable};
 pub use ingest::stored_event;
 pub use wellfed_client::api::{Invite, InviteText};
+/// HMAC-SHA256, for the service's keyed digests: the workspace's one
+/// implementation, which the service reaches through the mirror.
+pub use wellfed_session::mac::hmac_sha256;
 pub use time::{Clock, Random, RandomFailed, SystemClock, SystemRandom};
 pub use zone::{Zone, ZoneError};
 

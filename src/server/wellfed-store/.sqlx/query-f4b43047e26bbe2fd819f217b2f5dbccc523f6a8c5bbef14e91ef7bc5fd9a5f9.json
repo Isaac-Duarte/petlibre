@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO phone_keys\n                         (feeder_id, key, user_id, token_id, role, invited_ms, invite_until_ms)\n                     VALUES (?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": []
+  },
+  "hash": "f4b43047e26bbe2fd819f217b2f5dbccc523f6a8c5bbef14e91ef7bc5fd9a5f9"
+}

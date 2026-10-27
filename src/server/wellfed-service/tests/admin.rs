@@ -214,6 +214,7 @@ fn a_removed_feeder_is_archived_its_key_revoked_and_adopted_again_under_its_id()
         let removal = service.remove_feeder(&owner(), id).await.unwrap();
 
         assert_eq!(removal.key, KeyRemoval::Revoked);
+        assert!(removal.phones_owed.is_empty());
         assert!(removal.feeder.archived.is_some());
         assert!(!feeder::client_keys(&sim).await.contains(&own));
         let listed = service.feeders().await.unwrap();

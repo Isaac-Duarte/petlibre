@@ -4,9 +4,10 @@
 //! settings (`server.toml`, optional; flags and environment variables
 //! override it) and the key the server's feeder keys are sealed with
 //! (`keys/server.key`), the verified releases kept for installs
-//! (`releases/`) and the database's backups (`backups/`). The first start
-//! makes that key; back it up apart from the database's backups, which
-//! leave it out: the database alone cannot open the feeder keys.
+//! (`releases/`), each feeder's stock backup (`stock/`) and the
+//! database's backups (`backups/`). The first start makes that key; back
+//! it up apart from the database's backups, which leave it out: the
+//! database alone cannot open the feeder keys.
 //!
 //! `wellfed-server reset-owner` gives a locked-out owner a new temporary
 //! password, straight on the database, and prints it.
@@ -18,10 +19,10 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use jiff::tz::TimeZone;
-use wellfed_server::config::{BACKUPS, DATABASE, Overrides, RELEASES, ServerConfig};
+use wellfed_server::config::{BACKUPS, DATABASE, Overrides, RELEASES, STOCK, ServerConfig};
 use wellfed_service::{
     Backups, Clock, Config, Diagnostics, ReleaseFeed, ReleaseKeys, ReleasesConfig, Service,
-    SystemClock, SystemRandom, Timing,
+    StockConfig, StockPins, SystemClock, SystemRandom, Timing,
 };
 use wellfed_store::Store;
 use tokio_util::sync::CancellationToken;
@@ -93,6 +94,11 @@ async fn main() -> Result<()> {
                     .collect(),
             },
             fetch: settings.releases.fetch.then(ReleaseFeed::default),
+            stock: StockConfig {
+                dir: cli.data.join(STOCK),
+                // Never anything else: only stock's own image is kept.
+                pins: StockPins::STOCK,
+            },
         },
         raw_sample_days: settings.retention.raw_sample_days,
         backups: Backups {

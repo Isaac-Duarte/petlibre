@@ -8,7 +8,7 @@ use axum::response::{IntoResponse, Response};
 use wellfed_api::{ErrorCode, FeederRefusal, Problem, Settings};
 use wellfed_service::{
     AccountError, CommandError, Error, FeederError, HouseholdError, InstallError, OwnerDataError,
-    ReleaseError, TokenError, ZoneError,
+    ReleaseError, StockError, TokenError, ZoneError,
 };
 
 /// A request's failure.
@@ -176,6 +176,11 @@ fn service(error: &Error) -> (ErrorCode, Option<String>, Option<FeederRefusal>) 
             InstallError::Running => ErrorCode::InstallRunning,
             InstallError::None => ErrorCode::NotFound,
         },
+        Error::Stock(stock) => match stock {
+            StockError::Mismatch(_) => ErrorCode::RestoreMismatch,
+            StockError::BackupNeeded => ErrorCode::StockBackupNeeded,
+            StockError::Size => return internal(error),
+        },
         Error::Release(release) => match release {
             ReleaseError::Refused(_) => ErrorCode::ReleaseRefused,
             ReleaseError::FetchDisabled => ErrorCode::FetchDisabled,
@@ -187,6 +192,9 @@ fn service(error: &Error) -> (ErrorCode, Option<String>, Option<FeederRefusal>) 
                 ErrorCode::ReleasesUnreachable
             }
             ReleaseError::NotFound => ErrorCode::NotFound,
+            ReleaseError::Stock(_) => ErrorCode::StockRefused,
+            ReleaseError::StockDiffers => ErrorCode::StockDiffers,
+            ReleaseError::NoStock | ReleaseError::StockDamaged => ErrorCode::NoStockBackup,
             ReleaseError::Cursor | ReleaseError::Limit { .. } => ErrorCode::Invalid,
             ReleaseError::Changed
             | ReleaseError::Client(_)
@@ -260,7 +268,11 @@ fn status(code: ErrorCode) -> StatusCode {
         ErrorCode::ReleaseRefused => StatusCode::UNPROCESSABLE_ENTITY,
         ErrorCode::FetchDisabled => StatusCode::CONFLICT,
         ErrorCode::ReleasesUnreachable => StatusCode::BAD_GATEWAY,
-        ErrorCode::InstallRunning => StatusCode::CONFLICT,
+        ErrorCode::InstallRunning | ErrorCode::StockDiffers | ErrorCode::StockBackupNeeded => {
+            StatusCode::CONFLICT
+        }
+        ErrorCode::NoStockBackup => StatusCode::NOT_FOUND,
+        ErrorCode::StockRefused | ErrorCode::RestoreMismatch => StatusCode::UNPROCESSABLE_ENTITY,
         ErrorCode::Internal => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }

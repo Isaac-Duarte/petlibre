@@ -5,8 +5,8 @@
 use std::fmt::Write as _;
 
 use wellfed_server_client::api::{
-    Command, CommandOutcome, Feeder, FeederDetail, FeederEvent, Gap, Install, Release, Settings,
-    Token, User,
+    Command, CommandOutcome, Feeder, FeederDetail, FeederEvent, Gap, Install, InstallTarget,
+    Release, Settings, StockBackup, StockState, Token, User,
 };
 use serde::Serialize;
 
@@ -175,8 +175,12 @@ pub(super) fn release(release: &Release) -> String {
 }
 
 pub(super) fn install(install: &Install) -> String {
+    let target = match install.target {
+        InstallTarget::Release { release } => format!("release {release}"),
+        InstallTarget::Stock { sha256 } => format!("stock {sha256}"),
+    };
     let mut line = format!(
-        "install {}  version {}  {}  {} of {} bytes",
+        "install {}  {target}  version {}  {}  {} of {} bytes",
         install.id,
         install.version,
         word(&install.state),
@@ -187,6 +191,46 @@ pub(super) fn install(install: &Install) -> String {
         let _ = write!(line, "  {}", word(failure));
     }
     line
+}
+
+pub(super) fn stock_backup(backup: &StockBackup) -> String {
+    format!(
+        "stock {}  {}  {}  {} bytes  from {}  kept {}",
+        backup.version,
+        word(&backup.state),
+        backup.sha256,
+        backup.bytes,
+        word(&backup.source),
+        backup.kept,
+    )
+}
+
+/// The kept backup, the feeder's banks and its last restore, a line each.
+pub(super) fn stock(state: &StockState) -> String {
+    let backup = state
+        .backup
+        .as_ref()
+        .map_or_else(|| "no stock backup kept".to_owned(), stock_backup);
+    let feeder = state.feeder_state.map_or_else(
+        || "feeder: not read (offline, or the server's key is not an owner's)".to_owned(),
+        |feeder| {
+            format!(
+                "feeder: bank {}  floor {}  {}",
+                feeder.bank,
+                feeder.floor,
+                if feeder.readable {
+                    "serves bank 1"
+                } else {
+                    "does not serve bank 1"
+                },
+            )
+        },
+    );
+    let restore = state
+        .restore
+        .as_ref()
+        .map_or_else(|| "no restore has run".to_owned(), install);
+    format!("{backup}\n{feeder}\n{restore}")
 }
 
 /// Each item on its own line.

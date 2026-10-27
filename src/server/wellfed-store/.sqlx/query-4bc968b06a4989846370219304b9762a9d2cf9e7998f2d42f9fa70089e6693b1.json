@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id AS \"id: Uuid\", feeder_id AS \"feeder_id: Uuid\", release_id, version,\n                      user_id AS \"user_id: Uuid\", started_ms, state, written, image_len,\n                      failure, finished_ms\n               FROM installs WHERE feeder_id = ?\n               ORDER BY started_ms DESC, rowid DESC LIMIT 1",
+  "query": "SELECT id AS \"id: Uuid\", feeder_id AS \"feeder_id: Uuid\", target, release_id,\n                      version, user_id AS \"user_id: Uuid\", started_ms, state, written,\n                      image_len, failure, finished_ms\n               FROM installs WHERE feeder_id = ?\n               ORDER BY started_ms DESC, rowid DESC LIMIT 1",
   "describe": {
     "columns": [
       {
@@ -26,8 +26,19 @@
         }
       },
       {
-        "name": "release_id",
+        "name": "target",
         "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "installs",
+            "name": "target"
+          }
+        }
+      },
+      {
+        "name": "release_id",
+        "ordinal": 3,
         "type_info": "Blob",
         "origin": {
           "Table": {
@@ -38,7 +49,7 @@
       },
       {
         "name": "version",
-        "ordinal": 3,
+        "ordinal": 4,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -49,7 +60,7 @@
       },
       {
         "name": "user_id: Uuid",
-        "ordinal": 4,
+        "ordinal": 5,
         "type_info": "Blob",
         "origin": {
           "Table": {
@@ -60,7 +71,7 @@
       },
       {
         "name": "started_ms",
-        "ordinal": 5,
+        "ordinal": 6,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -71,7 +82,7 @@
       },
       {
         "name": "state",
-        "ordinal": 6,
+        "ordinal": 7,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -82,7 +93,7 @@
       },
       {
         "name": "written",
-        "ordinal": 7,
+        "ordinal": 8,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -93,7 +104,7 @@
       },
       {
         "name": "image_len",
-        "ordinal": 8,
+        "ordinal": 9,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -104,7 +115,7 @@
       },
       {
         "name": "failure",
-        "ordinal": 9,
+        "ordinal": 10,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -115,7 +126,7 @@
       },
       {
         "name": "finished_ms",
-        "ordinal": 10,
+        "ordinal": 11,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -138,9 +149,10 @@
       false,
       false,
       false,
+      false,
       true,
       true
     ]
   },
-  "hash": "23de1fdf3b79d28e7c6552c12958d6c45b4ebc5bbbe7fe7ccf8b0eb943b210f1"
+  "hash": "4bc968b06a4989846370219304b9762a9d2cf9e7998f2d42f9fa70089e6693b1"
 }

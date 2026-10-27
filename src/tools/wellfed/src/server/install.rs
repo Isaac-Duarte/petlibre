@@ -55,7 +55,11 @@ pub(super) async fn install(client: &Client, args: InstallArgs, out: Output) -> 
 
 /// Follow `started` on the stream, showing each change, until it ends;
 /// `None` if the stream ends first.
-async fn follow(updates: &mut Updates, started: &Install, out: Output) -> Result<Option<Install>> {
+pub(super) async fn follow(
+    updates: &mut Updates,
+    started: &Install,
+    out: Output,
+) -> Result<Option<Install>> {
     while let Some(update) = updates.next().await {
         let Ok(update) = update else {
             return Ok(None);

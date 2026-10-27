@@ -27,6 +27,7 @@ mod installs;
 mod pets;
 mod releases;
 mod samples;
+mod stock;
 mod stream;
 mod tokens;
 mod users;
@@ -53,7 +54,7 @@ pub use foods::{
 };
 pub use health::{FeederLink, Health, Job, JobOutcome, JobRun, ServerStatus, StoreState};
 pub use household::{Household, HouseholdPatch, TimeFormat, Units};
-pub use installs::{Install, InstallFailure, InstallRequest, InstallState};
+pub use installs::{Install, InstallFailure, InstallRequest, InstallState, InstallTarget};
 // The feeder's own values are the model's, served as they are; the HTTP
 // API adds only what the server knows (when it received them, its own ids).
 pub use wellfed_model::{
@@ -70,6 +71,10 @@ pub use releases::{
 pub use samples::{
     HourSample, RawSample, Resolution, SAMPLE_NUMBER_VERSION, SamplePage, SampleQuery,
     sample_number,
+};
+pub use stock::{
+    MANIFEST_LEN, STATEMENT_LEN, StockBackup, StockBackupState, StockFeeder, StockRestore,
+    StockSource, StockState,
 };
 pub use stream::{FeederSample, StreamEvent, StreamQuery};
 pub use tokens::{BEARER, CreatedToken, NewToken, Token, TokenId};

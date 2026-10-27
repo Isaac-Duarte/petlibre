@@ -46,8 +46,9 @@ pub mod backup;
 pub mod frame;
 
 pub use backup::{
-    BackupError, Bank1Reader, CONTAINER_HEADER, ReadError, STOCK_OTA_SHA256, STOCK_PAYLOAD_LEN,
-    STOCK_PAYLOAD_SHA256, STOCK_VERSION, StockBackup, VerifiedBackup,
+    BackupError, Bank1Reader, CONTAINER_HEADER, DOWNGRADE_LEN, ReadError, RestoreError,
+    RestoreOffer, STOCK_OTA_SHA256, STOCK_PAYLOAD_LEN, STOCK_PAYLOAD_SHA256, STOCK_VERSION,
+    StockBackup, StockPins, VerifiedBackup,
 };
 pub use frame::{FrameError, SETUP_ADDRESS, SetupFrame};
 

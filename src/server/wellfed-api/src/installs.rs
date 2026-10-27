@@ -1,5 +1,6 @@
 //! Installs: an owner's request to install one of the server's releases on
-//! one feeder, and where it stands. One runs at a time per server.
+//! one feeder, or to restore the feeder's stock firmware from the server's
+//! backup, and where it stands. One runs at a time per server.
 
 use jiff::Timestamp;
 use wellfed_model::{Hex, UpdateRefusal, UpdateStop};
@@ -22,9 +23,9 @@ pub struct InstallRequest {
 pub struct Install {
     pub id: InstallId,
     pub feeder: FeederId,
-    /// The release's id.
-    #[schema(value_type = String)]
-    pub release: Hex<32>,
+    /// What it writes into bank 1.
+    pub target: InstallTarget,
+    /// The version its manifest offers.
     pub version: u32,
     /// The owner who asked for it.
     pub by: UserId,
@@ -39,6 +40,59 @@ pub struct Install {
     pub finished: Option<Timestamp>,
 }
 
+/// What an install writes into bank 1.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum InstallTarget {
+    /// One of the server's releases.
+    Release {
+        /// The release's id.
+        #[schema(value_type = String)]
+        release: Hex<32>,
+    },
+    /// The feeder's stock firmware, from the backup the server keeps
+    /// ("Restore stock"). Once activated, the feeder runs stock, which
+    /// serves no device API: the server stops reaching it.
+    Stock {
+        /// SHA-256 of the kept backup file.
+        #[schema(value_type = String)]
+        sha256: Hex<32>,
+    },
+}
+
+impl InstallTarget {
+    /// The stored spelling of a release's install.
+    pub const RELEASE: &'static str = "release";
+    /// The stored spelling of a stock restore.
+    pub const STOCK: &'static str = "stock";
+
+    /// The stored spelling of its kind.
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::Release { .. } => Self::RELEASE,
+            Self::Stock { .. } => Self::STOCK,
+        }
+    }
+
+    /// The bytes that name it: the release's id, or the backup's SHA-256.
+    pub const fn name(self) -> Hex<32> {
+        match self {
+            Self::Release { release } => release,
+            Self::Stock { sha256 } => sha256,
+        }
+    }
+
+    /// The target a stored kind and name spell; `None` for a kind this
+    /// build does not know.
+    pub fn from_code(code: &str, name: Hex<32>) -> Option<Self> {
+        match code {
+            Self::RELEASE => Some(Self::Release { release: name }),
+            Self::STOCK => Some(Self::Stock { sha256: name }),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum InstallState {
@@ -46,7 +100,7 @@ pub enum InstallState {
     /// restart into bank 0 to take it.
     Running,
     /// Every byte is verified and bank 1 activated: the feeder restarts
-    /// into the release, whose trial confirms it.
+    /// into the release, whose trial confirms it, or into stock.
     Activated,
     /// Bank 1 already ran the release's build when the install began, so
     /// nothing was offered and nothing written.

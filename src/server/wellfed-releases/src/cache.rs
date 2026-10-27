@@ -202,7 +202,7 @@ fn verify(file: &[u8], keys: &Keys) -> Result<release::Verified, Error> {
 
 /// Run `work` on the blocking pool: reading, hashing and syncing a
 /// megabyte is not for the async workers.
-async fn blocking<T: Send + 'static>(
+pub(crate) async fn blocking<T: Send + 'static>(
     work: impl FnOnce() -> Result<T, Error> + Send + 'static,
 ) -> Result<T, Error> {
     tokio::task::spawn_blocking(work)
@@ -214,7 +214,7 @@ fn path(dir: &Path, id: Hex<32>, extension: &str) -> PathBuf {
     dir.join(format!("{id}.{extension}"))
 }
 
-fn cache(path: &Path) -> impl FnOnce(io::Error) -> Error + '_ {
+pub(crate) fn cache(path: &Path) -> impl FnOnce(io::Error) -> Error + '_ {
     move |source| Error::Cache {
         path: path.to_owned(),
         source,
@@ -286,7 +286,7 @@ fn sweep(dir: &Path) -> Result<(), Error> {
 }
 
 /// Write `bytes` to `path` so that it is either absent or whole.
-fn write_whole(path: &Path, bytes: &[u8]) -> Result<(), Error> {
+pub(crate) fn write_whole(path: &Path, bytes: &[u8]) -> Result<(), Error> {
     let mut part = path.as_os_str().to_owned();
     part.push(".");
     part.push(PART);
@@ -298,7 +298,7 @@ fn write_whole(path: &Path, bytes: &[u8]) -> Result<(), Error> {
     fs::rename(&part, path).map_err(cache(path))
 }
 
-fn sync_dir(dir: &Path) -> Result<(), Error> {
+pub(crate) fn sync_dir(dir: &Path) -> Result<(), Error> {
     File::open(dir)
         .and_then(|dir| dir.sync_all())
         .map_err(cache(dir))

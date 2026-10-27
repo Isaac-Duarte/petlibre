@@ -5,7 +5,7 @@
 //! other verb sends it. The device verbs (`feeders`, `status`, `settings`,
 //! `lock`, `feed`, `cancel-feed`, `events`) reach the feeders the server
 //! holds, through its command journal; the rest (`command`, `commands`,
-//! `users`, `tokens`, `releases`, `install`) only the server has.
+//! `users`, `tokens`, `releases`, `install`, `stock`) only the server has.
 //!
 //! Output is text by default, and with `--json` the API's bodies, one JSON
 //! document per line (a refusal's problem included). The exit status is 0
@@ -25,6 +25,7 @@ mod feeders;
 mod install;
 mod login;
 mod releases;
+mod stock;
 mod text;
 
 use std::path::{Path, PathBuf};
@@ -94,6 +95,10 @@ enum Verb {
     /// (owners only), or without one read the feeder's running or last
     /// install.
     Install(install::InstallArgs),
+    /// The feeder's stock backup on the server: show it, read it from the
+    /// feeder, upload or export it, or restore stock from it (owners
+    /// only, signed here with your update key).
+    Stock(stock::StockArgs),
 }
 
 pub(crate) async fn run(args: ServerArgs) -> Result<ExitCode> {
@@ -127,6 +132,7 @@ async fn verb(verb: Verb, token_file: &Path, out: Output) -> Result<Settled> {
         Verb::Tokens(tokens) => accounts::tokens(&client()?, tokens, out).await,
         Verb::Releases(releases) => releases::releases(&client()?, releases, out).await,
         Verb::Install(args) => install::install(&client()?, args, out).await,
+        Verb::Stock(args) => stock::stock(&client()?, args, out).await,
     }
 }
 

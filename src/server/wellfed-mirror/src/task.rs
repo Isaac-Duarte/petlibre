@@ -81,6 +81,10 @@ impl Handle {
         self.opened.borrow().map(|opened| opened.epoch)
     }
 
+    pub(crate) fn capabilities(&self) -> Option<Capabilities> {
+        self.opened.borrow().map(|opened| opened.capabilities)
+    }
+
     pub(crate) fn subscribe(&self) -> broadcast::Receiver<MirrorEvent> {
         self.updates.subscribe()
     }

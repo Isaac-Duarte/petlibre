@@ -1,7 +1,9 @@
 //! `wellfed server …` as a process against the server in process and the
 //! simulated feeder: the login and its token file, a feed, `--json`, the
 //! exit statuses, a feed whose answer is lost, which exits 3 with its key
-//! and is never sent again, and an install followed to its end.
+//! and is never sent again, an install followed to its end, and the
+//! feeder's stock backup read, shown and exported, and never signed when
+//! it is not stock's pinned image.
 
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -9,7 +11,8 @@ use std::process::Stdio;
 
 use wellfed_server_client::api::{
     AdoptFeeder, ClientRole, Command, CommandOutcome, CommandState, Connection, ErrorCode,
-    FeedOutcome, Feeder, FeederId, Install, InstallState, Problem,
+    FeedOutcome, Feeder, FeederId, Install, InstallState, Problem, StockBackup, StockSource,
+    StockState,
 };
 use wellfed_server_client::{Client, Uploaded};
 use wellfed_server_testkit::feeder::{self, Banks, Flash, Relay, Running};
@@ -308,6 +311,76 @@ fn install_follows_a_release_to_activation() {
             again.stdout
         );
         home.run(&["install", "not-an-id"], "").await.exited(2);
+
+        server.stop().await;
+        sim.stop().await;
+    });
+}
+
+/// `stock read` keeps bank 1 read from the replacement on bank 0, `stock`
+/// shows it, `stock export` copies it byte for byte to a new file, and
+/// `stock restore` checks the server's copy against stock's pinned image
+/// before signing anything: the simulator's synthetic stock is refused,
+/// with nothing sent.
+#[test]
+fn stock_is_read_shown_exported_and_never_signed_unless_pinned() {
+    local(async {
+        let banks = Banks::new();
+        let stock = banks.borrow().bank1().to_vec();
+        let sim = feeder::start_updatable(&banks).await;
+        let config = release::keeping_stock(release::trusting(config()), &banks);
+        let server = TestServer::start_with(config).await;
+        let mut http = server.client();
+        http.setup(&ada_setup()).await.unwrap();
+        let request = AdoptFeeder {
+            invite: feeder::invite(&sim, ClientRole::Owner).await,
+            name: "kitchen".into(),
+            address: Some(sim.address.to_string()),
+        };
+        let kitchen = http.adopt(&request).await.unwrap().id;
+        feeder::stock_gave_way(&sim, &banks);
+        until("the feeder serves bank 1", || async {
+            let state = http.stock(kitchen).await.ok();
+            state
+                .and_then(|state| state.feeder_state)
+                .is_some_and(|feeder| feeder.readable)
+        })
+        .await;
+        let home = Home::new();
+        home.login(&server).await.exited(0);
+
+        let read = home.run(&["stock", "read", "--json"], "").await;
+        let [kept]: [StockBackup; 1] = read.exited(0).bodies().try_into().unwrap();
+        assert_eq!(kept.source, StockSource::Feeder);
+        let shown = home.run(&["stock", "--json"], "").await;
+        let [state]: [StockState; 1] = shown.exited(0).bodies().try_into().unwrap();
+        assert_eq!(state.backup, Some(kept.clone()));
+        let text = home.run(&["stock"], "").await;
+        assert!(
+            text.exited(0).stdout.contains("verified"),
+            "{}",
+            text.stdout
+        );
+
+        let output = home.0.path().join("stock.bin");
+        let output_arg = output.to_str().unwrap();
+        home.run(&["stock", "export", "--output", output_arg], "")
+            .await
+            .exited(0);
+        let exported = std::fs::read(&output).unwrap();
+        assert_eq!(&exported[32..], &stock[..]);
+        // An existing file is never replaced.
+        home.run(&["stock", "export", "--output", output_arg], "")
+            .await
+            .exited(1);
+
+        let restore = home.run(&["stock", "restore", "--version", "1"], "").await;
+        assert!(
+            restore.exited(1).stderr.contains("pinned image"),
+            "{}",
+            restore.stderr
+        );
+        assert_eq!(http.stock(kitchen).await.unwrap().restore, None);
 
         server.stop().await;
         sim.stop().await;

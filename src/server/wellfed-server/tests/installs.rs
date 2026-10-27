@@ -8,7 +8,7 @@ use std::rc::Rc;
 
 use wellfed_api::{
     AdoptFeeder, ClientRole, Connection, Credentials, ErrorCode, FeederId, FeederRefusal, Hex,
-    Install, InstallState, NewUser, Release, Role, StreamEvent, StreamQuery,
+    Install, InstallState, InstallTarget, NewUser, Release, Role, StreamEvent, StreamQuery,
 };
 use wellfed_server_client::{Client, Error, Lock, StatusCode, Uploaded};
 use wellfed_server_testkit::feeder::{self, Banks, Running};
@@ -98,8 +98,14 @@ fn an_owner_installs_a_release_with_its_progress_on_the_stream() {
         let started = rig.http.install(rig.feeder, rig.release.id).await.unwrap();
         assert_eq!(started.state, InstallState::Running);
         assert_eq!(
-            (started.feeder, started.release, started.version),
-            (rig.feeder, rig.release.id, 7)
+            (started.feeder, started.target, started.version),
+            (
+                rig.feeder,
+                InstallTarget::Release {
+                    release: rig.release.id
+                },
+                7
+            )
         );
         assert_eq!(
             (started.written, started.image_len),

@@ -234,8 +234,8 @@ fn show(path: &Path) -> Result<()> {
     };
     crate::print_json(&Shown {
         path: path.to_path_buf(),
-        stock_version: backup.verified().version(),
-        verified: true,
+        stock_version: STOCK_VERSION,
+        verified: backup.verified().is_some(),
         sha256: sha256(backup.bytes()),
         bytes: backup.bytes().len(),
     })

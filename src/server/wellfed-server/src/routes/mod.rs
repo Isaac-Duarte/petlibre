@@ -17,6 +17,7 @@ pub(crate) mod installs;
 pub(crate) mod pets;
 pub(crate) mod releases;
 pub(crate) mod samples;
+pub(crate) mod stock;
 pub(crate) mod stream;
 pub(crate) mod tokens;
 pub(crate) mod users;

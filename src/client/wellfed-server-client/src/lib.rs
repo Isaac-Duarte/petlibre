@@ -34,6 +34,7 @@ mod health;
 mod household;
 mod pets;
 mod releases;
+mod stock;
 mod stream;
 mod tokens;
 mod users;
@@ -54,6 +55,7 @@ pub use feeders::Lock;
 pub use wellfed_api as api;
 pub use releases::Uploaded;
 pub use reqwest::{self, Method, StatusCode, Url};
+pub use stock::Kept;
 pub use stream::{Update, Updates};
 
 /// How long a connection to the server may take to open. A server on the

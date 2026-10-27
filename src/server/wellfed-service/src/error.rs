@@ -26,6 +26,8 @@ pub enum Error {
     #[error(transparent)]
     Install(#[from] InstallError),
     #[error(transparent)]
+    Stock(#[from] StockError),
+    #[error(transparent)]
     Random(#[from] RandomFailed),
     #[error(transparent)]
     Release(#[from] wellfed_releases::Error),
@@ -220,6 +222,20 @@ pub enum InstallError {
     Running,
     #[error("no install has run on that feeder")]
     None,
+}
+
+/// The feeder's stock backup and its restore.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum StockError {
+    #[error("the restore does not offer the kept backup: {0}")]
+    Mismatch(wellfed_releases::RestoreError),
+    #[error("the kept backup is larger than any bank")]
+    Size,
+    #[error(
+        "the feeder runs from bank 0 with stock in bank 1, and no verified backup of it is kept: \
+         read it from the feeder or upload the installer's copy before installing"
+    )]
+    BackupNeeded,
 }
 
 /// A mirror refusal in the service's domains. Only `Unknown` may have

@@ -42,14 +42,16 @@
 //!   daily and on an owner's request, without the sealing key.
 //! - **Installs** run one at a time per server, in the background on the
 //!   feeder's long-operation lane, so feeds and status reads keep working;
-//!   their progress and their end reach the stream.
+//!   their progress and their end reach the stream. "Restore stock" is
+//!   one: it installs the feeder's own stock firmware from the verified
+//!   backup the server keeps in its data directory, signed by the owner.
 //! - **Background jobs** have their bodies here, each a method that takes
 //!   the time it runs at; [`Service::run_job`] runs one and records its
 //!   run. The server's supervisor decides when.
 //!
 //! Each domain has its own error enum ([`AccountError`],
 //! [`TokenError`], [`HouseholdError`], [`FeederError`], [`CommandError`],
-//! [`InstallError`], [`OwnerDataError`]), wrapped in [`Error`]. Time and randomness come in
+//! [`InstallError`], [`StockError`], [`OwnerDataError`]), wrapped in [`Error`]. Time and randomness come in
 //! through [`Clock`] and [`Random`], so tests can fix them.
 //!
 //! [API design]: ../../../../docs/api/README.md
@@ -77,6 +79,7 @@ mod pets;
 mod releases;
 mod samples;
 mod sessions;
+mod stock;
 mod tokens;
 mod updates;
 mod users;
@@ -99,7 +102,7 @@ pub use backups::{BackupError, Backups};
 pub use diagnostics::LogFollow;
 pub use error::{
     AccountError, CommandError, Error, FeederError, HouseholdError, InstallError, Invalid,
-    OwnerDataError, Result, TokenError,
+    OwnerDataError, Result, StockError, TokenError,
 };
 pub use hub::{Hub, Resume, Stamped, StreamId, Subscription};
 pub use permissions::{Permission, can};
@@ -108,7 +111,7 @@ pub use wellfed_mirror::{
 };
 pub use wellfed_releases::{
     Added as ReleaseAdded, Config as ReleasesConfig, Error as ReleaseError, Keys as ReleaseKeys,
-    MAX_FILE as RELEASE_MAX, Source as ReleaseFeed,
+    MAX_FILE as RELEASE_MAX, Source as ReleaseFeed, StockConfig, StockPins,
 };
 pub use sessions::SessionToken;
 pub use tokens::{BearerToken, Caller};

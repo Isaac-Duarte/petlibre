@@ -30,6 +30,7 @@
 //! [rollback]: ../../../../../docs/firmware/consumer-installation.md#rollback
 
 use wellfed_core::ota::MARKER;
+use wellfed_core::ota::offer::{self, ImageKind};
 use wellfed_model::{Answer, Bank1Page, Op, Refusal};
 use sha2::{Digest, Sha256};
 
@@ -57,6 +58,10 @@ pub const STOCK_PAYLOAD_LEN: u32 = 0x15_0000;
 
 /// The OTA container's header, which precedes the bank's contents.
 pub const CONTAINER_HEADER: usize = 32;
+
+/// A signed downgrade statement's length, which a restore of stock always
+/// carries.
+pub const DOWNGRADE_LEN: usize = offer::DOWNGRADE_BODY + offer::SIGNATURE_LEN;
 
 /// Why a backup does not count.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
@@ -152,12 +157,44 @@ impl Bank1Reader {
     }
 }
 
+/// The two hashes a stock backup must match: the vendor's container and
+/// the bank's contents inside it.
+///
+/// Every real backup is checked against [`StockPins::STOCK`], and only a
+/// backup checked against those gives the [`VerifiedBackup`] promotion
+/// waits for. Other pins exist for tests and simulators, which cannot hold
+/// the vendor's image: a copy checked against them is kept, exported and
+/// restored the same way, but never lets an install promote.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StockPins {
+    pub container: [u8; 32],
+    pub payload: [u8; 32],
+}
+
+impl StockPins {
+    /// Stock 1.1.15's pinned image.
+    pub const STOCK: Self = Self {
+        container: STOCK_OTA_SHA256,
+        payload: STOCK_PAYLOAD_SHA256,
+    };
+
+    /// Pins naming `payload` (a bank whose marker is intact) and the
+    /// vendor's container around it: a synthetic stock for tests.
+    pub fn of_payload(payload: &[u8]) -> Self {
+        Self {
+            container: Sha256::digest(container(payload)).into(),
+            payload: Sha256::digest(payload).into(),
+        }
+    }
+}
+
 /// The owner's copy of stock, checked against the pins: the vendor's exact
 /// container, or the bare payload a caller handed in.
 #[derive(Clone, PartialEq, Eq)]
 pub struct StockBackup {
     image: Vec<u8>,
-    verified: VerifiedBackup,
+    /// Present only for a copy checked against [`StockPins::STOCK`].
+    verified: Option<VerifiedBackup>,
 }
 
 impl core::fmt::Debug for StockBackup {
@@ -173,18 +210,34 @@ impl StockBackup {
     /// restored, the payload checked against its pin, and the vendor's
     /// container rebuilt around it and checked against its own pin.
     pub fn from_bank(bank: Vec<u8>) -> Result<Self, BackupError> {
-        from_bank_against(bank, &STOCK_OTA_SHA256, &STOCK_PAYLOAD_SHA256)
+        Self::from_bank_pinned(bank, &StockPins::STOCK)
+    }
+
+    /// [`Self::from_bank`] against `pins`.
+    pub fn from_bank_pinned(bank: Vec<u8>, pins: &StockPins) -> Result<Self, BackupError> {
+        let image = from_bank_against(bank, &pins.container, &pins.payload)?;
+        Ok(Self::pinned(image, pins))
     }
 
     /// A copy the owner holds (a file kept or exported earlier): the
     /// vendor's exact container as it is, or a bare payload wrapped in it.
     pub fn open(image: Vec<u8>) -> Result<Self, BackupError> {
+        Self::open_pinned(image, &StockPins::STOCK)
+    }
+
+    /// [`Self::open`] against `pins`.
+    pub fn open_pinned(image: Vec<u8>, pins: &StockPins) -> Result<Self, BackupError> {
         let sha256: [u8; 32] = Sha256::digest(&image).into();
-        if sha256 == STOCK_PAYLOAD_SHA256 {
-            return from_bank_against(image, &STOCK_OTA_SHA256, &STOCK_PAYLOAD_SHA256);
+        if sha256 == pins.payload {
+            return Self::from_bank_pinned(image, pins);
         }
-        let verified = verify_against(&image, &STOCK_OTA_SHA256, &STOCK_PAYLOAD_SHA256)?;
-        Ok(Self { image, verified })
+        verify_against(&image, &pins.container, &pins.payload)?;
+        Ok(Self::pinned(image, pins))
+    }
+
+    fn pinned(image: Vec<u8>, pins: &StockPins) -> Self {
+        let verified = (*pins == StockPins::STOCK).then_some(VerifiedBackup { _checked: () });
+        Self { image, verified }
     }
 
     /// The bytes to keep and export unchanged: the vendor's container.
@@ -197,17 +250,77 @@ impl StockBackup {
         self.image.get(CONTAINER_HEADER..).unwrap_or_default()
     }
 
-    pub fn verified(&self) -> VerifiedBackup {
+    /// SHA-256 of [`Self::bytes`]: the kept file's name for the owner.
+    pub fn sha256(&self) -> [u8; 32] {
+        Sha256::digest(&self.image).into()
+    }
+
+    /// SHA-256 of [`Self::payload`]: the build a restore's manifest names.
+    pub fn payload_sha256(&self) -> [u8; 32] {
+        Sha256::digest(self.payload()).into()
+    }
+
+    /// The proof promotion waits for: only for a copy of the real stock
+    /// image, checked against [`StockPins::STOCK`].
+    pub fn verified(&self) -> Option<VerifiedBackup> {
         self.verified
+    }
+
+    /// Whether `manifest` offers exactly this backup as the stock image,
+    /// as "Restore stock" must: a version 2 manifest of the stock kind,
+    /// aimed at bank 1, naming this payload's length, SHA-256 and build.
+    /// Its signature and the downgrade statement it needs are the
+    /// feeder's to check.
+    pub fn restore_offer(&self, manifest: &[u8]) -> Result<RestoreOffer, RestoreError> {
+        let signed = offer::parse_manifest(manifest).map_err(RestoreError::Manifest)?;
+        if signed.kind != ImageKind::Stock {
+            return Err(RestoreError::NotStock);
+        }
+
+        let m = signed.manifest;
+        let sha256 = self.payload_sha256();
+        let names_it = m.target_bank == 1
+            && usize::try_from(m.image_len).ok() == Some(self.payload().len())
+            && m.image_sha256 == sha256
+            && m.build_id == sha256;
+        if !names_it {
+            return Err(RestoreError::OtherImage);
+        }
+        Ok(RestoreOffer {
+            version: m.version,
+            digest: offer::manifest_digest(manifest),
+        })
     }
 }
 
-/// [`StockBackup::from_bank`] against the given pins.
+/// A manifest that offers a kept backup as stock.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RestoreOffer {
+    /// The version it installs as.
+    pub version: u32,
+    /// SHA-256 over the manifest, signature included: what its downgrade
+    /// statement names.
+    pub digest: [u8; 32],
+}
+
+/// Why a manifest does not offer a kept backup as stock.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum RestoreError {
+    #[error("not a version 2 manifest ({0:?})")]
+    Manifest(offer::OfferError),
+    #[error("the manifest does not offer a stock image")]
+    NotStock,
+    #[error("the manifest names another image than the kept backup")]
+    OtherImage,
+}
+
+/// [`StockBackup::from_bank`] against the given pins: the vendor's
+/// container, rebuilt.
 fn from_bank_against(
     mut bank: Vec<u8>,
     container_pin: &[u8; 32],
     payload_pin: &[u8; 32],
-) -> Result<StockBackup, BackupError> {
+) -> Result<Vec<u8>, BackupError> {
     // Stock's activation of bank 0 programs bank 1's first marker byte to
     // zero and leaves every other byte as it was.
     let Some(marker) = bank.get_mut(..MARKER.len()) else {
@@ -232,10 +345,7 @@ fn from_bank_against(
     if sha256 != *container_pin {
         return Err(BackupError::NotPinned { sha256 });
     }
-    Ok(StockBackup {
-        image,
-        verified: VerifiedBackup { _checked: () },
-    })
+    Ok(image)
 }
 
 /// The vendor's single-entry OTA container around `payload`: version
@@ -342,11 +452,17 @@ mod tests {
         let mut bank = original.clone();
         bank[0] = 0;
 
-        let backup = from_bank_against(bank, &container_pin, &payload_pin).unwrap();
+        let backup =
+            StockBackup::from_bank_pinned(bank, &StockPins::of_payload(&original)).unwrap();
         let image = backup.bytes();
         assert_eq!(<[u8; 32]>::from(Sha256::digest(image)), container_pin);
         assert_eq!(&image[CONTAINER_HEADER..], &original[..]);
         assert_eq!(backup.payload(), &original[..]);
+        assert_eq!(
+            backup.verified(),
+            None,
+            "only stock's pins let a promotion run"
+        );
 
         // The header names the payload as the vendor's does.
         let word = |at: usize| u32::from_le_bytes(image[at..at + 4].try_into().unwrap());
@@ -393,6 +509,69 @@ mod tests {
         assert!(matches!(
             StockBackup::from_bank(original),
             Err(BackupError::NotPinned { .. })
+        ));
+    }
+
+    /// A kept container, or its bare payload, opens against its pins as
+    /// the same backup; anything else does not.
+    #[test]
+    fn a_kept_copy_opens_against_its_pins() {
+        let original = synthetic_bank();
+        let pins = StockPins::of_payload(&original);
+        let backup = StockBackup::from_bank_pinned(original.clone(), &pins).unwrap();
+
+        let reopened = StockBackup::open_pinned(backup.bytes().to_vec(), &pins).unwrap();
+        assert_eq!(reopened, backup);
+        assert_eq!(StockBackup::open_pinned(original, &pins).unwrap(), backup);
+        assert!(StockBackup::open(backup.bytes().to_vec()).is_err());
+
+        let mut damaged = backup.bytes().to_vec();
+        damaged[CONTAINER_HEADER + 100] ^= 1;
+        assert!(StockBackup::open_pinned(damaged, &pins).is_err());
+    }
+
+    /// A manifest for `payload` of `kind`, with a signature nothing here
+    /// checks.
+    fn manifest(payload: &[u8], kind: ImageKind, len: usize) -> Vec<u8> {
+        let sha256: [u8; 32] = Sha256::digest(payload).into();
+        let signed = offer::Signed {
+            manifest: wellfed_core::ota::Manifest {
+                version: 3,
+                image_len: u32::try_from(len).unwrap(),
+                target_bank: 1,
+                image_sha256: sha256,
+                build_id: sha256,
+            },
+            kind,
+            key_id: [7; 8],
+        };
+        let mut manifest = offer::manifest_body(&signed).to_vec();
+        manifest.extend_from_slice(&[0; offer::SIGNATURE_LEN]);
+        manifest
+    }
+
+    #[test]
+    fn only_a_stock_manifest_naming_the_backup_restores_it() {
+        let original = synthetic_bank();
+        let backup =
+            StockBackup::from_bank_pinned(original.clone(), &StockPins::of_payload(&original))
+                .unwrap();
+
+        let good = manifest(&original, ImageKind::Stock, original.len());
+        let offer = backup.restore_offer(&good).unwrap();
+        assert_eq!(offer.version, 3);
+        assert_eq!(offer.digest, offer::manifest_digest(&good));
+
+        let replacement = manifest(&original, ImageKind::Replacement, original.len());
+        assert_eq!(
+            backup.restore_offer(&replacement),
+            Err(RestoreError::NotStock)
+        );
+        let other = manifest(&original[1..], ImageKind::Stock, original.len() - 1);
+        assert_eq!(backup.restore_offer(&other), Err(RestoreError::OtherImage));
+        assert!(matches!(
+            backup.restore_offer(&good[1..]),
+            Err(RestoreError::Manifest(_))
         ));
     }
 

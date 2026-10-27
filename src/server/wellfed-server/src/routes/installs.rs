@@ -26,7 +26,7 @@ use crate::auth::{Allowed, need};
         (status = 400, body = Problem, description = "invalid: a malformed body"),
         (status = 403, body = Problem, description = "forbidden: owners only"),
         (status = 404, body = Problem, description = "not_found: no such feeder or release"),
-        (status = 409, body = Problem, description = "install_running: another install is running; feeder_refused (`forbidden`): the server's key is not an owner's on this feeder"),
+        (status = 409, body = Problem, description = "install_running: another install is running; feeder_refused (`forbidden`): the server's key is not an owner's on this feeder; stock_backup_needed: the feeder runs from bank 0 with stock in bank 1 and no verified backup is kept"),
         (status = 422, body = Problem, description = "release_refused: the release no longer verifies"),
         (status = 503, body = Problem, description = "feeder_offline"),
     ),

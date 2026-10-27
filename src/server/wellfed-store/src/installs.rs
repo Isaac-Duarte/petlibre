@@ -1,8 +1,10 @@
-//! Installs: one row per install an owner asked for, rewritten as it
-//! progresses and once it ends.
+//! Installs: one row per install an owner asked for, a release's or a
+//! stock restore's, rewritten as it progresses and once it ends.
 
 use jiff::Timestamp;
-use wellfed_api::{FeederId, Hex, Install, InstallFailure, InstallId, InstallState, UserId};
+use wellfed_api::{
+    FeederId, Hex, Install, InstallFailure, InstallId, InstallState, InstallTarget, UserId,
+};
 use uuid::Uuid;
 
 use crate::convert::{millis, timestamp};
@@ -13,7 +15,9 @@ impl Store {
     pub async fn save_install(&self, install: &Install) -> Result<()> {
         let id = install.id.0;
         let feeder = install.feeder.0;
-        let release = install.release.0.as_slice();
+        let target = install.target.code();
+        let name = install.target.name();
+        let name = name.0.as_slice();
         let user = install.by.0;
         let started = millis(install.started);
         let state = install.state.code();
@@ -25,9 +29,9 @@ impl Store {
         let finished = install.finished.map(millis);
 
         sqlx::query!(
-            "INSERT INTO installs (id, feeder_id, release_id, version, user_id, started_ms,
-                                   state, written, image_len, failure, finished_ms)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "INSERT INTO installs (id, feeder_id, target, release_id, version, user_id,
+                                   started_ms, state, written, image_len, failure, finished_ms)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT (id) DO UPDATE SET
                  state = excluded.state,
                  written = excluded.written,
@@ -35,7 +39,8 @@ impl Store {
                  finished_ms = excluded.finished_ms",
             id,
             feeder,
-            release,
+            target,
+            name,
             install.version,
             user,
             started,
@@ -55,12 +60,31 @@ impl Store {
         let feeder = feeder.0;
         let row = sqlx::query_as!(
             Raw,
-            r#"SELECT id AS "id: Uuid", feeder_id AS "feeder_id: Uuid", release_id, version,
-                      user_id AS "user_id: Uuid", started_ms, state, written, image_len,
-                      failure, finished_ms
+            r#"SELECT id AS "id: Uuid", feeder_id AS "feeder_id: Uuid", target, release_id,
+                      version, user_id AS "user_id: Uuid", started_ms, state, written,
+                      image_len, failure, finished_ms
                FROM installs WHERE feeder_id = ?
                ORDER BY started_ms DESC, rowid DESC LIMIT 1"#,
             feeder
+        )
+        .fetch_optional(&self.reader)
+        .await?;
+        row.map(Install::try_from).transpose()
+    }
+
+    /// The feeder's most recent stock restore, running or not.
+    pub async fn latest_restore(&self, feeder: FeederId) -> Result<Option<Install>> {
+        let feeder = feeder.0;
+        let stock = InstallTarget::STOCK;
+        let row = sqlx::query_as!(
+            Raw,
+            r#"SELECT id AS "id: Uuid", feeder_id AS "feeder_id: Uuid", target, release_id,
+                      version, user_id AS "user_id: Uuid", started_ms, state, written,
+                      image_len, failure, finished_ms
+               FROM installs WHERE feeder_id = ? AND target = ?
+               ORDER BY started_ms DESC, rowid DESC LIMIT 1"#,
+            feeder,
+            stock
         )
         .fetch_optional(&self.reader)
         .await?;
@@ -93,6 +117,7 @@ impl Store {
 struct Raw {
     id: Uuid,
     feeder_id: Uuid,
+    target: String,
     release_id: Vec<u8>,
     version: i64,
     user_id: Uuid,
@@ -113,14 +138,16 @@ impl TryFrom<Raw> for Install {
             .failure
             .map(|json| serde_json::from_str(&json).map_err(|_| Error::Corrupt("install failure")))
             .transpose()?;
+        let name = Hex(raw
+            .release_id
+            .try_into()
+            .map_err(|_| Error::Corrupt("install target's name"))?);
 
         Ok(Self {
             id: InstallId(raw.id),
             feeder: FeederId(raw.feeder_id),
-            release: Hex(raw
-                .release_id
-                .try_into()
-                .map_err(|_| Error::Corrupt("install release"))?),
+            target: InstallTarget::from_code(&raw.target, name)
+                .ok_or(Error::Corrupt("install target"))?,
             version: small(raw.version, "install version")?,
             by: UserId(raw.user_id),
             started: timestamp(raw.started_ms)?,

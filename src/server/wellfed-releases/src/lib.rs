@@ -17,6 +17,10 @@
 //! and an owner may ask for one at any time. Nothing here installs: that
 //! is an owner's request for one feeder.
 //!
+//! Beside the releases, [`Stock`] keeps each feeder's own stock firmware:
+//! the backup "Restore stock" installs, checked against the pinned stock
+//! image the same way the installer checks it.
+//!
 //! Time comes in as `now` from the server's clock, so tests fix it.
 //!
 //! [API design]: ../../../../docs/api/README.md
@@ -25,6 +29,7 @@
 mod cache;
 mod error;
 mod github;
+mod stock;
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -36,7 +41,11 @@ use wellfed_api::{AssetName, Release, ReleaseCheck, ReleasePage, ReleaseQuery, R
 use wellfed_model::Hex;
 
 pub use error::Error;
-pub use wellfed_client::release::ReleaseError;
+pub use wellfed_client::install::{
+    DOWNGRADE_LEN, RestoreError, RestoreOffer, STOCK_VERSION, StockBackup, StockPins,
+};
+pub use wellfed_client::release::{MANIFEST_LEN, ReleaseError};
+pub use stock::{Stock, StockConfig, Taken};
 
 use cache::{Cache, Origin};
 
@@ -85,6 +94,8 @@ pub struct Config {
     pub keys: Keys,
     /// Where releases are fetched from; `None` while fetching is off.
     pub fetch: Option<Source>,
+    /// The feeders' stock backups.
+    pub stock: StockConfig,
 }
 
 /// Whether a release was new to the cache.
@@ -99,6 +110,7 @@ pub enum Added {
 #[derive(Debug)]
 pub struct Releases {
     cache: Arc<Cache>,
+    stock: Stock,
     fetch: Option<Source>,
     http: reqwest::Client,
     /// One check at a time: a check the owner asks for while the daily one
@@ -119,6 +131,7 @@ impl Releases {
     /// is cleaned up here.
     pub async fn open(config: Config) -> Result<Self, Error> {
         let cache = Cache::open(config.dir, config.keys).await?;
+        let stock = Stock::open(config.stock).await?;
         let http = reqwest::Client::builder()
             .user_agent(concat!("wellfed-server/", env!("CARGO_PKG_VERSION")))
             .connect_timeout(CONNECT_TIMEOUT)
@@ -128,11 +141,17 @@ impl Releases {
 
         Ok(Self {
             cache: Arc::new(cache),
+            stock,
             fetch: config.fetch,
             http,
             checking: tokio::sync::Mutex::new(()),
             seen: Mutex::new(HashSet::new()),
         })
+    }
+
+    /// The feeders' stock backups.
+    pub fn stock(&self) -> &Stock {
+        &self.stock
     }
 
     /// Whether [`Self::check`] may run.

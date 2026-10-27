@@ -35,6 +35,10 @@ pub const DATABASE: &str = "server.db";
 /// The database's backups, in the data directory.
 pub const BACKUPS: &str = "backups";
 
+/// The feeders' stock backups, one directory per feeder identity, in the
+/// data directory.
+pub const STOCK: &str = "stock";
+
 /// The label the server enrolls under on each feeder, unless set.
 const LABEL: &str = "wellfed-server";
 

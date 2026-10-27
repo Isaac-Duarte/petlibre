@@ -182,7 +182,11 @@ pub(crate) async fn run(args: InstallArgs) -> Result<()> {
         Install::new(provision(&args, &config)?, &build, version)?
     };
     if let Some(backup) = &backup {
-        install.backup(backup.verified());
+        install.backup(
+            backup
+                .verified()
+                .context("--stock-backup is not stock's pinned image")?,
+        );
     }
 
     let mut run = Run {
@@ -354,7 +358,11 @@ impl Run {
                          with --from-bank0 once a backup can be read, or with \
                          --stock-backup <stock 1.1.15 OTA image>",
                     )?;
-                    install.backup(backup.verified());
+                    install.backup(
+                        backup
+                            .verified()
+                            .context("--stock-backup is not stock's pinned image")?,
+                    );
                 }
                 Step::Promote => {
                     self.keep_given()?;

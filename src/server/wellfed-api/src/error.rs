@@ -78,8 +78,27 @@ pub enum ErrorCode {
     /// The server could not reach the project's releases, or they answered
     /// with something it could not read.
     ReleasesUnreachable,
-    /// Another install is running on this server: one runs at a time.
+    /// Another install is running on this server: one runs at a time. A
+    /// stock restore counts as one, and a feeder's stock is not read while
+    /// one runs on it.
     InstallRunning,
+    /// The server keeps no stock backup for the feeder, or none that
+    /// still verifies.
+    NoStockBackup,
+    /// The image is not stock's pinned image (damaged, partial or another
+    /// release): nothing was kept.
+    StockRefused,
+    /// The feeder runs from bank 0 with stock still in bank 1, its only
+    /// copy, and the server keeps no verified backup of it: an install
+    /// would overwrite it. Read it (`POST /feeders/{id}/stock/read`) or
+    /// upload the installer's copy first.
+    StockBackupNeeded,
+    /// The server already keeps a different copy of the feeder's stock;
+    /// a kept copy is never replaced.
+    StockDiffers,
+    /// The restore's manifest does not offer the kept backup as the stock
+    /// image: nothing was sent.
+    RestoreMismatch,
     Internal,
 }
 

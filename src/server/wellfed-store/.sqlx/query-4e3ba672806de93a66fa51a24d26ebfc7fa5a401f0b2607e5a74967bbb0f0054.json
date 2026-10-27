@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO installs (id, feeder_id, target, release_id, version, user_id,\n                                   started_ms, state, written, image_len, failure, finished_ms)\n             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n             ON CONFLICT (id) DO UPDATE SET\n                 state = excluded.state,\n                 written = excluded.written,\n                 failure = excluded.failure,\n                 finished_ms = excluded.finished_ms",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 12
+    },
+    "nullable": []
+  },
+  "hash": "4e3ba672806de93a66fa51a24d26ebfc7fa5a401f0b2607e5a74967bbb0f0054"
+}

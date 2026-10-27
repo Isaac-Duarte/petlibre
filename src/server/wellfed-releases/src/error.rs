@@ -6,6 +6,7 @@ use std::io;
 use std::path::PathBuf;
 
 use wellfed_api::ReleaseRefusal;
+use wellfed_client::install::BackupError;
 use wellfed_client::release::ReleaseError;
 
 #[derive(Debug, thiserror::Error)]
@@ -44,6 +45,14 @@ pub enum Error {
     },
     #[error("the release cache's task stopped before it finished")]
     Task,
+    #[error("not the stock image a backup must be: {0}")]
+    Stock(#[from] BackupError),
+    #[error("the server keeps another copy of this feeder's stock; it is never replaced")]
+    StockDiffers,
+    #[error("the server keeps no stock backup for this feeder")]
+    NoStock,
+    #[error("the kept stock backup no longer matches stock's pinned image")]
+    StockDamaged,
 }
 
 impl Error {

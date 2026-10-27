@@ -1,5 +1,6 @@
 //! Installs: an owner's request to install one of the server's releases on
-//! one feeder, run in the background on the feeder's long-operation lane.
+//! one feeder, or to restore its stock firmware from the server's backup
+//! (`stock.rs`), run in the background on the feeder's long-operation lane.
 //!
 //! One install runs at a time per server, held by a [`Claim`] on the
 //! service's one slot: a second request while it runs is
@@ -20,16 +21,30 @@ use std::sync::{Arc, Mutex};
 
 use wellfed_api::{
     ClientRole, Connection as Link, FeederId, FeederRefusal, Install, InstallFailure, InstallId,
-    InstallRequest, InstallState, StreamEvent,
+    InstallRequest, InstallState, InstallTarget, StreamEvent,
 };
-use wellfed_mirror::{PushError, Pushed, Update, UpdateError};
+use wellfed_mirror::{PushError, Pushed, Restore, Update, UpdateError};
 use wellfed_model::{Refusal, UpdateView};
+use wellfed_releases::{STOCK_VERSION, StockBackup};
 use tracing::{Instrument, info, info_span, warn};
 
 use crate::{Caller, CommandError, InstallError, Result, Service, lock};
 
 /// Progress reaches the stream each time this many more bytes are written.
 const PROGRESS_STEP: u32 = 32 * 1024;
+
+/// What an install pushes.
+pub(crate) enum Offer {
+    /// A release file as the cache keeps it, and the build it carries.
+    Release { file: Vec<u8>, build: [u8; 32] },
+    /// The kept stock backup, with the manifest and statement the owner
+    /// signed for it.
+    Stock {
+        manifest: Vec<u8>,
+        downgrade: Vec<u8>,
+        backup: StockBackup,
+    },
+}
 
 /// The server's one install slot, with the ends the store did not take.
 pub(crate) type Slot = Arc<Mutex<Installs>>;
@@ -67,41 +82,79 @@ impl Service {
         if self.mirror.link(id) != Some(Link::Online) {
             return Err(CommandError::Offline.into());
         }
+        self.keeps_stock(id, row.identity).await?;
 
-        let install = Install {
+        let install = self.new_install(
+            caller,
+            id,
+            InstallTarget::Release {
+                release: release.id,
+            },
+            release.version,
+            release.image_len,
+        )?;
+        let offer = Offer::Release {
+            file,
+            build: release.build_id.0,
+        };
+        self.begin(install, offer).await
+    }
+
+    /// An install of `target` on the feeder `id`, as it starts.
+    pub(crate) fn new_install(
+        &self,
+        caller: &Caller,
+        id: FeederId,
+        target: InstallTarget,
+        version: u32,
+        image_len: u32,
+    ) -> Result<Install> {
+        Ok(Install {
             id: InstallId(self.shared.new_id()?),
             feeder: id,
-            release: release.id,
-            version: release.version,
+            target,
+            version,
             by: caller.user.id,
             started: self.shared.clock.now(),
             state: InstallState::Running,
             written: 0,
-            image_len: release.image_len,
+            image_len,
             failure: None,
             finished: None,
-        };
+        })
+    }
+
+    /// Take the slot for `install` (refused while another runs), keep it,
+    /// and push `offer` in the background.
+    pub(crate) async fn begin(&self, install: Install, offer: Offer) -> Result<Install> {
         let claim = Claim::take(&self.installing, install)?;
         self.shared.store.save_install(&install).await?;
-        info!(
-            feeder = %id,
-            release = %release.id,
-            "install of version {} started",
-            release.version
-        );
+        match install.target {
+            InstallTarget::Release { release } => info!(
+                feeder = %install.feeder,
+                %release,
+                "install of version {} started",
+                install.version
+            ),
+            InstallTarget::Stock { sha256 } => info!(
+                feeder = %install.feeder,
+                backup = %sha256,
+                "restore of stock {STOCK_VERSION} started, as version {}",
+                install.version
+            ),
+        }
         self.publish_install(install);
 
         let service = self.clone();
         let cancel = self.cancel.child_token();
-        let update = (file, release.build_id.0);
-        let span = info_span!(parent: None, "install", feeder = %id);
+        let span = info_span!(parent: None, "install", feeder = %install.feeder);
         self.tasks.spawn(
             async move {
                 // On shutdown the row stays `running`, and the next start
                 // marks it interrupted, as after a crash.
                 tokio::select! {
                     () = cancel.cancelled() => {}
-                    () = service.run_install(claim, &update.0, update.1) => {}
+                    () = service.run_install(claim, offer) => {}
                 }
             }
             .instrument(span),
@@ -109,19 +162,31 @@ impl Service {
         Ok(install)
     }
 
+    /// The running install, if it is the feeder `id`'s.
+    pub(crate) fn running_on(&self, id: FeederId) -> Option<Install> {
+        lock(&self.installing)
+            .running
+            .filter(|install| install.feeder == id)
+    }
+
+    /// `last` as it ended, if its end is held in memory rather than in the
+    /// store.
+    pub(crate) fn unsaved(&self, last: Install) -> Install {
+        let installs = lock(&self.installing);
+        let unsaved = installs.unsaved.iter().find(|ended| ended.id == last.id);
+        unsaved.copied().unwrap_or(last)
+    }
+
     /// The feeder's running install, or else its last one.
     pub async fn install_state(&self, id: FeederId) -> Result<Install> {
         self.row(id).await?;
-        let running = lock(&self.installing).running;
-        if let Some(install) = running.filter(|install| install.feeder == id) {
+        if let Some(install) = self.running_on(id) {
             return Ok(install);
         }
 
         let last = self.shared.store.latest_install(id).await?;
         let last = last.ok_or(InstallError::None)?;
-        let installs = lock(&self.installing);
-        let unsaved = installs.unsaved.iter().find(|ended| ended.id == last.id);
-        Ok(unsaved.copied().unwrap_or(last))
+        Ok(self.unsaved(last))
     }
 
     /// Mark the install a stopped server left running failed.
@@ -135,9 +200,9 @@ impl Service {
     }
 
     /// Run the install to its end, keep that, and free the slot.
-    async fn run_install(&self, mut claim: Claim, file: &[u8], build: [u8; 32]) {
+    async fn run_install(&self, mut claim: Claim, offer: Offer) {
         let feeder = claim.install.feeder;
-        let ended = self.push(&mut claim, feeder, Update { file, build }).await;
+        let ended = self.push(&mut claim, feeder, &offer).await;
         let failed = |failure| (InstallState::Failed, Some(failure));
         let (state, failure) = match ended {
             Ok(Pushed::Activated) => (InstallState::Activated, None),
@@ -164,10 +229,16 @@ impl Service {
                 "the feeder already runs version {}: nothing was sent",
                 install.version
             ),
-            (_, None) => info!(
-                "activated: the feeder restarts into version {}",
-                install.version
-            ),
+            (_, None) => match install.target {
+                InstallTarget::Release { .. } => info!(
+                    "activated: the feeder restarts into version {}",
+                    install.version
+                ),
+                InstallTarget::Stock { .. } => info!(
+                    "activated: the feeder restarts into stock {STOCK_VERSION}, which serves no \
+                     device API"
+                ),
+            },
         }
 
         self.save_end(&claim, install).await;
@@ -189,13 +260,13 @@ impl Service {
         claim.unsaved(install);
     }
 
-    /// Wait for the feeder's long-operation turn and push the update over
+    /// Wait for the feeder's long-operation turn and push the offer over
     /// it, publishing the progress as it goes.
     async fn push(
         &self,
         claim: &mut Claim,
         feeder: FeederId,
-        update: Update<'_>,
+        offer: &Offer,
     ) -> Result<Pushed, PushError> {
         let Ok(mut operation) = self.mirror.operation(feeder).await else {
             // The only refusal: the feeder was let go before the turn came.
@@ -212,7 +283,28 @@ impl Service {
                 self.publish_install(install);
             }
         };
-        operation.install(update, progress).await
+        match offer {
+            Offer::Release { file, build } => {
+                let update = Update {
+                    file,
+                    build: *build,
+                };
+                operation.install(update, progress).await
+            }
+            Offer::Stock {
+                manifest,
+                downgrade,
+                backup,
+            } => {
+                let restore = Restore {
+                    manifest,
+                    downgrade,
+                    payload: backup.payload(),
+                    build: backup.payload_sha256(),
+                };
+                Ok(operation.restore(restore, progress).await?)
+            }
+        }
     }
 
     fn publish_install(&self, install: Install) {

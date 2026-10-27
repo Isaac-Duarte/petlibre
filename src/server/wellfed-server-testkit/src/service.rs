@@ -7,7 +7,8 @@ use std::time::Duration;
 
 use wellfed_api::{AdoptFeeder, ClientRole, Connection, EventBody, EventQuery, FeederId};
 use wellfed_service::{
-    Backups, Clock, Config, Diagnostics, Discovery, ReleaseKeys, ReleasesConfig, Service, Timing,
+    Backups, Clock, Config, Diagnostics, Discovery, ReleaseKeys, ReleasesConfig, Service,
+    StockConfig, StockPins, Timing,
 };
 use wellfed_store::Store;
 use tempfile::TempDir;
@@ -42,6 +43,10 @@ pub fn config() -> Config {
             dir: PathBuf::from("releases"),
             keys: ReleaseKeys::default(),
             fetch: None,
+            stock: StockConfig {
+                dir: PathBuf::from("stock"),
+                pins: StockPins::STOCK,
+            },
         },
         raw_sample_days: None,
         backups: Backups {
@@ -67,6 +72,11 @@ impl TempStore {
     /// The release cache, as the server keeps it in its data directory.
     pub fn releases(&self) -> PathBuf {
         self.0.path().join("releases")
+    }
+
+    /// The stock backups, as the server keeps them in its data directory.
+    pub fn stock(&self) -> PathBuf {
+        self.0.path().join("stock")
     }
 
     /// The backups, as the server keeps them in its data directory.
@@ -124,6 +134,7 @@ impl TestService {
 
     async fn open_with_clock(store: TempStore, mut config: Config, clock: Arc<dyn Clock>) -> Self {
         config.releases.dir = store.releases();
+        config.releases.stock.dir = store.stock();
         config.backups.dir = store.backups();
         let service = Service::start(
             store.open().await,

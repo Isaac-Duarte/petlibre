@@ -7,7 +7,7 @@ use jiff::Timestamp;
 use wellfed_api::ReleaseQuery;
 use wellfed_core::ota::offer::{self, ImageKind, Signed, key_id};
 use wellfed_core::ota::{MARKER, Manifest, SECTOR};
-use wellfed_releases::{Config, Keys, Releases, Source};
+use wellfed_releases::{Config, Keys, Releases, Source, StockConfig, StockPins};
 use sha2_0_10::{Digest, Sha256};
 use tempfile::TempDir;
 
@@ -63,9 +63,28 @@ pub async fn open_with(dir: &TempDir, keys: Keys, fetch: Option<Source>) -> Rele
         dir: dir.path().join("releases"),
         keys,
         fetch,
+        stock: StockConfig {
+            dir: dir.path().join("stock"),
+            pins: stock_pins(),
+        },
     })
     .await
     .unwrap()
+}
+
+/// A synthetic stock bank: stock's size, starting with the marker. The
+/// real image is the vendor's and stays out of the repository.
+pub fn stock_bank() -> Vec<u8> {
+    let mut bank: Vec<u8> = (0..0x15_0000u32)
+        .map(|i| i.to_le_bytes()[0] ^ i.to_le_bytes()[1] ^ 0x5a)
+        .collect();
+    bank[..8].copy_from_slice(&MARKER);
+    bank
+}
+
+/// The pins a test cache checks stock against: [`stock_bank`]'s.
+pub fn stock_pins() -> StockPins {
+    StockPins::of_payload(&stock_bank())
 }
 
 pub async fn versions(releases: &Releases) -> Vec<u32> {

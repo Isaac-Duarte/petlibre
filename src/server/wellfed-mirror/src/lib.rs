@@ -18,7 +18,9 @@
 //!   feeder may have run it, and a retry under the same request id gets its
 //!   first answer. One whose caller stopped waiting is dropped unsent.
 //!   An install is a long operation: [`Operation::install`] runs the
-//!   update driver the owner's CLI runs, a step at a time on the long lane.
+//!   update driver the owner's CLI runs, a step at a time on the long lane,
+//!   and so are "Restore stock" ([`Operation::restore`]) and reading the
+//!   stock backup from bank 1 ([`Operation::read_bank1`]).
 //! - **What a feeder sends** goes out on its own broadcast of
 //!   [`MirrorEvent`]s (events, gaps, samples and link changes): an event
 //!   or gap after it is stored, a sample as it arrives, ahead of its
@@ -57,6 +59,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use wellfed_api::{Connection as Link, FeederEvent, FeederId, FeederSample, Gap};
+use wellfed_model::Capabilities;
 use wellfed_session::noise::Keypair;
 use wellfed_store::Store;
 use tokio::sync::{broadcast, watch};
@@ -67,7 +70,7 @@ pub use command::Operation;
 pub use connect::Enrolled;
 pub use error::{AskError, ConnectError, LogError, Unreachable};
 pub use ingest::{stored_event, stored_sample};
-pub use install::{PushError, Pushed, Update, UpdateError};
+pub use install::{BankReadError, PushError, Pushed, ReadError, Restore, Update, UpdateError};
 pub use wellfed_client::api::{Invite, InviteText};
 pub use time::{Clock, Random, RandomFailed, SystemClock, SystemRandom};
 pub use zone::{Zone, ZoneError};
@@ -298,6 +301,12 @@ impl Mirror {
     /// counts in.
     pub fn epoch(&self, id: FeederId) -> Option<u32> {
         self.handles().get(&id).and_then(task::Handle::epoch)
+    }
+
+    /// The features the feeder's open session runs on, or `None` while it
+    /// has none: an op outside them is never sent.
+    pub fn capabilities(&self, id: FeederId) -> Option<Capabilities> {
+        self.handles().get(&id).and_then(task::Handle::capabilities)
     }
 
     /// Follow a feeder's updates from now on.

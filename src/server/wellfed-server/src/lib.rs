@@ -37,7 +37,8 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
 /// Every request body this API takes is a few hundred bytes, but for a
-/// release upload, which takes up to [`RELEASE_MAX`].
+/// release or stock upload, which takes up to [`RELEASE_MAX`] (a stock
+/// image, its container's header and a full bank, is shorter).
 const BODY_LIMIT: usize = 64 * 1024;
 
 #[derive(Clone)]
@@ -77,7 +78,7 @@ struct ApiDoc;
 fn router() -> OpenApiRouter<AppState> {
     use routes::{
         audit, auth, backups, commands, diagnostics, events, feeders, feeds, foods, health,
-        household, installs, pets, releases, samples, stream, tokens, users,
+        household, installs, pets, releases, samples, stock, stream, tokens, users,
     };
 
     let small = OpenApiRouter::new()
@@ -100,6 +101,10 @@ fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(feeds::feed))
         .routes(routes!(feeds::cancel))
         .routes(routes!(installs::install, installs::install_state))
+        .routes(routes!(stock::stock))
+        .routes(routes!(stock::export_stock))
+        .routes(routes!(stock::read_stock))
+        .routes(routes!(stock::restore_stock))
         .routes(routes!(events::events))
         .routes(routes!(samples::samples))
         .routes(routes!(diagnostics::trace))
@@ -127,6 +132,7 @@ fn router() -> OpenApiRouter<AppState> {
         .layer(RequestBodyLimitLayer::new(BODY_LIMIT));
     let uploads = OpenApiRouter::new()
         .routes(routes!(releases::upload_release))
+        .routes(routes!(stock::upload_stock))
         .layer(DefaultBodyLimit::max(RELEASE_MAX));
     let api = small.merge(uploads);
     OpenApiRouter::with_openapi(ApiDoc::openapi())

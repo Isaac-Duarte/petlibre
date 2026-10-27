@@ -65,6 +65,15 @@ pub async fn start_updatable(banks: &Rc<RefCell<Banks>>) -> Running {
     .await
 }
 
+/// Leave bank 1 as stock leaves it once it installed a build into bank 0
+/// (its marker's first byte zeroed) and restart the simulator, which then
+/// runs the replacement from bank 0 and serves bank 1: the window in which
+/// the stock backup is read.
+pub fn stock_gave_way(sim: &Running, banks: &RefCell<Banks>) {
+    banks.borrow_mut().stock_gave_way();
+    sim.control(Control::Reboot);
+}
+
 /// An owner's session with the simulator.
 pub async fn open_owner(sim: &Running) -> Connection {
     Connection::open(&owner(), sim.identity, sim.address, [0x99; 32])

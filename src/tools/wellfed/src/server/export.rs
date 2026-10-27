@@ -77,12 +77,14 @@ pub(super) async fn export(client: &Client, args: ExportArgs, out: Output) -> Re
 fn whole(path: &Path) -> Result<()> {
     const BLOCK: u64 = 512;
     const END: usize = 1024;
+    /// The same two blocks, as a seek back from the end.
+    const BACK: i64 = -1024;
 
     let mut file = std::fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
     let size = file.metadata()?.len();
     let mut end = [0u8; END];
-    let ended = size >= END as u64 && size % BLOCK == 0 && {
-        file.seek(SeekFrom::End(-(END as i64)))?;
+    let ended = size >= BLOCK * 2 && size % BLOCK == 0 && {
+        file.seek(SeekFrom::End(BACK))?;
         file.read_exact(&mut end)?;
         end.iter().all(|&byte| byte == 0)
     };

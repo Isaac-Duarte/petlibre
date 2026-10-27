@@ -16,7 +16,6 @@ use std::sync::Arc;
 pub use backups::{BackupError, Backups};
 pub use export::{CHUNK as EXPORT_CHUNK, ExportError};
 pub use installs::InstallError;
-pub use stock::StockError;
 
 /// The operations that run one at a time per server.
 #[derive(Clone, Default)]

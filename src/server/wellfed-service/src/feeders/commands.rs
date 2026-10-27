@@ -11,7 +11,7 @@ use wellfed_model::{Answer, Op};
 use serde::Serialize;
 
 use crate::feeders::journal::Write;
-use crate::{Caller, Error, IdempotencyKey, Invalid, Reply, RequestId, Result, Service};
+use crate::{Caller, Error, IdempotencyKey, InternalError, Invalid, RequestId, Result, Service};
 
 /// A command sent to a feeder, and its answer.
 #[derive(Debug, thiserror::Error)]
@@ -20,33 +20,17 @@ pub enum CommandError {
     Offline,
     #[error("no answer in time: retry with the same key")]
     Unknown,
-    #[error("the feeder refused: {0:?}")]
-    Refused(FeederRefusal),
-    #[error("the settings moved on to generation {}", .0.generation)]
-    Stale(Settings),
-    #[error("the feeder sent an answer that does not fit the request")]
-    Unexpected,
     #[error("the Idempotency-Key already names another request; nothing was sent")]
     KeyReused,
-    #[error("no command under that key")]
-    NoEntry,
-    #[error("hash a request body: {0}")]
-    Body(wellfed_formats::Error),
 }
 
 impl CommandError {
-    pub(crate) fn reply(&self) -> Reply {
-        let code = match self {
+    pub(crate) fn code(&self) -> ErrorCode {
+        match self {
             Self::Offline => ErrorCode::FeederOffline,
             Self::Unknown => ErrorCode::OutcomeUnknown,
-            Self::Refused(_) => ErrorCode::FeederRefused,
             Self::KeyReused => ErrorCode::KeyReused,
-            Self::NoEntry => ErrorCode::NotFound,
-            // The server answers a stale edit with the current settings,
-            // not a problem.
-            Self::Stale(_) | Self::Unexpected | Self::Body(_) => return Reply::Internal,
-        };
-        Reply::Code(code)
+        }
     }
 }
 
@@ -108,7 +92,7 @@ impl Service {
     }
 
     /// Change the settings if they are still at `base`. A stale base gets
-    /// [`CommandError::Stale`] with the current settings. After the change
+    /// [`Error::Stale`] with the current settings. After the change
     /// the settings are read again and recorded as the write's outcome, so
     /// a retry under the same key returns them; if that read fails the
     /// change still happened, and a retry reads them again.
@@ -164,12 +148,12 @@ impl Service {
             // copy would offer a base that may be stale itself.
             CommandOutcome::Refused {
                 refusal: FeederRefusal::Stale,
-            } => Err(CommandError::Stale(self.read_settings(id).await?).into()),
-            CommandOutcome::Refused { refusal } => Err(CommandError::Refused(refusal).into()),
+            } => Err(Error::Stale(self.read_settings(id).await?)),
+            CommandOutcome::Refused { refusal } => Err(Error::Refused(refusal)),
             CommandOutcome::Feeding { .. }
             | CommandOutcome::Fed { .. }
             | CommandOutcome::Invited { .. }
-            | CommandOutcome::Unrecorded => Err(CommandError::Unexpected.into()),
+            | CommandOutcome::Unrecorded => Err(InternalError::Unexpected.into()),
         }
     }
 
@@ -219,20 +203,19 @@ impl Service {
 pub(crate) fn done(outcome: &CommandOutcome) -> Result<()> {
     match outcome {
         CommandOutcome::Done => Ok(()),
-        CommandOutcome::Refused { refusal } => Err(CommandError::Refused(*refusal).into()),
+        CommandOutcome::Refused { refusal } => Err(Error::Refused(*refusal)),
         CommandOutcome::Settings { .. }
         | CommandOutcome::Feeding { .. }
         | CommandOutcome::Fed { .. }
         | CommandOutcome::Invited { .. }
-        | CommandOutcome::Unrecorded => Err(CommandError::Unexpected.into()),
+        | CommandOutcome::Unrecorded => Err(InternalError::Unexpected.into()),
     }
 }
 
 /// The error for an answer that is not the one asked for.
 pub(crate) fn refused(answer: &Answer) -> Error {
-    let error = match answer {
-        Answer::Refused(refusal) => CommandError::Refused((*refusal).into()),
-        _ => CommandError::Unexpected,
-    };
-    error.into()
+    match answer {
+        Answer::Refused(refusal) => Error::Refused((*refusal).into()),
+        _ => InternalError::Unexpected.into(),
+    }
 }

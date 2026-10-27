@@ -29,7 +29,7 @@ use wellfed_store::NewUser;
 use sha2::{Digest, Sha256};
 
 use crate::accounts::tokens::session_only;
-use crate::{AccountError, Caller, HouseholdError, Invalid, Result, Service};
+use crate::{AccountError, Caller, Error, InternalError, Invalid, Resource, Result, Service};
 
 /// Password hashes computed at once.
 const HASHING: usize = 2;
@@ -95,7 +95,7 @@ impl Service {
         let name = user_name(&setup.name)?;
         password(&setup.password)?;
         let now = self.shared.clock.now();
-        let zone = Zone::new(&setup.zone, now).map_err(HouseholdError::Zone)?;
+        let zone = Zone::new(&setup.zone, now)?;
         if !self.setup_open().await? {
             return Err(AccountError::SetupClosed.into());
         }
@@ -250,7 +250,7 @@ impl Service {
         password(&change.password)?;
         let store = &self.shared.store;
         let hash = store.password_hash(user.id).await?;
-        let hash = hash.ok_or(AccountError::NotFound)?;
+        let hash = hash.ok_or(Error::NotFound(Resource::User))?;
         let current = change.current;
         let matches = blocking(move || Ok(verify_password(&current, &hash))).await?;
         if !matches {
@@ -259,7 +259,7 @@ impl Service {
 
         let hash = self.hash_password(change.password).await?;
         if !store.set_password(user.id, &hash).await? {
-            return Err(AccountError::NotFound.into());
+            return Err(Error::NotFound(Resource::User));
         }
         store
             .delete_sessions_of(user.id, session.and_then(SessionToken::hash).as_ref())
@@ -296,7 +296,9 @@ pub(crate) fn disabled(user: &User, now: Timestamp) -> bool {
 
 /// `at` plus `after`, refused past the latest time the clock can show.
 fn later(at: Timestamp, after: Duration) -> Result<Timestamp> {
-    Ok(at.checked_add(after).map_err(|_| AccountError::Expiry)?)
+    Ok(at
+        .checked_add(after)
+        .map_err(|_| InternalError::SessionExpiry)?)
 }
 
 pub(crate) fn user_name(name: &str) -> Result<&str> {
@@ -315,10 +317,10 @@ pub(crate) fn password(password: &str) -> Result<()> {
 }
 
 pub(crate) fn hash_password(password: &str, salt: &[u8; 16]) -> Result<String> {
-    let salt = SaltString::encode_b64(salt).map_err(AccountError::Hash)?;
+    let salt = SaltString::encode_b64(salt).map_err(InternalError::Hash)?;
     let hash = Argon2::default()
         .hash_password(password.as_bytes(), &salt)
-        .map_err(AccountError::Hash)?;
+        .map_err(InternalError::Hash)?;
     Ok(hash.to_string())
 }
 
@@ -352,11 +354,14 @@ pub(crate) async fn blocking<T: Send + 'static>(
 ) -> Result<T> {
     // The permit goes with the work: a caller that gives up leaves the hash
     // running, and it still counts.
-    let permit = HASHERS.acquire().await.map_err(|_| AccountError::Hashing)?;
+    let permit = HASHERS
+        .acquire()
+        .await
+        .map_err(|_| InternalError::Hashing)?;
     tokio::task::spawn_blocking(move || {
         let _permit = permit;
         work()
     })
     .await
-    .map_err(|_| AccountError::Hashing)?
+    .map_err(|_| InternalError::Hashing)?
 }

@@ -17,7 +17,7 @@
 //! serves no device API.
 
 use wellfed_api::{
-    ClientRole, Connection as Link, ErrorCode, FeederId, FeederRefusal, Install, InstallTarget,
+    ClientRole, Connection as Link, FeederId, FeederRefusal, Install, InstallTarget,
     StockBackup as StockView, StockFeeder, StockRestore, StockState,
 };
 use wellfed_mirror::{BankReadError, ReadError};
@@ -27,32 +27,9 @@ use tracing::{info, warn};
 
 use crate::operations::installs::Offer;
 use crate::{
-    Caller, CommandError, InstallError, Permission, ReleaseAdded, Reply, Result, Service, can,
+    Caller, CommandError, Error, InstallError, InternalError, Permission, ReleaseAdded, Result,
+    Service, can,
 };
-
-/// The feeder's stock backup and its restore.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
-pub enum StockError {
-    #[error("the restore does not offer the kept backup: {0}")]
-    Mismatch(wellfed_releases::RestoreError),
-    #[error("the kept backup is larger than any bank")]
-    Size,
-    #[error(
-        "the feeder runs from bank 0 with stock in bank 1, and no verified backup of it is kept: \
-         read it from the feeder or upload the installer's copy before installing"
-    )]
-    BackupNeeded,
-}
-
-impl StockError {
-    pub(crate) fn reply(self) -> Reply {
-        match self {
-            Self::Mismatch(_) => Reply::Code(ErrorCode::RestoreMismatch),
-            Self::BackupNeeded => Reply::Code(ErrorCode::StockBackupNeeded),
-            Self::Size => Reply::Internal,
-        }
-    }
-}
 
 // The API spells the restore's parts at the lengths the feeder reads.
 const _: () = assert!(wellfed_api::MANIFEST_LEN == MANIFEST_LEN);
@@ -121,14 +98,14 @@ impl Service {
             return Ok((kept, ReleaseAdded::Known));
         }
         if row.role != ClientRole::Owner {
-            return Err(CommandError::Refused(FeederRefusal::Forbidden).into());
+            return Err(Error::Refused(FeederRefusal::Forbidden));
         }
         if self.mirror.link(id) != Some(Link::Online) {
             return Err(CommandError::Offline.into());
         }
         // A feeder that predates the op would end the session on it.
         if !self.mirror.capabilities(id).is_some_and(|c| c.backup) {
-            return Err(CommandError::Refused(FeederRefusal::Unavailable).into());
+            return Err(Error::Refused(FeederRefusal::Unavailable));
         }
         // The feeder answers `busy` while an install holds its flash.
         if self.running_on(id).is_some() {
@@ -170,20 +147,21 @@ impl Service {
     ) -> Result<Install> {
         let row = self.row(id).await?;
         if row.role != ClientRole::Owner {
-            return Err(CommandError::Refused(FeederRefusal::Forbidden).into());
+            return Err(Error::Refused(FeederRefusal::Forbidden));
         }
         let (view, backup) = self.releases.stock().backup(row.identity).await?;
         let offer = backup
             .restore_offer(&request.manifest.0)
-            .map_err(StockError::Mismatch)?;
+            .map_err(InstallError::RestoreMismatch)?;
         if self.mirror.link(id) != Some(Link::Online) {
             return Err(CommandError::Offline.into());
         }
         if !self.mirror.capabilities(id).is_some_and(|c| c.update) {
-            return Err(CommandError::Refused(FeederRefusal::Unavailable).into());
+            return Err(Error::Refused(FeederRefusal::Unavailable));
         }
 
-        let image_len = u32::try_from(backup.payload().len()).map_err(|_| StockError::Size)?;
+        let image_len =
+            u32::try_from(backup.payload().len()).map_err(|_| InternalError::StockSize)?;
         let install = self.new_install(
             caller,
             id,
@@ -214,13 +192,13 @@ impl Service {
     pub(crate) async fn keeps_stock(&self, id: FeederId, identity: [u8; 32]) -> Result<()> {
         // A feeder that predates the op would end the session on it.
         if !self.mirror.capabilities(id).is_some_and(|c| c.update) {
-            return Err(CommandError::Refused(FeederRefusal::Unavailable).into());
+            return Err(Error::Refused(FeederRefusal::Unavailable));
         }
         let request = self.request_id()?;
         let view = match self.mirror.ask(id, request, Op::UpdateState).await? {
             Answer::Update(view) => view,
-            Answer::Refused(refusal) => return Err(CommandError::Refused(refusal.into()).into()),
-            _ => return Err(CommandError::Unexpected.into()),
+            Answer::Refused(refusal) => return Err(Error::Refused(refusal.into())),
+            _ => return Err(InternalError::Unexpected.into()),
         };
 
         let over_stock = view.bank == 0
@@ -228,7 +206,7 @@ impl Service {
             && (view.stopped.is_none() || view.written == 0);
         if over_stock && self.releases.stock().backup(identity).await.is_err() {
             warn!(feeder = %id, "install refused: bank 1 may hold stock, and no backup is kept");
-            return Err(StockError::BackupNeeded.into());
+            return Err(InstallError::StockBackupNeeded.into());
         }
         Ok(())
     }
@@ -265,12 +243,10 @@ impl Service {
 /// A read that stopped, in the service's domains.
 fn read_failed(error: BankReadError) -> crate::Error {
     match error {
-        BankReadError::Bank(ReadError::Refused(refusal)) => {
-            CommandError::Refused(refusal.into()).into()
-        }
+        BankReadError::Bank(ReadError::Refused(refusal)) => Error::Refused(refusal.into()),
         BankReadError::Bank(other) => {
             warn!("the stock read stopped: {other}");
-            CommandError::Unexpected.into()
+            InternalError::Unexpected.into()
         }
         BankReadError::Lost(error) => error.into(),
         BankReadError::Random(failed) => failed.into(),

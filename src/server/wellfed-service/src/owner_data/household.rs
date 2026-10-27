@@ -6,39 +6,16 @@
 //! down. A zone no rule describes is refused, since a feeder could not keep
 //! it.
 
-use wellfed_api::{AuditAction, ErrorCode, Household, HouseholdPatch};
-use wellfed_mirror::{Zone, ZoneError};
+use wellfed_api::{AuditAction, Household, HouseholdPatch};
+use wellfed_mirror::Zone;
 use tracing::error;
 
-use crate::{Caller, Invalid, Result, Service};
-
-/// The household's settings.
-#[derive(Debug, thiserror::Error)]
-pub enum HouseholdError {
-    #[error("the household is made at setup")]
-    NotSetUp,
-    #[error(transparent)]
-    Zone(ZoneError),
-}
-
-impl HouseholdError {
-    /// A real zone no POSIX rule describes is `zone_unsupported`; a name the
-    /// tzdb does not know is a plain `invalid`.
-    pub(crate) fn code(&self) -> ErrorCode {
-        match self {
-            Self::NotSetUp => ErrorCode::NotFound,
-            Self::Zone(ZoneError::Unknown(_)) => ErrorCode::Invalid,
-            Self::Zone(
-                ZoneError::NoRule(_) | ZoneError::Unsupported { .. } | ZoneError::Irregular { .. },
-            ) => ErrorCode::ZoneUnsupported,
-        }
-    }
-}
+use crate::{Caller, Error, Invalid, Resource, Result, Service};
 
 impl Service {
     pub async fn household(&self) -> Result<Household> {
         let household = self.shared.store.household().await?;
-        household.ok_or_else(|| HouseholdError::NotSetUp.into())
+        household.ok_or(Error::NotFound(Resource::Household))
     }
 
     /// Change the household, as `caller` (an owner). A new zone goes to
@@ -62,8 +39,7 @@ impl Service {
         let zone = patch
             .zone
             .map(|name| Zone::new(&name, self.shared.clock.now()))
-            .transpose()
-            .map_err(HouseholdError::Zone)?;
+            .transpose()?;
         if let Some(zone) = &zone {
             household.zone = zone.name().to_owned();
         }

@@ -7,7 +7,7 @@ use wellfed_mirror::stored_sample;
 use wellfed_store::{SampleKey, Span};
 use tracing::info;
 
-use crate::{FeederError, Invalid, Result, Service};
+use crate::{Error, InternalError, Invalid, Resource, Result, Service};
 
 /// Samples or hours per page, unless asked.
 const PAGE: u32 = 100;
@@ -37,7 +37,7 @@ impl Service {
             Resolution::Hour => (None, after.map(hour_cursor).transpose()?),
         };
         if self.shared.store.feeder(id).await?.is_none() {
-            return Err(FeederError::NotFound.into());
+            return Err(Error::NotFound(Resource::Feeder));
         }
 
         // One more than the page, to know whether another follows.
@@ -55,7 +55,7 @@ impl Service {
                     .into_iter()
                     .map(|row| {
                         let value =
-                            stored_sample(&row.value).ok_or(FeederError::UndecodableSample)?;
+                            stored_sample(&row.value).ok_or(InternalError::UndecodableSample)?;
                         Ok(RawSample {
                             received: row.received,
                             uptime_ms: row.uptime_ms,

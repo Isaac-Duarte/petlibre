@@ -11,7 +11,7 @@ use wellfed_api::{
 };
 use wellfed_server_testkit::feeder::{self, Relay};
 use wellfed_server_testkit::{TestService, ada, config, local, owner_user, until};
-use wellfed_service::{CommandError, Error, IdempotencyKey, Invalid, Service};
+use wellfed_service::{CommandError, Error, IdempotencyKey, Invalid, Resource, Service};
 use wellfed_store::{Journaled, NewCommand};
 use uuid::Uuid;
 
@@ -375,7 +375,7 @@ fn every_write_is_journalled_and_an_unsent_one_frees_its_key() {
         ));
         assert!(matches!(
             service.command(&ada(), key).await,
-            Err(Error::Command(CommandError::NoEntry))
+            Err(Error::NotFound(Resource::Command))
         ));
         assert_eq!(
             service.commands(&ada(), all()).await.unwrap().items.len(),
@@ -417,7 +417,7 @@ fn each_user_reads_their_own_entries_and_an_owner_reads_all() {
         assert!(theirs.items.iter().all(|c| c.user == cy.id));
         assert!(matches!(
             service.command(&cy, [0x40; 16]).await,
-            Err(Error::Command(CommandError::NoEntry))
+            Err(Error::NotFound(Resource::Command))
         ));
         assert_eq!(
             service.command(&dee, [0x40; 16]).await.unwrap().user,

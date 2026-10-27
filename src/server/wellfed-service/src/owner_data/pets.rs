@@ -12,7 +12,7 @@ use wellfed_api::{
 };
 
 use crate::page::{self, after_weight, weight_cursor};
-use crate::{Invalid, OwnerDataError, Result, Service};
+use crate::{Error, Invalid, OwnerDataError, Resource, Result, Service};
 
 const KCAL_MAX: u32 = 10_000;
 /// A large dog, with room to spare.
@@ -26,7 +26,7 @@ impl Service {
 
     pub async fn pet(&self, id: PetId) -> Result<Pet> {
         let pet = self.shared.store.pet(id).await?;
-        pet.ok_or_else(|| OwnerDataError::PetNotFound.into())
+        pet.ok_or_else(|| Error::NotFound(Resource::Pet))
     }
 
     pub async fn create_pet(&self, request: NewPet) -> Result<Pet> {
@@ -62,7 +62,7 @@ impl Service {
         }
 
         if !self.shared.store.update_pet(&pet).await? {
-            return Err(OwnerDataError::PetNotFound.into());
+            return Err(Error::NotFound(Resource::Pet));
         }
         Ok(pet)
     }
@@ -70,7 +70,7 @@ impl Service {
     /// Delete a pet with its weight log and its feeders' links.
     pub async fn delete_pet(&self, id: PetId) -> Result<()> {
         if !self.shared.store.delete_pet(id).await? {
-            return Err(OwnerDataError::PetNotFound.into());
+            return Err(Error::NotFound(Resource::Pet));
         }
         Ok(())
     }
@@ -147,7 +147,7 @@ impl Service {
         self.pet(pet).await?;
 
         if !self.shared.store.delete_weight(pet, weight).await? {
-            return Err(OwnerDataError::WeightNotFound.into());
+            return Err(Error::NotFound(Resource::Weight));
         }
         Ok(())
     }

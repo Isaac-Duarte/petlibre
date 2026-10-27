@@ -303,12 +303,7 @@ fn a_cancel_stops_the_feed_through_the_journal() {
             .cancel_feed(&ada().into(), id, feed, Some([0xc2; 16]))
             .await;
         assert!(
-            matches!(
-                late,
-                Err(Error::Command(CommandError::Refused(
-                    FeederRefusal::NotFound
-                )))
-            ),
+            matches!(late, Err(Error::Refused(FeederRefusal::NotFound))),
             "{late:?}"
         );
         one_feed(service, id, &flash).await;
@@ -341,20 +336,14 @@ fn a_reused_key_and_a_refused_feed_send_nothing_more() {
         let busy_key: IdempotencyKey = [0xd9; 16];
         let busy = service.feed(&ada().into(), id, 1, busy_key).await;
         assert!(
-            matches!(
-                busy,
-                Err(Error::Command(CommandError::Refused(FeederRefusal::Busy)))
-            ),
+            matches!(busy, Err(Error::Refused(FeederRefusal::Busy))),
             "one feed at a time: {busy:?}"
         );
         sim.control(Control::StallFeeds(false));
         resolved(service, key).await;
         let again = service.feed(&ada().into(), id, 1, busy_key).await;
         assert!(
-            matches!(
-                again,
-                Err(Error::Command(CommandError::Refused(FeederRefusal::Busy)))
-            ),
+            matches!(again, Err(Error::Refused(FeederRefusal::Busy))),
             "a refusal is final for its key: {again:?}"
         );
         one_feed(service, id, &flash).await;

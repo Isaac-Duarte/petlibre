@@ -12,7 +12,7 @@ use wellfed_store::{FoodReading, TraceFound};
 use tokio::sync::broadcast::Receiver;
 use tokio::sync::broadcast::error::RecvError;
 
-use crate::{CommandError, Error, FeederError, Result, Service};
+use crate::{CommandError, Error, FeederError, InternalError, Resource, Result, Service};
 
 /// A followed debug log: its batches in order, until the tail ends.
 #[derive(Debug)]
@@ -49,7 +49,7 @@ impl Service {
         self.row(id).await?;
 
         let row = self.shared.store.trace(id, query.epoch, feed).await?;
-        let row = row.ok_or(FeederError::NoTrace)?;
+        let row = row.ok_or(Error::NotFound(Resource::FeedTrace))?;
         let record = match row.found {
             TraceFound::Trace(raw) => {
                 // The mirror stores only a trace that decodes.
@@ -110,12 +110,12 @@ impl Service {
 impl From<LogError> for Error {
     fn from(error: LogError) -> Self {
         match error {
-            LogError::NotRunning => FeederError::NotFound.into(),
+            LogError::NotRunning => Error::NotFound(Resource::Feeder),
             LogError::Offline => CommandError::Offline.into(),
             LogError::Connect(error) => error.into(),
-            LogError::Refused(refusal) => CommandError::Refused(refusal.into()).into(),
+            LogError::Refused(refusal) => Error::Refused(refusal.into()),
             LogError::Unanswered => FeederError::LogUnanswered.into(),
-            LogError::Unexpected => CommandError::Unexpected.into(),
+            LogError::Unexpected => InternalError::Unexpected.into(),
         }
     }
 }

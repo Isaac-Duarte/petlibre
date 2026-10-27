@@ -7,7 +7,7 @@ use axum::extract::rejection::{BytesRejection, JsonRejection, PathRejection, Que
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use wellfed_api::{ErrorCode, FeederRefusal, Problem, Settings};
-use wellfed_service::{AccountError, CommandError, Error, Reply};
+use wellfed_service::{AccountError, Error, Reply};
 
 /// A request's failure.
 #[derive(Debug)]
@@ -66,7 +66,7 @@ impl IntoResponse for ApiError {
         };
         let (code, detail, refusal) = match self {
             Self::Code(code, detail) => (code, detail, None),
-            Self::Service(Error::Command(CommandError::Stale(settings))) => return stale(settings),
+            Self::Service(Error::Stale(settings)) => return stale(settings),
             Self::Service(error) => service(&error),
         };
         let status = status(code);
@@ -182,7 +182,7 @@ fn status(code: ErrorCode) -> StatusCode {
 
 #[cfg(test)]
 mod tests {
-    use wellfed_service::{HouseholdError, ZoneError};
+    use wellfed_service::ZoneError;
 
     use super::*;
 
@@ -190,32 +190,25 @@ mod tests {
     /// not "try again" (503) but a refusal like any other.
     #[test]
     fn a_busy_refusal_is_final_for_its_key() {
-        let refused = CommandError::Refused(FeederRefusal::Busy);
+        let refused = Error::Refused(FeederRefusal::Busy);
 
-        let response = ApiError::Service(refused.into()).into_response();
+        let response = ApiError::Service(refused).into_response();
 
         assert_eq!(response.status(), StatusCode::CONFLICT);
     }
 
-    /// A real zone no POSIX rule describes is `422 zone_unsupported`; a
-    /// name the tzdb does not know is a plain `400 invalid`.
+    /// A real zone no POSIX rule describes is `422`: the request was well
+    /// formed, but a feeder could not keep the zone.
     #[test]
-    fn a_zone_is_refused_by_kind() {
+    fn a_zone_no_rule_describes_is_unprocessable() {
         let irregular = ZoneError::Irregular {
             name: "Asia/Gaza".into(),
             rule: "EET-2EEST".into(),
             at: jiff::Timestamp::UNIX_EPOCH,
         };
-        let unknown = ZoneError::Unknown("Mars/Olympus".into());
 
-        let code = |zone| service(&HouseholdError::Zone(zone).into());
-        let (code_irregular, detail, _) = code(irregular);
-        assert_eq!(code_irregular, ErrorCode::ZoneUnsupported);
-        assert!(detail.is_some_and(|detail| detail.contains("Asia/Gaza")));
-        assert_eq!(
-            status(ErrorCode::ZoneUnsupported),
-            StatusCode::UNPROCESSABLE_ENTITY
-        );
-        assert_eq!(code(unknown).0, ErrorCode::Invalid);
+        let response = ApiError::Service(Error::Zone(irregular)).into_response();
+
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
     }
 }

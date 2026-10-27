@@ -16,33 +16,13 @@
 //! revoking a leaked token is enough: it cannot have made other tokens,
 //! nor a password or an account to log in with and make them.
 
-use wellfed_api::{
-    AuditAction, CreatedToken, ErrorCode, NewToken, RevokeReason, Token, TokenId, User,
-};
+use wellfed_api::{AuditAction, CreatedToken, NewToken, RevokeReason, Token, TokenId, User};
 use wellfed_formats::hex;
 use wellfed_store::Whose;
 use sha2::{Digest, Sha256};
 
 use crate::accounts::sessions::{TOUCH, disabled};
-use crate::{AccountError, Invalid, Permission, Result, Service, can};
-
-/// Bearer tokens.
-#[derive(Debug, thiserror::Error)]
-pub enum TokenError {
-    #[error("no such token")]
-    NotFound,
-    #[error("only a login makes a token: a token cannot make another")]
-    SessionRequired,
-}
-
-impl TokenError {
-    pub(crate) fn code(&self) -> ErrorCode {
-        match self {
-            Self::NotFound => ErrorCode::NotFound,
-            Self::SessionRequired => ErrorCode::SessionRequired,
-        }
-    }
-}
+use crate::{AccountError, Error, Invalid, Permission, Resource, Result, Service, can};
 
 /// What every secret starts with, so it is recognisable in a config file
 /// or a leak scan, and never mistaken for a session's.
@@ -98,11 +78,11 @@ impl std::fmt::Debug for BearerToken {
     }
 }
 
-/// Refuse a token's caller [`TokenError::SessionRequired`]: what a leaked
+/// Refuse a token's caller [`AccountError::SessionRequired`]: what a leaked
 /// token could turn into a login of its own takes a login.
 pub(crate) fn session_only(caller: &Caller) -> Result<()> {
     if caller.token.is_some() {
-        return Err(TokenError::SessionRequired.into());
+        return Err(AccountError::SessionRequired.into());
     }
     Ok(())
 }
@@ -201,10 +181,10 @@ impl Service {
         let Some(token) =
             token.filter(|token| token.user == user.id || can(user.role, Permission::Users))
         else {
-            return Err(TokenError::NotFound.into());
+            return Err(Error::NotFound(Resource::Token));
         };
         if !self.shared.store.delete_token(id).await? {
-            return Err(TokenError::NotFound.into());
+            return Err(Error::NotFound(Resource::Token));
         }
 
         let action = AuditAction::TokenRevoked {

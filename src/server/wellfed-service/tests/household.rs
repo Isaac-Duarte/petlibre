@@ -8,7 +8,7 @@ use wellfed_server_testkit::feeder::{self, Flash, Running, open_owner};
 use std::time::Duration;
 
 use wellfed_server_testkit::{TestService, ZONE, ada_setup, config, local, until};
-use wellfed_service::{Caller, Error, HouseholdError, Invalid, ZoneError};
+use wellfed_service::{Caller, Error, Invalid, Resource, ZoneError};
 
 const BERLIN: &str = "CET-1CEST,M3.5.0,M10.5.0/3";
 const DENVER: &str = "MST7MDT,M3.2.0,M11.1.0";
@@ -60,7 +60,7 @@ fn setup_makes_the_household_and_an_owner_changes_it() {
         let service = server.service();
         assert!(matches!(
             service.household().await,
-            Err(Error::Household(HouseholdError::NotSetUp))
+            Err(Error::NotFound(Resource::Household))
         ));
         let state = service.setup_state().await.unwrap();
         assert_eq!((state.open, state.zone.as_deref()), (true, Some("UTC")));
@@ -105,7 +105,7 @@ fn an_unknown_zone_is_refused_by_name() {
         setup.zone = "Mars/Olympus".into();
         assert!(matches!(
             service.setup(setup).await,
-            Err(Error::Household(HouseholdError::Zone(ZoneError::Unknown(name)))) if name == "Mars/Olympus"
+            Err(Error::Zone(ZoneError::Unknown(name))) if name == "Mars/Olympus"
         ));
         assert!(service.setup_open().await.unwrap(), "nothing was made");
         service.setup(ada_setup()).await.unwrap();
@@ -115,9 +115,7 @@ fn an_unknown_zone_is_refused_by_name() {
         };
         assert!(matches!(
             service.update_household(&owner(), unknown).await,
-            Err(Error::Household(HouseholdError::Zone(ZoneError::Unknown(
-                _
-            ))))
+            Err(Error::Zone(ZoneError::Unknown(_)))
         ));
         assert_eq!(service.household().await.unwrap().zone, ZONE);
         // A zone that changes irregularly is refused the same way, by the

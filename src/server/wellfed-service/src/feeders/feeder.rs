@@ -8,7 +8,7 @@ use wellfed_store::{FeederRow, NewFeeder};
 use tracing::warn;
 
 use crate::feeders::keys;
-use crate::{Error, FeederError, Invalid, Result, Service};
+use crate::{Error, FeederError, InternalError, Invalid, Resource, Result, Service};
 
 const PAGE: u32 = 100;
 const PAGE_MAX: u32 = 500;
@@ -119,7 +119,7 @@ impl Service {
             .iter()
             .map(|row| {
                 wellfed_mirror::stored_event(epoch, row)
-                    .ok_or(Error::Feeder(FeederError::Undecodable(row.seq)))
+                    .ok_or(Error::Internal(InternalError::Undecodable(row.seq)))
             })
             .collect::<Result<Vec<_>>>()?;
 
@@ -141,7 +141,7 @@ impl Service {
     /// feeder's history stays readable.
     pub(crate) async fn row(&self, id: FeederId) -> Result<FeederRow> {
         let row = self.shared.store.feeder(id).await?;
-        row.ok_or_else(|| FeederError::NotFound.into())
+        row.ok_or_else(|| Error::NotFound(Resource::Feeder))
     }
 
     /// The feeder, refused [`FeederError::Archived`] once it is removed:

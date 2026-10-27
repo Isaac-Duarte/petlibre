@@ -15,7 +15,7 @@ use wellfed_api::{
 use wellfed_server_testkit::feeder::{self, Flash, Running};
 use wellfed_server_testkit::fixed::{FixedClock, ManualClock};
 use wellfed_server_testkit::{TestService, ada_setup, local, until};
-use wellfed_service::{Caller, ClientError, CommandError, Error, Service};
+use wellfed_service::{Caller, ClientError, Error, Service};
 
 /// A phone's secret key, by number.
 fn secret(n: u8) -> [u8; 32] {
@@ -237,12 +237,7 @@ fn a_server_role_key_is_refused_the_invite_and_records_nothing() {
         let refused = service.invite_phone(&ada, id, invite_for(5)).await;
 
         assert!(
-            matches!(
-                refused,
-                Err(Error::Command(CommandError::Refused(
-                    FeederRefusal::Forbidden
-                )))
-            ),
+            matches!(refused, Err(Error::Refused(FeederRefusal::Forbidden))),
             "{refused:?}"
         );
         assert!(service.phones(&ada.user).await.unwrap().is_empty());

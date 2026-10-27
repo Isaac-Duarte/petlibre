@@ -19,7 +19,7 @@ use tracing::{Instrument, info_span};
 
 use crate::feeders::commands::done;
 use crate::feeders::journal::{Write, view};
-use crate::{Caller, CommandError, IdempotencyKey, Result, Service};
+use crate::{Caller, Error, IdempotencyKey, InternalError, Resource, Result, Service};
 
 mod history;
 
@@ -59,12 +59,13 @@ impl Service {
             | CommandOutcome::Fed { .. }
             | CommandOutcome::Unrecorded => {
                 let row = self.shared.store.command(&recorded.key).await?;
-                row.map(view).ok_or_else(|| CommandError::NoEntry.into())
+                row.map(view)
+                    .ok_or_else(|| Error::NotFound(Resource::Command))
             }
-            CommandOutcome::Refused { refusal } => Err(CommandError::Refused(refusal).into()),
+            CommandOutcome::Refused { refusal } => Err(Error::Refused(refusal)),
             CommandOutcome::Done
             | CommandOutcome::Settings { .. }
-            | CommandOutcome::Invited { .. } => Err(CommandError::Unexpected.into()),
+            | CommandOutcome::Invited { .. } => Err(InternalError::Unexpected.into()),
         }
     }
 

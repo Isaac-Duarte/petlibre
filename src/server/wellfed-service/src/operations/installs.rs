@@ -28,22 +28,28 @@ use wellfed_model::{Refusal, UpdateView};
 use wellfed_releases::{STOCK_VERSION, StockBackup};
 use tracing::{Instrument, info, info_span, warn};
 
-use crate::{Caller, CommandError, Result, Service, lock};
+use crate::{Caller, CommandError, Error, Resource, Result, Service, lock};
 
-/// Installs, one at a time per server.
+/// Installs, one at a time per server, a restore of stock among them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum InstallError {
     #[error("another install is running: one runs at a time")]
     Running,
-    #[error("no install has run on that feeder")]
-    None,
+    #[error("the restore does not offer the kept backup: {0}")]
+    RestoreMismatch(wellfed_releases::RestoreError),
+    #[error(
+        "the feeder runs from bank 0 with stock in bank 1, and no verified backup of it is kept: \
+         read it from the feeder or upload the installer's copy before installing"
+    )]
+    StockBackupNeeded,
 }
 
 impl InstallError {
     pub(crate) fn code(self) -> ErrorCode {
         match self {
             Self::Running => ErrorCode::InstallRunning,
-            Self::None => ErrorCode::NotFound,
+            Self::RestoreMismatch(_) => ErrorCode::RestoreMismatch,
+            Self::StockBackupNeeded => ErrorCode::StockBackupNeeded,
         }
     }
 }
@@ -94,7 +100,7 @@ impl Service {
     ) -> Result<Install> {
         let row = self.row(id).await?;
         if row.role != ClientRole::Owner {
-            return Err(CommandError::Refused(FeederRefusal::Forbidden).into());
+            return Err(Error::Refused(FeederRefusal::Forbidden));
         }
         let (release, file) = self.release_file(request.release).await?;
         if self.mirror.link(id) != Some(Link::Online) {
@@ -203,7 +209,7 @@ impl Service {
         }
 
         let last = self.shared.store.latest_install(id).await?;
-        let last = last.ok_or(InstallError::None)?;
+        let last = last.ok_or(Error::NotFound(Resource::Install))?;
         Ok(self.unsaved(last))
     }
 

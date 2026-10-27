@@ -8,7 +8,7 @@ use wellfed_api::{
 };
 use wellfed_server_testkit::feeder::{self, Running};
 use wellfed_server_testkit::{TestService, ada, local, until};
-use wellfed_service::{Caller, ClientError, CommandError, Error, FeederError, Invalid, Service};
+use wellfed_service::{Caller, ClientError, Error, FeederError, Invalid, Service};
 
 async fn started(role: ClientRole) -> (Running, TestService, FeederId) {
     let sim = feeder::start().await;
@@ -131,10 +131,7 @@ fn wifi_changes_against_the_stores_generation_and_a_stale_base_is_refused() {
             .put_wifi(&owner(), id, base, home("another one"), Some([3; 16]))
             .await;
         assert!(
-            matches!(
-                stale,
-                Err(Error::Command(CommandError::Refused(FeederRefusal::Stale)))
-            ),
+            matches!(stale, Err(Error::Refused(FeederRefusal::Stale))),
             "{stale:?}"
         );
         let cleared = WifiChange { wifi: None };
@@ -162,12 +159,7 @@ fn a_tune_the_feeder_cannot_play_is_refused_with_its_reason() {
         let played = service.play(&owner(), id, chime, Some([1; 16])).await;
 
         assert!(
-            matches!(
-                played,
-                Err(Error::Command(CommandError::Refused(
-                    FeederRefusal::Unavailable
-                )))
-            ),
+            matches!(played, Err(Error::Refused(FeederRefusal::Unavailable))),
             "{played:?}"
         );
         server.shutdown().await;

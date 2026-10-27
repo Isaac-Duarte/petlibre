@@ -17,10 +17,8 @@ use wellfed_api::ErrorCode;
 
 pub use permissions::{Permission, can};
 pub use sessions::SessionToken;
-pub use tokens::{BearerToken, Caller, TokenError};
+pub use tokens::{BearerToken, Caller};
 pub use users::reset_owner;
-
-use crate::Reply;
 
 /// What the accounts keep between requests.
 #[derive(Clone, Default)]
@@ -41,40 +39,32 @@ pub enum AccountError {
     Limited { retry_after: Duration },
     #[error("the account is past its expiry: an owner can extend it")]
     Disabled,
-    #[error("no such user")]
-    NotFound,
     #[error("that name is taken")]
     NameTaken,
     #[error("the household would have no owner left")]
     LastOwner,
+    #[error("only a login makes a token: a token cannot make another")]
+    SessionRequired,
     #[error("{0} is not an owner")]
     NotAnOwner(String),
     #[error("the household has no owner")]
     NoOwner,
     #[error("the household has several owners: name one")]
     OwnerAmbiguous,
-    #[error("hash a password: {0}")]
-    Hash(argon2::password_hash::Error),
-    #[error("the password hashing task stopped before it finished")]
-    Hashing,
-    #[error("a session's expiry is past the latest time the clock can show")]
-    Expiry,
 }
 
 impl AccountError {
-    pub(crate) fn reply(&self) -> Reply {
-        let code = match self {
+    pub(crate) fn code(&self) -> ErrorCode {
+        match self {
             Self::SetupClosed => ErrorCode::SetupClosed,
             Self::BadCredentials => ErrorCode::BadCredentials,
             Self::Limited { .. } => ErrorCode::LoginLimited,
             Self::Disabled => ErrorCode::AccountDisabled,
-            Self::NotFound => ErrorCode::NotFound,
             Self::NameTaken => ErrorCode::NameTaken,
             Self::LastOwner => ErrorCode::LastOwner,
+            Self::SessionRequired => ErrorCode::SessionRequired,
             // Only `reset-owner`, on the host, picks an owner by name.
             Self::NotAnOwner(_) | Self::NoOwner | Self::OwnerAmbiguous => ErrorCode::Invalid,
-            Self::Hash(_) | Self::Hashing | Self::Expiry => return Reply::Internal,
-        };
-        Reply::Code(code)
+        }
     }
 }

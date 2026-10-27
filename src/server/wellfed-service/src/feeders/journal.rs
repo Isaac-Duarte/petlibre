@@ -40,8 +40,8 @@ use uuid::Uuid;
 use self::id::write_id;
 use self::retry::{Retry, retry};
 use crate::{
-    Caller, CommandError, Error, IdempotencyKey, Invalid, Permission, RequestId, Result, Service,
-    can,
+    Caller, CommandError, Error, IdempotencyKey, InternalError, Invalid, Permission, RequestId,
+    Resource, Result, Service, can,
 };
 
 mod id;
@@ -92,7 +92,7 @@ impl Service {
             Some(row) if can(user.role, Permission::AllHistory) || row.user == user.id => {
                 Ok(view(row))
             }
-            _ => Err(CommandError::NoEntry.into()),
+            _ => Err(Error::NotFound(Resource::Command)),
         }
     }
 
@@ -144,7 +144,7 @@ impl Service {
                 .into_uuid()
                 .into_bytes(),
         };
-        let body = canonical_of(write.body).map_err(CommandError::Body)?;
+        let body = canonical_of(write.body).map_err(InternalError::Body)?;
         let body_hash: [u8; 32] = Sha256::digest(body).into();
         let request = write_id(&write.caller.user, write.feeder, write.kind, &key);
         let boot_count = self
@@ -289,7 +289,7 @@ impl Service {
             // known from it.
             Ok(_) => {
                 self.unknown(&key, now).await?;
-                return Err(CommandError::Unexpected.into());
+                return Err(InternalError::Unexpected.into());
             }
             Err(AskError::Unknown) => {
                 self.unknown(&key, now).await?;

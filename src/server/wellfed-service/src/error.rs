@@ -1,28 +1,39 @@
-//! The service's refusals: an enum per domain, kept beside its domain and
-//! wrapped in [`Error`], so a new domain adds an enum rather than growing
-//! one list. Each domain also says how its refusals are answered
-//! ([`Reply`]), so the code a client sees is decided where the refusal is.
+//! The service's refusals. [`Error`] holds what every domain shares (a
+//! field that failed its checks, a resource that is not there, the
+//! feeder's own refusal, the server's own failure) and an enum per domain
+//! for the rest, kept beside its domain. Every variant of a domain enum is
+//! a refusal the caller can act on, so each gives exactly one API code;
+//! the server's own failures go in [`InternalError`], which no caller is
+//! told about. [`Error::reply`] gathers them.
 
-use wellfed_api::{ErrorCode, FeederRefusal};
-use wellfed_mirror::{AskError, ConnectError, RandomFailed};
+use std::fmt;
+
+use wellfed_api::{ErrorCode, FeederRefusal, Settings};
+use wellfed_mirror::{AskError, ConnectError, RandomFailed, ZoneError};
 
 use crate::{
-    AccountError, BackupError, ClientError, CommandError, ExportError, FeederError, HouseholdError,
-    InstallError, OwnerDataError, StockError, TokenError,
+    AccountError, BackupError, ClientError, CommandError, ExportError, FeederError, InstallError,
+    OwnerDataError,
 };
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error(transparent)]
-    Store(#[from] wellfed_store::Error),
-    #[error(transparent)]
     Invalid(#[from] Invalid),
+    #[error("{0}")]
+    NotFound(Resource),
+    /// The feeder refused: final for the request's key, since the feeder
+    /// replays its refusal while it remembers the id.
+    #[error("the feeder refused: {0:?}")]
+    Refused(FeederRefusal),
+    /// An edit named a settings generation the feeder has moved past; it
+    /// carries the current settings, which the server answers with.
+    #[error("the settings moved on to generation {}", .0.generation)]
+    Stale(Settings),
+    #[error(transparent)]
+    Zone(#[from] ZoneError),
     #[error(transparent)]
     Account(#[from] AccountError),
-    #[error(transparent)]
-    Token(#[from] TokenError),
-    #[error(transparent)]
-    Household(#[from] HouseholdError),
     #[error(transparent)]
     Feeder(#[from] FeederError),
     #[error(transparent)]
@@ -34,18 +45,102 @@ pub enum Error {
     #[error(transparent)]
     Install(#[from] InstallError),
     #[error(transparent)]
-    Stock(#[from] StockError),
-    #[error(transparent)]
-    Random(#[from] RandomFailed),
-    #[error(transparent)]
     Release(#[from] wellfed_releases::Error),
     #[error(transparent)]
-    Backup(#[from] BackupError),
-    #[error(transparent)]
     Export(#[from] ExportError),
+    #[error(transparent)]
+    Internal(#[from] InternalError),
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
+
+/// What a [`Error::NotFound`] names. Each reads as the whole refusal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Resource {
+    User,
+    Token,
+    /// The household is made at setup, so before it there is none.
+    Household,
+    Feeder,
+    /// A feed the server never journalled nor saw in the feeder's history.
+    FeedTrace,
+    Pet,
+    Weight,
+    Food,
+    Refill,
+    /// A feeder's last install, before any has run.
+    Install,
+    /// A journal entry under an idempotency key.
+    Command,
+}
+
+impl fmt::Display for Resource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::User => "no such user",
+            Self::Token => "no such token",
+            Self::Household => "the household is made at setup",
+            Self::Feeder => "no such feeder",
+            Self::FeedTrace => "the server holds no trace of that feed",
+            Self::Pet => "no such pet",
+            Self::Weight => "no such entry in the pet's weight log",
+            Self::Food => "no such food",
+            Self::Refill => "no such refill on that feeder",
+            Self::Install => "no install has run on that feeder",
+            Self::Command => "no command under that key",
+        })
+    }
+}
+
+/// The server's own failures: logged with their sources, and answered
+/// `internal` with no detail.
+#[derive(Debug, thiserror::Error)]
+pub enum InternalError {
+    #[error(transparent)]
+    Store(#[from] wellfed_store::Error),
+    #[error(transparent)]
+    Random(#[from] RandomFailed),
+    #[error(transparent)]
+    Backup(#[from] BackupError),
+    #[error("hash a password: {0}")]
+    Hash(argon2::password_hash::Error),
+    #[error("the password hashing task stopped before it finished")]
+    Hashing,
+    #[error("a session's expiry is past the latest time the clock can show")]
+    SessionExpiry,
+    #[error("the mDNS lookup stopped before it answered")]
+    Lookup,
+    #[error("stored event {0} does not decode")]
+    Undecodable(u64),
+    #[error("a stored sample does not decode")]
+    UndecodableSample,
+    #[error("a feeder key does not open with this server's key")]
+    Unseal,
+    #[error("the feeder sent an answer that does not fit the request")]
+    Unexpected,
+    #[error("hash a request body: {0}")]
+    Body(wellfed_formats::Error),
+    #[error("the kept backup is larger than any bank")]
+    StockSize,
+}
+
+impl From<wellfed_store::Error> for Error {
+    fn from(error: wellfed_store::Error) -> Self {
+        InternalError::from(error).into()
+    }
+}
+
+impl From<RandomFailed> for Error {
+    fn from(error: RandomFailed) -> Self {
+        InternalError::from(error).into()
+    }
+}
+
+impl From<BackupError> for Error {
+    fn from(error: BackupError) -> Self {
+        InternalError::from(error).into()
+    }
+}
 
 /// How a refusal is answered.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,29 +159,35 @@ pub enum Reply {
 
 impl Error {
     pub fn reply(&self) -> Reply {
-        match self {
-            Self::Invalid(_) => Reply::Code(ErrorCode::Invalid),
-            Self::Account(account) => account.reply(),
-            Self::Token(token) => Reply::Code(token.code()),
-            Self::Household(household) => Reply::Code(household.code()),
-            Self::Feeder(feeder) => feeder.reply(),
-            Self::Client(client) => Reply::Code(client.code()),
-            Self::OwnerData(owner_data) => Reply::Code(owner_data.code()),
-            Self::Command(command) => command.reply(),
-            Self::Install(install) => Reply::Code(install.code()),
-            Self::Stock(stock) => stock.reply(),
-            Self::Release(release) => crate::operations::releases::reply(release),
-            Self::Export(export) => export.reply(),
-            Self::Store(_) | Self::Random(_) | Self::Backup(_) => Reply::Internal,
-        }
+        let code = match self {
+            Self::Invalid(_) => ErrorCode::Invalid,
+            Self::NotFound(_) => ErrorCode::NotFound,
+            Self::Refused(_) => ErrorCode::FeederRefused,
+            // A real zone no POSIX rule describes is `zone_unsupported`; a
+            // name the tzdb does not know is a plain `invalid`.
+            Self::Zone(ZoneError::Unknown(_)) => ErrorCode::Invalid,
+            Self::Zone(
+                ZoneError::NoRule(_) | ZoneError::Unsupported { .. } | ZoneError::Irregular { .. },
+            ) => ErrorCode::ZoneUnsupported,
+            Self::Account(account) => account.code(),
+            Self::Feeder(feeder) => feeder.code(),
+            Self::Client(client) => client.code(),
+            Self::OwnerData(owner_data) => owner_data.code(),
+            Self::Command(command) => command.code(),
+            Self::Install(install) => install.code(),
+            Self::Release(release) => return crate::operations::releases::reply(release),
+            Self::Export(export) => return export.reply(),
+            // The server answers a stale edit with the current settings,
+            // not a problem.
+            Self::Stale(_) | Self::Internal(_) => return Reply::Internal,
+        };
+        Reply::Code(code)
     }
 
-    /// What the feeder said when it refused, for a refusal that is the
-    /// feeder's.
+    /// What the feeder said, for a refusal that is the feeder's.
     pub fn refusal(&self) -> Option<FeederRefusal> {
         match self {
-            Self::Feeder(FeederError::Refused(refusal))
-            | Self::Command(CommandError::Refused(refusal)) => Some(*refusal),
+            Self::Refused(refusal) => Some(*refusal),
             _ => None,
         }
     }
@@ -160,10 +261,10 @@ pub enum Invalid {
 impl From<AskError> for Error {
     fn from(error: AskError) -> Self {
         match error {
-            AskError::NotRunning => FeederError::NotFound.into(),
+            AskError::NotRunning => Self::NotFound(Resource::Feeder),
             AskError::Offline => CommandError::Offline.into(),
             AskError::Unknown => CommandError::Unknown.into(),
-            AskError::Unsendable => CommandError::Unexpected.into(),
+            AskError::Unsendable => InternalError::Unexpected.into(),
         }
     }
 }
@@ -174,10 +275,55 @@ impl From<ConnectError> for Error {
             ConnectError::Address => Invalid::Address.into(),
             ConnectError::AddressRequired => Invalid::AddressRequired.into(),
             ConnectError::InviteExpired => FeederError::InviteExpired.into(),
-            ConnectError::Refused(refusal) => FeederError::Refused(refusal.into()).into(),
+            ConnectError::Refused(refusal) => Self::Refused(refusal.into()),
             ConnectError::Unreachable(unreachable) => FeederError::Unreachable(unreachable).into(),
             ConnectError::Random(failed) => failed.into(),
-            ConnectError::Lookup => FeederError::Lookup.into(),
+            ConnectError::Lookup => InternalError::Lookup.into(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    #[test]
+    fn each_kind_of_refusal_is_answered_with_its_code() {
+        let busy = Error::Refused(FeederRefusal::Busy);
+        let limited = AccountError::Limited {
+            retry_after: Duration::from_secs(5),
+        };
+
+        assert_eq!(
+            Error::NotFound(Resource::Pet).reply(),
+            Reply::Code(ErrorCode::NotFound)
+        );
+        assert_eq!(busy.reply(), Reply::Code(ErrorCode::FeederRefused));
+        assert_eq!(busy.refusal(), Some(FeederRefusal::Busy));
+        assert_eq!(
+            Error::from(limited).reply(),
+            Reply::Code(ErrorCode::LoginLimited)
+        );
+        let internal = Error::from(wellfed_store::Error::Corrupt("feeder"));
+        assert_eq!(internal.reply(), Reply::Internal);
+        assert_eq!(internal.refusal(), None);
+    }
+
+    /// A real zone no POSIX rule describes is `zone_unsupported`, named in
+    /// the detail; a name the tzdb does not know is a plain `invalid`.
+    #[test]
+    fn a_zone_is_refused_by_kind() {
+        let irregular = Error::Zone(ZoneError::Irregular {
+            name: "Asia/Gaza".into(),
+            rule: "EET-2EEST".into(),
+            at: jiff::Timestamp::UNIX_EPOCH,
+        });
+        let unknown = Error::Zone(ZoneError::Unknown("Mars/Olympus".into()));
+
+        assert_eq!(irregular.reply(), Reply::Code(ErrorCode::ZoneUnsupported));
+        assert!(irregular.to_string().contains("Asia/Gaza"));
+        assert_eq!(unknown.reply(), Reply::Code(ErrorCode::Invalid));
     }
 }

@@ -51,7 +51,7 @@ fn settings_change_against_the_current_generation_only() {
         let stale = service
             .put_settings(&ada().into(), id, settings.generation, patch, Some([2; 16]))
             .await;
-        let Err(Error::Command(CommandError::Stale(current))) = stale else {
+        let Err(Error::Stale(current)) = stale else {
             panic!("{stale:?}");
         };
         assert_eq!(current, changed);

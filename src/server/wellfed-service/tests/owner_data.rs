@@ -11,7 +11,7 @@ use wellfed_api::{
 };
 use wellfed_server_testkit::fixed::ManualClock;
 use wellfed_server_testkit::{TestService, ada_setup, feeder, local};
-use wellfed_service::{Error, FeederError, Invalid, OwnerDataError, Service};
+use wellfed_service::{Error, Invalid, OwnerDataError, Resource, Service};
 use uuid::Uuid;
 
 /// A feeder this server never adopted.
@@ -48,6 +48,14 @@ fn invalid<T: std::fmt::Debug>(result: Result<T, Error>, want: Invalid) {
     match result {
         Err(Error::Invalid(got)) => assert_eq!(got, want),
         other => panic!("expected {want:?}, got {other:?}"),
+    }
+}
+
+#[track_caller]
+fn not_found<T: std::fmt::Debug>(result: Result<T, Error>, want: Resource) {
+    match result {
+        Err(Error::NotFound(got)) => assert_eq!(got, want),
+        other => panic!("expected {want:?} not found, got {other:?}"),
     }
 }
 
@@ -144,15 +152,15 @@ fn a_pet_is_made_changed_and_deleted_with_its_weight_log() {
         );
 
         service.delete_weight(pet.id, today.id).await.unwrap();
-        refused(
+        not_found(
             service.delete_weight(pet.id, today.id).await,
-            OwnerDataError::WeightNotFound,
+            Resource::Weight,
         );
         service.delete_pet(pet.id).await.unwrap();
-        refused(service.pet(pet.id).await, OwnerDataError::PetNotFound);
-        refused(
+        not_found(service.pet(pet.id).await, Resource::Pet);
+        not_found(
             service.weights(pet.id, PageQuery::default()).await,
-            OwnerDataError::PetNotFound,
+            Resource::Pet,
         );
         server.shutdown().await;
     });
@@ -185,7 +193,7 @@ fn pets_and_feeders_are_many_to_many() {
 
         assert!(matches!(
             service.assign_feeder(tom.id, NOBODY).await,
-            Err(Error::Feeder(FeederError::NotFound))
+            Err(Error::NotFound(Resource::Feeder))
         ));
         let left = service.unassign_feeder(tom.id, hall).await.unwrap();
         assert_eq!(left.feeders, [kitchen]);
@@ -246,14 +254,14 @@ fn a_food_is_checked_and_one_a_feeder_served_is_kept() {
         refused(service.delete_food(dry.id).await, OwnerDataError::FoodInUse);
         let spare = service.create_food(kibble("Spare", 400)).await.unwrap();
         service.delete_food(spare.id).await.unwrap();
-        refused(service.food(spare.id).await, OwnerDataError::FoodNotFound);
-        refused(
+        not_found(service.food(spare.id).await, Resource::Food);
+        not_found(
             service.set_feeder_food(kitchen, spare.id).await,
-            OwnerDataError::FoodNotFound,
+            Resource::Food,
         );
         assert!(matches!(
             service.set_feeder_food(NOBODY, dry.id).await,
-            Err(Error::Feeder(FeederError::NotFound))
+            Err(Error::NotFound(Resource::Feeder))
         ));
         server.shutdown().await;
     });
@@ -360,9 +368,9 @@ fn a_refill_is_grams_or_a_full_bag_of_the_current_food() {
         assert_eq!((rest.items, rest.next), (vec![bag.clone()], None));
 
         service.delete_refill(kitchen, bag.id).await.unwrap();
-        refused(
+        not_found(
             service.delete_refill(kitchen, bag.id).await,
-            OwnerDataError::RefillNotFound,
+            Resource::Refill,
         );
         assert_eq!(
             service.feeder_food(kitchen).await.unwrap().last_refill,
@@ -370,7 +378,7 @@ fn a_refill_is_grams_or_a_full_bag_of_the_current_food() {
         );
         assert!(matches!(
             service.refills(NOBODY, PageQuery::default()).await,
-            Err(Error::Feeder(FeederError::NotFound))
+            Err(Error::NotFound(Resource::Feeder))
         ));
         server.shutdown().await;
     });
@@ -516,7 +524,7 @@ fn a_feeder_s_pets_keep_their_history() {
         assert_eq!(toms, [(t0, Some(t0 + hour * 2)), (t0 + hour * 2, None)]);
         assert!(matches!(
             service.feeder_pets(NOBODY, t0, t0 + hour).await,
-            Err(Error::Feeder(FeederError::NotFound))
+            Err(Error::NotFound(Resource::Feeder))
         ));
         server.shutdown().await;
     });

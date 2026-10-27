@@ -56,11 +56,14 @@
 //!   the time it runs at; [`Service::run_job`] runs one and records its
 //!   run. The server's supervisor decides when.
 //!
-//! Each domain has its own error enum ([`AccountError`],
-//! [`TokenError`], [`HouseholdError`], [`FeederError`], [`ClientError`],
-//! [`CommandError`], [`InstallError`], [`StockError`], [`OwnerDataError`]),
-//! wrapped in [`Error`]. Time and randomness come in through [`Clock`] and
-//! [`Random`], so tests can fix them.
+//! [`Error`] holds what every domain shares: a field that failed its
+//! checks, a [`Resource`] that is not there, the feeder's own refusal and
+//! the server's own failures ([`InternalError`]). Each domain's other
+//! refusals have their own enum ([`AccountError`], [`FeederError`],
+//! [`ClientError`], [`CommandError`], [`InstallError`],
+//! [`OwnerDataError`]), every variant with its one API code, and
+//! [`Error::reply`] says how each is answered. Time and randomness come in
+//! through [`Clock`] and [`Random`], so tests can fix them.
 //!
 //! [API design]: ../../../../docs/api/README.md
 #![forbid(unsafe_code)]
@@ -77,18 +80,16 @@ mod page;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
-pub use accounts::{
-    AccountError, BearerToken, Caller, Permission, SessionToken, TokenError, can, reset_owner,
-};
+pub use accounts::{AccountError, BearerToken, Caller, Permission, SessionToken, can, reset_owner};
 pub use config::{Config, Timing};
-pub use error::{Error, Invalid, Reply, Result};
+pub use error::{Error, InternalError, Invalid, Reply, Resource, Result};
 pub use feeders::{
     ClientError, CommandError, FeederError, LogFollow, Method, NoRoute, Parity, parity,
 };
 pub use hub::{Hub, Resume, Stamped, StreamId, Subscription};
 use jiff::Timestamp;
-pub use operations::{BackupError, Backups, EXPORT_CHUNK, ExportError, InstallError, StockError};
-pub use owner_data::{HouseholdError, OwnerDataError};
+pub use operations::{BackupError, Backups, EXPORT_CHUNK, ExportError, InstallError};
+pub use owner_data::OwnerDataError;
 use wellfed_mirror::Mirror;
 pub use wellfed_mirror::{
     Clock, Diagnostics, Discovery, Random, RandomFailed, SystemClock, SystemRandom, ZoneError,

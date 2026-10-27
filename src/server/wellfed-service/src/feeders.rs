@@ -18,7 +18,7 @@ mod updates;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use wellfed_api::{Connection as Link, ErrorCode, FeederId, FeederRefusal};
+use wellfed_api::{Connection as Link, ErrorCode, FeederId};
 use wellfed_mirror::{InviteText, Unreachable};
 
 pub use clients::ClientError;
@@ -26,7 +26,7 @@ pub use commands::CommandError;
 pub use diagnostics::LogFollow;
 pub use parity::{Method, NoRoute, Parity, parity};
 
-use crate::{Reply, Service, lock};
+use crate::{Service, lock};
 
 /// What the service keeps of the feeders between requests.
 #[derive(Clone, Default)]
@@ -57,8 +57,6 @@ impl Service {
 /// Adopting feeders and reading what the server holds of them.
 #[derive(Debug, thiserror::Error)]
 pub enum FeederError {
-    #[error("no such feeder")]
-    NotFound,
     #[error("that feeder is already adopted")]
     AlreadyAdopted,
     #[error("the feeder was removed: adopt it again to send it anything")]
@@ -69,36 +67,18 @@ pub enum FeederError {
     InviteExpired,
     #[error(transparent)]
     Unreachable(#[from] Unreachable),
-    #[error("the feeder refused: {0:?}")]
-    Refused(FeederRefusal),
-    #[error("the mDNS lookup stopped before it answered")]
-    Lookup,
-    #[error("stored event {0} does not decode")]
-    Undecodable(u64),
-    #[error("a stored sample does not decode")]
-    UndecodableSample,
-    #[error("a feeder key does not open with this server's key")]
-    Unseal,
-    #[error("the server holds no trace of that feed")]
-    NoTrace,
     #[error("the feeder did not answer the log request in time")]
     LogUnanswered,
 }
 
 impl FeederError {
-    pub(crate) fn reply(&self) -> Reply {
-        let code = match self {
-            Self::NotFound | Self::NoTrace => ErrorCode::NotFound,
+    pub(crate) fn code(&self) -> ErrorCode {
+        match self {
             Self::AlreadyAdopted => ErrorCode::AlreadyAdopted,
             Self::Archived => ErrorCode::FeederArchived,
             Self::Invite(_) => ErrorCode::Invalid,
             Self::InviteExpired => ErrorCode::InviteExpired,
             Self::Unreachable(_) | Self::LogUnanswered => ErrorCode::Unreachable,
-            Self::Refused(_) => ErrorCode::FeederRefused,
-            Self::Lookup | Self::Undecodable(_) | Self::UndecodableSample | Self::Unseal => {
-                return Reply::Internal;
-            }
-        };
-        Reply::Code(code)
+        }
     }
 }

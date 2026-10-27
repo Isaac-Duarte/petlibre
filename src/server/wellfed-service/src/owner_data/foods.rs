@@ -15,7 +15,7 @@ use wellfed_api::{
 use wellfed_store::FoodSet;
 
 use crate::page::{self, after_seq};
-use crate::{Invalid, OwnerDataError, Result, Service};
+use crate::{Error, Invalid, OwnerDataError, Resource, Result, Service};
 
 const KCAL_MAX: u32 = 10_000;
 const BAG_MAX: u32 = 100_000;
@@ -30,7 +30,7 @@ impl Service {
 
     pub async fn food(&self, id: FoodId) -> Result<Food> {
         let food = self.shared.store.food(id).await?;
-        food.ok_or_else(|| OwnerDataError::FoodNotFound.into())
+        food.ok_or_else(|| Error::NotFound(Resource::Food))
     }
 
     pub async fn create_food(&self, request: NewFood) -> Result<Food> {
@@ -71,7 +71,7 @@ impl Service {
         }
 
         if !self.shared.store.update_food(&food).await? {
-            return Err(OwnerDataError::FoodNotFound.into());
+            return Err(Error::NotFound(Resource::Food));
         }
         Ok(food)
     }
@@ -80,7 +80,7 @@ impl Service {
     pub async fn delete_food(&self, id: FoodId) -> Result<()> {
         match self.shared.store.delete_food(id).await {
             Ok(true) => Ok(()),
-            Ok(false) => Err(OwnerDataError::FoodNotFound.into()),
+            Ok(false) => Err(Error::NotFound(Resource::Food)),
             Err(wellfed_store::Error::InUse(_)) => Err(OwnerDataError::FoodInUse.into()),
             Err(error) => Err(error.into()),
         }
@@ -207,7 +207,7 @@ impl Service {
         self.row(feeder).await?;
 
         if !self.shared.store.delete_refill(feeder, id).await? {
-            return Err(OwnerDataError::RefillNotFound.into());
+            return Err(Error::NotFound(Resource::Refill));
         }
         Ok(())
     }

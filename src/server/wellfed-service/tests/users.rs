@@ -10,7 +10,9 @@ use wellfed_api::{
 };
 use wellfed_server_testkit::fixed::{FixedClock, ManualClock, SeededRandom};
 use wellfed_server_testkit::{HERE, TestService, ada_login, ada_setup, local};
-use wellfed_service::{AccountError, Caller, Error, Invalid, Service, SessionToken, reset_owner};
+use wellfed_service::{
+    AccountError, Caller, Error, Invalid, Resource, Service, SessionToken, reset_owner,
+};
 
 const HOUR: Duration = Duration::from_secs(3600);
 
@@ -106,7 +108,7 @@ fn owners_add_change_and_delete_users_but_never_the_last_owner() {
         service.delete_user(&from_login(), ada.id).await.unwrap();
         assert!(matches!(
             service.delete_user(&from_login(), ada.id).await,
-            Err(Error::Account(AccountError::NotFound))
+            Err(Error::NotFound(Resource::User))
         ));
         assert_eq!(service.users().await.unwrap(), [bob]);
         server.shutdown().await;
@@ -385,7 +387,7 @@ fn reset_owner_gives_the_sole_owner_a_new_password() {
         ));
         assert!(matches!(
             reset_owner(&store, Some("nobody"), &random, FixedClock.now()).await,
-            Err(Error::Account(AccountError::NotFound))
+            Err(Error::NotFound(Resource::User))
         ));
         store.close().await;
 

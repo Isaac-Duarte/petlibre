@@ -14,7 +14,9 @@ use wellfed_store::{Change, NewAudit, Store, Whose};
 use crate::accounts::sessions::{self, disabled, hash_password, password, user_name};
 use crate::accounts::tokens::session_only;
 use crate::feeders::phones::revocation;
-use crate::{AccountError, Caller, Invalid, Random, Result, Service, SessionToken};
+use crate::{
+    AccountError, Caller, Error, Invalid, Random, Resource, Result, Service, SessionToken,
+};
 
 impl Service {
     /// Every account, by name.
@@ -151,7 +153,7 @@ impl Service {
 
     async fn user(&self, id: UserId) -> Result<User> {
         let user = self.shared.store.user(id).await?;
-        user.ok_or_else(|| AccountError::NotFound.into())
+        user.ok_or_else(|| Error::NotFound(Resource::User))
     }
 }
 
@@ -169,7 +171,7 @@ pub async fn reset_owner(
     let owner = match name {
         Some(name) => {
             let user = users.into_iter().find(|user| user.name == name.trim());
-            let user = user.ok_or(AccountError::NotFound)?;
+            let user = user.ok_or(Error::NotFound(Resource::User))?;
             if user.role != Role::Owner {
                 return Err(AccountError::NotAnOwner(user.name).into());
             }
@@ -194,7 +196,7 @@ pub async fn reset_owner(
     let hash = sessions::blocking(move || hash_password(&typed, &salt)).await?;
 
     if !store.set_password(owner.id, &hash).await? {
-        return Err(AccountError::NotFound.into());
+        return Err(Error::NotFound(Resource::User));
     }
     store.delete_sessions_of(owner.id, None).await?;
     let action = AuditAction::PasswordSet {
@@ -228,7 +230,7 @@ fn owner_never_expires(role: Role, expires: Option<Timestamp>) -> Result<()> {
 fn changed(change: Change) -> Result<()> {
     match change {
         Change::Done => Ok(()),
-        Change::NotFound => Err(AccountError::NotFound.into()),
+        Change::NotFound => Err(Error::NotFound(Resource::User)),
         Change::LastOwner => Err(AccountError::LastOwner.into()),
     }
 }

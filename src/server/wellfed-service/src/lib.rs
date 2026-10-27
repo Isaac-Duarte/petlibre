@@ -218,7 +218,7 @@ impl Shared {
     }
 
     /// A new time-ordered id (UUIDv7), its time from the service's clock and
-    /// its counter and random bits from its generator, so a test that fixes
+    /// its 74 random bits from its random source, so a test that fixes
     /// both gets the same ids every run.
     fn new_id(&self) -> Result<Uuid> {
         Ok(time_ordered(self.clock.now(), &self.random()?))

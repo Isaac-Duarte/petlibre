@@ -23,6 +23,7 @@ mod commands;
 mod convert;
 mod feeders;
 mod history;
+mod jobs;
 mod migrate;
 mod projections;
 mod samples;

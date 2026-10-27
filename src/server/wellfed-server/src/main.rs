@@ -104,17 +104,24 @@ async fn main() -> Result<()> {
         .await
         .with_context(|| format!("listen on {}", settings.listen))?;
     tracing::info!("serving on http://{}", listener.local_addr()?);
+    let jobs = wellfed_server::jobs::spawn(service.clone(), service.clock(), shutdown.clone());
 
     let stop = shutdown.clone();
-    axum::serve(listener, app)
+    let served = axum::serve(listener, app)
         .with_graceful_shutdown(async move {
             stopped().await;
             stop.cancel();
         })
-        .await
-        .context("serve")?;
+        .await;
+
+    // The jobs stop before the service, so none is cut off by the store
+    // closing under it.
+    shutdown.cancel();
+    if let Err(error) = jobs.await {
+        tracing::error!("the jobs' task: {error}");
+    }
     service.shutdown().await;
-    Ok(())
+    served.context("serve")
 }
 
 /// Print a new password for the owner, on an existing database only.

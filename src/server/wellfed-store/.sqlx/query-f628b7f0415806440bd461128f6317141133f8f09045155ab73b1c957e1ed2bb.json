@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO job_runs (job, started_ms, finished_ms, outcome) VALUES (?, ?, ?, ?)\n             ON CONFLICT (job) DO UPDATE SET\n                 started_ms = excluded.started_ms,\n                 finished_ms = excluded.finished_ms,\n                 outcome = excluded.outcome",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "f628b7f0415806440bd461128f6317141133f8f09045155ab73b1c957e1ed2bb"
+}

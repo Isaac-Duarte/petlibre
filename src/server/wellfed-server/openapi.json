@@ -2833,7 +2833,8 @@
           "retention",
           "rollups",
           "expiry",
-          "backup"
+          "backup",
+          "release_check"
         ]
       },
       "JobOutcome": {
@@ -3477,7 +3478,7 @@
             "items": {
               "$ref": "#/components/schemas/JobRun"
             },
-            "description": "Each background job's last run, once it has run."
+            "description": "Each background job's last run, once it has run, in the order the\njobs are listed. Read from the database, so empty while `store` is\n`failing`."
           },
           "started": {
             "type": "string",

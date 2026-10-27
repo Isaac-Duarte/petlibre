@@ -89,7 +89,7 @@ fn readiness_shows_the_store_each_feeders_link_and_the_jobs() {
         assert_eq!(empty.started, FixedClock.now());
         assert_eq!(empty.store, StoreState::Ok);
         assert!(empty.feeders.is_empty());
-        assert!(empty.jobs.is_empty(), "no background job runs yet");
+        assert!(empty.jobs.is_empty(), "the test server runs no jobs");
 
         let kitchen = owner
             .adopt(&wellfed_api::AdoptFeeder {

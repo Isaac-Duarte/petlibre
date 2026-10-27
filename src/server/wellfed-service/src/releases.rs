@@ -22,7 +22,7 @@ impl Service {
     /// while fetching is off; the server's daily job runs it only while
     /// [`Self::fetching_releases`].
     pub async fn check_releases(&self) -> Result<ReleaseCheck> {
-        Ok(self.releases.check(self.shared.clock.now()).await?)
+        self.run_release_check(self.shared.clock.now()).await
     }
 
     /// Whether the owner allows the server to fetch releases.

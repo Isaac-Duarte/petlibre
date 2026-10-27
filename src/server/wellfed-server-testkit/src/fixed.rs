@@ -1,11 +1,14 @@
 //! Time and randomness a test can repeat.
 
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::time::Duration;
 
 use jiff::Timestamp;
 use wellfed_service::{Clock, Random, RandomFailed};
+use tokio::sync::Notify;
 
 /// The instant a [`FixedClock`] shows, in Unix milliseconds: inside the
 /// feeder clock's accepted range, so a clock sync from it is applied.
@@ -27,21 +30,37 @@ impl Clock for FixedClock {
     }
 }
 
-/// A clock that starts at [`NOW_MS`] and moves only when a test moves it.
-/// Clones share the time.
+/// A clock that starts at [`NOW_MS`] and moves only when a test moves it,
+/// waking whatever sleeps until a time it passes. Clones share the time.
 #[derive(Clone, Debug)]
-pub struct ManualClock(Arc<AtomicI64>);
+pub struct ManualClock(Arc<Manual>);
+
+#[derive(Debug)]
+struct Manual {
+    ms: AtomicI64,
+    moved: Notify,
+}
 
 impl ManualClock {
     pub fn new() -> Self {
-        Self(Arc::new(AtomicI64::new(NOW_MS)))
+        Self(Arc::new(Manual {
+            ms: AtomicI64::new(NOW_MS),
+            moved: Notify::new(),
+        }))
     }
 
     /// Move the clock on by `by`.
     pub fn advance(&self, by: Duration) {
         let by =
             i64::try_from(by.as_millis()).expect("a test moves the clock by less than 2^63 ms");
-        self.0.fetch_add(by, Ordering::Relaxed);
+        self.0.ms.fetch_add(by, Ordering::SeqCst);
+        self.0.moved.notify_waiters();
+    }
+
+    /// Move the clock on to `at`, or leave it where it is when it is past.
+    pub fn advance_to(&self, at: Timestamp) {
+        self.0.ms.fetch_max(at.as_millisecond(), Ordering::SeqCst);
+        self.0.moved.notify_waiters();
     }
 }
 
@@ -53,8 +72,23 @@ impl Default for ManualClock {
 
 impl Clock for ManualClock {
     fn now(&self) -> Timestamp {
-        Timestamp::from_millisecond(self.0.load(Ordering::Relaxed))
+        Timestamp::from_millisecond(self.0.ms.load(Ordering::SeqCst))
             .expect("a test keeps the clock in jiff's range")
+    }
+
+    fn sleep_until(&self, at: Timestamp) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
+        Box::pin(async move {
+            loop {
+                // Registered before the time is read, so a move in between
+                // still wakes it.
+                let mut moved = std::pin::pin!(self.0.moved.notified());
+                moved.as_mut().enable();
+                if self.now() >= at {
+                    return;
+                }
+                moved.await;
+            }
+        })
     }
 }
 

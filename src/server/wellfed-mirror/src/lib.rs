@@ -230,6 +230,12 @@ impl Mirror {
         self.shared.zone.send_replace(Some(Arc::new(zone)));
     }
 
+    /// The household's zone, as the feeders keep it; `None` before there
+    /// is a household, or when its stored name is no longer known.
+    pub fn zone(&self) -> Option<Arc<Zone>> {
+        self.shared.zone.borrow().clone()
+    }
+
     /// The feeder's session state, or `None` when it is not mirrored.
     pub fn link(&self, id: FeederId) -> Option<Link> {
         self.handles().get(&id).map(task::Handle::link)

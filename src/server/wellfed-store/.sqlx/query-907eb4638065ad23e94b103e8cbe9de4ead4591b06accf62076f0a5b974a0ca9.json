@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM sessions WHERE last_used_ms <= ? OR user_id IN\n                 (SELECT id FROM users WHERE expires_ms IS NOT NULL AND expires_ms <= ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "907eb4638065ad23e94b103e8cbe9de4ead4591b06accf62076f0a5b974a0ca9"
+}

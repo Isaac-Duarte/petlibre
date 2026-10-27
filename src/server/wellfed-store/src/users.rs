@@ -321,12 +321,19 @@ impl Store {
         Ok(row.map(|row| row.password_hash))
     }
 
-    /// End every session last used at or before `cutoff`.
-    pub async fn delete_idle_sessions(&self, cutoff: Timestamp) -> Result<u64> {
-        let cutoff = millis(cutoff);
-        let done = sqlx::query!("DELETE FROM sessions WHERE last_used_ms <= ?", cutoff)
-            .execute(&self.writer)
-            .await?;
+    /// End every session last used at or before `idle`, and every session
+    /// of an account expired at `now`; how many there were.
+    pub async fn delete_ended_sessions(&self, idle: Timestamp, now: Timestamp) -> Result<u64> {
+        let idle = millis(idle);
+        let now = millis(now);
+        let done = sqlx::query!(
+            "DELETE FROM sessions WHERE last_used_ms <= ? OR user_id IN
+                 (SELECT id FROM users WHERE expires_ms IS NOT NULL AND expires_ms <= ?)",
+            idle,
+            now,
+        )
+        .execute(&self.writer)
+        .await?;
         Ok(done.rows_affected())
     }
 }

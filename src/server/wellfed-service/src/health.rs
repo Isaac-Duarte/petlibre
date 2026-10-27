@@ -16,11 +16,15 @@ impl Service {
             Ok(()) => store.feeders().await,
             Err(error) => Err(error),
         };
-        let (store, feeders) = match rows {
+        let rows = match rows {
+            Ok(feeders) => store.job_runs().await.map(|jobs| (feeders, jobs)),
+            Err(error) => Err(error),
+        };
+        let (store, (feeders, jobs)) = match rows {
             Ok(rows) => (StoreState::Ok, rows),
             Err(error) => {
                 warn!("readiness: the database failed: {error}");
-                (StoreState::Failing, Vec::new())
+                (StoreState::Failing, (Vec::new(), Vec::new()))
             }
         };
 
@@ -40,9 +44,7 @@ impl Service {
             started: self.shared.started,
             store,
             feeders,
-            // The server runs no background jobs yet; the supervisor that
-            // comes with them records each run for this view.
-            jobs: Vec::new(),
+            jobs,
         }
     }
 }

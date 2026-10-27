@@ -15,6 +15,7 @@ mod auth;
 pub mod config;
 mod error;
 mod extract;
+pub mod jobs;
 pub mod key;
 mod request_id;
 mod routes;

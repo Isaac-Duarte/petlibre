@@ -143,7 +143,13 @@ async fn a_session_is_used_idles_out_or_logs_out() {
     let session = store.session(&live).await.unwrap().unwrap();
     assert_eq!(session.last_used, at(9_000), "a use never moves it back");
 
-    assert_eq!(store.delete_idle_sessions(at(1_000)).await.unwrap(), 1);
+    assert_eq!(
+        store
+            .delete_ended_sessions(at(1_000), at(9_000))
+            .await
+            .unwrap(),
+        1
+    );
     assert!(store.session(&idle).await.unwrap().is_none());
     store.delete_session(&live).await.unwrap();
     assert!(store.session(&live).await.unwrap().is_none());

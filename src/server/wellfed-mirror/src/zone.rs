@@ -63,7 +63,7 @@ impl Zone {
         self.rule.as_deref()
     }
 
-    pub(crate) fn tz(&self) -> &TimeZone {
+    pub fn tz(&self) -> &TimeZone {
         &self.tz
     }
 }

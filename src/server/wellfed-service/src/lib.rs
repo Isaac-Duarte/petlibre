@@ -26,6 +26,9 @@
 //!   and the hub assigns the stream ids.
 //! - **Releases** are `wellfed-releases`' cache: uploaded or fetched,
 //!   verified the same way, and kept until an owner installs one.
+//! - **Background jobs** have their bodies here, each a method that takes
+//!   the time it runs at; [`Service::run_job`] runs one and records its
+//!   run. The server's supervisor decides when.
 //!
 //! Each domain has its own error enum ([`AccountError`],
 //! [`TokenError`], [`HouseholdError`], [`FeederError`], [`CommandError`]),
@@ -41,6 +44,7 @@ mod feeders;
 mod health;
 mod household;
 mod hub;
+mod jobs;
 mod journal;
 mod keys;
 mod permissions;

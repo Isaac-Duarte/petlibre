@@ -8,7 +8,9 @@
 //!
 //! A session lasts [`Timing::session`](crate::Timing::session) from its
 //! last use. An account past its expiry is disabled: it cannot log in, and
-//! a session of its that is presented is ended and refused.
+//! a session of its that is presented is ended and refused. Those checks
+//! hold on every request; the expiry job only clears what they would
+//! refuse, so the table does not keep dead sessions.
 
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -227,9 +229,6 @@ impl Service {
         let hash: [u8; 32] = Sha256::digest(secret).into();
 
         let now = self.shared.clock.now();
-        if let Ok(cutoff) = now.checked_sub(self.session_lifetime()) {
-            self.shared.store.delete_idle_sessions(cutoff).await?;
-        }
         self.shared.store.create_session(&hash, user, now).await?;
         Ok(token)
     }

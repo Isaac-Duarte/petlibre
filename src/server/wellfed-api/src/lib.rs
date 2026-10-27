@@ -20,6 +20,7 @@ mod commands;
 mod diagnostics;
 mod error;
 mod events;
+mod export;
 mod feeders;
 mod foods;
 mod health;
@@ -52,6 +53,7 @@ pub use commands::{
 pub use diagnostics::{FeedTrace, FeederStats, LogEvent, StatsRead, TraceQuery, TraceRecord};
 pub use error::{ErrorCode, FeederRefusal, Problem};
 pub use events::{EventPage, EventQuery, FeederEvent, Gap};
+pub use export::{ExportFormat, ExportQuery, Imported, ImportedTable};
 pub use feeders::{AdoptFeeder, Connection, Feeder, FeederDetail, LockRequest, StatusSnapshot};
 pub use foods::{
     FeederFood, Food, FoodChoice, FoodHistoryPage, FoodPatch, FoodPeriod, GRAMS_PER_CUP, NewFood,

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO refills (seq, id, feeder_id, at_ms, grams, full_bag, food_id, user_id)\n         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 8
+    },
+    "nullable": []
+  },
+  "hash": "72621ef74876ac24a4f48767c3392292087471f4d5daf74ce80841c4bd8b8dc5"
+}

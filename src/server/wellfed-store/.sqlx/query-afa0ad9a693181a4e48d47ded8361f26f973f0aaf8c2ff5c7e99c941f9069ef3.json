@@ -1,0 +1,86 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id AS \"id: Uuid\", name, species, birth_date, daily_kcal, created_ms\n                       FROM pets ORDER BY id",
+  "describe": {
+    "columns": [
+      {
+        "name": "id: Uuid",
+        "ordinal": 0,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "pets",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "name",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "pets",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "species",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "pets",
+            "name": "species"
+          }
+        }
+      },
+      {
+        "name": "birth_date",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "pets",
+            "name": "birth_date"
+          }
+        }
+      },
+      {
+        "name": "daily_kcal",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "pets",
+            "name": "daily_kcal"
+          }
+        }
+      },
+      {
+        "name": "created_ms",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "pets",
+            "name": "created_ms"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "afa0ad9a693181a4e48d47ded8361f26f973f0aaf8c2ff5c7e99c941f9069ef3"
+}

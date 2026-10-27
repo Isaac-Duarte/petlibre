@@ -1,0 +1,110 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT feeder_id AS \"feeder_id: Uuid\", epoch, feed, fetched_ms, summary,\n                              stored AS \"stored: bool\", body, refusal\n                       FROM feed_traces ORDER BY feeder_id, epoch, feed",
+  "describe": {
+    "columns": [
+      {
+        "name": "feeder_id: Uuid",
+        "ordinal": 0,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "feed_traces",
+            "name": "feeder_id"
+          }
+        }
+      },
+      {
+        "name": "epoch",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "feed_traces",
+            "name": "epoch"
+          }
+        }
+      },
+      {
+        "name": "feed",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "feed_traces",
+            "name": "feed"
+          }
+        }
+      },
+      {
+        "name": "fetched_ms",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "feed_traces",
+            "name": "fetched_ms"
+          }
+        }
+      },
+      {
+        "name": "summary",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "feed_traces",
+            "name": "summary"
+          }
+        }
+      },
+      {
+        "name": "stored: bool",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "feed_traces",
+            "name": "stored"
+          }
+        }
+      },
+      {
+        "name": "body",
+        "ordinal": 6,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "feed_traces",
+            "name": "body"
+          }
+        }
+      },
+      {
+        "name": "refusal",
+        "ordinal": 7,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "feed_traces",
+            "name": "refusal"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "9468b4ef38c781f3b28848b380022700776e65349c1112d0e8339d54ddc5c3a2"
+}

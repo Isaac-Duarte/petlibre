@@ -1,0 +1,98 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT seq AS \"seq!\", at_ms, user_id AS \"user_id: Uuid\", user_name,\n                              token_id AS \"token_id: Uuid\", action, command_seq\n                       FROM audit ORDER BY seq",
+  "describe": {
+    "columns": [
+      {
+        "name": "seq!",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "audit",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "name": "at_ms",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "audit",
+            "name": "at_ms"
+          }
+        }
+      },
+      {
+        "name": "user_id: Uuid",
+        "ordinal": 2,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "audit",
+            "name": "user_id"
+          }
+        }
+      },
+      {
+        "name": "user_name",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "audit",
+            "name": "user_name"
+          }
+        }
+      },
+      {
+        "name": "token_id: Uuid",
+        "ordinal": 4,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "audit",
+            "name": "token_id"
+          }
+        }
+      },
+      {
+        "name": "action",
+        "ordinal": 5,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "audit",
+            "name": "action"
+          }
+        }
+      },
+      {
+        "name": "command_seq",
+        "ordinal": 6,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "audit",
+            "name": "command_seq"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "f4b0a86f9aa7234833d4e7d6d70ccbed1b5ccfd5aa1a808edfbb3364aa91376a"
+}

@@ -35,6 +35,7 @@ pub fn config() -> Config {
             answer: Duration::from_secs(12),
             sample_wait: Duration::from_millis(100),
             session: Duration::from_secs(3600),
+            upload_idle: Duration::from_secs(30),
         },
         // The diagnostics' own tests turn them on: elsewhere their reads
         // would share the lanes and the seeded ids with what is tested.

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO feeders (id, identity, name, role, address, key_nonce, key_sealed,\n                                          synced, epoch, created_ms)\n                     VALUES (?, ?, ?, ?, ?, zeroblob(12), X'', ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 8
+    },
+    "nullable": []
+  },
+  "hash": "4d5cb0ac285fffe0382732da2e68087a90a62ade47e3d68800af0fb5d3786f23"
+}

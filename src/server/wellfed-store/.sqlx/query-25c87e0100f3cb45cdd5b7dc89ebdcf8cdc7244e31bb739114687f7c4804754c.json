@@ -1,0 +1,86 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT feeder_id AS \"feeder_id: Uuid\", epoch, seq, reason, at_s, received_ms\n                       FROM blocked_changes ORDER BY feeder_id, epoch, seq",
+  "describe": {
+    "columns": [
+      {
+        "name": "feeder_id: Uuid",
+        "ordinal": 0,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "blocked_changes",
+            "name": "feeder_id"
+          }
+        }
+      },
+      {
+        "name": "epoch",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "blocked_changes",
+            "name": "epoch"
+          }
+        }
+      },
+      {
+        "name": "seq",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "blocked_changes",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "name": "reason",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocked_changes",
+            "name": "reason"
+          }
+        }
+      },
+      {
+        "name": "at_s",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "blocked_changes",
+            "name": "at_s"
+          }
+        }
+      },
+      {
+        "name": "received_ms",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "blocked_changes",
+            "name": "received_ms"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "25c87e0100f3cb45cdd5b7dc89ebdcf8cdc7244e31bb739114687f7c4804754c"
+}

@@ -20,6 +20,7 @@ pub mod canonical;
 pub mod capture;
 pub mod credentials;
 pub mod device;
+pub mod export;
 pub mod flash_plan;
 pub mod hex;
 pub mod layout;

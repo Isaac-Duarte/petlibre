@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT rolled, version FROM sample_marks ORDER BY id",
+  "describe": {
+    "columns": [
+      {
+        "name": "rolled",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "sample_marks",
+            "name": "rolled"
+          }
+        }
+      },
+      {
+        "name": "version",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "sample_marks",
+            "name": "version"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "2d7836ab8736a4fe36535aabf0719a7fb0532aa60cd41595ab562778f5b1d5ed"
+}

@@ -1,0 +1,74 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT seq AS \"seq!\", pet_id AS \"pet_id: Uuid\", feeder_id AS \"feeder_id: Uuid\",\n                              from_ms, to_ms\n                       FROM pet_feeders ORDER BY seq",
+  "describe": {
+    "columns": [
+      {
+        "name": "seq!",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "pet_feeders",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "name": "pet_id: Uuid",
+        "ordinal": 1,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "pet_feeders",
+            "name": "pet_id"
+          }
+        }
+      },
+      {
+        "name": "feeder_id: Uuid",
+        "ordinal": 2,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "pet_feeders",
+            "name": "feeder_id"
+          }
+        }
+      },
+      {
+        "name": "from_ms",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "pet_feeders",
+            "name": "from_ms"
+          }
+        }
+      },
+      {
+        "name": "to_ms",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "pet_feeders",
+            "name": "to_ms"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "768755c1c4162a44690f8326490d5973171be586115de72325e53fe378dddfc4"
+}

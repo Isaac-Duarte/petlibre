@@ -6,7 +6,7 @@
 //! `lock`, `feed`, `cancel-feed`, `events`, `clients`, `revoke`, `reboot`)
 //! reach the feeders the server holds, through its command journal; the
 //! rest (`command`, `commands`, `users`, `tokens`, `releases`, `install`,
-//! `stock`) only the server has.
+//! `stock`, `export`) only the server has.
 //!
 //! Output is text by default, and with `--json` the API's bodies, one JSON
 //! document per line (a refusal's problem included). The exit status is 0
@@ -23,6 +23,7 @@
 
 mod accounts;
 mod clients;
+mod export;
 mod feeders;
 mod install;
 mod login;
@@ -108,6 +109,9 @@ enum Verb {
     /// feeder, upload or export it, or restore stock from it (owners
     /// only, signed here with your update key).
     Stock(stock::StockArgs),
+    /// Save everything the server holds as one archive (a tar of a
+    /// manifest and a file per table), with no secrets in it. Owners only.
+    Export(export::ExportArgs),
 }
 
 pub(crate) async fn run(args: ServerArgs) -> Result<ExitCode> {
@@ -145,6 +149,7 @@ async fn verb(verb: Verb, token_file: &Path, out: Output) -> Result<Settled> {
         Verb::Releases(releases) => releases::releases(&client()?, releases, out).await,
         Verb::Install(args) => install::install(&client()?, args, out).await,
         Verb::Stock(args) => stock::stock(&client()?, args, out).await,
+        Verb::Export(args) => export::export(&client()?, args, out).await,
     }
 }
 

@@ -1,0 +1,98 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT feeder_id AS \"feeder_id: Uuid\", metric, hour_ms, count, min, max, sum\n                       FROM sample_rollups ORDER BY feeder_id, metric, hour_ms",
+  "describe": {
+    "columns": [
+      {
+        "name": "feeder_id: Uuid",
+        "ordinal": 0,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "sample_rollups",
+            "name": "feeder_id"
+          }
+        }
+      },
+      {
+        "name": "metric",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "sample_rollups",
+            "name": "metric"
+          }
+        }
+      },
+      {
+        "name": "hour_ms",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "sample_rollups",
+            "name": "hour_ms"
+          }
+        }
+      },
+      {
+        "name": "count",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "sample_rollups",
+            "name": "count"
+          }
+        }
+      },
+      {
+        "name": "min",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "sample_rollups",
+            "name": "min"
+          }
+        }
+      },
+      {
+        "name": "max",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "sample_rollups",
+            "name": "max"
+          }
+        }
+      },
+      {
+        "name": "sum",
+        "ordinal": 6,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "sample_rollups",
+            "name": "sum"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "47b602bb1a86a65df6503ba203559642c83d66512d08e22f0722ab8092a75dc7"
+}

@@ -1,0 +1,158 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT feeder_id AS \"feeder_id: Uuid\", epoch, feed, seq, source, client,\n                              requested, completed, outcome, reason, at_s, received_ms\n                       FROM feeds ORDER BY feeder_id, epoch, feed",
+  "describe": {
+    "columns": [
+      {
+        "name": "feeder_id: Uuid",
+        "ordinal": 0,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "feeds",
+            "name": "feeder_id"
+          }
+        }
+      },
+      {
+        "name": "epoch",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "feeds",
+            "name": "epoch"
+          }
+        }
+      },
+      {
+        "name": "feed",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "feeds",
+            "name": "feed"
+          }
+        }
+      },
+      {
+        "name": "seq",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "feeds",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "name": "source",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "feeds",
+            "name": "source"
+          }
+        }
+      },
+      {
+        "name": "client",
+        "ordinal": 5,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "feeds",
+            "name": "client"
+          }
+        }
+      },
+      {
+        "name": "requested",
+        "ordinal": 6,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "feeds",
+            "name": "requested"
+          }
+        }
+      },
+      {
+        "name": "completed",
+        "ordinal": 7,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "feeds",
+            "name": "completed"
+          }
+        }
+      },
+      {
+        "name": "outcome",
+        "ordinal": 8,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "feeds",
+            "name": "outcome"
+          }
+        }
+      },
+      {
+        "name": "reason",
+        "ordinal": 9,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "feeds",
+            "name": "reason"
+          }
+        }
+      },
+      {
+        "name": "at_s",
+        "ordinal": 10,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "feeds",
+            "name": "at_s"
+          }
+        }
+      },
+      {
+        "name": "received_ms",
+        "ordinal": 11,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "feeds",
+            "name": "received_ms"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "b3ffd6e09516e947436f50380e5cb783051a614ae94ea2c20753454a9657bf9f"
+}

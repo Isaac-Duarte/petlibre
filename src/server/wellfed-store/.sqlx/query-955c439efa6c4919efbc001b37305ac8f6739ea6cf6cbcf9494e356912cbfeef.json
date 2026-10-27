@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO feeder_stats (feeder_id, section, received_ms, boot_count, stats)\n         VALUES (?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "955c439efa6c4919efbc001b37305ac8f6739ea6cf6cbcf9494e356912cbfeef"
+}

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO gaps (feeder_id, epoch, from_seq, to_seq, received_ms)\n                     VALUES (?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "bf560e53d375a9311b05e0d01affed05d6d46e167628e78da5bdb6096ac69fd3"
+}

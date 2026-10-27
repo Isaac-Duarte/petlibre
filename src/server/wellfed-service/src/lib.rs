@@ -73,12 +73,14 @@ mod commands;
 mod config;
 mod diagnostics;
 mod error;
+mod export;
 mod feeders;
 mod feeds;
 mod foods;
 mod health;
 mod household;
 mod hub;
+mod import;
 mod installs;
 mod jobs;
 mod journal;
@@ -117,6 +119,7 @@ pub use error::{
     AccountError, ClientError, CommandError, Error, FeederError, HouseholdError, InstallError,
     Invalid, OwnerDataError, Result, StockError, TokenError,
 };
+pub use export::{CHUNK as EXPORT_CHUNK, ExportError};
 pub use hub::{Hub, Resume, Stamped, StreamId, Subscription};
 pub use parity::{Method, NoRoute, Parity, parity};
 pub use permissions::{Permission, can};
@@ -189,6 +192,9 @@ pub struct Service {
     household: Arc<tokio::sync::Mutex<()>>,
     /// Backups are taken one at a time.
     backing_up: Arc<tokio::sync::Mutex<()>>,
+    /// Held by the export being written: one runs at a time, so exports
+    /// hold at most one reader and one snapshot.
+    exporting: Arc<tokio::sync::Mutex<()>>,
     /// The one install the server runs at a time.
     installing: installs::Slot,
     /// Failed logins per name and per address.
@@ -245,6 +251,7 @@ impl Service {
             adopting: Arc::new(tokio::sync::Mutex::new(())),
             household: Arc::new(tokio::sync::Mutex::new(())),
             backing_up: Arc::new(tokio::sync::Mutex::new(())),
+            exporting: Arc::new(tokio::sync::Mutex::new(())),
             installing: installs::Slot::default(),
             limits: Arc::new(limits::Limits::default()),
             cancel,

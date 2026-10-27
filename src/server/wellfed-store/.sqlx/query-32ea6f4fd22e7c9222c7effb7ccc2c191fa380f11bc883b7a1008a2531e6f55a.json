@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO household (id, name, units, time_format, zone)\n                     VALUES (1, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "32ea6f4fd22e7c9222c7effb7ccc2c191fa380f11bc883b7a1008a2531e6f55a"
+}

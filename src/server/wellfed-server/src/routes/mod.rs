@@ -10,6 +10,7 @@ pub(crate) mod clients;
 pub(crate) mod commands;
 pub(crate) mod diagnostics;
 pub(crate) mod events;
+pub(crate) mod export;
 pub(crate) mod feeders;
 pub(crate) mod feeds;
 pub(crate) mod foods;
@@ -45,6 +46,7 @@ pub(crate) const TAG_TOKENS: &str = "tokens";
 pub(crate) const TAG_PETS: &str = "pets";
 pub(crate) const TAG_FOODS: &str = "foods";
 pub(crate) const TAG_BACKUPS: &str = "backups";
+pub(crate) const TAG_EXPORT: &str = "export";
 
 type ApiResult<T> = Result<T, ApiError>;
 type JsonBody<T> = WithRejection<Json<T>, ApiError>;

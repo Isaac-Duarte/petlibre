@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO pets (id, name, species, birth_date, daily_kcal, created_ms)\n         VALUES (?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": []
+  },
+  "hash": "6c867d4eac4610f341f46187deb54c4333940cece93cb9c03bb343e418e3fd2b"
+}

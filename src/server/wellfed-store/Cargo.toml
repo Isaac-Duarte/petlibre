@@ -8,8 +8,10 @@ description = "The owner's server database: SQLite through sqlx, its migrations 
 publish.workspace = true
 
 [dependencies]
+futures-util.workspace = true
 jiff.workspace = true
 wellfed-api.workspace = true
+wellfed-formats.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sqlx = { workspace = true, features = ["uuid"] }

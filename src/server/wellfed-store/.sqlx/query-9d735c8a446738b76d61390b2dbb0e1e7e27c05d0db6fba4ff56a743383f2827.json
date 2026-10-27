@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO commands (seq, key, user_id, token_id, feeder_id, kind, body_hash,\n                               request_id, boot_count, state, outcome, feed, sent_ms, updated_ms,\n                               history_epoch, history_seq)\n         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 16
+    },
+    "nullable": []
+  },
+  "hash": "9d735c8a446738b76d61390b2dbb0e1e7e27c05d0db6fba4ff56a743383f2827"
+}

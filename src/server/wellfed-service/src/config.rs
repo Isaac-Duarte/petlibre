@@ -73,6 +73,9 @@ pub struct Timing {
     pub sample_wait: Duration,
     /// How long a login lasts after its last use.
     pub session: Duration,
+    /// The longest an import's upload may go without a byte: the import
+    /// holds the one writer meanwhile.
+    pub upload_idle: Duration,
 }
 
 impl Default for Timing {
@@ -85,6 +88,7 @@ impl Default for Timing {
             answer: mirror.answer,
             sample_wait: mirror.sample_wait,
             session: Duration::from_secs(30 * 24 * 3600),
+            upload_idle: Duration::from_secs(30),
         }
     }
 }

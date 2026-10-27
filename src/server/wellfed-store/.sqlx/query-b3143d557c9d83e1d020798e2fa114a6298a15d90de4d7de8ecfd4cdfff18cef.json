@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO boots (feeder_id, epoch, seq, bank, reset_flags, at_s, received_ms)\n         VALUES (?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": []
+  },
+  "hash": "b3143d557c9d83e1d020798e2fa114a6298a15d90de4d7de8ecfd4cdfff18cef"
+}

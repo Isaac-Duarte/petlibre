@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO feed_traces (feeder_id, epoch, feed, fetched_ms, summary, stored, body,\n                                  refusal)\n         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 8
+    },
+    "nullable": []
+  },
+  "hash": "cfb07f27cfeeb3623825c34106ab4b84914aa97d4df276008e1146ee8211848c"
+}

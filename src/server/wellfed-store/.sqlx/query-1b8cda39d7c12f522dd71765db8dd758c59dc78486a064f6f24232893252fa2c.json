@@ -1,0 +1,62 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id AS \"id: Uuid\", pet_id AS \"pet_id: Uuid\", at_ms, grams\n                       FROM pet_weights ORDER BY id",
+  "describe": {
+    "columns": [
+      {
+        "name": "id: Uuid",
+        "ordinal": 0,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "pet_weights",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "pet_id: Uuid",
+        "ordinal": 1,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "pet_weights",
+            "name": "pet_id"
+          }
+        }
+      },
+      {
+        "name": "at_ms",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "pet_weights",
+            "name": "at_ms"
+          }
+        }
+      },
+      {
+        "name": "grams",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "pet_weights",
+            "name": "grams"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "1b8cda39d7c12f522dd71765db8dd758c59dc78486a064f6f24232893252fa2c"
+}

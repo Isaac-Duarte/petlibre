@@ -7,8 +7,8 @@ use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use wellfed_api::{ErrorCode, FeederRefusal, Problem, Settings};
 use wellfed_service::{
-    AccountError, ClientError, CommandError, Error, FeederError, HouseholdError, InstallError,
-    OwnerDataError, ReleaseError, StockError, TokenError, ZoneError,
+    AccountError, ClientError, CommandError, Error, ExportError, FeederError, HouseholdError,
+    InstallError, OwnerDataError, ReleaseError, StockError, TokenError, ZoneError,
 };
 
 /// A request's failure.
@@ -217,6 +217,20 @@ fn service(error: &Error) -> (ErrorCode, Option<String>, Option<FeederRefusal>) 
             tracing::error!("{}", Chain(backup));
             return (ErrorCode::Internal, None, None);
         }
+        Error::Export(export) => match export {
+            ExportError::ImportClosed => ErrorCode::ImportClosed,
+            ExportError::Running => ErrorCode::ExportRunning,
+            ExportError::Archive(_) => ErrorCode::ArchiveInvalid,
+            ExportError::Rejected { .. } => {
+                // The database's own words stay in the log; the detail names
+                // the table.
+                tracing::warn!("import: {}", Chain(export));
+                ErrorCode::ArchiveInvalid
+            }
+            // The client stopped sending; it reads no answer.
+            ExportError::Upload(_) => ErrorCode::Invalid,
+            ExportError::Manifest(_) | ExportError::Changed(_) => return internal(error),
+        },
         Error::Store(_) | Error::Random(_) => return internal(error),
     };
     (code, detail, None)
@@ -284,6 +298,8 @@ fn status(code: ErrorCode) -> StatusCode {
         }
         ErrorCode::NoStockBackup => StatusCode::NOT_FOUND,
         ErrorCode::StockRefused | ErrorCode::RestoreMismatch => StatusCode::UNPROCESSABLE_ENTITY,
+        ErrorCode::ImportClosed | ErrorCode::ExportRunning => StatusCode::CONFLICT,
+        ErrorCode::ArchiveInvalid => StatusCode::UNPROCESSABLE_ENTITY,
         ErrorCode::Internal => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }

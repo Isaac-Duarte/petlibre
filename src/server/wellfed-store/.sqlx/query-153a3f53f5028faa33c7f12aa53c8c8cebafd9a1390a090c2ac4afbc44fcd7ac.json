@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO sample_rollups (feeder_id, metric, hour_ms, count, min, max, sum)\n                     VALUES (?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": []
+  },
+  "hash": "153a3f53f5028faa33c7f12aa53c8c8cebafd9a1390a090c2ac4afbc44fcd7ac"
+}

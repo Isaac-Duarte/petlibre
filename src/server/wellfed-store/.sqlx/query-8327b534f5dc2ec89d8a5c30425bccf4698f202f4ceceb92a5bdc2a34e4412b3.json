@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE feeders SET archived_ms = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "8327b534f5dc2ec89d8a5c30425bccf4698f202f4ceceb92a5bdc2a34e4412b3"
+}

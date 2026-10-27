@@ -1,0 +1,146 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id AS \"id: Uuid\", feeder_id AS \"feeder_id: Uuid\", release_id,\n                              version, user_id AS \"user_id: Uuid\", started_ms, state, written,\n                              image_len, failure, finished_ms\n                       FROM installs ORDER BY id",
+  "describe": {
+    "columns": [
+      {
+        "name": "id: Uuid",
+        "ordinal": 0,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "installs",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "feeder_id: Uuid",
+        "ordinal": 1,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "installs",
+            "name": "feeder_id"
+          }
+        }
+      },
+      {
+        "name": "release_id",
+        "ordinal": 2,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "installs",
+            "name": "release_id"
+          }
+        }
+      },
+      {
+        "name": "version",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "installs",
+            "name": "version"
+          }
+        }
+      },
+      {
+        "name": "user_id: Uuid",
+        "ordinal": 4,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "installs",
+            "name": "user_id"
+          }
+        }
+      },
+      {
+        "name": "started_ms",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "installs",
+            "name": "started_ms"
+          }
+        }
+      },
+      {
+        "name": "state",
+        "ordinal": 6,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "installs",
+            "name": "state"
+          }
+        }
+      },
+      {
+        "name": "written",
+        "ordinal": 7,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "installs",
+            "name": "written"
+          }
+        }
+      },
+      {
+        "name": "image_len",
+        "ordinal": 8,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "installs",
+            "name": "image_len"
+          }
+        }
+      },
+      {
+        "name": "failure",
+        "ordinal": 9,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "installs",
+            "name": "failure"
+          }
+        }
+      },
+      {
+        "name": "finished_ms",
+        "ordinal": 10,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "installs",
+            "name": "finished_ms"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "36565f49cb691d0a89892967c0ca3250830636e8f57b65b722abd5c1e37f0365"
+}

@@ -71,14 +71,16 @@ pub(crate) struct AppState {
         (name = routes::TAG_PETS, description = "Pets, their weight logs and the feeders that serve them"),
         (name = routes::TAG_FOODS, description = "Foods, the food each feeder serves over time, and refills"),
         (name = routes::TAG_BACKUPS, description = "Copies of the server's database, kept in its data directory"),
+        (name = routes::TAG_EXPORT, description = "Everything the server holds as one archive, and its import onto a fresh server"),
     ),
 )]
 struct ApiDoc;
 
 fn router() -> OpenApiRouter<AppState> {
     use routes::{
-        admin, audit, auth, backups, clients, commands, diagnostics, events, feeders, feeds, foods,
-        health, household, installs, pets, releases, samples, stock, stream, tokens, users,
+        admin, audit, auth, backups, clients, commands, diagnostics, events, export, feeders,
+        feeds, foods, health, household, installs, pets, releases, samples, stock, stream,
+        tokens, users,
     };
 
     let small = OpenApiRouter::new()
@@ -137,12 +139,16 @@ fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(foods::refills, foods::add_refill))
         .routes(routes!(foods::delete_refill))
         .routes(routes!(backups::backups, backups::create_backup))
+        .routes(routes!(export::export))
         .layer(RequestBodyLimitLayer::new(BODY_LIMIT));
     let uploads = OpenApiRouter::new()
         .routes(routes!(releases::upload_release))
         .routes(routes!(stock::upload_stock))
         .layer(DefaultBodyLimit::max(RELEASE_MAX));
-    let api = small.merge(uploads);
+    // An import streams into its transaction as it arrives, so it is held
+    // to no size: it runs only on a fresh server, where no data is at stake.
+    let imports = OpenApiRouter::new().routes(routes!(export::import));
+    let api = small.merge(uploads).merge(imports);
     OpenApiRouter::with_openapi(ApiDoc::openapi())
         .routes(routes!(health::health))
         .nest(wellfed_api::PREFIX, api)
@@ -150,8 +156,8 @@ fn router() -> OpenApiRouter<AppState> {
 
 /// The API, serving `service` under any IP address, `localhost` and
 /// `hosts`, and believing the forwarded headers of `proxies` alone.
-/// Cancelling `shutdown` ends the open event streams, so a graceful
-/// shutdown can finish.
+/// Cancelling `shutdown` ends the open event streams, exports and imports,
+/// so a graceful shutdown can finish.
 ///
 /// Serve it with its connections' addresses
 /// (`into_make_service_with_connect_info::<SocketAddr>`): a login is

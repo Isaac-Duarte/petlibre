@@ -3,7 +3,8 @@
 //! exit statuses, a feed whose answer is lost, which exits 3 with its key
 //! and is never sent again, an install followed to its end, the feeder's
 //! stock backup read, shown and exported, and never signed when it is not
-//! stock's pinned image, and a feeder's clients and restart.
+//! stock's pinned image, and a feeder's clients and restart, and an export saved
+//! whole.
 
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -435,6 +436,40 @@ fn stock_is_read_shown_exported_and_never_signed_unless_pinned() {
         );
         assert_eq!(http.stock(kitchen).await.unwrap().restore, None);
 
+
+#[test]
+fn export_saves_the_archive_once_it_is_whole() {
+    local(async {
+        let sim = feeder::start().await;
+        let server = TestServer::start().await;
+        let mut http = server.client();
+        http.setup(&ada_setup()).await.unwrap();
+        adopt(&http, &sim, sim.address.to_string()).await;
+        let home = Home::new();
+        home.login(&server).await.exited(0);
+        let file = home.0.path().join("home.tar");
+
+        let saved = home
+            .run(&["export", file.to_str().unwrap(), "--json"], "")
+            .await;
+        let bodies: Vec<serde_json::Value> = saved.exited(0).bodies();
+        let archive = std::fs::read(&file).unwrap();
+        assert_eq!(bodies[0]["bytes"], archive.len());
+        assert!(!home.0.path().join("home.tar.partial").exists());
+        // The archive the server streamed, whole: it imports.
+        let fresh = TestServer::start().await;
+        let imported = fresh.client().import(archive).await.unwrap();
+        assert_eq!(imported.tables[0].rows, 1);
+
+        let csv = home.0.path().join("home-csv.tar");
+        let saved = home
+            .run(&["export", csv.to_str().unwrap(), "--csv"], "")
+            .await;
+        assert!(saved.exited(0).stdout.starts_with("Saved "));
+        let archive = std::fs::read(&csv).unwrap();
+        assert!(archive.windows(9).any(|name| name == b"users.csv"));
+
+        fresh.stop().await;
         server.stop().await;
         sim.stop().await;
     });

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO events (feeder_id, epoch, seq, at_s, received_ms, kind, body)\n                     VALUES (?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": []
+  },
+  "hash": "34c6e775b1ca5f822d7d95b8acac696b86a39ac3cf4b9626a8452df909ba9f01"
+}

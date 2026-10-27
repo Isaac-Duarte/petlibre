@@ -110,6 +110,13 @@ pub enum ErrorCode {
     /// The restore's manifest does not offer the kept backup as the stock
     /// image: nothing was sent.
     RestoreMismatch,
+    /// An account exists: only a fresh server takes an import.
+    ImportClosed,
+    /// The upload is not an archive this server imports, or does not
+    /// match its own manifest; `detail` says how. Nothing was imported.
+    ArchiveInvalid,
+    /// Another export is being written: one runs at a time.
+    ExportRunning,
     Internal,
 }
 

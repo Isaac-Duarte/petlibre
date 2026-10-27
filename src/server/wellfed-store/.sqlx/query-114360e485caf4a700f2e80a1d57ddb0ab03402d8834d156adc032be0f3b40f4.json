@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO pet_feeders (seq, pet_id, feeder_id, from_ms, to_ms) VALUES (?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "114360e485caf4a700f2e80a1d57ddb0ab03402d8834d156adc032be0f3b40f4"
+}

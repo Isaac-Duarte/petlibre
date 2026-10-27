@@ -1,0 +1,74 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT feeder_id AS \"feeder_id: Uuid\", epoch, from_seq, to_seq, received_ms\n                       FROM gaps ORDER BY feeder_id, epoch, from_seq",
+  "describe": {
+    "columns": [
+      {
+        "name": "feeder_id: Uuid",
+        "ordinal": 0,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "gaps",
+            "name": "feeder_id"
+          }
+        }
+      },
+      {
+        "name": "epoch",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "gaps",
+            "name": "epoch"
+          }
+        }
+      },
+      {
+        "name": "from_seq",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "gaps",
+            "name": "from_seq"
+          }
+        }
+      },
+      {
+        "name": "to_seq",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "gaps",
+            "name": "to_seq"
+          }
+        }
+      },
+      {
+        "name": "received_ms",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "gaps",
+            "name": "received_ms"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "5fa06632801ab4f7251154a06728ac989335697233a684dda597b46e85785011"
+}

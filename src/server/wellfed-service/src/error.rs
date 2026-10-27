@@ -35,6 +35,8 @@ pub enum Error {
     Release(#[from] wellfed_releases::Error),
     #[error(transparent)]
     Backup(#[from] crate::BackupError),
+    #[error(transparent)]
+    Export(#[from] crate::ExportError),
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;

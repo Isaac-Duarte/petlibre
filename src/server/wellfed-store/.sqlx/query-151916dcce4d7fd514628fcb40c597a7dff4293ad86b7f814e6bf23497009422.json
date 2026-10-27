@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO blocked_changes (feeder_id, epoch, seq, reason, at_s, received_ms)\n         VALUES (?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": []
+  },
+  "hash": "151916dcce4d7fd514628fcb40c597a7dff4293ad86b7f814e6bf23497009422"
+}

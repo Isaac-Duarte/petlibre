@@ -1,0 +1,62 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT name, units, time_format, zone FROM household ORDER BY id",
+  "describe": {
+    "columns": [
+      {
+        "name": "name",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "household",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "units",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "household",
+            "name": "units"
+          }
+        }
+      },
+      {
+        "name": "time_format",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "household",
+            "name": "time_format"
+          }
+        }
+      },
+      {
+        "name": "zone",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "household",
+            "name": "zone"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "2b4bea105bdbe531dc6c9609b8457abc0ec8bf0f2cf6b3610fdd7dc4740e033c"
+}

@@ -1,0 +1,110 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT feeder_id AS \"feeder_id: Uuid\", epoch, seq, locked AS \"locked: bool\",\n                              source, client, at_s, received_ms\n                       FROM lock_changes ORDER BY feeder_id, epoch, seq",
+  "describe": {
+    "columns": [
+      {
+        "name": "feeder_id: Uuid",
+        "ordinal": 0,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "lock_changes",
+            "name": "feeder_id"
+          }
+        }
+      },
+      {
+        "name": "epoch",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "lock_changes",
+            "name": "epoch"
+          }
+        }
+      },
+      {
+        "name": "seq",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "lock_changes",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "name": "locked: bool",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "lock_changes",
+            "name": "locked"
+          }
+        }
+      },
+      {
+        "name": "source",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "lock_changes",
+            "name": "source"
+          }
+        }
+      },
+      {
+        "name": "client",
+        "ordinal": 5,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "lock_changes",
+            "name": "client"
+          }
+        }
+      },
+      {
+        "name": "at_s",
+        "ordinal": 6,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "lock_changes",
+            "name": "at_s"
+          }
+        }
+      },
+      {
+        "name": "received_ms",
+        "ordinal": 7,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "lock_changes",
+            "name": "received_ms"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "3c03e95eebde80404a62596b92bcbb5392689740beff366e02c1b83b859ac923"
+}

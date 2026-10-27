@@ -1,0 +1,98 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT feeder_id AS \"feeder_id: Uuid\", epoch, seq, bank, reset_flags, at_s,\n                              received_ms\n                       FROM boots ORDER BY feeder_id, epoch, seq",
+  "describe": {
+    "columns": [
+      {
+        "name": "feeder_id: Uuid",
+        "ordinal": 0,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "boots",
+            "name": "feeder_id"
+          }
+        }
+      },
+      {
+        "name": "epoch",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "boots",
+            "name": "epoch"
+          }
+        }
+      },
+      {
+        "name": "seq",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "boots",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "name": "bank",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "boots",
+            "name": "bank"
+          }
+        }
+      },
+      {
+        "name": "reset_flags",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "boots",
+            "name": "reset_flags"
+          }
+        }
+      },
+      {
+        "name": "at_s",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "boots",
+            "name": "at_s"
+          }
+        }
+      },
+      {
+        "name": "received_ms",
+        "ordinal": 6,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "boots",
+            "name": "received_ms"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "547e79df755d8414c4b6a6ae3d9a259e0968ca6044895a7067a137eaef8ce936"
+}

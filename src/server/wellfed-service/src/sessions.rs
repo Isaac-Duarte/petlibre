@@ -160,11 +160,17 @@ impl Service {
             })?;
 
         let login = self.shared.store.login(name).await?;
-        let (user, hash) = match login {
-            Some(login) => (Some(login.user), login.password_hash),
-            None => (None, decoy()?.to_owned()),
+        // A name with no password (an imported account's empty hash) costs
+        // the decoy's hash like an unknown one, and matches nothing.
+        let (user, hash, usable) = match login {
+            Some(login) if PasswordHash::new(&login.password_hash).is_ok() => {
+                (Some(login.user), login.password_hash, true)
+            }
+            Some(login) => (Some(login.user), decoy()?.to_owned(), false),
+            None => (None, decoy()?.to_owned(), false),
         };
-        let matches = blocking(move || Ok(verify_password(&credentials.password, &hash))).await?;
+        let verified = blocking(move || Ok(verify_password(&credentials.password, &hash))).await?;
+        let matches = usable && verified;
 
         let Some(user) = user else {
             return Err(AccountError::BadCredentials.into());

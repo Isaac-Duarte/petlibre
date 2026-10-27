@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM audit WHERE command_seq = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "715cfb272f181dead4a65fcb1734641e1c01edf5a820d910fd7fb4f60ab65c1a"
+}

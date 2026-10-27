@@ -1,0 +1,62 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT seq AS \"seq!\", feeder_id AS \"feeder_id: Uuid\",\n                              food_id AS \"food_id: Uuid\", from_ms\n                       FROM feeder_foods ORDER BY seq",
+  "describe": {
+    "columns": [
+      {
+        "name": "seq!",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "feeder_foods",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "name": "feeder_id: Uuid",
+        "ordinal": 1,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "feeder_foods",
+            "name": "feeder_id"
+          }
+        }
+      },
+      {
+        "name": "food_id: Uuid",
+        "ordinal": 2,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "feeder_foods",
+            "name": "food_id"
+          }
+        }
+      },
+      {
+        "name": "from_ms",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "feeder_foods",
+            "name": "from_ms"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "fef9c29b2fc33d137c4e2b3174036a348022afa3b7e7e2657524a32d5dcc6b56"
+}

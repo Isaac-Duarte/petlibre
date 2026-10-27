@@ -33,7 +33,7 @@ const API: &str = "wellfed-api";
 /// manifest is checked.
 const ARROWS: [(&str, &[&str]); 8] = [
     (API, &["wellfed-model"]),
-    (STORE, &[API]),
+    (STORE, &[API, "wellfed-formats"]),
     (
         "wellfed-mirror",
         &[
@@ -448,7 +448,7 @@ mod tests {
                 "dependency rule: wellfed-server → wellfed-mirror is not an allowed edge; wellfed-server may depend on wellfed-service, wellfed-api, wellfed-store",
                 "dependency rule: wellfed-service → sqlx: only wellfed-store depends on sqlx",
                 "dependency rule: wellfed-service → wellfed-mirror → utoipa-axum → axum: nothing below wellfed-server links axum",
-                "dependency rule: wellfed-store → wellfed-service is not an allowed edge; wellfed-store may depend on wellfed-api",
+                "dependency rule: wellfed-store → wellfed-service is not an allowed edge; wellfed-store may depend on wellfed-api, wellfed-formats",
                 "dependency rule: wellfed-store → wellfed-service → wellfed-mirror → utoipa-axum → axum: nothing below wellfed-server links axum",
             ]
         );

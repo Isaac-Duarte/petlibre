@@ -1,0 +1,206 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT seq AS \"seq!\", key, user_id AS \"user_id: Uuid\",\n                              token_id AS \"token_id: Uuid\", feeder_id AS \"feeder_id: Uuid\", kind,\n                              body_hash, request_id, boot_count, state, outcome, feed, sent_ms,\n                              updated_ms, history_epoch, history_seq\n                       FROM commands ORDER BY seq",
+  "describe": {
+    "columns": [
+      {
+        "name": "seq!",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "commands",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "name": "key",
+        "ordinal": 1,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "commands",
+            "name": "key"
+          }
+        }
+      },
+      {
+        "name": "user_id: Uuid",
+        "ordinal": 2,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "commands",
+            "name": "user_id"
+          }
+        }
+      },
+      {
+        "name": "token_id: Uuid",
+        "ordinal": 3,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "commands",
+            "name": "token_id"
+          }
+        }
+      },
+      {
+        "name": "feeder_id: Uuid",
+        "ordinal": 4,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "commands",
+            "name": "feeder_id"
+          }
+        }
+      },
+      {
+        "name": "kind",
+        "ordinal": 5,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "commands",
+            "name": "kind"
+          }
+        }
+      },
+      {
+        "name": "body_hash",
+        "ordinal": 6,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "commands",
+            "name": "body_hash"
+          }
+        }
+      },
+      {
+        "name": "request_id",
+        "ordinal": 7,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "commands",
+            "name": "request_id"
+          }
+        }
+      },
+      {
+        "name": "boot_count",
+        "ordinal": 8,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "commands",
+            "name": "boot_count"
+          }
+        }
+      },
+      {
+        "name": "state",
+        "ordinal": 9,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "commands",
+            "name": "state"
+          }
+        }
+      },
+      {
+        "name": "outcome",
+        "ordinal": 10,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "commands",
+            "name": "outcome"
+          }
+        }
+      },
+      {
+        "name": "feed",
+        "ordinal": 11,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "commands",
+            "name": "feed"
+          }
+        }
+      },
+      {
+        "name": "sent_ms",
+        "ordinal": 12,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "commands",
+            "name": "sent_ms"
+          }
+        }
+      },
+      {
+        "name": "updated_ms",
+        "ordinal": 13,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "commands",
+            "name": "updated_ms"
+          }
+        }
+      },
+      {
+        "name": "history_epoch",
+        "ordinal": 14,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "commands",
+            "name": "history_epoch"
+          }
+        }
+      },
+      {
+        "name": "history_seq",
+        "ordinal": 15,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "commands",
+            "name": "history_seq"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      true,
+      true,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "fd2e9736ddad70217ffd3270c196a3893a1af734914032f8ce85dd5e7de98055"
+}

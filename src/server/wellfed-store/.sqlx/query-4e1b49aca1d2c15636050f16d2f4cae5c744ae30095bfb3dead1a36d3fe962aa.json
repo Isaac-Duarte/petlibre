@@ -1,0 +1,74 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT feeder_id AS \"feeder_id: Uuid\", section, received_ms, boot_count, stats\n                       FROM feeder_stats ORDER BY feeder_id, section",
+  "describe": {
+    "columns": [
+      {
+        "name": "feeder_id: Uuid",
+        "ordinal": 0,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "feeder_stats",
+            "name": "feeder_id"
+          }
+        }
+      },
+      {
+        "name": "section",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "feeder_stats",
+            "name": "section"
+          }
+        }
+      },
+      {
+        "name": "received_ms",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "feeder_stats",
+            "name": "received_ms"
+          }
+        }
+      },
+      {
+        "name": "boot_count",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "feeder_stats",
+            "name": "boot_count"
+          }
+        }
+      },
+      {
+        "name": "stats",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "feeder_stats",
+            "name": "stats"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "4e1b49aca1d2c15636050f16d2f4cae5c744ae30095bfb3dead1a36d3fe962aa"
+}

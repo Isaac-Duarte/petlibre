@@ -1,0 +1,110 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id AS \"id: Uuid\", identity, name, role, address, synced, epoch,\n                              created_ms\n                       FROM feeders ORDER BY id",
+  "describe": {
+    "columns": [
+      {
+        "name": "id: Uuid",
+        "ordinal": 0,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "feeders",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "identity",
+        "ordinal": 1,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "feeders",
+            "name": "identity"
+          }
+        }
+      },
+      {
+        "name": "name",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "feeders",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "role",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "feeders",
+            "name": "role"
+          }
+        }
+      },
+      {
+        "name": "address",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "feeders",
+            "name": "address"
+          }
+        }
+      },
+      {
+        "name": "synced",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "feeders",
+            "name": "synced"
+          }
+        }
+      },
+      {
+        "name": "epoch",
+        "ordinal": 6,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "feeders",
+            "name": "epoch"
+          }
+        }
+      },
+      {
+        "name": "created_ms",
+        "ordinal": 7,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "feeders",
+            "name": "created_ms"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "997a01881beaa132ab0ef65403f66d1c1ed6a1b25d5ed6ee883cf01d9d333d26"
+}

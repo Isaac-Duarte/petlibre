@@ -395,6 +395,11 @@ fn a_lock_change_is_recorded_once_and_published_live() {
         let event = tokio::time::timeout(WAIT, async {
             loop {
                 let stamped = live.live.recv().await.unwrap();
+                assert_eq!(
+                    stamped.id.epoch,
+                    1000 * NOW_MS.unsigned_abs(),
+                    "the clock's start"
+                );
                 if let StreamEvent::Event { feeder, event } = &stamped.event
                     && matches!(event.body, EventBody::Lock { .. })
                 {

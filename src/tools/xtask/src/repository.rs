@@ -37,6 +37,10 @@ const STOCK_SERVER: &str = "src/tools/wellfed-stock/Cargo.toml";
 /// runs it as its own process, so a fault elsewhere never takes a write down
 /// with it. What other crates check of images and reviews is `wellfed-image`.
 const FLASH_CLIENT: &str = "src/tools/wellfed-flash/Cargo.toml";
+/// The server crates' clippy.toml, which Clippy reads instead of the root's
+/// (it takes the nearest file and merges none), so it must repeat every root
+/// setting before adding its own.
+const SERVER_CLIPPY: &str = "src/server/clippy.toml";
 /// Sources under `src/` that must not cite a board card.
 const CARD_FREE: [&str; 6] = ["rs", "c", "h", "toml", "md", "ts"];
 
@@ -192,6 +196,15 @@ fn check_file(root: &Path, name: &str, summary: &mut Summary) {
         }
     }
 
+    if name == SERVER_CLIPPY {
+        let root_settings = fs::read_to_string(root.join("clippy.toml")).unwrap_or_default();
+        for missing in missing_settings(&root_settings, &content) {
+            summary.errors.push(format!(
+                "{name}: lacks the root clippy.toml's `{missing}`; Clippy reads only the nearest file"
+            ));
+        }
+    }
+
     if extension == "md" {
         // Inline links only; external references are provenance links, not fetched.
         for capture in LINK.captures_iter(&content) {
@@ -208,6 +221,17 @@ fn check_file(root: &Path, name: &str, summary: &mut Summary) {
             }
         }
     }
+}
+
+/// The root's settings (its non-comment lines) that a nested clippy.toml lacks.
+fn missing_settings<'a>(root: &'a str, nested: &str) -> Vec<&'a str> {
+    let nested: Vec<&str> = nested.lines().map(str::trim).collect();
+
+    root.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .filter(|line| !nested.contains(line))
+        .collect()
 }
 
 /// The local file a Markdown link names: no scheme, no host, a nonempty path.
@@ -425,6 +449,19 @@ mod tests {
                 "src/tools/auditor/Cargo.toml: links the flash client; run wellfed-flash as a process and use wellfed-image",
             ]
         );
+    }
+
+    #[test]
+    fn a_nested_clippy_toml_repeats_every_root_setting() {
+        let root =
+            "# comment\nallow-unwrap-in-tests = true\n\navoid-breaking-exported-api = false\n";
+        let nested = "# its own comment\nallow-unwrap-in-tests = true\ndisallowed-methods = []\n";
+
+        assert_eq!(
+            missing_settings(root, nested),
+            ["avoid-breaking-exported-api = false"]
+        );
+        assert!(missing_settings(root, &format!("{root}disallowed-methods = []\n")).is_empty());
     }
 
     #[test]

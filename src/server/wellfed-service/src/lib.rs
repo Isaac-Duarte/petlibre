@@ -124,6 +124,10 @@ pub trait Clock: Send + Sync + 'static {
 pub struct SystemClock;
 
 impl Clock for SystemClock {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the one place a server crate reads the wall clock"
+    )]
     fn now(&self) -> Timestamp {
         Timestamp::now()
     }
@@ -241,13 +245,14 @@ impl Service {
         if label.is_empty() || label.len() > 16 || label.contains(&0) {
             return Err(Invalid::Label.into());
         }
+        let hub = Hub::new(clock.now());
         let service = Self {
             shared: Arc::new(Shared {
                 store,
                 config,
                 clock,
                 random,
-                hub: Hub::new(),
+                hub,
             }),
             feeders: Arc::new(Mutex::new(HashMap::new())),
             adopting: Arc::new(tokio::sync::Mutex::new(())),

@@ -1,0 +1,24 @@
+# Clippy configuration for the server crates. Clippy reads the nearest
+# clippy.toml above a crate's manifest and does not merge it with the one
+# further up, so this file repeats the root clippy.toml before adding the
+# server's own rules; `cargo xtask check-repository` refuses it when a root
+# setting is missing here.
+
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-dbg-in-tests = true
+avoid-breaking-exported-api = false
+
+# One clock. The server reads the wall clock only through `wellfed_service::
+# Clock`, whose `SystemClock` is the single exception, so every time it keeps
+# (stream epochs, session expiry, backup names, feeder time sync) comes from one
+# injected source a test can fix. Timeouts and retry backoff are monotonic and
+# run on tokio's `Instant`, which a paused test runtime controls; std's
+# `Instant::now` would escape that, so it is refused too. `SystemClock` carries
+# an `#[expect]` for this lint, so the build fails if the rule stops applying.
+disallowed-methods = [
+    { path = "jiff::Timestamp::now", reason = "read the time from the injected `Clock`" },
+    { path = "jiff::Zoned::now", reason = "read the time from the injected `Clock` and the configured zone" },
+    { path = "std::time::SystemTime::now", reason = "read the time from the injected `Clock`" },
+    { path = "std::time::Instant::now", reason = "time timeouts with `tokio::time::Instant`, which a paused test runtime controls" },
+]

@@ -81,9 +81,10 @@ struct State {
 }
 
 impl Hub {
-    pub(crate) fn new() -> Self {
-        // A restart must not reuse ids, so the epoch is the start time.
-        Self::with_epoch(jiff::Timestamp::now().as_microsecond().unsigned_abs())
+    /// A restart must not reuse ids, so the epoch is the start time, read from
+    /// the service's clock like every other time it keeps.
+    pub(crate) fn new(started: jiff::Timestamp) -> Self {
+        Self::with_epoch(started.as_microsecond().unsigned_abs())
     }
 
     fn with_epoch(epoch: u64) -> Self {
@@ -177,6 +178,18 @@ mod tests {
         assert_eq!(seqs(&hub.subscribe(at(1)).resume), None, "too far back");
         let held = seqs(&hub.subscribe(at(2)).resume).unwrap();
         assert_eq!(held.len(), RECENT);
+    }
+
+    #[test]
+    fn the_epoch_is_the_start_time_it_is_given() {
+        let started = jiff::Timestamp::from_microsecond(1_790_000_000_123_456).unwrap();
+        let hub = Hub::new(started);
+        let mut sub = hub.subscribe(None);
+
+        hub.publish(StreamEvent::Resync);
+
+        let got = sub.live.try_recv().unwrap();
+        assert_eq!(got.id.epoch, 1_790_000_000_123_456);
     }
 
     #[test]

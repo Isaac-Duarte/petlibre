@@ -106,9 +106,12 @@ impl Collector {
                         due = Due { traces: true, stats: true, food: false };
                     }
                     Ok(_) => {}
-                    // A `Fed` event may be among those missed; the store
+                    // A `Fed` event may be among those missed: the store
                     // knows.
-                    Err(RecvError::Lagged(_)) => due.traces = true,
+                    Err(RecvError::Lagged(_)) => {
+                        due.traces = true;
+                        due.food = true;
+                    }
                     Err(RecvError::Closed) => return,
                 },
                 () = tokio::time::sleep_until(next_stats) => {

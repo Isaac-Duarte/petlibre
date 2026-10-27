@@ -91,7 +91,7 @@ pub(crate) async fn open(
             Err(error) if shared.config.discovery == Discovery::Off => {
                 return Err(Unreachable(error).into());
             }
-            Err(error) => debug!(feeder = %id, "{address}: {error}; looking over mDNS"),
+            Err(error) => debug!("{address}: {error}; looking over mDNS"),
         }
     } else if shared.config.discovery == Discovery::Off {
         let address = address.unwrap_or_default().to_owned();
@@ -100,7 +100,7 @@ pub(crate) async fn open(
 
     let found = discover(identity).await?;
     if let Err(error) = shared.store.set_address(id, &found.to_string()).await {
-        warn!(feeder = %id, "remember the address {found}: {error}");
+        warn!("remember the address {found}: {error}");
     }
     let ephemeral = shared.random()?;
     let connection = Connection::open(keys, identity, found, ephemeral)

@@ -13,7 +13,7 @@ use tokio::task::JoinHandle;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
-use tracing::{debug, info, warn};
+use tracing::{Instrument, debug, info, info_span, warn};
 
 use crate::command::Command;
 use crate::session::End;
@@ -72,7 +72,12 @@ pub(crate) fn spawn(
         updates: updates.clone(),
         cancel: cancel.clone(),
     };
-    let task = tasks.spawn(task.run());
+    // Every line the task logs, its session's and its commands' included,
+    // is written under the feeder's span, so it names the feeder. The span
+    // has no parent: a feeder adopted over HTTP would otherwise log under
+    // that one request's span for as long as it runs.
+    let span = info_span!(parent: None, "feeder", id = %task.id);
+    let task = tasks.spawn(task.run().instrument(span));
     Handle {
         commands,
         link: watching,
@@ -113,7 +118,7 @@ impl Task {
 
             let link = match opened {
                 Ok((connection, address)) => {
-                    info!(feeder = %self.id, %address, build = connection.build(), "connected");
+                    info!(%address, build = connection.build(), "connected");
                     self.address = Some(address.to_string());
                     let opened_at = Instant::now();
                     let end = self.serve(connection).await;
@@ -125,19 +130,19 @@ impl Task {
                     }
                     match end {
                         End::Cancelled => return,
-                        End::Lost(error) => info!(feeder = %self.id, "session ended: {error}"),
-                        End::Failed(error) => warn!(feeder = %self.id, "session dropped: {error}"),
+                        End::Lost(error) => info!("session ended: {error}"),
+                        End::Failed(error) => warn!("session dropped: {error}"),
                     }
                     Link::Offline
                 }
                 Err(ConnectError::Unreachable(Unreachable(
                     wellfed_connect::Error::UnknownKey,
                 ))) => {
-                    warn!(feeder = %self.id, "the feeder no longer knows this server's key");
+                    warn!("the feeder no longer knows this server's key");
                     Link::Refused
                 }
                 Err(error) => {
-                    debug!(feeder = %self.id, "connect failed: {error}");
+                    debug!("connect failed: {error}");
                     Link::Offline
                 }
             };

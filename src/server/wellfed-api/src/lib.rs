@@ -16,6 +16,7 @@ mod auth;
 mod error;
 mod events;
 mod feeders;
+mod health;
 mod stream;
 
 use std::fmt;
@@ -28,6 +29,7 @@ pub use auth::{Credentials, Role, SetupState, User};
 pub use error::{ErrorCode, FeederRefusal, Problem};
 pub use events::{EventPage, EventQuery, FeederEvent, Gap};
 pub use feeders::{AdoptFeeder, Connection, Feeder, FeederDetail, LockRequest, StatusSnapshot};
+pub use health::{FeederLink, Health, Job, JobOutcome, JobRun, ServerStatus, StoreState};
 // The feeder's own values are the model's, served as they are; the HTTP
 // API adds only what the server knows (when it received them, its own ids).
 pub use wellfed_model::{
@@ -68,10 +70,4 @@ impl fmt::Display for UserId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)
     }
-}
-
-/// Liveness, without authentication.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-pub struct Health {
-    pub version: String,
 }

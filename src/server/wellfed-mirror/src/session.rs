@@ -116,7 +116,6 @@ impl Task {
         let resume = connection.subscribe(from, true).await.map_err(End::Lost)?;
         if resume == Resume::Restarted {
             warn!(
-                feeder = %self.id,
                 epoch = connection.epoch(),
                 "the feeder's history is a new one; mirroring it from its oldest event"
             );
@@ -145,11 +144,11 @@ impl Task {
         let now = self.shared.clock.now();
         let sync = wellfed_client::time::sync(now, &self.shared.config.zone);
         match self.ask(connection, &Op::TimeSync(sync)).await? {
-            Answer::Done { .. } => debug!(feeder = %self.id, "clock set"),
+            Answer::Done { .. } => debug!("clock set"),
             Answer::Refused(refusal) => {
-                warn!(feeder = %self.id, "the feeder refused the clock: {refusal:?}");
+                warn!("the feeder refused the clock: {refusal:?}");
             }
-            other => warn!(feeder = %self.id, "unexpected answer to the clock: {other:?}"),
+            other => warn!("unexpected answer to the clock: {other:?}"),
         }
         Ok(())
     }

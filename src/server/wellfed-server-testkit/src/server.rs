@@ -9,7 +9,7 @@ use wellfed_service::{Config, Service};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-use crate::service::{TestService, config};
+use crate::service::{TempStore, TestService, config};
 
 /// The server, serving until [`Self::stop`].
 #[derive(Debug)]
@@ -27,7 +27,13 @@ impl TestServer {
     }
 
     pub async fn start_with(config: Config) -> Self {
-        let service = TestService::start_with(config).await;
+        Self::open(TempStore::new(), config).await
+    }
+
+    /// The server with `config` on `store`, which a test may have filled
+    /// through the store first.
+    pub async fn open(store: TempStore, config: Config) -> Self {
+        let service = TestService::open(store, config).await;
         let shutdown = CancellationToken::new();
         let app = wellfed_server::app(
             service.service().clone(),

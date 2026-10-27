@@ -92,6 +92,18 @@ impl Store {
         Ok(Self { writer, reader })
     }
 
+    /// A trivial query on the writer and on a reader, for readiness: the
+    /// writer is the one connection every write waits for, and the readers
+    /// serve every page.
+    pub async fn ping(&self) -> Result<()> {
+        for pool in [&self.writer, &self.reader] {
+            sqlx::query!(r#"SELECT 1 AS "one!: i64""#)
+                .fetch_one(pool)
+                .await?;
+        }
+        Ok(())
+    }
+
     /// Wait for both pools to close, so the WAL is checkpointed.
     pub async fn close(&self) {
         self.reader.close().await;

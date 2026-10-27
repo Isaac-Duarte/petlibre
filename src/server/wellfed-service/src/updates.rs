@@ -15,7 +15,7 @@ use wellfed_store::FeederRow;
 use tokio::sync::broadcast::Receiver;
 use tokio::sync::broadcast::error::RecvError;
 use tokio_util::sync::CancellationToken;
-use tracing::warn;
+use tracing::{Instrument, info_span, warn};
 
 use crate::{Hub, Result, Service, keys, lock};
 
@@ -42,8 +42,14 @@ impl Service {
             links: Arc::clone(&self.links),
             id,
         };
-        self.tasks
-            .spawn(forward.run(updates, self.cancel.child_token()));
+        // Under the same span as the mirror's task (no parent, as there), so
+        // its lines name the feeder and not the request that adopted it.
+        let span = info_span!(parent: None, "feeder", id = %id);
+        self.tasks.spawn(
+            forward
+                .run(updates, self.cancel.child_token())
+                .instrument(span),
+        );
         Ok(())
     }
 }
@@ -73,7 +79,7 @@ impl Forward {
                 // after resubscribing: a change after that read still
                 // arrives, so the last link published is the current one.
                 Err(RecvError::Lagged(missed)) => {
-                    warn!(feeder = %self.id, missed, "the stream fell behind the feeder");
+                    warn!(missed, "the stream fell behind the feeder");
                     updates = updates.resubscribe();
                     self.hub.publish(StreamEvent::Resync);
                     if let Some(link) = (self.current)() {

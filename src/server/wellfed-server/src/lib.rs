@@ -16,6 +16,7 @@ pub mod config;
 mod error;
 mod extract;
 pub mod key;
+mod request_id;
 mod routes;
 
 pub use auth::Hosts;
@@ -23,6 +24,7 @@ use axum::Router;
 use wellfed_service::Service;
 use tokio_util::sync::CancellationToken;
 use tower_http::limit::RequestBodyLimitLayer;
+use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
 use tower_http::trace::TraceLayer;
 use utoipa::OpenApi;
 use utoipa_axum::router::OpenApiRouter;
@@ -49,12 +51,13 @@ pub(crate) struct AppState {
     tags(
         (name = routes::TAG_AUTH, description = "First-owner setup and login"),
         (name = routes::TAG_FEEDERS, description = "Adopted feeders, their settings, lock and history"),
+        (name = routes::TAG_HEALTH, description = "Liveness for anyone, readiness for an owner"),
     ),
 )]
 struct ApiDoc;
 
 fn router() -> OpenApiRouter<AppState> {
-    use routes::{auth, events, feeders, stream};
+    use routes::{auth, events, feeders, health, stream};
 
     let api = OpenApiRouter::new()
         .routes(routes!(auth::setup_state, auth::setup))
@@ -64,9 +67,10 @@ fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(feeders::settings, feeders::put_settings))
         .routes(routes!(feeders::lock))
         .routes(routes!(events::events))
-        .routes(routes!(stream::stream));
+        .routes(routes!(stream::stream))
+        .routes(routes!(health::status));
     OpenApiRouter::with_openapi(ApiDoc::openapi())
-        .routes(routes!(routes::health))
+        .routes(routes!(health::health))
         .nest(wellfed_api::PREFIX, api)
 }
 
@@ -80,6 +84,10 @@ pub fn app(service: Service, shutdown: CancellationToken, hosts: Hosts) -> Route
         hosts,
     };
     let (router, _) = router().split_for_parts();
+
+    // Each layer wraps the ones above it. The id is set outermost, so the
+    // trace span carries it, and copied onto the answer inside the span,
+    // so a refusal from the host, origin or size checks carries it too.
     router
         .layer(axum::middleware::from_fn(auth::same_origin))
         .layer(axum::middleware::from_fn_with_state(
@@ -87,7 +95,9 @@ pub fn app(service: Service, shutdown: CancellationToken, hosts: Hosts) -> Route
             auth::known_host,
         ))
         .layer(RequestBodyLimitLayer::new(BODY_LIMIT))
-        .layer(TraceLayer::new_for_http())
+        .layer(PropagateRequestIdLayer::new(request_id::HEADER))
+        .layer(TraceLayer::new_for_http().make_span_with(request_id::span))
+        .layer(SetRequestIdLayer::new(request_id::HEADER, MakeRequestUuid))
         .with_state(state)
 }
 

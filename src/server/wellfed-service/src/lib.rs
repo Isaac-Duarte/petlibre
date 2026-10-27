@@ -25,6 +25,7 @@
 mod commands;
 mod error;
 mod feeders;
+mod health;
 mod hub;
 mod keys;
 mod updates;
@@ -126,6 +127,8 @@ struct Shared {
     clock: Arc<dyn Clock>,
     random: Arc<dyn Random>,
     hub: Arc<Hub>,
+    /// When this run started, by the service's clock.
+    started: Timestamp,
 }
 
 impl Shared {
@@ -188,7 +191,8 @@ impl Service {
             Arc::clone(&random),
             cancel.child_token(),
         );
-        let hub = Arc::new(Hub::new(clock.now()));
+        let started = clock.now();
+        let hub = Arc::new(Hub::new(started));
         let service = Self {
             shared: Arc::new(Shared {
                 store,
@@ -196,6 +200,7 @@ impl Service {
                 clock,
                 random,
                 hub,
+                started,
             }),
             mirror,
             links: Arc::new(Mutex::new(HashMap::new())),

@@ -24,6 +24,7 @@
 mod auth;
 mod error;
 mod feeders;
+mod health;
 mod stream;
 
 use std::fmt;

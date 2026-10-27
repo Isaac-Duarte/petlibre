@@ -1,18 +1,12 @@
-//! Health, first-owner setup and the session.
+//! First-owner setup and the session.
 
-use wellfed_api::{Credentials, Health, SESSION_COOKIE, SetupState, User};
+use wellfed_api::{Credentials, SESSION_COOKIE, SetupState, User};
 use reqwest::header::{self, HeaderMap};
 use reqwest::{Method, StatusCode};
 
 use crate::{Auth, Client, Error, decode, expect_status};
 
 impl Client {
-    /// Liveness and the server's version; needs no login.
-    pub async fn health(&self) -> Result<Health, Error> {
-        let response = self.request(Method::GET, "/health").send().await?;
-        decode(response, StatusCode::OK).await
-    }
-
     /// Whether the server is waiting for its first owner.
     pub async fn setup_state(&self) -> Result<SetupState, Error> {
         let response = self.api(Method::GET, "/setup").send().await?;

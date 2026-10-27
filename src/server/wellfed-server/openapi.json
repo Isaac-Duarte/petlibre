@@ -642,6 +642,45 @@
         }
       }
     },
+    "/api/v1/status": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Readiness: whether the database answers, each feeder's link and the\nbackground jobs' last runs. A failing database is reported in the body,\nnot as an error.",
+        "operationId": "status",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerStatus"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden: owners only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/stream": {
       "get": {
         "tags": [
@@ -705,7 +744,10 @@
     },
     "/health": {
       "get": {
-        "summary": "Liveness and version, without authentication.",
+        "tags": [
+          "health"
+        ],
+        "summary": "Liveness and version, without authentication: the process is up and\nserving. It reads nothing, so a probe never waits on the database.",
         "operationId": "health",
         "responses": {
           "200": {
@@ -1416,6 +1458,25 @@
         "type": "string",
         "format": "uuid"
       },
+      "FeederLink": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "connection"
+        ],
+        "properties": {
+          "connection": {
+            "$ref": "#/components/schemas/Connection"
+          },
+          "id": {
+            "$ref": "#/components/schemas/FeederId"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
       "FeederRefusal": {
         "type": "string",
         "description": "Why the feeder refused, as it said.",
@@ -1629,6 +1690,49 @@
         "properties": {
           "version": {
             "type": "string"
+          }
+        }
+      },
+      "Job": {
+        "type": "string",
+        "description": "The server's background jobs.",
+        "enum": [
+          "retention",
+          "rollups",
+          "expiry",
+          "backup"
+        ]
+      },
+      "JobOutcome": {
+        "type": "string",
+        "enum": [
+          "succeeded",
+          "failed"
+        ]
+      },
+      "JobRun": {
+        "type": "object",
+        "description": "A job's most recent run.",
+        "required": [
+          "job",
+          "started",
+          "finished",
+          "outcome"
+        ],
+        "properties": {
+          "finished": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "job": {
+            "$ref": "#/components/schemas/Job"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/JobOutcome"
+          },
+          "started": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },
@@ -1941,6 +2045,44 @@
           }
         ]
       },
+      "ServerStatus": {
+        "type": "object",
+        "description": "Readiness, for an owner.",
+        "required": [
+          "version",
+          "started",
+          "store",
+          "feeders",
+          "jobs"
+        ],
+        "properties": {
+          "feeders": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FeederLink"
+            },
+            "description": "Every adopted feeder and the server's session with it. Read from\nthe database, so empty while `store` is `failing`."
+          },
+          "jobs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/JobRun"
+            },
+            "description": "Each background job's last run, once it has run."
+          },
+          "started": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When this run of the server started."
+          },
+          "store": {
+            "$ref": "#/components/schemas/StoreState"
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
       "Settings": {
         "type": "object",
         "description": "The feeder's settings. Its `generation` goes back in `If-Match` with a\nchange, and is the `ETag` of a read.",
@@ -2085,6 +2227,14 @@
             "$ref": "#/components/schemas/FeederStatus"
           }
         }
+      },
+      "StoreState": {
+        "type": "string",
+        "description": "Whether the database answered a trivial query on both its writer and\nits readers. The failure itself is in the server's log, under the\nrequest's id.",
+        "enum": [
+          "ok",
+          "failing"
+        ]
       },
       "StreamEvent": {
         "oneOf": [
@@ -2235,6 +2385,10 @@
     {
       "name": "feeders",
       "description": "Adopted feeders, their settings, lock and history"
+    },
+    {
+      "name": "health",
+      "description": "Liveness for anyone, readiness for an owner"
     }
   ]
 }

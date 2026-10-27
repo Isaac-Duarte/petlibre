@@ -1,4 +1,4 @@
-//! Health, first-owner setup and the session, over HTTP. No feeder is
+//! First-owner setup and the session, over HTTP. No feeder is
 //! involved; `end_to_end.rs` adds one.
 
 use wellfed_api::{Credentials, ErrorCode, Role, SetupState};
@@ -17,14 +17,6 @@ fn cookie(response: &Response) -> String {
     );
     let pair = set.split(';').next().unwrap();
     pair.split_once('=').unwrap().1.to_owned()
-}
-
-#[tokio::test]
-async fn health_needs_no_login() {
-    let server = TestServer::start().await;
-    let health = server.client().health().await.unwrap();
-    assert_eq!(health.version, env!("CARGO_PKG_VERSION"));
-    server.stop().await;
 }
 
 #[tokio::test]

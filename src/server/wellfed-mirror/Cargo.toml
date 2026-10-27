@@ -24,6 +24,7 @@ tracing.workspace = true
 
 [dev-dependencies]
 wellfed-server-testkit.workspace = true
+tracing-subscriber.workspace = true
 uuid.workspace = true
 
 [lints]

@@ -41,6 +41,14 @@ const FLASH_CLIENT: &str = "src/tools/wellfed-flash/Cargo.toml";
 /// (it takes the nearest file and merges none), so it must repeat every root
 /// setting before adding its own.
 const SERVER_CLIPPY: &str = "src/server/clippy.toml";
+/// The tree whose Rust sources are held to a size, so a domain that grows
+/// gets a module of its own rather than a longer file.
+const SIZED: &str = "src/server/";
+/// The most lines a Rust source under [`SIZED`] may have.
+const LINES: usize = 400;
+/// The same under a `tests/` directory, where each test keeps its setup
+/// and its assertions together.
+const TEST_LINES: usize = 600;
 /// Sources under `src/` that must not cite a board card.
 const CARD_FREE: [&str; 6] = ["rs", "c", "h", "toml", "md", "ts"];
 
@@ -182,6 +190,9 @@ fn check_file(root: &Path, name: &str, summary: &mut Summary) {
 
     if extension == "rs" {
         raw_outputs(name, &content, &mut summary.errors);
+        if let Some(error) = oversized(name, &content) {
+            summary.errors.push(error);
+        }
     }
     if first == "src" && relative.file_name().is_some_and(|f| f == "Cargo.toml") {
         if name != STOCK_SERVER && STOCK_DEPENDENCY.is_match(&content) {
@@ -296,6 +307,27 @@ fn normalize(path: &Path) -> PathBuf {
         }
     }
     out
+}
+
+/// A Rust source under [`SIZED`] longer than its limit: [`TEST_LINES`] under
+/// a `tests/` directory, [`LINES`] anywhere else (a `tests.rs` module beside
+/// the code it tests included). Generated files (`openapi.json`, the sqlx
+/// metadata) are not Rust, so their size follows what they describe.
+fn oversized(name: &str, source: &str) -> Option<String> {
+    let inside = name.strip_prefix(SIZED)?;
+    let directories = Path::new(inside).parent()?;
+    let limit = if directories.components().any(|c| c.as_os_str() == "tests") {
+        TEST_LINES
+    } else {
+        LINES
+    };
+
+    let lines = source.lines().count();
+    (lines > limit).then(|| {
+        format!(
+            "{name}: {lines} lines, over the {limit} a server source may have; split it by domain"
+        )
+    })
 }
 
 /// Product code names no raw writer and no `bringup`; bring-up code names a
@@ -463,6 +495,95 @@ mod tests {
                 "src/tools/b.rs: cites a board card; state the constraint instead",
                 "src/tools/page/Cargo.toml: links the stock server; run wellfed-stock and use wellfed-stock-api",
                 "src/tools/auditor/Cargo.toml: links the flash client; run wellfed-flash as a process and use wellfed-image",
+            ]
+        );
+    }
+
+    fn lines(count: usize) -> String {
+        "x\n".repeat(count)
+    }
+
+    #[test]
+    fn a_server_source_over_its_limit_is_named_with_its_count() {
+        let source = "src/server/wellfed-store/src/lib.rs";
+        let test = "src/server/wellfed-store/tests/store.rs";
+
+        assert_eq!(oversized(source, &lines(400)), None);
+        assert_eq!(
+            oversized(source, &lines(401)).as_deref(),
+            Some(
+                "src/server/wellfed-store/src/lib.rs: 401 lines, over the 400 a server source may have; split it by domain"
+            )
+        );
+        assert_eq!(oversized(test, &lines(600)), None);
+        assert_eq!(
+            oversized(test, &lines(601)).as_deref(),
+            Some(
+                "src/server/wellfed-store/tests/store.rs: 601 lines, over the 600 a server source may have; split it by domain"
+            )
+        );
+        assert_eq!(
+            oversized(
+                "src/server/wellfed-server/tests/api/feeders.rs",
+                &lines(600)
+            ),
+            None,
+            "a module of an integration test is a test too"
+        );
+    }
+
+    #[test]
+    fn a_unit_test_file_beside_the_code_keeps_the_source_limit() {
+        assert!(
+            oversized("src/server/wellfed-service/src/tests.rs", &lines(401)).is_some(),
+            "a tests.rs module under src/ is held to 400"
+        );
+        assert!(
+            oversized("src/server/wellfed-service/src/tests/hub.rs", &lines(401)).is_none(),
+            "a tests/ directory under src/ holds tests"
+        );
+        assert_eq!(
+            oversized("src/client/wellfed-client/src/api.rs", &lines(900)),
+            None
+        );
+        assert_eq!(
+            oversized("src/tools/xtask/src/layers.rs", &lines(900)),
+            None
+        );
+    }
+
+    #[test]
+    fn the_size_guard_reads_server_rust_sources_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        fs::create_dir_all(root.join("src/server/wellfed-server/src")).unwrap();
+        fs::write(
+            root.join("src/server/wellfed-server/src/lib.rs"),
+            lines(401),
+        )
+        .unwrap();
+        fs::write(
+            root.join("src/server/wellfed-server/openapi.json"),
+            lines(401),
+        )
+        .unwrap();
+        let mut summary = Summary {
+            files: 0,
+            links: 0,
+            errors: Vec::new(),
+        };
+
+        check_file(&root, "src/server/wellfed-server/src/lib.rs", &mut summary);
+        check_file(
+            &root,
+            "src/server/wellfed-server/openapi.json",
+            &mut summary,
+        );
+
+        assert_eq!(
+            summary.errors,
+            [
+                "src/server/wellfed-server/src/lib.rs: 401 lines, over the 400 a server source may have; split it by domain"
             ]
         );
     }

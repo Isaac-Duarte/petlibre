@@ -63,7 +63,7 @@ impl Task {
             }
             Pushed::Gap(gap) => {
                 let (epoch, from, to) = (gap.epoch, gap.from, gap.to);
-                warn!(feeder = %self.id, from, to, "events lost before the server read them");
+                warn!(from, to, "events lost before the server read them");
                 store.record_gap(self.id, epoch, from, to, received).await?;
                 MirrorEvent::Gap(Gap {
                     epoch,

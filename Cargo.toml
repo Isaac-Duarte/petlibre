@@ -78,8 +78,10 @@ getrandom = "0.3.4"
 http-body-util = "0.1.5"
 jiff = "0.2.38"
 reqwest = { version = "0.13.5", default-features = false }
+serde_path_to_error = "0.1.20"
 sha2 = "0.11"
 sqlx = { version = "0.9.0", default-features = false, features = ["sqlite", "runtime-tokio", "macros", "migrate"] }
+toml = { version = "1.1.8", default-features = false, features = ["parse", "serde", "std"] }
 tokio-stream = "0.1.19"
 tokio-util = "0.7.20"
 tower = "0.5.3"

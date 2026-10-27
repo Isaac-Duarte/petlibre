@@ -123,6 +123,7 @@ wellfed (the CLI) ─► wellfed-server-client ─► wellfed-api
 
 - **Done:** the first slice (FP18, Oct 24, host simulation): setup and login, adoption by invite, the mirror, settings, lock, history pages and the stream.
 - **Done (foundations):** SV01 (the architecture in the API design, its arrows checked by `cargo xtask check-repository`) and SV02 (server dependencies from the workspace), static analysis, Oct 26; SV03 (store modules: a module per table group, the squashed first migration, the pre-migration copy named by the caller's clock), SV04 (routes per resource and typed header extractors) and SV05 (the server test kit and `wellfed-server-client`; the server's and service's tests a file per domain over them), host simulation, Oct 26; SV06 (one clock: the hub's epoch from the `Clock`, and Clippy refusing every other wall-clock read in the server crates), host simulation and static analysis, Oct 26.
+- **Done (operations):** SV60 (the settings file `server.toml` under flags and environment variables, and the sealing key moved to `keys/server.key`), host simulation, Oct 26.
 - **Ready:** SV09.
 - **Next:** the foundations, in this order: SV07, then SV08. They change no behavior. SV09 runs as soon as the bench is free, and always before SV07, so the current server meets the research unit before the mirror is reshaped (owner, Oct 26: the firmware run holds the bench, so SV01–SV05 go first). SV19 runs when no firmware run is editing `src/client/`.
 - **Then:** the command plane (SV20, SV21) and the public setup's accounts (SV30–SV32), the CLI on the server API (SV34), then data, owner data and releases.
@@ -201,7 +202,7 @@ wellfed (the CLI) ─► wellfed-server-client ─► wellfed-api
 
 | Card | Status | Evidence | Prerequisites | Finish line |
 | --- | --- | --- | --- | --- |
-| **SV60 Configuration** | Planned | — | SV04 | A typed config file in the data directory for everything that is not a secret or a household setting: listen address, host names, label, discovery, retention, trusted proxies, whether releases are fetched. The sealing key stays in its own file. Flags override the file, and a bad file is a typed error naming the field. |
+| **SV60 Configuration** | Done | Host simulation, Oct 26: `wellfed_server::config` reads `data/server.toml` (`listen`, `hosts`, `label`, `discovery`, `trusted_proxies`, `retention.raw_sample_days`, `releases.fetch`, `backups.keep`) under flags and `WELLFED_SERVER_*` variables, and `wellfed_server::key` keeps the sealing key in `data/keys/server.key` (0600, in a 0700 directory), moved from `config.json`, which is then deleted. `tests/config.rs`: `no_file_is_the_defaults`, `the_example_file_parses` (`server.example.toml`, the documented example), `the_file_sets_every_setting`, `flags_override_the_file`, `flags_check_their_values`, `a_bad_value_names_its_field`, `an_unknown_key_is_refused`, `a_file_that_is_not_toml_is_refused`, `a_label_is_one_to_sixteen_bytes`. `tests/key.rs`: `the_first_start_makes_a_key_only_its_user_reads`, `the_key_moves_from_config_json`, `an_interrupted_move_finishes`, `two_different_keys_are_refused`, `a_database_without_its_key_is_refused`, `a_short_key_file_is_refused`, `a_garbled_config_json_is_refused`. Trusted proxies, retention, releases and backups are parsed and carried for SV32, SV11, SV50 and SV64; nothing reads them yet. | SV04 | A typed config file in the data directory for everything that is not a secret or a household setting: listen address, host names, label, discovery, retention, trusted proxies, whether releases are fetched. The sealing key stays in its own file. Flags override the file, and a bad file is a typed error naming the field. |
 | **SV61 Embedded web UI** | Planned | — | SV04, FP21 | `wellfed-server` serves the SvelteKit build embedded with `rust-embed`, with cache headers by content hash and a Content Security Policy, from the same origin as `/api/v1`. The Playwright suite runs against the real binary. |
 | **SV62 Packaging** | Planned | — | SV60 | One static binary per target in the GitHub releases with an example systemd unit, and a container image. The image's docs ask for host networking for mDNS discovery; on a bridged network it adopts and reconnects by address with `--no-discovery`. A release check starts each fresh and adopts the simulator. |
 | **SV63 Health and logs** | Planned | — | SV07 | `/health` stays unauthenticated liveness; an owner-only readiness view adds the store, each feeder's link and the jobs' last runs. Every log line from a feeder task carries the feeder, and every request a request id. No Prometheus endpoint ([decision](#decisions-owner-october-26)). |
@@ -246,7 +247,7 @@ wellfed (the CLI) ─► wellfed-server-client ─► wellfed-api
 | SV50 wellfed-releases | ⬜ Planned |
 | SV51 Install | ⬜ Planned |
 | SV52 Stock backup and rollback | ⬜ Planned |
-| SV60 Configuration | ⬜ Planned |
+| SV60 Configuration | ✅ Done |
 | SV61 Embedded web UI | ⬜ Planned |
 | SV62 Packaging | ⬜ Planned |
 | SV63 Health and logs | ⬜ Planned |

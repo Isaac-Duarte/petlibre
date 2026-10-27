@@ -5,13 +5,17 @@
 //!
 //! [`app`] is the whole API as an axum router, so tests drive it in
 //! process; [`openapi`] is its document, committed as `openapi.json`.
+//! [`config`] and [`key`] read what the server starts with from its data
+//! directory: the settings file and the sealing key.
 //!
 //! [API design]: ../../../../docs/api/README.md
 #![forbid(unsafe_code)]
 
 mod auth;
+pub mod config;
 mod error;
 mod extract;
+pub mod key;
 mod routes;
 
 pub use auth::Hosts;

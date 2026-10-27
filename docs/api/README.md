@@ -243,12 +243,46 @@ GET    /health                               no auth; liveness and version
 - **Shutdown and cancellation** go through one `CancellationToken` tree. Every task ends on it, and the store flushes before exit.
 - **Determinism.** Time, randomness and the network sit behind small injected interfaces, so service tests run on a virtual clock against the host-simulated feeder. No server crate reads the wall clock outside `SystemClock`: `src/server/clippy.toml` refuses jiff's `Timestamp::now` and `Zoned::now`, std's `SystemTime::now`, `SystemTime::elapsed`, `Instant::now` and `Instant::elapsed`, and uuid's `Uuid::now_v7` and `Timestamp::now` (ids are UUIDv7 built from the `Clock` and `Random`) (timeouts use tokio's `Instant`, which is monotonic and follows a paused test runtime), and `SystemClock`'s `#[expect]` fails the build if that rule stops applying.
 
+### Configuration
+
+The server keeps everything in its data directory (`--data`, or `WELLFED_SERVER_DATA`):
+
+| Path | What |
+| --- | --- |
+| `server.db` | The database. |
+| `server.toml` | The settings: optional, every key has a default. |
+| `keys/server.key` | The sealing key, its 32 bytes as they are (mode 0600, in a 0700 directory). It seals every feeder key in the database, so back it up apart from the database's backups, which leave it out. |
+
+`server.toml` holds what is neither a secret nor a household setting (the household's zone is in the database). [`server.example.toml`](../../src/server/wellfed-server/server.example.toml) lists every key with its default, and a test parses it:
+
+```toml
+listen = "0.0.0.0:8080"          # default 127.0.0.1:8080, this computer only
+hosts = ["feeder.lan"]           # names besides IP addresses and localhost
+label = "wellfed-server"        # the label enrolled on each feeder, 1-16 bytes
+discovery = "off"                # "mdns" (default), or adopt by address only
+trusted_proxies = ["127.0.0.1"]  # proxies whose X-Forwarded-* are believed
+
+[retention]
+raw_sample_days = 90             # default: keep raw samples forever
+
+[releases]
+fetch = false                    # check GitHub releases daily
+
+[backups]
+keep = 7                         # daily backups kept
+```
+
+- **Overrides.** Each key has a flag, and each flag an environment variable: `--listen` (`WELLFED_SERVER_LISTEN`), `--host` (`WELLFED_SERVER_HOSTS`, comma-separated), `--label`, `--discovery` (or `--no-discovery`), `--trusted-proxy` (`WELLFED_SERVER_TRUSTED_PROXIES`), `--raw-sample-days`, `--releases-fetch true|false` and `--backups-keep`, each variable `WELLFED_SERVER_` and the flag's name. A flag beats its variable, and either replaces the file's value whole: `--host` given once replaces the file's `hosts`.
+- **A bad file stops the start.** An unknown key, a wrong type or an out-of-range value (a 17-byte label, `raw_sample_days = 0`, a host name with a port) is refused with the key's path (`retention.raw_sample_days`, `hosts[1]`) and its line; a missing file is the defaults.
+- **The key.** The first start makes it. A server from before the settings file kept it in `config.json`: the first start moves it to `keys/server.key` and deletes `config.json`, which held nothing else. A start interrupted between the two finishes the move on the next; two different keys are refused. A `server.db` with no key file is refused too, since a new key could not open its feeder keys: that is a backup restored without its key.
+- **Read by later cards.** `trusted_proxies` (the scheme and client address behind a proxy), `retention`, `releases.fetch` and `backups.keep` are parsed and checked now; the features that read them come with their cards.
+
 ## Server first slice
 
 Built Oct 24 (host simulation only; no server has met a real feeder yet).
 
 - **Resources:** `/health`, `/setup`, `/session` (GET for the logged-in user, POST to log in, DELETE to log out), `/feeders` (list, and adopt by invite), `/feeders/{id}` (live status, or the last copy marked `live: false`), `/feeders/{id}/settings` (GET with `ETag`, PATCH with `If-Match`), `/feeders/{id}/lock`, `/feeders/{id}/events` and `/stream`. Every other resource in [the list above](#first-resources) is still to come: household, users and tokens, feed, plans, samples, clients, food, intake, audit, releases, export and import.
-- **Feeder connections** follow [server runtime](#server-runtime): a task per feeder subscribes after the newest stored event before anything else (from the feeder's oldest event when its epoch is a new one; `/feeders/{id}/events` reads the current epoch, or an older one with `?epoch=`), then sets the clock (again every 6 h), and records every event, gap and sample raw. A feeder that drops the server's key shows as `refused`. mDNS finds a feeder whose stored address fails, unless `--no-discovery`.
+- **Feeder connections** follow [server runtime](#server-runtime): a task per feeder subscribes after the newest stored event before anything else (from the feeder's oldest event when its epoch is a new one; `/feeders/{id}/events` reads the current epoch, or an older one with `?epoch=`), then sets the clock (again every 6 h), and records every event, gap and sample raw. A feeder that drops the server's key shows as `refused`. mDNS finds a feeder whose stored address fails, unless `discovery = "off"` (`--no-discovery`).
 - **Writes** take `Idempotency-Key` as a UUID. The feeder remembers writes by request ID alone and every user shares the server's key, so the device request ID is a hash of the user, the feeder, the kind of write and the key: one key reused for two kinds of write, or by two users, never returns another write's answer. A write without a key gets a fresh ID, where the route allows that; a malformed key is `400 invalid`. A settings change re-reads the settings afterwards, so its answer carries the new generation; if that read fails, the answer is `outcome_unknown`, since the change was made.
 - **A refusal is final for its key:** `409 feeder_refused` with the feeder's reason, `busy` included. A refused write is final for its key: the feeder replays the refusal while it remembers the request ID (its per-client ring keeps the last 32 writes), so a retry with the same key is refused again; trying later is a new request with a new key. Nothing ran, so a refused feed is a new intent the user confirms again, unlike an `outcome_unknown` one, which only the same key may retry.
 - **A command** is refused as offline until the connect sequence finishes, and then waits only behind an earlier command; one whose caller has stopped waiting is dropped unsent. A feeder heard from not at all for 90 s (time for a keepalive and its answer, with margin) counts as gone, so a feeder that loses power shows offline within that time rather than when the kernel gives up on the socket. The real feeder must answer a `Status` within that time even during flash writes; that is not yet checked on the bench.
@@ -257,7 +291,7 @@ Built Oct 24 (host simulation only; no server has met a real feeder yet).
 - **Hosts.** Every request must name the server by an IP address, `localhost` or a name given with `--host`, so a DNS-rebinding page (whose own name appears in both `Host` and `Origin`) is refused with `421 unknown_host`.
 - **Samples** are always subscribed and kept: the simulator's rate (power every 5 s, signal every 30 s) is about 20,000 rows a day per feeder. Retention comes with the samples endpoint.
 - **The store** has one writer connection and a read pool, as [storage](#storage) describes. Before pending migrations run, `VACUUM INTO` copies the database beside itself as `server.db.before-<version>-<unix ms>`, the time being the one `Store::open` is given (the server passes its `Clock`'s), so the store never reads the wall clock. Until the first release the schema is one migration, edited in place.
-- **Secrets:** the sealing key is `config.json` in the data directory, made on the first start (mode 0600). Each feeder key is sealed with ChaCha20-Poly1305, bound to the feeder's row ID and identity. Adoptions run one at a time, so two invites for one feeder cannot both enroll a key; a key the feeder enrolled but the server failed to store is logged with its fingerprint, to revoke.
+- **Secrets:** the sealing key is `keys/server.key` in the data directory, made on the first start (mode 0600; [configuration](#configuration)). Each feeder key is sealed with ChaCha20-Poly1305, bound to the feeder's row ID and identity. Adoptions run one at a time, so two invites for one feeder cannot both enroll a key; a key the feeder enrolled but the server failed to store is logged with its fingerprint, to revoke.
 - **Logins** hash at most two passwords at once (argon2id takes about 19 MiB each), and an unknown name costs the same hash as a wrong password.
 - **Shutdown** on Ctrl-C or SIGTERM ends the streams, stops every feeder task (cancelling a connect sequence or command in flight) and closes the database.
 - **Tests** follow the layers: the store against real SQLite, the service and the end-to-end test against `wellfed-feeder-sim` over TCP (through its `harness` module), and the HTTP API in process. The service tests fix the wall clock but run timers in real time with short intervals: tokio's paused clock would jump while sqlx's SQLite worker threads are busy, and fire timeouts that never happen.
@@ -279,6 +313,7 @@ Pinned in `[workspace.dependencies]`; a new dependency needs a reason in its pul
 | Discovery | `mdns-sd` |
 | Releases | `reqwest` with rustls (`reqwest` already in `wellfed-stock`), `ed25519-dalek` (already) |
 | Observability | `tracing` and `tracing-subscriber` (already) |
+| Settings | `toml` (already, in `wellfed-build`), `serde_path_to_error` (already, under axum), `clap` with `env` |
 | Tests | `insta` (snapshots), `proptest` (codec round trips), `tower::ServiceExt` (in-process requests), `sqlx::test` |
 | Hygiene | `cargo-deny` (licenses, advisories, duplicates) and `cargo-nextest`, both in place ([Rust standard](../development/rust.md)) |
 

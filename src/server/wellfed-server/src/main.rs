@@ -1,54 +1,32 @@
 //! `wellfed-server`: the owner's server, as one process.
 //!
-//! Everything it keeps is in `--data`: the database (`server.db`) and
-//! `config.json`, which holds the key the server's feeder keys are sealed
-//! with. The first start makes that key; keep the two files together, and
-//! back up both: the database alone cannot open the feeder keys.
+//! Everything it keeps is in `--data`: the database (`server.db`), the
+//! settings (`server.toml`, optional; flags and environment variables
+//! override it) and the key the server's feeder keys are sealed with
+//! (`keys/server.key`). The first start makes that key; back it up apart
+//! from the database's backups: the database alone cannot open the feeder
+//! keys.
 
-use std::io::Write;
-use std::net::{Ipv4Addr, SocketAddr};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use clap::Parser;
 use jiff::tz::TimeZone;
-use wellfed_api::Hex;
-use wellfed_service::{
-    Clock, Config, Discovery, Random, Service, SystemClock, SystemRandom, Timing,
-};
+use wellfed_server::config::{DATABASE, Overrides, ServerConfig};
+use wellfed_service::{Clock, Config, Service, SystemClock, SystemRandom, Timing};
 use wellfed_store::Store;
-use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::EnvFilter;
-
-/// The label the server enrolls under on each feeder.
-const LABEL: &str = "wellfed-server";
 
 #[derive(Parser)]
 #[command(version, about = "The owner's Wellfed server")]
 struct Cli {
-    /// The directory that keeps the database and the key file.
-    #[arg(long)]
+    /// The directory that keeps the database, the settings and the key.
+    #[arg(long, env = "WELLFED_SERVER_DATA")]
     data: PathBuf,
-    /// Where the HTTP API listens: this computer only, unless the
-    /// household's other devices should reach it (`0.0.0.0:8080`).
-    #[arg(long, default_value_t = SocketAddr::from((Ipv4Addr::LOCALHOST, 8080)))]
-    listen: SocketAddr,
-    /// Never look feeders up over mDNS: adopt each by address.
-    #[arg(long)]
-    no_discovery: bool,
-    /// A name the household reaches the server by (`feeder.lan`); IP
-    /// addresses and `localhost` always work. Repeat for more names.
-    #[arg(long = "host")]
-    hosts: Vec<String>,
-}
-
-/// `config.json`.
-#[derive(Serialize, Deserialize)]
-struct ConfigFile {
-    /// Seals the server's feeder keys.
-    key: Hex<32>,
+    #[command(flatten)]
+    overrides: Overrides,
 }
 
 #[tokio::main]
@@ -61,19 +39,16 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     std::fs::create_dir_all(&cli.data).with_context(|| format!("create {}", cli.data.display()))?;
-    let key = config_key(&cli.data.join("config.json"))?;
-    let store = Store::open(&cli.data.join("server.db"), SystemClock.now())
+    let settings = ServerConfig::load(&cli.data, cli.overrides)?;
+    let (key, _) = wellfed_server::key::sealing_key(&cli.data, &SystemRandom)?;
+    let store = Store::open(&cli.data.join(DATABASE), SystemClock.now())
         .await
         .context("open the database")?;
     let config = Config {
         key,
         zone: TimeZone::system(),
-        label: LABEL.into(),
-        discovery: if cli.no_discovery {
-            Discovery::Off
-        } else {
-            Discovery::Mdns
-        },
+        label: settings.label.into(),
+        discovery: settings.discovery.into(),
         timing: Timing::default(),
     };
     let service = Service::start(store, config, Arc::new(SystemClock), Arc::new(SystemRandom))
@@ -81,11 +56,11 @@ async fn main() -> Result<()> {
         .context("start the feeder connections")?;
 
     let shutdown = CancellationToken::new();
-    let hosts = wellfed_server::Hosts::new(cli.hosts);
+    let hosts = wellfed_server::Hosts::new(settings.hosts.into_iter().map(String::from));
     let app = wellfed_server::app(service.clone(), shutdown.clone(), hosts);
-    let listener = tokio::net::TcpListener::bind(cli.listen)
+    let listener = tokio::net::TcpListener::bind(settings.listen)
         .await
-        .with_context(|| format!("listen on {}", cli.listen))?;
+        .with_context(|| format!("listen on {}", settings.listen))?;
     tracing::info!("serving on http://{}", listener.local_addr()?);
 
     let stop = shutdown.clone();
@@ -120,34 +95,4 @@ async fn stopped() {
     if let Err(error) = tokio::signal::ctrl_c().await {
         tracing::error!("wait for Ctrl-C: {error}");
     }
-}
-
-/// The sealing key from `path`, made on the first start. The file is
-/// written once, readable by this user only.
-fn config_key(path: &Path) -> Result<[u8; 32]> {
-    match std::fs::read(path) {
-        Ok(bytes) => {
-            let file: ConfigFile = serde_json::from_slice(&bytes)
-                .with_context(|| format!("read {}", path.display()))?;
-            return Ok(file.key.0);
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => bail!("read {}: {error}", path.display()),
-    }
-
-    let mut key = [0; 32];
-    SystemRandom.fill(&mut key)?;
-    let json = serde_json::to_vec_pretty(&ConfigFile { key: Hex(key) })?;
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-    let mut file = options
-        .open(path)
-        .with_context(|| format!("create {}", path.display()))?;
-    file.write_all(&json)
-        .and_then(|()| file.sync_all())
-        .with_context(|| format!("write {}", path.display()))?;
-    tracing::info!("made a new key in {}", path.display());
-    Ok(key)
 }

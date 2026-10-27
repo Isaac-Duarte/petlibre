@@ -1,0 +1,39 @@
+# wellfed-server's settings: copy to <data>/server.toml and keep the keys
+# you change. Every key is optional and shows its default unless noted; a
+# flag or its environment variable (`wellfed-server --help`) overrides it.
+
+# Where the HTTP API listens. 127.0.0.1 is this computer only; 0.0.0.0
+# serves the household's other devices.
+listen = "127.0.0.1:8080"
+
+# Names the household reaches the server by. IP addresses and `localhost`
+# always work; any other name is refused, which stops DNS rebinding.
+# (Default: none.)
+hosts = ["feeder.lan"]
+
+# The label the server enrolls under on each feeder: 1-16 bytes.
+label = "wellfed-server"
+
+# "mdns" looks up a feeder whose stored address fails; "off" adopts and
+# reconnects by address only (a bridged container network).
+discovery = "mdns"
+
+# Reverse proxies whose X-Forwarded-For and X-Forwarded-Proto headers are
+# believed: the scheme for `Secure` cookies and the client's address for
+# login limits. (Default: none.)
+trusted_proxies = ["127.0.0.1"]
+
+[retention]
+# Days raw samples are kept. Leave it out to keep them forever; hourly
+# rollups are always kept.
+raw_sample_days = 90
+
+[releases]
+# Check the project's GitHub releases daily. Uploads work either way, and
+# nothing installs until an owner asks.
+fetch = false
+
+[backups]
+# Daily backups (03:30 household time) kept in <data>/backups. They leave
+# out keys/server.key: back that up on its own.
+keep = 7

@@ -1,6 +1,5 @@
 //! Manual feeding in the loop: whether a feed can start now, how a feed is
-//! queued (a Dispense press and a client's `Feed` alike), and the feed call
-//! that announces it.
+//! queued (a Dispense press and a client's `Feed` alike).
 //!
 //! **Readiness** is one decision ([`readiness`]): the feeding owner's own
 //! reason not to feed ([`Feeds::blocked`]), then BLE setup mode (it ends in
@@ -17,29 +16,21 @@
 //! through [`queue`], which a client's `Feed` also takes: the same
 //! readiness, the same owner, the same `Fed` event (by the panel).
 //!
-//! **The feed call** plays once a feed is queued, if the speaker is free.
-//! Nothing waits for it: the play request only fills the speaker's one-slot
-//! mailbox, its answer (started, muted, busy) is logged and dropped, and the
-//! speaker is stepped after the owner and the device API in each pass. A
-//! speaker that is muted, busy, missing or stalled therefore never delays a
-//! feed's start, its stop (the owner's step and its supervision timer) or
-//! its terminal result (recorded by the loop before the pass).
+//! **Silent.** A feed plays no tune; that is the owner's choice. A tune a
+//! client asks for with `play` is stepped after the owner and the device
+//! API in each pass, so a speaker that is busy, will not open or stalls
+//! never delays a feed's start, its stop or its terminal result.
 
 use core::fmt;
 
-use wellfed_core::tone::Tune;
 use wellfed_proto::api::{Blocked, EventBody, Readiness, Refusal, Source};
 
 use super::Feeds;
 use super::events;
 use super::platform::Platform;
-use wellfed_device_api::mailbox::PlayResult;
 
 /// What a Dispense press asks for: one portion, as stock.
 pub const DISPENSE_PORTIONS: u8 = 1;
-
-/// The tune that announces a feed.
-pub const FEED_CALL: Tune = Tune::Meal;
 
 /// Whether a feed can start now. The owner's lasting reasons come first,
 /// since they outlast setup mode and an install; then those two; then the
@@ -60,32 +51,18 @@ pub fn readiness<F: Feeds>(
     blocked.map_or(Readiness::Ready, Readiness::Blocked)
 }
 
-/// Queue one feed of `portions` for `by` while `ready` allows it, then ask
-/// for the feed call. The number the journal holds the feed under, or why
-/// it was refused.
-pub fn queue<P: Platform, F: Feeds>(
-    platform: &mut P,
+/// Queue one feed of `portions` for `by` while `ready` allows it. The
+/// number the journal holds the feed under, or why it was refused.
+pub fn queue<F: Feeds>(
     feeds: &mut F,
     ready: Readiness,
     portions: u8,
     by: Source,
-) -> (Result<u32, Refusal>, Option<PlayResult>) {
+) -> Result<u32, Refusal> {
     if let Readiness::Blocked(blocked) = ready {
-        return (Err(blocked.refusal()), None);
+        return Err(blocked.refusal());
     }
-    match feeds.submit(portions, by) {
-        Ok(feed) => (Ok(feed), Some(call(platform))),
-        Err(refusal) => (Err(refusal), None),
-    }
-}
-
-/// Ask for the feed call. A busy speaker keeps what it plays.
-fn call<P: Platform>(platform: &mut P) -> PlayResult {
-    if platform.speaker_idle() {
-        platform.play(FEED_CALL)
-    } else {
-        PlayResult::Busy
-    }
+    feeds.submit(portions, by)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -94,8 +71,6 @@ pub enum Record {
     Readiness(Readiness),
     /// A Dispense press asked for a feed.
     Dispense { result: Result<u32, Refusal> },
-    /// A feed was queued; what the feed call's request came to.
-    Call { feed: u32, result: PlayResult },
 }
 
 /// One record's body (`PLFEED1`).
@@ -114,9 +89,6 @@ pub fn describe(record: Record, f: &mut impl fmt::Write) -> fmt::Result {
             result: Err(refusal),
         } => {
             write!(f, "dispense refused={}", refusal_name(refusal))
-        }
-        Record::Call { feed, result } => {
-            write!(f, "call feed={feed} result={}", play_name(result))
         }
     }
 }
@@ -177,14 +149,6 @@ const fn blocked_name(blocked: Blocked) -> &'static str {
         Blocked::Setup => "setup",
         Blocked::Unserved => "unserved",
         Blocked::Battery => "battery",
-    }
-}
-
-const fn play_name(result: PlayResult) -> &'static str {
-    match result {
-        PlayResult::Started => "started",
-        PlayResult::Muted => "muted",
-        PlayResult::Busy => "busy",
     }
 }
 

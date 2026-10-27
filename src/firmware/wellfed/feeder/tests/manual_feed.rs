@@ -1,13 +1,14 @@
 //! Manual feeding through the loop on the board's platform, with a fake
 //! feeding owner: a Dispense press the panel allows queues one portion
 //! through the path a client's feed takes; readiness refuses a press and
-//! records its lasting reasons; and the feed call (the real speaker on the
-//! fake codec) never holds up a feed, its cancel or its result, whether it
-//! plays, is muted, finds the speaker busy, fails to open or stalls.
+//! records its lasting reasons; a feed plays no tune; and a tune a client
+//! asked for (the real speaker on the fake codec) never holds up a feed,
+//! its cancel or its result, whether it plays, fails to open or stalls.
 
 use std::sync::{Mutex, MutexGuard};
 
 use wellfed_core::buttons::{Button, Buttons, Gesture};
+use wellfed_core::tone::{PlayResult, Tune};
 use wellfed_device_api::Device;
 use wellfed_device_api::mailbox::SettingsView;
 use wellfed_feeder::feeder::owner::POLL_MS;
@@ -161,20 +162,18 @@ fn a_dispense_press_queues_one_portion_through_the_owner() {
     rig.press_dispense();
     assert_eq!(rig.owner.submitted, [(1, Source::Panel)]);
     assert!(rig.logged("PLFEED1 dispense feed=1"), "{:?}", rig.lines);
-    assert!(rig.logged("PLFEED1 call feed=1 result=started"));
 
-    // The call plays on, stepped by the loop, then the speaker closes.
+    // Sound is on, yet the feed plays nothing: the speaker stays closed.
     for _ in 0..200 {
         rig.pass();
         fake::play_audio(2);
     }
     assert!(
-        rig.lines
-            .iter()
-            .any(|l| l.starts_with("PLAUD1 done tune=meal")),
-        "{:?}",
+        !rig.lines.iter().any(|l| l.starts_with("PLAUD1")),
+        "a feed plays no tune: {:?}",
         rig.lines
     );
+    assert_eq!(audio::request(Tune::Coin), PlayResult::Started);
 }
 
 #[test]
@@ -217,19 +216,14 @@ fn a_press_obeys_readiness_and_a_lasting_reason_is_recorded() {
     assert_eq!(readiness, Readiness::Blocked(Blocked::Resolving));
 }
 
-/// A feed's path past the call: queued, cancelled through the device API,
-/// and its `Fed` event recorded, with the loop's delay never longer than
-/// its poll.
-fn feed_despite_the_speaker(rig: &mut Rig, call: &str) {
+/// A feed's path while the speaker is busy with a requested tune: queued,
+/// cancelled through the device API, and its `Fed` event recorded, with the
+/// loop's delay never longer than its poll.
+fn feed_despite_the_speaker(rig: &mut Rig) {
     rig.unlock();
     rig.press_dispense();
     let feed = u32::try_from(rig.owner.submitted.len()).unwrap();
     assert_eq!(rig.owner.submitted.last(), Some(&(1, Source::Panel)));
-    assert!(
-        rig.logged(&format!("PLFEED1 call feed={feed} result={call}")),
-        "{:?}",
-        rig.lines
-    );
 
     for _ in 0..10 {
         assert!(rig.pass() <= POLL_MS, "the speaker never holds the loop");
@@ -248,26 +242,36 @@ fn feed_despite_the_speaker(rig: &mut Rig, call: &str) {
 }
 
 #[test]
-fn a_muted_call_holds_up_nothing() {
-    let mut rig = Rig::new(false);
-    feed_despite_the_speaker(&mut rig, "muted");
-}
-
-#[test]
-fn a_busy_speaker_keeps_its_tune_and_the_feed_goes_on() {
+fn a_playing_tune_keeps_playing_and_the_feed_goes_on() {
     let mut rig = Rig::new(true);
+    assert_eq!(audio::request(Tune::Chime), PlayResult::Started);
+
+    feed_despite_the_speaker(&mut rig);
+    for _ in 0..200 {
+        rig.pass();
+        fake::play_audio(2);
+    }
+
+    let tunes: Vec<_> = rig
+        .lines
+        .iter()
+        .filter(|l| l.starts_with("PLAUD1 play"))
+        .collect();
     assert_eq!(
-        audio::request(wellfed_core::tone::Tune::Chime),
-        wellfed_core::tone::PlayResult::Started
+        tunes,
+        ["PLAUD1 play tune=chime volume=50"],
+        "{:?}",
+        rig.lines
     );
-    feed_despite_the_speaker(&mut rig, "busy");
 }
 
 #[test]
 fn a_codec_that_will_not_open_holds_up_nothing() {
     let mut rig = Rig::new(true);
     fake::with(|h| h.audio_open_fails = true);
-    feed_despite_the_speaker(&mut rig, "started");
+    assert_eq!(audio::request(Tune::Coin), PlayResult::Started);
+
+    feed_despite_the_speaker(&mut rig);
     assert!(
         rig.lines
             .iter()
@@ -280,15 +284,17 @@ fn a_codec_that_will_not_open_holds_up_nothing() {
 #[test]
 fn a_stalled_ring_holds_up_nothing_and_still_ends() {
     let mut rig = Rig::new(true);
+    assert_eq!(audio::request(Tune::Coin), PlayResult::Started);
+
     // The DMA never takes a page: the tune cannot finish.
-    feed_despite_the_speaker(&mut rig, "started");
+    feed_despite_the_speaker(&mut rig);
     for _ in 0..300 {
         rig.pass();
     }
     assert!(
         rig.lines
             .iter()
-            .any(|l| l.starts_with("PLAUD1 done tune=meal")),
+            .any(|l| l.starts_with("PLAUD1 done tune=coin")),
         "the speaker gives up on its own bound: {:?}",
         rig.lines
     );

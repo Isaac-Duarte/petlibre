@@ -33,8 +33,8 @@ From the stock KM4 image (`DL_AUDIO`, `audio_play_http_file`):
   - A one-slot mailbox holds the tune, and the slot stays taken until playback ends, so a second request is `busy` rather than queued.
   - **Per tune:** open the codec, set PB23 HIGH, play 150 ms of silence while the amplifier settles (60 ms swallowed a 50 ms tick whole on the unit, October 24), stream the tune, wait for the ring to drain (at most 400 ms), then set PB23 LOW and close.
   - **Bounded:** a ring that stops draining still ends playback at the tune's length plus 1 s, so the amplifier is never left on.
-  - **Startup:** the startup chime plays once the settings are loaded, unless `sound` is off.
-- **Feeding:** audio is independent of it. The task touches only the codec, its DMA and PB23, never the motor, the emitters or flash.
+  - **Startup:** the QA firmware and the bring-up `speaker` variant play the startup chime once the settings are loaded, unless `sound` is off. The `feeder` firmware starts its speaker quiet and boots silently.
+- **Feeding:** audio is independent of it, and a feed plays no tune (owner, October 26). The task touches only the codec, its DMA and PB23, never the motor, the emitters or flash.
 
 ## Requests
 
@@ -88,4 +88,4 @@ The task logs these `PLAUD1` lines:
 - **Stored clips:** playing them needs a read-only FAT reader and the SDK's Helix AAC decoder, and a 44.1 kHz codec setup;
 - PA25's role;
 - quiet windows (FW21/FW23);
-- the feed-time call: since FW17 the loop plays `meal` once a feed is queued and steps the speaker outside setup mode ([device API](device-api.md)); not yet heard on hardware.
+- the feed-time call: feeds play no tune (owner, October 26). FW17 had the loop play `meal` once a feed was queued (heard on hardware October 26); it was removed at the owner's request. A call before a scheduled meal, when its plan enables one, is FP13's ([device API](device-api.md)).

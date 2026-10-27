@@ -268,15 +268,13 @@ impl<S: Copy> Serve<S> {
         })
     }
 
-    /// One pass; the delay until the next. `called` hears a client's feed
-    /// queued this pass, with what its feed call's request came to.
+    /// One pass; the delay until the next.
     pub fn step<P: Platform<Socket = S>, F: Feeds>(
         &mut self,
         platform: &mut P,
         lock: &mut LockBox,
         inputs: Inputs<'_, F>,
         mut record: impl FnMut(Record),
-        called: impl FnOnce(u32, PlayResult),
     ) -> u32 {
         let Inputs {
             now_ms,
@@ -352,7 +350,6 @@ impl<S: Copy> Serve<S> {
             tasks: &mut self.tasks,
             page: &mut self.page,
             battery_hold,
-            call: None,
         };
         let busy = self.server.step(
             Pass {
@@ -373,9 +370,6 @@ impl<S: Copy> Serve<S> {
                 record(Record::Server(r));
             },
         );
-        if let Some((feed, result)) = device.call {
-            called(feed, result);
-        }
         for handshake_ms in opened.into_iter().flatten() {
             self.stats.opened(handshake_ms);
         }
@@ -660,8 +654,6 @@ pub struct FeederDevice<'a, P, F> {
     pub(super) page: &'a mut [u8; PAGE_BYTES],
     /// A brownout holds feeding until the adapter is seen.
     pub(super) battery_hold: bool,
-    /// The feed a client queued, and its feed call's request.
-    pub(super) call: Option<(u32, PlayResult)>,
 }
 
 /// How long a walk of the task stacks answers memory requests: the walk
@@ -841,11 +833,7 @@ impl<P: Platform, F: Feeds> Device for FeederDevice<'_, P, F> {
 
     fn feed(&mut self, portions: u8, by: Source) -> Result<u32, Refusal> {
         let ready = self.readiness();
-        let (result, call) = feeding::queue(self.platform, self.feeds, ready, portions, by);
-        if let (Ok(feed), Some(play)) = (result, call) {
-            self.call = Some((feed, play));
-        }
-        result
+        feeding::queue(self.feeds, ready, portions, by)
     }
 
     fn feed_reserved(&mut self, feed: u32) -> Option<Result<(), Refusal>> {

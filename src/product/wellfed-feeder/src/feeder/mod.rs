@@ -16,7 +16,8 @@
 //!    knows ([`lights`]);
 //! 4. the device API: its sockets, the server's step and the live samples
 //!    ([`serve`]), with the time settings and the NTP exchange ([`time`]);
-//! 5. the speaker, while the feed call plays (setup mode steps it itself).
+//! 5. the speaker, while a tune a client asked for plays (setup mode steps
+//!    it itself). A feed plays none.
 //!
 //! The feeding owner is the platform's: the firmware steps it before the
 //! pass and hands it in as [`Feeds`], and records its `Fed` events through
@@ -140,7 +141,7 @@ pub enum Record<D> {
     Feeding(feeding::Record),
     /// `PLIND1`.
     Lights(lights::Record),
-    /// The speaker's own record while the feed call plays, under its tag.
+    /// The speaker's own record while a requested tune plays, under its tag.
     Driver(D),
 }
 
@@ -288,12 +289,8 @@ impl<P: Platform> Feeder<P> {
         if self.owner.take_dispense() {
             let ready = self.readiness(feeds);
             let portions = feeding::DISPENSE_PORTIONS;
-            let (result, call) =
-                feeding::queue(&mut self.platform, feeds, ready, portions, Source::Panel);
+            let result = feeding::queue(feeds, ready, portions, Source::Panel);
             record(Record::Feeding(feeding::Record::Dispense { result }));
-            if let (Ok(feed), Some(result)) = (result, call) {
-                record(Record::Feeding(feeding::Record::Call { feed, result }));
-            }
             if result.is_err() {
                 self.lights.refused(now_ms, |r| record(Record::Lights(r)));
             }
@@ -326,17 +323,11 @@ impl<P: Platform> Feeder<P> {
             battery_hold: self.supply.holds(),
             feeds,
         };
-        let mut calls = None;
-        let serve_delay = self.serve.step(
-            &mut self.platform,
-            &mut self.lock,
-            inputs,
-            |r| record(Record::Serve(r)),
-            |feed, result| calls = Some((feed, result)),
-        );
-        if let Some((feed, result)) = calls {
-            record(Record::Feeding(feeding::Record::Call { feed, result }));
-        }
+        let serve_delay = self
+            .serve
+            .step(&mut self.platform, &mut self.lock, inputs, |r| {
+                record(Record::Serve(r))
+            });
 
         // After the owner and the device API, so playback never delays
         // either; setup mode steps the speaker itself.
@@ -407,7 +398,6 @@ impl<P: Platform> Feeder<P> {
             tasks,
             page,
             battery_hold: self.supply.holds(),
-            call: None,
         }
     }
 }

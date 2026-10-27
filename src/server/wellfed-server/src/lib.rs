@@ -60,13 +60,16 @@ pub(crate) struct AppState {
         (name = routes::TAG_HEALTH, description = "Liveness for anyone, readiness for an owner"),
         (name = routes::TAG_COMMANDS, description = "The command journal: every write sent through the server"),
         (name = routes::TAG_RELEASES, description = "Verified releases kept for installs: fetched or uploaded"),
+        (name = routes::TAG_PETS, description = "Pets, their weight logs and the feeders that serve them"),
+        (name = routes::TAG_FOODS, description = "Foods, the food each feeder serves over time, and refills"),
     ),
 )]
 struct ApiDoc;
 
 fn router() -> OpenApiRouter<AppState> {
     use routes::{
-        auth, commands, events, feeders, health, household, releases, stream, tokens, users,
+        auth, commands, events, feeders, foods, health, household, pets, releases, stream, tokens,
+        users,
     };
 
     let small = OpenApiRouter::new()
@@ -93,6 +96,17 @@ fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(health::status))
         .routes(routes!(releases::releases))
         .routes(routes!(releases::check_releases))
+        .routes(routes!(pets::pets, pets::create_pet))
+        .routes(routes!(pets::pet, pets::update_pet, pets::delete_pet))
+        .routes(routes!(pets::assign_feeder, pets::unassign_feeder))
+        .routes(routes!(pets::weights, pets::add_weight))
+        .routes(routes!(pets::delete_weight))
+        .routes(routes!(foods::foods, foods::create_food))
+        .routes(routes!(foods::food, foods::update_food, foods::delete_food))
+        .routes(routes!(foods::feeder_food, foods::set_feeder_food))
+        .routes(routes!(foods::food_history))
+        .routes(routes!(foods::refills, foods::add_refill))
+        .routes(routes!(foods::delete_refill))
         .layer(RequestBodyLimitLayer::new(BODY_LIMIT));
     let uploads = OpenApiRouter::new()
         .routes(routes!(releases::upload_release))

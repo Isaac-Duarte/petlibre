@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT feeder_id AS \"feeder_id: Uuid\" FROM pet_feeders\n               WHERE pet_id = ? AND to_ms IS NULL ORDER BY feeder_id",
+  "describe": {
+    "columns": [
+      {
+        "name": "feeder_id: Uuid",
+        "ordinal": 0,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "pet_feeders",
+            "name": "feeder_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "55b844a43fd51aa6f53525e4b7b0e49bf6cc952aa2e55cc7b4342a4ddfc37709"
+}

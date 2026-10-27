@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id AS \"id: Uuid\", at_ms, grams FROM pet_weights\n               WHERE pet_id = ?1 AND (?2 IS NULL OR (at_ms, id) > (?2, ?3))\n               ORDER BY at_ms, id LIMIT ?4",
+  "describe": {
+    "columns": [
+      {
+        "name": "id: Uuid",
+        "ordinal": 0,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "pet_weights",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "at_ms",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "pet_weights",
+            "name": "at_ms"
+          }
+        }
+      },
+      {
+        "name": "grams",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "pet_weights",
+            "name": "grams"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "b4366e1087bb6fa4aa79589c5e9af37927c58ebd48aeaf48ac9a31678ca22810"
+}

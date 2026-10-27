@@ -22,10 +22,13 @@
 mod commands;
 mod convert;
 mod feeders;
+mod foods;
 mod history;
 mod jobs;
 mod migrate;
+mod pets;
 mod projections;
+mod refills;
 mod samples;
 mod tokens;
 mod users;
@@ -40,7 +43,9 @@ use sqlx::sqlite::{
 
 pub use commands::{CommandFilter, CommandRow, Journaled, NewCommand};
 pub use feeders::{FeederRow, FeederState, NewFeeder, SealedKey, Synced};
+pub use foods::FoodSet;
 pub use history::{EventRow, NewEvent};
+pub use pets::WeightCursor;
 pub use projections::{Boot, ClockSync, Feed, LockChange, PROJECTION_VERSION, Projected, Refresh};
 pub use samples::{NewSample, SampleRow};
 pub use tokens::{NewToken, TokenUse};
@@ -62,6 +67,8 @@ pub enum Error {
     TooLarge(&'static str),
     #[error("that {0} already exists")]
     Duplicate(&'static str),
+    #[error("a {0} still in use cannot be deleted")]
+    InUse(&'static str),
     #[error("encode a cached {0}: {1}")]
     Json(&'static str, serde_json::Error),
 }

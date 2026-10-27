@@ -62,6 +62,14 @@ impl ManualClock {
         self.0.ms.fetch_max(at.as_millisecond(), Ordering::SeqCst);
         self.0.moved.notify_waiters();
     }
+
+    /// Move the clock back by `by`, as an NTP correction does. Nothing
+    /// sleeping wakes: its time only moved further off.
+    pub fn step_back(&self, by: Duration) {
+        let by =
+            i64::try_from(by.as_millis()).expect("a test moves the clock by less than 2^63 ms");
+        self.0.ms.fetch_sub(by, Ordering::SeqCst);
+    }
 }
 
 impl Default for ManualClock {

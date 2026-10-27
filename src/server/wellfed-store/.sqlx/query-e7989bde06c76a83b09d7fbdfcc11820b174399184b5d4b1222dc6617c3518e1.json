@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT food_id AS \"food_id: Uuid\", from_ms FROM feeder_foods\n               WHERE feeder_id = ? ORDER BY seq DESC LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "food_id: Uuid",
+        "ordinal": 0,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "feeder_foods",
+            "name": "food_id"
+          }
+        }
+      },
+      {
+        "name": "from_ms",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "feeder_foods",
+            "name": "from_ms"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "e7989bde06c76a83b09d7fbdfcc11820b174399184b5d4b1222dc6617c3518e1"
+}

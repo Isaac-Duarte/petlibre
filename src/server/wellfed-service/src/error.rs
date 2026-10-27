@@ -20,6 +20,8 @@ pub enum Error {
     #[error(transparent)]
     Feeder(#[from] FeederError),
     #[error(transparent)]
+    OwnerData(#[from] OwnerDataError),
+    #[error(transparent)]
     Command(#[from] CommandError),
     #[error(transparent)]
     Random(#[from] RandomFailed),
@@ -62,6 +64,28 @@ pub enum Invalid {
     TokenName,
     #[error("a token's expiry is in the future")]
     TokenExpiry,
+    #[error("a page holds 1-1000 items")]
+    PageLimit,
+    #[error("not a cursor this server gave")]
+    PageCursor,
+    #[error("a pet's name is 1-64 characters")]
+    PetName,
+    #[error("a daily target is 1-10000 kcal")]
+    DailyKcal,
+    #[error("a weight is 1-200000 g")]
+    Weight,
+    #[error("a weight is read now or in the past")]
+    WeightTime,
+    #[error("a food's brand and name are 1-64 characters each")]
+    FoodName,
+    #[error("a food's energy is 1-10000 kcal per kg")]
+    Kcal,
+    #[error("a bag is 1-100000 g")]
+    BagSize,
+    #[error("a cup is 1-1000 g")]
+    GramsPerCup,
+    #[error("a refill is 1-100000 g")]
+    RefillGrams,
 }
 
 /// Setup, login, sessions and the accounts owners manage.
@@ -132,6 +156,25 @@ pub enum FeederError {
     Undecodable(u64),
     #[error("a feeder key does not open with this server's key")]
     Unseal,
+}
+
+/// Pets, foods and refills: the owner data the feeders do not hold.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum OwnerDataError {
+    #[error("no such pet")]
+    PetNotFound,
+    #[error("no such entry in the pet's weight log")]
+    WeightNotFound,
+    #[error("that feeder does not serve the pet")]
+    NotAssigned,
+    #[error("no such food")]
+    FoodNotFound,
+    #[error("a feeder's food history names the food: past feeds' calories use it")]
+    FoodInUse,
+    #[error("no such refill on that feeder")]
+    RefillNotFound,
+    #[error("the feeder has no food set, so a full bag weighs nothing known: set its food first")]
+    NoCurrentFood,
 }
 
 /// A command sent to a feeder, and its answer.

@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO refills (id, feeder_id, at_ms, grams, full_bag, food_id, user_id)\n               VALUES (?1, ?2, MAX(?3, COALESCE(\n                   (SELECT MAX(at_ms) FROM refills WHERE feeder_id = ?2), ?3)),\n                   ?4, ?5, ?6, ?7)\n               RETURNING at_ms",
+  "describe": {
+    "columns": [
+      {
+        "name": "at_ms",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "refills",
+            "name": "at_ms"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "220b126b8d6cc9001e71e5c42d66b72eac66a5a533bcc0f5de93be6166654bde"
+}

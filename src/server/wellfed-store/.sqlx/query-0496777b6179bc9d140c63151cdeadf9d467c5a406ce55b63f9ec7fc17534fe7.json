@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM pet_weights WHERE id = ? AND pet_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "0496777b6179bc9d140c63151cdeadf9d467c5a406ce55b63f9ec7fc17534fe7"
+}

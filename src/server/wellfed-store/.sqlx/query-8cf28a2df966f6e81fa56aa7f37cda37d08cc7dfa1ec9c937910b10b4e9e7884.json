@@ -1,0 +1,122 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT p.seq, p.from_ms,\n                      (SELECT n.from_ms FROM feeder_foods n\n                       WHERE n.feeder_id = p.feeder_id AND n.seq > p.seq\n                       ORDER BY n.seq LIMIT 1) AS \"to_ms?: i64\",\n                      f.id AS \"id: Uuid\", f.brand, f.name, f.kcal_per_kg, f.bag_grams,\n                      f.grams_per_cup\n               FROM feeder_foods p JOIN foods f ON f.id = p.food_id\n               WHERE p.feeder_id = ? AND p.from_ms <= ?\n               ORDER BY p.seq DESC LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "seq",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "feeder_foods",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "name": "from_ms",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "feeder_foods",
+            "name": "from_ms"
+          }
+        }
+      },
+      {
+        "name": "to_ms?: i64",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "feeder_foods",
+            "name": "from_ms"
+          }
+        }
+      },
+      {
+        "name": "id: Uuid",
+        "ordinal": 3,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "foods",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "brand",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "foods",
+            "name": "brand"
+          }
+        }
+      },
+      {
+        "name": "name",
+        "ordinal": 5,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "foods",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "kcal_per_kg",
+        "ordinal": 6,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "foods",
+            "name": "kcal_per_kg"
+          }
+        }
+      },
+      {
+        "name": "bag_grams",
+        "ordinal": 7,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "foods",
+            "name": "bag_grams"
+          }
+        }
+      },
+      {
+        "name": "grams_per_cup",
+        "ordinal": 8,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "foods",
+            "name": "grams_per_cup"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "8cf28a2df966f6e81fa56aa7f37cda37d08cc7dfa1ec9c937910b10b4e9e7884"
+}

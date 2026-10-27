@@ -136,7 +136,7 @@ pub(crate) mod need {
     }
 
     needs!(
-        Read, Control, OwnHistory, OwnAccount, Users, Household, Adopt, ServerData
+        Read, Control, OwnHistory, OwnAccount, Users, Household, OwnerData, Adopt, ServerData
     );
 }
 

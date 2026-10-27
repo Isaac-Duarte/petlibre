@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE pet_feeders SET to_ms = MAX(from_ms, ?)\n             WHERE pet_id = ? AND feeder_id = ? AND to_ms IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "3956c2ae8f276d22aa0aefe65d4bfa79aebb30e167b169acd15adf05c48de251"
+}

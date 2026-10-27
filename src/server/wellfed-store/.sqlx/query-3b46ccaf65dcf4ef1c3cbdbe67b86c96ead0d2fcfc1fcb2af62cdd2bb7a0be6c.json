@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO pet_feeders (pet_id, feeder_id, from_ms)\n             SELECT ?1, ?2, MAX(?3, COALESCE(\n                 (SELECT MAX(to_ms) FROM pet_feeders WHERE pet_id = ?1 AND feeder_id = ?2),\n                 ?3))\n             WHERE NOT EXISTS (SELECT 1 FROM pet_feeders\n                               WHERE pet_id = ?1 AND feeder_id = ?2 AND to_ms IS NULL)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "3b46ccaf65dcf4ef1c3cbdbe67b86c96ead0d2fcfc1fcb2af62cdd2bb7a0be6c"
+}

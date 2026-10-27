@@ -7,8 +7,8 @@ use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use wellfed_api::{ErrorCode, FeederRefusal, Problem, Settings};
 use wellfed_service::{
-    AccountError, CommandError, Error, FeederError, HouseholdError, ReleaseError, TokenError,
-    ZoneError,
+    AccountError, CommandError, Error, FeederError, HouseholdError, OwnerDataError, ReleaseError,
+    TokenError, ZoneError,
 };
 
 /// A request's failure.
@@ -137,6 +137,15 @@ fn service(error: &Error) -> (ErrorCode, Option<String>, Option<FeederRefusal>) 
                 return internal(error);
             }
         },
+        Error::OwnerData(owner_data) => match owner_data {
+            OwnerDataError::PetNotFound
+            | OwnerDataError::WeightNotFound
+            | OwnerDataError::NotAssigned
+            | OwnerDataError::FoodNotFound
+            | OwnerDataError::RefillNotFound => ErrorCode::NotFound,
+            OwnerDataError::FoodInUse => ErrorCode::FoodInUse,
+            OwnerDataError::NoCurrentFood => ErrorCode::NoCurrentFood,
+        },
         Error::Command(command) => match command {
             CommandError::Offline => ErrorCode::FeederOffline,
             CommandError::Unknown => ErrorCode::OutcomeUnknown,
@@ -201,7 +210,9 @@ fn status(code: ErrorCode) -> StatusCode {
         ErrorCode::SetupClosed
         | ErrorCode::AlreadyAdopted
         | ErrorCode::LastOwner
-        | ErrorCode::NameTaken => StatusCode::CONFLICT,
+        | ErrorCode::NameTaken
+        | ErrorCode::FoodInUse
+        | ErrorCode::NoCurrentFood => StatusCode::CONFLICT,
         ErrorCode::Unauthenticated | ErrorCode::BadCredentials => StatusCode::UNAUTHORIZED,
         ErrorCode::Forbidden
         | ErrorCode::SessionRequired

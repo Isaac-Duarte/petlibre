@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT pet_id AS \"pet_id: Uuid\", from_ms, to_ms FROM pet_feeders\n               WHERE feeder_id = ?1 AND from_ms < ?3 AND (to_ms IS NULL OR to_ms > ?2)\n                     AND (to_ms IS NULL OR to_ms > from_ms)\n               ORDER BY from_ms, seq",
+  "describe": {
+    "columns": [
+      {
+        "name": "pet_id: Uuid",
+        "ordinal": 0,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "pet_feeders",
+            "name": "pet_id"
+          }
+        }
+      },
+      {
+        "name": "from_ms",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "pet_feeders",
+            "name": "from_ms"
+          }
+        }
+      },
+      {
+        "name": "to_ms",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "pet_feeders",
+            "name": "to_ms"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "97d690df98b281f1eab5e5b7d977216a13e8eed4d4890ae395ad503f5f69a16e"
+}

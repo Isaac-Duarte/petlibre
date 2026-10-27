@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE pets SET name = ?, species = ?, birth_date = ?, daily_kcal = ? WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "4738d9f20b35814a4d70674b3928ceb6027f4bf58a1cfeaca62e95ecc7855bc6"
+}

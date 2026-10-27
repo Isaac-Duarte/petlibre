@@ -24,6 +24,9 @@
 //! - **Live updates** go through the [`Hub`], which the server's event
 //!   stream reads: each feeder's mirror broadcast is forwarded into it,
 //!   and the hub assigns the stream ids.
+//! - **Owner data** is the pets, the foods and the refills the feeders
+//!   do not hold. Each feeder serves one food at a time, with a history of
+//!   when each started, so a past feed's calories use the food it served.
 //! - **Releases** are `wellfed-releases`' cache: uploaded or fetched,
 //!   verified the same way, and kept until an owner installs one.
 //! - **Background jobs** have their bodies here, each a method that takes
@@ -31,8 +34,8 @@
 //!   run. The server's supervisor decides when.
 //!
 //! Each domain has its own error enum ([`AccountError`],
-//! [`TokenError`], [`HouseholdError`], [`FeederError`], [`CommandError`]),
-//! wrapped in [`Error`]. Time and randomness come in
+//! [`TokenError`], [`HouseholdError`], [`FeederError`], [`CommandError`],
+//! [`OwnerDataError`]), wrapped in [`Error`]. Time and randomness come in
 //! through [`Clock`] and [`Random`], so tests can fix them.
 //!
 //! [API design]: ../../../../docs/api/README.md
@@ -41,13 +44,16 @@
 mod commands;
 mod error;
 mod feeders;
+mod foods;
 mod health;
 mod household;
 mod hub;
 mod jobs;
 mod journal;
 mod keys;
+mod page;
 mod permissions;
+mod pets;
 mod releases;
 mod sessions;
 mod tokens;
@@ -68,7 +74,8 @@ use tokio_util::task::TaskTracker;
 use uuid::Uuid;
 
 pub use error::{
-    AccountError, CommandError, Error, FeederError, HouseholdError, Invalid, Result, TokenError,
+    AccountError, CommandError, Error, FeederError, HouseholdError, Invalid, OwnerDataError,
+    Result, TokenError,
 };
 pub use hub::{Hub, Resume, Stamped, StreamId, Subscription};
 pub use permissions::{Permission, can};

@@ -115,7 +115,7 @@ wellfed (the CLI) ─► wellfed-server-client ─► wellfed-api
 ```
 
 - **`wellfed-mirror`** owns every task that holds a feeder session. Its surface is small: start and stop a feeder, its link state, `ask` (one answer or unknown), a long-operation lane, and a per-feeder broadcast of typed mirror events. The hub that merges it with command results and alerts is the service's. The service never sees a socket; the mirror never sees a user.
-- **`wellfed-store`** stays one crate, so the sqlx offline metadata and the migrations stay in one place, split into `users`, `feeders`, `history`, `samples`, `owner` (pets and foods), `commands`, `releases` and `jobs` modules.
+- **`wellfed-store`** stays one crate, so the sqlx offline metadata and the migrations stay in one place, split into `users`, `feeders`, `history`, `samples`, `pets`, `foods` and `refills` (owner data), `commands`, `releases` and `jobs` modules.
 - **Derived views** are a service module over the store's projections. They are pure functions of typed rows, with "now" and the household zone passed in, so they are tested without a database.
 - **The service's errors split by domain** (`AccountError`, `CommandError`, …), wrapped in its `Error`, as the [Rust standard](docs/development/rust.md) asks of a module with several refusals.
 
@@ -129,7 +129,8 @@ wellfed (the CLI) ─► wellfed-server-client ─► wellfed-api
 - **Done (releases):** SV50 (`wellfed-releases`: uploads and GitHub checks verified with the feeder's own offer check, a cache in the data directory, `GET`/`POST /releases` and `POST /releases/check`), host simulation, Oct 26.
 - **Done (accounts):** SV30 (owners, members and viewers under one permission table, `/users`, expiring accounts, sliding sessions, self-service password changes, `reset-owner`, and `/household` with the zone every feeder keeps as its POSIX rule), host simulation, Oct 26; SV31 (`/tokens`: bearer tokens shown once and stored as SHA-256, a token-authenticated write needs no `Origin`, the journal names the token), host simulation, Oct 27.
 - **Done (data):** SV10 (projections beside the raw log: feeds, lock changes, boots, clock syncs and feeding blocked, written in the raw insert's transaction and rebuilt from the raw rows when their version changes), host simulation, Oct 27.
-- **Ready:** SV09, SV11, SV14, SV19, SV21, SV22, SV24, SV32, SV33, SV40, SV62, SV64.
+- **Done (owner data):** SV40 (`/pets` with weight logs and feeder assignments, `/foods`, each feeder's current food with its history (`PUT /feeders/{id}/food`), and refills (`POST /feeders/{id}/refills`); photos deferred), host simulation, Oct 27.
+- **Ready:** SV09, SV11, SV14, SV19, SV21, SV22, SV24, SV32, SV33, SV62, SV64.
 - **Next:** the command plane (SV21) and the public setup's login limits (SV32), app parity and phone keys (SV24) and the audit log (SV33). SV09 runs as soon as the bench is free, now against the restructured server (the spec dropped it as SV07's prerequisite). SV19 runs when no firmware run is editing `src/client/`.
 - **Then:** the CLI on the server API (SV34), then data, owner data and releases.
 - **Critical path to a feed from the web UI:** SV21 (SV07 and SV20 are done). FW17 (feeds that survive a reboot) is done.
@@ -185,8 +186,8 @@ wellfed (the CLI) ─► wellfed-server-client ─► wellfed-api
 
 | Card | Status | Evidence | Prerequisites | Finish line |
 | --- | --- | --- | --- | --- |
-| **SV40 Pets and foods** | Ready | — | SV30 | `/pets` (name, weight log, daily target) and `/foods` (brand, kcal per gram, bag size), with which feeder serves which pet and food. Photos are files in the data directory with size and type limits, never in the database. |
-| **SV41 Derived views** | Planned | — | SV10, SV13, SV40 | A service module: food remaining and a refill estimate (grams per portion from FW18's calibration, portions since the last refill, the bag size), grams and calories against each pet's target, and feeding anomalies (missed, uncertain or short feeds). Pure functions of typed rows with "now" and the zone passed in, property-tested. `GET /feeders/{id}/food` and `GET /pets/{id}/intake`. |
+| **SV40 Pets and foods** | Done | Host simulation, Oct 27: `wellfed-service` tests `owner_data.rs` (`a_pet_is_made_changed_and_deleted_with_its_weight_log`, `pets_and_feeders_are_many_to_many`, `a_food_is_checked_and_one_a_feeder_served_is_kept`, `the_food_at_a_time_is_the_one_the_feeder_served_then`, `a_refill_is_grams_or_a_full_bag_of_the_current_food`, `the_current_food_and_refills_survive_the_clock_stepping_back`, `a_weight_is_not_from_the_future_and_its_time_returns_as_stored`, `a_feeder_s_pets_keep_their_history`) against the simulator; `wellfed-server` tests `owner_data.rs` (`a_member_and_a_viewer_read_owner_data_but_every_write_is_refused`, `an_owner_keeps_pets_foods_and_refills_over_http`); the store's `owner_data.rs` (`the_food_at_a_time_is_the_last_change_made_by_then`, `a_change_is_never_dated_before_the_one_it_follows`, `a_food_a_feeder_served_cannot_be_deleted`, `a_weight_log_pages_by_reading_time_even_when_backdated`, `refills_list_in_order_and_the_newest_is_the_last`, `a_pet_round_trips_with_its_feeders_and_its_deletion_takes_its_log`, `the_current_food_is_the_newest_change_whatever_the_clock_reads`, `a_refill_is_never_dated_before_the_feeder_s_last`, `a_feeder_s_links_keep_their_history_and_never_overlap`); the service's `page::tests` and the API's `pets::tests` and `foods::tests`. Photos are deferred until the UI, per the spec. | SV30 | `/pets` (name, weight log, daily target) and `/foods` (brand, kcal per gram, bag size), with which feeder serves which pet and food. Photos are files in the data directory with size and type limits, never in the database. |
+| **SV41 Derived views** | Planned | — | SV10, SV13, SV40 | A service module: food remaining and a refill estimate (grams per portion from FW18's calibration, portions since the last refill, the bag size), grams and calories against each pet's target, and feeding anomalies (missed, uncertain or short feeds). Pure functions of typed rows with "now" and the zone passed in, property-tested. A feed's food is `Service::feeder_food_at` at the feeder's own time (`at_s`) when its clock was valid, else at `received_ms`, and its pets are `Service::feeder_pets` over that time. `GET /feeders/{id}/food` and `GET /pets/{id}/intake`. |
 | **SV42 Export and import** | Planned | — | SV10, SV40 | `GET /export` streams everything as JSON or a CSV archive without loading the database into memory; `POST /import` restores it onto a fresh server. The archive format is typed and versioned. A round trip (export, import into an empty server, export again) is byte-identical. |
 
 ## Alerts
@@ -246,7 +247,7 @@ wellfed (the CLI) ─► wellfed-server-client ─► wellfed-api
 | SV32 Login limits and the proxy | 🟢 Ready |
 | SV33 Audit log | 🟢 Ready |
 | SV34 The CLI on the server API | ⬜ Planned |
-| SV40 Pets and foods | 🟢 Ready |
+| SV40 Pets and foods | ✅ Done |
 | SV41 Derived views | ⬜ Planned |
 | SV42 Export and import | ⬜ Planned |
 | SV50 wellfed-releases | ✅ Done |

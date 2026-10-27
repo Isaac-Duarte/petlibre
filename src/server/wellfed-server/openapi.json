@@ -367,6 +367,190 @@
         }
       }
     },
+    "/api/v1/feeders/{id}/food": {
+      "get": {
+        "tags": [
+          "foods"
+        ],
+        "summary": "The food the feeder serves now, and its newest refill.",
+        "operationId": "feeder_food",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/FeederId"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeederFood"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "foods"
+        ],
+        "summary": "Serve another food from now on; past feeds keep the food they served.\nChoosing the food the feeder already serves keeps its period.",
+        "operationId": "set_feeder_food",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/FeederId"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FoodChoice"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FoodPeriod"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden: owners only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not_found: the feeder or the food",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/feeders/{id}/food/history": {
+      "get": {
+        "tags": [
+          "foods"
+        ],
+        "summary": "The foods the feeder has served, oldest first, each with when it\nstarted and ended.",
+        "operationId": "food_history",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/FeederId"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "description": "The previous page's `next`, as it came.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "At most this many (1-1000, default 100).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FoodHistoryPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid: a bad `after` or `limit`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/feeders/{id}/lock": {
       "post": {
         "tags": [
@@ -438,6 +622,210 @@
           },
           "504": {
             "description": "outcome_unknown: retry with the same key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/feeders/{id}/refills": {
+      "get": {
+        "tags": [
+          "foods"
+        ],
+        "summary": "The feeder's refills, in the order they were recorded.",
+        "operationId": "refills",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/FeederId"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "description": "The previous page's `next`, as it came.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "At most this many (1-1000, default 100).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefillPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid: a bad `after` or `limit`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "foods"
+        ],
+        "summary": "Record a refill made now: a weighed amount, or a full bag of the\nfeeder's current food.",
+        "operationId": "add_refill",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/FeederId"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewRefill"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refill"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid: an amount out of range",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden: owners only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "no_current_food: a full bag on a feeder with no food set",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/feeders/{id}/refills/{refill}": {
+      "delete": {
+        "tags": [
+          "foods"
+        ],
+        "summary": "Remove a refill recorded by mistake.",
+        "operationId": "delete_refill",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/FeederId"
+            }
+          },
+          {
+            "name": "refill",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/RefillId"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "403": {
+            "description": "forbidden: owners only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
             "content": {
               "application/json": {
                 "schema": {
@@ -634,6 +1022,249 @@
         }
       }
     },
+    "/api/v1/foods": {
+      "get": {
+        "tags": [
+          "foods"
+        ],
+        "summary": "Every food, by brand and name.",
+        "operationId": "foods",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Food"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "foods"
+        ],
+        "summary": "Add a food. A cup is 110 g unless `grams_per_cup` says otherwise.",
+        "operationId": "create_food",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewFood"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Food"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid: a brand, name or amount out of range",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden: owners only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/foods/{id}": {
+      "get": {
+        "tags": [
+          "foods"
+        ],
+        "operationId": "food",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/FoodId"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Food"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "foods"
+        ],
+        "summary": "Delete a food that no feeder has served and no refill names.",
+        "operationId": "delete_food",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/FoodId"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "403": {
+            "description": "forbidden: owners only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "food_in_use: a feeder's history or a refill names it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "foods"
+        ],
+        "summary": "Change a food. Feeders' histories keep naming it, so the change applies\nto past feeds too: a new recipe is a new food.",
+        "operationId": "update_food",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/FoodId"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FoodPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Food"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid: a brand, name or amount out of range",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden: owners only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/household": {
       "get": {
         "tags": [
@@ -710,6 +1341,547 @@
           },
           "422": {
             "description": "zone_unsupported: no POSIX rule describes the zone",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/pets": {
+      "get": {
+        "tags": [
+          "pets"
+        ],
+        "summary": "Every pet, by name, each with the feeders that serve it.",
+        "operationId": "pets",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Pet"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "pets"
+        ],
+        "summary": "Add a pet. It starts with no feeders and an empty weight log.",
+        "operationId": "create_pet",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewPet"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Pet"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid: a name, or a daily target out of range",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden: owners only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/pets/{id}": {
+      "get": {
+        "tags": [
+          "pets"
+        ],
+        "operationId": "pet",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/PetId"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Pet"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "pets"
+        ],
+        "summary": "Delete a pet, with its weight log and its feeders' links.",
+        "operationId": "delete_pet",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/PetId"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "403": {
+            "description": "forbidden: owners only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "pets"
+        ],
+        "summary": "Change a pet; `null` clears its birth date or daily target.",
+        "operationId": "update_pet",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/PetId"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PetPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Pet"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid: a name, or a daily target out of range",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden: owners only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/pets/{id}/feeders/{feeder}": {
+      "put": {
+        "tags": [
+          "pets"
+        ],
+        "summary": "Let a feeder serve the pet. A feeder that already does is left as it\nis.",
+        "operationId": "assign_feeder",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/PetId"
+            }
+          },
+          {
+            "name": "feeder",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/FeederId"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Pet"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden: owners only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not_found: the pet or the feeder",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "pets"
+        ],
+        "summary": "Stop a feeder serving the pet.",
+        "operationId": "unassign_feeder",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/PetId"
+            }
+          },
+          {
+            "name": "feeder",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/FeederId"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Pet"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden: owners only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not_found: the pet, or the feeder does not serve it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/pets/{id}/weights": {
+      "get": {
+        "tags": [
+          "pets"
+        ],
+        "summary": "The pet's weight log, oldest reading first.",
+        "operationId": "weights",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/PetId"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "description": "The previous page's `next`, as it came.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "At most this many (1-1000, default 100).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WeightPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid: a bad `after` or `limit`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "pets"
+        ],
+        "summary": "Log a weight, taken now unless `at` says when.",
+        "operationId": "add_weight",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/PetId"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewWeight"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Weight"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid: a weight out of range",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden: owners only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/pets/{id}/weights/{weight}": {
+      "delete": {
+        "tags": [
+          "pets"
+        ],
+        "summary": "Remove an entry from the pet's weight log.",
+        "operationId": "delete_weight",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/PetId"
+            }
+          },
+          {
+            "name": "weight",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/WeightId"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "403": {
+            "description": "forbidden: owners only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
             "content": {
               "application/json": {
                 "schema": {
@@ -2021,6 +3193,8 @@
           "session_required",
           "last_owner",
           "name_taken",
+          "food_in_use",
+          "no_current_food",
           "zone_unsupported",
           "cross_origin",
           "unknown_host",
@@ -2523,6 +3697,34 @@
           }
         }
       },
+      "FeederFood": {
+        "type": "object",
+        "description": "A feeder's food as it stands.",
+        "properties": {
+          "current": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/FoodPeriod",
+                "description": "The food it serves now; `None` before an owner sets one."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_refill": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Refill",
+                "description": "The newest refill recorded."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
       "FeederId": {
         "type": "string",
         "format": "uuid"
@@ -2713,6 +3915,152 @@
           }
         }
       },
+      "Food": {
+        "type": "object",
+        "required": [
+          "id",
+          "brand",
+          "name",
+          "kcal_per_kg",
+          "bag_grams",
+          "grams_per_cup"
+        ],
+        "properties": {
+          "bag_grams": {
+            "type": "integer",
+            "format": "int32",
+            "description": "A full bag's weight (1-100000 g): what a full-bag refill adds.",
+            "minimum": 0
+          },
+          "brand": {
+            "type": "string",
+            "description": "1-64 characters."
+          },
+          "grams_per_cup": {
+            "type": "integer",
+            "format": "int32",
+            "description": "What a cup of it weighs (1-1000 g).",
+            "minimum": 0
+          },
+          "id": {
+            "$ref": "#/components/schemas/FoodId"
+          },
+          "kcal_per_kg": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Energy, as labels print it (1-10000 kcal per kg).",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string",
+            "description": "1-64 characters."
+          }
+        }
+      },
+      "FoodChoice": {
+        "type": "object",
+        "description": "`PUT /feeders/{id}/food`: the food a feeder serves from now on.",
+        "required": [
+          "food"
+        ],
+        "properties": {
+          "food": {
+            "$ref": "#/components/schemas/FoodId"
+          }
+        }
+      },
+      "FoodHistoryPage": {
+        "type": "object",
+        "description": "A page of a feeder's food history, oldest first.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FoodPeriod"
+            }
+          },
+          "next": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The `after` for the next page; `None` at the end."
+          }
+        }
+      },
+      "FoodId": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "FoodPatch": {
+        "type": "object",
+        "description": "A change to a food; an absent field is left as it is. A change applies\nto the past too: a new recipe is a new food.",
+        "properties": {
+          "bag_grams": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "brand": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "grams_per_cup": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "kcal_per_kg": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "FoodPeriod": {
+        "type": "object",
+        "description": "A span of time a feeder served one food: from `from` until `to`, the\nnext change, or still when `to` is `None`.",
+        "required": [
+          "food",
+          "from"
+        ],
+        "properties": {
+          "food": {
+            "$ref": "#/components/schemas/Food"
+          },
+          "from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "to": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
       "Gap": {
         "type": "object",
         "description": "Events the feeder dropped from its ring before the server read them.",
@@ -2881,6 +4229,112 @@
           }
         }
       },
+      "NewFood": {
+        "type": "object",
+        "required": [
+          "brand",
+          "name",
+          "kcal_per_kg",
+          "bag_grams"
+        ],
+        "properties": {
+          "bag_grams": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "brand": {
+            "type": "string"
+          },
+          "grams_per_cup": {
+            "type": "integer",
+            "format": "int32",
+            "description": "110 g when absent.",
+            "default": 110,
+            "minimum": 0
+          },
+          "kcal_per_kg": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "NewPet": {
+        "type": "object",
+        "description": "A new pet; it starts with no feeders and no weights.",
+        "required": [
+          "name",
+          "species"
+        ],
+        "properties": {
+          "birth_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date"
+          },
+          "daily_kcal": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string"
+          },
+          "species": {
+            "$ref": "#/components/schemas/Species"
+          }
+        }
+      },
+      "NewRefill": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "A weighed amount (1-100000 g).",
+            "required": [
+              "grams",
+              "kind"
+            ],
+            "properties": {
+              "grams": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "grams"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A whole bag of the feeder's current food: its `bag_grams`. A feeder\nwith no food set is refused `no_current_food`.",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "full_bag"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "What an owner put in the hopper."
+      },
       "NewToken": {
         "type": "object",
         "description": "A token to make, for the user asking.",
@@ -2932,6 +4386,29 @@
           }
         }
       },
+      "NewWeight": {
+        "type": "object",
+        "description": "A new weight-log entry.",
+        "required": [
+          "grams"
+        ],
+        "properties": {
+          "at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When it was weighed, for a reading taken earlier (a vet's); now when\nabsent."
+          },
+          "grams": {
+            "type": "integer",
+            "format": "int32",
+            "description": "1-200000.",
+            "minimum": 0
+          }
+        }
+      },
       "PasswordChange": {
         "type": "object",
         "description": "A user changing their own password: `PATCH /session`.",
@@ -2947,6 +4424,91 @@
           "password": {
             "type": "string",
             "description": "At least 10 characters."
+          }
+        }
+      },
+      "Pet": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "species",
+          "feeders"
+        ],
+        "properties": {
+          "birth_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date"
+          },
+          "daily_kcal": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The calories a day the pet should eat (1-10000 kcal).",
+            "minimum": 0
+          },
+          "feeders": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FeederId"
+            },
+            "description": "The feeders that serve this pet. A feeder may serve several pets,\nand its intake is then split between them as an estimate."
+          },
+          "id": {
+            "$ref": "#/components/schemas/PetId"
+          },
+          "name": {
+            "type": "string",
+            "description": "1-64 characters."
+          },
+          "species": {
+            "$ref": "#/components/schemas/Species"
+          }
+        }
+      },
+      "PetId": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "PetPatch": {
+        "type": "object",
+        "description": "A change to a pet; an absent field is left as it is, and `null` clears\nan optional one.",
+        "properties": {
+          "birth_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date"
+          },
+          "daily_kcal": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "species": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Species"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       },
@@ -3057,6 +4619,79 @@
           }
         ],
         "description": "Whether the feeder can start a feed now: the one decision a feed\nrequest obeys too."
+      },
+      "Refill": {
+        "type": "object",
+        "required": [
+          "id",
+          "feeder",
+          "at",
+          "grams",
+          "full_bag",
+          "user"
+        ],
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "feeder": {
+            "$ref": "#/components/schemas/FeederId"
+          },
+          "food": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/FoodId",
+                "description": "The feeder's food when it was recorded."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "full_bag": {
+            "type": "boolean"
+          },
+          "grams": {
+            "type": "integer",
+            "format": "int32",
+            "description": "What went in: a full bag's is the bag size when it was recorded.",
+            "minimum": 0
+          },
+          "id": {
+            "$ref": "#/components/schemas/RefillId"
+          },
+          "user": {
+            "$ref": "#/components/schemas/UserId",
+            "description": "Who recorded it."
+          }
+        }
+      },
+      "RefillId": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "RefillPage": {
+        "type": "object",
+        "description": "A page of a feeder's refills, oldest first.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Refill"
+            }
+          },
+          "next": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The `after` for the next page; `None` at the end."
+          }
+        }
       },
       "RefusedAsset": {
         "type": "object",
@@ -3646,6 +5281,15 @@
         ],
         "description": "Who caused an event."
       },
+      "Species": {
+        "type": "string",
+        "description": "What kind of animal a pet is.",
+        "enum": [
+          "cat",
+          "dog",
+          "other"
+        ]
+      },
       "StatusSnapshot": {
         "type": "object",
         "required": [
@@ -3909,6 +5553,57 @@
           }
         }
       },
+      "Weight": {
+        "type": "object",
+        "description": "One entry of a pet's weight log.",
+        "required": [
+          "id",
+          "at",
+          "grams"
+        ],
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the pet weighed this."
+          },
+          "grams": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "id": {
+            "$ref": "#/components/schemas/WeightId"
+          }
+        }
+      },
+      "WeightId": {
+        "type": "string",
+        "format": "uuid",
+        "description": "One entry of a pet's weight log."
+      },
+      "WeightPage": {
+        "type": "object",
+        "description": "A page of a weight log, oldest reading first.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Weight"
+            }
+          },
+          "next": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The `after` for the next page; `None` at the end."
+          }
+        }
+      },
       "WifiSource": {
         "type": "string",
         "description": "Which Wi-Fi credentials the feeder joined with.",
@@ -3952,6 +5647,14 @@
     {
       "name": "releases",
       "description": "Verified releases kept for installs: fetched or uploaded"
+    },
+    {
+      "name": "pets",
+      "description": "Pets, their weight logs and the feeders that serve them"
+    },
+    {
+      "name": "foods",
+      "description": "Foods, the food each feeder serves over time, and refills"
     }
   ]
 }

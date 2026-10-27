@@ -3,10 +3,10 @@
 use std::fmt;
 
 use jiff::Timestamp;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::Role;
+use crate::{Role, present};
 
 /// A new account.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -61,16 +61,6 @@ impl fmt::Debug for UserPatch {
             .field("password", &self.password.as_ref().map(|_| ".."))
             .finish()
     }
-}
-
-/// A field that is present is `Some`, even when it is `null`: absent
-/// leaves a value alone, `null` clears it.
-fn present<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
-where
-    D: Deserializer<'de>,
-    T: Deserialize<'de>,
-{
-    Option::<T>::deserialize(deserializer).map(Some)
 }
 
 #[cfg(test)]

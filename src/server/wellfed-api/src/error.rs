@@ -28,6 +28,11 @@ pub enum ErrorCode {
     LastOwner,
     /// Another account has that name.
     NameTaken,
+    /// A feeder's food history names the food, so deleting it would lose
+    /// past feeds' calories.
+    FoodInUse,
+    /// A full-bag refill on a feeder with no food set: set its food first.
+    NoCurrentFood,
     /// The zone is real, but no POSIX rule describes it (it changes
     /// irregularly), so a feeder could not keep it; `detail` names it.
     ZoneUnsupported,

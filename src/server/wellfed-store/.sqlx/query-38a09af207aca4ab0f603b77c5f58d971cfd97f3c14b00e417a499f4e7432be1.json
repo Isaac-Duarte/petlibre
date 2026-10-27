@@ -1,0 +1,110 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT seq, id AS \"id: Uuid\", feeder_id AS \"feeder_id: Uuid\", at_ms, grams,\n                      full_bag AS \"full_bag: bool\", food_id AS \"food_id: Uuid\",\n                      user_id AS \"user_id: Uuid\"\n               FROM refills WHERE feeder_id = ? AND seq > ? ORDER BY seq LIMIT ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "seq",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "refills",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "name": "id: Uuid",
+        "ordinal": 1,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "refills",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "feeder_id: Uuid",
+        "ordinal": 2,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "refills",
+            "name": "feeder_id"
+          }
+        }
+      },
+      {
+        "name": "at_ms",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "refills",
+            "name": "at_ms"
+          }
+        }
+      },
+      {
+        "name": "grams",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "refills",
+            "name": "grams"
+          }
+        }
+      },
+      {
+        "name": "full_bag: bool",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "refills",
+            "name": "full_bag"
+          }
+        }
+      },
+      {
+        "name": "food_id: Uuid",
+        "ordinal": 6,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "refills",
+            "name": "food_id"
+          }
+        }
+      },
+      {
+        "name": "user_id: Uuid",
+        "ordinal": 7,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "refills",
+            "name": "user_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "38a09af207aca4ab0f603b77c5f58d971cfd97f3c14b00e417a499f4e7432be1"
+}

@@ -102,6 +102,7 @@ pub(crate) async fn settings(
     request_body = SettingsPatch,
     responses(
         (status = 200, body = Settings, headers(("ETag" = String))),
+        (status = 400, body = Problem, description = "invalid: a malformed body, If-Match or Idempotency-Key"),
         (status = 412, body = Settings, description = "Stale: the current settings"),
         (status = 428, body = Problem, description = "precondition_required"),
         (status = 409, body = Problem, description = "feeder_refused: final for this key; a later attempt needs a new key"),
@@ -133,6 +134,7 @@ pub(crate) async fn put_settings(
     request_body = LockRequest,
     responses(
         (status = 204),
+        (status = 400, body = Problem, description = "invalid: a malformed body or Idempotency-Key"),
         (status = 409, body = Problem, description = "feeder_refused: final for this key; a later attempt needs a new key"),
         (status = 503, body = Problem, description = "feeder_offline"),
         (status = 504, body = Problem, description = "outcome_unknown: retry with the same key"),

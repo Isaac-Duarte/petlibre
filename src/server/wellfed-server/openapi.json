@@ -277,6 +277,16 @@
         },
         "responses": {
           "204": {},
+          "400": {
+            "description": "invalid: a malformed body or Idempotency-Key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
           "409": {
             "description": "feeder_refused: final for this key; a later attempt needs a new key",
             "content": {
@@ -428,6 +438,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Settings"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid: a malformed body, If-Match or Idempotency-Key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
                 }
               }
             }

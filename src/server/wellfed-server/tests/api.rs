@@ -60,7 +60,21 @@ impl Api {
         body: Option<Value>,
         cookie: Option<&str>,
     ) -> (StatusCode, HeaderMap, Value) {
-        self.send(method, uri, body, cookie, Some(ORIGIN)).await
+        self.send(method, uri, body, cookie, Some(ORIGIN), None)
+            .await
+    }
+
+    /// [`Self::call`] with one more header.
+    async fn call_with(
+        &self,
+        method: Method,
+        uri: &str,
+        body: Option<Value>,
+        cookie: Option<&str>,
+        extra: (&str, &str),
+    ) -> (StatusCode, HeaderMap, Value) {
+        self.send(method, uri, body, cookie, Some(ORIGIN), Some(extra))
+            .await
     }
 
     async fn send(
@@ -70,6 +84,7 @@ impl Api {
         body: Option<Value>,
         cookie: Option<&str>,
         origin: Option<&str>,
+        extra: Option<(&str, &str)>,
     ) -> (StatusCode, HeaderMap, Value) {
         let mut request = Request::builder()
             .method(method)
@@ -80,6 +95,9 @@ impl Api {
         }
         if let Some(cookie) = cookie {
             request = request.header(header::COOKIE, cookie);
+        }
+        if let Some((name, value)) = extra {
+            request = request.header(name, value);
         }
         let request = match body {
             Some(body) => request
@@ -227,13 +245,20 @@ async fn a_write_from_another_origin_is_refused() {
     let api = Api::start().await;
     for origin in [None, Some("http://evil.example")] {
         let (status, _, problem) = api
-            .send(Method::POST, "/api/v1/setup", Some(ada()), None, origin)
+            .send(
+                Method::POST,
+                "/api/v1/setup",
+                Some(ada()),
+                None,
+                origin,
+                None,
+            )
             .await;
         assert_eq!(status, StatusCode::FORBIDDEN, "{origin:?}");
         assert_eq!(problem["code"], "cross_origin");
     }
     let (_, _, state) = api
-        .send(Method::GET, "/api/v1/setup", None, None, None)
+        .send(Method::GET, "/api/v1/setup", None, None, None, None)
         .await;
     assert_eq!(
         state,
@@ -329,4 +354,19 @@ async fn bad_requests_come_back_as_typed_problems() {
         )
         .await;
     assert_eq!(status, StatusCode::PRECONDITION_REQUIRED, "{problem}");
+
+    let (status, _, problem) = api
+        .call_with(
+            Method::POST,
+            &format!("{unknown}/lock"),
+            Some(json!({ "locked": true })),
+            me,
+            ("Idempotency-Key", "7"),
+        )
+        .await;
+    assert_eq!(
+        (status, problem["code"].as_str()),
+        (StatusCode::BAD_REQUEST, Some("invalid")),
+        "{problem}"
+    );
 }

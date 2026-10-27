@@ -8,7 +8,7 @@ use wellfed_core::record::{self, Event, Record as Line, Tag};
 use wellfed_core::store::seed::SeedStatus;
 use wellfed_device_api::clients::{Label, Role};
 use wellfed_device_api::mailbox::{SettingsFields, SettingsResult};
-use wellfed_feeder::stats::{EARLY_SAVES, SAVE_MS, Totals};
+use wellfed_feeder::stats::{EARLY_SAVES, RESTART_SETTLED_MS, SAVE_MS, Totals};
 use wellfed_feeder::store::clients::ClientStatus;
 use wellfed_feeder::store::events::Read;
 use wellfed_feeder::store::net::NetStatus;
@@ -1065,6 +1065,35 @@ fn an_intentional_restart_saves_in_its_grace() {
     let (_, _, save) = boot(&mut provider);
     assert_eq!(stats::totals().unwrap().counts.feeds, 2);
     assert_eq!(save, saved(3, 3));
+}
+
+/// With the budget spent, a restart once the boot has settled still saves
+/// its counts, neither taking a token nor giving one back.
+#[test]
+fn a_settled_restart_saves_with_the_budget_spent() {
+    let (_guard, _, mut provider) = start();
+    for _ in 1..=EARLY_SAVES {
+        boot(&mut provider);
+    }
+    let (mut writer, _, save) = boot(&mut provider);
+    assert_eq!(save, None, "no token left");
+
+    sdk::delay_ms(RESTART_SETTLED_MS);
+    stats::hand_counts(Counts {
+        feeds: 2,
+        ..Counts::default()
+    });
+    let asked = sdk::uptime_ms();
+    supervision::begin_restart_grace(asked);
+    assert_eq!(
+        step(&mut writer, &mut provider),
+        saved(u64::from(EARLY_SAVES) + 1, EARLY_SAVES)
+    );
+    assert!(supervision::restart_grace_over(asked), "flushed: at once");
+
+    let (_, _, save) = boot(&mut provider);
+    assert_eq!(stats::totals().unwrap().counts.feeds, 2);
+    assert_eq!(save, None, "still no token");
 }
 
 /// A restart's save held by a feed waits only through the grace; then the

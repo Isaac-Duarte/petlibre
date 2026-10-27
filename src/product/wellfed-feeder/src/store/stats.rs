@@ -18,7 +18,9 @@
 //! exists).
 //!
 //! **Early saves** are the one each boot makes as it starts, so its reset
-//! is counted even if it ends at once, and one at an intentional restart.
+//! is counted even if it ends at once, and one at an intentional restart
+//! within `RESTART_SETTLED_MS` of boot (a later restart's save is
+//! `SaveKind::Restart`, outside the budget).
 //! Each takes one of `EARLY_SAVES` tokens and each settled save (the
 //! hourly one) gives one back, so early saves never outnumber settled ones
 //! by more than `EARLY_SAVES`, which bounds the store's wear under any
@@ -41,7 +43,7 @@ use wellfed_core::store::slot::{
 };
 use wellfed_proto::api::{Counts, Resets};
 
-use crate::stats::{EARLY_SAVES, TOTAL_SECTORS, Totals};
+use crate::stats::{EARLY_SAVES, RESTART_SETTLED_MS, TOTAL_SECTORS, Totals};
 
 pub const VERSION: u16 = 1;
 /// The record's size: the totals, padded to a 4-byte program granule.
@@ -93,10 +95,28 @@ impl StatsStatus {
 /// gives one back.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SaveKind {
-    /// A boot's own as it starts, or an intentional restart's.
+    /// A boot's own as it starts, or an intentional restart's early in a
+    /// boot.
     Early,
     /// The timed one, every `SAVE_MS` of uptime.
     Settled,
+    /// An intentional restart's once the boot has run `RESTART_SETTLED_MS`:
+    /// it neither takes a token nor gives one back, so a spent budget never
+    /// costs an owner's restart its counts, and each such save has a
+    /// settled stretch of uptime behind it. Only [`SaveKind::restart`]
+    /// gives it, from the boot's uptime.
+    Restart,
+}
+
+impl SaveKind {
+    /// The kind of an intentional restart's save after `uptime_ms` of boot.
+    pub const fn restart(uptime_ms: u32) -> Self {
+        if uptime_ms >= RESTART_SETTLED_MS {
+            Self::Restart
+        } else {
+            Self::Early
+        }
+    }
 }
 
 /// The early tokens in use, and whether a save ever took the last
@@ -127,6 +147,7 @@ impl Budget {
                 early: self.early.saturating_sub(1),
                 missed: self.missed,
             },
+            SaveKind::Restart => self,
         }
     }
 }
@@ -321,7 +342,7 @@ impl<I: SlotIo> StatsStore<I> {
     /// Whether a save of `kind` may go ahead: a writable store, and for an
     /// early save, budget left.
     pub fn may_save(&self, kind: SaveKind) -> bool {
-        self.writable() && (kind == SaveKind::Settled || self.budget.allows_early())
+        self.writable() && (kind != SaveKind::Early || self.budget.allows_early())
     }
 
     /// Store `totals` to the other slot by the torn-write rule, spending or

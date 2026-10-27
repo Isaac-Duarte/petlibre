@@ -4,9 +4,9 @@
 //! written is not read, and the record's bytes are pinned.
 
 use wellfed_core::store::slot::crc32;
-use wellfed_feeder::stats::EARLY_SAVES;
+use wellfed_feeder::stats::{EARLY_SAVES, RESTART_SETTLED_MS};
 use wellfed_feeder::stats::{TOTAL_SECTORS, Totals};
-use wellfed_feeder::store::stats::SaveKind::{Early, Settled};
+use wellfed_feeder::store::stats::SaveKind::{self, Early, Restart, Settled};
 use wellfed_feeder::store::stats::{Budget, RECORD_BYTES, StatsStatus, StatsStore};
 use wellfed_proto::api::{Counts, ResetCause};
 use wellfed_testkit::journal_flash::{FakeJournalFlash, FlashIo};
@@ -99,6 +99,30 @@ fn early_saves_take_tokens_a_settled_save_gives_one_back() {
         assert!(r.save(&totals(22), Settled));
     }
     assert_eq!(r.budget.early, 0, "held at none in use");
+}
+
+/// A restart's save early in a boot spends a token like any early save;
+/// once the boot has run `RESTART_SETTLED_MS` it is outside the budget, so
+/// an owner's restart keeps its counts with the budget spent.
+#[test]
+fn a_settled_boots_restart_saves_with_the_budget_spent() {
+    assert_eq!(SaveKind::restart(RESTART_SETTLED_MS - 1), Early);
+    assert_eq!(SaveKind::restart(RESTART_SETTLED_MS), Restart);
+
+    let mut f = FakeJournalFlash::with_unit(512);
+    let mut s = open(&mut f);
+    for n in 1..=EARLY_SAVES {
+        assert!(s.save(&totals(u32::from(n)), Early));
+    }
+    let spent = s.budget;
+    assert!(!s.may_save(Early));
+
+    assert!(s.may_save(Restart));
+    assert!(s.save(&totals(30), Restart));
+    assert_eq!(s.budget, spent, "neither takes nor gives back a token");
+
+    let r = open(&mut f);
+    assert_eq!((r.budget, r.totals), (spent, totals(30)));
 }
 
 #[test]

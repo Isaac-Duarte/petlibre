@@ -74,7 +74,8 @@ struct Rig {
 }
 
 impl Rig {
-    fn new(sound: bool) -> Self {
+    /// Sound on, so a tune that should not play would.
+    fn new() -> Self {
         let serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         fake::reset_hardware();
         buttons::reset();
@@ -83,7 +84,7 @@ impl Rig {
         events::reset();
         settings::publish(SettingsView {
             lights: true,
-            sound,
+            sound: true,
             volume: 50,
             generation: 1,
             writable: true,
@@ -154,7 +155,7 @@ impl Rig {
 
 #[test]
 fn a_dispense_press_queues_one_portion_through_the_owner() {
-    let mut rig = Rig::new(true);
+    let mut rig = Rig::new();
     rig.press_dispense();
     assert!(rig.owner.submitted.is_empty(), "the panel starts locked");
 
@@ -178,7 +179,7 @@ fn a_dispense_press_queues_one_portion_through_the_owner() {
 
 #[test]
 fn a_press_obeys_readiness_and_a_lasting_reason_is_recorded() {
-    let mut rig = Rig::new(true);
+    let mut rig = Rig::new();
     rig.unlock();
     assert!(rig.logged("PLFEED1 readiness state=ready"));
 
@@ -216,6 +217,27 @@ fn a_press_obeys_readiness_and_a_lasting_reason_is_recorded() {
     assert_eq!(readiness, Readiness::Blocked(Blocked::Resolving));
 }
 
+#[test]
+fn a_client_feed_plays_no_tune() {
+    let mut rig = Rig::new();
+    let by = Source::Client([7; 4]);
+
+    let feed = rig.feeder.device(rig.now, &mut rig.owner).feed(1, by);
+    assert_eq!(feed, Ok(1));
+    assert_eq!(rig.owner.submitted, [(1, by)]);
+    for _ in 0..200 {
+        rig.pass();
+        fake::play_audio(2);
+    }
+
+    assert!(
+        !rig.lines.iter().any(|l| l.starts_with("PLAUD1")),
+        "a feed plays no tune: {:?}",
+        rig.lines
+    );
+    assert_eq!(audio::request(Tune::Coin), PlayResult::Started);
+}
+
 /// A feed's path while the speaker is busy with a requested tune: queued,
 /// cancelled through the device API, and its `Fed` event recorded, with the
 /// loop's delay never longer than its poll.
@@ -243,7 +265,7 @@ fn feed_despite_the_speaker(rig: &mut Rig) {
 
 #[test]
 fn a_playing_tune_keeps_playing_and_the_feed_goes_on() {
-    let mut rig = Rig::new(true);
+    let mut rig = Rig::new();
     assert_eq!(audio::request(Tune::Chime), PlayResult::Started);
 
     feed_despite_the_speaker(&mut rig);
@@ -267,7 +289,7 @@ fn a_playing_tune_keeps_playing_and_the_feed_goes_on() {
 
 #[test]
 fn a_codec_that_will_not_open_holds_up_nothing() {
-    let mut rig = Rig::new(true);
+    let mut rig = Rig::new();
     fake::with(|h| h.audio_open_fails = true);
     assert_eq!(audio::request(Tune::Coin), PlayResult::Started);
 
@@ -283,7 +305,7 @@ fn a_codec_that_will_not_open_holds_up_nothing() {
 
 #[test]
 fn a_stalled_ring_holds_up_nothing_and_still_ends() {
-    let mut rig = Rig::new(true);
+    let mut rig = Rig::new();
     assert_eq!(audio::request(Tune::Coin), PlayResult::Started);
 
     // The DMA never takes a page: the tune cannot finish.
@@ -304,7 +326,7 @@ fn a_stalled_ring_holds_up_nothing_and_still_ends() {
 /// logged, refused `Busy`, never a `FeedingBlocked` event.
 #[test]
 fn a_press_on_a_low_pack_is_refused_and_not_recorded_as_blocked() {
-    let mut rig = Rig::new(true);
+    let mut rig = Rig::new();
     rig.unlock();
     rig.owner.blocked = Some(Blocked::Battery);
     rig.press_dispense();
@@ -327,7 +349,7 @@ fn a_press_on_a_low_pack_is_refused_and_not_recorded_as_blocked() {
 /// loss a `Supply` event with the owner's verdict.
 #[test]
 fn the_adapter_leaving_is_a_supply_event_with_the_pack_reading() {
-    let mut rig = Rig::new(true);
+    let mut rig = Rig::new();
     power::reset();
     let mut monitor = Monitor::default();
     // A pack: 2117 mV at the pin with the default calibration, 4.37 V.

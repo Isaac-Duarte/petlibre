@@ -322,8 +322,9 @@ impl<S: Copy> Serve<S> {
             self.open_sockets(platform, now_ms, &mut record);
         }
         self.mdns(platform, now_ms);
+        let clock_ms = platform.clock_ms(now_ms);
         self.time
-            .step(platform, now_ms, ip, |r| record(Record::Time(r)));
+            .step(platform, clock_ms, ip, |r| record(Record::Time(r)));
         self.accept(platform, now_ms, &mut record);
         self.receive(platform, &mut record);
 

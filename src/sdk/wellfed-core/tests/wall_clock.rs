@@ -690,6 +690,43 @@ fn a_stale_or_corrupt_record_is_not_resumed() {
     assert_eq!(clock.read(3_000), None);
 }
 
+/// A version-1 record came from a build that ran the clock on the
+/// scheduler's tick, which flash erases stop: after a download it read 12 s
+/// behind while claiming 5.5 s, so a well-formed one is still refused.
+#[test]
+fn a_record_from_a_tick_counted_build_is_not_resumed() {
+    let mut clock = WallClock::default();
+    let mut old = saved();
+    assert_eq!(old[1] & 0xffff, 2, "the record's version");
+    old[1] = (old[1] & !0xffff) | 1;
+    let mut bytes = [0; (CARRY_WORDS - 1) * 4];
+    for (chunk, word) in bytes.as_chunks_mut::<4>().0.iter_mut().zip(old) {
+        *chunk = word.to_le_bytes();
+    }
+    old[CARRY_WORDS - 1] = wellfed_core::store::slot::crc32(&bytes);
+
+    assert_eq!(
+        clock.resume(3_000, &old, Some(1012), Restart::Warm),
+        Err(NoResume::Corrupt)
+    );
+    assert_eq!(clock.read(3_000), None);
+}
+
+/// Forgetting drops the time and the rate but keeps the zone's offsets.
+#[test]
+fn a_forgotten_clock_needs_the_time_and_keeps_its_offsets() {
+    let mut clock = WallClock::default();
+    clock.sync(0, sync(NOON), Origin::Owner).unwrap();
+
+    clock.forget();
+    assert_eq!(clock.read(1_000), None);
+    assert_eq!(clock.carry(1_000, 1000), None);
+
+    // The next fix of any origin sets it, as a first fix.
+    assert_eq!(clock.fix(2_000, ntp(NOON + 2_000, 20)), Ok(Jump::First));
+    assert_eq!(clock.read(2_000).unwrap().offset_s, Some(MDT));
+}
+
 #[test]
 fn a_record_too_close_to_expiry_is_not_resumed() {
     let mut clock = WallClock::default();

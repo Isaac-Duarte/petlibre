@@ -4,6 +4,17 @@
 //! and event stamps read it. One instance, copied in and out with
 //! interrupts masked.
 //!
+//! **Its milliseconds** come from the SysTimer ([`now_ms`]), not from the
+//! scheduler's tick: every flash lease stops SysTick with interrupts masked
+//! for the length of an erase (about 45 ms), so the tick count falls behind
+//! by each one, about 11 s across a full bank's download, while the clock
+//! would grow its error only by the rate bound over the shortened count.
+//! The SysTimer is a free-running 32 kHz counter that runs through masked
+//! interrupts. It is extended here at every clock access, which the loop
+//! makes every pass ([`keep`]); a read that finds it moved backwards or by
+//! half its range is a count that lost its place, and the clock forgets
+//! the time rather than project across it.
+//!
 //! **Across a warm reset** the clock is kept in `wellfed_time_carry`, RAM
 //! a watchdog or system reset leaves alone, stamped with the KM0 RTC's
 //! second: after every accepted fix and every few seconds from the loop
@@ -11,8 +22,7 @@
 //! finds a clock older than the last correction. The start hook resumes it
 //! once ([`resume`]); whatever it finds, it then stores this boot's own.
 
-use core::sync::atomic::{AtomicU32, Ordering};
-
+use wellfed_core::clock::tick::TickClock;
 use wellfed_core::clock::wall::{
     CARRY_WORDS, Fix, Jump, NoResume, Origin, Restart, State, Sync as ClockSync, SyncError,
     WallClock,
@@ -22,47 +32,87 @@ use wellfed_core::clock::zone::Rule;
 use crate::cell::TaskCell;
 use crate::sdk::{self, IrqGuard};
 use crate::startup;
+use crate::supervision::config::SYSTIMER_HZ;
+
+/// The clock, its millisecond count, and that count at the last store.
+struct Kept {
+    clock: WallClock,
+    count: TickClock,
+    kept_at: u32,
+}
 
 /// Every access is a short copy or update under `IrqGuard`.
-static CLOCK: TaskCell<WallClock> = TaskCell::new(WallClock::new());
+static CLOCK: TaskCell<Kept> = TaskCell::new(Kept {
+    clock: WallClock::new(),
+    count: TickClock::UNSET,
+    kept_at: 0,
+});
 
 /// How often the loop stores the clock: its error grows at the RTC's
 /// bound from the last store, 0.1 s over this.
 const KEEP_MS: u32 = 10_000;
-/// Uptime of the last store.
-static KEPT_AT: AtomicU32 = AtomicU32::new(0);
 
 const _: () = assert!(CARRY_WORDS == sdk::TIME_CARRY_WORDS);
 
-fn update<T>(change: impl FnOnce(&mut WallClock) -> T) -> T {
+/// Run `change` on the clock at its millisecond count now, with interrupts
+/// masked; it also gets the count at the last store.
+fn update<T>(change: impl FnOnce(&mut WallClock, u32, &mut u32) -> T) -> T {
     let _guard = IrqGuard::lock();
     // SAFETY: interrupts are masked, so this is the only reference.
-    change(unsafe { &mut *CLOCK.get() })
+    let kept = unsafe { &mut *CLOCK.get() };
+    let now = count(kept);
+    change(&mut kept.clock, now, &mut kept.kept_at)
+}
+
+/// The SysTimer extended to milliseconds. The first read starts the count
+/// at the tick count, so early records read close to uptime; a read the
+/// extension refuses starts it again from where it stood and forgets the
+/// time and the record a reset would resume, since how long the count was
+/// lost is unknown.
+fn count(kept: &mut Kept) -> u32 {
+    let raw = sdk::systimer_ticks();
+    if let Some(now) = kept.count.read(raw) {
+        return now;
+    }
+
+    let from = if kept.count.ticks_per_second == 0 {
+        sdk::uptime_ms()
+    } else {
+        kept.clock.forget();
+        sdk::time_carry_store(&[0; CARRY_WORDS]);
+        kept.count.millis
+    };
+    kept.count = TickClock::new(SYSTIMER_HZ, raw, from).unwrap_or_default();
+    from
+}
+
+/// The clock's millisecond count now. The NTP exchange times its round
+/// trip with it, so an erase during the exchange counts in its error.
+pub fn now_ms() -> u32 {
+    update(|_, now, _| now)
 }
 
 /// Adopt a client's sync, as `origin`, and log it as a `PLTIM1` record.
 pub fn sync(sync: ClockSync, origin: Origin) -> Result<Jump, SyncError> {
-    let now = sdk::uptime_ms();
     let rtc = rtc_seconds();
-    let result = update(|clock| {
+    let (result, now) = update(|clock, now, kept_at| {
         let result = clock.sync(now, sync, origin);
-        store(clock, now, rtc);
-        result
+        store(clock, now, rtc, kept_at);
+        (result, now)
     });
-    log(origin, result);
+    log(origin, result, now);
     result
 }
 
 /// Adopt an NTP fix measured now, and log it as a `PLTIM1` record.
 pub fn fix(fix: Fix) -> Result<Jump, SyncError> {
-    let now = sdk::uptime_ms();
     let rtc = rtc_seconds();
-    let result = update(|clock| {
+    let (result, now) = update(|clock, now, kept_at| {
         let result = clock.fix(now, fix);
-        store(clock, now, rtc);
-        result
+        store(clock, now, rtc, kept_at);
+        (result, now)
     });
-    log(fix.origin, result);
+    log(fix.origin, result, now);
     result
 }
 
@@ -71,24 +121,24 @@ pub fn fix(fix: Fix) -> Result<Jump, SyncError> {
 /// `PLTIM1 carry`. `restart` comes from the ROM's reset flags: only a
 /// watchdog or software reset kept the RTC's count.
 pub fn resume(restart: Restart) {
-    let now = sdk::uptime_ms();
     let record = sdk::time_carry_load();
     let rtc = rtc_seconds();
-    let result = update(|clock| {
+    let (result, now) = update(|clock, now, kept_at| {
         let result = clock.resume(now, &record, rtc, restart);
-        store(clock, now, rtc);
-        result
+        store(clock, now, rtc, kept_at);
+        (result, now)
     });
 
     let rtc = rtc.unwrap_or(u32::MAX);
+    let at = sdk::uptime_ms();
     let mut report = startup::Report::new();
     let line = match result {
         Ok(resumed) => report.record(format_args!(
-            "PLTIM1 carry result=resumed gap_s={} error_ms={} rtc_s={rtc} at_ms={now}\r\n",
+            "PLTIM1 carry result=resumed gap_s={} error_ms={} rtc_s={rtc} at_ms={at} count_ms={now}\r\n",
             resumed.gap_s, resumed.error_ms
         )),
         Err(why) => report.record(format_args!(
-            "PLTIM1 carry result={} rtc_s={rtc} at_ms={now}\r\n",
+            "PLTIM1 carry result={} rtc_s={rtc} at_ms={at} count_ms={now}\r\n",
             no_resume_name(why)
         )),
     };
@@ -97,23 +147,24 @@ pub fn resume(restart: Restart) {
     }
 }
 
-/// Store the clock for a warm reset if the last store is `KEEP_MS` old;
-/// the loop calls it every pass.
+/// Store the clock for a warm reset if the last store is `KEEP_MS` old.
+/// The loop calls it every pass, which also keeps the SysTimer's extension
+/// read well inside its half range (about 18 h).
 pub fn keep() {
-    let now = sdk::uptime_ms();
-    if now.wrapping_sub(KEPT_AT.load(Ordering::Relaxed)) < KEEP_MS {
+    let due = update(|_, now, kept_at| now.wrapping_sub(*kept_at) >= KEEP_MS);
+    if !due {
         return;
     }
     let rtc = rtc_seconds();
-    update(|clock| store(clock, now, rtc));
+    update(|clock, now, kept_at| store(clock, now, rtc, kept_at));
 }
 
-/// Store the clock at uptime `now` and RTC second `rtc`, or clear the
+/// Store the clock at count `now` and RTC second `rtc`, or clear the
 /// record while it is invalid or the RTC unreadable.
-fn store(clock: &WallClock, now: u32, rtc: Option<u32>) {
+fn store(clock: &WallClock, now: u32, rtc: Option<u32>, kept_at: &mut u32) {
     let record = rtc.and_then(|rtc| clock.carry(now, rtc));
     sdk::time_carry_store(&record.unwrap_or([0; CARRY_WORDS]));
-    KEPT_AT.store(now, Ordering::Relaxed);
+    *kept_at = now;
 }
 
 /// The KM0 RTC's count now, in seconds; `None` if two reads in a row never
@@ -167,7 +218,9 @@ const fn no_resume_name(why: NoResume) -> &'static str {
     }
 }
 
-fn log(origin: Origin, result: Result<Jump, SyncError>) {
+/// `at_ms` is uptime, as in every record; `count_ms` is the clock's own
+/// count, which runs ahead of it by the ticks flash erases stopped.
+fn log(origin: Origin, result: Result<Jump, SyncError>, count_ms: u32) {
     let now = sdk::uptime_ms();
     let error_ms = state().reading.map_or(0, |reading| reading.error_ms);
     let mut report = startup::Report::new();
@@ -179,7 +232,7 @@ fn log(origin: Origin, result: Result<Jump, SyncError>) {
                 Jump::Jumped(delta) => ("jump", delta),
             };
             report.record(format_args!(
-                "PLTIM1 sync ok=1 source={} kind={kind} delta_ms={delta} error_ms={error_ms} at_ms={now}\r\n",
+                "PLTIM1 sync ok=1 source={} kind={kind} delta_ms={delta} error_ms={error_ms} at_ms={now} count_ms={count_ms}\r\n",
                 origin_name(origin)
             ))
         }
@@ -214,14 +267,13 @@ fn name(error: SyncError) -> &'static str {
 
 /// Set or clear the zone's rule.
 pub fn set_rule(rule: Option<Rule>) {
-    update(|clock| clock.set_rule(rule));
+    update(|clock, _, _| clock.set_rule(rule));
 }
 
 /// The clock's state now: its reading (`None` while invalid), the learned
-/// rate and the last fix.
+/// rate and the last fix (at the clock's count, not uptime).
 pub fn state() -> State {
-    let now = sdk::uptime_ms();
-    let clock = update(|clock| *clock);
+    let (clock, now) = update(|clock, now, _| (*clock, now));
     clock.state(now)
 }
 
@@ -240,8 +292,15 @@ pub fn log_rtc() {
     }
 }
 
-/// Forget every sync (host tests).
+/// Forget every sync and the count, as a reset does (host tests).
 #[cfg(not(target_os = "none"))]
 pub fn reset() {
-    update(|clock| *clock = WallClock::new());
+    let _guard = IrqGuard::lock();
+    // SAFETY: interrupts are masked, so this is the only reference.
+    let kept = unsafe { &mut *CLOCK.get() };
+    *kept = Kept {
+        clock: WallClock::new(),
+        count: TickClock::UNSET,
+        kept_at: 0,
+    };
 }

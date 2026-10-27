@@ -2,9 +2,17 @@
 //!
 //! The feeder has no battery-backed clock, so after a power-on the wall
 //! clock is invalid until a fix arrives: a sync from a client's session, or
-//! an NTP answer. Between fixes the time is carried by uptime, corrected by
-//! the uptime clock's learned rate. Across a warm reset it is carried by
-//! the always-on RTC instead ([`WallClock::carry`], [`WallClock::resume`]).
+//! an NTP answer. Between fixes the time is carried by a millisecond count
+//! the caller supplies (`now`, called uptime here), corrected by its
+//! learned rate. Across a warm reset it is carried by the always-on RTC
+//! instead ([`WallClock::carry`], [`WallClock::resume`]).
+//!
+//! **The count must not stop.** Every bound below assumes `now` advanced
+//! by the true elapsed time within its rate bound. A count that skips while
+//! interrupts are masked (the scheduler's tick, which every flash erase
+//! stops for about 45 ms) runs behind by every skip with no error to show
+//! for it, so the caller derives `now` from a counter that runs through
+//! them, and forgets the clock ([`WallClock::forget`]) when it cannot.
 //!
 //! **The trusted interval.** The clock keeps an anchor that only a trusted
 //! fix sets: an owner's sync, or any fix while the clock is invalid (the
@@ -63,11 +71,13 @@ pub const MAX_UNIX_MS: u64 = 4_102_444_800_000;
 /// UTC offsets run from -12 h to +14 h.
 pub const MIN_OFFSET_S: i32 = -12 * 3600;
 pub const MAX_OFFSET_S: i32 = 14 * 3600;
-/// The rate bound before one is learned. The uptime clock has been
+/// The rate bound before one is learned. The scheduler's tick has been
 /// measured 735 ppm slow (two 10-minute resyncs) and 2,060 ppm slow (one
-/// 17-minute NTP poll, four days later, another build); this is more than
-/// twice the worst. The cost is the validity window, `MAX_ERROR_MS` over
-/// the bound: about 6.6 h after a trusted fix.
+/// 17-minute NTP poll, four days later, another build), and those include
+/// whatever ticks flash erases stopped; the SysTimer the firmware now
+/// counts with measured about 475 ppm slow. This is more than twice the
+/// worst. The cost is the validity window, `MAX_ERROR_MS` over the bound:
+/// about 6.6 h after a trusted fix.
 pub const UNLEARNED_PPM: u32 = 5000;
 /// The least rate bound once learned. The same unit's rate moved 1,325 ppm
 /// between two measurements, so a learned correction is not trusted any
@@ -439,12 +449,21 @@ impl WallClock {
     fn missed(&mut self) {
         self.disjoint = self.disjoint.saturating_add(1);
         if self.disjoint >= DISJOINT_LIMIT {
-            self.trust = None;
-            self.centre = None;
-            self.forget_rate();
-            self.base = None;
-            self.disjoint = 0;
+            self.forget();
         }
+    }
+
+    /// Forget the time, its anchor and the learned rate, so the clock reads
+    /// invalid and needs the time from any source; the zone rule and a
+    /// client's offsets stay. For an anchor that can no longer be trusted,
+    /// and for a millisecond count that lost its place, across which no
+    /// projection holds.
+    pub fn forget(&mut self) {
+        self.trust = None;
+        self.centre = None;
+        self.forget_rate();
+        self.base = None;
+        self.disjoint = 0;
     }
 
     fn trusted(&mut self, point: Anchor) {
@@ -696,7 +715,11 @@ struct Carry {
 
 /// `PLTC`.
 const CARRY_MAGIC: u32 = 0x4354_4c50;
-const CARRY_VERSION: u32 = 1;
+/// Version 1 was written by builds that ran the clock on the scheduler's
+/// tick, which stops through every flash erase: a version-1 record saved
+/// after erases is behind by them while claiming its old error, so it is
+/// read as `Corrupt` rather than trusted.
+const CARRY_VERSION: u32 = 2;
 const CARRY_HINT: u32 = 1 << 16;
 
 impl Carry {

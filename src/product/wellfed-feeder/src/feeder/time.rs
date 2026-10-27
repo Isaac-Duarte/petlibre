@@ -118,7 +118,10 @@ impl<S: Copy> Time<S> {
         self.last
     }
 
-    /// One pass.
+    /// One pass, at `now_ms` on the clock's own count
+    /// ([`Platform::clock_ms`]): an answer's error is half the round trip
+    /// measured on it, which a count that stopped during the exchange
+    /// would understate.
     pub fn step<P: Platform<Socket = S>>(
         &mut self,
         platform: &mut P,

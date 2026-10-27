@@ -318,7 +318,12 @@ impl Platform for Plaf103 {
         wellfed_sdk::log_tail(after, text)
     }
 
-    /// The clock reads its own uptime.
+    /// The SysTimer's count, which flash erases do not stop.
+    fn clock_ms(&mut self, _now_ms: u32) -> u32 {
+        clock::now_ms()
+    }
+
+    /// The clock reads its own count.
     fn wall_ms(&mut self, _now_ms: u32) -> Option<u64> {
         clock::state().reading.map(|reading| reading.unix_ms)
     }

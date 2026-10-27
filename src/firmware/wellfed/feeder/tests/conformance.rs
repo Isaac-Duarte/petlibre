@@ -202,6 +202,48 @@ fn the_loop_asks_the_gateway_and_an_answer_sets_the_clock() {
     assert_eq!(reading.offset_s, None, "no zone, no client sync");
 }
 
+/// A flash erase while the request is out stops the scheduler's tick, not
+/// the clock's count: the round trip the answer is weighed with includes
+/// it, so the clock's error covers the true time. Timed on the tick, the
+/// round trip read 20 ms and the fix landed 200 ms early claiming 18.
+#[test]
+fn an_erase_during_the_exchange_counts_in_the_answer_error() {
+    use wellfed_core::clock::ntp;
+    use wellfed_feeder::feeder::NoFeeds;
+
+    let mut rig = FirmwareRig::start();
+    let gateway = u32::from_be_bytes([10, 42, 103, 1]);
+    fake::with(|h| {
+        h.ipv4 = u32::from_be_bytes([10, 42, 103, 172]);
+        h.gateway = gateway;
+        h.uptime_ms = 10_000;
+        h.raw_ticks = 10 * 32_768;
+    });
+    rig.feeder.pass(10_000, &mut NoFeeds, |_| {});
+    let sent = fake::with(|h| core::mem::take(&mut h.udp_tx));
+    let [(request, _, _)] = sent.as_slice() else {
+        panic!("one request: {sent:?}");
+    };
+
+    // The server answers 210 ms after the request (true time) and the
+    // answer is read 420 ms after it, 400 ms of which a lease masked.
+    let served = 1_792_674_000_000;
+    let answer = ntp::serve(request, served, served, 2, 5).unwrap();
+    fake::with(|h| {
+        h.udp_rx.push_back((answer.to_vec(), gateway, 123));
+        h.uptime_ms += 20;
+        h.raw_ticks += 420 * 32_768 / 1000;
+    });
+    rig.feeder.pass(10_020, &mut NoFeeds, |_| {});
+
+    let reading = clock::state().reading.expect("the clock is set");
+    let truth = served + 210;
+    assert!(
+        reading.unix_ms.abs_diff(truth) <= reading.error_ms,
+        "{reading:?} against {truth}"
+    );
+}
+
 /// A server that denies the feeder is not asked again for a day, though
 /// the clock, never set, needs the time on every pass.
 #[test]
@@ -227,14 +269,21 @@ fn a_denying_server_is_left_alone_while_the_clock_needs_the_time() {
     fake::with(|h| h.udp_rx.push_back((deny.to_vec(), gateway, 123)));
 
     // A pass every 20 ms for 100 s, then one every minute to the day's end.
+    // The exchange runs on the clock's count, the SysTimer: it moves too.
+    let at = |now: u32| {
+        fake::with(|h| {
+            h.uptime_ms = now;
+            h.raw_ticks = u32::try_from(u64::from(now) * 32_768 / 1000).unwrap();
+        });
+    };
     let mut now = 10_020u32;
     while now < 110_000 {
-        fake::with(|h| h.uptime_ms = now);
+        at(now);
         rig.feeder.pass(now, &mut NoFeeds, |_| {});
         now += 20;
     }
     while now < 10_000 + ntp::DENIED_MS - 60_000 {
-        fake::with(|h| h.uptime_ms = now);
+        at(now);
         rig.feeder.pass(now, &mut NoFeeds, |_| {});
         now += 60_000;
     }

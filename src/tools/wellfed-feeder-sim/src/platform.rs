@@ -769,6 +769,11 @@ impl Platform for SimPlatform {
         self.log.read(after, text)
     }
 
+    /// The simulated uptime never stops.
+    fn clock_ms(&mut self, now_ms: u32) -> u32 {
+        now_ms
+    }
+
     fn wall_ms(&mut self, now_ms: u32) -> Option<u64> {
         self.clock.read(now_ms).map(|reading| reading.unix_ms)
     }

@@ -333,6 +333,11 @@ pub trait Platform {
 
     // ---- The wall clock.
 
+    /// The clock's own millisecond count, at the loop's `now_ms`: one that
+    /// keeps counting while interrupts are masked, where the loop's may
+    /// not. The NTP exchange runs on it, so a flash erase during an
+    /// exchange lengthens the round trip, and the error, it measures.
+    fn clock_ms(&mut self, now_ms: u32) -> u32;
     /// Unix milliseconds now, while the clock is valid.
     fn wall_ms(&mut self, now_ms: u32) -> Option<u64>;
     /// Check and adopt a sync from a client; `origin` says whether it may

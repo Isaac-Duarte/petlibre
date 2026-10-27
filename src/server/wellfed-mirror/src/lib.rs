@@ -204,8 +204,6 @@ impl Shared {
 pub struct Mirror {
     shared: Arc<Shared>,
     feeders: Arc<Mutex<HashMap<FeederId, task::Handle>>>,
-    /// Each followed debug log, by feeder: one tail at a time.
-    logs: Arc<tokio::sync::Mutex<HashMap<FeederId, log::Tail>>>,
     cancel: CancellationToken,
     tasks: TaskTracker,
 }
@@ -235,7 +233,6 @@ impl Mirror {
                 zone: watch::Sender::new(None),
             }),
             feeders: Arc::new(Mutex::new(HashMap::new())),
-            logs: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             cancel,
             tasks: TaskTracker::new(),
         }

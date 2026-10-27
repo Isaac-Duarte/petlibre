@@ -9,12 +9,14 @@ mod support;
 use std::time::Duration;
 
 use jiff::Timestamp;
-use wellfed_api::{ClientRole, FeederRefusal, StatsSection};
+use wellfed_api::{ClientRole, Connection as Link, FeederRefusal, StatsSection};
 use wellfed_mirror::{Diagnostics, Feeder, LogError, Mirror};
-use wellfed_model::{Answer, Op, Refusal, Trace, TraceEntry, TraceMotor};
-use wellfed_server_testkit::feeder::{self, Flash};
+use wellfed_model::{Answer, LogLines, Op, Refusal, Trace, TraceEntry, TraceMotor};
+use wellfed_server_testkit::feeder::{self, Flash, Relay};
 use wellfed_server_testkit::{TempStore, WAIT, local, until};
 use wellfed_store::{Store, TraceFound};
+use tokio::sync::broadcast::Receiver;
+use tokio::sync::broadcast::error::RecvError;
 
 use support::{ID, SECRET, mirrored, mirrored_as, mirrored_with};
 
@@ -60,11 +62,24 @@ fn each_feeds_trace_is_fetched_after_its_fed_event() {
         let (mirror, _updates) =
             mirrored_with(&store, &sim, &address, WAIT, ClientRole::Server, READ).await;
         let summary = feeder::store_trace(&flash, 1);
+        let food_reads = || async {
+            let (from, to) = (Timestamp::UNIX_EPOCH, Timestamp::MAX);
+            store.food_readings(ID, from, to).await.unwrap().len()
+        };
+        until("the connect's statistics are read", || async {
+            food_reads().await == 1
+        })
+        .await;
 
         assert_eq!(feed(&mirror, 1).await, 1);
         let TraceFound::Trace(raw) = traced(&store, 1).await else {
             panic!("the feeder had the trace");
         };
+        assert_eq!(
+            food_reads().await,
+            2,
+            "the food section is read again after each feed, ahead of its trace"
+        );
         assert_eq!(raw.summary, summary);
         assert!(raw.stored, "the simulator serves its ring");
         let trace = Trace::decode(raw.summary, raw.stored, &raw.body).unwrap();
@@ -262,6 +277,63 @@ fn the_debug_log_is_refused_to_a_key_that_is_not_an_owners() {
             "{refused:?}"
         );
         assert_eq!(sessions(&mirror).await, 1, "the refused session is closed");
+
+        mirror.shutdown().await;
+        store.close().await;
+        sim.stop().await;
+    });
+}
+
+/// Read `log` until it closes, as a follower's stream would end.
+async fn ends(mut log: Receiver<LogLines>, what: &str) {
+    let ended = tokio::time::timeout(WAIT, async {
+        loop {
+            match log.recv().await {
+                Ok(_) | Err(RecvError::Lagged(_)) => {}
+                Err(RecvError::Closed) => return,
+            }
+        }
+    });
+    assert!(ended.await.is_ok(), "{what}: the follower's log ends");
+}
+
+/// The first batch a follower gets.
+async fn first_batch(log: &mut Receiver<LogLines>) {
+    tokio::time::timeout(WAIT, log.recv())
+        .await
+        .expect("a batch in time")
+        .expect("the tail is open");
+}
+
+#[test]
+fn a_followers_log_ends_when_its_tail_does() {
+    local(async {
+        let temp = TempStore::new();
+        let store = temp.open().await;
+        let sim = feeder::start().await;
+        let relay = Relay::start(sim.address).await;
+        let address = relay.address.to_string();
+        let (mirror, _updates) = mirrored_as(&store, &sim, &address, WAIT, ClientRole::Owner).await;
+
+        // The feeder drops the tail's session.
+        let mut log = mirror.follow_log(ID).await.unwrap();
+        first_batch(&mut log).await;
+        relay.cut();
+        ends(log, "a cut session").await;
+
+        // A follower after it starts another tail.
+        until("the mirror is back", || async {
+            mirror.link(ID) == Some(Link::Online)
+        })
+        .await;
+        let mut log = mirror.follow_log(ID).await.unwrap();
+        first_batch(&mut log).await;
+        let joined = mirror.follow_log(ID).await.unwrap();
+
+        // The feeder's task stops.
+        assert!(mirror.stop(ID).await);
+        ends(log, "a stopped feeder").await;
+        ends(joined, "a joined follower").await;
 
         mirror.shutdown().await;
         store.close().await;

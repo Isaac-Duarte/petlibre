@@ -10,8 +10,18 @@
 //! or when the feeder drops it; a follower then sees its log end and
 //! follows again. Nothing of the log is stored, and a follower who joins
 //! a running tail gets the lines from then on.
+//!
+//! The feeder serves four sessions at once, so a followed log takes one
+//! from the CLI, the phones and the server's own. The server's own goes
+//! first: when the feeder task finds every session taken as it
+//! reconnects, it ends the tail and tries again.
+//!
+//! The tail's task owns the only strong sender of its lines; the feeder's
+//! handle keeps a weak one. So when the task ends, for whatever reason,
+//! every follower's receiver closes, and a follower who comes after finds
+//! no tail to join and starts another.
 
-use std::sync::Arc;
+use std::sync::{Arc, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use wellfed_api::{Connection as Link, FeederId};
@@ -19,7 +29,6 @@ use wellfed_connect::Connection;
 use wellfed_model::{Answer, LogLines, Op, Pushed};
 use wellfed_session::noise::Keypair;
 use tokio::sync::{broadcast, oneshot};
-use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, debug, info, info_span};
 
@@ -33,10 +42,19 @@ const BATCHES: usize = 64;
 /// the feeder logs nothing meanwhile.
 const FOLLOWERS: Duration = Duration::from_secs(1);
 
-/// A running tail of one feeder's log.
-pub(crate) struct Tail {
-    lines: broadcast::Sender<LogLines>,
-    task: JoinHandle<()>,
+/// A feeder's running tail as its handle keeps it: the weak sender of its
+/// lines, under the lock a first follower holds while the tail's session
+/// opens, so one feeder's followers take turns and no other feeder's wait.
+pub(crate) type Slot = Arc<tokio::sync::Mutex<Option<broadcast::WeakSender<LogLines>>>>;
+
+/// What ends a feeder's running tail early: its feeder task cancels it to
+/// take back the session.
+pub(crate) type Stop = Arc<std::sync::Mutex<Option<CancellationToken>>>;
+
+/// The running tail's stop, if any. Insertions are whole, so a poisoned
+/// lock still holds a consistent value.
+pub(crate) fn stop(stop: &Stop) -> MutexGuard<'_, Option<CancellationToken>> {
+    stop.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 /// Where a tail's session goes, and what ends it.
@@ -57,43 +75,50 @@ impl Mirror {
         &self,
         id: FeederId,
     ) -> Result<broadcast::Receiver<LogLines>, LogError> {
-        let mut logs = self.logs.lock().await;
-        if let Some(tail) = logs.get(&id)
-            && !tail.task.is_finished()
-        {
-            return Ok(tail.lines.subscribe());
-        }
-
-        let target = {
+        let (slot, stops, target) = {
             let handles = self.handles();
             let handle = handles.get(&id).ok_or(LogError::NotRunning)?;
             if handle.link() != Link::Online {
                 return Err(LogError::Offline);
             }
-            Target {
+            let target = Target {
                 id,
                 identity: handle.identity,
                 keys: handle.keys.clone(),
                 address: handle.address.borrow().clone(),
                 cancel: handle.cancel.child_token(),
-            }
+            };
+            (
+                Arc::clone(&handle.log),
+                Arc::clone(&handle.log_stop),
+                target,
+            )
         };
+
+        let mut slot = slot.lock().await;
+        if let Some(lines) = slot.as_ref().and_then(broadcast::WeakSender::upgrade) {
+            return Ok(lines.subscribe());
+        }
+
         let (lines, follower) = broadcast::channel(BATCHES);
+        let weak = lines.downgrade();
         let (started, start) = oneshot::channel();
+        stop(&stops).replace(target.cancel.clone());
         let span = info_span!(parent: None, "feeder", id = %id);
-        let task = self
-            .tasks
-            .spawn(tail(Arc::clone(&self.shared), target, lines.clone(), started).instrument(span));
+        self.tasks
+            .spawn(tail(Arc::clone(&self.shared), target, lines, started).instrument(span));
         start.await.map_err(|_| LogError::Unanswered)??;
 
-        logs.insert(id, Tail { lines, task });
+        *slot = Some(weak);
         Ok(follower)
     }
 }
 
 /// Open the tail's session and ask for the log, telling `started` how
 /// that went; then forward each batch until nobody follows, the feeder's
-/// task stops, or the session ends.
+/// task stops or takes the session back, or the session ends. `lines` is
+/// the only strong sender, so every follower's receiver closes as this
+/// returns.
 async fn tail(
     shared: Arc<Shared>,
     target: Target,

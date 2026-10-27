@@ -12,7 +12,10 @@
 //!   next look. Reads change nothing on the feeder, so asking again is
 //!   always safe.
 //! - **Statistics.** Every section the session's capabilities allow, at
-//!   each connect and then every [`Diagnostics::Read`]'s `stats_every`. A
+//!   each connect and then every [`Diagnostics::Read`]'s `stats_every`, and
+//!   the food section alone after each `Fed` event, ahead of its trace: the
+//!   food beam reaches the server only through it, so an emptied or
+//!   refilled hopper shows one feed late at most, not one period. A
 //!   section the feeder refuses (memory is an owner's, and busy during a
 //!   feed) keeps its last read.
 //!
@@ -52,6 +55,15 @@ const REREADS: usize = 2;
 struct Due {
     traces: bool,
     stats: bool,
+    /// The food section alone.
+    food: bool,
+}
+
+/// Which statistics sections a round reads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Round {
+    Every,
+    Food,
 }
 
 pub(crate) struct Collector {
@@ -70,7 +82,7 @@ impl Collector {
         let mut next_stats = Instant::now() + self.stats_every;
         loop {
             let online = *self.long.link.borrow() == Link::Online;
-            if online && (due.traces || due.stats) {
+            if online && (due.traces || due.stats || due.food) {
                 let work = std::mem::take(&mut due);
                 let cancel = self.cancel.clone();
                 tokio::select! {
@@ -87,10 +99,11 @@ impl Collector {
                     Ok(MirrorEvent::Event(event)) => {
                         if matches!(event.body, EventBody::Fed { .. }) {
                             due.traces = true;
+                            due.food = true;
                         }
                     }
                     Ok(MirrorEvent::Link(Link::Online)) => {
-                        due = Due { traces: true, stats: true };
+                        due = Due { traces: true, stats: true, food: false };
                     }
                     Ok(_) => {}
                     // A `Fed` event may be among those missed; the store
@@ -100,7 +113,7 @@ impl Collector {
                 },
                 () = tokio::time::sleep_until(next_stats) => {
                     next_stats = Instant::now() + self.stats_every;
-                    due = Due { traces: true, stats: true };
+                    due = Due { traces: true, stats: true, food: false };
                 }
             }
         }
@@ -111,13 +124,16 @@ impl Collector {
             return;
         };
         let capabilities = opened.capabilities;
+        if due.food && !due.stats && capabilities.stats {
+            self.stats(opened, Round::Food).await;
+        }
         // A feeder serves traces only beside the statistics, and one from
         // before either would end the session on an op it does not know.
         if due.traces && capabilities.stats && capabilities.traces {
             self.traces(opened.epoch).await;
         }
         if due.stats && capabilities.stats {
-            self.stats(opened).await;
+            self.stats(opened, Round::Every).await;
         }
     }
 
@@ -215,12 +231,13 @@ impl Collector {
         Ok(None)
     }
 
-    /// Read and store every section the session serves, one round on one
+    /// Read and store the round's sections the session serves, on one
     /// turn.
-    async fn stats(&self, opened: Opened) {
+    async fn stats(&self, opened: Opened, round: Round) {
         let capabilities = opened.capabilities;
         let sections = StatsSection::ALL
             .into_iter()
+            .filter(|section| round == Round::Every || *section == StatsSection::Food)
             .filter(|section| match section {
                 StatsSection::Feeds => capabilities.traces,
                 StatsSection::Portions => capabilities.calibration,

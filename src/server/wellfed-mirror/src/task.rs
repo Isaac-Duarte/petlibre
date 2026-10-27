@@ -20,7 +20,9 @@ use crate::collect::Collector;
 use crate::command::Command;
 use crate::ingest::Batch;
 use crate::session::End;
-use crate::{ConnectError, Diagnostics, Feeder, MirrorEvent, Shared, Unreachable, Zone, connect};
+use crate::{
+    ConnectError, Diagnostics, Feeder, MirrorEvent, Shared, Unreachable, Zone, connect, log,
+};
 
 /// Commands waiting for the task; more wait in `send`.
 const COMMANDS: usize = 16;
@@ -42,6 +44,9 @@ pub(crate) struct Handle {
     pub(crate) keys: Keypair,
     /// Where the task last reached the feeder.
     pub(crate) address: watch::Receiver<Option<String>>,
+    /// The debug log's running tail, and what ends it.
+    pub(crate) log: log::Slot,
+    pub(crate) log_stop: log::Stop,
     updates: broadcast::Sender<MirrorEvent>,
     pub(crate) cancel: CancellationToken,
     task: JoinHandle<()>,
@@ -106,6 +111,7 @@ pub(crate) fn spawn(
     let (opened, opens) = watch::channel(None);
     let (address, addresses) = watch::channel(feeder.address.clone());
     let keys = Keypair::from_secret(feeder.secret);
+    let log_stop = log::Stop::default();
     let long = LongLane {
         steps,
         link: watching.clone(),
@@ -131,6 +137,7 @@ pub(crate) fn spawn(
         keys: keys.clone(),
         address: feeder.address,
         reached: address,
+        log_stop: Arc::clone(&log_stop),
         commands: receiver,
         steps: step_receiver,
         link,
@@ -156,6 +163,8 @@ pub(crate) fn spawn(
         identity: feeder.identity,
         keys,
         address: addresses,
+        log: log::Slot::default(),
+        log_stop,
         updates,
         cancel,
         task,
@@ -171,6 +180,9 @@ pub(crate) struct Task {
     address: Option<String>,
     /// Where the feeder was last reached, for the debug log's session.
     reached: watch::Sender<Option<String>>,
+    /// Ends the debug log's tail when the feeder has no session left for
+    /// this task's.
+    log_stop: log::Stop,
     pub(crate) commands: mpsc::Receiver<Command>,
     pub(crate) steps: mpsc::Receiver<Command>,
     /// The household's zone, watched for changes while a session is open.
@@ -224,6 +236,17 @@ impl Task {
                 ))) => {
                     warn!("the feeder no longer knows this server's key");
                     Link::Refused
+                }
+                Err(ConnectError::Unreachable(Unreachable(wellfed_connect::Error::Full))) => {
+                    // A followed log holds one of the feeder's sessions:
+                    // the mirror's own goes first.
+                    if let Some(tail) = log::stop(&self.log_stop).take() {
+                        info!("every session of the feeder is taken: ending the debug log's");
+                        tail.cancel();
+                    } else {
+                        debug!("connect failed: every session of the feeder is taken");
+                    }
+                    Link::Offline
                 }
                 Err(error) => {
                     debug!("connect failed: {error}");

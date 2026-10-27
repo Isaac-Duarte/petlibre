@@ -10,9 +10,10 @@
 //!    another, so it follows DST on its own;
 //! 4. read its status and settings into the store's cache.
 //!
-//! Then it serves commands, events and samples until the session ends, and
-//! sets the clock and checks the rule again every [`Timing::time_sync`] and
-//! whenever the household's zone changes. A feeder offline at the change
+//! Then it serves commands on their lanes ([`crate::lanes`]), events and
+//! samples until the session ends, and sets the clock and checks the rule
+//! again every [`Timing::time_sync`] and whenever the household's zone
+//! changes. A feeder offline at the change
 //! gets the new zone in its next connect sequence. The feeder shows online
 //! only once the connect sequence is done, so no command waits behind it.
 //!
@@ -22,12 +23,13 @@ use std::time::Duration;
 
 use jiff::tz::TimeZone;
 use wellfed_api::Connection as Link;
-use wellfed_connect::{Connection, Cursor, Resume};
+use wellfed_connect::{Connection, Cursor, Received, Resume};
 use wellfed_model::{Answer, Op, Refusal, TimeChanges};
 use tokio::time::Instant;
 use tracing::{debug, info, warn};
 
 use crate::RandomFailed;
+use crate::lanes::{Lane, Lanes};
 use crate::task::Task;
 
 /// How long the task waits on a quiet feeder before looking again; the
@@ -66,13 +68,21 @@ impl From<RandomFailed> for End {
 }
 
 impl Task {
-    /// Serve one open session until it ends.
+    /// Serve one open session until it ends. Whatever ends it, each
+    /// command still in flight is unknown.
     pub(crate) async fn serve(&mut self, mut connection: Connection) -> End {
+        let mut lanes = Lanes::default();
+        let end = self.serve_lanes(&mut connection, &mut lanes).await;
+        lanes.lost();
+        end
+    }
+
+    async fn serve_lanes(&mut self, connection: &mut Connection, lanes: &mut Lanes) -> End {
         let cancel = self.cancel.clone();
         let started = tokio::select! {
             biased;
             () = cancel.cancelled() => Err(End::Cancelled),
-            started = self.start(&mut connection) => started,
+            started = self.start(connection, lanes) => started,
         };
         if let Err(end) = started {
             return end;
@@ -85,30 +95,33 @@ impl Task {
         // simply stops changing.
         let mut zone_open = true;
         loop {
+            let short_free = lanes.short_free();
+            let long_free = lanes.long_free(!self.commands.is_empty());
             let step = tokio::select! {
                 biased;
                 () = self.cancel.cancelled() => Err(End::Cancelled),
-                command = self.commands.recv() => match command {
-                    Some(command) => tokio::select! {
-                        biased;
-                        () = self.cancel.cancelled() => Err(End::Cancelled),
-                        step = command.run(&mut connection) => step,
-                    },
+                command = self.commands.recv(), if short_free => match command {
+                    Some(command) => lanes.dispatch(Lane::Short, command, connection),
+                    None => Err(End::Cancelled),
+                },
+                step = self.steps.recv(), if long_free => match step {
+                    Some(step) => lanes.dispatch(Lane::Long, step, connection),
                     None => Err(End::Cancelled),
                 },
                 () = tokio::time::sleep_until(next_sync) => {
                     next_sync += every;
-                    self.keep_time(&mut connection).await
+                    self.keep_time(connection, lanes).await
                 }
                 changed = self.zone.changed(), if zone_open => match changed {
-                    Ok(()) => self.keep_time(&mut connection).await,
+                    Ok(()) => self.keep_time(connection, lanes).await,
                     Err(_) => {
                         zone_open = false;
                         Ok(())
                     }
                 },
-                message = connection.next(QUIET) => match message {
-                    Ok(pushed) => self.apply(pushed).await,
+                received = connection.receive(QUIET) => match received {
+                    Ok(Received::Pushed(pushed)) => self.apply(pushed).await,
+                    Ok(Received::Answer { id, answer }) => lanes.answered(id, answer, connection),
                     Err(wellfed_connect::Error::Timeout) => Ok(()),
                     Err(error) => Err(End::Lost(error)),
                 },
@@ -121,7 +134,7 @@ impl Task {
 
     /// The connect sequence: history first, then the clock, then the
     /// cached status and settings.
-    async fn start(&mut self, connection: &mut Connection) -> Result<(), End> {
+    async fn start(&mut self, connection: &mut Connection, lanes: &mut Lanes) -> Result<(), End> {
         let Some(row) = self.shared.store.feeder(self.id).await? else {
             return Err(End::Cancelled);
         };
@@ -136,16 +149,16 @@ impl Task {
                 "the feeder's history is a new one; mirroring it from its oldest event"
             );
         }
-        self.keep_time(connection).await?;
+        self.keep_time(connection, lanes).await?;
 
-        if let Answer::Status(status) = self.ask(connection, &Op::Status).await? {
+        if let Answer::Status(status) = self.ask(connection, lanes, &Op::Status).await? {
             let now = self.shared.clock.now();
             self.shared
                 .store
                 .record_status(self.id, &status, now)
                 .await?;
         }
-        if let Answer::Settings(settings) = self.ask(connection, &Op::GetSettings).await? {
+        if let Answer::Settings(settings) = self.ask(connection, lanes, &Op::GetSettings).await? {
             let now = self.shared.clock.now();
             self.shared
                 .store
@@ -156,13 +169,21 @@ impl Task {
     }
 
     /// Set the feeder's clock and its zone's rule.
-    async fn keep_time(&mut self, connection: &mut Connection) -> Result<(), End> {
-        self.sync_time(connection).await?;
-        self.push_zone(connection).await
+    async fn keep_time(
+        &mut self,
+        connection: &mut Connection,
+        lanes: &mut Lanes,
+    ) -> Result<(), End> {
+        self.sync_time(connection, lanes).await?;
+        self.push_zone(connection, lanes).await
     }
 
     /// Set the feeder's clock to this server's, in the household's zone.
-    async fn sync_time(&mut self, connection: &mut Connection) -> Result<(), End> {
+    async fn sync_time(
+        &mut self,
+        connection: &mut Connection,
+        lanes: &mut Lanes,
+    ) -> Result<(), End> {
         let now = self.shared.clock.now();
         // Seen here, so a change already applied does not fire again.
         let zone = self.zone.borrow_and_update().clone();
@@ -170,7 +191,7 @@ impl Task {
             .as_deref()
             .map_or(TimeZone::UTC, |zone| zone.tz().clone());
         let sync = wellfed_client::time::sync(now, &zone);
-        match self.ask(connection, &Op::TimeSync(sync)).await? {
+        match self.ask(connection, lanes, &Op::TimeSync(sync)).await? {
             Answer::Done { .. } => debug!("clock set"),
             Answer::Refused(refusal) => {
                 warn!("the feeder refused the clock: {refusal:?}");
@@ -184,13 +205,17 @@ impl Task {
     /// hold another. Nothing here is a feed: a write that is lost or
     /// refused is tried again at the next sync or connect, under a new id,
     /// from the time settings read then.
-    async fn push_zone(&mut self, connection: &mut Connection) -> Result<(), End> {
+    async fn push_zone(
+        &mut self,
+        connection: &mut Connection,
+        lanes: &mut Lanes,
+    ) -> Result<(), End> {
         let zone = self.zone.borrow_and_update().clone();
         let Some((zone, rule)) = zone.as_deref().and_then(|z| Some((z, z.rule()?))) else {
             return Ok(());
         };
 
-        let view = match self.ask(connection, &Op::GetTime).await? {
+        let view = match self.ask(connection, lanes, &Op::GetTime).await? {
             Answer::Time(view) => view,
             Answer::Refused(refusal) => {
                 debug!(feeder = %self.id, "the feeder serves no time settings: {refusal:?}");
@@ -212,7 +237,7 @@ impl Task {
                 ntp: None,
             },
         };
-        match self.ask(connection, &put).await? {
+        match self.ask(connection, lanes, &put).await? {
             Answer::Done { .. } => info!(feeder = %self.id, zone = zone.name(), rule, "zone set"),
             Answer::Refused(Refusal::Forbidden) => info!(
                 feeder = %self.id,
@@ -227,9 +252,32 @@ impl Task {
         Ok(())
     }
 
-    /// One request of the task's own.
-    async fn ask(&self, connection: &mut Connection, op: &Op) -> Result<Answer, End> {
+    /// One request of the task's own, and its answer. The commands in
+    /// flight meanwhile are answered and what the feeder pushes is stored,
+    /// as the loop would; no new command goes out until this is answered.
+    /// No answer in time ends the session.
+    async fn ask(
+        &self,
+        connection: &mut Connection,
+        lanes: &mut Lanes,
+        op: &Op,
+    ) -> Result<Answer, End> {
         let id = self.shared.random()?;
-        connection.ask(id, op).await.map_err(End::Lost)
+        connection.request(id, op).map_err(End::Lost)?;
+        loop {
+            match connection.receive(QUIET).await {
+                Ok(Received::Answer {
+                    id: answered,
+                    answer,
+                }) if answered == id => {
+                    return answer.ok_or(End::Lost(wellfed_connect::Error::Timeout));
+                }
+                Ok(Received::Answer { id, answer }) => lanes.answered(id, answer, connection)?,
+                Ok(Received::Pushed(pushed)) => self.apply(pushed).await?,
+                // The session's own answer timer reports it unanswered.
+                Err(wellfed_connect::Error::Timeout) => {}
+                Err(error) => return Err(End::Lost(error)),
+            }
+        }
     }
 }

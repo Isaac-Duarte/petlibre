@@ -8,6 +8,11 @@
 //! - [`Connection`] is an open session. [`Connection::ask`] sends one
 //!   request and waits for its answer; events, gaps and samples that arrive
 //!   meanwhile stay queued for [`Connection::next`] rather than being lost.
+//!   A caller that keeps several requests outstanding (the server's feeder
+//!   task) queues each with [`Connection::request`] and takes answers and
+//!   pushed messages alike from [`Connection::receive`], matching answers
+//!   by id: the feeder reads one request per client per pass and answers
+//!   in the order they arrive.
 //! - [`join`] redeems an invite, and [`Recovery`] runs the recovery window.
 //!
 //! Every method is cancel-safe, so a caller can `select!` on
@@ -186,6 +191,19 @@ impl Outbox {
     }
 }
 
+/// What [`Connection::receive`] yields.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Received {
+    /// An event, gap, sample or log batch the feeder pushed.
+    Pushed(Pushed),
+    /// The answer to the request under `id`, or `None` when none came in
+    /// time or the session ended first: the request may have run.
+    Answer {
+        id: RequestId,
+        answer: Option<Answer>,
+    },
+}
+
 /// An open session.
 pub struct Connection {
     stream: TcpStream,
@@ -321,6 +339,39 @@ impl Connection {
         }
         self.outbox.flush(&mut self.stream).await?;
         Ok(resume)
+    }
+
+    /// Queue one request under `id` without waiting for its answer; it is
+    /// written by the next [`Self::receive`], which later yields its answer
+    /// or its absence. Several may be outstanding. `id` may not be
+    /// [`KEEPALIVE_ID`]. Answers go to [`Self::receive`] only: [`Self::ask`]
+    /// and [`Self::next`] drop those of other requests.
+    pub fn request(&mut self, id: RequestId, op: &Op) -> Result<()> {
+        self.session.request(now(), id, op)?;
+        while let Some(bytes) = self.session.poll_transmit() {
+            self.outbox.0.extend(bytes);
+        }
+        Ok(())
+    }
+
+    /// The next answer or pushed message within `wait`, writing what is
+    /// queued and keeping the session alive meanwhile. Cancel-safe. When
+    /// the session ends, the error comes back and the requests still
+    /// outstanding get no answer here: each may have run.
+    pub async fn receive(&mut self, wait: Duration) -> Result<Received> {
+        let deadline = Instant::now() + wait;
+        loop {
+            if let Some((id, answer)) = self.answers.pop_front() {
+                return Ok(Received::Answer { id, answer });
+            }
+            if let Some(message) = self.queued.pop_front() {
+                return Ok(Received::Pushed(message));
+            }
+            if deadline <= Instant::now() {
+                return Err(Error::Timeout);
+            }
+            self.turn(Some(deadline)).await?;
+        }
     }
 
     /// The next pushed message within `wait`, keeping the session alive

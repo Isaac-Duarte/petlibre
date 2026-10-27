@@ -9,9 +9,10 @@
 //!   so it follows DST with the server down. It records every event and
 //!   sample as the feeder sent it: one store transaction per event, with
 //!   its projections and the cursor.
-//! - **Commands** reach the task through a channel. A short one is
+//! - **Commands** reach the task on two lanes. A short one is
 //!   [`Mirror::ask`]; a long operation holds an [`Operation`] and sends its
-//!   steps one at a time, so other commands run between them. One that is
+//!   steps one at a time. The task pipelines the lanes over one session, so
+//!   a short command is answered after at most one step. One that is
 //!   not answered in time is [`AskError::Unknown`], never a failure: the
 //!   feeder may have run it, and a retry under the same request id gets its
 //!   first answer. One whose caller stopped waiting is dropped unsent.
@@ -31,6 +32,7 @@ mod command;
 mod connect;
 mod error;
 mod ingest;
+mod lanes;
 mod session;
 mod task;
 mod time;

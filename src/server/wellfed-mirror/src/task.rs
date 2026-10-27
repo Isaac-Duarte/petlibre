@@ -21,13 +21,18 @@ use crate::{ConnectError, Feeder, MirrorEvent, Shared, Unreachable, Zone, connec
 
 /// Commands waiting for the task; more wait in `send`.
 const COMMANDS: usize = 16;
+/// A long operation sends one step at a time, so one waits at most.
+const STEPS: usize = 1;
 
 /// The mirror's side of a task.
 pub(crate) struct Handle {
+    /// The short lane.
     pub(crate) commands: mpsc::Sender<Command>,
+    /// The long lane, for the [`crate::Operation`] holding the turn.
+    pub(crate) steps: mpsc::Sender<Command>,
     pub(crate) link: watch::Receiver<Link>,
     /// The long-operation turn: one permit.
-    pub(crate) long: Arc<Semaphore>,
+    pub(crate) turn: Arc<Semaphore>,
     updates: broadcast::Sender<MirrorEvent>,
     cancel: CancellationToken,
     task: JoinHandle<()>,
@@ -60,6 +65,7 @@ pub(crate) fn spawn(
     tasks: &TaskTracker,
 ) -> Handle {
     let (commands, receiver) = mpsc::channel(COMMANDS);
+    let (steps, step_receiver) = mpsc::channel(STEPS);
     let (link, watching) = watch::channel(Link::Offline);
     let task = Task {
         zone: shared.zone.subscribe(),
@@ -69,6 +75,7 @@ pub(crate) fn spawn(
         keys: Keypair::from_secret(feeder.secret),
         address: feeder.address,
         commands: receiver,
+        steps: step_receiver,
         link,
         updates: updates.clone(),
         cancel: cancel.clone(),
@@ -81,8 +88,9 @@ pub(crate) fn spawn(
     let task = tasks.spawn(task.run().instrument(span));
     Handle {
         commands,
+        steps,
         link: watching,
-        long: Arc::new(Semaphore::new(1)),
+        turn: Arc::new(Semaphore::new(1)),
         updates,
         cancel,
         task,
@@ -96,6 +104,7 @@ pub(crate) struct Task {
     keys: Keypair,
     address: Option<String>,
     pub(crate) commands: mpsc::Receiver<Command>,
+    pub(crate) steps: mpsc::Receiver<Command>,
     /// The household's zone, watched for changes while a session is open.
     pub(crate) zone: watch::Receiver<Option<Arc<Zone>>>,
     link: watch::Sender<Link>,
@@ -180,6 +189,9 @@ impl Task {
                 command = self.commands.recv() => {
                     command?.offline();
                 }
+                step = self.steps.recv() => {
+                    step?.offline();
+                }
                 opened = &mut open => return Some(opened),
             }
         }
@@ -209,6 +221,10 @@ impl Task {
                 command = self.commands.recv() => {
                     let Some(command) = command else { return false };
                     command.offline();
+                }
+                step = self.steps.recv() => {
+                    let Some(step) = step else { return false };
+                    step.offline();
                 }
                 () = tokio::time::sleep_until(deadline) => return true,
             }

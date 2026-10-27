@@ -36,6 +36,8 @@ fn start() -> Startup {
 
     #[cfg(feature = "gap-probe")]
     gap_probe::start();
+    #[cfg(feature = "held-stall")]
+    held_stall::start();
 
     // Nothing here holds the KM0 flash handshake, so the runtime may confirm
     // once it is otherwise healthy. Nothing that reads this runs before the
@@ -408,6 +410,61 @@ mod show_faults {
             }
             None => {}
         }
+    }
+}
+
+/// The `held-stall` variant: a reset storm that a held boot does not stop.
+/// A held boot opens no feeding owner, so it owes no owner beat, and the
+/// `owner-stall` loop stall leaves it running; this stall instead starves
+/// the runtime's service task. A priority-3 task spins 15 s once a boot
+/// is a minute old, armed and past any trial, above the loop and the
+/// service task (priority 2): the service beat outlasts the 10 s liveness
+/// window and the runtime lets the watchdog reset the board, held or not.
+/// Every boot repeats it, so on a bank 0 (or a bank 1 with nothing to fall
+/// back to) the storm holds at five resets and halts at eight. A halted
+/// boot starts no firmware task, so the halt's hour runs undisturbed. The
+/// task touches nothing but the uptime and the log.
+#[cfg(feature = "held-stall")]
+mod held_stall {
+    use wellfed_sdk::hal::sdk;
+
+    /// The task only reads the uptime and logs two lines.
+    const STALL_STACK_WORDS: u16 = 256;
+    /// Uptime of the stall, past the join and arming of a normal boot.
+    const AT_MS: u32 = 60_000;
+    /// Longer than the 10 s liveness window, with room for the stop's grace.
+    const SPIN_MS: u32 = 15_000;
+    /// How often the task looks at the uptime before its stall.
+    const POLL_MS: u32 = 1_000;
+
+    pub fn start() {
+        let created = wellfed_sdk::spawn(stall_task);
+        sdk::log(if created {
+            c"PLHLD1 task created=1\r\n"
+        } else {
+            c"PLHLD1 task created=0\r\n"
+        });
+    }
+
+    /// Spins with interrupts enabled: only the tasks below it stop.
+    #[wellfed_sdk::task(name = "wellfed-hld", stack = STALL_STACK_WORDS, priority = 3)]
+    fn stall_task() -> u32 {
+        let now = sdk::uptime_ms();
+        if now < AT_MS || !wellfed_sdk::storage_armed() || wellfed_sdk::confirming() {
+            return POLL_MS;
+        }
+
+        sdk::log(if wellfed_sdk::held() {
+            c"PLHLD1 stall begin=1 held=1\r\n"
+        } else {
+            c"PLHLD1 stall begin=1 held=0\r\n"
+        });
+        while sdk::uptime_ms().wrapping_sub(now) < SPIN_MS {
+            core::hint::spin_loop();
+        }
+        // Reached only if the runtime did not reset the board.
+        sdk::log(c"PLHLD1 stall end=1\r\n");
+        0
     }
 }
 

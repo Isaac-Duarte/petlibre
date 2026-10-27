@@ -15,7 +15,9 @@
 //!
 //! The `entropy` variant streams raw noise samples for the host's entropy
 //! estimate, the `owner-stall` variant stalls the loop on purpose, for the
-//! bench to watch the owner's beat lapse, and the `gap-probe` variant
+//! bench to watch the owner's beat lapse, the `held-stall` variant starves
+//! the runtime's service task in every boot, held ones included, for the
+//! bench to watch a reset storm hold and then halt, and the `gap-probe` variant
 //! measures how long the loop and a priority-4 task wait across Wi-Fi
 //! rejoins (`gaps`), with feeds refused. The `feed-stall` and `stop-fail`
 //! variants inject a stalled loop or a stop that does not take into each

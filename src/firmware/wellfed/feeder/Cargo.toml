@@ -28,6 +28,9 @@ km4 = [
 entropy = []
 # Stall the loop twice, for the bench to watch the owner's beat lapse.
 owner-stall = []
+# Starve the runtime's service task once a boot, held boots included, for
+# the bench to watch a reset storm hold and then halt.
+held-stall = []
 # Measure the loop's and a priority-4 task's scheduling gaps; feeds refused.
 gap-probe = []
 # Stall the loop once, 2 s into each feed's drive: 600 ms for a 1-portion
@@ -84,6 +87,9 @@ summary = "Raw clock-jitter and ADC samples over UART, for the host's entropy es
 
 [package.metadata.wellfed.variants.owner-stall]
 summary = "Stalls the loop 3 s at 2 minutes and 12 s at 3 minutes; at rest the feeding owner's beat allows 10 s, so the first changes nothing and the second lapses into a watchdog reset"
+
+[package.metadata.wellfed.variants.held-stall]
+summary = "A priority-3 task spins 15 s a minute into every boot past its trial, held boots included, starving the runtime's service task past the 10 s liveness window into a watchdog reset; on bank 0 the storm holds at five resets and halts for an hour at eight"
 
 [package.metadata.wellfed.variants.gap-probe]
 summary = "Logs the scheduling gaps of the loop and of a priority-4 probe task every 10 s, with the Wi-Fi counters, for comparing them across rejoins; feeds are refused"

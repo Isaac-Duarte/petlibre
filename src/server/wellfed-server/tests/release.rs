@@ -68,6 +68,17 @@ impl Launch {
                 command
             }
         };
+
+        // Only the flags given here: a setting from the caller's
+        // environment would change what is checked.
+        for (variable, _) in std::env::vars_os() {
+            if variable
+                .to_str()
+                .is_some_and(|name| name.starts_with("WELLFED_SERVER_"))
+            {
+                command.env_remove(variable);
+            }
+        }
         command
             .args(["--listen", "127.0.0.1:0", "--no-discovery"])
             .env("RUST_LOG", "info")
@@ -151,17 +162,25 @@ impl<'a> Server<'a> {
 
     /// Stop the server as systemd and container runtimes do, with SIGTERM,
     /// and wait for it to exit.
+    /// The child stays in `self` until it has exited, so a panic on the way
+    /// (no `kill`, a hung shutdown) leaves it to [`Drop`] to kill and clean
+    /// up.
     async fn terminate(mut self) -> ExitStatus {
-        let mut child = self.child.take().expect("the server runs until stopped");
+        let pid = self
+            .child
+            .as_ref()
+            .expect("the server runs until stopped")
+            .id();
         let signal = Command::new("kill")
             .arg("-TERM")
-            .arg(child.id().to_string())
+            .arg(pid.to_string())
             .status()
             .expect("kill runs");
         assert!(signal.success(), "SIGTERM is sent");
 
         let polled = tokio::time::timeout(START, async {
             loop {
+                let child = self.child.as_mut().expect("the server runs until stopped");
                 if let Some(status) = child.try_wait().expect("the server's status reads") {
                     return status;
                 }
@@ -169,7 +188,10 @@ impl<'a> Server<'a> {
             }
         })
         .await;
-        polled.expect("the server stops on SIGTERM in time")
+        let status = polled.expect("the server stops on SIGTERM in time");
+
+        self.child = None;
+        status
     }
 }
 

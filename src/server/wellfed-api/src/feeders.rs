@@ -18,7 +18,9 @@ pub struct AdoptFeeder {
     pub invite: String,
     /// What the household calls the feeder (1-64 characters).
     pub name: String,
-    /// The feeder's `host` or `host:port`; found over mDNS when absent.
+    /// The feeder's IP address (the device API's port) or `IP:port`; a DNS
+    /// name is refused. Found over mDNS when absent, and required while
+    /// discovery is off.
     #[serde(default)]
     pub address: Option<String>,
 }

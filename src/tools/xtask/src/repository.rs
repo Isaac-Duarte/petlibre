@@ -41,6 +41,10 @@ const FLASH_CLIENT: &str = "src/tools/wellfed-flash/Cargo.toml";
 /// (it takes the nearest file and merges none), so it must repeat every root
 /// setting before adding its own.
 const SERVER_CLIPPY: &str = "src/server/clippy.toml";
+/// The server's release build, which names its own Rust image and
+/// toolchain: they must be the one `rust-toolchain.toml` pins, or a release
+/// builds with a compiler `make check` never ran.
+const SERVER_CONTAINERFILE: &str = "src/server/wellfed-server/packaging/Containerfile";
 /// The tree whose Rust sources are held to a size, so a domain that grows
 /// gets a module of its own rather than a longer file.
 const SIZED: &str = "src/server/";
@@ -64,6 +68,7 @@ regex!(DATED, r#"private/[^\s"']*202610\d{2}"#);
 // A board card's id: the firmware or feature board's prefix and a number.
 // Pinned policy names are lowercase and stay.
 regex!(CARD, r"\b(?:FW|FP)\d{1,3}[a-z]?\b");
+regex!(CHANNEL, r#"(?m)^channel\s*=\s*"([^"]+)""#);
 
 // The raw output writers `wellfed-amebad-sys` marks `unsafe`; reads such
 // as `wdg_vendor` and `bank1_read` are not among them.
@@ -163,6 +168,21 @@ fn check_file(root: &Path, name: &str, summary: &mut Summary) {
             "{name}: binary/evidence files need explicit provenance review"
         ));
     }
+    if name == SERVER_CONTAINERFILE {
+        let read = |file: &str| fs::read_to_string(root.join(file));
+        match (read(SERVER_CONTAINERFILE), read("rust-toolchain.toml")) {
+            (Ok(containerfile), Ok(toolchain)) => {
+                for missing in unpinned_toolchain(&containerfile, &toolchain) {
+                    summary.errors.push(format!(
+                        "{name}: lacks `{missing}`; build releases with rust-toolchain.toml's channel"
+                    ));
+                }
+            }
+            (Err(error), _) | (_, Err(error)) => summary.errors.push(format!(
+                "{name}: cannot compare its toolchain with rust-toolchain.toml: {error}"
+            )),
+        }
+    }
     if !TEXT.contains(&extension) {
         return;
     }
@@ -246,6 +266,23 @@ fn check_file(root: &Path, name: &str, summary: &mut Summary) {
             }
         }
     }
+}
+
+/// What the release Containerfile must say for `toolchain`'s channel (the
+/// Rust image's tag and the toolchain it selects) and does not. A
+/// toolchain file without a channel is reported as such.
+fn unpinned_toolchain(containerfile: &str, toolchain: &str) -> Vec<String> {
+    let Some(channel) = CHANNEL.captures(toolchain).map(|found| found[1].to_owned()) else {
+        return vec!["a channel in rust-toolchain.toml".to_owned()];
+    };
+
+    [
+        format!("rust:{channel}-alpine"),
+        format!("RUSTUP_TOOLCHAIN={channel}"),
+    ]
+    .into_iter()
+    .filter(|wanted| !containerfile.contains(wanted.as_str()))
+    .collect()
 }
 
 /// The root's settings (its non-comment lines) that a nested clippy.toml lacks.
@@ -599,6 +636,20 @@ mod tests {
             ["avoid-breaking-exported-api = false"]
         );
         assert!(missing_settings(root, &format!("{root}disallowed-methods = []\n")).is_empty());
+    }
+
+    #[test]
+    fn the_release_build_uses_the_pinned_toolchain() {
+        let toolchain = "[toolchain]\nchannel = \"1.99.1\"\nprofile = \"minimal\"\n";
+        let pinned = "ARG RUST_IMAGE=docker.io/library/rust:1.99.1-alpine3.24\nENV RUSTUP_TOOLCHAIN=1.99.1 CARGO_INCREMENTAL=0\n";
+        let stale = "ARG RUST_IMAGE=docker.io/library/rust:1.98.0-alpine3.24\nENV RUSTUP_TOOLCHAIN=1.99.1\n";
+
+        assert!(unpinned_toolchain(pinned, toolchain).is_empty());
+        assert_eq!(unpinned_toolchain(stale, toolchain), ["rust:1.99.1-alpine"]);
+        assert_eq!(
+            unpinned_toolchain(pinned, "[toolchain]\n"),
+            ["a channel in rust-toolchain.toml"]
+        );
     }
 
     #[test]

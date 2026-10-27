@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1
-#
 # wellfed-server as a static musl binary, and as a container image that
 # holds only that binary and the CA certificates its GitHub release checks
 # need. Built from the repository root:
@@ -18,12 +16,15 @@
 # See docs/api/README.md#packaging for running it (host networking for mDNS
 # discovery, or `--no-discovery` on a bridged network).
 
+# The image's Rust is rust-toolchain.toml's channel (`cargo xtask
+# check-repository` holds the two together), and the linkers are pinned to
+# the Alpine release's packages, so a release rebuilds the same way.
 ARG RUST_IMAGE=docker.io/library/rust:1.99.1-alpine3.24
 
 FROM --platform=$BUILDPLATFORM ${RUST_IMAGE} AS build
-RUN apk add --no-cache ca-certificates cargo-zigbuild zig
-# The toolchain the image ships, not the repository's rust-toolchain.toml,
-# whose firmware targets this build never needs.
+RUN apk add --no-cache ca-certificates cargo-zigbuild=0.23.4-r0 zig=0.16.0-r1
+# The toolchain the image ships, without rust-toolchain.toml's firmware
+# targets, which this build never needs.
 ENV RUSTUP_TOOLCHAIN=1.99.1 CARGO_INCREMENTAL=0
 RUN rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl
 WORKDIR /src
@@ -32,11 +33,11 @@ COPY .cargo .cargo
 COPY src src
 RUN cargo zigbuild --release --locked -p wellfed-server \
         --target x86_64-unknown-linux-musl --target aarch64-unknown-linux-musl
-RUN mkdir -p /dist/amd64 /dist/arm64 /rootfs/data /rootfs/tmp /rootfs/etc/ssl/certs \
+RUN mkdir -p /dist/amd64 /dist/arm64 /rootfs/tmp /rootfs/etc/ssl/certs /data \
  && cp target/x86_64-unknown-linux-musl/release/wellfed-server /dist/amd64/ \
  && cp target/aarch64-unknown-linux-musl/release/wellfed-server /dist/arm64/ \
  && cp /etc/ssl/certs/ca-certificates.crt /rootfs/etc/ssl/certs/ \
- && chown 65532:65532 /rootfs/data && chmod 0700 /rootfs/data && chmod 1777 /rootfs/tmp
+ && chmod 0700 /data && chmod 1777 /rootfs/tmp
 
 # The release binaries, named by target.
 FROM scratch AS dist
@@ -48,6 +49,8 @@ COPY --from=build /dist/arm64/wellfed-server /wellfed-server-aarch64-unknown-lin
 FROM scratch AS image
 ARG TARGETARCH
 COPY --from=build /rootfs/ /
+# The data directory is the server user's, whatever the build user was.
+COPY --from=build --chown=65532:65532 /data /data
 COPY --from=build /dist/${TARGETARCH}/wellfed-server /usr/local/bin/wellfed-server
 # Not root, and nothing but the data directory is written.
 USER 65532:65532

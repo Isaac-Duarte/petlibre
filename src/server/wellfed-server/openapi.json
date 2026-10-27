@@ -3946,7 +3946,7 @@
               "string",
               "null"
             ],
-            "description": "The feeder's `host` or `host:port`; found over mDNS when absent."
+            "description": "The feeder's IP address (the device API's port) or `IP:port`; a DNS\nname is refused. Found over mDNS when absent, and required while\ndiscovery is off."
           },
           "invite": {
             "type": "string",

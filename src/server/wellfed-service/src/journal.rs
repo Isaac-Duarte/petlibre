@@ -220,10 +220,27 @@ impl Service {
         let sending = self
             .tasks
             .spawn(async move { service.send(key, feeder, request, op, attempt).await });
-        let outcome = sending
-            .await
-            .unwrap_or_else(|_| Err(CommandError::Unknown.into()))?;
-        Ok(Recorded { key, outcome })
+        let Ok(outcome) = sending.await else {
+            // The task died with the write possibly sent and nothing
+            // recorded: say unknown now rather than leave it `sent`, which
+            // a retry would take for a send still in flight.
+            self.unknown_best_effort(&key).await;
+            return Err(CommandError::Unknown.into());
+        };
+        Ok(Recorded {
+            key,
+            outcome: outcome?,
+        })
+    }
+
+    /// Mark `key`'s entry unknown after a failure that left it `sent`,
+    /// logging rather than returning a failure of its own: the caller
+    /// already has the error that matters.
+    async fn unknown_best_effort(&self, key: &IdempotencyKey) {
+        let now = self.shared.clock.now();
+        if let Err(error) = self.unknown(key, now).await {
+            warn!(key = %Uuid::from_bytes(*key), %error, "a write's entry stays sent until the next start");
+        }
     }
 
     /// Replace a recorded outcome: the settings read back after a change.
@@ -283,8 +300,17 @@ impl Service {
                 return Err(Error::from(unsent));
             }
         };
-        if !store.answer_command(&key, &outcome, now).await? {
-            warn!(key = %Uuid::from_bytes(key), "the feeder answered a write the journal no longer holds open");
+        match store.answer_command(&key, &outcome, now).await {
+            Ok(true) => {}
+            Ok(false) => {
+                warn!(key = %Uuid::from_bytes(key), "the feeder answered a write the journal no longer holds open");
+            }
+            // The answer is lost to the journal; unknown is still true of
+            // it, and a retry resends under the same id.
+            Err(error) => {
+                self.unknown_best_effort(&key).await;
+                return Err(error.into());
+            }
         }
         Ok(outcome)
     }

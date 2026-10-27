@@ -94,7 +94,8 @@ impl IntoParams for IdempotencyKey {
 }
 
 /// A write's `Idempotency-Key`, when the client sent one. A write without
-/// one is sent under a fresh device request id.
+/// one is journalled under a key the server draws, so it cannot be
+/// retried.
 pub(crate) struct OptionalIdempotencyKey(pub(crate) Option<Key>);
 
 impl<S: Sync> FromRequestParts<S> for OptionalIdempotencyKey {

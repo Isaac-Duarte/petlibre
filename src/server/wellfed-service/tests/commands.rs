@@ -67,25 +67,25 @@ fn settings_change_against_the_current_generation_only() {
             Err(Error::Invalid(Invalid::Volume))
         ));
 
-        // The settings change's key, reused for a lock, is a new write: the
-        // feeder remembers writes by id, and the id binds the kind of write.
-        service
-            .set_lock(&ada(), id, false, Some([1; 16]))
-            .await
-            .unwrap();
-        // Another user's same key is their own write, against the current
-        // generation.
+        // The settings change's key names that change: reused for a lock,
+        // or by another user, it is refused, and nothing is sent.
+        assert!(matches!(
+            service.set_lock(&ada(), id, false, Some([1; 16])).await,
+            Err(Error::Command(CommandError::KeyReused))
+        ));
+        let bob = owner_user(2, "bob");
+        let louder = SettingsPatch {
+            volume: Some(40),
+            ..SettingsPatch::default()
+        };
+        assert!(matches!(
+            service
+                .put_settings(&bob, id, changed.generation, louder, Some([1; 16]))
+                .await,
+            Err(Error::Command(CommandError::KeyReused))
+        ));
         let theirs = service
-            .put_settings(
-                &owner_user(2, "bob"),
-                id,
-                changed.generation,
-                SettingsPatch {
-                    volume: Some(40),
-                    ..SettingsPatch::default()
-                },
-                Some([1; 16]),
-            )
+            .put_settings(&bob, id, changed.generation, louder, Some([4; 16]))
             .await
             .unwrap();
         assert_eq!(theirs.generation, Generation(changed.generation.0 + 1));

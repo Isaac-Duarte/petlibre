@@ -3,6 +3,7 @@
 //! the OpenAPI document comes from their annotations.
 
 pub(crate) mod auth;
+pub(crate) mod commands;
 pub(crate) mod events;
 pub(crate) mod feeders;
 pub(crate) mod health;
@@ -20,6 +21,7 @@ use crate::error::ApiError;
 pub(crate) const TAG_AUTH: &str = "auth";
 pub(crate) const TAG_FEEDERS: &str = "feeders";
 pub(crate) const TAG_HEALTH: &str = "health";
+pub(crate) const TAG_COMMANDS: &str = "commands";
 
 type ApiResult<T> = Result<T, ApiError>;
 type JsonBody<T> = WithRejection<Json<T>, ApiError>;

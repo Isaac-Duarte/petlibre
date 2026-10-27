@@ -1,15 +1,25 @@
 //! Commands sent to a feeder: its live status, its settings and the panel
-//! lock. Each goes through the mirror under a device request id; a write's
-//! id is bound to who sent it (`write_id`), so a retry under the
-//! same key is answered from the feeder's memory and never applied twice.
+//! lock. Reads go straight through the mirror under a fresh request id;
+//! every write goes through the journal (`journal.rs`), so a retry under
+//! the same key is answered once and never applied twice.
 
 use wellfed_api::{
-    FeederDetail, FeederId, Generation, Settings, SettingsPatch, StatusSnapshot, User,
+    CommandKind, CommandOutcome, FeederDetail, FeederId, FeederRefusal, Generation, LockRequest,
+    Settings, SettingsPatch, StatusSnapshot, User,
 };
-use wellfed_model::{Answer, Op, Refusal};
-use sha2::{Digest, Sha256};
+use wellfed_model::{Answer, Op};
+use serde::Serialize;
 
+use crate::journal::Write;
 use crate::{CommandError, Error, IdempotencyKey, Invalid, RequestId, Result, Service};
+
+/// A settings change as it is hashed into the journal: the base it names
+/// is part of the request.
+#[derive(Serialize)]
+struct SettingsChange {
+    base: Generation,
+    changes: SettingsPatch,
+}
 
 impl Service {
     /// The feeder and its status: read now when it is online, otherwise the
@@ -62,9 +72,9 @@ impl Service {
 
     /// Change the settings if they are still at `base`. A stale base gets
     /// [`CommandError::Stale`] with the current settings. After the change
-    /// the settings are read again; if that read fails the change still
-    /// happened, and a retry under the same `request` id is answered from
-    /// the feeder's memory without changing anything twice.
+    /// the settings are read again and recorded as the write's outcome, so
+    /// a retry under the same key returns them; if that read fails the
+    /// change still happened, and a retry reads them again.
     pub async fn put_settings(
         &self,
         user: &User,
@@ -78,23 +88,42 @@ impl Service {
         }
         self.row(id).await?;
 
-        let op = Op::PutSettings {
+        let body = SettingsChange {
             base,
             changes: patch,
         };
-        let request = self.write_id(user, id, Write::Settings, key)?;
-        match self.ask(id, request, op).await? {
+        let recorded = self
+            .journaled(Write {
+                user,
+                feeder: id,
+                kind: CommandKind::Settings,
+                body: &body,
+                key,
+                op: Op::PutSettings {
+                    base,
+                    changes: patch,
+                },
+            })
+            .await?;
+
+        match recorded.outcome {
+            CommandOutcome::Settings { settings } => Ok(settings),
             // The change is made; if the read-back fails, saying offline
             // would claim it was not, so the outcome is unknown: a retry
-            // under the same key is answered without changing anything.
-            Answer::Done { .. } => self.read_settings(id).await.map_err(|error| match error {
-                Error::Command(CommandError::Offline) => CommandError::Unknown.into(),
-                other => other,
-            }),
-            Answer::Refused(Refusal::Stale { .. }) => {
-                Err(CommandError::Stale(self.read_settings(id).await?).into())
+            // under the same key reads it again without changing anything.
+            CommandOutcome::Done => {
+                let settings = self.read_settings(id).await.map_err(|error| match error {
+                    Error::Command(CommandError::Offline) => CommandError::Unknown.into(),
+                    other => other,
+                })?;
+                self.amend(&recorded.key, &CommandOutcome::Settings { settings })
+                    .await?;
+                Ok(settings)
             }
-            other => Err(refused(&other)),
+            CommandOutcome::Refused {
+                refusal: FeederRefusal::Stale,
+            } => Err(CommandError::Stale(self.read_settings(id).await?).into()),
+            CommandOutcome::Refused { refusal } => Err(CommandError::Refused(refusal).into()),
         }
     }
 
@@ -106,39 +135,23 @@ impl Service {
         key: Option<IdempotencyKey>,
     ) -> Result<()> {
         self.row(id).await?;
-        let request = self.write_id(user, id, Write::Lock, key)?;
-        match self.ask(id, request, Op::SetLock { locked }).await? {
-            Answer::Done { .. } => Ok(()),
-            other => Err(refused(&other)),
-        }
-    }
 
-    /// The device request id for a write. The feeder remembers writes by id
-    /// alone, and every user shares the server's key, so the client's key
-    /// is bound to who sent it, to which feeder and to what kind of write:
-    /// one key reused for a lock and then a settings change cannot return
-    /// the lock's answer, and two users' keys never meet. A write without a
-    /// key gets a fresh id.
-    fn write_id(
-        &self,
-        user: &User,
-        id: FeederId,
-        write: Write,
-        key: Option<IdempotencyKey>,
-    ) -> Result<RequestId> {
-        let Some(key) = key else {
-            return self.request_id();
-        };
-        let digest = Sha256::new()
-            .chain_update(b"wellfed-server write v1")
-            .chain_update(user.id.0.as_bytes())
-            .chain_update(id.0.as_bytes())
-            .chain_update([write.code()])
-            .chain_update(key)
-            .finalize();
-        let mut request = [0; 16];
-        request.copy_from_slice(&digest[..16]);
-        Ok(request)
+        let recorded = self
+            .journaled(Write {
+                user,
+                feeder: id,
+                kind: CommandKind::Lock,
+                body: &LockRequest { locked },
+                key,
+                op: Op::SetLock { locked },
+            })
+            .await?;
+
+        match recorded.outcome {
+            CommandOutcome::Done => Ok(()),
+            CommandOutcome::Refused { refusal } => Err(CommandError::Refused(refusal).into()),
+            CommandOutcome::Settings { .. } => Err(CommandError::Unexpected.into()),
+        }
     }
 
     async fn read_settings(&self, id: FeederId) -> Result<Settings> {
@@ -154,26 +167,10 @@ impl Service {
         Ok(settings)
     }
 
-    /// Send `op` to the feeder through the mirror and wait for its answer.
+    /// Send a read to the feeder through the mirror and wait for its
+    /// answer.
     async fn ask(&self, id: FeederId, request: RequestId, op: Op) -> Result<Answer> {
         Ok(self.mirror.ask(id, request, op).await?)
-    }
-}
-
-/// A write's kind, bound into its request id. The codes are hashed, so they
-/// never change.
-#[derive(Clone, Copy)]
-enum Write {
-    Settings,
-    Lock,
-}
-
-impl Write {
-    const fn code(self) -> u8 {
-        match self {
-            Self::Settings => 1,
-            Self::Lock => 2,
-        }
     }
 }
 

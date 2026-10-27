@@ -16,6 +16,7 @@
 
 #![forbid(unsafe_code)]
 
+mod commands;
 mod convert;
 mod feeders;
 mod history;
@@ -31,6 +32,7 @@ use sqlx::sqlite::{
     SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions, SqliteSynchronous,
 };
 
+pub use commands::{CommandFilter, CommandRow, Journaled, NewCommand};
 pub use feeders::{FeederRow, FeederState, NewFeeder, SealedKey, Synced};
 pub use history::{EventRow, NewEvent};
 pub use samples::{NewSample, SampleRow};

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM commands WHERE key = ? AND state = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "1666c469cd1082f781b492e1ac8505fe9d058849bed45efc1419e3208cb0778a"
+}

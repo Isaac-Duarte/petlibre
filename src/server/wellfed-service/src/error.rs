@@ -44,6 +44,10 @@ pub enum Invalid {
     Label,
     #[error("an event cursor is at most 2^63 - 1")]
     Cursor,
+    #[error("a page holds 1-1000 commands")]
+    CommandLimit,
+    #[error("not a cursor this server gave")]
+    CommandCursor,
 }
 
 /// Setup, login and sessions.
@@ -97,6 +101,12 @@ pub enum CommandError {
     Stale(Settings),
     #[error("the feeder sent an answer that does not fit the request")]
     Unexpected,
+    #[error("the Idempotency-Key already names another request; nothing was sent")]
+    KeyReused,
+    #[error("no command under that key")]
+    NoEntry,
+    #[error("hash a request body: {0}")]
+    Body(wellfed_formats::Error),
 }
 
 /// A mirror refusal in the service's domains. Only `Unknown` may have

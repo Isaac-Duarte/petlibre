@@ -52,12 +52,13 @@ pub(crate) struct AppState {
         (name = routes::TAG_AUTH, description = "First-owner setup and login"),
         (name = routes::TAG_FEEDERS, description = "Adopted feeders, their settings, lock and history"),
         (name = routes::TAG_HEALTH, description = "Liveness for anyone, readiness for an owner"),
+        (name = routes::TAG_COMMANDS, description = "The command journal: every write sent through the server"),
     ),
 )]
 struct ApiDoc;
 
 fn router() -> OpenApiRouter<AppState> {
-    use routes::{auth, events, feeders, health, stream};
+    use routes::{auth, commands, events, feeders, health, stream};
 
     let api = OpenApiRouter::new()
         .routes(routes!(auth::setup_state, auth::setup))
@@ -67,6 +68,8 @@ fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(feeders::settings, feeders::put_settings))
         .routes(routes!(feeders::lock))
         .routes(routes!(events::events))
+        .routes(routes!(commands::commands))
+        .routes(routes!(commands::command))
         .routes(routes!(stream::stream))
         .routes(routes!(health::status));
     OpenApiRouter::with_openapi(ApiDoc::openapi())

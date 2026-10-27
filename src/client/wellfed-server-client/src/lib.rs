@@ -22,6 +22,7 @@
 #![forbid(unsafe_code)]
 
 mod auth;
+mod commands;
 mod error;
 mod feeders;
 mod health;

@@ -13,6 +13,7 @@
 #![forbid(unsafe_code)]
 
 mod auth;
+mod commands;
 mod error;
 mod events;
 mod feeders;
@@ -26,6 +27,7 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 pub use auth::{Credentials, Role, SetupState, User};
+pub use commands::{Command, CommandKind, CommandOutcome, CommandPage, CommandQuery, CommandState};
 pub use error::{ErrorCode, FeederRefusal, Problem};
 pub use events::{EventPage, EventQuery, FeederEvent, Gap};
 pub use feeders::{AdoptFeeder, Connection, Feeder, FeederDetail, LockRequest, StatusSnapshot};

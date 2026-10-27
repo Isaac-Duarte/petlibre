@@ -107,7 +107,9 @@ fn service(error: &Error) -> (ErrorCode, Option<String>, Option<FeederRefusal>) 
             }
             // Handled before: it carries the current resource.
             CommandError::Stale(_) => return (ErrorCode::Internal, None, None),
-            CommandError::Unexpected => return internal(error),
+            CommandError::KeyReused => ErrorCode::KeyReused,
+            CommandError::NoEntry => ErrorCode::NotFound,
+            CommandError::Unexpected | CommandError::Body(_) => return internal(error),
         },
         Error::Store(_) | Error::Random(_) => return internal(error),
     };
@@ -133,6 +135,7 @@ fn status(code: ErrorCode) -> StatusCode {
         ErrorCode::Unreachable => StatusCode::BAD_GATEWAY,
         ErrorCode::FeederOffline => StatusCode::SERVICE_UNAVAILABLE,
         ErrorCode::OutcomeUnknown => StatusCode::GATEWAY_TIMEOUT,
+        ErrorCode::KeyReused => StatusCode::UNPROCESSABLE_ENTITY,
         // Every refusal is final for its key, `busy` included: the feeder
         // replays a refused write's answer while it remembers the id, so a
         // later attempt is a new request under a new key.

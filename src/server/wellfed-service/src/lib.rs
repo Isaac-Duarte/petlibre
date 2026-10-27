@@ -10,7 +10,9 @@
 //!   only to hand it to the mirror.
 //! - **Commands** go through the mirror. One that is not answered in time
 //!   is [`CommandError::Unknown`], never a failure: the feeder may have run
-//!   it, and a retry under the same key gets its first answer.
+//!   it. Every write is recorded in the command journal before it is sent,
+//!   so a retry under the same key gets its first answer from the journal,
+//!   however many writes the feeder has seen since.
 //! - **Live updates** go through the [`Hub`], which the server's event
 //!   stream reads: each feeder's mirror broadcast is forwarded into it,
 //!   and the hub assigns the stream ids.
@@ -27,6 +29,7 @@ mod error;
 mod feeders;
 mod health;
 mod hub;
+mod journal;
 mod keys;
 mod updates;
 mod users;
@@ -210,6 +213,7 @@ impl Service {
         };
 
         users::prepare().await?;
+        service.interrupt_commands().await?;
         for row in service.shared.store.feeders().await? {
             service.spawn(&row).await?;
         }

@@ -40,6 +40,9 @@ pub enum ErrorCode {
     /// No answer arrived in time. The feeder may have run the request:
     /// retry with the same `Idempotency-Key`, which it answers once.
     OutcomeUnknown,
+    /// The `Idempotency-Key` already names another request (another
+    /// body, feeder, kind of write or user). Nothing was sent.
+    KeyReused,
     Internal,
 }
 

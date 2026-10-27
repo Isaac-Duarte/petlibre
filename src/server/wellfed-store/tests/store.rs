@@ -398,7 +398,11 @@ async fn pending_migrations_copy_the_database_first_on_every_attempt() {
         let opened = Store::open(&path, now).await;
         assert!(matches!(opened, Err(Error::Migrate(_))), "{opened:?}");
         assert_eq!(copies(dir.path()), attempt);
-        let copy = format!("server.db.before-1-{}", now.as_millisecond());
+        // Named for the newest pending migration and the time given.
+        let newest = std::fs::read_dir(env!("CARGO_MANIFEST_DIR").to_owned() + "/migrations")
+            .unwrap()
+            .count();
+        let copy = format!("server.db.before-{newest}-{}", now.as_millisecond());
         assert!(dir.path().join(copy).exists(), "named for the time given");
     }
 }

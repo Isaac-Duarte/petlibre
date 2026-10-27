@@ -1,5 +1,5 @@
-//! Live updates for the server's event stream: every feeder task publishes
-//! here, and each stream subscriber reads a broadcast.
+//! Live updates for the server's event stream: each feeder's mirror updates
+//! are forwarded here, and each stream subscriber reads a broadcast.
 //!
 //! Each update gets a [`StreamId`], the stream's SSE `id`. The hub keeps
 //! the most recent updates, so a client that reconnects with its last id

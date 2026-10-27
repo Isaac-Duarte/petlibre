@@ -9,7 +9,7 @@ allow-expect-in-tests = true
 allow-dbg-in-tests = true
 avoid-breaking-exported-api = false
 
-# One clock. The server reads the wall clock only through `wellfed_service::
+# One clock. The server reads the wall clock only through `wellfed_mirror::
 # Clock`, whose `SystemClock` is the single exception, so every time it keeps
 # (stream epochs, ids, session expiry, backup names, feeder time sync) comes
 # from one injected source a test can fix. That includes library calls that

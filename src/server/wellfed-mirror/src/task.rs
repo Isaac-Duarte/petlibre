@@ -9,6 +9,7 @@ use wellfed_api::{Connection as Link, FeederId};
 use wellfed_connect::Connection;
 use wellfed_session::noise::Keypair;
 use tokio::sync::{Semaphore, broadcast, mpsc, watch};
+use tokio::task::JoinHandle;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
@@ -29,6 +30,7 @@ pub(crate) struct Handle {
     pub(crate) long: Arc<Semaphore>,
     updates: broadcast::Sender<MirrorEvent>,
     cancel: CancellationToken,
+    task: JoinHandle<()>,
 }
 
 impl Handle {
@@ -40,8 +42,13 @@ impl Handle {
         self.updates.subscribe()
     }
 
-    pub(crate) fn stop(self) {
+    /// Stop the task and wait until it has ended: its session is closed
+    /// and its last update (`offline`) sent. The broadcast closes as this
+    /// handle drops.
+    pub(crate) async fn stop(self) {
         self.cancel.cancel();
+        // The task returns on cancellation; a panic in it has ended it too.
+        let _ = self.task.await;
     }
 }
 
@@ -65,13 +72,14 @@ pub(crate) fn spawn(
         updates: updates.clone(),
         cancel: cancel.clone(),
     };
-    tasks.spawn(task.run());
+    let task = tasks.spawn(task.run());
     Handle {
         commands,
         link: watching,
         long: Arc::new(Semaphore::new(1)),
         updates,
         cancel,
+        task,
     }
 }
 
@@ -88,7 +96,14 @@ pub(crate) struct Task {
 }
 
 impl Task {
+    /// Mirror the feeder until the task is stopped, then show it offline,
+    /// so a subscriber's last word on a stopped feeder is never `online`.
     async fn run(mut self) {
+        self.reconnect().await;
+        self.set(Link::Offline);
+    }
+
+    async fn reconnect(&mut self) {
         let mut failures = 0u32;
         loop {
             self.set(Link::Connecting);

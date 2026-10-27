@@ -191,9 +191,15 @@ impl Mirror {
     }
 
     /// Start mirroring `feeder`, and subscribe to its updates from the
-    /// first. A feeder already running is stopped and started again.
-    pub fn start(&self, feeder: Feeder) -> broadcast::Receiver<MirrorEvent> {
+    /// first. A feeder already running is stopped first, and its task has
+    /// ended before the new one starts, so two sessions never overlap.
+    pub async fn start(&self, feeder: Feeder) -> broadcast::Receiver<MirrorEvent> {
         let id = feeder.id;
+        let running = self.handles().remove(&id);
+        if let Some(old) = running {
+            old.stop().await;
+        }
+
         let (updates, first) = broadcast::channel(UPDATES);
         let handle = task::spawn(
             Arc::clone(&self.shared),
@@ -202,17 +208,24 @@ impl Mirror {
             self.cancel.child_token(),
             &self.tasks,
         );
-        if let Some(old) = self.handles().insert(id, handle) {
-            old.stop();
+        // Two starts racing for one id: the loser's task is stopped too.
+        let raced = self.handles().insert(id, handle);
+        if let Some(other) = raced {
+            other.stop().await;
         }
         first
     }
 
-    /// Stop mirroring a feeder; whether it was running. Its broadcast
-    /// closes once its task has ended.
-    pub fn stop(&self, id: FeederId) -> bool {
+    /// Stop mirroring a feeder and wait until its task has ended; whether
+    /// it was running. Its last update is `Link::Offline`, then its
+    /// broadcast closes.
+    pub async fn stop(&self, id: FeederId) -> bool {
         let handle = self.handles().remove(&id);
-        handle.map(|handle| handle.stop()).is_some()
+        let Some(handle) = handle else {
+            return false;
+        };
+        handle.stop().await;
+        true
     }
 
     /// The feeder's session state, or `None` when it is not mirrored.

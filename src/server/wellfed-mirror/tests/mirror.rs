@@ -1,7 +1,9 @@
 //! The mirror on its own, against the simulated feeder: updates follow the
 //! store, a command whose caller left is never sent, a long operation
-//! takes turns with short commands, and a stopped feeder is let go.
+//! takes turns with short commands, and a stopped feeder is let go
+//! (offline last) once its task has ended.
 
+use std::cell::RefCell;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -13,7 +15,7 @@ use wellfed_server_testkit::fixed::{FixedClock, SeededRandom};
 use wellfed_server_testkit::{TempStore, WAIT, local, until};
 use wellfed_store::{NewFeeder, SealedKey, Store};
 use tokio::sync::broadcast::Receiver;
-use tokio::sync::broadcast::error::RecvError;
+use tokio::sync::broadcast::error::TryRecvError;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -72,12 +74,14 @@ async fn mirrored(
         })
         .await
         .unwrap();
-    let mut updates = mirror.start(Feeder {
-        id: ID,
-        identity,
-        secret,
-        address: Some(address.into()),
-    });
+    let mut updates = mirror
+        .start(Feeder {
+            id: ID,
+            identity,
+            secret,
+            address: Some(address.into()),
+        })
+        .await;
 
     let mut links = Vec::new();
     while links.last() != Some(&Link::Online) {
@@ -232,6 +236,47 @@ fn a_long_operation_takes_turns_with_short_commands() {
     });
 }
 
+/// A step is on the wire when the feeder stalls, and a short command is
+/// queued behind it. The next step, sent once the first is answered, waits
+/// behind the short command: a short command waits at most one step.
+#[test]
+fn a_short_command_queued_during_a_step_runs_before_the_next_step() {
+    local(async {
+        let temp = TempStore::new();
+        let store = temp.open().await;
+        let sim = feeder::start().await;
+        let relay = Relay::start(sim.address).await;
+        let address = relay.address.to_string();
+        let (mirror, _updates) = mirrored(&store, &sim, &address, WAIT).await;
+        let mut long = mirror.operation(ID).await.unwrap();
+        let order = RefCell::new(Vec::new());
+
+        relay.pause();
+        let steps = async {
+            long.step([1; 16], Op::Status).await.unwrap();
+            order.borrow_mut().push("step 1");
+            long.step([2; 16], Op::GetSettings).await.unwrap();
+            order.borrow_mut().push("step 2");
+        };
+        let short = async {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            mirror.ask(ID, [3; 16], Op::Status).await.unwrap();
+            order.borrow_mut().push("ask");
+        };
+        let stall = async {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            relay.resume();
+        };
+        tokio::join!(steps, short, stall);
+
+        assert_eq!(*order.borrow(), ["step 1", "ask", "step 2"]);
+        drop(long);
+        mirror.shutdown().await;
+        store.close().await;
+        sim.stop().await;
+    });
+}
+
 #[test]
 fn a_stopped_feeder_is_let_go() {
     local(async {
@@ -242,22 +287,25 @@ fn a_stopped_feeder_is_let_go() {
         let (mirror, mut updates) = mirrored(&store, &sim, &address, WAIT).await;
         assert_eq!(mirror.link(ID), Some(Link::Online));
 
-        assert!(mirror.stop(ID));
-        assert!(!mirror.stop(ID), "already stopped");
+        assert!(mirror.stop(ID).await);
+        assert!(!mirror.stop(ID).await, "already stopped");
         assert_eq!(mirror.link(ID), None);
         assert!(mirror.subscribe(ID).is_none());
         let asked = mirror.ask(ID, [1; 16], Op::Status).await;
         assert_eq!(asked, Err(AskError::NotRunning));
-        let closed = tokio::time::timeout(WAIT, async {
-            loop {
-                if let Err(RecvError::Closed) = updates.recv().await {
-                    return;
-                }
+
+        // `stop` returned after the task ended: its updates are all sent,
+        // the last link is offline, and the broadcast is closed.
+        let mut last = None;
+        loop {
+            match updates.try_recv() {
+                Ok(MirrorEvent::Link(link)) => last = Some(link),
+                Ok(_) => {}
+                Err(TryRecvError::Closed) => break,
+                Err(other) => panic!("the broadcast is closed and whole: {other:?}"),
             }
-        });
-        closed
-            .await
-            .expect("the broadcast closes when the task ends");
+        }
+        assert_eq!(last, Some(Link::Offline));
 
         mirror.shutdown().await;
         store.close().await;

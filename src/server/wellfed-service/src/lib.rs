@@ -125,7 +125,7 @@ struct Shared {
     config: Config,
     clock: Arc<dyn Clock>,
     random: Arc<dyn Random>,
-    hub: Hub,
+    hub: Arc<Hub>,
 }
 
 impl Shared {
@@ -188,7 +188,7 @@ impl Service {
             Arc::clone(&random),
             cancel.child_token(),
         );
-        let hub = Hub::new(clock.now());
+        let hub = Arc::new(Hub::new(clock.now()));
         let service = Self {
             shared: Arc::new(Shared {
                 store,
@@ -206,7 +206,7 @@ impl Service {
 
         users::prepare().await?;
         for row in service.shared.store.feeders().await? {
-            service.spawn(&row)?;
+            service.spawn(&row).await?;
         }
         Ok(service)
     }

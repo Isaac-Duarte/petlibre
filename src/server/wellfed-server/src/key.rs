@@ -85,7 +85,7 @@ pub enum KeyError {
     )]
     Missing { database: PathBuf, key: PathBuf },
     #[error("make a new key")]
-    Random(#[source] wellfed_service::Error),
+    Random(#[source] wellfed_service::RandomFailed),
 }
 
 /// `config.json` as servers before the settings file wrote it.

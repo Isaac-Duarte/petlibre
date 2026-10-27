@@ -70,7 +70,7 @@ impl Service {
         }
 
         let row = self.row(id).await?;
-        self.spawn(&row)?;
+        self.spawn(&row).await?;
         Ok(self.view(row))
     }
 

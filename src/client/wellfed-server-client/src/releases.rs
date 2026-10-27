@@ -1,7 +1,10 @@
 //! The releases the server keeps for installs: the list, an upload and a
-//! check of the project's releases. Owners only.
+//! check of the project's releases (owners only), and installing one on a
+//! feeder.
 
-use wellfed_api::{Release, ReleaseCheck, ReleasePage, ReleaseQuery};
+use wellfed_api::{
+    FeederId, Hex, Install, InstallRequest, Release, ReleaseCheck, ReleasePage, ReleaseQuery,
+};
 use reqwest::header::{self, HeaderValue};
 use reqwest::{Method, StatusCode};
 
@@ -51,6 +54,28 @@ impl Client {
     /// verifies. Refused as `fetch_disabled` while fetching is off.
     pub async fn check_releases(&self) -> Result<ReleaseCheck, Error> {
         let response = self.api(Method::POST, "/releases/check").send().await?;
+        decode(response, StatusCode::OK).await
+    }
+
+    /// Install a release on a feeder. It runs on the server in the
+    /// background: this returns once it has started, and the stream carries
+    /// its progress and its end. Owners only; a second install while one
+    /// runs is refused `install_running`.
+    pub async fn install(&self, feeder: FeederId, release: Hex<32>) -> Result<Install, Error> {
+        let response = self
+            .api(Method::POST, &format!("/feeders/{feeder}/install"))
+            .json(&InstallRequest { release })
+            .send()
+            .await?;
+        decode(response, StatusCode::ACCEPTED).await
+    }
+
+    /// The feeder's running install, or else its last one.
+    pub async fn install_state(&self, feeder: FeederId) -> Result<Install, Error> {
+        let response = self
+            .api(Method::GET, &format!("/feeders/{feeder}/install"))
+            .send()
+            .await?;
         decode(response, StatusCode::OK).await
     }
 }

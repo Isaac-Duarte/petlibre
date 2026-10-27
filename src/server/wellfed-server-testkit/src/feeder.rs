@@ -1,17 +1,21 @@
 //! The simulated feeder, over real TCP, and what its owner does to it: the
 //! feeder's own policy and stores answer, never a mock.
 
-use std::net::SocketAddr;
+use std::cell::RefCell;
+use std::net::{Ipv4Addr, SocketAddr};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU8, Ordering};
 
 use wellfed_client::api::Invite;
 use wellfed_connect::Connection;
+pub use wellfed_feeder_sim::banks::Banks;
 pub use wellfed_feeder_sim::flash::Flash;
 pub use wellfed_feeder_sim::harness::{Relay, Running};
 pub use wellfed_feeder_sim::serve::Control;
 use wellfed_model::{Answer, ClientRole, Op};
 use wellfed_session::noise::Keypair;
+
+use crate::release;
 
 /// The owner's secret key, enrolled on every simulator the kit starts.
 pub const OWNER: [u8; 32] = [0x21; 32];
@@ -43,6 +47,20 @@ pub async fn restart(flash: &Rc<Flash>, address: SocketAddr) -> Running {
 /// journal: the count a test that retries a feed proves is one.
 pub fn feeds(flash: &Rc<Flash>) -> u64 {
     wellfed_feeder_sim::feeding::reserved(flash).unwrap_or(0)
+}
+
+/// A simulator on fresh flash and `banks` (kept across its restarts, as
+/// the board keeps them), at a free localhost port, with the owner
+/// enrolled, taking updates signed with [`release::project`].
+pub async fn start_updatable(banks: &Rc<RefCell<Banks>>) -> Running {
+    Running::start_with(
+        &Flash::memory(),
+        banks,
+        Some(release::project().verifying_key().to_bytes()),
+        Some(*owner().public()),
+        SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
+    )
+    .await
 }
 
 /// An owner's session with the simulator.

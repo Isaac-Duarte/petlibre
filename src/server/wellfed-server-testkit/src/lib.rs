@@ -9,6 +9,8 @@
 //!   front of a [`TestService`], reached through
 //!   [`wellfed_server_client::Client`] so the tests and the CLI use one
 //!   client of the routes.
+//! - [`release`]: release files signed with a test key the simulator and
+//!   the server can both be told to trust.
 //! - [`feeder`]: the simulated feeder over real TCP, its owner's key and
 //!   the invites the server redeems.
 //!
@@ -21,6 +23,7 @@
 
 pub mod feeder;
 pub mod fixed;
+pub mod release;
 mod server;
 mod service;
 

@@ -5,7 +5,7 @@
 //! other verb sends it. The device verbs (`feeders`, `status`, `settings`,
 //! `lock`, `feed`, `cancel-feed`, `events`) reach the feeders the server
 //! holds, through its command journal; the rest (`command`, `commands`,
-//! `users`, `tokens`, `releases`) only the server has.
+//! `users`, `tokens`, `releases`, `install`) only the server has.
 //!
 //! Output is text by default, and with `--json` the API's bodies, one JSON
 //! document per line (a refusal's problem included). The exit status is 0
@@ -22,6 +22,7 @@
 
 mod accounts;
 mod feeders;
+mod install;
 mod login;
 mod releases;
 mod text;
@@ -89,6 +90,10 @@ enum Verb {
     /// The releases the server keeps for installs. Owners only.
     #[command(subcommand)]
     Releases(releases::Releases),
+    /// Install a kept release on a feeder and follow it to its end
+    /// (owners only), or without one read the feeder's running or last
+    /// install.
+    Install(install::InstallArgs),
 }
 
 pub(crate) async fn run(args: ServerArgs) -> Result<ExitCode> {
@@ -121,6 +126,7 @@ async fn verb(verb: Verb, token_file: &Path, out: Output) -> Result<Settled> {
         Verb::Users(users) => accounts::users(&client()?, users, out).await,
         Verb::Tokens(tokens) => accounts::tokens(&client()?, tokens, out).await,
         Verb::Releases(releases) => releases::releases(&client()?, releases, out).await,
+        Verb::Install(args) => install::install(&client()?, args, out).await,
     }
 }
 

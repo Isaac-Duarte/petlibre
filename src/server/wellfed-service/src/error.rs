@@ -24,6 +24,8 @@ pub enum Error {
     #[error(transparent)]
     Command(#[from] CommandError),
     #[error(transparent)]
+    Install(#[from] InstallError),
+    #[error(transparent)]
     Random(#[from] RandomFailed),
     #[error(transparent)]
     Release(#[from] wellfed_releases::Error),
@@ -202,6 +204,15 @@ pub enum CommandError {
     NoEntry,
     #[error("hash a request body: {0}")]
     Body(wellfed_formats::Error),
+}
+
+/// Installs, one at a time per server.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum InstallError {
+    #[error("another install is running: one runs at a time")]
+    Running,
+    #[error("no install has run on that feeder")]
+    None,
 }
 
 /// A mirror refusal in the service's domains. Only `Unknown` may have

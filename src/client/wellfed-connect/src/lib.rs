@@ -14,6 +14,8 @@
 //!   by id: the feeder reads one request per client per pass and answers
 //!   in the order they arrive.
 //! - [`join`] redeems an invite, and [`Recovery`] runs the recovery window.
+//! - [`update::push`] drives a signed update until bank 1 is activated,
+//!   over the CLI's own session or the server's feeder task.
 //!
 //! Every method is cancel-safe, so a caller can `select!` on
 //! [`Connection::next`] beside its own work: reads keep nothing in flight,
@@ -27,6 +29,8 @@
 //! caller retries a write with the same id.
 
 #![forbid(unsafe_code)]
+
+pub mod update;
 
 use std::collections::VecDeque;
 use std::net::{IpAddr, SocketAddr};

@@ -13,7 +13,7 @@ use wellfed_model::{Answer, Op};
 use tokio::sync::{OwnedSemaphorePermit, mpsc, oneshot, watch};
 use tokio::time::{Duration, Instant, timeout_at};
 
-use crate::{AskError, Mirror, RequestId};
+use crate::{AskError, Mirror, Random, RequestId};
 
 /// One request for the feeder, and where its answer goes.
 pub(crate) struct Command {
@@ -25,12 +25,19 @@ pub(crate) struct Command {
 /// A long operation's turn on a feeder: its steps go out one at a time on
 /// the long lane, and short commands go first. Dropping it ends the
 /// operation.
-#[derive(Debug)]
 pub struct Operation {
     steps: mpsc::Sender<Command>,
-    link: watch::Receiver<Link>,
+    pub(crate) link: watch::Receiver<Link>,
     answer: Duration,
+    /// Request ids for the steps an install sends.
+    pub(crate) random: Arc<dyn Random>,
     _turn: OwnedSemaphorePermit,
+}
+
+impl std::fmt::Debug for Operation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Operation").finish_non_exhaustive()
+    }
 }
 
 impl Operation {
@@ -81,6 +88,7 @@ impl Mirror {
             steps,
             link,
             answer: self.shared.config.timing.answer,
+            random: Arc::clone(&self.shared.random),
             _turn: turn,
         })
     }

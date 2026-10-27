@@ -14,6 +14,7 @@ use crate::FeederId;
 use crate::commands::Command;
 use crate::events::{FeederEvent, Gap};
 use crate::feeders::Connection;
+use crate::installs::Install;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -39,6 +40,11 @@ pub enum StreamEvent {
     /// writes; an owner, everyone's.
     Command {
         command: Command,
+    },
+    /// An install started, made progress or ended.
+    Install {
+        feeder: FeederId,
+        install: Install,
     },
     /// The stream cannot resume from the client's `Last-Event-ID`:
     /// refetch what it shows.

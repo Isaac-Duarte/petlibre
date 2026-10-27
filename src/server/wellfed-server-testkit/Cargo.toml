@@ -9,10 +9,12 @@ publish.workspace = true
 
 [dependencies]
 axum.workspace = true
+ed25519-dalek.workspace = true
 jiff.workspace = true
 wellfed-api.workspace = true
 wellfed-client.workspace = true
 wellfed-connect.workspace = true
+wellfed-core.workspace = true
 wellfed-feeder-sim = { workspace = true, features = ["harness"] }
 wellfed-model.workspace = true
 wellfed-server.workspace = true
@@ -20,6 +22,7 @@ wellfed-server-client.workspace = true
 wellfed-service.workspace = true
 wellfed-session.workspace = true
 wellfed-store.workspace = true
+sha2-0-10.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["net", "rt", "sync", "time"] }
 tokio-util.workspace = true

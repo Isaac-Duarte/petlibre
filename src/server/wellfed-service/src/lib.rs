@@ -37,13 +37,16 @@
 //!   rollups and drop raw rows past the owner's retention.
 //! - **Backups** are copies of the database in the data directory, taken
 //!   daily and on an owner's request, without the sealing key.
+//! - **Installs** run one at a time per server, in the background on the
+//!   feeder's long-operation lane, so feeds and status reads keep working;
+//!   their progress and their end reach the stream.
 //! - **Background jobs** have their bodies here, each a method that takes
 //!   the time it runs at; [`Service::run_job`] runs one and records its
 //!   run. The server's supervisor decides when.
 //!
 //! Each domain has its own error enum ([`AccountError`],
 //! [`TokenError`], [`HouseholdError`], [`FeederError`], [`CommandError`],
-//! [`OwnerDataError`]), wrapped in [`Error`]. Time and randomness come in
+//! [`InstallError`], [`OwnerDataError`]), wrapped in [`Error`]. Time and randomness come in
 //! through [`Clock`] and [`Random`], so tests can fix them.
 //!
 //! [API design]: ../../../../docs/api/README.md
@@ -58,6 +61,7 @@ mod foods;
 mod health;
 mod household;
 mod hub;
+mod installs;
 mod jobs;
 mod journal;
 mod keys;
@@ -87,8 +91,8 @@ use uuid::Uuid;
 
 pub use backups::{BackupError, Backups};
 pub use error::{
-    AccountError, CommandError, Error, FeederError, HouseholdError, Invalid, OwnerDataError,
-    Result, TokenError,
+    AccountError, CommandError, Error, FeederError, HouseholdError, InstallError, Invalid,
+    OwnerDataError, Result, TokenError,
 };
 pub use hub::{Hub, Resume, Stamped, StreamId, Subscription};
 pub use permissions::{Permission, can};
@@ -239,6 +243,8 @@ pub struct Service {
     household: Arc<tokio::sync::Mutex<()>>,
     /// Backups are taken one at a time.
     backing_up: Arc<tokio::sync::Mutex<()>>,
+    /// The one install the server runs at a time.
+    installing: installs::Slot,
     cancel: CancellationToken,
     tasks: TaskTracker,
 }
@@ -290,12 +296,14 @@ impl Service {
             adopting: Arc::new(tokio::sync::Mutex::new(())),
             household: Arc::new(tokio::sync::Mutex::new(())),
             backing_up: Arc::new(tokio::sync::Mutex::new(())),
+            installing: installs::Slot::default(),
             cancel,
             tasks: TaskTracker::new(),
         };
 
         sessions::prepare().await?;
         service.interrupt_commands().await?;
+        service.interrupt_installs().await?;
         service.load_zone().await?;
         // Before any feeder task ingests, so none writes beside a stale
         // build of the projections.

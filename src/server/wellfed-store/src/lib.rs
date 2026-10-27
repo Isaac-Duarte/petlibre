@@ -27,6 +27,7 @@ mod feeders;
 mod feeds;
 mod foods;
 mod history;
+mod installs;
 mod jobs;
 mod migrate;
 mod pets;

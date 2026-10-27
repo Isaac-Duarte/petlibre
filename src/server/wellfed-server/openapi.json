@@ -829,6 +829,145 @@
         }
       }
     },
+    "/api/v1/feeders/{id}/install": {
+      "get": {
+        "tags": [
+          "feeders"
+        ],
+        "summary": "The feeder's running install, or else its last one.",
+        "operationId": "install_state",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/FeederId"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Install"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not_found: no such feeder, or no install has run on it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "feeders"
+        ],
+        "summary": "Install a release on the feeder. It runs in the background: this answers\nonce it has started, and the event stream carries its progress and its\nend as `install` updates. Nothing is offered again on the owner's\nbehalf; another install is another request.",
+        "operationId": "install",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/FeederId"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InstallRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Install"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid: a malformed body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden: owners only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not_found: no such feeder or release",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "install_running: another install is running; feeder_refused (`forbidden`): the server's key is not an owner's on this feeder",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "release_refused: the release no longer verifies",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "feeder_offline",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/feeders/{id}/lock": {
       "post": {
         "tags": [
@@ -3723,6 +3862,7 @@
           "release_refused",
           "fetch_disabled",
           "releases_unreachable",
+          "install_running",
           "internal"
         ]
       },
@@ -4734,6 +4874,246 @@
             "description": "An IANA zone; one a POSIX rule cannot describe is refused\n`zone_unsupported`."
           }
         }
+      },
+      "Install": {
+        "type": "object",
+        "description": "One install, as it stands. Its progress and its end reach the event\nstream as `install` updates carrying this body.",
+        "required": [
+          "id",
+          "feeder",
+          "release",
+          "version",
+          "by",
+          "started",
+          "state",
+          "written",
+          "image_len"
+        ],
+        "properties": {
+          "by": {
+            "$ref": "#/components/schemas/UserId",
+            "description": "The owner who asked for it."
+          },
+          "failure": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/InstallFailure",
+                "description": "Why it failed, once it has."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "feeder": {
+            "$ref": "#/components/schemas/FeederId"
+          },
+          "finished": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When it ended."
+          },
+          "id": {
+            "$ref": "#/components/schemas/InstallId"
+          },
+          "image_len": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "release": {
+            "type": "string",
+            "description": "The release's id."
+          },
+          "started": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "state": {
+            "$ref": "#/components/schemas/InstallState"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "written": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Bytes bank 0 has written and read back, of `image_len`.",
+            "minimum": 0
+          }
+        }
+      },
+      "InstallFailure": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "The feeder refused an update request; `refusal` says why. (`same`\nanswers an offer of the build bank 1 runs, which the server never\nsends: that install ends `already_running` instead.)",
+            "required": [
+              "refusal",
+              "reason"
+            ],
+            "properties": {
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "update_refused"
+                ]
+              },
+              "refusal": {
+                "$ref": "#/components/schemas/UpdateRefusal"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The feeder refused for a reason not particular to updates\n(`forbidden`: the server's key is not an owner's on this feeder).",
+            "required": [
+              "refusal",
+              "reason"
+            ],
+            "properties": {
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "refused"
+                ]
+              },
+              "refusal": {
+                "$ref": "#/components/schemas/FeederRefusal"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The install stopped on the feeder before activation.",
+            "required": [
+              "stop",
+              "reason"
+            ],
+            "properties": {
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "stopped"
+                ]
+              },
+              "stop": {
+                "$ref": "#/components/schemas/UpdateStop"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Bank 0 is no longer installing this release.",
+            "required": [
+              "reason"
+            ],
+            "properties": {
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "lost"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The feeder answered something that does not fit an update.",
+            "required": [
+              "reason"
+            ],
+            "properties": {
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "unexpected"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The feeder stopped answering. With `offered`, the offer went out,\nso bank 1 may be partly written, or activated with its answer lost:\nthe feeder's status tells.",
+            "required": [
+              "offered",
+              "reason"
+            ],
+            "properties": {
+              "offered": {
+                "type": "boolean"
+              },
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "unreachable"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The server failed (its random source); its log says why.",
+            "required": [
+              "reason"
+            ],
+            "properties": {
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "server"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The server stopped while it ran. The feeder stops a transfer that\ngets no chunk for a minute, and another install resumes one still\nreceiving this release.",
+            "required": [
+              "reason"
+            ],
+            "properties": {
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "interrupted"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "Why an install failed. Nothing is offered again on the owner's behalf:\nanother install is another request."
+      },
+      "InstallId": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "InstallRequest": {
+        "type": "object",
+        "description": "`POST /feeders/{id}/install`: the release to install.",
+        "required": [
+          "release"
+        ],
+        "properties": {
+          "release": {
+            "type": "string",
+            "description": "A release's id, as `GET /releases` lists it."
+          }
+        }
+      },
+      "InstallState": {
+        "type": "string",
+        "enum": [
+          "running",
+          "activated",
+          "already_running",
+          "failed"
+        ]
       },
       "Job": {
         "type": "string",
@@ -6085,6 +6465,29 @@
           },
           {
             "type": "object",
+            "description": "An install started, made progress or ended.",
+            "required": [
+              "feeder",
+              "install",
+              "type"
+            ],
+            "properties": {
+              "feeder": {
+                "$ref": "#/components/schemas/FeederId"
+              },
+              "install": {
+                "$ref": "#/components/schemas/Install"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "install"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
             "description": "The stream cannot resume from the client's `Last-Event-ID`:\nrefetch what it shows.",
             "required": [
               "type"
@@ -6161,6 +6564,42 @@
         "enum": [
           "grams",
           "ounces"
+        ]
+      },
+      "UpdateRefusal": {
+        "type": "string",
+        "description": "Why an update op was refused.",
+        "enum": [
+          "manifest",
+          "key",
+          "revoked",
+          "signature",
+          "target",
+          "same",
+          "downgrade",
+          "statement",
+          "pending",
+          "failed",
+          "fallback",
+          "attempt",
+          "installing",
+          "not_installing",
+          "store",
+          "unconfirmed"
+        ]
+      },
+      "UpdateStop": {
+        "type": "string",
+        "description": "Why an install stopped. Bank 1's marker was never written, so the\nfeeder keeps running bank 0.",
+        "enum": [
+          "timeout",
+          "cancelled",
+          "order",
+          "marker",
+          "write",
+          "hash",
+          "activate",
+          "store"
         ]
       },
       "User": {

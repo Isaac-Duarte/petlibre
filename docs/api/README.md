@@ -38,21 +38,22 @@ src/product/wellfed-proto    no_std, no alloc. Device-protocol messages, framing
 src/product/wellfed-device-api no_std, no alloc. The feeder's side: the sans-IO session server, pairing, the setup exchange
 src/client/wellfed-model     owned device API values (status, settings, events, requests, answers) and their conversion from the wire
 src/client/wellfed-client    sans-IO. Noise sessions, pairing, invites, the Connection: keepalive, answers, event cursor, recovery
-src/client/wellfed-connect   tokio loop over wellfed-client's Connection: locate, open, ask, request and receive (several outstanding), follow, join, recover
+src/client/wellfed-connect   tokio loop over wellfed-client's Connection: locate, open, ask, request and receive (several outstanding), follow, join, recover,
+                              and the update driver (Installer) the CLI and the server share
 src/client/wellfed-server-client  a typed async client of the server's HTTP API over wellfed-api (reqwest with rustls,
                               the SSE stream included): the CLI and the server's own tests
 src/tools/wellfed-feeder-sim the host-simulated feeder: wellfed-feeder's loop pass and stores over real TCP
 src/server/wellfed-api       HTTP bodies, error codes, OpenAPI schemas; a module per resource. No axum. Builds for Android
 src/server/wellfed-store     sqlx, migrations, typed queries; a module per table group, one Store. Raw rows plus
                               projections. The only crate that contains SQL
-src/server/wellfed-mirror    the per-feeder runtime: connect, sync, ingest and projections, the command lanes, and a
-                              typed broadcast of each feeder's mirror events
-src/server/wellfed-releases  fetch, upload and verify releases, the release cache, the install driver
+src/server/wellfed-mirror    the per-feeder runtime: connect, sync, ingest and projections, the command lanes (an
+                              install on the long one), and a typed broadcast of each feeder's mirror events
+src/server/wellfed-releases  fetch, upload and verify releases, the release cache
 src/server/wellfed-service   the use cases: accounts and auth, household, commands and their journal, pets and food,
                               derived views, alerts, audit, export, and the hub. No axum, no SQL
 src/server/wellfed-server    the binary: config, axum routers per resource, the auth extractors, SSE, the jobs
                               supervisor, the embedded web UI
-src/server/wellfed-server-testkit  a temp store, a fixed clock and random, the simulator harness, the server in process
+src/server/wellfed-server-testkit  a temp store, a fixed clock and random, the simulator harness, signed test releases, the server in process
 src/app/                      Flutter app, plus a thin flutter_rust_bridge crate (wellfed-app-bridge) over wellfed-client,
                               wellfed-model and wellfed-api
 ```
@@ -68,7 +69,7 @@ Each arrow means "may depend on":
 ```text
 wellfed-server ─► wellfed-service ─┬─► wellfed-mirror ─┬─► wellfed-store ─► wellfed-api ─► wellfed-model
        │                             │                    └─► wellfed-connect ─► wellfed-client
-       │                             ├─► wellfed-releases ─► wellfed-store, wellfed-client (Installer), a release verifier
+       │                             ├─► wellfed-releases ─► wellfed-store, wellfed-client (the release verifier)
        │                             └─► wellfed-store (projections), wellfed-api (the bodies it returns)
        └─► wellfed-api, wellfed-store (to open it)
 
@@ -92,7 +93,7 @@ wellfed (the CLI) ─► wellfed-server-client ─► wellfed-api
 | `wellfed-releases` | `wellfed-store`, `wellfed-api`, `wellfed-client`, `wellfed-model`; the verifier is `wellfed_client::release`, over the firmware's own offer check |
 | `wellfed-service` | `wellfed-mirror`, `wellfed-releases`, `wellfed-store`, `wellfed-api`, `wellfed-model`, `wellfed-formats` |
 | `wellfed-server` | `wellfed-service`, `wellfed-api`, `wellfed-store` |
-| `wellfed-server-testkit` | `wellfed-server`, `wellfed-service`, `wellfed-store`, `wellfed-api`, `wellfed-server-client`, `wellfed-feeder-sim`, `wellfed-client`, `wellfed-connect`, `wellfed-model`, `wellfed-session` |
+| `wellfed-server-testkit` | `wellfed-server`, `wellfed-service`, `wellfed-store`, `wellfed-api`, `wellfed-server-client`, `wellfed-feeder-sim`, `wellfed-client`, `wellfed-connect`, `wellfed-model`, `wellfed-session`, `wellfed-core` (to sign test releases) |
 | `wellfed-server-client` | `wellfed-api` |
 
 - **`wellfed-session`** is the session layer the feeder and every client run: the Noise handshakes and transport, the setup code's proof and the frames that carry them, with the strict hex and base64 text forms. It knows nothing of the feeder's hardware or storage, so the server's crates and the app take it without the firmware's SDK (`wellfed-core`).
@@ -208,7 +209,7 @@ GET    /api/v1/audit                         who did what through the server  ?a
 GET    /api/v1/releases                      fetched and verified releases  ?after=&limit=
 POST   /api/v1/releases                      upload a release file (octet-stream)
 POST   /api/v1/releases/check                check GitHub releases now
-POST   /api/v1/feeders/{id}/install          owner-approved install of a release
+POST   /api/v1/feeders/{id}/install          owner-approved install of a release   GET: the running or last one
 GET    /api/v1/pets    /foods                CRUD, owner data the feeder doesn't hold
 GET    /api/v1/pets/{id}/weights             a pet's weight log  POST, DELETE /weights/{weight}
 PUT    /api/v1/pets/{id}/feeders/{feeder}    a feeder serves the pet   DELETE: no longer
@@ -236,7 +237,7 @@ GET    /health                               no auth; liveness and version
 `wellfed server …` speaks this API through `wellfed-server-client` alone (it reaches the bodies as `wellfed_server_client::api`), beside the device commands, and each command takes one path ([two paths, one feed](#two-paths-one-feed)).
 
 - **Login.** `wellfed server login --server URL --name NAME` reads the password from standard input, opens a session, makes a token, keeps it in `private/wellfed-server.json` (`--token-file`) mode 0600 beside the device API's key file, and ends the session. `logout` revokes the token and deletes the file. Every other verb sends the token.
-- **Verbs.** `feeders`, `status`, `settings`, `lock`, `feed` and `cancel-feed` (each takes `--feeder` with an id or a name when the server holds more than one), `events` (with `--follow` over the stream), `command <key>` and `commands` (the journal), `users` (list, a role or an expiry, delete; adding an account needs a login), `tokens` (list, revoke) and `releases` (list, upload, check). `clients`, `revoke`, `reboot`, `install` and `export` join as their routes land.
+- **Verbs.** `feeders`, `status`, `settings`, `lock`, `feed` and `cancel-feed` (each takes `--feeder` with an id or a name when the server holds more than one), `events` (with `--follow` over the stream), `command <key>` and `commands` (the journal), `users` (list, a role or an expiry, delete; adding an account needs a login), `tokens` (list, revoke), `releases` (list, upload, check) and `install` (a release, followed on the stream to its end; without one, the last install). `clients`, `revoke`, `reboot` and `export` join as their routes land.
 - **Output.** Text by default; with `--json`, the API's bodies, one per line, a refusal's problem included. The exit status is 0 on success, 1 on an error and 3 when an outcome is unknown.
 - **Uncertain writes.** A write goes out once under a fresh `Idempotency-Key`. When its outcome is unknown (`504 outcome_unknown`, a `500`, or an answer lost on the way) the command prints the key and `wellfed server command <key>`, exits 3, and sends nothing more: not again under a new key, and never over the device API. `command <key>` reads the entry the feeder's history settles, exiting 3 until it does. A feed waits on the stream for its result, opened before the feed is sent; an `uncertain` or `unrecorded` result exits 3 too.
 
@@ -325,6 +326,16 @@ Built Oct 26 (host simulation). `wellfed-releases` keeps the signed updates an o
 
 - **`VACUUM INTO`** copies the database into `backups/` in the data directory, on a read connection so ingest goes on: daily at 03:30 household time (the `backup` job) and on an owner's `POST /backups` (`Permission::ServerData`, `201` with `{ name, taken, bytes }`). A copy is written under a hidden partial name, synced and renamed into place, named by the second it was taken (`server-20261027T033000Z.db`, then `-2`, … within one second), and the newest `backups.keep` (default 7) are kept, whichever way they were taken. `GET /backups` lists them, newest first, as `{ items, next }` with `next` always null, since they are at most `backups.keep`. The copy just taken is never pruned, even when the clock stepped back and older names sort after it.
 - **The key is not copied.** A copy holds the feeder keys sealed; `backups/README.txt` says that the key is `keys/server.key`, to back up once apart from the copies, and how to restore: stop the server, copy a backup to `server.db` (deleting any `-wal` and `-shm`), put the key back, start. The server refuses a `server.db` without its key file rather than making a new key.
+
+## Installs
+
+Built Oct 27 (host simulation). An owner installs a cached release on one feeder; nothing installs without that request.
+
+- **The driver** is `wellfed_connect::update::push`, which the `wellfed` CLI's promotion and "Restore stock" run too. It drives `wellfed_client::update::Installer` over a `Steps` trait: the CLI's steps are its own session, which it reopens itself; the server's are `wellfed-mirror`'s `Operation::install`, whose every step is an `Operation::step` on the feeder's long lane. The feeder task keeps the session, so when it drops (a cut, or the feeder restarting into bank 0 to take the release) the driver waits for the link to come back and reads the status from the new session. A short command waits at most one chunk, so feeds and status reads keep working. Chunks are idempotent by offset, so a dropped session resumes where bank 0 says; an offer is never sent again behind the owner's back.
+- **`POST /feeders/{id}/install`** (`Permission::ServerData`, owners only) takes `{ "release": <id> }` and answers `202` with the `Install` as it starts; it runs in the background. One install runs at a time per server: another is `409 install_running`. Refused first, before anything is sent: an unknown feeder or release (`404 not_found`), a release that no longer verifies (`422 release_refused`), a feeder the server has no session with (`503 feeder_offline`), and a feeder whose key for the server is not an owner's (`409 feeder_refused`, `refusal: forbidden`), since the feeder takes update requests only from an owner ([open question](../../SERVER_SPEC.md#open-questions)).
+- **`GET /feeders/{id}/install`** (`Permission::Read`) is the running install, or else the last one (`404 not_found` before any). An `Install` names its release and version, the owner who asked, its state (`running`, `activated`, `already_running` when bank 1 already ran the build and nothing was sent, or `failed`), bytes `written` of `image_len`, and once failed a typed `failure`: `update_refused` (with the feeder's `UpdateRefusal`), `refused` (with a `FeederRefusal`), `stopped` (with the feeder's `UpdateStop`), `lost`, `unexpected`, `unreachable` (with whether the offer went out), `interrupted` or `server`.
+- **The stream** carries `install` updates: the start, progress each 32 KiB written, and the end.
+- **Storage** is the `installs` table: each install is written when it starts and when it ends; its progress lives in memory, in the one slot that also makes the one-at-a-time claim. Each start marks a row a stopped server left `running` as failed, `interrupted`, so after a restart the state is defined and the slot free. An end the store refuses twice is kept in memory for `GET` until then. The feeder ends a transfer that hears nothing for a minute, and a new install of the same release within it takes the transfer up.
 
 ## Server first slice
 

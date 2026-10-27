@@ -11,6 +11,7 @@ pub(crate) mod feeds;
 pub(crate) mod foods;
 pub(crate) mod health;
 pub(crate) mod household;
+pub(crate) mod installs;
 pub(crate) mod pets;
 pub(crate) mod releases;
 pub(crate) mod samples;

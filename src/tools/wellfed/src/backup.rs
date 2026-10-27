@@ -321,7 +321,7 @@ pub(crate) async fn restore(args: RestoreArgs) -> Result<()> {
     .await?;
 
     match pushed {
-        Pushed::Activated => {
+        Pushed::Activated | Pushed::AlreadyRunning => {
             eprintln!(
                 "Activated: the feeder restarts into stock {STOCK_VERSION} from bank 1, with \
                  its own settings. Stock serves no device API: check it in stock's app, or \

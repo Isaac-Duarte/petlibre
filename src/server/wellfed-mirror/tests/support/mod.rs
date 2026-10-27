@@ -1,5 +1,6 @@
 //! What the mirror's tests share: a mirror on a temporary store with one
 //! simulated feeder enrolled and online.
+#![allow(dead_code, reason = "each test binary uses a subset")]
 
 use std::sync::Arc;
 use std::time::Duration;

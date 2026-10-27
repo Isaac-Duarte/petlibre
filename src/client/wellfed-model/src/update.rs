@@ -2,6 +2,7 @@
 //! stands and why one was refused.
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use crate::Hex;
 
@@ -67,7 +68,7 @@ pub enum UpdatePhase {
 
 /// Why an install stopped. Bank 1's marker was never written, so the
 /// feeder keeps running bank 0.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum UpdateStop {
     /// No chunk came for a minute.
@@ -88,7 +89,7 @@ pub enum UpdateStop {
 }
 
 /// Why an update op was refused.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum UpdateRefusal {
     /// Not a version 2 manifest, or an unknown image kind.

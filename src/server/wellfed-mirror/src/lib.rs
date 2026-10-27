@@ -17,6 +17,8 @@
 //!   not answered in time is [`AskError::Unknown`], never a failure: the
 //!   feeder may have run it, and a retry under the same request id gets its
 //!   first answer. One whose caller stopped waiting is dropped unsent.
+//!   An install is a long operation: [`Operation::install`] runs the
+//!   update driver the owner's CLI runs, a step at a time on the long lane.
 //! - **What a feeder sends** goes out on its own broadcast of
 //!   [`MirrorEvent`]s (events, gaps, samples and link changes): an event
 //!   or gap after it is stored, a sample as it arrives, ahead of its
@@ -34,6 +36,7 @@ mod command;
 mod connect;
 mod error;
 mod ingest;
+mod install;
 mod lanes;
 mod session;
 mod task;
@@ -55,6 +58,7 @@ pub use command::Operation;
 pub use connect::Enrolled;
 pub use error::{AskError, ConnectError, Unreachable};
 pub use ingest::{stored_event, stored_sample};
+pub use install::{PushError, Pushed, Update, UpdateError};
 pub use wellfed_client::api::{Invite, InviteText};
 pub use time::{Clock, Random, RandomFailed, SystemClock, SystemRandom};
 pub use zone::{Zone, ZoneError};

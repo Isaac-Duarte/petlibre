@@ -2,26 +2,19 @@
 //! file's typed reason, and a check's refusals. The fetch itself is tested
 //! in `wellfed-releases` against a stand-in for GitHub.
 
-use ed25519_dalek::{Signer as _, SigningKey};
+use ed25519_dalek::SigningKey;
 use wellfed_api::{
     Credentials, ErrorCode, NewUser, ReleaseQuery, ReleaseRefusal, ReleaseSigner, ReleaseSource,
     Role,
 };
-use wellfed_core::ota::offer::{self, ImageKind, Signed, key_id};
-use wellfed_core::ota::{MARKER, Manifest, SECTOR};
 use wellfed_server_client::{Client, Error, StatusCode, Uploaded};
+use wellfed_server_testkit::release::{self, MANIFEST_LEN, SECTOR, project, signed};
 use wellfed_server_testkit::{TestServer, ada_setup, config, refused};
 use wellfed_service::{Config, RELEASE_MAX, ReleaseFeed};
-use sha2_0_10::{Digest, Sha256};
-
-fn project() -> SigningKey {
-    SigningKey::from_bytes(&[0x05; 32])
-}
 
 /// The kit's config, trusting [`project`] and fetching from `fetch`.
 fn trusting(fetch: Option<ReleaseFeed>) -> Config {
-    let mut config = config();
-    config.releases.keys.project = vec![project().verifying_key().to_bytes()];
+    let mut config = release::trusting(config());
     config.releases.fetch = fetch;
     config
 }
@@ -33,24 +26,7 @@ fn release(key: &SigningKey, version: u32) -> Vec<u8> {
 
 /// A release at `version` whose image is `len` bytes.
 fn sized(key: &SigningKey, version: u32, len: usize) -> Vec<u8> {
-    let mut image: Vec<u8> = (0..len).map(|i| (i % 251) as u8).collect();
-    image[..8].copy_from_slice(&MARKER);
-    let signed = Signed {
-        manifest: Manifest {
-            version,
-            image_len: u32::try_from(image.len()).unwrap(),
-            target_bank: 1,
-            image_sha256: Sha256::digest(&image).into(),
-            build_id: [0x3c; 32],
-        },
-        kind: ImageKind::Replacement,
-        key_id: key_id(&key.verifying_key().to_bytes()),
-    };
-    let body = offer::manifest_body(&signed);
-    let mut file = body.to_vec();
-    file.extend_from_slice(&key.sign(&body).to_bytes());
-    file.extend_from_slice(&image);
-    file
+    signed(key, version, [0x3c; 32], len)
 }
 
 async fn owner(server: &TestServer) -> Client {
@@ -105,7 +81,7 @@ async fn an_owner_uploads_a_release_and_lists_it() {
 async fn an_upload_may_be_a_full_bank() {
     let server = TestServer::start_with(trusting(None)).await;
     let client = owner(&server).await;
-    let file = sized(&project(), 7, RELEASE_MAX - offer::MANIFEST_LEN);
+    let file = sized(&project(), 7, RELEASE_MAX - MANIFEST_LEN);
     assert_eq!(file.len(), RELEASE_MAX);
 
     let uploaded = client.upload_release(file).await.unwrap();
@@ -144,7 +120,7 @@ async fn a_refused_upload_says_why_and_is_not_kept() {
     let client = owner(&server).await;
 
     let mut forged = release(&project(), 7);
-    forged[offer::MANIFEST_LEN - 1] ^= 0x01;
+    forged[MANIFEST_LEN - 1] ^= 0x01;
     refused_as(
         client.upload_release(forged).await,
         ReleaseRefusal::Signature,

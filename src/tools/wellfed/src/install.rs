@@ -741,7 +741,7 @@ impl Run {
         )
         .await?;
         Ok(match pushed {
-            Pushed::Activated => Ok(()),
+            Pushed::Activated | Pushed::AlreadyRunning => Ok(()),
             Pushed::Failed(error) => Err(error),
             Pushed::Gone { .. } => Err(UpdateError::Lost),
         })

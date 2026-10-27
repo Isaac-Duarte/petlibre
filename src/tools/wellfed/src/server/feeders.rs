@@ -35,7 +35,7 @@ pub(crate) struct Which {
 
 impl Which {
     /// The feeder this names, from the server's list.
-    async fn id(&self, client: &Client) -> Result<FeederId> {
+    pub(super) async fn id(&self, client: &Client) -> Result<FeederId> {
         let feeders = client.feeders().await?;
         let matching: Vec<&Feeder> = feeders
             .iter()

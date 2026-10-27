@@ -7,8 +7,8 @@ use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use wellfed_api::{ErrorCode, FeederRefusal, Problem, Settings};
 use wellfed_service::{
-    AccountError, CommandError, Error, FeederError, HouseholdError, OwnerDataError, ReleaseError,
-    TokenError, ZoneError,
+    AccountError, CommandError, Error, FeederError, HouseholdError, InstallError, OwnerDataError,
+    ReleaseError, TokenError, ZoneError,
 };
 
 /// A request's failure.
@@ -161,6 +161,10 @@ fn service(error: &Error) -> (ErrorCode, Option<String>, Option<FeederRefusal>) 
             CommandError::NoEntry => ErrorCode::NotFound,
             CommandError::Unexpected | CommandError::Body(_) => return internal(error),
         },
+        Error::Install(install) => match install {
+            InstallError::Running => ErrorCode::InstallRunning,
+            InstallError::None => ErrorCode::NotFound,
+        },
         Error::Release(release) => match release {
             ReleaseError::Refused(_) => ErrorCode::ReleaseRefused,
             ReleaseError::FetchDisabled => ErrorCode::FetchDisabled,
@@ -244,6 +248,7 @@ fn status(code: ErrorCode) -> StatusCode {
         ErrorCode::ReleaseRefused => StatusCode::UNPROCESSABLE_ENTITY,
         ErrorCode::FetchDisabled => StatusCode::CONFLICT,
         ErrorCode::ReleasesUnreachable => StatusCode::BAD_GATEWAY,
+        ErrorCode::InstallRunning => StatusCode::CONFLICT,
         ErrorCode::Internal => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }

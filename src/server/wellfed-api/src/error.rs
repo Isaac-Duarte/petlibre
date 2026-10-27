@@ -74,6 +74,8 @@ pub enum ErrorCode {
     /// The server could not reach the project's releases, or they answered
     /// with something it could not read.
     ReleasesUnreachable,
+    /// Another install is running on this server: one runs at a time.
+    InstallRunning,
     Internal,
 }
 

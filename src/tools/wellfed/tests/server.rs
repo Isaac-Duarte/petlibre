@@ -1,21 +1,24 @@
 //! `wellfed server …` as a process against the server in process and the
 //! simulated feeder: the login and its token file, a feed, `--json`, the
-//! exit statuses, and a feed whose answer is lost, which exits 3 with its
-//! key and is never sent again.
+//! exit statuses, a feed whose answer is lost, which exits 3 with its key
+//! and is never sent again, and an install followed to its end.
 
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
-use wellfed_server_client::Client;
 use wellfed_server_client::api::{
     AdoptFeeder, ClientRole, Command, CommandOutcome, CommandState, Connection, ErrorCode,
-    FeedOutcome, Feeder, FeederId, Problem,
+    FeedOutcome, Feeder, FeederId, Install, InstallState, Problem,
 };
-use wellfed_server_testkit::feeder::{self, Flash, Relay, Running};
+use wellfed_server_client::{Client, Uploaded};
+use wellfed_server_testkit::feeder::{self, Banks, Flash, Relay, Running};
+use wellfed_server_testkit::release;
 use wellfed_server_testkit::{TestServer, ada_login, ada_setup, config, local, until};
 use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
+
+const BUILD: [u8; 32] = [0x77; 32];
 
 /// What one run of the CLI printed, and how it exited.
 struct Ran {
@@ -241,6 +244,71 @@ fn an_uncertain_feed_exits_3_with_its_key_and_is_never_resent() {
 
         // One feed: the CLI never sent it again.
         assert_eq!(feeder::feeds(&flash), 1);
+        server.stop().await;
+        sim.stop().await;
+    });
+}
+
+/// `install` starts a kept release and follows it to activation, reads it
+/// back without a release, and a second run of the build the feeder now
+/// runs ends `already_running`, with nothing sent.
+#[test]
+fn install_follows_a_release_to_activation() {
+    local(async {
+        let banks = Banks::new();
+        let sim = feeder::start_updatable(&banks).await;
+        let server = TestServer::start_with(release::trusting(config())).await;
+        let mut http = server.client();
+        http.setup(&ada_setup()).await.unwrap();
+        let request = AdoptFeeder {
+            invite: feeder::invite(&sim, ClientRole::Owner).await,
+            name: "kitchen".into(),
+            address: Some(sim.address.to_string()),
+        };
+        let kitchen = http.adopt(&request).await.unwrap().id;
+        let file = release::signed(&release::project(), 7, BUILD, 16 * release::SECTOR);
+        let Uploaded::New(kept) = http.upload_release(file).await.unwrap() else {
+            panic!("a first upload is new");
+        };
+        until("the server reads the feeder", || async {
+            let detail = http.feeder(kitchen).await.ok();
+            let status = detail.and_then(|detail| detail.status);
+            status.is_some_and(|status| status.live)
+        })
+        .await;
+        let home = Home::new();
+        home.login(&server).await.exited(0);
+        let id = kept.id.to_string();
+
+        let ran = home.run(&["install", &id, "--json"], "").await;
+        let bodies: Vec<Install> = ran.exited(0).bodies();
+        assert_eq!(bodies.first().map(|b| b.state), Some(InstallState::Running));
+        let last = bodies.last().unwrap();
+        assert_eq!(
+            (last.state, last.written),
+            (InstallState::Activated, kept.image_len)
+        );
+        let read = home.run(&["install"], "").await;
+        assert!(
+            read.exited(0).stdout.contains("activated"),
+            "{}",
+            read.stdout
+        );
+
+        until("the feeder answers from the release", || async {
+            let detail = http.feeder(kitchen).await.ok();
+            let status = detail.and_then(|detail| detail.status);
+            status.is_some_and(|status| status.live && status.status.bank == 1)
+        })
+        .await;
+        let again = home.run(&["install", &id], "").await;
+        assert!(
+            again.exited(0).stdout.contains("already_running"),
+            "{}",
+            again.stdout
+        );
+        home.run(&["install", "not-an-id"], "").await.exited(2);
+
         server.stop().await;
         sim.stop().await;
     });

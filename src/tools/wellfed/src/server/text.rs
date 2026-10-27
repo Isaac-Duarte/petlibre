@@ -5,7 +5,8 @@
 use std::fmt::Write as _;
 
 use wellfed_server_client::api::{
-    Command, CommandOutcome, Feeder, FeederDetail, FeederEvent, Gap, Release, Settings, Token, User,
+    Command, CommandOutcome, Feeder, FeederDetail, FeederEvent, Gap, Install, Release, Settings,
+    Token, User,
 };
 use serde::Serialize;
 
@@ -171,6 +172,21 @@ pub(super) fn release(release: &Release) -> String {
         word(&release.signer),
         release.added,
     )
+}
+
+pub(super) fn install(install: &Install) -> String {
+    let mut line = format!(
+        "install {}  version {}  {}  {} of {} bytes",
+        install.id,
+        install.version,
+        word(&install.state),
+        install.written,
+        install.image_len,
+    );
+    if let Some(failure) = &install.failure {
+        let _ = write!(line, "  {}", word(failure));
+    }
+    line
 }
 
 /// Each item on its own line.

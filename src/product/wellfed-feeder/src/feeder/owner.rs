@@ -2,7 +2,8 @@
 //!
 //! Each step it reads the button service's gestures and a queued remote lock
 //! change, steps the pairing and lock policies ([`pairing`](wellfed_device_api::pairing)
-//! and [`panel`](crate::panel)) and shows the lock on its indicator. Pairing
+//! and [`panel`](crate::panel)); the lights ([`lights`](super::lights))
+//! show the lock and a pending offer from what it holds. Pairing
 //! sees each gesture first and the panel gets only those it leaves, so a
 //! Dispense press that confirms a pairing, or that is part of setup's code,
 //! feeds nothing. An allowed Reset hold queues the key reset for the
@@ -10,12 +11,6 @@
 //! ([`setup`](super::setup)), which runs in this loop until it reboots. A
 //! lock change made here (a button, the idle relock) goes to the event
 //! history; a client's is recorded by the device API, with who made it.
-//!
-//! The lock indicator is on, as stock drives it, while the panel is locked,
-//! and off while the `lights` setting is off. A level is accepted when it
-//! reads back (`Platform::indicator_check`). A refused or unverified level
-//! drives every indicator off and the indicator stays off for the rest of
-//! the boot; the lock itself keeps working.
 
 use core::fmt;
 
@@ -24,7 +19,7 @@ use wellfed_proto::api::{EventBody, Source as EventSource};
 use wellfed_session::noise::Keypair;
 
 use super::events;
-use super::platform::{Check, Platform};
+use super::platform::Platform;
 use super::setup::{self, Setup};
 use crate::panel::{Action, Config, Event, Panel, Source};
 use wellfed_device_api::mailbox::Lock;
@@ -46,13 +41,6 @@ pub enum Record<D> {
     Reset {
         requested: Requested,
     },
-    /// The indicator failed and stays off for the rest of the boot.
-    Indicator {
-        /// The indicator's pad.
-        led: &'static str,
-        /// How its level read back; `None` when the request was refused.
-        check: Option<Check>,
-    },
     /// BLE setup mode.
     Setup(setup::Record<D>),
 }
@@ -73,16 +61,6 @@ pub fn describe<D: fmt::Display>(record: Record<D>, f: &mut impl fmt::Write) -> 
         Record::Pairing(event) => pair(event, f),
         Record::Reset { requested } => write!(f, "reset keys={requested}"),
         Record::Setup(record) => setup::describe(record, f),
-        Record::Indicator { led, check } => write!(
-            f,
-            "indicator led={led} stop={}",
-            match check {
-                None => "refused",
-                Some(Check::Held) => "verified",
-                Some(Check::InputMismatch) => "input-mismatch",
-                Some(Check::Abort) => "abort",
-            }
-        ),
     }
 }
 
@@ -106,22 +84,9 @@ pub fn pair(event: pairing::Event, f: &mut impl fmt::Write) -> fmt::Result {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Indicator {
-    /// Holding a verified level.
-    Shown(bool),
-    /// A level was requested at this time and is settling.
-    Settling {
-        high: bool,
-        since_ms: u32,
-    },
-    Failed,
-}
-
 pub struct Owner {
     panel: Option<Panel>,
     pairing: Pairing,
-    indicator: Indicator,
     /// BLE setup mode, from the gesture that starts it until the reboot
     /// that ends it.
     setup: Setup,
@@ -159,8 +124,6 @@ impl Owner {
         Self {
             panel: None,
             pairing: Pairing::new(pairing::Config::DEFAULT),
-            // Every indicator starts off.
-            indicator: Indicator::Shown(false),
             setup: Setup::off(),
             recovery: None,
             signer: None,
@@ -226,8 +189,6 @@ impl Owner {
         identity: Option<&Keypair>,
         mut record: impl FnMut(Record<P::Record>),
     ) -> u32 {
-        // True until the settings load.
-        let lights = platform.settings().is_none_or(|view| view.lights);
         let panel = self.panel.get_or_insert_with(|| {
             let panel = Panel::new(Config::STOCK, now);
             record(Record::Start { lock: panel.lock() });
@@ -292,8 +253,7 @@ impl Owner {
             self.signer = self.signer.or(signer_decision(event));
         }
 
-        let want = panel.lock().locked() && lights;
-        let delay = self.show(platform, now, want, &mut record);
+        let delay = POLL_MS;
         if !self.setup.is_on() {
             return delay;
         }
@@ -307,57 +267,6 @@ impl Owner {
             &mut setup_record,
         );
         delay.min(setup_delay.max(1))
-    }
-
-    /// Moves the indicator one stage towards `want`: request, then after
-    /// the settle time verify. Returns the delay to the next step.
-    fn show<P: Platform>(
-        &mut self,
-        platform: &mut P,
-        now: u32,
-        want: bool,
-        record: &mut impl FnMut(Record<P::Record>),
-    ) -> u32 {
-        match self.indicator {
-            Indicator::Failed => POLL_MS,
-            Indicator::Shown(high) if high == want => POLL_MS,
-            Indicator::Shown(_) => {
-                if !platform.indicator(want) {
-                    return self.fail(platform, None, record);
-                }
-                self.indicator = Indicator::Settling {
-                    high: want,
-                    since_ms: now,
-                };
-                P::INDICATOR_SETTLE_MS
-            }
-            Indicator::Settling { high, since_ms } => {
-                if now.wrapping_sub(since_ms) < P::INDICATOR_SETTLE_MS {
-                    return P::INDICATOR_SETTLE_MS;
-                }
-                let check = platform.indicator_check(high);
-                if check != Check::Held {
-                    return self.fail(platform, Some(check), record);
-                }
-                self.indicator = Indicator::Shown(high);
-                POLL_MS
-            }
-        }
-    }
-
-    fn fail<P: Platform>(
-        &mut self,
-        platform: &mut P,
-        check: Option<Check>,
-        record: &mut impl FnMut(Record<P::Record>),
-    ) -> u32 {
-        platform.indicators_off();
-        self.indicator = Indicator::Failed;
-        record(Record::Indicator {
-            led: P::LOCK_INDICATOR,
-            check,
-        });
-        POLL_MS
     }
 }
 

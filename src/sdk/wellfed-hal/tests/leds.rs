@@ -271,6 +271,63 @@ fn indicator_pull_removal_preserves_unrelated_pad_flags_and_pins() {
 }
 
 #[test]
+fn the_indicator_service_drives_lights_while_the_motor_runs_and_emitters_are_lit() {
+    use leds::Decision;
+    use wellfed_hal::plaf103::pins::{IR_PA_BIT, MOTOR_A_BIT};
+    ready();
+
+    // A feed: one motor pin driven, the outlet emitter lit.
+    fake::with(|h| h.output[0] = (h.output[0] & !MOTOR_A_BIT) | IR_PA_BIT);
+    assert!(!stopped::observe().verified());
+    let outputs = fake::with(|h| {
+        (
+            h.output[0] & stopped::PA_MASK,
+            h.output[1] & stopped::PB_MASK,
+        )
+    });
+
+    for led in Led::ALL {
+        assert!(leds::show(led, true));
+        assert!(
+            !leds::observe(led).accepted(true),
+            "the probe's decision still wants stopped outputs"
+        );
+        let expected = if led.input_readable() {
+            Decision::Verified
+        } else {
+            Decision::OutputOnly
+        };
+        assert_eq!(leds::observe(led).shown(true), expected);
+        assert!(leds::show(led, false));
+        assert_eq!(leds::observe(led).shown(false), expected);
+    }
+    fake::with(|h| {
+        assert_eq!(
+            (
+                h.output[0] & stopped::PA_MASK,
+                h.output[1] & stopped::PB_MASK
+            ),
+            outputs,
+            "no motor or emitter bit moved"
+        );
+    });
+
+    // A latch that did not take still fails its check.
+    fake::with(|h| h.blocked_gpio_write[0] = 1 << Led::Lock.pin());
+    assert!(leds::show(Led::Lock, true));
+    assert_eq!(leds::observe(Led::Lock).shown(true), Decision::Abort);
+
+    // A pin no longer an output refuses the request and darkens them all.
+    fake::with(|h| {
+        h.blocked_gpio_write[0] = 0;
+        h.output[0] |= leds::PA_MASK;
+        h.direction[1] &= !leds::PB_MASK;
+    });
+    assert!(!leds::show(Led::Food, true));
+    fake::with(|h| assert_eq!(h.output[0] & leds::PA_MASK, 0));
+}
+
+#[test]
 fn blocked_low_write_cannot_hide_behind_a_low_input() {
     ready();
     assert!(leds::request(Led::Connection, true));

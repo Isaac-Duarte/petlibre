@@ -93,6 +93,35 @@ pub fn request(led: Led, high: bool) -> bool {
     true
 }
 
+// `show` writes these bits while the motor may run and the emitters may be
+// lit: the masks must never reach a pin the stopped-output owners hold.
+const _: () = assert!(
+    PA_MASK & crate::stopped::PA_MASK == 0 && PB_MASK & crate::stopped::PB_MASK == 0,
+    "an indicator mask overlaps a motor or emitter pin"
+);
+
+/// Drive one indicator for the panel's indicator service, whatever the
+/// motor and emitters are doing: a feed must not freeze or fail the lights,
+/// and the lights must not hold up a feed. The write is one masked port
+/// write under the interrupt lock, so it cannot interleave with the
+/// supervision timer's motor writes, and its mask holds only indicator
+/// bits (checked at compile time above). An indicator pin that is no
+/// longer an output refuses the request and turns every indicator off.
+/// The caller waits [`SETTLE_MS`] and checks with [`Readback::shown`].
+pub fn show(led: Led, high: bool) -> bool {
+    let _guard = IrqGuard::lock();
+    if !directions() {
+        let _ = all_low();
+        return false;
+    }
+
+    let pin = led.pin();
+    let mask = 1 << (pin & 31);
+    // SAFETY: one indicator pin; this module owns them.
+    unsafe { sdk::gpio_port_write(pin >> 5, mask, if high { mask } else { 0 }) };
+    true
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Readback {
     pub latch_high: bool,
@@ -136,6 +165,17 @@ impl Readback {
         } else {
             Decision::Abort
         }
+    }
+
+    /// The decision for a level [`show`] wrote: the same checks of latch,
+    /// pad, direction and input, but not the stopped outputs, which a feed
+    /// legitimately leaves.
+    pub fn shown(self, high: bool) -> Decision {
+        Self {
+            stopped_ok: true,
+            ..self
+        }
+        .decision(high)
     }
 
     /// True only for an input-verified level.

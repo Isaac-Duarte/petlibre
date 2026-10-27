@@ -24,7 +24,7 @@ What works on the PLAF103 by hardware block, after [Asahi's feature-support page
 | Power inputs and battery | Yes | Hardware (no-load scope): FW14; Planned: FW26, FP14 |
 | Motor and feeding | Yes | In progress: FW30 electrical checks; Planned: FW16–FW19, FP05 |
 | Buttons and child lock | Yes ([stock](stock/README.md#panel-buttons-and-child-lock)) | Hardware: FW20, FP11; Planned: FP15 reset button |
-| Indicators | Yes | Hardware (output-only scope): FW04; Planned: FW23 |
+| Indicators | Yes | Hardware (output-only scope): FW04; In progress: FW23 ([service](../../firmware/indicators.md), host done); Planned: FP12 |
 | Speaker and audio | Yes | Hardware (playback scope): FW24; Planned: FP12, FP13 |
 | Schedules and time | Yes ([stock](stock/README.md#clock-and-schedules)) | In progress: FW21; Planned: FW46, FP03, FP04 |
 | Bluetooth LE setup | Wi-Fi/broker provisioning ([stock](stock/README.md#bluetooth-le)) | In progress: FW34 |

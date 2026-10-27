@@ -31,6 +31,7 @@ use wellfed_core::clock::wall::{
     Fix, Jump, Origin, State as ClockState, Sync, SyncError, WallClock,
 };
 use wellfed_core::clock::zone::Rule;
+use wellfed_core::indicator::Light;
 use wellfed_core::log_tail::{Batch as LogBatch, LogTail};
 use wellfed_core::ota::install::{Answer, Progress, Refused};
 use wellfed_core::store::slot::crc32;
@@ -526,7 +527,6 @@ impl Platform for SimPlatform {
     type Socket = Socket;
     type Record = Infallible;
 
-    const LOCK_INDICATOR: &'static str = "PA4";
     const INDICATOR_SETTLE_MS: u32 = 10;
     const POWER_SAMPLE_MS: u32 = POWER_SAMPLE_MS;
 
@@ -580,11 +580,11 @@ impl Platform for SimPlatform {
         self.gestures.pop_front()
     }
 
-    fn indicator(&mut self, _on: bool) -> bool {
+    fn indicator(&mut self, _light: Light, _on: bool) -> bool {
         true
     }
 
-    fn indicator_check(&mut self, _on: bool) -> Check {
+    fn indicator_check(&mut self, _light: Light, _on: bool) -> Check {
         Check::Held
     }
 

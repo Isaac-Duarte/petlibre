@@ -1,7 +1,7 @@
 //! [`Plaf103`]: the product loop's [`Platform`] on the PLAF103, over the
 //! SDK's drivers and the feeder runtime's mailboxes. Everything here is a
-//! direct call into one of them, wired to this board: the lock indicator on
-//! PA4, the BLE peripheral and the speaker that setup mode steps, the
+//! direct call into one of them, wired to this board: the four panel
+//! indicators, the BLE peripheral and the speaker that setup mode steps, the
 //! device API's lwIP sockets, the settings writer's mailboxes, the wall
 //! clock, the outputs' interlock and the update stage's mailbox.
 //!
@@ -13,6 +13,7 @@ use core::fmt;
 use wellfed_core::buttons::Gesture;
 use wellfed_core::clock::wall::{Fix, Jump, Origin, State as ClockState, Sync, SyncError};
 use wellfed_core::clock::zone::Rule;
+use wellfed_core::indicator::Light;
 use wellfed_core::log_tail::Batch as LogBatch;
 use wellfed_core::ota::install::{Answer, Progress, Refused};
 use wellfed_core::store::slot::SlotIo;
@@ -122,11 +123,21 @@ impl SlotIo for TraceReads {
     }
 }
 
+/// The pad behind each panel light: PA0 Wi-Fi, PA2 low food, PA4 lock and
+/// PB22 warning, each lit HIGH (physical, on the research unit).
+const fn led(light: Light) -> Led {
+    match light {
+        Light::Connection => Led::Connection,
+        Light::Food => Led::Food,
+        Light::Lock => Led::Lock,
+        Light::Fault => Led::Fault,
+    }
+}
+
 impl Platform for Plaf103 {
     type Socket = i32;
     type Record = Driver;
 
-    const LOCK_INDICATOR: &'static str = Led::Lock.name();
     const INDICATOR_SETTLE_MS: u32 = leds::SETTLE_MS;
     const POWER_SAMPLE_MS: u32 = power::SAMPLE_MS;
 
@@ -173,12 +184,12 @@ impl Platform for Plaf103 {
         wellfed_sdk::buttons::next()
     }
 
-    fn indicator(&mut self, on: bool) -> bool {
-        leds::request(Led::Lock, on)
+    fn indicator(&mut self, light: Light, on: bool) -> bool {
+        leds::show(led(light), on)
     }
 
-    fn indicator_check(&mut self, on: bool) -> Check {
-        match leds::observe(Led::Lock).decision(on) {
+    fn indicator_check(&mut self, light: Light, on: bool) -> Check {
+        match leds::observe(led(light)).shown(on) {
             // Port A has no input readback: a level whose latch, pad,
             // directions and stopped outputs agree is accepted.
             Decision::Verified | Decision::OutputOnly => Check::Held,

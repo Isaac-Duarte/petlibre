@@ -7,12 +7,13 @@
 //! 1. the identity, if the settings writer published a new one
 //!    ([`identity`]);
 //! 2. the panel's owner: gestures, a client's queued lock change, the idle
-//!    relock, pairing's timers, the lock indicator and BLE setup mode while
-//!    it runs ([`owner`], [`setup`]); then the reboot setup mode asks for,
-//!    and the lock it now holds for the device API ([`lock`]);
+//!    relock, pairing's timers and BLE setup mode while it runs ([`owner`],
+//!    [`setup`]); then the reboot setup mode asks for, and the lock it now
+//!    holds for the device API ([`lock`]);
 //! 3. the supply judged, its change recorded ([`supply`]); a Dispense
 //!    press the panel allowed, queued for the feeding owner, and readiness
-//!    noted ([`feeding`]);
+//!    noted ([`feeding`]); then the panel's lights from what the pass now
+//!    knows ([`lights`]);
 //! 4. the device API: its sockets, the server's step and the live samples
 //!    ([`serve`]), with the time settings and the NTP exchange ([`time`]);
 //! 5. the speaker, while the feed call plays (setup mode steps it itself).
@@ -25,6 +26,7 @@
 pub mod events;
 pub mod feeding;
 pub mod identity;
+pub mod lights;
 pub mod lock;
 pub mod owner;
 pub mod platform;
@@ -41,6 +43,7 @@ use wellfed_session::noise::Keypair;
 pub use platform::Platform;
 
 use identity::Identity;
+use lights::Lights;
 use lock::LockBox;
 use owner::Owner;
 use wellfed_device_api::mailbox::Lock;
@@ -135,6 +138,8 @@ pub enum Record<D> {
     Serve(serve::Record),
     /// `PLFEED1`.
     Feeding(feeding::Record),
+    /// `PLIND1`.
+    Lights(lights::Record),
     /// The speaker's own record while the feed call plays, under its tag.
     Driver(D),
 }
@@ -149,6 +154,7 @@ impl<D: DriverRecord> Record<D> {
             Self::Owner(_) => "PLPANEL1",
             Self::Serve(_) => "PLAPI1",
             Self::Feeding(_) => "PLFEED1",
+            Self::Lights(_) => "PLIND1",
             Self::Driver(record) => record.tag(),
         }
     }
@@ -162,6 +168,7 @@ impl<D: DriverRecord> fmt::Display for Record<D> {
             Self::Owner(record) => owner::describe(record, f),
             Self::Serve(record) => serve::describe(record, f),
             Self::Feeding(record) => feeding::describe(record, f),
+            Self::Lights(record) => lights::describe(record, f),
             Self::Driver(record) => fmt::Display::fmt(&record, f),
         }
     }
@@ -175,6 +182,7 @@ pub struct Feeder<P: Platform> {
     serve: Serve<P::Socket>,
     readiness: feeding::Watch,
     supply: supply::Watch,
+    lights: Lights,
 }
 
 impl<P: Platform> Feeder<P> {
@@ -189,6 +197,7 @@ impl<P: Platform> Feeder<P> {
             serve: Serve::new(),
             readiness: feeding::Watch::new(),
             supply: supply::Watch::new(),
+            lights: Lights::new(),
         }
     }
 
@@ -285,10 +294,18 @@ impl<P: Platform> Feeder<P> {
             if let (Ok(feed), Some(result)) = (result, call) {
                 record(Record::Feeding(feeding::Record::Call { feed, result }));
             }
+            if result.is_err() {
+                self.lights.refused(now_ms, |r| record(Record::Lights(r)));
+            }
         }
         let ready = self.readiness(feeds);
         self.readiness.note(&mut self.platform, now_ms, ready, |r| {
             record(Record::Feeding(r))
+        });
+
+        let states = self.states(feeds, ready);
+        let lights_delay = self.lights.step(&mut self.platform, now_ms, states, |r| {
+            record(Record::Lights(r))
         });
 
         // Requests read what the owner holds after this step.
@@ -331,7 +348,26 @@ impl<P: Platform> Feeder<P> {
             }
             speaker_delay = step.delay_ms;
         }
-        delay.min(serve_delay).min(speaker_delay)
+        delay.min(serve_delay).min(speaker_delay).min(lights_delay)
+    }
+
+    /// The feeder's states as the lights show them, after this pass's
+    /// owner step and readiness.
+    fn states<F: Feeds>(&mut self, feeds: &F, ready: Readiness) -> lights::States {
+        let blocked = feeds.blocked();
+        lights::States {
+            fault: matches!(blocked, Some(Blocked::Fault | Blocked::Journal)),
+            updating: self.platform.installing(),
+            setup: self.owner.setup_on(),
+            pairing: self.owner.pairing().awaiting().is_some(),
+            battery: ready == Readiness::Blocked(Blocked::Battery)
+                || blocked == Some(Blocked::Battery),
+            feeding: feeds.busy(),
+            locked: self.owner.lock().is_some_and(Lock::locked),
+            online: self.platform.ipv4().is_some(),
+            // True until the settings load.
+            lights: self.platform.settings().is_none_or(|view| view.lights),
+        }
     }
 
     /// Record a feed's `Fed` event, which may take the queue's reserved

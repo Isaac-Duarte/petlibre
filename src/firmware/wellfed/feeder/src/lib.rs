@@ -4,7 +4,7 @@
 //! the panel and its child lock, pairing and BLE setup mode, the device
 //! API with its sockets and mDNS, and the event recorder, one pass at a
 //! time. This crate is the PLAF103's wiring for it:
-//! - [`platform`]: the loop's `Platform` on this board: the lock indicator,
+//! - [`platform`]: the loop's `Platform` on this board: the panel indicators,
 //!   setup mode's BLE link and speaker, lwIP's sockets, and the runtime's
 //!   mailboxes, clock, interlock and update mailbox;
 //! - [`feeding`]: the feeding owner with this board's limits, which the loop

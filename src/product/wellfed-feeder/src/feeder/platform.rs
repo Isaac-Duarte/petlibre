@@ -12,6 +12,7 @@ use core::fmt;
 use wellfed_core::buttons::Gesture;
 use wellfed_core::clock::wall::{Fix, Jump, Origin, State as ClockState, Sync, SyncError};
 use wellfed_core::clock::zone::Rule;
+use wellfed_core::indicator::Light;
 use wellfed_core::log_tail::Batch as LogBatch;
 use wellfed_core::ota::install::{Answer, Progress, Refused};
 use wellfed_core::supply::{Pack, Reading};
@@ -166,15 +167,7 @@ pub enum EventSlot {
 }
 
 /// How a settled indicator level read back.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Check {
-    /// The level holds (read back, or consistent where the pad has no
-    /// input readback).
-    Held,
-    InputMismatch,
-    /// Outputs or the pad disagree: stop driving the indicator.
-    Abort,
-}
+pub use wellfed_core::indicator::Check;
 
 /// What setup mode's BLE link asks the loop to act on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -234,8 +227,6 @@ pub trait Platform {
     /// What the platform's own drivers record.
     type Record: DriverRecord;
 
-    /// The lock indicator's pad, for its record.
-    const LOCK_INDICATOR: &'static str;
     /// How long a requested indicator level settles before it reads back.
     const INDICATOR_SETTLE_MS: u32;
     /// How often the supply is sampled, and so how often a subscriber gets
@@ -261,10 +252,11 @@ pub trait Platform {
 
     /// The button service's next queued gesture.
     fn gesture(&mut self) -> Option<Gesture>;
-    /// Drive the lock indicator; false when the request is refused.
-    fn indicator(&mut self, on: bool) -> bool;
-    /// How the lock indicator's settled level reads back against `on`.
-    fn indicator_check(&mut self, on: bool) -> Check;
+    /// Drive `light`, whatever the motor and emitters are doing; false when
+    /// the request is refused.
+    fn indicator(&mut self, light: Light, on: bool) -> bool;
+    /// How `light`'s settled level reads back against `on`.
+    fn indicator_check(&mut self, light: Light, on: bool) -> Check;
     /// Drive every indicator off, for good.
     fn indicators_off(&mut self);
     /// The supply, once sampled.

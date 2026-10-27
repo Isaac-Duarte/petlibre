@@ -390,6 +390,12 @@ impl Pairing {
         }
     }
 
+    /// The offer that waits for a Dispense press or its code, if one does
+    /// (until [`Self::tick`] expires it).
+    pub fn awaiting(&self) -> Option<Path> {
+        self.pending.map(|pending| pending.path)
+    }
+
     pub const fn recovery_open(&self) -> bool {
         self.recovery_until.is_some()
     }

@@ -6,10 +6,11 @@
 //! owner to time either. A disabled account's sessions are ended when it is
 //! extended, so only a new login opens one.
 
-use wellfed_api::{NewUser, Role, User, UserId, UserPatch};
+use wellfed_api::{NewUser, RevokeReason, Role, User, UserId, UserPatch};
 use wellfed_formats::hex;
-use wellfed_store::{Change, Store};
+use wellfed_store::{Change, Store, Whose};
 
+use crate::phones::revocation;
 use crate::sessions::{self, disabled, hash_password, password, user_name};
 use crate::tokens::session_only;
 use crate::{AccountError, Caller, Invalid, Random, Result, Service, SessionToken};
@@ -85,6 +86,9 @@ impl Service {
 
         let store = &self.shared.store;
         changed(store.update_user(id, updated.role, updated.expires).await?)?;
+        if let Some(reason) = revocation(&current, &updated) {
+            self.revoke_phones(Whose::User(id), reason).await?;
+        }
         let now = self.shared.clock.now();
         let enabled = disabled(&current, now) && !disabled(&updated, now);
         let reset = hash.is_some();
@@ -104,9 +108,12 @@ impl Service {
         Ok(updated)
     }
 
-    /// Delete a user and end their sessions.
+    /// Delete a user and end their sessions; their phones' keys are
+    /// revoked on every feeder.
     pub async fn delete_user(&self, id: UserId) -> Result<()> {
-        changed(self.shared.store.delete_user(id).await?)
+        changed(self.shared.store.delete_user(id).await?)?;
+        self.revoke_phones(Whose::User(id), RevokeReason::Deleted)
+            .await
     }
 
     async fn user(&self, id: UserId) -> Result<User> {

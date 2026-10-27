@@ -59,6 +59,8 @@ pub struct Feeder {
     pub synced: Option<u64>,
     /// The feeder's history epoch `synced` counts in.
     pub epoch: Option<u32>,
+    /// When it was removed from the server; `None` while it is mirrored.
+    pub archived: Option<Timestamp>,
 }
 
 /// One feeder and its latest status.

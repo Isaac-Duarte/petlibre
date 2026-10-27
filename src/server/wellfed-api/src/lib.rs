@@ -13,6 +13,7 @@
 #![forbid(unsafe_code)]
 
 mod auth;
+mod clients;
 mod commands;
 mod error;
 mod events;
@@ -33,6 +34,10 @@ use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
 pub use auth::{Credentials, PasswordChange, Role, Setup, SetupState, User};
+pub use clients::{
+    ClientOwner, FeederClient, KeyRemoval, NewPhoneInvite, PhoneInvite, PhoneKey, PlayRequest,
+    Removal, RevokeAttempt, RevokeReason, Revoking, TuneName, WifiChange, WifiCredentials,
+};
 pub use commands::{
     Command, CommandKind, CommandOutcome, CommandPage, CommandQuery, CommandState, FeedRequest,
 };

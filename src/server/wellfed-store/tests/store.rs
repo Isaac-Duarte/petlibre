@@ -283,8 +283,11 @@ async fn a_feeder_is_adopted_once_and_reads_back_whole() {
     let (_dir, store) = fresh().await;
     let id = adopt(&store, 0xaa).await;
 
-    assert!(store.feeder_adopted(&[0xaa; 32]).await.unwrap());
-    assert!(!store.feeder_adopted(&[0xbb; 32]).await.unwrap());
+    assert_eq!(
+        store.feeder_by_identity(&[0xaa; 32]).await.unwrap(),
+        Some(id)
+    );
+    assert_eq!(store.feeder_by_identity(&[0xbb; 32]).await.unwrap(), None);
     let again = store
         .insert_feeder(NewFeeder {
             id: FeederId(fresh_id()),
@@ -313,6 +316,7 @@ async fn a_feeder_is_adopted_once_and_reads_back_whole() {
             sealed: vec![1, 2, 3],
         },
         synced: None,
+        archived: None,
     };
     assert_eq!(store.feeder(id).await.unwrap(), Some(want.clone()));
     assert_eq!(store.feeders().await.unwrap(), [want]);

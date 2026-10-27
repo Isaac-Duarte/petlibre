@@ -35,6 +35,9 @@ impl Service {
         if let Some(feeds) = self.mirror.subscribe(row.id) {
             self.watch_feeds(row.id, feeds);
         }
+        if let Some(links) = self.mirror.subscribe(row.id) {
+            self.watch_revocations(row.id, links);
+        }
 
         let mirror = self.mirror.clone();
         let id = row.id;

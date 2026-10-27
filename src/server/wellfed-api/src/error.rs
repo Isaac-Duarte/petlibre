@@ -51,6 +51,17 @@ pub enum ErrorCode {
     TooLarge,
     /// The feeder is already adopted.
     AlreadyAdopted,
+    /// The feeder was removed from the server: its history stays readable,
+    /// and adopting it again brings it back.
+    FeederArchived,
+    /// Only a phone's token, not a browser session, gets an invite for a
+    /// phone: the key is recorded as that token's.
+    TokenRequired,
+    /// The account or token has an expiry, so its phone holds no key of its
+    /// own and reaches the feeders through the server only.
+    DirectKeyRefused,
+    /// The key is already one of the feeder's clients, or another phone's.
+    ClientKeyTaken,
     /// The feeder dropped the invite unanswered: unknown, used or expired.
     InviteExpired,
     /// The server could not reach the feeder.

@@ -20,6 +20,8 @@ pub enum Error {
     #[error(transparent)]
     Feeder(#[from] FeederError),
     #[error(transparent)]
+    Client(#[from] ClientError),
+    #[error(transparent)]
     OwnerData(#[from] OwnerDataError),
     #[error(transparent)]
     Command(#[from] CommandError),
@@ -86,6 +88,10 @@ pub enum Invalid {
     GramsPerCup,
     #[error("a refill is 1-100000 g")]
     RefillGrams,
+    #[error("an SSID is 1-32 bytes")]
+    Ssid,
+    #[error("a WPA2 passphrase is 8-63 printable ASCII characters")]
+    Psk,
 }
 
 /// Setup, login, sessions and the accounts owners manage.
@@ -142,6 +148,8 @@ pub enum FeederError {
     NotFound,
     #[error("that feeder is already adopted")]
     AlreadyAdopted,
+    #[error("the feeder was removed: adopt it again to send it anything")]
+    Archived,
     #[error(transparent)]
     Invite(#[from] InviteText),
     #[error("the feeder dropped the invite: unknown, used or expired")]
@@ -156,6 +164,21 @@ pub enum FeederError {
     Undecodable(u64),
     #[error("a feeder key does not open with this server's key")]
     Unseal,
+}
+
+/// A feeder's clients and the phones' own keys.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum ClientError {
+    #[error("only a phone's token gets an invite for a phone: sign in on the phone")]
+    TokenRequired,
+    #[error(
+        "an account or token with an expiry holds no key of its own: it reaches the feeders through the server"
+    )]
+    DirectKeyRefused,
+    #[error("that key is already one of the feeder's clients, or another phone's")]
+    KeyTaken,
+    #[error("that is the server's own key: remove the feeder to revoke it")]
+    OwnKey,
 }
 
 /// Pets, foods and refills: the owner data the feeders do not hold.

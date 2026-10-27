@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE phone_keys SET attempt = ? WHERE feeder_id = ? AND key = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "8ac43b666c11f9ff3eb69e422fd4ba0ccd3060f35c1db529f603dd68ba1f9436"
+}

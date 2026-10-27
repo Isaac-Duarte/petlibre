@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE feeders SET archived_ms = ? WHERE id = ? AND archived_ms IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "63da059bcaab7b95af04d1832a9d852fc2289339b912e48f6ce2f5e770b03bb8"
+}

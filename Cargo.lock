@@ -2824,6 +2824,7 @@ dependencies = [
  "jiff",
  "wellfed-api",
  "wellfed-core",
+ "wellfed-model",
  "wellfed-server-client",
  "wellfed-server-testkit",
  "wellfed-service",

@@ -16,8 +16,9 @@
 //! revoking a leaked token is enough: it cannot have made other tokens,
 //! nor a password or an account to log in with and make them.
 
-use wellfed_api::{CreatedToken, NewToken, Token, TokenId, User};
+use wellfed_api::{CreatedToken, NewToken, RevokeReason, Token, TokenId, User};
 use wellfed_formats::hex;
+use wellfed_store::Whose;
 use sha2::{Digest, Sha256};
 
 use crate::sessions::{TOUCH, disabled};
@@ -165,7 +166,8 @@ impl Service {
     }
 
     /// Revoke a token: the user's own, or anyone's for an owner. Another
-    /// user's is not found, so a member learns nothing of it.
+    /// user's is not found, so a member learns nothing of it. The phone
+    /// key it was invited for is revoked on its feeder.
     pub async fn revoke_token(&self, user: &User, id: TokenId) -> Result<()> {
         let token = self.shared.store.token(id).await?;
         let theirs =
@@ -173,7 +175,8 @@ impl Service {
         if !theirs || !self.shared.store.delete_token(id).await? {
             return Err(TokenError::NotFound.into());
         }
-        Ok(())
+        self.revoke_phones(Whose::Token(id), RevokeReason::TokenRevoked)
+            .await
     }
 }
 

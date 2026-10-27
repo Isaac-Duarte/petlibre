@@ -21,6 +21,13 @@
 //!   it. Every write is recorded in the command journal before it is sent,
 //!   so a retry under the same key gets its first answer from the journal,
 //!   however many writes the feeder has seen since.
+//! - **Phones** of owners and members keep a key of their own on each
+//!   feeder, from an invite the server makes and records as their
+//!   account's and token's; an account change that takes their direct
+//!   access away revokes those keys on every feeder, retried at each
+//!   reconnect until it lands. The feeders' clients, Wi-Fi, restart and
+//!   removal go through the journal like every write, and [`parity`]
+//!   gives every device operation its route or the reason it has none.
 //! - **Feeds** are journalled writes answered with the feeder's number for
 //!   the feed, and settled from the feeder's history: its `Fed` event. An
 //!   uncertain feed is never sent again.
@@ -38,13 +45,15 @@
 //!   run. The server's supervisor decides when.
 //!
 //! Each domain has its own error enum ([`AccountError`],
-//! [`TokenError`], [`HouseholdError`], [`FeederError`], [`CommandError`],
-//! [`OwnerDataError`]), wrapped in [`Error`]. Time and randomness come in
+//! [`TokenError`], [`HouseholdError`], [`FeederError`], [`ClientError`],
+//! [`CommandError`], [`OwnerDataError`]), wrapped in [`Error`]. Time and randomness come in
 //! through [`Clock`] and [`Random`], so tests can fix them.
 //!
 //! [API design]: ../../../../docs/api/README.md
 #![forbid(unsafe_code)]
 
+mod admin;
+mod clients;
 mod commands;
 mod error;
 mod feeders;
@@ -57,8 +66,10 @@ mod jobs;
 mod journal;
 mod keys;
 mod page;
+mod parity;
 mod permissions;
 mod pets;
+mod phones;
 mod releases;
 mod sessions;
 mod tokens;
@@ -79,10 +90,11 @@ use tokio_util::task::TaskTracker;
 use uuid::Uuid;
 
 pub use error::{
-    AccountError, CommandError, Error, FeederError, HouseholdError, Invalid, OwnerDataError,
-    Result, TokenError,
+    AccountError, ClientError, CommandError, Error, FeederError, HouseholdError, Invalid,
+    OwnerDataError, Result, TokenError,
 };
 pub use hub::{Hub, Resume, Stamped, StreamId, Subscription};
+pub use parity::{Method, NoRoute, Parity, parity};
 pub use permissions::{Permission, can};
 pub use wellfed_mirror::{
     Clock, Discovery, Random, RandomFailed, SystemClock, SystemRandom, ZoneError,
@@ -215,6 +227,9 @@ pub struct Service {
     /// Held while a feeder's feeds are settled from its history, so its
     /// watcher and a feed's answer take turns.
     resolving: Arc<Mutex<HashMap<FeederId, Arc<tokio::sync::Mutex<()>>>>>,
+    /// Held while a feeder's owed phone-key revokes are sent, so an
+    /// account change and a reconnect take turns.
+    revoking: Arc<Mutex<HashMap<FeederId, Arc<tokio::sync::Mutex<()>>>>>,
     adopting: Arc<tokio::sync::Mutex<()>>,
     /// Household changes run one at a time, so the stored zone and the
     /// mirror's are always the last change's.
@@ -267,6 +282,7 @@ impl Service {
             links: Arc::new(Mutex::new(HashMap::new())),
             fingerprints: Arc::new(Mutex::new(HashMap::new())),
             resolving: Arc::new(Mutex::new(HashMap::new())),
+            revoking: Arc::new(Mutex::new(HashMap::new())),
             adopting: Arc::new(tokio::sync::Mutex::new(())),
             household: Arc::new(tokio::sync::Mutex::new(())),
             cancel,
@@ -280,7 +296,9 @@ impl Service {
         // build of the projections.
         service.mirror.refresh_projections().await?;
         for row in service.shared.store.feeders().await? {
-            service.spawn(&row).await?;
+            if row.archived.is_none() {
+                service.spawn(&row).await?;
+            }
         }
         Ok(service)
     }

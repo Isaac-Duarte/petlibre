@@ -120,10 +120,16 @@ impl std::fmt::Debug for Feeder {
 }
 
 impl Feeder {
+    /// The server's public key on the feeder: how its client list shows
+    /// the server.
+    pub fn public(&self) -> [u8; 32] {
+        *Keypair::from_secret(self.secret).public()
+    }
+
     /// How the feeder's history names the server (`Source::Client`): the
     /// first 4 bytes of the server's public key on it.
     pub fn fingerprint(&self) -> [u8; 4] {
-        let public = *Keypair::from_secret(self.secret).public();
+        let public = self.public();
         [public[0], public[1], public[2], public[3]]
     }
 }

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO phone_keys (feeder_id, key, user_id, token_id, role, invited_ms)\n             VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": []
+  },
+  "hash": "115a849f31b289a7035fa513c7780a4f42e251604645a72381a34be92b001de0"
+}

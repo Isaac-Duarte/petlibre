@@ -35,6 +35,7 @@ uuid.workspace = true
 [dev-dependencies]
 ed25519-dalek.workspace = true
 wellfed-core.workspace = true
+wellfed-model.workspace = true
 wellfed-server-client.workspace = true
 wellfed-server-testkit.workspace = true
 sha2-0-10.workspace = true

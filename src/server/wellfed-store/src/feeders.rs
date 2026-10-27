@@ -5,7 +5,7 @@ use jiff::Timestamp;
 use wellfed_api::{ClientRole, FeederId, FeederStatus, Settings};
 use uuid::Uuid;
 
-use crate::convert::{cached, from_i64, millis};
+use crate::convert::{cached, from_i64, millis, timestamp};
 use crate::{Error, Result, Store};
 
 /// The server's feeder key, sealed by the service.
@@ -41,6 +41,8 @@ pub struct FeederRow {
     pub key: SealedKey,
     /// The newest event held.
     pub synced: Option<Synced>,
+    /// When it was removed; `None` while it is mirrored.
+    pub archived: Option<Timestamp>,
 }
 
 /// The newest event (or gap end) held, in the epoch it counts in.
@@ -91,7 +93,7 @@ impl Store {
 
     pub async fn feeders(&self) -> Result<Vec<FeederRow>> {
         let rows = sqlx::query!(
-            r#"SELECT id AS "id: Uuid", identity, name, role, address, key_nonce, key_sealed, synced, epoch
+            r#"SELECT id AS "id: Uuid", identity, name, role, address, key_nonce, key_sealed, synced, epoch, archived_ms
                FROM feeders ORDER BY created_ms, id"#
         )
         .fetch_all(&self.reader)
@@ -109,6 +111,7 @@ impl Store {
                     row.key_sealed,
                     row.synced,
                     row.epoch,
+                    row.archived_ms,
                 )
             })
             .collect()
@@ -116,7 +119,7 @@ impl Store {
 
     pub async fn feeder(&self, id: FeederId) -> Result<Option<FeederRow>> {
         let row = sqlx::query!(
-            r#"SELECT id AS "id: Uuid", identity, name, role, address, key_nonce, key_sealed, synced, epoch
+            r#"SELECT id AS "id: Uuid", identity, name, role, address, key_nonce, key_sealed, synced, epoch, archived_ms
                FROM feeders WHERE id = ?"#,
             id.0
         )
@@ -134,20 +137,56 @@ impl Store {
                 row.key_sealed,
                 row.synced,
                 row.epoch,
+                row.archived_ms,
             )
         })
         .transpose()
     }
 
-    pub async fn feeder_adopted(&self, identity: &[u8; 32]) -> Result<bool> {
+    /// The feeder with this identity, adopted or archived.
+    pub async fn feeder_by_identity(&self, identity: &[u8; 32]) -> Result<Option<FeederId>> {
         let identity = identity.as_slice();
         let row = sqlx::query!(
-            r#"SELECT EXISTS (SELECT 1 FROM feeders WHERE identity = ?) AS "exists!: bool""#,
+            r#"SELECT id AS "id: Uuid" FROM feeders WHERE identity = ?"#,
             identity
         )
-        .fetch_one(&self.reader)
+        .fetch_optional(&self.reader)
         .await?;
-        Ok(row.exists)
+        Ok(row.map(|row| FeederId(row.id)))
+    }
+
+    /// Bring an archived feeder back under a new key: its id, history and
+    /// journal continue. Whether an archived feeder was there to take it.
+    pub async fn readopt_feeder(&self, feeder: NewFeeder<'_>) -> Result<bool> {
+        let role = feeder.role.code();
+        let nonce = feeder.key.nonce.as_slice();
+        let done = sqlx::query!(
+            "UPDATE feeders SET name = ?, role = ?, address = ?, key_nonce = ?, key_sealed = ?,
+                 archived_ms = NULL
+             WHERE id = ? AND archived_ms IS NOT NULL",
+            feeder.name,
+            role,
+            feeder.address,
+            nonce,
+            feeder.key.sealed,
+            feeder.id.0,
+        )
+        .execute(&self.writer)
+        .await?;
+        Ok(done.rows_affected() == 1)
+    }
+
+    /// Archive a removed feeder. Whether it was mirrored until now.
+    pub async fn archive_feeder(&self, id: FeederId, at: Timestamp) -> Result<bool> {
+        let at = millis(at);
+        let done = sqlx::query!(
+            "UPDATE feeders SET archived_ms = ? WHERE id = ? AND archived_ms IS NULL",
+            at,
+            id.0
+        )
+        .execute(&self.writer)
+        .await?;
+        Ok(done.rows_affected() == 1)
     }
 
     /// Where the feeder was last reached.
@@ -230,6 +269,7 @@ fn feeder_row(
     sealed: Vec<u8>,
     synced: Option<i64>,
     epoch: Option<i64>,
+    archived: Option<i64>,
 ) -> Result<FeederRow> {
     Ok(FeederRow {
         id: FeederId(id),
@@ -251,5 +291,6 @@ fn feeder_row(
             (None, _) => None,
             (Some(_), None) => return Err(Error::Corrupt("cursor without its epoch")),
         },
+        archived: archived.map(timestamp).transpose()?,
     })
 }

@@ -17,6 +17,7 @@ use tokio::sync::broadcast::error::RecvError;
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, info_span};
 
+use crate::commands::done;
 use crate::journal::{Write, view};
 use crate::{Caller, CommandError, IdempotencyKey, Result, Service};
 
@@ -40,7 +41,7 @@ impl Service {
         portions: u8,
         key: IdempotencyKey,
     ) -> Result<Command> {
-        self.row(id).await?;
+        self.live_row(id).await?;
 
         let recorded = self
             .journaled(Write {
@@ -61,9 +62,9 @@ impl Service {
                 row.map(view).ok_or_else(|| CommandError::NoEntry.into())
             }
             CommandOutcome::Refused { refusal } => Err(CommandError::Refused(refusal).into()),
-            CommandOutcome::Done | CommandOutcome::Settings { .. } => {
-                Err(CommandError::Unexpected.into())
-            }
+            CommandOutcome::Done
+            | CommandOutcome::Settings { .. }
+            | CommandOutcome::Invited { .. } => Err(CommandError::Unexpected.into()),
         }
     }
 
@@ -80,7 +81,7 @@ impl Service {
         feed: u32,
         key: Option<IdempotencyKey>,
     ) -> Result<()> {
-        self.row(id).await?;
+        self.live_row(id).await?;
 
         let recorded = self
             .journaled(Write {
@@ -93,14 +94,7 @@ impl Service {
             })
             .await?;
 
-        match recorded.outcome {
-            CommandOutcome::Done => Ok(()),
-            CommandOutcome::Refused { refusal } => Err(CommandError::Refused(refusal).into()),
-            CommandOutcome::Settings { .. }
-            | CommandOutcome::Feeding { .. }
-            | CommandOutcome::Fed { .. }
-            | CommandOutcome::Unrecorded => Err(CommandError::Unexpected.into()),
-        }
+        done(&recorded.outcome)
     }
 
     /// Settle the feeder's feeds from its history whenever it may hold

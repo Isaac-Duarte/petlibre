@@ -33,7 +33,7 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use wellfed_client::api::{Incoming, Session};
+use wellfed_client::api::{Error as SessionError, Incoming, Session};
 use wellfed_client::update::{Image, InstallError, Installer, Next, Sent};
 use wellfed_formats::hex;
 use wellfed_formats::owner::OwnerKeyFile;
@@ -322,6 +322,10 @@ pub(crate) const REACH: Duration = Duration::from_secs(10 * 60);
 const STALL: Duration = Duration::from_secs(75);
 /// Between polls of the connection while chunks are out.
 const POLL: Duration = Duration::from_millis(100);
+/// Undecodable feeder messages one install resumes past. A feeder that
+/// garbles every answer (another protocol, or a fault that persists) still
+/// ends the install with the decode error.
+const GARBLED_MAX: u32 = 3;
 
 /// A connection the feeder must not let in, for `request-auth`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -642,6 +646,7 @@ impl Device {
         // no wanted chunk goes, so the install cannot reach its offset.
         let mut unwanted: Option<(u32, Option<RequestId>)> = None;
         let mut cancelling: Option<Instant> = None;
+        let mut garbled = 0;
 
         loop {
             if stop.load(Ordering::Acquire) && cancelling.is_none() {
@@ -747,7 +752,25 @@ impl Device {
                     Err(DeviceError::Timeout(_)) => {}
                     Err(_) => lost = true,
                 }
-                while let Some(incoming) = connection.session.next_incoming()? {
+                loop {
+                    let incoming = match connection.session.next_incoming() {
+                        Ok(Some(incoming)) => incoming,
+                        Ok(None) => break,
+                        // The message authenticated, so the feeder sealed
+                        // bytes that are not a message of this protocol: a
+                        // garbled answer, which a new session resumes past
+                        // as it does a dropped one. The feeder's readback
+                        // and whole-image hash still guard what is written.
+                        Err(SessionError::Malformed) if garbled < GARBLED_MAX => {
+                            garbled += 1;
+                            note(format!(
+                                "A feeder message did not decode ({garbled} of {GARBLED_MAX} allowed); resuming on a new session"
+                            ));
+                            lost = true;
+                            break;
+                        }
+                        Err(error) => return Err(error.into()),
+                    };
                     let Incoming::Answer { id, answer } = incoming else {
                         continue;
                     };

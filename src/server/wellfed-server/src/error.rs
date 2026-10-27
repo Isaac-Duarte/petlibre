@@ -133,7 +133,10 @@ fn service(error: &Error) -> (ErrorCode, Option<String>, Option<FeederRefusal>) 
             FeederError::Refused(refusal) => {
                 return (ErrorCode::FeederRefused, detail, Some(*refusal));
             }
-            FeederError::Lookup | FeederError::Undecodable(_) | FeederError::Unseal => {
+            FeederError::Lookup
+            | FeederError::Undecodable(_)
+            | FeederError::UndecodableSample
+            | FeederError::Unseal => {
                 return internal(error);
             }
         },
@@ -179,6 +182,11 @@ fn service(error: &Error) -> (ErrorCode, Option<String>, Option<FeederRefusal>) 
                 return (ErrorCode::Internal, None, None);
             }
         },
+        Error::Backup(backup) => {
+            // The cause (a full disk, a permission) is only in the chain.
+            tracing::error!("{}", Chain(backup));
+            return (ErrorCode::Internal, None, None);
+        }
         Error::Store(_) | Error::Random(_) => return internal(error),
     };
     (code, detail, None)

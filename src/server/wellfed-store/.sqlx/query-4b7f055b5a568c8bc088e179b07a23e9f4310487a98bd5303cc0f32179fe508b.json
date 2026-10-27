@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO sample_rollups (feeder_id, metric, hour_ms, count, min, max, sum)\n                 SELECT feeder_id, metric, received_ms / 3600000 * 3600000,\n                        COUNT(*), MIN(number), MAX(number), SUM(number)\n                 FROM samples\n                 WHERE id > ?1 AND id <= ?2 AND number IS NOT NULL\n                 GROUP BY 1, 2, 3\n                 ON CONFLICT (feeder_id, metric, hour_ms) DO UPDATE SET\n                     count = count + excluded.count,\n                     min = min(min, excluded.min),\n                     max = max(max, excluded.max),\n                     sum = sum + excluded.sum",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "4b7f055b5a568c8bc088e179b07a23e9f4310487a98bd5303cc0f32179fe508b"
+}

@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT rolled FROM sample_marks WHERE id = 0",
+  "describe": {
+    "columns": [
+      {
+        "name": "rolled",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "sample_marks",
+            "name": "rolled"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "39dbae726f94c75bd973f907ba6b0143ca36382c6f114f215908a91741ca3e89"
+}

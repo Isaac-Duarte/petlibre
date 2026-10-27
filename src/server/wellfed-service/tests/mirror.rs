@@ -4,11 +4,12 @@
 
 use std::time::Duration;
 
-use wellfed_api::{Connection as Link, EventBody, EventQuery, Source, StreamEvent};
+use wellfed_api::{Connection as Link, EventBody, EventQuery, Source, StreamEvent, sample_number};
 use wellfed_model::{Answer, Op};
 use wellfed_server_testkit::feeder::{self, Flash, open_owner};
-use wellfed_server_testkit::{TestService, WAIT, ada, config, local};
+use wellfed_server_testkit::{TestService, WAIT, ada, config, local, until};
 use wellfed_service::{CommandError, Error};
+use wellfed_store::Span;
 
 #[test]
 fn history_recorded_while_the_server_was_down_arrives_on_restart() {
@@ -142,10 +143,21 @@ fn the_clock_is_set_again_on_schedule_and_samples_are_kept() {
         .await
         .expect("three clock syncs and a sample");
 
-        let reader = server.store().open().await;
+        // Broadcast as it arrives, and written with its number once its
+        // batch's wait is up.
         let sample = sample.unwrap();
-        let kept = reader.samples(id, sample.value.metric(), 10).await.unwrap();
-        assert!(kept.iter().any(|row| row.uptime_ms == sample.uptime_ms));
+        let metric = sample.value.metric();
+        let reader = &server.store().open().await;
+        let kept = move || async move {
+            let rows = reader
+                .samples(id, metric, Span::default(), None, 1000)
+                .await
+                .unwrap();
+            rows.iter().any(|row| {
+                row.uptime_ms == sample.uptime_ms && row.number == sample_number(&sample.value)
+            })
+        };
+        until("the sample is written", kept).await;
         server.shutdown().await;
         sim.stop().await;
     });

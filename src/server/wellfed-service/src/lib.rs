@@ -33,6 +33,10 @@
 //!   when each started, so a past feed's calories use the food it served.
 //! - **Releases** are `wellfed-releases`' cache: uploaded or fetched,
 //!   verified the same way, and kept until an owner installs one.
+//! - **Samples** are read raw or by the hour; the jobs keep the hourly
+//!   rollups and drop raw rows past the owner's retention.
+//! - **Backups** are copies of the database in the data directory, taken
+//!   daily and on an owner's request, without the sealing key.
 //! - **Background jobs** have their bodies here, each a method that takes
 //!   the time it runs at; [`Service::run_job`] runs one and records its
 //!   run. The server's supervisor decides when.
@@ -45,6 +49,7 @@
 //! [API design]: ../../../../docs/api/README.md
 #![forbid(unsafe_code)]
 
+mod backups;
 mod commands;
 mod error;
 mod feeders;
@@ -60,12 +65,14 @@ mod page;
 mod permissions;
 mod pets;
 mod releases;
+mod samples;
 mod sessions;
 mod tokens;
 mod updates;
 mod users;
 
 use std::collections::HashMap;
+use std::num::NonZeroU32;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
@@ -78,6 +85,7 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use uuid::Uuid;
 
+pub use backups::{BackupError, Backups};
 pub use error::{
     AccountError, CommandError, Error, FeederError, HouseholdError, Invalid, OwnerDataError,
     Result, TokenError,
@@ -113,6 +121,10 @@ pub struct Config {
     /// The release cache, the keys a release may be signed with, and
     /// whether releases are fetched.
     pub releases: ReleasesConfig,
+    /// How many days raw samples are kept; forever when `None`. Hourly
+    /// rollups are always kept.
+    pub raw_sample_days: Option<NonZeroU32>,
+    pub backups: Backups,
 }
 
 impl std::fmt::Debug for Config {
@@ -123,6 +135,8 @@ impl std::fmt::Debug for Config {
             .field("discovery", &self.discovery)
             .field("timing", &self.timing)
             .field("releases", &self.releases)
+            .field("raw_sample_days", &self.raw_sample_days)
+            .field("backups", &self.backups)
             .finish_non_exhaustive()
     }
 }
@@ -138,6 +152,7 @@ impl Config {
                 retry_max: timing.retry_max,
                 time_sync: timing.time_sync,
                 answer: timing.answer,
+                sample_wait: timing.sample_wait,
             },
         }
     }
@@ -153,6 +168,8 @@ pub struct Timing {
     /// How long a caller waits for a command's answer: the connection's
     /// own answer timeout, and some room to queue behind another command.
     pub answer: Duration,
+    /// The longest a received sample waits to be written with others.
+    pub sample_wait: Duration,
     /// How long a login lasts after its last use.
     pub session: Duration,
 }
@@ -165,6 +182,7 @@ impl Default for Timing {
             retry_max: mirror.retry_max,
             time_sync: mirror.time_sync,
             answer: mirror.answer,
+            sample_wait: mirror.sample_wait,
             session: Duration::from_secs(30 * 24 * 3600),
         }
     }
@@ -219,6 +237,8 @@ pub struct Service {
     /// Household changes run one at a time, so the stored zone and the
     /// mirror's are always the last change's.
     household: Arc<tokio::sync::Mutex<()>>,
+    /// Backups are taken one at a time.
+    backing_up: Arc<tokio::sync::Mutex<()>>,
     cancel: CancellationToken,
     tasks: TaskTracker,
 }
@@ -269,6 +289,7 @@ impl Service {
             resolving: Arc::new(Mutex::new(HashMap::new())),
             adopting: Arc::new(tokio::sync::Mutex::new(())),
             household: Arc::new(tokio::sync::Mutex::new(())),
+            backing_up: Arc::new(tokio::sync::Mutex::new(())),
             cancel,
             tasks: TaskTracker::new(),
         };
@@ -279,6 +300,7 @@ impl Service {
         // Before any feeder task ingests, so none writes beside a stale
         // build of the projections.
         service.mirror.refresh_projections().await?;
+        service.mirror.refresh_samples().await?;
         for row in service.shared.store.feeders().await? {
             service.spawn(&row).await?;
         }

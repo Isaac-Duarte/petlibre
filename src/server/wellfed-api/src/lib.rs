@@ -13,6 +13,7 @@
 #![forbid(unsafe_code)]
 
 mod auth;
+mod backups;
 mod commands;
 mod error;
 mod events;
@@ -22,6 +23,7 @@ mod health;
 mod household;
 mod pets;
 mod releases;
+mod samples;
 mod stream;
 mod tokens;
 mod users;
@@ -33,6 +35,7 @@ use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
 pub use auth::{Credentials, PasswordChange, Role, Setup, SetupState, User};
+pub use backups::{Backup, BackupPage};
 pub use commands::{
     Command, CommandKind, CommandOutcome, CommandPage, CommandQuery, CommandState, FeedRequest,
 };
@@ -56,6 +59,10 @@ pub use pets::{NewPet, NewWeight, Pet, PetLink, PetPatch, Species, Weight, Weigh
 pub use releases::{
     AssetName, RefusedAsset, Release, ReleaseCheck, ReleasePage, ReleaseQuery, ReleaseRefusal,
     ReleaseSigner, ReleaseSource,
+};
+pub use samples::{
+    HourSample, RawSample, Resolution, SAMPLE_NUMBER_VERSION, SamplePage, SampleQuery,
+    sample_number,
 };
 pub use stream::{FeederSample, StreamEvent, StreamQuery};
 pub use tokens::{BEARER, CreatedToken, NewToken, Token, TokenId};

@@ -9,6 +9,64 @@
     "version": "0.1.0"
   },
   "paths": {
+    "/api/v1/backups": {
+      "get": {
+        "tags": [
+          "backups"
+        ],
+        "summary": "The backups kept, newest first, in one page (`next` is always null).",
+        "operationId": "backups",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupPage"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden: owners only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "backups"
+        ],
+        "summary": "Back the database up now; the oldest backups past `backups.keep` go.\nTaking one twice is harmless, so it needs no idempotency key.",
+        "operationId": "create_backup",
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Backup"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden: owners only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/commands": {
       "get": {
         "tags": [
@@ -1037,6 +1095,112 @@
           "204": {},
           "403": {
             "description": "forbidden: owners only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/feeders/{id}/samples": {
+      "get": {
+        "tags": [
+          "feeders"
+        ],
+        "summary": "One metric's samples, oldest first: each as the feeder sent it with\nits number (`resolution=raw`, while the owner's raw retention keeps\nit), or the number's count, minimum, maximum and mean per UTC hour\n(`resolution=hour`, kept forever).",
+        "operationId": "samples",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/FeederId"
+            }
+          },
+          {
+            "name": "metric",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/MetricKind"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "description": "Samples received at or after this time; from the oldest when\nabsent. An hour's rollup is in when its hour starts in the range.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "description": "Samples received before this time; up to the newest when absent.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "resolution",
+            "in": "query",
+            "description": "`raw` when absent.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Resolution"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "description": "The `next` of the previous page, as it came.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "At most this many (1-1000, default 100).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SamplePage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid: no metric, a bad span, limit or cursor",
             "content": {
               "application/json": {
                 "schema": {
@@ -3041,6 +3205,54 @@
           }
         }
       },
+      "Backup": {
+        "type": "object",
+        "description": "One copy of the database.",
+        "required": [
+          "name",
+          "taken",
+          "bytes"
+        ],
+        "properties": {
+          "bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Its size in bytes.",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string",
+            "description": "Its file name in `backups/`."
+          },
+          "taken": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When it was taken."
+          }
+        }
+      },
+      "BackupPage": {
+        "type": "object",
+        "description": "The backups kept, newest first. They are at most `backups.keep`, so\none page holds them all and `next` is always `None`.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Backup"
+            }
+          },
+          "next": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The `after` for the next page; always `None`."
+          }
+        }
+      },
       "Battery": {
         "oneOf": [
           {
@@ -4424,6 +4636,41 @@
           }
         }
       },
+      "HourSample": {
+        "type": "object",
+        "description": "One UTC hour of a metric's numbers. Samples with no number are not\ncounted, and an hour with none is left out.",
+        "required": [
+          "hour",
+          "count",
+          "min",
+          "max",
+          "mean"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "hour": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The hour's start."
+          },
+          "max": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "mean": {
+            "type": "number",
+            "format": "double"
+          },
+          "min": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "Household": {
         "type": "object",
         "required": [
@@ -4897,6 +5144,38 @@
           }
         }
       },
+      "RawSample": {
+        "type": "object",
+        "description": "One sample as the server received it, with its number.",
+        "required": [
+          "received",
+          "uptime_ms",
+          "value"
+        ],
+        "properties": {
+          "number": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The metric's number ([`sample_number`]); `None` when it has none."
+          },
+          "received": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "uptime_ms": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The feeder's uptime when it measured.",
+            "minimum": 0
+          },
+          "value": {
+            "$ref": "#/components/schemas/SampleValue"
+          }
+        }
+      },
       "Readiness": {
         "oneOf": [
           {
@@ -5211,6 +5490,67 @@
           "member",
           "viewer"
         ]
+      },
+      "SamplePage": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "items",
+              "resolution"
+            ],
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/RawSample"
+                }
+              },
+              "next": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The `after` for the next page; `None` at the end."
+              },
+              "resolution": {
+                "type": "string",
+                "enum": [
+                  "raw"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "items",
+              "resolution"
+            ],
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/HourSample"
+                }
+              },
+              "next": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The `after` for the next page; `None` at the end."
+              },
+              "resolution": {
+                "type": "string",
+                "enum": [
+                  "hour"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "A page of one feeder's samples of one metric, oldest first."
       },
       "SampleValue": {
         "oneOf": [
@@ -5988,6 +6328,10 @@
     {
       "name": "foods",
       "description": "Foods, the food each feeder serves over time, and refills"
+    },
+    {
+      "name": "backups",
+      "description": "Copies of the server's database, kept in its data directory"
     }
   ]
 }

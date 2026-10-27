@@ -3,6 +3,7 @@
 //! the OpenAPI document comes from their annotations.
 
 pub(crate) mod auth;
+pub(crate) mod backups;
 pub(crate) mod commands;
 pub(crate) mod events;
 pub(crate) mod feeders;
@@ -12,6 +13,7 @@ pub(crate) mod health;
 pub(crate) mod household;
 pub(crate) mod pets;
 pub(crate) mod releases;
+pub(crate) mod samples;
 pub(crate) mod stream;
 pub(crate) mod tokens;
 pub(crate) mod users;
@@ -35,6 +37,7 @@ pub(crate) const TAG_RELEASES: &str = "releases";
 pub(crate) const TAG_TOKENS: &str = "tokens";
 pub(crate) const TAG_PETS: &str = "pets";
 pub(crate) const TAG_FOODS: &str = "foods";
+pub(crate) const TAG_BACKUPS: &str = "backups";
 
 type ApiResult<T> = Result<T, ApiError>;
 type JsonBody<T> = WithRejection<Json<T>, ApiError>;

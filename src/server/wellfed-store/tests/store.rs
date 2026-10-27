@@ -5,10 +5,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use jiff::Timestamp;
 use wellfed_api::{
     Blocked, ClientRole, EventBody, EventKind, FeederId, FeederStatus, Generation, Household,
-    MetricKind, Readiness, Role, Settings, Source, TimeFormat, Units, UserId, WifiSource,
+    Readiness, Role, Settings, Source, TimeFormat, Units, UserId, WifiSource,
 };
 use wellfed_store::{
-    Change, Error, FeederRow, NewEvent, NewFeeder, NewSample, NewUser, SealedKey, Store, Synced,
+    Change, Error, FeederRow, NewEvent, NewFeeder, NewUser, SealedKey, Store, Synced,
 };
 use tempfile::TempDir;
 use uuid::Uuid;
@@ -447,38 +447,6 @@ async fn the_cached_status_and_settings_read_back() {
     let state = store.state(id).await.unwrap();
     assert_eq!(state.settings, Some((settings, at(100))));
     assert_eq!(state.status, Some((status, at(200))));
-}
-
-#[tokio::test]
-async fn samples_are_kept_raw_newest_first() {
-    let (_dir, store) = fresh().await;
-    let id = adopt(&store, 3).await;
-    for (ms, metric, value) in [
-        (1, MetricKind::Power, [1u8].as_slice()),
-        (2, MetricKind::Rssi, &[2]),
-        (3, MetricKind::Power, &[3]),
-    ] {
-        store
-            .record_sample(
-                id,
-                NewSample {
-                    received: at(ms),
-                    uptime_ms: 10,
-                    metric,
-                    value,
-                },
-            )
-            .await
-            .unwrap();
-    }
-
-    let power = store.samples(id, MetricKind::Power, 10).await.unwrap();
-    let values: Vec<&[u8]> = power.iter().map(|s| s.value.as_slice()).collect();
-    assert_eq!(values, [[3u8].as_slice(), &[1]]);
-    assert_eq!(
-        store.samples(id, MetricKind::Rssi, 10).await.unwrap().len(),
-        1
-    );
 }
 
 #[tokio::test]

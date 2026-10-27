@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE samples SET number = ? WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "48bde62bc2226a67e35e5838e33d601608a1272f2a6f9a5c8e961fc161a5fc4a"
+}

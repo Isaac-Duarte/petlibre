@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM samples WHERE id IN (\n                     SELECT id FROM samples\n                     WHERE id <= (SELECT rolled FROM sample_marks WHERE id = 0)\n                       AND received_ms < ?\n                     ORDER BY id LIMIT ?\n                 )",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "f3ddcdab778854a1af6268bab9c24042e26aad54209b5aa4c736925f04102542"
+}

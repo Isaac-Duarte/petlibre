@@ -9,7 +9,7 @@ use wellfed_mirror::{Config, Discovery, Feeder, Invite, Mirror, MirrorEvent, Tim
 use wellfed_server_testkit::WAIT;
 use wellfed_server_testkit::feeder::{self, Running};
 use wellfed_server_testkit::fixed::{FixedClock, SeededRandom};
-use wellfed_store::{NewFeeder, Refresh, SealedKey, Store};
+use wellfed_store::{NewFeeder, Refresh, SampleRefresh, SealedKey, Store};
 use tokio::sync::broadcast::Receiver;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -24,6 +24,7 @@ fn config(answer: Duration) -> Config {
             retry_max: Duration::from_millis(400),
             time_sync: Duration::from_secs(3600),
             answer,
+            sample_wait: Duration::from_millis(100),
         },
     }
 }
@@ -62,6 +63,15 @@ pub async fn mirrored_as(
     assert_eq!(
         mirror.refresh_projections().await.unwrap(),
         Refresh::Current
+    );
+    let numbered = SampleRefresh::Decoded {
+        samples: 0,
+        undecoded: 0,
+    };
+    assert_eq!(mirror.refresh_samples().await.unwrap(), numbered);
+    assert_eq!(
+        mirror.refresh_samples().await.unwrap(),
+        SampleRefresh::Current
     );
     let invite = feeder::invite(sim, role).await;
     let invite = Invite::parse(&invite).expect("the kit's invite parses");

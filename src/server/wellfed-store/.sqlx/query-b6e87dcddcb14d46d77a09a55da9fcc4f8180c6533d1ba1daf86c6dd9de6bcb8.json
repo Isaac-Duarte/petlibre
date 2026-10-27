@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO samples (feeder_id, received_ms, uptime_ms, metric, number, value)\n                 VALUES (?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": []
+  },
+  "hash": "b6e87dcddcb14d46d77a09a55da9fcc4f8180c6533d1ba1daf86c6dd9de6bcb8"
+}

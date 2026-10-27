@@ -8,7 +8,8 @@
 //!   clock in the household's [`Zone`] and gives it the zone's POSIX rule,
 //!   so it follows DST with the server down. It records every event and
 //!   sample as the feeder sent it: one store transaction per event, with
-//!   its projections and the cursor.
+//!   its projections and the cursor, and samples in small batches, each
+//!   with its number.
 //! - **Commands** reach the task on two lanes. A short one is
 //!   [`Mirror::ask`]; a long operation holds an [`Operation`] and sends its
 //!   steps one at a time. The task pipelines the lanes over one session, so
@@ -17,8 +18,9 @@
 //!   feeder may have run it, and a retry under the same request id gets its
 //!   first answer. One whose caller stopped waiting is dropped unsent.
 //! - **What a feeder sends** goes out on its own broadcast of
-//!   [`MirrorEvent`]s (events, gaps, samples and link changes), after it is
-//!   stored. The service merges the broadcasts into its stream.
+//!   [`MirrorEvent`]s (events, gaps, samples and link changes): an event
+//!   or gap after it is stored, a sample as it arrives, ahead of its
+//!   batch's write. The service merges the broadcasts into its stream.
 //!
 //! The mirror knows feeders by id, identity, key and address. It knows
 //! nothing of users, alerts or stream ids, and the request ids it sends for
@@ -52,7 +54,7 @@ use tokio_util::task::TaskTracker;
 pub use command::Operation;
 pub use connect::Enrolled;
 pub use error::{AskError, ConnectError, Unreachable};
-pub use ingest::stored_event;
+pub use ingest::{stored_event, stored_sample};
 pub use wellfed_client::api::{Invite, InviteText};
 pub use time::{Clock, Random, RandomFailed, SystemClock, SystemRandom};
 pub use zone::{Zone, ZoneError};
@@ -87,6 +89,9 @@ pub struct Timing {
     /// How long a caller waits for a command's answer: the connection's
     /// own answer timeout, and some room to queue behind another command.
     pub answer: Duration,
+    /// The longest a sample waits in its batch before the batch is
+    /// written.
+    pub sample_wait: Duration,
 }
 
 impl Default for Timing {
@@ -96,6 +101,7 @@ impl Default for Timing {
             retry_max: Duration::from_secs(60),
             time_sync: Duration::from_secs(6 * 3600),
             answer: wellfed_connect::ANSWER + Duration::from_secs(5),
+            sample_wait: Duration::from_secs(10),
         }
     }
 }
@@ -128,7 +134,8 @@ impl Feeder {
     }
 }
 
-/// One update from a feeder, sent after it is stored.
+/// One update from a feeder: an event or gap after it is stored, a sample
+/// as it arrives.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MirrorEvent {
     /// An event the store did not hold before.

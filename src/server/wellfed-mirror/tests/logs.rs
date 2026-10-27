@@ -66,6 +66,7 @@ async fn every_line_from_a_feeder_task_names_the_feeder() {
                 retry_max: Duration::from_millis(40),
                 time_sync: Duration::from_secs(3600),
                 answer: Duration::from_secs(1),
+                sample_wait: Duration::from_millis(100),
             },
         },
         Arc::new(FixedClock),

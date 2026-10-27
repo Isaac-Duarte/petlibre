@@ -55,14 +55,11 @@ impl Service {
     }
 
     /// Whether `job` runs on its schedule: the release check only while
-    /// the owner allows fetching, and the backup only once it copies
-    /// something, so the readiness view never shows a backup that is not
-    /// there.
+    /// the owner allows fetching.
     pub fn job_scheduled(&self, job: Job) -> bool {
         match job {
-            Job::Retention | Job::Rollups | Job::Expiry => true,
+            Job::Retention | Job::Rollups | Job::Expiry | Job::Backup => true,
             Job::ReleaseCheck => self.fetching_releases(),
-            Job::Backup => false,
         }
     }
 
@@ -94,26 +91,9 @@ impl Service {
         Ok(self.shared.store.delete_ended_sessions(idle, now).await?)
     }
 
-    /// Drop the raw samples past the owner's retention. Samples carry no
-    /// value to roll up yet, so there is nothing to drop that a rollup
-    /// would keep: this succeeds with nothing done.
-    pub async fn run_retention(&self, now: Timestamp) -> Result<()> {
-        let _ = now;
-        Ok(())
-    }
-
-    /// Catch the hourly rollups up to `now`. Like retention, there is
-    /// nothing to roll up yet.
-    pub async fn run_rollups(&self, now: Timestamp) -> Result<()> {
-        let _ = now;
-        Ok(())
-    }
-
-    /// Copy the database into the data directory. Not scheduled until it
-    /// does ([`Self::job_scheduled`]).
+    /// Copy the database into the data directory's backups.
     pub async fn run_backup(&self, now: Timestamp) -> Result<()> {
-        let _ = now;
-        Ok(())
+        self.backup_at(now).await.map(drop)
     }
 
     /// Fetch and verify the project's releases the cache lacks, as of

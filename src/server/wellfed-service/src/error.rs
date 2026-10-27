@@ -27,6 +27,8 @@ pub enum Error {
     Random(#[from] RandomFailed),
     #[error(transparent)]
     Release(#[from] wellfed_releases::Error),
+    #[error(transparent)]
+    Backup(#[from] crate::BackupError),
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
@@ -86,6 +88,8 @@ pub enum Invalid {
     GramsPerCup,
     #[error("a refill is 1-100000 g")]
     RefillGrams,
+    #[error("a sample span's `from` is before its `to`")]
+    SampleSpan,
 }
 
 /// Setup, login, sessions and the accounts owners manage.
@@ -154,6 +158,8 @@ pub enum FeederError {
     Lookup,
     #[error("stored event {0} does not decode")]
     Undecodable(u64),
+    #[error("a stored sample does not decode")]
+    UndecodableSample,
     #[error("a feeder key does not open with this server's key")]
     Unseal,
 }

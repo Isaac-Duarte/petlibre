@@ -16,6 +16,7 @@ use tokio_util::task::TaskTracker;
 use tracing::{Instrument, debug, info, info_span, warn};
 
 use crate::command::Command;
+use crate::ingest::Batch;
 use crate::session::End;
 use crate::{ConnectError, Feeder, MirrorEvent, Shared, Unreachable, Zone, connect};
 
@@ -88,6 +89,7 @@ pub(crate) fn spawn(
         epoch,
         updates: updates.clone(),
         cancel: cancel.clone(),
+        batch: Batch::default(),
     };
     // Every line the task logs, its session's and its commands' included,
     // is written under the feeder's span, so it names the feeder. The span
@@ -121,6 +123,8 @@ pub(crate) struct Task {
     pub(crate) epoch: watch::Sender<Option<u32>>,
     pub(crate) updates: broadcast::Sender<MirrorEvent>,
     pub(crate) cancel: CancellationToken,
+    /// Samples received and not yet written.
+    pub(crate) batch: Batch,
 }
 
 impl Task {

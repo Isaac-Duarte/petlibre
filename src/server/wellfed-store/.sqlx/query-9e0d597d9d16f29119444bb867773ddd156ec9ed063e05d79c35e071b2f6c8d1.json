@@ -1,0 +1,74 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id AS \"id!: i64\", received_ms, uptime_ms, number, value FROM samples\n               WHERE feeder_id = ?1 AND metric = ?2 AND received_ms >= ?3 AND received_ms < ?4\n                 AND (received_ms, id) > (?5, ?6)\n               ORDER BY received_ms, id LIMIT ?7",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "samples",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "received_ms",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "samples",
+            "name": "received_ms"
+          }
+        }
+      },
+      {
+        "name": "uptime_ms",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "samples",
+            "name": "uptime_ms"
+          }
+        }
+      },
+      {
+        "name": "number",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "samples",
+            "name": "number"
+          }
+        }
+      },
+      {
+        "name": "value",
+        "ordinal": 4,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "samples",
+            "name": "value"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "9e0d597d9d16f29119444bb867773ddd156ec9ed063e05d79c35e071b2f6c8d1"
+}

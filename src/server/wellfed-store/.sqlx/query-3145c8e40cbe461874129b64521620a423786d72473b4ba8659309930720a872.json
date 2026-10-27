@@ -1,0 +1,49 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT hour_ms AS \"hour_ms!: i64\", SUM(count) AS \"count!: i64\",\n                      MIN(min) AS \"min!: i64\", MAX(max) AS \"max!: i64\", SUM(sum) AS \"sum!: i64\"\n               FROM (\n                   SELECT hour_ms, count, min, max, sum FROM sample_rollups\n                   WHERE feeder_id = ?1 AND metric = ?2 AND hour_ms >= ?3 AND hour_ms < ?4\n                     AND hour_ms > ?5\n                   UNION ALL\n                   SELECT received_ms / 3600000 * 3600000 AS hour_ms, COUNT(*) AS count,\n                          MIN(number) AS min, MAX(number) AS max, SUM(number) AS sum\n                   FROM samples NOT INDEXED\n                   WHERE id > (SELECT rolled FROM sample_marks WHERE id = 0)\n                     AND feeder_id = ?1 AND metric = ?2 AND number IS NOT NULL\n                     AND received_ms >= ?3 AND received_ms < ?4\n                     AND received_ms / 3600000 * 3600000 > ?5\n                   GROUP BY 1\n               )\n               GROUP BY hour_ms ORDER BY hour_ms LIMIT ?6",
+  "describe": {
+    "columns": [
+      {
+        "name": "hour_ms!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "count!: i64",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "min!: i64",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "max!: i64",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "sum!: i64",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": [
+      true,
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "3145c8e40cbe461874129b64521620a423786d72473b4ba8659309930720a872"
+}

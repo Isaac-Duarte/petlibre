@@ -69,11 +69,15 @@ impl From<RandomFailed> for End {
 
 impl Task {
     /// Serve one open session until it ends. Whatever ends it, each
-    /// command still in flight is unknown.
+    /// command still in flight is unknown, and the samples left in the
+    /// batch are written.
     pub(crate) async fn serve(&mut self, mut connection: Connection) -> End {
         let mut lanes = Lanes::default();
         let end = self.serve_lanes(&mut connection, &mut lanes).await;
         lanes.lost();
+        if let Err(End::Failed(failure)) = self.write_samples().await {
+            warn!("write the session's last samples: {failure}");
+        }
         end
     }
 
@@ -97,9 +101,13 @@ impl Task {
         loop {
             let short_free = lanes.short_free();
             let long_free = lanes.long_free(!self.commands.is_empty());
+            let samples_due = self.batch.due();
             let step = tokio::select! {
                 biased;
                 () = self.cancel.cancelled() => Err(End::Cancelled),
+                () = sleep_until_some(samples_due), if samples_due.is_some() => {
+                    self.write_samples().await
+                }
                 command = self.commands.recv(), if short_free => match command {
                     Some(command) => lanes.dispatch(Lane::Short, command, connection),
                     None => Err(End::Cancelled),
@@ -268,7 +276,7 @@ impl Task {
     /// A read of the connect sequence: with no command in flight yet, no
     /// answer in time means the feeder is not serving, and ends the session.
     async fn read(
-        &self,
+        &mut self,
         connection: &mut Connection,
         lanes: &mut Lanes,
         op: &Op,
@@ -286,7 +294,7 @@ impl Task {
     /// not end the session, which would make the lanes' writes in flight
     /// unknown. Its late answer is dropped.
     async fn ask(
-        &self,
+        &mut self,
         connection: &mut Connection,
         lanes: &mut Lanes,
         op: &Op,
@@ -306,5 +314,13 @@ impl Task {
                 Err(error) => return Err(End::Lost(error)),
             }
         }
+    }
+}
+
+/// Sleep until `at`; `None` is never selected (its branch is disabled), so
+/// it returns at once.
+async fn sleep_until_some(at: Option<Instant>) {
+    if let Some(at) = at {
+        tokio::time::sleep_until(at).await;
     }
 }

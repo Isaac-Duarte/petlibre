@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM sample_rollups AS r WHERE EXISTS (\n                 SELECT 1 FROM samples AS s\n                 WHERE s.feeder_id = r.feeder_id AND s.metric = r.metric\n                   AND s.received_ms >= r.hour_ms AND s.received_ms < r.hour_ms + 3600000\n             )",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "0f7111ed4ed9230c45d40f0e99b56213780a6b321d9b4972e193230cd0f0d2fe"
+}

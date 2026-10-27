@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE sample_marks SET rolled = ? WHERE id = 0",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "95b70872d848ac54e589dd557a14e1c5230fb3bc0d2d825461a11f3b29907bcb"
+}

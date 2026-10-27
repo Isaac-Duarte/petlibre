@@ -15,7 +15,9 @@
 //! the raw events, each event's typed projection (feeds, lock changes,
 //! boots, clock syncs, feeding blocked) is written in the same transaction
 //! for the views to query, and rebuilt from the raw rows when the
-//! projection code changes.
+//! projection code changes. Each sample carries its number beside its
+//! bytes, and hourly rollups of the numbers outlive the raw rows the
+//! owner's retention removes.
 
 #![forbid(unsafe_code)]
 
@@ -48,7 +50,7 @@ pub use foods::FoodSet;
 pub use history::{EventRow, NewEvent};
 pub use pets::WeightCursor;
 pub use projections::{Boot, ClockSync, Feed, LockChange, PROJECTION_VERSION, Projected, Refresh};
-pub use samples::{NewSample, SampleRow};
+pub use samples::{HourRow, NewSample, SampleKey, SampleRefresh, SampleRow, Span};
 pub use tokens::{NewToken, TokenUse};
 pub use users::{Change, Login, NewUser, SessionRow};
 
@@ -72,6 +74,8 @@ pub enum Error {
     InUse(&'static str),
     #[error("encode a cached {0}: {1}")]
     Json(&'static str, serde_json::Error),
+    #[error("{0} is not a UTF-8 path")]
+    Path(std::path::PathBuf),
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
@@ -120,6 +124,19 @@ impl Store {
                 .fetch_one(pool)
                 .await?;
         }
+        Ok(())
+    }
+
+    /// Copy the database into a new file at `target`, compacted, as one
+    /// read snapshot sees it: on a reader, so ingest and every other write
+    /// go on meanwhile. `target` must not exist.
+    pub async fn backup_into(&self, target: &Path) -> Result<()> {
+        let path = target
+            .to_str()
+            .ok_or_else(|| Error::Path(target.to_owned()))?;
+        sqlx::query!("VACUUM INTO ?", path)
+            .execute(&self.reader)
+            .await?;
         Ok(())
     }
 

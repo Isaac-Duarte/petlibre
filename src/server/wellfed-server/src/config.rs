@@ -30,10 +30,13 @@ pub const FILE: &str = "server.toml";
 /// The database, in the data directory.
 pub const DATABASE: &str = "server.db";
 
+/// The database's backups, in the data directory.
+pub const BACKUPS: &str = "backups";
+
 /// The label the server enrolls under on each feeder, unless set.
 const LABEL: &str = "wellfed-server";
 
-/// How many daily backups are kept, unless set.
+/// How many backups are kept, unless set.
 const BACKUPS_KEPT: NonZeroU32 = NonZeroU32::MIN.saturating_add(6);
 
 #[derive(Debug, thiserror::Error)]
@@ -104,7 +107,8 @@ pub struct Retention {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Backups {
-    /// How many daily backups are kept.
+    /// How many backups are kept, the daily ones and those asked for
+    /// together.
     pub keep: NonZeroU32,
 }
 
@@ -263,7 +267,7 @@ pub struct Overrides {
     pub raw_sample_days: Option<NonZeroU32>,
     #[command(flatten)]
     pub releases: ReleaseOverrides,
-    /// Daily backups kept (`backups.keep`; default 7).
+    /// Backups kept (`backups.keep`; default 7).
     #[arg(long, env = "WELLFED_SERVER_BACKUPS_KEEP")]
     pub backups_keep: Option<NonZeroU32>,
 }

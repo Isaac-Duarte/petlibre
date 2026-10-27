@@ -62,14 +62,15 @@ pub(crate) struct AppState {
         (name = routes::TAG_RELEASES, description = "Verified releases kept for installs: fetched or uploaded"),
         (name = routes::TAG_PETS, description = "Pets, their weight logs and the feeders that serve them"),
         (name = routes::TAG_FOODS, description = "Foods, the food each feeder serves over time, and refills"),
+        (name = routes::TAG_BACKUPS, description = "Copies of the server's database, kept in its data directory"),
     ),
 )]
 struct ApiDoc;
 
 fn router() -> OpenApiRouter<AppState> {
     use routes::{
-        auth, commands, events, feeders, feeds, foods, health, household, pets, releases, stream,
-        tokens, users,
+        auth, backups, commands, events, feeders, feeds, foods, health, household, pets, releases,
+        samples, stream, tokens, users,
     };
 
     let small = OpenApiRouter::new()
@@ -92,6 +93,7 @@ fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(feeds::feed))
         .routes(routes!(feeds::cancel))
         .routes(routes!(events::events))
+        .routes(routes!(samples::samples))
         .routes(routes!(commands::commands))
         .routes(routes!(commands::command))
         .routes(routes!(stream::stream))
@@ -109,6 +111,7 @@ fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(foods::food_history))
         .routes(routes!(foods::refills, foods::add_refill))
         .routes(routes!(foods::delete_refill))
+        .routes(routes!(backups::backups, backups::create_backup))
         .layer(RequestBodyLimitLayer::new(BODY_LIMIT));
     let uploads = OpenApiRouter::new()
         .routes(routes!(releases::upload_release))

@@ -1,9 +1,9 @@
-//! Adopted feeders: the list, adoption, status, settings, the panel lock
-//! and the history.
+//! Adopted feeders: the list, adoption, status, settings, the panel lock,
+//! the history and the samples.
 
 use wellfed_api::{
     AdoptFeeder, EventPage, EventQuery, Feeder, FeederDetail, FeederId, Generation, LockRequest,
-    Settings, SettingsPatch,
+    SamplePage, SampleQuery, Settings, SettingsPatch,
 };
 use reqwest::header;
 use reqwest::{Method, StatusCode};
@@ -101,6 +101,16 @@ impl Client {
     pub async fn events(&self, id: FeederId, query: &EventQuery) -> Result<EventPage, Error> {
         let response = self
             .api(Method::GET, &format!("/feeders/{id}/events"))
+            .query(query)
+            .send()
+            .await?;
+        decode(response, StatusCode::OK).await
+    }
+
+    /// A page of one metric's samples, raw or by the hour.
+    pub async fn samples(&self, id: FeederId, query: &SampleQuery) -> Result<SamplePage, Error> {
+        let response = self
+            .api(Method::GET, &format!("/feeders/{id}/samples"))
             .query(query)
             .send()
             .await?;

@@ -1,11 +1,14 @@
 //! The service on a temporary store, with fixed time and seeded random.
 
+use std::num::NonZeroU32;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use wellfed_api::{AdoptFeeder, ClientRole, Connection, EventBody, EventQuery, FeederId};
-use wellfed_service::{Clock, Config, Discovery, ReleaseKeys, ReleasesConfig, Service, Timing};
+use wellfed_service::{
+    Backups, Clock, Config, Discovery, ReleaseKeys, ReleasesConfig, Service, Timing,
+};
 use wellfed_store::Store;
 use tempfile::TempDir;
 
@@ -15,8 +18,9 @@ use crate::until;
 
 /// The config every test server starts with: no discovery, reconnects
 /// fast enough for a test to watch, no trusted release key and no release
-/// fetching. Its release cache directory is a placeholder: a
-/// [`TestService`] keeps the cache beside its database.
+/// fetching, samples written within a tenth of a second and kept raw
+/// forever, and seven backups. Its release cache and backup directories
+/// are placeholders: a [`TestService`] keeps both beside its database.
 pub fn config() -> Config {
     Config {
         key: [0x42; 32],
@@ -28,12 +32,18 @@ pub fn config() -> Config {
             retry_max: Duration::from_millis(400),
             time_sync: Duration::from_secs(3600),
             answer: Duration::from_secs(12),
+            sample_wait: Duration::from_millis(100),
             session: Duration::from_secs(3600),
         },
         releases: ReleasesConfig {
             dir: PathBuf::from("releases"),
             keys: ReleaseKeys::default(),
             fetch: None,
+        },
+        raw_sample_days: None,
+        backups: Backups {
+            dir: PathBuf::from("backups"),
+            keep: NonZeroU32::new(7).expect("seven is not zero"),
         },
     }
 }
@@ -54,6 +64,16 @@ impl TempStore {
     /// The release cache, as the server keeps it in its data directory.
     pub fn releases(&self) -> PathBuf {
         self.0.path().join("releases")
+    }
+
+    /// The backups, as the server keeps them in its data directory.
+    pub fn backups(&self) -> PathBuf {
+        self.0.path().join("backups")
+    }
+
+    /// The data directory itself.
+    pub fn dir(&self) -> &std::path::Path {
+        self.0.path()
     }
 
     /// Open the database, as the server does at the fixed time.
@@ -101,6 +121,7 @@ impl TestService {
 
     async fn open_with_clock(store: TempStore, mut config: Config, clock: Arc<dyn Clock>) -> Self {
         config.releases.dir = store.releases();
+        config.backups.dir = store.backups();
         let service = Service::start(
             store.open().await,
             config,

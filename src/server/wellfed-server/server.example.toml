@@ -42,6 +42,7 @@ project_keys = []
 owner_keys = []
 
 [backups]
-# Daily backups (03:30 household time) kept in <data>/backups. They leave
-# out keys/server.key: back that up on its own.
+# Backups kept in <data>/backups, the daily ones (03:30 household time)
+# and those an owner asks for together. They leave out keys/server.key:
+# back that up on its own.
 keep = 7

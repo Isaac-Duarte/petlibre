@@ -351,7 +351,7 @@ async fn expiry_ends_an_expired_accounts_sessions_and_readiness_shows_the_runs()
 
     let service = server.service().clone();
     assert!(!service.job_scheduled(Job::ReleaseCheck), "fetching is off");
-    assert!(!service.job_scheduled(Job::Backup), "nothing to copy yet");
+    assert!(service.job_scheduled(Job::Backup));
     let cancel = CancellationToken::new();
     let task = jobs::spawn(service.clone(), service.clock(), cancel.clone());
     until("the hourly jobs run at start", || async {

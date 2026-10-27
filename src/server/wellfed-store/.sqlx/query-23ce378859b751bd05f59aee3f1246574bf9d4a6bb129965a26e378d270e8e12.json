@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT MAX(id) AS \"newest: i64\" FROM samples",
+  "describe": {
+    "columns": [
+      {
+        "name": "newest: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "23ce378859b751bd05f59aee3f1246574bf9d4a6bb129965a26e378d270e8e12"
+}

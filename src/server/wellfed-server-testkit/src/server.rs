@@ -11,7 +11,7 @@ use wellfed_service::{Clock, Config, Service};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-use crate::service::{TestService, config};
+use crate::service::{TempStore, TestService, config};
 
 /// The server, serving until [`Self::stop`].
 #[derive(Debug)]
@@ -80,6 +80,11 @@ impl TestServer {
 
     pub fn service(&self) -> &Service {
         self.service.service()
+    }
+
+    /// The service's data directory.
+    pub fn store(&self) -> &TempStore {
+        self.service.store()
     }
 
     /// End the open streams, stop serving, and stop the service.

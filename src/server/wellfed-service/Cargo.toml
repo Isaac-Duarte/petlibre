@@ -29,6 +29,7 @@ uuid.workspace = true
 
 [dev-dependencies]
 wellfed-server-testkit.workspace = true
+proptest.workspace = true
 serde_json.workspace = true
 
 [lints]

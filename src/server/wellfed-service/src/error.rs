@@ -30,6 +30,8 @@ pub enum Error {
     #[error(transparent)]
     Stock(#[from] StockError),
     #[error(transparent)]
+    Alert(#[from] AlertError),
+    #[error(transparent)]
     Random(#[from] RandomFailed),
     #[error(transparent)]
     Release(#[from] wellfed_releases::Error),
@@ -102,6 +104,8 @@ pub enum Invalid {
     Ssid,
     #[error("a WPA2 passphrase is 8-63 printable ASCII characters")]
     Psk,
+    #[error("an intake runs from `from` to `to` (on or after it), at most 366 days")]
+    IntakeDays,
 }
 
 /// Setup, login, sessions and the accounts owners manage.
@@ -261,6 +265,13 @@ pub enum StockError {
          read it from the feeder or upload the installer's copy before installing"
     )]
     BackupNeeded,
+}
+
+/// Alerts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum AlertError {
+    #[error("no such alert")]
+    NotFound,
 }
 
 /// A mirror refusal in the service's domains. Only `Unknown` may have

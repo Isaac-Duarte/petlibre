@@ -23,6 +23,7 @@
 
 #![forbid(unsafe_code)]
 
+mod alerts;
 mod audit;
 mod commands;
 mod convert;
@@ -52,6 +53,7 @@ use sqlx::sqlite::{
     SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions, SqliteSynchronous,
 };
 
+pub use alerts::{Acked, AlertFilter, NewAlert};
 pub use audit::{AuditFilter, AuditRecord, AuditRow, NewAudit};
 pub use commands::{CommandFilter, CommandRow, Journaled, NewCommand};
 pub use diagnostics::{FoodReading, RawTrace, StatsRow, TraceFound, TraceRow};

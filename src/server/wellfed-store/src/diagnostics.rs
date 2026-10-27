@@ -237,7 +237,8 @@ impl Store {
         to: Timestamp,
     ) -> Result<Vec<FoodReading>> {
         let (from, to) = (millis(from), millis(to));
-        let rows = sqlx::query!(
+        let rows = sqlx::query_as!(
+            ReadingRow,
             "SELECT received_ms, boot_count, present, emptied, refilled, feeds_since_refill
              FROM food_readings WHERE feeder_id = ? AND received_ms >= ? AND received_ms < ?
              ORDER BY received_ms, rowid",
@@ -248,21 +249,48 @@ impl Store {
         .fetch_all(&self.reader)
         .await?;
 
+        rows.into_iter().map(ReadingRow::reading).collect()
+    }
+
+    /// The food section's newest read.
+    pub async fn last_food_reading(&self, id: FeederId) -> Result<Option<FoodReading>> {
+        let row = sqlx::query_as!(
+            ReadingRow,
+            "SELECT received_ms, boot_count, present, emptied, refilled, feeds_since_refill
+             FROM food_readings WHERE feeder_id = ?
+             ORDER BY received_ms DESC, rowid DESC LIMIT 1",
+            id.0,
+        )
+        .fetch_optional(&self.reader)
+        .await?;
+
+        row.map(ReadingRow::reading).transpose()
+    }
+}
+
+/// A `food_readings` row as SQLite holds it.
+struct ReadingRow {
+    received_ms: i64,
+    boot_count: Option<i64>,
+    present: Option<i64>,
+    emptied: i64,
+    refilled: i64,
+    feeds_since_refill: Option<i64>,
+}
+
+impl ReadingRow {
+    fn reading(self) -> Result<FoodReading> {
         let count = |value: i64| u32::try_from(value).map_err(|_| Error::Corrupt("food count"));
-        rows.into_iter()
-            .map(|row| {
-                Ok(FoodReading {
-                    received: timestamp(row.received_ms)?,
-                    boot_count: boot(row.boot_count)?,
-                    food: FoodStats {
-                        present: row.present.map(|present| present != 0),
-                        emptied: count(row.emptied)?,
-                        refilled: count(row.refilled)?,
-                        feeds_since_refill: row.feeds_since_refill.map(count).transpose()?,
-                    },
-                })
-            })
-            .collect()
+        Ok(FoodReading {
+            received: timestamp(self.received_ms)?,
+            boot_count: boot(self.boot_count)?,
+            food: FoodStats {
+                present: self.present.map(|present| present != 0),
+                emptied: count(self.emptied)?,
+                refilled: count(self.refilled)?,
+                feeds_since_refill: self.feeds_since_refill.map(count).transpose()?,
+            },
+        })
     }
 }
 

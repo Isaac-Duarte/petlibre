@@ -149,6 +149,7 @@ pub(crate) mod need {
         FeederAdmin,
         Adopt,
         ServerData,
+        AcknowledgeAlerts,
     );
 }
 

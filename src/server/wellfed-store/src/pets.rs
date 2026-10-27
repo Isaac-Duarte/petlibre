@@ -202,6 +202,39 @@ impl Store {
             .collect()
     }
 
+    /// The pet's links that overlap `from..to` (`to` exclusive), in the
+    /// order they began, as [`Store::feeder_links`] reads a feeder's.
+    pub async fn pet_links(
+        &self,
+        pet: PetId,
+        from: Timestamp,
+        to: Timestamp,
+    ) -> Result<Vec<PetLink>> {
+        let (from, to) = (millis(from), millis(to));
+        let rows = sqlx::query!(
+            r#"SELECT feeder_id AS "feeder_id: Uuid", from_ms, to_ms FROM pet_feeders
+               WHERE pet_id = ?1 AND from_ms < ?3 AND (to_ms IS NULL OR to_ms > ?2)
+                     AND (to_ms IS NULL OR to_ms > from_ms)
+               ORDER BY from_ms, seq"#,
+            pet.0,
+            from,
+            to,
+        )
+        .fetch_all(&self.reader)
+        .await?;
+
+        rows.into_iter()
+            .map(|row| {
+                Ok(PetLink {
+                    pet,
+                    feeder: FeederId(row.feeder_id),
+                    from: timestamp(row.from_ms)?,
+                    to: row.to_ms.map(timestamp).transpose()?,
+                })
+            })
+            .collect()
+    }
+
     /// Log a weight; the reading time as stored, to the millisecond.
     pub async fn insert_weight(&self, pet: PetId, weight: &Weight) -> Result<Timestamp> {
         let at = millis(weight.at);

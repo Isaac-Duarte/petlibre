@@ -164,6 +164,91 @@ impl Store {
     }
 }
 
+impl Store {
+    /// The feeder's newest boot, by the server's receive order.
+    pub async fn last_boot(&self, id: FeederId) -> Result<Option<Projected<Boot>>> {
+        let row = sqlx::query!(
+            r#"SELECT epoch AS "epoch!", seq AS "seq!", bank, reset_flags, at_s, received_ms
+             FROM boots WHERE feeder_id = ?
+             ORDER BY received_ms DESC, epoch DESC, seq DESC LIMIT 1"#,
+            id.0,
+        )
+        .fetch_optional(&self.reader)
+        .await?;
+
+        row.map(|row| {
+            let value = Boot {
+                bank: u8::try_from(row.bank).map_err(|_| Error::Corrupt("boot bank"))?,
+                reset_flags: u32::try_from(row.reset_flags)
+                    .map_err(|_| Error::Corrupt("reset flags"))?,
+            };
+            projected(row.epoch, row.seq, row.at_s, row.received_ms, value)
+        })
+        .transpose()
+    }
+
+    /// The feeder's newest clock sync, by the server's receive order.
+    pub async fn last_clock_sync(&self, id: FeederId) -> Result<Option<Projected<ClockSync>>> {
+        let row = sqlx::query!(
+            r#"SELECT epoch AS "epoch!", seq AS "seq!", source, client, jump_ms, at_s, received_ms
+             FROM clock_syncs WHERE feeder_id = ?
+             ORDER BY received_ms DESC, epoch DESC, seq DESC LIMIT 1"#,
+            id.0,
+        )
+        .fetch_optional(&self.reader)
+        .await?;
+
+        row.map(|row| {
+            let jump_ms = row
+                .jump_ms
+                .map(|jump| i32::try_from(jump).map_err(|_| Error::Corrupt("clock jump")))
+                .transpose()?;
+            let value = ClockSync {
+                by: source(&row.source, row.client)?,
+                jump_ms,
+            };
+            projected(row.epoch, row.seq, row.at_s, row.received_ms, value)
+        })
+        .transpose()
+    }
+
+    /// The reasons the feeder could not feed received since it last could
+    /// (or since its first change), oldest first: empty when it can feed
+    /// now. The first says since when it cannot.
+    pub async fn blocked_since_free(
+        &self,
+        id: FeederId,
+    ) -> Result<Vec<Projected<Option<Blocked>>>> {
+        let rows = sqlx::query!(
+            r#"WITH free AS (
+                 SELECT received_ms, epoch, seq FROM blocked_changes
+                 WHERE feeder_id = ?1 AND reason IS NULL
+                 ORDER BY received_ms DESC, epoch DESC, seq DESC LIMIT 1)
+             SELECT b.epoch AS "epoch!", b.seq AS "seq!", b.reason, b.at_s, b.received_ms
+             FROM blocked_changes b
+             WHERE b.feeder_id = ?1 AND NOT EXISTS (
+                 SELECT 1 FROM free f
+                 WHERE (b.received_ms, b.epoch, b.seq) <= (f.received_ms, f.epoch, f.seq))
+             ORDER BY b.received_ms, b.epoch, b.seq"#,
+            id.0,
+        )
+        .fetch_all(&self.reader)
+        .await?;
+
+        rows.into_iter()
+            .map(|row| {
+                let value = row
+                    .reason
+                    .map(|reason| {
+                        Blocked::from_code(&reason).ok_or(Error::Corrupt("blocked reason"))
+                    })
+                    .transpose()?;
+                projected(row.epoch, row.seq, row.at_s, row.received_ms, value)
+            })
+            .collect()
+    }
+}
+
 /// A `feeds` row as SQLite holds it.
 pub(crate) struct FeedRow {
     pub(crate) epoch: i64,

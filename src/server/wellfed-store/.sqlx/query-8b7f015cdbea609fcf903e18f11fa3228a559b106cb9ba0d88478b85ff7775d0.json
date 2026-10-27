@@ -1,0 +1,122 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT seq, id AS \"id: Uuid\", feeder_id AS \"feeder_id: Uuid\", condition,\n                      since_ms, opened_ms, acked_ms, acked_by AS \"acked_by?: Uuid\", cleared_ms\n               FROM alerts\n               WHERE seq > ?1 AND (?2 IS NULL OR feeder_id = ?2)\n                 AND (?3 IS NULL\n                      OR (?3 = 'open' AND cleared_ms IS NULL AND acked_ms IS NULL)\n                      OR (?3 = 'acknowledged' AND cleared_ms IS NULL AND acked_ms IS NOT NULL)\n                      OR (?3 = 'cleared' AND cleared_ms IS NOT NULL))\n               ORDER BY seq LIMIT ?4",
+  "describe": {
+    "columns": [
+      {
+        "name": "seq",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "alerts",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "name": "id: Uuid",
+        "ordinal": 1,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "alerts",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "feeder_id: Uuid",
+        "ordinal": 2,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "alerts",
+            "name": "feeder_id"
+          }
+        }
+      },
+      {
+        "name": "condition",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "alerts",
+            "name": "condition"
+          }
+        }
+      },
+      {
+        "name": "since_ms",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "alerts",
+            "name": "since_ms"
+          }
+        }
+      },
+      {
+        "name": "opened_ms",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "alerts",
+            "name": "opened_ms"
+          }
+        }
+      },
+      {
+        "name": "acked_ms",
+        "ordinal": 6,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "alerts",
+            "name": "acked_ms"
+          }
+        }
+      },
+      {
+        "name": "acked_by?: Uuid",
+        "ordinal": 7,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "alerts",
+            "name": "acked_by"
+          }
+        }
+      },
+      {
+        "name": "cleared_ms",
+        "ordinal": 8,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "alerts",
+            "name": "cleared_ms"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "8b7f015cdbea609fcf903e18f11fa3228a559b106cb9ba0d88478b85ff7775d0"
+}

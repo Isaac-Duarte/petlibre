@@ -120,6 +120,7 @@ fn shown(user: &User, metrics: &[MetricKind], event: &StreamEvent) -> bool {
         | StreamEvent::Gap { .. }
         | StreamEvent::Connection { .. }
         | StreamEvent::Install { .. }
+        | StreamEvent::Alert { .. }
         | StreamEvent::Resync => true,
     }
 }

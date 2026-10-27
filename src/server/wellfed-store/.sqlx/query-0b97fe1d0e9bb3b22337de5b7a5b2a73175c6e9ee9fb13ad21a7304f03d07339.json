@@ -1,0 +1,122 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT seq, id AS \"id: Uuid\", feeder_id AS \"feeder_id: Uuid\", condition,\n                      since_ms, opened_ms, acked_ms, acked_by AS \"acked_by?: Uuid\", cleared_ms\n               FROM alerts WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "seq",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "alerts",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "name": "id: Uuid",
+        "ordinal": 1,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "alerts",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "feeder_id: Uuid",
+        "ordinal": 2,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "alerts",
+            "name": "feeder_id"
+          }
+        }
+      },
+      {
+        "name": "condition",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "alerts",
+            "name": "condition"
+          }
+        }
+      },
+      {
+        "name": "since_ms",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "alerts",
+            "name": "since_ms"
+          }
+        }
+      },
+      {
+        "name": "opened_ms",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "alerts",
+            "name": "opened_ms"
+          }
+        }
+      },
+      {
+        "name": "acked_ms",
+        "ordinal": 6,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "alerts",
+            "name": "acked_ms"
+          }
+        }
+      },
+      {
+        "name": "acked_by?: Uuid",
+        "ordinal": 7,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "alerts",
+            "name": "acked_by"
+          }
+        }
+      },
+      {
+        "name": "cleared_ms",
+        "ordinal": 8,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "alerts",
+            "name": "cleared_ms"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "0b97fe1d0e9bb3b22337de5b7a5b2a73175c6e9ee9fb13ad21a7304f03d07339"
+}

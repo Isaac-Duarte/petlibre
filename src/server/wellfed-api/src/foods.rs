@@ -71,13 +71,59 @@ pub struct FoodPeriod {
     pub to: Option<Timestamp>,
 }
 
-/// A feeder's food as it stands.
+/// A feeder's food as it stands, and what the server estimates of it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct FeederFood {
     /// The food it serves now; `None` before an owner sets one.
     pub current: Option<FoodPeriod>,
     /// The newest refill recorded.
     pub last_refill: Option<Refill>,
+    /// The food beam as the feeder last read it; `None` before it has.
+    pub hopper: Option<HopperReading>,
+    /// What is left since the newest refill; `None` before one is
+    /// recorded.
+    pub estimate: Option<FoodEstimate>,
+    /// "Refilled?": when the food beam saw the hopper go from empty to
+    /// full with no refill recorded since. The estimate does not count it:
+    /// only a recorded refill starts the count again.
+    pub unrecorded_refill: Option<Timestamp>,
+}
+
+/// One reading of the food beam. The beam sees only whether food reaches
+/// it, so a hopper that reads full may be nearly empty.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct HopperReading {
+    pub present: bool,
+    /// When the server received the reading; the feeder reads the beam
+    /// during each feed.
+    pub received: Timestamp,
+}
+
+/// What the feeder has dispensed since the newest refill, and what is
+/// left. An estimate: a portion is 1/12 cup by the food's `grams_per_cup`
+/// (provisional), what was in the hopper before the refill is not known,
+/// and only the portions the feeder confirmed count.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct FoodEstimate {
+    /// What a portion of the current food weighs, in milligrams; `None`
+    /// with no food set.
+    pub portion_mg: Option<u32>,
+    /// The portions the feeder confirmed since the refill.
+    pub portions: u32,
+    /// Of those, the portions of feeds with no food set, which weigh
+    /// nothing known.
+    pub unweighed_portions: u32,
+    /// What those portions weighed, by the food each feed served.
+    pub dispensed_grams: u32,
+    /// The refill less what was dispensed since; 0 once the food beam
+    /// reads empty.
+    pub remaining_grams: u32,
+    /// A full bag of the current food, to compare with.
+    pub bag_grams: Option<u32>,
+    /// When the hopper runs out at the rate of the last 7 days (or since
+    /// the refill, when that is sooner); `None` while nothing was
+    /// dispensed.
+    pub empty_by: Option<Timestamp>,
 }
 
 /// `PUT /feeders/{id}/food`: the food a feeder serves from now on.

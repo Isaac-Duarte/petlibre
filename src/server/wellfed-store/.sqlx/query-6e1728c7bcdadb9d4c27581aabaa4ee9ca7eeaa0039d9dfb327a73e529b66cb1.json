@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO alerts (id, feeder_id, kind, subject, condition, since_ms, opened_ms)\n             VALUES (?, ?, ?, ?, ?, ?, ?)\n             ON CONFLICT DO NOTHING\n             RETURNING seq",
+  "describe": {
+    "columns": [
+      {
+        "name": "seq",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "alerts",
+            "name": "seq"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "6e1728c7bcdadb9d4c27581aabaa4ee9ca7eeaa0039d9dfb327a73e529b66cb1"
+}

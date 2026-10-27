@@ -21,6 +21,7 @@
 //! [API design]: ../../../../docs/api/README.md
 #![forbid(unsafe_code)]
 
+mod alerts;
 mod audit;
 mod auth;
 mod backups;

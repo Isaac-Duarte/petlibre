@@ -11,9 +11,10 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 use wellfed_server_client::api::{
-    AdoptFeeder, ClientOwner, ClientRole, Command, CommandOutcome, CommandState, Connection,
-    ErrorCode, FeedOutcome, Feeder, FeederClient, FeederId, Hex, Install, InstallState, Problem,
-    StockBackup, StockSource, StockState,
+    AdoptFeeder, AlertPage, ClientOwner, ClientRole, Command, CommandOutcome, CommandState,
+    Connection, ErrorCode, FeedOutcome, Feeder, FeederClient, FeederFood, FeederId, Hex, Install,
+    InstallState, NewFood, NewPet, NewRefill, PetIntake, Problem, Species, StockBackup,
+    StockSource, StockState,
 };
 use wellfed_server_client::{Client, Uploaded};
 use wellfed_server_testkit::feeder::{self, Banks, Flash, Relay, Running};
@@ -474,6 +475,68 @@ fn export_saves_the_archive_once_it_is_whole() {
         assert!(archive.windows(9).any(|name| name == b"users.csv"));
 
         fresh.stop().await;
+        server.stop().await;
+        sim.stop().await;
+    });
+}
+
+/// `food`, `intake` and `alerts` read what the server works out: a feed
+/// the CLI asked for counts in the food left and the pet's day, and an
+/// unknown alert cannot be acknowledged.
+#[test]
+fn the_views_read_the_food_left_the_intake_and_the_alerts() {
+    local(async {
+        let sim = feeder::start().await;
+        let server = TestServer::start().await;
+        let mut http = server.client();
+        http.setup(&ada_setup()).await.unwrap();
+        let kitchen = adopt(&http, &sim, sim.address.to_string()).await;
+        let food = NewFood {
+            brand: "Acme".into(),
+            name: "Dry".into(),
+            kcal_per_kg: 3600,
+            bag_grams: 2000,
+            grams_per_cup: 120,
+        };
+        let food = http.create_food(&food).await.unwrap();
+        http.set_feeder_food(kitchen, food.id).await.unwrap();
+        http.add_refill(kitchen, &NewRefill::FullBag).await.unwrap();
+        let tom = NewPet {
+            name: "Tom".into(),
+            species: Species::Cat,
+            birth_date: None,
+            daily_kcal: Some(200),
+        };
+        let tom = http.create_pet(&tom).await.unwrap();
+        http.assign_feeder(tom.id, kitchen).await.unwrap();
+        let home = Home::new();
+        home.login(&server).await.exited(0);
+        home.run(&["feed", "--portions", "2"], "").await.exited(0);
+
+        let read = home.run(&["food", "--json"], "").await;
+        let views: Vec<FeederFood> = read.exited(0).bodies();
+        let estimate = views[0].estimate.unwrap();
+        assert_eq!((estimate.portions, estimate.remaining_grams), (2, 1980));
+        let text = home.run(&["food", "--feeder", "kitchen"], "").await;
+        assert!(text.exited(0).stdout.contains("about 1980 g left"));
+
+        let read = home.run(&["intake", "Tom", "--json"], "").await;
+        let intakes: Vec<PetIntake> = read.exited(0).bodies();
+        let today = intakes[0].days.last().unwrap();
+        assert_eq!((today.grams, today.kcal, today.estimate), (20, 72, false));
+        home.run(&["intake", "Rex"], "").await.exited(1);
+        home.run(&["intake", "Tom", "--from", "May"], "")
+            .await
+            .exited(2);
+
+        let open = ["alerts", "list", "--state", "open", "--json"];
+        let pages: Vec<AlertPage> = home.run(&open, "").await.exited(0).bodies();
+        assert!(pages[0].items.is_empty());
+        let missing = Uuid::from_u128(1).to_string();
+        let acked = home.run(&["alerts", "ack", &missing, "--json"], "").await;
+        let problems: Vec<Problem> = acked.exited(1).bodies();
+        assert_eq!(problems[0].code, ErrorCode::NotFound);
+
         server.stop().await;
         sim.stop().await;
     });

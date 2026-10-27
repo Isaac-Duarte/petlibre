@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO alerts (seq, id, feeder_id, kind, subject, condition, since_ms, opened_ms,\n                             acked_ms, acked_by, cleared_ms)\n         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 11
+    },
+    "nullable": []
+  },
+  "hash": "3e630ed22286006e235e6e022049b7ed67a27e876f8844eee7d3592708e8dc2f"
+}

@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
 use crate::FeederId;
+use crate::alerts::Alert;
 use crate::commands::Command;
 use crate::events::{FeederEvent, Gap};
 use crate::feeders::Connection;
@@ -45,6 +46,11 @@ pub enum StreamEvent {
     Install {
         feeder: FeederId,
         install: Install,
+    },
+    /// An alert was raised, acknowledged or cleared. Everyone is sent
+    /// every alert.
+    Alert {
+        alert: Alert,
     },
     /// The stream cannot resume from the client's `Last-Event-ID`:
     /// refetch what it shows.

@@ -9,7 +9,7 @@
 use futures_util::stream::BoxStream;
 use futures_util::{StreamExt, TryStreamExt};
 use wellfed_formats::export::{
-    AuditEntry, BlockedChange, Boot, ClockSync, Command, Event, Feed, FeedTrace, Feeder,
+    Alert, AuditEntry, BlockedChange, Boot, ClockSync, Command, Event, Feed, FeedTrace, Feeder,
     FeederFood, FeederStat, FeederState, Food, FoodReading, Gap, Household, Install, KeptClient,
     LockChange, Pet, PetFeeder, PetWeight, PhoneKey, ProjectionVersion, Refill, Row, Sample,
     SampleMarks, SampleRollup, Table, User,
@@ -285,6 +285,16 @@ impl Snapshot {
                               grams, full_bag AS "full_bag: bool", food_id AS "food_id: Uuid",
                               user_id AS "user_id: Uuid"
                        FROM refills ORDER BY seq"#
+                )
+                .fetch(tx),
+            ),
+            Table::Alerts => rows(
+                sqlx::query_as!(
+                    Alert,
+                    r#"SELECT seq AS "seq!", id AS "id: Uuid", feeder_id AS "feeder_id: Uuid", kind,
+                              subject, condition, since_ms, opened_ms, acked_ms,
+                              acked_by AS "acked_by: Uuid", cleared_ms
+                       FROM alerts ORDER BY seq"#
                 )
                 .fetch(tx),
             ),

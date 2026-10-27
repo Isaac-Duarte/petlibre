@@ -332,10 +332,16 @@ impl Service {
     /// read that fails is logged: the entry itself is recorded.
     pub(crate) async fn published(&self, key: &IdempotencyKey) {
         match self.shared.store.command(key).await {
-            Ok(Some(row)) => self
-                .shared
-                .hub
-                .publish(StreamEvent::Command { command: view(row) }),
+            Ok(Some(row)) => {
+                // A feed resolved `unrecorded`, or found after all, moves
+                // its alert.
+                if row.state == CommandState::Resolved {
+                    self.alerts_changed(row.feeder);
+                }
+                self.shared
+                    .hub
+                    .publish(StreamEvent::Command { command: view(row) });
+            }
             Ok(None) => {}
             Err(error) => {
                 warn!(key = %Uuid::from_bytes(*key), %error, "a changed entry was not streamed");

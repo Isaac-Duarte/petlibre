@@ -52,25 +52,33 @@
 //!   their progress and their end reach the stream. "Restore stock" is
 //!   one: it installs the feeder's own stock firmware from the verified
 //!   backup the server keeps in its data directory, signed by the owner.
+//! - **Derived views** (the food left, a pet's intake against its target,
+//!   the feeds that went wrong) are pure functions of the stored rows, with
+//!   the time and the household's zone passed in.
+//! - **Alerts** are decided from what the server holds of each feeder, on
+//!   its updates and once a minute; each is recorded, and every change
+//!   reaches the stream.
 //! - **Background jobs** have their bodies here, each a method that takes
 //!   the time it runs at; [`Service::run_job`] runs one and records its
 //!   run. The server's supervisor decides when.
 //!
 //! Each domain has its own error enum ([`AccountError`],
 //! [`TokenError`], [`HouseholdError`], [`FeederError`], [`ClientError`],
-//! [`CommandError`], [`InstallError`], [`StockError`], [`OwnerDataError`]),
-//! wrapped in [`Error`]. Time and randomness come in through [`Clock`] and
-//! [`Random`], so tests can fix them.
+//! [`CommandError`], [`InstallError`], [`StockError`], [`OwnerDataError`],
+//! [`AlertError`]), wrapped in [`Error`]. Time and randomness come in
+//! through [`Clock`] and [`Random`], so tests can fix them.
 //!
 //! [API design]: ../../../../docs/api/README.md
 #![forbid(unsafe_code)]
 
 mod admin;
+mod alerts;
 mod audit;
 mod backups;
 mod clients;
 mod commands;
 mod config;
+mod derived;
 mod diagnostics;
 mod error;
 mod export;
@@ -98,6 +106,7 @@ mod stock;
 mod tokens;
 mod updates;
 mod users;
+mod views;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -116,8 +125,8 @@ pub use backups::{BackupError, Backups};
 pub use config::{Config, Timing};
 pub use diagnostics::LogFollow;
 pub use error::{
-    AccountError, ClientError, CommandError, Error, FeederError, HouseholdError, InstallError,
-    Invalid, OwnerDataError, Result, StockError, TokenError,
+    AccountError, AlertError, ClientError, CommandError, Error, FeederError, HouseholdError,
+    InstallError, Invalid, OwnerDataError, Result, StockError, TokenError,
 };
 pub use export::{CHUNK as EXPORT_CHUNK, ExportError};
 pub use hub::{Hub, Resume, Stamped, StreamId, Subscription};
@@ -199,6 +208,7 @@ pub struct Service {
     installing: installs::Slot,
     /// Failed logins per name and per address.
     limits: Arc<limits::Limits>,
+    alerting: Arc<alerts::Alerting>,
     cancel: CancellationToken,
     tasks: TaskTracker,
 }
@@ -254,6 +264,7 @@ impl Service {
             exporting: Arc::new(tokio::sync::Mutex::new(())),
             installing: installs::Slot::default(),
             limits: Arc::new(limits::Limits::default()),
+            alerting: Arc::new(alerts::Alerting::default()),
             cancel,
             tasks: TaskTracker::new(),
         };
@@ -274,6 +285,7 @@ impl Service {
                 service.spawn(&row).await?;
             }
         }
+        service.tick_alerts();
         Ok(service)
     }
 

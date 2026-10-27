@@ -312,6 +312,8 @@ impl Service {
             feeder: install.feeder,
             install,
         });
+        // A failed install is an alert, and the next one clears it.
+        self.alerts_changed(install.feeder);
     }
 }
 

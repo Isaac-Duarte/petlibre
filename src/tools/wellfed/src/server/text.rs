@@ -5,8 +5,8 @@
 use std::fmt::Write as _;
 
 use wellfed_server_client::api::{
-    Command, CommandOutcome, Feeder, FeederDetail, FeederEvent, Gap, Install, InstallTarget,
-    Release, Settings, StockBackup, StockState, Token, User,
+    Alert, AlertCondition, Command, CommandOutcome, Feeder, FeederDetail, FeederEvent, Gap,
+    Install, InstallTarget, Release, Settings, StockBackup, StockState, Token, User,
 };
 use serde::Serialize;
 
@@ -234,6 +234,43 @@ pub(super) fn stock(state: &StockState) -> String {
         .as_ref()
         .map_or_else(|| "no restore has run".to_owned(), install);
     format!("{backup}\n{feeder}\n{restore}")
+}
+
+pub(super) fn alert(alert: &Alert) -> String {
+    let mut line = format!(
+        "{}  {}  {}  {}  since {}",
+        alert.id,
+        alert.feeder,
+        word(&alert.state),
+        alert.condition.code(),
+        alert.since,
+    );
+    match alert.condition {
+        AlertCondition::Feed {
+            feed,
+            outcome,
+            requested,
+            completed,
+            ..
+        } => {
+            let _ = write!(
+                line,
+                "  feed {feed}: {completed} of {requested} portions, {}",
+                word(&outcome)
+            );
+        }
+        AlertCondition::Unrecorded { command } => {
+            let _ = write!(line, "  wellfed server command {command}");
+        }
+        AlertCondition::Blocked { reason } => {
+            let _ = write!(line, "  {}", word(&reason));
+        }
+        AlertCondition::InstallFailed { install, .. } => {
+            let _ = write!(line, "  install {install}");
+        }
+        AlertCondition::Offline | AlertCondition::HopperEmpty | AlertCondition::ClockInvalid => {}
+    }
+    line
 }
 
 /// Each item on its own line.

@@ -6,8 +6,8 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum_extra::extract::WithRejection;
 use wellfed_api::{
-    FeederId, NewPet, NewWeight, PageQuery, Pet, PetId, PetPatch, Problem, Weight, WeightId,
-    WeightPage,
+    FeederId, IntakeQuery, NewPet, NewWeight, PageQuery, Pet, PetId, PetIntake, PetPatch, Problem,
+    Weight, WeightId, WeightPage,
 };
 
 use super::{ApiResult, JsonBody, TAG_PETS};
@@ -221,4 +221,29 @@ pub(crate) async fn delete_weight(
 ) -> ApiResult<StatusCode> {
     state.service.delete_weight(id, weight).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// What the pet's feeders dispensed for it each day, in the household's
+/// zone, against its daily target, and the feeds among them that went
+/// wrong. A feeder that served several pets has its feeds split evenly
+/// between them, and those days are marked an estimate.
+#[utoipa::path(
+    get,
+    path = "/pets/{id}/intake",
+    tag = TAG_PETS,
+    params(("id" = PetId, Path), IntakeQuery),
+    responses(
+        (status = 200, body = PetIntake),
+        (status = 400, body = Problem, description = "invalid: `from` after `to`, or more than 366 days"),
+        (status = 401, body = Problem),
+        (status = 404, body = Problem),
+    ),
+)]
+pub(crate) async fn intake(
+    State(state): State<AppState>,
+    _: Allowed<need::Read>,
+    WithRejection(Path(id), _): PetPath,
+    WithRejection(Query(query), _): WithRejection<Query<IntakeQuery>, ApiError>,
+) -> ApiResult<Json<PetIntake>> {
+    Ok(Json(state.service.pet_intake(id, query).await?))
 }

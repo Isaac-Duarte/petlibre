@@ -9,8 +9,8 @@
 
 use jiff::Timestamp;
 use wellfed_api::{
-    FeederFood, FeederId, Food, FoodHistoryPage, FoodId, FoodPatch, FoodPeriod, NewFood, NewRefill,
-    PageQuery, Refill, RefillId, RefillPage, User,
+    FeederId, Food, FoodHistoryPage, FoodId, FoodPatch, FoodPeriod, NewFood, NewRefill, PageQuery,
+    Refill, RefillId, RefillPage, User,
 };
 use wellfed_store::FoodSet;
 
@@ -84,20 +84,6 @@ impl Service {
             Err(wellfed_store::Error::InUse(_)) => Err(OwnerDataError::FoodInUse.into()),
             Err(error) => Err(error.into()),
         }
-    }
-
-    /// The feeder's food now (its newest change, even when the clock has
-    /// stepped back before it), and its newest refill.
-    pub async fn feeder_food(&self, feeder: FeederId) -> Result<FeederFood> {
-        self.row(feeder).await?;
-
-        let store = &self.shared.store;
-        let current = store.current_food(feeder).await?;
-        let last_refill = store.last_refill(feeder).await?;
-        Ok(FeederFood {
-            current,
-            last_refill,
-        })
     }
 
     /// The food the feeder served at `at`, and the period it served it in:
@@ -186,6 +172,8 @@ impl Service {
         };
 
         refill.at = self.shared.store.insert_refill(&refill).await?;
+        // A refill clears an empty hopper's alert.
+        self.alerts_changed(feeder);
         Ok(refill)
     }
 

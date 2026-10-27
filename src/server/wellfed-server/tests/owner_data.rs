@@ -2,8 +2,8 @@
 //! writes them, and each refusal has its code.
 
 use wellfed_api::{
-    AdoptFeeder, ClientRole, ErrorCode, FeederId, FoodPatch, NewFood, NewPet, NewRefill, NewUser,
-    NewWeight, PageQuery, PetPatch, RefillId, Role, Species, WeightId,
+    AdoptFeeder, ClientRole, ErrorCode, FeederId, FoodPatch, IntakeQuery, NewFood, NewPet,
+    NewRefill, NewUser, NewWeight, PageQuery, PetPatch, RefillId, Role, Species, WeightId,
 };
 use wellfed_server_client::{Client, StatusCode};
 use wellfed_server_testkit::{TestServer, ada_setup, feeder, local, refused, refused_for};
@@ -225,6 +225,21 @@ fn an_owner_keeps_pets_foods_and_refills_over_http() {
         let food = owner.feeder_food(kitchen).await.unwrap();
         assert_eq!(food.current, Some(period.clone()));
         assert_eq!(food.last_refill, Some(bag.clone()));
+        // Nothing dispensed yet, and the beam not read: the whole bag left.
+        let estimate = food.estimate.unwrap();
+        assert_eq!((estimate.portions, estimate.remaining_grams), (0, 2000));
+        assert_eq!((estimate.empty_by, food.hopper), (None, None));
+
+        // A week of empty days by default, every role's to read.
+        let intake = owner.pet_intake(pet.id, &IntakeQuery::default()).await;
+        let intake = intake.unwrap();
+        assert_eq!(intake.days.len(), 7);
+        assert!(intake.days.iter().all(|day| day.grams == 0));
+        let backwards = IntakeQuery {
+            from: Some(jiff::civil::date(2026, 10, 2)),
+            to: Some(jiff::civil::date(2026, 10, 1)),
+        };
+        refused(owner.pet_intake(pet.id, &backwards).await, bad, invalid);
         let history = owner
             .food_history(kitchen, &PageQuery::default())
             .await

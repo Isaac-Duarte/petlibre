@@ -2,7 +2,8 @@
 //! them. Everyone reads them; owners write them.
 
 use wellfed_api::{
-    FeederId, NewPet, NewWeight, PageQuery, Pet, PetId, PetPatch, Weight, WeightId, WeightPage,
+    FeederId, IntakeQuery, NewPet, NewWeight, PageQuery, Pet, PetId, PetIntake, PetPatch, Weight,
+    WeightId, WeightPage,
 };
 use reqwest::{Method, StatusCode};
 
@@ -92,5 +93,16 @@ impl Client {
             .await?;
         expect_status(response, StatusCode::NO_CONTENT).await?;
         Ok(())
+    }
+
+    /// What the pet's feeders dispensed for it each day of `query`, against
+    /// its target, and the feeds that went wrong.
+    pub async fn pet_intake(&self, pet: PetId, query: &IntakeQuery) -> Result<PetIntake, Error> {
+        let response = self
+            .api(Method::GET, &format!("/pets/{pet}/intake"))
+            .query(query)
+            .send()
+            .await?;
+        decode(response, StatusCode::OK).await
     }
 }

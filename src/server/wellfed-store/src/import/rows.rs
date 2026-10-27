@@ -1,11 +1,11 @@
 //! The inserts of the tables after the samples: the projections, the
-//! journal and its audit log, installs and the owner data. Each row goes in
-//! as exported.
+//! journal and its audit log, installs, the owner data and the alerts. Each
+//! row goes in as exported.
 
 use wellfed_formats::export::{
-    AuditEntry, BlockedChange, Boot, ClockSync, Command, Feed, FeedTrace, FeederFood, FeederStat,
-    Food, FoodReading, Install, KeptClient, LockChange, Pet, PetFeeder, PetWeight, PhoneKey,
-    Refill,
+    Alert, AuditEntry, BlockedChange, Boot, ClockSync, Command, Feed, FeedTrace, FeederFood,
+    FeederStat, Food, FoodReading, Install, KeptClient, LockChange, Pet, PetFeeder, PetWeight,
+    PhoneKey, Refill,
 };
 use sqlx::SqliteConnection;
 
@@ -352,6 +352,28 @@ pub(super) async fn refill(tx: &mut SqliteConnection, refill: &Refill) -> Result
         refill.full_bag,
         refill.food_id,
         refill.user_id,
+    )
+    .execute(tx)
+    .await?;
+    Ok(())
+}
+
+pub(super) async fn alert(tx: &mut SqliteConnection, alert: &Alert) -> Result<()> {
+    sqlx::query!(
+        "INSERT INTO alerts (seq, id, feeder_id, kind, subject, condition, since_ms, opened_ms,
+                             acked_ms, acked_by, cleared_ms)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        alert.seq,
+        alert.id,
+        alert.feeder_id,
+        alert.kind,
+        alert.subject,
+        alert.condition,
+        alert.since_ms,
+        alert.opened_ms,
+        alert.acked_ms,
+        alert.acked_by,
+        alert.cleared_ms,
     )
     .execute(tx)
     .await?;

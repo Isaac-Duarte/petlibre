@@ -9,6 +9,143 @@
     "version": "0.1.0"
   },
   "paths": {
+    "/api/v1/alerts": {
+      "get": {
+        "tags": [
+          "alerts"
+        ],
+        "summary": "The alerts, oldest first; `state=open` lists those nobody has\nacknowledged and that still hold.",
+        "operationId": "alerts",
+        "parameters": [
+          {
+            "name": "state",
+            "in": "query",
+            "description": "Only alerts in this state; every alert when absent.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/AlertState"
+            }
+          },
+          {
+            "name": "feeder",
+            "in": "query",
+            "description": "Only this feeder's alerts.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/FeederId"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "description": "The previous page's `next`, as it came.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "At most this many (1-1000, default 100).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlertPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid: a bad state, feeder, limit or cursor",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/alerts/{id}/ack": {
+      "post": {
+        "tags": [
+          "alerts"
+        ],
+        "summary": "Acknowledge an alert: an owner has seen it. It still clears when its\ncondition ends. One acknowledged before is answered as it stands.",
+        "operationId": "acknowledge",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/AlertId"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Alert"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden: owners only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/audit": {
       "get": {
         "tags": [
@@ -3624,6 +3761,84 @@
         }
       }
     },
+    "/api/v1/pets/{id}/intake": {
+      "get": {
+        "tags": [
+          "pets"
+        ],
+        "summary": "What the pet's feeders dispensed for it each day, in the household's\nzone, against its daily target, and the feeds among them that went\nwrong. A feeder that served several pets has its feeds split evenly\nbetween them, and those days are marked an estimate.",
+        "operationId": "intake",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/PetId"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "description": "The first day; six days before `to` when absent.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "description": "The last day, included; today when absent. At most 366 days from\n`from`.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PetIntake"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid: `from` after `to`, or more than 366 days",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/pets/{id}/weights": {
       "get": {
         "tags": [
@@ -4757,6 +4972,23 @@
   },
   "components": {
     "schemas": {
+      "Acknowledgement": {
+        "type": "object",
+        "description": "Who acknowledged an alert, and when.",
+        "required": [
+          "by",
+          "at"
+        ],
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "by": {
+            "$ref": "#/components/schemas/UserId"
+          }
+        }
+      },
       "AdoptFeeder": {
         "type": "object",
         "description": "Adopt a feeder by redeeming an invite its owner created for the server\n(`wellfed invite --role server`).",
@@ -4781,6 +5013,268 @@
             "description": "What the household calls the feeder (1-64 characters)."
           }
         }
+      },
+      "Alert": {
+        "type": "object",
+        "required": [
+          "id",
+          "feeder",
+          "condition",
+          "state",
+          "since",
+          "opened"
+        ],
+        "properties": {
+          "acknowledged": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Acknowledgement"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cleared": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When its condition ended."
+          },
+          "condition": {
+            "$ref": "#/components/schemas/AlertCondition"
+          },
+          "feeder": {
+            "$ref": "#/components/schemas/FeederId"
+          },
+          "id": {
+            "$ref": "#/components/schemas/AlertId"
+          },
+          "opened": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the server raised it."
+          },
+          "since": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the condition began, as far as the server knows: when it saw\nthe feeder go, the feed end, the beam read empty, and so on."
+          },
+          "state": {
+            "$ref": "#/components/schemas/AlertState"
+          }
+        }
+      },
+      "AlertCondition": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "The server has had no session with the feeder for more than 10\nminutes.",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "offline"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A feed ended `uncertain`, `failed` or `expired`, as the feeder's\nhistory says.",
+            "required": [
+              "epoch",
+              "feed",
+              "outcome",
+              "reason",
+              "requested",
+              "completed",
+              "kind"
+            ],
+            "properties": {
+              "completed": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "epoch": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "feed": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "feed"
+                ]
+              },
+              "outcome": {
+                "$ref": "#/components/schemas/FeedOutcome"
+              },
+              "reason": {
+                "$ref": "#/components/schemas/FeedReason"
+              },
+              "requested": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A feed sent through the server that the feeder's history has no\nrecord of after a restart: it never ran, or its record was lost.\nIt clears if the history later shows the feed.",
+            "required": [
+              "command",
+              "kind"
+            ],
+            "properties": {
+              "command": {
+                "type": "string",
+                "format": "uuid",
+                "description": "The journal entry's key (`GET /commands/{key}`)."
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "unrecorded"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The food beam last read an empty hopper. It clears when a later\nreading finds food, or an owner records a refill.",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "hopper_empty"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The feeder's last install failed. It clears when another install\nstarts on it.",
+            "required": [
+              "install",
+              "kind"
+            ],
+            "properties": {
+              "failure": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/InstallFailure"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "install": {
+                "$ref": "#/components/schemas/InstallId"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "install_failed"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The feeder's clock has been invalid for more than an hour, so its\nown schedule cannot run.",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "clock_invalid"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The feeder has been unable to feed for more than 30 minutes, for\nthe reason it gave first.",
+            "required": [
+              "reason",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "blocked"
+                ]
+              },
+              "reason": {
+                "$ref": "#/components/schemas/Blocked"
+              }
+            }
+          }
+        ],
+        "description": "What an alert is about."
+      },
+      "AlertId": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "AlertPage": {
+        "type": "object",
+        "description": "A page of alerts, oldest first.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Alert"
+            }
+          },
+          "next": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The `after` for the next page; `None` at the end."
+          }
+        }
+      },
+      "AlertState": {
+        "type": "string",
+        "description": "Where an alert stands.",
+        "enum": [
+          "open",
+          "acknowledged",
+          "cleared"
+        ]
+      },
+      "AnomalyKind": {
+        "type": "string",
+        "enum": [
+          "missed",
+          "uncertain",
+          "short"
+        ]
       },
       "Archive": {
         "type": "string",
@@ -6191,6 +6685,56 @@
           }
         }
       },
+      "FeedAnomaly": {
+        "type": "object",
+        "description": "A feed that went wrong.",
+        "required": [
+          "feeder",
+          "epoch",
+          "feed",
+          "at",
+          "kind",
+          "requested",
+          "completed",
+          "reason"
+        ],
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When it ended: the feeder's time when its clock was valid, else\nwhen the server received the result."
+          },
+          "completed": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "epoch": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "feed": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "feeder": {
+            "$ref": "#/components/schemas/FeederId"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/AnomalyKind"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/FeedReason"
+          },
+          "requested": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
       "FeedOutcome": {
         "type": "string",
         "enum": [
@@ -6515,13 +7059,35 @@
       },
       "FeederFood": {
         "type": "object",
-        "description": "A feeder's food as it stands.",
+        "description": "A feeder's food as it stands, and what the server estimates of it.",
         "properties": {
           "current": {
             "oneOf": [
               {
                 "$ref": "#/components/schemas/FoodPeriod",
                 "description": "The food it serves now; `None` before an owner sets one."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "estimate": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/FoodEstimate",
+                "description": "What is left since the newest refill; `None` before one is\nrecorded."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hopper": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/HopperReading",
+                "description": "The food beam as the feeder last read it; `None` before it has."
               },
               {
                 "type": "null"
@@ -6538,6 +7104,14 @@
                 "type": "null"
               }
             ]
+          },
+          "unrecorded_refill": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "\"Refilled?\": when the food beam saw the hopper go from empty to\nfull with no refill recorded since. The estimate does not count it:\nonly a recorded refill starts the count again."
           }
         }
       },
@@ -6857,6 +7431,68 @@
           }
         }
       },
+      "FoodEstimate": {
+        "type": "object",
+        "description": "What the feeder has dispensed since the newest refill, and what is\nleft. An estimate: a portion is 1/12 cup by the food's `grams_per_cup`\n(provisional), what was in the hopper before the refill is not known,\nand only the portions the feeder confirmed count.",
+        "required": [
+          "portions",
+          "unweighed_portions",
+          "dispensed_grams",
+          "remaining_grams"
+        ],
+        "properties": {
+          "bag_grams": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "A full bag of the current food, to compare with.",
+            "minimum": 0
+          },
+          "dispensed_grams": {
+            "type": "integer",
+            "format": "int32",
+            "description": "What those portions weighed, by the food each feed served.",
+            "minimum": 0
+          },
+          "empty_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When the hopper runs out at the rate of the last 7 days (or since\nthe refill, when that is sooner); `None` while nothing was\ndispensed."
+          },
+          "portion_mg": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "What a portion of the current food weighs, in milligrams; `None`\nwith no food set.",
+            "minimum": 0
+          },
+          "portions": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The portions the feeder confirmed since the refill.",
+            "minimum": 0
+          },
+          "remaining_grams": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The refill less what was dispensed since; 0 once the food beam\nreads empty.",
+            "minimum": 0
+          },
+          "unweighed_portions": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Of those, the portions of feeds with no food set, which weigh\nnothing known.",
+            "minimum": 0
+          }
+        }
+      },
       "FoodHistoryPage": {
         "type": "object",
         "description": "A page of a feeder's food history, oldest first.",
@@ -7028,6 +7664,24 @@
         "properties": {
           "version": {
             "type": "string"
+          }
+        }
+      },
+      "HopperReading": {
+        "type": "object",
+        "description": "One reading of the food beam. The beam sees only whether food reaches\nit, so a hopper that reads full may be nearly empty.",
+        "required": [
+          "present",
+          "received"
+        ],
+        "properties": {
+          "present": {
+            "type": "boolean"
+          },
+          "received": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the server received the reading; the feeder reads the beam\nduring each feed."
           }
         }
       },
@@ -7449,6 +8103,51 @@
           }
         ],
         "description": "What an install writes into bank 1."
+      },
+      "IntakeDay": {
+        "type": "object",
+        "required": [
+          "date",
+          "grams",
+          "kcal",
+          "estimate",
+          "unweighed_milliportions"
+        ],
+        "properties": {
+          "date": {
+            "type": "string",
+            "format": "date"
+          },
+          "estimate": {
+            "type": "boolean",
+            "description": "Part of the day came from a feeder that served other pets too, and\nwas split evenly between them."
+          },
+          "grams": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "kcal": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "target_percent": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "`kcal` as a percentage of the daily target; `None` without one.",
+            "minimum": 0
+          },
+          "unweighed_milliportions": {
+            "type": "integer",
+            "format": "int32",
+            "description": "This pet's share of portions from feeds with no food set, which\nweigh nothing known, in thousandths of a portion.",
+            "minimum": 0
+          }
+        }
       },
       "Job": {
         "type": "string",
@@ -7904,6 +8603,42 @@
       "PetId": {
         "type": "string",
         "format": "uuid"
+      },
+      "PetIntake": {
+        "type": "object",
+        "required": [
+          "pet",
+          "days",
+          "anomalies"
+        ],
+        "properties": {
+          "anomalies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FeedAnomaly"
+            },
+            "description": "The feeds of the pet's feeders in those days that went wrong,\noldest first."
+          },
+          "daily_kcal": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The pet's daily target now.",
+            "minimum": 0
+          },
+          "days": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IntakeDay"
+            },
+            "description": "Every day asked for, oldest first, empty days included."
+          },
+          "pet": {
+            "$ref": "#/components/schemas/PetId"
+          }
+        }
       },
       "PetPatch": {
         "type": "object",
@@ -9787,6 +10522,25 @@
           },
           {
             "type": "object",
+            "description": "An alert was raised, acknowledged or cleared. Everyone is sent\nevery alert.",
+            "required": [
+              "alert",
+              "type"
+            ],
+            "properties": {
+              "alert": {
+                "$ref": "#/components/schemas/Alert"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "alert"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
             "description": "The stream cannot resume from the client's `Last-Event-ID`:\nrefetch what it shows.",
             "required": [
               "type"
@@ -10483,6 +11237,10 @@
     {
       "name": "export",
       "description": "Everything the server holds as one archive, and its import onto a fresh server"
+    },
+    {
+      "name": "alerts",
+      "description": "What the server noticed about a feeder: raised, acknowledged and cleared"
     }
   ]
 }

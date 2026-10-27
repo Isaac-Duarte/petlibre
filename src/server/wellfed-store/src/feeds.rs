@@ -48,6 +48,31 @@ impl Store {
         rows.into_iter().map(CommandRow::try_from).collect()
     }
 
+    /// A feeder's feeds resolved `unrecorded`, oldest first: sent through
+    /// the server, and absent from the history after a restart.
+    pub async fn unrecorded_feeds(&self, feeder: FeederId) -> Result<Vec<CommandRow>> {
+        let kind = CommandKind::Feed.code();
+        let resolved = CommandState::Resolved.code();
+        let unrecorded = outcome_json(&CommandOutcome::Unrecorded)?;
+        let rows = sqlx::query_as!(
+            Raw,
+            r#"SELECT seq, key, user_id AS "user_id: Uuid", token_id AS "token_id: Uuid",
+                      feeder_id AS "feeder_id: Uuid", kind, body_hash, request_id, boot_count,
+                      history_epoch, history_seq, state, outcome, feed, sent_ms, updated_ms
+               FROM commands
+               WHERE feeder_id = ?1 AND kind = ?2 AND state = ?3 AND outcome = ?4
+               ORDER BY seq"#,
+            feeder.0,
+            kind,
+            resolved,
+            unrecorded,
+        )
+        .fetch_all(&self.reader)
+        .await?;
+
+        rows.into_iter().map(CommandRow::try_from).collect()
+    }
+
     /// Whether a feed entry of `feeder` already holds the feed number
     /// `feed` of `epoch`'s history: numbers count again in a ring that a
     /// storage wipe re-created, so one sent in another epoch is another

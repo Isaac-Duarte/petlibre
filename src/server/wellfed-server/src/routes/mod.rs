@@ -3,6 +3,7 @@
 //! the OpenAPI document comes from their annotations.
 
 pub(crate) mod admin;
+pub(crate) mod alerts;
 pub(crate) mod audit;
 pub(crate) mod auth;
 pub(crate) mod backups;
@@ -47,6 +48,7 @@ pub(crate) const TAG_PETS: &str = "pets";
 pub(crate) const TAG_FOODS: &str = "foods";
 pub(crate) const TAG_BACKUPS: &str = "backups";
 pub(crate) const TAG_EXPORT: &str = "export";
+pub(crate) const TAG_ALERTS: &str = "alerts";
 
 type ApiResult<T> = Result<T, ApiError>;
 type JsonBody<T> = WithRejection<Json<T>, ApiError>;

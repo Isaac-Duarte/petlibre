@@ -204,6 +204,7 @@ impl Import {
             Row::Foods(food) => rows::food(tx, food).await?,
             Row::FeederFoods(food) => rows::feeder_food(tx, food).await?,
             Row::Refills(refill) => rows::refill(tx, refill).await?,
+            Row::Alerts(alert) => rows::alert(tx, alert).await?,
         }
         Ok(())
     }

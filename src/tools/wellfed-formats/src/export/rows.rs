@@ -108,6 +108,7 @@ tables! {
     Foods => "foods": Food,
     FeederFoods => "feeder_foods": FeederFood,
     Refills => "refills": Refill,
+    Alerts => "alerts": Alert,
 }
 
 /// An account, without its password hash.
@@ -484,6 +485,24 @@ pub struct Refill {
     pub full_bag: bool,
     pub food_id: Option<Uuid>,
     pub user_id: Uuid,
+}
+
+/// An alert and where it stands: `condition` is the API's
+/// `AlertCondition` as the database keeps it, JSON text.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Alert {
+    pub seq: i64,
+    pub id: Uuid,
+    pub feeder_id: Uuid,
+    pub kind: String,
+    pub subject: String,
+    pub condition: String,
+    pub since_ms: i64,
+    pub opened_ms: i64,
+    pub acked_ms: Option<i64>,
+    pub acked_by: Option<Uuid>,
+    pub cleared_ms: Option<i64>,
 }
 
 /// Bytes as lowercase hex.

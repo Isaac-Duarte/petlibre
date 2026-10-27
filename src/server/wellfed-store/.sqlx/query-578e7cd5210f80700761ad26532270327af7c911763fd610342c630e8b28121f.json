@@ -1,0 +1,146 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT seq AS \"seq!\", id AS \"id: Uuid\", feeder_id AS \"feeder_id: Uuid\", kind,\n                              subject, condition, since_ms, opened_ms, acked_ms,\n                              acked_by AS \"acked_by: Uuid\", cleared_ms\n                       FROM alerts ORDER BY seq",
+  "describe": {
+    "columns": [
+      {
+        "name": "seq!",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "alerts",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "name": "id: Uuid",
+        "ordinal": 1,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "alerts",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "feeder_id: Uuid",
+        "ordinal": 2,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "alerts",
+            "name": "feeder_id"
+          }
+        }
+      },
+      {
+        "name": "kind",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "alerts",
+            "name": "kind"
+          }
+        }
+      },
+      {
+        "name": "subject",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "alerts",
+            "name": "subject"
+          }
+        }
+      },
+      {
+        "name": "condition",
+        "ordinal": 5,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "alerts",
+            "name": "condition"
+          }
+        }
+      },
+      {
+        "name": "since_ms",
+        "ordinal": 6,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "alerts",
+            "name": "since_ms"
+          }
+        }
+      },
+      {
+        "name": "opened_ms",
+        "ordinal": 7,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "alerts",
+            "name": "opened_ms"
+          }
+        }
+      },
+      {
+        "name": "acked_ms",
+        "ordinal": 8,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "alerts",
+            "name": "acked_ms"
+          }
+        }
+      },
+      {
+        "name": "acked_by: Uuid",
+        "ordinal": 9,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "alerts",
+            "name": "acked_by"
+          }
+        }
+      },
+      {
+        "name": "cleared_ms",
+        "ordinal": 10,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "alerts",
+            "name": "cleared_ms"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "578e7cd5210f80700761ad26532270327af7c911763fd610342c630e8b28121f"
+}

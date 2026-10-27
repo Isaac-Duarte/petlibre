@@ -24,6 +24,8 @@ impl Service {
     pub(crate) async fn spawn(&self, row: &FeederRow) -> Result<()> {
         let secret = keys::open(&self.shared.config.key, row.id, &row.identity, &row.key)?;
         self.links().insert(row.id, Link::Offline);
+        self.alerting
+            .link(row.id, Link::Offline, self.shared.clock.now());
         let feeder = Feeder {
             id: row.id,
             identity: row.identity,
@@ -37,6 +39,9 @@ impl Service {
         }
         if let Some(links) = self.mirror.subscribe(row.id) {
             self.watch_revocations(row.id, links);
+        }
+        if let Some(updates) = self.mirror.subscribe(row.id) {
+            self.watch_alerts(row.id, updates);
         }
 
         let mirror = self.mirror.clone();

@@ -12,6 +12,7 @@
 //! [API design]: ../../../../docs/api/README.md
 #![forbid(unsafe_code)]
 
+mod alerts;
 mod audit;
 mod auth;
 mod backups;
@@ -26,6 +27,7 @@ mod foods;
 mod health;
 mod household;
 mod installs;
+mod intake;
 mod pets;
 mod releases;
 mod samples;
@@ -40,6 +42,10 @@ use serde::{Deserialize, Deserializer, Serialize};
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
+pub use alerts::{
+    Acknowledgement, Alert, AlertCondition, AlertPage, AlertQuery, AlertState, BLOCKED_AFTER_S,
+    CLOCK_INVALID_AFTER_S, OFFLINE_AFTER_S,
+};
 pub use audit::{AuditAction, AuditEntry, AuditPage, LoginFailure};
 pub use auth::{Credentials, PasswordChange, Role, Setup, SetupState, User};
 pub use backups::{Backup, BackupPage};
@@ -56,12 +62,13 @@ pub use events::{EventPage, EventQuery, FeederEvent, Gap};
 pub use export::{ExportFormat, ExportQuery, Imported, ImportedTable};
 pub use feeders::{AdoptFeeder, Connection, Feeder, FeederDetail, LockRequest, StatusSnapshot};
 pub use foods::{
-    FeederFood, Food, FoodChoice, FoodHistoryPage, FoodPatch, FoodPeriod, GRAMS_PER_CUP, NewFood,
-    NewRefill, Refill, RefillPage,
+    FeederFood, Food, FoodChoice, FoodEstimate, FoodHistoryPage, FoodPatch, FoodPeriod,
+    GRAMS_PER_CUP, HopperReading, NewFood, NewRefill, Refill, RefillPage,
 };
 pub use health::{FeederLink, Health, Job, JobOutcome, JobRun, ServerStatus, StoreState};
 pub use household::{Household, HouseholdPatch, TimeFormat, Units};
 pub use installs::{Install, InstallFailure, InstallRequest, InstallState, InstallTarget};
+pub use intake::{AnomalyKind, FeedAnomaly, INTAKE_DAYS_MAX, IntakeDay, IntakeQuery, PetIntake};
 // The feeder's own values are the model's, served as they are; the HTTP
 // API adds only what the server knows (when it received them, its own ids).
 pub use wellfed_model::{
@@ -135,6 +142,7 @@ ids!(
     FoodId,
     RefillId,
     InstallId,
+    AlertId,
 );
 
 /// A page of a list that grows: the previous page's `next`, and a size.

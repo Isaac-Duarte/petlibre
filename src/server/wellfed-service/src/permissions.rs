@@ -38,25 +38,28 @@ pub enum Permission {
     Adopt,
     /// Releases, installs, backups, export and import.
     ServerData,
+    /// Acknowledging an alert.
+    AcknowledgeAlerts,
 }
 
 /// Whether `role` may do `permission`.
 pub const fn can(role: Role, permission: Permission) -> bool {
     use Permission::{
-        Adopt, AllHistory, Control, Feed, FeederAdmin, Household, InviteOwnPhone, OwnAccount,
-        OwnHistory, OwnerData, Read, ServerData, Users,
+        AcknowledgeAlerts, Adopt, AllHistory, Control, Feed, FeederAdmin, Household,
+        InviteOwnPhone, OwnAccount, OwnHistory, OwnerData, Read, ServerData, Users,
     };
 
     match role {
         Role::Owner => true,
         Role::Member => match permission {
             Read | Feed | Control | InviteOwnPhone | OwnHistory | OwnAccount => true,
-            AllHistory | Users | Household | OwnerData | FeederAdmin | Adopt | ServerData => false,
+            AllHistory | Users | Household | OwnerData | FeederAdmin | Adopt | ServerData
+            | AcknowledgeAlerts => false,
         },
         Role::Viewer => match permission {
             Read | OwnHistory | OwnAccount => true,
             Feed | Control | InviteOwnPhone | AllHistory | Users | Household | OwnerData
-            | FeederAdmin | Adopt | ServerData => false,
+            | FeederAdmin | Adopt | ServerData | AcknowledgeAlerts => false,
         },
     }
 }
@@ -84,6 +87,7 @@ mod tests {
             (FeederAdmin, [true, false, false]),
             (Adopt, [true, false, false]),
             (ServerData, [true, false, false]),
+            (AcknowledgeAlerts, [true, false, false]),
         ];
         for (permission, allowed) in rows {
             let got = [Role::Owner, Role::Member, Role::Viewer].map(|role| can(role, permission));

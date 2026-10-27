@@ -7,8 +7,8 @@ use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use wellfed_api::{ErrorCode, FeederRefusal, Problem, Settings};
 use wellfed_service::{
-    AccountError, ClientError, CommandError, Error, ExportError, FeederError, HouseholdError,
-    InstallError, OwnerDataError, ReleaseError, StockError, TokenError, ZoneError,
+    AccountError, AlertError, ClientError, CommandError, Error, ExportError, FeederError,
+    HouseholdError, InstallError, OwnerDataError, ReleaseError, StockError, TokenError, ZoneError,
 };
 
 /// A request's failure.
@@ -179,6 +179,7 @@ fn service(error: &Error) -> (ErrorCode, Option<String>, Option<FeederRefusal>) 
             CommandError::NoEntry => ErrorCode::NotFound,
             CommandError::Unexpected | CommandError::Body(_) => return internal(error),
         },
+        Error::Alert(AlertError::NotFound) => ErrorCode::NotFound,
         Error::Install(install) => match install {
             InstallError::Running => ErrorCode::InstallRunning,
             InstallError::None => ErrorCode::NotFound,

@@ -1,0 +1,206 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT seq, key, user_id AS \"user_id: Uuid\", token_id AS \"token_id: Uuid\",\n                      feeder_id AS \"feeder_id: Uuid\", kind, body_hash, request_id, boot_count,\n                      history_epoch, history_seq, state, outcome, feed, sent_ms, updated_ms\n               FROM commands\n               WHERE feeder_id = ?1 AND kind = ?2 AND state = ?3 AND outcome = ?4\n               ORDER BY seq",
+  "describe": {
+    "columns": [
+      {
+        "name": "seq",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "commands",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "name": "key",
+        "ordinal": 1,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "commands",
+            "name": "key"
+          }
+        }
+      },
+      {
+        "name": "user_id: Uuid",
+        "ordinal": 2,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "commands",
+            "name": "user_id"
+          }
+        }
+      },
+      {
+        "name": "token_id: Uuid",
+        "ordinal": 3,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "commands",
+            "name": "token_id"
+          }
+        }
+      },
+      {
+        "name": "feeder_id: Uuid",
+        "ordinal": 4,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "commands",
+            "name": "feeder_id"
+          }
+        }
+      },
+      {
+        "name": "kind",
+        "ordinal": 5,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "commands",
+            "name": "kind"
+          }
+        }
+      },
+      {
+        "name": "body_hash",
+        "ordinal": 6,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "commands",
+            "name": "body_hash"
+          }
+        }
+      },
+      {
+        "name": "request_id",
+        "ordinal": 7,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "commands",
+            "name": "request_id"
+          }
+        }
+      },
+      {
+        "name": "boot_count",
+        "ordinal": 8,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "commands",
+            "name": "boot_count"
+          }
+        }
+      },
+      {
+        "name": "history_epoch",
+        "ordinal": 9,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "commands",
+            "name": "history_epoch"
+          }
+        }
+      },
+      {
+        "name": "history_seq",
+        "ordinal": 10,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "commands",
+            "name": "history_seq"
+          }
+        }
+      },
+      {
+        "name": "state",
+        "ordinal": 11,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "commands",
+            "name": "state"
+          }
+        }
+      },
+      {
+        "name": "outcome",
+        "ordinal": 12,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "commands",
+            "name": "outcome"
+          }
+        }
+      },
+      {
+        "name": "feed",
+        "ordinal": 13,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "commands",
+            "name": "feed"
+          }
+        }
+      },
+      {
+        "name": "sent_ms",
+        "ordinal": 14,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "commands",
+            "name": "sent_ms"
+          }
+        }
+      },
+      {
+        "name": "updated_ms",
+        "ordinal": 15,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "commands",
+            "name": "updated_ms"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "abace69756ae45ef60dd09e19311b93fa1645df2f3965adc207c20b351692777"
+}

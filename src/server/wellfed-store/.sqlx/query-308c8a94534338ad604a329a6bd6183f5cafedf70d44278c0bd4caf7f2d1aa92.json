@@ -1,0 +1,74 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH free AS (\n                 SELECT received_ms, epoch, seq FROM blocked_changes\n                 WHERE feeder_id = ?1 AND reason IS NULL\n                 ORDER BY received_ms DESC, epoch DESC, seq DESC LIMIT 1)\n             SELECT b.epoch AS \"epoch!\", b.seq AS \"seq!\", b.reason, b.at_s, b.received_ms\n             FROM blocked_changes b\n             WHERE b.feeder_id = ?1 AND NOT EXISTS (\n                 SELECT 1 FROM free f\n                 WHERE (b.received_ms, b.epoch, b.seq) <= (f.received_ms, f.epoch, f.seq))\n             ORDER BY b.received_ms, b.epoch, b.seq",
+  "describe": {
+    "columns": [
+      {
+        "name": "epoch!",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "blocked_changes",
+            "name": "epoch"
+          }
+        }
+      },
+      {
+        "name": "seq!",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "blocked_changes",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "name": "reason",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocked_changes",
+            "name": "reason"
+          }
+        }
+      },
+      {
+        "name": "at_s",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "blocked_changes",
+            "name": "at_s"
+          }
+        }
+      },
+      {
+        "name": "received_ms",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "blocked_changes",
+            "name": "received_ms"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      null,
+      null,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "308c8a94534338ad604a329a6bd6183f5cafedf70d44278c0bd4caf7f2d1aa92"
+}

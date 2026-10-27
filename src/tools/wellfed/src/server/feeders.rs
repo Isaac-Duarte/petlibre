@@ -34,6 +34,13 @@ pub(crate) struct Which {
 }
 
 impl Which {
+    /// The feeder named or numbered `feeder`.
+    pub(super) const fn named(feeder: String) -> Self {
+        Self {
+            feeder: Some(feeder),
+        }
+    }
+
     /// The feeder this names, from the server's list.
     pub(super) async fn id(&self, client: &Client) -> Result<FeederId> {
         let feeders = client.feeders().await?;

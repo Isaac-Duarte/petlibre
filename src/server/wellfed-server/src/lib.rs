@@ -72,15 +72,16 @@ pub(crate) struct AppState {
         (name = routes::TAG_FOODS, description = "Foods, the food each feeder serves over time, and refills"),
         (name = routes::TAG_BACKUPS, description = "Copies of the server's database, kept in its data directory"),
         (name = routes::TAG_EXPORT, description = "Everything the server holds as one archive, and its import onto a fresh server"),
+        (name = routes::TAG_ALERTS, description = "What the server noticed about a feeder: raised, acknowledged and cleared"),
     ),
 )]
 struct ApiDoc;
 
 fn router() -> OpenApiRouter<AppState> {
     use routes::{
-        admin, audit, auth, backups, clients, commands, diagnostics, events, export, feeders,
-        feeds, foods, health, household, installs, pets, releases, samples, stock, stream, tokens,
-        users,
+        admin, alerts, audit, auth, backups, clients, commands, diagnostics, events, export,
+        feeders, feeds, foods, health, household, installs, pets, releases, samples, stock, stream,
+        tokens, users,
     };
 
     let small = OpenApiRouter::new()
@@ -132,6 +133,7 @@ fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(pets::assign_feeder, pets::unassign_feeder))
         .routes(routes!(pets::weights, pets::add_weight))
         .routes(routes!(pets::delete_weight))
+        .routes(routes!(pets::intake))
         .routes(routes!(foods::foods, foods::create_food))
         .routes(routes!(foods::food, foods::update_food, foods::delete_food))
         .routes(routes!(foods::feeder_food, foods::set_feeder_food))
@@ -140,6 +142,8 @@ fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(foods::delete_refill))
         .routes(routes!(backups::backups, backups::create_backup))
         .routes(routes!(export::export))
+        .routes(routes!(alerts::alerts))
+        .routes(routes!(alerts::acknowledge))
         .layer(RequestBodyLimitLayer::new(BODY_LIMIT));
     let uploads = OpenApiRouter::new()
         .routes(routes!(releases::upload_release))

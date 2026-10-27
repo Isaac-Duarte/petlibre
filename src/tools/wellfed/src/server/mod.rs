@@ -6,7 +6,7 @@
 //! `lock`, `feed`, `cancel-feed`, `events`, `clients`, `revoke`, `reboot`)
 //! reach the feeders the server holds, through its command journal; the
 //! rest (`command`, `commands`, `users`, `tokens`, `releases`, `install`,
-//! `stock`, `export`) only the server has.
+//! `stock`, `export`, `alerts`, `food`, `intake`) only the server has.
 //!
 //! Output is text by default, and with `--json` the API's bodies, one JSON
 //! document per line (a refusal's problem included). The exit status is 0
@@ -30,6 +30,7 @@ mod login;
 mod releases;
 mod stock;
 mod text;
+mod views;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -112,6 +113,24 @@ enum Verb {
     /// Save everything the server holds as one archive (a tar of a
     /// manifest and a file per table), with no secrets in it. Owners only.
     Export(export::ExportArgs),
+    /// What the server noticed about the feeders, and acknowledging it
+    /// (owners only).
+    #[command(subcommand)]
+    Alerts(views::Alerts),
+    /// A feeder's food: the hopper as the beam last read it, and what is
+    /// left since the last refill.
+    Food(feeders::Which),
+    /// What a pet's feeders dispensed for it each day, against its target.
+    Intake {
+        /// The pet's id or name.
+        pet: String,
+        /// The first day (YYYY-MM-DD); six days before `--to` when absent.
+        #[arg(long)]
+        from: Option<jiff::civil::Date>,
+        /// The last day, included; today when absent.
+        #[arg(long)]
+        to: Option<jiff::civil::Date>,
+    },
 }
 
 pub(crate) async fn run(args: ServerArgs) -> Result<ExitCode> {
@@ -150,6 +169,9 @@ async fn verb(verb: Verb, token_file: &Path, out: Output) -> Result<Settled> {
         Verb::Install(args) => install::install(&client()?, args, out).await,
         Verb::Stock(args) => stock::stock(&client()?, args, out).await,
         Verb::Export(args) => export::export(&client()?, args, out).await,
+        Verb::Alerts(alerts) => views::alerts(&client()?, alerts, out).await,
+        Verb::Food(which) => views::food(&client()?, &which, out).await,
+        Verb::Intake { pet, from, to } => views::intake(&client()?, &pet, from, to, out).await,
     }
 }
 

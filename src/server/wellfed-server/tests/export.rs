@@ -452,8 +452,9 @@ fn setup_and_an_import_racing_end_with_one_household() {
     });
 }
 
-/// An export nobody reads, through one that runs: a second is refused
-/// while it runs, and the server stops without waiting for the reader.
+/// An export nobody reads: a second is refused while it runs, and the
+/// server stops without waiting for the reader, whose export ends in an
+/// error.
 #[test]
 fn one_export_runs_at_a_time_and_none_holds_up_a_stop() {
     local(async {
@@ -482,9 +483,20 @@ fn one_export_runs_at_a_time_and_none_holds_up_a_stop() {
             ErrorCode::ExportRunning,
         );
 
-        tokio::time::timeout(std::time::Duration::from_secs(10), server.stop())
+        // The server stops meanwhile: the reader sees the export end in
+        // an error, never in a clean end it could take for a whole one.
+        let stopped = tokio::task::spawn_local(server.stop());
+        let ended = loop {
+            match held.try_next().await {
+                Ok(Some(_)) => {}
+                Ok(None) => break None,
+                Err(error) => break Some(error),
+            }
+        };
+        assert!(ended.is_some(), "the cut export ended cleanly");
+        tokio::time::timeout(std::time::Duration::from_secs(10), stopped)
             .await
-            .expect("the stop does not wait for the export's reader");
-        drop(held);
+            .expect("the stop does not wait for the export's reader")
+            .unwrap();
     });
 }

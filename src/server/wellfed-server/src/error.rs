@@ -229,7 +229,10 @@ fn service(error: &Error) -> (ErrorCode, Option<String>, Option<FeederRefusal>) 
             }
             // The client stopped sending; it reads no answer.
             ExportError::Upload(_) => ErrorCode::Invalid,
-            ExportError::Manifest(_) | ExportError::Changed(_) => return internal(error),
+            // Only ever the end of an export body, never an answer.
+            ExportError::Manifest(_) | ExportError::Changed(_) | ExportError::Stopped => {
+                return internal(error);
+            }
         },
         Error::Store(_) | Error::Random(_) => return internal(error),
     };

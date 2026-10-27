@@ -9,6 +9,7 @@ use axum::response::{IntoResponse, Response};
 use axum_extra::extract::WithRejection;
 use futures_util::{StreamExt, TryStreamExt};
 use wellfed_api::{ExportFormat, ExportQuery, Imported, Problem};
+use wellfed_service::ExportError;
 
 use super::{ApiResult, TAG_EXPORT, insert};
 use crate::AppState;
@@ -51,9 +52,14 @@ pub(crate) async fn export(
 ) -> ApiResult<Response> {
     let chunks = state.service.export(query.format, VERSION).await?;
     // The body ends when the server stops, so a slow reader never holds
-    // up its graceful shutdown; the cut tar shows it.
-    let stopping = Box::pin(state.shutdown.clone().cancelled_owned());
-    let chunks = chunks.take_until(stopping);
+    // up its graceful shutdown. It ends in an error, which aborts the
+    // response rather than ending it cleanly, so no client takes the cut
+    // archive for a whole one.
+    let shutdown = state.shutdown.clone();
+    let stopping = Box::pin(shutdown.clone().cancelled_owned());
+    let stopped = futures_util::stream::once(async move { shutdown.is_cancelled() })
+        .filter_map(|stopped| async move { stopped.then(|| Err(ExportError::Stopped.into())) });
+    let chunks = chunks.take_until(stopping).chain(stopped);
 
     let name = match query.format {
         ExportFormat::Json => "wellfed-export.tar",

@@ -1,6 +1,6 @@
 //! The server's archive, saved to a file as it arrives. Owners only.
 
-use std::io::Write;
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -56,6 +56,8 @@ pub(super) async fn export(client: &Client, args: ExportArgs, out: Output) -> Re
     }
     file.sync_all()
         .with_context(|| format!("sync {}", partial.display()))?;
+    drop(file);
+    whole(&partial)?;
     std::fs::rename(&partial, &args.file)
         .with_context(|| format!("rename {} to {}", partial.display(), args.file.display()))?;
 
@@ -67,4 +69,49 @@ pub(super) async fn export(client: &Client, args: ExportArgs, out: Output) -> Re
         format!("Saved {} ({} bytes)", saved.file.display(), saved.bytes)
     })?;
     Ok(Settled::Known)
+}
+
+/// Refuse an archive that does not end the way a whole tar does: its
+/// blocks complete and the two empty ones last. A body that stopped short
+/// without an error is caught here, and the partial file stays for a look.
+fn whole(path: &Path) -> Result<()> {
+    const BLOCK: u64 = 512;
+    const END: usize = 1024;
+
+    let mut file = std::fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
+    let size = file.metadata()?.len();
+    let mut end = [0u8; END];
+    let ended = size >= END as u64 && size % BLOCK == 0 && {
+        file.seek(SeekFrom::End(-(END as i64)))?;
+        file.read_exact(&mut end)?;
+        end.iter().all(|&byte| byte == 0)
+    };
+    anyhow::ensure!(
+        ended,
+        "the export stopped before its end; {} is incomplete",
+        path.display()
+    );
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_a_tar_ending_in_its_two_empty_blocks_is_whole() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = |name: &str, bytes: &[u8]| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, bytes).unwrap();
+            path
+        };
+        let mut data = vec![7; 512];
+        data.extend_from_slice(&[0; 1024]);
+
+        assert!(whole(&file("whole.tar", &data)).is_ok());
+        assert!(whole(&file("one-block.tar", &data[..1024])).is_err());
+        assert!(whole(&file("ragged.tar", &data[..1500])).is_err());
+        assert!(whole(&file("empty.tar", &[])).is_err());
+    }
 }

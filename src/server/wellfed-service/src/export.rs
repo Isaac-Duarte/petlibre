@@ -53,6 +53,8 @@ pub enum ExportError {
     Changed(&'static str),
     #[error("another export is being written: one runs at a time")]
     Running,
+    #[error("the server stopped before the export ended")]
+    Stopped,
 }
 
 impl Service {

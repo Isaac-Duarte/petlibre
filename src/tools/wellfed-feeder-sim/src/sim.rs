@@ -150,7 +150,8 @@ impl Sim {
         let fault_reset =
             ((trial && confirmed.is_none()) || storms).then(|| now_ms.wrapping_add(TRIAL_MS));
 
-        let platform = SimPlatform::open(flash, random, boot_count, bank, build, mdns)?;
+        let mut platform = SimPlatform::open(flash, random, boot_count, bank, build, mdns)?;
+        platform.attach_banks(banks);
         Ok(Self {
             feeder: Box::new(Feeder::new(platform)),
             booted: false,

@@ -245,6 +245,44 @@ fn an_update_gives_way_installs_from_bank_0_and_confirms() {
     });
 }
 
+/// The stock backup's source: once bank 1 is left as stock leaves it after
+/// installing a build into bank 0, the bank-0 role streams it whole, byte
+/// for byte, the zeroed marker byte included. Bank 1 never serves its own
+/// image, and after a promotion there is nothing left to read.
+#[test]
+fn bank_0_streams_bank_1_whole_and_bank_1_serves_none() {
+    use wellfed_client::install::Bank1Reader;
+
+    paused(async {
+        let mut rig = Rig::start().await;
+        let mut connection = rig.open().await;
+        let answer = connection
+            .ask(rig.id(), &Op::ReadBank1 { offset: 0 })
+            .await
+            .unwrap();
+        assert_eq!(answer, Answer::Refused(Refusal::Unavailable));
+        drop(connection);
+
+        rig.banks.borrow_mut().stock_gave_way();
+        rig.sim.control(Control::Reboot);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(rig.bank().await, 0);
+
+        let mut connection = rig.open().await;
+        let mut reader = Bank1Reader::new();
+        let bank = loop {
+            let op = reader.next_op();
+            let answer = connection.ask(rig.id(), &op).await.unwrap();
+            if let Some(bank) = reader.take(answer).unwrap() {
+                break bank;
+            }
+        };
+        assert_eq!(bank[0], 0, "the marker byte as stock left it");
+        assert_eq!(bank, rig.banks.borrow().bank1());
+        rig.sim.stop().await;
+    });
+}
+
 #[test]
 fn a_flipped_byte_stops_at_the_hash() {
     paused(async {

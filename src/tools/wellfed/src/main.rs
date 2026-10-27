@@ -19,10 +19,12 @@
 
 #![forbid(unsafe_code)]
 
+mod backup;
 mod ble;
 mod device;
 mod install;
 mod keys;
+mod push;
 mod trace;
 
 use std::io::BufRead;
@@ -109,6 +111,13 @@ enum Command {
     /// at this computer, have it install the build into bank 0, pair as its
     /// owner, and (with a verified stock backup) promote it to bank 1.
     Install(Box<install::InstallArgs>),
+    /// The owner's copy of stock: read it from the replacement on bank 0
+    /// (bank 1 still holds stock until the promotion), show it, or export
+    /// it unchanged.
+    Backup(backup::BackupArgs),
+    /// Install the stock backup over the replacement: signed as stock,
+    /// pushed as any update, then the feeder runs stock from bank 1.
+    RestoreStock(Box<backup::RestoreArgs>),
 }
 
 #[derive(Args)]
@@ -162,6 +171,8 @@ fn main() -> Result<()> {
         Command::Trace(args) => runtime.block_on(trace_command(args)),
         Command::Recover(args) => runtime.block_on(recover_command(args)),
         Command::Install(args) => runtime.block_on(install::run(*args)),
+        Command::Backup(args) => runtime.block_on(backup::command(args)),
+        Command::RestoreStock(args) => runtime.block_on(backup::restore(*args)),
     }
 }
 

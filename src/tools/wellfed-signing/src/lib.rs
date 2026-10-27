@@ -38,6 +38,7 @@ use std::path::Path;
 use ed25519_dalek::{Signer, SigningKey};
 use wellfed_core::ota::offer::{self, ImageKind as OfferKind, KeyId, Signed};
 use wellfed_core::ota::{self, MARKER, Manifest};
+use wellfed_formats::canonical::sha256;
 use wellfed_formats::credentials::{KeyScope, OtaKeyFile};
 use wellfed_formats::hex;
 use wellfed_formats::manifest::BuildManifest;
@@ -46,6 +47,7 @@ use wellfed_formats::private::{SYSTEM_RANDOM, random};
 use wellfed_formats::require;
 use wellfed_formats::review::ImageKind;
 use wellfed_image::bank::BANK1;
+use wellfed_image::ota::STOCK_SHA256;
 use wellfed_image::review::frozen;
 use wellfed_image::root::Root;
 use sha2::{Digest, Sha256};
@@ -193,6 +195,22 @@ impl Frozen {
             kind,
             build_id,
             manifest: verified.manifest,
+        })
+    }
+
+    /// The pinned stock image as given, without a review directory: an
+    /// owner's own backup, for "Restore stock". A stock review binds
+    /// nothing but the image, and only the pinned container passes here,
+    /// as there; its payload hash names it.
+    pub fn stock(image: Vec<u8>) -> Result<Self> {
+        require(sha256(&image) == STOCK_SHA256, || FrozenError::NotStock)?;
+        let payload = wellfed_image::bank::payload(&image, &BANK1)?;
+        let build_id = Sha256::digest(payload).into();
+        Ok(Self {
+            image,
+            kind: ImageKind::Stock,
+            build_id,
+            manifest: None,
         })
     }
 
@@ -561,6 +579,18 @@ mod tests {
             frozen
                 .offer(&key, 1, Motion::Attended("fw16-pulse-v1"))
                 .is_ok()
+        );
+    }
+
+    /// An owner's backup signs as stock only when it is the pinned stock
+    /// container: a build handed in as a backup is refused before anything
+    /// is signed.
+    #[test]
+    fn only_the_pinned_stock_image_signs_without_a_review() {
+        let error = Frozen::stock(build_image()).unwrap_err();
+        assert!(
+            matches!(error, Error::Frozen(FrozenError::NotStock)),
+            "{error:?}"
         );
     }
 

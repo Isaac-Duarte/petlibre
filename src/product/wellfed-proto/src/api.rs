@@ -114,6 +114,10 @@ impl Capabilities {
     /// [`Blocked::Battery`]. A session without the bit sees that reason as
     /// [`Blocked::Starting`] ([`Blocked::seen_by`]).
     pub const POWER: Self = Self(128);
+    /// The stock backup: [`Op::ReadBank1`] and [`Outcome::Bank1`]. Owner
+    /// sessions only, and served only by the bank-0 recovery role, which
+    /// can read bank 1 while it holds the feeder's only copy of stock.
+    pub const BACKUP: Self = Self(512);
     /// Every bit this crate defines: what a current client claims. A
     /// session then runs on the bits both sides claim, so a client adapts
     /// to whatever feeder it meets, however old.
@@ -126,7 +130,8 @@ impl Capabilities {
             | Self::LOG.0
             | Self::TRACES.0
             | Self::CALIBRATION.0
-            | Self::POWER.0,
+            | Self::POWER.0
+            | Self::BACKUP.0,
     );
 
     pub const fn union(self, other: Self) -> Self {
@@ -342,7 +347,23 @@ pub enum Op<'a> {
         base: u32,
         calibration: Calibration,
     },
+    /// Bank 1's bytes from `offset`, answered [`Outcome::Bank1`] with at
+    /// most [`BANK1_PAGE_MAX`] bytes, so a client asks again from where
+    /// each page ends until it has the whole bank. Read-only and owner
+    /// sessions only. Served only from bank 0 (`Unavailable` from bank 1,
+    /// whose own image is the running build), `Busy` while an install
+    /// holds the flash, `Invalid` for an offset at or past the bank's end.
+    /// The bytes are as the flash holds them: after stock installed a
+    /// build into bank 0, stock with its marker's first byte zeroed.
+    ReadBank1 {
+        offset: u32,
+    },
 }
+
+/// The most bank-1 bytes one [`Outcome::Bank1`] carries: well within a
+/// frame beside the response's id and numbers, and a whole number of pages
+/// in the bank (1,792 of them).
+pub const BANK1_PAGE_MAX: usize = 768;
 
 /// The lightest portion a calibration may store: well under any dry-food
 /// compartment's load.
@@ -409,6 +430,7 @@ impl Op<'_> {
                 | Self::Stats { .. }
                 | Self::FeedTrace { .. }
                 | Self::GetCalibration
+                | Self::ReadBank1 { .. }
         )
     }
 
@@ -428,6 +450,7 @@ impl Op<'_> {
             Self::GetTime | Self::PutTime { .. } => Capabilities::TIME,
             Self::TailLog { .. } => Capabilities::LOG,
             Self::GetCalibration | Self::PutCalibration { .. } => Capabilities::CALIBRATION,
+            Self::ReadBank1 { .. } => Capabilities::BACKUP,
             Self::Status
             | Self::GetSettings
             | Self::PutSettings { .. }
@@ -619,6 +642,19 @@ pub enum Outcome<'a> {
     FeedTrace(TracePage<'a>),
     /// The calibration, after [`Op::GetCalibration`].
     Calibration(CalibrationView),
+    /// One page of bank 1, after [`Op::ReadBank1`].
+    #[serde(borrow)]
+    Bank1(Bank1Page<'a>),
+}
+
+/// One page of bank 1: `bytes` from `offset`, of the `total` the feeder
+/// serves (the bank's whole extent).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Bank1Page<'a> {
+    pub offset: u32,
+    pub total: u32,
+    #[serde(borrow)]
+    pub bytes: &'a [u8],
 }
 
 /// Whether the feeder can start a feed now. One decision, which both
@@ -1565,6 +1601,19 @@ mod tests {
         };
         let len = encode(&page, &mut out).unwrap();
         assert_eq!(decode::<FeederMessage<'_>>(&out[..len]), Ok(page));
+
+        let bank1 = FeederMessage::Response {
+            id: [0xff; 16],
+            result: Outcome::Bank1(Bank1Page {
+                offset: u32::MAX,
+                total: u32::MAX,
+                bytes: &[0xff; BANK1_PAGE_MAX],
+            }),
+        };
+        let len = encode(&bank1, &mut out).unwrap();
+        assert_eq!(decode::<FeederMessage<'_>>(&out[..len]), Ok(bank1));
+        // The bank is a whole number of pages.
+        assert_eq!(0x15_0000 % BANK1_PAGE_MAX, 0);
     }
 
     /// A summary with every field at its largest encoding.

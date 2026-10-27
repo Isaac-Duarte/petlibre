@@ -2233,6 +2233,7 @@ dependencies = [
  "wellfed-model",
  "wellfed-proto",
  "wellfed-session",
+ "wellfed-signing",
  "wellfed-stock-api",
  "rustix",
  "serde",

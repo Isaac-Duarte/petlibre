@@ -31,7 +31,9 @@
 //!    its confirmation.
 //! 8. **Backup:** promotion overwrites bank 1, the feeder's only copy of
 //!    stock, so it waits for a [`VerifiedBackup`]. There is no way past this
-//!    step without one.
+//!    step without one. The bank-0 role streams bank 1 ([`Bank1Reader`]),
+//!    and [`StockBackup::from_bank`] checks it against the pinned payload
+//!    and rebuilds the owner's own stock OTA, which the caller keeps.
 //! 9. **Promote:** the signed update ([`crate::update::Installer`]) writes
 //!    bank 1 from bank 0, and its trial boot confirms on bank 1.
 //!
@@ -44,7 +46,8 @@ pub mod backup;
 pub mod frame;
 
 pub use backup::{
-    BackupError, STOCK_OTA_SHA256, STOCK_PAYLOAD_SHA256, STOCK_VERSION, VerifiedBackup,
+    BackupError, Bank1Reader, CONTAINER_HEADER, ReadError, STOCK_OTA_SHA256, STOCK_PAYLOAD_LEN,
+    STOCK_PAYLOAD_SHA256, STOCK_VERSION, StockBackup, VerifiedBackup,
 };
 pub use frame::{FrameError, SETUP_ADDRESS, SetupFrame};
 
@@ -236,7 +239,9 @@ pub enum Step {
     /// closes its record; then [`Install::trial_closed`], whatever it said.
     CloseTrial,
     /// Promotion is refused until [`Install::backup`] is given a verified
-    /// stock backup.
+    /// stock backup: read bank 1 with [`Bank1Reader`] and check it with
+    /// [`StockBackup::from_bank`] (or a copy kept earlier, with
+    /// [`StockBackup::open`]), and keep it.
     Backup,
     /// Push the signed update until bank 1 is activated; report with
     /// [`Install::promoted`].

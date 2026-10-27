@@ -5,8 +5,8 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ClientRole, Generation, Hex, Settings, SettingsPatch, Stats, StatsSection, Status, TracePage,
-    UpdateRefusal, UpdateView,
+    Bank1Page, ClientRole, Generation, Hex, Settings, SettingsPatch, Stats, StatsSection, Status,
+    TracePage, UpdateRefusal, UpdateView,
 };
 
 /// One operation. Reads may be repeated freely; a write's request id makes
@@ -109,6 +109,12 @@ pub enum Op {
     PutCalibration {
         base: Generation,
         calibration: Calibration,
+    },
+    /// One page of bank 1 from `offset`. Owners only, and only from the
+    /// bank-0 recovery role, while bank 1 may still hold stock: the
+    /// installer's backup before a promotion overwrites it.
+    ReadBank1 {
+        offset: u32,
     },
 }
 
@@ -283,6 +289,7 @@ pub enum Answer {
     Stats(Stats),
     FeedTrace(TracePage),
     Calibration(CalibrationView),
+    Bank1(Bank1Page),
 }
 
 /// Why the feeder refused a request.

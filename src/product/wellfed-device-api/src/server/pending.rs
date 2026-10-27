@@ -244,9 +244,12 @@ impl Server {
         device: &mut D,
         record: &mut impl FnMut(Record),
     ) -> Result<(), Reason> {
-        // A chunk that went in is not worth a line each: an image is about
-        // two thousand of them, and the log would cost the loop seconds.
-        if !(op == Action::CHUNK && matches!(reply, Reply::Update(_))) {
+        // A chunk that went in, or a page of bank 1 read out, is not worth
+        // a line each: an image is about two thousand of them, and the log
+        // would cost the loop seconds.
+        if !(op == Action::CHUNK && matches!(reply, Reply::Update(_)))
+            && !matches!(reply, Reply::Bank1 { .. })
+        {
             record(Record::Request {
                 slot: slot_id(index),
                 op,
@@ -312,6 +315,13 @@ impl Server {
             Reply::FeedTrace { feed, offset } => {
                 let result = match device.feed_trace(feed, offset) {
                     Ok(page) => Outcome::FeedTrace(page),
+                    Err(refusal) => Outcome::Refused(refusal),
+                };
+                return self.seal_and_send(index, &FeederMessage::Response { id, result });
+            }
+            Reply::Bank1 { offset } => {
+                let result = match device.bank1_page(offset) {
+                    Ok(page) => Outcome::Bank1(page),
                     Err(refusal) => Outcome::Refused(refusal),
                 };
                 return self.seal_and_send(index, &FeederMessage::Response { id, result });

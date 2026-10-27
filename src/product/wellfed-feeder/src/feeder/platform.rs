@@ -377,6 +377,12 @@ pub trait Platform {
     fn update_progress(&mut self) -> Option<Progress>;
     /// An install holds the flash (or is about to restart).
     fn installing(&self) -> bool;
+    /// Copy bank 1's bytes from `offset` into `out`, through the mapped
+    /// flash (a read takes no lease). False when this platform cannot read
+    /// bank 1: it runs from bank 1, or keeps no banks.
+    fn bank1_read(&mut self, _offset: u32, _out: &mut [u8]) -> bool {
+        false
+    }
 
     // ---- The device API's sockets.
 

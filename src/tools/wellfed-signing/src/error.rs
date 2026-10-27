@@ -47,6 +47,9 @@ pub enum FrozenError {
     NoReview { review: PathBuf },
     #[error("Frozen review's kind and manifest disagree")]
     KindMismatch,
+    /// An image offered as stock that is not the pinned stock container.
+    #[error("Only the pinned stock image signs as stock")]
+    NotStock,
     #[error("Frozen review has no 64-hex build ID")]
     BuildId,
     #[error("image.bin does not carry the reviewed build's identity")]

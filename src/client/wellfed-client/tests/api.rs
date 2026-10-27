@@ -100,6 +100,9 @@ struct Fake {
     /// stored; and a feed still being recorded.
     trace: Option<(proto::TraceSummary, Vec<u8>, bool)>,
     tracing: Option<u32>,
+    /// Bank 1 as the bank-0 role reads it; serves `Capabilities::BACKUP`
+    /// when set.
+    bank1: Option<Vec<u8>>,
 }
 
 /// A sealed trace of feed `feed`: a reading every poll of a 400-poll drive,
@@ -360,6 +363,9 @@ impl Device for Fake {
         if self.log {
             capabilities = capabilities.union(Capabilities::LOG);
         }
+        if self.bank1.is_some() {
+            capabilities = capabilities.union(Capabilities::BACKUP);
+        }
         capabilities
     }
 
@@ -429,6 +435,23 @@ impl Device for Fake {
             stored: *stored,
             offset,
             total: u16::try_from(body.len()).unwrap(),
+            bytes: &rest[..len],
+        })
+    }
+
+    fn bank1_page(&mut self, offset: u32) -> Result<proto::Bank1Page<'_>, Refusal> {
+        if self.installing {
+            return Err(Refusal::Busy);
+        }
+        let bank = self.bank1.as_deref().ok_or(Refusal::Unavailable)?;
+        let rest = bank
+            .get(offset as usize..)
+            .filter(|rest| !rest.is_empty())
+            .ok_or(Refusal::Invalid)?;
+        let len = rest.len().min(proto::BANK1_PAGE_MAX);
+        Ok(proto::Bank1Page {
+            offset,
+            total: u32::try_from(bank.len()).unwrap(),
             bytes: &rest[..len],
         })
     }
@@ -1820,6 +1843,7 @@ fn a_connection_names_the_epoch_and_answers_each_request_once() {
                 traces: true,
                 calibration: true,
                 power: false,
+                backup: false,
             },
             EPOCH
         )
@@ -2261,6 +2285,88 @@ fn a_trace_is_read_a_page_at_a_time_with_both_bits() {
     }
 }
 
+/// Bank 1 read whole a page at a time, by an owner only: a member is
+/// forbidden, a session without the bit (or a feeder that does not serve
+/// it) is refused, and so is a read while an install holds the flash or
+/// past the bank's end.
+#[test]
+fn bank_1_is_read_whole_by_an_owner_with_the_backup_bit() {
+    use wellfed_client::install::{Bank1Reader, ReadError, STOCK_PAYLOAD_LEN};
+
+    let mut rig = Rig::new();
+    let bank: Vec<u8> = (0..STOCK_PAYLOAD_LEN)
+        .map(|i| i.to_le_bytes()[0] ^ i.to_le_bytes()[2])
+        .collect();
+    rig.device.bank1 = Some(bank.clone());
+    let mut owner = open(&mut rig, OWNER);
+
+    let mut reader = Bank1Reader::new();
+    let mut id: u32 = 0;
+    let read = loop {
+        id += 1;
+        let request = u8::try_from(id % 251).unwrap();
+        let answer = ask(&mut rig, &mut owner, request, reader.next_op());
+        if let Some(read) = reader.take(answer).unwrap() {
+            break read;
+        }
+    };
+    assert_eq!(read, bank);
+    assert_eq!(id, STOCK_PAYLOAD_LEN / 768, "a page of 768 bytes each");
+
+    let past = Op::ReadBank1 {
+        offset: STOCK_PAYLOAD_LEN,
+    };
+    let answer = ask(&mut rig, &mut owner, 252, past);
+    assert_eq!(answer, Answer::Refused(model::Refusal::Invalid));
+    rig.device.installing = true;
+    let mut reader = Bank1Reader::new();
+    let answer = ask(&mut rig, &mut owner, 253, reader.next_op());
+    assert_eq!(
+        reader.take(answer),
+        Err(ReadError::Refused(model::Refusal::Busy))
+    );
+    rig.device.installing = false;
+
+    let mut member = open(&mut rig, MEMBER);
+    let answer = ask(&mut rig, &mut member, 1, Op::ReadBank1 { offset: 0 });
+    assert_eq!(answer, Answer::Refused(model::Refusal::Forbidden));
+
+    let hello = Hello {
+        major: 1,
+        capabilities: model::Capabilities {
+            backup: false,
+            ..model::Capabilities::KNOWN
+        },
+    };
+    let mut old = live_with(&mut rig, OWNER, hello);
+    drive(&mut rig, &mut old, |live| {
+        live.connection.opened().is_some()
+    })
+    .unwrap();
+    let now = old.now(&rig);
+    old.connection
+        .request(now, [3; 16], &Op::ReadBank1 { offset: 0 })
+        .unwrap();
+    drive(&mut rig, &mut old, |live| !live.events.is_empty()).unwrap();
+    assert!(
+        matches!(
+            &old.events[..],
+            [Event::Answer {
+                answer: Answer::Refused(model::Refusal::Unavailable),
+                ..
+            }]
+        ),
+        "{:?}",
+        old.events
+    );
+
+    // A feeder that serves no backup.
+    let mut rig = Rig::new();
+    let mut owner = open(&mut rig, OWNER);
+    let answer = ask(&mut rig, &mut owner, 1, Op::ReadBank1 { offset: 0 });
+    assert_eq!(answer, Answer::Refused(model::Refusal::Unavailable));
+}
+
 /// The calibration ops and the portions section need their own bit: a
 /// feeder that predates them could not decode the request.
 #[test]
@@ -2461,6 +2567,7 @@ fn only_an_owner_s_session_with_the_update_bit_may_update() {
             traces: true,
             calibration: false,
             power: true,
+            backup: false,
         },
     };
     let slot = rig.accept().unwrap();

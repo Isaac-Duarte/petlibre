@@ -36,6 +36,9 @@ pub struct Capabilities {
     /// The supply judged: the `Supply` sample and event, and readiness's
     /// `Battery` reason.
     pub power: bool,
+    /// The stock backup: the `ReadBank1` op and the `Bank1` answer, which
+    /// only the bank-0 recovery role serves.
+    pub backup: bool,
 }
 
 impl Capabilities {
@@ -50,6 +53,7 @@ impl Capabilities {
         traces: false,
         calibration: false,
         power: false,
+        backup: false,
     };
     /// Every feature this crate knows: what a current client claims.
     pub const KNOWN: Self = Self {
@@ -62,6 +66,7 @@ impl Capabilities {
         traces: true,
         calibration: true,
         power: true,
+        backup: true,
     };
 
     /// The features both `self` and `other` claim.
@@ -77,6 +82,7 @@ impl Capabilities {
             traces: self.traces && other.traces,
             calibration: self.calibration && other.calibration,
             power: self.power && other.power,
+            backup: self.backup && other.backup,
         }
     }
 }

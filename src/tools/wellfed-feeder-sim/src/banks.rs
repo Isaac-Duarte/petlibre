@@ -185,6 +185,13 @@ impl Banks {
         Self::valid(&self.bank1)
     }
 
+    /// Bank 1 as stock leaves it once it has installed a build into bank
+    /// 0: every byte kept but its marker's first, which is zeroed, so the
+    /// loader boots bank 0.
+    pub fn stock_gave_way(&mut self) {
+        self.bank1[0] = 0;
+    }
+
     /// Bank 0's image as bank 0 records it at boot: the simulator starts as
     /// a feeder whose bank 0 has run once, built with `key`, as both banks
     /// are.

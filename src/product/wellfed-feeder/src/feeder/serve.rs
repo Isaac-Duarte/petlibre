@@ -24,16 +24,25 @@ use core::fmt;
 
 use wellfed_core::log_tail::Batch as LogBatch;
 use wellfed_core::mdns::{self, Destination, Responder};
+use wellfed_core::ota::BANK1_BYTES;
 use wellfed_core::ota::install::{Answer, Phase};
 use wellfed_core::ota::offer::{KeyStatement, key_id};
 use wellfed_core::tone::Tune;
 use wellfed_proto::api::{
-    self as proto, Battery, Capabilities, EventBody, Metric, PORT, Power, Readiness, Refusal,
-    Sample, Source, Stats, StatsSection, Status, Supply, TASKS_MAX, TaskStack as WireTask,
-    TracePage, UpdateRefusal, UpdateView,
+    self as proto, BANK1_PAGE_MAX, Bank1Page, Battery, Capabilities, EventBody, Metric, PORT,
+    Power, Readiness, Refusal, Sample, Source, Stats, StatsSection, Status, Supply, TASKS_MAX,
+    TaskStack as WireTask, TracePage, UpdateRefusal, UpdateView,
 };
 use wellfed_proto::trace::PAGE_MAX;
 use wellfed_session::noise::Keypair;
+
+/// The answer page buffer: a trace's page or a bank-1 page, whichever is
+/// larger.
+pub(super) const PAGE_BYTES: usize = if PAGE_MAX > BANK1_PAGE_MAX {
+    PAGE_MAX
+} else {
+    BANK1_PAGE_MAX
+};
 
 use super::Feeds;
 use super::events;
@@ -188,8 +197,8 @@ pub struct Serve<S> {
     stats: Keeper,
     /// The task stacks a memory answer borrows its names from.
     tasks: TaskCache,
-    /// The trace page an answer borrows its bytes from.
-    page: [u8; PAGE_MAX],
+    /// The trace or bank-1 page an answer borrows its bytes from.
+    page: [u8; PAGE_BYTES],
     packet: [u8; mdns::PACKET],
     reply: [u8; mdns::PACKET],
     time: Time<S>,
@@ -217,7 +226,7 @@ impl<S: Copy> Serve<S> {
             failed: 0,
             stats: Keeper::new(),
             tasks: TaskCache::new(),
-            page: [0; PAGE_MAX],
+            page: [0; PAGE_BYTES],
             packet: [0; mdns::PACKET],
             reply: [0; mdns::PACKET],
             time: Time::new(),
@@ -241,7 +250,7 @@ impl<S: Copy> Serve<S> {
 
     /// The statistics and the buffers a memory or trace answer borrows
     /// from.
-    pub(super) fn stats_parts(&mut self) -> (&mut Keeper, &mut TaskCache, &mut [u8; PAGE_MAX]) {
+    pub(super) fn stats_parts(&mut self) -> (&mut Keeper, &mut TaskCache, &mut [u8; PAGE_BYTES]) {
         (&mut self.stats, &mut self.tasks, &mut self.page)
     }
 
@@ -647,8 +656,8 @@ pub struct FeederDevice<'a, P, F> {
     pub(super) ntp_last: Option<NtpResult>,
     pub(super) stats: &'a mut Keeper,
     pub(super) tasks: &'a mut TaskCache,
-    /// The page a trace answer borrows its bytes from.
-    pub(super) page: &'a mut [u8; PAGE_MAX],
+    /// The page a trace or bank-1 answer borrows its bytes from.
+    pub(super) page: &'a mut [u8; PAGE_BYTES],
     /// A brownout holds feeding until the adapter is seen.
     pub(super) battery_hold: bool,
     /// The feed a client queued, and its feed call's request.
@@ -931,13 +940,47 @@ impl<P: Platform, F: Feeds> Device for FeederDevice<'_, P, F> {
     }
 
     fn feed_trace(&mut self, feed: u32, offset: u16) -> Result<TracePage<'_>, Refusal> {
-        let read = self.platform.trace_page(feed, offset, self.page)?;
+        let (page, _) = self
+            .page
+            .split_first_chunk_mut::<PAGE_MAX>()
+            .ok_or(Refusal::Busy)?;
+        let read = self.platform.trace_page(feed, offset, page)?;
         Ok(TracePage {
             summary: read.summary,
             stored: read.stored,
             offset,
             total: read.total,
             bytes: self.page.get(..read.len).unwrap_or(&[]),
+        })
+    }
+
+    /// Bank 1 as the flash holds it. Only the bank-0 role reads it: there
+    /// it may still hold stock, the feeder's only copy until a promotion
+    /// overwrites it, while on bank 1 it is the running build. An install
+    /// rewrites it under the read, so none is served while one holds the
+    /// flash. Nothing here vouches for the bytes: the installer checks the
+    /// copy against the pinned stock image.
+    fn bank1_page(&mut self, offset: u32) -> Result<Bank1Page<'_>, Refusal> {
+        if self.boot.bank != 0 {
+            return Err(Refusal::Unavailable);
+        }
+        if self.platform.installing() {
+            return Err(Refusal::Busy);
+        }
+
+        let left = BANK1_BYTES
+            .checked_sub(offset)
+            .filter(|&left| left > 0)
+            .ok_or(Refusal::Invalid)?;
+        let len = usize::try_from(left).map_or(BANK1_PAGE_MAX, |left| left.min(BANK1_PAGE_MAX));
+        let out = self.page.get_mut(..len).ok_or(Refusal::Busy)?;
+        if !self.platform.bank1_read(offset, out) {
+            return Err(Refusal::Unavailable);
+        }
+        Ok(Bank1Page {
+            offset,
+            total: BANK1_BYTES,
+            bytes: out,
         })
     }
 

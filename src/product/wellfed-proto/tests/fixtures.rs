@@ -845,6 +845,30 @@ fn messages() -> Vec<Fixture> {
             })),
             feeder,
         ),
+        (
+            "hello-backup",
+            entry(&Hello {
+                major: 1,
+                capabilities: Capabilities::UPDATE.union(Capabilities::BACKUP),
+            }),
+            |b| decode::<Hello>(b).is_ok(),
+        ),
+        (
+            "op-read-bank1",
+            entry(&request(Op::ReadBank1 { offset: 1_536 })),
+            client,
+        ),
+        (
+            "outcome-bank1",
+            entry(&response(Outcome::Bank1(Bank1Page {
+                offset: 0,
+                total: 0x15_0000,
+                // A stock bank as bank 0 reads it: the marker's first byte
+                // zeroed by stock's activation of bank 0.
+                bytes: b"\x001958711",
+            }))),
+            feeder,
+        ),
     ]
 }
 

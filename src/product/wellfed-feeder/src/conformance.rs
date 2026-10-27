@@ -517,6 +517,20 @@ pub fn the_statistics_follow_the_loop(rig: &mut impl Rig) {
     }
 }
 
+/// Every platform serves the stock backup's reads, and only its bank-0
+/// role answers them: running from bank 1, whose image is the running
+/// build, it refuses every page.
+pub fn bank_1_is_read_only_from_bank_0(rig: &mut impl Rig) {
+    let (capabilities, bank, page) = device(rig, 0, |device| {
+        let bank = device.status(0).bank;
+        let page = device.bank1_page(0).map(|page| page.offset);
+        (device.capabilities(), bank, page)
+    });
+    assert!(capabilities.contains(Capabilities::BACKUP));
+    assert_eq!(bank, 1, "the suite's rigs run from bank 1");
+    assert_eq!(page, Err(Refusal::Unavailable));
+}
+
 /// Every platform serves the traces beside the statistics: a feed it keeps
 /// no trace of is `NotFound`, the storage ring keeps at least eight, and a
 /// sealed trace's figures join the feeds section.
@@ -651,6 +665,7 @@ macro_rules! conformance {
             the_statistics_follow_the_loop,
             traces_are_served_beside_the_statistics,
             a_lasting_reason_not_to_feed_is_recorded_once,
+            bank_1_is_read_only_from_bank_0,
         );
     };
     (@tests $rig:expr; $($check:ident),* $(,)?) => {

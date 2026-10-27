@@ -45,7 +45,7 @@ pub use stats::{
 };
 pub use status::{Battery, Blocked, Power, Readiness, Settings, SettingsPatch, Status, WifiSource};
 pub use trace::{CurrentUnit, Malformed, Trace, TraceEntry, TraceMotor, TracePage, TraceSummary};
-pub use update::{UpdatePhase, UpdateRefusal, UpdateStop, UpdateView};
+pub use update::{Bank1Page, UpdatePhase, UpdateRefusal, UpdateStop, UpdateView};
 
 /// A feeder store's generation: a write names the one it read, and the
 /// feeder refuses it once the store has moved on.

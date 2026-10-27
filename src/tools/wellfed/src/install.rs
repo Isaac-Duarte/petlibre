@@ -27,10 +27,10 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use clap::Args;
 use wellfed_client::install::{
-    FeederTrust, Install, Provision, Replacement, Requested, SETUP_ADDRESS, SetupFrame, Step,
-    StockPower, StockView, VerifiedBackup, manifest_version,
+    CONTAINER_HEADER, FeederTrust, Install, Provision, Replacement, Requested, SETUP_ADDRESS,
+    SetupFrame, Step, StockBackup, StockPower, StockView, VerifiedBackup, manifest_version,
 };
-use wellfed_client::update::{Image, InstallError as UpdateError, Installer, Next};
+use wellfed_client::update::{Image, InstallError as UpdateError};
 use wellfed_formats::bench::lease::Lease;
 use wellfed_formats::manifest::BuildManifest;
 use wellfed_formats::stock::{
@@ -43,6 +43,7 @@ use serde::de::IgnoredAny;
 use tokio::process::{Child, Command};
 
 use crate::keys::{OwnerKey, fingerprint};
+use crate::push::{Pushed, push};
 
 /// How long the stock server's loopback API gets per call.
 const API_TIMEOUT: Duration = Duration::from_secs(10);
@@ -64,11 +65,6 @@ const CONFIRM_WAIT: Duration = Duration::from_secs(6 * 60);
 const IMAGES_WAIT: Duration = Duration::from_secs(30);
 /// How long a child process gets to exit after SIGTERM.
 const STOP_WAIT: Duration = Duration::from_secs(5);
-/// Sessions the promotion reopens at most: a feeder that keeps dropping
-/// them is not coming back.
-const REOPEN_MAX: u32 = 20;
-/// The OTA container's header precedes the bank contents.
-const CONTAINER_HEADER: usize = 32;
 
 #[derive(Args)]
 pub(crate) struct InstallArgs {
@@ -81,11 +77,16 @@ pub(crate) struct InstallArgs {
     #[arg(long)]
     manifest: PathBuf,
     /// A copy of stock 1.1.15's OTA image that matches the pinned digest.
-    /// Promotion overwrites the feeder's only copy of stock, so without one
-    /// the run stops before it, with the replacement on bank 0 and stock
+    /// Without one, the run reads bank 1 from the replacement on bank 0
+    /// and keeps it under --backups; promotion overwrites the feeder's
+    /// only copy of stock, so the run stops before it unless one copy or
+    /// the other checks out, with the replacement on bank 0 and stock
     /// intact in bank 1.
     #[arg(long)]
     stock_backup: Option<PathBuf>,
+    /// The owner's data directory for stock backups, one per feeder.
+    #[arg(long, default_value = crate::backup::BACKUPS)]
+    backups: PathBuf,
     /// Point stock at this network (passphrase from standard input) and the
     /// installer's broker with the setup frame first. Without it, stock
     /// already connects to the installer's broker.
@@ -164,8 +165,8 @@ pub(crate) async fn run(args: InstallArgs) -> Result<()> {
         }
         None => {
             eprintln!(
-                "No --stock-backup: the run stops before promotion, which would overwrite \
-                 the feeder's only copy of stock."
+                "No --stock-backup: bank 1 is read from the replacement before promotion, \
+                 which would overwrite the feeder's only copy of stock."
             );
             None
         }
@@ -242,15 +243,6 @@ fn stock_bin(given: Option<&Path>) -> Result<PathBuf> {
         );
     }
     Ok(beside)
-}
-
-/// What reopening a promotion's session found.
-enum Reopened {
-    Session(Box<wellfed_connect::Connection>),
-    /// Bank 1 already runs the served build.
-    Activated,
-    /// The feeder did not come back in time.
-    Gone,
 }
 
 /// Whether a session answering from `bank` with `build` shows the
@@ -351,11 +343,15 @@ impl Run {
                     self.close_trial(install.build()).await;
                     install.trial_closed();
                 }
-                Step::Backup => bail!(
-                    "Promotion refused: no verified stock backup. The feeder runs the \
-                     replacement from bank 0 and still holds stock in bank 1. Run again with \
-                     --from-bank0 --stock-backup <stock 1.1.15 OTA image>."
-                ),
+                Step::Backup => {
+                    let backup = self.backup().await.context(
+                        "Promotion refused: no verified stock backup. The feeder runs the \
+                         replacement from bank 0 and still holds stock in bank 1; run again \
+                         with --from-bank0 once a backup can be read, or with \
+                         --stock-backup <stock 1.1.15 OTA image>",
+                    )?;
+                    install.backup(backup.verified());
+                }
                 Step::Promote => {
                     let outcome = self.promote(install.build()).await?;
                     install.promoted(outcome);
@@ -625,6 +621,18 @@ impl Run {
         Ok(())
     }
 
+    /// The stock backup for the paired feeder: kept from an earlier run, or
+    /// read from bank 1 now and kept.
+    async fn backup(&self) -> Result<StockBackup> {
+        let identity = self
+            .identity
+            .context("the feeder's identity is not known yet")?;
+        let mut connection = crate::device::Connection::from(self.connect().await?);
+        let (_, backup) =
+            crate::backup::fetch(&mut connection, &self.args.backups, &identity).await?;
+        Ok(backup)
+    }
+
     async fn connect(&self) -> Result<wellfed_connect::Connection> {
         let identity = self
             .identity
@@ -686,104 +694,34 @@ impl Run {
     }
 
     /// Push the signed update from bank 0 until bank 1 is activated, or the
-    /// update's own error. A dropped session loses nothing: the installer
-    /// resumes on the next one (chunks are idempotent by offset, and bank 0
-    /// waits a minute for the next), so a lost answer or a restart reopens
-    /// the session rather than ending the promotion.
+    /// update's own error ([`push`]). If bank 1 answers a reopened session
+    /// with the served build, the activation's answer was lost and the
+    /// feeder already restarted into its trial boot: offering the manifest
+    /// there would interrupt the trial, so the promotion counts as
+    /// activated instead.
     async fn promote(&self, served: &str) -> Result<Result<(), UpdateError>> {
         let payload = self
             .container
             .get(CONTAINER_HEADER..)
             .context("image.bin is shorter than its header")?;
-        let mut installer = Installer::new(Image {
+        let image = Image {
             manifest: &self.manifest,
             downgrade: None,
             payload,
-        });
+        };
 
         eprintln!("Promoting: bank 0 writes the replacement into bank 1.");
-        let mut connection = None;
-        let mut reopened = 0;
-        let mut written = 0;
-        loop {
-            let session = match &mut connection {
-                Some(session) => session,
-                None if reopened >= REOPEN_MAX => return Ok(Err(UpdateError::Lost)),
-                None => {
-                    reopened += 1;
-                    match self.reopen(&mut installer, served).await? {
-                        Reopened::Session(session) => connection.insert(*session),
-                        Reopened::Activated => {
-                            eprintln!("Bank 1 already runs the build: it was activated.");
-                            return Ok(Ok(()));
-                        }
-                        Reopened::Gone => return Ok(Err(UpdateError::Lost)),
-                    }
-                }
-            };
-
-            match installer.poll() {
-                Next::Send(sent, op) => {
-                    match session.ask(crate::device::random()?, &op).await {
-                        // An answer the installer rejects ends the install;
-                        // the next poll says so.
-                        Ok(answer) => {
-                            let _ = installer.answer(sent, &answer);
-                        }
-                        Err(error) => {
-                            eprintln!("  The session dropped ({error}); resuming on a new one.");
-                            installer.lost();
-                            connection = None;
-                        }
-                    }
-                    if let Some(view) = installer.view()
-                        && view.written / 65_536 != written / 65_536
-                    {
-                        written = view.written;
-                        eprintln!("  {} of {} bytes written", view.written, view.image_len);
-                    }
-                }
-                Next::Wait => tokio::time::sleep(Duration::from_millis(200)).await,
-                Next::Activated => {
-                    eprintln!("Activated: the feeder restarts into bank 1.");
-                    return Ok(Ok(()));
-                }
-                Next::Failed(error) => return Ok(Err(error)),
-                // Bank 1 gave way (a feeder that answered from bank 1):
-                // reconnect once it has restarted into bank 0.
-                Next::Reconnect => {
-                    installer.lost();
-                    connection = None;
-                    tokio::time::sleep(POLL).await;
-                }
-                Next::Cancelled => return Ok(Err(UpdateError::Lost)),
-            }
-        }
-    }
-
-    /// A new session for the promotion, with the installer told which bank
-    /// answers. If bank 1 answers with the served build, the activation's
-    /// answer was lost and the feeder already restarted into its trial boot:
-    /// offering the manifest there would interrupt the trial, so the
-    /// promotion counts as activated instead.
-    async fn reopen(&self, installer: &mut Installer<'_>, served: &str) -> Result<Reopened> {
-        let deadline = Instant::now() + REPLACEMENT_WAIT;
-        loop {
-            if let Ok(mut session) = self.connect().await
-                && let Ok(Answer::Status(status)) =
-                    session.ask(crate::device::random()?, &Op::Status).await
-            {
-                if activated(status.bank, &status.build, served) {
-                    return Ok(Reopened::Activated);
-                }
-                installer.opened(status.bank);
-                return Ok(Reopened::Session(Box::new(session)));
-            }
-            if Instant::now() >= deadline {
-                return Ok(Reopened::Gone);
-            }
-            tokio::time::sleep(POLL).await;
-        }
+        let pushed = push(
+            image,
+            async || self.connect().await,
+            |bank, build| activated(bank, build, served),
+        )
+        .await?;
+        Ok(match pushed {
+            Pushed::Activated => Ok(()),
+            Pushed::Failed(error) => Err(error),
+            Pushed::Gone { .. } => Err(UpdateError::Lost),
+        })
     }
 
     /// Until bank 1 runs the build and reports its version confirmed.
@@ -857,6 +795,7 @@ fn short(build: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wellfed_client::update::{Installer, Next};
     use serde_json::json;
 
     #[test]

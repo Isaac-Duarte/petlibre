@@ -19,6 +19,7 @@ wellfed-formats.workspace = true
 wellfed-model.workspace = true
 wellfed-proto.workspace = true
 wellfed-session.workspace = true
+wellfed-signing.workspace = true
 wellfed-stock-api.workspace = true
 rustix = { version = "1", features = ["process"] }
 serde.workspace = true

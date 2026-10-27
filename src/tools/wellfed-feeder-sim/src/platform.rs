@@ -17,6 +17,7 @@
 //! simulator does not have (the indicator, BLE, the speaker, a feeding
 //! owner) answers as an idle board would.
 
+use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::convert::Infallible;
 use std::io;
@@ -63,6 +64,7 @@ use wellfed_proto::api::{self as proto, Capabilities, Counts, FLASH_SECTORS, TAS
 use wellfed_proto::trace::PAGE_MAX;
 use tokio::net::{TcpStream, UdpSocket};
 
+use crate::banks::Banks;
 use crate::flash::{Flash, Region};
 
 /// This simulator's settings binding: a store written by one installation
@@ -177,6 +179,9 @@ pub struct SimPlatform {
     /// The lines this boot logged, as the firmware's RAM tail keeps them;
     /// the simulator copies its records in ([`crate::sim::Sim::pass`]).
     log: Rc<LogTail<LOG_TAIL_BYTES>>,
+    /// The two banks, which the bank-0 role reads bank 1 of for the stock
+    /// backup; `None` for a platform opened without them.
+    banks: Option<Rc<RefCell<Banks>>>,
 }
 
 impl std::fmt::Debug for SimPlatform {
@@ -282,12 +287,19 @@ impl SimPlatform {
             mdns,
             ip,
             log: Rc::new(LogTail::new()),
+            banks: None,
         };
         platform.publish_signers();
         // The boot's own early save, so its reset counts however short it is.
         let mut platform = platform;
         platform.save_now(SaveKind::Early);
         Ok(platform)
+    }
+
+    /// Read bank 1 from these banks, as the firmware reads it through the
+    /// flash window (from bank 0 only).
+    pub fn attach_banks(&mut self, banks: &Rc<RefCell<Banks>>) {
+        self.banks = Some(Rc::clone(banks));
     }
 
     /// The trace ring's sectors.
@@ -542,6 +554,7 @@ impl Platform for SimPlatform {
             .union(Capabilities::TRACES)
             .union(Capabilities::CALIBRATION)
             .union(Capabilities::POWER)
+            .union(Capabilities::BACKUP)
     }
 
     fn reset(&mut self) {
@@ -816,6 +829,19 @@ impl Platform for SimPlatform {
 
     fn installing(&self) -> bool {
         mailbox::installing()
+    }
+
+    fn bank1_read(&mut self, offset: u32, out: &mut [u8]) -> bool {
+        let Some(banks) = self.banks.as_ref().filter(|_| self.bank == 0) else {
+            return false;
+        };
+        let start = offset as usize;
+        let banks = banks.borrow();
+        let Some(bytes) = banks.bank1().get(start..start + out.len()) else {
+            return false;
+        };
+        out.copy_from_slice(bytes);
+        true
     }
 
     fn listen(&mut self, _port: u16) -> Option<Socket> {

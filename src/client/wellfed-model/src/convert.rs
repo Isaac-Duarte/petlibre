@@ -10,10 +10,10 @@ use wellfed_proto::api as proto;
 use wellfed_proto::setup as proto_setup;
 
 use crate::{
-    Answer, Battery, Blocked, Bowl, Calibration, CalibrationView, Capabilities, Client, ClientRole,
-    Counters, Counts, EnrollPath, Erases, Event, EventBody, FeedOutcome, FeedReason, Flash, Food,
-    Generation, Hello, Hex, Invite, Joined, LogLines, Memory, NtpResult, NtpServer, Op,
-    OpenRefusal, Phase, Portions, Power, PowerStats, Readiness, Refusal, ResetCause, Resets,
+    Answer, Bank1Page, Battery, Blocked, Bowl, Calibration, CalibrationView, Capabilities, Client,
+    ClientRole, Counters, Counts, EnrollPath, Erases, Event, EventBody, FeedOutcome, FeedReason,
+    Flash, Food, Generation, Hello, Hex, Invite, Joined, LogLines, Memory, NtpResult, NtpServer,
+    Op, OpenRefusal, Phase, Portions, Power, PowerStats, Readiness, Refusal, ResetCause, Resets,
     Sample, SampleValue, Settings, SettingsPatch, Source, Stats, StatsSection, Status, TaskStack,
     TimeSource, TimeSync, TimeView, Tune, UpdatePhase, UpdateRefusal, UpdateStop, UpdateView,
     WifiSource, setup,
@@ -598,6 +598,15 @@ impl From<proto::Outcome<'_>> for Answer {
             proto::Outcome::Stats(stats) => Self::Stats(stats.into()),
             proto::Outcome::FeedTrace(page) => Self::FeedTrace(page.into()),
             proto::Outcome::Calibration(view) => Self::Calibration(view.into()),
+            proto::Outcome::Bank1(proto::Bank1Page {
+                offset,
+                total,
+                bytes,
+            }) => Self::Bank1(Bank1Page {
+                offset,
+                total,
+                bytes: bytes.to_vec(),
+            }),
         }
     }
 }
@@ -1208,6 +1217,7 @@ impl Op {
                 base: base.0,
                 calibration: (*calibration).into(),
             },
+            Self::ReadBank1 { offset } => proto::Op::ReadBank1 { offset: *offset },
         }
     }
 }
@@ -1269,6 +1279,7 @@ impl From<proto::Capabilities> for Capabilities {
             traces: bits.contains(proto::Capabilities::TRACES),
             calibration: bits.contains(proto::Capabilities::CALIBRATION),
             power: bits.contains(proto::Capabilities::POWER),
+            backup: bits.contains(proto::Capabilities::BACKUP),
         }
     }
 }
@@ -1285,6 +1296,7 @@ impl From<Capabilities> for proto::Capabilities {
             traces,
             calibration,
             power,
+            backup,
         } = capabilities;
         let mut bits = proto::Capabilities::V1.0;
         if feed {
@@ -1313,6 +1325,9 @@ impl From<Capabilities> for proto::Capabilities {
         }
         if power {
             bits |= proto::Capabilities::POWER.0;
+        }
+        if backup {
+            bits |= proto::Capabilities::BACKUP.0;
         }
         Self(bits)
     }

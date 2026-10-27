@@ -263,6 +263,7 @@ impl Server {
             } if self.feeding || device.feed_active() => Reply::Refused(Refusal::Busy),
             Action::Stats { section } => return Some(Reply::Stats(section)),
             Action::FeedTrace { feed, offset } => return Some(Reply::FeedTrace { feed, offset }),
+            Action::ReadBank1 { offset } => return Some(Reply::Bank1 { offset }),
         };
         Some(self.remember(memory, id, action, outcome))
     }
@@ -453,6 +454,8 @@ const fn allowed(role: Role, action: Action) -> bool {
                 | Action::Stats {
                     section: StatsSection::Memory,
                 }
+                // The stock backup is the owner's copy to keep.
+                | Action::ReadBank1 { .. }
         ),
         Role::UpdateSigner => false,
     }
@@ -555,6 +558,9 @@ pub(super) enum Action {
         base: u32,
         calibration: Calibration,
         bowl: Bowl,
+    },
+    ReadBank1 {
+        offset: u32,
     },
     /// A field failed the stores' checks before anything ran.
     Invalid,
@@ -666,6 +672,7 @@ impl From<Op<'_>> for Action {
                     bowl,
                 }
             }
+            Op::ReadBank1 { offset } => Self::ReadBank1 { offset },
         }
     }
 }
@@ -689,6 +696,7 @@ impl Action {
                 | Self::Stats { .. }
                 | Self::FeedTrace { .. }
                 | Self::GetCalibration
+                | Self::ReadBank1 { .. }
         )
     }
 
@@ -720,6 +728,7 @@ impl Action {
             Self::FeedTrace { .. } => "feed-trace",
             Self::GetCalibration => "get-calibration",
             Self::PutCalibration { .. } => "put-calibration",
+            Self::ReadBank1 { .. } => "read-bank1",
             Self::Invalid => "invalid",
         }
     }
@@ -747,6 +756,10 @@ pub(super) enum Reply {
     },
     /// The calibration view, read when the answer is sealed.
     Calibration,
+    /// A page of bank 1, read when the answer is sealed.
+    Bank1 {
+        offset: u32,
+    },
 }
 
 fn saturate(jump_ms: i64) -> i32 {
@@ -772,6 +785,7 @@ impl Name for Reply {
             Self::Stats(_) => "stats",
             Self::FeedTrace { .. } => "feed-trace",
             Self::Calibration => "calibration",
+            Self::Bank1 { .. } => "bank1",
             Self::Refused(refusal) => match refusal {
                 Refusal::Forbidden => "forbidden",
                 Refusal::Stale { .. } => "stale",

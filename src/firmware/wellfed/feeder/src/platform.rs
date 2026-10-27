@@ -153,6 +153,7 @@ impl Platform for Plaf103 {
             .union(Capabilities::TRACES)
             .union(Capabilities::CALIBRATION)
             .union(Capabilities::POWER)
+            .union(Capabilities::BACKUP)
     }
 
     fn reset(&mut self) {
@@ -366,6 +367,28 @@ impl Platform for Plaf103 {
 
     fn installing(&self) -> bool {
         mailbox::installing()
+    }
+
+    /// Through the mapped flash window, a sector at a time as the SDK
+    /// takes it; it refuses every read unless the flash MMU maps bank 0,
+    /// so only the recovery role reads.
+    fn bank1_read(&mut self, offset: u32, out: &mut [u8]) -> bool {
+        let mut at = offset;
+        let mut rest = out;
+        while !rest.is_empty() {
+            let within = at % sdk::SECTOR_BYTES;
+            let room = usize::try_from(sdk::SECTOR_BYTES - within).unwrap_or(usize::MAX);
+            let (piece, after) = rest.split_at_mut(room.min(rest.len()));
+            if !sdk::bank1_read(at / sdk::SECTOR_BYTES, within, piece) {
+                return false;
+            }
+            let Ok(len) = u32::try_from(piece.len()) else {
+                return false;
+            };
+            at += len;
+            rest = after;
+        }
+        true
     }
 
     fn listen(&mut self, port: u16) -> Option<i32> {

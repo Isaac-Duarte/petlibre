@@ -5,6 +5,26 @@ use serde::{Deserialize, Serialize};
 
 use crate::Hex;
 
+/// One page of bank 1, as the bank-0 recovery role answers `ReadBank1`:
+/// `bytes` from `offset`, of the `total` it serves
+/// (`wellfed_client::install::backup::Bank1Reader` asks for every page).
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Bank1Page {
+    pub offset: u32,
+    pub total: u32,
+    pub bytes: Vec<u8>,
+}
+
+impl std::fmt::Debug for Bank1Page {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Bank1Page")
+            .field("offset", &self.offset)
+            .field("total", &self.total)
+            .field("len", &self.bytes.len())
+            .finish()
+    }
+}
+
 /// Where an update stands. The install does not depend on the session: a
 /// client that lost its connection reconnects, reads the state and sends
 /// what [`Self::wanted`] names.

@@ -13,8 +13,8 @@ use wellfed_core::named_enum;
 use wellfed_core::ota::offer::KeyId;
 use wellfed_core::tone::Tune as CoreTune;
 use wellfed_proto::api::{
-    self as proto, Blocked, Bowl, Capabilities, EventBody, Phase, Readiness, Refusal, Source,
-    Stats, StatsSection, Status, TracePage, UpdateView,
+    self as proto, Bank1Page, Blocked, Bowl, Capabilities, EventBody, Phase, Readiness, Refusal,
+    Source, Stats, StatsSection, Status, TracePage, UpdateView,
 };
 
 /// The rest of the feeder, as the server needs it. Every call returns at
@@ -76,6 +76,14 @@ pub trait Device {
     /// `Busy` while it is still recorded, `Invalid` for an offset past the
     /// body. Asked only of a device whose capabilities carry the traces.
     fn feed_trace(&mut self, feed: u32, offset: u16) -> Result<TracePage<'_>, Refusal>;
+    /// One page of bank 1 from `offset`, read when its answer is sealed:
+    /// served only by the bank-0 recovery role (`Unavailable` elsewhere),
+    /// `Busy` while an install holds the flash, `Invalid` at or past the
+    /// bank's end. Asked only of a device whose capabilities carry
+    /// [`Capabilities::BACKUP`], and only for an owner.
+    fn bank1_page(&mut self, _offset: u32) -> Result<Bank1Page<'_>, Refusal> {
+        Err(Refusal::Unavailable)
+    }
 
     /// Queue an update request for the installer: its ticket, or why it
     /// cannot be queued now. A device without [`Capabilities::UPDATE`]

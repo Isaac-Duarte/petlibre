@@ -219,7 +219,8 @@ impl Answer {
             | Model::Time(_)
             | Model::Stats(_)
             | Model::FeedTrace(_)
-            | Model::Calibration(_) => Self::Unexpected,
+            | Model::Calibration(_)
+            | Model::Bank1(_) => Self::Unexpected,
         }
     }
 }

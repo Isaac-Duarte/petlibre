@@ -24,6 +24,12 @@ pub(crate) fn random<const N: usize>() -> Result<[u8; N]> {
 /// An open session.
 pub(crate) struct Connection(wellfed_connect::Connection);
 
+impl From<wellfed_connect::Connection> for Connection {
+    fn from(connection: wellfed_connect::Connection) -> Self {
+        Self(connection)
+    }
+}
+
 impl Connection {
     pub(crate) async fn open(
         key: &OwnerKey,

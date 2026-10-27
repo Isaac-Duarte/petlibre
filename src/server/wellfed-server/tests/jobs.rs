@@ -4,7 +4,7 @@
 //! sessions, and readiness shows each job's last run.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use jiff::Timestamp;
@@ -34,6 +34,8 @@ struct Fake {
     running: Arc<AtomicUsize>,
     most: Arc<AtomicUsize>,
     finished: Arc<AtomicUsize>,
+    /// Whether the release check is scheduled, as `releases.fetch` says.
+    fetching: Arc<AtomicBool>,
 }
 
 /// What a test watches a [`Fake`] by.
@@ -42,6 +44,7 @@ struct Watch {
     gate: Arc<Semaphore>,
     most: Arc<AtomicUsize>,
     finished: Arc<AtomicUsize>,
+    fetching: Arc<AtomicBool>,
 }
 
 impl Watch {
@@ -71,6 +74,7 @@ fn runner(clock: &ManualClock, zone: &str, last: Vec<JobRun>, gated: bool) -> (F
     let gate = Arc::new(Semaphore::new(0));
     let most = Arc::new(AtomicUsize::new(0));
     let finished = Arc::new(AtomicUsize::new(0));
+    let fetching = Arc::new(AtomicBool::new(true));
     let fake = Fake {
         clock: clock.clone(),
         zone: TimeZone::get(zone).expect("the host's tzdb knows the zone"),
@@ -80,12 +84,14 @@ fn runner(clock: &ManualClock, zone: &str, last: Vec<JobRun>, gated: bool) -> (F
         running: Arc::new(AtomicUsize::new(0)),
         most: Arc::clone(&most),
         finished: Arc::clone(&finished),
+        fetching: Arc::clone(&fetching),
     };
     let watch = Watch {
         started: rx,
         gate,
         most,
         finished,
+        fetching,
     };
     (fake, watch)
 }
@@ -114,8 +120,8 @@ impl Runner for Fake {
         self.last.clone()
     }
 
-    fn scheduled(&self, _: Job) -> bool {
-        true
+    fn scheduled(&self, job: Job) -> bool {
+        job != Job::ReleaseCheck || self.fetching.load(Ordering::SeqCst)
     }
 
     fn zone(&self) -> TimeZone {
@@ -269,6 +275,50 @@ async fn shutdown_ends_a_running_job_and_a_waiting_supervisor() {
         .expect("and cleanly");
 }
 
+#[tokio::test]
+async fn a_release_check_turned_on_is_picked_up_at_the_next_wake() {
+    let clock = ManualClock::new();
+    clock.advance_to(at("2026-10-27T12:00:00Z"));
+    let ran = |job, started: &str| JobRun {
+        job,
+        started: at(started),
+        finished: at(started),
+        outcome: JobOutcome::Succeeded,
+    };
+    let last = vec![
+        ran(Job::Retention, "2026-10-27T03:00:00Z"),
+        ran(Job::Rollups, "2026-10-27T11:30:00Z"),
+        ran(Job::Expiry, "2026-10-27T11:30:00Z"),
+        ran(Job::Backup, "2026-10-27T03:30:00Z"),
+        ran(Job::ReleaseCheck, "2026-10-20T04:00:00Z"),
+    ];
+    let (fake, mut watch) = runner(&clock, "UTC", last, false);
+    watch.fetching.store(false, Ordering::SeqCst);
+    let cancel = CancellationToken::new();
+    let task = jobs::spawn(fake, Arc::new(clock.clone()), cancel.clone());
+    watch.quiet().await;
+
+    // Turned on while the supervisor sleeps: at its next wake (here the
+    // hourly jobs' 12:30, at most an hour on) the overdue check runs at
+    // once, first, since it fell due a week ago.
+    watch.fetching.store(true, Ordering::SeqCst);
+    watch.quiet().await;
+    clock.advance(HOUR / 2);
+    let half = at("2026-10-27T12:30:00Z");
+    assert_eq!(
+        watch.starts(3).await,
+        [
+            (Job::ReleaseCheck, half),
+            (Job::Rollups, half),
+            (Job::Expiry, half)
+        ]
+    );
+    watch.quiet().await;
+
+    cancel.cancel();
+    task.await.expect("the supervisor ends cleanly");
+}
+
 fn bob() -> Credentials {
     Credentials {
         name: "bob".into(),
@@ -284,7 +334,7 @@ async fn expiry_ends_an_expired_accounts_sessions_and_readiness_shows_the_runs()
     owner.setup(&ada_setup()).await.unwrap();
     let start = wellfed_service::Clock::now(&clock);
     let expires = start
-        .checked_add(jiff::SignedDuration::from_mins(30))
+        .checked_add(jiff::SignedDuration::from_mins(59))
         .unwrap();
     let Credentials { name, password } = bob();
     owner
@@ -317,10 +367,14 @@ async fn expiry_ends_an_expired_accounts_sessions_and_readiness_shows_the_runs()
     let status = owner.status().await.unwrap();
     assert_eq!(status.jobs, [ran(Job::Rollups), ran(Job::Expiry)]);
 
-    // An hour on, bob's account has expired, and so has the owner's idle
-    // login (the test's sessions last an hour). The job ends both: bob's
-    // session is gone rather than refused as disabled.
-    clock.advance(HOUR);
+    // Bob uses his session at 58 minutes, so at the hour it has not idled
+    // out (the test's sessions last an hour) but his account, expiring at
+    // 59, has; the owner's login, unused since the start, has idled out.
+    // The job ends both: bob's session is gone rather than refused as
+    // disabled, which only the expired-account clause can do.
+    clock.advance(Duration::from_secs(58 * 60));
+    member.feeders().await.unwrap();
+    clock.advance(Duration::from_secs(2 * 60));
     let later = wellfed_service::Clock::now(&clock);
     until("the expiry job runs again", || async {
         let runs = service.job_runs().await.unwrap();

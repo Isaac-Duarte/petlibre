@@ -70,6 +70,8 @@ pub enum Job {
 }
 
 impl Job {
+    /// Every job, in the order readiness lists them and the supervisor
+    /// runs jobs that fall due at the same time.
     pub const ALL: [Self; 5] = [
         Self::Retention,
         Self::Rollups,
@@ -89,6 +91,8 @@ impl Job {
         }
     }
 
+    /// The job a stored spelling names; `None` for one this build does not
+    /// know.
     pub fn from_code(code: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|job| job.code() == code)
     }
@@ -111,6 +115,8 @@ impl JobOutcome {
         }
     }
 
+    /// The outcome a stored spelling names; `None` for one this build does
+    /// not know.
     pub fn from_code(code: &str) -> Option<Self> {
         [Self::Succeeded, Self::Failed]
             .into_iter()

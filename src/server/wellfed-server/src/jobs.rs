@@ -246,4 +246,22 @@ mod tests {
         let after = skipped.due(Some(due), before, &berlin);
         assert_eq!(after, at("2026-03-30T00:30:00Z"));
     }
+
+    #[test]
+    fn a_time_the_clocks_repeat_runs_once_that_day() {
+        // Europe/Berlin shows 02:00-03:00 twice on 2026-10-25.
+        let berlin = TimeZone::get("Europe/Berlin").unwrap();
+        let repeated = Schedule::Daily(civil::time(2, 30, 0, 0));
+        let before = at("2026-10-24T12:00:00Z");
+
+        let due = repeated.due(Some(before), before, &berlin);
+
+        assert_eq!(due, at("2026-10-25T00:30:00Z"), "the first, summer time");
+        let after = repeated.due(Some(due), before, &berlin);
+        assert_eq!(
+            after,
+            at("2026-10-26T01:30:00Z"),
+            "not the second 02:30 an hour later, but the next day's"
+        );
+    }
 }

@@ -194,7 +194,8 @@ pub enum ArgError {
     UnknownFirmware { text: String },
     #[error(
         "unknown variant {text:?}; the trial firmware has stall and fail, the feeder entropy, \
-         owner-stall, gap-probe, feed-stall, stop-fail, owner-fail, feed-jam, sensor-fault and twin"
+         owner-stall, held-stall, gap-probe, feed-stall, stop-fail, owner-fail, feed-jam, sensor-fault \
+         and twin"
     )]
     UnknownVariant { text: String },
     #[error("{at:?} is not a byte offset")]
@@ -306,6 +307,9 @@ pub enum Variant {
     /// The feeder stalling its loop on purpose, so the feeding owner's beat
     /// lapses into a watchdog reset; no motion.
     OwnerStall,
+    /// The feeder starving the runtime's service task in every boot, held
+    /// boots included, so a reset storm holds and then halts; no motion.
+    HeldStall,
     /// The feeder logging the loop's and a priority-4 task's scheduling
     /// gaps, with feeds refused; no motion.
     GapProbe,
@@ -338,6 +342,7 @@ impl Variant {
             Self::Fail => "fail",
             Self::Entropy => "entropy",
             Self::OwnerStall => "owner-stall",
+            Self::HeldStall => "held-stall",
             Self::GapProbe => "gap-probe",
             Self::FeedStall => "feed-stall",
             Self::StopFail => "stop-fail",
@@ -354,6 +359,7 @@ impl Variant {
             Self::Stall | Self::Fail => Firmware::Trial,
             Self::Entropy
             | Self::OwnerStall
+            | Self::HeldStall
             | Self::GapProbe
             | Self::FeedStall
             | Self::StopFail
@@ -372,6 +378,7 @@ pub fn parse_variant(text: &str) -> std::result::Result<Variant, ArgError> {
         "fail" => Ok(Variant::Fail),
         "entropy" => Ok(Variant::Entropy),
         "owner-stall" => Ok(Variant::OwnerStall),
+        "held-stall" => Ok(Variant::HeldStall),
         "gap-probe" => Ok(Variant::GapProbe),
         "feed-stall" => Ok(Variant::FeedStall),
         "stop-fail" => Ok(Variant::StopFail),
@@ -448,7 +455,7 @@ pub struct OtaArgs {
     #[arg(long, value_parser = parse_firmware)]
     pub firmware: Option<Firmware>,
     /// Variant for --build: stall or fail with --firmware trial, entropy, owner-stall,
-    /// gap-probe, feed-stall, stop-fail, owner-fail, feed-jam, sensor-fault or twin with
+    /// held-stall, gap-probe, feed-stall, stop-fail, owner-fail, feed-jam, sensor-fault or twin with
     /// --firmware feeder.
     #[arg(long, value_parser = parse_variant)]
     pub variant: Option<Variant>,

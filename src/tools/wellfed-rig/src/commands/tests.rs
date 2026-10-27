@@ -111,6 +111,8 @@ struct Calls {
     analyzer_early_exits: u32,
     /// Analyzer launches so far.
     analyzer_launches: u32,
+    /// Analyzers killed so far.
+    analyzer_kills: u32,
     sigrok: bool,
     /// UART bytes each capture records, in order.
     rx: VecDeque<Vec<u8>>,
@@ -192,6 +194,7 @@ struct FakeAnalyzer {
     output: PathBuf,
     code: i32,
     running: bool,
+    calls: Rc<RefCell<Calls>>,
 }
 
 impl Analyzer for FakeAnalyzer {
@@ -203,7 +206,9 @@ impl Analyzer for FakeAnalyzer {
         fs::write(&self.output, [0u8; 10])?;
         Ok(Some(self.code))
     }
-    fn kill(&mut self) {}
+    fn kill(&mut self) {
+        self.calls.borrow_mut().analyzer_kills += 1;
+    }
     fn stderr(&mut self) -> String {
         String::new()
     }
@@ -331,10 +336,13 @@ impl Tools for FakeTools {
         let mut calls = self.0.borrow_mut();
         calls.analyzer_launches += 1;
         let running = calls.analyzer_launches > calls.analyzer_early_exits;
+        let code = calls.analyzer_code;
+        drop(calls);
         Ok(Box::new(FakeAnalyzer {
             output: output.to_path_buf(),
-            code: calls.analyzer_code,
+            code,
             running,
+            calls: self.0.clone(),
         }))
     }
 
@@ -1074,8 +1082,36 @@ fn an_analyzer_that_never_arms_stops_before_power_on() {
         "{error:?}"
     );
     assert_eq!(rig.tools.0.borrow().analyzer_launches, 3);
+    // Only the cut and the isolation: no relay was closed.
     assert!(
-        !rig.board.log().contains(&(1, true)),
+        rig.board.log().iter().all(|&(_, on)| !on),
+        "{:?}",
+        rig.board.log()
+    );
+}
+
+#[test]
+fn an_interrupt_while_arming_kills_the_analyzer_before_power_on() {
+    let mut rig = rig();
+    // Only the analyzer's arming pause is interrupted.
+    rig.bench.sleep = |_, span| {
+        if span == Duration::from_secs(3) {
+            Err(Error::Interrupted)
+        } else {
+            Ok(())
+        }
+    };
+
+    let error = rig
+        .bench
+        .transients(&transients(TransientMode::Boot))
+        .expect_err("interrupted");
+
+    assert!(matches!(error, Error::Interrupted), "{error:?}");
+    let calls = rig.tools.0.borrow();
+    assert_eq!((calls.analyzer_launches, calls.analyzer_kills), (1, 1));
+    assert!(
+        rig.board.log().iter().all(|&(_, on)| !on),
         "{:?}",
         rig.board.log()
     );
@@ -2014,6 +2050,8 @@ fn a_variant_needs_the_firmware_that_declares_it() {
     assert_eq!(ota::parse_variant("entropy"), Ok(Variant::Entropy));
     assert_eq!(Variant::Entropy.firmware(), Firmware::Feeder);
     assert_eq!(ota::parse_variant("owner-stall"), Ok(Variant::OwnerStall));
+    assert_eq!(ota::parse_variant("held-stall"), Ok(Variant::HeldStall));
+    assert_eq!(Variant::HeldStall.firmware(), Firmware::Feeder);
     assert_eq!(Variant::OwnerStall.firmware(), Firmware::Feeder);
     assert_eq!(ota::parse_variant("gap-probe"), Ok(Variant::GapProbe));
     assert_eq!(Variant::GapProbe.firmware(), Firmware::Feeder);

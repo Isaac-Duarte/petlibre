@@ -423,7 +423,11 @@ mod show_faults {
 /// Every boot repeats it, so on a bank 0 (or a bank 1 with nothing to fall
 /// back to) the storm holds at five resets and halts at eight. A halted
 /// boot starts no firmware task, so the halt's hour runs undisturbed. The
-/// task touches nothing but the uptime and the log.
+/// task touches nothing but the uptime and the log. A feed under way at the
+/// stall ends in the reset, as any reset mid-feed does, and resolves
+/// uncertain at the next boot; a store write the service task had between
+/// sectors resumes or recovers as after a power cut, since no lease is
+/// preempted (each masks the tick for its erase).
 #[cfg(feature = "held-stall")]
 mod held_stall {
     use wellfed_sdk::hal::sdk;

@@ -69,7 +69,7 @@ impl IntoResponse for ApiError {
 /// show it and decide again.
 fn stale(settings: Settings) -> Response {
     let mut response = (StatusCode::PRECONDITION_FAILED, Json(settings)).into_response();
-    if let Ok(tag) = HeaderValue::from_str(&crate::routes::etag(settings.generation)) {
+    if let Ok(tag) = HeaderValue::from_str(&crate::routes::feeders::etag(settings.generation)) {
         response.headers_mut().insert(header::ETAG, tag);
     }
     response

@@ -21,10 +21,10 @@ use wellfed_service::{Resume, SessionToken, Stamped, StreamId};
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 
+use super::TAG_FEEDERS;
 use crate::AppState;
 use crate::auth::{self, Auth};
 use crate::error::ApiError;
-use crate::routes::TAG_FEEDERS;
 
 /// How often an open stream checks that its session still holds.
 const SESSION_CHECK: Duration = Duration::from_secs(60);

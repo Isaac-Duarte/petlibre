@@ -11,8 +11,8 @@
 
 mod auth;
 mod error;
+mod extract;
 mod routes;
-mod stream;
 
 pub use auth::Hosts;
 use axum::Router;
@@ -50,14 +50,16 @@ pub(crate) struct AppState {
 struct ApiDoc;
 
 fn router() -> OpenApiRouter<AppState> {
+    use routes::{auth, events, feeders, stream};
+
     let api = OpenApiRouter::new()
-        .routes(routes!(routes::setup_state, routes::setup))
-        .routes(routes!(routes::session, routes::login, routes::logout))
-        .routes(routes!(routes::feeders, routes::adopt))
-        .routes(routes!(routes::feeder))
-        .routes(routes!(routes::settings, routes::put_settings))
-        .routes(routes!(routes::lock))
-        .routes(routes!(routes::events))
+        .routes(routes!(auth::setup_state, auth::setup))
+        .routes(routes!(auth::session, auth::login, auth::logout))
+        .routes(routes!(feeders::feeders, feeders::adopt))
+        .routes(routes!(feeders::feeder))
+        .routes(routes!(feeders::settings, feeders::put_settings))
+        .routes(routes!(feeders::lock))
+        .routes(routes!(events::events))
         .routes(routes!(stream::stream));
     OpenApiRouter::with_openapi(ApiDoc::openapi())
         .routes(routes!(routes::health))

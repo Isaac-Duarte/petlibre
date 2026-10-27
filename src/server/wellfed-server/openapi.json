@@ -260,10 +260,8 @@
             "description": "A UUID; a retry with the same key is answered once",
             "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string",
+              "format": "uuid"
             }
           }
         ],
@@ -389,7 +387,11 @@
             "description": "The generation the change is based on",
             "required": true,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "examples": [
+                "\"7\""
+              ],
+              "pattern": "^\"?[0-9]+\"?$"
             }
           },
           {
@@ -398,10 +400,8 @@
             "description": "A UUID; a retry with the same key is answered once",
             "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string",
+              "format": "uuid"
             }
           }
         ],

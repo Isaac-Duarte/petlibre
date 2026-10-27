@@ -210,7 +210,8 @@ fn a_count_that_lost_its_place_forgets_the_time() {
     assert_eq!(clock::state().reading, None);
     assert_eq!(record(), [0; CARRY_WORDS]);
 
-    // Logged, so a later `empty` carry has its reason.
+    // Logged by the loop's next pass, so a later `empty` carry has its reason.
+    clock::keep();
     let mut text = [0; wellfed_hal::sdk::LOG_TAIL_BYTES];
     let batch = wellfed_hal::sdk::LOG_TAIL
         .read(None, &mut text)

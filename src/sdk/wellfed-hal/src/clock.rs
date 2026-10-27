@@ -39,8 +39,8 @@ struct Kept {
     clock: WallClock,
     count: TickClock,
     kept_at: u32,
-    /// The count lost its place and the clock forgot the time: logged once
-    /// the interrupts are unmasked again.
+    /// The count lost its place and the clock forgot the time: logged by
+    /// the loop's next [`keep`].
     lost: Option<Lost>,
 }
 
@@ -71,24 +71,17 @@ const _: () = assert!(CARRY_WORDS == sdk::TIME_CARRY_WORDS);
 /// Run `change` on the clock at its millisecond count now, with interrupts
 /// masked; it also gets the count at the last store.
 fn update<T>(change: impl FnOnce(&mut WallClock, u32, &mut u32) -> T) -> T {
-    let (result, lost) = {
-        let _guard = IrqGuard::lock();
-        // SAFETY: interrupts are masked, so this is the only reference.
-        let kept = unsafe { &mut *CLOCK.get() };
-        let now = count(kept);
-        let result = change(&mut kept.clock, now, &mut kept.kept_at);
-        (result, kept.lost.take())
-    };
-
-    if let Some(lost) = lost {
-        log_lost(lost);
-    }
-    result
+    let _guard = IrqGuard::lock();
+    // SAFETY: interrupts are masked, so this is the only reference.
+    let kept = unsafe { &mut *CLOCK.get() };
+    let now = count(kept);
+    change(&mut kept.clock, now, &mut kept.kept_at)
 }
 
-/// `PLTIM1 forget reason=count`. Out of line, so its report frame stays
-/// off the stack of every clock reader that `update` is inlined into
-/// (feed submission among them).
+/// `PLTIM1 forget reason=count`, from [`keep`] at the top of the loop's
+/// pass rather than from whichever reader found the count lost: a report
+/// frame there would sit on the deepest stack path (a time view inside a
+/// session's answer).
 #[cold]
 #[inline(never)]
 fn log_lost(lost: Lost) {
@@ -107,8 +100,8 @@ fn log_lost(lost: Lost) {
 /// at the tick count, so early records read close to uptime; a read the
 /// extension refuses starts it again from where it stood and forgets the
 /// time and the record a reset would resume, since how long the count was
-/// lost is unknown (`PLTIM1 forget reason=count`, so a later `empty` carry
-/// has its explanation in the log).
+/// lost is unknown (`PLTIM1 forget reason=count` from the next [`keep`],
+/// so a later `empty` carry has its explanation in the log).
 fn count(kept: &mut Kept) -> u32 {
     let raw = sdk::systimer_ticks();
     if let Some(now) = kept.count.read(raw) {
@@ -211,11 +204,22 @@ pub fn resume(restart: Restart) {
     }
 }
 
-/// Store the clock for a warm reset if the last store is `KEEP_MS` old.
-/// The loop calls it every pass, which also keeps the SysTimer's extension
-/// read well inside its half range (about 18 h).
+/// Store the clock for a warm reset if the last store is `KEEP_MS` old,
+/// and log a count that lost its place since the last pass. The loop
+/// calls it every pass, which also keeps the SysTimer's extension read
+/// well inside its half range (about 18 h).
 pub fn keep() {
-    let due = update(|_, now, kept_at| now.wrapping_sub(*kept_at) >= KEEP_MS);
+    let (due, lost) = {
+        let _guard = IrqGuard::lock();
+        // SAFETY: interrupts are masked, so this is the only reference.
+        let kept = unsafe { &mut *CLOCK.get() };
+        let now = count(kept);
+        (now.wrapping_sub(kept.kept_at) >= KEEP_MS, kept.lost.take())
+    };
+    if let Some(lost) = lost {
+        log_lost(lost);
+    }
+
     if !due {
         return;
     }

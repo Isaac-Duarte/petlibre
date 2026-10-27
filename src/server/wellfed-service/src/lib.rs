@@ -21,9 +21,13 @@
 //!   it. Every write is recorded in the command journal before it is sent,
 //!   so a retry under the same key gets its first answer from the journal,
 //!   however many writes the feeder has seen since.
+//! - **Feeds** are journalled writes answered with the feeder's number for
+//!   the feed, and settled from the feeder's history: its `Fed` event. An
+//!   uncertain feed is never sent again.
 //! - **Live updates** go through the [`Hub`], which the server's event
 //!   stream reads: each feeder's mirror broadcast is forwarded into it,
-//!   and the hub assigns the stream ids.
+//!   with each change to a journal entry, and the hub assigns the stream
+//!   ids.
 //! - **Owner data** is the pets, the foods and the refills the feeders
 //!   do not hold. Each feeder serves one food at a time, with a history of
 //!   when each started, so a past feed's calories use the food it served.
@@ -44,6 +48,7 @@
 mod commands;
 mod error;
 mod feeders;
+mod feeds;
 mod foods;
 mod health;
 mod household;
@@ -205,6 +210,11 @@ pub struct Service {
     /// Each feeder's link as the stream last told it, so a list never
     /// shows a state the stream has not.
     links: Arc<Mutex<HashMap<FeederId, Link>>>,
+    /// How each mirrored feeder's history names the server.
+    fingerprints: Arc<Mutex<HashMap<FeederId, [u8; 4]>>>,
+    /// Held while a feeder's feeds are settled from its history, so its
+    /// watcher and a feed's answer take turns.
+    resolving: Arc<Mutex<HashMap<FeederId, Arc<tokio::sync::Mutex<()>>>>>,
     adopting: Arc<tokio::sync::Mutex<()>>,
     /// Household changes run one at a time, so the stored zone and the
     /// mirror's are always the last change's.
@@ -255,6 +265,8 @@ impl Service {
             mirror,
             releases: Arc::new(releases),
             links: Arc::new(Mutex::new(HashMap::new())),
+            fingerprints: Arc::new(Mutex::new(HashMap::new())),
+            resolving: Arc::new(Mutex::new(HashMap::new())),
             adopting: Arc::new(tokio::sync::Mutex::new(())),
             household: Arc::new(tokio::sync::Mutex::new(())),
             cancel,
@@ -298,6 +310,11 @@ impl Service {
 
     fn links(&self) -> MutexGuard<'_, HashMap<FeederId, Link>> {
         lock(&self.links)
+    }
+
+    /// How the feeder's history names the server, once it is mirrored.
+    fn fingerprint(&self, id: FeederId) -> Option<[u8; 4]> {
+        lock(&self.fingerprints).get(&id).copied()
     }
 }
 

@@ -20,7 +20,7 @@ pub enum Lock {
 }
 
 /// The header a write's key travels in.
-const IDEMPOTENCY_KEY: &str = "Idempotency-Key";
+pub(crate) const IDEMPOTENCY_KEY: &str = "Idempotency-Key";
 
 impl Client {
     /// The adopted feeders, with the server's connection to each.

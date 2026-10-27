@@ -19,7 +19,8 @@ impl Store {
         to: Timestamp,
     ) -> Result<Vec<Projected<Feed>>> {
         let (from, to) = (millis(from), millis(to));
-        let rows = sqlx::query!(
+        let rows = sqlx::query_as!(
+            FeedRow,
             r#"SELECT epoch AS "epoch!", feed AS "feed!", seq AS "seq!", source, client, requested, completed, outcome, reason,
                     at_s, received_ms
              FROM feeds WHERE feeder_id = ? AND received_ms >= ? AND received_ms < ?
@@ -31,23 +32,7 @@ impl Store {
         .fetch_all(&self.reader)
         .await?;
 
-        rows.into_iter()
-            .map(|row| {
-                let value = Feed {
-                    feed: u32::try_from(row.feed).map_err(|_| Error::Corrupt("feed number"))?,
-                    by: source(&row.source, row.client)?,
-                    requested: u8::try_from(row.requested)
-                        .map_err(|_| Error::Corrupt("requested portions"))?,
-                    completed: u8::try_from(row.completed)
-                        .map_err(|_| Error::Corrupt("completed portions"))?,
-                    outcome: FeedOutcome::from_code(&row.outcome)
-                        .ok_or(Error::Corrupt("feed outcome"))?,
-                    reason: FeedReason::from_code(&row.reason)
-                        .ok_or(Error::Corrupt("feed reason"))?,
-                };
-                projected(row.epoch, row.seq, row.at_s, row.received_ms, value)
-            })
-            .collect()
+        rows.into_iter().map(Projected::try_from).collect()
     }
 
     /// The panel lock's changes received in `from..to`.
@@ -176,6 +161,39 @@ impl Store {
                 projected(row.epoch, row.seq, row.at_s, row.received_ms, value)
             })
             .collect()
+    }
+}
+
+/// A `feeds` row as SQLite holds it.
+pub(crate) struct FeedRow {
+    pub(crate) epoch: i64,
+    pub(crate) feed: i64,
+    pub(crate) seq: i64,
+    pub(crate) source: String,
+    pub(crate) client: Option<Vec<u8>>,
+    pub(crate) requested: i64,
+    pub(crate) completed: i64,
+    pub(crate) outcome: String,
+    pub(crate) reason: String,
+    pub(crate) at_s: Option<i64>,
+    pub(crate) received_ms: i64,
+}
+
+impl TryFrom<FeedRow> for Projected<Feed> {
+    type Error = Error;
+
+    fn try_from(row: FeedRow) -> Result<Self> {
+        let value = Feed {
+            feed: u32::try_from(row.feed).map_err(|_| Error::Corrupt("feed number"))?,
+            by: source(&row.source, row.client)?,
+            requested: u8::try_from(row.requested)
+                .map_err(|_| Error::Corrupt("requested portions"))?,
+            completed: u8::try_from(row.completed)
+                .map_err(|_| Error::Corrupt("completed portions"))?,
+            outcome: FeedOutcome::from_code(&row.outcome).ok_or(Error::Corrupt("feed outcome"))?,
+            reason: FeedReason::from_code(&row.reason).ok_or(Error::Corrupt("feed reason"))?,
+        };
+        projected(row.epoch, row.seq, row.at_s, row.received_ms, value)
     }
 }
 

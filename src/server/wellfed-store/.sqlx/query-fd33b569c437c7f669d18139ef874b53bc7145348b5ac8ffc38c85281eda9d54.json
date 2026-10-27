@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO commands\n                 (key, user_id, token_id, feeder_id, kind, body_hash, request_id, boot_count,\n                  history_epoch, history_seq, state, sent_ms, updated_ms)\n             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12) ON CONFLICT (key) DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 12
+    },
+    "nullable": []
+  },
+  "hash": "fd33b569c437c7f669d18139ef874b53bc7145348b5ac8ffc38c85281eda9d54"
+}

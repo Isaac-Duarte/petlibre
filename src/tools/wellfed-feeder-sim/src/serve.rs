@@ -48,6 +48,9 @@ pub enum Control {
     /// Restart, as a power cycle: KM0's trial count and the update-attempt
     /// bit are lost with the backup registers.
     Reboot,
+    /// Hold a feed in flight where it is (`true`), as a motor that stopped
+    /// moving, or let it go on. A restart lets go.
+    StallFeeds(bool),
     /// Stop serving.
     Quit,
 }
@@ -119,6 +122,7 @@ pub async fn serve(
                     wellfed_amebad_sys::fake::reset_hardware();
                     reboot = true;
                 }
+                Some(Control::StallFeeds(stalled)) => booted.sim.stall_feeds(stalled),
                 Some(Control::Quit) => return Ok(()),
                 None => control = None,
             },

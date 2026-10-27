@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT seq, key, user_id AS \"user_id: Uuid\", token_id AS \"token_id: Uuid\",\n                      feeder_id AS \"feeder_id: Uuid\", kind, body_hash, request_id, boot_count, state, outcome, feed, sent_ms, updated_ms\n               FROM commands WHERE key = ?",
+  "query": "SELECT seq, key, user_id AS \"user_id: Uuid\", token_id AS \"token_id: Uuid\",\n                      feeder_id AS \"feeder_id: Uuid\", kind, body_hash, request_id, boot_count,\n                      history_epoch, history_seq, state, outcome, feed, sent_ms, updated_ms\n               FROM commands\n               WHERE feeder_id = ?1 AND kind = ?2\n                 AND (state IN (?3, ?5) OR (state = ?4 AND feed IS NOT NULL)\n                      OR (state = ?6 AND outcome = ?7))\n               ORDER BY seq",
   "describe": {
     "columns": [
       {
@@ -103,8 +103,30 @@
         }
       },
       {
-        "name": "state",
+        "name": "history_epoch",
         "ordinal": 9,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "commands",
+            "name": "history_epoch"
+          }
+        }
+      },
+      {
+        "name": "history_seq",
+        "ordinal": 10,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "commands",
+            "name": "history_seq"
+          }
+        }
+      },
+      {
+        "name": "state",
+        "ordinal": 11,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -115,7 +137,7 @@
       },
       {
         "name": "outcome",
-        "ordinal": 10,
+        "ordinal": 12,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -126,7 +148,7 @@
       },
       {
         "name": "feed",
-        "ordinal": 11,
+        "ordinal": 13,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -137,7 +159,7 @@
       },
       {
         "name": "sent_ms",
-        "ordinal": 12,
+        "ordinal": 14,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -148,7 +170,7 @@
       },
       {
         "name": "updated_ms",
-        "ordinal": 13,
+        "ordinal": 15,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -159,7 +181,7 @@
       }
     ],
     "parameters": {
-      "Right": 1
+      "Right": 7
     },
     "nullable": [
       false,
@@ -171,6 +193,8 @@
       false,
       false,
       true,
+      true,
+      true,
       false,
       true,
       true,
@@ -178,5 +202,5 @@
       false
     ]
   },
-  "hash": "b8387c359a732d02219fce9e3d89e3bcd95fead2f55aab5645a73ee7a97db33d"
+  "hash": "9640f22abc7ab5b6fded34d057f0d4714a1393d3021b082f81b1d96b7c0267c6"
 }

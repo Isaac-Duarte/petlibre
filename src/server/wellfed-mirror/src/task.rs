@@ -31,6 +31,9 @@ pub(crate) struct Handle {
     /// The long lane, for the [`crate::Operation`] holding the turn.
     pub(crate) steps: mpsc::Sender<Command>,
     pub(crate) link: watch::Receiver<Link>,
+    /// The epoch the open session's history counts in; `None` between
+    /// sessions.
+    epoch: watch::Receiver<Option<u32>>,
     /// The long-operation turn: one permit.
     pub(crate) turn: Arc<Semaphore>,
     updates: broadcast::Sender<MirrorEvent>,
@@ -41,6 +44,10 @@ pub(crate) struct Handle {
 impl Handle {
     pub(crate) fn link(&self) -> Link {
         *self.link.borrow()
+    }
+
+    pub(crate) fn epoch(&self) -> Option<u32> {
+        *self.epoch.borrow()
     }
 
     pub(crate) fn subscribe(&self) -> broadcast::Receiver<MirrorEvent> {
@@ -67,6 +74,7 @@ pub(crate) fn spawn(
     let (commands, receiver) = mpsc::channel(COMMANDS);
     let (steps, step_receiver) = mpsc::channel(STEPS);
     let (link, watching) = watch::channel(Link::Offline);
+    let (epoch, epochs) = watch::channel(None);
     let task = Task {
         zone: shared.zone.subscribe(),
         shared,
@@ -77,6 +85,7 @@ pub(crate) fn spawn(
         commands: receiver,
         steps: step_receiver,
         link,
+        epoch,
         updates: updates.clone(),
         cancel: cancel.clone(),
     };
@@ -90,6 +99,7 @@ pub(crate) fn spawn(
         commands,
         steps,
         link: watching,
+        epoch: epochs,
         turn: Arc::new(Semaphore::new(1)),
         updates,
         cancel,
@@ -108,6 +118,7 @@ pub(crate) struct Task {
     /// The household's zone, watched for changes while a session is open.
     pub(crate) zone: watch::Receiver<Option<Arc<Zone>>>,
     link: watch::Sender<Link>,
+    pub(crate) epoch: watch::Sender<Option<u32>>,
     pub(crate) updates: broadcast::Sender<MirrorEvent>,
     pub(crate) cancel: CancellationToken,
 }
@@ -158,6 +169,7 @@ impl Task {
                     Link::Offline
                 }
             };
+            self.epoch.send_replace(None);
             self.set(link);
 
             let wait = match link {

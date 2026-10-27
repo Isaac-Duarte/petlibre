@@ -67,10 +67,6 @@ impl IntoParams for IfMatch {
 /// A write's `Idempotency-Key`, which the route requires: a retry under
 /// the same key is answered once, so a write that must never run twice
 /// cannot be sent without one.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "no route requires a key until the feed route")
-)]
 pub(crate) struct IdempotencyKey(pub(crate) Key);
 
 impl<S: Sync> FromRequestParts<S> for IdempotencyKey {

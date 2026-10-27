@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE commands SET state = ?1, outcome = ?2, feed = COALESCE(?3, feed), updated_ms = ?4\n             WHERE key = ?5\n               AND (state = ?7 OR (state = ?6 AND feed IS NOT NULL)\n                    OR (?8 AND state = ?1 AND outcome = ?9))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 9
+    },
+    "nullable": []
+  },
+  "hash": "fbf0d2e6f932482129e068a082b27ebd51a48f44f2517a73d58a69e39b676159"
+}

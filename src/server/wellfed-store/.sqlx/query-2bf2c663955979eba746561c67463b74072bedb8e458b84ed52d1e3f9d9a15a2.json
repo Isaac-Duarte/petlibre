@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE commands SET state = ?1, outcome = ?2, feed = COALESCE(?3, feed), updated_ms = ?4\n             WHERE key = ?5 AND state != ?6",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": []
+  },
+  "hash": "2bf2c663955979eba746561c67463b74072bedb8e458b84ed52d1e3f9d9a15a2"
+}

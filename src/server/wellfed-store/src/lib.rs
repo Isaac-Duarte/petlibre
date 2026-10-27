@@ -22,6 +22,7 @@
 mod commands;
 mod convert;
 mod feeders;
+mod feeds;
 mod foods;
 mod history;
 mod jobs;

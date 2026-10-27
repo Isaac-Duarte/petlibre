@@ -6,6 +6,7 @@ pub(crate) mod auth;
 pub(crate) mod commands;
 pub(crate) mod events;
 pub(crate) mod feeders;
+pub(crate) mod feeds;
 pub(crate) mod foods;
 pub(crate) mod health;
 pub(crate) mod household;

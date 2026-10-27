@@ -197,8 +197,8 @@ fn an_owner_reads_and_writes_the_feeder() {
             .unwrap();
         assert_eq!(
             feed,
-            Answer::Refused(Refusal::Unavailable),
-            "no feeding owner yet"
+            Answer::Feeding { feed: 1 },
+            "the first feed the journal reserves"
         );
         sim.stop().await;
     });

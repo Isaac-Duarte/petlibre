@@ -24,15 +24,17 @@ impl Service {
     pub(crate) async fn spawn(&self, row: &FeederRow) -> Result<()> {
         let secret = keys::open(&self.shared.config.key, row.id, &row.identity, &row.key)?;
         self.links().insert(row.id, Link::Offline);
-        let updates = self
-            .mirror
-            .start(Feeder {
-                id: row.id,
-                identity: row.identity,
-                secret,
-                address: row.address.clone(),
-            })
-            .await;
+        let feeder = Feeder {
+            id: row.id,
+            identity: row.identity,
+            secret,
+            address: row.address.clone(),
+        };
+        lock(&self.fingerprints).insert(row.id, feeder.fingerprint());
+        let updates = self.mirror.start(feeder).await;
+        if let Some(feeds) = self.mirror.subscribe(row.id) {
+            self.watch_feeds(row.id, feeds);
+        }
 
         let mirror = self.mirror.clone();
         let id = row.id;

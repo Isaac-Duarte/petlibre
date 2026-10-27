@@ -20,15 +20,18 @@
 //!
 //! A key that already names another request is refused and nothing is
 //! sent. The send runs in a task of its own, so the entry reaches its
-//! answer or `unknown` even when the caller stops waiting.
+//! answer or `unknown` even when the caller stops waiting. Every change to
+//! an entry goes on the stream. A feed's entry is settled later from the
+//! feeder's history (`feeds/history.rs`).
 
 use wellfed_api::{
-    Command, CommandKind, CommandOutcome, CommandPage, CommandQuery, CommandState, FeederId, User,
+    Command, CommandKind, CommandOutcome, CommandPage, CommandQuery, CommandState, FeederId,
+    StreamEvent, User,
 };
 use wellfed_formats::canonical::canonical_of;
 use wellfed_mirror::AskError;
 use wellfed_model::{Answer, Op};
-use wellfed_store::{CommandFilter, CommandRow, Journaled, NewCommand};
+use wellfed_store::{CommandFilter, CommandRow, Journaled, NewCommand, Synced};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use tracing::warn;
@@ -146,6 +149,22 @@ impl Service {
             .await?
             .status
             .map(|(status, _)| status.boot_count);
+        // Where the feed's result can start: after the newest event held,
+        // or from the start of the live session's history when none of it
+        // is held yet (a session's replay may still be arriving).
+        let held = self
+            .shared
+            .store
+            .feeder(write.feeder)
+            .await?
+            .and_then(|row| row.synced);
+        let history = match self.mirror.epoch(write.feeder) {
+            Some(live) if held.is_none_or(|held| held.epoch != live) => Some(Synced {
+                epoch: live,
+                seq: 0,
+            }),
+            _ => held,
+        };
 
         let entry = NewCommand {
             key,
@@ -156,6 +175,7 @@ impl Service {
             body_hash,
             request_id: request,
             boot_count,
+            history,
             sent: self.shared.clock.now(),
         };
         let (request, attempt) = match self.shared.store.journal(&entry).await? {
@@ -242,6 +262,7 @@ impl Service {
             Ok(Answer::Refused(refusal)) => CommandOutcome::Refused {
                 refusal: refusal.into(),
             },
+            Ok(Answer::Feeding { feed }) => CommandOutcome::Feeding { feed },
             // An answer that fits no write: what the feeder did is not
             // known from it.
             Ok(_) => {
@@ -263,7 +284,7 @@ impl Service {
             }
         };
         match store.answer_command(&key, &outcome, now).await {
-            Ok(true) => {}
+            Ok(true) => self.published(&key).await,
             Ok(false) => {
                 warn!(key = %Uuid::from_bytes(key), "the feeder answered a write the journal no longer holds open");
             }
@@ -274,13 +295,38 @@ impl Service {
                 return Err(error.into());
             }
         }
+        // The feed's `Fed` event may have been stored before its answer
+        // was: look for it now rather than at the next event, beside the
+        // answer rather than ahead of it.
+        if outcome.feed().is_some() {
+            let service = self.clone();
+            self.tasks
+                .spawn(async move { service.reconcile_best_effort(feeder).await });
+        }
         Ok(outcome)
+    }
+
+    /// Tell the stream that `key`'s entry changed, as it now stands. A
+    /// read that fails is logged: the entry itself is recorded.
+    pub(crate) async fn published(&self, key: &IdempotencyKey) {
+        match self.shared.store.command(key).await {
+            Ok(Some(row)) => self
+                .shared
+                .hub
+                .publish(StreamEvent::Command { command: view(row) }),
+            Ok(None) => {}
+            Err(error) => {
+                warn!(key = %Uuid::from_bytes(*key), %error, "a changed entry was not streamed");
+            }
+        }
     }
 
     /// Mark `key`'s entry unknown. An entry another attempt answered stays
     /// answered; one that is gone is logged.
     async fn unknown(&self, key: &IdempotencyKey, now: jiff::Timestamp) -> Result<()> {
-        if !self.shared.store.command_unknown(key, now).await? {
+        if self.shared.store.command_unknown(key, now).await? {
+            self.published(key).await;
+        } else {
             let state = self.shared.store.command(key).await?.map(|row| row.state);
             if state != Some(CommandState::Answered) {
                 warn!(key = %Uuid::from_bytes(*key), ?state, "an unanswered write's entry was not open");
@@ -312,10 +358,11 @@ const fn kind_code(kind: CommandKind) -> u8 {
         CommandKind::Settings => 1,
         CommandKind::Lock => 2,
         CommandKind::Feed => 3,
+        CommandKind::Cancel => 4,
     }
 }
 
-fn view(row: CommandRow) -> Command {
+pub(crate) fn view(row: CommandRow) -> Command {
     Command {
         key: Uuid::from_bytes(row.key),
         user: row.user,

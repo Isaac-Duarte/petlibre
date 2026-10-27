@@ -264,6 +264,7 @@ fn a_write_left_sent_by_a_crash_is_unknown_at_the_next_start() {
                 body_hash: [0; 32],
                 request_id: [0xcd; 16],
                 boot_count: Some(1),
+                history: None,
                 sent: jiff::Timestamp::UNIX_EPOCH,
             })
             .await

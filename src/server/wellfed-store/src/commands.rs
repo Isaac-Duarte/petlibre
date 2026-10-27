@@ -7,7 +7,7 @@ use wellfed_api::{CommandKind, CommandOutcome, CommandState, FeederId, TokenId, 
 use uuid::Uuid;
 
 use crate::convert::{from_i64, millis, timestamp, to_i64};
-use crate::{Error, Result, Store};
+use crate::{Error, Result, Store, Synced};
 
 /// A write about to be sent.
 pub struct NewCommand {
@@ -22,6 +22,8 @@ pub struct NewCommand {
     /// The device request id it goes out under.
     pub request_id: [u8; 16],
     pub boot_count: Option<u32>,
+    /// The newest event of the feeder's history the server held.
+    pub history: Option<Synced>,
     pub sent: Timestamp,
 }
 
@@ -37,6 +39,9 @@ pub struct CommandRow {
     pub body_hash: [u8; 32],
     pub request_id: [u8; 16],
     pub boot_count: Option<u32>,
+    /// The newest event of the feeder's history the server held when it
+    /// was sent.
+    pub history: Option<Synced>,
     pub state: CommandState,
     pub outcome: Option<CommandOutcome>,
     pub feed: Option<u32>,
@@ -75,13 +80,18 @@ impl Store {
         let state = CommandState::Sent.code();
         let sent = millis(command.sent);
         let token = command.token.map(|token| token.0);
+        let history_epoch = command.history.map(|history| history.epoch);
+        let history_seq = command
+            .history
+            .map(|history| to_i64(history.seq, "event sequence"))
+            .transpose()?;
 
         let mut tx = self.writer.begin().await?;
         let done = sqlx::query!(
             "INSERT INTO commands
-                 (key, user_id, token_id, feeder_id, kind, body_hash, request_id, boot_count, state,
-                  sent_ms, updated_ms)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10) ON CONFLICT (key) DO NOTHING",
+                 (key, user_id, token_id, feeder_id, kind, body_hash, request_id, boot_count,
+                  history_epoch, history_seq, state, sent_ms, updated_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12) ON CONFLICT (key) DO NOTHING",
             key,
             command.user.0,
             token,
@@ -90,6 +100,8 @@ impl Store {
             hash,
             request,
             command.boot_count,
+            history_epoch,
+            history_seq,
             state,
             sent,
         )
@@ -103,7 +115,8 @@ impl Store {
         let found = sqlx::query_as!(
             Raw,
             r#"SELECT seq, key, user_id AS "user_id: Uuid", token_id AS "token_id: Uuid",
-                      feeder_id AS "feeder_id: Uuid", kind, body_hash, request_id, boot_count, state, outcome, feed, sent_ms, updated_ms
+                      feeder_id AS "feeder_id: Uuid", kind, body_hash, request_id, boot_count,
+                      history_epoch, history_seq, state, outcome, feed, sent_ms, updated_ms
                FROM commands WHERE key = ?"#,
             key
         )
@@ -113,9 +126,10 @@ impl Store {
         Ok(Journaled::Existing(Box::new(found.try_into()?)))
     }
 
-    /// Record the feeder's answer. An entry already resolved from the
-    /// history keeps its resolution. Whether an entry changed: `false`
-    /// when there is none under `key`, or it is resolved.
+    /// Record the feeder's answer, and a feed's number from it. An entry
+    /// already resolved from the history keeps its resolution. Whether an
+    /// entry changed: `false` when there is none under `key`, or it is
+    /// resolved.
     pub async fn answer_command(
         &self,
         key: &[u8; 16],
@@ -125,12 +139,14 @@ impl Store {
         let key = key.as_slice();
         let json = serde_json::to_string(outcome).map_err(|e| Error::Json("outcome", e))?;
         let (answered, resolved) = (CommandState::Answered.code(), CommandState::Resolved.code());
+        let feed = outcome.feed();
         let at = millis(at);
         let done = sqlx::query!(
-            "UPDATE commands SET state = ?1, outcome = ?2, updated_ms = ?3
-             WHERE key = ?4 AND state != ?5",
+            "UPDATE commands SET state = ?1, outcome = ?2, feed = COALESCE(?3, feed), updated_ms = ?4
+             WHERE key = ?5 AND state != ?6",
             answered,
             json,
+            feed,
             at,
             key,
             resolved,
@@ -198,7 +214,8 @@ impl Store {
         let found = sqlx::query_as!(
             Raw,
             r#"SELECT seq, key, user_id AS "user_id: Uuid", token_id AS "token_id: Uuid",
-                      feeder_id AS "feeder_id: Uuid", kind, body_hash, request_id, boot_count, state, outcome, feed, sent_ms, updated_ms
+                      feeder_id AS "feeder_id: Uuid", kind, body_hash, request_id, boot_count,
+                      history_epoch, history_seq, state, outcome, feed, sent_ms, updated_ms
                FROM commands WHERE key = ?"#,
             key
         )
@@ -219,7 +236,8 @@ impl Store {
         let rows = sqlx::query_as!(
             Raw,
             r#"SELECT seq, key, user_id AS "user_id: Uuid", token_id AS "token_id: Uuid",
-                      feeder_id AS "feeder_id: Uuid", kind, body_hash, request_id, boot_count, state, outcome, feed, sent_ms, updated_ms
+                      feeder_id AS "feeder_id: Uuid", kind, body_hash, request_id, boot_count,
+                      history_epoch, history_seq, state, outcome, feed, sent_ms, updated_ms
                FROM commands
                WHERE (?1 IS NULL OR user_id = ?1) AND (?2 IS NULL OR feeder_id = ?2)
                  AND (?3 IS NULL OR state = ?3) AND seq > ?4
@@ -238,21 +256,23 @@ impl Store {
 }
 
 /// A row as SQLite holds it.
-struct Raw {
-    seq: i64,
-    key: Vec<u8>,
-    user_id: Uuid,
-    token_id: Option<Uuid>,
-    feeder_id: Uuid,
-    kind: String,
-    body_hash: Vec<u8>,
-    request_id: Vec<u8>,
-    boot_count: Option<i64>,
-    state: String,
-    outcome: Option<String>,
-    feed: Option<i64>,
-    sent_ms: i64,
-    updated_ms: i64,
+pub(crate) struct Raw {
+    pub(crate) seq: i64,
+    pub(crate) key: Vec<u8>,
+    pub(crate) user_id: Uuid,
+    pub(crate) token_id: Option<Uuid>,
+    pub(crate) feeder_id: Uuid,
+    pub(crate) kind: String,
+    pub(crate) body_hash: Vec<u8>,
+    pub(crate) request_id: Vec<u8>,
+    pub(crate) boot_count: Option<i64>,
+    pub(crate) history_epoch: Option<i64>,
+    pub(crate) history_seq: Option<i64>,
+    pub(crate) state: String,
+    pub(crate) outcome: Option<String>,
+    pub(crate) feed: Option<i64>,
+    pub(crate) sent_ms: i64,
+    pub(crate) updated_ms: i64,
 }
 
 impl TryFrom<Raw> for CommandRow {
@@ -287,6 +307,13 @@ impl TryFrom<Raw> for CommandRow {
                 .boot_count
                 .map(|count| small(count, "boot count"))
                 .transpose()?,
+            history: match (raw.history_epoch, raw.history_seq) {
+                (Some(epoch), Some(seq)) => Some(Synced {
+                    epoch: small(epoch, "history epoch")?,
+                    seq: from_i64(seq, "event sequence")?,
+                }),
+                _ => None,
+            },
             state: CommandState::from_code(&raw.state).ok_or(Error::Corrupt("command state"))?,
             outcome,
             feed: raw

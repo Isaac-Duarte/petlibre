@@ -9,6 +9,7 @@ use wellfed_client::api::Invite;
 use wellfed_connect::Connection;
 pub use wellfed_feeder_sim::flash::Flash;
 pub use wellfed_feeder_sim::harness::{Relay, Running};
+pub use wellfed_feeder_sim::serve::Control;
 use wellfed_model::{Answer, ClientRole, Op};
 use wellfed_session::noise::Keypair;
 
@@ -36,6 +37,12 @@ pub async fn start_on(flash: &Rc<Flash>) -> Running {
 /// already knows.
 pub async fn restart(flash: &Rc<Flash>, address: SocketAddr) -> Running {
     Running::start_at(flash, Some(*owner().public()), address).await
+}
+
+/// How many feeds the simulator on `flash` has ever reserved in its feed
+/// journal: the count a test that retries a feed proves is one.
+pub fn feeds(flash: &Rc<Flash>) -> u64 {
+    wellfed_feeder_sim::feeding::reserved(flash).unwrap_or(0)
 }
 
 /// An owner's session with the simulator.

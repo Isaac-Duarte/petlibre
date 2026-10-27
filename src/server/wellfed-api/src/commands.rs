@@ -4,8 +4,13 @@
 //! An entry is found by the `Idempotency-Key` it was sent under. A retry
 //! with the same key reads the entry first: an answered write returns its
 //! recorded outcome without reaching the feeder, and one whose outcome is
-//! unknown is sent again under the same device request id. A key reused
-//! for another request is refused `key_reused`.
+//! unknown is sent again under the same device request id when its kind
+//! allows (a feed never is). A key reused for another request is refused
+//! `key_reused`.
+//!
+//! A feed is answered once the feeder has reserved it (`feeding`, with its
+//! number), and resolved from the feeder's history: its `Fed` event, or,
+//! when the feeder restarted and holds no record of it, `unrecorded`.
 
 use jiff::Timestamp;
 use wellfed_model::Settings;
@@ -13,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
-use crate::{FeederId, FeederRefusal, TokenId, UserId};
+use crate::{FeedOutcome, FeedReason, FeederId, FeederRefusal, TokenId, UserId};
 
 /// What a journalled write asked of the feeder.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
@@ -27,6 +32,8 @@ pub enum CommandKind {
     /// feeder's memory of request ids does not outlive a reboot, so an
     /// uncertain feed is resolved from its history instead.
     Feed,
+    /// Stopping a feed that runs.
+    Cancel,
 }
 
 impl CommandKind {
@@ -36,6 +43,7 @@ impl CommandKind {
             Self::Settings => "settings",
             Self::Lock => "lock",
             Self::Feed => "feed",
+            Self::Cancel => "cancel",
         }
     }
 
@@ -44,6 +52,7 @@ impl CommandKind {
             "settings" => Some(Self::Settings),
             "lock" => Some(Self::Lock),
             "feed" => Some(Self::Feed),
+            "cancel" => Some(Self::Cancel),
             _ => None,
         }
     }
@@ -61,7 +70,9 @@ pub enum CommandState {
     /// No answer came, or the server stopped before one did. The feeder
     /// may have run it: only a retry under the same key may send it again.
     Unknown,
-    /// An uncertain write settled from the feeder's history.
+    /// Settled from the feeder's history: a feed by its `Fed` event, or as
+    /// `unrecorded` once the feeder restarted with no record of it. Final,
+    /// except that a `Fed` event found after `unrecorded` replaces it.
     Resolved,
 }
 
@@ -87,7 +98,7 @@ impl CommandState {
     }
 }
 
-/// What the feeder answered a write.
+/// What the feeder answered a write, or what its history says of it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "result", rename_all = "snake_case")]
 pub enum CommandOutcome {
@@ -98,6 +109,34 @@ pub enum CommandOutcome {
     Settings { settings: Settings },
     /// The feeder refused it; nothing ran.
     Refused { refusal: FeederRefusal },
+    /// The feeder reserved the feed under this number and runs it; its
+    /// result follows as `fed`.
+    Feeding { feed: u32 },
+    /// The feed ended, as its `Fed` event in the feeder's history says.
+    /// An `uncertain` outcome may have dispensed anything up to
+    /// `requested`, and is never retried.
+    Fed {
+        feed: u32,
+        requested: u8,
+        /// The portions the feeder confirmed.
+        completed: u8,
+        outcome: FeedOutcome,
+        reason: FeedReason,
+    },
+    /// The feeder restarted since the feed was sent, and its history holds
+    /// no record of it: it never ran, or its record was lost. Whether food
+    /// was dispensed is not known, and it is never sent again.
+    Unrecorded,
+}
+
+impl CommandOutcome {
+    /// The feeder's number for the feed this outcome names.
+    pub const fn feed(&self) -> Option<u32> {
+        match self {
+            Self::Feeding { feed } | Self::Fed { feed, .. } => Some(*feed),
+            Self::Done | Self::Settings { .. } | Self::Refused { .. } | Self::Unrecorded => None,
+        }
+    }
 }
 
 /// One journalled write.
@@ -114,9 +153,9 @@ pub struct Command {
     pub feeder: FeederId,
     pub kind: CommandKind,
     pub state: CommandState,
-    /// The feeder's answer, once `answered`.
+    /// The feeder's answer once `answered`; its history's once `resolved`.
     pub outcome: Option<CommandOutcome>,
-    /// A feed's number in the feeder's journal.
+    /// A feed's number in the feeder's journal, once it is known.
     pub feed: Option<u32>,
     /// The feeder's boot count when it was sent, as the server last read
     /// it; `None` before the server read the feeder's status.
@@ -148,4 +187,11 @@ pub struct CommandQuery {
     pub after: Option<String>,
     /// At most this many (1-1000, default 100).
     pub limit: Option<u32>,
+}
+
+/// A feed to send.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct FeedRequest {
+    /// Portions to dispense (1-48; the feeder checks its own cap).
+    pub portions: u8,
 }

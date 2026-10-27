@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
 use crate::FeederId;
+use crate::commands::Command;
 use crate::events::{FeederEvent, Gap};
 use crate::feeders::Connection;
 
@@ -32,6 +33,12 @@ pub enum StreamEvent {
     Connection {
         feeder: FeederId,
         connection: Connection,
+    },
+    /// A journalled write changed: answered, unknown, or resolved from the
+    /// feeder's history (a feed's result). Each user is sent their own
+    /// writes; an owner, everyone's.
+    Command {
+        command: Command,
     },
     /// The stream cannot resume from the client's `Last-Event-ID`:
     /// refetch what it shows.

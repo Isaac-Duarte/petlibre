@@ -4,6 +4,7 @@
 //! a test's identities and invite secrets repeat from run to run.
 
 use std::cell::{Cell, RefCell};
+use std::future::Future;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -147,11 +148,14 @@ impl Running {
 /// A relay in front of a simulator that can stall: while paused it stops
 /// moving bytes either way but keeps both sockets open, as a feeder that
 /// lost power does (no reset reaches the client). Resuming delivers what
-/// waited, in order.
+/// waited, in order. It can also hold back only what the feeder sends (an
+/// answer lost on its way back), and cut every connection it carries.
 #[derive(Debug)]
 pub struct Relay {
     pub address: SocketAddr,
-    paused: watch::Sender<bool>,
+    to_feeder: watch::Sender<bool>,
+    to_client: watch::Sender<bool>,
+    cut: watch::Sender<u64>,
 }
 
 impl Relay {
@@ -162,7 +166,9 @@ impl Relay {
         let address = listener
             .local_addr()
             .expect("a bound listener has an address");
-        let (paused, watching) = watch::channel(false);
+        let (to_feeder, feeder_paused) = watch::channel(false);
+        let (to_client, client_paused) = watch::channel(false);
+        let (cut, cuts) = watch::channel(0);
         tokio::spawn(async move {
             while let Ok((client, _)) = listener.accept().await {
                 let Ok(feeder) = TcpStream::connect(target).await else {
@@ -170,19 +176,53 @@ impl Relay {
                 };
                 let (client_in, client_out) = client.into_split();
                 let (feeder_in, feeder_out) = feeder.into_split();
-                tokio::spawn(relay(client_in, feeder_out, watching.clone()));
-                tokio::spawn(relay(feeder_in, client_out, watching.clone()));
+                let forward = relay(client_in, feeder_out, feeder_paused.clone());
+                let back = relay(feeder_in, client_out, client_paused.clone());
+                // Cuts from now on end this connection.
+                let mut this = cuts.clone();
+                this.mark_unchanged();
+                tokio::spawn(until_cut(forward, this.clone()));
+                tokio::spawn(until_cut(back, this));
             }
         });
-        Self { address, paused }
+        Self {
+            address,
+            to_feeder,
+            to_client,
+            cut,
+        }
     }
 
     pub fn pause(&self) {
-        self.paused.send_replace(true);
+        self.to_feeder.send_replace(true);
+        self.to_client.send_replace(true);
     }
 
     pub fn resume(&self) {
-        self.paused.send_replace(false);
+        self.to_feeder.send_replace(false);
+        self.to_client.send_replace(false);
+    }
+
+    /// Deliver what the client sends, but hold back what the feeder sends
+    /// until [`Self::resume`].
+    pub fn hold_answers(&self) {
+        self.to_client.send_replace(true);
+    }
+
+    /// Close every connection the relay carries now, dropping what it held
+    /// back; later connections pass as before.
+    pub fn cut(&self) {
+        self.cut.send_modify(|cuts| *cuts += 1);
+    }
+}
+
+/// Run `copy` until the relay's connections are cut. A cut wins over
+/// bytes waiting to be copied, so what it held back is dropped.
+async fn until_cut(copy: impl Future<Output = ()>, mut cuts: watch::Receiver<u64>) {
+    tokio::select! {
+        biased;
+        _ = cuts.changed() => {}
+        () = copy => {}
     }
 }
 

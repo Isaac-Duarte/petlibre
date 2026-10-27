@@ -21,7 +21,9 @@ enum Resend {
 /// cannot be journalled without choosing one.
 const fn resend(kind: CommandKind) -> Resend {
     match kind {
-        CommandKind::Settings | CommandKind::Lock => Resend::SameId,
+        // A cancel names its feed: run again, it stops nothing new, and
+        // once the feed has ended it is refused `NotFound`.
+        CommandKind::Settings | CommandKind::Lock | CommandKind::Cancel => Resend::SameId,
         // The feeder's memory of a feed's id ends at a reboot.
         CommandKind::Feed => Resend::Never,
     }
@@ -76,6 +78,7 @@ mod tests {
             body_hash: [3; 32],
             request_id: [4; 16],
             boot_count: Some(5),
+            history: None,
             state,
             outcome,
             feed: None,
@@ -99,7 +102,13 @@ mod tests {
         let refused = CommandOutcome::Refused {
             refusal: FeederRefusal::Busy,
         };
-        for kind in [CommandKind::Settings, CommandKind::Lock, CommandKind::Feed] {
+        let every = [
+            CommandKind::Settings,
+            CommandKind::Lock,
+            CommandKind::Feed,
+            CommandKind::Cancel,
+        ];
+        for kind in every {
             let answered = entry(kind, CommandState::Answered, Some(refused.clone()));
             assert_eq!(retry(&answered), Retry::Replay(refused.clone()), "{kind:?}");
             let resolved = entry(kind, CommandState::Resolved, Some(CommandOutcome::Done));
@@ -108,7 +117,11 @@ mod tests {
             assert_eq!(retry(&in_flight), Retry::Unknown, "{kind:?}");
         }
 
-        for kind in [CommandKind::Settings, CommandKind::Lock] {
+        for kind in [
+            CommandKind::Settings,
+            CommandKind::Lock,
+            CommandKind::Cancel,
+        ] {
             let unknown = entry(kind, CommandState::Unknown, None);
             assert_eq!(retry(&unknown), Retry::Resend([4; 16]), "{kind:?}");
         }

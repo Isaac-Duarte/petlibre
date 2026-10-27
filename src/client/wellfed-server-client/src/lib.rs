@@ -25,6 +25,7 @@ mod auth;
 mod commands;
 mod error;
 mod feeders;
+mod feeds;
 mod foods;
 mod health;
 mod household;

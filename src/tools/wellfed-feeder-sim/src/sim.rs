@@ -25,7 +25,7 @@ use wellfed_core::ota::{self, CONFIRM_LEN};
 use wellfed_core::store::slot::SlotIo;
 use wellfed_core::store::update::{State, UpdateStore};
 use wellfed_device_api::mailbox::KeyResult;
-use wellfed_feeder::feeder::{self, Feeder, NoFeeds};
+use wellfed_feeder::feeder::{self, Feeder};
 use wellfed_feeder::panel;
 use wellfed_hal::ota::mailbox;
 use wellfed_hal::ota::update::{self as update, Floor, Update};
@@ -34,6 +34,7 @@ use wellfed_session::noise::Keypair;
 use tokio::net::{TcpStream, UdpSocket};
 
 use crate::banks::{Banks, Boot, Bus, Trial};
+use crate::feeding::SimFeeds;
 use crate::flash::{Flash, Region};
 use crate::platform::{DeviceError, Random, SimPlatform};
 
@@ -99,6 +100,8 @@ impl fmt::Display for Record {
 
 pub struct Sim {
     feeder: Box<Feeder<SimPlatform>>,
+    /// The feeding owner, stepped before each pass as the firmware's is.
+    feeds: SimFeeds,
     booted: bool,
     banks: Rc<RefCell<Banks>>,
     bank: u8,
@@ -154,6 +157,7 @@ impl Sim {
         platform.attach_banks(banks);
         Ok(Self {
             feeder: Box::new(Feeder::new(platform)),
+            feeds: SimFeeds::open(flash),
             booted: false,
             banks: Rc::clone(banks),
             bank,
@@ -207,6 +211,13 @@ impl Sim {
         self.platform().gesture_in(gesture);
     }
 
+    /// Hold a feed in flight where it is, or let it go on: a motor that
+    /// stopped moving, for a test to act while a feed runs. A restart
+    /// lets go.
+    pub fn stall_feeds(&mut self, stalled: bool) {
+        self.feeds.stall(stalled);
+    }
+
     /// Whether the serve loop should accept connections.
     pub(crate) fn listening(&self) -> bool {
         self.feeder.platform().listening()
@@ -237,9 +248,14 @@ impl Sim {
             record(self.boot);
         }
 
+        let (fed, feed_delay) = self.feeds.step(now_ms);
+        if let Some(body) = fed {
+            self.feeder.record_outcome(now_ms, body);
+        }
         let delay = self
             .feeder
-            .pass(now_ms, &mut NoFeeds, |r| record(Record::Feeder(r)));
+            .pass(now_ms, &mut self.feeds, |r| record(Record::Feeder(r)));
+        let delay = feed_delay.map_or(delay, |feed| delay.min(feed));
         if let Some(result) = self.platform().write() {
             record(Record::Keys(result));
         }

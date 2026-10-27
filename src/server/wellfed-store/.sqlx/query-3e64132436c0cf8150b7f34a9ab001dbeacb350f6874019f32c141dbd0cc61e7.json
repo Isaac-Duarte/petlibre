@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT EXISTS (\n                   SELECT 1 FROM commands\n                   WHERE feeder_id = ?1 AND kind = ?2 AND feed = ?3\n                     AND (history_epoch IS NULL OR history_epoch = ?4)\n               ) AS \"found: bool\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "found: bool",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "3e64132436c0cf8150b7f34a9ab001dbeacb350f6874019f32c141dbd0cc61e7"
+}

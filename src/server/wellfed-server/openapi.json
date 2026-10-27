@@ -367,6 +367,226 @@
         }
       }
     },
+    "/api/v1/feeders/{id}/feed": {
+      "post": {
+        "tags": [
+          "feeders"
+        ],
+        "summary": "Feed now. Answered once the feeder has reserved the feed: the journal\nentry, with the feeder's number for it in `feed`. Its result arrives on\nthe stream and at `GET /commands/{key}`; a retry under the same key\nreturns the entry as it stands and never feeds again.",
+        "operationId": "feed",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/FeederId"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "A UUID; a retry with the same key is answered once",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeedRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Command"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid: a malformed body, or a missing or malformed Idempotency-Key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden: a viewer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "feeder_refused: nothing ran; final for this key, so a new feed needs a new key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "key_reused: the key names another request; nothing was sent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "feeder_offline: nothing was sent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "outcome_unknown: never sent again; its result is read at GET /commands/{key}",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/feeders/{id}/feeds/{feed}/cancel": {
+      "post": {
+        "tags": [
+          "feeders"
+        ],
+        "summary": "Stop the feed with this number if it still runs. Its result is still\nits `Fed` event, `cancelled`, with the portions it gave. A retry of a\ncancel whose outcome was unknown may be refused `not_found`: the feed\nhas ended, perhaps by the first attempt, and its `Fed` event says how.",
+        "operationId": "cancel",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/FeederId"
+            }
+          },
+          {
+            "name": "feed",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "A UUID; a retry with the same key is answered once",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "400": {
+            "description": "invalid: a malformed Idempotency-Key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden: a viewer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "feeder_refused: not_found once the feed has ended",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "feeder_offline",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "outcome_unknown: retry with the same key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/feeders/{id}/food": {
       "get": {
         "tags": [
@@ -2345,7 +2565,7 @@
         "tags": [
           "feeders"
         ],
-        "summary": "Live updates for every feeder: events, gaps, connection changes, and\nthe sample metrics asked for.",
+        "summary": "Live updates for every feeder: events, gaps, connection changes, the\nsample metrics asked for, and changes to the caller's journal entries\n(everyone's for an owner), a feed's result among them.",
         "operationId": "stream",
         "parameters": [
           {
@@ -2972,7 +3192,7 @@
               "null"
             ],
             "format": "int32",
-            "description": "A feed's number in the feeder's journal.",
+            "description": "A feed's number in the feeder's journal, once it is known.",
             "minimum": 0
           },
           "feeder": {
@@ -2990,7 +3210,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/CommandOutcome",
-                "description": "The feeder's answer, once `answered`."
+                "description": "The feeder's answer once `answered`; its history's once `resolved`."
               },
               {
                 "type": "null"
@@ -3033,7 +3253,8 @@
         "enum": [
           "settings",
           "lock",
-          "feed"
+          "feed",
+          "cancel"
         ]
       },
       "CommandOutcome": {
@@ -3090,9 +3311,87 @@
                 ]
               }
             }
+          },
+          {
+            "type": "object",
+            "description": "The feeder reserved the feed under this number and runs it; its\nresult follows as `fed`.",
+            "required": [
+              "feed",
+              "result"
+            ],
+            "properties": {
+              "feed": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "result": {
+                "type": "string",
+                "enum": [
+                  "feeding"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The feed ended, as its `Fed` event in the feeder's history says.\nAn `uncertain` outcome may have dispensed anything up to\n`requested`, and is never retried.",
+            "required": [
+              "feed",
+              "requested",
+              "completed",
+              "outcome",
+              "reason",
+              "result"
+            ],
+            "properties": {
+              "completed": {
+                "type": "integer",
+                "format": "int32",
+                "description": "The portions the feeder confirmed.",
+                "minimum": 0
+              },
+              "feed": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "outcome": {
+                "$ref": "#/components/schemas/FeedOutcome"
+              },
+              "reason": {
+                "$ref": "#/components/schemas/FeedReason"
+              },
+              "requested": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "result": {
+                "type": "string",
+                "enum": [
+                  "fed"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The feeder restarted since the feed was sent, and its history holds\nno record of it: it never ran, or its record was lost. Whether food\nwas dispensed is not known, and it is never sent again.",
+            "required": [
+              "result"
+            ],
+            "properties": {
+              "result": {
+                "type": "string",
+                "enum": [
+                  "unrecorded"
+                ]
+              }
+            }
           }
         ],
-        "description": "What the feeder answered a write."
+        "description": "What the feeder answered a write, or what its history says of it."
       },
       "CommandPage": {
         "type": "object",
@@ -3579,6 +3878,21 @@
           "feedback_stream",
           "output"
         ]
+      },
+      "FeedRequest": {
+        "type": "object",
+        "description": "A feed to send.",
+        "required": [
+          "portions"
+        ],
+        "properties": {
+          "portions": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Portions to dispense (1-48; the feeder checks its own cap).",
+            "minimum": 0
+          }
+        }
       },
       "Feeder": {
         "type": "object",
@@ -5412,6 +5726,25 @@
           },
           {
             "type": "object",
+            "description": "A journalled write changed: answered, unknown, or resolved from the\nfeeder's history (a feed's result). Each user is sent their own\nwrites; an owner, everyone's.",
+            "required": [
+              "command",
+              "type"
+            ],
+            "properties": {
+              "command": {
+                "$ref": "#/components/schemas/Command"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "command"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
             "description": "The stream cannot resume from the client's `Last-Event-ID`:\nrefetch what it shows.",
             "required": [
               "type"
@@ -5634,7 +5967,7 @@
     },
     {
       "name": "feeders",
-      "description": "Adopted feeders, their settings, lock and history"
+      "description": "Adopted feeders, their settings, lock, feeds and history"
     },
     {
       "name": "health",

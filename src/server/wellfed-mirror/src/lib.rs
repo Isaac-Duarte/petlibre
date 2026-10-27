@@ -43,6 +43,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use wellfed_api::{Connection as Link, FeederEvent, FeederId, FeederSample, Gap};
+use wellfed_session::noise::Keypair;
 use wellfed_store::Store;
 use tokio::sync::{broadcast, watch};
 use tokio_util::sync::CancellationToken;
@@ -115,6 +116,15 @@ impl std::fmt::Debug for Feeder {
             .field("id", &self.id)
             .field("address", &self.address)
             .finish_non_exhaustive()
+    }
+}
+
+impl Feeder {
+    /// How the feeder's history names the server (`Source::Client`): the
+    /// first 4 bytes of the server's public key on it.
+    pub fn fingerprint(&self) -> [u8; 4] {
+        let public = *Keypair::from_secret(self.secret).public();
+        [public[0], public[1], public[2], public[3]]
     }
 }
 
@@ -241,6 +251,13 @@ impl Mirror {
     /// The feeder's session state, or `None` when it is not mirrored.
     pub fn link(&self, id: FeederId) -> Option<Link> {
         self.handles().get(&id).map(task::Handle::link)
+    }
+
+    /// The epoch the feeder's open session counts its history in, or
+    /// `None` while it has none: what the newest event of its status
+    /// counts in.
+    pub fn epoch(&self, id: FeederId) -> Option<u32> {
+        self.handles().get(&id).and_then(task::Handle::epoch)
     }
 
     /// Follow a feeder's updates from now on.

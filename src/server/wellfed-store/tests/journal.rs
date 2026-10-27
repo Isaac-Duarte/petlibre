@@ -4,7 +4,8 @@ use jiff::Timestamp;
 use wellfed_api::{
     ClientRole, CommandKind, CommandOutcome, CommandState, FeederId, FeederRefusal, UserId,
 };
-use wellfed_store::{CommandFilter, Journaled, NewCommand, NewFeeder, SealedKey, Store};
+use wellfed_api::{FeedOutcome, FeedReason};
+use wellfed_store::{CommandFilter, Journaled, NewCommand, NewFeeder, SealedKey, Store, Synced};
 use tempfile::TempDir;
 use uuid::Uuid;
 
@@ -46,7 +47,15 @@ fn command(key: u8, feeder: FeederId) -> NewCommand {
         body_hash: [key; 32],
         request_id: [key ^ 0xff; 16],
         boot_count: Some(3),
+        history: Some(Synced { epoch: 7, seq: 9 }),
         sent: at(10),
+    }
+}
+
+fn feed(key: u8, feeder: FeederId) -> NewCommand {
+    NewCommand {
+        kind: CommandKind::Feed,
+        ..command(key, feeder)
     }
 }
 
@@ -164,4 +173,107 @@ async fn a_start_marks_what_was_left_sent_unknown() {
         .unwrap();
     assert_eq!(rest.len(), 1);
     assert_eq!(rest[0].key, [3; 16]);
+}
+
+/// A feed's number comes with its answer; the feeds still open to the
+/// history are those in flight, unknown, answered with a number or
+/// resolved `unrecorded`; and only a `Fed` resolution replaces
+/// `unrecorded`, never the other way.
+#[tokio::test]
+async fn feeds_open_to_the_history_and_their_resolution() {
+    let (_dir, store, feeder) = fresh().await;
+    for key in 1..=5 {
+        store.journal(&feed(key, feeder)).await.unwrap();
+    }
+    store.journal(&command(6, feeder)).await.unwrap();
+
+    let feeding = CommandOutcome::Feeding { feed: 4 };
+    assert!(
+        store
+            .answer_command(&[1; 16], &feeding, at(11))
+            .await
+            .unwrap()
+    );
+    let refused = CommandOutcome::Refused {
+        refusal: FeederRefusal::Busy,
+    };
+    assert!(
+        store
+            .answer_command(&[2; 16], &refused, at(11))
+            .await
+            .unwrap()
+    );
+    assert!(store.command_unknown(&[3; 16], at(11)).await.unwrap());
+    assert!(store.command_unknown(&[4; 16], at(11)).await.unwrap());
+
+    let entry = store.command(&[1; 16]).await.unwrap().unwrap();
+    assert_eq!(entry.feed, Some(4));
+    assert_eq!(entry.history, Some(Synced { epoch: 7, seq: 9 }));
+    assert!(store.feed_claimed(feeder, 7, 4).await.unwrap());
+    assert!(!store.feed_claimed(feeder, 7, 5).await.unwrap());
+    assert!(
+        !store.feed_claimed(feeder, 8, 4).await.unwrap(),
+        "another epoch's feed 4 is another feed"
+    );
+
+    let open = |rows: Vec<wellfed_store::CommandRow>| -> Vec<u8> {
+        rows.iter().map(|row| row.key[0]).collect()
+    };
+    // The refusal is final, and the lock is no feed; 5 is still in flight.
+    assert_eq!(open(store.open_feeds(feeder).await.unwrap()), [1, 3, 4, 5]);
+
+    let fed_as = |feed| CommandOutcome::Fed {
+        feed,
+        requested: 1,
+        completed: 1,
+        outcome: FeedOutcome::Done,
+        reason: FeedReason::Done,
+    };
+    let fed = fed_as(5);
+    assert!(
+        !store.resolve_command(&[5; 16], &fed, at(12)).await.unwrap(),
+        "in flight"
+    );
+    assert!(
+        !store.resolve_command(&[2; 16], &fed, at(12)).await.unwrap(),
+        "refused"
+    );
+    assert!(store.resolve_command(&[3; 16], &fed, at(12)).await.unwrap());
+    let unrecorded = CommandOutcome::Unrecorded;
+    assert!(
+        store
+            .resolve_command(&[4; 16], &unrecorded, at(12))
+            .await
+            .unwrap()
+    );
+    assert!(
+        !store
+            .resolve_command(&[3; 16], &unrecorded, at(13))
+            .await
+            .unwrap()
+    );
+    assert_eq!(open(store.open_feeds(feeder).await.unwrap()), [1, 4, 5]);
+
+    let later = fed_as(6);
+    assert!(
+        store
+            .resolve_command(&[4; 16], &later, at(14))
+            .await
+            .unwrap()
+    );
+    let entry = store.command(&[4; 16]).await.unwrap().unwrap();
+    assert_eq!((entry.state, entry.feed), (CommandState::Resolved, Some(6)));
+    assert_eq!(entry.outcome, Some(later));
+    assert!(
+        !store.resolve_command(&[4; 16], &fed, at(15)).await.unwrap(),
+        "final"
+    );
+    assert!(
+        !store
+            .answer_command(&[3; 16], &feeding, at(15))
+            .await
+            .unwrap(),
+        "an answer never replaces a resolution"
+    );
+    assert_eq!(open(store.open_feeds(feeder).await.unwrap()), [1, 5]);
 }

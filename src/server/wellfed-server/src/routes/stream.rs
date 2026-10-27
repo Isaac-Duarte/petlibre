@@ -17,8 +17,8 @@ use axum::http::HeaderMap;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum_extra::extract::WithRejection;
 use futures_util::{Stream, StreamExt, stream};
-use wellfed_api::{ErrorCode, MetricKind, Problem, StreamEvent, StreamQuery};
-use wellfed_service::{Resume, Stamped, StreamId};
+use wellfed_api::{ErrorCode, MetricKind, Problem, StreamEvent, StreamQuery, User};
+use wellfed_service::{Permission, Resume, Stamped, StreamId, can};
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 
@@ -30,8 +30,9 @@ use crate::error::ApiError;
 /// How often an open stream checks that its session or token still holds.
 const SESSION_CHECK: Duration = Duration::from_secs(60);
 
-/// Live updates for every feeder: events, gaps, connection changes, and
-/// the sample metrics asked for.
+/// Live updates for every feeder: events, gaps, connection changes, the
+/// sample metrics asked for, and changes to the caller's journal entries
+/// (everyone's for an owner), a feed's result among them.
 #[utoipa::path(
     get,
     path = "/stream",
@@ -48,7 +49,7 @@ const SESSION_CHECK: Duration = Duration::from_secs(60);
 )]
 pub(crate) async fn stream(
     State(state): State<AppState>,
-    _: Allowed<need::Read>,
+    Allowed(caller, _): Allowed<need::Read>,
     headers: HeaderMap,
     WithRejection(Query(query), _): WithRejection<Query<StreamQuery>, ApiError>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ApiError> {
@@ -64,10 +65,7 @@ pub(crate) async fn stream(
     };
     let subscription = state.service.hub().subscribe(last);
 
-    let wanted = move |event: &StreamEvent| match event {
-        StreamEvent::Sample { sample, .. } => metrics.contains(&sample.value.metric()),
-        _ => true,
-    };
+    let wanted = move |event: &StreamEvent| shown(&caller.user, &metrics, event);
     let first: Vec<_> = match subscription.resume {
         Resume::Replay(missed) => missed
             .into_iter()
@@ -109,6 +107,22 @@ async fn session_ended(state: AppState, credential: Option<Credential>) {
     }
 }
 
+/// Whether `user`'s stream carries `event`: a sample only of the metrics
+/// asked for, and a journal entry as `GET /commands` shows it, a member's
+/// own only.
+fn shown(user: &User, metrics: &[MetricKind], event: &StreamEvent) -> bool {
+    match event {
+        StreamEvent::Sample { sample, .. } => metrics.contains(&sample.value.metric()),
+        StreamEvent::Command { command } => {
+            can(user.role, Permission::AllHistory) || command.user == user.id
+        }
+        StreamEvent::Event { .. }
+        | StreamEvent::Gap { .. }
+        | StreamEvent::Connection { .. }
+        | StreamEvent::Resync => true,
+    }
+}
+
 /// The metrics a `samples` list names.
 fn metrics(list: Option<&str>) -> Result<Vec<MetricKind>, ApiError> {
     let Some(list) = list else {
@@ -146,7 +160,52 @@ fn encode(event: &StreamEvent) -> Event {
 
 #[cfg(test)]
 mod tests {
+    use jiff::Timestamp;
+    use wellfed_api::{Command, CommandKind, CommandState, FeederId, Role, UserId};
+    use uuid::Uuid;
+
     use super::*;
+
+    fn user(n: u128, role: Role) -> User {
+        User {
+            id: UserId(Uuid::from_u128(n)),
+            name: format!("user {n}"),
+            role,
+            expires: None,
+        }
+    }
+
+    #[test]
+    fn a_member_is_streamed_their_own_journal_entries_and_an_owner_everyones() {
+        let entry = |by: &User| StreamEvent::Command {
+            command: Command {
+                key: Uuid::from_u128(9),
+                user: by.id,
+                token: None,
+                feeder: FeederId(Uuid::from_u128(3)),
+                kind: CommandKind::Feed,
+                state: CommandState::Resolved,
+                outcome: None,
+                feed: Some(1),
+                boot_count: None,
+                sent: Timestamp::UNIX_EPOCH,
+                updated: Timestamp::UNIX_EPOCH,
+            },
+        };
+        let viewer = user(4, Role::Viewer);
+        assert!(!shown(&viewer, &[], &entry(&user(2, Role::Member))));
+        let (owner, member, other) = (
+            user(1, Role::Owner),
+            user(2, Role::Member),
+            user(3, Role::Member),
+        );
+
+        assert!(shown(&owner, &[], &entry(&member)));
+        assert!(shown(&member, &[], &entry(&member)));
+        assert!(!shown(&other, &[], &entry(&member)));
+        assert!(!shown(&member, &[], &entry(&owner)));
+        assert!(shown(&member, &[], &StreamEvent::Resync));
+    }
 
     #[test]
     fn a_sample_list_names_known_metrics_only() {

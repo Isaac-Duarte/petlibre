@@ -129,6 +129,9 @@ impl Service {
                 refusal: FeederRefusal::Stale,
             } => Err(CommandError::Stale(self.read_settings(id).await?).into()),
             CommandOutcome::Refused { refusal } => Err(CommandError::Refused(refusal).into()),
+            CommandOutcome::Feeding { .. }
+            | CommandOutcome::Fed { .. }
+            | CommandOutcome::Unrecorded => Err(CommandError::Unexpected.into()),
         }
     }
 
@@ -155,7 +158,10 @@ impl Service {
         match recorded.outcome {
             CommandOutcome::Done => Ok(()),
             CommandOutcome::Refused { refusal } => Err(CommandError::Refused(refusal).into()),
-            CommandOutcome::Settings { .. } => Err(CommandError::Unexpected.into()),
+            CommandOutcome::Settings { .. }
+            | CommandOutcome::Feeding { .. }
+            | CommandOutcome::Fed { .. }
+            | CommandOutcome::Unrecorded => Err(CommandError::Unexpected.into()),
         }
     }
 

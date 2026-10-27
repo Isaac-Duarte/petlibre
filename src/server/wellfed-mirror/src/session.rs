@@ -143,6 +143,7 @@ impl Task {
             seq: synced.seq,
         });
         let resume = connection.subscribe(from, true).await.map_err(End::Lost)?;
+        self.epoch.send_replace(Some(connection.epoch()));
         if resume == Resume::Restarted {
             warn!(
                 epoch = connection.epoch(),

@@ -543,10 +543,10 @@ impl Platform for SimPlatform {
     }
 
     fn capabilities(&self) -> Capabilities {
-        // No motor: the server refuses feeds before they reach the owner,
-        // and the status says why (`Unserved`). It records no trace either,
-        // but serves the ones its storage ring holds.
-        Capabilities::UPDATE
+        // No motor, but a feeding owner on the feed journal (`feeding`). It
+        // records no trace, but serves the ones its storage ring holds.
+        Capabilities::FEED
+            .union(Capabilities::UPDATE)
             .union(Capabilities::READINESS)
             .union(Capabilities::TIME)
             .union(Capabilities::LOG)

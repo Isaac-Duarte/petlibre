@@ -155,9 +155,14 @@ pub enum Owner {
         stopped: bool,
     },
     /// A feed was handed to the owner, whether or not it took it
-    /// (`submit=`); the bench waits on the record, not the answer.
+    /// (`submit=`); the bench waits on the record, not the answer. A
+    /// refused submission names the next id without consuming it, so the
+    /// next feed it takes logs the same id: only an `accepted` one is a
+    /// feed.
     Submitted {
         id: u64,
+        /// `submit=0`: the owner queued it.
+        accepted: bool,
     },
     /// A feed was refused before the owner saw it.
     Held,
@@ -392,6 +397,9 @@ impl<'a> Record<'a> {
             "feed" if self.field("held").is_some() => Owner::Held,
             "feed" => Owner::Submitted {
                 id: self.number("id")?,
+                // The owner's `SubmitResult::Enqueued`, which this crate
+                // cannot name.
+                accepted: self.number::<u32>("submit")? == 0,
             },
             "fed" => Owner::Fed {
                 id: self.number("id")?,

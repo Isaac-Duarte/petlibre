@@ -120,6 +120,13 @@ enum Server {
     StockTrial,
 }
 
+/// Whether tearing the rig down cuts relay 1 ([`Rig::arm_kill`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Armed {
+    On,
+    Off,
+}
+
 /// The state to put the feeder's hotspot connection in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Hotspot {
@@ -182,6 +189,10 @@ trait Rig {
     /// run began: how a halted unattended run ends, with relay 1 as the
     /// kill switch.
     fn kill(&mut self) -> Result<()>;
+    /// While `On`, tearing the rig down cuts relay 1 whatever the run began
+    /// with: an unattended run that ends any way but cleanly, a host panic
+    /// unwinding through it included, leaves the feeder unpowered.
+    fn arm_kill(&mut self, _armed: Armed) {}
     /// UART bytes received since the last call.
     fn uart(&mut self) -> Result<Vec<u8>>;
     /// An interruptible wait.

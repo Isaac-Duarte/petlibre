@@ -605,10 +605,20 @@ impl Feeder {
                 Answer::Done { generation: None }
             }
             Ask::Feed { .. } if self.feeding().is_some() => Answer::Refused(Refusal::Busy),
-            Ask::Feed { .. } if self.faulted => Answer::Refused(Refusal::Fault),
+            Ask::Feed { portions } if self.faulted => {
+                // As the firmware logs it: the next id, refused, not consumed.
+                let id = self.next_feed;
+                self.actions.push(format!("refused feed {id}"));
+                self.line(
+                    0.1,
+                    &format!("PLOWN1 feed id={id} portions={portions} submit=5"),
+                );
+                Answer::Refused(Refusal::Fault)
+            }
             Ask::Reboot if self.feeding().is_some() => Answer::Refused(Refusal::Busy),
             Ask::Reboot => {
-                self.at(1.0, Event::Restart(ResetCause::Software));
+                // The firmware restarts by letting its watchdog lapse.
+                self.at(1.0, Event::Restart(ResetCause::Watchdog));
                 Answer::Done { generation: None }
             }
             Ask::GetTime => Answer::Time(Box::new(self.time())),
@@ -1164,8 +1174,11 @@ fn a_sustained_run_feeds_through_every_fault_and_ends_on_the_baseline() {
     let noted = |text: &str| feeder.notes.iter().filter(|n| n.contains(text)).count();
     assert_eq!(noted("Cutting the supply with feed"), 2);
     assert_eq!(noted("reserved, not yet driving"), 1);
-    assert_eq!(noted("passed:"), 8, "{:#?}", feeder.notes);
+    assert_eq!(noted("passed in"), 8, "{:#?}", feeder.notes);
     assert!(feeder.actions.iter().any(|a| a == "ask reboot"));
+    // The faulted owner logged a refused submission under the id the next
+    // feed took, and the journal check still passed.
+    assert!(feeder.actions.iter().any(|a| a.starts_with("refused feed")));
     assert!(feeder.actions.iter().any(|a| a == "hotspot down"));
     // Half-hour cycles: eight of them take at least four hours.
     assert!(report.took >= Duration::from_secs(8 * 30 * 60));
@@ -1175,7 +1188,7 @@ fn a_sustained_run_feeds_through_every_fault_and_ends_on_the_baseline() {
 fn an_unplanned_restart_at_rest_halts_the_sustained_run_with_relay_1_cut() {
     let mut feeder = Feeder::new(GOOD);
     // Well into the first cycle's rest between feeds.
-    feeder.at(400.0, Event::Restart(ResetCause::Watchdog));
+    feeder.at(900.0, Event::Restart(ResetCause::Watchdog));
     let report = sustained(&mut feeder, "2");
 
     let reason = halted(&feeder, &report);
@@ -1234,6 +1247,14 @@ fn a_scenario_that_leaves_the_feeder_changed_fails_and_is_put_right() {
         "{reason}"
     );
     assert_eq!(feeder.volume, 40);
+}
+
+#[test]
+fn a_refused_submission_is_no_feed() {
+    let taken = |line: &str| super::log::events(line).find_map(|e| super::feeds::submitted(&e));
+
+    assert_eq!(taken("PLOWN1 feed id=60 portions=1 submit=5"), None);
+    assert_eq!(taken("PLOWN1 feed id=60 portions=1 submit=0"), Some(60));
 }
 
 #[test]

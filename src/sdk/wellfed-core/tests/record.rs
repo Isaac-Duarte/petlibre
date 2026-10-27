@@ -189,7 +189,17 @@ fn settings_owner_and_api_records_decode() {
     );
     assert_eq!(
         event("PLOWN1 feed id=7 portions=2 submit=0"),
-        Some(Event::Owner(Owner::Submitted { id: 7 }))
+        Some(Event::Owner(Owner::Submitted {
+            id: 7,
+            accepted: true
+        }))
+    );
+    assert_eq!(
+        event("PLOWN1 feed id=7 portions=2 submit=4"),
+        Some(Event::Owner(Owner::Submitted {
+            id: 7,
+            accepted: false
+        }))
     );
 
     assert_eq!(

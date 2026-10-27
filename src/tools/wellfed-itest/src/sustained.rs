@@ -34,7 +34,7 @@ use wellfed_rig::device::{Answer, Ask, DeviceStatus};
 
 use super::feeds::{self, FEED_WAIT, Fed, PREPARE_WAIT, STOP_WAIT};
 use super::scenarios::{self, BOOT_WAIT, DeviceState, OUTAGE, REJOIN_WAIT};
-use super::{Ctx, Fault, Hotspot, Result, STATUS_WAIT, compact, short};
+use super::{Armed, Ctx, Error, Fault, Hotspot, Result, STATUS_WAIT, compact, short};
 
 /// One cycle: its fault, then feeds at the cadence until it is spent.
 const CYCLE: Duration = Duration::from_secs(30 * 60);
@@ -264,6 +264,15 @@ impl Injected {
             Self::Stall => "stall",
         }
     }
+
+    /// As `wellfed-build --variant` names it.
+    fn name(self) -> &'static str {
+        match self {
+            Self::Jam => "feed-jam",
+            Self::Sensor => "sensor-fault",
+            Self::Stall => "feed-stall",
+        }
+    }
 }
 
 /// Whether a reading of the clock must find it valid.
@@ -318,21 +327,42 @@ struct Run {
     lifetime: Option<Counts>,
     heap: Option<HeapBase>,
     figures: Figures,
+    /// The injected-fault variant bank 1 holds until its restore confirms.
+    variant: Option<Injected>,
 }
 
 pub(super) fn sustained(ctx: &mut Ctx) -> Result<()> {
-    let result = Run::open(ctx).and_then(|mut run| run.cycles(ctx));
-    let Err(error) = &result else {
-        return result;
+    // Until the run ends cleanly, the rig cuts relay 1 however it is torn
+    // down, a host panic's unwinding included.
+    ctx.rig.arm_kill(Armed::On);
+    let mut run = match Run::open(ctx) {
+        Ok(run) => run,
+        Err(error) => return halt(ctx, error, None),
     };
+    match run.cycles(ctx) {
+        Ok(()) => {
+            ctx.rig.arm_kill(Armed::Off);
+            Ok(())
+        }
+        Err(error) => halt(ctx, error, run.variant),
+    }
+}
 
+/// Cut relay 1 and leave it off, and say what bank 1 may still hold.
+fn halt(ctx: &mut Ctx, error: Error, variant: Option<Injected>) -> Result<()> {
     let how = match ctx.rig.kill() {
         Ok(()) => "relay 1 is off".to_string(),
         Err(cut) => format!("cutting relay 1 failed ({cut}): cut it by hand"),
     };
-    ctx.note(&format!("  Halted: {error}; {how}"));
-    ctx.halted = Some(format!("the sustained run halted; {how}"));
-    result
+    let left = variant.map_or_else(String::new, |variant| {
+        format!(
+            "; bank 1 may still hold the {} variant: install the baseline before any other run",
+            variant.name()
+        )
+    });
+    ctx.note(&format!("  Halted: {error}; {how}{left}"));
+    ctx.halted = Some(format!("the sustained run halted; {how}{left}"));
+    Err(error)
 }
 
 impl Run {
@@ -352,6 +382,7 @@ impl Run {
             },
             lifetime: counters.lifetime,
             heap: None,
+            variant: None,
             figures: Figures::default(),
         })
     }
@@ -382,15 +413,18 @@ impl Run {
             }
             self.rest(ctx, end)?;
             self.journal(ctx)?;
-            self.report(ctx, cycle);
+            // A step that outlasts its half hour (the update cuts can)
+            // stretches its cycle rather than squeezing the next.
+            let took = ctx.rig.clock().saturating_sub(start);
+            self.report(ctx, cycle, took);
         }
         Ok(())
     }
 
     /// 1, 2, 3 portions in turn: never more than the unattended limit.
     fn next_portions(&mut self) -> u8 {
-        self.feeds += 1;
         let turn = u8::try_from(self.feeds % u32::from(MAX_PORTIONS)).unwrap_or(0);
+        self.feeds += 1;
         turn + 1
     }
 
@@ -470,8 +504,9 @@ impl Run {
         Ok(())
     }
 
-    /// A reboot request at rest: `build` starts once more, as a software
-    /// reset, with the clock carried and nothing driving after it.
+    /// A reboot request at rest: `build` starts once more. The firmware restarts
+    /// by letting its watchdog lapse, so the cause reads `watchdog`; the clock
+    /// is carried and nothing drives after it.
     fn reboot(&mut self, ctx: &mut Ctx, build: &str) -> Result<()> {
         // An install's activation may have left the clock unset: set it, so
         // that only the reboot can lose it.
@@ -494,7 +529,7 @@ impl Run {
         })?;
         let after = ctx.reachable(STATUS_WAIT)?;
         restarted_once(&before, &after, "a reboot")?;
-        reset_cause(ctx, ResetCause::Software)?;
+        reset_cause(ctx, ResetCause::Watchdog)?;
         self.clock(ctx, Carry::Required)?;
         no_drive(ctx, booted, "the boot after a reboot")
     }
@@ -502,6 +537,10 @@ impl Run {
     /// A 3-portion feed cut off by the supply at `phase`: the next boot
     /// resolves it as uncertain, once, and never drives it again.
     fn cut(&mut self, ctx: &mut Ctx, phase: Phase) -> Result<()> {
+        // The feeder holds the `Feeding` answer until the owner has reserved
+        // the feed in its journal, and `ask_feed` returns only after that
+        // answer: the reserved cut lands after the reservation, not on the
+        // earlier `feed id=` record.
         let (feed, start) = self.ask_feed(ctx, MAX_PORTIONS)?;
         if phase == Phase::Driving {
             ctx.expect("the motor driving", start, PREPARE_WAIT, |e| {
@@ -591,6 +630,8 @@ impl Run {
             variant: Some(injected.variant()),
         };
         let staged = ctx.image(&label, image)?;
+        // From the offer on, bank 1 may hold the variant.
+        self.variant = Some(injected);
         install(ctx, &staged)?;
         let build = staged.build.clone();
 
@@ -612,7 +653,9 @@ impl Run {
                     Expect::failed(FeedReason::FeedbackTimeout),
                     OwnerState::Idle,
                 )?;
+                let mark = ctx.mark()?;
                 self.feed(ctx, 2, Expect::failed(FeedReason::Outlet), OwnerState::Idle)?;
+                no_drive(ctx, mark, "a feed with the outlet blocked")?;
                 self.feed(
                     ctx,
                     3,
@@ -630,7 +673,9 @@ impl Run {
         }
 
         let staged = ctx.resign(&format!("{label}-restore"))?;
-        install(ctx, &staged)
+        install(ctx, &staged)?;
+        self.variant = None;
+        Ok(())
     }
 
     /// The owner holds its fault: a feed is refused, and nothing drives.
@@ -874,11 +919,12 @@ impl Run {
         })
     }
 
-    fn report(&self, ctx: &mut Ctx, cycle: u32) {
+    fn report(&self, ctx: &mut Ctx, cycle: u32, took: Duration) {
         let f = &self.figures;
         ctx.note(&format!(
-            "  Cycle {cycle} passed: {} feeds so far, {} polls (slowest {:.1} s), least free heap {}, \
-             clock skew up to {} ms within bounds up to {} ms, {} clock syncs",
+            "  Cycle {cycle} passed in {:.1} min: {} feeds so far, {} polls (slowest {:.1} s), \
+             least free heap {}, clock skew up to {} ms within bounds up to {} ms, {} clock syncs",
+            took.as_secs_f64() / 60.0,
             f.feeds,
             f.polls,
             f.slowest.as_secs_f64(),

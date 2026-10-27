@@ -42,7 +42,7 @@ use wellfed_rig::tools::{Capture, CaptureFailure, InstallJob, Installing, PushEr
 use wellfed_rig::{Waited, say, wait_child};
 use wellfed_stock_api::{Auth, StockApi};
 
-use super::{Error, Fault, Hotspot, Result, Rig, Server};
+use super::{Armed, Error, Fault, Hotspot, Result, Rig, Server};
 
 /// Why the live rig could not set the bench up or keep it running.
 #[derive(Debug, thiserror::Error)]
@@ -126,6 +126,8 @@ pub(super) struct LiveRig<'b> {
     hotspot_now: Hotspot,
     power: bool,
     power_was_on: Option<bool>,
+    /// `On` while an unattended run holds the motor: teardown cuts relay 1.
+    kill_armed: Armed,
     children: Children,
     stock_bin: PathBuf,
     capture: Option<Box<dyn Capture>>,
@@ -164,6 +166,7 @@ impl<'b> LiveRig<'b> {
             hotspot_now: Hotspot::Down,
             power: args.power,
             power_was_on: None,
+            kill_armed: Armed::Off,
             children: Children::default(),
             capture: None,
             reading: (0, 0),
@@ -361,6 +364,13 @@ impl<'b> LiveRig<'b> {
         }
         self.restored = true;
 
+        // An unattended run that did not end cleanly: power off first.
+        if self.kill_armed == Armed::On
+            && let Err(error) = self.bench.cut_power()
+        {
+            eprintln!("Could not cut relay 1 (cut the feeder supply by hand): {error}");
+        }
+
         self.stop_push();
         self.stop_servers();
         if let Some(mut capture) = self.capture.take() {
@@ -501,6 +511,10 @@ impl Rig for LiveRig<'_> {
         self.note("  Relay 1 off: the feeder stays unpowered");
         // `restore` only ever switches the supply off, so it stays off.
         Ok(self.bench.cut_power()?)
+    }
+
+    fn arm_kill(&mut self, armed: Armed) {
+        self.kill_armed = armed;
     }
 
     fn uart(&mut self) -> Result<Vec<u8>> {

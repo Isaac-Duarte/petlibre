@@ -257,7 +257,21 @@ fn owner_records_decode_for_the_bench() {
             portions: 2,
             result: SubmitResult::Enqueued,
         },
-        Some(Event::Owner(Owner::Submitted { id: 12 })),
+        Some(Event::Owner(Owner::Submitted {
+            id: 12,
+            accepted: true,
+        })),
+    );
+    decodes(
+        Record::Submitted {
+            feed: 12,
+            portions: 2,
+            result: SubmitResult::RejectPhase,
+        },
+        Some(Event::Owner(Owner::Submitted {
+            id: 12,
+            accepted: false,
+        })),
     );
     decodes(
         Record::Held {

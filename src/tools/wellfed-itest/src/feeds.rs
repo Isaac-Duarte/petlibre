@@ -116,8 +116,8 @@ pub(super) const STOP_WAIT: Duration = Duration::from_secs(10);
 /// before it was asked for, where its result is looked for.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Issued {
-    pub feed: u32,
-    pub since: usize,
+    pub(super) feed: u32,
+    pub(super) since: usize,
 }
 
 pub(super) fn feed_writes(ctx: &mut Ctx) -> Result<()> {
@@ -424,10 +424,11 @@ fn taken(ctx: &mut Ctx, since: usize) -> Result<Option<u32>> {
         .and_then(|id| u32::try_from(id).ok()))
 }
 
-/// The feed a `PLOWN1 feed id=` record hands to the owner.
+/// The feed a `PLOWN1 feed id=` record shows the owner taking. A refused
+/// submission names the id the next feed will take, so it is no feed.
 pub(super) fn submitted(event: &Event<'_>) -> Option<u64> {
     match *event {
-        Event::Owner(Owner::Submitted { id }) => Some(id),
+        Event::Owner(Owner::Submitted { id, accepted: true }) => Some(id),
         _ => None,
     }
 }
@@ -453,10 +454,10 @@ fn store_write(event: &Event<'_>) -> bool {
 /// What `PLOWN1 fed` reports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Fed {
-    pub requested: u16,
-    pub completed: u16,
-    pub outcome: Option<OwnerOutcome>,
-    pub reason: Option<FeedReason>,
+    pub(super) requested: u16,
+    pub(super) completed: u16,
+    pub(super) outcome: Option<OwnerOutcome>,
+    pub(super) reason: Option<FeedReason>,
 }
 
 /// `event` as feed `feed`'s result, if it is one.

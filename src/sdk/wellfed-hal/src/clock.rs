@@ -81,17 +81,26 @@ fn update<T>(change: impl FnOnce(&mut WallClock, u32, &mut u32) -> T) -> T {
     };
 
     if let Some(lost) = lost {
-        let mut report = startup::Report::new();
-        if let Ok(line) = report.record(format_args!(
-            "PLTIM1 forget reason=count had_time={} at_ms={} count_ms={}\r\n",
-            u8::from(lost.had_time),
-            sdk::uptime_ms(),
-            lost.count_ms
-        )) {
-            sdk::log(line);
-        }
+        log_lost(lost);
     }
     result
+}
+
+/// `PLTIM1 forget reason=count`. Out of line, so its report frame stays
+/// off the stack of every clock reader that `update` is inlined into
+/// (feed submission among them).
+#[cold]
+#[inline(never)]
+fn log_lost(lost: Lost) {
+    let mut report = startup::Report::new();
+    if let Ok(line) = report.record(format_args!(
+        "PLTIM1 forget reason=count had_time={} at_ms={} count_ms={}\r\n",
+        u8::from(lost.had_time),
+        sdk::uptime_ms(),
+        lost.count_ms
+    )) {
+        sdk::log(line);
+    }
 }
 
 /// The SysTimer extended to milliseconds. The first read starts the count

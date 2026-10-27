@@ -2742,6 +2742,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "wellfed-releases"
+version = "0.1.0"
+dependencies = [
+ "ed25519-dalek",
+ "jiff",
+ "wellfed-api",
+ "wellfed-client",
+ "wellfed-core",
+ "wellfed-model",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "wellfed-rig"
 version = "0.1.0"
 dependencies = [
@@ -2799,9 +2819,11 @@ dependencies = [
  "axum",
  "axum-extra",
  "clap",
+ "ed25519-dalek",
  "futures-util",
  "jiff",
  "wellfed-api",
+ "wellfed-core",
  "wellfed-server-client",
  "wellfed-server-testkit",
  "wellfed-service",
@@ -2809,6 +2831,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_path_to_error",
+ "sha2 0.10.9",
  "tempfile",
  "thiserror",
  "tokio",
@@ -2869,6 +2892,7 @@ dependencies = [
  "wellfed-formats",
  "wellfed-mirror",
  "wellfed-model",
+ "wellfed-releases",
  "wellfed-server-testkit",
  "wellfed-store",
  "serde",

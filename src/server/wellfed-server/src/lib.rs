@@ -21,7 +21,8 @@ mod routes;
 
 pub use auth::Hosts;
 use axum::Router;
-use wellfed_service::Service;
+use axum::extract::DefaultBodyLimit;
+use wellfed_service::{RELEASE_MAX, Service};
 use tokio_util::sync::CancellationToken;
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
@@ -30,7 +31,8 @@ use utoipa::OpenApi;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
-/// Every request body this API takes is a few hundred bytes.
+/// Every request body this API takes is a few hundred bytes, but for a
+/// release upload, which takes up to [`RELEASE_MAX`].
 const BODY_LIMIT: usize = 64 * 1024;
 
 #[derive(Clone)]
@@ -55,14 +57,15 @@ pub(crate) struct AppState {
         (name = routes::TAG_FEEDERS, description = "Adopted feeders, their settings, lock and history"),
         (name = routes::TAG_HEALTH, description = "Liveness for anyone, readiness for an owner"),
         (name = routes::TAG_COMMANDS, description = "The command journal: every write sent through the server"),
+        (name = routes::TAG_RELEASES, description = "Verified releases kept for installs: fetched or uploaded"),
     ),
 )]
 struct ApiDoc;
 
 fn router() -> OpenApiRouter<AppState> {
-    use routes::{auth, commands, events, feeders, health, household, stream, users};
+    use routes::{auth, commands, events, feeders, health, household, releases, stream, users};
 
-    let api = OpenApiRouter::new()
+    let small = OpenApiRouter::new()
         .routes(routes!(auth::setup_state, auth::setup))
         .routes(routes!(
             auth::session,
@@ -81,7 +84,14 @@ fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(commands::commands))
         .routes(routes!(commands::command))
         .routes(routes!(stream::stream))
-        .routes(routes!(health::status));
+        .routes(routes!(health::status))
+        .routes(routes!(releases::releases))
+        .routes(routes!(releases::check_releases))
+        .layer(RequestBodyLimitLayer::new(BODY_LIMIT));
+    let uploads = OpenApiRouter::new()
+        .routes(routes!(releases::upload_release))
+        .layer(DefaultBodyLimit::max(RELEASE_MAX));
+    let api = small.merge(uploads);
     OpenApiRouter::with_openapi(ApiDoc::openapi())
         .routes(routes!(health::health))
         .nest(wellfed_api::PREFIX, api)
@@ -108,7 +118,6 @@ pub fn app(service: Service, shutdown: CancellationToken, hosts: Hosts) -> Route
             state.clone(),
             auth::known_host,
         ))
-        .layer(RequestBodyLimitLayer::new(BODY_LIMIT))
         .layer(PropagateRequestIdLayer::new(request_id::HEADER))
         .layer(TraceLayer::new_for_http().make_span_with(request_id::span))
         .layer(SetRequestIdLayer::new(request_id::HEADER, MakeRequestUuid))

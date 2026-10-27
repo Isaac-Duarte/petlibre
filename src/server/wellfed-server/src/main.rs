@@ -3,7 +3,8 @@
 //! Everything it keeps is in `--data`: the database (`server.db`), the
 //! settings (`server.toml`, optional; flags and environment variables
 //! override it) and the key the server's feeder keys are sealed with
-//! (`keys/server.key`). The first start makes that key; back it up apart
+//! (`keys/server.key`), and the verified releases kept for installs
+//! (`releases/`). The first start makes that key; back it up apart
 //! from the database's backups: the database alone cannot open the feeder
 //! keys.
 //!
@@ -16,8 +17,11 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use jiff::tz::TimeZone;
-use wellfed_server::config::{DATABASE, Overrides, ServerConfig};
-use wellfed_service::{Clock, Config, Service, SystemClock, SystemRandom, Timing};
+use wellfed_server::config::{DATABASE, Overrides, RELEASES, ServerConfig};
+use wellfed_service::{
+    Clock, Config, ReleaseFeed, ReleaseKeys, ReleasesConfig, Service, SystemClock, SystemRandom,
+    Timing,
+};
 use wellfed_store::Store;
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::EnvFilter;
@@ -70,6 +74,24 @@ async fn main() -> Result<()> {
         label: settings.label.into(),
         discovery: settings.discovery.into(),
         timing: Timing::default(),
+        releases: ReleasesConfig {
+            dir: cli.data.join(RELEASES),
+            keys: ReleaseKeys {
+                project: settings
+                    .releases
+                    .project_keys
+                    .iter()
+                    .map(|key| key.0)
+                    .collect(),
+                owner: settings
+                    .releases
+                    .owner_keys
+                    .iter()
+                    .map(|key| key.0)
+                    .collect(),
+            },
+            fetch: settings.releases.fetch.then(ReleaseFeed::default),
+        },
     };
     let service = Service::start(store, config, Arc::new(SystemClock), Arc::new(SystemRandom))
         .await

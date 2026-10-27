@@ -721,6 +721,187 @@
         }
       }
     },
+    "/api/v1/releases": {
+      "get": {
+        "tags": [
+          "releases"
+        ],
+        "summary": "The verified releases the server holds, newest version first.",
+        "operationId": "releases",
+        "parameters": [
+          {
+            "name": "after",
+            "in": "query",
+            "description": "The `next` of the previous page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "At most this many (1-1000, default 100).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleasePage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid: a bad `after` or `limit`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden: owners only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "releases"
+        ],
+        "summary": "Upload a release file (a signed manifest, then the image it names),\nfor an offline home or a self-built image. It is verified as a fetched\none is, against the project's keys and the owner's.",
+        "operationId": "upload_release",
+        "requestBody": {
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "$ref": "#/components/schemas/ReleaseFile"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "the server held it already",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Release"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "verified and kept",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Release"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden: owners only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "too_large: longer than any release",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "release_refused: `release` says why",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/releases/check": {
+      "post": {
+        "tags": [
+          "releases"
+        ],
+        "summary": "Check the project's GitHub releases now, keeping each new one that\nverifies. The server also checks daily while fetching is on.",
+        "operationId": "check_releases",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseCheck"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden: owners only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "fetch_disabled: `releases.fetch` is off",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "releases_unreachable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/session": {
       "get": {
         "tags": [
@@ -1305,6 +1486,22 @@
           }
         }
       },
+      "AssetName": {
+        "type": "object",
+        "description": "One asset of one of the project's releases.",
+        "required": [
+          "tag",
+          "asset"
+        ],
+        "properties": {
+          "asset": {
+            "type": "string"
+          },
+          "tag": {
+            "type": "string"
+          }
+        }
+      },
       "Battery": {
         "oneOf": [
           {
@@ -1651,6 +1848,7 @@
           "not_found",
           "invalid",
           "precondition_required",
+          "too_large",
           "already_adopted",
           "invite_expired",
           "unreachable",
@@ -1658,6 +1856,9 @@
           "feeder_refused",
           "outcome_unknown",
           "key_reused",
+          "release_refused",
+          "fetch_disabled",
+          "releases_unreachable",
           "internal"
         ]
       },
@@ -2595,6 +2796,16 @@
               }
             ]
           },
+          "release": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ReleaseRefusal"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "status": {
             "type": "integer",
             "format": "int32",
@@ -2645,6 +2856,202 @@
           }
         ],
         "description": "Whether the feeder can start a feed now: the one decision a feed\nrequest obeys too."
+      },
+      "RefusedAsset": {
+        "type": "object",
+        "description": "A release asset the server would not keep.",
+        "required": [
+          "tag",
+          "asset",
+          "reason"
+        ],
+        "properties": {
+          "asset": {
+            "type": "string"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/ReleaseRefusal"
+          },
+          "tag": {
+            "type": "string"
+          }
+        }
+      },
+      "Release": {
+        "type": "object",
+        "description": "A verified release in the server's cache.",
+        "required": [
+          "id",
+          "version",
+          "build_id",
+          "image_len",
+          "image_sha256",
+          "key_id",
+          "signer",
+          "source",
+          "added"
+        ],
+        "properties": {
+          "added": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the server took it in."
+          },
+          "build_id": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "description": "SHA-256 over the signed manifest: the name a feeder's update state\ngives the install."
+          },
+          "image_len": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The image's length in bytes.",
+            "minimum": 0
+          },
+          "image_sha256": {
+            "type": "string"
+          },
+          "key_id": {
+            "type": "string",
+            "description": "The signing key's id: the first 8 bytes of SHA-256 over it."
+          },
+          "signer": {
+            "$ref": "#/components/schemas/ReleaseSigner"
+          },
+          "source": {
+            "$ref": "#/components/schemas/ReleaseSource"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "ReleaseCheck": {
+        "type": "object",
+        "description": "What one check of the project's releases found.",
+        "required": [
+          "added",
+          "refused",
+          "failed"
+        ],
+        "properties": {
+          "added": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Release"
+            },
+            "description": "Releases verified and added to the cache by this check."
+          },
+          "failed": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AssetName"
+            },
+            "description": "Assets that failed to download. The next check tries them again."
+          },
+          "refused": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RefusedAsset"
+            },
+            "description": "Assets that failed verification. Each is skipped by later checks\nuntil the server restarts."
+          }
+        }
+      },
+      "ReleaseFile": {
+        "type": "string",
+        "format": "binary",
+        "description": "A release file's bytes, as the upload's body documents them."
+      },
+      "ReleasePage": {
+        "type": "object",
+        "description": "A page of releases, newest version first.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Release"
+            }
+          },
+          "next": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The `after` for the next page; `None` at the end."
+          }
+        }
+      },
+      "ReleaseRefusal": {
+        "type": "string",
+        "description": "Why a file is not a release the server keeps.",
+        "enum": [
+          "size",
+          "manifest",
+          "needs_statement",
+          "unknown_key",
+          "signature",
+          "refused",
+          "image"
+        ]
+      },
+      "ReleaseSigner": {
+        "type": "string",
+        "description": "Whose key signed a release.",
+        "enum": [
+          "project",
+          "owner"
+        ]
+      },
+      "ReleaseSource": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "An asset of one of the project's GitHub releases.",
+            "required": [
+              "tag",
+              "asset",
+              "kind"
+            ],
+            "properties": {
+              "asset": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "github"
+                ]
+              },
+              "tag": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A file an owner uploaded.",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "upload"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "Where a release came from."
       },
       "Role": {
         "type": "string",
@@ -3289,6 +3696,10 @@
     {
       "name": "commands",
       "description": "The command journal: every write sent through the server"
+    },
+    {
+      "name": "releases",
+      "description": "Verified releases kept for installs: fetched or uploaded"
     }
   ]
 }

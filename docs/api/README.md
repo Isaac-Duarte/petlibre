@@ -59,7 +59,7 @@ src/app/                      Flutter app, plus a thin flutter_rust_bridge crate
 
 The server's crates follow one rule: **a crate per runtime or dependency boundary, a module per domain inside it.** A new domain (pets, alerts) is a module and some tables, not a crate, unless it brings its own runtime (tasks), a heavy dependency (`reqwest`) or a consumer outside the server. That is why the mirror (the feeder tasks), the releases (`reqwest` and the verifier) and the HTTP client (the CLI) are crates and accounts or alerts are not.
 
-The map is the target ([server board](../../SERVER_BOARD.md#target-architecture)). Today the server is `wellfed-api`, `wellfed-store`, `wellfed-mirror`, `wellfed-service` and `wellfed-server`, with `wellfed-server-client` and `wellfed-server-testkit` beside them; `wellfed-releases` arrives with its card.
+The map is the target ([server board](../../SERVER_BOARD.md#target-architecture)). Today the server is `wellfed-api`, `wellfed-store`, `wellfed-mirror`, `wellfed-releases`, `wellfed-service` and `wellfed-server`, with `wellfed-server-client` and `wellfed-server-testkit` beside them.
 
 ### Allowed dependencies
 
@@ -89,7 +89,7 @@ wellfed (the CLI) ─► wellfed-server-client ─► wellfed-api
 | `wellfed-api` | `wellfed-model` |
 | `wellfed-store` | `wellfed-api` (its ids and enums) |
 | `wellfed-mirror` | `wellfed-store`, `wellfed-api`, `wellfed-connect`, `wellfed-client`, `wellfed-model`, `wellfed-proto`, `wellfed-session` |
-| `wellfed-releases` | `wellfed-store`, `wellfed-api`, `wellfed-client`, `wellfed-model`; the verifier's crate joins when it is chosen |
+| `wellfed-releases` | `wellfed-store`, `wellfed-api`, `wellfed-client`, `wellfed-model`; the verifier is `wellfed_client::release`, over the firmware's own offer check |
 | `wellfed-service` | `wellfed-mirror`, `wellfed-releases`, `wellfed-store`, `wellfed-api`, `wellfed-model`, `wellfed-formats` |
 | `wellfed-server` | `wellfed-service`, `wellfed-api`, `wellfed-store` |
 | `wellfed-server-testkit` | `wellfed-server`, `wellfed-service`, `wellfed-store`, `wellfed-api`, `wellfed-server-client`, `wellfed-feeder-sim`, `wellfed-client`, `wellfed-connect`, `wellfed-model`, `wellfed-session` |
@@ -104,7 +104,7 @@ wellfed (the CLI) ─► wellfed-server-client ─► wellfed-api
 - **`wellfed-api`** builds for every target, including the app's Android library, so it carries no server dependencies. It has a module per resource.
 - **`wellfed-store`** stays one crate, so the sqlx offline metadata and the migrations stay in one place, with a module per table group (`users`, `feeders`, `history`, `samples`, `owner`, `commands`, `releases`, `jobs`). It keeps a single writer connection beside a read pool ([storage](#storage)).
 - **`wellfed-mirror`** owns every task that holds a feeder session: connect (at the stored address, else over mDNS), sync from the cursor, clock sync, ingest, reconnect with jittered backoff, and the command channel. Its surface is small: `Mirror::start` and `stop` a feeder (given its id, identity, unsealed key and address; both return once the old task has ended, its last update `offline`), `link`, `ask` (one answer, or `AskError::Unknown` when the answer does not come in time; a command whose caller left is dropped unsent), `operation` (a long-operation turn, one per feeder, whose steps go through the same queue so a short command waits at most one step), `locate` and `enroll` for adoption, and a per-feeder broadcast of typed `MirrorEvent`s (events, gaps, samples, link changes), sent after the store holds them. Ingest is its own: it calls the store to record each raw row and the cursor in one transaction (its projections join that transaction when they land), and `stored_event` is the one way back from a stored body. It also holds the injected `Clock` and `Random` every server crate uses. The service never sees a socket, and the mirror never sees a user, an alert or a stream id.
-- **`wellfed-releases`** fetches releases from the project's GitHub releases or takes an owner's upload, and verifies both the same way, with the verifier the feeder's own checks are tested against, never a copy. If that verifier drags in firmware-only dependencies, a small host-safe crate is split out of it.
+- **`wellfed-releases`** fetches releases from the project's GitHub releases or takes an owner's upload, and verifies both the same way, with the verifier the feeder's own checks are tested against, never a copy: `wellfed_client::release::verify` runs `wellfed_core::ota::offer::admit_offer` (host-safe, so no crate was split out) and then checks the image against the manifest. See [releases](#releases).
 - **`wellfed-service`** is one crate with a module per domain: accounts, household, commands and the journal, owner data, derived views, alerts, audit and export. Each domain has its own error enum, wrapped in the crate's `Error`. It owns the auth rules (argon2, issuing and verifying sessions and tokens, expiry, the login-limit state, and a `Permission` enum with one `can(role, permission)` table), the hub, and each job's body as a method that takes `now`. Derived views are a pure module over the store's projections, with "now" and the household zone passed in, so they are tested without a database. It returns `wellfed-api` bodies until a second API version exists. It never sees an HTTP type.
 - **The hub** is the service's: it merges the mirror's per-feeder events with command results, alerts and install progress, and assigns the stream ids `GET /stream` resumes from. A task per feeder forwards its broadcast, recording the feeder's link before the hub hears of it, so the feeder list never shows a state the stream has not, and drops the entry when the mirror lets the feeder go; a forwarder that falls behind drops its backlog, publishes `resync` and then the current link.
 - **`wellfed-server`** never sees SQL. A handler parses, authorizes through an axum extractor that calls the service's auth, calls one service method and maps the result. The jobs supervisor lives here, scheduling each job's service method on the cancellation tree with the injected `Clock`.
@@ -205,7 +205,9 @@ GET    /api/v1/pets/{id}/intake              grams and calories against target  
 GET    /api/v1/commands                      the command journal  ?feeder=&state=&after=&limit=
 GET    /api/v1/commands/{key}                one write, by its Idempotency-Key
 GET    /api/v1/audit                         who did what through the server  ?after=&limit=
-GET    /api/v1/releases                      fetched and verified releases
+GET    /api/v1/releases                      fetched and verified releases  ?after=&limit=
+POST   /api/v1/releases                      upload a release file (octet-stream)
+POST   /api/v1/releases/check                check GitHub releases now
 POST   /api/v1/feeders/{id}/install          owner-approved install of a release
 GET    /api/v1/pets    /foods                CRUD, owner data the feeder doesn't hold
 GET    /api/v1/export                        everything, as JSON or a CSV archive
@@ -237,7 +239,7 @@ GET    /health                               no auth; liveness and version
   - `events` (raw, keyed by feeder, epoch and `seq`, so the cursor sync is idempotent and a re-created ring's history stays apart)
   - `samples` (feeder, metric, time and value) and `sample_rollups` (hourly)
   - `pets` and `foods`
-  - `releases`
+  - `releases`: a directory in the data directory rather than a table ([releases](#releases))
   - `audit` (who did what through the server)
 - **Volume.** About 100k sample rows a day per feeder is 1–2 GB a year, which SQLite handles. Retention runs as a background job under the owner's setting. Export streams rows, so it never loads the database into memory.
 - **Secrets.** The server's feeder keys are stored encrypted with a key from the config file, so a copied database alone cannot impersonate the server.
@@ -273,15 +275,28 @@ raw_sample_days = 90             # default: keep raw samples forever
 
 [releases]
 fetch = false                    # check GitHub releases daily
+project_keys = []                # the project's update keys, hex
+owner_keys = []                  # the owner's enrolled update keys, hex
 
 [backups]
 keep = 7                         # daily backups kept
 ```
 
-- **Overrides.** Each key has a flag, and each flag an environment variable: `--listen` (`WELLFED_SERVER_LISTEN`), `--host` (`WELLFED_SERVER_HOSTS`, comma-separated), `--label`, `--discovery` (or `--no-discovery`), `--trusted-proxy` (`WELLFED_SERVER_TRUSTED_PROXIES`), `--raw-sample-days`, `--releases-fetch true|false` and `--backups-keep`, each variable `WELLFED_SERVER_` and the flag's name. A flag beats its variable, and either replaces the file's value whole: `--host` given once replaces the file's `hosts`. An override can replace a list but not clear it (no flag or empty variable means "not given"), so to drop every host or proxy, edit the file. `--no-discovery` beats `--discovery` and its variable.
+- **Overrides.** Each key has a flag, and each flag an environment variable: `--listen` (`WELLFED_SERVER_LISTEN`), `--host` (`WELLFED_SERVER_HOSTS`, comma-separated), `--label`, `--discovery` (or `--no-discovery`), `--trusted-proxy` (`WELLFED_SERVER_TRUSTED_PROXIES`), `--raw-sample-days`, `--releases-fetch true|false`, `--release-project-key` and `--release-owner-key` (`WELLFED_SERVER_RELEASE_PROJECT_KEYS` and `..._OWNER_KEYS`, comma-separated) and `--backups-keep`, each variable `WELLFED_SERVER_` and the flag's name. A flag beats its variable, and either replaces the file's value whole: `--host` given once replaces the file's `hosts`. An override can replace a list but not clear it (no flag or empty variable means "not given"), so to drop every host or proxy, edit the file. `--no-discovery` beats `--discovery` and its variable.
 - **A bad file stops the start.** An unknown key, a wrong type or an out-of-range value (a 17-byte label, `raw_sample_days = 0`, a host name with a port) is refused with the key's path (`retention.raw_sample_days`, `hosts[1]`) and its line; a missing file is the defaults.
 - **The key.** The first start makes it, staging it beside its name and hard-linking it into place, so a second start racing the first is refused rather than replacing its key; an existing `keys` directory others could read or enter is tightened to 0700, with a warning. A server from before the settings file kept it in `config.json`: the first start moves it to `keys/server.key` and deletes `config.json`, which held nothing else. A start interrupted between the two finishes the move on the next; two different keys are refused. A `server.db` with no key file is refused too, since a new key could not open its feeder keys: that is a backup restored without its key.
-- **Read by later cards.** `trusted_proxies` (the scheme and client address behind a proxy), `retention`, `releases.fetch` and `backups.keep` are parsed and checked now; the features that read them come with their cards.
+- **Read by later cards.** `trusted_proxies` (the scheme and client address behind a proxy), `retention` and `backups.keep` are parsed and checked now; the features that read them come with their cards. `releases` is read by [releases](#releases).
+
+## Releases
+
+Built Oct 26 (host simulation). `wellfed-releases` keeps the signed updates an owner may install; nothing installs from here (that is `POST /feeders/{id}/install`).
+
+- **A release file** is the version 2 manifest (160 bytes) followed by the image it names (`image_len` bytes: the bank's contents, without the OTA container's header), which is exactly what `wellfed_client::update::Image` offers. On GitHub it is a release asset whose name ends in `.plota`; drafts and pre-releases are skipped.
+- **Verification** is `wellfed_client::release::verify`: the feeder's own `admit_offer`, with the project's keys as built-in keys and the owner's as enrolled ones, no key retired, a floor of zero and nothing running; then the image's length and SHA-256 against the manifest, and that it starts with the bank's validity marker, as the feeder's sector writer requires. A stock image or a version-0 one always needs a statement bound to one feeder, so neither is a release. Uploads and fetched assets go through the same call, and reading a release back for an install verifies it again.
+- **Keys** are settings: `releases.project_keys` (the key built into the feeders' firmware, or the offline release key their release slot holds) and `releases.owner_keys` (the owner's enrolled update keys). A server with neither keeps no release. Nothing is built into the server: today the firmware's built-in key (`WELLFED_OTA_PUBLIC_KEY`, which `wellfed-build` sets only for firmware builds) is the bench key from `private/`, and which key signs public releases is an [open question](../../SERVER_SPEC.md#open-questions). A release names its signer, `project` or `owner`, by today's keys; the list leaves out a release whose key is no longer listed, and an install's read refuses it.
+- **The cache** is `releases/` in the data directory: `<id>.plota` and its record `<id>.json`, the id being the manifest's SHA-256 in hex (the name a feeder's update state gives it). Each file is written to a `.part`, synced and renamed, the release before its record; the next start removes a `.part` or a release with no record. There is no table: the directory is the index. A record that does not parse, or whose release file is gone, is logged and skipped; uploading the release again repairs it.
+- **Fetching** is off unless `releases.fetch`. A check reads the newest 30 releases from the GitHub API over rustls, skips assets the cache holds or this process already refused, refuses an asset larger than a manifest and a full bank without downloading it, and stops reading one that grows past that. A release list GitHub does not serve ends the check (`502 releases_unreachable`); what it added stays. An asset that fails to download is reported under `failed` and tried again by the next check. One check runs at a time. The daily job (SV12) calls `Service::check_releases` while `Service::fetching_releases`.
+- **Routes** are owners only (`Permission::ServerData`): `GET /releases` (newest version first, paged by release id), `POST /releases` with the file as `application/octet-stream` (`201` new, `200` already held, `413 too_large`, `422 release_refused` with `release` naming the reason: `size`, `manifest`, `needs_statement`, `unknown_key`, `signature`, `refused` or `image`), and `POST /releases/check` (`409 fetch_disabled` while fetching is off). The upload route alone takes a body past 64 KiB.
 
 ## Server first slice
 

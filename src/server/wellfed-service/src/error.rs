@@ -21,6 +21,8 @@ pub enum Error {
     Command(#[from] CommandError),
     #[error(transparent)]
     Random(#[from] RandomFailed),
+    #[error(transparent)]
+    Release(#[from] wellfed_releases::Error),
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;

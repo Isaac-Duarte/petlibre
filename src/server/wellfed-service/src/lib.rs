@@ -21,6 +21,8 @@
 //! - **Live updates** go through the [`Hub`], which the server's event
 //!   stream reads: each feeder's mirror broadcast is forwarded into it,
 //!   and the hub assigns the stream ids.
+//! - **Releases** are `wellfed-releases`' cache: uploaded or fetched,
+//!   verified the same way, and kept until an owner installs one.
 //!
 //! Each domain has its own error enum ([`AccountError`],
 //! [`HouseholdError`], [`FeederError`], [`CommandError`]), wrapped in [`Error`]. Time and randomness come in
@@ -38,6 +40,7 @@ mod hub;
 mod journal;
 mod keys;
 mod permissions;
+mod releases;
 mod sessions;
 mod updates;
 mod users;
@@ -49,6 +52,7 @@ use std::time::Duration;
 use jiff::Timestamp;
 use wellfed_api::{Connection as Link, FeederId};
 use wellfed_mirror::Mirror;
+use wellfed_releases::Releases;
 use wellfed_store::Store;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
@@ -59,6 +63,10 @@ pub use hub::{Hub, Resume, Stamped, StreamId, Subscription};
 pub use permissions::{Permission, can};
 pub use wellfed_mirror::{
     Clock, Discovery, Random, RandomFailed, SystemClock, SystemRandom, ZoneError,
+};
+pub use wellfed_releases::{
+    Added as ReleaseAdded, Config as ReleasesConfig, Error as ReleaseError, Keys as ReleaseKeys,
+    MAX_FILE as RELEASE_MAX, Source as ReleaseFeed,
 };
 pub use sessions::SessionToken;
 pub use users::reset_owner;
@@ -78,6 +86,9 @@ pub struct Config {
     pub label: String,
     pub discovery: Discovery,
     pub timing: Timing,
+    /// The release cache, the keys a release may be signed with, and
+    /// whether releases are fetched.
+    pub releases: ReleasesConfig,
 }
 
 impl std::fmt::Debug for Config {
@@ -87,6 +98,7 @@ impl std::fmt::Debug for Config {
             .field("label", &self.label)
             .field("discovery", &self.discovery)
             .field("timing", &self.timing)
+            .field("releases", &self.releases)
             .finish_non_exhaustive()
     }
 }
@@ -170,6 +182,7 @@ fn time_ordered(at: Timestamp, bits: &[u8; 10]) -> Uuid {
 pub struct Service {
     shared: Arc<Shared>,
     mirror: Mirror,
+    releases: Arc<Releases>,
     /// Each feeder's link as the stream last told it, so a list never
     /// shows a state the stream has not.
     links: Arc<Mutex<HashMap<FeederId, Link>>>,
@@ -200,6 +213,7 @@ impl Service {
             return Err(Invalid::Label.into());
         }
 
+        let releases = Releases::open(config.releases.clone()).await?;
         let cancel = CancellationToken::new();
         let mirror = Mirror::new(
             store.clone(),
@@ -220,6 +234,7 @@ impl Service {
                 started,
             }),
             mirror,
+            releases: Arc::new(releases),
             links: Arc::new(Mutex::new(HashMap::new())),
             adopting: Arc::new(tokio::sync::Mutex::new(())),
             household: Arc::new(tokio::sync::Mutex::new(())),

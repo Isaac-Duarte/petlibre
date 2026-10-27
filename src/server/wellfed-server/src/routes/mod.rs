@@ -8,6 +8,7 @@ pub(crate) mod events;
 pub(crate) mod feeders;
 pub(crate) mod health;
 pub(crate) mod household;
+pub(crate) mod releases;
 pub(crate) mod stream;
 pub(crate) mod users;
 
@@ -26,6 +27,7 @@ pub(crate) const TAG_HEALTH: &str = "health";
 pub(crate) const TAG_COMMANDS: &str = "commands";
 pub(crate) const TAG_HOUSEHOLD: &str = "household";
 pub(crate) const TAG_USERS: &str = "users";
+pub(crate) const TAG_RELEASES: &str = "releases";
 
 type ApiResult<T> = Result<T, ApiError>;
 type JsonBody<T> = WithRejection<Json<T>, ApiError>;

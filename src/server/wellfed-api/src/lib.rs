@@ -19,6 +19,7 @@ mod events;
 mod feeders;
 mod health;
 mod household;
+mod releases;
 mod stream;
 mod users;
 
@@ -41,6 +42,10 @@ pub use wellfed_model::{
     Blocked, ClientRole, EnrollPath, EventBody, EventKind, FeedOutcome, FeedReason, Generation,
     Hex, MetricKind, Power, Readiness, SampleValue, Settings, SettingsPatch, Source,
     Status as FeederStatus, WifiSource,
+};
+pub use releases::{
+    AssetName, RefusedAsset, Release, ReleaseCheck, ReleasePage, ReleaseQuery, ReleaseRefusal,
+    ReleaseSigner, ReleaseSource,
 };
 pub use stream::{FeederSample, StreamEvent, StreamQuery};
 pub use users::{NewUser, UserPatch};

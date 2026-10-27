@@ -6,7 +6,7 @@ use std::path::Path;
 
 use clap::Parser;
 use wellfed_server::config::{
-    ConfigError, Discovery, FILE, HostName, Label, Overrides, ServerConfig,
+    ConfigError, Discovery, FILE, HostName, Label, Overrides, ServerConfig, UpdateKey,
 };
 
 /// The server's flags alone, as `wellfed-server` takes them.
@@ -85,6 +85,8 @@ raw_sample_days = 30
 
 [releases]
 fetch = true
+project_keys = ["3333333333333333333333333333333333333333333333333333333333333333"]
+owner_keys = ["1111111111111111111111111111111111111111111111111111111111111111"]
 
 [backups]
 keep = 3
@@ -112,6 +114,8 @@ keep = 3
     );
     assert_eq!(config.retention.raw_sample_days, Some(days(30)));
     assert!(config.releases.fetch);
+    assert_eq!(config.releases.project_keys, [UpdateKey([0x33; 32])]);
+    assert_eq!(config.releases.owner_keys, [UpdateKey([0x11; 32])]);
     assert_eq!(config.backups.keep, days(3));
 }
 
@@ -132,11 +136,14 @@ raw_sample_days = 30
 
 [releases]
 fetch = true
+owner_keys = ["1111111111111111111111111111111111111111111111111111111111111111"]
 "#,
     )
     .unwrap();
 
     let overrides = flags(&[
+        "--release-owner-key",
+        "2222222222222222222222222222222222222222222222222222222222222222",
         "--listen",
         "127.0.0.1:7000",
         "--host",
@@ -156,6 +163,8 @@ fetch = true
     assert_eq!(config.discovery, Discovery::Off);
     assert_eq!(config.retention.raw_sample_days, Some(days(5)));
     assert!(!config.releases.fetch);
+    assert_eq!(config.releases.owner_keys, [UpdateKey([0x22; 32])]);
+    assert!(config.releases.project_keys.is_empty());
     assert_eq!(config.backups.keep, days(2));
     assert_eq!(
         config.trusted_proxies,
@@ -257,6 +266,10 @@ fn a_bad_value_names_its_field() {
     assert_eq!(
         invalid_field("[releases]\nfetch = \"yes\""),
         "releases.fetch"
+    );
+    assert_eq!(
+        invalid_field("[releases]\nowner_keys = [\"AB\"]"),
+        "releases.owner_keys[0]"
     );
     assert_eq!(invalid_field("[backups]\nkeep = -1"), "backups.keep");
 }

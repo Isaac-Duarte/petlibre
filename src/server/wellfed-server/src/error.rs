@@ -2,11 +2,13 @@
 //! place from the service's errors and axum's rejections.
 
 use axum::Json;
-use axum::extract::rejection::{JsonRejection, PathRejection, QueryRejection};
+use axum::extract::rejection::{BytesRejection, JsonRejection, PathRejection, QueryRejection};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use wellfed_api::{ErrorCode, FeederRefusal, Problem, Settings};
-use wellfed_service::{AccountError, CommandError, Error, FeederError, HouseholdError, ZoneError};
+use wellfed_service::{
+    AccountError, CommandError, Error, FeederError, HouseholdError, ReleaseError, ZoneError,
+};
 
 /// A request's failure.
 #[derive(Debug)]
@@ -34,6 +36,17 @@ impl From<PathRejection> for ApiError {
     }
 }
 
+impl From<BytesRejection> for ApiError {
+    fn from(rejection: BytesRejection) -> Self {
+        let code = if rejection.status() == StatusCode::PAYLOAD_TOO_LARGE {
+            ErrorCode::TooLarge
+        } else {
+            ErrorCode::Invalid
+        };
+        Self::Code(code, Some(rejection.body_text()))
+    }
+}
+
 impl From<QueryRejection> for ApiError {
     fn from(rejection: QueryRejection) -> Self {
         Self::Code(ErrorCode::Invalid, Some(rejection.body_text()))
@@ -42,6 +55,10 @@ impl From<QueryRejection> for ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
+        let release = match &self {
+            Self::Service(Error::Release(release)) => release.refusal(),
+            _ => None,
+        };
         let (code, detail, refusal) = match self {
             Self::Code(code, detail) => (code, detail, None),
             Self::Service(Error::Command(CommandError::Stale(settings))) => return stale(settings),
@@ -55,6 +72,7 @@ impl IntoResponse for ApiError {
             code,
             detail,
             refusal,
+            release,
         };
         let mut response = (status, Json(problem)).into_response();
         response.headers_mut().insert(
@@ -126,9 +144,45 @@ fn service(error: &Error) -> (ErrorCode, Option<String>, Option<FeederRefusal>) 
             CommandError::NoEntry => ErrorCode::NotFound,
             CommandError::Unexpected | CommandError::Body(_) => return internal(error),
         },
+        Error::Release(release) => match release {
+            ReleaseError::Refused(_) => ErrorCode::ReleaseRefused,
+            ReleaseError::FetchDisabled => ErrorCode::FetchDisabled,
+            ReleaseError::Unreachable(_)
+            | ReleaseError::Listing(_)
+            | ReleaseError::ListingTooLarge => {
+                // The cause (a status, a TLS failure) is only in the chain.
+                tracing::warn!("{}", Chain(release));
+                ErrorCode::ReleasesUnreachable
+            }
+            ReleaseError::NotFound => ErrorCode::NotFound,
+            ReleaseError::Cursor | ReleaseError::Limit { .. } => ErrorCode::Invalid,
+            ReleaseError::Changed
+            | ReleaseError::Client(_)
+            | ReleaseError::Cache { .. }
+            | ReleaseError::Entry { .. }
+            | ReleaseError::Task => {
+                tracing::error!("{}", Chain(release));
+                return (ErrorCode::Internal, None, None);
+            }
+        },
         Error::Store(_) | Error::Random(_) => return internal(error),
     };
     (code, detail, None)
+}
+
+/// An error and each of its sources, for the log.
+struct Chain<'a>(&'a dyn std::error::Error);
+
+impl std::fmt::Display for Chain<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)?;
+        let mut source = self.0.source();
+        while let Some(error) = source {
+            write!(f, ": {error}")?;
+            source = error.source();
+        }
+        Ok(())
+    }
 }
 
 /// A failure of the server's own: logged, and answered without its detail.
@@ -152,6 +206,7 @@ fn status(code: ErrorCode) -> StatusCode {
         ErrorCode::NotFound => StatusCode::NOT_FOUND,
         ErrorCode::Invalid => StatusCode::BAD_REQUEST,
         ErrorCode::PreconditionRequired => StatusCode::PRECONDITION_REQUIRED,
+        ErrorCode::TooLarge => StatusCode::PAYLOAD_TOO_LARGE,
         ErrorCode::InviteExpired => StatusCode::GONE,
         ErrorCode::Unreachable => StatusCode::BAD_GATEWAY,
         ErrorCode::FeederOffline => StatusCode::SERVICE_UNAVAILABLE,
@@ -161,6 +216,9 @@ fn status(code: ErrorCode) -> StatusCode {
         // replays a refused write's answer while it remembers the id, so a
         // later attempt is a new request under a new key.
         ErrorCode::FeederRefused => StatusCode::CONFLICT,
+        ErrorCode::ReleaseRefused => StatusCode::UNPROCESSABLE_ENTITY,
+        ErrorCode::FetchDisabled => StatusCode::CONFLICT,
+        ErrorCode::ReleasesUnreachable => StatusCode::BAD_GATEWAY,
         ErrorCode::Internal => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }

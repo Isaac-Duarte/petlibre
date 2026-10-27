@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use wellfed_api::{AdoptFeeder, ClientRole, Connection, EventBody, EventQuery, FeederId};
-use wellfed_service::{Clock, Config, Discovery, Service, Timing};
+use wellfed_service::{Clock, Config, Discovery, ReleaseKeys, ReleasesConfig, Service, Timing};
 use wellfed_store::Store;
 use tempfile::TempDir;
 
@@ -13,8 +13,10 @@ use crate::feeder::{self, Running};
 use crate::fixed::{FixedClock, SeededRandom};
 use crate::until;
 
-/// The config every test server starts with: no discovery, and reconnects
-/// fast enough for a test to watch.
+/// The config every test server starts with: no discovery, reconnects
+/// fast enough for a test to watch, no trusted release key and no release
+/// fetching. Its release cache directory is a placeholder: a
+/// [`TestService`] keeps the cache beside its database.
 pub fn config() -> Config {
     Config {
         key: [0x42; 32],
@@ -27,6 +29,11 @@ pub fn config() -> Config {
             time_sync: Duration::from_secs(3600),
             answer: Duration::from_secs(12),
             session: Duration::from_secs(3600),
+        },
+        releases: ReleasesConfig {
+            dir: PathBuf::from("releases"),
+            keys: ReleaseKeys::default(),
+            fetch: None,
         },
     }
 }
@@ -42,6 +49,11 @@ impl TempStore {
 
     pub fn path(&self) -> PathBuf {
         self.0.path().join("server.db")
+    }
+
+    /// The release cache, as the server keeps it in its data directory.
+    pub fn releases(&self) -> PathBuf {
+        self.0.path().join("releases")
     }
 
     /// Open the database, as the server does at the fixed time.
@@ -81,12 +93,14 @@ impl TestService {
     }
 
     /// The service with `config` on `store`, which may hold a previous
-    /// run's data. Each start draws from a seed of its own.
+    /// run's data, its release cache included. Each start draws from a
+    /// seed of its own.
     pub async fn open(store: TempStore, config: Config) -> Self {
         Self::open_with_clock(store, config, Arc::new(FixedClock)).await
     }
 
-    async fn open_with_clock(store: TempStore, config: Config, clock: Arc<dyn Clock>) -> Self {
+    async fn open_with_clock(store: TempStore, mut config: Config, clock: Arc<dyn Clock>) -> Self {
+        config.releases.dir = store.releases();
         let service = Service::start(
             store.open().await,
             config,

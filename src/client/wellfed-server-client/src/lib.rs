@@ -27,6 +27,7 @@ mod error;
 mod feeders;
 mod health;
 mod household;
+mod releases;
 mod stream;
 mod users;
 
@@ -40,6 +41,7 @@ use serde::de::DeserializeOwned;
 
 pub use error::Error;
 pub use feeders::Lock;
+pub use releases::Uploaded;
 pub use reqwest::{self, Method, StatusCode, Url};
 pub use stream::{Update, Updates};
 

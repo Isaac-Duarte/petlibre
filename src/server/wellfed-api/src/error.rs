@@ -1,6 +1,8 @@
 //! Errors as RFC 9457 `application/problem+json`, each with a typed code.
 
 use wellfed_model::Refusal;
+
+use crate::ReleaseRefusal;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -35,6 +37,8 @@ pub enum ErrorCode {
     Invalid,
     /// An edit came without `If-Match`.
     PreconditionRequired,
+    /// The request's body is larger than the route takes.
+    TooLarge,
     /// The feeder is already adopted.
     AlreadyAdopted,
     /// The feeder dropped the invite unanswered: unknown, used or expired.
@@ -53,6 +57,13 @@ pub enum ErrorCode {
     /// The `Idempotency-Key` already names another request (another
     /// body, feeder, kind of write or user). Nothing was sent.
     KeyReused,
+    /// The file is not a release the server keeps; `release` says why.
+    ReleaseRefused,
+    /// Fetching releases is off (`releases.fetch`); uploads still work.
+    FetchDisabled,
+    /// The server could not reach the project's releases, or they answered
+    /// with something it could not read.
+    ReleasesUnreachable,
     Internal,
 }
 
@@ -115,4 +126,6 @@ pub struct Problem {
     pub detail: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refusal: Option<FeederRefusal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release: Option<ReleaseRefusal>,
 }

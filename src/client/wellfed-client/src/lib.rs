@@ -7,7 +7,9 @@
 //! and invite redemption ([`api`]), and the whole session every client
 //! runs over them ([`connection`]: keepalive, answers, the event cursor and
 //! LAN recovery), the update an owner pushes over it ([`update`]), and a
-//! feed's trace read a page at a time ([`trace`]).
+//! feed's trace read a page at a time ([`trace`]). A release file the owner
+//! keeps until they install it is checked with the feeder's own offer check
+//! ([`release`]).
 //! The consumer installer's steps from stock to a confirmed replacement,
 //! stock's setup frame and the backup gate before promotion are
 //! [`install`].
@@ -25,6 +27,7 @@
 pub mod api;
 pub mod connection;
 pub mod install;
+pub mod release;
 pub mod setup;
 pub mod time;
 pub mod trace;

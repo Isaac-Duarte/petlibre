@@ -32,6 +32,14 @@ raw_sample_days = 90
 # Check the project's GitHub releases daily. Uploads work either way, and
 # nothing installs until an owner asks.
 fetch = false
+# The project's update keys, 64 hex digits each: the key your feeders'
+# firmware has built in, or the release key in their release slot. With
+# none, only releases your own keys signed are kept.
+project_keys = []
+# The update keys you enrolled on your feeders, 64 hex digits each: a
+# release one of them signed (an image you built) is kept beside the
+# project's.
+owner_keys = []
 
 [backups]
 # Daily backups (03:30 household time) kept in <data>/backups. They leave

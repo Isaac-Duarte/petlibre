@@ -18,6 +18,12 @@ use std::str::FromStr;
 
 use serde::Deserialize;
 
+mod releases;
+
+pub use releases::{RELEASES, ReleaseOverrides, Releases, UpdateKey};
+
+use releases::ReleasesFile;
+
 /// The settings file, in the data directory.
 pub const FILE: &str = "server.toml";
 
@@ -66,6 +72,8 @@ pub enum InvalidValue {
         "`{name}` is not a host name (dot-separated labels of 1-63 letters, digits and inner `-`, up to 253 in all)"
     )]
     HostName { name: String },
+    #[error("`{text}` is not an update key (64 lowercase hex digits)")]
+    UpdateKey { text: String },
 }
 
 /// The settings the server runs with.
@@ -92,13 +100,6 @@ pub struct Retention {
     /// How many days raw samples are kept; forever when `None`. Hourly
     /// rollups are always kept.
     pub raw_sample_days: Option<NonZeroU32>,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Releases {
-    /// Whether the project's GitHub releases are checked daily. Uploads work
-    /// either way, and nothing installs without an owner asking.
-    pub fetch: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -260,10 +261,8 @@ pub struct Overrides {
     /// forever).
     #[arg(long, env = "WELLFED_SERVER_RAW_SAMPLE_DAYS")]
     pub raw_sample_days: Option<NonZeroU32>,
-    /// Whether GitHub releases are checked daily (`releases.fetch`; default
-    /// false).
-    #[arg(long, env = "WELLFED_SERVER_RELEASES_FETCH", value_name = "BOOL")]
-    pub releases_fetch: Option<bool>,
+    #[command(flatten)]
+    pub releases: ReleaseOverrides,
     /// Daily backups kept (`backups.keep`; default 7).
     #[arg(long, env = "WELLFED_SERVER_BACKUPS_KEEP")]
     pub backups_keep: Option<NonZeroU32>,
@@ -290,12 +289,6 @@ struct File {
 #[serde(deny_unknown_fields)]
 struct RetentionFile {
     raw_sample_days: Option<NonZeroU32>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ReleasesFile {
-    fetch: Option<bool>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -347,12 +340,7 @@ impl ServerConfig {
             retention: Retention {
                 raw_sample_days: overrides.raw_sample_days.or(file.retention.raw_sample_days),
             },
-            releases: Releases {
-                fetch: overrides
-                    .releases_fetch
-                    .or(file.releases.fetch)
-                    .unwrap_or(false),
-            },
+            releases: Releases::merge(file.releases, overrides.releases),
             backups: Backups {
                 keep: overrides
                     .backups_keep

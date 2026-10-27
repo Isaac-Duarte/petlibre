@@ -332,8 +332,9 @@ impl Platform for Plaf103 {
         clock::sync(sync, origin)
     }
 
-    fn time_fix(&mut self, _now_ms: u32, fix: Fix) -> Result<Jump, SyncError> {
-        clock::fix(fix)
+    /// `now_ms` is the clock's count the answer was read at.
+    fn time_fix(&mut self, now_ms: u32, fix: Fix) -> Result<Jump, SyncError> {
+        clock::fix(fix, now_ms)
     }
 
     fn clock_state(&mut self, _now_ms: u32) -> ClockState {

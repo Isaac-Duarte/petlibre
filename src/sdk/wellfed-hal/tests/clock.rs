@@ -1,7 +1,7 @@
 //! The wall clock carried across a warm reset in the fake's RAM record,
 //! stamped with the fake RTC.
 
-use wellfed_core::clock::wall::{CARRY_WORDS, Origin, Restart, Sync};
+use wellfed_core::clock::wall::{CARRY_WORDS, Fix, Origin, Restart, Sync, SyncError};
 use wellfed_hal::clock;
 use wellfed_hal::sdk::fake;
 
@@ -209,4 +209,40 @@ fn a_count_that_lost_its_place_forgets_the_time() {
     fake::with(|h| h.raw_ticks = h.raw_ticks.wrapping_add(1 << 31));
     assert_eq!(clock::state().reading, None);
     assert_eq!(record(), [0; CARRY_WORDS]);
+
+    // Logged, so a later `empty` carry has its reason.
+    let mut text = [0; wellfed_hal::sdk::LOG_TAIL_BYTES];
+    let batch = wellfed_hal::sdk::LOG_TAIL
+        .read(None, &mut text)
+        .expect("lines");
+    let text = core::str::from_utf8(&text[..batch.len]).unwrap();
+    assert!(
+        text.contains("PLTIM1 forget reason=count had_time=1 "),
+        "{text}"
+    );
+}
+
+/// An NTP answer applied after the count moved on from where it was read
+/// is moved on with it: the time between costs neither accuracy nor the
+/// bound.
+#[test]
+fn a_fix_applied_late_is_carried_to_the_count_now() {
+    clock::reset();
+    at(20_000, 20);
+    let read_at = clock::now_ms();
+    at(20_500, 20);
+
+    let answer = Fix {
+        unix_ms: NOON,
+        error_ms: 20,
+        origin: Origin::Ntp,
+    };
+    clock::fix(answer, read_at).unwrap();
+    let reading = clock::state().reading.expect("set");
+    assert_eq!(reading.unix_ms, NOON + 500);
+    assert_eq!(reading.error_ms, 20 + 3);
+
+    // A count ahead of the clock's is no measurement of it.
+    let ahead = clock::now_ms() + 1;
+    assert_eq!(clock::fix(answer, ahead), Err(SyncError::Time));
 }

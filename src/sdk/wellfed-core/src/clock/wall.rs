@@ -75,7 +75,8 @@ pub const MAX_OFFSET_S: i32 = 14 * 3600;
 /// measured 735 ppm slow (two 10-minute resyncs) and 2,060 ppm slow (one
 /// 17-minute NTP poll, four days later, another build), and those include
 /// whatever ticks flash erases stopped; the SysTimer the firmware now
-/// counts with measured about 475 ppm slow. This is more than twice the
+/// counts with read about 475 ppm slow in the supervision probe (physical
+/// but rough: one 60 s probe, about ±1,000 ppm). This is more than twice the
 /// worst. The cost is the validity window, `MAX_ERROR_MS` over the bound:
 /// about 6.6 h after a trusted fix.
 pub const UNLEARNED_PPM: u32 = 5000;

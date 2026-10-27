@@ -343,7 +343,8 @@ pub trait Platform {
     /// Check and adopt a sync from a client; `origin` says whether it may
     /// step the clock.
     fn time_sync(&mut self, now_ms: u32, sync: Sync, origin: Origin) -> Result<Jump, SyncError>;
-    /// Adopt an NTP fix measured at `now_ms`.
+    /// Adopt an NTP fix measured at `now_ms` on the clock's count
+    /// ([`Self::clock_ms`]).
     fn time_fix(&mut self, now_ms: u32, fix: Fix) -> Result<Jump, SyncError>;
     /// The clock's state now.
     fn clock_state(&mut self, now_ms: u32) -> ClockState;

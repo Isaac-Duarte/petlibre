@@ -25,7 +25,7 @@
 use wellfed_core::clock::tick::TickClock;
 use wellfed_core::clock::wall::{
     CARRY_WORDS, Fix, Jump, NoResume, Origin, Restart, State, Sync as ClockSync, SyncError,
-    WallClock,
+    UNLEARNED_PPM, WallClock,
 };
 use wellfed_core::clock::zone::Rule;
 
@@ -39,14 +39,28 @@ struct Kept {
     clock: WallClock,
     count: TickClock,
     kept_at: u32,
+    /// The count lost its place and the clock forgot the time: logged once
+    /// the interrupts are unmasked again.
+    lost: Option<Lost>,
 }
 
-/// Every access is a short copy or update under `IrqGuard`.
-static CLOCK: TaskCell<Kept> = TaskCell::new(Kept {
+/// Where the count stood when it lost its place.
+#[derive(Clone, Copy)]
+struct Lost {
+    count_ms: u32,
+    /// The clock had the time, so forgetting it changed what it reads.
+    had_time: bool,
+}
+
+const UNSET: Kept = Kept {
     clock: WallClock::new(),
     count: TickClock::UNSET,
     kept_at: 0,
-});
+    lost: None,
+};
+
+/// Every access is a short copy or update under `IrqGuard`.
+static CLOCK: TaskCell<Kept> = TaskCell::new(UNSET);
 
 /// How often the loop stores the clock: its error grows at the RTC's
 /// bound from the last store, 0.1 s over this.
@@ -57,18 +71,35 @@ const _: () = assert!(CARRY_WORDS == sdk::TIME_CARRY_WORDS);
 /// Run `change` on the clock at its millisecond count now, with interrupts
 /// masked; it also gets the count at the last store.
 fn update<T>(change: impl FnOnce(&mut WallClock, u32, &mut u32) -> T) -> T {
-    let _guard = IrqGuard::lock();
-    // SAFETY: interrupts are masked, so this is the only reference.
-    let kept = unsafe { &mut *CLOCK.get() };
-    let now = count(kept);
-    change(&mut kept.clock, now, &mut kept.kept_at)
+    let (result, lost) = {
+        let _guard = IrqGuard::lock();
+        // SAFETY: interrupts are masked, so this is the only reference.
+        let kept = unsafe { &mut *CLOCK.get() };
+        let now = count(kept);
+        let result = change(&mut kept.clock, now, &mut kept.kept_at);
+        (result, kept.lost.take())
+    };
+
+    if let Some(lost) = lost {
+        let mut report = startup::Report::new();
+        if let Ok(line) = report.record(format_args!(
+            "PLTIM1 forget reason=count had_time={} at_ms={} count_ms={}\r\n",
+            u8::from(lost.had_time),
+            sdk::uptime_ms(),
+            lost.count_ms
+        )) {
+            sdk::log(line);
+        }
+    }
+    result
 }
 
 /// The SysTimer extended to milliseconds. The first read starts the count
 /// at the tick count, so early records read close to uptime; a read the
 /// extension refuses starts it again from where it stood and forgets the
 /// time and the record a reset would resume, since how long the count was
-/// lost is unknown.
+/// lost is unknown (`PLTIM1 forget reason=count`, so a later `empty` carry
+/// has its explanation in the log).
 fn count(kept: &mut Kept) -> u32 {
     let raw = sdk::systimer_ticks();
     if let Some(now) = kept.count.read(raw) {
@@ -78,9 +109,14 @@ fn count(kept: &mut Kept) -> u32 {
     let from = if kept.count.ticks_per_second == 0 {
         sdk::uptime_ms()
     } else {
+        let count_ms = kept.count.millis;
+        kept.lost = Some(Lost {
+            count_ms,
+            had_time: kept.clock.read(count_ms).is_some(),
+        });
         kept.clock.forget();
         sdk::time_carry_store(&[0; CARRY_WORDS]);
-        kept.count.millis
+        count_ms
     };
     kept.count = TickClock::new(SYSTIMER_HZ, raw, from).unwrap_or_default();
     from
@@ -104,16 +140,35 @@ pub fn sync(sync: ClockSync, origin: Origin) -> Result<Jump, SyncError> {
     result
 }
 
-/// Adopt an NTP fix measured now, and log it as a `PLTIM1` record.
-pub fn fix(fix: Fix) -> Result<Jump, SyncError> {
+/// Adopt an NTP fix measured at count `at` ([`now_ms`]), and log it as a
+/// `PLTIM1` record. It is applied now, moved on by the count since `at`
+/// with that span's error at the unlearned bound, so the clock's anchors
+/// stay in order even if a sync came in between, and the time between the
+/// answer and this call is neither lost nor unaccounted for. A count `at`
+/// ahead of now is not a measurement of this count: refused as `Time`.
+pub fn fix(fix: Fix, at: u32) -> Result<Jump, SyncError> {
     let rtc = rtc_seconds();
     let (result, now) = update(|clock, now, kept_at| {
-        let result = clock.fix(now, fix);
+        let result = advance(fix, now.wrapping_sub(at)).and_then(|fix| clock.fix(now, fix));
         store(clock, now, rtc, kept_at);
         (result, now)
     });
     log(fix.origin, result, now);
     result
+}
+
+/// `fix` carried `elapsed_ms` of the clock's count on.
+fn advance(fix: Fix, elapsed_ms: u32) -> Result<Fix, SyncError> {
+    if elapsed_ms >= wellfed_core::HALF_RANGE {
+        return Err(SyncError::Time);
+    }
+    let grown = u64::from(elapsed_ms) * u64::from(UNLEARNED_PPM);
+    let grown = u32::try_from(grown.div_ceil(1_000_000)).map_err(|_| SyncError::Time)?;
+    Ok(Fix {
+        unix_ms: fix.unix_ms + u64::from(elapsed_ms),
+        error_ms: fix.error_ms.saturating_add(grown),
+        origin: fix.origin,
+    })
 }
 
 /// Resume the clock a warm reset left in `wellfed_time_carry`, once at
@@ -298,9 +353,5 @@ pub fn reset() {
     let _guard = IrqGuard::lock();
     // SAFETY: interrupts are masked, so this is the only reference.
     let kept = unsafe { &mut *CLOCK.get() };
-    *kept = Kept {
-        clock: WallClock::new(),
-        count: TickClock::UNSET,
-        kept_at: 0,
-    };
+    *kept = UNSET;
 }

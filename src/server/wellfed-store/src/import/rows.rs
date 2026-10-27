@@ -4,11 +4,45 @@
 
 use wellfed_formats::export::{
     AuditEntry, BlockedChange, Boot, ClockSync, Command, Feed, FeedTrace, FeederFood, FeederStat,
-    Food, FoodReading, Install, LockChange, Pet, PetFeeder, PetWeight, Refill,
+    Food, FoodReading, Install, KeptClient, LockChange, Pet, PetFeeder, PetWeight, PhoneKey,
+    Refill,
 };
 use sqlx::SqliteConnection;
 
 use crate::Result;
+
+pub(super) async fn phone_key(tx: &mut SqliteConnection, phone: &PhoneKey) -> Result<()> {
+    sqlx::query!(
+        "INSERT INTO phone_keys (feeder_id, key, user_id, token_id, role, invited_ms,
+                                 invite_until_ms, revoke, revoke_ms, attempt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        phone.feeder_id,
+        phone.key,
+        phone.user_id,
+        phone.token_id,
+        phone.role,
+        phone.invited_ms,
+        phone.invite_until_ms,
+        phone.revoke,
+        phone.revoke_ms,
+        phone.attempt,
+    )
+    .execute(tx)
+    .await?;
+    Ok(())
+}
+
+pub(super) async fn kept_client(tx: &mut SqliteConnection, kept: &KeptClient) -> Result<()> {
+    sqlx::query!(
+        "INSERT INTO kept_clients (feeder_id, key, kept_ms) VALUES (?, ?, ?)",
+        kept.feeder_id,
+        kept.key,
+        kept.kept_ms,
+    )
+    .execute(tx)
+    .await?;
+    Ok(())
+}
 
 pub(super) async fn feed(tx: &mut SqliteConnection, feed: &Feed) -> Result<()> {
     sqlx::query!(
@@ -213,8 +247,8 @@ pub(super) async fn audit(tx: &mut SqliteConnection, entry: &AuditEntry) -> Resu
 pub(super) async fn install(tx: &mut SqliteConnection, install: &Install) -> Result<()> {
     sqlx::query!(
         "INSERT INTO installs (id, feeder_id, release_id, version, user_id, started_ms, state,
-                               written, image_len, failure, finished_ms)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                               written, image_len, failure, finished_ms, target)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         install.id,
         install.feeder_id,
         install.release_id,
@@ -226,6 +260,7 @@ pub(super) async fn install(tx: &mut SqliteConnection, install: &Install) -> Res
         install.image_len,
         install.failure,
         install.finished_ms,
+        install.target,
     )
     .execute(tx)
     .await?;

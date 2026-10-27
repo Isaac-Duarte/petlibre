@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT feeder_id AS \"feeder_id: Uuid\", key, kept_ms\n                       FROM kept_clients ORDER BY feeder_id, key",
+  "describe": {
+    "columns": [
+      {
+        "name": "feeder_id: Uuid",
+        "ordinal": 0,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "kept_clients",
+            "name": "feeder_id"
+          }
+        }
+      },
+      {
+        "name": "key",
+        "ordinal": 1,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "kept_clients",
+            "name": "key"
+          }
+        }
+      },
+      {
+        "name": "kept_ms",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "kept_clients",
+            "name": "kept_ms"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "2adfd16c42ed3fb196906cb750a5531a6b5ad2bc43269f5e8b7c165014d4116d"
+}

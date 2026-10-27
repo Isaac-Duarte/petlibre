@@ -27,7 +27,8 @@
 //! - **job runs** are not exported: they are this server's schedule, and an
 //!   imported server runs each job when it is next due.
 //!
-//! Everything else is: the household, each feeder's cached state, raw
+//! Everything else is: the household, each feeder's cached state, the
+//! phone keys the server invited and the clients an owner kept, raw
 //! events, gaps, samples and their rollups, the projections, the command
 //! journal and the audit log, installs, pets, foods and refills.
 

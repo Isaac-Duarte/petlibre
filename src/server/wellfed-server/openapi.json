@@ -257,6 +257,66 @@
         }
       }
     },
+    "/api/v1/export": {
+      "get": {
+        "tags": [
+          "export"
+        ],
+        "summary": "Everything the server holds, as a tar streamed from one snapshot of\nthe database: `manifest.json` (the format version, the server's version,\nand each table's row count, size and SHA-256), then a file per table,\n`.jsonl` or `.csv`. No password, token or session hashes and no feeder\nkeys. A body cut short means the export failed; the manifest's sizes and\nhashes show it.",
+        "operationId": "export",
+        "parameters": [
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ExportFormat"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/x-tar": {
+                "schema": {
+                  "$ref": "#/components/schemas/Archive"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid: an unknown format",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden: owners only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "export_running: another export is being written",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/feeders": {
       "get": {
         "tags": [
@@ -3167,6 +3227,56 @@
         }
       }
     },
+    "/api/v1/import": {
+      "post": {
+        "tags": [
+          "export"
+        ],
+        "summary": "Restore a JSON export onto this fresh server, in one transaction, read\nas it is uploaded. Like setup, it needs no login and runs only while no\naccount exists; it logs no one in. Imported accounts have no password\nuntil the host's `wellfed-server reset-owner` gives an owner one, and\nimported feeders are archived until they are adopted again.",
+        "operationId": "import",
+        "requestBody": {
+          "content": {
+            "application/x-tar": {
+              "schema": {
+                "$ref": "#/components/schemas/Archive"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Imported"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "import_closed: an account exists",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "archive_invalid: not an archive this server imports, or not what its manifest says; nothing was imported",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/pets": {
       "get": {
         "tags": [
@@ -4672,6 +4782,11 @@
           }
         }
       },
+      "Archive": {
+        "type": "string",
+        "format": "binary",
+        "description": "An archive's bytes: a tar, as the body documents it."
+      },
       "AssetName": {
         "type": "object",
         "description": "One asset of one of the project's releases.",
@@ -5733,6 +5848,9 @@
           "stock_backup_needed",
           "stock_differs",
           "restore_mismatch",
+          "import_closed",
+          "archive_invalid",
+          "export_running",
           "internal"
         ]
       },
@@ -7009,6 +7127,40 @@
               "null"
             ],
             "description": "An IANA zone; one a POSIX rule cannot describe is refused\n`zone_unsupported`."
+          }
+        }
+      },
+      "Imported": {
+        "type": "object",
+        "description": "What an import restored.",
+        "required": [
+          "tables"
+        ],
+        "properties": {
+          "tables": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportedTable"
+            },
+            "description": "Every table in the archive, in its order, with the rows restored."
+          }
+        }
+      },
+      "ImportedTable": {
+        "type": "object",
+        "required": [
+          "table",
+          "rows"
+        ],
+        "properties": {
+          "rows": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "table": {
+            "type": "string",
+            "description": "The table's name in the archive."
           }
         }
       },
@@ -10327,6 +10479,10 @@
     {
       "name": "backups",
       "description": "Copies of the server's database, kept in its data directory"
+    },
+    {
+      "name": "export",
+      "description": "Everything the server holds as one archive, and its import onto a fresh server"
     }
   ]
 }

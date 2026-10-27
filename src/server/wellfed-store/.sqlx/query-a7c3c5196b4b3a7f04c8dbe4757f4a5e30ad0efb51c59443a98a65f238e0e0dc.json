@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id AS \"id: Uuid\", feeder_id AS \"feeder_id: Uuid\", release_id,\n                              version, user_id AS \"user_id: Uuid\", started_ms, state, written,\n                              image_len, failure, finished_ms\n                       FROM installs ORDER BY id",
+  "query": "SELECT id AS \"id: Uuid\", feeder_id AS \"feeder_id: Uuid\", release_id,\n                              version, user_id AS \"user_id: Uuid\", started_ms, state, written,\n                              image_len, failure, finished_ms, target\n                       FROM installs ORDER BY id",
   "describe": {
     "columns": [
       {
@@ -123,6 +123,17 @@
             "name": "finished_ms"
           }
         }
+      },
+      {
+        "name": "target",
+        "ordinal": 11,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "installs",
+            "name": "target"
+          }
+        }
       }
     ],
     "parameters": {
@@ -139,8 +150,9 @@
       false,
       false,
       true,
-      true
+      true,
+      false
     ]
   },
-  "hash": "36565f49cb691d0a89892967c0ca3250830636e8f57b65b722abd5c1e37f0365"
+  "hash": "a7c3c5196b4b3a7f04c8dbe4757f4a5e30ad0efb51c59443a98a65f238e0e0dc"
 }

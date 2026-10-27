@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO kept_clients (feeder_id, key, kept_ms) VALUES (?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "1d18d1848547b71c099fb366edf89ca3562da50fcf0a8c0f54b3c640b5acac1c"
+}

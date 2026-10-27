@@ -10,9 +10,9 @@ use futures_util::stream::BoxStream;
 use futures_util::{StreamExt, TryStreamExt};
 use wellfed_formats::export::{
     AuditEntry, BlockedChange, Boot, ClockSync, Command, Event, Feed, FeedTrace, Feeder,
-    FeederFood, FeederStat, FeederState, Food, FoodReading, Gap, Household, Install, LockChange,
-    Pet, PetFeeder, PetWeight, ProjectionVersion, Refill, Row, Sample, SampleMarks, SampleRollup,
-    Table, User,
+    FeederFood, FeederStat, FeederState, Food, FoodReading, Gap, Household, Install, KeptClient,
+    LockChange, Pet, PetFeeder, PetWeight, PhoneKey, ProjectionVersion, Refill, Row, Sample,
+    SampleMarks, SampleRollup, Table, User,
 };
 use sqlx::{Sqlite, Transaction};
 use uuid::Uuid;
@@ -65,6 +65,24 @@ impl Snapshot {
                     r#"SELECT feeder_id AS "feeder_id: Uuid", status, status_ms, settings,
                               settings_ms
                        FROM feeder_state ORDER BY feeder_id"#
+                )
+                .fetch(tx),
+            ),
+            Table::PhoneKeys => rows(
+                sqlx::query_as!(
+                    PhoneKey,
+                    r#"SELECT feeder_id AS "feeder_id: Uuid", key, user_id AS "user_id: Uuid",
+                              token_id AS "token_id: Uuid", role, invited_ms, invite_until_ms,
+                              revoke, revoke_ms, attempt
+                       FROM phone_keys ORDER BY feeder_id, key"#
+                )
+                .fetch(tx),
+            ),
+            Table::KeptClients => rows(
+                sqlx::query_as!(
+                    KeptClient,
+                    r#"SELECT feeder_id AS "feeder_id: Uuid", key, kept_ms
+                       FROM kept_clients ORDER BY feeder_id, key"#
                 )
                 .fetch(tx),
             ),
@@ -212,7 +230,7 @@ impl Snapshot {
                     Install,
                     r#"SELECT id AS "id: Uuid", feeder_id AS "feeder_id: Uuid", release_id,
                               version, user_id AS "user_id: Uuid", started_ms, state, written,
-                              image_len, failure, finished_ms
+                              image_len, failure, finished_ms, target
                        FROM installs ORDER BY id"#
                 )
                 .fetch(tx),

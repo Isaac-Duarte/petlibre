@@ -104,6 +104,8 @@ impl Import {
                 .execute(tx)
                 .await?;
             }
+            Row::PhoneKeys(phone) => rows::phone_key(tx, phone).await?,
+            Row::KeptClients(kept) => rows::kept_client(tx, kept).await?,
             Row::Events(event) => {
                 sqlx::query!(
                     "INSERT INTO events (feeder_id, epoch, seq, at_s, received_ms, kind, body)

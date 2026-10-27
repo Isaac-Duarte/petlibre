@@ -237,6 +237,7 @@ fn an_archive_imports_onto_an_empty_server_and_exports_again_byte_for_byte() {
         let feeders = ada.feeders().await.unwrap();
         assert_eq!(feeders.len(), 1);
         assert_eq!(feeders[0].connection, Connection::Offline);
+        assert!(feeders[0].archived.is_some(), "{feeders:?}");
 
         store.close().await;
         second.stop().await;

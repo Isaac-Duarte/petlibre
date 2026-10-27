@@ -83,6 +83,8 @@ tables! {
     Household => "household": Household,
     Feeders => "feeders": Feeder,
     FeederState => "feeder_state": FeederState,
+    PhoneKeys => "phone_keys": PhoneKey,
+    KeptClients => "kept_clients": KeptClient,
     Events => "events": Event,
     Gaps => "gaps": Gap,
     Samples => "samples": Sample,
@@ -154,6 +156,34 @@ pub struct FeederState {
     pub status_ms: Option<i64>,
     pub settings: Option<String>,
     pub settings_ms: Option<i64>,
+}
+
+/// A phone key the server made an invite for: who it is for, and its
+/// revocation while one is pending. `key` is the phone's public key.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PhoneKey {
+    pub feeder_id: Uuid,
+    #[serde(with = "hex_bytes")]
+    pub key: Vec<u8>,
+    pub user_id: Uuid,
+    pub token_id: Option<Uuid>,
+    pub role: String,
+    pub invited_ms: i64,
+    pub invite_until_ms: i64,
+    pub revoke: Option<String>,
+    pub revoke_ms: Option<i64>,
+    pub attempt: Option<String>,
+}
+
+/// A client the server did not invite that an owner chose to keep.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KeptClient {
+    pub feeder_id: Uuid,
+    #[serde(with = "hex_bytes")]
+    pub key: Vec<u8>,
+    pub kept_ms: i64,
 }
 
 /// An event as the feeder recorded it: `body` is its postcard bytes.
@@ -388,6 +418,8 @@ pub struct Install {
     pub image_len: i64,
     pub failure: Option<String>,
     pub finished_ms: Option<i64>,
+    /// What it writes: `release`, or `stock` from the kept backup.
+    pub target: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

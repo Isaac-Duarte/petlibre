@@ -436,6 +436,10 @@ fn stock_is_read_shown_exported_and_never_signed_unless_pinned() {
         );
         assert_eq!(http.stock(kitchen).await.unwrap().restore, None);
 
+        server.stop().await;
+        sim.stop().await;
+    });
+}
 
 #[test]
 fn export_saves_the_archive_once_it_is_whole() {

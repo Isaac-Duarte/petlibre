@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO installs (id, feeder_id, release_id, version, user_id, started_ms, state,\n                               written, image_len, failure, finished_ms, target)\n         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 12
+    },
+    "nullable": []
+  },
+  "hash": "381a94dbf1930c3d95060c87938487bf2dda886c7be4e6436f5ea9778763f022"
+}

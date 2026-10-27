@@ -107,6 +107,10 @@ struct Calls {
     flash_codes: VecDeque<i32>,
     results: VecDeque<Observation>,
     analyzer_code: i32,
+    /// Analyzer launches that exit while arming, before the one that runs.
+    analyzer_early_exits: u32,
+    /// Analyzer launches so far.
+    analyzer_launches: u32,
     sigrok: bool,
     /// UART bytes each capture records, in order.
     rx: VecDeque<Vec<u8>>,
@@ -187,11 +191,12 @@ impl Capture for NoCapture {
 struct FakeAnalyzer {
     output: PathBuf,
     code: i32,
+    running: bool,
 }
 
 impl Analyzer for FakeAnalyzer {
     fn running(&mut self) -> bool {
-        true
+        self.running
     }
     fn wait(&mut self, _: Duration) -> Result<Option<i32>> {
         // Recorded while the feeder was being powered.
@@ -323,9 +328,13 @@ impl Tools for FakeTools {
     }
 
     fn analyzer(&mut self, output: &Path, _: Duration, _: u64) -> Result<Box<dyn Analyzer>> {
+        let mut calls = self.0.borrow_mut();
+        calls.analyzer_launches += 1;
+        let running = calls.analyzer_launches > calls.analyzer_early_exits;
         Ok(Box::new(FakeAnalyzer {
             output: output.to_path_buf(),
-            code: self.0.borrow().analyzer_code,
+            code: calls.analyzer_code,
+            running,
         }))
     }
 
@@ -1035,6 +1044,41 @@ fn missing_sigrok_refuses_before_any_relay_change() {
         "{error:?}"
     );
     assert!(rig.board.log().is_empty());
+}
+
+#[test]
+fn an_analyzer_that_exits_while_arming_is_launched_again() {
+    let mut rig = rig();
+    rig.tools.0.borrow_mut().analyzer_early_exits = 2;
+
+    rig.bench
+        .transients(&transients(TransientMode::Boot))
+        .expect("the third launch runs");
+
+    // Three launches for the first cycle, one for the second.
+    assert_eq!(rig.tools.0.borrow().analyzer_launches, 4);
+}
+
+#[test]
+fn an_analyzer_that_never_arms_stops_before_power_on() {
+    let mut rig = rig();
+    rig.tools.0.borrow_mut().analyzer_early_exits = 3;
+
+    let error = rig
+        .bench
+        .transients(&transients(TransientMode::Boot))
+        .expect_err("three launches exited");
+
+    assert!(
+        matches!(error, Error::Command(CommandsError::AnalyzerExited { .. })),
+        "{error:?}"
+    );
+    assert_eq!(rig.tools.0.borrow().analyzer_launches, 3);
+    assert!(
+        !rig.board.log().contains(&(1, true)),
+        "{:?}",
+        rig.board.log()
+    );
 }
 
 #[test]

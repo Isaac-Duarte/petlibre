@@ -45,6 +45,10 @@ const FRAME_TX_BYTES: u64 = 1056;
 /// before power-on so the unpowered state is recorded first; the first open
 /// also uploads the analyzer's firmware, which takes about a second.
 const ANALYZER_ARMING: Duration = Duration::from_secs(3);
+/// Launches of the analyzer one cycle may take. The fx2lafw clone fails
+/// its USB open about one launch in five (October 27), always while
+/// arming: another launch repeats nothing the cycle has done.
+const ANALYZER_STARTS: u32 = 3;
 const ANALYZER_DRIVER_CHANNELS: [(&str, u8); 4] =
     [("ina", 0), ("inb", 1), ("outa", 2), ("outb", 3)];
 const ANALYZER_OUTPUT_CHANNELS: [(&str, u8); 2] = [("outa", 2), ("outb", 3)];
@@ -589,11 +593,9 @@ impl Bench {
             self.status.step(&format!("cycle {n}/{}", args.cycles));
             self.power_off(self.off_time)?;
             let name = format!("cycle-{n:03}.bin");
-            let started = Instant::now();
 
-            let mut analyzer = self
-                .tools
-                .analyzer(&out.join(&name), length, args.samplerate)?;
+            let (mut analyzer, started) =
+                self.armed_analyzer(&out.join(&name), length, args.samplerate)?;
             let cycle = self.transient_cycle(args, length, analyzer.as_mut());
             if cycle.is_err() {
                 analyzer.kill();
@@ -619,6 +621,39 @@ impl Bench {
         Ok(())
     }
 
+    /// The analyzer, still running after its arming pause, and when the
+    /// one that runs was launched. A start that exits during arming is
+    /// launched again, up to [`ANALYZER_STARTS`]: nothing is powered yet.
+    fn armed_analyzer(
+        &mut self,
+        output: &Path,
+        length: Duration,
+        samplerate: u64,
+    ) -> Result<(Box<dyn Analyzer>, Instant)> {
+        let mut start = 1;
+        loop {
+            let launched = Instant::now();
+            let mut analyzer = self.tools.analyzer(output, length, samplerate)?;
+            if let Err(error) = self.pause(ANALYZER_ARMING) {
+                analyzer.kill();
+                return Err(error);
+            }
+            if analyzer.running() {
+                return Ok((analyzer, launched));
+            }
+
+            let stderr = analyzer.stderr();
+            if start == ANALYZER_STARTS {
+                return Err(CommandsError::AnalyzerExited { stderr }.into());
+            }
+            say!(
+                "Analyzer exited before power-on (start {start}/{ANALYZER_STARTS}): {}; starting it again",
+                stderr.trim()
+            );
+            start += 1;
+        }
+    }
+
     /// One analyzer capture across a power-on; when power came on.
     fn transient_cycle(
         &mut self,
@@ -626,14 +661,6 @@ impl Bench {
         length: Duration,
         analyzer: &mut dyn Analyzer,
     ) -> Result<Instant> {
-        self.pause(ANALYZER_ARMING)?;
-        if !analyzer.running() {
-            return Err(CommandsError::AnalyzerExited {
-                stderr: analyzer.stderr(),
-            }
-            .into());
-        }
-
         let powered = Instant::now();
         if args.mode == TransientMode::Loader {
             self.set(STRAP, Switch::On)?;

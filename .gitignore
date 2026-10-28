@@ -29,3 +29,15 @@ skills-lock.json
 
 # The server's release binaries (make server-dist)
 /dist/
+
+# The bench board: its firmware's own build output, KiCad's per-user state,
+# backups and autorouter files, and enclosure STLs (rendered from the .scad)
+/src/firmware/bench/wellfed-bench-board/target/
+/src/hardware/bench/kicad/*.kicad_prl
+/src/hardware/bench/kicad/*-backups/
+/src/hardware/bench/kicad/_autosave-*
+/src/hardware/bench/kicad/fp-info-cache
+/src/hardware/bench/kicad/.history/
+/src/hardware/bench/kicad/*.dsn
+/src/hardware/bench/kicad/*.ses
+/src/hardware/bench/enclosure/*.stl

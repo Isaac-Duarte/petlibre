@@ -42,8 +42,8 @@ The repository is self-contained. SDK and toolchain copies and fixtures resolve 
 | Target | What it covers |
 | --- | --- |
 | `check-rust` | Formatting, Clippy with warnings denied, workspace host tests under cargo-nextest, doctests |
-| `check-deps` | cargo-deny: licenses, advisories, duplicate versions and sources ([deny.toml](../../deny.toml)), then the fuzz crate's lockfile under [its own policy](../../src/fuzz/deny.toml) |
-| `check-cross` | The SDK-independent KM0 and KM4 FFI static libraries |
+| `check-deps` | cargo-deny: licenses, advisories, duplicate versions and sources ([deny.toml](../../deny.toml)), then the fuzz crate's and the bench board firmware's lockfiles under their own policies ([fuzz](../../src/fuzz/deny.toml), [bench board](../../src/firmware/bench/wellfed-bench-board/deny.toml)) |
+| `check-cross` | The SDK-independent KM0 and KM4 FFI static libraries, and `check-bench-board`: Clippy and a release build of the [bench board firmware](../../src/firmware/bench/README.md) for the RP2040 |
 | `check-virtual-feeder` | The simulator; see [the simulator](#the-simulator). Also part of `check-rust` |
 | `check-docs` | Local Markdown links, portability checks, no Python under `src/`, and the source rules (raw output writers, card ids) |
 | `check-fixtures` | The optional binary and SDK evidence suite. Missing inputs or skips fail ([fixtures](fixtures.md)) |

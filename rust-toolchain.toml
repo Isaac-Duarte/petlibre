@@ -3,5 +3,6 @@ channel = "1.99.1"
 profile = "minimal"
 components = ["rustfmt", "clippy"]
 # KM0 (Cortex-M23, armv8-m.base) and KM4 (Cortex-M33, armv8-m.main, FPv5-SP hard float);
-# thumbv7em-none-eabi builds the soft-float Cortex-M4 stock-image probe.
-targets = ["thumbv8m.base-none-eabi", "thumbv8m.main-none-eabihf", "thumbv7em-none-eabi"]
+# thumbv7em-none-eabi builds the soft-float Cortex-M4 stock-image probe;
+# thumbv6m-none-eabi (Cortex-M0+) builds the bench board's RP2040 firmware.
+targets = ["thumbv8m.base-none-eabi", "thumbv8m.main-none-eabihf", "thumbv7em-none-eabi", "thumbv6m-none-eabi"]

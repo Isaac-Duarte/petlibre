@@ -1,8 +1,9 @@
-.PHONY: help check check-rust check-deps check-cross check-virtual-feeder check-docs check-fixtures ui check-web sqlx-prepare server-dist server-image check-server-release
+.PHONY: help check check-rust check-deps check-cross check-bench-board check-virtual-feeder check-docs check-fixtures ui check-web sqlx-prepare server-dist server-image check-server-release
 
 help:
 	@echo "check: formatting, Clippy, Rust tests, cross-builds, simulator, repository checks"
 	@echo "check-rust / check-deps / check-cross / check-virtual-feeder / check-docs: individual checks"
+	@echo "check-bench-board: Clippy and a release build of the bench board's RP2040 firmware (part of check-cross)"
 	@echo "check-fixtures: optional reference-binary/SDK evidence; fails if unavailable"
 	@echo "ui: build the web page (pnpm in src/web/) that wellfed-dashboard embeds with --features ui"
 	@echo "check-web: web types, unit tests, build, then the page end to end against wellfed-bench --ui"
@@ -36,14 +37,24 @@ check-rust:
 	cargo nextest run --locked -p wellfed-hal --features feed-faults --test feed_faults
 
 # Licenses, advisories, duplicate versions and sources (deny.toml), then the
-# out-of-workspace fuzz crate's own lockfile under its own policy. Advisories
-# need the RustSec database, which the first run fetches.
+# out-of-workspace fuzz and bench board crates' own lockfiles under their own
+# policies. Advisories need the RustSec database, which the first run fetches.
 check-deps:
 	cargo deny --locked check
 	cargo deny --manifest-path src/fuzz/Cargo.toml --locked check --config src/fuzz/deny.toml
+	cargo deny --manifest-path $(BENCH_BOARD)/Cargo.toml --locked check --config $(BENCH_BOARD)/deny.toml
 
-check-cross:
+check-cross: check-bench-board
 	WELLFED_BUILD_ID=$$(cargo run --quiet --locked --release -p wellfed-build -- source-id) cargo build --locked -p wellfed-hal-common --release --target thumbv8m.base-none-eabi --features km0
+
+# The bench board's firmware is its own workspace, built from its folder so
+# its .cargo/config.toml (target, linker script, UF2 runner) applies. It only
+# builds: nothing here touches a board or a feeder.
+BENCH_BOARD = src/firmware/bench/wellfed-bench-board
+check-bench-board:
+	cd $(BENCH_BOARD) && cargo clippy --locked --all-targets -- -D warnings
+	cd $(BENCH_BOARD) && cargo clippy --locked --bins -- -D warnings $(PRODUCTION_LINTS)
+	cd $(BENCH_BOARD) && cargo build --locked --release
 
 check-virtual-feeder:
 	cargo test --locked -p wellfed-sim --test virtual_feeder

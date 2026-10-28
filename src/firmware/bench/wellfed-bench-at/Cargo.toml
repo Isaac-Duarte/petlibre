@@ -1,0 +1,14 @@
+[package]
+license.workspace = true
+name = "wellfed-bench-at"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "The Wellfed Bench relay port: SH-UR04A AT+CHn parsing, replies and telemetry scaling"
+publish.workspace = true
+
+[dependencies]
+heapless = "0.9.3"
+
+[lints]
+workspace = true

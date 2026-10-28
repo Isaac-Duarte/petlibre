@@ -1,0 +1,37 @@
+# cargo-deny policy for the bench board's own lockfile, run by
+# `make check-deps` beside the workspace's ../../../../deny.toml. The same
+# rules (docs/development/rust.md#dependencies), with the allow list trimmed
+# to what this graph uses so neither check warns about an unused entry.
+
+[graph]
+all-features = true
+
+[advisories]
+unmaintained = "all"
+yanked = "deny"
+ignore = [
+    # bare-metal is archived, and cortex-m 0.7 depends on it with no release
+    # that drops it, as in the workspace's policy.
+    { id = "RUSTSEC-2026-0110", reason = "archived, pulled in by cortex-m 0.7 with no upgrade" },
+    # embassy-rp's PIO assembler macros (pio-core, pio-proc) use both at
+    # build time only; neither is linked into the firmware, and embassy-rp
+    # 0.10 has no release without them.
+    { id = "RUSTSEC-2024-0436", reason = "paste: unmaintained, a build-time macro dependency of embassy-rp's PIO assembler" },
+    { id = "RUSTSEC-2026-0173", reason = "proc-macro-error2: unmaintained, a build-time macro dependency of embassy-rp's PIO assembler" },
+]
+
+[licenses]
+allow = ["Apache-2.0", "BSD-3-Clause", "MIT", "Unicode-3.0"]
+confidence-threshold = 0.9
+
+[licenses.private]
+ignore = true
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

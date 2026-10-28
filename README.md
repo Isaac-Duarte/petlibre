@@ -69,6 +69,8 @@ The first run downloads dependencies. Checks use host models and loopback networ
 | `src/firmware/wellfed/` | One crate per firmware: `feeder`, `qa`, `bringup` and `blink` ([firmware guide](src/firmware/wellfed/README.md)) |
 | `src/firmware/vendor/` | The vendor SDK side: C hooks and ports, pinned SDK and toolchain locks, the stock layout, simulator scenarios and the image build (`make -C src/firmware/vendor`) |
 | `src/firmware/devices/` | Per-device descriptions and layouts |
+| `src/firmware/bench/` | The bench board's RP2040 firmware and its relay protocol crate ([bench firmware](src/firmware/bench/README.md)) |
+| `src/hardware/bench/` | The Wellfed Bench board: KiCad project, fab outputs and enclosure ([bench board](src/hardware/bench/README.md)) |
 | `src/web/` | Web frontends (a pnpm workspace): the bench page, the [well-fed.dev](docs/web/site.md) site, shared tokens and components, and API types generated from Rust. `make ui` builds them |
 | `src/fuzz/` | Fuzz targets ([fuzzing](docs/development/README.md#fuzzing)) |
 | `src/scripts/` | Developer scripts: `bench-dashboard` serves the bench page for this checkout |
@@ -80,6 +82,6 @@ The existing `wellfed-*` crate names are kept for compatibility.
 
 ## License and provenance
 
-First-party material is [MIT licensed](LICENSE). Dependencies and vendor components keep their own licenses; see [third-party provenance](THIRD_PARTY.md).
+First-party material is [MIT licensed](LICENSE), except the bench board's hardware design in `src/hardware/bench/`, which is [CERN-OHL-P](src/hardware/bench/LICENSE). Dependencies and vendor components keep their own licenses; see [third-party provenance](THIRD_PARTY.md).
 
 This repository contains no vendor firmware or device backups. [Contributions](CONTRIBUTING.md) are welcome.

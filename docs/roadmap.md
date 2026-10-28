@@ -62,6 +62,12 @@ This page tracks what works today and what comes next. It covers the replacement
 | Android app | Not started | |
 | Home Assistant | Not started | Paused. |
 
+## Development hardware
+
+| Capability | Status | Notes |
+| --- | --- | --- |
+| Wellfed Bench board | Not started | Designed in KiCad with its firmware written; no board built yet. See [the bench board](../src/hardware/bench/README.md). |
+
 ## What's next
 
 1. A long unattended run with injected faults, to prove the feeder stays safe over hours.

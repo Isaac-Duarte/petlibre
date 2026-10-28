@@ -1,0 +1,56 @@
+# RP2040 firmware for the Wellfed Bench board. Outside the main workspace:
+# embassy-rp builds only for thumbv6m-none-eabi, so `make check` never builds
+# this crate on the host. `make check-bench-board` lints and builds it for the
+# RP2040, and `make check-deps` checks its lockfile against deny.toml.
+[package]
+name = "wellfed-bench-board"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+license = "MIT"
+description = "RP2040 firmware for the Wellfed Bench board: feeder UART bridge and SH-UR04A relay emulation"
+publish = false
+
+[workspace]
+
+[[bin]]
+name = "wellfed-bench-board"
+test = false
+bench = false
+
+[dependencies]
+wellfed-bench-at = { path = "../wellfed-bench-at" }
+embassy-rp = { version = "0.10.0", features = ["rp2040", "time-driver", "critical-section-impl", "unstable-pac"] }
+embassy-executor = { version = "0.10.0", features = ["platform-cortex-m", "executor-thread"] }
+embassy-time = "0.5.1"
+embassy-usb = "0.6.0"
+embassy-sync = "0.8.0"
+embassy-futures = "0.1.2"
+cortex-m = { version = "0.7.10", features = ["inline-asm"] }
+cortex-m-rt = "0.7.7"
+panic-reset = "0.1.1"
+static_cell = "2.1.1"
+portable-atomic = { version = "1.15.0", features = ["critical-section"] }
+heapless = "0.9.3"
+embedded-io-async = "0.7.0"
+
+# The root workspace's lints, which a separate workspace cannot inherit.
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+undocumented_unsafe_blocks = "deny"
+unimplemented = "deny"
+
+[profile.release]
+opt-level = "s"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+debug = 2
+
+[profile.dev]
+opt-level = 1
+panic = "abort"

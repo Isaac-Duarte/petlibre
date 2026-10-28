@@ -181,8 +181,9 @@ impl SimFeeds {
     /// if one did, and how soon to step again while a feed runs.
     pub fn step(&mut self, now_ms: u32) -> (Option<EventBody>, Option<u32>) {
         if let Some(result) = self.interrupted.take() {
+            let number = u32::try_from(result.id).unwrap_or(u32::MAX);
             return (
-                Some(fed(&result, None, Durability::Durable, Source::Feeder)),
+                Some(feed::interrupted(number, &result, Source::Feeder)),
                 None,
             );
         }

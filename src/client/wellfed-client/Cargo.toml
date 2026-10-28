@@ -8,8 +8,9 @@ description = "Sans-IO client of the feeder's protocols, shared by the app and t
 publish.workspace = true
 
 [dependencies]
-jiff = "0.2.38"
+jiff = { workspace = true, features = ["serde"] }
 jiff-tzdb = "0.1.9"
+serde.workspace = true
 wellfed-core.workspace = true
 wellfed-model.workspace = true
 wellfed-proto.workspace = true
@@ -19,6 +20,7 @@ thiserror.workspace = true
 
 [dev-dependencies]
 ed25519-dalek = "2"
+serde_json.workspace = true
 wellfed-device-api.workspace = true
 wellfed-feeder.workspace = true
 wellfed-testkit.workspace = true

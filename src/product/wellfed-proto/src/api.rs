@@ -1377,7 +1377,8 @@ pub enum FeedReason {
     /// portions delivered so far and is never resumed (stock pauses up to
     /// about 10 minutes instead); at the start it ends with no motion.
     OutletBlocked,
-    /// One current reading over the ceiling: stopped at once, no reversal.
+    /// One current reading over the ceiling, or the limit held while the
+    /// motor is stopped (a pause): stopped at once, no reversal.
     Overcurrent,
     /// The feedback sensor's edges could not be trusted.
     FeedbackStream,
@@ -1389,6 +1390,9 @@ pub enum FeedReason {
     Jammed,
     /// The mark sensor read a mark for longer than any mark lasts.
     MarkStuck,
+    /// A reset (power cut, watchdog, fault) cut the feed short, and the
+    /// next boot resolved it: always `Uncertain`.
+    Interrupted,
 }
 
 /// The first 4 bytes of a client's key: enough to tell clients apart in

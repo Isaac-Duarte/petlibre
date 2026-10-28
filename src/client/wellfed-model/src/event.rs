@@ -216,7 +216,8 @@ pub enum FeedReason {
     /// The outlet beam read blocked: mid-feed, the feed ended with the
     /// portions delivered so far, never resumed; at the start, no motion.
     OutletBlocked,
-    /// One current reading over the ceiling: stopped at once.
+    /// One current reading over the ceiling, or the limit held while the
+    /// motor is stopped (a pause): stopped at once.
     Overcurrent,
     /// The feedback sensor's edges could not be trusted.
     FeedbackStream,
@@ -227,6 +228,9 @@ pub enum FeedReason {
     Jammed,
     /// The mark sensor read a mark for longer than any mark lasts.
     MarkStuck,
+    /// A reset (power cut, watchdog, fault) cut the feed short, and the
+    /// next boot resolved it: always `Uncertain`.
+    Interrupted,
 }
 
 impl FeedOutcome {
@@ -255,7 +259,7 @@ impl FeedOutcome {
 }
 
 impl FeedReason {
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 15] = [
         Self::Done,
         Self::Cancelled,
         Self::Clock,
@@ -270,6 +274,7 @@ impl FeedReason {
         Self::Output,
         Self::Jammed,
         Self::MarkStuck,
+        Self::Interrupted,
     ];
 
     /// The stored spelling, the same as the JSON one.
@@ -289,6 +294,7 @@ impl FeedReason {
             Self::Output => "output",
             Self::Jammed => "jammed",
             Self::MarkStuck => "mark_stuck",
+            Self::Interrupted => "interrupted",
         }
     }
 

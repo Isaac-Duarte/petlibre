@@ -84,6 +84,9 @@ enum Command {
     Time(configure::TimeArgs),
     /// The feeder's history, and with --follow its live events and samples.
     Events(history::EventsArgs),
+    /// The feeds the feeder's history keeps: when, who asked, portions asked
+    /// for and delivered, and how each ended (an uncertain feed as a range).
+    Feeds(history::FeedsArgs),
     /// The feeder's debug log (the record lines its UART prints), and with
     /// --follow each new line. Owners only.
     Logs(history::LogsArgs),
@@ -148,6 +151,7 @@ fn main() -> Result<ExitCode> {
         Command::Wifi(args) => runtime.block_on(configure::wifi_command(args)),
         Command::Time(args) => runtime.block_on(configure::time_command(args)),
         Command::Events(args) => runtime.block_on(history::events_command(args)),
+        Command::Feeds(args) => runtime.block_on(history::feeds_command(args)),
         Command::Logs(args) => runtime.block_on(history::logs_command(args)),
         Command::Invite(args) => runtime.block_on(access::invite_command(args)),
         Command::Join(args) => runtime.block_on(access::join_command(args)),

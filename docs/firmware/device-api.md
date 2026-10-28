@@ -123,7 +123,7 @@ A client that may want to cancel keeps its session open across the feed, as `wel
 
 **A feed a reset interrupted** (power cut, watchdog, fault) is resolved when the owner next opens.
 - The journal records it as uncertain under its own id.
-- The loop records its `Fed` event with outcome `Uncertain`, `completed` 0, reason `Output` and source `Feeder`. A distinct reason would be a later wire change, and the requester is not journaled.
+- The loop records its `Fed` event with outcome `Uncertain`, `completed` 0, reason `Interrupted` and source `Feeder`, or the plan that had claimed it: the journal keeps neither the requester nor a reason for it, so its record stays the one bank 0 and the flash tools read. Its time is when the boot resolved it, not when it ran, and none when the clock is invalid then (always after a cold boot).
 - The owner then takes feeds again, from the next id.
 - It is never retried, and its id is never handed out again. A `CancelFeed` for it answers `NotFound`, and its `Fed` event in the history says how it ended.
 - Until that event is recorded, a new feed is refused `Busy` (readiness `Resolving`).
@@ -234,6 +234,16 @@ Every flash lease checks that the outputs are stopped, and fails closed when the
 - The settings writer appends them to the ring in storage sectors 13–24 (`wellfed_feeder::store::events`: 32-byte records, at least 1,408 kept) and answers the API's reads. It polls every 5 ms while either waits. While a feed holds the outputs, an append waits at the head of the queue.
 - A ring created empty draws a random epoch from the generator, and every record repeats it in bytes 4–7, the high half of the old 64-bit sequence field. So a ring written before epochs reads as epoch 0, and the layout is unchanged. The welcome carries the epoch, and the feeder welcomes no session until the writer has opened the ring and published it.
 - Recorded today: boot, lock changes (panel, idle relock, or which client), settings, plans and Wi-Fi writes with their client, clock syncs, invites redeemed, recovery and revocations, feeds, refused Dispense presses, meal reminders, missed meals, and blocked feeding.
+
+**The feeding history** is the ring's `Fed` events; the feeder keeps no other log of feeds. Stock keeps none at all on the device: its two 50-record rings only queue records until the cloud acknowledges them.
+- Each records the feed's number, when it ended, who asked (the panel, a client or a plan), the portions asked for and confirmed, the outcome and the reason. It survives reboots with the ring.
+- **Coverage.** The ring's 1,408 records are shared with every other event, so it keeps at least the last 50 feeds unless the feeder records more than about 1,350 other events between them. A day of a few meals records a few dozen events (each meal's reminder and `Fed`, with lock, clock and supply changes), so the ring spans weeks to months; 200 events a day, a high design bound, still keeps about a week (static estimate, not measured). Long history is the server's job; there is no store of feeds alone.
+- **Gaps.** A reader resuming from a cursor (`--after`, or the server's mirror) whose events the ring has since dropped gets a `Gap` for them, never a silent hole. A plain `wellfed feeds` starts at the oldest event kept, so it shows no gap: its first line is simply the oldest feed left.
+- **Time.** `at` is the feeder's clock when the event was recorded, none while the clock is invalid (a cold boot until a source syncs it).
+- **A feed a reset interrupted** reads as uncertain for the reason `Interrupted`, with the time the next boot resolved it rather than when it ran. Its requester is unknown (the journal does not keep it) unless a plan had claimed it, and the event names the feeder.
+- **Not recorded:** a feed whose `Fed` event was still in the RAM queue when the power went (the window runs from the feed's end until the settings writer appends it: its 5 ms poll and one record's program when no other write waits; static analysis, not measured). The journal holds its result, but no event is written for it at the next boot. Events the queue dropped show as `Lost { count }`.
+- `wellfed feeds` reads it from the CLI, oldest first, one line a feed in the computer's time zone with its offset (`--json` for the entries as JSON, `--after` to resume after an event number of the current epoch). `wellfed_client::history` turns each event into the entry the CLI and the app show.
+- An uncertain feed reads as a range, never a count: from the portions confirmed up to the portions asked (`Delivered::Uncertain`). The feeder stopped without a result, so anything in that range may have dispensed.
 
 **Samples** go only to subscribers: power every 5 s, Wi-Fi signal every 30 s, the statistics' metrics with `STATS` ([below](#statistics)), and the judged supply beside the power sample with `POWER`. A sample not sent before the next of its kind is replaced.
 

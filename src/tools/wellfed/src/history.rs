@@ -1,12 +1,16 @@
 //! Reading what the feeder recorded over the device API: its events and
-//! samples, its debug log, its statistics and one feed's trace.
+//! samples, its feeding history, its debug log, its statistics and one
+//! feed's trace.
 
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use clap::{Args, ValueEnum};
+use jiff::Timestamp;
+use jiff::tz::TimeZone;
+use wellfed_client::history::{Entry, Feed};
 use wellfed_client::trace::Pages;
-use wellfed_model::{self as model, Answer, Op, Pushed, StatsSection};
+use wellfed_model::{self as model, Answer, FoodLevel, Gap, Op, Pushed, Source, StatsSection};
 
 use crate::{Target, connect, print_answer, print_json, trace};
 
@@ -24,6 +28,22 @@ pub(crate) struct EventsArgs {
     follow: bool,
     #[arg(long)]
     samples: bool,
+}
+
+#[derive(Args)]
+pub(crate) struct FeedsArgs {
+    #[command(flatten)]
+    target: Target,
+    /// Start after this event number (the first column), in the feeder's
+    /// current epoch (default: the oldest kept). A storage wipe starts a
+    /// new epoch counting from 1 again, so a number from before it would
+    /// skip that many of the new epoch's events: start without it then.
+    #[arg(long)]
+    after: Option<u64>,
+    /// Each entry as JSON, one a line, instead of one line a feed. An
+    /// uncertain feed's `delivered` is a range, never a count.
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Args)]
@@ -160,6 +180,92 @@ pub(crate) async fn events_command(args: EventsArgs) -> Result<()> {
     }
 }
 
+/// Each feed the feeder's history keeps, oldest first, one line a feed in
+/// this computer's time zone.
+pub(crate) async fn feeds_command(args: FeedsArgs) -> Result<()> {
+    let (_, _, mut connection) = connect(&args.target).await?;
+    connection.subscribe(args.after, false).await?;
+
+    let zone = TimeZone::system();
+    // The backlog is sent at once: stop once it has been quiet a moment.
+    while let Some(pushed) = connection.next(Duration::from_secs(2)).await? {
+        let Some(entry) = Entry::from_pushed(&pushed) else {
+            continue;
+        };
+        if args.json {
+            println!("{}", serde_json::to_string(&entry)?);
+        } else {
+            println!("{}", line(&entry, &zone));
+        }
+    }
+    Ok(())
+}
+
+/// One history entry as a line: a feed's event number, time, number,
+/// source, portions and ending, or what a gap or an overflow lost.
+fn line(entry: &Entry, zone: &TimeZone) -> String {
+    let feed = match *entry {
+        Entry::Feed(feed) => feed,
+        Entry::Gap(Gap { from, to, .. }) => {
+            return format!(
+                "events {from}-{to} left the feeder's history before they were read; feeds among them are gone"
+            );
+        }
+        Entry::Lost { seq, at, count, .. } => {
+            return format!(
+                "{seq:>6}  {}  the feeder could not record {count} events; feeds among them are gone",
+                time(at, zone)
+            );
+        }
+    };
+
+    let Feed {
+        seq,
+        feed: number,
+        requested,
+        outcome,
+        reason,
+        hopper,
+        ..
+    } = feed;
+    let empty = match hopper {
+        FoodLevel::Empty => "  hopper read empty",
+        FoodLevel::Unread | FoodLevel::Present => "",
+    };
+    format!(
+        "{seq:>6}  {}  feed {number}  by {}  {} ({}){empty}",
+        time(feed.at, zone),
+        source(feed.by),
+        feed.delivered.describe(requested, outcome),
+        reason.code()
+    )
+}
+
+/// The feeder's time in `zone`, with its offset so a line reads the same
+/// on any computer.
+fn time(at: Option<Timestamp>, zone: &TimeZone) -> String {
+    at.map_or_else(
+        || "(clock not set)".to_owned(),
+        |at| {
+            at.to_zoned(zone.clone())
+                .strftime("%Y-%m-%d %H:%M:%S %:z")
+                .to_string()
+        },
+    )
+}
+
+/// Who asked; nobody known for a feed a reset interrupted that no plan
+/// had claimed.
+fn source(by: Option<Source>) -> String {
+    match by {
+        Some(Source::Panel) => "panel".to_owned(),
+        Some(Source::Client { client }) => format!("client {client}"),
+        Some(Source::Feeder) => "feeder".to_owned(),
+        Some(Source::Schedule { plan }) => format!("plan {plan}"),
+        None => "unknown".to_owned(),
+    }
+}
+
 /// The lines as the feeder logged them, one per line on standard output;
 /// lines the feeder overwrote before sending are counted on standard error.
 pub(crate) async fn logs_command(args: LogsArgs) -> Result<()> {
@@ -204,3 +310,117 @@ pub(crate) async fn logs_command(args: LogsArgs) -> Result<()> {
 /// How long `logs` without `--follow` reads: the whole tail is a few
 /// frames, sent within a second.
 const LOGS_BOUND: Duration = Duration::from_secs(10);
+
+#[cfg(test)]
+mod tests {
+    use wellfed_model::{Event, EventBody, FeedOutcome, FeedReason, Hex};
+
+    use super::*;
+
+    fn feed(at: Option<Timestamp>, outcome: FeedOutcome, reason: FeedReason, by: Source) -> Entry {
+        let event = Event {
+            epoch: 1,
+            seq: 1175,
+            at,
+            body: EventBody::Fed {
+                feed: 128,
+                requested: 3,
+                completed: 1,
+                outcome,
+                reason,
+                hopper: FoodLevel::Present,
+                by,
+            },
+        };
+        Entry::Feed(Feed::from_event(&event).unwrap())
+    }
+
+    #[test]
+    fn a_feed_reads_as_one_line_with_its_time_source_portions_and_ending() {
+        let at = Some(Timestamp::from_second(1_793_100_000).unwrap());
+        let plan = Source::Schedule { plan: 0 };
+        let failed = feed(at, FeedOutcome::Failed, FeedReason::Output, plan);
+
+        assert_eq!(
+            line(&failed, &TimeZone::UTC),
+            "  1175  2026-10-27 11:20:00 +00:00  feed 128  by plan 0  1 of 3 portions, failed (output)"
+        );
+        let denver = TimeZone::fixed(jiff::tz::offset(-6));
+        assert!(line(&failed, &denver).contains("2026-10-27 05:20:00 -06:00  feed 128"));
+        let client = Source::Client {
+            client: Hex([0xab, 0xcd, 0x01, 0x02]),
+        };
+        let unset = feed(None, FeedOutcome::Done, FeedReason::Done, client);
+        assert!(
+            line(&unset, &TimeZone::UTC).contains("(clock not set)  feed 128  by client abcd0102")
+        );
+    }
+
+    #[test]
+    fn an_uncertain_feed_reads_as_a_range() {
+        let uncertain = feed(
+            None,
+            FeedOutcome::Uncertain,
+            FeedReason::Output,
+            Source::Panel,
+        );
+
+        assert!(
+            line(&uncertain, &TimeZone::UTC)
+                .ends_with("by panel  1 to 3 of 3 portions, uncertain (output)")
+        );
+    }
+
+    #[test]
+    fn a_feed_that_read_the_hopper_empty_says_so() {
+        let Entry::Feed(mut empty) = feed(None, FeedOutcome::Done, FeedReason::Done, Source::Panel)
+        else {
+            unreachable!("feed builds a feed")
+        };
+        empty.hopper = FoodLevel::Empty;
+
+        assert!(
+            line(&Entry::Feed(empty), &TimeZone::UTC)
+                .ends_with("1 of 3 portions, done (done)  hopper read empty")
+        );
+    }
+
+    #[test]
+    fn an_interrupted_feed_reads_by_unknown() {
+        let interrupted = feed(
+            None,
+            FeedOutcome::Uncertain,
+            FeedReason::Interrupted,
+            Source::Feeder,
+        );
+
+        assert!(
+            line(&interrupted, &TimeZone::UTC)
+                .ends_with("by unknown  1 to 3 of 3 portions, uncertain (interrupted)")
+        );
+    }
+
+    #[test]
+    fn a_gap_or_an_overflow_says_its_feeds_are_gone() {
+        let gap = Entry::Gap(Gap {
+            epoch: 1,
+            from: 1,
+            to: 40,
+        });
+        let lost = Entry::Lost {
+            epoch: 1,
+            seq: 77,
+            at: None,
+            count: 3,
+        };
+
+        assert_eq!(
+            line(&gap, &TimeZone::UTC),
+            "events 1-40 left the feeder's history before they were read; feeds among them are gone"
+        );
+        assert_eq!(
+            line(&lost, &TimeZone::UTC),
+            "    77  (clock not set)  the feeder could not record 3 events; feeds among them are gone"
+        );
+    }
+}

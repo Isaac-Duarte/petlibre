@@ -6,8 +6,9 @@
 //! It holds the BLE setup session ([`setup`]), the device API's sessions
 //! and invite redemption ([`api`]), and the whole session every client
 //! runs over them ([`connection`]: keepalive, answers, the event cursor and
-//! LAN recovery), the update an owner pushes over it ([`update`]), and a
-//! feed's trace read a page at a time ([`trace`]). A release file the owner
+//! LAN recovery), the update an owner pushes over it ([`update`]), a
+//! feed's trace read a page at a time ([`trace`]), and the feeding history
+//! the event history records ([`history`]). A release file the owner
 //! keeps until they install it is checked with the feeder's own offer check
 //! ([`release`]).
 //! The consumer installer's steps from stock to a confirmed replacement,
@@ -26,6 +27,7 @@
 
 pub mod api;
 pub mod connection;
+pub mod history;
 pub mod install;
 pub mod release;
 pub mod setup;

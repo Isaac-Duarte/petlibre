@@ -217,7 +217,7 @@ fn a_feeder_reboot_mid_feed_feeds_once_and_is_uncertain() {
                 requested: 2,
                 completed: 0,
                 outcome: FeedOutcome::Uncertain,
-                reason: FeedReason::Output,
+                reason: FeedReason::Interrupted,
             })
         );
         let retried = service.feed(&ada().into(), id, 2, key).await.unwrap();

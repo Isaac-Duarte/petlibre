@@ -4295,6 +4295,8 @@ dependencies = [
  "ed25519-dalek",
  "jiff",
  "jiff-tzdb",
+ "serde",
+ "serde_json",
  "sha2 0.10.9",
  "thiserror",
  "wellfed-core",

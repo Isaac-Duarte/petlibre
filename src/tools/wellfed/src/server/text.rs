@@ -5,6 +5,7 @@
 use std::fmt::Write as _;
 
 use serde::Serialize;
+use wellfed_client::history::Delivered;
 use wellfed_server_client::api::{
     Command, CommandOutcome, Feeder, FeederDetail, FeederEvent, Gap, Install, InstallTarget,
     MealReminder, Release, Settings, StockBackup, StockState, Token, User,
@@ -160,8 +161,8 @@ pub(super) fn outcome(outcome: &CommandOutcome) -> String {
             outcome,
             reason,
         } => format!(
-            "feed {feed}: {completed} of {requested} portions, {} ({})",
-            word(outcome),
+            "feed {feed}: {} ({})",
+            Delivered::of(*outcome, *completed, *requested).describe(*requested, *outcome),
             word(reason)
         ),
         CommandOutcome::Unrecorded => {
@@ -287,5 +288,16 @@ mod tests {
             reason: FeedReason::Done,
         };
         assert_eq!(outcome(&fed), "feed 4: 1 of 2 portions, failed (done)");
+        let uncertain = CommandOutcome::Fed {
+            feed: 5,
+            requested: 3,
+            completed: 0,
+            outcome: FeedOutcome::Uncertain,
+            reason: FeedReason::Interrupted,
+        };
+        assert_eq!(
+            outcome(&uncertain),
+            "feed 5: 0 to 3 of 3 portions, uncertain (interrupted)"
+        );
     }
 }

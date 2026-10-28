@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use anyhow::{Result, bail};
 use clap::Args;
+use wellfed_client::history::Delivered;
 use wellfed_model::{Answer, EventBody, FoodLevel, Op, PORTIONS_MAX, Pushed, Refusal};
 
 use crate::{Target, ask_and_print, connect, print_json};
@@ -99,8 +100,8 @@ fn fed(body: &EventBody, feed: u32) -> Option<String> {
     };
     (ended == feed).then(|| {
         format!(
-            "feed {feed}: {completed} of {requested} portions delivered, {} ({}){hopper}",
-            outcome.code(),
+            "feed {feed}: {} ({}){hopper}",
+            Delivered::of(outcome, completed, requested).describe(requested, outcome),
             reason.code()
         )
     })
@@ -163,9 +164,24 @@ mod tests {
 
         assert_eq!(
             fed(&body, 7).as_deref(),
-            Some("feed 7: 2 of 3 portions delivered, failed (no_feedback)")
+            Some("feed 7: 2 of 3 portions, failed (no_feedback)")
         );
         assert_eq!(fed(&body, 8), None);
+
+        // A result the journal lost: the confirmed portions are a floor.
+        let lost = EventBody::Fed {
+            feed: 7,
+            requested: 3,
+            completed: 2,
+            outcome: FeedOutcome::Uncertain,
+            reason: FeedReason::Output,
+            hopper: FoodLevel::Present,
+            by: Source::Feeder,
+        };
+        assert_eq!(
+            fed(&lost, 7).as_deref(),
+            Some("feed 7: 2 to 3 of 3 portions, uncertain (output)")
+        );
 
         let empty = EventBody::Fed {
             feed: 7,
@@ -178,7 +194,7 @@ mod tests {
         };
         assert_eq!(
             fed(&empty, 7).as_deref(),
-            Some("feed 7: 3 of 3 portions delivered, done (done); the hopper read empty")
+            Some("feed 7: 3 of 3 portions, done (done); the hopper read empty")
         );
     }
 }

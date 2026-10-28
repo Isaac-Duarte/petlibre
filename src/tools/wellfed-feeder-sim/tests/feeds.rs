@@ -2,13 +2,15 @@
 //! its journal id, its result is a `Fed` event, a cancel ends it, and a
 //! restart in the middle of one resolves it as uncertain under its own
 //! number, never as a new feed. A feed asks for 1 to 48 portions, and a
-//! Dispense press takes the same owner.
+//! Dispense press takes the same owner. The feeding history reads every
+//! feed back after a restart.
 
 use std::future::Future;
 use std::rc::Rc;
 use std::time::Duration;
 
 use tokio::task::LocalSet;
+use wellfed_client::history::{Delivered, Entry};
 use wellfed_connect::Connection;
 use wellfed_feeder_sim::feeding;
 use wellfed_feeder_sim::flash::Flash;
@@ -280,7 +282,7 @@ fn a_restart_mid_feed_resolves_it_as_uncertain_under_its_own_number() {
                 requested: 2,
                 completed: 0,
                 outcome: FeedOutcome::Uncertain,
-                reason: FeedReason::Output,
+                reason: FeedReason::Interrupted,
                 hopper: FoodLevel::Unread,
                 by: Source::Feeder,
             }
@@ -417,6 +419,67 @@ fn a_blocked_outlet_or_a_jam_ends_the_feed_by_name_with_its_portions_so_far() {
         assert_eq!(outcome, FeedOutcome::Done);
         assert_eq!(feed_fault(&mut owner, id + 1).await, None);
         assert_eq!(feeding::reserved(&flash), Some(3));
+        sim.stop().await;
+    });
+}
+
+/// The feeding history survives a restart: a fresh session after it reads
+/// every feed from the event ring, each with who asked and what it
+/// delivered, and the feed the restart interrupted as a range, never a
+/// count.
+#[test]
+fn the_feeding_history_reads_every_feed_after_a_restart() {
+    local(async {
+        let flash = Flash::memory();
+        let sim = start(&flash).await;
+        let mut owner = open(&sim).await;
+        owner.subscribe(None, false).await.unwrap();
+        let answer = owner.ask([1; 16], &Op::Feed { portions: 2 }).await.unwrap();
+        assert_eq!(answer, Answer::Feeding { feed: 1 });
+        next_fed(&mut owner).await;
+
+        sim.control(Control::StallFeeds(true));
+        let answer = owner.ask([2; 16], &Op::Feed { portions: 3 }).await.unwrap();
+        assert_eq!(answer, Answer::Feeding { feed: 2 });
+        sim.control(Control::Reboot);
+        drop(owner);
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        let mut owner = open(&sim).await;
+        owner.subscribe(None, false).await.unwrap();
+        let mut feeds = Vec::new();
+        while let Ok(pushed) = owner.next(Duration::from_millis(500)).await {
+            match Entry::from_pushed(&pushed) {
+                Some(Entry::Feed(feed)) => feeds.push(feed),
+                Some(lost @ (Entry::Gap(_) | Entry::Lost { .. })) => {
+                    panic!("nothing left the ring or the queue: {lost:?}")
+                }
+                None => {}
+            }
+        }
+
+        let read: Vec<_> = feeds
+            .iter()
+            .map(|feed| (feed.feed, feed.requested, feed.delivered, feed.outcome))
+            .collect();
+        let interrupted = Delivered::Uncertain {
+            confirmed: 0,
+            requested: 3,
+        };
+        assert_eq!(
+            read,
+            [
+                (1, 2, Delivered::Counted(2), FeedOutcome::Done),
+                (2, 3, interrupted, FeedOutcome::Uncertain),
+            ]
+        );
+        assert!(matches!(feeds[0].by, Some(Source::Client { .. })));
+        // The journal does not keep who asked: unknown, and interrupted.
+        assert_eq!(
+            (feeds[1].by, feeds[1].reason),
+            (None, FeedReason::Interrupted)
+        );
+        assert!(feeds[0].seq < feeds[1].seq, "oldest first");
         sim.stop().await;
     });
 }

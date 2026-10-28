@@ -983,13 +983,7 @@ mod target {
             // The journal holds the id under the high water `submit` checks.
             let number = u32::try_from(feed).unwrap_or(u32::MAX);
             // Its trace, if it had one, was lost with the RAM it was in.
-            let body = feed::fed(
-                number,
-                &status.result,
-                None,
-                Durability::Durable,
-                Source::Feeder,
-            );
+            let body = feed::interrupted(number, &status.result, Source::Feeder);
             outcome(body, None);
         }
 

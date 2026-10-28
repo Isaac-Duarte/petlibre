@@ -8,7 +8,11 @@
 //! owner faulted before its journal write) may have dispensed anything up
 //! to what was asked, so it is recorded as uncertain and never retried. A
 //! feed a reset interrupted is resolved at the next boot, durably, as
-//! uncertain too.
+//! uncertain too, with a reason of its own ([`interrupted`]).
+//!
+//! The journal keeps no reason for a resolved feed (its record is pinned,
+//! and bank 0 and the flash tools read it), so the reason is the wire's
+//! alone: the boot that resolves the feed names it.
 
 use wellfed_core::feed::controller::FeedReason as CoreReason;
 use wellfed_core::feed::storage::{OwnerOutcome, OwnerResult};
@@ -51,11 +55,33 @@ pub fn fed(
     };
     EventBody::Fed {
         feed,
-        requested: u8::try_from(result.requested).unwrap_or(u8::MAX),
-        completed: u8::try_from(result.completed).unwrap_or(u8::MAX),
+        requested: portions(result.requested),
+        completed: portions(result.completed),
         outcome,
         reason: reason(result.reason),
         hopper: food_level(hopper),
+        by,
+    }
+}
+
+/// A count of portions as the event carries it; the owner caps a feed far
+/// below 255.
+fn portions(count: u16) -> u8 {
+    u8::try_from(count).unwrap_or(u8::MAX)
+}
+
+/// The `Fed` event for the feed `feed` a reset interrupted, which the
+/// owner resolved at this boot as `result`: uncertain, for the reason
+/// `Interrupted`.
+pub fn interrupted(feed: u32, result: &OwnerResult, by: Source) -> EventBody {
+    EventBody::Fed {
+        feed,
+        requested: portions(result.requested),
+        completed: portions(result.completed),
+        outcome: FeedOutcome::Uncertain,
+        reason: FeedReason::Interrupted,
+        // The boot that resolves it never saw the feed's reading.
+        hopper: FoodLevel::Unread,
         by,
     }
 }
@@ -76,9 +102,8 @@ const fn reason(reason: CoreReason) -> FeedReason {
         CoreReason::Overcurrent => FeedReason::Overcurrent,
         CoreReason::FeedbackStream => FeedReason::FeedbackStream,
         // No reason: a result still pending, which ends as an output
-        // failure if it ends at all, or an interrupted feed resolved at
-        // boot. Both report `Output` until the wire has a reason of its own
-        // for an interrupted feed.
+        // failure if it ends at all. A feed resolved at boot has none
+        // either, but takes `interrupted` instead.
         CoreReason::None | CoreReason::Output => FeedReason::Output,
     }
 }
@@ -156,20 +181,20 @@ mod tests {
     }
 
     #[test]
-    fn a_feed_resolved_at_boot_is_uncertain_and_counts_no_portion() {
+    fn a_feed_resolved_at_boot_is_uncertain_interrupted_and_counts_no_portion() {
         let resolved = OwnerResult {
             completed: 0,
             motion_possible: true,
             ..result(OwnerOutcome::Uncertain, CoreReason::None)
         };
         assert_eq!(
-            fed(9, &resolved, None, Durability::Durable, Source::Feeder),
+            interrupted(9, &resolved, Source::Feeder),
             EventBody::Fed {
                 feed: 9,
                 requested: 2,
                 completed: 0,
                 outcome: FeedOutcome::Uncertain,
-                reason: FeedReason::Output,
+                reason: FeedReason::Interrupted,
                 hopper: FoodLevel::Unread,
                 by: Source::Feeder,
             }

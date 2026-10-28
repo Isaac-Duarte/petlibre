@@ -655,6 +655,7 @@ impl From<proto::FeedReason> for FeedReason {
             proto::FeedReason::Overcurrent => Self::Overcurrent,
             proto::FeedReason::FeedbackStream => Self::FeedbackStream,
             proto::FeedReason::Output => Self::Output,
+            proto::FeedReason::Interrupted => Self::Interrupted,
         }
     }
 }
@@ -676,6 +677,7 @@ impl From<FeedReason> for proto::FeedReason {
             FeedReason::Overcurrent => Self::Overcurrent,
             FeedReason::FeedbackStream => Self::FeedbackStream,
             FeedReason::Output => Self::Output,
+            FeedReason::Interrupted => Self::Interrupted,
         }
     }
 }

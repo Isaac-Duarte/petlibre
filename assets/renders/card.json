@@ -5,7 +5,7 @@
     "button_reset": {"x": 0.6354, "y": 0.5748, "r": 0.0097, "visible": false},
     "button_mic": {"x": 0.6265, "y": 0.5892, "r": 0.0079, "visible": true},
     "button_dispense": {"x": 0.4614, "y": 0.6177, "r": 0.0107, "visible": true},
-    "button_lock": {"x": 0.4118, "y": 0.616, "r": 0.0094, "visible": true},
+    "button_lock": {"x": 0.4102, "y": 0.6156, "r": 0.0077, "visible": true},
     "led_connection": {"x": 0.5758, "y": 0.6086, "r": 0.0097, "visible": true},
     "led_food": {"x": 0.5195, "y": 0.6161, "r": 0.0109, "visible": true},
     "led_lock": {"x": 0.5494, "y": 0.6136, "r": 0.0069, "visible": true},

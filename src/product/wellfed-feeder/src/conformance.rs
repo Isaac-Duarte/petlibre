@@ -16,8 +16,8 @@
 
 use wellfed_core::store::slot::crc32;
 use wellfed_proto::api::{
-    Blocked, Capabilities, CurrentUnit, Event, EventBody, FeedOutcome, FeedReason, Readiness,
-    Refusal, Resets, Source, Stats, StatsSection, TraceSummary,
+    Blocked, Capabilities, CurrentUnit, Desiccant, Event, EventBody, FeedOutcome, FeedReason,
+    Readiness, Refusal, Resets, Source, Stats, StatsSection, TraceSummary,
 };
 
 use crate::feeder::{Feeder, Feeds, NoFeeds, Platform};
@@ -408,6 +408,46 @@ pub fn a_calibration_lands_and_weighs_the_portions(rig: &mut impl Rig) {
     rig.claim_outputs(false);
 }
 
+/// The desiccant reminder starts unset with the default period; today is
+/// unknown until the clock syncs, then is the local calendar day the
+/// clock's offset gives, and a replacement recorded under it starts the
+/// status's count from the full period.
+pub fn the_desiccant_count_follows_the_clock_and_its_reset(rig: &mut impl Rig) {
+    let before = settings_view(rig);
+    assert_eq!((before.desiccant_days, before.desiccant_reset), (14, None));
+    assert!(device(rig, 0, |device| device.capabilities()).contains(Capabilities::DESICCANT));
+    assert_eq!(device(rig, 0, |device| device.today(0)), None);
+    let status = device(rig, 0, |device| device.status(0));
+    assert_eq!(status.desiccant, Desiccant::Unset);
+
+    // 2026-10-28 23:30 UTC, 17:30 in UTC-6: the local day is the 28th
+    // either way, and 2026-10-29 is the next UTC day.
+    let sync = TimeFields {
+        unix_ms: 1_793_230_200_000,
+        offset_s: -6 * 3600,
+        next_change_s: 0,
+        next_offset_s: 0,
+    };
+    device(rig, 0, |device| device.time_sync(sync, Origin::Owner));
+    let today = device(rig, 0, |device| device.today(0));
+    assert_eq!(today, Some(20_754));
+
+    let reset = SettingsFields {
+        desiccant_reset: today,
+        ..SettingsFields::default()
+    };
+    assert!(matches!(
+        settings(rig, reset),
+        SettingsResult::Current { pending: true, .. }
+    ));
+    rig.write();
+    let after = settings_view(rig);
+    assert_eq!(after.desiccant_reset, today);
+    assert_eq!(after.generation, before.generation + 1);
+    let status = device(rig, 0, |device| device.status(0));
+    assert_eq!(status.desiccant, Desiccant::Remaining { days: 14 });
+}
+
 fn plans(rig: &mut impl Rig, change: Option<Table>) -> PlansResult {
     device(rig, 0, |device| device.plans(change))
 }
@@ -739,6 +779,7 @@ macro_rules! conformance {
             time_settings_land_and_set_the_zone,
             a_calibration_lands_and_weighs_the_portions,
             a_plans_table_lands_and_starts_from_its_save,
+            the_desiccant_count_follows_the_clock_and_its_reset,
             a_recorded_event_reads_back,
             status_reports_the_build_and_the_time,
             a_feeder_without_a_feeding_owner_refuses_feeds,

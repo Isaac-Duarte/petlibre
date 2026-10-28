@@ -42,6 +42,9 @@ pub struct Capabilities {
     /// Feeding plans: `GetPlans`, `PutPlans`, the `Plans` answer, and the
     /// `Plans` and `Missed` events.
     pub plans: bool,
+    /// The desiccant reminder's `ResetDesiccant` op and the `NoClock`
+    /// refusal.
+    pub desiccant: bool,
 }
 
 impl Capabilities {
@@ -58,6 +61,7 @@ impl Capabilities {
         power: false,
         backup: false,
         plans: false,
+        desiccant: false,
     };
     /// Every feature this crate knows: what a current client claims.
     pub const KNOWN: Self = Self {
@@ -72,6 +76,7 @@ impl Capabilities {
         power: true,
         backup: true,
         plans: true,
+        desiccant: true,
     };
 
     /// The features both `self` and `other` claim.
@@ -89,6 +94,7 @@ impl Capabilities {
             power: self.power && other.power,
             backup: self.backup && other.backup,
             plans: self.plans && other.plans,
+            desiccant: self.desiccant && other.desiccant,
         }
     }
 }

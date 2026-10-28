@@ -154,6 +154,31 @@ pub(crate) async fn lock(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Record that the feeder's desiccant was replaced today, by the feeder's
+/// own calendar: its reminder counts the period again from today.
+#[utoipa::path(
+    post,
+    path = "/feeders/{id}/desiccant/reset",
+    tag = TAG_FEEDERS,
+    params(("id" = FeederId, Path), OptionalIdempotencyKey),
+    responses(
+        (status = 204),
+        (status = 400, body = Problem, description = "invalid: a malformed Idempotency-Key"),
+        (status = 409, body = Problem, description = "feeder_refused (no_clock while the feeder's clock is invalid): final for this key; a later attempt needs a new key"),
+        (status = 503, body = Problem, description = "feeder_offline"),
+        (status = 504, body = Problem, description = "outcome_unknown: retry with the same key"),
+    ),
+)]
+pub(crate) async fn reset_desiccant(
+    State(state): State<AppState>,
+    Allowed(caller, _): Allowed<need::Control>,
+    WithRejection(Path(id), _): IdPath,
+    OptionalIdempotencyKey(key): OptionalIdempotencyKey,
+) -> ApiResult<StatusCode> {
+    state.service.reset_desiccant(&caller, id, key).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 /// A generation as an entity tag.
 pub(crate) fn etag(generation: Generation) -> String {
     format!("\"{generation}\"")

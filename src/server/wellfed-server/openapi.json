@@ -763,6 +763,78 @@
         }
       }
     },
+    "/api/v1/feeders/{id}/desiccant/reset": {
+      "post": {
+        "tags": [
+          "feeders"
+        ],
+        "summary": "Record that the feeder's desiccant was replaced today, by the feeder's\nown calendar: its reminder counts the period again from today.",
+        "operationId": "reset_desiccant",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/FeederId"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "A UUID; a retry with the same key is answered once",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "400": {
+            "description": "invalid: a malformed Idempotency-Key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "feeder_refused (no_clock while the feeder's clock is invalid): final for this key; a later attempt needs a new key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "feeder_offline",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "outcome_unknown: retry with the same key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/feeders/{id}/events": {
       "get": {
         "tags": [
@@ -5494,7 +5566,8 @@
           "wifi",
           "reboot",
           "play",
-          "remove"
+          "remove",
+          "desiccant"
         ]
       },
       "CommandOutcome": {
@@ -5796,6 +5869,65 @@
           "scaled",
           "milli_amps"
         ]
+      },
+      "Desiccant": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "No replacement is recorded yet: reset it once the pack is fresh.",
+            "required": [
+              "state"
+            ],
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": [
+                  "unset"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The feeder's clock is invalid, so the days cannot be counted.",
+            "required": [
+              "state"
+            ],
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": [
+                  "unknown"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Days left of the period; `due` from 0 on, and the count goes on\nbelow zero.",
+            "required": [
+              "days",
+              "due",
+              "state"
+            ],
+            "properties": {
+              "days": {
+                "type": "integer",
+                "format": "int32"
+              },
+              "due": {
+                "type": "boolean"
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "remaining"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "The desiccant reminder, counted in the feeder's local calendar days\nfrom the last replacement ([desiccant reminder]).\n\n[desiccant reminder]: ../../../../docs/firmware/desiccant.md"
       },
       "EnrollPath": {
         "type": "string",
@@ -6653,7 +6785,8 @@
           "muted",
           "time",
           "fault",
-          "portions"
+          "portions",
+          "no_clock"
         ]
       },
       "FeederSample": {
@@ -6711,7 +6844,8 @@
           "dns_losses",
           "settings_generation",
           "wifi_generation",
-          "sessions"
+          "sessions",
+          "desiccant"
         ],
         "properties": {
           "bank": {
@@ -6735,6 +6869,10 @@
             ],
             "format": "date-time",
             "description": "The feeder's clock; `None` while it is invalid."
+          },
+          "desiccant": {
+            "$ref": "#/components/schemas/Desiccant",
+            "description": "The desiccant reminder."
           },
           "dns_losses": {
             "type": "integer",
@@ -9189,9 +9327,25 @@
           "volume",
           "lights_window",
           "sound_window",
+          "desiccant_days",
           "writable"
         ],
         "properties": {
+          "desiccant_days": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The desiccant reminder's period: days from a replacement until the\nnext is due.",
+            "maximum": 90,
+            "minimum": 1
+          },
+          "desiccant_replaced": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date",
+            "description": "The feeder's local date of the last desiccant replacement; `None`\nbefore the first."
+          },
           "generation": {
             "$ref": "#/components/schemas/Generation"
           },
@@ -9225,6 +9379,16 @@
         "type": "object",
         "description": "The settings to change; absent fields stay as they are.",
         "properties": {
+          "desiccant_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The desiccant reminder's period in days, 1-90.",
+            "maximum": 90,
+            "minimum": 1
+          },
           "lights": {
             "type": [
               "boolean",

@@ -214,6 +214,8 @@ pub enum Invalid {
     Volume,
     #[error("a window's start and end are minutes of the day, 0-1439")]
     Window,
+    #[error("the desiccant period is 1-90 days")]
+    DesiccantDays,
     #[error("a page holds 1-500 events")]
     Limit,
     #[error("the server's label is 1-16 bytes with no NUL")]

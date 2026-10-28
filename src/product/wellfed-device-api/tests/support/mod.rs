@@ -204,7 +204,13 @@ impl Device for Fake {
             wifi_generation: self.wifi_generation,
             last_event: self.events.last().map(|e| e.seq),
             sessions: 0,
+            // The widest count, so a frame that holds it holds any.
+            desiccant: proto::Desiccant::Remaining { days: i32::MIN },
         }
+    }
+
+    fn today(&mut self, _now_ms: u32) -> Option<i32> {
+        Some(20_389)
     }
 
     fn settings(&mut self, change: SettingsFields) -> SettingsResult {

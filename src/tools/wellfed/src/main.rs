@@ -70,6 +70,10 @@ enum Command {
     /// The feeding plans: list them, or add, edit, enable, disable or
     /// delete one (docs/firmware/schedules.md).
     Plans(plans::PlansArgs),
+    /// The desiccant reminder: days left until the pack is due, and with
+    /// --reset record that it was replaced today
+    /// (docs/firmware/desiccant.md). Its period is a setting.
+    Desiccant(configure::DesiccantArgs),
     /// Lock or unlock the panel.
     Lock(configure::LockArgs),
     /// Store or clear the network the feeder joins next.
@@ -139,6 +143,7 @@ fn main() -> Result<ExitCode> {
         Command::Status(target) => runtime.block_on(ask_and_print(&target, &Op::Status)),
         Command::Settings(args) => runtime.block_on(configure::settings_command(args)),
         Command::Plans(args) => runtime.block_on(plans::command(args)),
+        Command::Desiccant(args) => runtime.block_on(configure::desiccant_command(args)),
         Command::Lock(args) => runtime.block_on(configure::lock_command(args)),
         Command::Wifi(args) => runtime.block_on(configure::wifi_command(args)),
         Command::Time(args) => runtime.block_on(configure::time_command(args)),
@@ -281,6 +286,15 @@ mod tests {
             "49",
         ];
         assert!(Cli::try_parse_from(too_many).is_err());
+
+        // The period's limits are checked before anything is sent.
+        let period = ["wellfed", "settings", "--desiccant-days", "91"];
+        assert!(Cli::try_parse_from(period).is_err());
+        let reset = ["wellfed", "desiccant", "--reset"];
+        assert!(matches!(
+            Cli::try_parse_from(reset).map(|cli| cli.command),
+            Ok(Command::Desiccant(_))
+        ));
 
         // A server command parses whole, its flags after the verb.
         let feed = ["wellfed", "server", "feed", "--portions", "2", "--json"];

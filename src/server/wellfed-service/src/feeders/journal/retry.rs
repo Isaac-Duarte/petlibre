@@ -25,8 +25,10 @@ const fn resend(kind: CommandKind) -> Resend {
         // once the feed has ended it is refused `NotFound`. A revoke run
         // again finds the key gone (`NotFound`). A Wi-Fi change names its
         // base, as a settings change does. A tune played twice is only
-        // heard twice.
+        // heard twice. A desiccant reset run again dates the replacement
+        // to the day it runs, which is what a retry of it asks.
         CommandKind::Settings
+        | CommandKind::Desiccant
         | CommandKind::Lock
         | CommandKind::Cancel
         | CommandKind::Revoke
@@ -150,6 +152,7 @@ mod tests {
                 Resend::Never,
                 Resend::SameId,
                 Resend::Never,
+                Resend::SameId,
             ],
             "the rule of each kind, in the order of CommandKind::ALL"
         );

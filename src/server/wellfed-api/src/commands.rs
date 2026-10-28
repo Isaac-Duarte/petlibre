@@ -46,6 +46,8 @@ pub enum CommandKind {
     Play,
     /// Revoking the server's own key as the feeder is removed.
     Remove,
+    /// Recording a desiccant replacement made today.
+    Desiccant,
 }
 
 impl CommandKind {
@@ -62,11 +64,12 @@ impl CommandKind {
             Self::Reboot => "reboot",
             Self::Play => "play",
             Self::Remove => "remove",
+            Self::Desiccant => "desiccant",
         }
     }
 
     /// Every kind, in the order they were added.
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::Settings,
         Self::Lock,
         Self::Feed,
@@ -77,6 +80,7 @@ impl CommandKind {
         Self::Reboot,
         Self::Play,
         Self::Remove,
+        Self::Desiccant,
     ];
 
     pub fn from_code(code: &str) -> Option<Self> {

@@ -380,6 +380,7 @@ impl Device for Feeder {
             wifi_generation: 1,
             last_event: None,
             sessions: 0,
+            desiccant: proto::Desiccant::Unset,
         }
     }
 

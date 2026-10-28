@@ -28,6 +28,8 @@ const NO_FIELDS: SettingsFields = SettingsFields {
     volume: None,
     lights_window: None,
     sound_window: None,
+    desiccant_days: None,
+    desiccant_reset: None,
 };
 const NO_VIEW: SettingsView = SettingsView {
     lights: false,
@@ -35,6 +37,8 @@ const NO_VIEW: SettingsView = SettingsView {
     volume: 0,
     lights_window: Window::Always,
     sound_window: Window::Always,
+    desiccant_days: 0,
+    desiccant_reset: None,
     generation: 0,
     writable: false,
 };

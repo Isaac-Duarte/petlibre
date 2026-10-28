@@ -38,6 +38,7 @@ From the bottom up:
 | Product | The loop: the panel, the device API, pairing, events and settings | [Device API](device-api.md), [pairing](pairing.md), [Bluetooth](bluetooth.md) |
 | Peripherals | Buttons, lights, speaker, clock and power | [Buttons](buttons.md), [indicators](indicators.md), [audio](audio.md), [clock](clock.md), [power](power.md), [optical inputs](optical-inputs.md) |
 | Schedules | Feeding plans: when each runs, at most once | [Schedules](schedules.md) |
+| Reminders | The desiccant reminder's count, from the last replacement | [Desiccant reminder](desiccant.md) |
 
 The design behind all of this, from "one firmware, server optional" to the choice of Noise, is in [product architecture](product-architecture.md). Whether it fits the chip is measured in [resource budget](resource-budget.md). How a stock feeder moves to Wellfed, and back, is in [consumer installation](consumer-installation.md).
 

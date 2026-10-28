@@ -1,6 +1,6 @@
 //! The device verbs over the server: the feeders it holds, their status,
-//! settings, lock, feeds and history, and the journal its writes go
-//! through.
+//! settings, lock, desiccant reminder, feeds and history, and the journal
+//! its writes go through.
 //!
 //! Each write is sent once under a fresh key ([`super::write`]). A feed is
 //! answered once the feeder has reserved it, and its result is the journal
@@ -78,6 +78,19 @@ pub(crate) struct SettingsArgs {
     /// `--lights-window`.
     #[arg(long, value_name = "WINDOW")]
     sound_window: Option<Window>,
+    /// Days from a desiccant replacement until the next is due (1-90).
+    #[arg(long, value_name = "DAYS", value_parser = crate::configure::desiccant_days)]
+    desiccant_days: Option<u8>,
+}
+
+#[derive(Args)]
+pub(crate) struct DesiccantArgs {
+    #[command(flatten)]
+    which: Which,
+    /// Record that the desiccant was replaced today (by the feeder's
+    /// clock, which must be valid).
+    #[arg(long)]
+    reset: bool,
 }
 
 #[derive(Args)]
@@ -188,6 +201,7 @@ pub(super) async fn settings(client: &Client, args: SettingsArgs, out: Output) -
         volume: args.volume,
         lights_window: args.lights_window,
         sound_window: args.sound_window,
+        desiccant_days: args.desiccant_days,
     };
     if patch == SettingsPatch::default() {
         out.show(&current, text::settings)?;
@@ -219,6 +233,28 @@ pub(super) async fn lock(client: &Client, args: LockArgs, out: Output) -> Result
         Lock::Locked => "The panel is locked.",
         Lock::Unlocked => "The panel is unlocked.",
     });
+    Ok(Settled::Known)
+}
+
+/// The reminder from the feeder's status; with `--reset`, a replacement
+/// recorded today first, under a fresh key.
+pub(super) async fn desiccant(
+    client: &Client,
+    args: DesiccantArgs,
+    out: Output,
+) -> Result<Settled> {
+    let id = args.which.id(client).await?;
+    if args.reset {
+        let key = Uuid::new_v4();
+        let sent = client.reset_desiccant(id, key);
+        let Written::Answered(()) = write(out, key, sent).await? else {
+            return Ok(Settled::Unknown);
+        };
+        out.text("Desiccant replaced today.");
+    }
+
+    let detail = client.feeder(id).await?;
+    out.show(&detail, text::desiccant)?;
     Ok(Settled::Known)
 }
 

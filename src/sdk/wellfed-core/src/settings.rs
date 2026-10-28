@@ -61,6 +61,13 @@ pub struct SettingsFields {
     pub volume: Option<u8>,
     pub lights_window: Option<Window>,
     pub sound_window: Option<Window>,
+    /// The desiccant reminder's period in days
+    /// ([`crate::desiccant::PERIOD_MIN`] to [`crate::desiccant::PERIOD_MAX`]).
+    pub desiccant_days: Option<u8>,
+    /// Record a desiccant replacement made on this local calendar day
+    /// ([`crate::desiccant::today`]); set only by the reset request, which
+    /// reads the day from a valid clock.
+    pub desiccant_reset: Option<i32>,
 }
 
 impl SettingsFields {
@@ -71,6 +78,8 @@ impl SettingsFields {
             || self.volume.is_some()
             || self.lights_window.is_some()
             || self.sound_window.is_some()
+            || self.desiccant_days.is_some()
+            || self.desiccant_reset.is_some()
     }
 
     /// Whether every field present is one the store accepts.
@@ -78,6 +87,9 @@ impl SettingsFields {
         self.volume.is_none_or(|volume| volume <= MAX_VOLUME)
             && self.lights_window.is_none_or(Window::valid)
             && self.sound_window.is_none_or(Window::valid)
+            && self
+                .desiccant_days
+                .is_none_or(crate::desiccant::period_valid)
     }
 }
 
@@ -93,6 +105,11 @@ pub struct SettingsView {
     pub volume: u8,
     pub lights_window: Window,
     pub sound_window: Window,
+    /// The desiccant reminder's period in days.
+    pub desiccant_days: u8,
+    /// The local calendar day of the last desiccant replacement; `None`
+    /// before the first.
+    pub desiccant_reset: Option<i32>,
     /// The stored record's generation; 0 for defaults never saved.
     pub generation: u32,
     /// Whether NOR holds a record this firmware can update.
@@ -109,6 +126,12 @@ impl SettingsView {
     /// above 0 and inside the sound window.
     pub fn sound_at(&self, local_ms: Option<i64>) -> bool {
         self.sound && self.volume > 0 && self.sound_window.allows(local_ms)
+    }
+
+    /// The desiccant reminder on local calendar day `today` (`None` while
+    /// the clock is invalid).
+    pub fn desiccant(&self, today: Option<i32>) -> crate::desiccant::Count {
+        crate::desiccant::Count::new(self.desiccant_days, self.desiccant_reset, today)
     }
 }
 

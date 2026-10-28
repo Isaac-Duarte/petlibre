@@ -79,6 +79,7 @@ fn every_op() -> Vec<Op> {
             base: Generation(0),
             plans: [None; PLANS],
         },
+        Op::ResetDesiccant,
     ];
     let mut kinds: Vec<_> = ops.iter().map(kind).collect();
     kinds.sort_unstable();
@@ -119,6 +120,7 @@ fn kind(op: &Op) -> u8 {
         Op::ReadBank1 { .. } => 26,
         Op::GetPlans => 27,
         Op::PutPlans { .. } => 28,
+        Op::ResetDesiccant => 29,
     }
 }
 

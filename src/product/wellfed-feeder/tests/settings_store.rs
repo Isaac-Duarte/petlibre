@@ -1,6 +1,7 @@
 //! Tests for the two-slot settings store: alternating saves, value
 //! validation, a power cut at every byte, newer-schema and foreign-binding
-//! records, torn-slot fallback and the wear limit.
+//! records, torn-slot fallback, the wear limit and the desiccant reminder's
+//! fields.
 //!
 //! Unlike the feed journal, losing the newest change is acceptable: a cut
 //! save must reopen with the old or the new settings and stay writable. A
@@ -37,6 +38,8 @@ fn custom(volume: u8) -> Settings {
             end: 420,
         },
         sound_window: Window::Always,
+        desiccant_days: 30,
+        desiccant_reset: Some(20_389),
     }
 }
 
@@ -266,26 +269,102 @@ fn windows_survive_a_reopen() {
     assert_eq!(s.settings, settings);
 }
 
-/// No migration: the version 1 record earlier builds wrote is superseded,
-/// so the store opens writable on defaults and the next save replaces it.
+/// No migration: a version 1 or 2 record earlier builds wrote is
+/// superseded, so the store opens writable on defaults and the next save
+/// replaces it.
 #[test]
-fn a_version_1_record_opens_empty_and_writable() {
+fn an_older_record_opens_empty_and_writable() {
+    for version in [1u16, 2] {
+        let mut f = FakeJournalFlash::default();
+        let mut s = open(&mut f);
+        assert!(s.save(&custom(5)));
+        rewrite(&mut f, |record| {
+            record[8..10].copy_from_slice(&version.to_le_bytes())
+        });
+
+        let mut s = open(&mut f);
+        assert_eq!(s.status, SettingsStatus::Empty, "version {version}");
+        assert_eq!(s.slots[0], SlotState::Older);
+        assert_eq!(s.settings, Settings::default());
+
+        assert!(s.save(&custom(7)));
+        let s = open(&mut f);
+        assert_eq!(s.status, SettingsStatus::Loaded);
+        assert_eq!(s.settings, custom(7));
+    }
+}
+
+/// The desiccant reminder's period and replacement day read back as saved,
+/// whatever the day's sign, and a fresh store holds the default period
+/// with nothing recorded.
+#[test]
+fn the_desiccant_reminder_survives_a_reopen() {
     let mut f = FakeJournalFlash::default();
     let mut s = open(&mut f);
-    assert!(s.save(&custom(5)));
-    rewrite(&mut f, |record| {
-        record[8..10].copy_from_slice(&1u16.to_le_bytes())
-    });
+    assert_eq!(
+        (s.settings.desiccant_days, s.settings.desiccant_reset),
+        (14, None)
+    );
 
+    for (days, reset) in [
+        (1, Some(0)),
+        (90, Some(-1)),
+        (7, Some(i32::MAX)),
+        (14, None),
+    ] {
+        let settings = Settings {
+            desiccant_days: days,
+            desiccant_reset: reset,
+            ..custom(5)
+        };
+        assert!(s.save(&settings));
+        let r = open(&mut f);
+        assert_eq!(r.status, SettingsStatus::Loaded);
+        assert_eq!(r.settings, settings);
+    }
+}
+
+#[test]
+fn a_period_outside_its_limits_is_refused_without_writing() {
+    let mut f = FakeJournalFlash::default();
     let mut s = open(&mut f);
-    assert_eq!(s.status, SettingsStatus::Empty);
-    assert_eq!(s.slots[0], SlotState::Older);
-    assert_eq!(s.settings, Settings::default());
+    let before = f.mutations;
+    for days in [0, 91] {
+        let settings = Settings {
+            desiccant_days: days,
+            ..custom(5)
+        };
+        assert!(!s.save(&settings), "{days}");
+    }
+    assert_eq!(f.mutations, before);
+}
 
-    assert!(s.save(&custom(7)));
-    let s = open(&mut f);
-    assert_eq!(s.status, SettingsStatus::Loaded);
-    assert_eq!(s.settings, custom(7));
+#[test]
+fn a_bad_desiccant_field_makes_the_record_invalid() {
+    for (at, byte) in [
+        // A period of 0 days, and one past the limit.
+        (44, 0),
+        (44, 91),
+        // A flag that is neither 0 nor 1.
+        (45, 2),
+        // A day with the flag clear.
+        (48, 1),
+        // Padding.
+        (46, 1),
+        (52, 1),
+    ] {
+        let mut f = FakeJournalFlash::default();
+        let mut s = open(&mut f);
+        let settings = Settings {
+            desiccant_reset: None,
+            ..custom(5)
+        };
+        assert!(s.save(&settings));
+        rewrite(&mut f, |record| record[at] = byte);
+
+        let s = open(&mut f);
+        assert_eq!(s.status, SettingsStatus::Corrupt, "byte {at} = {byte}");
+    }
 }
 
 #[test]

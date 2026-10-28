@@ -134,6 +134,12 @@ pub trait Device {
     fn plans(&mut self, _change: Option<Table>) -> PlansResult {
         PlansResult::Unserved
     }
+    /// Today's local calendar day (days since 1970-01-01, UTC when the
+    /// clock knows no offset) while the clock is valid: the day a desiccant
+    /// replacement is recorded under. `None` refuses the reset.
+    fn today(&mut self, _now_ms: u32) -> Option<i32> {
+        None
+    }
     /// The bowl mode this build runs: the only one a calibration may name,
     /// since a build runs only the mode it was verified for.
     fn bowl(&self) -> Bowl {

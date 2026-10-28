@@ -243,13 +243,19 @@ pub fn describe(record: Record, f: &mut impl fmt::Write) -> fmt::Result {
     let values = |f: &mut dyn fmt::Write, s: &Settings| {
         write!(
             f,
-            "lights={} sound={} volume={} lights_window={} sound_window={}",
+            "lights={} sound={} volume={} lights_window={} sound_window={} desiccant_days={} \
+             desiccant_reset=",
             u8::from(s.lights),
             u8::from(s.sound),
             s.volume,
             s.lights_window,
-            s.sound_window
-        )
+            s.sound_window,
+            s.desiccant_days,
+        )?;
+        match s.desiccant_reset {
+            Some(day) => write!(f, "{day}"),
+            None => f.write_str("none"),
+        }
     };
     match record {
         Record::Open {

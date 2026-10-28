@@ -46,11 +46,13 @@ pub use stats::{
     Resets, Stats, StatsSection, TaskStack,
 };
 pub use status::{
-    Battery, Blocked, Power, Readiness, Settings, SettingsPatch, Status, WifiSource, Window,
-    WindowError,
+    Battery, Blocked, Desiccant, Power, Readiness, Settings, SettingsPatch, Status, WifiSource,
+    Window, WindowError,
 };
 pub use trace::{CurrentUnit, Malformed, Trace, TraceEntry, TraceMotor, TracePage, TraceSummary};
 pub use update::{Bank1Page, UpdatePhase, UpdateRefusal, UpdateStop, UpdateView};
+/// The desiccant reminder's period limits and default, in days.
+pub use wellfed_proto::api::{DESICCANT_DAYS_DEFAULT, DESICCANT_DAYS_MAX, DESICCANT_DAYS_MIN};
 
 /// A feeder store's generation: a write names the one it read, and the
 /// feeder refuses it once the store has moved on.

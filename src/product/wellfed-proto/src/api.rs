@@ -126,6 +126,10 @@ impl Capabilities {
     /// [`Outcome::Plans`], and the [`EventBody::Plans`] and
     /// [`EventBody::Missed`] history.
     pub const PLANS: Self = Self(1024);
+    /// The desiccant reminder's reset: [`Op::ResetDesiccant`] and
+    /// [`Refusal::NoClock`]. The period ([`Settings::desiccant_days`]) and
+    /// the count ([`Status::desiccant`]) are part of those messages.
+    pub const DESICCANT: Self = Self(2048);
     /// Every bit this crate defines: what a current client claims. A
     /// session then runs on the bits both sides claim, so a client adapts
     /// to whatever feeder it meets, however old.
@@ -140,7 +144,8 @@ impl Capabilities {
             | Self::CALIBRATION.0
             | Self::POWER.0
             | Self::BACKUP.0
-            | Self::PLANS.0,
+            | Self::PLANS.0
+            | Self::DESICCANT.0,
     );
 
     pub const fn union(self, other: Self) -> Self {
@@ -383,6 +388,11 @@ pub enum Op<'a> {
         base: u32,
         plans: [Option<Plan>; PLANS_MAX],
     },
+    /// Record that the desiccant was replaced today, by the feeder's local
+    /// calendar, answered `Done` with the settings' generation once the
+    /// store holds it. Refused [`Refusal::NoClock`] while the clock is
+    /// invalid: the feeder never records a date it does not know.
+    ResetDesiccant,
 }
 
 /// The most bank-1 bytes one [`Outcome::Bank1`] carries: well within a
@@ -507,6 +517,7 @@ impl Op<'_> {
             Self::GetCalibration | Self::PutCalibration { .. } => Capabilities::CALIBRATION,
             Self::ReadBank1 { .. } => Capabilities::BACKUP,
             Self::GetPlans | Self::PutPlans { .. } => Capabilities::PLANS,
+            Self::ResetDesiccant => Capabilities::DESICCANT,
             Self::Status
             | Self::GetSettings
             | Self::PutSettings { .. }
@@ -530,7 +541,16 @@ pub struct SettingsChanges {
     pub volume: Option<u8>,
     pub lights_window: Option<Window>,
     pub sound_window: Option<Window>,
+    /// [`DESICCANT_DAYS_MIN`] to [`DESICCANT_DAYS_MAX`].
+    pub desiccant_days: Option<u8>,
 }
+
+/// The shortest desiccant reminder period, in days.
+pub const DESICCANT_DAYS_MIN: u8 = 1;
+/// The longest desiccant reminder period, in days.
+pub const DESICCANT_DAYS_MAX: u8 = 90;
+/// The period a feeder starts with: stock's cloud used 14 days.
+pub const DESICCANT_DAYS_DEFAULT: u8 = 14;
 
 /// When lights or sound that are on may show or play: always, or only from
 /// minute `start` to minute `end` of the local day (0-1439, both included;
@@ -856,6 +876,9 @@ pub enum Refusal {
     Portions {
         asked: u8,
     },
+    /// The clock is invalid, so the feeder cannot date the change: sync
+    /// the time first.
+    NoClock,
 }
 
 /// Where an update stands. The install itself does not depend on the
@@ -987,6 +1010,29 @@ pub struct Status<'a> {
     /// The newest event's sequence number, `None` before the first.
     pub last_event: Option<u64>,
     pub sessions: u8,
+    pub desiccant: Desiccant,
+}
+
+/// The desiccant reminder, counted in the feeder's local calendar days.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Desiccant {
+    /// No replacement is recorded yet.
+    Unset,
+    /// The clock is invalid, so the days cannot be counted.
+    Unknown,
+    /// Days left of the period since the last replacement: due at 0, and
+    /// counting on below zero after that.
+    Remaining { days: i32 },
+}
+
+impl Desiccant {
+    /// Whether the replacement is due; `None` while it cannot be counted.
+    pub const fn due(self) -> Option<bool> {
+        match self {
+            Self::Remaining { days } => Some(days <= 0),
+            Self::Unset | Self::Unknown => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1041,6 +1087,11 @@ pub struct Settings {
     pub volume: u8,
     pub lights_window: Window,
     pub sound_window: Window,
+    /// The desiccant reminder's period in days.
+    pub desiccant_days: u8,
+    /// The local calendar day (days since 1970-01-01) the desiccant was
+    /// last replaced; `None` before the first [`Op::ResetDesiccant`].
+    pub desiccant_reset: Option<i32>,
     pub writable: bool,
 }
 

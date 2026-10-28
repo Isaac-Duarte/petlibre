@@ -1,12 +1,14 @@
 //! Changing the feeder over the device API: its settings, the panel lock,
-//! the network it joins, its time settings and the portion calibration.
+//! the network it joins, its time settings, the portion calibration and the
+//! desiccant reminder.
 //! Each change names the generation it was read at, so a change made
 //! meanwhile is refused rather than overwritten.
 
 use anyhow::{Context, Result, bail};
 use clap::Args;
 use wellfed_model::{
-    self as model, Answer, NtpServer, Op, SettingsPatch, StatsSection, TimeChanges, Wifi, Window,
+    self as model, Answer, DESICCANT_DAYS_MAX, DESICCANT_DAYS_MIN, Desiccant, NtpServer, Op,
+    SettingsPatch, StatsSection, TimeChanges, Wifi, Window,
 };
 
 use crate::{Target, Toggle, ask_and_print, connect, passphrase, print_answer, print_json};
@@ -30,6 +32,40 @@ pub(crate) struct SettingsArgs {
     /// `--lights-window`.
     #[arg(long, value_name = "WINDOW")]
     sound_window: Option<Window>,
+    /// Days from a desiccant replacement until the next is due (1-90).
+    #[arg(long, value_name = "DAYS", value_parser = desiccant_days)]
+    desiccant_days: Option<u8>,
+}
+
+/// A `--desiccant-days` value: the period's limits are the feeder's.
+pub(crate) fn desiccant_days(text: &str) -> Result<u8, String> {
+    match text.parse::<u8>() {
+        Ok(days) if (DESICCANT_DAYS_MIN..=DESICCANT_DAYS_MAX).contains(&days) => Ok(days),
+        _ => Err(format!(
+            "{text:?} is not {DESICCANT_DAYS_MIN}-{DESICCANT_DAYS_MAX} days"
+        )),
+    }
+}
+
+#[derive(Args)]
+pub(crate) struct DesiccantArgs {
+    #[command(flatten)]
+    target: Target,
+    /// Record that the desiccant was replaced today (by the feeder's
+    /// clock, which must be valid).
+    #[arg(long)]
+    reset: bool,
+}
+
+/// The reminder as `wellfed desiccant` prints it.
+#[derive(serde::Serialize)]
+struct DesiccantView {
+    /// Where the count stands, from the status.
+    count: Desiccant,
+    /// The same, for a person.
+    text: String,
+    period_days: u8,
+    replaced: Option<jiff::civil::Date>,
 }
 
 #[derive(Args)]
@@ -169,6 +205,7 @@ pub(crate) async fn settings_command(args: SettingsArgs) -> Result<()> {
         volume: args.volume,
         lights_window: args.lights_window,
         sound_window: args.sound_window,
+        desiccant_days: args.desiccant_days,
     };
     if changes == SettingsPatch::default() {
         return ask_and_print(&args.target, &Op::GetSettings).await;
@@ -184,6 +221,40 @@ pub(crate) async fn settings_command(args: SettingsArgs) -> Result<()> {
         })
         .await?;
     print_answer(&answer)
+}
+
+/// The reminder, read from the status and settings; with `--reset`, a
+/// replacement recorded today first.
+pub(crate) async fn desiccant_command(args: DesiccantArgs) -> Result<()> {
+    let (_, _, mut connection) = connect(&args.target).await?;
+    if args.reset {
+        // An op the feeder predates would end the session rather than be
+        // refused, so ask only a feeder that claims the reminder.
+        if !connection.capabilities().desiccant {
+            bail!("this feeder's build has no desiccant reminder; update it first");
+        }
+        match connection.ask(&Op::ResetDesiccant).await? {
+            Answer::Done { .. } => eprintln!("Desiccant replaced today."),
+            Answer::Refused(model::Refusal::NoClock) => bail!(
+                "refused: the feeder's clock is invalid, so it cannot date the \
+                 replacement; run `wellfed time` first"
+            ),
+            other => return print_answer(&other),
+        }
+    }
+
+    let Answer::Status(status) = connection.ask(&Op::Status).await? else {
+        bail!("the feeder did not return its status");
+    };
+    let Answer::Settings(settings) = connection.ask(&Op::GetSettings).await? else {
+        bail!("the feeder did not return its settings");
+    };
+    print_json(&DesiccantView {
+        count: status.desiccant,
+        text: status.desiccant.to_string(),
+        period_days: settings.desiccant_days,
+        replaced: settings.desiccant_replaced,
+    })
 }
 
 pub(crate) async fn wifi_command(args: WifiArgs) -> Result<()> {
@@ -312,6 +383,15 @@ mod tests {
         assert_eq!(mean_mg(98_400, 10).unwrap(), 9_840);
         assert_eq!(mean_mg(10_000, 3).unwrap(), 3_333);
         assert!(mean_mg(1_000, 0).is_err());
+    }
+
+    #[test]
+    fn a_desiccant_period_is_one_to_ninety_days() {
+        assert_eq!(desiccant_days("1"), Ok(1));
+        assert_eq!(desiccant_days("90"), Ok(90));
+        for bad in ["0", "91", "-1", "14d", ""] {
+            assert!(desiccant_days(bad).is_err(), "{bad}");
+        }
     }
 
     #[test]

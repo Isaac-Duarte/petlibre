@@ -6,8 +6,8 @@ use jiff::Timestamp;
 use tempfile::TempDir;
 use uuid::Uuid;
 use wellfed_api::{
-    Blocked, ClientRole, EventBody, EventKind, FeederId, FeederStatus, Generation, Household,
-    Readiness, Role, Settings, Source, TimeFormat, Units, UserId, WifiSource, Window,
+    Blocked, ClientRole, Desiccant, EventBody, EventKind, FeederId, FeederStatus, Generation,
+    Household, Readiness, Role, Settings, Source, TimeFormat, Units, UserId, WifiSource, Window,
 };
 use wellfed_store::{
     Change, Error, FeederRow, NewEvent, NewFeeder, NewUser, SealedKey, Store, Synced,
@@ -428,6 +428,8 @@ async fn the_cached_status_and_settings_read_back() {
             end: 420,
         },
         sound_window: Window::Always,
+        desiccant_days: 21,
+        desiccant_replaced: Some(jiff::civil::date(2026, 10, 28)),
         writable: true,
     };
     store.record_settings(id, &settings, at(100)).await.unwrap();
@@ -450,6 +452,10 @@ async fn the_cached_status_and_settings_read_back() {
         last_event: Some(9),
         sessions: 1,
         readiness: Some(Readiness::Blocked(Blocked::Joining)),
+        desiccant: Desiccant::Remaining {
+            days: -2,
+            due: true,
+        },
     };
     store.record_status(id, &status, at(200)).await.unwrap();
 

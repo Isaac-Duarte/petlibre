@@ -91,12 +91,18 @@ impl Server {
                     volume: view.volume,
                     lights_window: wire_window(view.lights_window),
                     sound_window: wire_window(view.sound_window),
+                    desiccant_days: view.desiccant_days,
+                    desiccant_reset: view.desiccant_reset,
                     writable: view.writable,
                 }),
                 SettingsResult::Busy => Reply::Refused(Refusal::Busy),
                 SettingsResult::ReadOnly => Reply::Refused(Refusal::NotWritable),
             },
             Action::PutSettings { base, fields } => match self.put_settings(base, fields, device) {
+                Ok(()) => return self.wait(index, id, action, Waiting::Settings),
+                Err(refusal) => Reply::Refused(refusal),
+            },
+            Action::ResetDesiccant => match reset_desiccant(now_ms, device) {
                 Ok(()) => return self.wait(index, id, action, Waiting::Settings),
                 Err(refusal) => Reply::Refused(refusal),
             },
@@ -394,6 +400,33 @@ impl Server {
         }
     }
 }
+
+/// Queue a desiccant replacement dated today. The day comes from the clock
+/// alone: with no valid clock the request is refused rather than dated by
+/// a guess. No `base`: a replacement is a fact about today, whatever the
+/// settings hold, and the settings event it records names their new
+/// generation.
+fn reset_desiccant<D: Device>(now_ms: u32, device: &mut D) -> Result<(), Refusal> {
+    let today = device.today(now_ms).ok_or(Refusal::NoClock)?;
+
+    match device.settings(SettingsFields::default()) {
+        SettingsResult::Current { pending: true, .. } | SettingsResult::Busy => {
+            return Err(Refusal::Busy);
+        }
+        SettingsResult::ReadOnly => return Err(Refusal::NotWritable),
+        SettingsResult::Current { .. } => {}
+    }
+    let fields = SettingsFields {
+        desiccant_reset: Some(today),
+        ..SettingsFields::default()
+    };
+    match device.settings(fields) {
+        SettingsResult::Current { pending: true, .. } => Ok(()),
+        SettingsResult::Current { .. } | SettingsResult::Busy => Err(Refusal::Busy),
+        SettingsResult::ReadOnly => Err(Refusal::NotWritable),
+    }
+}
+
 fn put_wifi<D: Device>(
     base: u32,
     credentials: Option<Credentials>,
@@ -626,6 +659,7 @@ pub(super) enum Action {
     PutPlans {
         base: u32,
     },
+    ResetDesiccant,
     /// A field failed the stores' checks before anything ran.
     Invalid,
 }
@@ -642,6 +676,8 @@ impl From<Op<'_>> for Action {
                     volume: changes.volume,
                     lights_window: changes.lights_window.map(window),
                     sound_window: changes.sound_window.map(window),
+                    desiccant_days: changes.desiccant_days,
+                    desiccant_reset: None,
                 };
                 if !fields.valid() {
                     return Self::Invalid;
@@ -739,6 +775,7 @@ impl From<Op<'_>> for Action {
             // Checked when it runs ([`table`]), which names a plan's
             // portions in its refusal.
             Op::PutPlans { base, .. } => Self::PutPlans { base },
+            Op::ResetDesiccant => Self::ResetDesiccant,
         }
     }
 }
@@ -798,6 +835,7 @@ impl Action {
             Self::ReadBank1 { .. } => "read-bank1",
             Self::GetPlans => "get-plans",
             Self::PutPlans { .. } => "put-plans",
+            Self::ResetDesiccant => "reset-desiccant",
             Self::Invalid => "invalid",
         }
     }
@@ -872,6 +910,7 @@ impl Name for Reply {
                 Refusal::Fault => "fault",
                 Refusal::Unverified => "unverified",
                 Refusal::Portions { .. } => "portions",
+                Refusal::NoClock => "no-clock",
                 Refusal::Update(refusal) => update_refusal(*refusal),
             },
         }
@@ -917,6 +956,11 @@ fn wire_window(window: Window) -> proto::Window {
 
 const _: () = assert!(PLANS == proto::PLANS_MAX);
 const _: () = assert!(wellfed_core::schedule::PORTIONS_MAX == proto::PORTIONS_MAX);
+const _: () = assert!(
+    wellfed_core::desiccant::PERIOD_MIN == proto::DESICCANT_DAYS_MIN
+        && wellfed_core::desiccant::PERIOD_MAX == proto::DESICCANT_DAYS_MAX
+        && wellfed_core::desiccant::PERIOD_DEFAULT == proto::DESICCANT_DAYS_DEFAULT
+);
 
 /// The wire's plans as the store keeps them. A plan's portions outside
 /// 1 to [`proto::PORTIONS_MAX`] are refused by name, as a feed's are; any

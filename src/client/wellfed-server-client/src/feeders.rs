@@ -97,6 +97,18 @@ impl Client {
         Ok(())
     }
 
+    /// Record that the feeder's desiccant was replaced today. A retry
+    /// carries the same `key`.
+    pub async fn reset_desiccant(&self, id: FeederId, key: Uuid) -> Result<(), Error> {
+        let response = self
+            .api(Method::POST, &format!("/feeders/{id}/desiccant/reset"))
+            .header(IDEMPOTENCY_KEY, key.to_string())
+            .send()
+            .await?;
+        expect_status(response, StatusCode::NO_CONTENT).await?;
+        Ok(())
+    }
+
     /// A page of the feeder's history as the server holds it.
     pub async fn events(&self, id: FeederId, query: &EventQuery) -> Result<EventPage, Error> {
         let response = self

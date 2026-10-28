@@ -49,7 +49,8 @@ pub(super) fn status(detail: &FeederDetail) -> String {
     let _ = write!(
         text,
         "\nStatus ({read} {}): build {}, bank {}, boot {}, up {} s\n\
-         clock {}, locked {}, readiness {}, Wi-Fi {} dBm, sessions {}",
+         clock {}, locked {}, readiness {}, Wi-Fi {} dBm, sessions {}\n\
+         desiccant {}",
         snapshot.at,
         status.build,
         status.bank,
@@ -62,19 +63,35 @@ pub(super) fn status(detail: &FeederDetail) -> String {
             .map_or_else(|| "-".to_owned(), |r| word(&r)),
         status.rssi,
         status.sessions,
+        status.desiccant,
     );
     text
 }
 
+/// The reminder alone, from a feeder's status.
+pub(super) fn desiccant(detail: &FeederDetail) -> String {
+    match &detail.status {
+        Some(snapshot) if snapshot.live => format!("Desiccant: {}", snapshot.status.desiccant),
+        Some(snapshot) => format!(
+            "Desiccant: {} (last read {})",
+            snapshot.status.desiccant, snapshot.at
+        ),
+        None => "No status read yet.".to_owned(),
+    }
+}
+
 pub(super) fn settings(settings: &Settings) -> String {
     format!(
-        "Generation {}: lights {} ({}), sound {} ({}), volume {}{}",
+        "Generation {}: lights {} ({}), sound {} ({}), volume {}, desiccant every {} days \
+         (replaced {}){}",
         settings.generation,
         on_off(settings.lights),
         settings.lights_window,
         on_off(settings.sound),
         settings.sound_window,
         settings.volume,
+        settings.desiccant_days,
+        or_dash(settings.desiccant_replaced),
         if settings.writable {
             ""
         } else {

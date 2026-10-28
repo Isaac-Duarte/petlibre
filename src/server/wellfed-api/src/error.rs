@@ -145,6 +145,8 @@ pub enum FeederRefusal {
     Fault,
     /// A feed, or a plan, asked for portions outside 1-48.
     Portions,
+    /// The feeder's clock is invalid, so it cannot date the change.
+    NoClock,
 }
 
 impl From<Refusal> for FeederRefusal {
@@ -162,6 +164,7 @@ impl From<Refusal> for FeederRefusal {
             Refusal::Time => Self::Time,
             Refusal::Fault => Self::Fault,
             Refusal::Portions { .. } => Self::Portions,
+            Refusal::NoClock => Self::NoClock,
             // Update ops and calibration writes are an owner's, never the
             // server's: a server session is refused them as `Forbidden`
             // before these could arrive.

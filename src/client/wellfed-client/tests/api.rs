@@ -12,6 +12,7 @@ use wellfed_client::connection::{
 };
 use wellfed_core::buttons::{Button, Buttons, Gesture};
 use wellfed_core::clock::wall::WallClock;
+use wellfed_core::desiccant::Count;
 use wellfed_core::log_tail::{Batch as LogBatch, LogTail};
 use wellfed_core::tone::Tune;
 use wellfed_device_api::clients::{CLIENTS, Client, Label, Role};
@@ -54,6 +55,8 @@ struct Fake {
     counter: u8,
     settings: SettingsView,
     settings_pending: Option<SettingsFields>,
+    /// Today's local calendar day; `None` while the clock is invalid.
+    today: Option<i32>,
     wifi_generation: u32,
     wifi_pending: Option<Option<Credentials>>,
     locked: Option<bool>,
@@ -168,6 +171,7 @@ impl Fake {
                 lights: true,
                 sound: true,
                 volume: 40,
+                desiccant_days: 14,
                 generation: 7,
                 writable: true,
                 ..Default::default()
@@ -206,6 +210,11 @@ impl Fake {
             self.settings.lights_window =
                 fields.lights_window.unwrap_or(self.settings.lights_window);
             self.settings.sound_window = fields.sound_window.unwrap_or(self.settings.sound_window);
+            self.settings.desiccant_days = fields
+                .desiccant_days
+                .unwrap_or(self.settings.desiccant_days);
+            self.settings.desiccant_reset =
+                fields.desiccant_reset.or(self.settings.desiccant_reset);
             self.settings.generation += 1;
         }
         if self.wifi_pending.take().is_some() {
@@ -284,7 +293,16 @@ impl Device for Fake {
             wifi_generation: self.wifi_generation,
             last_event: self.events.last().map(|e| e.seq),
             sessions: 0,
+            desiccant: match self.settings.desiccant(self.today) {
+                Count::Unset => proto::Desiccant::Unset,
+                Count::Unknown => proto::Desiccant::Unknown,
+                Count::Remaining(days) => proto::Desiccant::Remaining { days },
+            },
         }
+    }
+
+    fn today(&mut self, _now_ms: u32) -> Option<i32> {
+        self.today
     }
 
     fn settings(&mut self, change: SettingsFields) -> SettingsResult {
@@ -360,7 +378,8 @@ impl Device for Fake {
             .union(Capabilities::TIME)
             .union(Capabilities::STATS)
             .union(Capabilities::TRACES)
-            .union(Capabilities::CALIBRATION);
+            .union(Capabilities::CALIBRATION)
+            .union(Capabilities::DESICCANT);
         if self.update {
             capabilities = capabilities.union(Capabilities::UPDATE);
         }
@@ -923,6 +942,105 @@ fn a_window_is_written_and_read_back_and_a_bad_one_refused() {
     );
     assert_eq!(refused, Answer::Refused(model::Refusal::Invalid));
     assert_eq!(rig.device.settings.generation, 8, "nothing written");
+}
+
+/// The reset is dated from the feeder's clock alone: refused by name
+/// without one, and once the clock is valid recorded under today, which
+/// the status then counts from. A member may reset it, as it may change
+/// the plans.
+#[test]
+fn a_desiccant_reset_needs_the_clock_and_starts_the_count() {
+    let mut rig = Rig::new();
+    let mut member = open(&mut rig, MEMBER);
+    let Answer::Status(status) = ask(&mut rig, &mut member, 1, Op::Status) else {
+        panic!("no status");
+    };
+    assert_eq!(status.desiccant, model::Desiccant::Unset);
+
+    let refused = ask(&mut rig, &mut member, 2, Op::ResetDesiccant);
+    assert_eq!(refused, Answer::Refused(model::Refusal::NoClock));
+    assert_eq!(rig.device.settings.generation, 7, "nothing written");
+
+    // 2025-10-28.
+    rig.device.today = Some(20_389);
+    let done = ask(&mut rig, &mut member, 3, Op::ResetDesiccant);
+    assert_eq!(
+        done,
+        Answer::Done {
+            generation: Some(Generation(8))
+        }
+    );
+    let Answer::Settings(settings) = ask(&mut rig, &mut member, 4, Op::GetSettings) else {
+        panic!("no settings");
+    };
+    assert_eq!(
+        settings.desiccant_replaced,
+        Some(jiff::civil::date(2025, 10, 28))
+    );
+    assert_eq!(settings.desiccant_days, 14);
+
+    // Fifteen days on, one past due; then the clock is lost.
+    rig.device.today = Some(20_389 + 15);
+    let Answer::Status(status) = ask(&mut rig, &mut member, 5, Op::Status) else {
+        panic!("no status");
+    };
+    assert_eq!(
+        status.desiccant,
+        model::Desiccant::Remaining {
+            days: -1,
+            due: true
+        }
+    );
+    rig.device.today = None;
+    let Answer::Status(status) = ask(&mut rig, &mut member, 6, Op::Status) else {
+        panic!("no status");
+    };
+    assert_eq!(status.desiccant, model::Desiccant::Unknown);
+}
+
+/// The period is a setting like any other, checked against its limits.
+#[test]
+fn the_desiccant_period_is_a_setting_within_its_limits() {
+    let mut rig = Rig::new();
+    let mut owner = open(&mut rig, OWNER);
+    for (id, days) in [(1, 0), (2, 91)] {
+        let refused = ask(
+            &mut rig,
+            &mut owner,
+            id,
+            Op::PutSettings {
+                base: Generation(7),
+                changes: SettingsPatch {
+                    desiccant_days: Some(days),
+                    ..SettingsPatch::default()
+                },
+            },
+        );
+        assert_eq!(refused, Answer::Refused(model::Refusal::Invalid), "{days}");
+    }
+
+    let done = ask(
+        &mut rig,
+        &mut owner,
+        3,
+        Op::PutSettings {
+            base: Generation(7),
+            changes: SettingsPatch {
+                desiccant_days: Some(90),
+                ..SettingsPatch::default()
+            },
+        },
+    );
+    assert_eq!(
+        done,
+        Answer::Done {
+            generation: Some(Generation(8))
+        }
+    );
+    let Answer::Settings(settings) = ask(&mut rig, &mut owner, 4, Op::GetSettings) else {
+        panic!("no settings");
+    };
+    assert_eq!(settings.desiccant_days, 90);
 }
 
 #[test]
@@ -1903,6 +2021,7 @@ fn a_connection_names_the_epoch_and_answers_each_request_once() {
                 power: false,
                 backup: false,
                 plans: false,
+                desiccant: true,
             },
             EPOCH
         )
@@ -2640,6 +2759,7 @@ fn only_an_owner_s_session_with_the_update_bit_may_update() {
             power: true,
             backup: false,
             plans: false,
+            desiccant: false,
         },
     };
     let slot = rig.accept().unwrap();

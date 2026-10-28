@@ -3,7 +3,7 @@
 //!
 //! `login` keeps a bearer token beside the device API's key file, and every
 //! other verb sends it. The device verbs (`feeders`, `status`, `settings`,
-//! `lock`, `feed`, `cancel-feed`, `events`, `clients`, `revoke`, `reboot`)
+//! `lock`, `desiccant`, `feed`, `cancel-feed`, `events`, `clients`, `revoke`, `reboot`)
 //! reach the feeders the server holds, through its command journal; the
 //! rest (`command`, `commands`, `users`, `tokens`, `releases`, `install`,
 //! `stock`, `export`) only the server has.
@@ -73,6 +73,9 @@ enum Verb {
     Settings(feeders::SettingsArgs),
     /// Lock or unlock the feeder's panel.
     Lock(feeders::LockArgs),
+    /// The desiccant reminder, and with --reset record that it was
+    /// replaced today. Its period is a setting.
+    Desiccant(feeders::DesiccantArgs),
     /// Dispense portions, and wait for the feed's result.
     Feed(feeders::FeedArgs),
     /// Stop a running feed.
@@ -136,6 +139,7 @@ async fn verb(verb: Verb, token_file: &Path, out: Output) -> Result<Settled> {
         Verb::Status(which) => feeders::status(&client()?, &which, out).await,
         Verb::Settings(args) => feeders::settings(&client()?, args, out).await,
         Verb::Lock(args) => feeders::lock(&client()?, args, out).await,
+        Verb::Desiccant(args) => feeders::desiccant(&client()?, args, out).await,
         Verb::Feed(args) => feeders::feed(&client()?, args, out).await,
         Verb::CancelFeed(args) => feeders::cancel_feed(&client()?, args, out).await,
         Verb::Clients(which) => clients::clients(&client()?, &which, out).await,

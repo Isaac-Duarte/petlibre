@@ -42,6 +42,50 @@ pub struct Status {
     /// Whether a feed can start now; absent from a feeder that does not
     /// report it.
     pub readiness: Option<Readiness>,
+    /// The desiccant reminder.
+    pub desiccant: Desiccant,
+}
+
+/// The desiccant reminder, counted in the feeder's local calendar days
+/// from the last replacement ([desiccant reminder]).
+///
+/// [desiccant reminder]: ../../../../docs/firmware/desiccant.md
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum Desiccant {
+    /// No replacement is recorded yet: reset it once the pack is fresh.
+    Unset,
+    /// The feeder's clock is invalid, so the days cannot be counted.
+    Unknown,
+    /// Days left of the period; `due` from 0 on, and the count goes on
+    /// below zero.
+    Remaining { days: i32, due: bool },
+}
+
+/// For a person: `not started`, `unknown (no clock)`, `5 days left`, `due
+/// today` or `due (3 days over)`.
+impl fmt::Display for Desiccant {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            Self::Unset => f.write_str("not started"),
+            Self::Unknown => f.write_str("unknown (no clock)"),
+            Self::Remaining { days: 0, .. } => f.write_str("due today"),
+            Self::Remaining { days, .. } if days > 0 => write!(f, "{} left", Days(days)),
+            Self::Remaining { days, .. } => write!(f, "due ({} over)", Days(days)),
+        }
+    }
+}
+
+/// A count of days, singular for one.
+struct Days(i32);
+
+impl fmt::Display for Days {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0.unsigned_abs() {
+            1 => f.write_str("1 day"),
+            days => write!(f, "{days} days"),
+        }
+    }
 }
 
 /// Whether the feeder can start a feed now: the one decision a feed
@@ -164,6 +208,14 @@ pub struct Settings {
     pub lights_window: Window,
     /// When sounds may play while `sound` is on and `volume` is above 0.
     pub sound_window: Window,
+    /// The desiccant reminder's period: days from a replacement until the
+    /// next is due.
+    #[schema(minimum = 1, maximum = 90)]
+    pub desiccant_days: u8,
+    /// The feeder's local date of the last desiccant replacement; `None`
+    /// before the first.
+    #[schema(value_type = Option<String>, format = Date)]
+    pub desiccant_replaced: Option<jiff::civil::Date>,
     /// Whether the settings store can take a write now.
     pub writable: bool,
 }
@@ -182,6 +234,10 @@ pub struct SettingsPatch {
     pub lights_window: Option<Window>,
     #[serde(default)]
     pub sound_window: Option<Window>,
+    /// The desiccant reminder's period in days, 1-90.
+    #[serde(default)]
+    #[schema(minimum = 1, maximum = 90)]
+    pub desiccant_days: Option<u8>,
 }
 
 /// When lights or sound that are on may show or play: always, or only from

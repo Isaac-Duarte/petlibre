@@ -285,6 +285,7 @@ fn status() -> proto::Status<'static> {
         wifi_generation: 0,
         last_event: None,
         sessions: 1,
+        desiccant: proto::Desiccant::Unset,
     }
 }
 

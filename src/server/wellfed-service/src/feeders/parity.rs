@@ -58,6 +58,7 @@ pub const fn parity(op: &Op) -> Parity {
         Op::PutSettings { .. } => Route(Patch, "/feeders/{id}/settings"),
         Op::PutWifi { .. } => Route(Put, "/feeders/{id}/wifi"),
         Op::SetLock { .. } => Route(Post, "/feeders/{id}/lock"),
+        Op::ResetDesiccant => Route(Post, "/feeders/{id}/desiccant/reset"),
         Op::Play { .. } => Route(Post, "/feeders/{id}/play"),
         Op::CreateInvite { .. } => Route(Post, "/feeders/{id}/invites"),
         Op::ListClients => Route(Get, "/feeders/{id}/clients"),

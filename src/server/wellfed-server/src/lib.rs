@@ -100,6 +100,7 @@ fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(feeders::feeder, admin::remove))
         .routes(routes!(feeders::settings, feeders::put_settings))
         .routes(routes!(feeders::lock))
+        .routes(routes!(feeders::reset_desiccant))
         .routes(routes!(clients::clients))
         .routes(routes!(clients::revoke_client))
         .routes(routes!(clients::keep_client))

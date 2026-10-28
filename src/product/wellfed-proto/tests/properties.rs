@@ -60,14 +60,18 @@ fn op() -> impl Strategy<Value = Op<'static>> {
         any::<Option<u8>>(),
         proptest::option::of(window()),
         proptest::option::of(window()),
+        any::<Option<u8>>(),
     )
         .prop_map(
-            |(lights, sound, volume, lights_window, sound_window)| SettingsChanges {
-                lights,
-                sound,
-                volume,
-                lights_window,
-                sound_window,
+            |(lights, sound, volume, lights_window, sound_window, desiccant_days)| {
+                SettingsChanges {
+                    lights,
+                    sound,
+                    volume,
+                    lights_window,
+                    sound_window,
+                    desiccant_days,
+                }
             },
         );
     let sync = (any::<u64>(), any::<i32>(), any::<u64>(), any::<i32>()).prop_map(
@@ -122,6 +126,7 @@ fn op() -> impl Strategy<Value = Op<'static>> {
         (any::<u32>(), any::<u16>()).prop_map(|(feed, offset)| Op::FeedTrace { feed, offset }),
         Just(Op::GetPlans),
         (any::<u32>(), plans()).prop_map(|(base, plans)| Op::PutPlans { base, plans }),
+        Just(Op::ResetDesiccant),
     ]
 }
 

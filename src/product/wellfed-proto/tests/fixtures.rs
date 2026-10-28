@@ -61,6 +61,7 @@ fn messages() -> Vec<Fixture> {
         wifi_generation: 7,
         last_event: Some(8),
         sessions: 1,
+        desiccant: Desiccant::Remaining { days: -3 },
     };
     let counts = Counts {
         uptime_s: 3_600,
@@ -176,6 +177,7 @@ fn messages() -> Vec<Fixture> {
                         end: 420,
                     }),
                     sound_window: None,
+                    desiccant_days: Some(21),
                 },
             })),
             client,
@@ -253,6 +255,8 @@ fn messages() -> Vec<Fixture> {
                     start: 480,
                     end: 1200,
                 },
+                desiccant_days: 21,
+                desiccant_reset: Some(20_389),
                 writable: true,
             }))),
             feeder,
@@ -937,6 +941,32 @@ fn messages() -> Vec<Fixture> {
                 reason: Blocked::Feeding,
             }),
             |b| decode::<EventBody>(b).is_ok(),
+        ),
+        (
+            "op-reset-desiccant",
+            entry(&request(Op::ResetDesiccant)),
+            client,
+        ),
+        (
+            "refused-no-clock",
+            entry(&response(Outcome::Refused(Refusal::NoClock))),
+            feeder,
+        ),
+        (
+            "outcome-status-desiccant-unknown",
+            entry(&response(Outcome::Status(Status {
+                desiccant: Desiccant::Unknown,
+                ..status
+            }))),
+            feeder,
+        ),
+        (
+            "outcome-status-desiccant-unset",
+            entry(&response(Outcome::Status(Status {
+                desiccant: Desiccant::Unset,
+                ..status
+            }))),
+            feeder,
         ),
     ]
 }

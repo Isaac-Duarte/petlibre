@@ -81,10 +81,10 @@ pub use stream::{FeederSample, StreamEvent, StreamQuery};
 pub use tokens::{BEARER, CreatedToken, NewToken, Token, TokenId};
 pub use users::{NewUser, UserPatch};
 pub use wellfed_model::{
-    Blocked, ClientRole, CurrentUnit, EnrollPath, EventBody, EventKind, FeedOutcome, FeedReason,
-    Food as FoodStats, Generation, Hex, MetricKind, Power, Readiness, SampleValue, Settings,
-    SettingsPatch, Source, Stats, StatsSection, Status as FeederStatus, Trace, TraceEntry,
-    TraceSummary, WifiSource, Window,
+    Blocked, ClientRole, CurrentUnit, Desiccant, EnrollPath, EventBody, EventKind, FeedOutcome,
+    FeedReason, Food as FoodStats, Generation, Hex, MetricKind, Power, Readiness, SampleValue,
+    Settings, SettingsPatch, Source, Stats, StatsSection, Status as FeederStatus, Trace,
+    TraceEntry, TraceSummary, WifiSource, Window,
 };
 
 /// The prefix every resource lives under.

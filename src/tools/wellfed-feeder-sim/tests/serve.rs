@@ -17,8 +17,8 @@ use wellfed_feeder_sim::harness;
 use wellfed_feeder_sim::serve::Event;
 use wellfed_feeder_sim::sim::Record;
 use wellfed_model::{
-    Answer, Bowl, Calibration, CalibrationView, ClientRole, EventBody, Generation, Joined,
-    MetricKind, NtpResult, NtpServer, Op, PLANS, Plan, Plans, Pushed, Refusal, SampleValue,
+    Answer, Bowl, Calibration, CalibrationView, ClientRole, Desiccant, EventBody, Generation,
+    Joined, MetricKind, NtpResult, NtpServer, Op, PLANS, Plan, Plans, Pushed, Refusal, SampleValue,
     SettingsPatch, Source, Stats, StatsSection, Status, TimeChanges, TimeSource, TimeSync,
     Weekdays, Wifi,
 };
@@ -1222,6 +1222,99 @@ fn a_member_edits_the_plans_against_the_generation_it_read() {
         let after = plans(&mut sim, &mut owner).await;
         assert_eq!(after.generation, Generation(1));
         assert_eq!(after.plans, table);
+        sim.stop().await;
+    });
+}
+
+/// The desiccant reminder end to end: a reset is refused until the clock
+/// syncs, then dated by the feeder's local calendar; the period is a
+/// setting; and both survive a restart, after which the count is unknown
+/// until the clock syncs again and then goes on below zero.
+#[test]
+fn the_desiccant_reminder_counts_from_its_reset_across_a_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("flash.bin");
+    let sync = |unix_ms| TimeSync {
+        unix_ms,
+        offset_s: -6 * 3600,
+        next_change_s: 0,
+        next_offset_s: -6 * 3600,
+    };
+    local(async {
+        let flash = Flash::file(&path).unwrap();
+        let mut sim = Running::start(&flash, true).await;
+        let mut owner = sim.open(OWNER).await.unwrap();
+        assert!(owner.capabilities().desiccant);
+        assert_eq!(
+            status(&mut sim, &mut owner).await.desiccant,
+            Desiccant::Unset
+        );
+
+        let refused = owner.ask(sim.id(), &Op::ResetDesiccant).await.unwrap();
+        assert_eq!(refused, Answer::Refused(Refusal::NoClock));
+
+        let synced = owner.ask(sim.id(), &Op::TimeSync(sync(NOW_MS))).await;
+        assert_eq!(synced.unwrap(), Answer::Done { generation: None });
+        let reset = owner.ask(sim.id(), &Op::ResetDesiccant).await.unwrap();
+        assert_eq!(
+            reset,
+            Answer::Done {
+                generation: Some(Generation(1))
+            }
+        );
+        assert_eq!(
+            status(&mut sim, &mut owner).await.desiccant,
+            Desiccant::Remaining {
+                days: 14,
+                due: false
+            }
+        );
+        let period = Op::PutSettings {
+            base: Generation(1),
+            changes: SettingsPatch {
+                desiccant_days: Some(3),
+                ..SettingsPatch::default()
+            },
+        };
+        let changed = owner.ask(sim.id(), &period).await.unwrap();
+        assert_eq!(
+            changed,
+            Answer::Done {
+                generation: Some(Generation(2))
+            }
+        );
+        drop(owner);
+        sim.stop().await;
+        drop(flash);
+
+        let flash = Flash::file(&path).unwrap();
+        let mut sim = Running::start(&flash, false).await;
+        let mut owner = sim.open(OWNER).await.unwrap();
+        let settings = owner.ask(sim.id(), &Op::GetSettings).await.unwrap();
+        let Answer::Settings(settings) = settings else {
+            panic!("{settings:?}");
+        };
+        let replaced = settings.desiccant_replaced.map(|date| date.to_string());
+        assert_eq!(
+            (settings.desiccant_days, replaced.as_deref()),
+            (3, Some("2026-09-21"))
+        );
+        assert_eq!(
+            status(&mut sim, &mut owner).await.desiccant,
+            Desiccant::Unknown
+        );
+
+        // Five days on: two days past due.
+        let later = NOW_MS + 5 * 86_400_000;
+        let synced = owner.ask(sim.id(), &Op::TimeSync(sync(later))).await;
+        assert_eq!(synced.unwrap(), Answer::Done { generation: None });
+        assert_eq!(
+            status(&mut sim, &mut owner).await.desiccant,
+            Desiccant::Remaining {
+                days: -2,
+                due: true
+            }
+        );
         sim.stop().await;
     });
 }

@@ -39,5 +39,6 @@ const fn kind_code(kind: CommandKind) -> u8 {
         CommandKind::Reboot => 8,
         CommandKind::Play => 9,
         CommandKind::Remove => 10,
+        CommandKind::Desiccant => 11,
     }
 }

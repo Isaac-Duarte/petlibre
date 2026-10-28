@@ -11,12 +11,12 @@ use wellfed_proto::setup as proto_setup;
 
 use crate::{
     Answer, Bank1Page, Battery, Blocked, Bowl, Calibration, CalibrationView, Capabilities, Client,
-    ClientRole, Counters, Counts, EnrollPath, Erases, Event, EventBody, FeedOutcome, FeedReason,
-    Flash, Food, Generation, Hello, Hex, Invite, Joined, LogLines, Memory, MissedReason, NtpResult,
-    NtpServer, Op, OpenRefusal, Phase, Plan, Plans, Portions, Power, PowerStats, Readiness,
-    Refusal, ResetCause, Resets, Sample, SampleValue, Settings, SettingsPatch, Source, Stats,
-    StatsSection, Status, TaskStack, TimeSource, TimeSync, TimeView, Tune, UpdatePhase,
-    UpdateRefusal, UpdateStop, UpdateView, Weekdays, WifiSource, Window, setup,
+    ClientRole, Counters, Counts, Desiccant, EnrollPath, Erases, Event, EventBody, FeedOutcome,
+    FeedReason, Flash, Food, Generation, Hello, Hex, Invite, Joined, LogLines, Memory,
+    MissedReason, NtpResult, NtpServer, Op, OpenRefusal, Phase, Plan, Plans, Portions, Power,
+    PowerStats, Readiness, Refusal, ResetCause, Resets, Sample, SampleValue, Settings,
+    SettingsPatch, Source, Stats, StatsSection, Status, TaskStack, TimeSource, TimeSync, TimeView,
+    Tune, UpdatePhase, UpdateRefusal, UpdateStop, UpdateView, Weekdays, WifiSource, Window, setup,
 };
 use crate::{
     CurrentUnit, FeedStats, Malformed, Trace, TraceEntry, TraceMotor, TracePage, TraceSummary,
@@ -68,6 +68,7 @@ impl From<proto::Status<'_>> for Status {
             wifi_generation,
             last_event,
             sessions,
+            desiccant,
         } = status;
         Self {
             build: build.to_owned(),
@@ -92,6 +93,20 @@ impl From<proto::Status<'_>> for Status {
             last_event,
             sessions,
             readiness: None,
+            desiccant: desiccant.into(),
+        }
+    }
+}
+
+impl From<proto::Desiccant> for Desiccant {
+    fn from(desiccant: proto::Desiccant) -> Self {
+        match desiccant {
+            proto::Desiccant::Unset => Self::Unset,
+            proto::Desiccant::Unknown => Self::Unknown,
+            proto::Desiccant::Remaining { days } => Self::Remaining {
+                days,
+                due: desiccant.due() == Some(true),
+            },
         }
     }
 }
@@ -195,6 +210,8 @@ impl From<proto::Settings> for Settings {
             volume,
             lights_window,
             sound_window,
+            desiccant_days,
+            desiccant_reset,
             writable,
         } = settings;
         Self {
@@ -204,9 +221,20 @@ impl From<proto::Settings> for Settings {
             volume,
             lights_window: lights_window.into(),
             sound_window: sound_window.into(),
+            desiccant_days,
+            desiccant_replaced: desiccant_reset.and_then(calendar_day),
             writable,
         }
     }
+}
+
+/// The calendar date of a feeder's local day number (days since
+/// 1970-01-01); `None` for one past jiff's range, which no valid clock
+/// gives.
+fn calendar_day(day: i32) -> Option<jiff::civil::Date> {
+    jiff::civil::date(1970, 1, 1)
+        .checked_add(jiff::Span::new().try_days(day).ok()?)
+        .ok()
 }
 
 impl From<proto::Window> for Window {
@@ -1250,6 +1278,7 @@ impl From<proto::Refusal> for Refusal {
             proto::Refusal::Update(refusal) => Self::Update(refusal.into()),
             proto::Refusal::Unverified => Self::Unverified,
             proto::Refusal::Portions { asked } => Self::Portions { asked },
+            proto::Refusal::NoClock => Self::NoClock,
         }
     }
 }
@@ -1328,6 +1357,7 @@ impl Op {
                 base: base.0,
                 plans: plans.map(|plan| plan.map(Into::into)),
             },
+            Self::ResetDesiccant => proto::Op::ResetDesiccant,
         }
     }
 }
@@ -1340,6 +1370,7 @@ impl From<SettingsPatch> for proto::SettingsChanges {
             volume,
             lights_window,
             sound_window,
+            desiccant_days,
         } = patch;
         Self {
             lights,
@@ -1347,6 +1378,7 @@ impl From<SettingsPatch> for proto::SettingsChanges {
             volume,
             lights_window: lights_window.map(Into::into),
             sound_window: sound_window.map(Into::into),
+            desiccant_days,
         }
     }
 }
@@ -1395,6 +1427,7 @@ impl From<proto::Capabilities> for Capabilities {
             power: bits.contains(proto::Capabilities::POWER),
             backup: bits.contains(proto::Capabilities::BACKUP),
             plans: bits.contains(proto::Capabilities::PLANS),
+            desiccant: bits.contains(proto::Capabilities::DESICCANT),
         }
     }
 }
@@ -1413,6 +1446,7 @@ impl From<Capabilities> for proto::Capabilities {
             power,
             backup,
             plans,
+            desiccant,
         } = capabilities;
         let mut bits = proto::Capabilities::V1.0;
         if feed {
@@ -1447,6 +1481,9 @@ impl From<Capabilities> for proto::Capabilities {
         }
         if plans {
             bits |= proto::Capabilities::PLANS.0;
+        }
+        if desiccant {
+            bits |= proto::Capabilities::DESICCANT.0;
         }
         Self(bits)
     }
@@ -1635,8 +1672,59 @@ mod tests {
             wifi_generation: 0,
             last_event: None,
             sessions: 1,
+            desiccant: proto::Desiccant::Unknown,
         };
         assert_eq!(Status::from(status).clock, None);
+    }
+
+    #[test]
+    fn the_desiccant_count_says_when_it_is_due() {
+        let cases = [
+            (proto::Desiccant::Unset, "not started", None),
+            (proto::Desiccant::Unknown, "unknown (no clock)", None),
+            (
+                proto::Desiccant::Remaining { days: 14 },
+                "14 days left",
+                Some(false),
+            ),
+            (
+                proto::Desiccant::Remaining { days: 1 },
+                "1 day left",
+                Some(false),
+            ),
+            (
+                proto::Desiccant::Remaining { days: 0 },
+                "due today",
+                Some(true),
+            ),
+            (
+                proto::Desiccant::Remaining { days: -1 },
+                "due (1 day over)",
+                Some(true),
+            ),
+            (
+                proto::Desiccant::Remaining { days: -52 },
+                "due (52 days over)",
+                Some(true),
+            ),
+        ];
+        for (wire, text, due) in cases {
+            let desiccant = Desiccant::from(wire);
+            assert_eq!(desiccant.to_string(), text);
+            let shown = match desiccant {
+                Desiccant::Remaining { due, .. } => Some(due),
+                Desiccant::Unset | Desiccant::Unknown => None,
+            };
+            assert_eq!(shown, due, "{text}");
+        }
+        assert_eq!(
+            serde_json::to_value(Desiccant::from(proto::Desiccant::Remaining { days: -2 }))
+                .unwrap(),
+            serde_json::json!({ "state": "remaining", "days": -2, "due": true })
+        );
+        assert_eq!(calendar_day(20_389), Some(jiff::civil::date(2025, 10, 28)));
+        assert_eq!(calendar_day(-1), Some(jiff::civil::date(1969, 12, 31)));
+        assert_eq!(calendar_day(i32::MAX), None);
     }
 
     #[test]

@@ -128,6 +128,10 @@ pub enum Op {
         base: Generation,
         plans: [Option<Plan>; PLANS],
     },
+    /// Record that the desiccant was replaced today, by the feeder's local
+    /// calendar. Refused [`Refusal::NoClock`] while the feeder's clock is
+    /// invalid.
+    ResetDesiccant,
 }
 
 /// What the owner measured, as the feeder keeps it.
@@ -341,6 +345,9 @@ pub enum Refusal {
     Portions {
         asked: u8,
     },
+    /// The feeder's clock is invalid, so it cannot date the change: sync
+    /// its time first.
+    NoClock,
 }
 
 /// One enrolled client.

@@ -74,6 +74,7 @@ struct Feeder {
     volume: u8,
     lights_window: Window,
     sound_window: Window,
+    desiccant_days: u8,
     generation: u32,
     stored: bool,
     wifi_generation: u32,
@@ -157,6 +158,7 @@ impl Feeder {
             volume: 40,
             lights_window: Window::Always,
             sound_window: Window::Always,
+            desiccant_days: 14,
             generation: 2979,
             stored: false,
             wifi_generation: 4,
@@ -339,6 +341,8 @@ impl Feeder {
             volume: self.volume,
             lights_window: self.lights_window,
             sound_window: self.sound_window,
+            desiccant_days: self.desiccant_days,
+            desiccant_replaced: None,
             writable: true,
         }
     }
@@ -579,6 +583,9 @@ impl Feeder {
                 }
                 if let Some(window) = changes.sound_window {
                     self.sound_window = window;
+                }
+                if let Some(days) = changes.desiccant_days {
+                    self.desiccant_days = days;
                 }
                 self.generation += 1;
                 let saved = format!(

@@ -50,7 +50,8 @@ This page tracks what works today and what comes next. It covers the replacement
 | Battery and brownout | Experimental | |
 | Statistics and per-feed traces | Experimental | |
 | Lights and sound settings | Works | Lights and sound windows, volume-0 mute and a beep on every button press, checked on the bench. |
-| Desiccant and meal reminders | Not started | |
+| Desiccant reminder | Experimental | Counted on the feeder from the last replacement; tested in simulation. |
+| Meal reminder | Not started | |
 
 ## Apps and server
 

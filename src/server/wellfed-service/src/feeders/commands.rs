@@ -8,7 +8,7 @@ use wellfed_api::{
     CommandKind, CommandOutcome, ErrorCode, FeederDetail, FeederId, FeederRefusal, Generation,
     LockRequest, Settings, SettingsPatch, StatusSnapshot,
 };
-use wellfed_model::{Answer, Op, Window};
+use wellfed_model::{Answer, DESICCANT_DAYS_MAX, DESICCANT_DAYS_MIN, Op, Window};
 
 use crate::feeders::journal::Write;
 use crate::{Caller, Error, IdempotencyKey, InternalError, Invalid, RequestId, Result, Service};
@@ -114,6 +114,12 @@ impl Service {
         {
             return Err(Invalid::Window.into());
         }
+        if patch
+            .desiccant_days
+            .is_some_and(|days| !(DESICCANT_DAYS_MIN..=DESICCANT_DAYS_MAX).contains(&days))
+        {
+            return Err(Invalid::DesiccantDays.into());
+        }
         self.live_row(id).await?;
 
         let body = SettingsChange {
@@ -181,6 +187,30 @@ impl Service {
                 body: &LockRequest { locked },
                 key,
                 op: Op::SetLock { locked },
+            })
+            .await?;
+        done(&recorded.outcome)
+    }
+
+    /// Record that the feeder's desiccant was replaced today, by the
+    /// feeder's own calendar. A feeder whose clock is invalid refuses it
+    /// `no_clock`.
+    pub async fn reset_desiccant(
+        &self,
+        caller: &Caller,
+        id: FeederId,
+        key: Option<IdempotencyKey>,
+    ) -> Result<()> {
+        self.live_row(id).await?;
+
+        let recorded = self
+            .journaled(Write {
+                caller,
+                feeder: id,
+                kind: CommandKind::Desiccant,
+                body: &(),
+                key,
+                op: Op::ResetDesiccant,
             })
             .await?;
         done(&recorded.outcome)

@@ -296,6 +296,7 @@ pub(super) fn changes_to(settings: &Settings) -> SettingsPatch {
         volume: Some(settings.volume),
         lights_window: Some(settings.lights_window),
         sound_window: Some(settings.sound_window),
+        desiccant_days: Some(settings.desiccant_days),
     }
 }
 
@@ -310,6 +311,9 @@ fn shows(settings: &Settings, change: SettingsPatch) -> bool {
         && change
             .sound_window
             .is_none_or(|window| settings.sound_window == window)
+        && change
+            .desiccant_days
+            .is_none_or(|days| settings.desiccant_days == days)
 }
 
 /// Change settings against the generation just read, see the writer save a
@@ -422,6 +426,7 @@ fn settings_persist(ctx: &mut Ctx) -> Result<()> {
         volume: Some(if before.volume == 35 { 36 } else { 35 }),
         lights_window: Some(other_window(before.lights_window)),
         sound_window: Some(other_window(before.sound_window)),
+        desiccant_days: Some(if before.desiccant_days == 14 { 15 } else { 14 }),
     };
 
     let result = set_settings(ctx, changed).and_then(|base| {

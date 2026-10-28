@@ -1,15 +1,18 @@
 //! Two-slot alternating device settings, in the dual-slot store
 //! (`wellfed_core::store::slot`) as the feed journal is.
 //!
-//! The on-flash v2 record is 128 bytes: magic `PLFSET01`, version, record
+//! The on-flash v3 record is 128 bytes: magic `PLFSET01`, version, record
 //! size, generation, binding, bowl mode, flags (bit 0 lights, bit 1 sound),
 //! volume, a zero byte, UTC offset in minutes, the lights and sound windows
 //! (a kind byte each at 34 and 35, 0 always and 1 between, then each
-//! window's start and end minute as u16 at 36..40 and 40..44), zero
-//! padding, CRC-32/ISO-HDLC of bytes 0..120 at 120 and the `CMIT` commit
-//! marker at 124. A record in an older version (v1, without the windows) is
-//! never migrated: it counts as erased, so the store opens on defaults and
-//! the next save replaces it.
+//! window's start and end minute as u16 at 36..40 and 40..44), the
+//! desiccant reminder (its period in days at 44, 1 at 45 when a
+//! replacement is recorded, two zero bytes, and the replacement's local
+//! calendar day as an i32 at 48..52, zero when none), zero padding,
+//! CRC-32/ISO-HDLC of bytes 0..120 at 120 and the `CMIT` commit marker at
+//! 124. A record in an older version (v1 without the windows, v2 without
+//! the reminder) is never migrated: it counts as erased, so the store opens
+//! on defaults and the next save replaces it.
 //!
 //! Unlike the journal, losing the newest settings change is safe, so a torn
 //! or invalid newer slot falls back to the older valid one. Storage with no
@@ -20,14 +23,15 @@
 
 use core::ffi::c_uint;
 
+use wellfed_core::desiccant;
 use wellfed_core::feed::progress::BowlMode;
 use wellfed_core::settings::{SettingsFields, SettingsView, Window};
 use wellfed_core::store::slot::{
-    CRC_AT, DualSlot, Extent, Found, Layout, Pick, Prepare, RECORD_BYTES, SlotIo, get_u16, get_u64,
-    newest, put_u16, put_u64, seal, target,
+    CRC_AT, DualSlot, Extent, Found, Layout, Pick, Prepare, RECORD_BYTES, SlotIo, get_u16, get_u32,
+    get_u64, newest, put_u16, put_u32, put_u64, seal, target,
 };
 
-pub const VERSION: u16 = 2;
+pub const VERSION: u16 = 3;
 /// Settings read their whole units, as the journal does, so data another
 /// writer left is never taken for empty settings and overwritten.
 const LAYOUT: Layout = Layout {
@@ -55,6 +59,10 @@ pub struct Settings {
     pub utc_offset_minutes: i16,
     pub lights_window: Window,
     pub sound_window: Window,
+    /// The desiccant reminder's period in days.
+    pub desiccant_days: u8,
+    /// The local calendar day of the last desiccant replacement.
+    pub desiccant_reset: Option<i32>,
 }
 
 impl Default for Settings {
@@ -67,6 +75,8 @@ impl Default for Settings {
             utc_offset_minutes: 0,
             lights_window: Window::Always,
             sound_window: Window::Always,
+            desiccant_days: desiccant::PERIOD_DEFAULT,
+            desiccant_reset: None,
         }
     }
 }
@@ -77,6 +87,7 @@ impl Settings {
             && (MIN_UTC_OFFSET..=MAX_UTC_OFFSET).contains(&self.utc_offset_minutes)
             && self.lights_window.valid()
             && self.sound_window.valid()
+            && desiccant::period_valid(self.desiccant_days)
     }
 
     /// These settings with a request's fields applied; the writer's merge,
@@ -88,6 +99,8 @@ impl Settings {
             volume: fields.volume.unwrap_or(self.volume),
             lights_window: fields.lights_window.unwrap_or(self.lights_window),
             sound_window: fields.sound_window.unwrap_or(self.sound_window),
+            desiccant_days: fields.desiccant_days.unwrap_or(self.desiccant_days),
+            desiccant_reset: fields.desiccant_reset.or(self.desiccant_reset),
             ..self
         }
     }
@@ -100,6 +113,8 @@ impl Settings {
             volume: self.volume,
             lights_window: self.lights_window,
             sound_window: self.sound_window,
+            desiccant_days: self.desiccant_days,
+            desiccant_reset: self.desiccant_reset,
             // Reported as 32 bits; saturate rather than wrap to an old value.
             generation: u32::try_from(generation).unwrap_or(u32::MAX),
             writable,
@@ -219,6 +234,9 @@ impl<I: SlotIo> SettingsStore<I> {
         p[35] = kind;
         put_u16::<40, _>(&mut p, start);
         put_u16::<42, _>(&mut p, end);
+        p[44] = s.desiccant_days;
+        p[45] = u8::from(s.desiccant_reset.is_some());
+        put_u32::<48, _>(&mut p, s.desiccant_reset.unwrap_or(0).cast_unsigned());
 
         seal(&mut p);
         p
@@ -240,11 +258,18 @@ impl<I: SlotIo> SettingsStore<I> {
             utc_offset_minutes: get_u16::<32, _>(p) as i16,
             lights_window: window(p[34], get_u16::<36, _>(p), get_u16::<38, _>(p))?,
             sound_window: window(p[35], get_u16::<40, _>(p), get_u16::<42, _>(p))?,
+            desiccant_days: p[44],
+            desiccant_reset: match p[45] {
+                0 if get_u32::<48, _>(p) == 0 => None,
+                1 => Some(get_u32::<48, _>(p).cast_signed()),
+                _ => return None,
+            },
         };
         let generation = get_u64::<GENERATION_AT, _>(p);
         if p[29] & !3 != 0
             || p[31] != 0
-            || p[44..CRC_AT].iter().any(|&b| b != 0)
+            || p[46..48].iter().any(|&b| b != 0)
+            || p[52..CRC_AT].iter().any(|&b| b != 0)
             || !s.valid()
             || generation == 0
         {

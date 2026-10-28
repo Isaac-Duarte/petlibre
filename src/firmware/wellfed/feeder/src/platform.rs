@@ -167,6 +167,7 @@ impl Platform for Plaf103 {
             .union(Capabilities::POWER)
             .union(Capabilities::BACKUP)
             .union(Capabilities::PLANS)
+            .union(Capabilities::DESICCANT)
     }
 
     fn reset(&mut self) {

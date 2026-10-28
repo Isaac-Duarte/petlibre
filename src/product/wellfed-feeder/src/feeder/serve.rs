@@ -22,6 +22,7 @@
 
 use core::fmt;
 
+use wellfed_core::desiccant::{self, Count};
 use wellfed_core::log_tail::Batch as LogBatch;
 use wellfed_core::mdns::{self, Destination, Responder};
 use wellfed_core::ota::BANK1_BYTES;
@@ -29,9 +30,9 @@ use wellfed_core::ota::install::{Answer, Phase};
 use wellfed_core::ota::offer::{KeyStatement, key_id};
 use wellfed_core::tone::Tune;
 use wellfed_proto::api::{
-    self as proto, BANK1_PAGE_MAX, Bank1Page, Battery, Capabilities, EventBody, Metric, PORT,
-    Power, Readiness, Refusal, Sample, Source, Stats, StatsSection, Status, Supply, TASKS_MAX,
-    TaskStack as WireTask, TracePage, UpdateRefusal, UpdateView,
+    self as proto, BANK1_PAGE_MAX, Bank1Page, Battery, Capabilities, Desiccant, EventBody, Metric,
+    PORT, Power, Readiness, Refusal, Sample, Source, Stats, StatsSection, Status, Supply,
+    TASKS_MAX, TaskStack as WireTask, TracePage, UpdateRefusal, UpdateView,
 };
 use wellfed_proto::trace::PAGE_MAX;
 use wellfed_session::noise::Keypair;
@@ -708,7 +709,14 @@ impl<P: Platform, F: Feeds> Device for FeederDevice<'_, P, F> {
 
     fn status(&mut self, now_ms: u32) -> Status<'static> {
         let link = self.platform.link();
-        let settings_generation = self.platform.settings().map_or(0, |view| view.generation);
+        let settings = self.platform.settings();
+        let settings_generation = settings.map_or(0, |view| view.generation);
+        let today = self.today(now_ms);
+        let desiccant = match settings.map(|view| view.desiccant(today)) {
+            Some(Count::Remaining(days)) => Desiccant::Remaining { days },
+            Some(Count::Unset) => Desiccant::Unset,
+            Some(Count::Unknown) | None => Desiccant::Unknown,
+        };
         let wifi_generation = match self.platform.wifi() {
             WifiResult::Current { view, .. } => view.generation,
             _ => 0,
@@ -735,7 +743,13 @@ impl<P: Platform, F: Feeds> Device for FeederDevice<'_, P, F> {
             wifi_generation,
             last_event: self.platform.last_event(),
             sessions: 0,
+            desiccant,
         }
+    }
+
+    fn today(&mut self, now_ms: u32) -> Option<i32> {
+        let reading = self.platform.clock_state(now_ms).reading?;
+        desiccant::today(&reading)
     }
 
     fn settings(&mut self, change: SettingsFields) -> SettingsResult {

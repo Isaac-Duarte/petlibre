@@ -17,10 +17,13 @@
 //! same readiness, the same owner, the same `Fed` event (by the panel)
 //! with the portions asked for and those delivered. A press while a feed
 //! cannot start (one running among the reasons) starts nothing and is not
-//! queued; stock logs it (record code 2022), and here the first such press
-//! of each spell is a `DispenseRefused` event ([`Watch::refused`]), so a
-//! child at the panel cannot fill the event queue during a long feed. Every
-//! press goes to the log.
+//! queued; stock logs it (record code 2022), and here a press is a
+//! `DispenseRefused` event ([`Watch::refused`]) when its reason differs from
+//! the last one recorded since the feeder was last ready, so a child at the
+//! panel cannot fill the event queue during a long feed, yet a feed that
+//! ends straight into another reason (the battery hold, a Wi-Fi join) is
+//! still recorded. Back-to-back feeds share the reason `Feeding`, so presses
+//! across them record once. Every press goes to the log.
 //!
 //! **Silent.** A feed plays no tune; that is the owner's choice. A tune a
 //! client asks for with `play` is stepped after the owner and the device
@@ -122,15 +125,16 @@ pub fn refused_reason<F: Feeds>(feeds: &F, ready: Readiness) -> Blocked {
     }
 }
 
-/// The last readiness logged, the last lasting reason recorded, and
-/// whether this spell's refused Dispense press was.
+/// The last readiness logged, the last lasting reason recorded, and the
+/// reason of the last refused Dispense press recorded since the feeder
+/// was last ready.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Watch {
     logged: Option<Readiness>,
     lasting: Option<Blocked>,
-    /// A refused Dispense press was recorded since the feeder was last
-    /// ready.
-    refused: bool,
+    /// The reason the last refused Dispense press was recorded for, since
+    /// the feeder was last ready.
+    refused: Option<Blocked>,
 }
 
 impl Watch {
@@ -138,15 +142,16 @@ impl Watch {
         Self {
             logged: None,
             lasting: None,
-            refused: false,
+            refused: None,
         }
     }
 
-    /// A Dispense press that could not feed, for `reason`: the first of
-    /// the spell (since the feeder was last ready) is recorded in the
-    /// history, the rest only in the log.
+    /// A Dispense press that could not feed, for `reason`: recorded in the
+    /// history when the reason differs from the last one recorded since the
+    /// feeder was last ready, otherwise only in the log. A pass that never
+    /// sees the feeder ready between two reasons still records the second.
     pub fn refused<P: Platform>(&mut self, platform: &mut P, now_ms: u32, reason: Blocked) {
-        if !core::mem::replace(&mut self.refused, true) {
+        if self.refused.replace(reason) != Some(reason) {
             events::record(platform, now_ms, EventBody::DispenseRefused { reason });
         }
     }
@@ -166,7 +171,7 @@ impl Watch {
             record(Record::Readiness(now));
         }
         if now == Readiness::Ready {
-            self.refused = false;
+            self.refused = None;
         }
         let lasting = match now {
             Readiness::Blocked(blocked) if blocked.lasting() => Some(blocked),

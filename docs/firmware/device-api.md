@@ -154,7 +154,7 @@ A client that may want to cancel keeps its session open across the feed, as `wel
 
 **The Dispense button** asks for one portion, as stock's does. It goes through the same readiness and the same owner as a client's `Feed`, and its `Fed` event says `by: Panel`. A locked panel ignores it, and a pending pairing confirmation takes the press first. The loop logs `PLFEED1 dispense feed=N` or `dispense refused=…`.
 
-A press while a feed cannot start, a feed running among the reasons, starts nothing and is not queued, as stock's (its record code 2022). The first such press after the feeder was last ready is recorded as a `DispenseRefused { reason }` event; later presses in the same spell are only logged, so presses during a long feed cannot fill the event queue, whose appends wait for the feed's end.
+A press while a feed cannot start, a feed running among the reasons, starts nothing and is not queued, as stock's (its record code 2022). Such a press is recorded as a `DispenseRefused { reason }` event when its reason differs from the last one recorded since the feeder was last ready; a repeat of that reason is only logged, so presses during a long feed cannot fill the event queue, whose appends wait for the feed's end.
 
 **Feeds are silent.** A feed, by a press or a client, asks nothing of the speaker. The loop still steps the speaker outside setup mode for a client's `play` request, after the owner and the device API. So a tune that is playing, will not open or stalls leaves a feed, its cancel and its `Fed` event alone. An owner-chosen call before a scheduled meal belongs to the schedule feature.
 
@@ -226,7 +226,7 @@ Every flash lease checks that the outputs are stopped, and fails closed when the
 - The queue holds 16 in RAM, the last kept for a feed's `Fed` event, since appends wait out a feed and events pile up meanwhile. Overflow is counted and recorded as a `Lost` event.
 - The settings writer appends them to the ring in storage sectors 13–24 (`wellfed_feeder::store::events`: 32-byte records, at least 1,408 kept) and answers the API's reads. It polls every 5 ms while either waits. While a feed holds the outputs, an append waits at the head of the queue.
 - A ring created empty draws a random epoch from the generator, and every record repeats it in bytes 4–7, the high half of the old 64-bit sequence field. So a ring written before epochs reads as epoch 0, and the layout is unchanged. The welcome carries the epoch, and the feeder welcomes no session until the writer has opened the ring and published it.
-- Recorded today: boot, lock changes (panel, idle relock, or which client), settings, plans and Wi-Fi writes with their client, clock syncs, invites redeemed, recovery and revocations, feeds, missed meals, and blocked feeding.
+- Recorded today: boot, lock changes (panel, idle relock, or which client), settings, plans and Wi-Fi writes with their client, clock syncs, invites redeemed, recovery and revocations, feeds, refused Dispense presses, missed meals, and blocked feeding.
 
 **Samples** go only to subscribers: power every 5 s, Wi-Fi signal every 30 s, the statistics' metrics with `STATS` ([below](#statistics)), and the judged supply beside the power sample with `POWER`. A sample not sent before the next of its kind is replaced.
 

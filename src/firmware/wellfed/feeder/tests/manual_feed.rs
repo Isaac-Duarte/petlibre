@@ -219,8 +219,8 @@ fn a_press_obeys_readiness_and_a_lasting_reason_is_recorded() {
 }
 
 /// A press while a feed runs starts nothing and is not queued; the first
-/// of the spell is a `DispenseRefused` event, the rest only log lines, and
-/// once the feeder is ready again the next spell's first is recorded too.
+/// for its reason is a `DispenseRefused` event, repeats only log lines, and
+/// once the feeder is ready again the next reason's first is recorded too.
 #[test]
 fn a_press_during_a_feed_is_recorded_once_a_spell_and_not_queued() {
     let mut rig = Rig::new();
@@ -257,6 +257,45 @@ fn a_press_during_a_feed_is_recorded_once_a_spell_and_not_queued() {
             },
             EventBody::DispenseRefused {
                 reason: Blocked::Resolving
+            },
+        ]
+    );
+}
+
+/// A feed that ends straight into another reason, with no pass that sees
+/// the feeder ready, still records the first press under the new reason:
+/// only a repeat of the reason last recorded is left to the log.
+#[test]
+fn a_press_under_a_new_reason_is_recorded_without_a_ready_pass() {
+    let mut rig = Rig::new();
+    rig.unlock();
+    let _ = rig.events();
+
+    rig.owner.blocked = Some(Blocked::Feeding);
+    rig.press_dispense();
+    rig.owner.blocked = Some(Blocked::Battery);
+    rig.press_dispense();
+    rig.press_dispense();
+    rig.owner.blocked = Some(Blocked::Feeding);
+    rig.press_dispense();
+    assert!(rig.owner.submitted.is_empty(), "nothing queued");
+
+    let refused: Vec<_> = rig
+        .events()
+        .into_iter()
+        .filter(|body| matches!(body, EventBody::DispenseRefused { .. }))
+        .collect();
+    assert_eq!(
+        refused,
+        [
+            EventBody::DispenseRefused {
+                reason: Blocked::Feeding
+            },
+            EventBody::DispenseRefused {
+                reason: Blocked::Battery
+            },
+            EventBody::DispenseRefused {
+                reason: Blocked::Feeding
             },
         ]
     );

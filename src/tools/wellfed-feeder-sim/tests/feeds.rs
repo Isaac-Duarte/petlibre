@@ -142,7 +142,7 @@ fn a_feed_outside_one_to_48_portions_is_refused_by_name() {
 
 /// Dispense goes through the owner a client's feed takes: one portion, by
 /// the panel. A press while a feed runs starts nothing, queues nothing and
-/// is recorded once for the spell; the next feed takes the next number.
+/// is recorded once for its reason; the next feed takes the next number.
 #[test]
 fn a_dispense_press_feeds_one_portion_and_one_during_a_feed_is_recorded_not_queued() {
     local(async {
@@ -208,7 +208,7 @@ fn a_dispense_press_feeds_one_portion_and_one_during_a_feed_is_recorded_not_queu
             [&EventBody::DispenseRefused {
                 reason: Blocked::Feeding
             }],
-            "one event for the spell"
+            "one event for the reason"
         );
 
         sim.control(Control::StallFeeds(false));

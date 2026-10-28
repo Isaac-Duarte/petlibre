@@ -15,10 +15,10 @@ use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 use clap::Args;
+use serde::{Deserialize, Serialize};
 use wellfed_formats::private;
 use wellfed_server_client::api::{Credentials, ErrorCode, NewToken, TokenId};
 use wellfed_server_client::{Auth, Client, Error, Url};
-use serde::{Deserialize, Serialize};
 
 use super::{Output, Settled};
 

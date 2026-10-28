@@ -52,8 +52,8 @@ impl Server {
                 let Some(len) = slot.wire.frame()? else {
                     return Ok(false);
                 };
-                let open: Open = wellfed_proto::decode(slot.wire.message(len))
-                    .map_err(|_| Reason::Malformed)?;
+                let open: Open =
+                    wellfed_proto::decode(slot.wire.message(len)).map_err(|_| Reason::Malformed)?;
                 slot.wire.consume(len);
                 let rescuing = self.slots.iter().any(|s| {
                     matches!(

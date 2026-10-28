@@ -16,6 +16,7 @@
 //! on the owner's behalf; once activated, the feeder runs stock, which
 //! serves no device API.
 
+use tracing::{info, warn};
 use wellfed_api::{
     ClientRole, Connection as Link, FeederId, FeederRefusal, Install, InstallTarget,
     StockBackup as StockView, StockFeeder, StockRestore, StockState,
@@ -23,7 +24,6 @@ use wellfed_api::{
 use wellfed_mirror::{BankReadError, ReadError};
 use wellfed_model::{Answer, Op, UpdatePhase};
 use wellfed_releases::{DOWNGRADE_LEN, MANIFEST_LEN, Taken};
-use tracing::{info, warn};
 
 use crate::operations::installs::Offer;
 use crate::{

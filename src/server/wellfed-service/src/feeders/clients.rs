@@ -4,12 +4,12 @@
 //! owner's key revoke, so a server adopted with the `server` role is
 //! refused `forbidden` by the feeder.
 
+use serde::Serialize;
 use wellfed_api::{
     ClientOwner, CommandKind, CommandOutcome, ErrorCode, FeederClient, FeederId, FeederRefusal, Hex,
 };
 use wellfed_model::{Answer, Client, Op};
 use wellfed_store::FeederRow;
-use serde::Serialize;
 
 use crate::feeders::commands::{done, refused};
 use crate::feeders::journal::Write;

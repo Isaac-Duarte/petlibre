@@ -1,13 +1,13 @@
 //! The command journal's rows and their states, against real SQLite.
 
 use jiff::Timestamp;
+use tempfile::TempDir;
+use uuid::Uuid;
 use wellfed_api::{
     ClientRole, CommandKind, CommandOutcome, CommandState, FeederId, FeederRefusal, UserId,
 };
 use wellfed_api::{FeedOutcome, FeedReason};
 use wellfed_store::{CommandFilter, Journaled, NewCommand, NewFeeder, SealedKey, Store, Synced};
-use tempfile::TempDir;
-use uuid::Uuid;
 
 fn at(ms: i64) -> Timestamp {
     Timestamp::from_millisecond(ms).unwrap()

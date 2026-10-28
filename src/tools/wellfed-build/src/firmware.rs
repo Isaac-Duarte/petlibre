@@ -10,8 +10,8 @@
 use std::collections::BTreeMap;
 use std::fs;
 
-use wellfed_formats::require;
 use serde::Deserialize;
+use wellfed_formats::require;
 
 use crate::catalog::{FirmwareEntry, VariantEntry};
 use crate::{Repo, Result, checked_name};
@@ -503,8 +503,7 @@ quiet = { summary = "No probes" }
     fn the_bringup_start_selection_knows_every_variant() {
         let repo = Repo::here().unwrap();
         let bringup = Firmware::new(&repo, "bringup").unwrap();
-        let app =
-            fs::read_to_string(repo.path("src/firmware/wellfed/bringup/src/app.rs")).unwrap();
+        let app = fs::read_to_string(repo.path("src/firmware/wellfed/bringup/src/app.rs")).unwrap();
         let block = |start: &str, end: &str| {
             let from = app.find(start).unwrap();
             let to = from + app[from..].find(end).unwrap();

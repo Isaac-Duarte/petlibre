@@ -2,6 +2,7 @@
 //! over HTTP: who may call each route, the codes each refusal maps to, and
 //! a removed feeder refused `feeder_archived`.
 
+use uuid::Uuid;
 use wellfed_api::{
     AdoptFeeder, ClientOwner, ClientRole, Connection, ErrorCode, FeederId, Hex, KeyRemoval,
     NewToken, NewUser, Role, TuneName, WifiChange, WifiCredentials,
@@ -9,7 +10,6 @@ use wellfed_api::{
 use wellfed_server_client::{Auth, Client, StatusCode};
 use wellfed_server_testkit::feeder::{self, Running};
 use wellfed_server_testkit::{TestServer, ada_setup, local, refused, refused_for, until};
-use uuid::Uuid;
 
 fn key(n: u128) -> Uuid {
     Uuid::from_u128(0x0192c5d0_5555_7000_8000_000000000000 + n)

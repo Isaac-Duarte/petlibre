@@ -6,9 +6,9 @@
 //! sample. Rollups are kept over that number per UTC hour.
 
 use jiff::Timestamp;
-use wellfed_model::{Battery, MetricKind, SampleValue};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
+use wellfed_model::{Battery, MetricKind, SampleValue};
 
 /// The version of [`sample_number`]. Bump it whenever what a sample's
 /// number is changes, so the server decodes every stored sample again and

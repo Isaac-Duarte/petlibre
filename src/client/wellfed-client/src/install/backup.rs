@@ -29,10 +29,10 @@
 //!
 //! [rollback]: ../../../../../docs/firmware/consumer-installation.md#rollback
 
+use sha2::{Digest, Sha256};
 use wellfed_core::ota::MARKER;
 use wellfed_core::ota::offer::{self, ImageKind};
 use wellfed_model::{Answer, Bank1Page, Op, Refusal};
-use sha2::{Digest, Sha256};
 
 /// The stock release an install starts from and a backup restores.
 pub const STOCK_VERSION: &str = "1.1.15";

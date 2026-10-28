@@ -33,8 +33,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 use std::sync::LazyLock;
 
-use wellfed_formats::audit::{StackAudit, TaskBound};
 use regex::Regex;
+use wellfed_formats::audit::{StackAudit, TaskBound};
 
 use super::writes::{demangle, loaded};
 use super::{HEADING, tool};
@@ -862,8 +862,7 @@ mod tests {
     #[test]
     fn the_firmware_share_matches_the_sdk_budget() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-        let tasks =
-            std::fs::read_to_string(root.join("src/sdk/wellfed-sdk/src/tasks.rs")).unwrap();
+        let tasks = std::fs::read_to_string(root.join("src/sdk/wellfed-sdk/src/tasks.rs")).unwrap();
 
         assert!(
             tasks.contains(&format!("pub const FIRMWARE_TASKS: u8 = {FIRMWARE_TASKS};")),
@@ -1007,10 +1006,7 @@ mod tests {
                 "optics_task".to_string(),
                 ("wellfed-optics".to_string(), 8192),
             ),
-            (
-                "feeder_task".to_string(),
-                ("wellfed-wdg".to_string(), 2048),
-            ),
+            ("feeder_task".to_string(), ("wellfed-wdg".to_string(), 2048)),
             ("audio_task".to_string(), ("wellfed-aud".to_string(), 4096)),
         ]
         .into();
@@ -1121,7 +1117,7 @@ mod tests {
     6000:\tb538      \tpush\t{r3, r4, r5, lr}
     6002:\t4790      \tblx\tr2
 
-00007000 <_RNvNtCs3_12wellfed_sdk7runtime12hook_acquire>:
+00007000 <_RNvNtCs3_11wellfed_sdk7runtime12hook_acquire>:
     7000:\tb5f0      \tpush\t{r4, r5, r6, r7, lr}
     7002:\tb0c0      \tsub\tsp, #256
 
@@ -1208,7 +1204,7 @@ mod tests {
     #[test]
     fn provider_callbacks_without_a_hook_site_are_refused() {
         let listing = "\
-00007000 <_RNvNtCs3_12wellfed_sdk7runtime12hook_acquire>:
+00007000 <_RNvNtCs3_11wellfed_sdk7runtime12hook_acquire>:
     7000:\tb5f0      \tpush\t{r4, r5, r6, r7, lr}
 ";
         let functions = link(frames(listing).into_iter().collect());

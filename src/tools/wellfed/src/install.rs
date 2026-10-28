@@ -26,6 +26,8 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use clap::Args;
+use serde::de::IgnoredAny;
+use tokio::process::{Child, Command};
 use wellfed_client::install::{
     CONTAINER_HEADER, FeederTrust, Install, Provision, Replacement, Requested, SETUP_ADDRESS,
     SetupFrame, Step, StockBackup, StockPower, StockView, manifest_version,
@@ -39,8 +41,6 @@ use wellfed_formats::stock::{
 use wellfed_model::{Answer, Op};
 use wellfed_proto::api::PORT;
 use wellfed_stock_api::{ApiError, Auth, StockApi};
-use serde::de::IgnoredAny;
-use tokio::process::{Child, Command};
 
 use crate::keys::{OwnerKey, fingerprint};
 use crate::push::{Pushed, push};
@@ -826,8 +826,8 @@ fn short(build: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wellfed_client::update::{Installer, Next};
     use serde_json::json;
+    use wellfed_client::update::{Installer, Next};
 
     #[test]
     fn the_server_s_document_becomes_the_steps_view() {

@@ -10,8 +10,8 @@ use std::fs;
 use std::path::Path;
 use std::sync::LazyLock;
 
-use wellfed_formats::audit::{Main, MainCalls, MainsAudit};
 use regex::Regex;
+use wellfed_formats::audit::{Main, MainCalls, MainsAudit};
 
 use super::hooks::file_offset;
 use super::{ADDRESSED, Binutils, DIRECT_BRANCH, INSTRUCTION, elf, hex, parse_hex, tool};

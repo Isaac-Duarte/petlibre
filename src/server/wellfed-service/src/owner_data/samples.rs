@@ -2,10 +2,10 @@
 //! keep their rollups and drop raw rows past the owner's retention.
 
 use jiff::{SignedDuration, Timestamp};
+use tracing::info;
 use wellfed_api::{FeederId, HourSample, RawSample, Resolution, SamplePage, SampleQuery};
 use wellfed_mirror::stored_sample;
 use wellfed_store::{SampleKey, Span};
-use tracing::info;
 
 use crate::{Error, InternalError, Invalid, Resource, Result, Service};
 

@@ -16,10 +16,10 @@
 //! revoking a leaked token is enough: it cannot have made other tokens,
 //! nor a password or an account to log in with and make them.
 
+use sha2::{Digest, Sha256};
 use wellfed_api::{AuditAction, CreatedToken, NewToken, RevokeReason, Token, TokenId, User};
 use wellfed_formats::hex;
 use wellfed_store::Whose;
-use sha2::{Digest, Sha256};
 
 use crate::accounts::sessions::{TOUCH, disabled};
 use crate::{AccountError, Error, Invalid, Permission, Resource, Result, Service, can};

@@ -4,11 +4,11 @@
 use std::net::SocketAddr;
 use std::time::Duration;
 
+use tracing::{debug, warn};
 use wellfed_api::FeederId;
 use wellfed_connect::Connection;
 use wellfed_model::{ClientRole, Joined};
 use wellfed_session::noise::Keypair;
-use tracing::{debug, warn};
 
 use crate::{ConnectError, Discovery, Invite, Mirror, Shared, Unreachable};
 
@@ -75,9 +75,8 @@ pub(crate) async fn open(
     keys: &Keypair,
     address: Option<&str>,
 ) -> Result<(Connection, SocketAddr), ConnectError> {
-    let stored = address.and_then(|address| {
-        wellfed_connect::locate(&identity, Some(address), Duration::ZERO).ok()
-    });
+    let stored = address
+        .and_then(|address| wellfed_connect::locate(&identity, Some(address), Duration::ZERO).ok());
     if let Some(address) = stored {
         let ephemeral = shared.random()?;
         match Connection::open(keys, identity, address, ephemeral).await {

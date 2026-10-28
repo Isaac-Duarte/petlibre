@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
-use wellfed_api::{Job, JobOutcome, JobRun, ReleaseCheck};
 use tracing::{info, warn};
+use wellfed_api::{Job, JobOutcome, JobRun, ReleaseCheck};
 
 use crate::{Clock, Result, Service};
 

@@ -7,8 +7,8 @@ use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::time::Duration;
 
 use jiff::Timestamp;
-use wellfed_service::{Clock, Random, RandomFailed};
 use tokio::sync::Notify;
+use wellfed_service::{Clock, Random, RandomFailed};
 
 /// The instant a [`FixedClock`] shows, in Unix milliseconds: inside the
 /// feeder clock's accepted range, so a clock sync from it is applied.

@@ -1,7 +1,7 @@
 //! The device request id a journalled write goes out under.
 
-use wellfed_api::{CommandKind, FeederId, User};
 use sha2::{Digest, Sha256};
+use wellfed_api::{CommandKind, FeederId, User};
 
 use crate::{IdempotencyKey, RequestId};
 

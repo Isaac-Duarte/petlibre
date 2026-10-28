@@ -6,12 +6,12 @@
 mod common;
 
 use chrono::{TimeZone, Utc};
+use serde_json::{Value, json};
+use uuid::Uuid;
 use wellfed_stock::{
     ota,
     protocol::{self, Reply},
 };
-use serde_json::{Value, json};
-use uuid::Uuid;
 
 const ID: &str = "6c8e4f8a-0d43-4c4b-9d5e-1f2a3b4c5d6e";
 const DIGEST: &str = "9af0ce801c538f7ff4b6edbe84f4d250791c5dedefbf01f0b18958b7123df6e7";

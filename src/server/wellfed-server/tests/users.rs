@@ -4,6 +4,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use uuid::Uuid;
 use wellfed_api::{
     AdoptFeeder, Credentials, ErrorCode, FeederId, Generation, HouseholdPatch, NewUser,
     PasswordChange, Role, SettingsPatch, Units, User, UserPatch,
@@ -11,7 +12,6 @@ use wellfed_api::{
 use wellfed_server_client::{Auth, Client, Lock, StatusCode};
 use wellfed_server_testkit::fixed::ManualClock;
 use wellfed_server_testkit::{TestServer, ZONE, ada_setup, refused, refused_for};
-use uuid::Uuid;
 
 /// A feeder no server has adopted: a permission is checked before the id.
 const NOBODY: FeederId = FeederId(Uuid::from_u128(0x0192c5d0_0000_7000_8000_000000000000));

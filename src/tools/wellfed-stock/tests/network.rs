@@ -17,10 +17,7 @@ fn routing_is_scoped_to_device_mac_and_hotspot_and_blocks_its_wan_only() {
     // The table and the rule tag are what earlier releases installed on
     // bench hosts, so `remove` still finds those rules.
     assert!(rules.starts_with("table inet wellfed_local {"));
-    assert_eq!(
-        rules.matches("comment \"wellfed-local-broker\"").count(),
-        2
-    );
+    assert_eq!(rules.matches("comment \"wellfed-local-broker\"").count(), 2);
     assert!(rules.contains("iifname \"wlan1\" ether saddr 02:00:00:00:00:42 counter reject"));
     assert!(!rules.contains("flush ruleset"));
 

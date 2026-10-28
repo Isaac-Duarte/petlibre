@@ -5,10 +5,10 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
-use wellfed_formats::canonical::sha256;
-use wellfed_formats::session::{Lifecycle, Status};
 use serde::Serialize;
 use serde_json::{Map, Value};
+use wellfed_formats::canonical::sha256;
+use wellfed_formats::session::{Lifecycle, Status};
 
 use super::{Sources, history, modified, read, serial_sizes};
 use wellfed_formats::bench::progress;

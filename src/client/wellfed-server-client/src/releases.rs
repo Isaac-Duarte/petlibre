@@ -2,11 +2,11 @@
 //! check of the project's releases (owners only), and installing one on a
 //! feeder.
 
+use reqwest::header::{self, HeaderValue};
+use reqwest::{Method, StatusCode};
 use wellfed_api::{
     FeederId, Hex, Install, InstallRequest, Release, ReleaseCheck, ReleasePage, ReleaseQuery,
 };
-use reqwest::header::{self, HeaderValue};
-use reqwest::{Method, StatusCode};
 
 use crate::{Client, Error, decode};
 

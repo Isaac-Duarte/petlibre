@@ -85,9 +85,9 @@ fn a_feed_during_a_wifi_join_is_refused_busy() {
 
 #[test]
 fn a_join_waits_out_the_longest_feed_and_no_longer() {
+    use std::cell::Cell;
     use wellfed_fw_feeder::feeding::{FEED_BOUND_MS, claim_outputs};
     use wellfed_sdk::hal::interlock::{Interlock, JoinStart};
-    use std::cell::Cell;
 
     // The owner's own cap on a feed's emitters-on time, which holds the
     // prepare timeout and the longest drive, fits inside the bound.
@@ -123,12 +123,12 @@ fn a_store_write_waits_out_the_longest_feed_and_no_longer() {
 
 #[test]
 fn a_feed_waits_for_a_running_store_write_and_is_refused_past_the_wait() {
+    use std::cell::Cell;
     use wellfed_fw_feeder::feeding::claim_outputs;
     use wellfed_proto::api::Refusal;
     use wellfed_sdk::hal::interlock::{
         Held, Interlock, WRITE_WAIT_MS, WriteStart, WriteStep, WriteTurn,
     };
-    use std::cell::Cell;
 
     let interlock = Interlock::new();
     let mut turn = WriteTurn::new();

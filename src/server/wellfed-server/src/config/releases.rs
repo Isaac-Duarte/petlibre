@@ -9,10 +9,10 @@
 
 use std::str::FromStr;
 
-use wellfed_api::Hex;
 use serde::Deserialize;
 use serde::de::IntoDeserializer as _;
 use serde::de::value::StrDeserializer;
+use wellfed_api::Hex;
 
 use super::{InvalidValue, given};
 

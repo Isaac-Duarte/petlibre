@@ -7,6 +7,7 @@ use std::io::Write;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
+use uuid::Uuid;
 use wellfed_api::{
     AdoptFeeder, ClientRole, Connection, CreatedToken, ErrorCode, FeederId, NewToken, NewUser,
     Role, SESSION_COOKIE, Token, User, UserPatch,
@@ -15,7 +16,6 @@ use wellfed_server_client::reqwest::header::{AUTHORIZATION, COOKIE};
 use wellfed_server_client::{Auth, Client, Lock, StatusCode, expect_status};
 use wellfed_server_testkit::fixed::ManualClock;
 use wellfed_server_testkit::{TestServer, ada_setup, feeder, local, refused, refused_for, until};
-use uuid::Uuid;
 
 /// A feeder no server has adopted: a permission is checked before the id.
 const NOBODY: FeederId = FeederId(Uuid::from_u128(0x0192c5d0_0000_7000_8000_000000000000));

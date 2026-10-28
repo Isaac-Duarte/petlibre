@@ -5,14 +5,14 @@ use std::io::{self, Write};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use wellfed_api::FeederId;
-use wellfed_mirror::{Config, Diagnostics, Discovery, Feeder, Mirror, Timing};
-use wellfed_server_testkit::fixed::{FixedClock, SeededRandom};
-use wellfed_server_testkit::{TempStore, until};
 use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
 use tracing_subscriber::fmt::MakeWriter;
 use uuid::Uuid;
+use wellfed_api::FeederId;
+use wellfed_mirror::{Config, Diagnostics, Discovery, Feeder, Mirror, Timing};
+use wellfed_server_testkit::fixed::{FixedClock, SeededRandom};
+use wellfed_server_testkit::{TempStore, until};
 
 /// What the subscriber wrote, shared with the test.
 #[derive(Clone, Default)]

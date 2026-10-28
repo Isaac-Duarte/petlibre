@@ -37,6 +37,7 @@
 use core::fmt;
 use core::marker::PhantomData;
 
+use sha2::{Digest, Sha256};
 pub use wellfed_core::ota::SectorStep;
 use wellfed_core::ota::install::{Install, Phase, Progress, Refused, Stop, Taken};
 use wellfed_core::ota::offer::{
@@ -46,7 +47,6 @@ use wellfed_core::ota::{BANK1_OFFSET, MARKER, SECTOR, SECTOR_BYTES, image};
 use wellfed_core::record::Tag;
 use wellfed_core::store::slot::SlotIo;
 use wellfed_core::store::update::{Bank0, Candidate, State, UpdateStatus, UpdateStore};
-use sha2::{Digest, Sha256};
 
 use crate::flash_lock::arming::{self, Hooks};
 use crate::interlock::{INTERLOCK, WRITER_POLL_MS, WriteStep, WriteTurn};
@@ -887,9 +887,7 @@ impl<I: SlotIo + Clone> Update<I> {
         }
         let record = self.install.is_some().then(|| self.stop(Stop::Cancelled));
         if recorded && under_marker(|| self.store.clear()).is_err() {
-            return self.refuse(Refused::Store(
-                wellfed_core::store::update::UpdateError::Io,
-            ));
+            return self.refuse(Refused::Store(wellfed_core::store::update::UpdateError::Io));
         }
         self.stopped = record.map(|_| Stop::Cancelled);
         mailbox::finish(Ok(Answer::Progress(self.progress())));

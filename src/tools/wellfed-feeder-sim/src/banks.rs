@@ -23,12 +23,12 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use sha2::{Digest, Sha256};
 use wellfed_amebad_sys::{BANK0_OFFSET, BANK1_OFFSET, SECTOR_BYTES};
 use wellfed_core::ota::{BANK1_BYTES, CONFIRM_LEN, MARKER, image};
 use wellfed_core::store::update::Bank0;
 use wellfed_hal::ota::update::Flash;
 use wellfed_hal::trial::{self, Decision, Storm};
-use sha2::{Digest, Sha256};
 
 /// KM0's limit: unconfirmed boots before it gives way.
 pub const TRIAL_LIMIT: u32 = trial::LIMIT;

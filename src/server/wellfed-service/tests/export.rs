@@ -8,13 +8,13 @@ use std::time::Duration;
 
 use futures_util::{StreamExt, TryStreamExt};
 use jiff::{SignedDuration, Timestamp};
+use uuid::Uuid;
 use wellfed_api::{ClientRole, ExportFormat, FeederId, SampleValue};
 use wellfed_formats::export::{Manifest, Table};
 use wellfed_server_testkit::fixed::FixedClock;
 use wellfed_server_testkit::{TestService, config};
 use wellfed_service::{EXPORT_CHUNK, Error, ExportError};
 use wellfed_store::{NewFeeder, NewSample, SealedKey, Store};
-use uuid::Uuid;
 
 /// Far more samples than the queue holds: about 13 MB of archive.
 const SAMPLES: usize = 100_000;

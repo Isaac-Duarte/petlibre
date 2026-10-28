@@ -10,17 +10,15 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use jiff::Timestamp;
-use wellfed_api::{
-    Blocked, ClientRole, EventBody, FeedOutcome, FeedReason, FeederId, Hex, Source,
-};
-use wellfed_store::{
-    Boot, ClockSync, Feed, LockChange, NewEvent, NewFeeder, PROJECTION_VERSION, Projected, Refresh,
-    SealedKey, Store,
-};
 use proptest::prelude::*;
 use proptest::sample::select;
 use tempfile::TempDir;
 use uuid::Uuid;
+use wellfed_api::{Blocked, ClientRole, EventBody, FeedOutcome, FeedReason, FeederId, Hex, Source};
+use wellfed_store::{
+    Boot, ClockSync, Feed, LockChange, NewEvent, NewFeeder, PROJECTION_VERSION, Projected, Refresh,
+    SealedKey, Store,
+};
 
 const DATABASE: &str = "server.db";
 

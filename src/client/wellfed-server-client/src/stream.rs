@@ -10,9 +10,9 @@ use std::collections::VecDeque;
 
 use futures_util::StreamExt;
 use futures_util::stream::BoxStream;
-use wellfed_api::{StreamEvent, StreamQuery};
 use reqwest::header::{self, HeaderValue};
 use reqwest::{Method, StatusCode};
+use wellfed_api::{StreamEvent, StreamQuery};
 
 use crate::{Client, Error, expect_status};
 

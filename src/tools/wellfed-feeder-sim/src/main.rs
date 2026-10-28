@@ -12,6 +12,8 @@ use std::rc::Rc;
 
 use anyhow::{Context, Result};
 use clap::Parser;
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::sync::mpsc;
 use wellfed_device_api::clients::{Label, Role};
 use wellfed_feeder_sim::console::{self, HELP};
 use wellfed_feeder_sim::flash::Flash;
@@ -23,8 +25,6 @@ use wellfed_formats::private::{self, SYSTEM_RANDOM};
 use wellfed_proto::api::PORT;
 use wellfed_session::hex::Lower;
 use wellfed_session::noise::Keypair;
-use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::sync::mpsc;
 
 #[derive(Parser)]
 #[command(version, about = "A simulated Wellfed feeder serving the device API")]

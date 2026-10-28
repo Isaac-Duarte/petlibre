@@ -1,7 +1,7 @@
 //! The audit log: who did what through the server.
 
-use wellfed_api::{AuditPage, PageQuery};
 use reqwest::{Method, StatusCode};
+use wellfed_api::{AuditPage, PageQuery};
 
 use crate::{Client, Error, decode};
 

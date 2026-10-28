@@ -7,9 +7,7 @@ use std::os::unix::fs::PermissionsExt;
 
 use jiff::SignedDuration;
 
-use wellfed_api::{
-    BackupPage, Connection, Credentials, ErrorCode, Job, JobOutcome, NewUser, Role,
-};
+use wellfed_api::{BackupPage, Connection, Credentials, ErrorCode, Job, JobOutcome, NewUser, Role};
 use wellfed_server::key::{KEY_DIR, KEY_FILE, KeyError, sealing_key};
 use wellfed_server_client::StatusCode;
 use wellfed_server_testkit::fixed::{FixedClock, SeededRandom};

@@ -19,9 +19,7 @@ use wellfed_hal::flash::hooks::HookTicket;
 use wellfed_hal::flash::park::{
     self, ACK, Mmio, RELEASE, RELEASED, REQUEST, SYSTICK_CTRL, TICKS, TIMEOUT,
 };
-use wellfed_hal::flash::peer::{
-    BACKUP_BASE, MARKER_REGISTER, PARK_CHANNEL, PARK_TICK_LIMIT, Peer,
-};
+use wellfed_hal::flash::peer::{BACKUP_BASE, MARKER_REGISTER, PARK_CHANNEL, PARK_TICK_LIMIT, Peer};
 use wellfed_hal::flash_lock::provider::{ATTEMPT_BIT, LeaseFault, LeaseStage, Provider};
 use wellfed_hal::sdk::{self, Irq, fake};
 use wellfed_hal::stopped;

@@ -2,8 +2,8 @@
 //! when.
 
 use jiff::Timestamp;
-use wellfed_api::{FeederId, FoodId, Refill, RefillId, UserId};
 use uuid::Uuid;
+use wellfed_api::{FeederId, FoodId, Refill, RefillId, UserId};
 
 use crate::convert::{from_i64, millis, timestamp, to_i64};
 use crate::{Error, Result, Store};

@@ -6,6 +6,7 @@
 
 use std::rc::Rc;
 
+use tokio::task::LocalSet;
 use wellfed_client::trace::{Pages, TraceError};
 use wellfed_connect::Connection;
 use wellfed_core::adc_scale::{AdcCalibration, SAMPLES};
@@ -20,7 +21,6 @@ use wellfed_model::{
 use wellfed_proto::api::{self as proto, EventBody};
 use wellfed_session::noise::Keypair;
 use wellfed_sim::plant::{Plant, PlantConfig, Turn};
-use tokio::task::LocalSet;
 
 const OWNER: [u8; 32] = [0x21; 32];
 /// The supervisor's clock at the drive's start.

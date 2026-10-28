@@ -5,9 +5,9 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use wellfed_formats::canonical::sha256;
 use serde::Serialize;
 use serde_json::Value;
+use wellfed_formats::canonical::sha256;
 
 use crate::protocol::{Event, Fault, Outcome, Profile, Reason, State, StoragePhase, Submission};
 

@@ -2,10 +2,10 @@
 //! with its age, nothing once it is stale or the ADC fails, and no pack
 //! voltage when the channel reads near zero.
 
+use std::sync::{Mutex, MutexGuard};
 use wellfed_core::adc_scale::AdcCalibration;
 use wellfed_hal::power::{self, DIVIDER_PER_MILLE, Monitor, Record, SAMPLE_MS, STALE_MS, Step};
 use wellfed_hal::sdk::fake;
-use std::sync::{Mutex, MutexGuard};
 
 /// The published sample is process-wide, so the tests take turns.
 static SERIAL: Mutex<()> = Mutex::new(());

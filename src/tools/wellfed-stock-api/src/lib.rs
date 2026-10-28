@@ -14,10 +14,10 @@ use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::time::Duration;
 
-use wellfed_formats::stock::ServerConfig;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
+use wellfed_formats::stock::ServerConfig;
 
 /// Why an exchange with the server failed.
 #[derive(Debug, thiserror::Error)]

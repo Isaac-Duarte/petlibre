@@ -4,13 +4,13 @@
 //! rebuild leaves all of it alone.
 
 use jiff::Timestamp;
+use tempfile::TempDir;
+use uuid::Uuid;
 use wellfed_api::{
     ClientRole, CurrentUnit, EventBody, FeedOutcome, FeedReason, FeederId, FeederRefusal,
     FoodStats, Source, Stats, StatsSection, TraceSummary,
 };
 use wellfed_store::{NewEvent, NewFeeder, RawTrace, Refresh, SealedKey, Store, TraceFound};
-use tempfile::TempDir;
-use uuid::Uuid;
 
 const DATABASE: &str = "server.db";
 const ID: FeederId = FeederId(Uuid::from_u128(1));

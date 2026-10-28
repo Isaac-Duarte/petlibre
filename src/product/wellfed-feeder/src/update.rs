@@ -5,9 +5,7 @@
 use wellfed_core::ota::install::{Phase, Progress, Refused, Stop, WANTED};
 use wellfed_core::ota::offer::{KeyError, OfferError, StatementError};
 use wellfed_core::store::update::UpdateError;
-use wellfed_proto::api::{
-    Refusal, UpdatePhase, UpdateRefusal, UpdateStop, UpdateView, WANTED_MAX,
-};
+use wellfed_proto::api::{Refusal, UpdatePhase, UpdateRefusal, UpdateStop, UpdateView, WANTED_MAX};
 
 const _: () = assert!(WANTED == WANTED_MAX);
 

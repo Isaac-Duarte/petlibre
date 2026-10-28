@@ -11,12 +11,12 @@ use std::time::Duration;
 
 use anyhow::{Result, bail};
 use clap::{Args, ValueEnum};
+use uuid::Uuid;
 use wellfed_server_client::api::{
     Command, CommandOutcome, CommandQuery, CommandState, EventQuery, FeedOutcome, Feeder, FeederId,
     SettingsPatch, StreamEvent, StreamQuery,
 };
 use wellfed_server_client::{Client, Lock, Updates};
-use uuid::Uuid;
 
 use super::{Output, Settled, Written, text, write};
 use crate::Toggle;

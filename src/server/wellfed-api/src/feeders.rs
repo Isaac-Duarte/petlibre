@@ -3,9 +3,9 @@
 use std::fmt;
 
 use jiff::Timestamp;
-use wellfed_model::{ClientRole, Hex, Status};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
+use wellfed_model::{ClientRole, Hex, Status};
 
 use crate::FeederId;
 

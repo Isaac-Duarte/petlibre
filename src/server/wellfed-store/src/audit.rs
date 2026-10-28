@@ -4,8 +4,8 @@
 //! state and outcome are always the journal's.
 
 use jiff::Timestamp;
-use wellfed_api::{AuditAction, TokenId, UserId};
 use uuid::Uuid;
+use wellfed_api::{AuditAction, TokenId, UserId};
 
 use crate::commands::{CommandRow, Raw as CommandRaw};
 use crate::convert::{from_i64, millis, timestamp, to_i64};

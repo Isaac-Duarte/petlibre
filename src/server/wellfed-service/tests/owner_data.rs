@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use jiff::{SignedDuration, Timestamp};
+use uuid::Uuid;
 use wellfed_api::{
     FeederId, FoodId, NewFood, NewPet, NewRefill, NewWeight, PageQuery, PetId, PetLink, PetPatch,
     Species,
@@ -12,7 +13,6 @@ use wellfed_api::{
 use wellfed_server_testkit::fixed::ManualClock;
 use wellfed_server_testkit::{TestService, ada_setup, feeder, local};
 use wellfed_service::{Error, Invalid, OwnerDataError, Resource, Service};
-use uuid::Uuid;
 
 /// A feeder this server never adopted.
 const NOBODY: FeederId = FeederId(Uuid::from_u128(0x0192c5d0_0000_7000_8000_000000000000));

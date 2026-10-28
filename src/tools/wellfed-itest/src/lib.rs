@@ -23,6 +23,7 @@ use std::time::Duration;
 
 pub use args::{ItestArgs, StockOtaArgs};
 pub use error::{Error, Result};
+use serde::Serialize;
 use wellfed_formats::bench::VERIFICATION;
 use wellfed_formats::bench::catalog::Need;
 use wellfed_formats::bench::progress::StepState;
@@ -34,7 +35,6 @@ use wellfed_rig::device::{Answer, Ask, DeviceStatus, Intruder, Rebuffed};
 use wellfed_rig::say;
 use wellfed_rig::server::{StockStatus, TrialAnswer, TrialRequest};
 use wellfed_rig::tools::PushError;
-use serde::Serialize;
 
 mod args;
 mod error;
@@ -48,9 +48,9 @@ mod sustained;
 mod tests;
 
 use log::Log;
+use scenarios::{DeviceState, SCENARIOS, Scenario};
 use wellfed_core::ota::install::{RefusedReason, StopStage};
 use wellfed_core::record::Event;
-use scenarios::{DeviceState, SCENARIOS, Scenario};
 
 /// How often waits look at the UART and the server again.
 const POLL: Duration = Duration::from_secs(1);

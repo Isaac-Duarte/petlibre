@@ -58,24 +58,24 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
+use tokio::sync::{broadcast, watch};
+use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 use wellfed_api::{Connection as Link, FeederEvent, FeederId, FeederSample, Gap};
 use wellfed_model::Capabilities;
 use wellfed_session::noise::Keypair;
 use wellfed_store::Store;
-use tokio::sync::{broadcast, watch};
-use tokio_util::sync::CancellationToken;
-use tokio_util::task::TaskTracker;
 
 pub use command::Operation;
 pub use connect::Enrolled;
 pub use error::{AskError, ConnectError, LogError, Unreachable};
 pub use ingest::{stored_event, stored_sample};
 pub use install::{BankReadError, PushError, Pushed, ReadError, Restore, Update, UpdateError};
+pub use time::{Clock, Random, RandomFailed, SystemClock, SystemRandom};
 pub use wellfed_client::api::{Invite, InviteText};
 /// HMAC-SHA256, for the service's keyed digests: the workspace's one
 /// implementation, which the service reaches through the mirror.
 pub use wellfed_session::mac::hmac_sha256;
-pub use time::{Clock, Random, RandomFailed, SystemClock, SystemRandom};
 pub use zone::{Zone, ZoneError};
 
 /// A device request id: the feeder answers a repeated one from memory.

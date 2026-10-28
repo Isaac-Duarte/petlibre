@@ -19,11 +19,11 @@ use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::rc::Rc;
 use std::time::Duration;
 
-use wellfed_core::buttons::Gesture;
-use wellfed_core::mdns;
 use tokio::net::{TcpListener, UdpSocket};
 use tokio::sync::mpsc;
 use tokio::time::{Instant, sleep};
+use wellfed_core::buttons::Gesture;
+use wellfed_core::mdns;
 
 use crate::banks::Banks;
 use crate::flash::Flash;

@@ -1,8 +1,8 @@
 //! First-owner setup and the session.
 
-use wellfed_api::{Credentials, PasswordChange, SESSION_COOKIE, Setup, SetupState, User};
 use reqwest::header::{self, HeaderMap};
 use reqwest::{Method, StatusCode};
+use wellfed_api::{Credentials, PasswordChange, SESSION_COOKIE, Setup, SetupState, User};
 
 use crate::{Auth, Client, Error, decode, expect_status};
 

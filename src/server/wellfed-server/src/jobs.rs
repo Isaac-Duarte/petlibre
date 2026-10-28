@@ -23,11 +23,11 @@ use std::time::Duration;
 use jiff::civil::{self, Time};
 use jiff::tz::TimeZone;
 use jiff::{SignedDuration, Timestamp};
-use wellfed_api::{Job, JobRun};
-use wellfed_service::{Clock, Service};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, info, info_span, warn};
+use wellfed_api::{Job, JobRun};
+use wellfed_service::{Clock, Service};
 
 /// How long the supervisor sleeps at most before working its schedule out
 /// again, so a change of the household's zone or of what is scheduled

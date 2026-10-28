@@ -3,9 +3,9 @@
 //! backup, and where it stands. One runs at a time per server.
 
 use jiff::Timestamp;
-use wellfed_model::{Hex, UpdateRefusal, UpdateStop};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
+use wellfed_model::{Hex, UpdateRefusal, UpdateStop};
 
 use crate::{FeederId, FeederRefusal, InstallId, UserId};
 

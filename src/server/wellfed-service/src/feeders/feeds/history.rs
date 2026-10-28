@@ -32,13 +32,13 @@
 
 use std::sync::Arc;
 
+use tracing::{info, warn};
+use uuid::Uuid;
 use wellfed_api::{
     Blocked, CommandOutcome, CommandState, EventKind, FeedOutcome, FeederId, Readiness, Source,
 };
 use wellfed_model::{Answer, Op};
 use wellfed_store::{CommandRow, Feed, Projected, Synced};
-use tracing::{info, warn};
-use uuid::Uuid;
 
 use crate::{Result, Service, lock};
 

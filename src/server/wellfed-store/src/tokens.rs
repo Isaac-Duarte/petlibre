@@ -1,8 +1,8 @@
 //! Bearer tokens: each one its user's, stored by the hash of its secret.
 
 use jiff::Timestamp;
-use wellfed_api::{Token, TokenId, User, UserId};
 use uuid::Uuid;
+use wellfed_api::{Token, TokenId, User, UserId};
 
 use crate::convert::{millis, timestamp};
 use crate::users::user;

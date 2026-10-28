@@ -86,9 +86,9 @@ impl Error {
             Self::Image(wellfed_image::Error::Json(_)) => ErrorKind::Json,
             Self::Formats(wellfed_formats::Error::Io(_)) => ErrorKind::Io,
             Self::Formats(wellfed_formats::Error::Json(_)) => ErrorKind::Json,
-            Self::Lease(
-                LeaseError::Io(_) | LeaseError::Formats(wellfed_formats::Error::Io(_)),
-            ) => ErrorKind::Io,
+            Self::Lease(LeaseError::Io(_) | LeaseError::Formats(wellfed_formats::Error::Io(_))) => {
+                ErrorKind::Io
+            }
 
             Self::Image(
                 wellfed_image::Error::Ota(_)

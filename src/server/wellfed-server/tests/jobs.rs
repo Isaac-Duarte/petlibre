@@ -9,13 +9,13 @@ use std::time::Duration;
 
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
+use tokio::sync::{Semaphore, mpsc};
+use tokio_util::sync::CancellationToken;
 use wellfed_api::{Credentials, ErrorCode, Job, JobOutcome, JobRun, NewUser, Role};
 use wellfed_server::jobs::{self, Runner};
 use wellfed_server_client::StatusCode;
 use wellfed_server_testkit::fixed::ManualClock;
 use wellfed_server_testkit::{TestServer, WAIT, ada_login, ada_setup, refused, until};
-use tokio::sync::{Semaphore, mpsc};
-use tokio_util::sync::CancellationToken;
 
 const HOUR: Duration = Duration::from_secs(3600);
 

@@ -5,6 +5,7 @@
 
 use std::time::Duration;
 
+use uuid::Uuid;
 use wellfed_api::{
     CommandKind, CommandOutcome, CommandQuery, CommandState, Connection as Link, EventKind,
     EventQuery, FeederId, Role, SettingsPatch, User, UserId,
@@ -13,7 +14,6 @@ use wellfed_server_testkit::feeder::{self, Relay};
 use wellfed_server_testkit::{TestService, ada, config, local, owner_user, until};
 use wellfed_service::{CommandError, Error, IdempotencyKey, Invalid, Resource, Service};
 use wellfed_store::{Journaled, NewCommand};
-use uuid::Uuid;
 
 fn member(n: u128, name: &str) -> User {
     User {

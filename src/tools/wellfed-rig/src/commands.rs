@@ -16,11 +16,11 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use clap::{Args, ValueEnum};
+use serde::Deserialize;
 use wellfed_formats::canonical::sha256;
 use wellfed_formats::flash_plan::{DevelopmentPlan, GiveWayPlan, StockRecoveryReviewed};
 use wellfed_formats::manifest::BuildManifest;
 use wellfed_formats::transients::{self, TransientCycle, TransientsManifest};
-use serde::Deserialize;
 
 use crate::tools::{Analyzer, Observation, Observer, Tools};
 use crate::{Cancel, Error, Result};
@@ -1195,8 +1195,8 @@ fn give_way_name(name: &str) -> String {
 /// recovery refuses a valid one, and only a full read shows it.
 fn bank1_marker_valid(read: &Path) -> Result<bool> {
     let bytes = fs::read(read)?;
-    let start = usize::try_from(wellfed_core::ota::BANK1_OFFSET)
-        .map_err(|_| CommandsError::Bank1Offset)?;
+    let start =
+        usize::try_from(wellfed_core::ota::BANK1_OFFSET).map_err(|_| CommandsError::Bank1Offset)?;
     let marker = bytes
         .get(start..start + wellfed_core::ota::MARKER.len())
         .ok_or_else(|| CommandsError::NotFullRead { read: read.into() })?;

@@ -3,14 +3,12 @@
 //! follows live, never stored.
 
 use jiff::Timestamp;
-use wellfed_api::{
-    FeedTrace, FeederId, FeederStats, LogEvent, StatsRead, TraceQuery, TraceRecord,
-};
+use tokio::sync::broadcast::Receiver;
+use tokio::sync::broadcast::error::RecvError;
+use wellfed_api::{FeedTrace, FeederId, FeederStats, LogEvent, StatsRead, TraceQuery, TraceRecord};
 use wellfed_mirror::LogError;
 use wellfed_model::{LogLines, Trace};
 use wellfed_store::{FoodReading, TraceFound};
-use tokio::sync::broadcast::Receiver;
-use tokio::sync::broadcast::error::RecvError;
 
 use crate::{CommandError, Error, FeederError, InternalError, Resource, Result, Service};
 

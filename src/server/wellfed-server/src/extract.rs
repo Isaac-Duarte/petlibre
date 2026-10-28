@@ -6,13 +6,13 @@
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, HeaderName, header};
-use wellfed_api::{ErrorCode, Generation};
-use wellfed_service::IdempotencyKey as Key;
 use utoipa::IntoParams;
 use utoipa::openapi::path::{Parameter, ParameterBuilder, ParameterIn};
 use utoipa::openapi::schema::{KnownFormat, ObjectBuilder, SchemaFormat, Type};
 use utoipa::openapi::{Object, Required};
 use uuid::Uuid;
+use wellfed_api::{ErrorCode, Generation};
+use wellfed_service::IdempotencyKey as Key;
 
 use crate::error::ApiError;
 

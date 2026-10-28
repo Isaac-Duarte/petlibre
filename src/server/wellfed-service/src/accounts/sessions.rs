@@ -19,6 +19,7 @@ use std::time::Duration;
 use argon2::Argon2;
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use jiff::Timestamp;
+use sha2::{Digest, Sha256};
 use wellfed_api::{
     AuditAction, Credentials, Household, LoginFailure, PasswordChange, Role, Setup, SetupState,
     TimeFormat, Units, User, UserId,
@@ -26,7 +27,6 @@ use wellfed_api::{
 use wellfed_formats::hex;
 use wellfed_mirror::Zone;
 use wellfed_store::NewUser;
-use sha2::{Digest, Sha256};
 
 use crate::accounts::tokens::session_only;
 use crate::{AccountError, Caller, Error, InternalError, Invalid, Resource, Result, Service};

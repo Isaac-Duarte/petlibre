@@ -14,9 +14,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use wellfed_formats::canonical::{canonical, sha256};
 use serde::Serialize;
 use serde_json::Value;
+use wellfed_formats::canonical::{canonical, sha256};
 
 pub mod plaf103;
 pub mod plant;

@@ -5,8 +5,8 @@ use std::collections::VecDeque;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use wellfed_formats::flash_plan::{GiveWayPlan, Kind, PlannedSector, Region};
 use serde_json::{Value, json};
+use wellfed_formats::flash_plan::{GiveWayPlan, Kind, PlannedSector, Region};
 
 use super::*;
 use crate::commands::ota::{ArgError, OtaError, Source};
@@ -1161,8 +1161,7 @@ fn freeze(root: &Path, review: &Path, manifest: &Value) {
 /// always needs).
 fn signed_by_bench(rig: &Rig, file: &str) -> wellfed_core::ota::Manifest {
     use wellfed_core::ota::offer::{Context, KeyRing, admit_offer};
-    let key =
-        wellfed_signing::Key::load(&rig.bench.root.join(wellfed_signing::KEY_PATH)).unwrap();
+    let key = wellfed_signing::Key::load(&rig.bench.root.join(wellfed_signing::KEY_PATH)).unwrap();
     let bytes = fs::read(rig.bench.root.join(VERIFICATION).join(file)).unwrap();
     let built_in = [key.public()];
     let context = Context {

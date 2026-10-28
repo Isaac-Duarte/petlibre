@@ -18,10 +18,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::Duration;
 
+use tokio::sync::oneshot;
 use wellfed_api::{AdoptFeeder, ClientRole, Connection, FeederLink, StoreState};
 use wellfed_server_client::{Client, Url};
 use wellfed_server_testkit::{ada_login, ada_setup, feeder, local, until};
-use tokio::sync::oneshot;
 
 /// How long a fresh process may take to listen, or to stop.
 const START: Duration = Duration::from_secs(30);

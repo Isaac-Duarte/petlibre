@@ -48,7 +48,7 @@ use crate::setup;
 /// The id of the keepalive's `Status`. A read is never remembered by the
 /// feeder, so reusing one id is safe; its answer is dropped here, so a
 /// caller may not use it.
-pub const KEEPALIVE_ID: RequestId = *b"wellfed-alive\0\0";
+pub const KEEPALIVE_ID: RequestId = *b"wellfed-alive\0\0\0";
 
 /// The session's clocks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -1,5 +1,5 @@
-use wellfed_core::clock::zone::{Rule, TEXT_MAX, Zone};
 use proptest::prelude::*;
+use wellfed_core::clock::zone::{Rule, TEXT_MAX, Zone};
 
 const H: i32 = 3600;
 

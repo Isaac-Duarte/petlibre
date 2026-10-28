@@ -5,8 +5,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use wellfed_stock_api::ApiError;
 use serde_json::{Value, json};
+use wellfed_stock_api::ApiError;
 
 use super::*;
 use wellfed_rig::device::{Answer, Ask, DeviceError, DeviceStatus, Intruder, Rebuffed};

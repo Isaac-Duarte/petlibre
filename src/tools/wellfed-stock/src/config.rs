@@ -29,10 +29,10 @@ use std::{
 
 use anyhow::{Context, Result, bail, ensure};
 use chrono_tz::Tz;
-use wellfed_formats::hex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use uuid::Uuid;
+use wellfed_formats::hex;
 
 use crate::{enroll::Enrollment, protocol::lenient, storage};
 

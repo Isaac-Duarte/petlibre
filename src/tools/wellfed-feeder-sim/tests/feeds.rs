@@ -7,6 +7,7 @@ use std::future::Future;
 use std::rc::Rc;
 use std::time::Duration;
 
+use tokio::task::LocalSet;
 use wellfed_connect::Connection;
 use wellfed_feeder_sim::feeding;
 use wellfed_feeder_sim::flash::Flash;
@@ -16,7 +17,6 @@ use wellfed_model::{
     Answer, Blocked, EventBody, FeedOutcome, FeedReason, Op, Pushed, Readiness, Refusal, Source,
 };
 use wellfed_session::noise::Keypair;
-use tokio::task::LocalSet;
 
 const OWNER: [u8; 32] = [0x21; 32];
 

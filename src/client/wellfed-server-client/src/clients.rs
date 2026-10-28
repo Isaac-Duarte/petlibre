@@ -1,13 +1,13 @@
 //! A feeder's clients and the phones' own keys, and what an owner
 //! administers on a feeder: Wi-Fi, a restart, a tune and removing it.
 
+use reqwest::header;
+use reqwest::{Method, StatusCode};
+use uuid::Uuid;
 use wellfed_api::{
     FeederClient, FeederId, Generation, Hex, NewPhoneInvite, PhoneInvite, PhoneKey, PlayRequest,
     Removal, TuneName, WifiChange,
 };
-use reqwest::header;
-use reqwest::{Method, StatusCode};
-use uuid::Uuid;
 
 use crate::feeders::IDEMPOTENCY_KEY;
 use crate::{Client, Error, decode, expect_status};

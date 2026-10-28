@@ -18,9 +18,9 @@
 //! written every sector, and its start against the bank's validity
 //! marker, which the feeder's sector writer refuses to write without.
 
+use sha2::{Digest, Sha256};
 use wellfed_core::ota::offer::{self, Context, ImageKind, KeyError, KeyRing, Trust};
 use wellfed_core::ota::{BANK1_BYTES, MARKER};
-use sha2::{Digest, Sha256};
 
 pub use wellfed_core::ota::offer::{KeyId, OfferError};
 

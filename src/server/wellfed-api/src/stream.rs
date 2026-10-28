@@ -6,9 +6,9 @@
 //! (or has restarted), after which it refetches.
 
 use jiff::Timestamp;
-use wellfed_model::{Sample, SampleValue};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
+use wellfed_model::{Sample, SampleValue};
 
 use crate::FeederId;
 use crate::commands::Command;

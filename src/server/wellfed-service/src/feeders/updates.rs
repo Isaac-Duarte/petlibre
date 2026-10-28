@@ -9,13 +9,13 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use wellfed_api::{Connection as Link, FeederId, StreamEvent};
-use wellfed_mirror::{Feeder, MirrorEvent};
-use wellfed_store::FeederRow;
 use tokio::sync::broadcast::Receiver;
 use tokio::sync::broadcast::error::RecvError;
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, info_span, warn};
+use wellfed_api::{Connection as Link, FeederId, StreamEvent};
+use wellfed_mirror::{Feeder, MirrorEvent};
+use wellfed_store::FeederRow;
 
 use crate::feeders::keys;
 use crate::{Hub, Result, Service, lock};

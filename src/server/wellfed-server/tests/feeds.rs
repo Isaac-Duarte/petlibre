@@ -7,6 +7,7 @@
 
 use std::time::Duration;
 
+use uuid::Uuid;
 use wellfed_api::{
     AdoptFeeder, ClientRole, Command, CommandKind, CommandOutcome, CommandState, Connection,
     Credentials, ErrorCode, FeedOutcome, FeedReason, FeederId, FeederRefusal, NewUser, PREFIX,
@@ -17,7 +18,6 @@ use wellfed_server_testkit::feeder::{self, Control, Flash, Relay, Running};
 use wellfed_server_testkit::{
     TestServer, WAIT, ada_setup, config, local, refused, refused_for, until,
 };
-use uuid::Uuid;
 
 fn key(n: u128) -> Uuid {
     Uuid::from_u128(0x0192c5d0_3333_7000_8000_000000000000 + n)
@@ -161,8 +161,7 @@ fn a_feed_needs_its_key_and_a_well_formed_body() {
                 request = request.header("Idempotency-Key", key);
             }
             let response = request.send().await.unwrap();
-            let result =
-                wellfed_server_client::expect_status(response, StatusCode::ACCEPTED).await;
+            let result = wellfed_server_client::expect_status(response, StatusCode::ACCEPTED).await;
             refused_for(what, result, StatusCode::BAD_REQUEST, ErrorCode::Invalid);
         }
         assert_eq!(feeder::feeds(&flash), 0, "nothing reached the feeder");

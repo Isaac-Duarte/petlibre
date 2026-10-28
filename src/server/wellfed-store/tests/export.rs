@@ -5,10 +5,10 @@
 
 use futures_util::TryStreamExt;
 use jiff::Timestamp;
-use wellfed_formats::export::{Row, Table};
-use wellfed_store::Store;
 use sqlx::SqlitePool;
 use tempfile::TempDir;
+use wellfed_formats::export::{Row, Table};
+use wellfed_store::Store;
 
 /// A row in every exported table, and a second with every nullable column
 /// null where the table has one, beside the rows that are not exported.

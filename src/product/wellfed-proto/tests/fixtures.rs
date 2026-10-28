@@ -10,10 +10,10 @@
 //! variant that moved, fails here even when blessed. The rules are in the
 //! [device API](../../../../docs/firmware/device-api.md#evolution).
 
+use serde::Serialize;
 use wellfed_proto::api::*;
 use wellfed_proto::{decode, encode};
 use wellfed_session::hex::Lower;
-use serde::Serialize;
 
 const ID: RequestId = [0x11; 16];
 

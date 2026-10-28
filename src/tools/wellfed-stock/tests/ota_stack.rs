@@ -7,7 +7,6 @@
 mod common;
 
 use chrono::Utc;
-use wellfed_stock::{ota, storage};
 use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS};
 use serde_json::{Value, json};
 use std::net::Ipv4Addr;
@@ -19,6 +18,7 @@ use std::{
     time::Duration,
 };
 use uuid::Uuid;
+use wellfed_stock::{ota, storage};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_explicit_api_install_publishes_once_and_never_again() {

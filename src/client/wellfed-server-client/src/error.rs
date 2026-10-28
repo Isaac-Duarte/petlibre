@@ -1,7 +1,7 @@
 //! Every way a call to the server fails.
 
-use wellfed_api::{ErrorCode, Problem, Settings};
 use std::time::Duration;
+use wellfed_api::{ErrorCode, Problem, Settings};
 
 use reqwest::{StatusCode, Url};
 

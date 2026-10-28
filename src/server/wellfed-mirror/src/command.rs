@@ -8,10 +8,10 @@
 
 use std::sync::Arc;
 
-use wellfed_api::{Connection as Link, FeederId};
-use wellfed_model::{Answer, Op};
 use tokio::sync::{OwnedSemaphorePermit, mpsc, oneshot, watch};
 use tokio::time::{Duration, Instant, timeout_at};
+use wellfed_api::{Connection as Link, FeederId};
+use wellfed_model::{Answer, Op};
 
 use crate::task::LongLane;
 use crate::{AskError, Mirror, Random, RequestId};

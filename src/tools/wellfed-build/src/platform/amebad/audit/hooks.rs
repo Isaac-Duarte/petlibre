@@ -10,8 +10,8 @@ use std::fs;
 use std::path::Path;
 use std::sync::LazyLock;
 
-use wellfed_formats::audit::{HookAudit, HookImage, Route, Symbol};
 use regex::Regex;
+use wellfed_formats::audit::{HookAudit, HookImage, Route, Symbol};
 
 use super::{
     Archives, Binutils, DIRECT_BRANCH, HEADING, INSTRUCTION, archive_record, elf, hex, index,

@@ -5,9 +5,9 @@
 mod common;
 
 use chrono::Utc;
+use serde_json::json;
 use wellfed_stock::protocol;
 use wellfed_stock::protocol::Channel;
-use serde_json::json;
 
 #[test]
 fn messages_from_other_devices_and_retained_topic_shapes_are_rejected() {

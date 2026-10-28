@@ -24,8 +24,8 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use wellfed_formats::require;
 use sha2::{Digest, Sha256};
+use wellfed_formats::require;
 
 pub mod catalog;
 pub mod device;
@@ -46,7 +46,6 @@ pub use firmware::FirmwareError;
 pub use firmware::{Firmware, Variant};
 pub use identity::IdentityError;
 pub use image::ImageError;
-pub(crate) use wellfed_formats::canonical::sha256;
 pub use platform::amebad::AmebadError;
 pub use platform::amebad::audit::AuditError;
 pub use platform::amebad::audit::hooks::HookError;
@@ -61,6 +60,7 @@ pub use platform::amebad::credentials::CredentialsError;
 pub use platform::amebad::sdk::{SdkAnchor, SdkError, StagedFile};
 pub use platform::amebad::toolchain::ToolchainError;
 pub use review::ReviewError;
+pub(crate) use wellfed_formats::canonical::sha256;
 
 /// The build profiles, from the unchanged SDK example to the reviewed
 /// UART-only first-boot image. Each adds stages to the one before.

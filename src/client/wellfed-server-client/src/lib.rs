@@ -44,21 +44,21 @@ mod users;
 use std::fmt;
 use std::time::Duration;
 
-use wellfed_api::{PREFIX, Problem, SESSION_COOKIE};
 use reqwest::header::{self, HeaderValue};
 use reqwest::{RequestBuilder, Response};
 use serde::de::DeserializeOwned;
+use wellfed_api::{PREFIX, Problem, SESSION_COOKIE};
 
 pub use diagnostics::LogBatches;
 pub use error::Error;
 pub use feeders::Lock;
-/// The API's bodies, for a caller that may not depend on `wellfed-api`
-/// itself: the CLI reaches the server through this crate alone.
-pub use wellfed_api as api;
 pub use releases::Uploaded;
 pub use reqwest::{self, Method, StatusCode, Url};
 pub use stock::Kept;
 pub use stream::{Update, Updates};
+/// The API's bodies, for a caller that may not depend on `wellfed-api`
+/// itself: the CLI reaches the server through this crate alone.
+pub use wellfed_api as api;
 
 /// How long a connection to the server may take to open. A server on the
 /// LAN answers in milliseconds; a request's own time is the caller's to

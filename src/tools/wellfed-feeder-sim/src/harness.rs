@@ -9,12 +9,12 @@ use std::net::{Ipv4Addr, SocketAddr};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU8, Ordering};
 
-use wellfed_device_api::clients::{Label, Role};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
+use wellfed_device_api::clients::{Label, Role};
 
 use wellfed_board_plaf103::storage;
 use wellfed_feeder::store::traces::{TraceError, TraceRing};

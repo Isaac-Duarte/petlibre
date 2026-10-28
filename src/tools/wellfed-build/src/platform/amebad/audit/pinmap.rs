@@ -7,9 +7,9 @@
 
 use std::sync::LazyLock;
 
+use regex::Regex;
 use wellfed_formats::audit::PinmapAudit;
 use wellfed_formats::layout::Hex;
-use regex::Regex;
 
 use super::word;
 use crate::{Result, sha256};

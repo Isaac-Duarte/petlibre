@@ -381,9 +381,9 @@ fn a_fourth_garbled_answer_ends_the_install() {
     assert!(
         matches!(
             result,
-            Err(DeviceError::Session(
-                wellfed_client::api::Error::Malformed(_)
-            ))
+            Err(DeviceError::Session(wellfed_client::api::Error::Malformed(
+                _
+            )))
         ),
         "{result:?}"
     );

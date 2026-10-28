@@ -15,11 +15,11 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::LazyLock;
 
+use regex::Regex;
 use wellfed_core::record::Tag;
 use wellfed_formats::device::AmebadMains;
 use wellfed_formats::lock::SdkLock;
 use wellfed_formats::manifest::{Artifact, Audits, CompiledArchive};
-use regex::Regex;
 
 use self::audit::{Archives, Binutils, park, word};
 use self::sdk::{Overrides, check_sdk_worktree, prepare, rust_archive};

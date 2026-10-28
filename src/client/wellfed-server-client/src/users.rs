@@ -1,7 +1,7 @@
 //! The household's accounts, which owners manage.
 
-use wellfed_api::{NewUser, User, UserId, UserPatch};
 use reqwest::{Method, StatusCode};
+use wellfed_api::{NewUser, User, UserId, UserPatch};
 
 use crate::{Client, Error, decode, expect_status};
 

@@ -10,8 +10,8 @@ use std::fs;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
-use wellfed_formats::qa::{Check, Item, Prompt, Record};
 use serde::Serialize;
+use wellfed_formats::qa::{Check, Item, Prompt, Record};
 
 use wellfed_formats::bench::relative;
 

@@ -2,12 +2,12 @@
 //! journal and its audit log, installs and the owner data. Each row goes in
 //! as exported.
 
+use sqlx::SqliteConnection;
 use wellfed_formats::export::{
     AuditEntry, BlockedChange, Boot, ClockSync, Command, Feed, FeedTrace, FeederFood, FeederStat,
     Food, FoodReading, Install, KeptClient, LockChange, Pet, PetFeeder, PetWeight, PhoneKey,
     Refill,
 };
-use sqlx::SqliteConnection;
 
 use crate::Result;
 

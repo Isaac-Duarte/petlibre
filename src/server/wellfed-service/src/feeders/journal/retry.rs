@@ -75,8 +75,8 @@ pub(super) fn retry(row: &CommandRow) -> Retry {
 #[cfg(test)]
 mod tests {
     use jiff::Timestamp;
-    use wellfed_api::{FeederId, FeederRefusal, UserId};
     use uuid::Uuid;
+    use wellfed_api::{FeederId, FeederRefusal, UserId};
 
     use super::*;
 

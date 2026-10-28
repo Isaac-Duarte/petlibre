@@ -1,8 +1,8 @@
 //! Feeds and their cancels.
 
-use wellfed_api::{Command, FeedRequest, FeederId};
 use reqwest::{Method, StatusCode};
 use uuid::Uuid;
+use wellfed_api::{Command, FeedRequest, FeederId};
 
 use crate::feeders::IDEMPOTENCY_KEY;
 use crate::{Client, Error, decode, expect_status};

@@ -10,6 +10,8 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
+use tokio::io::AsyncWriteExt;
+use uuid::Uuid;
 use wellfed_server_client::api::{
     AdoptFeeder, ClientOwner, ClientRole, Command, CommandOutcome, CommandState, Connection,
     ErrorCode, FeedOutcome, Feeder, FeederClient, FeederId, Hex, Install, InstallState, Problem,
@@ -19,8 +21,6 @@ use wellfed_server_client::{Client, Uploaded};
 use wellfed_server_testkit::feeder::{self, Banks, Flash, Relay, Running};
 use wellfed_server_testkit::release;
 use wellfed_server_testkit::{TestServer, ada_login, ada_setup, config, local, until};
-use tokio::io::AsyncWriteExt;
-use uuid::Uuid;
 
 const BUILD: [u8; 32] = [0x77; 32];
 

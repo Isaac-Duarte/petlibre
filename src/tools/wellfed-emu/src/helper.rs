@@ -12,9 +12,9 @@
 
 use std::collections::VecDeque;
 
+use unicorn_engine::{Arch, ArmCpuModel, Mode, Prot, RegisterARM, Unicorn};
 use wellfed_formats::canonical::sha256;
 use wellfed_formats::require;
-use unicorn_engine::{Arch, ArmCpuModel, Mode, Prot, RegisterARM, Unicorn};
 
 use crate::{BANKS, FLASH_BYTES, HELPER_SHA256, Result, SECTOR};
 

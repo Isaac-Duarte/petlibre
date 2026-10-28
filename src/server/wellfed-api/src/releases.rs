@@ -2,9 +2,9 @@
 //! project's GitHub releases or uploaded, and verified the same way.
 
 use jiff::Timestamp;
-use wellfed_model::Hex;
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
+use wellfed_model::Hex;
 
 /// A verified release in the server's cache.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]

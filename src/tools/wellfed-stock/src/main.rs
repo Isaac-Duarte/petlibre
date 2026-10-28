@@ -14,6 +14,13 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
+use reqwest::Method;
+use serde::Serialize;
+use tokio::{
+    process::Command,
+    sync::{mpsc, watch},
+};
+use tracing::info;
 use wellfed_client::install::{SETUP_ADDRESS, SetupFrame};
 use wellfed_formats::bench::lease::Lease;
 use wellfed_stock::{
@@ -25,13 +32,6 @@ use wellfed_stock::{
     mqtt::{self, broker, broker::DeviceAuth},
     neighbour, network, ota,
 };
-use reqwest::Method;
-use serde::Serialize;
-use tokio::{
-    process::Command,
-    sync::{mpsc, watch},
-};
-use tracing::info;
 
 #[derive(Parser)]
 #[command(

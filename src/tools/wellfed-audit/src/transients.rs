@@ -26,9 +26,9 @@
 use std::fs;
 use std::path::Path;
 
+use serde::Serialize;
 use wellfed_formats::require;
 use wellfed_formats::transients::{TransientMode, TransientsManifest};
-use serde::Serialize;
 
 use crate::{Result, outcomes, round};
 

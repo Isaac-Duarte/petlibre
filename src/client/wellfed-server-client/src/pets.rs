@@ -1,10 +1,10 @@
 //! The household's pets, their weight logs and the feeders that serve
 //! them. Everyone reads them; owners write them.
 
+use reqwest::{Method, StatusCode};
 use wellfed_api::{
     FeederId, NewPet, NewWeight, PageQuery, Pet, PetId, PetPatch, Weight, WeightId, WeightPage,
 };
-use reqwest::{Method, StatusCode};
 
 use crate::{Client, Error, decode, expect_status};
 

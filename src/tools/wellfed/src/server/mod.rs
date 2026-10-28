@@ -36,10 +36,10 @@ use std::process::ExitCode;
 
 use anyhow::{Result, anyhow};
 use clap::{Args, Subcommand};
-use wellfed_server_client::Error;
-use wellfed_server_client::api::{ErrorCode, Problem};
 use serde::Serialize;
 use uuid::Uuid;
+use wellfed_server_client::Error;
+use wellfed_server_client::api::{ErrorCode, Problem};
 
 /// The exit status of a write whose outcome is unknown.
 const UNKNOWN: u8 = 3;

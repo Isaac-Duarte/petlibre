@@ -41,11 +41,11 @@ use wellfed_api::{AssetName, Release, ReleaseCheck, ReleasePage, ReleaseQuery, R
 use wellfed_model::Hex;
 
 pub use error::Error;
+pub use stock::{Stock, StockConfig, Taken};
 pub use wellfed_client::install::{
     DOWNGRADE_LEN, RestoreError, RestoreOffer, STOCK_VERSION, StockBackup, StockPins,
 };
 pub use wellfed_client::release::{MANIFEST_LEN, ReleaseError};
-pub use stock::{Stock, StockConfig, Taken};
 
 use cache::{Cache, Origin};
 

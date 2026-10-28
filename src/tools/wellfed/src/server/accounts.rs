@@ -8,9 +8,9 @@
 use anyhow::{Result, bail};
 use clap::{Subcommand, ValueEnum};
 use jiff::Timestamp;
+use uuid::Uuid;
 use wellfed_server_client::Client;
 use wellfed_server_client::api::{Role, TokenId, User, UserId, UserPatch};
-use uuid::Uuid;
 
 use super::{Output, Settled, text};
 

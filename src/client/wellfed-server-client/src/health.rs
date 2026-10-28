@@ -1,7 +1,7 @@
 //! The server's liveness and readiness.
 
-use wellfed_api::{Health, ServerStatus};
 use reqwest::{Method, StatusCode};
+use wellfed_api::{Health, ServerStatus};
 
 use crate::{Client, Error, decode};
 

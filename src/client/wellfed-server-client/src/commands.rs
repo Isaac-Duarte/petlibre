@@ -1,9 +1,9 @@
 //! The command journal: the writes sent through the server, by key or as
 //! pages.
 
-use wellfed_api::{Command, CommandPage, CommandQuery};
 use reqwest::{Method, StatusCode};
 use uuid::Uuid;
+use wellfed_api::{Command, CommandPage, CommandQuery};
 
 use crate::{Client, Error, decode};
 

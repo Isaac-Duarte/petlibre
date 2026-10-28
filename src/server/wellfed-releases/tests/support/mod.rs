@@ -4,12 +4,12 @@
 
 use ed25519_dalek::{Signer as _, SigningKey};
 use jiff::Timestamp;
+use sha2_0_10::{Digest, Sha256};
+use tempfile::TempDir;
 use wellfed_api::ReleaseQuery;
 use wellfed_core::ota::offer::{self, ImageKind, Signed, key_id};
 use wellfed_core::ota::{MARKER, Manifest, SECTOR};
 use wellfed_releases::{Config, Keys, Releases, Source, StockConfig, StockPins};
-use sha2_0_10::{Digest, Sha256};
-use tempfile::TempDir;
 
 pub fn project() -> SigningKey {
     SigningKey::from_bytes(&[0x05; 32])

@@ -25,9 +25,7 @@ use wellfed_core::feed::owner::OwnerState;
 use wellfed_core::feed::storage::OwnerOutcome;
 use wellfed_core::record::{Event, Owner, Trial};
 use wellfed_formats::require;
-use wellfed_model::{
-    Counters, Counts, Memory, Refusal, ResetCause, Stats, StatsSection, TimeView,
-};
+use wellfed_model::{Counters, Counts, Memory, Refusal, ResetCause, Stats, StatsSection, TimeView};
 use wellfed_rig::commands::ota::{Outcome, Staged};
 use wellfed_rig::commands::{Firmware, Image, Variant};
 use wellfed_rig::device::{Answer, Ask, DeviceStatus};

@@ -2,11 +2,11 @@
 //! status. Most of these requests are ones the typed client cannot make,
 //! so they go through its escape hatch with the same session and origin.
 
+use serde_json::json;
+use uuid::Uuid;
 use wellfed_api::{ErrorCode, EventQuery, FeederId, StreamQuery};
 use wellfed_server_client::{Method, StatusCode, expect_status};
 use wellfed_server_testkit::{TestServer, ada_setup, refused, refused_for};
-use serde_json::json;
-use uuid::Uuid;
 
 /// A feeder no server has adopted.
 const NOBODY: FeederId = FeederId(Uuid::from_u128(0x0192c5d0_0000_7000_8000_000000000000));

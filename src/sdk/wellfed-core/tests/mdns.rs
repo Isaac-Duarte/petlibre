@@ -2,9 +2,9 @@
 //! the answers a browser and a resolver ask for, legacy unicast, the
 //! announcements, and packets it must ignore.
 
-use wellfed_core::mdns::{Destination, PACKET, PORT, Responder};
 use simple_dns::rdata::RData;
 use simple_dns::{CLASS, Name, Packet, QCLASS, QTYPE, Question, TYPE};
+use wellfed_core::mdns::{Destination, PACKET, PORT, Responder};
 
 const KEY: [u8; 32] = [0xab; 32];
 const IP: u32 = 0x0a2a_6705;
@@ -109,12 +109,7 @@ fn host_and_instance_lookups_are_answered_case_insensitively() {
 
     let reply = r
         .query(
-            &query(
-                "wellfed-abababab._wellfed._tcp.local",
-                TYPE::SRV,
-                false,
-                1,
-            ),
+            &query("wellfed-abababab._wellfed._tcp.local", TYPE::SRV, false, 1),
             PORT,
             &mut out,
         )

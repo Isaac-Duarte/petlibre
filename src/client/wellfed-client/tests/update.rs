@@ -12,6 +12,7 @@
 use std::time::{Duration, Instant};
 
 use ed25519_dalek::{Signer, SigningKey};
+use sha2::{Digest, Sha256};
 use wellfed_client::connection::{Connection, Event};
 use wellfed_client::update::{Image, InstallError, Installer, Next, Sent};
 use wellfed_core::ota::install::{Install, Phase, Progress, Refused, Stop, Taken};
@@ -38,7 +39,6 @@ use wellfed_proto::api::{
 };
 use wellfed_session::noise::Keypair;
 use wellfed_testkit::journal_flash::{FakeJournalFlash, FlashIo};
-use sha2::{Digest, Sha256};
 
 const FEEDER: [u8; 32] = [0x10; 32];
 const OWNER: [u8; 32] = [0x20; 32];

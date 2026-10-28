@@ -4,10 +4,10 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use jiff::Timestamp;
-use wellfed_api::{Household, Role, TimeFormat, Token, TokenId, Units, UserId};
-use wellfed_store::{NewToken, NewUser, Store};
 use tempfile::TempDir;
 use uuid::Uuid;
+use wellfed_api::{Household, Role, TimeFormat, Token, TokenId, Units, UserId};
+use wellfed_store::{NewToken, NewUser, Store};
 
 async fn fresh() -> (TempDir, Store) {
     let dir = tempfile::tempdir().unwrap();

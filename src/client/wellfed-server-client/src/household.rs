@@ -1,7 +1,7 @@
 //! The household: its name, units, time format and zone.
 
-use wellfed_api::{Household, HouseholdPatch};
 use reqwest::{Method, StatusCode};
+use wellfed_api::{Household, HouseholdPatch};
 
 use crate::{Client, Error, decode};
 

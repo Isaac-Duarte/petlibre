@@ -33,6 +33,7 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
+use serde::{Deserialize, Serialize};
 use wellfed_client::api::{Error as SessionError, Incoming, Session};
 use wellfed_client::update::{Image, InstallError, Installer, Next, Sent};
 use wellfed_formats::hex;
@@ -44,7 +45,6 @@ use wellfed_model::{
 };
 use wellfed_proto::api::{PORT, RequestId};
 use wellfed_session::noise::Keypair;
-use serde::{Deserialize, Serialize};
 
 use crate::server::NotReady;
 

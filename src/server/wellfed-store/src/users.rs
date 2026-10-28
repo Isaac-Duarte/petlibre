@@ -1,8 +1,8 @@
 //! Users, the household they share, and their browser sessions.
 
 use jiff::Timestamp;
-use wellfed_api::{Household, Role, TimeFormat, Units, User, UserId};
 use uuid::Uuid;
+use wellfed_api::{Household, Role, TimeFormat, Units, User, UserId};
 
 use crate::convert::{millis, timestamp};
 use crate::{Error, Result, Store};

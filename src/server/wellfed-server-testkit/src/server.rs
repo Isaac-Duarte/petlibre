@@ -3,13 +3,13 @@
 
 use std::net::{Ipv4Addr, SocketAddr};
 
+use std::sync::Arc;
 use wellfed_server::{Hosts, TrustedProxies};
 use wellfed_server_client::{Client, Url};
-use std::sync::Arc;
 
-use wellfed_service::{Clock, Config, Service};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
+use wellfed_service::{Clock, Config, Service};
 
 use crate::service::{TempStore, TestService, config};
 

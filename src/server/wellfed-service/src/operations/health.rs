@@ -1,7 +1,7 @@
 //! Readiness: what an owner checks when something looks wrong.
 
-use wellfed_api::{FeederLink, ServerStatus, StoreState};
 use tracing::warn;
+use wellfed_api::{FeederLink, ServerStatus, StoreState};
 
 use crate::Service;
 

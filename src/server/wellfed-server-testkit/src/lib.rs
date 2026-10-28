@@ -32,10 +32,10 @@ use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr};
 use std::time::Duration;
 
-use wellfed_api::{Credentials, ErrorCode, Role, Setup, User, UserId};
-use wellfed_server_client::StatusCode;
 use tokio::task::LocalSet;
 use uuid::Uuid;
+use wellfed_api::{Credentials, ErrorCode, Role, Setup, User, UserId};
+use wellfed_server_client::StatusCode;
 
 pub use server::TestServer;
 pub use service::{TempStore, TestService, config};

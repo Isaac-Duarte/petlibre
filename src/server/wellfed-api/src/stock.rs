@@ -8,9 +8,9 @@
 //! the manifest offers exactly the copy it keeps before anything is sent.
 
 use jiff::Timestamp;
-use wellfed_model::Hex;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
+use wellfed_model::Hex;
 
 use crate::{FeederId, Install};
 

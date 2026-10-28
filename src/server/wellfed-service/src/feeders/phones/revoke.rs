@@ -16,6 +16,9 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use jiff::Timestamp;
+use tokio::sync::broadcast::Receiver;
+use tokio::sync::broadcast::error::RecvError;
+use tracing::{Instrument, info, info_span, warn};
 use wellfed_api::{
     CommandOutcome, Connection as Link, EventBody, FeederId, RevokeAttempt, RevokeReason, Role,
     User,
@@ -24,9 +27,6 @@ use wellfed_formats::hex;
 use wellfed_mirror::{AskError, MirrorEvent};
 use wellfed_model::{Answer, Op, Refusal};
 use wellfed_store::Whose;
-use tokio::sync::broadcast::Receiver;
-use tokio::sync::broadcast::error::RecvError;
-use tracing::{Instrument, info, info_span, warn};
 
 use crate::{CommandError, Error, InternalError, Resource, Result, Service, lock};
 

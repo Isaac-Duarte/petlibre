@@ -7,8 +7,8 @@
 //! can never be activated (design: docs/firmware/ota-design.md).
 
 use ed25519_dalek::VerifyingKey;
-use wellfed_core::ota::*;
 use sha2::{Digest, Sha256};
+use wellfed_core::ota::*;
 
 fn image(len: usize) -> Vec<u8> {
     let mut out: Vec<u8> = (0..len).map(|i| (i * 31 % 251) as u8).collect();

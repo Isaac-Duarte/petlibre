@@ -29,15 +29,15 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use wellfed_api::{Connection as Link, FeederId, FeederRefusal};
-use wellfed_client::trace::{Pages, TraceError};
-use wellfed_model::{Answer, EventBody, Op, Refusal, StatsSection, Trace};
-use wellfed_store::{RawTrace, TraceFound};
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::{broadcast, watch};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
+use wellfed_api::{Connection as Link, FeederId, FeederRefusal};
+use wellfed_client::trace::{Pages, TraceError};
+use wellfed_model::{Answer, EventBody, Op, Refusal, StatsSection, Trace};
+use wellfed_store::{RawTrace, TraceFound};
 
 use crate::task::{LongLane, Opened};
 use crate::{AskError, MirrorEvent, Operation, Shared};

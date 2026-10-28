@@ -4,8 +4,8 @@ use std::collections::HashMap;
 
 use jiff::Timestamp;
 use jiff::civil::Date;
-use wellfed_api::{FeederId, Pet, PetId, PetLink, Species, Weight, WeightId};
 use uuid::Uuid;
+use wellfed_api::{FeederId, Pet, PetId, PetLink, Species, Weight, WeightId};
 
 use crate::convert::{millis, timestamp};
 use crate::{Error, Result, Store};

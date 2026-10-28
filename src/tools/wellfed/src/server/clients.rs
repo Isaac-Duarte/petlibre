@@ -5,9 +5,9 @@
 
 use anyhow::{Result, bail};
 use clap::Args;
+use uuid::Uuid;
 use wellfed_server_client::Client;
 use wellfed_server_client::api::{ClientOwner, FeederClient};
-use uuid::Uuid;
 
 use super::feeders::Which;
 use super::{Output, Settled, Written, text, write};

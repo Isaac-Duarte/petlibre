@@ -19,6 +19,7 @@
 
 use std::sync::{Arc, Mutex};
 
+use tracing::{Instrument, info, info_span, warn};
 use wellfed_api::{
     ClientRole, Connection as Link, ErrorCode, FeederId, FeederRefusal, Install, InstallFailure,
     InstallId, InstallRequest, InstallState, InstallTarget, StreamEvent,
@@ -26,7 +27,6 @@ use wellfed_api::{
 use wellfed_mirror::{PushError, Pushed, Restore, Update, UpdateError};
 use wellfed_model::{Refusal, UpdateView};
 use wellfed_releases::{STOCK_VERSION, StockBackup};
-use tracing::{Instrument, info, info_span, warn};
 
 use crate::{Caller, CommandError, Error, Resource, Result, Service, lock};
 

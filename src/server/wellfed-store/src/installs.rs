@@ -2,10 +2,10 @@
 //! stock restore's, rewritten as it progresses and once it ends.
 
 use jiff::Timestamp;
+use uuid::Uuid;
 use wellfed_api::{
     FeederId, Hex, Install, InstallFailure, InstallId, InstallState, InstallTarget, UserId,
 };
-use uuid::Uuid;
 
 use crate::convert::{millis, timestamp};
 use crate::{Error, Result, Store};

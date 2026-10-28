@@ -4,12 +4,12 @@
 mod support;
 
 use ed25519_dalek::SigningKey;
+use support::{keys, now, open, open_with, owner, project, release, versions as ids};
 use wellfed_api::{ReleaseQuery, ReleaseRefusal, ReleaseSigner, ReleaseSource};
 use wellfed_core::ota::SECTOR;
 use wellfed_core::ota::offer;
 use wellfed_releases::Keys;
 use wellfed_releases::{Added, Error, ReleaseError};
-use support::{keys, now, open, open_with, owner, project, release, versions as ids};
 
 #[tokio::test]
 async fn an_upload_is_verified_and_kept() {

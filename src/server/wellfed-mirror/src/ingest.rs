@@ -19,12 +19,12 @@
 
 use std::sync::Arc;
 
+use tokio::time::Instant;
+use tracing::{info, warn};
 use wellfed_api::{FeederEvent, FeederSample, Gap, SampleValue};
 use wellfed_model::{Event, EventBody, Pushed};
 use wellfed_proto::api as proto;
 use wellfed_store::{EventRow, NewEvent, NewSample, Refresh, SampleRefresh};
-use tokio::time::Instant;
-use tracing::{info, warn};
 
 use crate::session::{End, Failure};
 use crate::task::Task;

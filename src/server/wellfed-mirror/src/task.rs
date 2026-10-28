@@ -5,16 +5,16 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use wellfed_api::{Connection as Link, FeederId};
-use wellfed_connect::Connection;
-use wellfed_model::Capabilities;
-use wellfed_session::noise::Keypair;
 use tokio::sync::{Semaphore, broadcast, mpsc, watch};
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use tracing::{Instrument, debug, info, info_span, warn};
+use wellfed_api::{Connection as Link, FeederId};
+use wellfed_connect::Connection;
+use wellfed_model::Capabilities;
+use wellfed_session::noise::Keypair;
 
 use crate::collect::Collector;
 use crate::command::Command;
@@ -235,9 +235,7 @@ impl Task {
                     }
                     Link::Offline
                 }
-                Err(ConnectError::Unreachable(Unreachable(
-                    wellfed_connect::Error::UnknownKey,
-                ))) => {
+                Err(ConnectError::Unreachable(Unreachable(wellfed_connect::Error::UnknownKey))) => {
                     warn!("the feeder no longer knows this server's key");
                     Link::Refused
                 }

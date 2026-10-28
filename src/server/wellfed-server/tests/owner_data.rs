@@ -1,13 +1,13 @@
 //! Pets, foods and refills over HTTP: everyone reads them, only an owner
 //! writes them, and each refusal has its code.
 
+use uuid::Uuid;
 use wellfed_api::{
     AdoptFeeder, ClientRole, ErrorCode, FeederId, FoodPatch, NewFood, NewPet, NewRefill, NewUser,
     NewWeight, PageQuery, PetPatch, RefillId, Role, Species, WeightId,
 };
 use wellfed_server_client::{Client, StatusCode};
 use wellfed_server_testkit::{TestServer, ada_setup, feeder, local, refused, refused_for};
-use uuid::Uuid;
 
 /// A feeder no server has adopted: a permission is checked before the id.
 const NOBODY: FeederId = FeederId(Uuid::from_u128(0x0192c5d0_0000_7000_8000_000000000000));

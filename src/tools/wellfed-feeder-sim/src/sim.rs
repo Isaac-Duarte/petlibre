@@ -19,6 +19,7 @@ use std::fmt;
 use std::net::Ipv4Addr;
 use std::rc::Rc;
 
+use tokio::net::{TcpStream, UdpSocket};
 use wellfed_board_plaf103::storage;
 use wellfed_core::buttons::Gesture;
 use wellfed_core::ota::{self, CONFIRM_LEN};
@@ -31,7 +32,6 @@ use wellfed_hal::ota::mailbox;
 use wellfed_hal::ota::update::{self as update, Floor, Update};
 use wellfed_hal::trial::{self, Storm};
 use wellfed_session::noise::Keypair;
-use tokio::net::{TcpStream, UdpSocket};
 
 use crate::banks::{Banks, Boot, Bus, Trial};
 use crate::feeding::SimFeeds;

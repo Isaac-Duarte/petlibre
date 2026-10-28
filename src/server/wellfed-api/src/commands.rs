@@ -13,10 +13,10 @@
 //! when the feeder restarted and holds no record of it, `unrecorded`.
 
 use jiff::Timestamp;
-use wellfed_model::Settings;
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
+use wellfed_model::Settings;
 
 use crate::{FeedOutcome, FeedReason, FeederId, FeederRefusal, TokenId, UserId};
 

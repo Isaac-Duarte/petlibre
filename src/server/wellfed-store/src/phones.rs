@@ -2,10 +2,10 @@
 //! on them, and the clients it did not invite that an owner kept.
 
 use jiff::Timestamp;
+use uuid::Uuid;
 use wellfed_api::{
     ClientRole, FeederId, Hex, PhoneKey, RevokeAttempt, RevokeReason, Revoking, TokenId, UserId,
 };
-use uuid::Uuid;
 
 use crate::convert::{millis, timestamp};
 use crate::{Error, Result, Store};

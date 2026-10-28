@@ -6,9 +6,9 @@
 //! down. A zone no rule describes is refused, since a feeder could not keep
 //! it.
 
+use tracing::error;
 use wellfed_api::{AuditAction, Household, HouseholdPatch};
 use wellfed_mirror::Zone;
-use tracing::error;
 
 use crate::{Caller, Error, Invalid, Resource, Result, Service};
 

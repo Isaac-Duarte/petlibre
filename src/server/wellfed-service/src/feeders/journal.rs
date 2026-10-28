@@ -24,6 +24,10 @@
 //! an entry goes on the stream. A feed's entry is settled later from the
 //! feeder's history (`feeds/history.rs`).
 
+use serde::Serialize;
+use sha2::{Digest, Sha256};
+use tracing::warn;
+use uuid::Uuid;
 use wellfed_api::{
     Command, CommandKind, CommandOutcome, CommandPage, CommandQuery, CommandState, FeederId,
     StreamEvent, User,
@@ -32,10 +36,6 @@ use wellfed_formats::canonical::canonical_of;
 use wellfed_mirror::AskError;
 use wellfed_model::{Answer, Invite, Op};
 use wellfed_store::{CommandFilter, CommandRow, Journaled, NewCommand, Synced};
-use serde::Serialize;
-use sha2::{Digest, Sha256};
-use tracing::warn;
-use uuid::Uuid;
 
 use self::id::write_id;
 use self::retry::{Retry, retry};

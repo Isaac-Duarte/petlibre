@@ -3,10 +3,10 @@
 //! longer may hold one.
 
 use jiff::Timestamp;
-use wellfed_api::{ClientRole, FeederId, RevokeReason, TokenId, UserId};
-use wellfed_store::{NewFeeder, NewPhone, Recorded, SealedKey, Store};
 use tempfile::TempDir;
 use uuid::Uuid;
+use wellfed_api::{ClientRole, FeederId, RevokeReason, TokenId, UserId};
+use wellfed_store::{NewFeeder, NewPhone, Recorded, SealedKey, Store};
 
 fn at(ms: i64) -> Timestamp {
     Timestamp::from_millisecond(ms).unwrap()

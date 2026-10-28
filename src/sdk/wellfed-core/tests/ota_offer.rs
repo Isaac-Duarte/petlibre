@@ -8,9 +8,9 @@
 //! Stock always needs one.
 
 use ed25519_dalek::{Signer, SigningKey};
+use proptest::prelude::*;
 use wellfed_core::ota::offer::*;
 use wellfed_core::ota::{BANK1_BYTES, MARKER, Manifest, SECTOR, SECTOR_BYTES, image};
-use proptest::prelude::*;
 
 const DEVICE: [u8; 32] = [0xd0; 32];
 const RUNNING: [u8; 32] = [0xee; 32];

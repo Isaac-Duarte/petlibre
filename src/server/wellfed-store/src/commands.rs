@@ -3,8 +3,8 @@
 //! deleted only while nothing of it can have reached the feeder.
 
 use jiff::Timestamp;
-use wellfed_api::{CommandKind, CommandOutcome, CommandState, FeederId, TokenId, UserId};
 use uuid::Uuid;
+use wellfed_api::{CommandKind, CommandOutcome, CommandState, FeederId, TokenId, UserId};
 
 use crate::convert::{from_i64, millis, timestamp, to_i64};
 use crate::{Error, Result, Store, Synced};

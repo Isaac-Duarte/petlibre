@@ -2,8 +2,8 @@
 //! one, marked whatever change left them so.
 
 use jiff::Timestamp;
-use wellfed_api::FeederId;
 use uuid::Uuid;
+use wellfed_api::FeederId;
 
 use crate::convert::millis;
 use crate::{Result, Store};

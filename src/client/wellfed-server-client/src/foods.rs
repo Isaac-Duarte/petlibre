@@ -1,11 +1,11 @@
 //! Foods, the food each feeder serves over time, and refills. Everyone
 //! reads them; owners write them.
 
+use reqwest::{Method, StatusCode};
 use wellfed_api::{
     FeederFood, FeederId, Food, FoodChoice, FoodHistoryPage, FoodId, FoodPatch, FoodPeriod,
     NewFood, NewRefill, PageQuery, Refill, RefillId, RefillPage,
 };
-use reqwest::{Method, StatusCode};
 
 use crate::{Client, Error, decode, expect_status};
 

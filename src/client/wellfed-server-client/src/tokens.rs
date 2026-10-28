@@ -1,7 +1,7 @@
 //! Bearer tokens: the caller's own, or anyone's for an owner.
 
-use wellfed_api::{CreatedToken, NewToken, Token, TokenId};
 use reqwest::{Method, StatusCode};
+use wellfed_api::{CreatedToken, NewToken, Token, TokenId};
 
 use crate::{Client, Error, decode, expect_status};
 

@@ -6,12 +6,12 @@ mod common;
 
 use chrono::{Duration, Utc};
 use common::Controller;
+use serde_json::json;
 use wellfed_stock::protocol::Channel;
 use wellfed_stock::{
     controller::{LEDGER_FILE, RETIRED_LEDGER_FILE},
     protocol::Message,
 };
-use serde_json::json;
 
 fn observe(controller: &mut Controller, channel: &str, value: serde_json::Value) {
     let message: Message = serde_json::from_value(value).unwrap();

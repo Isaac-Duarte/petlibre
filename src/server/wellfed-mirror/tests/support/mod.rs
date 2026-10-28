@@ -5,17 +5,15 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use tokio::sync::broadcast::Receiver;
+use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
 use wellfed_api::{ClientRole, Connection as Link, FeederId};
-use wellfed_mirror::{
-    Config, Diagnostics, Discovery, Feeder, Invite, Mirror, MirrorEvent, Timing,
-};
+use wellfed_mirror::{Config, Diagnostics, Discovery, Feeder, Invite, Mirror, MirrorEvent, Timing};
 use wellfed_server_testkit::WAIT;
 use wellfed_server_testkit::feeder::{self, Running};
 use wellfed_server_testkit::fixed::{FixedClock, SeededRandom};
 use wellfed_store::{NewFeeder, Refresh, SampleRefresh, SealedKey, Store};
-use tokio::sync::broadcast::Receiver;
-use tokio_util::sync::CancellationToken;
-use uuid::Uuid;
 
 pub const ID: FeederId = FeederId(Uuid::from_u128(7));
 /// The mirror's key on the feeder.

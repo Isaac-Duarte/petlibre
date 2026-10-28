@@ -5,8 +5,8 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
-use wellfed_core::record::{Event, Record, Tag};
 use serde::Serialize;
+use wellfed_core::record::{Event, Record, Tag};
 
 use super::{Sources, captures_by_age, modified, printable, read};
 use wellfed_formats::bench::progress::{self, BenchCommand, RELAYS, RelayState};
@@ -203,8 +203,8 @@ pub(super) fn bindings(cfg: &ts_rs::Config) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use wellfed_formats::canonical::sha256;
     use serde_json::json;
+    use wellfed_formats::canonical::sha256;
 
     use super::*;
     use crate::views::tests::{json, sources};

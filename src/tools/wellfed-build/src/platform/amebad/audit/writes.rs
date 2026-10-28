@@ -13,8 +13,8 @@ use std::fs;
 use std::path::Path;
 use std::sync::LazyLock;
 
-use wellfed_formats::audit::{CoreWrites, WritesAudit};
 use regex::Regex;
+use wellfed_formats::audit::{CoreWrites, WritesAudit};
 
 use super::{Binutils, HEADING, elf, index, parse_hex, tool, word};
 use crate::platform::amebad::Core;
@@ -668,11 +668,11 @@ mod tests {
     #[test]
     fn rust_paths_drop_the_crate_hash() {
         assert_eq!(
-            demangle("_RNvNtCseBw8xjNrJWj_19wellfed_amebad_sys6target13bank1_program"),
+            demangle("_RNvNtCseBw8xjNrJWj_18wellfed_amebad_sys6target13bank1_program"),
             "wellfed_amebad_sys::target::bank1_program"
         );
         assert_eq!(
-            demangle("_RNvNtCsOther123_19wellfed_amebad_sys6target11bank1_erase"),
+            demangle("_RNvNtCsOther123_18wellfed_amebad_sys6target11bank1_erase"),
             "wellfed_amebad_sys::target::bank1_erase"
         );
         for name in [

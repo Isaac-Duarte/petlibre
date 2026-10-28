@@ -4,9 +4,9 @@
 //! uploads it. Nothing read here is trusted: every file is verified before
 //! the cache keeps it, so this only bounds what it reads.
 
-use wellfed_client::release::MAX_LEN;
 use reqwest::header::ACCEPT;
 use serde::Deserialize;
+use wellfed_client::release::MAX_LEN;
 
 use crate::{ASSET_SUFFIX, Error, Source};
 

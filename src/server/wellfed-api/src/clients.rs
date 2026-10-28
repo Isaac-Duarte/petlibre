@@ -12,9 +12,9 @@
 use std::fmt;
 
 use jiff::Timestamp;
-use wellfed_model::{ClientRole, Hex};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
+use wellfed_model::{ClientRole, Hex};
 
 use crate::{Feeder, FeederId, FeederRefusal, TokenId, UserId};
 

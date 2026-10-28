@@ -14,10 +14,10 @@
 use std::fs;
 use std::path::Path;
 
+use unicorn_engine::{Arch, ArmCpuModel, Mode, Prot, RegisterARM, Unicorn};
 use wellfed_formats::canonical::sha256;
 use wellfed_formats::require;
 use wellfed_formats::review::{FactoryRun, MappingConfig, Stop};
-use unicorn_engine::{Arch, ArmCpuModel, Mode, Prot, RegisterARM, Unicorn};
 
 use crate::{BASELINE, BASELINE_SHA256, FLASH_BYTES, ROM, ROM_SHA256, Result, word};
 

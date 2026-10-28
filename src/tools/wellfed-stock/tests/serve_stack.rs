@@ -14,9 +14,9 @@ use std::{
 };
 
 use common::{address, ready, start, status};
-use wellfed_stock::storage;
 use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS};
 use serde_json::{Value, json};
+use wellfed_stock::storage;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn real_broker_api_and_simulated_stock_session_without_commands() {

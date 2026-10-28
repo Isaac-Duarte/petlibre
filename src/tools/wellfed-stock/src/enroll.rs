@@ -24,8 +24,8 @@ use std::{
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use wellfed_formats::stock::StockEnrollment;
 use serde::{Deserialize, Serialize};
+use wellfed_formats::stock::StockEnrollment;
 
 use crate::{config, storage};
 

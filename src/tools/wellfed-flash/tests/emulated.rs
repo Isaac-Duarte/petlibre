@@ -17,13 +17,13 @@ use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use serde_json::{Value, json};
+use tempfile::TempDir;
 use wellfed_emu::helper::{Call, Helper, Scope};
 use wellfed_emu::{HELPER, serve};
 use wellfed_flash::evidence::journal;
 use wellfed_formats::canonical::sha256;
 use wellfed_image::ota::container;
-use serde_json::{Value, json};
-use tempfile::TempDir;
 
 const BINARY: &str = env!("CARGO_BIN_EXE_wellfed-flash");
 const BANK1: usize = 0x18_6000;

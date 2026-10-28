@@ -2,12 +2,12 @@
 //! manifests signed the way `wellfed-build sign` signs them.
 
 use ed25519_dalek::{Signer as _, SigningKey};
+use sha2::{Digest, Sha256};
 use wellfed_client::release::{
     Keys, MANIFEST_LEN, MAX_LEN, OfferError, ReleaseError, Signer, parts, verify,
 };
 use wellfed_core::ota::offer::{self, ImageKind, Signed, key_id};
 use wellfed_core::ota::{MARKER, Manifest, SECTOR};
-use sha2::{Digest, Sha256};
 
 fn project() -> SigningKey {
     SigningKey::from_bytes(&[0x05; 32])

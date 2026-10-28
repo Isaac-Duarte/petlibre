@@ -1,11 +1,11 @@
 //! Adopting feeders, and reading them and their history as the server
 //! holds it.
 
+use tracing::warn;
 use wellfed_api::{AdoptFeeder, Connection as Link, EventPage, EventQuery, Feeder, FeederId, Hex};
 use wellfed_formats::hex;
 use wellfed_mirror::Invite;
 use wellfed_store::{FeederRow, NewFeeder};
-use tracing::warn;
 
 use crate::feeders::keys;
 use crate::{Error, FeederError, InternalError, Invalid, Resource, Result, Service};

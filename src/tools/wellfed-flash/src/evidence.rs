@@ -13,9 +13,9 @@ use std::io::{self, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 
+use serde::Serialize;
 pub(crate) use wellfed_formats::private::{sync_directory, write_new};
 pub(crate) use wellfed_image::root::Root;
-use serde::Serialize;
 
 use crate::error::Result;
 use crate::evidence::report::Streams;

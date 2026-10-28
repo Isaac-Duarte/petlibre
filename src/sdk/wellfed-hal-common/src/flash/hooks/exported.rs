@@ -152,9 +152,7 @@ pub extern "C" fn hook_fail(reason: HookFault) -> ! {
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".image2.ram.text.wellfed_hooks")]
 #[inline(never)]
-pub unsafe extern "C" fn wellfed_amebad_flash_hooks_install(
-    provider: *const HookProvider,
-) -> bool {
+pub unsafe extern "C" fn wellfed_amebad_flash_hooks_install(provider: *const HookProvider) -> bool {
     // SAFETY: the C caller passes null or a readable provider.
     unsafe { install::<Hardware>(provider) }
 }

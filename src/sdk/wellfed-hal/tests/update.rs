@@ -11,6 +11,7 @@ use std::cell::{Cell, RefCell};
 use std::sync::{Mutex, MutexGuard};
 
 use ed25519_dalek::{Signer, SigningKey};
+use sha2::{Digest, Sha256};
 use wellfed_core::flash_coord::{FlashFault, FlashPhase, FlashReply};
 use wellfed_core::ota::install::{IDLE_MS, Phase, Progress, Refused, Stop};
 use wellfed_core::ota::offer::{
@@ -29,7 +30,6 @@ use wellfed_hal::ota::signers;
 use wellfed_hal::ota::update::*;
 use wellfed_hal::sdk::fake;
 use wellfed_hal::stopped;
-use sha2::{Digest, Sha256};
 
 /// The mailbox and the update bit are process-wide.
 static SERIAL: Mutex<()> = Mutex::new(());

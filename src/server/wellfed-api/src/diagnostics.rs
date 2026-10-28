@@ -7,9 +7,9 @@
 //! diagnostics text, never stored and not a contract.
 
 use jiff::Timestamp;
-use wellfed_model::{Stats, StatsSection, Trace};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
+use wellfed_model::{Stats, StatsSection, Trace};
 
 use crate::FeederRefusal;
 

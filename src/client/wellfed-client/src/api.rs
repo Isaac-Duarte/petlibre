@@ -297,8 +297,8 @@ impl Session {
             return Ok(None);
         };
         let Some(epoch) = self.epoch else {
-            let welcome: Welcome<'_> = wellfed_proto::decode(&plain)
-                .map_err(|_| Error::Malformed(Garbled::of(&plain)))?;
+            let welcome: Welcome<'_> =
+                wellfed_proto::decode(&plain).map_err(|_| Error::Malformed(Garbled::of(&plain)))?;
             return Ok(Some(match welcome {
                 Welcome::Open {
                     major: _,

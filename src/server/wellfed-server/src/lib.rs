@@ -26,7 +26,6 @@ use std::sync::Arc;
 pub use auth::Hosts;
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
-use wellfed_service::{RELEASE_MAX, Service};
 pub use proxy::{ProxyRange, TrustedProxies};
 use tokio_util::sync::CancellationToken;
 use tower_http::limit::RequestBodyLimitLayer;
@@ -35,6 +34,7 @@ use tower_http::trace::TraceLayer;
 use utoipa::OpenApi;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
+use wellfed_service::{RELEASE_MAX, Service};
 
 /// Every request body this API takes is a few hundred bytes, but for a
 /// release or stock upload, which takes up to [`RELEASE_MAX`] (a stock

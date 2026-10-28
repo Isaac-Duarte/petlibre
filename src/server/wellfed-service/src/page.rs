@@ -2,9 +2,9 @@
 //! opaque cursors its `next` carries.
 
 use jiff::Timestamp;
+use uuid::Uuid;
 use wellfed_api::{PageQuery, WeightId};
 use wellfed_store::WeightCursor;
-use uuid::Uuid;
 
 use crate::Invalid;
 

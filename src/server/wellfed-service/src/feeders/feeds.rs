@@ -8,14 +8,14 @@
 //! request ids at a restart, so a resend could feed twice. It is settled
 //! only from the history.
 
-use wellfed_api::{Command, CommandKind, CommandOutcome, FeedRequest, FeederId};
-use wellfed_mirror::MirrorEvent;
-use wellfed_model::Op;
 use serde::Serialize;
 use tokio::sync::broadcast::Receiver;
 use tokio::sync::broadcast::error::RecvError;
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, info_span};
+use wellfed_api::{Command, CommandKind, CommandOutcome, FeedRequest, FeederId};
+use wellfed_mirror::MirrorEvent;
+use wellfed_model::Op;
 
 use crate::feeders::commands::done;
 use crate::feeders::journal::{Write, view};

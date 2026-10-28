@@ -9,12 +9,12 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use serde_json::Value;
 use wellfed_build::identity::current_inputs;
 use wellfed_build::image::audit_build;
 use wellfed_build::platform::amebad::audit::{self, Binutils, elf, hex, hooks, mains, park, tool};
 use wellfed_build::platform::amebad::{Core, PROJECT, binutils};
 use wellfed_build::{Device, Error, Firmware, HookError, MainsError, Profile, Repo};
-use serde_json::Value;
 
 struct Build {
     repo: Repo,

@@ -10,10 +10,10 @@ use std::fs;
 use std::path::Path;
 
 use chrono::{DateTime, FixedOffset};
-use wellfed_formats::capture::{Direction, SerialEvent};
-use wellfed_formats::session::{Lifecycle, Status};
 use serde::Deserialize;
 use serde_json::Value;
+use wellfed_formats::capture::{Direction, SerialEvent};
+use wellfed_formats::session::{Lifecycle, Status};
 
 use wellfed_formats::require;
 

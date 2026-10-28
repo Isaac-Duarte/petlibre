@@ -9,10 +9,10 @@
 use std::time::Duration;
 
 use jiff::Timestamp;
-use wellfed_api::{ClientRole, FeederId, MetricKind};
-use wellfed_store::{NewFeeder, SealedKey, Span, Store};
 use tokio::time::Instant;
 use uuid::Uuid;
+use wellfed_api::{ClientRole, FeederId, MetricKind};
+use wellfed_store::{NewFeeder, SealedKey, Span, Store};
 
 const FEEDERS: u8 = 5;
 const DAYS: i64 = 30;

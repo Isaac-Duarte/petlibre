@@ -15,8 +15,8 @@ use bluer::gatt::WriteOp;
 use bluer::gatt::remote::{Characteristic, CharacteristicWriteRequest};
 use bluer::{Address, Uuid};
 use futures_util::{Stream, StreamExt};
-use wellfed_client::setup::{CONTROL, Deframer, SERVICE, frame};
 use tokio::time::timeout;
+use wellfed_client::setup::{CONTROL, Deframer, SERVICE, frame};
 
 const FIND_TIMEOUT: Duration = Duration::from_secs(30);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);

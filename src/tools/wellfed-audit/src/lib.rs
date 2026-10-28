@@ -31,8 +31,8 @@ use std::io::Write;
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
-use wellfed_formats::require;
 use serde::Serialize;
+use wellfed_formats::require;
 
 pub use capture::CaptureError;
 

@@ -15,10 +15,10 @@ use std::io::Read;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
+use serde::Serialize;
 use wellfed_formats::layout::{Hex, Layout};
 use wellfed_formats::require;
 use wellfed_image::ota;
-use serde::Serialize;
 
 use crate::{Error, Result, digest};
 

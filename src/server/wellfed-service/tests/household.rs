@@ -2,10 +2,10 @@
 //! rule in its time settings, set on connect and whenever the zone changes,
 //! so its clock and plans follow DST with the server down.
 
+use std::time::Duration;
 use wellfed_api::{ClientRole, Connection as Link, FeederId, HouseholdPatch, TimeFormat, Units};
 use wellfed_model::{Answer, Op};
 use wellfed_server_testkit::feeder::{self, Flash, Running, open_owner};
-use std::time::Duration;
 
 use wellfed_server_testkit::{TestService, ZONE, ada_setup, config, local, until};
 use wellfed_service::{Caller, Error, Invalid, Resource, ZoneError};

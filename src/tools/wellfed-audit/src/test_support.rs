@@ -4,8 +4,8 @@ use std::fs;
 use std::path::Path;
 
 use chrono::{DateTime, Duration};
-use wellfed_formats::manifest::BuildManifest;
 use serde_json::{Value, json};
+use wellfed_formats::manifest::BuildManifest;
 
 use crate::capture::Time;
 use crate::startup::{Declaration, PolicyError, find, verify};

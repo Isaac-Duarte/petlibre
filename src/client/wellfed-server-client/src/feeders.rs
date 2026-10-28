@@ -1,13 +1,13 @@
 //! Adopted feeders: the list, adoption, status, settings, the panel lock,
 //! the history and the samples.
 
+use reqwest::header;
+use reqwest::{Method, StatusCode};
+use uuid::Uuid;
 use wellfed_api::{
     AdoptFeeder, EventPage, EventQuery, Feeder, FeederDetail, FeederId, Generation, LockRequest,
     SamplePage, SampleQuery, Settings, SettingsPatch,
 };
-use reqwest::header;
-use reqwest::{Method, StatusCode};
-use uuid::Uuid;
 
 use crate::{Client, Error, decode, expect_status, is_problem};
 

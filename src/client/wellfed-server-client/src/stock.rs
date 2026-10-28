@@ -2,9 +2,9 @@
 //! backup's export, an upload or a read from the feeder, and "Restore
 //! stock".
 
-use wellfed_api::{FeederId, Install, StockBackup, StockRestore, StockState};
 use reqwest::header::{self, HeaderValue};
 use reqwest::{Method, Response, StatusCode};
+use wellfed_api::{FeederId, Install, StockBackup, StockRestore, StockState};
 
 use crate::{Client, Error, decode, expect_status};
 

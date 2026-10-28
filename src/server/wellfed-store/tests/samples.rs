@@ -1,12 +1,12 @@
 //! Samples, their numbers, the hourly rollups and raw retention.
 
 use jiff::Timestamp;
+use tempfile::TempDir;
+use uuid::Uuid;
 use wellfed_api::{ClientRole, FeederId, MetricKind, SampleValue};
 use wellfed_store::{
     HourRow, NewFeeder, NewSample, SampleKey, SampleRefresh, SealedKey, Span, Store,
 };
-use tempfile::TempDir;
-use uuid::Uuid;
 
 const HOUR: i64 = 3_600_000;
 

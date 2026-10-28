@@ -1,9 +1,9 @@
+use proptest::prelude::*;
 use wellfed_core::clock::ntp::{
     ANSWER_MS, Bad, DENIED_MS, Exchange, Outcome, PACKET, POLL_MS, RATE_MS, RETRY_MAX_MS,
     RETRY_MIN_MS, answer, request, serve,
 };
 use wellfed_core::clock::wall::{Fix, Origin};
-use proptest::prelude::*;
 
 // 2026-10-22T13:00:00Z.
 const NOON: u64 = 1_792_674_000_000;

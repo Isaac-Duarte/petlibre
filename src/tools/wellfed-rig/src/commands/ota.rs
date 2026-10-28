@@ -1170,8 +1170,8 @@ impl Bench {
         // bring-up firmwares serve no device API, so their UART
         // confirmation is the whole check.
         let described = self.root.join(&staged.review).join("build-manifest.json");
-        let manifest: wellfed_formats::manifest::BuildManifest =
-            wellfed_formats::load(&described).map_err(|error| OtaError::ManifestUnreadable {
+        let manifest: wellfed_formats::manifest::BuildManifest = wellfed_formats::load(&described)
+            .map_err(|error| OtaError::ManifestUnreadable {
                 manifest: self.rel(&described),
                 error,
             })?;

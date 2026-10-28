@@ -451,11 +451,7 @@ fn record_start(
 }
 
 /// Run the command: the suite's on `wellfed-itest`, the rest on the rig.
-fn dispatch(
-    bench: &mut Bench,
-    command: &Command,
-    stock_bin: PathBuf,
-) -> wellfed_itest::Result<u8> {
+fn dispatch(bench: &mut Bench, command: &Command, stock_bin: PathBuf) -> wellfed_itest::Result<u8> {
     let captures = bench.root.join(wellfed_formats::bench::CAPTURES);
     let ran = match command {
         Command::Status { .. } => bench.status_report(),

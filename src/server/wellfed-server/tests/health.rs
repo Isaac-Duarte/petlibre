@@ -1,6 +1,7 @@
 //! Liveness for anyone, readiness for an owner, and the request id every
 //! answer carries.
 
+use uuid::Uuid;
 use wellfed_api::{
     ClientRole, Connection, Credentials, ErrorCode, FeederLink, NewUser, Role, StoreState,
 };
@@ -9,7 +10,6 @@ use wellfed_server_client::reqwest::header::HOST;
 use wellfed_server_client::{Method, StatusCode};
 use wellfed_server_testkit::fixed::FixedClock;
 use wellfed_server_testkit::{TestServer, ada_setup, feeder, local, refused};
-use uuid::Uuid;
 
 const REQUEST_ID: &str = "x-request-id";
 

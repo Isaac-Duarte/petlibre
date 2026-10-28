@@ -7,9 +7,9 @@
 //! failed that did not. A write to a feeder cannot miss its entry: the
 //! journal row that precedes every send brings it.
 
+use tracing::error;
 use wellfed_api::{AuditAction, AuditEntry, AuditPage, PageQuery, User};
 use wellfed_store::{AuditFilter, AuditRecord, AuditRow, NewAudit};
-use tracing::error;
 
 use crate::feeders::journal::view;
 use crate::{Caller, Permission, Result, Service, can, page};

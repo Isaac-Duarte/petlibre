@@ -15,9 +15,9 @@ mod read;
 pub(crate) use read::FeedRow;
 
 use jiff::Timestamp;
-use wellfed_api::{Blocked, EventBody, FeedOutcome, FeedReason, FeederId, Source};
 use sqlx::SqliteConnection;
 use uuid::Uuid;
+use wellfed_api::{Blocked, EventBody, FeedOutcome, FeedReason, FeederId, Source};
 
 use crate::convert::source_columns;
 use crate::{Error, Result, Store};

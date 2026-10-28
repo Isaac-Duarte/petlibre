@@ -14,6 +14,8 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use ed25519_dalek::{Signer, SigningKey};
+use sha2::{Digest, Sha256};
+use tokio::task::LocalSet;
 use wellfed_client::update::{Image, InstallError, Installer, Next, Sent};
 use wellfed_connect::Connection;
 use wellfed_core::ota::install::IDLE_MS;
@@ -26,8 +28,6 @@ use wellfed_feeder_sim::serve::Control;
 use wellfed_model::{Answer, Op, Refusal, UpdatePhase, UpdateRefusal, UpdateStop, UpdateView};
 use wellfed_proto::api::RequestId;
 use wellfed_session::noise::Keypair;
-use sha2::{Digest, Sha256};
-use tokio::task::LocalSet;
 
 const OWNER: [u8; 32] = [0x22; 32];
 const BENCH: [u8; 32] = [0x0b; 32];

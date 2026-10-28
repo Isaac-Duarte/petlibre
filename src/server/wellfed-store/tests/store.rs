@@ -3,6 +3,8 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use jiff::Timestamp;
+use tempfile::TempDir;
+use uuid::Uuid;
 use wellfed_api::{
     Blocked, ClientRole, EventBody, EventKind, FeederId, FeederStatus, Generation, Household,
     Readiness, Role, Settings, Source, TimeFormat, Units, UserId, WifiSource,
@@ -10,8 +12,6 @@ use wellfed_api::{
 use wellfed_store::{
     Change, Error, FeederRow, NewEvent, NewFeeder, NewUser, SealedKey, Store, Synced,
 };
-use tempfile::TempDir;
-use uuid::Uuid;
 
 async fn fresh() -> (TempDir, Store) {
     let dir = tempfile::tempdir().unwrap();

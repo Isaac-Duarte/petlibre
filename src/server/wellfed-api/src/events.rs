@@ -5,9 +5,9 @@
 //! under a new one. Each epoch is its own history; a page reads one.
 
 use jiff::Timestamp;
-use wellfed_model::{Event, EventBody, EventKind};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
+use wellfed_model::{Event, EventBody, EventKind};
 
 /// One event the feeder recorded.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]

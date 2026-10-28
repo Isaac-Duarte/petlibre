@@ -3,13 +3,13 @@ mod common;
 
 use std::time::Duration;
 
-use wellfed_stock::config::Config;
-use wellfed_stock::storage;
 use serde_json::{Value, json};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
 };
+use wellfed_stock::config::Config;
+use wellfed_stock::storage;
 
 fn string(value: &str) -> Vec<u8> {
     let mut bytes = u16::try_from(value.len()).unwrap().to_be_bytes().to_vec();

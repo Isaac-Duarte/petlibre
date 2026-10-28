@@ -17,10 +17,10 @@ use axum::http::HeaderMap;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum_extra::extract::WithRejection;
 use futures_util::{Stream, StreamExt, stream};
-use wellfed_api::{ErrorCode, MetricKind, Problem, StreamEvent, StreamQuery, User};
-use wellfed_service::{Permission, Resume, Stamped, StreamId, can};
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
+use wellfed_api::{ErrorCode, MetricKind, Problem, StreamEvent, StreamQuery, User};
+use wellfed_service::{Permission, Resume, Stamped, StreamId, can};
 
 use super::TAG_FEEDERS;
 use crate::AppState;
@@ -162,8 +162,8 @@ fn encode(event: &StreamEvent) -> Event {
 #[cfg(test)]
 mod tests {
     use jiff::Timestamp;
-    use wellfed_api::{Command, CommandKind, CommandState, FeederId, Role, UserId};
     use uuid::Uuid;
+    use wellfed_api::{Command, CommandKind, CommandState, FeederId, Role, UserId};
 
     use super::*;
 

@@ -12,9 +12,9 @@
 use std::fmt::Display;
 use std::ops::Deref;
 
-use wellfed_model::WifiSource;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use wellfed_model::WifiSource;
 
 /// A `wellfed-stock` status document.
 #[derive(Debug, Clone, Default, Deserialize)]

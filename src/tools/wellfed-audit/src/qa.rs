@@ -11,9 +11,9 @@
 
 use std::path::Path;
 
+use serde::Serialize;
 pub use wellfed_formats::qa::Verdict;
 use wellfed_formats::qa::{Check, Record};
-use serde::Serialize;
 
 use wellfed_formats::require;
 

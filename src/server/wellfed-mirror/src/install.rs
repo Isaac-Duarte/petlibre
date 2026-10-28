@@ -11,6 +11,7 @@
 //! session. Feeds and status reads keep their own lane throughout, so each
 //! waits at most one chunk.
 
+use tokio::time::{Duration, Instant, sleep, timeout_at};
 use wellfed_api::Connection as Link;
 use wellfed_client::install::Bank1Reader;
 use wellfed_client::release::MANIFEST_LEN;
@@ -18,7 +19,6 @@ use wellfed_client::update::Image;
 use wellfed_connect::update::{Opened, Pace, Steps};
 use wellfed_model::{Answer, Op, UpdateView};
 use wellfed_session::hex::Lower;
-use tokio::time::{Duration, Instant, sleep, timeout_at};
 
 use crate::{AskError, Operation, RandomFailed};
 

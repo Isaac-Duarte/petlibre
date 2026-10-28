@@ -3,12 +3,12 @@
 //! every write goes through the journal (`journal.rs`), so a retry under
 //! the same key is answered once and never applied twice.
 
+use serde::Serialize;
 use wellfed_api::{
     CommandKind, CommandOutcome, ErrorCode, FeederDetail, FeederId, FeederRefusal, Generation,
     LockRequest, Settings, SettingsPatch, StatusSnapshot,
 };
 use wellfed_model::{Answer, Op};
-use serde::Serialize;
 
 use crate::feeders::journal::Write;
 use crate::{Caller, Error, IdempotencyKey, InternalError, Invalid, RequestId, Result, Service};

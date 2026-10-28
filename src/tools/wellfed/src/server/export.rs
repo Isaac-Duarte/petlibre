@@ -6,9 +6,9 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use clap::Args;
 use futures_util::TryStreamExt;
+use serde::Serialize;
 use wellfed_server_client::Client;
 use wellfed_server_client::api::ExportFormat;
-use serde::Serialize;
 
 use super::{Output, Settled};
 

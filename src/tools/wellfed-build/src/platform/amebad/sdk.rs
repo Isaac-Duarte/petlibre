@@ -12,10 +12,10 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
+use regex::Regex;
 use wellfed_formats::layout::Layout;
 use wellfed_formats::lock::SdkLock;
 use wellfed_formats::require;
-use regex::Regex;
 
 use super::audit::{hooks, pinmap};
 use super::credentials::wifi_header;

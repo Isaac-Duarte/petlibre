@@ -34,11 +34,11 @@ mod wait;
 
 use std::path::{Path, PathBuf};
 
+pub use wait::{Waited, sleep, wait_child};
 /// The operator's interrupt: `wellfed-bench` makes one and hands it to
 /// every wait, so a sequence stops (with its power-off cleanup) instead of
 /// running on.
 pub use wellfed_formats::bench::Cancel;
-pub use wait::{Waited, sleep, wait_child};
 
 /// Everything a bench sequence stops on. A refusal or stop condition is a
 /// variant of the module that makes it, whose `Display` is what the

@@ -5,6 +5,7 @@
 use std::num::NonZeroU32;
 
 use jiff::{SignedDuration, Timestamp};
+use uuid::Uuid;
 use wellfed_api::{
     ClientRole, FeederId, HourSample, Job, JobOutcome, MetricKind, Resolution, SamplePage,
     SampleQuery, SampleValue,
@@ -13,7 +14,6 @@ use wellfed_server_testkit::fixed::FixedClock;
 use wellfed_server_testkit::{TestService, config};
 use wellfed_service::Service;
 use wellfed_store::{NewFeeder, NewSample, SealedKey, Span, Store};
-use uuid::Uuid;
 
 /// `hours` before the fixed clock's time.
 fn ago(hours: i64) -> Timestamp {

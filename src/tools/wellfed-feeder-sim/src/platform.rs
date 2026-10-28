@@ -25,6 +25,7 @@ use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+use tokio::net::{TcpStream, UdpSocket};
 use wellfed_board_plaf103::storage;
 use wellfed_core::buttons::Gesture;
 use wellfed_core::clock::wall::{
@@ -63,7 +64,6 @@ use wellfed_hal::ota::signers;
 use wellfed_hal::sdk::LOG_TAIL_BYTES;
 use wellfed_proto::api::{self as proto, Capabilities, Counts, FLASH_SECTORS, TASKS_MAX};
 use wellfed_proto::trace::PAGE_MAX;
-use tokio::net::{TcpStream, UdpSocket};
 
 use crate::banks::Banks;
 use crate::flash::{Flash, Region};

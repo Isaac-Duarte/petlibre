@@ -7,14 +7,14 @@ mod support;
 use std::time::Duration;
 
 use jiff::Timestamp;
+use tokio::sync::broadcast::Receiver;
+use tokio::sync::broadcast::error::TryRecvError;
 use wellfed_api::{Connection as Link, EventBody, EventKind, FeederEvent, Source};
 use wellfed_mirror::{AskError, MirrorEvent};
 use wellfed_model::{Answer, Op};
 use wellfed_server_testkit::feeder::{self, Relay};
 use wellfed_server_testkit::{TempStore, WAIT, local, until};
 use wellfed_store::Store;
-use tokio::sync::broadcast::Receiver;
-use tokio::sync::broadcast::error::TryRecvError;
 
 use support::{ID, mirrored, next};
 
@@ -33,12 +33,10 @@ async fn locks(store: &Store, epoch: u32) -> Vec<bool> {
         .await
         .unwrap();
     rows.iter()
-        .filter_map(
-            |row| match wellfed_mirror::stored_event(epoch, row)?.body {
-                EventBody::Lock { locked, .. } => Some(locked),
-                _ => None,
-            },
-        )
+        .filter_map(|row| match wellfed_mirror::stored_event(epoch, row)?.body {
+            EventBody::Lock { locked, .. } => Some(locked),
+            _ => None,
+        })
         .collect()
 }
 

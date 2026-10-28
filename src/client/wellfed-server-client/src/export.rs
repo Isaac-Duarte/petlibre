@@ -2,8 +2,8 @@
 //! server.
 
 use futures_util::{Stream, TryStreamExt};
-use wellfed_api::{ExportFormat, ExportQuery, Imported};
 use reqwest::{Body, Method, StatusCode};
+use wellfed_api::{ExportFormat, ExportQuery, Imported};
 
 use crate::{Client, Error, decode, expect_status};
 

@@ -5,13 +5,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use tempfile::TempDir;
 use wellfed_api::{AdoptFeeder, ClientRole, Connection, EventBody, EventQuery, FeederId};
 use wellfed_service::{
     Backups, Clock, Config, Diagnostics, Discovery, ReleaseKeys, ReleasesConfig, Service,
     StockConfig, StockPins, Timing,
 };
 use wellfed_store::Store;
-use tempfile::TempDir;
 
 use crate::feeder::{self, Running};
 use crate::fixed::{FixedClock, SeededRandom};

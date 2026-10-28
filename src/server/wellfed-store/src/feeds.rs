@@ -3,8 +3,8 @@
 //! that history is read from.
 
 use jiff::Timestamp;
-use wellfed_api::{CommandKind, CommandOutcome, CommandState, FeederId};
 use uuid::Uuid;
+use wellfed_api::{CommandKind, CommandOutcome, CommandState, FeederId};
 
 use crate::commands::Raw;
 use crate::convert::{millis, to_i64};

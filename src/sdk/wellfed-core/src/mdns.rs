@@ -52,7 +52,7 @@ const TTL_LEGACY: u32 = 10;
 const ANNOUNCE_GAP_MS: u32 = 1_000;
 
 /// "wellfed-" and eight hex digits.
-const LABEL: usize = 17;
+const LABEL: usize = 16;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Destination {
@@ -98,7 +98,7 @@ pub struct Responder {
 impl Responder {
     pub fn new(identity: &[u8; 32], port: u16) -> Self {
         let mut label = *b"wellfed-00000000";
-        let _ = hex::encode(&identity[..4], &mut label[9..]);
+        let _ = hex::encode(&identity[..4], &mut label[8..]);
         let mut id = [0; 67];
         id[..3].copy_from_slice(b"id=");
         let _ = hex::encode(identity, &mut id[3..]);

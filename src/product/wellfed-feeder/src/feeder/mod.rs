@@ -47,10 +47,10 @@ use identity::Identity;
 use lights::Lights;
 use lock::LockBox;
 use owner::Owner;
-use wellfed_device_api::mailbox::Lock;
-use wellfed_device_api::{Device, Server};
 use platform::DriverRecord;
 use serve::{FeederDevice, Inputs, Serve};
+use wellfed_device_api::mailbox::Lock;
+use wellfed_device_api::{Device, Server};
 
 /// The feeding owner, as the device API reaches it. Generic rather than
 /// `dyn`, so the calls stay direct for the firmware's stack audit.

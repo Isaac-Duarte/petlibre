@@ -8,8 +8,8 @@
 //! all back.
 
 use jiff::Timestamp;
-use wellfed_formats::export::Row;
 use sqlx::{Sqlite, Transaction};
+use wellfed_formats::export::Row;
 
 use crate::convert::millis;
 use crate::{Result, Store};

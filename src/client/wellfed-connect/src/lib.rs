@@ -36,6 +36,9 @@ use std::collections::VecDeque;
 use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
+use tokio::time::{Instant, timeout, timeout_at};
 use wellfed_client::api::{Invite, Join, JoinStep};
 use wellfed_client::connection::{self, Event, Opened, Recovery as Window, Timing};
 pub use wellfed_client::connection::{Cursor, KEEPALIVE_ID, Resume};
@@ -44,9 +47,6 @@ use wellfed_model::{Answer, Capabilities, ClientRole, Joined, Op, OpenRefusal, P
 use wellfed_proto::api::{PORT, RequestId, SERVICE};
 use wellfed_session::hex::Lower;
 use wellfed_session::noise::Keypair;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
-use tokio::time::{Instant, timeout, timeout_at};
 
 /// mDNS answers on a LAN arrive within a second or two.
 pub const DISCOVERY: Duration = Duration::from_secs(6);

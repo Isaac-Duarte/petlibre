@@ -3,8 +3,8 @@
 
 use std::{fs, process::Command};
 
-use wellfed_stock::config;
 use tempfile::TempDir;
+use wellfed_stock::config;
 
 fn inputs(dir: &TempDir) -> Vec<String> {
     let credentials = dir.path().join("credentials.json");

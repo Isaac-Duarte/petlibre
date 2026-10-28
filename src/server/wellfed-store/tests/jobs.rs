@@ -1,10 +1,10 @@
 //! What the background jobs keep and clear.
 
 use jiff::Timestamp;
-use wellfed_api::{Household, Job, JobOutcome, JobRun, Role, TimeFormat, Units, UserId};
-use wellfed_store::{NewUser, Store};
 use tempfile::TempDir;
 use uuid::Uuid;
+use wellfed_api::{Household, Job, JobOutcome, JobRun, Role, TimeFormat, Units, UserId};
+use wellfed_store::{NewUser, Store};
 
 async fn fresh() -> (TempDir, Store) {
     let dir = tempfile::tempdir().unwrap();

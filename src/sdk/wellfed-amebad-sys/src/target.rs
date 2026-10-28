@@ -1004,11 +1004,7 @@ pub fn spin_once() {
 
 pub fn hs_platform_para() -> u32 {
     // SAFETY: a fixed register in the pinned SDK memory map.
-    unsafe {
-        ptr::read_volatile(reg(
-            k::WELLFED_SYSCTRL_HP + k::WELLFED_REG_HS_PLATFORM_PARA
-        ))
-    }
+    unsafe { ptr::read_volatile(reg(k::WELLFED_SYSCTRL_HP + k::WELLFED_REG_HS_PLATFORM_PARA)) }
 }
 
 pub fn set_hs_platform_para(value: u32) {

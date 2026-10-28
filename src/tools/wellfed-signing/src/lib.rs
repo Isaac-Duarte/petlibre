@@ -36,6 +36,7 @@
 use std::path::Path;
 
 use ed25519_dalek::{Signer, SigningKey};
+use sha2::{Digest, Sha256};
 use wellfed_core::ota::offer::{self, ImageKind as OfferKind, KeyId, Signed};
 use wellfed_core::ota::{self, MARKER, Manifest};
 use wellfed_formats::canonical::sha256;
@@ -50,7 +51,6 @@ use wellfed_image::bank::BANK1;
 use wellfed_image::ota::STOCK_SHA256;
 use wellfed_image::review::frozen;
 use wellfed_image::root::Root;
-use sha2::{Digest, Sha256};
 
 mod error;
 
@@ -319,9 +319,9 @@ fn contains(haystack: &[u8], needle: &[u8]) -> bool {
 mod tests {
     use std::fs;
 
+    use serde_json::json;
     use wellfed_core::ota::SECTOR;
     use wellfed_core::record::Tag;
-    use serde_json::json;
 
     use super::*;
 

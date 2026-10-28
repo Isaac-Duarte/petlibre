@@ -1,13 +1,13 @@
 //! The command journal over HTTP: an entry by its key, the list in pages,
 //! and a key reused for another request refused `422 key_reused`.
 
+use uuid::Uuid;
 use wellfed_api::{
     AdoptFeeder, ClientRole, CommandKind, CommandOutcome, CommandQuery, CommandState, Connection,
     ErrorCode, PREFIX,
 };
 use wellfed_server_client::{Lock, Method, StatusCode};
 use wellfed_server_testkit::{TestServer, ada_setup, feeder, local, refused, refused_for, until};
-use uuid::Uuid;
 
 fn key(n: u128) -> Uuid {
     Uuid::from_u128(0x0192c5d0_2222_7000_8000_000000000000 + n)

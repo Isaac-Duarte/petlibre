@@ -3,9 +3,7 @@
 //! source, and the pool refusing output until the start-up test and its
 //! entropy claim are met.
 
-use wellfed_core::rng::{
-    Drbg, Error, Health, MAX_REQUEST, Pool, RESEED_INTERVAL, STARTUP_SAMPLES,
-};
+use wellfed_core::rng::{Drbg, Error, Health, MAX_REQUEST, Pool, RESEED_INTERVAL, STARTUP_SAMPLES};
 
 fn hex(text: &str) -> Vec<u8> {
     let mut out = vec![0; text.len() / 2];

@@ -2,8 +2,8 @@
 //! settings read from each.
 
 use jiff::Timestamp;
-use wellfed_api::{ClientRole, FeederId, FeederStatus, Settings};
 use uuid::Uuid;
+use wellfed_api::{ClientRole, FeederId, FeederStatus, Settings};
 
 use crate::convert::{cached, from_i64, millis, timestamp};
 use crate::{Error, Result, Store};

@@ -7,6 +7,8 @@ mod common;
 
 use chrono::{DateTime, Duration, Utc};
 use common::Controller;
+use serde_json::json;
+use uuid::Uuid;
 use wellfed_stock::protocol::Channel;
 use wellfed_stock::{
     controller::Rejection,
@@ -17,8 +19,6 @@ use wellfed_stock::{
     },
     protocol::{Message, Reply},
 };
-use serde_json::json;
-use uuid::Uuid;
 
 /// The served build's identity, as its frozen manifest and its device API
 /// name it.

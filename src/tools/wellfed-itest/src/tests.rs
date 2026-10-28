@@ -4,11 +4,11 @@
 use std::path::Path;
 use std::time::Duration;
 
+use serde_json::json;
 use wellfed_model::{
     Counters, Counts, Generation, Memory, NtpServer, OpenRefusal, Refusal, ResetCause, Settings,
     Stats, StatsSection, TimeView, WifiSource,
 };
-use serde_json::json;
 
 use super::log::Log;
 use super::scenarios::ended_for;

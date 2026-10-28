@@ -8,6 +8,7 @@ use std::pin::pin;
 
 use futures_util::TryStreamExt;
 use jiff::SignedDuration;
+use uuid::Uuid;
 use wellfed_api::{
     AdoptFeeder, ClientRole, CommandState, Connection, Credentials, ErrorCode, ExportFormat,
     FeederId, NewFood, NewPet, NewRefill, NewToken, NewUser, NewWeight, Role, SampleValue, Species,
@@ -20,7 +21,6 @@ use wellfed_server_testkit::fixed::FixedClock;
 use wellfed_server_testkit::{TestServer, ada_login, ada_setup, local, refused, until};
 use wellfed_service::{SystemRandom, reset_owner};
 use wellfed_store::NewSample;
-use uuid::Uuid;
 
 /// A server with rows in most tables: two accounts and a token, a feeder
 /// that fed once and was locked, a pet with a weight on that feeder, and a

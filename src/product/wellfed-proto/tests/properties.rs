@@ -5,10 +5,10 @@
 //! The byte fixtures (`fixtures.rs`) pin the encoding itself; these
 //! properties cover the values between them.
 
+use proptest::prelude::*;
 use wellfed_proto::api::*;
 use wellfed_proto::setup::{self, Answer, Reply, Request};
 use wellfed_proto::{Error, decode, decode_padded, encode, trace};
-use proptest::prelude::*;
 
 /// A string for a borrowed field. Tests only: each case leaks a few bytes
 /// so a generated value can hold `&'static` fields.

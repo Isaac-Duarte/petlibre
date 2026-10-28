@@ -7,8 +7,8 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
-use wellfed_formats::canonical::sha256;
 use serde_json::{Value, json};
+use wellfed_formats::canonical::sha256;
 
 use crate::ota::IMAGE_MAGIC;
 

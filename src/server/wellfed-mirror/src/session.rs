@@ -22,11 +22,11 @@
 use std::time::Duration;
 
 use jiff::tz::TimeZone;
+use tokio::time::Instant;
+use tracing::{debug, info, warn};
 use wellfed_api::Connection as Link;
 use wellfed_connect::{Connection, Cursor, Received, Resume};
 use wellfed_model::{Answer, Op, Refusal, TimeChanges};
-use tokio::time::Instant;
-use tracing::{debug, info, warn};
 
 use crate::RandomFailed;
 use crate::lanes::{Lane, Lanes};

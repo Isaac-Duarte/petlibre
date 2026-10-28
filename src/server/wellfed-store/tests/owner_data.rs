@@ -2,13 +2,13 @@
 //! SQLite.
 
 use jiff::Timestamp;
+use tempfile::TempDir;
+use uuid::Uuid;
 use wellfed_api::{
     ClientRole, FeederId, Food, FoodId, Pet, PetId, PetLink, Refill, RefillId, Species, UserId,
     Weight, WeightId,
 };
 use wellfed_store::{Error, FoodSet, NewFeeder, SealedKey, Store, WeightCursor};
-use tempfile::TempDir;
-use uuid::Uuid;
 
 fn at(ms: i64) -> Timestamp {
     Timestamp::from_millisecond(ms).unwrap()

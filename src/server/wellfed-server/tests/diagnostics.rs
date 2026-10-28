@@ -5,6 +5,7 @@
 
 use std::time::Duration;
 
+use uuid::Uuid;
 use wellfed_api::{
     AdoptFeeder, ClientRole, Connection, Credentials, ErrorCode, FeederId, FeederRefusal, LogEvent,
     NewUser, Role, StatsSection, TraceQuery, TraceRecord,
@@ -13,7 +14,6 @@ use wellfed_server_client::{Client, StatusCode};
 use wellfed_server_testkit::feeder::{self, Flash, Running};
 use wellfed_server_testkit::{TestServer, WAIT, ada_setup, config, local, refused, until};
 use wellfed_service::Diagnostics;
-use uuid::Uuid;
 
 /// The test server, reading traces and statistics as a real one does.
 async fn server() -> TestServer {

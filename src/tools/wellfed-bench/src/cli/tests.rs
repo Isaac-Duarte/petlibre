@@ -77,14 +77,7 @@ fn itest_lists_without_a_name_and_takes_its_scenarios() {
 
     for argv in [
         &["wellfed-bench", "itest"][..],
-        &[
-            "wellfed-bench",
-            "itest",
-            "run1",
-            "--build",
-            "--review",
-            "r",
-        ],
+        &["wellfed-bench", "itest", "run1", "--build", "--review", "r"],
     ] {
         assert!(Cli::try_parse_from(argv).is_err(), "{argv:?}");
     }

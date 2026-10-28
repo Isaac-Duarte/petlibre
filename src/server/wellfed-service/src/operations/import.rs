@@ -16,9 +16,9 @@
 //! leaves the server as fresh as it was.
 
 use futures_util::{Stream, StreamExt};
+use tracing::info;
 use wellfed_api::{Imported, ImportedTable};
 use wellfed_formats::export::{Item, Reader};
-use tracing::info;
 
 use crate::operations::export::ExportError;
 use crate::{Result, Service};

@@ -17,12 +17,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use jiff::Timestamp;
-use wellfed_api::{Release, ReleaseSigner};
-use wellfed_client::release::{self, KeyId, Signer};
-use wellfed_model::Hex;
 use serde::de::IntoDeserializer as _;
 use serde::de::value::StrDeserializer;
 use serde::{Deserialize, Serialize};
+use wellfed_api::{Release, ReleaseSigner};
+use wellfed_client::release::{self, KeyId, Signer};
+use wellfed_model::Hex;
 
 use crate::{Added, Error, Keys};
 

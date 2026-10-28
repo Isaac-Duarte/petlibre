@@ -1,6 +1,7 @@
 //! The server end to end: real HTTP in front, and behind it the service
 //! speaking the device API (Noise over TCP) to the simulated feeder.
 
+use uuid::Uuid;
 use wellfed_api::{
     AdoptFeeder, ClientRole, Connection, EventBody, EventKind, EventQuery, Settings, SettingsPatch,
     Source, StreamEvent, StreamQuery,
@@ -10,7 +11,6 @@ use wellfed_server_client::{
     Error, Lock, Method, StatusCode, Update, Updates, decode, expect_status,
 };
 use wellfed_server_testkit::{TestServer, WAIT, ada_setup, feeder, local, until};
-use uuid::Uuid;
 
 /// The next update, failing the test when the stream ends or breaks.
 async fn next(updates: &mut Updates) -> Update {

@@ -2299,725 +2299,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
-name = "wellfed"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bluer",
- "chrono",
- "clap",
- "futures-util",
- "jiff",
- "wellfed-client",
- "wellfed-connect",
- "wellfed-formats",
- "wellfed-model",
- "wellfed-proto",
- "wellfed-server-client",
- "wellfed-server-testkit",
- "wellfed-session",
- "wellfed-signing",
- "wellfed-stock-api",
- "rustix",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror",
- "tokio",
- "uuid",
-]
-
-[[package]]
-name = "wellfed-amebad-sys"
-version = "0.1.0"
-dependencies = [
- "bindgen 0.72.1",
- "cortex-m",
- "wellfed-board-plaf103",
- "wellfed-core",
-]
-
-[[package]]
-name = "wellfed-api"
-version = "0.1.0"
-dependencies = [
- "jiff",
- "wellfed-model",
- "serde",
- "serde_json",
- "utoipa",
- "uuid",
-]
-
-[[package]]
-name = "wellfed-audit"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "clap",
- "wellfed-formats",
- "wellfed-image",
- "regex",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror",
-]
-
-[[package]]
-name = "wellfed-bench"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "ctrlc",
- "wellfed-dashboard",
- "wellfed-formats",
- "wellfed-itest",
- "wellfed-relay",
- "wellfed-rig",
- "rustix",
- "tempfile",
-]
-
-[[package]]
-name = "wellfed-board-plaf103"
-version = "0.1.0"
-
-[[package]]
-name = "wellfed-build"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "clap",
- "wellfed-core",
- "wellfed-emu",
- "wellfed-formats",
- "wellfed-image",
- "wellfed-signing",
- "regex",
- "rustix",
- "serde",
- "serde_json",
- "sha2 0.11.1",
- "tempfile",
- "thiserror",
- "toml",
-]
-
-[[package]]
-name = "wellfed-client"
-version = "0.1.0"
-dependencies = [
- "ed25519-dalek",
- "jiff",
- "jiff-tzdb",
- "wellfed-core",
- "wellfed-device-api",
- "wellfed-feeder",
- "wellfed-model",
- "wellfed-proto",
- "wellfed-session",
- "wellfed-testkit",
- "sha2 0.10.9",
- "thiserror",
-]
-
-[[package]]
-name = "wellfed-connect"
-version = "0.1.0"
-dependencies = [
- "mdns-sd",
- "wellfed-client",
- "wellfed-model",
- "wellfed-proto",
- "wellfed-session",
- "thiserror",
- "tokio",
-]
-
-[[package]]
-name = "wellfed-core"
-version = "0.1.0"
-dependencies = [
- "ed25519-dalek",
- "wellfed-session",
- "wellfed-testkit",
- "proptest",
- "sha2 0.10.9",
- "simple-dns",
-]
-
-[[package]]
-name = "wellfed-dashboard"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "chrono",
- "clap",
- "ctrlc",
- "futures-util",
- "wellfed-core",
- "wellfed-formats",
- "wellfed-stock-api",
- "rust-embed",
- "rustix",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror",
- "tokio",
- "tower",
- "ts-rs",
-]
-
-[[package]]
-name = "wellfed-device-api"
-version = "0.1.0"
-dependencies = [
- "wellfed-core",
- "wellfed-proto",
- "wellfed-session",
- "proptest",
- "serde",
-]
-
-[[package]]
-name = "wellfed-emu"
-version = "0.1.0"
-dependencies = [
- "wellfed-formats",
- "thiserror",
- "unicorn-engine",
-]
-
-[[package]]
-name = "wellfed-feeder"
-version = "0.1.0"
-dependencies = [
- "wellfed-core",
- "wellfed-device-api",
- "wellfed-proto",
- "wellfed-session",
- "wellfed-testkit",
- "thiserror",
-]
-
-[[package]]
-name = "wellfed-feeder-runtime"
-version = "0.1.0"
-dependencies = [
- "wellfed-core",
- "wellfed-device-api",
- "wellfed-feeder",
- "wellfed-hal",
- "wellfed-proto",
- "wellfed-sdk",
-]
-
-[[package]]
-name = "wellfed-feeder-sim"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "ed25519-dalek",
- "wellfed-amebad-sys",
- "wellfed-board-plaf103",
- "wellfed-client",
- "wellfed-connect",
- "wellfed-core",
- "wellfed-device-api",
- "wellfed-feeder",
- "wellfed-feeder-sim",
- "wellfed-formats",
- "wellfed-hal",
- "wellfed-model",
- "wellfed-proto",
- "wellfed-session",
- "wellfed-sim",
- "sha2 0.10.9",
- "socket2",
- "tempfile",
- "thiserror",
- "tokio",
-]
-
-[[package]]
-name = "wellfed-flash"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "clap",
- "ctrlc",
- "wellfed-emu",
- "wellfed-formats",
- "wellfed-image",
- "serde",
- "serde_json",
- "serialport",
- "sha2 0.11.1",
- "tempfile",
- "thiserror",
- "uuid",
-]
-
-[[package]]
-name = "wellfed-formats"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "clap",
- "wellfed-session",
- "serde",
- "serde_json",
- "sha2 0.11.1",
- "tempfile",
- "thiserror",
- "ts-rs",
- "uuid",
-]
-
-[[package]]
-name = "wellfed-fw-blink"
-version = "0.1.0"
-dependencies = [
- "wellfed-feeder-runtime",
- "wellfed-sdk",
-]
-
-[[package]]
-name = "wellfed-fw-bringup"
-version = "0.1.0"
-dependencies = [
- "wellfed-feeder-runtime",
- "wellfed-probes",
- "wellfed-sdk",
-]
-
-[[package]]
-name = "wellfed-fw-feeder"
-version = "0.1.0"
-dependencies = [
- "wellfed-client",
- "wellfed-core",
- "wellfed-device-api",
- "wellfed-feeder",
- "wellfed-feeder-runtime",
- "wellfed-model",
- "wellfed-proto",
- "wellfed-sdk",
- "wellfed-session",
- "wellfed-sim",
-]
-
-[[package]]
-name = "wellfed-fw-qa"
-version = "0.1.0"
-dependencies = [
- "wellfed-core",
- "wellfed-feeder-runtime",
- "wellfed-probes",
- "wellfed-sdk",
-]
-
-[[package]]
-name = "wellfed-hal"
-version = "0.1.0"
-dependencies = [
- "ed25519-dalek",
- "wellfed-amebad-sys",
- "wellfed-board-plaf103",
- "wellfed-core",
- "wellfed-hal-common",
- "wellfed-session",
- "wellfed-testkit",
- "sha2 0.10.9",
-]
-
-[[package]]
-name = "wellfed-hal-common"
-version = "0.1.0"
-dependencies = [
- "cortex-m",
- "wellfed-amebad-sys",
- "wellfed-board-plaf103",
- "wellfed-core",
- "wellfed-session",
-]
-
-[[package]]
-name = "wellfed-image"
-version = "0.1.0"
-dependencies = [
- "wellfed-core",
- "wellfed-formats",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror",
-]
-
-[[package]]
-name = "wellfed-itest"
-version = "0.1.0"
-dependencies = [
- "clap",
- "wellfed-core",
- "wellfed-formats",
- "wellfed-model",
- "wellfed-relay",
- "wellfed-rig",
- "wellfed-stock-api",
- "rustix",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror",
- "uuid",
-]
-
-[[package]]
-name = "wellfed-mirror"
-version = "0.1.0"
-dependencies = [
- "getrandom 0.3.4",
- "jiff",
- "jiff-tzdb",
- "wellfed-api",
- "wellfed-client",
- "wellfed-connect",
- "wellfed-model",
- "wellfed-proto",
- "wellfed-server-testkit",
- "wellfed-session",
- "wellfed-store",
- "thiserror",
- "tokio",
- "tokio-util",
- "tracing",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
-name = "wellfed-model"
-version = "0.1.0"
-dependencies = [
- "jiff",
- "wellfed-proto",
- "wellfed-session",
- "serde",
- "serde_json",
- "thiserror",
- "utoipa",
-]
-
-[[package]]
-name = "wellfed-probes"
-version = "0.1.0"
-dependencies = [
- "wellfed-core",
- "wellfed-hal",
- "wellfed-sdk",
-]
-
-[[package]]
-name = "wellfed-proto"
-version = "0.1.0"
-dependencies = [
- "wellfed-session",
- "postcard",
- "proptest",
- "serde",
- "thiserror",
-]
-
-[[package]]
-name = "wellfed-relay"
-version = "0.1.0"
-dependencies = [
- "serialport",
- "thiserror",
-]
-
-[[package]]
-name = "wellfed-releases"
-version = "0.1.0"
-dependencies = [
- "ed25519-dalek",
- "jiff",
- "wellfed-api",
- "wellfed-client",
- "wellfed-core",
- "wellfed-model",
- "reqwest",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "tempfile",
- "thiserror",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "wellfed-rig"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "ed25519-dalek",
- "jiff",
- "mdns-sd",
- "wellfed-build",
- "wellfed-client",
- "wellfed-core",
- "wellfed-feeder-sim",
- "wellfed-formats",
- "wellfed-image",
- "wellfed-model",
- "wellfed-proto",
- "wellfed-relay",
- "wellfed-session",
- "wellfed-signing",
- "wellfed-stock-api",
- "serde",
- "serde_json",
- "serialport",
- "sha2 0.10.9",
- "tempfile",
- "thiserror",
- "tokio",
- "uuid",
-]
-
-[[package]]
-name = "wellfed-sdk"
-version = "0.1.0"
-dependencies = [
- "wellfed-core",
- "wellfed-hal",
- "wellfed-sdk-macros",
- "wellfed-session",
-]
-
-[[package]]
-name = "wellfed-sdk-macros"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
-name = "wellfed-server"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "axum-extra",
- "clap",
- "ed25519-dalek",
- "futures-util",
- "jiff",
- "wellfed-api",
- "wellfed-formats",
- "wellfed-model",
- "wellfed-server-client",
- "wellfed-server-testkit",
- "wellfed-service",
- "wellfed-store",
- "serde",
- "serde_json",
- "serde_path_to_error",
- "tempfile",
- "thiserror",
- "tokio",
- "tokio-stream",
- "tokio-util",
- "toml",
- "tower-http",
- "tracing",
- "tracing-subscriber",
- "utoipa",
- "utoipa-axum",
- "uuid",
-]
-
-[[package]]
-name = "wellfed-server-client"
-version = "0.1.0"
-dependencies = [
- "futures-util",
- "wellfed-api",
- "reqwest",
- "serde",
- "serde_json",
- "thiserror",
- "uuid",
-]
-
-[[package]]
-name = "wellfed-server-testkit"
-version = "0.1.0"
-dependencies = [
- "axum",
- "ed25519-dalek",
- "jiff",
- "wellfed-api",
- "wellfed-client",
- "wellfed-connect",
- "wellfed-core",
- "wellfed-feeder-sim",
- "wellfed-model",
- "wellfed-proto",
- "wellfed-server",
- "wellfed-server-client",
- "wellfed-service",
- "wellfed-session",
- "wellfed-store",
- "sha2 0.10.9",
- "tempfile",
- "tokio",
- "tokio-util",
- "uuid",
-]
-
-[[package]]
-name = "wellfed-service"
-version = "0.1.0"
-dependencies = [
- "argon2",
- "chacha20poly1305",
- "futures-util",
- "jiff",
- "wellfed-api",
- "wellfed-formats",
- "wellfed-mirror",
- "wellfed-model",
- "wellfed-releases",
- "wellfed-server-testkit",
- "wellfed-store",
- "serde",
- "serde_json",
- "sha2 0.11.1",
- "thiserror",
- "tokio",
- "tokio-stream",
- "tokio-util",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "wellfed-session"
-version = "0.1.0"
-dependencies = [
- "chacha20poly1305",
- "proptest",
- "sha2 0.10.9",
- "snow",
- "x25519-dalek",
-]
-
-[[package]]
-name = "wellfed-signing"
-version = "0.1.0"
-dependencies = [
- "ed25519-dalek",
- "wellfed-core",
- "wellfed-formats",
- "wellfed-image",
- "serde_json",
- "sha2 0.11.1",
- "tempfile",
- "thiserror",
-]
-
-[[package]]
-name = "wellfed-sim"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "wellfed-core",
- "wellfed-formats",
- "wellfed-hal",
- "wellfed-testkit",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror",
-]
-
-[[package]]
-name = "wellfed-stock"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "chrono",
- "chrono-tz",
- "clap",
- "hyper",
- "hyper-util",
- "mqtt5",
- "wellfed-client",
- "wellfed-core",
- "wellfed-formats",
- "reqwest",
- "rumqttc",
- "serde",
- "serde_json",
- "subtle",
- "tempfile",
- "thiserror",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
-name = "wellfed-stock-api"
-version = "0.1.0"
-dependencies = [
- "wellfed-formats",
- "serde",
- "serde_json",
- "thiserror",
-]
-
-[[package]]
-name = "wellfed-store"
-version = "0.1.0"
-dependencies = [
- "futures-util",
- "jiff",
- "wellfed-api",
- "wellfed-formats",
- "proptest",
- "serde",
- "serde_json",
- "sqlx",
- "tempfile",
- "thiserror",
- "tokio",
- "uuid",
-]
-
-[[package]]
-name = "wellfed-testkit"
-version = "0.1.0"
-dependencies = [
- "wellfed-core",
-]
-
-[[package]]
 name = "phf"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4871,6 +4152,725 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f5f280bbb2b287bc8e7de7e3852945a0ff50d1bbcb5ed42b6c7a568c546df171"
 dependencies = [
  "rustls-pki-types",
+]
+
+[[package]]
+name = "wellfed"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bluer",
+ "chrono",
+ "clap",
+ "futures-util",
+ "jiff",
+ "rustix",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "uuid",
+ "wellfed-client",
+ "wellfed-connect",
+ "wellfed-formats",
+ "wellfed-model",
+ "wellfed-proto",
+ "wellfed-server-client",
+ "wellfed-server-testkit",
+ "wellfed-session",
+ "wellfed-signing",
+ "wellfed-stock-api",
+]
+
+[[package]]
+name = "wellfed-amebad-sys"
+version = "0.1.0"
+dependencies = [
+ "bindgen 0.72.1",
+ "cortex-m",
+ "wellfed-board-plaf103",
+ "wellfed-core",
+]
+
+[[package]]
+name = "wellfed-api"
+version = "0.1.0"
+dependencies = [
+ "jiff",
+ "serde",
+ "serde_json",
+ "utoipa",
+ "uuid",
+ "wellfed-model",
+]
+
+[[package]]
+name = "wellfed-audit"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap",
+ "regex",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "wellfed-formats",
+ "wellfed-image",
+]
+
+[[package]]
+name = "wellfed-bench"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "ctrlc",
+ "rustix",
+ "tempfile",
+ "wellfed-dashboard",
+ "wellfed-formats",
+ "wellfed-itest",
+ "wellfed-relay",
+ "wellfed-rig",
+]
+
+[[package]]
+name = "wellfed-board-plaf103"
+version = "0.1.0"
+
+[[package]]
+name = "wellfed-build"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "clap",
+ "regex",
+ "rustix",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "tempfile",
+ "thiserror",
+ "toml",
+ "wellfed-core",
+ "wellfed-emu",
+ "wellfed-formats",
+ "wellfed-image",
+ "wellfed-signing",
+]
+
+[[package]]
+name = "wellfed-client"
+version = "0.1.0"
+dependencies = [
+ "ed25519-dalek",
+ "jiff",
+ "jiff-tzdb",
+ "sha2 0.10.9",
+ "thiserror",
+ "wellfed-core",
+ "wellfed-device-api",
+ "wellfed-feeder",
+ "wellfed-model",
+ "wellfed-proto",
+ "wellfed-session",
+ "wellfed-testkit",
+]
+
+[[package]]
+name = "wellfed-connect"
+version = "0.1.0"
+dependencies = [
+ "mdns-sd",
+ "thiserror",
+ "tokio",
+ "wellfed-client",
+ "wellfed-model",
+ "wellfed-proto",
+ "wellfed-session",
+]
+
+[[package]]
+name = "wellfed-core"
+version = "0.1.0"
+dependencies = [
+ "ed25519-dalek",
+ "proptest",
+ "sha2 0.10.9",
+ "simple-dns",
+ "wellfed-session",
+ "wellfed-testkit",
+]
+
+[[package]]
+name = "wellfed-dashboard"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "chrono",
+ "clap",
+ "ctrlc",
+ "futures-util",
+ "rust-embed",
+ "rustix",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tower",
+ "ts-rs",
+ "wellfed-core",
+ "wellfed-formats",
+ "wellfed-stock-api",
+]
+
+[[package]]
+name = "wellfed-device-api"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "serde",
+ "wellfed-core",
+ "wellfed-proto",
+ "wellfed-session",
+]
+
+[[package]]
+name = "wellfed-emu"
+version = "0.1.0"
+dependencies = [
+ "thiserror",
+ "unicorn-engine",
+ "wellfed-formats",
+]
+
+[[package]]
+name = "wellfed-feeder"
+version = "0.1.0"
+dependencies = [
+ "thiserror",
+ "wellfed-core",
+ "wellfed-device-api",
+ "wellfed-proto",
+ "wellfed-session",
+ "wellfed-testkit",
+]
+
+[[package]]
+name = "wellfed-feeder-runtime"
+version = "0.1.0"
+dependencies = [
+ "wellfed-core",
+ "wellfed-device-api",
+ "wellfed-feeder",
+ "wellfed-hal",
+ "wellfed-proto",
+ "wellfed-sdk",
+]
+
+[[package]]
+name = "wellfed-feeder-sim"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "ed25519-dalek",
+ "sha2 0.10.9",
+ "socket2",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "wellfed-amebad-sys",
+ "wellfed-board-plaf103",
+ "wellfed-client",
+ "wellfed-connect",
+ "wellfed-core",
+ "wellfed-device-api",
+ "wellfed-feeder",
+ "wellfed-feeder-sim",
+ "wellfed-formats",
+ "wellfed-hal",
+ "wellfed-model",
+ "wellfed-proto",
+ "wellfed-session",
+ "wellfed-sim",
+]
+
+[[package]]
+name = "wellfed-flash"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "clap",
+ "ctrlc",
+ "serde",
+ "serde_json",
+ "serialport",
+ "sha2 0.11.1",
+ "tempfile",
+ "thiserror",
+ "uuid",
+ "wellfed-emu",
+ "wellfed-formats",
+ "wellfed-image",
+]
+
+[[package]]
+name = "wellfed-formats"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "clap",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "tempfile",
+ "thiserror",
+ "ts-rs",
+ "uuid",
+ "wellfed-session",
+]
+
+[[package]]
+name = "wellfed-fw-blink"
+version = "0.1.0"
+dependencies = [
+ "wellfed-feeder-runtime",
+ "wellfed-sdk",
+]
+
+[[package]]
+name = "wellfed-fw-bringup"
+version = "0.1.0"
+dependencies = [
+ "wellfed-feeder-runtime",
+ "wellfed-probes",
+ "wellfed-sdk",
+]
+
+[[package]]
+name = "wellfed-fw-feeder"
+version = "0.1.0"
+dependencies = [
+ "wellfed-client",
+ "wellfed-core",
+ "wellfed-device-api",
+ "wellfed-feeder",
+ "wellfed-feeder-runtime",
+ "wellfed-model",
+ "wellfed-proto",
+ "wellfed-sdk",
+ "wellfed-session",
+ "wellfed-sim",
+]
+
+[[package]]
+name = "wellfed-fw-qa"
+version = "0.1.0"
+dependencies = [
+ "wellfed-core",
+ "wellfed-feeder-runtime",
+ "wellfed-probes",
+ "wellfed-sdk",
+]
+
+[[package]]
+name = "wellfed-hal"
+version = "0.1.0"
+dependencies = [
+ "ed25519-dalek",
+ "sha2 0.10.9",
+ "wellfed-amebad-sys",
+ "wellfed-board-plaf103",
+ "wellfed-core",
+ "wellfed-hal-common",
+ "wellfed-session",
+ "wellfed-testkit",
+]
+
+[[package]]
+name = "wellfed-hal-common"
+version = "0.1.0"
+dependencies = [
+ "cortex-m",
+ "wellfed-amebad-sys",
+ "wellfed-board-plaf103",
+ "wellfed-core",
+ "wellfed-session",
+]
+
+[[package]]
+name = "wellfed-image"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "wellfed-core",
+ "wellfed-formats",
+]
+
+[[package]]
+name = "wellfed-itest"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "rustix",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "uuid",
+ "wellfed-core",
+ "wellfed-formats",
+ "wellfed-model",
+ "wellfed-relay",
+ "wellfed-rig",
+ "wellfed-stock-api",
+]
+
+[[package]]
+name = "wellfed-mirror"
+version = "0.1.0"
+dependencies = [
+ "getrandom 0.3.4",
+ "jiff",
+ "jiff-tzdb",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "wellfed-api",
+ "wellfed-client",
+ "wellfed-connect",
+ "wellfed-model",
+ "wellfed-proto",
+ "wellfed-server-testkit",
+ "wellfed-session",
+ "wellfed-store",
+]
+
+[[package]]
+name = "wellfed-model"
+version = "0.1.0"
+dependencies = [
+ "jiff",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "utoipa",
+ "wellfed-proto",
+ "wellfed-session",
+]
+
+[[package]]
+name = "wellfed-probes"
+version = "0.1.0"
+dependencies = [
+ "wellfed-core",
+ "wellfed-hal",
+ "wellfed-sdk",
+]
+
+[[package]]
+name = "wellfed-proto"
+version = "0.1.0"
+dependencies = [
+ "postcard",
+ "proptest",
+ "serde",
+ "thiserror",
+ "wellfed-session",
+]
+
+[[package]]
+name = "wellfed-relay"
+version = "0.1.0"
+dependencies = [
+ "serialport",
+ "thiserror",
+]
+
+[[package]]
+name = "wellfed-releases"
+version = "0.1.0"
+dependencies = [
+ "ed25519-dalek",
+ "jiff",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "wellfed-api",
+ "wellfed-client",
+ "wellfed-core",
+ "wellfed-model",
+]
+
+[[package]]
+name = "wellfed-rig"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "ed25519-dalek",
+ "jiff",
+ "mdns-sd",
+ "serde",
+ "serde_json",
+ "serialport",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "uuid",
+ "wellfed-build",
+ "wellfed-client",
+ "wellfed-core",
+ "wellfed-feeder-sim",
+ "wellfed-formats",
+ "wellfed-image",
+ "wellfed-model",
+ "wellfed-proto",
+ "wellfed-relay",
+ "wellfed-session",
+ "wellfed-signing",
+ "wellfed-stock-api",
+]
+
+[[package]]
+name = "wellfed-sdk"
+version = "0.1.0"
+dependencies = [
+ "wellfed-core",
+ "wellfed-hal",
+ "wellfed-sdk-macros",
+ "wellfed-session",
+]
+
+[[package]]
+name = "wellfed-sdk-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "wellfed-server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "axum-extra",
+ "clap",
+ "ed25519-dalek",
+ "futures-util",
+ "jiff",
+ "serde",
+ "serde_json",
+ "serde_path_to_error",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "toml",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+ "utoipa",
+ "utoipa-axum",
+ "uuid",
+ "wellfed-api",
+ "wellfed-formats",
+ "wellfed-model",
+ "wellfed-server-client",
+ "wellfed-server-testkit",
+ "wellfed-service",
+ "wellfed-store",
+]
+
+[[package]]
+name = "wellfed-server-client"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "uuid",
+ "wellfed-api",
+]
+
+[[package]]
+name = "wellfed-server-testkit"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "ed25519-dalek",
+ "jiff",
+ "sha2 0.10.9",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "uuid",
+ "wellfed-api",
+ "wellfed-client",
+ "wellfed-connect",
+ "wellfed-core",
+ "wellfed-feeder-sim",
+ "wellfed-model",
+ "wellfed-proto",
+ "wellfed-server",
+ "wellfed-server-client",
+ "wellfed-service",
+ "wellfed-session",
+ "wellfed-store",
+]
+
+[[package]]
+name = "wellfed-service"
+version = "0.1.0"
+dependencies = [
+ "argon2",
+ "chacha20poly1305",
+ "futures-util",
+ "jiff",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "thiserror",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tracing",
+ "uuid",
+ "wellfed-api",
+ "wellfed-formats",
+ "wellfed-mirror",
+ "wellfed-model",
+ "wellfed-releases",
+ "wellfed-server-testkit",
+ "wellfed-store",
+]
+
+[[package]]
+name = "wellfed-session"
+version = "0.1.0"
+dependencies = [
+ "chacha20poly1305",
+ "proptest",
+ "sha2 0.10.9",
+ "snow",
+ "x25519-dalek",
+]
+
+[[package]]
+name = "wellfed-signing"
+version = "0.1.0"
+dependencies = [
+ "ed25519-dalek",
+ "serde_json",
+ "sha2 0.11.1",
+ "tempfile",
+ "thiserror",
+ "wellfed-core",
+ "wellfed-formats",
+ "wellfed-image",
+]
+
+[[package]]
+name = "wellfed-sim"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "wellfed-core",
+ "wellfed-formats",
+ "wellfed-hal",
+ "wellfed-testkit",
+]
+
+[[package]]
+name = "wellfed-stock"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "chrono",
+ "chrono-tz",
+ "clap",
+ "hyper",
+ "hyper-util",
+ "mqtt5",
+ "reqwest",
+ "rumqttc",
+ "serde",
+ "serde_json",
+ "subtle",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "wellfed-client",
+ "wellfed-core",
+ "wellfed-formats",
+]
+
+[[package]]
+name = "wellfed-stock-api"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
+ "wellfed-formats",
+]
+
+[[package]]
+name = "wellfed-store"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "jiff",
+ "proptest",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "uuid",
+ "wellfed-api",
+ "wellfed-formats",
+]
+
+[[package]]
+name = "wellfed-testkit"
+version = "0.1.0"
+dependencies = [
+ "wellfed-core",
 ]
 
 [[package]]

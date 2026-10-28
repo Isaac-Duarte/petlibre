@@ -5,6 +5,7 @@ use std::future::Future;
 use std::rc::Rc;
 use std::time::Duration;
 
+use tokio::task::LocalSet;
 use wellfed_client::api::Invite;
 use wellfed_connect::{Connection, Error as ConnectError, join};
 use wellfed_core::clock::ntp;
@@ -22,7 +23,6 @@ use wellfed_model::{
 };
 use wellfed_proto::api::RequestId;
 use wellfed_session::noise::Keypair;
-use tokio::task::LocalSet;
 
 const OWNER: [u8; 32] = [0x21; 32];
 const MEMBER: [u8; 32] = [0x31; 32];
@@ -835,10 +835,10 @@ fn a_session_polled_with_dropped_next_futures_stays_alive() {
 /// exchange over the device API, and the operator keys in its code.
 #[test]
 fn the_recovery_window_admits_a_new_owner_who_proves_the_code() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use wellfed_client::setup::{Ask, Deframer, Session, Step, frame, panel_position};
     use wellfed_model::setup::Reply;
     use wellfed_session::setup_code::Code;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     const STRANGER: [u8; 32] = [0x41; 32];
 

@@ -12,9 +12,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::LazyLock;
 
+use regex::Regex;
 use wellfed_formats::manifest::RustCompiler;
 use wellfed_formats::require;
-use regex::Regex;
 
 use crate::platform::TARGETS;
 use crate::{Repo, Result, text, which};

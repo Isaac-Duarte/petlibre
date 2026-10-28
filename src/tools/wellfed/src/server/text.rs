@@ -4,11 +4,11 @@
 
 use std::fmt::Write as _;
 
+use serde::Serialize;
 use wellfed_server_client::api::{
     Command, CommandOutcome, Feeder, FeederDetail, FeederEvent, Gap, Install, InstallTarget,
     Release, Settings, StockBackup, StockState, Token, User,
 };
-use serde::Serialize;
 
 /// A value as the API spells it: a bare word for an enum's name, its JSON
 /// otherwise.

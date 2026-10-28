@@ -11,8 +11,8 @@ use std::fmt;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
-use wellfed_api::StreamEvent;
 use tokio::sync::broadcast;
+use wellfed_api::StreamEvent;
 
 /// How many recent updates a reconnecting client can catch up on, and how
 /// far a slow subscriber may fall behind before it must resync.

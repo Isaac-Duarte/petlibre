@@ -10,9 +10,9 @@ mod common;
 use std::{path::Path, time::Duration};
 
 use chrono::Utc;
-use wellfed_stock::{config, enroll::Enrollment};
 use rumqttc::{AsyncClient, Event, EventLoop, MqttOptions, Packet, QoS};
 use serde_json::json;
+use wellfed_stock::{config, enroll::Enrollment};
 
 /// A stock-shaped identity no file mentions.
 const DEVICE: &str = "AF_FRESH_FEEDER";

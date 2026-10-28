@@ -14,8 +14,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
-use wellfed_formats::canonical::sha256;
 use serde::Deserialize;
+use wellfed_formats::canonical::sha256;
 
 use crate::device::{Answer, Ask, Device, DeviceError, DeviceStatus, Fault};
 use crate::{Cancel, Error, Result, Waited, wait_child};

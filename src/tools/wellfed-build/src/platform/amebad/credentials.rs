@@ -5,9 +5,9 @@
 //! input). Values are octal-escaped C strings, so no SSID or password can
 //! break out of its literal.
 
-use wellfed_formats::credentials::WifiCredential;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
+use wellfed_formats::credentials::WifiCredential;
 
 use wellfed_formats::require;
 

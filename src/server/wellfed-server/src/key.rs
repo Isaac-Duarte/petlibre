@@ -20,9 +20,9 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use serde::Deserialize;
 use wellfed_api::Hex;
 use wellfed_service::Random;
-use serde::Deserialize;
 
 use crate::config::DATABASE;
 

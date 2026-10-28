@@ -1,7 +1,7 @@
 //! Backups of the server's database. Owners only.
 
-use wellfed_api::{Backup, BackupPage};
 use reqwest::{Method, StatusCode};
+use wellfed_api::{Backup, BackupPage};
 
 use crate::{Client, Error, decode};
 

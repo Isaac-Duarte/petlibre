@@ -7,9 +7,9 @@
 #[expect(dead_code, reason = "the release helpers serve the other test files")]
 mod support;
 
+use support::{now, open, stock_bank, stock_pins};
 use wellfed_api::{StockBackupState, StockSource};
 use wellfed_releases::{Added, Error, Releases, StockConfig, StockPins, Taken};
-use support::{now, open, stock_bank, stock_pins};
 
 const FEEDER: [u8; 32] = [0xab; 32];
 

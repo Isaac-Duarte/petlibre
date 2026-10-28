@@ -6,6 +6,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use uuid::Uuid;
 use wellfed_api::{
     AdoptFeeder, ClientRole, Connection, Credentials, ErrorCode, FeederId, FeederRefusal, Hex,
     Install, InstallState, InstallTarget, NewUser, Release, Role, StreamEvent, StreamQuery,
@@ -14,7 +15,6 @@ use wellfed_server_client::{Client, Error, Lock, StatusCode, Uploaded};
 use wellfed_server_testkit::feeder::{self, Banks, Running};
 use wellfed_server_testkit::release::{self, SECTOR, project, signed};
 use wellfed_server_testkit::{TestServer, WAIT, ada_setup, config, local, refused, until};
-use uuid::Uuid;
 
 const BUILD: [u8; 32] = [0x77; 32];
 const LEN: usize = 16 * SECTOR;

@@ -11,9 +11,9 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use serde::Serialize;
 use wellfed_formats::device::PlatformConfig;
 use wellfed_formats::manifest::{Artifact, Audits, CompiledArchive};
-use serde::Serialize;
 
 use crate::environment::Rust;
 use crate::{Device, Firmware, Profile, Repo, Result, Variant};

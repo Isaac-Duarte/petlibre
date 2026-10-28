@@ -6,8 +6,8 @@
 //! a time is the last change made by then.
 
 use jiff::Timestamp;
-use wellfed_api::{FeederId, Food, FoodId, FoodPeriod};
 use uuid::Uuid;
+use wellfed_api::{FeederId, Food, FoodId, FoodPeriod};
 
 use crate::convert::{from_i64, millis, timestamp, to_i64};
 use crate::{Error, Result, Store};

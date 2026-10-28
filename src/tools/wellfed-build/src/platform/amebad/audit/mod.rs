@@ -12,12 +12,12 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::LazyLock;
 
+use regex::Regex;
+use serde::Serialize;
 use wellfed_formats::audit::{
     ArchiveRecord, HookAudit, LayoutAudit, MainsAudit, ParkAudit, PinmapAudit, StackAudit,
     WritesAudit,
 };
-use regex::Regex;
-use serde::Serialize;
 
 use super::{Core, PROJECT, binutils};
 use crate::device::StockPaths;

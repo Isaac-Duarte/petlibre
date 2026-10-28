@@ -7,11 +7,11 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
-use wellfed_api::{ReleaseRefusal, ReleaseSource};
-use wellfed_releases::{Error, Source};
 use support::{now, open, project, release, versions as ids};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
+use wellfed_api::{ReleaseRefusal, ReleaseSource};
+use wellfed_releases::{Error, Source};
 
 #[tokio::test]
 async fn a_check_with_fetching_off_is_refused() {

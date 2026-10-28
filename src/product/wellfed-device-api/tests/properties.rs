@@ -5,12 +5,12 @@
 
 mod support;
 
+use proptest::prelude::*;
+use support::Setup;
 use wellfed_device_api::clients::Label;
 use wellfed_device_api::wifi::Credentials;
 use wellfed_proto::api::FRAME_MAX;
 use wellfed_proto::setup::{self, Request};
-use proptest::prelude::*;
-use support::Setup;
 
 /// A clear opening frame the server takes (session, invite or recovery),
 /// then arbitrary bytes, so the cases reach the handshakes behind it.

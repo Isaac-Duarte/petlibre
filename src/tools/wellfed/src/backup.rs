@@ -25,13 +25,13 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use clap::{Args, Subcommand};
+use serde::Serialize;
 use wellfed_client::install::{Bank1Reader, STOCK_VERSION, StockBackup};
 use wellfed_client::update::Image;
 use wellfed_formats::canonical::sha256;
 use wellfed_formats::hex;
 use wellfed_model::{Answer, Op};
 use wellfed_signing::{Frozen, Key, Motion};
-use serde::Serialize;
 
 use crate::device::Connection;
 use crate::keys::{OwnerKey, fingerprint};

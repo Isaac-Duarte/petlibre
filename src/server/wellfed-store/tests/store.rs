@@ -6,9 +6,9 @@ use jiff::Timestamp;
 use tempfile::TempDir;
 use uuid::Uuid;
 use wellfed_api::{
-    Blocked, ClientRole, Desiccant, EventBody, EventKind, FeederId, FeederStatus, Generation,
-    Household, MealReminder, Readiness, Role, Settings, Source, TimeFormat, Units, UserId,
-    WifiSource, Window,
+    Blocked, ClientRole, Desiccant, EventBody, EventKind, FeederId, FeederStatus, FoodLevel,
+    Generation, Household, MealReminder, Readiness, Role, Settings, Source, TimeFormat, Units,
+    UserId, WifiSource, Window,
 };
 use wellfed_store::{
     Change, Error, FeederRow, NewEvent, NewFeeder, NewUser, SealedKey, Store, Synced,
@@ -453,6 +453,7 @@ async fn the_cached_status_and_settings_read_back() {
         wifi_generation: Generation(0),
         last_event: Some(9),
         sessions: 1,
+        food: FoodLevel::Empty,
         readiness: Some(Readiness::Blocked(Blocked::Joining)),
         desiccant: Desiccant::Remaining {
             days: -2,

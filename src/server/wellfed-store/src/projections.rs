@@ -198,6 +198,8 @@ pub(crate) async fn project(
             completed,
             outcome,
             reason,
+            // The raw event keeps the hopper; the feeds table does not.
+            hopper: _,
             by,
         } => {
             let (source, client) = source_columns(by);
@@ -315,6 +317,7 @@ pub(crate) async fn project(
         | EventBody::Missed { .. }
         | EventBody::MealSoon { .. }
         | EventBody::DispenseRefused { .. }
+        | EventBody::Food { .. }
         | EventBody::Wifi { .. }
         | EventBody::Enrolled { .. }
         | EventBody::Revoked { .. }

@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use anyhow::{Result, bail};
 use clap::Args;
-use wellfed_model::{Answer, EventBody, Op, PORTIONS_MAX, Pushed, Refusal};
+use wellfed_model::{Answer, EventBody, FoodLevel, Op, PORTIONS_MAX, Pushed, Refusal};
 
 use crate::{Target, ask_and_print, connect, print_json};
 
@@ -86,14 +86,20 @@ fn fed(body: &EventBody, feed: u32) -> Option<String> {
         completed,
         outcome,
         reason,
+        hopper,
         ..
     } = *body
     else {
         return None;
     };
+    // A feed runs on an empty hopper, so the line says when it read empty.
+    let hopper = match hopper {
+        FoodLevel::Empty => "; the hopper read empty",
+        FoodLevel::Present | FoodLevel::Unread => "",
+    };
     (ended == feed).then(|| {
         format!(
-            "feed {feed}: {completed} of {requested} portions delivered, {} ({})",
+            "feed {feed}: {completed} of {requested} portions delivered, {} ({}){hopper}",
             outcome.code(),
             reason.code()
         )
@@ -151,6 +157,7 @@ mod tests {
             completed: 2,
             outcome: FeedOutcome::Failed,
             reason: FeedReason::NoFeedback,
+            hopper: FoodLevel::Present,
             by: Source::Feeder,
         };
 
@@ -159,5 +166,19 @@ mod tests {
             Some("feed 7: 2 of 3 portions delivered, failed (no_feedback)")
         );
         assert_eq!(fed(&body, 8), None);
+
+        let empty = EventBody::Fed {
+            feed: 7,
+            requested: 3,
+            completed: 3,
+            outcome: FeedOutcome::Done,
+            reason: FeedReason::Done,
+            hopper: FoodLevel::Empty,
+            by: Source::Feeder,
+        };
+        assert_eq!(
+            fed(&empty, 7).as_deref(),
+            Some("feed 7: 3 of 3 portions delivered, done (done); the hopper read empty")
+        );
     }
 }

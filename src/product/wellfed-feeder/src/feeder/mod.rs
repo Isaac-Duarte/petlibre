@@ -365,6 +365,8 @@ impl<P: Platform> Feeder<P> {
         self.readiness.note(&mut self.platform, now_ms, ready, |r| {
             record(Record::Feeding(r))
         });
+        self.readiness
+            .food(&mut self.platform, now_ms, feeds.food(), !feeds.busy());
 
         let local_ms = self
             .platform

@@ -8,7 +8,7 @@ use wellfed_core::feed::observe::{Beams, Observation};
 use wellfed_feeder::store::traces::{self, MAX_UNITS, TraceRing};
 use wellfed_feeder::trace::{DriveFigures, Recorder};
 use wellfed_proto::api::{
-    CurrentUnit, EventBody, FeedOutcome, FeedReason, Refusal, Source, TraceSummary,
+    CurrentUnit, EventBody, FeedOutcome, FeedReason, FoodLevel, Refusal, Source, TraceSummary,
 };
 use wellfed_proto::trace::{BODY_MAX, Entry, Motor, PAGE_MAX, Reader};
 use wellfed_testkit::journal_flash::{FakeJournalFlash, FlashIo};
@@ -26,6 +26,7 @@ fn fed(feed: u32, portions: u8) -> EventBody {
         completed: portions,
         outcome: FeedOutcome::Done,
         reason: FeedReason::Done,
+        hopper: FoodLevel::Present,
         by: Source::Panel,
     }
 }

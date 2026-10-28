@@ -55,7 +55,7 @@ Subscribe { after, samples }          Event { seq, at, body }
 
 | Bit | Ops |
 | --- | --- |
-| `FEED` | The feed ops, the `Feeding` answer, the `Fed` and `DispenseRefused` events and the `Fault` and `Portions` refusals. A feeder answers a client whose hello lacks the bit `Unavailable`, and never pushes it a `Fed` event |
+| `FEED` | The feed ops, the `Feeding` answer, the `Fed`, `DispenseRefused` and `Food` events and the `Fault` and `Portions` refusals. A feeder answers a client whose hello lacks the bit `Unavailable`, and never pushes it a `Fed` event |
 | `TIME` | `GetTime`, answered `Time(TimeView)`: the zone's rule, the NTP server, the clock with its error bound (or `None` while the feeder needs the time), the learned rate, the last source and the last NTP result. `PutTime { base, changes }`, owners only ([clock](clock.md)) |
 | `UPDATE` | `OfferUpdate`, `UpdateChunk`, `UpdateState`, `CancelUpdate`, `EnrollUpdateKey`, `UpdateKeyStatement` |
 | `STATS` | `Stats { section }`, and four more metrics |
@@ -68,6 +68,8 @@ Subscribe { after, samples }          Event { seq, at, body }
 | `DESICCANT` | `ResetDesiccant`, which records a desiccant replacement today by the feeder's clock, and the `NoClock` refusal it gets while the clock is invalid ([desiccant reminder](desiccant.md)) |
 
 `Fed` carries the feed's number, the portions asked for (`requested`) and those delivered (`completed`, one per rotor mark the feedback sensor confirmed), an outcome and a reason. The outlet beam's breaks are a lower bound on food passing, not a count, so they stay in the log and the statistics ([calibration](calibration.md#delivered-food-estimate)). The outcome is `Done`, `Cancelled`, `Expired`, `Failed`, or `Uncertain`: the owner stopped without a durable result, or a reset interrupted the feed and the next boot resolved it.
+
+`Fed` also carries `hopper`, what the food beam read during the feed: `Empty` once it read no food, `Present` if it read only food, `Unread` if the feed ended before the beam settled (or a reset interrupted it). A feed runs whatever the beam reads, as stock's does, so a beam that misreads never skips a meal; an empty hopper is recorded, not refused. The beam is filtered as stock filters its `surplusGrain`: food shows at once, and empty only after a second of readings without (stock's 20 readings at its 50 ms poll). It is lit only during feeds, so `Status.food` is the last feed's reading (`Unread` before the first feed of a boot), and a `Food { level }` event records each change once the feed that read it has ended: at most one a feed, the first reading of a boot included.
 
 **Samples** `Power` (every supply sample, 5 s) and `Rssi` (30 s) are major version 1's. `Heap`, `Loop`, `Gateway` and `Wifi` (30 s) go only to a subscriber whose hello claims `STATS`, and `Supply` only to one that claims `POWER`.
 

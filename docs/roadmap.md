@@ -31,7 +31,7 @@ This page tracks what works today and what comes next. It covers the replacement
 | Jam and sensor fault handling | Experimental | |
 | Schedules | Works | Up to ten plans, run on the feeder with no server. |
 | Feeding history | Partial | Each feed is recorded as an event; a long history needs the server. |
-| Food level | Not started | The sensor is read; the feature isn't built. |
+| Food level | Experimental | The status shows the hopper as the last feed read it. A feed on an empty hopper still runs, as stock's does, and its history entry says the hopper read empty. |
 | Importing your stock schedule | Experimental | The installer reads stock's plans before promotion and sets them on the replacement once it confirms. |
 
 ## The feeder itself

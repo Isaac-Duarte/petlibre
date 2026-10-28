@@ -35,7 +35,7 @@ use wellfed_device_api::{
 use wellfed_feeder::update as wire;
 use wellfed_model::{self as model, Answer, Op};
 use wellfed_proto::api::{
-    self as proto, Capabilities, EventBody, Refusal, RequestId, Status, UpdateView,
+    self as proto, Capabilities, EventBody, FoodLevel, Refusal, RequestId, Status, UpdateView,
 };
 use wellfed_session::noise::Keypair;
 use wellfed_testkit::journal_flash::{FakeJournalFlash, FlashIo};
@@ -381,6 +381,7 @@ impl Device for Feeder {
             last_event: None,
             sessions: 0,
             desiccant: proto::Desiccant::Unset,
+            food: FoodLevel::Unread,
         }
     }
 

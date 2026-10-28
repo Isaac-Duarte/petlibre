@@ -28,6 +28,11 @@
 //!   a sag; the firmware's owner and its plant (`wellfed-sim`) cover that.
 //! - [`SimFeeds::stall`] holds a feed in flight where it is, as a motor
 //!   that stopped moving would, so a test can act while a feed runs.
+//! - The hopper has food until [`SimFeeds::fill`] empties it. Each feed
+//!   reads it as the food beam would, runs whatever it reads (as the
+//!   firmware's and stock's do) and records the reading in its `Fed`
+//!   event; the reading stays the feeder's food level until the next feed,
+//!   since the beam is lit only during feeds.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -89,6 +94,10 @@ pub struct SimFeeds {
     /// last step.
     floor: Floor,
     adapter: bool,
+    /// Whether the hopper has food in front of the beam.
+    hopper: bool,
+    /// What the beam read in the last feed this boot, once one has run.
+    food: Option<bool>,
 }
 
 impl SimFeeds {
@@ -114,6 +123,8 @@ impl SimFeeds {
             refusing: false,
             floor: Floor::default(),
             adapter: true,
+            hopper: true,
+            food: None,
         }
     }
 
@@ -135,6 +146,11 @@ impl SimFeeds {
         !self.adapter && !self.floor.above()
     }
 
+    /// Put food in front of the beam (`true`), or empty the hopper.
+    pub fn fill(&mut self, food: bool) {
+        self.hopper = food;
+    }
+
     /// Hold a feed in flight where it is, or let it go on.
     pub fn stall(&mut self, stalled: bool) {
         self.stalled = stalled;
@@ -150,7 +166,7 @@ impl SimFeeds {
     pub fn step(&mut self, now_ms: u32) -> (Option<EventBody>, Option<u32>) {
         if let Some(result) = self.interrupted.take() {
             return (
-                Some(fed(&result, Durability::Durable, Source::Feeder)),
+                Some(fed(&result, None, Durability::Durable, Source::Feeder)),
                 None,
             );
         }
@@ -210,6 +226,7 @@ impl SimFeeds {
         };
         let by = current.by;
         self.current = None;
+        self.food = Some(self.hopper);
         (Some(self.finish(&result, by)), None)
     }
 
@@ -226,15 +243,20 @@ impl SimFeeds {
         } else {
             Durability::Lost
         };
-        fed(result, durability, by)
+        fed(result, Some(self.hopper), durability, by)
     }
 }
 
-/// The `Fed` event for `result`. The journal's ids fit a `u32` here:
-/// `submit` refuses one that does not.
-fn fed(result: &OwnerResult, durability: Durability, by: Source) -> EventBody {
+/// The `Fed` event for `result`, the food beam having read `hopper`. The
+/// journal's ids fit a `u32` here: `submit` refuses one that does not.
+fn fed(
+    result: &OwnerResult,
+    hopper: Option<bool>,
+    durability: Durability,
+    by: Source,
+) -> EventBody {
     let feed = u32::try_from(result.id).unwrap_or(u32::MAX);
-    feed::fed(feed, result, durability, by)
+    feed::fed(feed, result, hopper, durability, by)
 }
 
 impl Feeds for SimFeeds {
@@ -301,6 +323,10 @@ impl Feeds for SimFeeds {
             // Reserved, and ended since.
             _ => Some(Ok(())),
         }
+    }
+
+    fn food(&self) -> Option<bool> {
+        self.food
     }
 
     fn high_water(&self) -> Option<u32> {

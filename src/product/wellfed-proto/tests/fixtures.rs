@@ -62,6 +62,7 @@ fn messages() -> Vec<Fixture> {
         last_event: Some(8),
         sessions: 1,
         desiccant: Desiccant::Remaining { days: -3 },
+        food: FoodLevel::Present,
     };
     let counts = Counts {
         uptime_s: 3_600,
@@ -324,6 +325,7 @@ fn messages() -> Vec<Fixture> {
                     completed: 1,
                     outcome: FeedOutcome::Failed,
                     reason: FeedReason::NoFeedback,
+                    hopper: FoodLevel::Empty,
                     by: Source::Panel,
                 },
             })),
@@ -941,6 +943,7 @@ fn messages() -> Vec<Fixture> {
                 completed: 2,
                 outcome: FeedOutcome::Done,
                 reason: FeedReason::Done,
+                hopper: FoodLevel::Present,
                 by: Source::Schedule(2),
             }),
             |b| decode::<EventBody>(b).is_ok(),
@@ -1013,6 +1016,13 @@ fn messages() -> Vec<Fixture> {
                 entries: &[0x65, 0, 0, 0, 30, 7],
             }))),
             feeder,
+        ),
+        (
+            "event-food",
+            entry(&EventBody::Food {
+                level: FoodLevel::Empty,
+            }),
+            |b| decode::<EventBody>(b).is_ok(),
         ),
     ]
 }

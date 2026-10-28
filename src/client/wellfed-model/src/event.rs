@@ -106,6 +106,9 @@ pub enum EventBody {
         completed: u8,
         outcome: FeedOutcome,
         reason: FeedReason,
+        /// What the food beam read during the feed. A feed runs whatever
+        /// it reads, so an empty hopper is recorded here, not refused.
+        hopper: FoodLevel,
         by: Source,
     },
     /// The lasting reason the feeder cannot feed changed: the new reason,
@@ -156,6 +159,24 @@ pub enum EventBody {
     DispenseRefused {
         reason: Blocked,
     },
+    /// The food beam's level changed (at most once a feed: the beam is lit
+    /// only during feeds). The first reading after a boot counts as one.
+    Food {
+        level: FoodLevel,
+    },
+}
+
+/// What the food beam across the hopper reads. One reading with food shows
+/// food at once; the hopper reads empty after a second without, as stock's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FoodLevel {
+    /// Not read yet: the beam is lit only during feeds.
+    Unread,
+    Present,
+    /// No food in front of the beam (at any time during a feed, for a
+    /// `Fed` event).
+    Empty,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -280,6 +301,7 @@ impl EventBody {
             Self::Missed { .. } => EventKind::Missed,
             Self::DispenseRefused { .. } => EventKind::DispenseRefused,
             Self::MealSoon { .. } => EventKind::MealSoon,
+            Self::Food { .. } => EventKind::Food,
         }
     }
 }
@@ -303,10 +325,11 @@ pub enum EventKind {
     Missed,
     DispenseRefused,
     MealSoon,
+    Food,
 }
 
 impl EventKind {
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 16] = [
         Self::Boot,
         Self::Lock,
         Self::Settings,
@@ -322,6 +345,7 @@ impl EventKind {
         Self::Missed,
         Self::DispenseRefused,
         Self::MealSoon,
+        Self::Food,
     ];
 
     /// The stored spelling, the same as the JSON one.
@@ -342,6 +366,7 @@ impl EventKind {
             Self::Missed => "missed",
             Self::DispenseRefused => "dispense_refused",
             Self::MealSoon => "meal_soon",
+            Self::Food => "food",
         }
     }
 

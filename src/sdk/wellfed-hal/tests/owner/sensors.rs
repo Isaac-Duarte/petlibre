@@ -12,7 +12,7 @@ use wellfed_core::feed::controller::FeedReason;
 use wellfed_core::feed::storage::{OwnerOutcome, OwnerRecovery};
 use wellfed_hal::board::MOTOR_MASK;
 use wellfed_hal::owner::{OwnerConfig, OwnerFault, OwnerState, SubmitResult};
-use wellfed_hal::plaf103::pins::{OUTLET, bit};
+use wellfed_hal::plaf103::pins::{FOOD, OUTLET, bit};
 use wellfed_hal::sdk::fake;
 
 /// Steps for longer than the rest gap, and the beats published meanwhile.
@@ -167,6 +167,28 @@ fn the_food_beam_reading_outlasts_the_feed_that_took_it() {
     let s = f.status();
     assert!(s.state == OwnerState::Terminal && s.optics_off);
     assert_eq!(s.food, Some(true));
+    assert_eq!(s.trace.hopper, Some(true), "the feed read only food");
+    f.stop();
+}
+
+/// A feed runs whatever the food beam reads, as stock's does, so a beam
+/// that misreads never skips a meal; its trace keeps that it read empty.
+#[test]
+fn a_feed_on_an_empty_hopper_completes_and_its_trace_says_it_read_empty() {
+    let mut f = boot();
+    // The food receiver reads HIGH: no food in front of the beam.
+    hw(|h| h.input[0] |= bit(FOOD));
+
+    f.start_feed();
+    f.complete();
+    let s = f.status();
+    assert!(s.state == OwnerState::Terminal && s.result_durable);
+    assert_eq!(
+        (s.result.outcome, s.result.completed),
+        (OwnerOutcome::Done, 1)
+    );
+    assert_eq!(s.food, Some(false));
+    assert_eq!(s.trace.hopper, Some(false));
     f.stop();
 }
 

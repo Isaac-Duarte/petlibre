@@ -6,7 +6,7 @@ use wellfed_core::feed::controller::MotorCommand;
 use wellfed_core::feed::observe::Observation;
 use wellfed_feeder::trace::DriveFigures;
 use wellfed_feeder_runtime::traces;
-use wellfed_proto::api::{EventBody, FeedOutcome, FeedReason, Refusal, Source};
+use wellfed_proto::api::{EventBody, FeedOutcome, FeedReason, FoodLevel, Refusal, Source};
 
 fn fed(feed: u32) -> EventBody {
     EventBody::Fed {
@@ -15,6 +15,7 @@ fn fed(feed: u32) -> EventBody {
         completed: 1,
         outcome: FeedOutcome::Done,
         reason: FeedReason::Done,
+        hopper: FoodLevel::Present,
         by: Source::Panel,
     }
 }

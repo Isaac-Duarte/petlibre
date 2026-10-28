@@ -146,7 +146,8 @@ pub const CONFIG: OwnerConfig = OwnerConfig {
         max_reverse_attempts: 3,
     },
     // Stock: 100 ticks of settling after enable, about 1 s of bad samples
-    // before a bad state.
+    // before a bad state. Its food flag (`surplusGrain`) clears after 20
+    // readings without food at its nominal 50 ms poll: the same second.
     sensors: SensorLimits {
         optical_settle_ms: 100,
         food_empty_delay_ms: 1000,
@@ -546,8 +547,14 @@ impl core::fmt::Display for Record {
                 }
                 write!(
                     f,
-                    " samples={} reversals={}",
-                    trace.current_samples, trace.reversals
+                    " samples={} reversals={} hopper={}",
+                    trace.current_samples,
+                    trace.reversals,
+                    match trace.hopper {
+                        None => "unread",
+                        Some(true) => "present",
+                        Some(false) => "empty",
+                    }
                 )
             }
             Record::Edges { feed, trace } => {
@@ -933,7 +940,9 @@ mod target {
             }
             // The feed id fits the event: `submit` refused any that does not.
             let feed = u32::try_from(current.feed).unwrap_or(u32::MAX);
-            let body = feed::fed(feed, &result, durability, current.by);
+            // The trace is this feed's only if the owner's result is.
+            let hopper = status.trace.hopper.filter(|_| ours);
+            let body = feed::fed(feed, &result, hopper, durability, current.by);
             let summary = traces::seal(&body, &drive_figures(&status.trace));
             outcome(body, summary.as_ref());
             if status.state == OwnerState::Terminal {
@@ -973,7 +982,13 @@ mod target {
             // The journal holds the id under the high water `submit` checks.
             let number = u32::try_from(feed).unwrap_or(u32::MAX);
             // Its trace, if it had one, was lost with the RAM it was in.
-            let body = feed::fed(number, &status.result, Durability::Durable, Source::Feeder);
+            let body = feed::fed(
+                number,
+                &status.result,
+                None,
+                Durability::Durable,
+                Source::Feeder,
+            );
             outcome(body, None);
         }
 

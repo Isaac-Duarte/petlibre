@@ -12,12 +12,12 @@ use wellfed_proto::setup as proto_setup;
 use crate::{
     Answer, Bank1Page, Battery, Blocked, Bowl, Calibration, CalibrationView, Capabilities, Client,
     ClientRole, Counters, Counts, Desiccant, EnrollPath, Erases, Event, EventBody, FeedOutcome,
-    FeedReason, Flash, Food, Generation, Hello, Hex, Invite, Joined, LogLines, MealReminder,
-    Memory, MissedReason, NtpResult, NtpServer, Op, OpenRefusal, Phase, Plan, Plans, Portions,
-    Power, PowerStats, Readiness, Refusal, ResetCause, Resets, Sample, SampleValue, Settings,
-    SettingsPatch, Source, Stats, StatsSection, Status, StockPlanSectors, Supply, TaskStack,
-    TimeSource, TimeSync, TimeView, Tune, UpdatePhase, UpdateRefusal, UpdateStop, UpdateView,
-    Weekdays, WifiSource, Window, setup,
+    FeedReason, Flash, Food, FoodLevel, Generation, Hello, Hex, Invite, Joined, LogLines,
+    MealReminder, Memory, MissedReason, NtpResult, NtpServer, Op, OpenRefusal, Phase, Plan, Plans,
+    Portions, Power, PowerStats, Readiness, Refusal, ResetCause, Resets, Sample, SampleValue,
+    Settings, SettingsPatch, Source, Stats, StatsSection, Status, StockPlanSectors, Supply,
+    TaskStack, TimeSource, TimeSync, TimeView, Tune, UpdatePhase, UpdateRefusal, UpdateStop,
+    UpdateView, Weekdays, WifiSource, Window, setup,
 };
 use crate::{
     CurrentUnit, FeedStats, Malformed, Trace, TraceEntry, TraceMotor, TracePage, TraceSummary,
@@ -70,6 +70,7 @@ impl From<proto::Status<'_>> for Status {
             last_event,
             sessions,
             desiccant,
+            food,
         } = status;
         Self {
             build: build.to_owned(),
@@ -93,6 +94,7 @@ impl From<proto::Status<'_>> for Status {
             wifi_generation: Generation(wifi_generation),
             last_event,
             sessions,
+            food: food.into(),
             readiness: None,
             desiccant: desiccant.into(),
             supply: None,
@@ -328,6 +330,7 @@ impl From<proto::EventBody> for EventBody {
                 completed,
                 outcome,
                 reason,
+                hopper,
                 by,
             } => Self::Fed {
                 feed,
@@ -335,6 +338,7 @@ impl From<proto::EventBody> for EventBody {
                 completed,
                 outcome: outcome.into(),
                 reason: reason.into(),
+                hopper: hopper.into(),
                 by: by.into(),
             },
             proto::EventBody::FeedingBlocked { reason } => Self::FeedingBlocked {
@@ -371,6 +375,9 @@ impl From<proto::EventBody> for EventBody {
                 due: seconds(due),
                 minute,
                 portions,
+            },
+            proto::EventBody::Food { level } => Self::Food {
+                level: level.into(),
             },
         }
     }
@@ -415,6 +422,7 @@ impl From<EventBody> for proto::EventBody {
                 completed,
                 outcome,
                 reason,
+                hopper,
                 by,
             } => Self::Fed {
                 feed,
@@ -422,6 +430,7 @@ impl From<EventBody> for proto::EventBody {
                 completed,
                 outcome: outcome.into(),
                 reason: reason.into(),
+                hopper: hopper.into(),
                 by: by.into(),
             },
             EventBody::FeedingBlocked { reason } => Self::FeedingBlocked {
@@ -460,6 +469,29 @@ impl From<EventBody> for proto::EventBody {
                 minute,
                 portions,
             },
+            EventBody::Food { level } => Self::Food {
+                level: level.into(),
+            },
+        }
+    }
+}
+
+impl From<proto::FoodLevel> for FoodLevel {
+    fn from(level: proto::FoodLevel) -> Self {
+        match level {
+            proto::FoodLevel::Unread => Self::Unread,
+            proto::FoodLevel::Present => Self::Present,
+            proto::FoodLevel::Empty => Self::Empty,
+        }
+    }
+}
+
+impl From<FoodLevel> for proto::FoodLevel {
+    fn from(level: FoodLevel) -> Self {
+        match level {
+            FoodLevel::Unread => Self::Unread,
+            FoodLevel::Present => Self::Present,
+            FoodLevel::Empty => Self::Empty,
         }
     }
 }
@@ -1662,6 +1694,7 @@ mod tests {
                 completed: 1,
                 outcome: proto::FeedOutcome::Uncertain,
                 reason: proto::FeedReason::FeedbackStream,
+                hopper: proto::FoodLevel::Empty,
                 by,
             },
             proto::EventBody::FeedingBlocked {
@@ -1673,6 +1706,9 @@ mod tests {
                 due: 1_793_200_000,
                 minute: 450,
                 portions: 2,
+            },
+            proto::EventBody::Food {
+                level: proto::FoodLevel::Present,
             },
         ]
     }
@@ -1779,6 +1815,7 @@ mod tests {
             last_event: None,
             sessions: 1,
             desiccant: proto::Desiccant::Unknown,
+            food: proto::FoodLevel::Unread,
         };
         assert_eq!(Status::from(status).clock, None);
     }

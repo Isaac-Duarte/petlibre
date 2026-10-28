@@ -32,8 +32,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use utoipa::ToSchema;
 
 pub use event::{
-    ClientRole, EnrollPath, Event, EventBody, EventKind, FeedOutcome, FeedReason, Gap, LogLines,
-    MetricKind, MissedReason, Pushed, Sample, SampleValue, Source,
+    ClientRole, EnrollPath, Event, EventBody, EventKind, FeedOutcome, FeedReason, FoodLevel, Gap,
+    LogLines, MetricKind, MissedReason, Pushed, Sample, SampleValue, Source,
 };
 pub use plan::{PLANS, PORTIONS_MAX, Plan, Plans, TimeOfDay, Weekday, Weekdays, WeekdaysError};
 pub use request::{

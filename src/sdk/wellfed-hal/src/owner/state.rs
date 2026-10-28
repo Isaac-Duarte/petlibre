@@ -522,8 +522,11 @@ impl<S: OwnerStorage> OwnerTask<S> {
         let captured = self.board().capture(&mut raw);
         let valid = captured.is_ok();
         self.sensors.update(started, valid.then_some(&raw));
+        // The beam qualifies only while a feed's emitters are on, so every
+        // reading belongs to the feed the trace follows.
         if let Some(present) = self.sensors.food_present() {
             self.food = Some(present);
+            self.trace.hopper = Some(self.trace.hopper.unwrap_or(true) && present);
         }
         if self.drive_at.is_some() && self.sensors.current_valid {
             let current = self.sensors.current_scaled;

@@ -1060,6 +1060,8 @@ pub struct Status<'a> {
     /// The newest event's sequence number, `None` before the first.
     pub last_event: Option<u64>,
     pub sessions: u8,
+    /// The hopper as the food beam last read it.
+    pub food: FoodLevel,
     pub desiccant: Desiccant,
 }
 
@@ -1221,13 +1223,16 @@ pub enum EventBody {
         count: u16,
     },
     /// A feed ended. `completed` counts the portions the feedback sensor
-    /// confirmed.
+    /// confirmed. `hopper` is what the food beam read during it: a feed
+    /// runs whatever the hopper reads, as stock's does, so a misreading
+    /// beam never skips a meal, and an empty one is recorded here.
     Fed {
         feed: u32,
         requested: u8,
         completed: u8,
         outcome: FeedOutcome,
         reason: FeedReason,
+        hopper: FoodLevel,
         by: Source,
     },
     /// The lasting reason the feeder cannot feed changed ([`Blocked::lasting`]):
@@ -1270,6 +1275,12 @@ pub enum EventBody {
         minute: u16,
         portions: u8,
     },
+    /// The food beam's level changed: at most once a feed, since the beam
+    /// is read only while a feed's emitters are on. The first reading
+    /// after a boot counts as a change.
+    Food {
+        level: FoodLevel,
+    },
 }
 
 impl EventBody {
@@ -1278,7 +1289,9 @@ impl EventBody {
     /// past it). No wildcard, as for [`Op::capability`].
     pub const fn capability(&self) -> Capabilities {
         match self {
-            Self::Fed { .. } | Self::DispenseRefused { .. } => Capabilities::FEED,
+            Self::Fed { .. } | Self::DispenseRefused { .. } | Self::Food { .. } => {
+                Capabilities::FEED
+            }
             Self::FeedingBlocked { .. } => Capabilities::READINESS,
             Self::Supply(_) => Capabilities::POWER,
             Self::Plans { .. } | Self::Missed { .. } | Self::MealSoon { .. } => Capabilities::PLANS,
@@ -1306,6 +1319,21 @@ pub enum FeedOutcome {
     /// When a power cut lost the reservation itself, `requested` is the
     /// feeder's cap on one feed, not what was asked.
     Uncertain,
+}
+
+/// What the food beam across the hopper reads, filtered as stock filters
+/// its `surplusGrain`: one reading with food shows food at once, and the
+/// hopper reads empty only after a second of readings without (stock's 20
+/// readings at its 50 ms poll). The beam is lit only during feeds, so the
+/// level is the last feed's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FoodLevel {
+    /// No qualified reading: no feed has lit the beam this boot, or this
+    /// feed ended before the beam settled.
+    Unread,
+    Present,
+    /// The beam read no food (at any time during a feed, for a `Fed`).
+    Empty,
 }
 
 /// Why a feed ended.
@@ -2098,6 +2126,7 @@ mod tests {
                 completed: u8::MAX,
                 outcome: FeedOutcome::Uncertain,
                 reason: FeedReason::Output,
+                hopper: FoodLevel::Unread,
                 by: Source::Client(client),
             },
             EventBody::FeedingBlocked {
@@ -2127,6 +2156,7 @@ mod tests {
                 completed: u8::MAX,
                 outcome: FeedOutcome::Uncertain,
                 reason: FeedReason::Output,
+                hopper: FoodLevel::Empty,
                 by: Source::Schedule(u8::MAX),
             },
             EventBody::Plans {
@@ -2146,6 +2176,9 @@ mod tests {
                 due: u32::MAX,
                 minute: u16::MAX,
                 portions: u8::MAX,
+            },
+            EventBody::Food {
+                level: FoodLevel::Empty,
             },
         ] {
             let mut out = [0; 16];

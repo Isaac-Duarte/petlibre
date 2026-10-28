@@ -13,8 +13,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use wellfed_proto::api::{
-    self as proto, ClientMessage, FRAME_MAX, FeederMessage, Hello, Op, Outcome, PROLOGUE,
-    PROTOCOL_MAJOR, Welcome,
+    self as proto, ClientMessage, FRAME_MAX, FeederMessage, FoodLevel, Hello, Op, Outcome,
+    PROLOGUE, PROTOCOL_MAJOR, Welcome,
 };
 use wellfed_session::frame::{self, PREFIX};
 use wellfed_session::noise::{Handshake, Keypair, Pattern, Role, Transport};
@@ -286,6 +286,7 @@ fn status() -> proto::Status<'static> {
         last_event: None,
         sessions: 1,
         desiccant: proto::Desiccant::Unset,
+        food: FoodLevel::Unread,
     }
 }
 

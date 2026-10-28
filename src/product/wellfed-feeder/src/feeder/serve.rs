@@ -751,6 +751,7 @@ impl<P: Platform, F: Feeds> Device for FeederDevice<'_, P, F> {
             last_event: self.platform.last_event(),
             sessions: 0,
             desiccant,
+            food: crate::feed::food_level(self.feeds.food()),
         }
     }
 

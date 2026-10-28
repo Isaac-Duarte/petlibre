@@ -94,6 +94,11 @@ pub struct FeedTrace {
     pub current_samples: u16,
     /// Times the drive backed off a jam.
     pub reversals: u8,
+    /// The food beam during this feed: `Some(false)` once it read empty,
+    /// `Some(true)` while it has read only food, `None` before it
+    /// qualified a reading. A feed never waits on it, so a short or
+    /// cancelled one can end unread.
+    pub hopper: Option<bool>,
     /// Each logged edge, from the drive's start (0 if it predates it), and
     /// the level after it.
     pub edge_ms: [Option<(u32, bool)>; EDGE_LOG],

@@ -16,7 +16,8 @@ use wellfed_feeder::feeder::{Feeder, Feeds, Record};
 use wellfed_feeder_runtime::events;
 use wellfed_fw_feeder::platform::{Driver, Plaf103};
 use wellfed_proto::api::{
-    Battery, Blocked, EventBody, FeedOutcome, FeedReason, Readiness, Refusal, Source, Supply,
+    Battery, Blocked, EventBody, FeedOutcome, FeedReason, FoodLevel, Readiness, Refusal, Source,
+    Supply,
 };
 use wellfed_sdk::hal::power::{self, Monitor};
 use wellfed_sdk::hal::sdk::fake;
@@ -359,6 +360,7 @@ fn feed_despite_the_speaker(rig: &mut Rig) {
         completed: 0,
         outcome: FeedOutcome::Cancelled,
         reason: FeedReason::Cancelled,
+        hopper: FoodLevel::Present,
         by: Source::Panel,
     };
     rig.feeder.record_outcome(rig.now, fed);

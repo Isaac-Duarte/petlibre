@@ -17,7 +17,7 @@
 use wellfed_core::store::slot::crc32;
 use wellfed_proto::api::{
     Blocked, Capabilities, CurrentUnit, Desiccant, Event, EventBody, FeedOutcome, FeedReason,
-    Readiness, Refusal, Resets, Source, Stats, StatsSection, TraceSummary,
+    FoodLevel, Readiness, Refusal, Resets, Source, Stats, StatsSection, TraceSummary,
 };
 
 use crate::feeder::{Feeder, Feeds, NoFeeds, Platform};
@@ -600,6 +600,7 @@ pub fn the_statistics_follow_the_loop(rig: &mut impl Rig) {
         completed: 2,
         outcome: FeedOutcome::Failed,
         reason: FeedReason::NoFeedback,
+        hopper: FoodLevel::Present,
         by: Source::Feeder,
     };
     rig.feeder().record_outcome(0, fed);

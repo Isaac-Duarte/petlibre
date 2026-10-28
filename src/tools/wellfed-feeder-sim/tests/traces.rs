@@ -108,6 +108,7 @@ fn three_portions() -> (proto::TraceSummary, Vec<u8>, Vec<(u32, bool)>) {
         completed: 3,
         outcome: proto::FeedOutcome::Done,
         reason: proto::FeedReason::Done,
+        hopper: proto::FoodLevel::Present,
         by: proto::Source::Panel,
     };
     let figures = DriveFigures {

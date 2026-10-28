@@ -14,7 +14,9 @@ use proptest::prelude::*;
 use proptest::sample::select;
 use tempfile::TempDir;
 use uuid::Uuid;
-use wellfed_api::{Blocked, ClientRole, EventBody, FeedOutcome, FeedReason, FeederId, Hex, Source};
+use wellfed_api::{
+    Blocked, ClientRole, EventBody, FeedOutcome, FeedReason, FeederId, FoodLevel, Hex, Source,
+};
 use wellfed_store::{
     Boot, ClockSync, Feed, LockChange, NewEvent, NewFeeder, PROJECTION_VERSION, Projected, Refresh,
     SealedKey, Store,
@@ -145,6 +147,7 @@ fn expected(events: &[Pushed], feeder: usize) -> Snapshot {
                 completed,
                 outcome,
                 reason,
+                hopper: _,
                 by,
             } => {
                 let value = Feed {
@@ -252,6 +255,7 @@ fn body() -> impl Strategy<Value = EventBody> {
                     completed,
                     outcome,
                     reason,
+                    hopper: FoodLevel::Present,
                     by,
                 }
             }),
@@ -349,6 +353,7 @@ async fn a_rebuild_reads_across_its_batches() {
                 completed: u8::try_from(n % 2).unwrap(),
                 outcome: FeedOutcome::ALL[usize::try_from(n).unwrap() % 5],
                 reason: FeedReason::Done,
+                hopper: FoodLevel::Present,
                 by: Source::Feeder,
             },
             1 => EventBody::Lock {
@@ -413,6 +418,7 @@ async fn a_feed_is_its_latest_event_and_reads_take_a_window() {
             completed,
             outcome,
             reason: FeedReason::Done,
+            hopper: FoodLevel::Present,
             by: Source::Client {
                 client: Hex([1, 2, 3, 4]),
             },
@@ -482,6 +488,7 @@ async fn a_new_projection_version_rebuilds_from_the_raw_events() {
             completed: 1,
             outcome: FeedOutcome::Done,
             reason: FeedReason::Done,
+            hopper: FoodLevel::Present,
             by: Source::Panel,
         },
     };

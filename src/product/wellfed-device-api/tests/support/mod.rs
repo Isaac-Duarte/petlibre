@@ -26,8 +26,8 @@ use wellfed_device_api::{
     Device, EventRead, KeyChange, KeyOutcome, Pass, Record, SESSIONS, Server,
 };
 use wellfed_proto::api::{
-    self as proto, Capabilities, EventBody, FRAME_MAX, FeederMessage, Hello, MESSAGE_MAX, Open,
-    PROLOGUE, PROTOCOL_MAJOR, Refusal, Stats, StatsSection, Status, Welcome,
+    self as proto, Capabilities, EventBody, FRAME_MAX, FeederMessage, FoodLevel, Hello,
+    MESSAGE_MAX, Open, PROLOGUE, PROTOCOL_MAJOR, Refusal, Stats, StatsSection, Status, Welcome,
 };
 use wellfed_proto::setup::{self, Answer, Reply};
 use wellfed_session::frame;
@@ -206,6 +206,7 @@ impl Device for Fake {
             sessions: 0,
             // The widest count, so a frame that holds it holds any.
             desiccant: proto::Desiccant::Remaining { days: i32::MIN },
+            food: FoodLevel::Unread,
         }
     }
 

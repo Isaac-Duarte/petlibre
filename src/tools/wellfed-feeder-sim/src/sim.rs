@@ -218,6 +218,12 @@ impl Sim {
         self.feeds.stall(stalled);
     }
 
+    /// Fill the hopper (`true`) or empty it, for the next feed's food beam.
+    /// A restart fills it again.
+    pub fn fill_hopper(&mut self, food: bool) {
+        self.feeds.fill(food);
+    }
+
     /// Refuse every feed `Busy` though readiness says ready, as an owner
     /// that lost a race does, or stop.
     pub fn refuse_feeds(&mut self, refusing: bool) {

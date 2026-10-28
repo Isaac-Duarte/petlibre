@@ -8,7 +8,7 @@ use tempfile::TempDir;
 use uuid::Uuid;
 use wellfed_api::{
     ClientRole, CurrentUnit, EventBody, FeedOutcome, FeedReason, FeederId, FeederRefusal,
-    FoodStats, Source, Stats, StatsSection, TraceSummary,
+    FoodLevel, FoodStats, Source, Stats, StatsSection, TraceSummary,
 };
 use wellfed_store::{NewEvent, NewFeeder, RawTrace, Refresh, SealedKey, Store, TraceFound};
 
@@ -55,6 +55,7 @@ async fn fed(store: &Store, epoch: u32, seq: u64, feed: u32) {
         completed: 1,
         outcome: FeedOutcome::Done,
         reason: FeedReason::Done,
+        hopper: FoodLevel::Present,
         by: Source::Panel,
     };
     let raw = serde_json::to_vec(&body).unwrap();

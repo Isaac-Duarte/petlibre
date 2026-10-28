@@ -57,6 +57,9 @@ pub enum Control {
     /// The battery channel's pin millivolts from now on and across
     /// restarts; `None` takes the cells out.
     Pack(Option<u32>),
+    /// Fill the hopper (`true`) or empty it, as the next feed's food beam
+    /// reads it. A restart fills it again.
+    Hopper(bool),
     /// Stop serving.
     Quit,
 }
@@ -138,6 +141,7 @@ pub async fn serve(
                     supply.pin_mv = pin_mv;
                     booted.sim.platform().set_supply(supply);
                 }
+                Some(Control::Hopper(food)) => booted.sim.fill_hopper(food),
                 Some(Control::Quit) => return Ok(()),
                 None => control = None,
             },

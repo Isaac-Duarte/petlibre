@@ -15,7 +15,8 @@ use wellfed_feeder_sim::flash::Flash;
 use wellfed_feeder_sim::harness::Running;
 use wellfed_feeder_sim::serve::Control;
 use wellfed_model::{
-    Answer, Blocked, EventBody, FeedOutcome, FeedReason, Op, Pushed, Readiness, Refusal, Source,
+    Answer, Blocked, EventBody, FeedOutcome, FeedReason, FoodLevel, Op, Pushed, Readiness, Refusal,
+    Source,
 };
 use wellfed_session::noise::Keypair;
 
@@ -84,6 +85,7 @@ fn a_feed_is_numbered_by_the_journal_and_ends_in_its_fed_event() {
             completed,
             outcome,
             reason,
+            hopper,
             by: Source::Client { .. },
         } = next_fed(&mut owner).await
         else {
@@ -91,6 +93,11 @@ fn a_feed_is_numbered_by_the_journal_and_ends_in_its_fed_event() {
         };
         assert_eq!((feed, requested, completed), (1, 2, 2));
         assert_eq!((outcome, reason), (FeedOutcome::Done, FeedReason::Done));
+        assert_eq!(
+            hopper,
+            FoodLevel::Present,
+            "the simulator's hopper starts full"
+        );
         assert_eq!(readiness(&mut owner, 3).await, Some(Readiness::Ready));
 
         let next = owner.ask([4; 16], &Op::Feed { portions: 1 }).await.unwrap();
@@ -274,6 +281,7 @@ fn a_restart_mid_feed_resolves_it_as_uncertain_under_its_own_number() {
                 completed: 0,
                 outcome: FeedOutcome::Uncertain,
                 reason: FeedReason::Output,
+                hopper: FoodLevel::Unread,
                 by: Source::Feeder,
             }
         );
@@ -283,6 +291,67 @@ fn a_restart_mid_feed_resolves_it_as_uncertain_under_its_own_number() {
         let resent = owner.ask([1; 16], &Op::Feed { portions: 2 }).await.unwrap();
         assert_eq!(resent, Answer::Feeding { feed: 2 });
         assert_eq!(feeding::reserved(&flash), Some(2));
+        sim.stop().await;
+    });
+}
+
+/// The next `Food` event the subscription pushes.
+async fn next_food(connection: &mut Connection) -> FoodLevel {
+    loop {
+        let pushed = connection.next(Duration::from_secs(5)).await.unwrap();
+        if let Pushed::Event(event) = pushed
+            && let EventBody::Food { level } = event.body
+        {
+            return level;
+        }
+    }
+}
+
+async fn food(connection: &mut Connection, id: u8) -> FoodLevel {
+    match connection.ask([id; 16], &Op::Status).await.unwrap() {
+        Answer::Status(status) => status.food,
+        other => panic!("{other:?}"),
+    }
+}
+
+/// A feed runs whatever the food beam reads, as stock's does: on an empty
+/// hopper it still delivers, and its `Fed` event says the hopper read
+/// empty. The level shows in the status and changes as one `Food` event
+/// after the feed that read it.
+#[test]
+fn a_feed_on_an_empty_hopper_runs_and_records_that_it_read_empty() {
+    local(async {
+        let flash = Flash::memory();
+        let sim = start(&flash).await;
+        let mut owner = open(&sim).await;
+        owner.subscribe(None, false).await.unwrap();
+        assert_eq!(food(&mut owner, 1).await, FoodLevel::Unread, "no feed yet");
+
+        let mut id = 2;
+        for (line, level) in [
+            (None, FoodLevel::Present),
+            (Some("empty"), FoodLevel::Empty),
+            (Some("fill"), FoodLevel::Present),
+        ] {
+            if let Some(line) = line {
+                sim.type_line(line).unwrap();
+            }
+            let answer = owner.ask([id; 16], &Op::Feed { portions: 2 }).await;
+            assert!(matches!(answer, Ok(Answer::Feeding { .. })), "{answer:?}");
+            let EventBody::Fed {
+                completed,
+                outcome,
+                hopper,
+                ..
+            } = next_fed(&mut owner).await
+            else {
+                unreachable!("next_fed returns a feed")
+            };
+            assert_eq!((completed, outcome, hopper), (2, FeedOutcome::Done, level));
+            assert_eq!(next_food(&mut owner).await, level);
+            assert_eq!(food(&mut owner, id + 1).await, level);
+            id += 2;
+        }
         sim.stop().await;
     });
 }

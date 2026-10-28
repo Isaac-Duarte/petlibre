@@ -5,7 +5,7 @@
 use wellfed_feeder::feeder::platform::Link;
 use wellfed_feeder::stats::{HISTORY_MS, Keeper, TOTAL_SECTORS, Totals, reset_cause};
 use wellfed_proto::api::{
-    Counts, Erases, FLASH_SECTORS, Metric, POWER_HISTORY, Power, ResetCause, Resets,
+    Counts, Erases, FLASH_SECTORS, FoodLevel, Metric, POWER_HISTORY, Power, ResetCause, Resets,
 };
 
 fn power(adapter: bool, battery_mv: Option<u32>) -> Power {
@@ -111,6 +111,7 @@ fn the_food_beam_counts_its_transitions_and_feeds_since_a_refill() {
         completed: 1,
         outcome: wellfed_proto::api::FeedOutcome::Done,
         reason: wellfed_proto::api::FeedReason::Done,
+        hopper: FoodLevel::Present,
         by: wellfed_proto::api::Source::Panel,
     };
     keeper.food(true);

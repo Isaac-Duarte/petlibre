@@ -10,6 +10,7 @@ use wellfed_feeder::feeder::Feeder;
 use wellfed_feeder_runtime::writer::Writer;
 use wellfed_feeder_runtime::{calibration, events, keys, network, plans, time, traces};
 use wellfed_fw_feeder::platform::Plaf103;
+use wellfed_proto::api::FoodLevel;
 use wellfed_sdk::hal::flash::park::Mmio;
 use wellfed_sdk::hal::flash_lock::arming::Hooks;
 use wellfed_sdk::hal::flash_lock::provider::Provider;
@@ -348,6 +349,7 @@ fn a_feed_trace_is_stored_on_the_writer_turn_and_read_back_after_a_restart() {
         completed: 0,
         outcome: FeedOutcome::Failed,
         reason: FeedReason::NoFeedback,
+        hopper: FoodLevel::Present,
         by: Source::Panel,
     };
     let figures = DriveFigures {

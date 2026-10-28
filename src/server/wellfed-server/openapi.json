@@ -6193,6 +6193,7 @@
               "completed",
               "outcome",
               "reason",
+              "hopper",
               "by",
               "kind"
             ],
@@ -6211,6 +6212,10 @@
                 "format": "int32",
                 "description": "The feeder's number for the feed.",
                 "minimum": 0
+              },
+              "hopper": {
+                "$ref": "#/components/schemas/FoodLevel",
+                "description": "What the food beam read during the feed. A feed runs whatever\nit reads, so an empty hopper is recorded here, not refused."
               },
               "kind": {
                 "type": "string",
@@ -6401,6 +6406,25 @@
               },
               "reason": {
                 "$ref": "#/components/schemas/Blocked"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The food beam's level changed (at most once a feed: the beam is lit\nonly during feeds). The first reading after a boot counts as one.",
+            "required": [
+              "level",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "food"
+                ]
+              },
+              "level": {
+                "$ref": "#/components/schemas/FoodLevel"
               }
             }
           }
@@ -6895,6 +6919,7 @@
           "settings_generation",
           "wifi_generation",
           "sessions",
+          "food",
           "desiccant"
         ],
         "properties": {
@@ -6934,6 +6959,10 @@
             "type": "integer",
             "format": "int32",
             "minimum": 0
+          },
+          "food": {
+            "$ref": "#/components/schemas/FoodLevel",
+            "description": "The hopper as the food beam last read it (during the last feed)."
           },
           "last_event": {
             "type": [
@@ -7156,6 +7185,15 @@
       "FoodId": {
         "type": "string",
         "format": "uuid"
+      },
+      "FoodLevel": {
+        "type": "string",
+        "description": "What the food beam across the hopper reads. One reading with food shows\nfood at once; the hopper reads empty after a second without, as stock's.",
+        "enum": [
+          "unread",
+          "present",
+          "empty"
+        ]
       },
       "FoodPatch": {
         "type": "object",

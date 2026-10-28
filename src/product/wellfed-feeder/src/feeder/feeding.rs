@@ -25,6 +25,12 @@
 //! still recorded. Back-to-back feeds share the reason `Feeding`, so presses
 //! across them record once. Every press goes to the log.
 //!
+//! **Food level.** The food beam is lit only during feeds, so its level is
+//! the last feed's. Once a feed has ended, a level that differs from the
+//! last one recorded this boot (the first included) is a `Food` event
+//! ([`Watch::food`]): at most one a feed, however the beam flickers as the
+//! last kibble passes. No feed waits on it or is refused for it, as stock.
+//!
 //! **Silent.** A feed plays no tune; that is the owner's choice. A tune a
 //! client asks for with `play` is stepped after the owner and the device
 //! API in each pass, so a speaker that is busy, will not open or stalls
@@ -33,6 +39,8 @@
 use core::fmt;
 
 use wellfed_proto::api::{Blocked, EventBody, PORTIONS_MAX, Readiness, Refusal, Source};
+
+use crate::feed;
 
 use super::Feeds;
 use super::events;
@@ -135,6 +143,8 @@ pub struct Watch {
     /// The reason the last refused Dispense press was recorded for, since
     /// the feeder was last ready.
     refused: Option<Blocked>,
+    /// The food level last recorded this boot (`true` with food).
+    food: Option<bool>,
 }
 
 impl Watch {
@@ -143,6 +153,27 @@ impl Watch {
             logged: None,
             lasting: None,
             refused: None,
+            food: None,
+        }
+    }
+
+    /// The food beam's latest reading, `reading`, with no feed in flight
+    /// (`at_rest`): recorded as a `Food` event when it differs from the
+    /// last one recorded this boot. During a feed the level waits for its
+    /// end, so a beam that flickers records once.
+    pub fn food<P: Platform>(
+        &mut self,
+        platform: &mut P,
+        now_ms: u32,
+        reading: Option<bool>,
+        at_rest: bool,
+    ) {
+        let Some(present) = reading.filter(|_| at_rest) else {
+            return;
+        };
+        if self.food.replace(present) != Some(present) {
+            let level = feed::food_level(Some(present));
+            events::record(platform, now_ms, EventBody::Food { level });
         }
     }
 

@@ -7,7 +7,7 @@ use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::{Generation, MEAL_REMINDER_MINUTES_MAX, MEAL_REMINDER_MINUTES_MIN};
+use crate::{FoodLevel, Generation, MEAL_REMINDER_MINUTES_MAX, MEAL_REMINDER_MINUTES_MIN};
 
 /// What the feeder reports about itself.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -39,6 +39,8 @@ pub struct Status {
     pub last_event: Option<u64>,
     /// Open device API sessions, the server's included.
     pub sessions: u8,
+    /// The hopper as the food beam last read it (during the last feed).
+    pub food: FoodLevel,
     /// Whether a feed can start now; absent from a feeder that does not
     /// report it.
     pub readiness: Option<Readiness>,

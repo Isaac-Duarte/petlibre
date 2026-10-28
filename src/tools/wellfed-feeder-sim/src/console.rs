@@ -11,6 +11,8 @@
 //! - `adapter in|out` fits or pulls the adapter; `pack <mV>|out` fits a
 //!   pack reading that many millivolts (three fresh D cells read about
 //!   4757) or takes the cells out. Both last across restarts.
+//! - `empty` empties the hopper and `fill` fills it, for the next feed's
+//!   food beam.
 //! - `reboot` restarts the feeder; `quit` stops the simulator.
 
 use wellfed_client::setup::panel_position;
@@ -24,7 +26,7 @@ const PRESS_MS: u32 = 120;
 /// Past the panel's 5 s hold.
 const HOLD_MS: u32 = 5_200;
 
-pub const HELP: &str = "commands: press <button>... | hold <button>[+<button>...] | adapter in|out | pack <mV>|out | reboot | quit\n\
+pub const HELP: &str = "commands: press <button>... | hold <button>[+<button>...] | adapter in|out | pack <mV>|out | empty | fill | reboot | quit\n\
      buttons: lock dispense mic reset, or their positions 1-4";
 
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
@@ -98,6 +100,8 @@ pub fn parse(line: &str) -> Result<Vec<Control>, ConsoleError> {
             }
             None => Err(ConsoleError::Pack),
         },
+        "empty" => Ok(vec![Control::Hopper(false)]),
+        "fill" => Ok(vec![Control::Hopper(true)]),
         "reboot" => Ok(vec![Control::Reboot]),
         "quit" | "exit" => Ok(vec![Control::Quit]),
         other => Err(ConsoleError::Command(other.to_owned())),

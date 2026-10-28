@@ -31,8 +31,8 @@ use wellfed_device_api::{
 use wellfed_model as model;
 use wellfed_model::{Answer, Generation, Hello, Joined, Op, OpenRefusal, SettingsPatch};
 use wellfed_proto::api::{
-    self as proto, Capabilities, EventBody, Metric, Refusal, Sample, Stats, StatsSection, Status,
-    UpdatePhase, UpdateRefusal, UpdateView, WANTED_MAX,
+    self as proto, Capabilities, EventBody, FoodLevel, Metric, Refusal, Sample, Stats,
+    StatsSection, Status, UpdatePhase, UpdateRefusal, UpdateView, WANTED_MAX,
 };
 use wellfed_session::frame;
 use wellfed_session::noise::Keypair;
@@ -298,6 +298,7 @@ impl Device for Fake {
                 Count::Unknown => proto::Desiccant::Unknown,
                 Count::Remaining(days) => proto::Desiccant::Remaining { days },
             },
+            food: FoodLevel::Unread,
         }
     }
 
@@ -1474,6 +1475,7 @@ fn a_client_without_the_feed_capability_neither_feeds_nor_sees_feeds() {
         completed: 1,
         outcome: proto::FeedOutcome::Done,
         reason: proto::FeedReason::Done,
+        hopper: FoodLevel::Present,
         by: proto::Source::Panel,
     };
     rig.device.record(0, fed);
@@ -2236,6 +2238,7 @@ fn every_body() -> Vec<EventBody> {
             EventBody::Missed { .. } => 12,
             EventBody::DispenseRefused { .. } => 13,
             EventBody::MealSoon { .. } => 14,
+            EventBody::Food { .. } => 15,
         }
     }
     let by = proto::Source::Panel;
@@ -2261,6 +2264,7 @@ fn every_body() -> Vec<EventBody> {
             completed: 1,
             outcome: proto::FeedOutcome::Done,
             reason: proto::FeedReason::Done,
+            hopper: FoodLevel::Present,
             by,
         },
         EventBody::FeedingBlocked {
@@ -2288,6 +2292,9 @@ fn every_body() -> Vec<EventBody> {
             due: 1_793_200_000,
             minute: 450,
             portions: 2,
+        },
+        EventBody::Food {
+            level: proto::FoodLevel::Empty,
         },
     ];
     let mut seen: Vec<usize> = bodies.iter().map(variant).collect();

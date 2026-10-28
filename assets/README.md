@@ -24,7 +24,7 @@ blender -b assets/model/plaf103.blend -P assets/model/render.py -- --all --check
 blender -b assets/model/plaf103.blend -P assets/model/render.py -- --view front --state food-half
 ```
 
-`--all` renders every image below, each in a fresh Blender. Output is a 1024 px transparent PNG with a contact shadow, optimized with `oxipng` when it is on `PATH`. An RTX A6000 on OptiX renders each in about 10 s at the default 512 samples; a CPU takes minutes. `--check` also draws the hotspot circles over `card`, `front` and `panel` into `model/checks/`, for checking that each lands on its part.
+`--all` renders every image below, each in a fresh Blender. Output is a 1024 px transparent PNG with a contact shadow, plus a `-cutout` copy without the shadow (`card-cutout.png`, `front-food-half-cutout.png`), each optimized with `oxipng` when it is on `PATH`. An RTX A6000 on OptiX renders each in about 10 s at the default 512 samples; a CPU takes minutes. `--check` also draws the hotspot circles over `card`, `front` and `panel` into `model/checks/`, for checking that each lands on its part.
 
 | Image | Use |
 | --- | --- |
@@ -34,8 +34,8 @@ blender -b assets/model/plaf103.blend -P assets/model/render.py -- --view front 
 | `top-lid-open` | Refilling the hopper, the lid set down beside it |
 | `bowl-out` | Washing or replacing the bowl (the card's camera) |
 | `outlet` | Jam and blocked-outlet help |
-| `back`, `bottom` | Rear three-quarter and underside. The model has no power jack or battery door yet, so neither image shows one |
+| `back`, `bottom` | Rear three-quarter, showing the USB-C power port, and underside. The model has no battery door yet |
 
-`card.json`, `front.json` and `panel.json` give each button's, indicator's, window's, outlet's and bowl's projected center and radius (normalized, origin top left) and whether it is visible, so the app draws highlights and indicator light over the image ([hotspots](model/RENDERS.md#hotspots)). Every state of a view shares its JSON. Every indicator is rendered unlit.
+`card.json`, `front.json` and `panel.json` give each button's, indicator's, window's, outlet's and bowl's projected center and radius (normalized, origin top left) and whether it is visible, so the app draws highlights and indicator light over the image ([hotspots](model/RENDERS.md#hotspots)). Every state of a view, and every cutout, shares its JSON. Every indicator is rendered unlit.
 
 **Every render is unbranded.** The script hides the hopper lettering and the PCB label, so no image suggests this project makes the hardware. Name the device only as "PETLIBRO Granary PLAF103" in compatibility text, and keep the "not affiliated" line wherever the device is shown with our brand.

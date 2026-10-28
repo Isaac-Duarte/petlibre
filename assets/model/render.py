@@ -43,15 +43,15 @@ FEEDER_WIDTH = 0.82 * 36.0 / 50.0
 BRAND_OBJECTS = ("Logo", "PCB_ChipLabel")
 
 # The ring icons the model lights blue. Only the red fault light is recorded on
-# hardware, so every indicator renders unlit and the UI draws light through the
-# hotspots.
+# hardware, so every indicator renders unlit (the smoked look of an indicator
+# icon with its LED off) and the UI draws light through the hotspots.
 LIT_ICONS = ("Icon_Lock", "Icon_WiFi")
-UNLIT_ICON = "PL_Icon__Icon_Mic"
+UNLIT_ICON = "PL_Icon__Icon_Bowl"
 
 # The window's food is the KibbleWin* pieces behind WindowGlass, in front of the
 # bulk HopperFill. The glass spans these heights (world Z).
-WINDOW_BOTTOM = 0.198
-WINDOW_TOP = 0.306
+WINDOW_BOTTOM = 0.186
+WINDOW_TOP = 0.303
 
 
 @dataclass(frozen=True)
@@ -70,9 +70,9 @@ CAMERAS = {
     "card": Camera(-32.0, 14.0, 85.0),
     "front": Camera(0.0, 8.0, 85.0, Vector((0.0, -0.06, 0.19)), 0.48),
     # The icons span 0.17 m of ring, so this is as tight as the frame gets.
-    "panel": Camera(0.0, 10.0, 160.0, Vector((0.0, -0.07, 0.133)), 0.19),
+    "panel": Camera(0.0, 10.0, 160.0, Vector((0.0, -0.07, 0.119)), 0.19),
     "top": Camera(-28.0, 50.0, 70.0, Vector((0.07, -0.04, 0.15)), 0.7),
-    "outlet": Camera(0.0, 11.0, 100.0, Vector((0.0, -0.09, 0.075)), 0.17),
+    "outlet": Camera(0.0, 11.0, 100.0, Vector((0.0, -0.09, 0.07)), 0.17),
     "back": Camera(148.0, 14.0, 85.0),
     "bottom": Camera(-32.0, -48.0, 85.0, Vector((0.0, 0.0, 0.07)), 0.5),
 }
@@ -80,17 +80,17 @@ CAMERAS = {
 # The ring icon under each button and indicator. The model has no separate
 # keycaps or LED objects, so each one's hotspot is its printed icon.
 # - Buttons follow the firmware's roles (docs/firmware/buttons.md): Reset, Mic,
-#   Dispense (the portion icon) and Lock.
+#   Dispense (the portion icon) and Lock. They are the outer four icons; the
+#   four indicators sit closer together between them.
 # - Indicators follow the operator's names for PA0/PA2/PA4/PB22 ("Wi-Fi", "low
 #   food", "locked", "warning"; docs/firmware/startup-diagnostics.md). "Low
 #   food" is the bowl icon by elimination, since no observation names the icon
-#   that lit. Icon_Battery matches no recorded indicator and is left out.
-# - Lock is one icon for both the button and its indicator.
+#   that lit.
 PARTS = {
     "button_reset": "Icon_Reset",
     "button_mic": "Icon_Mic",
     "button_dispense": "Icon_Portion",
-    "button_lock": "Icon_Lock",
+    "button_lock": "Icon_LockButton",
     "led_connection": "Icon_WiFi",
     "led_food": "Icon_Bowl",
     "led_lock": "Icon_Lock",
@@ -522,6 +522,25 @@ def render_one(args):
             CHECKS.mkdir(exist_ok=True)
             draw_check(out, data, CHECKS / f"{args.view}-hotspots.png")
     print(f"rendered {name} in {elapsed:.1f} s on {device}", flush=True)
+
+    # The cutout is the same image without the contact shadow, for layouts
+    # that ground the feeder themselves. The catcher stays in the scene, hidden
+    # only from the camera: removing it changes how Cycles lights the body and
+    # the cutout would come out darker. The view's hotspots still apply.
+    cutout = args.out / f"{name}-cutout.png"
+    catchers = [obj for obj in bpy.data.objects if obj.is_shadow_catcher]
+    if not catchers:
+        shutil.copyfile(out, cutout)
+        print(f"rendered {name}-cutout as a copy (no floor)", flush=True)
+        return
+    for catcher in catchers:
+        catcher.visible_camera = False
+    bpy.context.scene.render.filepath = str(cutout)
+    started = time.monotonic()
+    bpy.ops.render.render(write_still=True)
+    elapsed = time.monotonic() - started
+    optimize(cutout)
+    print(f"rendered {name}-cutout in {elapsed:.1f} s on {device}", flush=True)
 
 
 def render_all(args):

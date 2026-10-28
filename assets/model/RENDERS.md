@@ -13,7 +13,7 @@ The images the app, the web UI and the docs need from `plaf103.blend`, and the r
 
 ## Outputs
 
-`assets/renders/<view>[-<state>].png`, plus `<view>.json` for views with hotspots. They are committed and listed in `assets/README.md`. Unless a row says otherwise, images are square RGBA, transparent, with a contact shadow (the existing shadow catcher). A UI image is 1024 px and a marketing image the size given in its row. PNGs are optimized losslessly (`oxipng -o 4`); the app's build makes WebP, not this script.
+`assets/renders/<view>[-<state>].png` and `<view>[-<state>]-cutout.png`, plus `<view>.json` for views with hotspots. They are committed and listed in `assets/README.md`. Unless a row says otherwise, images are square RGBA, transparent, with a contact shadow (the existing shadow catcher); each `-cutout` image is the same render with the catcher hidden, so it has no shadow, and shares its view's hotspots. A UI image is 1024 px and a marketing image the size given in its row. PNGs are optimized losslessly (`oxipng -o 4`); the app's build makes WebP, not this script.
 
 ## The set
 
@@ -80,7 +80,7 @@ For `panel`, `front` and `card`, write `<view>.json` beside the image: each name
 - **Parts:**
   - The **buttons** are Reset, Mic, Dispense and Lock (firmware `buttons.md`, physical).
   - The **indicators** are connection, food warning, lock and fault (hardware README).
-  - The model's ring icons are `Icon_Reset`, `Icon_Mic`, `Icon_Portion`, `Icon_Lock`, `Icon_WiFi`, `Icon_Warn`, `Icon_Bowl` and `Icon_Battery`. Map them by inspecting the model, and record the mapping in `render.py`.
+  - The model's ring icons are `Icon_Reset`, `Icon_Mic`, `Icon_Portion`, `Icon_Lock`, `Icon_WiFi`, `Icon_Warn`, `Icon_Bowl` and `Icon_LockButton`. Map them by inspecting the model, and record the mapping in `render.py`.
   - If an indicator has no matching object, leave it out of the JSON and say so. Never place one by guesswork.
 
 ## Acceptance
@@ -94,8 +94,8 @@ For `panel`, `front` and `card`, write `<view>.json` beside the image: each name
 ## Status
 
 Priority 1 is rendered (October 23, 2026; simulation: renders of the model, not photographs). Open items for the owner:
-- **Model gaps.** There is no power jack (the back is plain, and `PCB_USBC` sits inside the front of the band with no opening) and no battery door (the underside is a flat disc), so `back` and `bottom` can't yet show either. `HopperFill` has no material; `render.py` gives it `PL_Kibble`.
+- **Model gaps.** The power port is a USB-C receptacle (`PowerPort`) low on the back, placed from photographs; `PCB_USBC` still sits inside the front of the band. There is no battery door (the underside is a flat disc), so `bottom` can't yet show one. `HopperFill` has no material; `render.py` gives it `PL_Kibble`.
 - **Lit icons.** The model lights `Icon_Lock` and `Icon_WiFi` blue. Since that color isn't recorded, `render.py` gives them the other icons' print material.
-- **Icon order.** On the feeder, seen from the front, the buttons run Lock, Dispense, Mic, Reset and the indicators low food, lock, Wi-Fi, error/warning, each from left to right (owner, Oct 24; the earlier notes gave the buttons in the reverse view). On the model's ring the icons run Battery, Portion, Bowl, Lock, Wi-Fi, Warn, Mic, Reset, which matches neither, so the model's icons are misplaced.
-- **Uncertain mapping.** `led_food` is `Icon_Bowl` by elimination. `Icon_Battery` matches no recorded indicator and is left out of the JSON.
+- **Icon order.** On the feeder, seen from the front, the buttons run Lock, Dispense, Mic, Reset and the indicators low food, lock, Wi-Fi, error/warning, each from left to right (owner, Oct 24). The ring matches (Oct 27, from owner photographs): `Icon_LockButton` and `Icon_Portion` at the left, the four indicators grouped in the middle, `Icon_Mic` and `Icon_Reset` at the right. The Priority 1 renders predate this and the model's new proportions, and need regenerating.
+- **Uncertain mapping.** `led_food` is `Icon_Bowl` by elimination.
 - **Panel legibility.** The icons span 0.17 m of ring, so even at the tightest square frame each is about 10 px wide at 390 px.

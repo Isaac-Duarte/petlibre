@@ -12,8 +12,9 @@
 //!    holds for the device API ([`lock`]);
 //! 3. the supply judged, its change recorded, battery mode's radio asked
 //!    of the platform and the brownout hold kept ([`supply`]); a Dispense
-//!    press the panel allowed, queued for the feeding owner, and readiness
-//!    noted ([`feeding`]); then the panel's lights from what the pass now
+//!    press the panel allowed, queued for the feeding owner; the feeding
+//!    plans ([`schedule`]) and the meal reminder ([`reminder`]); and
+//!    readiness noted ([`feeding`]); then the panel's lights from what the pass now
 //!    knows ([`lights`]), and a press's beep ([`beep`]);
 //! 4. the device API: its sockets, the server's step and the live samples
 //!    ([`serve`]), with the time settings and the NTP exchange ([`time`]);
@@ -33,6 +34,7 @@ pub mod lights;
 pub mod lock;
 pub mod owner;
 pub mod platform;
+pub mod reminder;
 pub mod schedule;
 pub mod serve;
 pub mod setup;
@@ -53,6 +55,7 @@ use lights::Lights;
 use lock::LockBox;
 use owner::Owner;
 use platform::DriverRecord;
+use reminder::Reminder;
 use schedule::Schedule;
 use serve::{FeederDevice, Inputs, Serve};
 use wellfed_device_api::mailbox::Lock;
@@ -205,6 +208,7 @@ pub struct Feeder<P: Platform> {
     lights: Lights,
     beep: Beeper,
     schedule: Schedule,
+    reminder: Reminder,
 }
 
 impl<P: Platform> Feeder<P> {
@@ -222,6 +226,7 @@ impl<P: Platform> Feeder<P> {
             lights: Lights::new(),
             beep: Beeper::new(),
             schedule: Schedule::new(),
+            reminder: Reminder::new(),
         }
     }
 
@@ -352,6 +357,10 @@ impl<P: Platform> Feeder<P> {
             .step(&mut self.platform, feeds, now_ms, ready, |r| {
                 record(Record::Schedule(r))
             });
+        // After the schedule, so a pass that runs a meal decides it first;
+        // the reminder only reads the plans.
+        self.reminder
+            .step(&mut self.platform, now_ms, |r| record(Record::Schedule(r)));
         let ready = self.readiness(feeds);
         self.readiness.note(&mut self.platform, now_ms, ready, |r| {
             record(Record::Feeding(r))

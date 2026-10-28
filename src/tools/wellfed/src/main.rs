@@ -295,6 +295,21 @@ mod tests {
             Cli::try_parse_from(reset).map(|cli| cli.command),
             Ok(Command::Desiccant(_))
         ));
+        // The meal reminder takes `off` or 1-60 minutes, here and through
+        // the server.
+        for lead in ["off", "1", "60"] {
+            let set = ["wellfed", "settings", "--meal-reminder", lead];
+            assert!(matches!(
+                Cli::try_parse_from(set).map(|cli| cli.command),
+                Ok(Command::Settings(_))
+            ));
+        }
+        for lead in ["0", "61", "soon", ""] {
+            let set = ["wellfed", "settings", "--meal-reminder", lead];
+            assert!(Cli::try_parse_from(set).is_err(), "{lead:?}");
+        }
+        let through = ["wellfed", "server", "settings", "--meal-reminder", "5"];
+        assert!(Cli::try_parse_from(through).is_ok());
 
         // A server command parses whole, its flags after the verb.
         let feed = ["wellfed", "server", "feed", "--portions", "2", "--json"];

@@ -126,6 +126,19 @@ pub enum EventBody {
         due: Timestamp,
         reason: MissedReason,
     },
+    /// A plan's occurrence is coming: sent the meal reminder's lead ahead
+    /// of it. A feeder restart inside the lead may send it again, with the
+    /// same `plan` and `due`.
+    MealSoon {
+        /// The plan's slot.
+        plan: u8,
+        /// When it is due.
+        due: Timestamp,
+        /// The minute of the feeder's local day it is due at (0-1439).
+        minute: u16,
+        /// The portions it will ask for.
+        portions: u8,
+    },
     /// The adapter came or went, or the pack crossed its floor (at most
     /// one a minute, as the supply stood at its end).
     Supply {
@@ -263,6 +276,7 @@ impl EventBody {
             Self::Plans { .. } => EventKind::Plans,
             Self::Missed { .. } => EventKind::Missed,
             Self::DispenseRefused { .. } => EventKind::DispenseRefused,
+            Self::MealSoon { .. } => EventKind::MealSoon,
         }
     }
 }
@@ -285,10 +299,11 @@ pub enum EventKind {
     Plans,
     Missed,
     DispenseRefused,
+    MealSoon,
 }
 
 impl EventKind {
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 15] = [
         Self::Boot,
         Self::Lock,
         Self::Settings,
@@ -303,6 +318,7 @@ impl EventKind {
         Self::Plans,
         Self::Missed,
         Self::DispenseRefused,
+        Self::MealSoon,
     ];
 
     /// The stored spelling, the same as the JSON one.
@@ -322,6 +338,7 @@ impl EventKind {
             Self::Plans => "plans",
             Self::Missed => "missed",
             Self::DispenseRefused => "dispense_refused",
+            Self::MealSoon => "meal_soon",
         }
     }
 

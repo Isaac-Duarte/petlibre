@@ -1,7 +1,8 @@
 //! The device settings as the runtime's services see them: the view the
 //! settings writer publishes (the speaker honours `sound`, `volume` and the
-//! sound window; the loop's lights honour `lights` and the lights window),
-//! and a `settings` request's fields and result, carried by
+//! sound window; the loop's lights honour `lights` and the lights window;
+//! and the schedule's meal reminder reads `meal_reminder`), and a
+//! `settings` request's fields and result, carried by
 //! `wellfed_hal::settings` between the device API and the writer.
 
 /// Minutes in a local day: a window's bounds are below it.
@@ -53,6 +54,43 @@ impl Window {
     }
 }
 
+/// Whether the feeder announces each scheduled meal ahead of it, and how
+/// far ahead: a `MealSoon` event on the event stream, never a sound.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MealReminder {
+    #[default]
+    Off,
+    /// [`REMINDER_MINUTES_MIN`] to [`REMINDER_MINUTES_MAX`] minutes before
+    /// each occurrence.
+    Before { minutes: u8 },
+}
+
+/// The shortest lead a meal reminder takes.
+pub const REMINDER_MINUTES_MIN: u8 = 1;
+/// The longest lead a meal reminder takes: an hour, a choice of ours, as
+/// stock's cloud field (`feedingPlanAdvanceNoticeTime`) gives no unit.
+pub const REMINDER_MINUTES_MAX: u8 = 60;
+
+impl MealReminder {
+    /// Whether the lead is one the store accepts.
+    pub const fn valid(self) -> bool {
+        match self {
+            Self::Off => true,
+            Self::Before { minutes } => {
+                minutes >= REMINDER_MINUTES_MIN && minutes <= REMINDER_MINUTES_MAX
+            }
+        }
+    }
+
+    /// The lead in minutes, or `None` when off.
+    pub const fn minutes(self) -> Option<u8> {
+        match self {
+            Self::Off => None,
+            Self::Before { minutes } => Some(minutes),
+        }
+    }
+}
+
 /// The fields of a `settings` request; none present reads the settings.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SettingsFields {
@@ -68,6 +106,7 @@ pub struct SettingsFields {
     /// ([`crate::desiccant::today`]); set only by the reset request, which
     /// reads the day from a valid clock.
     pub desiccant_reset: Option<i32>,
+    pub meal_reminder: Option<MealReminder>,
 }
 
 impl SettingsFields {
@@ -80,6 +119,7 @@ impl SettingsFields {
             || self.sound_window.is_some()
             || self.desiccant_days.is_some()
             || self.desiccant_reset.is_some()
+            || self.meal_reminder.is_some()
     }
 
     /// Whether every field present is one the store accepts.
@@ -90,6 +130,7 @@ impl SettingsFields {
             && self
                 .desiccant_days
                 .is_none_or(crate::desiccant::period_valid)
+            && self.meal_reminder.is_none_or(MealReminder::valid)
     }
 }
 
@@ -110,6 +151,7 @@ pub struct SettingsView {
     /// The local calendar day of the last desiccant replacement; `None`
     /// before the first.
     pub desiccant_reset: Option<i32>,
+    pub meal_reminder: MealReminder,
     /// The stored record's generation; 0 for defaults never saved.
     pub generation: u32,
     /// Whether NOR holds a record this firmware can update.
@@ -144,6 +186,16 @@ pub enum SettingsResult {
     Busy,
     /// The store cannot be written (corrupt, newer schema, worn or unarmed).
     ReadOnly,
+}
+
+/// `off`, or the lead in minutes, as records spell it.
+impl core::fmt::Display for MealReminder {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match *self {
+            Self::Off => f.write_str("off"),
+            Self::Before { minutes } => write!(f, "{minutes}"),
+        }
+    }
 }
 
 /// `always`, or the window's bounds as `HH:MM-HH:MM`, as records spell it.

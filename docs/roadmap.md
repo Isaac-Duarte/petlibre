@@ -51,7 +51,7 @@ This page tracks what works today and what comes next. It covers the replacement
 | Statistics and per-feed traces | Experimental | |
 | Lights and sound settings | Works | Lights and sound windows, volume-0 mute and a beep on every button press, checked on the bench. |
 | Desiccant reminder | Experimental | Counted on the feeder from the last replacement; tested in simulation. |
-| Meal reminder | Not started | |
+| Meal reminder | Experimental | An event on the event stream before each scheduled meal; tested in simulation. |
 
 ## Apps and server
 

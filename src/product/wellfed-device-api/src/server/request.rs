@@ -6,9 +6,9 @@ use super::memory::Remembered;
 use super::{Phase, Server, Waiting, slot_id};
 use crate::clients::{Label, Role};
 use crate::mailbox::{
-    Calibration, CalibrationResult, LockResult, NtpServer, Origin, PLANS, Plan, PlansResult,
-    PlayResult, SettingsFields, SettingsResult, Table, TimeFields, TimeResult, TimeSettingsResult,
-    Weekdays, WifiResult, Window, Zone,
+    Calibration, CalibrationResult, LockResult, MealReminder, NtpServer, Origin, PLANS, Plan,
+    PlansResult, PlayResult, SettingsFields, SettingsResult, Table, TimeFields, TimeResult,
+    TimeSettingsResult, Weekdays, WifiResult, Window, Zone,
 };
 use crate::pairing::{self, Pairing};
 use crate::wifi::Credentials;
@@ -93,6 +93,7 @@ impl Server {
                     sound_window: wire_window(view.sound_window),
                     desiccant_days: view.desiccant_days,
                     desiccant_reset: view.desiccant_reset,
+                    meal_reminder: wire_reminder(view.meal_reminder),
                     writable: view.writable,
                 }),
                 SettingsResult::Busy => Reply::Refused(Refusal::Busy),
@@ -678,6 +679,7 @@ impl From<Op<'_>> for Action {
                     sound_window: changes.sound_window.map(window),
                     desiccant_days: changes.desiccant_days,
                     desiccant_reset: None,
+                    meal_reminder: changes.meal_reminder.map(reminder),
                 };
                 if !fields.valid() {
                     return Self::Invalid;
@@ -952,6 +954,21 @@ fn wire_window(window: Window) -> proto::Window {
     match window {
         Window::Always => proto::Window::Always,
         Window::Between { start, end } => proto::Window::Between { start, end },
+    }
+}
+
+fn reminder(reminder: proto::MealReminder) -> MealReminder {
+    match reminder {
+        proto::MealReminder::Off => MealReminder::Off,
+        proto::MealReminder::Before { minutes } => MealReminder::Before { minutes },
+    }
+}
+
+/// A meal reminder as the wire carries it.
+fn wire_reminder(reminder: MealReminder) -> proto::MealReminder {
+    match reminder {
+        MealReminder::Off => proto::MealReminder::Off,
+        MealReminder::Before { minutes } => proto::MealReminder::Before { minutes },
     }
 }
 

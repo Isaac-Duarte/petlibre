@@ -6,8 +6,8 @@ use std::time::Duration;
 
 use serde_json::json;
 use wellfed_model::{
-    Counters, Counts, Generation, Memory, NtpServer, OpenRefusal, Refusal, ResetCause, Settings,
-    Stats, StatsSection, TimeView, WifiSource, Window,
+    Counters, Counts, Generation, MealReminder, Memory, NtpServer, OpenRefusal, Refusal,
+    ResetCause, Settings, Stats, StatsSection, TimeView, WifiSource, Window,
 };
 
 use super::log::Log;
@@ -75,6 +75,7 @@ struct Feeder {
     lights_window: Window,
     sound_window: Window,
     desiccant_days: u8,
+    meal_reminder: MealReminder,
     generation: u32,
     stored: bool,
     wifi_generation: u32,
@@ -159,6 +160,7 @@ impl Feeder {
             lights_window: Window::Always,
             sound_window: Window::Always,
             desiccant_days: 14,
+            meal_reminder: MealReminder::Off,
             generation: 2979,
             stored: false,
             wifi_generation: 4,
@@ -343,6 +345,7 @@ impl Feeder {
             sound_window: self.sound_window,
             desiccant_days: self.desiccant_days,
             desiccant_replaced: None,
+            meal_reminder: self.meal_reminder,
             writable: true,
         }
     }
@@ -586,6 +589,9 @@ impl Feeder {
                 }
                 if let Some(days) = changes.desiccant_days {
                     self.desiccant_days = days;
+                }
+                if let Some(reminder) = changes.meal_reminder {
+                    self.meal_reminder = reminder;
                 }
                 self.generation += 1;
                 let saved = format!(

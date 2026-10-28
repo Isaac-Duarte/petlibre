@@ -5,8 +5,8 @@
 use std::time::Duration;
 
 use wellfed_api::{
-    Connection as Link, EventBody, EventKind, EventQuery, Generation, SettingsPatch, Source,
-    StreamEvent, Window,
+    Connection as Link, EventBody, EventKind, EventQuery, Generation, MealReminder, SettingsPatch,
+    Source, StreamEvent, Window,
 };
 use wellfed_server_testkit::feeder::{self, Relay};
 use wellfed_server_testkit::fixed::NOW_MS;
@@ -85,6 +85,23 @@ fn settings_change_against_the_current_generation_only() {
                 )
                 .await,
             Err(Error::Invalid(Invalid::Window))
+        ));
+
+        let too_early = SettingsPatch {
+            meal_reminder: Some(MealReminder::Before { minutes: 61 }),
+            ..SettingsPatch::default()
+        };
+        assert!(matches!(
+            service
+                .put_settings(
+                    &ada().into(),
+                    id,
+                    changed.generation,
+                    too_early,
+                    Some([5; 16])
+                )
+                .await,
+            Err(Error::Invalid(Invalid::MealReminder))
         ));
 
         // The settings change's key names that change: reused for a lock,

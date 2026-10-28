@@ -10,7 +10,9 @@
 //! names the store generation it read, so the feeder refuses it as stale if
 //! anything changed in between.
 
-use wellfed_model::{OpenRefusal, Refusal, Settings, SettingsPatch, WifiSource, Window};
+use wellfed_model::{
+    MealReminder, OpenRefusal, Refusal, Settings, SettingsPatch, WifiSource, Window,
+};
 
 use std::ops::Deref;
 use std::time::Duration;
@@ -297,6 +299,7 @@ pub(super) fn changes_to(settings: &Settings) -> SettingsPatch {
         lights_window: Some(settings.lights_window),
         sound_window: Some(settings.sound_window),
         desiccant_days: Some(settings.desiccant_days),
+        meal_reminder: Some(settings.meal_reminder),
     }
 }
 
@@ -418,6 +421,15 @@ fn other_window(window: Window) -> Window {
     }
 }
 
+fn other_reminder(reminder: MealReminder) -> MealReminder {
+    let soon = MealReminder::Before { minutes: 5 };
+    if reminder == soon {
+        MealReminder::Off
+    } else {
+        soon
+    }
+}
+
 fn settings_persist(ctx: &mut Ctx) -> Result<()> {
     let before = read_settings(ctx)?;
     let changed = SettingsPatch {
@@ -427,6 +439,7 @@ fn settings_persist(ctx: &mut Ctx) -> Result<()> {
         lights_window: Some(other_window(before.lights_window)),
         sound_window: Some(other_window(before.sound_window)),
         desiccant_days: Some(if before.desiccant_days == 14 { 15 } else { 14 }),
+        meal_reminder: Some(other_reminder(before.meal_reminder)),
     };
 
     let result = set_settings(ctx, changed).and_then(|base| {

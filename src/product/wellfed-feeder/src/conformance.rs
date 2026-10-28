@@ -23,9 +23,10 @@ use wellfed_proto::api::{
 use crate::feeder::{Feeder, Feeds, NoFeeds, Platform};
 use wellfed_device_api::clients::{Label, Role};
 use wellfed_device_api::mailbox::{
-    Calibration, CalibrationResult, LockResult, NtpServer, Origin, PLANS, Plan, PlansResult,
-    SettingsFields, SettingsResult, SettingsView, Table, TimeFields, TimeResult, TimeSettings,
-    TimeSettingsResult, TimeSettingsView, Weekdays, WifiResult, WifiView, Window, Zone,
+    Calibration, CalibrationResult, LockResult, MealReminder, NtpServer, Origin, PLANS, Plan,
+    PlansResult, SettingsFields, SettingsResult, SettingsView, Table, TimeFields, TimeResult,
+    TimeSettings, TimeSettingsResult, TimeSettingsView, Weekdays, WifiResult, WifiView, Window,
+    Zone,
 };
 use wellfed_device_api::wifi::Credentials;
 use wellfed_device_api::{Device, EventRead, KeyChange, KeyOutcome};
@@ -159,6 +160,24 @@ pub fn a_settings_change_lands_on_the_writer_turn(rig: &mut impl Rig) {
     assert_eq!(windowed.sound_window, Window::Between { start: 0, end: 0 });
     assert_eq!(windowed.volume, target);
     assert_eq!(windowed.generation, after.generation + 1);
+
+    // The meal reminder, off by default, lands on its own field.
+    assert_eq!(windowed.meal_reminder, MealReminder::Off);
+    let soon = MealReminder::Before { minutes: 15 };
+    let reminder = SettingsFields {
+        meal_reminder: Some(soon),
+        ..SettingsFields::default()
+    };
+    assert!(matches!(
+        settings(rig, reminder),
+        SettingsResult::Current { pending: true, .. }
+    ));
+    rig.write();
+
+    let reminded = settings_view(rig);
+    assert_eq!(reminded.meal_reminder, soon);
+    assert_eq!(reminded.lights_window, night);
+    assert_eq!(reminded.generation, windowed.generation + 1);
 }
 
 /// Wi-Fi credentials are saved and cleared on the writer's turn, and the

@@ -91,6 +91,8 @@ pub enum Record {
     },
     /// The writer dropped the schedule's change: it decides again.
     Dropped,
+    /// The meal reminder recorded `MealSoon` for this occurrence.
+    Reminded { plan: u8, due_s: u32 },
 }
 
 /// One record's body (`PLSCH1`).
@@ -115,6 +117,7 @@ pub fn describe(record: Record, f: &mut impl fmt::Write) -> fmt::Result {
             missed_name(reason)
         ),
         Record::Dropped => f.write_str("dropped"),
+        Record::Reminded { plan, due_s } => write!(f, "reminded plan={plan} due={due_s}"),
     }
 }
 

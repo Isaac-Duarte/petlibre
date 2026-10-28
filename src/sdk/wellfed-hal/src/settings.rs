@@ -8,7 +8,9 @@
 
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
-pub use wellfed_core::settings::{SettingsFields, SettingsResult, SettingsView, Window};
+pub use wellfed_core::settings::{
+    MealReminder, SettingsFields, SettingsResult, SettingsView, Window,
+};
 
 use crate::cell::TaskCell;
 use crate::sdk::IrqGuard;
@@ -30,6 +32,7 @@ const NO_FIELDS: SettingsFields = SettingsFields {
     sound_window: None,
     desiccant_days: None,
     desiccant_reset: None,
+    meal_reminder: None,
 };
 const NO_VIEW: SettingsView = SettingsView {
     lights: false,
@@ -39,6 +42,7 @@ const NO_VIEW: SettingsView = SettingsView {
     sound_window: Window::Always,
     desiccant_days: 0,
     desiccant_reset: None,
+    meal_reminder: MealReminder::Off,
     generation: 0,
     writable: false,
 };

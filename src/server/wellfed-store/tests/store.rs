@@ -7,7 +7,8 @@ use tempfile::TempDir;
 use uuid::Uuid;
 use wellfed_api::{
     Blocked, ClientRole, Desiccant, EventBody, EventKind, FeederId, FeederStatus, Generation,
-    Household, Readiness, Role, Settings, Source, TimeFormat, Units, UserId, WifiSource, Window,
+    Household, MealReminder, Readiness, Role, Settings, Source, TimeFormat, Units, UserId,
+    WifiSource, Window,
 };
 use wellfed_store::{
     Change, Error, FeederRow, NewEvent, NewFeeder, NewUser, SealedKey, Store, Synced,
@@ -430,6 +431,7 @@ async fn the_cached_status_and_settings_read_back() {
         sound_window: Window::Always,
         desiccant_days: 21,
         desiccant_replaced: Some(jiff::civil::date(2026, 10, 28)),
+        meal_reminder: MealReminder::Before { minutes: 5 },
         writable: true,
     };
     store.record_settings(id, &settings, at(100)).await.unwrap();

@@ -2,7 +2,7 @@
 
 The feeder keeps up to ten feeding plans and runs them itself, with no server. This page explains what a plan is, when one runs, and how the feeder makes sure a meal runs at most once through restarts, clock jumps and daylight changes. It is for owners who want to know what to expect and for anyone changing the schedule code.
 
-Status: **Works**. Observed on our feeder; daylight changes and power cuts between a claim and its feed are tested in simulation only.
+Status: **Works**. Observed on our feeder; daylight changes and power cuts between a claim and its feed are tested in simulation only. The meal reminder is **Experimental**: tested in simulation only.
 
 ## Plans
 
@@ -52,6 +52,26 @@ A feed a plan started is a `Fed` event by `schedule` with the plan's slot. A mis
 
 A plan you saved while the feeder had no time has no starting point, so it starts once the clock returns. An occurrence that falls before then, late or not, passes without a `Missed` event: it may have fallen before the save.
 
+## Meal reminder
+
+The feeder can announce each scheduled meal ahead of it, so the app, the server or a home automation can tell you food is coming. It records a `MealSoon` event on the event stream; it plays no sound and sends no phone notification itself. The reminder is off until you set it:
+
+```sh
+wellfed settings --meal-reminder 10    # 10 minutes before each meal
+wellfed settings --meal-reminder off
+```
+
+The lead is 1 to 60 minutes, one setting for every plan. Stock kept a similar field in its cloud (`feedingPlanAdvanceNoticeTime`, 5 or unset), with no unit we could find, so the range is ours.
+
+A `MealSoon` event names the plan's slot, the time the meal is due (and its minute of the feeder's local day) and the portions it will ask for. The feeder sends one for each occurrence:
+
+- **When the lead starts.** With a 10-minute lead, a 07:30 meal is announced at 07:20. A plan you save, or move, inside the lead is announced at once.
+- **Only for a meal that will run.** A disabled plan, a feeder without a valid clock, or a plans store it cannot write gets no reminder.
+- **Once.** Changing only a plan's portions keeps the reminder already sent; the meal feeds the new portions. A change of time or days is a new occurrence, with its own reminder.
+- **Across a daylight change**, the lead counts real minutes to the meal's instant: a 03:10 meal on the spring change day, 30 minutes ahead, is announced at 01:40, just before the clock jumps.
+
+The reminder only reads the plans. It never claims, delays or blocks a meal, and the meal runs exactly as it would with the reminder off. It keeps nothing on flash about what it sent. So a restart inside the lead announces the same meal again once the clock is back, with the same plan and due time, and a client can drop the repeat.
+
 ## Daylight saving and time zones
 
 Plans keep local time across daylight changes, from the zone's rule or a client's sync ([clock](clock.md#time-settings)):
@@ -86,6 +106,7 @@ A plans store the feeder cannot write runs nothing, since it could not keep the 
 | Time zone | Whole hours | Any offset, with daylight rules |
 | A one-off plan after it runs | Deleted | Kept, disabled |
 | A sound before the meal | Per plan | Not yet |
+| A reminder before the meal | The vendor's cloud and app; nothing in the firmware | A `MealSoon` event on the feeder's event stream, 1 to 60 minutes ahead |
 
 ## Storage
 
@@ -94,4 +115,5 @@ The plans live in storage sectors 11 and 12 (`wellfed_feeder::store::plans`): on
 ## Evidence
 
 - **Observed, October 28, 2026** (`fp03-ota-20261028`, hopper empty): a daily plan fed once at its minute; a reboot within that minute, with the clock carried across it, ran nothing again; a plan set to run once fed and disabled itself; a plan due while the feeder had no clock after a cold boot held, and the sync 16 minutes later recorded it missed, unfed.
+- **Simulated, October 28, 2026.** The meal reminder, on the same loop: off by default, its lead before the meal with the meal still run once, a disabled plan and a feeder without time, a plan edited inside the lead, a restart inside the lead, and Denver's spring and autumn changes.
 - **Simulated, October 28, 2026.** `wellfed-feeder-sim`'s schedule tests run the product loop in virtual time over the real stores and feed journal: on-time feeds, restarts, backward and forward jumps, a cold boot without time, plans due together, a wait past the grace, a cut between the claim and the feed, a cut mid-feed, a refused feed and its retries, one-off plans enabled again, a plan saved without time, and Denver's spring and autumn changes.

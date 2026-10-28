@@ -12,9 +12,9 @@ use wellfed_proto::setup as proto_setup;
 use crate::{
     Answer, Bank1Page, Battery, Blocked, Bowl, Calibration, CalibrationView, Capabilities, Client,
     ClientRole, Counters, Counts, Desiccant, EnrollPath, Erases, Event, EventBody, FeedOutcome,
-    FeedReason, Flash, Food, Generation, Hello, Hex, Invite, Joined, LogLines, Memory,
-    MissedReason, NtpResult, NtpServer, Op, OpenRefusal, Phase, Plan, Plans, Portions, Power,
-    PowerStats, Readiness, Refusal, ResetCause, Resets, Sample, SampleValue, Settings,
+    FeedReason, Flash, Food, Generation, Hello, Hex, Invite, Joined, LogLines, MealReminder,
+    Memory, MissedReason, NtpResult, NtpServer, Op, OpenRefusal, Phase, Plan, Plans, Portions,
+    Power, PowerStats, Readiness, Refusal, ResetCause, Resets, Sample, SampleValue, Settings,
     SettingsPatch, Source, Stats, StatsSection, Status, Supply, TaskStack, TimeSource, TimeSync,
     TimeView, Tune, UpdatePhase, UpdateRefusal, UpdateStop, UpdateView, Weekdays, WifiSource,
     Window, setup,
@@ -229,6 +229,7 @@ impl From<proto::Settings> for Settings {
             sound_window,
             desiccant_days,
             desiccant_reset,
+            meal_reminder,
             writable,
         } = settings;
         Self {
@@ -240,6 +241,7 @@ impl From<proto::Settings> for Settings {
             sound_window: sound_window.into(),
             desiccant_days,
             desiccant_replaced: desiccant_reset.and_then(calendar_day),
+            meal_reminder: meal_reminder.into(),
             writable,
         }
     }
@@ -252,6 +254,24 @@ fn calendar_day(day: i32) -> Option<jiff::civil::Date> {
     jiff::civil::date(1970, 1, 1)
         .checked_add(jiff::Span::new().try_days(day).ok()?)
         .ok()
+}
+
+impl From<proto::MealReminder> for MealReminder {
+    fn from(reminder: proto::MealReminder) -> Self {
+        match reminder {
+            proto::MealReminder::Off => Self::Off,
+            proto::MealReminder::Before { minutes } => Self::Before { minutes },
+        }
+    }
+}
+
+impl From<MealReminder> for proto::MealReminder {
+    fn from(reminder: MealReminder) -> Self {
+        match reminder {
+            MealReminder::Off => Self::Off,
+            MealReminder::Before { minutes } => Self::Before { minutes },
+        }
+    }
 }
 
 impl From<proto::Window> for Window {
@@ -341,6 +361,17 @@ impl From<proto::EventBody> for EventBody {
             proto::EventBody::DispenseRefused { reason } => Self::DispenseRefused {
                 reason: reason.into(),
             },
+            proto::EventBody::MealSoon {
+                plan,
+                due,
+                minute,
+                portions,
+            } => Self::MealSoon {
+                plan,
+                due: seconds(due),
+                minute,
+                portions,
+            },
         }
     }
 }
@@ -417,6 +448,17 @@ impl From<EventBody> for proto::EventBody {
             },
             EventBody::DispenseRefused { reason } => Self::DispenseRefused {
                 reason: reason.into(),
+            },
+            EventBody::MealSoon {
+                plan,
+                due,
+                minute,
+                portions,
+            } => Self::MealSoon {
+                plan,
+                due: u32::try_from(due.as_second()).unwrap_or(u32::MAX),
+                minute,
+                portions,
             },
         }
     }
@@ -1394,6 +1436,7 @@ impl From<SettingsPatch> for proto::SettingsChanges {
             lights_window,
             sound_window,
             desiccant_days,
+            meal_reminder,
         } = patch;
         Self {
             lights,
@@ -1402,6 +1445,7 @@ impl From<SettingsPatch> for proto::SettingsChanges {
             lights_window: lights_window.map(Into::into),
             sound_window: sound_window.map(Into::into),
             desiccant_days,
+            meal_reminder: meal_reminder.map(Into::into),
         }
     }
 }
@@ -1617,6 +1661,12 @@ mod tests {
                 reason: Some(proto::Blocked::Fault),
             },
             proto::EventBody::FeedingBlocked { reason: None },
+            proto::EventBody::MealSoon {
+                plan: 3,
+                due: 1_793_200_000,
+                minute: 450,
+                portions: 2,
+            },
         ]
     }
 
@@ -1626,6 +1676,32 @@ mod tests {
             let model = EventBody::from(body);
             assert_eq!(proto::EventBody::from(model), body);
         }
+    }
+
+    /// `wellfed events` prints each body as this JSON.
+    #[test]
+    fn a_meal_reminder_reads_as_json() {
+        let body = EventBody::from(proto::EventBody::MealSoon {
+            plan: 3,
+            due: 1_793_200_000,
+            minute: 450,
+            portions: 2,
+        });
+        assert_eq!(
+            serde_json::to_value(body).unwrap(),
+            serde_json::json!({
+                "kind": "meal_soon",
+                "plan": 3,
+                "due": "2026-10-28T15:06:40Z",
+                "minute": 450,
+                "portions": 2,
+            })
+        );
+        let reminder = serde_json::to_value(MealReminder::Before { minutes: 10 }).unwrap();
+        assert_eq!(
+            reminder,
+            serde_json::json!({ "mode": "before", "minutes": 10 })
+        );
     }
 
     #[test]

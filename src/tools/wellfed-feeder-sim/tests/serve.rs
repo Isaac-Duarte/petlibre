@@ -18,9 +18,9 @@ use wellfed_feeder_sim::serve::Event;
 use wellfed_feeder_sim::sim::Record;
 use wellfed_model::{
     Answer, Bowl, Calibration, CalibrationView, ClientRole, Desiccant, EventBody, Generation,
-    Joined, MetricKind, NtpResult, NtpServer, Op, PLANS, Plan, Plans, Pushed, Refusal, SampleValue,
-    SettingsPatch, Source, Stats, StatsSection, Status, TimeChanges, TimeSource, TimeSync,
-    Weekdays, Wifi,
+    Joined, MealReminder, MetricKind, NtpResult, NtpServer, Op, PLANS, Plan, Plans, Pushed,
+    Refusal, SampleValue, SettingsPatch, Source, Stats, StatsSection, Status, TimeChanges,
+    TimeSource, TimeSync, Weekdays, Wifi,
 };
 use wellfed_proto::api::RequestId;
 use wellfed_session::noise::Keypair;
@@ -201,6 +201,54 @@ fn an_owner_reads_and_writes_the_feeder() {
             Answer::Feeding { feed: 1 },
             "the first feed the journal reserves"
         );
+        sim.stop().await;
+    });
+}
+
+/// The meal reminder is a setting like any other: off by default, written
+/// against the generation read, and refused outside 1-60 minutes before
+/// anything is queued.
+#[test]
+fn an_owner_sets_the_meal_reminder_within_its_hour() {
+    local(async {
+        let mut sim = Running::start(&Flash::memory(), true).await;
+        let mut owner = sim.open(OWNER).await.unwrap();
+        let settings = owner.ask(sim.id(), &Op::GetSettings).await.unwrap();
+        let Answer::Settings(settings) = settings else {
+            panic!("{settings:?}");
+        };
+        assert_eq!(settings.meal_reminder, MealReminder::Off);
+
+        for minutes in [0, 61] {
+            let put = Op::PutSettings {
+                base: settings.generation,
+                changes: SettingsPatch {
+                    meal_reminder: Some(MealReminder::Before { minutes }),
+                    ..SettingsPatch::default()
+                },
+            };
+            let refused = owner.ask(sim.id(), &put).await.unwrap();
+            assert_eq!(refused, Answer::Refused(Refusal::Invalid), "{minutes}");
+        }
+        let put = Op::PutSettings {
+            base: settings.generation,
+            changes: SettingsPatch {
+                meal_reminder: Some(MealReminder::Before { minutes: 15 }),
+                ..SettingsPatch::default()
+            },
+        };
+        let done = owner.ask(sim.id(), &put).await.unwrap();
+        assert_eq!(
+            done,
+            Answer::Done {
+                generation: Some(Generation(1))
+            }
+        );
+        let settings = owner.ask(sim.id(), &Op::GetSettings).await.unwrap();
+        let Answer::Settings(settings) = settings else {
+            panic!("{settings:?}");
+        };
+        assert_eq!(settings.meal_reminder, MealReminder::Before { minutes: 15 });
         sim.stop().await;
     });
 }

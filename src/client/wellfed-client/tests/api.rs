@@ -2223,6 +2223,7 @@ fn every_body() -> Vec<EventBody> {
             EventBody::Plans { .. } => 11,
             EventBody::Missed { .. } => 12,
             EventBody::DispenseRefused { .. } => 13,
+            EventBody::MealSoon { .. } => 14,
         }
     }
     let by = proto::Source::Panel;
@@ -2269,6 +2270,12 @@ fn every_body() -> Vec<EventBody> {
         },
         EventBody::DispenseRefused {
             reason: proto::Blocked::Feeding,
+        },
+        EventBody::MealSoon {
+            plan: 0,
+            due: 1_793_200_000,
+            minute: 450,
+            portions: 2,
         },
     ];
     let mut seen: Vec<usize> = bodies.iter().map(variant).collect();

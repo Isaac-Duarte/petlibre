@@ -53,6 +53,13 @@ fn window() -> impl Strategy<Value = Window> {
     ]
 }
 
+fn meal_reminder() -> impl Strategy<Value = MealReminder> {
+    prop_oneof![
+        Just(MealReminder::Off),
+        any::<u8>().prop_map(|minutes| MealReminder::Before { minutes }),
+    ]
+}
+
 fn op() -> impl Strategy<Value = Op<'static>> {
     let changes = (
         any::<Option<bool>>(),
@@ -61,9 +68,18 @@ fn op() -> impl Strategy<Value = Op<'static>> {
         proptest::option::of(window()),
         proptest::option::of(window()),
         any::<Option<u8>>(),
+        proptest::option::of(meal_reminder()),
     )
         .prop_map(
-            |(lights, sound, volume, lights_window, sound_window, desiccant_days)| {
+            |(
+                lights,
+                sound,
+                volume,
+                lights_window,
+                sound_window,
+                desiccant_days,
+                meal_reminder,
+            )| {
                 SettingsChanges {
                     lights,
                     sound,
@@ -71,6 +87,7 @@ fn op() -> impl Strategy<Value = Op<'static>> {
                     lights_window,
                     sound_window,
                     desiccant_days,
+                    meal_reminder,
                 }
             },
         );

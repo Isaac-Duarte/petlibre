@@ -62,7 +62,7 @@ A reset is answered `Done` with the settings' new generation, and records a `Set
 
 ## Storage
 
-The period and the replacement day are fields of the settings record, version 3, in storage sectors 2 and 3 ([device API](device-api.md#settings-wi-fi-and-the-lock)):
+The period and the replacement day are fields of the settings record, version 4, in storage sectors 2 and 3 ([device API](device-api.md#settings-wi-fi-and-the-lock)):
 
 | Bytes | Field |
 | --- | --- |

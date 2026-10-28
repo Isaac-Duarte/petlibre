@@ -120,6 +120,12 @@ impl Service {
         {
             return Err(Invalid::DesiccantDays.into());
         }
+        if patch
+            .meal_reminder
+            .is_some_and(|reminder| !reminder.valid())
+        {
+            return Err(Invalid::MealReminder.into());
+        }
         self.live_row(id).await?;
 
         let body = SettingsChange {

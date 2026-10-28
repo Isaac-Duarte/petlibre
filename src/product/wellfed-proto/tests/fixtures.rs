@@ -178,6 +178,7 @@ fn messages() -> Vec<Fixture> {
                     }),
                     sound_window: None,
                     desiccant_days: Some(21),
+                    meal_reminder: Some(MealReminder::Before { minutes: 15 }),
                 },
             })),
             client,
@@ -257,6 +258,7 @@ fn messages() -> Vec<Fixture> {
                 },
                 desiccant_days: 21,
                 desiccant_reset: Some(20_389),
+                meal_reminder: MealReminder::Before { minutes: 10 },
                 writable: true,
             }))),
             feeder,
@@ -987,6 +989,16 @@ fn messages() -> Vec<Fixture> {
                 UpdateRefusal::Battery,
             )))),
             feeder,
+        ),
+        (
+            "event-meal-soon",
+            entry(&EventBody::MealSoon {
+                plan: 2,
+                due: 1_793_200_000,
+                minute: 7 * 60 + 30,
+                portions: 2,
+            }),
+            |b| decode::<EventBody>(b).is_ok(),
         ),
     ]
 }

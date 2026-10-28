@@ -1,7 +1,8 @@
 //! Feeding plans on the simulator's loop, in virtual time: each occurrence
 //! runs at most once through the feeding owner, whatever restarts, clock
 //! jumps and daylight changes do around it, and one that cannot run is
-//! recorded missed.
+//! recorded missed. The meal reminder announces each occurrence ahead of
+//! it, and never changes whether or when it runs.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -9,7 +10,9 @@ use std::rc::Rc;
 use wellfed_core::clock::wall::{Origin, Sync};
 use wellfed_core::clock::zone::Zone;
 use wellfed_core::schedule::{PLANS, Plan, Table, Weekdays};
-use wellfed_device_api::mailbox::{PlansChange, PlansResult, PlansView};
+use wellfed_device_api::mailbox::{
+    MealReminder, PlansChange, PlansResult, PlansView, SettingsFields, SettingsResult,
+};
 use wellfed_feeder::feeder::Platform;
 use wellfed_feeder::feeder::{self, schedule};
 use wellfed_feeder::store::events::Read;
@@ -155,6 +158,42 @@ impl Feeder {
                 _ => None,
             })
             .collect()
+    }
+
+    /// Set the meal reminder, as a client's settings write does.
+    fn remind(&mut self, reminder: MealReminder) {
+        let fields = SettingsFields {
+            meal_reminder: Some(reminder),
+            ..SettingsFields::default()
+        };
+        let queued = self.sim.platform().settings_request(fields);
+        assert!(matches!(
+            queued,
+            SettingsResult::Current { pending: true, .. }
+        ));
+        self.run(1);
+        let saved = self.sim.platform().settings().map(|s| s.meal_reminder);
+        assert_eq!(saved, Some(reminder));
+    }
+
+    /// The `MealSoon` events: when each was recorded, and the plan, due
+    /// time, local minute and portions it names.
+    fn soon(&mut self) -> Vec<(Option<u32>, u8, u32, u16, u8)> {
+        let mut found = Vec::new();
+        let mut after = None;
+        while let Some(Read::Record(record)) = self.sim.platform().event_after(after) {
+            after = Some(record.seq);
+            if let Some(EventBody::MealSoon {
+                plan,
+                due,
+                minute,
+                portions,
+            }) = wellfed_proto::decode_padded::<EventBody>(&record.body)
+            {
+                found.push((record.at, plan, due, minute, portions));
+            }
+        }
+        found
     }
 
     fn missed(&mut self) -> Vec<(u8, u32, MissedReason)> {
@@ -517,4 +556,207 @@ fn a_plan_that_runs_once_saved_without_a_clock_feeds_at_its_minute() {
         feeder.plans().table[0].map(|plan| plan.enabled),
         Some(false)
     );
+}
+
+const BREAKFAST: u64 = WEDNESDAY + 7 * HOUR_MS + 30 * MINUTE_MS;
+
+/// Breakfast with the reminder set `lead` minutes ahead.
+fn reminded_breakfast(lead: u8) -> Feeder {
+    let mut feeder = breakfast();
+    feeder.remind(MealReminder::Before { minutes: lead });
+    feeder
+}
+
+#[test]
+fn the_reminder_is_off_by_default() {
+    let mut feeder = breakfast();
+    let settings = feeder.sim.platform().settings().unwrap();
+    assert_eq!(settings.meal_reminder, MealReminder::Off);
+
+    feeder.run_until(BREAKFAST + MINUTE_MS);
+    assert_eq!(feeder.fed().len(), 1);
+    assert!(feeder.soon().is_empty());
+}
+
+#[test]
+fn the_reminder_comes_its_lead_before_the_meal_and_the_meal_runs_once() {
+    let mut feeder = reminded_breakfast(10);
+
+    feeder.run_until(BREAKFAST - 10 * MINUTE_MS - 1000);
+    assert!(feeder.soon().is_empty(), "nothing before the lead");
+    feeder.run(2000);
+    let due = seconds(BREAKFAST);
+    let at = seconds(BREAKFAST - 10 * MINUTE_MS);
+    let reminded = feeder.soon();
+    assert_eq!(reminded.len(), 1);
+    let (recorded, plan, reminded_due, minute, portions) = reminded[0];
+    assert!(recorded.is_some_and(|recorded| recorded.abs_diff(at) <= 1));
+    assert_eq!((plan, reminded_due, minute, portions), (0, due, 450, 2));
+
+    // The meal itself, once, after its one reminder.
+    feeder.run_until(BREAKFAST + 5 * MINUTE_MS);
+    assert_eq!(
+        feeder.fed(),
+        [(1, 2, FeedOutcome::Done, Source::Schedule(0))]
+    );
+    assert_eq!(feeder.soon().len(), 1);
+    assert_eq!(feeder.claims, 1);
+    let order: Vec<bool> = feeder
+        .events()
+        .into_iter()
+        .filter_map(|body| match body {
+            EventBody::MealSoon { .. } => Some(true),
+            EventBody::Fed { .. } => Some(false),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(order, [true, false]);
+}
+
+#[test]
+fn a_disabled_plan_and_a_feeder_without_time_are_not_reminded() {
+    let mut feeder = reminded_breakfast(10);
+    let off = Plan {
+        enabled: false,
+        ..plan(7 * 60 + 30, 2)
+    };
+    feeder.put(table(&[(0, off)]));
+    feeder.run_until(BREAKFAST + MINUTE_MS);
+    assert!(feeder.soon().is_empty());
+    assert!(feeder.fed().is_empty());
+
+    // A cold boot inside the lead with no time: nothing is reminded.
+    let mut feeder = reminded_breakfast(10);
+    feeder.run_until(BREAKFAST - 20 * MINUTE_MS);
+    feeder.restart();
+    feeder.run(15 * MINUTE_MS);
+    assert!(feeder.soon().is_empty());
+}
+
+#[test]
+fn a_plan_edited_inside_the_lead_is_reminded_only_for_a_new_occurrence() {
+    // More portions: the same occurrence, already reminded; the meal
+    // feeds the new portions.
+    let mut feeder = reminded_breakfast(10);
+    feeder.run_until(BREAKFAST - 5 * MINUTE_MS);
+    assert_eq!(feeder.soon().len(), 1);
+    feeder.put(table(&[(0, plan(7 * 60 + 30, 3))]));
+    feeder.run_until(BREAKFAST + MINUTE_MS);
+    assert_eq!(feeder.soon().len(), 1);
+    assert_eq!(
+        feeder.fed(),
+        [(1, 3, FeedOutcome::Done, Source::Schedule(0))]
+    );
+
+    // Moved to 07:28: a new occurrence, already inside the lead, is
+    // reminded at once, and runs once; 07:30 is no longer a meal.
+    let mut feeder = reminded_breakfast(10);
+    feeder.run_until(BREAKFAST - 5 * MINUTE_MS);
+    feeder.put(table(&[(0, plan(7 * 60 + 28, 2))]));
+    feeder.run(1000);
+    let moved = seconds(BREAKFAST - 2 * MINUTE_MS);
+    let dues: Vec<(u32, u16)> = feeder
+        .soon()
+        .into_iter()
+        .map(|(_, _, due, minute, _)| (due, minute))
+        .collect();
+    assert_eq!(dues, [(seconds(BREAKFAST), 450), (moved, 448)]);
+    feeder.run_until(BREAKFAST + 5 * MINUTE_MS);
+    assert_eq!(
+        feeder.fed(),
+        [(1, 2, FeedOutcome::Done, Source::Schedule(0))]
+    );
+    assert_eq!(feeder.claims, 1);
+}
+
+#[test]
+fn a_restart_inside_the_lead_reminds_the_same_occurrence_again_and_feeds_once() {
+    let mut feeder = reminded_breakfast(10);
+    feeder.run_until(BREAKFAST - 8 * MINUTE_MS);
+    assert_eq!(feeder.soon().len(), 1);
+
+    // A cold boot, synced again inside the lead: the reminder kept nothing
+    // on flash, so it names the same occurrence once more.
+    feeder.restart();
+    feeder.run(100);
+    feeder.sync(BREAKFAST - 6 * MINUTE_MS);
+    feeder.run(MINUTE_MS);
+    let due = seconds(BREAKFAST);
+    let named: Vec<(u8, u32)> = feeder
+        .soon()
+        .into_iter()
+        .map(|(_, plan, due, _, _)| (plan, due))
+        .collect();
+    assert_eq!(named, [(0, due), (0, due)]);
+
+    feeder.run_until(BREAKFAST + 5 * MINUTE_MS);
+    assert_eq!(
+        feeder.fed(),
+        [(1, 2, FeedOutcome::Done, Source::Schedule(0))]
+    );
+    assert_eq!(feeder.soon().len(), 2);
+    assert!(feeder.missed().is_empty());
+}
+
+#[test]
+fn a_lead_across_a_daylight_change_counts_real_minutes_to_the_occurrence() {
+    // 03:10 MDT on March 8 is 09:10Z; 30 minutes before is 01:40 MST, as
+    // the clock jumps from 02:00 to 03:00 between them.
+    let mut feeder = Feeder::new();
+    feeder.run(100);
+    feeder.zone("MST7MDT,M3.2.0,M11.1.0");
+    feeder.sync(SPRING - 2 * HOUR_MS);
+    feeder.remind(MealReminder::Before { minutes: 30 });
+    feeder.put(table(&[
+        (0, plan(3 * 60 + 10, 1)),
+        (1, plan(2 * 60 + 30, 1)),
+    ]));
+    feeder.run_until(SPRING - 21 * MINUTE_MS);
+    assert!(feeder.soon().is_empty());
+    feeder.run(2 * MINUTE_MS);
+    let first = feeder.soon();
+    assert_eq!(first.len(), 1);
+    assert_eq!(
+        (first[0].1, first[0].2, first[0].3),
+        (0, seconds(SPRING + 10 * MINUTE_MS), 3 * 60 + 10)
+    );
+    // The skipped 02:30 runs at 03:30 MDT, and is reminded at 03:00.
+    feeder.run_until(SPRING + MINUTE_MS);
+    let skipped: Vec<(u8, u32, u16)> = feeder
+        .soon()
+        .into_iter()
+        .map(|(_, plan, due, minute, _)| (plan, due, minute))
+        .collect();
+    assert_eq!(
+        skipped,
+        [
+            (0, seconds(SPRING + 10 * MINUTE_MS), 3 * 60 + 10),
+            (1, seconds(SPRING + 30 * MINUTE_MS), 3 * 60 + 30),
+        ]
+    );
+    feeder.run_until(SPRING + 40 * MINUTE_MS);
+    assert_eq!(feeder.fed().len(), 2);
+
+    // 01:30 happens twice on November 1: one reminder, an hour before the
+    // first pass, and none before the second.
+    let mut feeder = Feeder::new();
+    feeder.run(100);
+    feeder.zone("MST7MDT,M3.2.0,M11.1.0");
+    feeder.sync(FALL - 3 * HOUR_MS);
+    feeder.remind(MealReminder::Before { minutes: 60 });
+    feeder.put(table(&[(0, plan(90, 1))]));
+    feeder.run_until(FALL + 40 * MINUTE_MS);
+    let fall: Vec<(Option<u32>, u32)> = feeder
+        .soon()
+        .into_iter()
+        .map(|(at, _, due, _, _)| (at, due))
+        .collect();
+    assert_eq!(fall.len(), 1);
+    assert_eq!(fall[0].1, seconds(FALL - 30 * MINUTE_MS));
+    assert!(
+        fall[0]
+            .0
+            .is_some_and(|at| at.abs_diff(seconds(FALL - 90 * MINUTE_MS)) <= 1)
+    );
+    assert_eq!(feeder.fed().len(), 1);
 }

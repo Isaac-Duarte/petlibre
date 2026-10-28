@@ -7,7 +7,7 @@ use std::fmt::Write as _;
 use serde::Serialize;
 use wellfed_server_client::api::{
     Command, CommandOutcome, Feeder, FeederDetail, FeederEvent, Gap, Install, InstallTarget,
-    Release, Settings, StockBackup, StockState, Token, User,
+    MealReminder, Release, Settings, StockBackup, StockState, Token, User,
 };
 
 /// A value as the API spells it: a bare word for an enum's name, its JSON
@@ -82,14 +82,15 @@ pub(super) fn desiccant(detail: &FeederDetail) -> String {
 
 pub(super) fn settings(settings: &Settings) -> String {
     format!(
-        "Generation {}: lights {} ({}), sound {} ({}), volume {}, desiccant every {} days \
-         (replaced {}){}",
+        "Generation {}: lights {} ({}), sound {} ({}), volume {}, meal reminder {}, desiccant \
+         every {} days (replaced {}){}",
         settings.generation,
         on_off(settings.lights),
         settings.lights_window,
         on_off(settings.sound),
         settings.sound_window,
         settings.volume,
+        reminder(settings.meal_reminder),
         settings.desiccant_days,
         or_dash(settings.desiccant_replaced),
         if settings.writable {
@@ -98,6 +99,13 @@ pub(super) fn settings(settings: &Settings) -> String {
             " (not writable now)"
         },
     )
+}
+
+fn reminder(reminder: MealReminder) -> String {
+    match reminder {
+        MealReminder::Off => "off".to_owned(),
+        MealReminder::Before { minutes } => format!("{minutes} min ahead"),
+    }
 }
 
 const fn on_off(on: bool) -> &'static str {

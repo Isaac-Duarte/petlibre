@@ -14,6 +14,9 @@
 //! from the clock ([`crate::clock::wall::WallClock::offset_at`]): the zone's
 //! rule, or a client sync's offsets until the next change it named.
 //!
+//! The next occurrence ([`next_due`]) follows the same rule, so a reminder
+//! ahead of a meal names the instant the meal will run.
+//!
 //! What an occurrence does (run, report as missed, or nothing) is the
 //! missed-meal rule, [`crate::clock::wall::occurrence`], against a mark per
 //! plan: the loop that keeps the marks lives in the product.
@@ -138,6 +141,30 @@ pub fn latest_due(plan: &Plan, now_ms: u64, offset_at: impl Fn(u64) -> Option<i3
         }
         let due = utc_of(day * DAY_MS + minute_ms, &offset_at)?;
         if due <= now_ms {
+            return Some(due);
+        }
+    }
+    None
+}
+
+/// The earliest occurrence of `plan` after `now_ms` (Unix milliseconds),
+/// whether or not the plan is enabled; `None` without offsets. The same
+/// instants as [`latest_due`]: a plan that runs once occurs every day until
+/// it runs.
+pub fn next_due(plan: &Plan, now_ms: u64, offset_at: impl Fn(u64) -> Option<i32>) -> Option<u64> {
+    let now = i64::try_from(now_ms).ok()?;
+    let local_now = now + i64::from(offset_at(now_ms)?) * 1000;
+    let today = local_now.div_euclid(DAY_MS);
+    let minute_ms = i64::from(plan.minute) * MINUTE_MS;
+
+    // As in `latest_due`, a change can put yesterday's occurrence, by the
+    // date, after now, so dates are tried from yesterday on.
+    for day in today - 1..=today + WEEK_BACK + 1 {
+        if !plan.days.once() && !plan.days.contains(weekday(day)) {
+            continue;
+        }
+        let due = utc_of(day * DAY_MS + minute_ms, &offset_at)?;
+        if due > now_ms {
             return Some(due);
         }
     }

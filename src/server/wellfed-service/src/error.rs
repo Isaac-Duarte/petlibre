@@ -216,6 +216,8 @@ pub enum Invalid {
     Window,
     #[error("the desiccant period is 1-90 days")]
     DesiccantDays,
+    #[error("a meal reminder is off or 1-60 minutes")]
+    MealReminder,
     #[error("a page holds 1-500 events")]
     Limit,
     #[error("the server's label is 1-16 bytes with no NUL")]

@@ -7,8 +7,8 @@
 use anyhow::{Context, Result, bail};
 use clap::Args;
 use wellfed_model::{
-    self as model, Answer, DESICCANT_DAYS_MAX, DESICCANT_DAYS_MIN, Desiccant, NtpServer, Op,
-    SettingsPatch, StatsSection, TimeChanges, Wifi, Window,
+    self as model, Answer, DESICCANT_DAYS_MAX, DESICCANT_DAYS_MIN, Desiccant, MealReminder,
+    NtpServer, Op, SettingsPatch, StatsSection, TimeChanges, Wifi, Window,
 };
 
 use crate::{Target, Toggle, ask_and_print, connect, passphrase, print_answer, print_json};
@@ -35,6 +35,10 @@ pub(crate) struct SettingsArgs {
     /// Days from a desiccant replacement until the next is due (1-90).
     #[arg(long, value_name = "DAYS", value_parser = desiccant_days)]
     desiccant_days: Option<u8>,
+    /// A `meal_soon` event this many minutes (1-60) before each scheduled
+    /// meal, or `off`.
+    #[arg(long, value_name = "off|MINUTES")]
+    meal_reminder: Option<MealReminder>,
 }
 
 /// A `--desiccant-days` value: the period's limits are the feeder's.
@@ -206,6 +210,7 @@ pub(crate) async fn settings_command(args: SettingsArgs) -> Result<()> {
         lights_window: args.lights_window,
         sound_window: args.sound_window,
         desiccant_days: args.desiccant_days,
+        meal_reminder: args.meal_reminder,
     };
     if changes == SettingsPatch::default() {
         return ask_and_print(&args.target, &Op::GetSettings).await;

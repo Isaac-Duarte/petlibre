@@ -6313,6 +6313,48 @@
           },
           {
             "type": "object",
+            "description": "A plan's occurrence is coming: sent the meal reminder's lead ahead\nof it. A feeder restart inside the lead may send it again, with the\nsame `plan` and `due`.",
+            "required": [
+              "plan",
+              "due",
+              "minute",
+              "portions",
+              "kind"
+            ],
+            "properties": {
+              "due": {
+                "type": "string",
+                "format": "date-time",
+                "description": "When it is due."
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "meal_soon"
+                ]
+              },
+              "minute": {
+                "type": "integer",
+                "format": "int32",
+                "description": "The minute of the feeder's local day it is due at (0-1439).",
+                "minimum": 0
+              },
+              "plan": {
+                "type": "integer",
+                "format": "int32",
+                "description": "The plan's slot.",
+                "minimum": 0
+              },
+              "portions": {
+                "type": "integer",
+                "format": "int32",
+                "description": "The portions it will ask for.",
+                "minimum": 0
+              }
+            }
+          },
+          {
+            "type": "object",
             "description": "The adapter came or went, or the pack crossed its floor (at most\none a minute, as the supply stood at its end).",
             "required": [
               "battery",
@@ -7846,6 +7888,46 @@
           "disabled"
         ]
       },
+      "MealReminder": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "mode"
+            ],
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "off"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "minutes",
+              "mode"
+            ],
+            "properties": {
+              "minutes": {
+                "type": "integer",
+                "format": "int32",
+                "maximum": 60,
+                "minimum": 1
+              },
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "before"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "Whether the feeder records a `meal_soon` event ahead of each scheduled\nmeal, and how many minutes ahead (1-60). It goes to the event stream\nfor the app and the server; the feeder plays nothing.\n\nSpelled `off` or the minutes on the command line."
+      },
       "MemoryStats": {
         "type": "object",
         "required": [
@@ -9347,6 +9429,7 @@
           "lights_window",
           "sound_window",
           "desiccant_days",
+          "meal_reminder",
           "writable"
         ],
         "properties": {
@@ -9374,6 +9457,10 @@
           "lights_window": {
             "$ref": "#/components/schemas/Window",
             "description": "When the lights may show while `lights` is on."
+          },
+          "meal_reminder": {
+            "$ref": "#/components/schemas/MealReminder",
+            "description": "The `meal_soon` event ahead of each scheduled meal."
           },
           "sound": {
             "type": "boolean"
@@ -9418,6 +9505,16 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/Window"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "meal_reminder": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MealReminder"
               },
               {
                 "type": "null"

@@ -11,7 +11,7 @@
 //! wrote them.
 
 use wellfed_core::feed::progress::BowlMode;
-use wellfed_core::settings::Window;
+use wellfed_core::settings::{MealReminder, Window};
 use wellfed_device_api::clients::{Client, Label, Role};
 use wellfed_device_api::mailbox::{
     Calibration, Claim, NtpServer, PLANS, Plan, PlansChange, TimeSettings, Weekdays, Zone,
@@ -76,6 +76,7 @@ fn settings_records() {
         },
         desiccant_days: 30,
         desiccant_reset: Some(20_389),
+        meal_reminder: MealReminder::Before { minutes: 60 },
     }));
     pinned("custom settings", &f, 1, 128, CUSTOM_SETTINGS);
     assert!(s.save(&Settings {
@@ -88,6 +89,7 @@ fn settings_records() {
         sound_window: Window::Between { start: 0, end: 0 },
         desiccant_days: 1,
         desiccant_reset: Some(0),
+        meal_reminder: MealReminder::Before { minutes: 1 },
     }));
     pinned("third settings", &f, 0, 128, THIRD_SETTINGS);
 }
@@ -360,6 +362,7 @@ fn settings_store_reads_the_pinned_records() {
                 },
                 desiccant_days: 30,
                 desiccant_reset: Some(20_389),
+                meal_reminder: MealReminder::Before { minutes: 60 },
             },
         ),
         (
@@ -376,6 +379,7 @@ fn settings_store_reads_the_pinned_records() {
                 sound_window: Window::Between { start: 0, end: 0 },
                 desiccant_days: 1,
                 desiccant_reset: Some(0),
+                meal_reminder: MealReminder::Before { minutes: 1 },
             },
         ),
     ] {
@@ -476,26 +480,26 @@ fn event_ring_reads_the_pinned_records() {
 
 /// Default settings.
 const DEFAULT_SETTINGS: &[&str] = &[
-    "504c465345543031030080000100000000000000010002353157465000033200",
+    "504c465345543031040080000100000000000000010002353157465000033200",
     "0000000000000000000000000e00000000000000000000000000000000000000",
     "0000000000000000000000000000000000000000000000000000000000000000",
-    "00000000000000000000000000000000000000000000000085b3abac434d4954",
+    "00000000000000000000000000000000000000000000000038234339434d4954",
 ];
 
 /// Custom settings.
 const CUSTOM_SETTINGS: &[&str] = &[
-    "504c465345543031030080000200000000000000010002353157465001026400",
+    "504c46534554303104008000020000000000000001000235315746500102643c",
     "c6fd01012805a401e001b0041e010000a54f0000000000000000000000000000",
     "0000000000000000000000000000000000000000000000000000000000000000",
-    "000000000000000000000000000000000000000000000000bb6477ce434d4954",
+    "000000000000000000000000000000000000000000000000ab6afb43434d4954",
 ];
 
 /// Third settings.
 const THIRD_SETTINGS: &[&str] = &[
-    "504c465345543031030080000300000000000000010002353157465000010000",
+    "504c465345543031040080000300000000000000010002353157465000010001",
     "4803000100000000000000000101000000000000000000000000000000000000",
     "0000000000000000000000000000000000000000000000000000000000000000",
-    "000000000000000000000000000000000000000000000000ae9efccc434d4954",
+    "0000000000000000000000000000000000000000000000009b63283d434d4954",
 ];
 
 /// Short credentials.

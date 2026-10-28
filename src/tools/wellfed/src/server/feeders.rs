@@ -14,7 +14,7 @@ use clap::{Args, ValueEnum};
 use uuid::Uuid;
 use wellfed_server_client::api::{
     Command, CommandOutcome, CommandQuery, CommandState, EventQuery, FeedOutcome, Feeder, FeederId,
-    SettingsPatch, StreamEvent, StreamQuery, Window,
+    MealReminder, SettingsPatch, StreamEvent, StreamQuery, Window,
 };
 use wellfed_server_client::{Client, Lock, Updates};
 
@@ -81,6 +81,10 @@ pub(crate) struct SettingsArgs {
     /// Days from a desiccant replacement until the next is due (1-90).
     #[arg(long, value_name = "DAYS", value_parser = crate::configure::desiccant_days)]
     desiccant_days: Option<u8>,
+    /// A `meal_soon` event this many minutes (1-60) before each scheduled
+    /// meal, or `off`.
+    #[arg(long, value_name = "off|MINUTES")]
+    meal_reminder: Option<MealReminder>,
 }
 
 #[derive(Args)]
@@ -202,6 +206,7 @@ pub(super) async fn settings(client: &Client, args: SettingsArgs, out: Output) -
         lights_window: args.lights_window,
         sound_window: args.sound_window,
         desiccant_days: args.desiccant_days,
+        meal_reminder: args.meal_reminder,
     };
     if patch == SettingsPatch::default() {
         out.show(&current, text::settings)?;

@@ -9,7 +9,7 @@
 //! explicit reset.
 
 use wellfed_core::feed::progress::BowlMode;
-use wellfed_core::settings::Window;
+use wellfed_core::settings::{MealReminder, Window};
 use wellfed_core::store::slot::{RECORD_BYTES, crc32};
 use wellfed_feeder::store::settings::{
     Settings, SettingsStatus, SettingsStore, SlotState, VERSION, WEAR_LIMIT,
@@ -40,6 +40,7 @@ fn custom(volume: u8) -> Settings {
         sound_window: Window::Always,
         desiccant_days: 30,
         desiccant_reset: Some(20_389),
+        meal_reminder: MealReminder::Before { minutes: 5 },
     }
 }
 
@@ -78,6 +79,14 @@ fn invalid_values_are_refused_without_writing() {
         },
         Settings {
             utc_offset_minutes: 15 * 60,
+            ..Settings::default()
+        },
+        Settings {
+            meal_reminder: MealReminder::Before { minutes: 0 },
+            ..Settings::default()
+        },
+        Settings {
+            meal_reminder: MealReminder::Before { minutes: 61 },
             ..Settings::default()
         },
     ] {
@@ -269,12 +278,12 @@ fn windows_survive_a_reopen() {
     assert_eq!(s.settings, settings);
 }
 
-/// No migration: a version 1 or 2 record earlier builds wrote is
+/// No migration: a version 1, 2 or 3 record earlier builds wrote is
 /// superseded, so the store opens writable on defaults and the next save
 /// replaces it.
 #[test]
 fn an_older_record_opens_empty_and_writable() {
-    for version in [1u16, 2] {
+    for version in [1u16, 2, 3] {
         let mut f = FakeJournalFlash::default();
         let mut s = open(&mut f);
         assert!(s.save(&custom(5)));
@@ -291,6 +300,31 @@ fn an_older_record_opens_empty_and_writable() {
         let s = open(&mut f);
         assert_eq!(s.status, SettingsStatus::Loaded);
         assert_eq!(s.settings, custom(7));
+    }
+}
+
+#[test]
+fn the_meal_reminder_survives_a_reopen_and_turns_off() {
+    let mut f = FakeJournalFlash::default();
+    let mut s = open(&mut f);
+    assert_eq!(
+        s.settings.meal_reminder,
+        MealReminder::Off,
+        "off by default"
+    );
+    for reminder in [
+        MealReminder::Before { minutes: 1 },
+        MealReminder::Before { minutes: 60 },
+        MealReminder::Off,
+    ] {
+        let settings = Settings {
+            meal_reminder: reminder,
+            ..custom(5)
+        };
+        assert!(s.save(&settings));
+        s = open(&mut f);
+        assert_eq!(s.status, SettingsStatus::Loaded);
+        assert_eq!(s.settings, settings);
     }
 }
 
@@ -368,7 +402,7 @@ fn a_bad_desiccant_field_makes_the_record_invalid() {
 }
 
 #[test]
-fn a_bad_window_makes_the_record_invalid() {
+fn a_bad_window_or_reminder_makes_the_record_invalid() {
     for (at, byte) in [
         // An unknown window kind.
         (34, 2),
@@ -376,6 +410,8 @@ fn a_bad_window_makes_the_record_invalid() {
         (36, 1),
         // A start past the last minute of the day (1440 = 0x05a0).
         (41, 0x05),
+        // A meal reminder past its hour.
+        (31, 61),
     ] {
         let mut f = FakeJournalFlash::default();
         let mut s = open(&mut f);

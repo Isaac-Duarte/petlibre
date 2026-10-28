@@ -15,7 +15,7 @@ use wellfed_core::named_enum;
 use crate::clients::{Label, Role};
 
 pub use wellfed_core::settings::{
-    MAX_VOLUME, SettingsFields, SettingsResult, SettingsView, Window,
+    MAX_VOLUME, MealReminder, SettingsFields, SettingsResult, SettingsView, Window,
 };
 pub use wellfed_core::tone::PlayResult;
 

@@ -4,7 +4,9 @@
 
 use proptest::prelude::*;
 use wellfed_core::clock::zone::{Rule, Zone};
-use wellfed_core::schedule::{PLANS, Plan, Weekdays, latest_due, table_valid, utc_of, weekday};
+use wellfed_core::schedule::{
+    PLANS, Plan, Weekdays, latest_due, next_due, table_valid, utc_of, weekday,
+};
 
 const MINUTE_MS: u64 = 60_000;
 const HOUR_MS: u64 = 60 * MINUTE_MS;
@@ -140,6 +142,36 @@ fn a_plan_that_runs_once_occurs_every_day_until_it_runs() {
 #[test]
 fn without_offsets_nothing_is_due() {
     assert_eq!(latest_due(&daily(0), WEDNESDAY, |_| None), None);
+    assert_eq!(next_due(&daily(0), WEDNESDAY, |_| None), None);
+}
+
+#[test]
+fn the_next_occurrence_is_strictly_after_now() {
+    let denver = offsets(rule("MST7MDT,M3.2.0,M11.1.0"));
+    let plan = daily(7 * 60 + 30);
+    // 07:30 MDT on Wednesday is 13:30Z.
+    let due = WEDNESDAY + 13 * HOUR_MS + 30 * MINUTE_MS;
+
+    assert_eq!(next_due(&plan, due - 1, &denver), Some(due));
+    // At its minute the occurrence is the latest, and the next is tomorrow's.
+    assert_eq!(next_due(&plan, due, &denver), Some(due + 24 * HOUR_MS));
+}
+
+#[test]
+fn the_next_occurrence_follows_the_daylight_rules() {
+    let denver = offsets(rule("MST7MDT,M3.2.0,M11.1.0"));
+    // The skipped 02:30 runs at 03:30 MDT; the repeated 01:30 on its first
+    // pass, so after it the next is the day after's.
+    assert_eq!(
+        next_due(&daily(2 * 60 + 30), SPRING - HOUR_MS, &denver),
+        Some(SPRING + 30 * MINUTE_MS)
+    );
+    let first = FALL - 30 * MINUTE_MS;
+    assert_eq!(next_due(&daily(90), first - 1, &denver), Some(first));
+    assert_eq!(
+        next_due(&daily(90), first, &denver),
+        Some(FALL + 30 * MINUTE_MS + 24 * HOUR_MS)
+    );
 }
 
 #[test]
@@ -198,5 +230,23 @@ proptest! {
         // At the minute, or an hour past it when the change skipped it.
         let skipped = (local_minute - i64::from(minute)) == 60;
         prop_assert!(local_minute == i64::from(minute) || skipped);
+    }
+
+    /// The next occurrence is after now, is an occurrence, and none falls
+    /// between now and it.
+    #[test]
+    fn the_next_occurrence_is_the_first_after_now(
+        now in 1_700_000_000_000u64..1_900_000_000_000,
+        minute in 0u16..1440,
+        days in 0u8..0x80,
+    ) {
+        let denver = offsets(rule("MST7MDT,M3.2.0,M11.1.0"));
+        let plan = Plan { minute, portions: 1, days: Weekdays(days), enabled: true };
+
+        let next = next_due(&plan, now, &denver).unwrap();
+        prop_assert!(next > now);
+        prop_assert!(next - now <= 8 * 24 * HOUR_MS);
+        prop_assert_eq!(latest_due(&plan, next, &denver), Some(next));
+        prop_assert!(latest_due(&plan, next - 1, &denver).is_none_or(|due| due <= now));
     }
 }

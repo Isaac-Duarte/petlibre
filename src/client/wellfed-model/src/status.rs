@@ -230,6 +230,8 @@ pub struct Settings {
     /// before the first.
     #[schema(value_type = Option<String>, format = Date)]
     pub desiccant_replaced: Option<jiff::civil::Date>,
+    /// The `meal_soon` event ahead of each scheduled meal.
+    pub meal_reminder: MealReminder,
     /// Whether the settings store can take a write now.
     pub writable: bool,
 }
@@ -252,6 +254,69 @@ pub struct SettingsPatch {
     #[serde(default)]
     #[schema(minimum = 1, maximum = 90)]
     pub desiccant_days: Option<u8>,
+    #[serde(default)]
+    pub meal_reminder: Option<MealReminder>,
+}
+
+/// Whether the feeder records a `meal_soon` event ahead of each scheduled
+/// meal, and how many minutes ahead (1-60). It goes to the event stream
+/// for the app and the server; the feeder plays nothing.
+///
+/// Spelled `off` or the minutes on the command line.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+pub enum MealReminder {
+    #[default]
+    Off,
+    Before {
+        #[schema(minimum = 1, maximum = 60)]
+        minutes: u8,
+    },
+}
+
+/// The longest lead a meal reminder takes, in minutes.
+const MEAL_REMINDER_MAX: u8 = 60;
+
+impl MealReminder {
+    /// Whether the lead is one the feeder accepts (1-60 minutes).
+    pub const fn valid(self) -> bool {
+        match self {
+            Self::Off => true,
+            Self::Before { minutes } => minutes >= 1 && minutes <= MEAL_REMINDER_MAX,
+        }
+    }
+}
+
+/// Why a meal reminder's text did not parse.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("`{0}` is not `off` or a number of minutes from 1 to 60")]
+pub struct MealReminderError(String);
+
+impl fmt::Display for MealReminder {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            Self::Off => f.write_str("off"),
+            Self::Before { minutes } => write!(f, "{minutes}"),
+        }
+    }
+}
+
+impl FromStr for MealReminder {
+    type Err = MealReminderError;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        if text == "off" {
+            return Ok(Self::Off);
+        }
+        let digits = !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit());
+        let reminder = text
+            .parse()
+            .ok()
+            .filter(|_| digits)
+            .map(|minutes| Self::Before { minutes })
+            .filter(|reminder: &Self| reminder.valid());
+        reminder.ok_or_else(|| MealReminderError(text.to_owned()))
+    }
 }
 
 /// When lights or sound that are on may show or play: always, or only from
@@ -347,7 +412,23 @@ pub(crate) fn minute(text: &str) -> Result<u16, WindowError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Window, WindowError};
+    use super::{MealReminder, MealReminderError, Window, WindowError};
+
+    #[test]
+    fn a_meal_reminder_parses_off_or_its_minutes() {
+        for text in ["off", "1", "15", "60"] {
+            let reminder: MealReminder = text.parse().unwrap();
+            assert_eq!(reminder.to_string(), text);
+        }
+        assert_eq!("5".parse(), Ok(MealReminder::Before { minutes: 5 }));
+        for bad in ["", "0", "61", "256", "-5", "+5", "5m", "on"] {
+            assert_eq!(
+                bad.parse::<MealReminder>(),
+                Err(MealReminderError(bad.to_owned())),
+                "{bad}"
+            );
+        }
+    }
 
     #[test]
     fn a_window_parses_from_and_back_to_its_text() {

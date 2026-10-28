@@ -123,8 +123,8 @@ impl Capabilities {
     /// can read bank 1 while it holds the feeder's only copy of stock.
     pub const BACKUP: Self = Self(512);
     /// Feeding plans: [`Op::GetPlans`] and [`Op::PutPlans`] with
-    /// [`Outcome::Plans`], and the [`EventBody::Plans`] and
-    /// [`EventBody::Missed`] history.
+    /// [`Outcome::Plans`], and the [`EventBody::Plans`],
+    /// [`EventBody::MealSoon`] and [`EventBody::Missed`] history.
     pub const PLANS: Self = Self(1024);
     /// The desiccant reminder's reset: [`Op::ResetDesiccant`] and
     /// [`Refusal::NoClock`]. The period ([`Settings::desiccant_days`]) and
@@ -543,6 +543,18 @@ pub struct SettingsChanges {
     pub sound_window: Option<Window>,
     /// [`DESICCANT_DAYS_MIN`] to [`DESICCANT_DAYS_MAX`].
     pub desiccant_days: Option<u8>,
+    pub meal_reminder: Option<MealReminder>,
+}
+
+/// Whether the feeder sends a [`EventBody::MealSoon`] ahead of each
+/// scheduled meal, and how many minutes (1-60) ahead.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MealReminder {
+    #[default]
+    Off,
+    Before {
+        minutes: u8,
+    },
 }
 
 /// The shortest desiccant reminder period, in days.
@@ -1099,6 +1111,7 @@ pub struct Settings {
     /// The local calendar day (days since 1970-01-01) the desiccant was
     /// last replaced; `None` before the first [`Op::ResetDesiccant`].
     pub desiccant_reset: Option<i32>,
+    pub meal_reminder: MealReminder,
     pub writable: bool,
 }
 
@@ -1212,6 +1225,16 @@ pub enum EventBody {
     DispenseRefused {
         reason: Blocked,
     },
+    /// The occurrence of plan `plan` due at `due` (Unix seconds), at
+    /// minute `minute` of the local day, will feed `portions`: sent the
+    /// reminder's lead ahead of it. A restart inside the lead may send it
+    /// again, with the same `plan` and `due`.
+    MealSoon {
+        plan: u8,
+        due: u32,
+        minute: u16,
+        portions: u8,
+    },
 }
 
 impl EventBody {
@@ -1223,7 +1246,7 @@ impl EventBody {
             Self::Fed { .. } | Self::DispenseRefused { .. } => Capabilities::FEED,
             Self::FeedingBlocked { .. } => Capabilities::READINESS,
             Self::Supply(_) => Capabilities::POWER,
-            Self::Plans { .. } | Self::Missed { .. } => Capabilities::PLANS,
+            Self::Plans { .. } | Self::Missed { .. } | Self::MealSoon { .. } => Capabilities::PLANS,
             Self::Boot { .. }
             | Self::Lock { .. }
             | Self::Settings { .. }
@@ -2072,6 +2095,12 @@ mod tests {
             },
             EventBody::DispenseRefused {
                 reason: Blocked::Battery,
+            },
+            EventBody::MealSoon {
+                plan: u8::MAX,
+                due: u32::MAX,
+                minute: u16::MAX,
+                portions: u8::MAX,
             },
         ] {
             let mut out = [0; 16];

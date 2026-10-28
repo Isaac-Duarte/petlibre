@@ -76,7 +76,7 @@ These are the promises the runtime keeps, whatever the rest of the firmware does
 
 - **Flash across both cores.** Flash coordination, the SDK hooks and RAM parking are tested, but complete exclusive flash ownership across both cores is unfinished. KM0's own SDK flash users are not yet mediated, which is safe only while KM0 never sleeps.
 - **Electrical acceptance.** Voltage and transient acceptance of the stopped outputs, and Port A input readback, are unresolved ([startup diagnostics](startup-diagnostics.md)).
-- **Schedules.** Built and simulated ([schedules](schedules.md)), not yet run on the feeder. The sound before a meal is not built.
+- **Schedules.** Running on the feeder ([schedules](schedules.md)). The sound before a meal is not built.
 - **The rest** is on the [roadmap](../roadmap.md): calibration, jams, lights and battery checks on hardware, and a long unattended run.
 
 ## Crates

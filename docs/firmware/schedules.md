@@ -2,7 +2,7 @@
 
 The feeder keeps up to ten feeding plans and runs them itself, with no server. This page explains what a plan is, when one runs, and how the feeder makes sure a meal runs at most once through restarts, clock jumps and daylight changes. It is for owners who want to know what to expect and for anyone changing the schedule code.
 
-Status: **Experimental**. Built and tested in simulation; not yet run on the feeder.
+Status: **Works**. Observed on our feeder; daylight changes and power cuts between a claim and its feed are tested in simulation only.
 
 ## Plans
 
@@ -93,4 +93,5 @@ The plans live in storage sectors 11 and 12 (`wellfed_feeder::store::plans`): on
 
 ## Evidence
 
+- **Observed, October 28, 2026** (`fp03-ota-20261028`, hopper empty): a daily plan fed once at its minute; a reboot within that minute, with the clock carried across it, ran nothing again; a plan set to run once fed and disabled itself; a plan due while the feeder had no clock after a cold boot held, and the sync 16 minutes later recorded it missed, unfed.
 - **Simulated, October 28, 2026.** `wellfed-feeder-sim`'s schedule tests run the product loop in virtual time over the real stores and feed journal: on-time feeds, restarts, backward and forward jumps, a cold boot without time, plans due together, a wait past the grace, a cut between the claim and the feed, a cut mid-feed, a refused feed and its retries, one-off plans enabled again, a plan saved without time, and Denver's spring and autumn changes.

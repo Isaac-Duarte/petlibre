@@ -126,9 +126,12 @@ pub enum EventBody {
         due: Timestamp,
         reason: MissedReason,
     },
-    /// A plan's occurrence is coming: sent the meal reminder's lead ahead
-    /// of it. A feeder restart inside the lead may send it again, with the
-    /// same `plan` and `due`.
+    /// A plan's occurrence is expected: sent the meal reminder's lead
+    /// ahead of it. A feeder restart inside the lead may send it again,
+    /// with the same `plan` and `due`. It is never withdrawn: the meal may
+    /// still be missed, or the plan disabled, deleted or moved, so the
+    /// `fed` or `missed` event for that `plan` and `due` (or the plans) say
+    /// what happened.
     MealSoon {
         /// The plan's slot.
         plan: u8,

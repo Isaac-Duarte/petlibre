@@ -547,7 +547,8 @@ pub struct SettingsChanges {
 }
 
 /// Whether the feeder sends a [`EventBody::MealSoon`] ahead of each
-/// scheduled meal, and how many minutes (1-60) ahead.
+/// scheduled meal, and how many minutes ([`MEAL_REMINDER_MINUTES_MIN`] to
+/// [`MEAL_REMINDER_MINUTES_MAX`]) ahead.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MealReminder {
     #[default]
@@ -556,6 +557,11 @@ pub enum MealReminder {
         minutes: u8,
     },
 }
+
+/// The shortest meal reminder lead, in minutes.
+pub const MEAL_REMINDER_MINUTES_MIN: u8 = 1;
+/// The longest meal reminder lead, in minutes.
+pub const MEAL_REMINDER_MINUTES_MAX: u8 = 60;
 
 /// The shortest desiccant reminder period, in days.
 pub const DESICCANT_DAYS_MIN: u8 = 1;
@@ -1226,9 +1232,12 @@ pub enum EventBody {
         reason: Blocked,
     },
     /// The occurrence of plan `plan` due at `due` (Unix seconds), at
-    /// minute `minute` of the local day, will feed `portions`: sent the
-    /// reminder's lead ahead of it. A restart inside the lead may send it
-    /// again, with the same `plan` and `due`.
+    /// minute `minute` of the local day, is expected to feed `portions`:
+    /// sent the reminder's lead ahead of it. A restart inside the lead may
+    /// send it again, with the same `plan` and `due`. It is never
+    /// withdrawn: the meal may still be missed, or the plan disabled,
+    /// deleted or moved, so the `Fed` or `Missed` for that `plan` and `due`
+    /// (or the plans) say what happened.
     MealSoon {
         plan: u8,
         due: u32,

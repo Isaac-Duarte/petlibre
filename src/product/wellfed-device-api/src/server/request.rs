@@ -979,6 +979,10 @@ const _: () = assert!(
         && wellfed_core::desiccant::PERIOD_MAX == proto::DESICCANT_DAYS_MAX
         && wellfed_core::desiccant::PERIOD_DEFAULT == proto::DESICCANT_DAYS_DEFAULT
 );
+const _: () = assert!(
+    wellfed_core::settings::REMINDER_MINUTES_MIN == proto::MEAL_REMINDER_MINUTES_MIN
+        && wellfed_core::settings::REMINDER_MINUTES_MAX == proto::MEAL_REMINDER_MINUTES_MAX
+);
 
 /// The wire's plans as the store keeps them. A plan's portions outside
 /// 1 to [`proto::PORTIONS_MAX`] are refused by name, as a feed's are; any

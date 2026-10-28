@@ -6313,7 +6313,7 @@
           },
           {
             "type": "object",
-            "description": "A plan's occurrence is coming: sent the meal reminder's lead ahead\nof it. A feeder restart inside the lead may send it again, with the\nsame `plan` and `due`.",
+            "description": "A plan's occurrence is expected: sent the meal reminder's lead\nahead of it. A feeder restart inside the lead may send it again,\nwith the same `plan` and `due`. It is never withdrawn: the meal may\nstill be missed, or the plan disabled, deleted or moved, so the\n`fed` or `missed` event for that `plan` and `due` (or the plans) say\nwhat happened.",
             "required": [
               "plan",
               "due",

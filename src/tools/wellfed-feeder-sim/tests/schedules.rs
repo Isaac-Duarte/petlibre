@@ -760,3 +760,40 @@ fn a_lead_across_a_daylight_change_counts_real_minutes_to_the_occurrence() {
     );
     assert_eq!(feeder.fed().len(), 1);
 }
+
+#[test]
+fn a_backward_jump_past_a_meal_already_run_gives_no_reminder() {
+    let mut feeder = reminded_breakfast(10);
+    feeder.run_until(BREAKFAST + 2 * MINUTE_MS);
+    assert_eq!(feeder.soon().len(), 1);
+    assert_eq!(feeder.fed().len(), 1);
+
+    // Set back to 07:25: 07:30 is inside the lead again, but its mark
+    // says it ran, so it is neither reminded nor fed again.
+    feeder.sync(BREAKFAST - 5 * MINUTE_MS);
+    feeder.run(10 * MINUTE_MS);
+    assert_eq!(feeder.soon().len(), 1);
+    assert_eq!(feeder.fed().len(), 1);
+}
+
+#[test]
+fn a_plan_saved_without_a_clock_is_reminded_once_the_clock_returns() {
+    let mut feeder = Feeder::new();
+    feeder.run(100);
+    feeder.remind(MealReminder::Before { minutes: 30 });
+    // Saved with no clock, so with no mark; the clock then reads 07:10,
+    // inside the lead. The loop passes yesterday's occurrence, which
+    // marks the plan, and today's is reminded.
+    feeder.put(table(&[(0, plan(7 * 60 + 30, 2))]));
+    feeder.sync(BREAKFAST - 20 * MINUTE_MS);
+    feeder.run(MINUTE_MS);
+    let reminded: Vec<(u8, u32)> = feeder
+        .soon()
+        .into_iter()
+        .map(|(_, plan, due, _, _)| (plan, due))
+        .collect();
+    assert_eq!(reminded, [(0, seconds(BREAKFAST))]);
+
+    feeder.run_until(BREAKFAST + MINUTE_MS);
+    assert_eq!(feeder.fed().len(), 1);
+}

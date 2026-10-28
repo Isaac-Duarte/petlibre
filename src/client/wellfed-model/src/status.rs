@@ -7,7 +7,7 @@ use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::Generation;
+use crate::{Generation, MEAL_REMINDER_MINUTES_MAX, MEAL_REMINDER_MINUTES_MIN};
 
 /// What the feeder reports about itself.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -274,15 +274,14 @@ pub enum MealReminder {
     },
 }
 
-/// The longest lead a meal reminder takes, in minutes.
-const MEAL_REMINDER_MAX: u8 = 60;
-
 impl MealReminder {
     /// Whether the lead is one the feeder accepts (1-60 minutes).
     pub const fn valid(self) -> bool {
         match self {
             Self::Off => true,
-            Self::Before { minutes } => minutes >= 1 && minutes <= MEAL_REMINDER_MAX,
+            Self::Before { minutes } => {
+                minutes >= MEAL_REMINDER_MINUTES_MIN && minutes <= MEAL_REMINDER_MINUTES_MAX
+            }
         }
     }
 }

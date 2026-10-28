@@ -66,9 +66,10 @@ The lead is 1 to 60 minutes, one setting for every plan. Stock kept a similar fi
 A `MealSoon` event names the plan's slot, the time the meal is due (and its minute of the feeder's local day) and the portions it will ask for. The feeder sends one for each occurrence:
 
 - **When the lead starts.** With a 10-minute lead, a 07:30 meal is announced at 07:20. A plan you save, or move, inside the lead is announced at once.
-- **Only for a meal that will run.** A disabled plan, a feeder without a valid clock, or a plans store it cannot write gets no reminder.
+- **Only for a meal the feeder expects to run.** A disabled plan, a feeder without a valid clock, or a plans store it cannot write gets no reminder.
 - **Once.** Changing only a plan's portions keeps the reminder already sent; the meal feeds the new portions. A change of time or days is a new occurrence, with its own reminder.
 - **Across a daylight change**, the lead counts real minutes to the meal's instant: a 03:10 meal on the spring change day, 30 minutes ahead, is announced at 01:40, just before the clock jumps.
+- **Never withdrawn.** A meal can still be missed after its reminder: blocked past the grace, held, or passed by a forward clock jump. A plan you disable, delete or move inside the lead leaves its `MealSoon` in place, and a move adds a second one for the new time. A forward jump across the lead gives no reminder at all. So a client that acts on a reminder should check the plans, or the `Fed` or `Missed` event that follows for the same plan and due time.
 
 The reminder only reads the plans. It never claims, delays or blocks a meal, and the meal runs exactly as it would with the reminder off. It keeps nothing on flash about what it sent. So a restart inside the lead announces the same meal again once the clock is back, with the same plan and due time, and a client can drop the repeat.
 

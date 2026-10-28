@@ -35,7 +35,7 @@ pub(crate) fn time(at: Option<Timestamp>, zone: &TimeZone) -> String {
 
 /// Who asked; nobody known for a feed a reset interrupted that no plan
 /// had claimed.
-pub(crate) fn source(by: Option<Source>) -> String {
+fn source(by: Option<Source>) -> String {
     match by {
         Some(Source::Panel) => "panel".to_owned(),
         Some(Source::Client { client }) => format!("client {client}"),
@@ -143,16 +143,20 @@ const fn blocked(reason: Blocked) -> &'static str {
         Blocked::Updating => "an install holds the flash",
         Blocked::Setup => "BLE setup mode runs",
         Blocked::Unserved => "this firmware does not feed",
-        Blocked::Battery => "on batteries below the floor a feed needs, or after a brownout",
+        Blocked::Battery => {
+            "on batteries below the floor a feed needs or not yet read, or after a brownout"
+        }
         Blocked::Restarting => "a restart is coming within seconds",
     }
 }
 
+/// The hopper as the status reports it: the food beam's reading during
+/// the last feed, since the beam is lit only then.
 fn food(level: FoodLevel) -> &'static str {
     match level {
         FoodLevel::Unread => "not read yet (the food beam reads only during feeds)",
-        FoodLevel::Present => "present",
-        FoodLevel::Empty => "empty",
+        FoodLevel::Present => "present at the last feed",
+        FoodLevel::Empty => "empty at the last feed",
     }
 }
 
@@ -168,14 +172,14 @@ fn feed_fault(fault: FeedFault) -> String {
 }
 
 /// The supply as the feeder judged it.
-pub(crate) fn supply(supply: Supply) -> String {
+fn supply(supply: Supply) -> String {
     let adapter = match supply.adapter {
         Some(true) => "adapter",
         Some(false) => "on batteries (Wi-Fi off 5 s after the adapter goes)",
         None => "adapter not sampled",
     };
     let floor = match supply.below_floor {
-        Some(true) => ", below the floor a feed needs",
+        Some(true) => ", pack below the floor a feed on batteries needs",
         Some(false) | None => "",
     };
     format!("{adapter}; {}{floor}", battery(supply.battery))
@@ -266,9 +270,14 @@ pub(crate) fn plans(plans: &Plans) -> String {
             continue;
         };
         any = true;
+        let call = match plan.call {
+            0 => "no call".to_owned(),
+            1 => "call once".to_owned(),
+            plays => format!("call {plays} times"),
+        };
         let _ = write!(
             text,
-            "\n  {slot}  {}  {} portions  {}  {}",
+            "\n  {slot}  {}  {} portions  {}  {call}  {}",
             TimeOfDay(plan.minute),
             plan.portions,
             plan.days,
@@ -396,7 +405,7 @@ pub(crate) fn event(event: &Event, zone: &TimeZone) -> String {
             "Dispense pressed while feeding was blocked, {}: nothing started",
             reason.code()
         ),
-        EventBody::Food { level } => format!("hopper {}", food(level)),
+        EventBody::Food { level } => format!("hopper {}", word(&level)),
     }
 }
 
@@ -515,10 +524,10 @@ mod tests {
             "Build feeder 345 on bank 1, boot 42, up 1 h 2 min",
             "Clock: not set: scheduled meals hold until a sync",
             "Feeding: blocked, restarting (a restart is coming within seconds)",
-            "Food: empty",
+            "Food: empty at the last feed",
             "Last fault: feed 128 uncertain (interrupted); `wellfed feeds` has its portions",
             "Power: on batteries (Wi-Fi off 5 s after the adapter goes); batteries 10% (4310 mV), \
-             below the floor a feed needs",
+             pack below the floor a feed on batteries needs",
             "Desiccant: due (3 days over)",
             "Panel: unlocked",
             "Wi-Fi: -54 dBm (stored credentials), 1 link losses, 0 gateway losses",
@@ -690,6 +699,13 @@ mod tests {
             portions: 2,
             days: Weekdays::DAILY,
             enabled: false,
+            call: 3,
+        });
+        table[5] = Some(Plan {
+            minute: 18 * 60,
+            portions: 1,
+            days: Weekdays::ONCE,
+            enabled: true,
             call: 0,
         });
         let plans = Plans {
@@ -699,7 +715,8 @@ mod tests {
         };
         assert_eq!(
             super::plans(&plans),
-            "Plans, generation 4\n  2  07:30  2 portions  daily  disabled"
+            "Plans, generation 4\n  2  07:30  2 portions  daily  call 3 times  disabled\n  5  \
+             18:00  1 portions  once  no call  enabled"
         );
         let empty = Plans {
             plans: [None; PLANS],

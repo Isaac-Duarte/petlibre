@@ -221,7 +221,10 @@ pub(crate) async fn settings_command(args: SettingsArgs) -> Result<()> {
     let (_, _, mut connection) = connect(&args.target).await?;
     let answer = connection.ask(&Op::GetSettings).await?;
     let Answer::Settings(settings) = answer else {
-        return print_answer(&answer);
+        // A refusal fails here; any other answer is no settings to write
+        // against, so a change fails too rather than exit as if it ran.
+        print_answer(&answer)?;
+        bail!("the feeder did not return its settings");
     };
     if changes == SettingsPatch::default() {
         return match args.json {

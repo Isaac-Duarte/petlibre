@@ -42,7 +42,8 @@ Outside `src/tools/`, the simulator `wellfed-sim` (in `src/sdk/`) has the `virtu
 | `setup` | Pair with a feeder in BLE setup mode, give it Wi-Fi and enroll this computer as its owner |
 | `status` | The clock, whether a feed can start and why not, the food level, the last failed or uncertain feed, the supply and charge, the desiccant reminder, the panel lock and the link |
 | `settings [--lights on\|off] [--sound on\|off] [--volume N] [--lights-window W] [--sound-window W] [--desiccant-days N] [--meal-reminder off\|N]` | Read the settings, or change them against the generation just read |
-| `plans list` / `add --at HH:MM --portions N [--days D] [--disabled]` / `edit SLOT` / `enable SLOT` / `disable SLOT` / `delete SLOT` | The feeding plans, up to ten ([schedules](../../docs/firmware/schedules.md)) |
+| `plans list` / `add --at HH:MM --portions N [--days D] [--call 0-5] [--disabled]` / `edit SLOT` / `enable SLOT` / `disable SLOT` / `delete SLOT` | The feeding plans, up to ten, each with how often the meal call plays before it ([schedules](../../docs/firmware/schedules.md)) |
+| `call show` / `upload FILE.wav` / `delete` | The meal call: one clip of your own, converted here and uploaded, played before each meal whose plan asks for it ([meal call](../../docs/firmware/schedules.md#meal-call)) |
 | `feed [--portions N]` | Feed 1–48 portions and wait for the result; never retried |
 | `cancel-feed FEED` | Stop a running feed |
 | `feeds [--after N]` | The feeding history, one line a feed; an uncertain feed reads as a range |

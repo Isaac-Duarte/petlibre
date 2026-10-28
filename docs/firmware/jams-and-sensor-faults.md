@@ -127,7 +127,7 @@ Host coverage: `wellfed-hal`'s `tests/feed_faults.rs` (built with `--features fe
 
 Unattended, hopper empty, D cells out, at most 3 portions a feed, the logic analyzer at the motor (D2, D3) recording all eight channels at 1 MHz. About an hour: three over-the-air installs to bank 1 (no bank-0 write) and six feeds, the longest driving about 12 s.
 
-1. Run `wellfed-bench status`. You should see relay 1 on, UART relays closed and no capture or server running, with the hotspot up and the normal `feeder` confirmed on bank 1. Note the journal's high water from `wellfed status`.
+1. Run `wellfed-bench status`. You should see relay 1 on, UART relays closed and no capture or server running, with the hotspot up and the normal `feeder` confirmed on bank 1. Note the newest feed's number from the last line of `wellfed feeds`.
 2. Run `wellfed-bench ota NAME --build --firmware feeder --variant feed-jam` and wait for it to confirm. Run no feed before the confirmation.
 3. For each feed, start a 180 s UART capture and the analyzer for 60 s, then run `wellfed feed --portions N --address …`, and afterwards `wellfed events` for the `Fed` event.
 4. Feed `feed-jam` with 1, 2 and 3 portions. Check the outcome, reason and `reversals=` against the table. On the analyzer you should see forward (D3 HIGH), back (D2 HIGH) for 1.0 s and stopped 0.5 s, plus the 50 ms deadtime each way.

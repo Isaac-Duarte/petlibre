@@ -38,12 +38,13 @@ pub(super) fn status(detail: &FeederDetail) -> String {
     };
 
     let read = if snapshot.live { "live" } else { "last read" };
+    let zone = TimeZone::system();
     // Writing to a String cannot fail.
     let _ = write!(
         text,
         "\nStatus ({read} {}):\n{}",
-        snapshot.at,
-        crate::text::status(&snapshot.status, &TimeZone::system()),
+        crate::text::time(Some(snapshot.at), &zone),
+        crate::text::status(&snapshot.status, &zone),
     );
     text
 }

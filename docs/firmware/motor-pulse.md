@@ -101,7 +101,7 @@ Besides the usual `PLOWN1` lines and the runtime's `PLSUP1 stop … owner_age= o
 
 Unattended motion: hopper empty, D cells out, at most 3 portions. About 45 minutes: three over-the-air installs to bank 1 (no bank-0 write) and four feeds, each driving at most about 10 s.
 
-1. Run `wellfed-bench status`. You should see relay 1 on, UART relays closed and no capture or server running, with the hotspot up and the `feeder` build confirmed on bank 1. Note the journal's high water from `wellfed status`.
+1. Run `wellfed-bench status`. You should see relay 1 on, UART relays closed and no capture or server running, with the hotspot up and the `feeder` build confirmed on bank 1. Note the newest feed's number from the last line of `wellfed feeds`.
 2. Run `wellfed-bench ota NAME --build --firmware feeder --variant feed-stall` from the main checkout's root (or with `--root`), and wait for the build to confirm. A reset during the trial would count against it, so run no feed before the confirmation.
 3. For each feed:
    1. `wellfed-bench capture NAME-uart --seconds 180` starts a UART capture.

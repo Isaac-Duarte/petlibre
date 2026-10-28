@@ -1781,7 +1781,7 @@ mod tests {
         }
     }
 
-    /// `wellfed events` prints each body as this JSON.
+    /// `wellfed events --json` prints each body as this JSON.
     #[test]
     fn a_meal_reminder_reads_as_json() {
         let body = EventBody::from(proto::EventBody::MealSoon {

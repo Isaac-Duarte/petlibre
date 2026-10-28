@@ -9,12 +9,14 @@
 //! (docs/development/stock-server.md): `serve` runs the broker, the session
 //! with stock and the loopback API in [`api`]; `ota-images` the image
 //! server; `network` the feeder-only gateway redirect in [`network`];
-//! `plans` stock's stored feeding plans from a flash read ([`plans`]).
+//! `plans` stock's stored feeding plans from a flash read ([`plans`]);
+//! `broker-name` the broker its settings name ([`broker_name`]).
 
 #![forbid(unsafe_code)]
 #![warn(clippy::print_stdout)]
 
 pub mod api;
+pub mod broker_name;
 pub mod build_info;
 pub mod config;
 pub mod controller;

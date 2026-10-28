@@ -7,7 +7,7 @@
 use wellfed_client::install::plans::{self, KEPT_LEN, PLAN_SECTORS, StockPlans};
 
 /// Bytes in a whole flash read of the feeder.
-const FLASH_BYTES: usize = 0x80_0000;
+pub(crate) const FLASH_BYTES: usize = 0x80_0000;
 
 /// Why a file holds no plan sectors to read.
 #[derive(Debug, thiserror::Error)]

@@ -206,6 +206,9 @@ fn the_passphrase_never_reaches_a_debug_line() {
 
     let mut install = Install::new(Provision::Frame(f), BUILD, VERSION).unwrap();
     assert!(!format!("{install:?}").contains("hunter2"));
+    assert_eq!(install.step(), Step::ConfirmReset);
+    assert!(!format!("{install:?}").contains("104, 117, 110"));
+    install.reset_accepted();
     let step = install.step();
     assert!(!format!("{step:?}").contains("hunter2"));
     let Step::SendFrame(bytes) = step else {
@@ -220,6 +223,11 @@ fn the_passphrase_never_reaches_a_debug_line() {
 fn a_whole_run_goes_from_the_frame_to_a_confirmed_replacement() {
     let mut install = Install::new(Provision::Frame(frame()), BUILD, VERSION).unwrap();
 
+    // The Reset hold erases stock's plans: the owner accepts that first.
+    assert_eq!(install.step(), Step::ConfirmReset);
+    install.frame_sent();
+    assert_eq!(install.step(), Step::ConfirmReset, "no frame before it");
+    install.reset_accepted();
     let Step::SendFrame(bytes) = install.step() else {
         panic!("the frame goes first");
     };
@@ -280,6 +288,62 @@ fn a_whole_run_goes_from_the_frame_to_a_confirmed_replacement() {
     );
     install.plans_put(PlansPut::Done);
     assert_eq!(install.step(), Step::Done);
+}
+
+fn dns() -> DnsOverride {
+    DnsOverride::new("broker.example.net", "10.42.103.1:1883".parse().unwrap()).unwrap()
+}
+
+/// DNS first: the owner points stock's broker name at the installer and
+/// restarts the feeder; no frame, no Reset hold, and the run then waits
+/// for stock at the broker like any other.
+#[test]
+fn the_dns_route_sends_no_frame_and_waits_for_stock() {
+    let mut install = Install::new(Provision::Dns(dns()), BUILD, VERSION).unwrap();
+    assert_eq!(install.phase(), Phase::Provision);
+    assert_eq!(install.step(), Step::PointDns(dns()));
+
+    // Nothing moves it on but the owner's word.
+    install.stock(&ready()).unwrap();
+    install.frame_sent();
+    install.reset_accepted();
+    assert_eq!(install.step(), Step::PointDns(dns()));
+
+    install.dns_pointed();
+    assert_eq!(install.step(), Step::AwaitStock);
+    assert_eq!(
+        install.stock(&StockView {
+            online: false,
+            ..ready()
+        }),
+        Err(StockNotReady::Offline)
+    );
+    install.stock(&ready()).unwrap();
+    assert_eq!(install.step(), Step::ConfirmFeeder(enrolled()));
+}
+
+/// Stock never reaching the broker (the override not in place, or a
+/// feeder that did not restart) ends the run at provisioning, with nothing
+/// sent to stock.
+#[test]
+fn stock_that_never_arrives_ends_the_run_with_nothing_sent() {
+    let mut install = Install::new(Provision::Dns(dns()), BUILD, VERSION).unwrap();
+    install.dns_pointed();
+    install.gave_up();
+    assert_eq!(
+        install.step(),
+        Step::Failed(InstallError::TimedOut(Phase::AwaitStock))
+    );
+}
+
+#[test]
+fn declining_the_reset_hold_ends_the_run_before_anything_is_sent() {
+    let mut install = Install::new(Provision::Frame(frame()), BUILD, VERSION).unwrap();
+    assert_eq!(install.step(), Step::ConfirmReset);
+    install.reset_declined();
+    assert_eq!(install.step(), Step::Failed(InstallError::ResetDeclined));
+    install.reset_accepted();
+    assert_eq!(install.step(), Step::Failed(InstallError::ResetDeclined));
 }
 
 #[test]

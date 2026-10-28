@@ -5,10 +5,19 @@
 //! image server stock talks to, the device API session).
 //!
 //! The run, in order ([`Step`] says which is next):
-//! 1. **Provision:** one type-3 setup frame ([`frame`]) to stock's setup
-//!    access point names the owner's Wi-Fi and the installer's broker. Stock
-//!    then connects there with its own MQTT credentials, which the broker
-//!    trusts on first use; nothing captured, nothing redirected.
+//! 1. **Provision:** stock is pointed at the installer's broker, where it
+//!    connects with its own MQTT credentials, which the broker trusts on
+//!    first use; nothing captured, nothing redirected. Two routes
+//!    ([`Provision`]):
+//!    - **DNS first** ([`dns`]): the owner's resolver answers stock's broker
+//!      name with the installer's address, and a restarted stock connects
+//!      there. Nothing is written to the feeder, so stock's plans stay for
+//!      the import.
+//!    - **The Reset hold**, where the owner's router cannot override a
+//!      name: the hold runs stock's factory restore, which erases its plans,
+//!      so the owner accepts that first; then one type-3 setup frame
+//!      ([`frame`]) to stock's setup access point names the owner's Wi-Fi
+//!      and the installer's broker.
 //! 2. **Stock ready:** stock reports 1.1.15 on its adapter, the same
 //!    conditions its own precheck and the server's trial gate hold.
 //! 3. **Confirm the feeder:** trust on first use admits whichever stock-
@@ -54,6 +63,7 @@
 //! [consumer installation]: ../../../../docs/firmware/consumer-installation.md
 
 pub mod backup;
+pub mod dns;
 pub mod frame;
 pub mod plans;
 
@@ -62,6 +72,7 @@ pub use backup::{
     RestoreOffer, STOCK_OTA_SHA256, STOCK_PAYLOAD_LEN, STOCK_PAYLOAD_SHA256, STOCK_VERSION,
     StockBackup, StockPins, VerifiedBackup,
 };
+pub use dns::{DnsCheck, DnsError, DnsOverride, STOCK_BROKER_PORT};
 pub use frame::{FrameError, SETUP_ADDRESS, SetupFrame};
 pub use plans::{DecodeError, Import, StockPlans};
 
@@ -80,7 +91,13 @@ pub fn manifest_version(manifest: &[u8]) -> Option<u32> {
 /// How stock is pointed at the installer's broker.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Provision {
-    /// Send this frame to stock's setup access point first.
+    /// DNS first: the owner's resolver answers stock's broker name with the
+    /// installer's broker, and stock, restarted, connects there. Nothing is
+    /// written to the feeder.
+    Dns(DnsOverride),
+    /// The fallback: the owner holds Reset, which runs stock's factory
+    /// restore (its plans erased with the rest) and opens its setup access
+    /// point; then this frame goes there.
     Frame(SetupFrame),
     /// Stock already connects to the installer's broker (provisioned by an
     /// earlier frame, or on the bench).
@@ -207,6 +224,10 @@ pub enum InstallError {
     #[error("the owner did not recognize the enrolled feeder; nothing was sent to it")]
     FeederRejected,
     #[error(
+        "the owner kept stock's plans: the Reset hold erases them, so nothing was done; point stock's broker name at the installer in your DNS instead"
+    )]
+    ResetDeclined,
+    #[error(
         "the server refused the install request without sending it; stock is unchanged, and a new run may ask again once the reason is fixed"
     )]
     RequestRefused,
@@ -274,6 +295,16 @@ pub enum PlansPut {
 /// What the caller does next.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Step {
+    /// Ask the owner to have their resolver answer the override's name with
+    /// its broker, then to restart the feeder so stock looks the name up
+    /// again; then [`Install::dns_pointed`]. The caller may look the name up
+    /// itself and show [`DnsOverride::check`], as advice only.
+    PointDns(DnsOverride),
+    /// Warn the owner, before the feeder is touched, that the Reset hold
+    /// runs stock's factory restore and erases its plans, so they note them
+    /// first (the vendor app shows them); then [`Install::reset_accepted`]
+    /// or [`Install::reset_declined`].
+    ConfirmReset,
     /// With this host joined to stock's setup access point, send these bytes
     /// once to [`SETUP_ADDRESS`] over UDP, then call
     /// [`Install::frame_sent`]. Never resent: stock applies a frame once.
@@ -335,6 +366,9 @@ pub enum Step {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Stage {
+    PointDns(DnsOverride),
+    /// The frame waits for the owner to accept losing stock's plans.
+    ConfirmReset(FrameBytes),
     Provision(FrameBytes),
     /// The frame is out; waiting for the caller to say so.
     FrameOut,
@@ -392,7 +426,8 @@ impl Install {
     /// refused here, before anything is sent.
     pub fn new(provision: Provision, build: &str, version: u32) -> Result<Self, FrameError> {
         let stage = match provision {
-            Provision::Frame(frame) => Stage::Provision(FrameBytes(frame.encode()?)),
+            Provision::Dns(dns) => Stage::PointDns(dns),
+            Provision::Frame(frame) => Stage::ConfirmReset(FrameBytes(frame.encode()?)),
             Provision::Done => Stage::AwaitStock,
         };
         Ok(Self::at(stage, build, version))
@@ -422,6 +457,8 @@ impl Install {
     /// The next thing to do.
     pub fn step(&mut self) -> Step {
         match &self.stage {
+            Stage::PointDns(dns) => Step::PointDns(dns.clone()),
+            Stage::ConfirmReset(_) => Step::ConfirmReset,
             Stage::Provision(frame) => {
                 let frame = frame.clone();
                 self.stage = Stage::FrameOut;
@@ -465,7 +502,9 @@ impl Install {
     /// Where the run stands, for a progress display.
     pub fn phase(&self) -> Phase {
         match self.stage {
-            Stage::Provision(_) | Stage::FrameOut => Phase::Provision,
+            Stage::PointDns(_) | Stage::ConfirmReset(_) | Stage::Provision(_) | Stage::FrameOut => {
+                Phase::Provision
+            }
             Stage::AwaitStock => Phase::AwaitStock,
             Stage::ConfirmFeeder(_) => Phase::ConfirmFeeder,
             Stage::Request | Stage::Requesting => Phase::Request,
@@ -516,6 +555,29 @@ impl Install {
     /// the run then goes on without them, and says why.
     pub fn without_stock_plans(&mut self) {
         self.without_plans = true;
+    }
+
+    /// The owner says their resolver answers stock's broker name with the
+    /// installer's broker and the feeder restarted: wait for stock there.
+    pub fn dns_pointed(&mut self) {
+        if matches!(self.stage, Stage::PointDns(_)) {
+            self.stage = Stage::AwaitStock;
+        }
+    }
+
+    /// The owner noted stock's plans and accepts the Reset hold erasing
+    /// them: the frame comes next.
+    pub fn reset_accepted(&mut self) {
+        if let Stage::ConfirmReset(frame) = &self.stage {
+            self.stage = Stage::Provision(frame.clone());
+        }
+    }
+
+    /// The owner keeps stock's plans: nothing is done.
+    pub fn reset_declined(&mut self) {
+        if matches!(self.stage, Stage::ConfirmReset(_)) {
+            self.stage = Stage::Failed(InstallError::ResetDeclined);
+        }
     }
 
     /// The frame went out (the caller left stock's access point after).

@@ -6,7 +6,12 @@
 //! - stock's side is `wellfed-stock`, run as child processes (`serve`, which
 //!   trusts the first feeder that connects during the run, and
 //!   `ota-images`), spoken to over its loopback API;
-//! - the setup frame is one UDP datagram, sent after the owner has joined
+//! - stock reaches the broker DNS first: the owner's resolver answers
+//!   stock's broker name with this computer and the owner restarts the
+//!   feeder (the run guides it and looks the name up as advice; stock
+//!   arriving at the broker is the check);
+//! - or, the fallback, the setup frame: one UDP datagram, sent after the
+//!   owner accepted that the Reset hold erases stock's plans and joined
 //!   this computer to the feeder's setup access point (joining Wi-Fi is the
 //!   platform's job, so the run waits for the owner to say it is done);
 //! - the replacement is reached over the device API, with this computer's
@@ -30,9 +35,9 @@ use clap::Args;
 use serde::de::IgnoredAny;
 use tokio::process::{Child, Command};
 use wellfed_client::install::{
-    CONTAINER_HEADER, FeederTrust, Install, InstallError, PlansPut, Provision, Replacement,
-    Requested, SETUP_ADDRESS, SetupFrame, Step, StockBackup, StockPower, StockView,
-    manifest_version, plans,
+    CONTAINER_HEADER, DnsCheck, DnsOverride, FeederTrust, Install, InstallError, PlansPut,
+    Provision, Replacement, Requested, SETUP_ADDRESS, STOCK_BROKER_PORT, SetupFrame, Step,
+    StockBackup, StockPower, StockView, manifest_version, plans,
 };
 use wellfed_client::update::{Image, InstallError as UpdateError};
 use wellfed_formats::bench::lease::Lease;
@@ -91,9 +96,17 @@ pub(crate) struct InstallArgs {
     /// The owner's data directory for stock backups, one per feeder.
     #[arg(long, default_value = crate::backup::BACKUPS)]
     backups: PathBuf,
-    /// Point stock at this network (passphrase from standard input) and the
-    /// installer's broker with the setup frame first. Without it, stock
-    /// already connects to the installer's broker.
+    /// Stock's broker name (the vendor's, which Wellfed does not ship):
+    /// the owner's resolver is to answer it with this computer, and the
+    /// restarted feeder connects here with nothing written to it, so its
+    /// plans stay for the import. The DNS-first route.
+    #[arg(long, conflicts_with_all = ["ssid", "from_bank0"])]
+    broker_name: Option<String>,
+    /// The fallback where the router cannot override a name: the owner
+    /// holds Reset, which erases stock's plans, and the setup frame points
+    /// stock at this network (passphrase from standard input) and the
+    /// installer's broker. Without it or --broker-name, stock already
+    /// connects to the installer's broker.
     #[arg(long)]
     ssid: Option<String>,
     /// The numeric account ID the frame carries; stock requires nonzero
@@ -101,7 +114,7 @@ pub(crate) struct InstallArgs {
     #[arg(long, default_value = "1")]
     account: String,
     /// The broker the frame names; the stock config's MQTT address otherwise.
-    #[arg(long)]
+    #[arg(long, requires = "ssid")]
     broker: Option<SocketAddr>,
     /// The replacement is already on bank 0 from an earlier run: start at
     /// pairing, and ask stock nothing.
@@ -233,9 +246,15 @@ fn review_build(review: &Path) -> Result<String> {
     Ok(id.to_ascii_lowercase())
 }
 
-/// The setup frame, when `--ssid` asks for one: the owner's network and
-/// the installer's broker.
+/// How stock reaches the installer's broker: a DNS override of its
+/// broker name (`--broker-name`), the setup frame after the Reset hold
+/// (`--ssid`: the owner's network and the installer's broker), or already.
 fn provision(args: &InstallArgs, config: &ServerConfig) -> Result<Provision> {
+    if let Some(name) = &args.broker_name {
+        return Ok(Provision::Dns(
+            DnsOverride::new(name, config.mqtt_listen).context("--broker-name")?,
+        ));
+    }
     let Some(ssid) = &args.ssid else {
         return Ok(Provision::Done);
     };
@@ -300,9 +319,27 @@ fn recognized(trust: &FeederTrust) -> Result<bool> {
         FeederTrust::Captured => return Ok(true),
         FeederTrust::Contested => return Ok(false),
     };
-    eprintln!(
+    yes(&format!(
         "The broker trusted feeder {device}, connecting from {address}. Is this your feeder? [y/N]"
+    ))
+}
+
+/// Whether the owner, warned up front, accepts that the Reset hold erases
+/// stock's plans before the installer can read them.
+fn reset_accepted() -> Result<bool> {
+    eprintln!(
+        "The fallback route starts with stock's Reset hold, which runs its factory restore: \
+         it erases stock's feeding plans, Wi-Fi and settings before the installer can read \
+         them, so no plans are imported. Note your plans in the vendor app now, to set them \
+         again on the replacement. Where your router (or a resolver you run) can override a \
+         DNS name, stop here and run with --broker-name instead: that keeps the plans."
     );
+    yes("Erase stock's plans with the Reset hold and go on? [y/N]")
+}
+
+/// The owner's answer to a `[y/N]` question.
+fn yes(question: &str) -> Result<bool> {
+    eprintln!("{question}");
     let mut line = String::new();
     std::io::stdin()
         .read_line(&mut line)
@@ -320,10 +357,60 @@ fn confirm(prompt: &str) -> Result<()> {
     Ok(())
 }
 
+/// Guide the owner through the DNS override and the feeder's restart,
+/// then look the name up from this computer. The lookup is advice only:
+/// this computer may ask another resolver than the feeder does, so the run
+/// waits for stock at the broker whatever it shows.
+async fn point_dns(dns: &DnsOverride) -> Result<()> {
+    let (name, broker) = (dns.name(), dns.broker());
+    eprintln!(
+        "Point stock's broker name at this computer. In your router's DNS settings (or a \
+         resolver you run, if your router hands that one out), make {name} resolve to \
+         {broker}. Only that name changes; stock keeps its Wi-Fi, its credentials and its \
+         plans, and nothing is written to it. Remove the override once the install is done: \
+         a feeder rolled back to stock would otherwise keep looking for this computer."
+    );
+    confirm(
+        "Then restart the feeder so stock looks the name up again: unplug its adapter for \
+         about 10 s (take its batteries out too, if fitted) and plug it back in.",
+    )?;
+
+    let resolved: Vec<IpAddr> = tokio::net::lookup_host((name, STOCK_BROKER_PORT))
+        .await
+        .map(|addresses| addresses.map(|address| address.ip()).collect())
+        .unwrap_or_default();
+    match dns.check(&resolved) {
+        DnsCheck::Points => eprintln!("This computer resolves {name} to {broker}, as it should."),
+        DnsCheck::Elsewhere(addresses) => eprintln!(
+            "This computer resolves {name} to {addresses:?}, not {broker}. If it asks the \
+             same resolver as the feeder, the override is not in place yet."
+        ),
+        DnsCheck::Unresolved => eprintln!("This computer cannot resolve {name}."),
+    }
+    eprintln!(
+        "Waiting for stock to connect here. If it does not within a few minutes, check the \
+         override in the resolver your router hands out and restart the feeder again; \
+         nothing is sent to stock until it does."
+    );
+    Ok(())
+}
+
 impl Run {
     async fn drive(&mut self, install: &mut Install) -> Result<()> {
         loop {
             match install.step() {
+                Step::PointDns(dns) => {
+                    self.serve().await?;
+                    point_dns(&dns).await?;
+                    install.dns_pointed();
+                }
+                Step::ConfirmReset => {
+                    if reset_accepted()? {
+                        install.reset_accepted();
+                    } else {
+                        install.reset_declined();
+                    }
+                }
                 Step::SendFrame(frame) => {
                     self.serve().await?;
                     self.send_frame(frame.bytes())?;

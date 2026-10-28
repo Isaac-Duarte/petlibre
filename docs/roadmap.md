@@ -32,7 +32,7 @@ This page tracks what works today and what comes next. It covers the replacement
 | Schedules | Works | Up to ten plans, run on the feeder with no server. |
 | Feeding history | Partial | `wellfed feeds` lists each feed the feeder keeps, across reboots; a long history needs the server. |
 | Food level | Experimental | The status shows the hopper as the last feed read it. A feed on an empty hopper still runs, as stock's does, and its history entry says the hopper read empty. |
-| Importing your stock schedule | Experimental | The installer reads stock's plans before promotion and sets them on the replacement once it confirms. |
+| Importing your stock schedule | Experimental | The installer reaches stock through a DNS override of its broker name, which keeps its plans, reads them before promotion and sets them on the replacement once it confirms. |
 
 ## The feeder itself
 

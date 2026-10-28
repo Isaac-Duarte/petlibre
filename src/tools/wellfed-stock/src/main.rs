@@ -25,6 +25,7 @@ use wellfed_client::install::{SETUP_ADDRESS, SetupFrame};
 use wellfed_formats::bench::lease::Lease;
 use wellfed_stock::{
     api::{self, ApiState},
+    broker_name,
     build_info::{self, BUILD},
     config::{self, State},
     controller::{self, Controller},
@@ -185,6 +186,12 @@ enum Action {
     /// sectors, or a whole flash read) and show what an install would
     /// import: each plan converted, or refused by name. Touches no feeder.
     Plans { file: PathBuf },
+
+    /// Print the broker name stock's settings store, from a file (the
+    /// settings sector at 0x3e8000, or a whole flash read): the name the
+    /// DNS-first install overrides (`wellfed install --broker-name`).
+    /// Touches no feeder.
+    BrokerName { file: PathBuf },
 
     /// Explicit feeder-only gateway routing and WAN isolation; needs sudo.
     Network {
@@ -421,6 +428,20 @@ async fn main() -> Result<()> {
                     &stock, now_ms
                 ))
             );
+        }
+
+        Action::BrokerName { file } => {
+            let bytes =
+                std::fs::read(&file).with_context(|| format!("reading {}", file.display()))?;
+            let broker = broker_name::read(&bytes)?;
+            if broker.port != u32::from(wellfed_client::install::STOCK_BROKER_PORT) {
+                eprintln!(
+                    "Stock connects on port {}, not {}: a DNS override alone cannot move it",
+                    broker.port,
+                    wellfed_client::install::STOCK_BROKER_PORT
+                );
+            }
+            println!("{}", broker.host);
         }
 
         Action::Network { action } => match action {

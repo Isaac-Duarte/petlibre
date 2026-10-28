@@ -12,6 +12,16 @@ Stock talks plaintext MQTT on TCP 1883 with device-specific credentials.
 - **Topics:** `dl/PLAF103/<device-id>/<group>/<event>/post` or `/sub`. Access stays within the configured device namespace.
 - **Our stock server** handles startup, attributes, heartbeat, clock, binding and captured plan replies. Its manual feeding has been removed. The API is in [stock server setup](../../../development/stock-server.md), and the Rust protocol tests hold complete synthetic wire examples.
 
+### Where stock connects
+
+Stock's broker is a DNS name, not an address. Its settings sector at `0x3e8000` holds the port as a little-endian word at its start and the host name, NUL-terminated, at `0x0c`. `Set_Dev_Info` writes that record, and stock loads it at every boot (static analysis; the offsets match the feeder's flash reads).
+
+- **Plaintext, no pinning.** Stock connects to that name on TCP 1883 with no TLS and no certificate or address pinning (static analysis; the stored port and a capture agree).
+- **Looked up at each connect.** Stock resolves the name as its MQTT client starts, through the resolvers its network handed it. Its own diagnostic report names two: the network's resolver, then a public one (observed). A resolver that does not answer most likely lets stock fall back to the public one, which answers with the vendor's address (inference).
+- **So DNS moves it.** When the network's resolver answers the name with our server, a restarted stock connects to our server with its own credentials. Nothing is written to the feeder, so its plans and settings stay. The [consumer installation](../../../firmware/consumer-installation.md#moving-stock-by-dns) builds on this. `wellfed-stock broker-name <flash read>` prints the stored name.
+- **What rewrites it.** Once stock is connected, a `DEVICE_CONFIG_SYNC` carrying an `mqttAddr` list of host and port rewrites only `0x3e8000`, and `WIFI_CHANGE_SERVICE` changes only the Wi-Fi settings. Neither erases the plans (static analysis). Our server sends neither.
+- **What a set-up stock sends first.** A stock that was set up before sends no `BINDING` when it connects. Its first messages are a diagnostic report, `NTP`, `GET_FEEDING_PLAN_EVENT`, a heartbeat, `DEVICE_START_EVENT` and `ATTR_PUSH_EVENT` (observed). A stock fresh from setup sends `BINDING` first (observed, in a capture of the vendor app's setup).
+
 The broker is authenticated, has no upstream bridge and keeps no sessions. Manual feed commands carry durable caller UUIDs, use QoS 0 and are never retained. A reply must match its request ID. An uncertain operation is never republished automatically. Stock's limited raw-payload and result caching is no substitute for durable no-replay handling.
 
 ## Feeding and device features
@@ -58,6 +68,8 @@ Advertising runs only on mains power. Nothing ties BLE to feeding, schedules or 
 ## Clock and schedules
 
 Stock's reply handler for `GET_FEEDING_PLAN_EVENT` erases and rewrites both plan sectors whenever the reply has a `plans` key, so `plans: []` erases the table. It checks neither the code nor the message ID, and it accepts the message unasked. A reply without the key writes nothing, but stock then publishes a `FEEDING_PLAN_SERVICE` with code 2099. With no reply, stock keeps its table; it sends the request once and does not retry (static analysis of the 1.1.15 KM4 image, with one UART capture of a stock install).
+
+How stock reads the reply is in [plan records](#how-stock-receives-plans).
 
 Our stock server answers that request only with a captured snapshot. An installer's config captures none, so the request goes unanswered and stock keeps its plans for the installer to import. The server never sends a plan message on its own. Nonempty plans are unvalidated for this release, and clock calibration is held while plans may exist (a captured nonempty snapshot, or none captured). Before this change, our server answered an installer's config with `plans: []`, so installs run before then may have erased stock's table. Responses use the configured IANA time zone, including DST transitions. Stock's full time zone and timer activation, and how the cloud builds plans, remain unresolved.
 
@@ -109,6 +121,29 @@ Stock keeps its plans in two flash sectors and rereads them at every boot. The i
 | 0x22 | 10 | — | Never written: zero |
 
 The hour, minute and weekday are local. Stock compares them with its clock shifted by the zone offset the cloud last sent, kept as a signed byte of whole hours. No zone is stored with the plans.
+
+#### How stock receives plans
+
+Stock's reply handler for `GET_FEEDING_PLAN_EVENT` reads a root `plans` array (static analysis of 1.1.15).
+
+- **The table is replaced.** Any reply with a `plans` key erases both plan sectors and writes the new table, from the first entry. Ten entries at most; an eleventh and later ones are dropped. An empty list leaves no plans.
+- **No checks.** It checks neither the reply's code nor its message ID, and takes the message unasked. Values are stored as given ([field validation](#schedules)).
+- **Numbers.** `planId`, `grainNum`, `audioTimes` and each `repeatDay` value are read as integers, and `enableAudio` as an integer or a boolean (true reads as 1). `syncTime` and `skipEndTime` are read as JSON numbers and stored as 64-bit integers, so millisecond times are exact.
+
+| Field | Type | Stored as |
+| --- | --- | --- |
+| `planId` | Integer | 0x00, the plan's ID |
+| `executionTime` | `"HH:MM"`, local | 0x05 hour and 0x04 minute, from the characters as written |
+| `grainNum` | Integer | 0x10, portions |
+| `repeatDay` | Array of weekdays, 1 Monday to 7 Sunday | 0x07, one byte each. An empty array with a `syncTime` sets the one-off flag (0x06) |
+| `enableAudio` | Boolean, or 0 or 1 | 0x0e, the meal call |
+| `audioTimes` | Integer | 0x0f, plays of the call |
+| `syncTime` | Unix milliseconds | 0x12 |
+| `skipEndTime` | Unix milliseconds | 0x1a: the plan does not run before it |
+
+Always send `repeatDay`. Without it, stock records an error, and whether the plan gets the one-off flag depends on the plan before it in the list.
+
+A plan whose `skipEndTime` lies far in the future is stored but never runs. The bench seeds stock's table this way to test the import without motion ([stock server](../../../development/stock-server.md#seed-stocks-plans-on-the-bench)).
 
 #### Importing them
 
@@ -186,7 +221,9 @@ Also refused, each with its own reason: an erased entry, a time no day has (hour
 | Fact | Value | Evidence |
 | --- | --- | --- |
 | Reset holds | One hold: Reset about 5 s on an unlocked panel starts the factory restore. No Wi-Fi-only hold exists in the panel handler | static, emulation |
-| What the restore clears | Unknown: its consumer task was not decompiled. Settle by decompiling it and listing the flash sectors it erases | — |
+| What the restore clears | Everything stock keeps: it erases `0x3e8000`–`0x3ea000` (the broker, Wi-Fi and binding records), `0x7d0000`–`0x7d6000` (the plans and the record rings) and `0x7da000`, then restarts. The plans are gone, so an install after a Reset hold imports none | static |
+| Setup mode | Only through the Reset hold. A set-up stock that cannot reach its Wi-Fi retries it forever and never opens its setup access point on its own | static |
+| MQTT `RESTORE` | Erases the same plan sectors, but keeps the Wi-Fi settings | static |
 | Home Assistant, history, remote control and the app | None on the device: no Home Assistant, history and remote control live in the cloud, and the vendor app is the client | static |
 
 **App and cloud, not firmware:** the desiccant reminder, the meal reminder, the low-battery and other notifications (`enableLowBatteryNotice` and siblings), `enableBatteryPercent`, `barnDoorError`, feed history (the device only queues unsent records), the per-model portion cap and the plan editor's limits. The firmware has no strings or fields for any of these.
@@ -203,5 +240,7 @@ Restarting only the stock server reproduced repeated startups and a KM4 watchdog
 - **Recovered, October 28, 2026:** the plan records, from a static pass over stock's plan boot load, setter, due check and feed-end delete in the 1.1.15 KM4 image. The weekday numbering, the stored byte widths and the millisecond times come from the October 18 Unicorn emulations of the setter and the calendar.
 - **Observed, October 28, 2026:** every full flash read of our feeder (October 18 to 26) holds count 0 and an erased entries sector, which is what stock's setter leaves for an empty plan list, as our server's `plans: []` replies wrote it. The decoder reads them as no plans. No read held a stored plan, so the entry layout is not yet checked against real bytes.
 - **Modeled, October 28, 2026:** the decoder and the conversion, host-tested on synthetic sectors.
+- **Recovered, October 28, 2026 (evening):** from a read-only static pass over the 1.1.15 KM4 image. The factory restore's erase list and its restart; that setup mode is entered only through it; the broker kept as a DNS name in `0x3e8000` on plaintext 1883; that `DEVICE_CONFIG_SYNC` and `WIFI_CHANGE_SERVICE` touch only their own settings; and the plan reply handler's fields and their mapping onto the 44-byte entry.
+- **Observed, October 23, 2026:** stock's boot through our bench server (`fw40-stock-ota-07-uart-01`, UART): the name looked up through two resolvers, the network's and a public one, and a set-up stock's first messages, with no `BINDING`. The settings record's offsets match every full flash read of our feeder.
 - **Recovered:** Bluetooth LE, from static analysis of the 1.1.15 KM4 image and the vendor app.
 - **Observed:** the MQTT protocol, from the feeder's traffic to our server. Our stock server's manual feeding was removed on October 24, 2026.

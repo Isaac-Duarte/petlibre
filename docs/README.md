@@ -33,6 +33,7 @@ The firmware docs describe Wellfed's own replacement, which isn't tied to one de
 | [The server](server/README.md) | What the optional server adds, [running it](server/running.md), and [how it's built](server/design.md) |
 | [Web UI design](web/README.md) | The server's browser UI |
 | [well-fed.dev](web/site.md) | The project's landing page |
+| [docs.well-fed.dev](web/docs-site.md) | This documentation as a website |
 
 Feeder components:
 

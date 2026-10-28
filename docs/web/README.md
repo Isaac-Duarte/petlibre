@@ -52,6 +52,7 @@ src/web/
     bench/                 the bench page (its own stack, on the shared tokens and components)
     server/                the server UI: SvelteKit, embedded by wellfed-server
     site/                  well-fed.dev, the prerendered landing page (site.md)
+    docs/                  docs.well-fed.dev, this docs/ folder as a searchable site (docs-site.md)
   packages/
     tokens/                generated CSS from assets/brand/tokens.json, plus the contrast test
     ui/                    styled components over bits-ui, format helpers, shared by both apps

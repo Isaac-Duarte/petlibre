@@ -1,5 +1,5 @@
 <script lang="ts">
-  import GitHub from "#lib/GitHub.svelte";
+  import { GitHubMark as GitHub } from "@wellfed/ui";
   import { REPO } from "#lib/links.ts";
 
   // The page's one picture: where a single feed command travels. Stock sends

@@ -5,7 +5,7 @@
   import type { Snippet } from "svelte";
   import { favicon, lockup, lockupOnLight, themeColor } from "#lib/brand.ts";
   import { DOCS, MAINTAINER, REPO, SITE } from "#lib/links.ts";
-  import GitHub from "#lib/GitHub.svelte";
+  import { GitHubMark as GitHub } from "@wellfed/ui";
 
   let { children }: { children: Snippet } = $props();
 

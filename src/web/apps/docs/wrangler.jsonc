@@ -1,0 +1,13 @@
+// docs.well-fed.dev as a Cloudflare Worker that only serves static assets
+// (docs/web/docs-site.md). There is no Worker script: every request is answered
+// from the prerendered build, and static/_headers sets the response headers.
+// The name must match the Worker's name in the Cloudflare dashboard.
+{
+  "name": "wellfed-docs",
+  "compatibility_date": "2026-10-28",
+  "assets": {
+    "directory": "./build",
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "none",
+  },
+}

@@ -98,7 +98,14 @@ export default ts.config(
 
   // Node scripts: the build-time generators and the e2e server.
   {
-    files: ["**/*.mjs", "**/*.config.js", "**/*.config.ts", "scripts/**", "packages/tokens/src/generate.ts"],
+    files: [
+      "**/*.mjs",
+      "**/*.config.js",
+      "**/*.config.ts",
+      "scripts/**",
+      "packages/tokens/src/generate.ts",
+      "apps/docs/e2e/serve.ts",
+    ],
     languageOptions: { globals: { ...globals.node } },
   },
   {

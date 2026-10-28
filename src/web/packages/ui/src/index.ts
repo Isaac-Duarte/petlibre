@@ -3,6 +3,7 @@ export { default as Command } from "./Command.svelte";
 export { default as Dialog } from "./Dialog.svelte";
 export { default as CopyButton } from "./CopyButton.svelte";
 export { default as Empty } from "./Empty.svelte";
+export { default as GitHubMark } from "./GitHubMark.svelte";
 export { default as Kv } from "./Kv.svelte";
 export { default as LiveDot } from "./LiveDot.svelte";
 export { default as LogView } from "./LogView.svelte";

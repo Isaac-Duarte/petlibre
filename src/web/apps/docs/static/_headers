@@ -1,0 +1,14 @@
+# Cloudflare static-asset response headers (docs/web/docs-site.md). Scripts are
+# held to 'self' plus each page's own inline hashes by the CSP <meta> that
+# SvelteKit writes into every prerendered page; a script must pass both
+# policies, so this one allows inline only to defer to that narrower one.
+# 'wasm-unsafe-eval' is for Pagefind's search index. Nothing loads from
+# another origin.
+/*
+  Content-Security-Policy: default-src 'none'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self'; font-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), interest-cohort=()
+
+/_app/immutable/*
+  Cache-Control: public, max-age=31536000, immutable

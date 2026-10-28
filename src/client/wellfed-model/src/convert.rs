@@ -15,8 +15,9 @@ use crate::{
     FeedReason, Flash, Food, Generation, Hello, Hex, Invite, Joined, LogLines, Memory,
     MissedReason, NtpResult, NtpServer, Op, OpenRefusal, Phase, Plan, Plans, Portions, Power,
     PowerStats, Readiness, Refusal, ResetCause, Resets, Sample, SampleValue, Settings,
-    SettingsPatch, Source, Stats, StatsSection, Status, TaskStack, TimeSource, TimeSync, TimeView,
-    Tune, UpdatePhase, UpdateRefusal, UpdateStop, UpdateView, Weekdays, WifiSource, Window, setup,
+    SettingsPatch, Source, Stats, StatsSection, Status, Supply, TaskStack, TimeSource, TimeSync,
+    TimeView, Tune, UpdatePhase, UpdateRefusal, UpdateStop, UpdateView, Weekdays, WifiSource,
+    Window, setup,
 };
 use crate::{
     CurrentUnit, FeedStats, Malformed, Trace, TraceEntry, TraceMotor, TracePage, TraceSummary,
@@ -94,6 +95,7 @@ impl From<proto::Status<'_>> for Status {
             sessions,
             readiness: None,
             desiccant: desiccant.into(),
+            supply: None,
         }
     }
 }
@@ -181,7 +183,7 @@ impl From<proto::Battery> for Battery {
     fn from(battery: proto::Battery) -> Self {
         match battery {
             proto::Battery::Absent => Self::Absent,
-            proto::Battery::Reading { mv } => Self::Reading { mv },
+            proto::Battery::Reading { mv, percent } => Self::Reading { mv, percent },
             proto::Battery::Implausible { mv } => Self::Implausible { mv },
             proto::Battery::Unread => Self::Unread,
             proto::Battery::Stale { age_ms } => Self::Stale { age_ms },
@@ -193,10 +195,25 @@ impl From<Battery> for proto::Battery {
     fn from(battery: Battery) -> Self {
         match battery {
             Battery::Absent => Self::Absent,
-            Battery::Reading { mv } => Self::Reading { mv },
+            Battery::Reading { mv, percent } => Self::Reading { mv, percent },
             Battery::Implausible { mv } => Self::Implausible { mv },
             Battery::Unread => Self::Unread,
             Battery::Stale { age_ms } => Self::Stale { age_ms },
+        }
+    }
+}
+
+impl From<proto::Supply> for Supply {
+    fn from(supply: proto::Supply) -> Self {
+        let proto::Supply {
+            adapter,
+            battery,
+            below_floor,
+        } = supply;
+        Self {
+            adapter,
+            battery: battery.into(),
+            below_floor,
         }
     }
 }
@@ -711,8 +728,13 @@ impl From<proto::Outcome<'_>> for Answer {
             proto::Outcome::Refused(refusal) => Self::Refused(refusal.into()),
             proto::Outcome::Feeding { feed } => Self::Feeding { feed },
             proto::Outcome::Update(view) => Self::Update(view.into()),
-            proto::Outcome::FeederStatus { status, readiness } => Self::Status(Status {
+            proto::Outcome::FeederStatus {
+                status,
+                readiness,
+                supply,
+            } => Self::Status(Status {
                 readiness: Some(readiness.into()),
+                supply: supply.map(Into::into),
                 ..status.into()
             }),
             proto::Outcome::Time(view) => Self::Time(view.into()),
@@ -1253,6 +1275,7 @@ impl From<proto::UpdateRefusal> for UpdateRefusal {
             proto::UpdateRefusal::NotInstalling => Self::NotInstalling,
             proto::UpdateRefusal::Store => Self::Store,
             proto::UpdateRefusal::Unconfirmed => Self::Unconfirmed,
+            proto::UpdateRefusal::Battery => Self::Battery,
         }
     }
 }

@@ -15,7 +15,7 @@ use wellfed_core::ota::offer::KeyId;
 use wellfed_core::tone::Tune as CoreTune;
 use wellfed_proto::api::{
     self as proto, Bank1Page, Blocked, Bowl, Capabilities, EventBody, Phase, Readiness, Refusal,
-    Source, Stats, StatsSection, Status, TracePage, UpdateView,
+    Source, Stats, StatsSection, Status, Supply, TracePage, UpdateView,
 };
 
 /// The rest of the feeder, as the server needs it. Every call returns at
@@ -49,6 +49,12 @@ pub trait Device {
     /// no feeding owner is [`Blocked::Unserved`].
     fn readiness(&mut self) -> Readiness {
         Readiness::Blocked(Blocked::Unserved)
+    }
+    /// The supply as the device judges it, for a status to a session that
+    /// shares [`Capabilities::POWER`]; `None` from a device that does not
+    /// judge it.
+    fn supply(&mut self) -> Option<Supply> {
+        None
     }
     /// Queue one feed for the feeding owner on `by`'s behalf: the number
     /// its journal will hold it under. Asked only while

@@ -27,7 +27,7 @@ use wellfed_core::mdns;
 
 use crate::banks::Banks;
 use crate::flash::Flash;
-use crate::platform::{DeviceError, Random};
+use crate::platform::{DeviceError, Random, SimSupply};
 use crate::sim::{Record, Sim};
 
 #[derive(Debug, thiserror::Error)]
@@ -51,6 +51,12 @@ pub enum Control {
     /// Hold a feed in flight where it is (`true`), as a motor that stopped
     /// moving, or let it go on. A restart lets go.
     StallFeeds(bool),
+    /// The adapter fitted (`true`) or pulled, from now on and across
+    /// restarts.
+    Adapter(bool),
+    /// The battery channel's pin millivolts from now on and across
+    /// restarts; `None` takes the cells out.
+    Pack(Option<u32>),
     /// Stop serving.
     Quit,
 }
@@ -107,6 +113,7 @@ pub async fn serve(
     listener.local_addr().map_err(ServeError::Listen)?;
 
     let mut boots = 1;
+    let mut supply = SimSupply::MAINS;
     let mut booted = Booted::start(&feeder, boots, advertise, &mut log)?;
     let mut control = Some(control);
     let mut delay = Duration::ZERO;
@@ -123,6 +130,14 @@ pub async fn serve(
                     reboot = true;
                 }
                 Some(Control::StallFeeds(stalled)) => booted.sim.stall_feeds(stalled),
+                Some(Control::Adapter(adapter)) => {
+                    supply.adapter = adapter;
+                    booted.sim.platform().set_supply(supply);
+                }
+                Some(Control::Pack(pin_mv)) => {
+                    supply.pin_mv = pin_mv;
+                    booted.sim.platform().set_supply(supply);
+                }
                 Some(Control::Quit) => return Ok(()),
                 None => control = None,
             },
@@ -153,6 +168,7 @@ pub async fn serve(
             // The connections close with the boot's platform.
             boots += 1;
             booted = Booted::start(&feeder, boots, advertise, &mut log)?;
+            booted.sim.platform().set_supply(supply);
             delay = Duration::ZERO;
         }
     }

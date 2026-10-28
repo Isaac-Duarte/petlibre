@@ -2,7 +2,9 @@
 //! uncertainty is named rather than read as a value, and the floor's hold,
 //! cutoff and hysteresis.
 
-use wellfed_core::supply::{Floor, FloorLimits, Pack, PackLimits, Reading, Sample, classify};
+use wellfed_core::supply::{
+    Curve, Floor, FloorLimits, Pack, PackLimits, Reading, Sample, classify,
+};
 
 const PACK: PackLimits = PackLimits {
     divider_per_mille: 2_063,
@@ -10,6 +12,10 @@ const PACK: PackLimits = PackLimits {
     max_pack_mv: 5_500,
     min_running_mv: 2_500,
     stale_ms: 15_001,
+    curve: Curve {
+        empty_pin_mv: 1650,
+        full_pin_mv: 2250,
+    },
 };
 
 const FLOOR: FloorLimits = FloorLimits {
@@ -34,7 +40,10 @@ fn readings_name_their_uncertainty() {
         classify(sample(2306, false, 1200), &PACK),
         Reading {
             adapter: Some(false),
-            pack: Pack::Reading { mv: 4757 },
+            pack: Pack::Reading {
+                mv: 4757,
+                percent: 100,
+            },
         }
     );
     assert_eq!(
@@ -57,6 +66,51 @@ fn readings_name_their_uncertainty() {
     );
 }
 
+/// Stock's lookup: 0 % at or below 1650, then each 60 above it a 10 %
+/// step, a reading taking the first step at or above it, 100 % from 2250.
+#[test]
+fn the_charge_follows_stocks_steps() {
+    let curve = PACK.curve;
+    let cases = [
+        (0, 0),
+        (1200, 0),
+        (1650, 0),
+        (1651, 10),
+        (1710, 10),
+        (1711, 20),
+        (1770, 20),
+        (1890, 40),
+        (1891, 50),
+        (2190, 90),
+        (2191, 100),
+        (2250, 100),
+        (2306, 100),
+        (u32::MAX, 100),
+    ];
+    for (pin_mv, percent) in cases {
+        assert_eq!(curve.percent(pin_mv), percent, "{pin_mv} mV");
+    }
+
+    let flat = Curve {
+        empty_pin_mv: 1650,
+        full_pin_mv: 1650,
+    };
+    assert_eq!(flat.percent(1650), 0);
+    assert_eq!(flat.percent(1651), 100);
+}
+
+#[test]
+fn a_reading_carries_its_charge() {
+    let reading = classify(sample(1800, false, 0), &PACK);
+    assert_eq!(
+        reading.pack,
+        Pack::Reading {
+            mv: 3713,
+            percent: 30,
+        }
+    );
+}
+
 #[test]
 fn a_value_no_pack_can_read_is_implausible() {
     // Above what three fresh alkaline cells read.
@@ -72,7 +126,10 @@ fn a_value_no_pack_can_read_is_implausible() {
     // On the adapter a deeply drained pack can read that low.
     assert_eq!(
         classify(sample(1200, true, 0), &PACK).pack,
-        Pack::Reading { mv: 2475 }
+        Pack::Reading {
+            mv: 2475,
+            percent: 0,
+        }
     );
     assert_eq!(classify(sample(1200, false, 0), &PACK).pack_mv(), None);
 }

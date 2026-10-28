@@ -15,7 +15,7 @@
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use wellfed_core::adc_scale::{AdcCalibration, SAMPLES};
-use wellfed_core::supply::{self, FloorLimits, PackLimits};
+use wellfed_core::supply::{self, Curve, FloorLimits, PackLimits};
 
 use crate::{adc, sdk};
 
@@ -56,12 +56,19 @@ pub const FLOOR: FloorLimits = FloorLimits {
 /// cells start near 1.65 V each, so above 5.5 V the reading is wrong. On
 /// the pack alone the board is running, so it reads at least what the
 /// 3.3 V rail needs with any regulator; 2.5 V is well under that.
+/// The charge is stock's curve on the same scaled unit: 1650 (the floor,
+/// pack about 3.40 V) is 0 % and 2250 (about 4.64 V) 100 %, in 10 % steps
+/// of 60. Fresh cells read about 2306 at rest, so 100 %.
 pub const PACK: PackLimits = PackLimits {
     divider_per_mille: DIVIDER_PER_MILLE,
     absent_pin_mv: NO_PACK_PIN_MV,
     max_pack_mv: 5_500,
     min_running_mv: 2_500,
     stale_ms: STALE_MS + 1,
+    curve: Curve {
+        empty_pin_mv: FLOOR.floor,
+        full_pin_mv: 2250,
+    },
 };
 
 const BATTERY_CHANNEL: u32 = crate::plaf103::pins::ADC_BATTERY;

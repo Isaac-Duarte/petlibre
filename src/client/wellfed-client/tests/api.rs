@@ -2255,7 +2255,10 @@ fn every_body() -> Vec<EventBody> {
         },
         EventBody::Supply(proto::Supply {
             adapter: Some(false),
-            battery: proto::Battery::Reading { mv: 4757 },
+            battery: proto::Battery::Reading {
+                mv: 4757,
+                percent: 100,
+            },
             below_floor: Some(false),
         }),
         EventBody::Plans { generation: 1, by },

@@ -629,6 +629,7 @@ fn messages() -> Vec<Fixture> {
             entry(&response(Outcome::FeederStatus {
                 status,
                 readiness: Readiness::Blocked(Blocked::Joining),
+                supply: None,
             })),
             feeder,
         ),
@@ -637,6 +638,7 @@ fn messages() -> Vec<Fixture> {
             entry(&response(Outcome::FeederStatus {
                 status,
                 readiness: Readiness::Ready,
+                supply: None,
             })),
             feeder,
         ),
@@ -795,7 +797,10 @@ fn messages() -> Vec<Fixture> {
                 at_ms: 20,
                 metric: Metric::Supply(Supply {
                     adapter: Some(false),
-                    battery: Battery::Reading { mv: 4757 },
+                    battery: Battery::Reading {
+                        mv: 4757,
+                        percent: 100,
+                    },
                     below_floor: Some(false),
                 }),
             })),
@@ -856,6 +861,14 @@ fn messages() -> Vec<Fixture> {
             entry(&response(Outcome::FeederStatus {
                 status,
                 readiness: Readiness::Blocked(Blocked::Battery),
+                supply: Some(Supply {
+                    adapter: Some(false),
+                    battery: Battery::Reading {
+                        mv: 3713,
+                        percent: 30,
+                    },
+                    below_floor: Some(false),
+                }),
             })),
             feeder,
         ),
@@ -966,6 +979,13 @@ fn messages() -> Vec<Fixture> {
                 desiccant: Desiccant::Unset,
                 ..status
             }))),
+            feeder,
+        ),
+        (
+            "outcome-update-refused-battery",
+            entry(&response(Outcome::Refused(Refusal::Update(
+                UpdateRefusal::Battery,
+            )))),
             feeder,
         ),
     ]

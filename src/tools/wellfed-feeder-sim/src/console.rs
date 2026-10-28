@@ -8,10 +8,14 @@
 //! - `hold <button>[+<button>…]` holds the chord past the panel's hold
 //!   (5 s): `hold lock` toggles the lock, `hold lock+dispense` opens the
 //!   recovery window on an unlocked panel, `hold reset` resets the keys.
+//! - `adapter in|out` fits or pulls the adapter; `pack <mV>|out` fits a
+//!   pack reading that many millivolts (three fresh D cells read about
+//!   4757) or takes the cells out. Both last across restarts.
 //! - `reboot` restarts the feeder; `quit` stops the simulator.
 
 use wellfed_client::setup::panel_position;
 use wellfed_core::buttons::{Button, Buttons, Gesture};
+use wellfed_hal::power::DIVIDER_PER_MILLE;
 
 use crate::serve::Control;
 
@@ -20,7 +24,7 @@ const PRESS_MS: u32 = 120;
 /// Past the panel's 5 s hold.
 const HOLD_MS: u32 = 5_200;
 
-pub const HELP: &str = "commands: press <button>... | hold <button>[+<button>...] | reboot | quit\n\
+pub const HELP: &str = "commands: press <button>... | hold <button>[+<button>...] | adapter in|out | pack <mV>|out | reboot | quit\n\
      buttons: lock dispense mic reset, or their positions 1-4";
 
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
@@ -31,6 +35,10 @@ pub enum ConsoleError {
     NoButtons,
     #[error("{0}: not a command")]
     Command(String),
+    #[error("adapter takes `in` or `out`")]
+    Adapter,
+    #[error("pack takes the pack's millivolts or `out`")]
+    Pack,
 }
 
 /// What one line asks for, in order.
@@ -74,6 +82,22 @@ pub fn parse(line: &str) -> Result<Vec<Control>, ConsoleError> {
             }));
             Ok(controls)
         }
+        "adapter" => match words.next() {
+            Some("in") => Ok(vec![Control::Adapter(true)]),
+            Some("out") => Ok(vec![Control::Adapter(false)]),
+            _ => Err(ConsoleError::Adapter),
+        },
+        "pack" => match words.next() {
+            Some("out") => Ok(vec![Control::Pack(None)]),
+            Some(mv) => {
+                let mv: u32 = mv.parse().map_err(|_| ConsoleError::Pack)?;
+                // The battery channel reads the pack through the board's
+                // divider.
+                let pin_mv = mv.saturating_mul(1000) / DIVIDER_PER_MILLE;
+                Ok(vec![Control::Pack(Some(pin_mv))])
+            }
+            None => Err(ConsoleError::Pack),
+        },
         "reboot" => Ok(vec![Control::Reboot]),
         "quit" | "exit" => Ok(vec![Control::Quit]),
         other => Err(ConsoleError::Command(other.to_owned())),

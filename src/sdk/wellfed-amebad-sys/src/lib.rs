@@ -174,6 +174,9 @@ impl WifiEvent {
     pub const AP: u32 = 10;
     /// lwIP's DHCP client took a new ACK without a rejoin.
     pub const RENEW: u32 = 11;
+    /// Battery mode turned the radio off: `result` is `wifi_off`'s. Its
+    /// return is an `ON` event with the attempt it left at.
+    pub const OFF: u32 = 12;
 }
 
 /// One task's stack, as `wellfed_task_stacks` (`example_entry.c`) reports

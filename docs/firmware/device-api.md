@@ -42,7 +42,7 @@ Subscribe { after, samples }          Event { seq, at, body }
 
 | Op | Notes |
 | --- | --- |
-| `Status` | Behind `READINESS`, answered `FeederStatus { status, readiness }` |
+| `Status` | Behind `READINESS`, answered `FeederStatus { status, readiness, supply }` (`supply` only with `POWER`) |
 | `GetSettings`, `PutSettings { base, changes }` | A stale `base` is refused `Stale { current }` |
 | `PutWifi { base, wifi }` | `None` clears |
 | `SetLock`, `Play`, `TimeSync` | An owner's `TimeSync` may step the clock; anyone else's may only narrow it, and is refused `Time` when it disagrees with a valid clock beyond both error bounds |
@@ -63,7 +63,7 @@ Subscribe { after, samples }          Event { seq, at, body }
 | `BACKUP` | `ReadBank1 { offset }`, answered `Bank1(Bank1Page)` |
 | `LOG` | `TailLog { after }`, answered with `Log` batches |
 | `CALIBRATION` | `GetCalibration`, `PutCalibration` |
-| `POWER` | The `Supply` metric and event, and the `Battery` readiness reason |
+| `POWER` | The `Supply` metric and event, the supply in `FeederStatus`, and the `Battery` readiness reason |
 | `PLANS` | `GetPlans`, answered `Plans { generation, writable, plans }`, and `PutPlans { base, plans }`, which replaces all ten slots. The `Plans` and `Missed` events, and the `Schedule` source of a plan's `Fed` event ([schedules](schedules.md)) |
 | `DESICCANT` | `ResetDesiccant`, which records a desiccant replacement today by the feeder's clock, and the `NoClock` refusal it gets while the clock is invalid ([desiccant reminder](desiccant.md)) |
 
@@ -141,13 +141,13 @@ A client that may want to cancel keeps its session open across the feed, as `wel
 | `Resolving` | An interrupted feed is being recorded | `Busy` |
 | `Feeding` | A feed is in flight | `Busy` |
 | `Joining` | A Wi-Fi join runs or waits | `Busy` |
-| `Battery` | On the pack alone below its floor, or after a brownout until the adapter returns | `Busy` |
+| `Battery` | On the pack alone below its floor, or after a brownout until the adapter returns or the pack has read charged for 3 minutes | `Busy` |
 | `Setup` | BLE setup mode, which ends in a restart that would leave a feed uncertain | `Busy` |
 | `Updating` | An install | `Busy` |
 | `Unserved` | No owner at all (the simulator, the `gap-probe` image) | `Unavailable` |
 
 - It starts from the owner's own reason (`Feeding::blocked`), then adds `Setup` and `Updating`.
-- A session that claims the bit gets `Status` answered as `FeederStatus { status, readiness }` (the model's `Status.readiness`).
+- A session that claims the bit gets `Status` answered as `FeederStatus { status, readiness, supply }` (the model's `Status.readiness`). `supply` is the judged supply with the pack's charge, for a session that also claims `POWER`, and `None` otherwise.
 - A `Feed` is asked of the owner only while it is `Ready`. The owner's own checks stand behind that, for a feed that lost a race.
 - A change of a lasting reason (`Journal`, `Fault`, `Updating`, `Setup`) is recorded as a `FeedingBlocked { reason }` event, and `FeedingBlocked { reason: None }` once it clears. Passing reasons (a feed, a join) only go to the log (`PLFEED1 readiness …`), so they never fill the history. Each boot starts with none recorded.
 - `Battery` sits behind `Capabilities::POWER` ([power](power.md)); a session without that bit reads it as `Starting`. A running feed whose pack falls under the floor ends `Failed`/`Power`.
@@ -232,7 +232,7 @@ Every flash lease checks that the outputs are stopped, and fails closed when the
 
 **Samples** go only to subscribers: power every 5 s, Wi-Fi signal every 30 s, the statistics' metrics with `STATS` ([below](#statistics)), and the judged supply beside the power sample with `POWER`. A sample not sent before the next of its kind is replaced.
 
-**Supply** (`Capabilities::POWER`). `Metric::Supply { adapter, battery, below_floor }` names an unread, stale or implausible reading rather than passing it off as a value. `EventBody::Supply` records the adapter's changes and the pack crossing its floor, at most one a minute ([power](power.md)).
+**Supply** (`Capabilities::POWER`). `Metric::Supply { adapter, battery, below_floor }` names an unread, stale or implausible reading rather than passing it off as a value. A plausible reading is `Battery::Reading { mv, percent }`, its charge on stock's curve. On its batteries the feeder turns Wi-Fi off 5 s after the adapter goes, so sessions end until it returns, and it refuses an update offer `Update(Battery)` ([battery mode](power.md#battery-mode)). `EventBody::Supply` records the adapter's changes and the pack crossing its floor, at most one a minute ([power](power.md)).
 
 ### mDNS
 

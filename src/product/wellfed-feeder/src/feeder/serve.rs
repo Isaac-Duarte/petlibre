@@ -355,6 +355,7 @@ impl<S: Copy> Serve<S> {
             tasks: &mut self.tasks,
             page: &mut self.page,
             battery_hold,
+            supply,
             meal,
         };
         let busy = self.server.step(
@@ -577,7 +578,7 @@ impl<S: Copy> Serve<S> {
             if let Some(power) = platform.power(now_ms) {
                 // The history keeps only readings a pack can give.
                 let battery_mv = match supply.battery {
-                    Battery::Reading { mv } => Some(u32::from(mv)),
+                    Battery::Reading { mv, .. } => Some(u32::from(mv)),
                     Battery::Absent
                     | Battery::Implausible { .. }
                     | Battery::Unread
@@ -660,6 +661,8 @@ pub struct FeederDevice<'a, P, F> {
     pub(super) page: &'a mut [u8; PAGE_BYTES],
     /// A brownout holds feeding until the adapter is seen.
     pub(super) battery_hold: bool,
+    /// The supply this pass judged.
+    pub(super) supply: Supply,
     /// A plan's claimed feed must be the next one.
     pub(super) meal: bool,
 }
@@ -870,6 +873,10 @@ impl<P: Platform, F: Feeds> Device for FeederDevice<'_, P, F> {
         feeding::held(ready, self.meal)
     }
 
+    fn supply(&mut self) -> Option<Supply> {
+        Some(self.supply)
+    }
+
     fn feed(&mut self, portions: u8, by: Source) -> Result<u32, Refusal> {
         let ready = self.readiness();
         feeding::queue(self.feeds, ready, portions, by)
@@ -1011,7 +1018,14 @@ impl<P: Platform, F: Feeds> Device for FeederDevice<'_, P, F> {
         })
     }
 
+    /// Stock refuses an install on its batteries: one that browns out
+    /// mid-write costs nothing (the marker comes last), but the radio goes
+    /// off within seconds and the install would time out. A cancel and a
+    /// key statement still go through.
     fn update(&mut self, request: UpdateRequest<'_>) -> Result<u32, Refusal> {
+        if matches!(request, UpdateRequest::Offer { .. }) && self.supply.adapter == Some(false) {
+            return Err(Refusal::Update(UpdateRefusal::Battery));
+        }
         let ticket = match request {
             UpdateRequest::Offer {
                 manifest,

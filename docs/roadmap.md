@@ -47,7 +47,7 @@ This page tracks what works today and what comes next. It covers the replacement
 | Indicator lights | Works | Which states show is not settled. |
 | Speaker | Works | Plays sounds; which sounds play when is not settled. |
 | Clock and time zones | Partial | Needs a time source after each power-up. Offline time is experimental. |
-| Battery and brownout | Experimental | |
+| Battery and brownout | Experimental | Stock's battery mode (Wi-Fi off 5 s after the adapter goes, meals and buttons on, updates refused), the charge on stock's curve, a floor and a brownout hold, all in simulation. |
 | Statistics and per-feed traces | Experimental | |
 | Lights and sound settings | Works | Lights and sound windows, volume-0 mute and a beep on every button press, checked on the bench. |
 | Desiccant reminder | Experimental | Counted on the feeder from the last replacement; tested in simulation. |

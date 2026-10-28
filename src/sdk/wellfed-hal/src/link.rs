@@ -20,10 +20,18 @@
 //! starts within one of them rather than at the next watch tick. The
 //! restart itself never waits for this: the watchdog feeder stops at
 //! once, and the leave runs inside the watchdog's expiry or not at all.
+//!
+//! **Battery mode** asks for the radio off ([`set_radio`]): the next watch
+//! answers [`Cause::Radio`], and the shim leaves as it does for a restart,
+//! then turns the radio off (`wifi_off`) and waits, checking
+//! [`wellfed_wifi_radio`] between its polls, until it is asked on again:
+//! then `wifi_on` and a fresh join. A shim between attempts checks it too,
+//! so it neither scans nor joins while the radio should be off. A restart
+//! wins over both.
 
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use wellfed_core::liveness::{Cause, Liveness, Probe, Verdict};
+use wellfed_core::liveness::{Cause, Liveness, Probe, Radio, Verdict};
 
 use crate::cell::TaskCell;
 use crate::{net_status, sdk};
@@ -43,10 +51,30 @@ pub extern "C" fn wellfed_wifi_restarting() -> i32 {
     i32::from(RESTARTING.load(Ordering::Acquire))
 }
 
+/// Set while battery mode wants the radio off; the boot starts on.
+static RADIO_OFF: AtomicBool = AtomicBool::new(false);
+
+/// The loop's wish for the radio, every pass; the Wi-Fi task acts on it.
+pub fn set_radio(radio: Radio) {
+    RADIO_OFF.store(radio == Radio::Off, Ordering::Release);
+}
+
+/// Whether battery mode wants the radio off.
+pub fn radio_off() -> bool {
+    RADIO_OFF.load(Ordering::Acquire)
+}
+
+/// 1 while the radio should be up, 0 while battery mode wants it off.
+#[unsafe(no_mangle)]
+pub extern "C" fn wellfed_wifi_radio() -> i32 {
+    i32::from(!RADIO_OFF.load(Ordering::Acquire))
+}
+
 /// Host tests only: back to the boot state.
 #[cfg(not(target_os = "none"))]
 pub fn reset() {
     RESTARTING.store(false, Ordering::Release);
+    RADIO_OFF.store(false, Ordering::Release);
 }
 
 /// Touched only by the C Wi-Fi task, through `wellfed_wifi_watch` and
@@ -68,7 +96,8 @@ pub unsafe fn joined() {
 /// the previous call asked for (0 when none ran). The answer is
 /// [`Verdict::code`]: hold, probe now and call again, settled (reset the
 /// rejoin backoff), or leave with a cause; once a restart was asked for,
-/// always a leave for [`Cause::Restart`].
+/// always a leave for [`Cause::Restart`], and while the radio should be
+/// off, one for [`Cause::Radio`].
 ///
 /// # Safety
 /// Called only from the Wi-Fi task, between a successful join's
@@ -78,6 +107,10 @@ pub unsafe extern "C" fn wellfed_wifi_watch(associated: i32, leased: i32, probe:
     if RESTARTING.load(Ordering::Acquire) {
         net_status::set_live(false);
         return Verdict::Leave(Cause::Restart).code();
+    }
+    if RADIO_OFF.load(Ordering::Acquire) {
+        net_status::set_live(false);
+        return Verdict::Leave(Cause::Radio).code();
     }
 
     // SAFETY: the caller's contract makes this the only reference to `WATCH`.

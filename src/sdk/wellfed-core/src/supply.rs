@@ -9,6 +9,11 @@
 //! with it), and a value no pack of the board's can read is
 //! [`Pack::Implausible`], kept for the record but never judged.
 //!
+//! **The charge.** A plausible reading carries a percentage on the
+//! board's [`Curve`]: stock's lookup, linear in the pin's millivolts from
+//! `empty` (0 %) to `full` (100 %) in 10 % steps, each reading reporting the
+//! first step at or above it, clamped to 0–100.
+//!
 //! **The floor.** [`Floor`] judges the pack against [`FloorLimits`] in the
 //! unit the feeding owner samples (stock-scaled millivolts at the pin). A
 //! pack below `floor` for `hold_ms` in a row, or below `cutoff` at all, is
@@ -34,6 +39,37 @@ pub struct PackLimits {
     pub min_running_mv: u32,
     /// A sample at least this old is stale.
     pub stale_ms: u32,
+    /// The pin's millivolts against the pack's charge.
+    pub curve: Curve,
+}
+
+/// The pack's charge against the pin's millivolts, in 10 % steps: stock's
+/// battery lookup. A reading at or below `empty` is 0 %, and each step of
+/// `(full - empty) / 10` above it adds 10 %, rounded up, so a reading
+/// reports the first step whose threshold is at or above it; at or above
+/// `full` it is 100 %.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Curve {
+    pub empty_pin_mv: u32,
+    pub full_pin_mv: u32,
+}
+
+impl Curve {
+    /// The charge, 0–100 in steps of 10, at `pin_mv`. A curve with no span
+    /// reads 0 % up to `empty` and 100 % above it.
+    pub fn percent(&self, pin_mv: u32) -> u8 {
+        if pin_mv <= self.empty_pin_mv {
+            return 0;
+        }
+        let span = self.full_pin_mv.saturating_sub(self.empty_pin_mv);
+        let above = pin_mv - self.empty_pin_mv;
+        if span == 0 || above >= span {
+            return 100;
+        }
+        // Rounded up to the next step; `above < span`, so 1 to 10 steps.
+        let steps = above.saturating_mul(10).div_ceil(span);
+        u8::try_from(steps.saturating_mul(10)).map_or(100, |percent| percent.min(100))
+    }
 }
 
 impl PackLimits {
@@ -60,8 +96,8 @@ pub struct Sample {
 pub enum Pack {
     /// No pack fitted: the pin reads near zero.
     Absent,
-    /// The pack's millivolts.
-    Reading { mv: u16 },
+    /// The pack's millivolts, and its charge on the board's [`Curve`].
+    Reading { mv: u16, percent: u8 },
     /// A value outside what the board's pack can read, as read.
     Implausible { mv: u16 },
     /// Nothing sampled: the monitor has not run, its ADC failed, or the
@@ -88,7 +124,7 @@ impl Reading {
     /// The pack's millivolts when they are a plausible fresh reading.
     pub const fn pack_mv(&self) -> Option<u16> {
         match self.pack {
-            Pack::Reading { mv } => Some(mv),
+            Pack::Reading { mv, .. } => Some(mv),
             Pack::Absent | Pack::Implausible { .. } | Pack::Unread | Pack::Stale { .. } => None,
         }
     }
@@ -114,7 +150,10 @@ pub fn classify(sample: Option<Sample>, limits: &PackLimits) -> Reading {
         if mv > limits.max_pack_mv || too_low {
             Pack::Implausible { mv: mv16 }
         } else {
-            Pack::Reading { mv: mv16 }
+            Pack::Reading {
+                mv: mv16,
+                percent: limits.curve.percent(sample.pin_mv),
+            }
         }
     } else {
         Pack::Absent

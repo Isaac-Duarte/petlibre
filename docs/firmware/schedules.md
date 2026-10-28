@@ -40,7 +40,7 @@ Each occurrence goes through the missed-meal rule ([clock](clock.md#missed-meal-
 - **Later than 15 minutes.** It never runs. The history records it as `Missed`, with the reason.
 - **Already run.** A backward clock jump or a restart never runs it again.
 
-A plan due while the feeder cannot feed waits: another feed, a Wi-Fi join, an install, BLE setup or a battery hold. It runs as soon as the feeder is ready, within the 15 minutes. Plans due at the same minute run one after another, by slot.
+A plan due while the feeder cannot feed waits: another feed, a Wi-Fi join, an install, BLE setup or a battery hold. On its batteries the feeder keeps running plans from its running clock with Wi-Fi off ([battery mode](power.md#battery-mode)). It runs as soon as the feeder is ready, within the 15 minutes. Plans due at the same minute run one after another, by slot.
 
 A feed a plan started is a `Fed` event by `schedule` with the plan's slot. A missed occurrence is a `Missed` event:
 

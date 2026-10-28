@@ -86,6 +86,10 @@ pub enum Cause {
     /// rejoin, so the access point drops the association before the next
     /// boot asks for one. The link layer answers it, never this machine.
     Restart = 4,
+    /// Battery mode asked for the radio off: leave cleanly, turn the radio
+    /// off, and rejoin once it is asked on again. The link layer answers
+    /// it, never this machine.
+    Radio = 5,
 }
 
 impl Cause {
@@ -99,7 +103,26 @@ impl Cause {
             2 => Some(Self::Lease),
             3 => Some(Self::Gateway),
             4 => Some(Self::Restart),
+            5 => Some(Self::Radio),
             _ => None,
+        }
+    }
+}
+
+/// Whether the Wi-Fi radio should be up: battery mode turns it off, and
+/// the adapter's return on again.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Radio {
+    On,
+    /// Leave the network and turn the radio off.
+    Off,
+}
+
+impl Radio {
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::On => "on",
+            Self::Off => "off",
         }
     }
 }

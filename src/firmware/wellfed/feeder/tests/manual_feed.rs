@@ -479,7 +479,7 @@ fn the_adapter_leaving_is_a_supply_event_with_the_pack_reading() {
     let [
         Supply {
             adapter: Some(false),
-            battery: Battery::Reading { mv },
+            battery: Battery::Reading { mv, percent },
             below_floor: Some(false),
         },
     ] = supply.as_slice()
@@ -487,4 +487,6 @@ fn the_adapter_leaving_is_a_supply_event_with_the_pack_reading() {
         panic!("{events:?}");
     };
     assert!((4000..5000).contains(mv), "{mv}");
+    // The pack reads on stock's curve from the same sample.
+    assert!(*percent >= 60, "{percent}");
 }

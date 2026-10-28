@@ -55,3 +55,14 @@ fn other_lines_are_refused_or_ignored() {
     assert_eq!(parse("press 5"), Err(ConsoleError::Button("5".to_owned())));
     assert_eq!(parse("feed"), Err(ConsoleError::Command("feed".to_owned())));
 }
+
+#[test]
+fn the_supply_lines_fit_or_pull_the_adapter_and_the_cells() {
+    assert_eq!(parse("adapter out"), Ok(vec![Control::Adapter(false)]));
+    assert_eq!(parse("adapter in"), Ok(vec![Control::Adapter(true)]));
+    assert_eq!(parse("pack out"), Ok(vec![Control::Pack(None)]));
+    // Through the board's divider: three fresh D cells.
+    assert_eq!(parse("pack 4757"), Ok(vec![Control::Pack(Some(2305))]));
+    assert_eq!(parse("adapter"), Err(ConsoleError::Adapter));
+    assert_eq!(parse("pack lots"), Err(ConsoleError::Pack));
+}

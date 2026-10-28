@@ -935,6 +935,7 @@ fn update_refusal(refusal: UpdateRefusal) -> &'static str {
         UpdateRefusal::NotInstalling => "update-not-installing",
         UpdateRefusal::Store => "update-store",
         UpdateRefusal::Unconfirmed => "update-unconfirmed",
+        UpdateRefusal::Battery => "update-battery",
     }
 }
 

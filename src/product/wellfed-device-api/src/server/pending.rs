@@ -294,7 +294,16 @@ impl Server {
                         }
                         Readiness::Ready => Readiness::Ready,
                     };
-                    Outcome::FeederStatus { status, readiness }
+                    let supply = if self.shares(index, Capabilities::POWER, device) {
+                        device.supply()
+                    } else {
+                        None
+                    };
+                    Outcome::FeederStatus {
+                        status,
+                        readiness,
+                        supply,
+                    }
                 } else {
                     Outcome::Status(status)
                 }

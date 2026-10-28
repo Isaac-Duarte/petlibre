@@ -36,6 +36,7 @@ use wellfed_core::indicator::Light;
 use wellfed_core::log_tail::{Batch as LogBatch, LogTail};
 use wellfed_core::ota::install::{Answer, Progress, Refused};
 use wellfed_core::store::slot::crc32;
+use wellfed_core::supply::{self, Reading, Sample};
 use wellfed_core::tone::Tune;
 use wellfed_device_api::clients::{CLIENTS, Client, Label, Role};
 use wellfed_device_api::mailbox::{
@@ -49,6 +50,7 @@ use wellfed_feeder::feeder::platform::{
     Accepted, BleDrop, BleStep, Boot, Check, Datagram, DriverStep, EventSlot, EventsFill, Link,
     Received, TaskCount, TaskStack, TraceRead, TracesFill,
 };
+use wellfed_feeder::feeder::supply::Radio;
 use wellfed_feeder::stats::{SAVE_MS, TOTAL_SECTORS, Totals, reset_cause};
 use wellfed_feeder::store::calibration::CalibrationStore;
 use wellfed_feeder::store::clients::{ClientError, ClientStore};
@@ -62,6 +64,7 @@ use wellfed_feeder::store::traces::{self, TraceRing};
 use wellfed_hal::interlock::INTERLOCK;
 use wellfed_hal::ota::mailbox::{self, Request};
 use wellfed_hal::ota::signers;
+use wellfed_hal::power;
 use wellfed_hal::sdk::LOG_TAIL_BYTES;
 use wellfed_proto::api::{self as proto, Capabilities, Counts, FLASH_SECTORS, TASKS_MAX};
 use wellfed_proto::trace::PAGE_MAX;
@@ -77,11 +80,33 @@ const BINDING: u64 = 0x5046_5731_5349_4d01;
 // the region changes the record and takes a new version of it.
 const _: () = assert!(wellfed_board_plaf103::STORAGE_SECTORS as usize == TOTAL_SECTORS);
 
-/// The supply the simulator reports: on the adapter, with no battery.
-pub(crate) const POWER: proto::Power = proto::Power {
-    adapter: true,
-    battery_mv: None,
-};
+/// What the simulated board's supply reads: the adapter's detect pin, and
+/// the battery channel's millivolts at the pin (`None` with no pack), on
+/// the PLAF103's divider and curve (`wellfed_hal::power::PACK`). The
+/// operator sets it ([`crate::serve::Control::Supply`]); it is fresh at
+/// every pass.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SimSupply {
+    pub adapter: bool,
+    pub pin_mv: Option<u32>,
+}
+
+impl SimSupply {
+    /// On the adapter, with no batteries: the simulator's default.
+    pub const MAINS: Self = Self {
+        adapter: true,
+        pin_mv: None,
+    };
+
+    /// The latest sample, as the monitor publishes it.
+    fn sample(self) -> Sample {
+        Sample {
+            pin_mv: self.pin_mv.unwrap_or(0),
+            adapter: self.adapter,
+            age_ms: 0,
+        }
+    }
+}
 
 /// A signal the simulator reports, as a feeder near its access point.
 pub(crate) const RSSI: i32 = -48;
@@ -188,6 +213,14 @@ pub struct SimPlatform {
     /// The two banks, which the bank-0 role reads bank 1 of for the stock
     /// backup; `None` for a platform opened without them.
     banks: Option<Rc<RefCell<Banks>>>,
+    /// What the supply reads.
+    supply: SimSupply,
+    /// The ROM's reset flags this boot reports: none, a power-on, unless a
+    /// test sets them before the first pass.
+    reset_flags: u32,
+    /// The radio the loop last asked for: while off, no connection is
+    /// taken and those open are dropped, as the network leaves.
+    radio: Radio,
 }
 
 impl std::fmt::Debug for SimPlatform {
@@ -299,6 +332,9 @@ impl SimPlatform {
             ip,
             log: Rc::new(LogTail::new()),
             banks: None,
+            supply: SimSupply::MAINS,
+            reset_flags: 0,
+            radio: Radio::On,
         };
         platform.publish_signers();
         // The boot's own early save, so its reset counts however short it is.
@@ -311,6 +347,27 @@ impl SimPlatform {
     /// flash window (from bank 0 only).
     pub fn attach_banks(&mut self, banks: &Rc<RefCell<Banks>>) {
         self.banks = Some(Rc::clone(banks));
+    }
+
+    /// What the supply reads from now on.
+    pub fn set_supply(&mut self, supply: SimSupply) {
+        self.supply = supply;
+    }
+
+    /// Report `flags` as this boot's reset flags (bit 18 a brownout), from
+    /// the first pass on.
+    pub fn set_reset_flags(&mut self, flags: u32) {
+        self.reset_flags = flags;
+    }
+
+    /// What the supply reads.
+    pub fn sim_supply(&self) -> SimSupply {
+        self.supply
+    }
+
+    /// The radio the loop last asked for.
+    pub fn radio_state(&self) -> Radio {
+        self.radio
     }
 
     /// The trace ring's sectors.
@@ -348,7 +405,7 @@ impl SimPlatform {
     /// Whether the serve loop should take connections: the driver holds
     /// the listener open.
     pub(crate) fn listening(&self) -> bool {
-        self.listening
+        self.listening && self.radio == Radio::On
     }
 
     /// A connection the serve loop accepted, for the driver's next accept.
@@ -545,7 +602,7 @@ impl Platform for SimPlatform {
     fn boot(&self) -> Boot {
         Boot {
             bank: self.bank,
-            reset_flags: 0,
+            reset_flags: self.reset_flags,
             boot_count: self.boot_count,
         }
     }
@@ -601,7 +658,25 @@ impl Platform for SimPlatform {
     fn indicators_off(&mut self) {}
 
     fn power(&mut self, _now_ms: u32) -> Option<proto::Power> {
-        Some(POWER)
+        Some(proto::Power {
+            adapter: self.supply.adapter,
+            battery_mv: self.supply.pin_mv.and_then(power::pack_mv),
+        })
+    }
+
+    fn supply(&mut self, _now_ms: u32) -> Reading {
+        supply::classify(Some(self.supply.sample()), &power::PACK)
+    }
+
+    /// Off drops every connection and the NTP socket, and takes no new
+    /// one until it is on again, as the network leaving does.
+    fn radio(&mut self, radio: Radio) {
+        if radio == Radio::Off && self.radio == Radio::On {
+            self.streams.clear();
+            self.accepted.clear();
+            self.ntp = None;
+        }
+        self.radio = radio;
     }
 
     fn link(&mut self) -> Link {
@@ -613,7 +688,7 @@ impl Platform for SimPlatform {
     }
 
     fn ipv4(&mut self) -> Option<u32> {
-        Some(u32::from(self.ip))
+        (self.radio == Radio::On).then(|| u32::from(self.ip))
     }
 
     /// The simulator has no router: an NTP setting names an address.
@@ -892,6 +967,10 @@ impl Platform for SimPlatform {
     }
 
     fn accept(&mut self, _listener: Socket) -> Accepted<Socket> {
+        if self.radio == Radio::Off {
+            self.accepted.clear();
+            return Accepted::None;
+        }
         if core::mem::take(&mut self.accept_failed) {
             return Accepted::Error;
         }
@@ -945,7 +1024,7 @@ impl Platform for SimPlatform {
 
     /// A failed send is only a lost answer: the asker asks again.
     fn mdns_send(&mut self, _socket: Socket, bytes: &[u8], ip: u32, port: u16) -> bool {
-        if let Some(mdns) = &self.mdns {
+        if let Some(mdns) = self.mdns.as_ref().filter(|_| self.radio == Radio::On) {
             let to = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::from(ip), port));
             let _ = mdns.try_send_to(bytes, to);
         }
@@ -953,7 +1032,7 @@ impl Platform for SimPlatform {
     }
 
     fn mdns_receive(&mut self, _socket: Socket, into: &mut [u8]) -> Datagram {
-        let Some(mdns) = &self.mdns else {
+        let Some(mdns) = self.mdns.as_ref().filter(|_| self.radio == Radio::On) else {
             return Datagram::None;
         };
         match mdns.try_recv_from(into) {
@@ -967,6 +1046,9 @@ impl Platform for SimPlatform {
     }
 
     fn ntp_open(&mut self) -> Option<Socket> {
+        if self.radio == Radio::Off {
+            return None;
+        }
         let socket = std::net::UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).ok()?;
         socket.set_nonblocking(true).ok()?;
         self.ntp = Some(socket);
@@ -975,7 +1057,7 @@ impl Platform for SimPlatform {
 
     /// A failed send is only a lost request: the exchange asks again.
     fn ntp_send(&mut self, _socket: Socket, bytes: &[u8], ip: u32, port: u16) -> bool {
-        let Some(ntp) = &self.ntp else {
+        let Some(ntp) = self.ntp.as_ref().filter(|_| self.radio == Radio::On) else {
             return false;
         };
         let to = SocketAddrV4::new(Ipv4Addr::from(ip), port);

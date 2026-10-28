@@ -456,6 +456,7 @@ async fn the_cached_status_and_settings_read_back() {
             days: -2,
             due: true,
         },
+        supply: None,
     };
     store.record_status(id, &status, at(200)).await.unwrap();
 

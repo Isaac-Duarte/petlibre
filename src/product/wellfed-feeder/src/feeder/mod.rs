@@ -10,7 +10,8 @@
 //!    relock, pairing's timers and BLE setup mode while it runs ([`owner`],
 //!    [`setup`]); then the reboot setup mode asks for, and the lock it now
 //!    holds for the device API ([`lock`]);
-//! 3. the supply judged, its change recorded ([`supply`]); a Dispense
+//! 3. the supply judged, its change recorded, battery mode's radio asked
+//!    of the platform and the brownout hold kept ([`supply`]); a Dispense
 //!    press the panel allowed, queued for the feeding owner, and readiness
 //!    noted ([`feeding`]); then the panel's lights from what the pass now
 //!    knows ([`lights`]), and a press's beep ([`beep`]);
@@ -152,6 +153,8 @@ pub enum Record<D> {
     Lights(lights::Record),
     /// `PLSCH1`.
     Schedule(schedule::Record),
+    /// `PLBAT2`.
+    Supply(supply::Record),
     /// The speaker's own record while a requested tune plays, under its tag.
     Driver(D),
 }
@@ -168,6 +171,7 @@ impl<D: DriverRecord> Record<D> {
             Self::Feeding(_) => "PLFEED1",
             Self::Lights(_) => "PLIND1",
             Self::Schedule(_) => "PLSCH1",
+            Self::Supply(_) => "PLBAT2",
             Self::Driver(record) => record.tag(),
         }
     }
@@ -183,6 +187,7 @@ impl<D: DriverRecord> fmt::Display for Record<D> {
             Self::Feeding(record) => feeding::describe(record, f),
             Self::Lights(record) => lights::describe(record, f),
             Self::Schedule(record) => schedule::describe(record, f),
+            Self::Supply(record) => supply::describe(record, f),
             Self::Driver(record) => fmt::Display::fmt(&record, f),
         }
     }
@@ -305,9 +310,16 @@ impl<P: Platform> Feeder<P> {
         let boot = self.serve.boot(&mut self.platform, now_ms);
         let reading = supply::supply(self.platform.supply(now_ms), feeds.below_floor());
         let reset = crate::stats::reset_cause(boot.reset_flags);
-        if let Some(changed) = self.supply.note(now_ms, reset, reading) {
+        let changed = self
+            .supply
+            .note(now_ms, reset, reading, |r| record(Record::Supply(r)));
+        if let Some(changed) = changed {
             events::record(&mut self.platform, now_ms, EventBody::Supply(changed));
         }
+        let radio = self
+            .supply
+            .radio(self.owner.setup_on(), |r| record(Record::Supply(r)));
+        self.platform.radio(radio);
 
         if self.owner.take_dispense() {
             let ready = self.readiness(feeds);
@@ -446,6 +458,7 @@ impl<P: Platform> Feeder<P> {
     /// owner `feeds`, as the server sees it in a pass.
     pub fn device<'a, F: Feeds>(&'a mut self, now_ms: u32, feeds: &'a mut F) -> impl Device + 'a {
         let boot = self.serve.boot(&mut self.platform, now_ms);
+        let supply = supply::supply(self.platform.supply(now_ms), feeds.below_floor());
         let ntp_last = self.serve.ntp_last();
         let (stats, tasks, page) = self.serve.stats_parts();
         FeederDevice {
@@ -461,6 +474,7 @@ impl<P: Platform> Feeder<P> {
             tasks,
             page,
             battery_hold: self.supply.holds(),
+            supply,
             meal: self.schedule.holds(),
         }
     }

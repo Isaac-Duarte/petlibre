@@ -36,7 +36,7 @@ pub fn sample_number(value: &SampleValue) -> Option<i64> {
         SampleValue::Gateway { round_trip_ms } => round_trip_ms.map(i64::from),
         SampleValue::Wifi { ap_changes, .. } => Some(i64::from(ap_changes)),
         SampleValue::Supply { battery, .. } => match battery {
-            Battery::Reading { mv } => Some(i64::from(mv)),
+            Battery::Reading { mv, .. } => Some(i64::from(mv)),
             Battery::Absent
             | Battery::Implausible { .. }
             | Battery::Unread
@@ -133,7 +133,10 @@ mod tests {
             below_floor: None,
         };
         assert_eq!(
-            sample_number(&supply(Battery::Reading { mv: 3_700 })),
+            sample_number(&supply(Battery::Reading {
+                mv: 3_700,
+                percent: 40,
+            })),
             Some(3_700)
         );
         assert_eq!(sample_number(&supply(Battery::Implausible { mv: 9 })), None);

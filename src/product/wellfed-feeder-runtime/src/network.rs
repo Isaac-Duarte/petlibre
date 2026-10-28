@@ -310,7 +310,9 @@ pub unsafe extern "C" fn wellfed_wifi_outcome(joined: i32) {
     if joined != 0 {
         join.joined_once = true;
         join.failures = 0;
-    } else {
+    } else if !link::radio_off() {
+        // An attempt battery mode cut short says nothing about the
+        // credentials, so it never counts toward the fallback.
         join.failures = join.failures.saturating_add(1);
     }
 }

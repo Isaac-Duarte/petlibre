@@ -3,8 +3,8 @@
 
 use std::sync::{Mutex, MutexGuard};
 
-use wellfed_core::liveness::{Cause, PROBE_PERIOD_MS, Verdict};
-use wellfed_hal::link::{self, wellfed_wifi_restarting, wellfed_wifi_watch};
+use wellfed_core::liveness::{Cause, PROBE_PERIOD_MS, Radio, Verdict};
+use wellfed_hal::link::{self, wellfed_wifi_radio, wellfed_wifi_restarting, wellfed_wifi_watch};
 use wellfed_hal::net_status;
 use wellfed_hal::sdk::{WifiEvent, fake};
 
@@ -218,4 +218,30 @@ fn the_link_figures_follow_the_shim_events() {
         None,
         "no channel while not joined"
     );
+}
+
+/// Battery mode: the radio asked off leaves a live link with its own
+/// cause, and the shim sees the wish between its waits; asked on again,
+/// the next join is watched as before. A restart wins.
+#[test]
+fn the_radio_off_leaves_the_link_until_it_is_asked_on() {
+    let _guard = start();
+    joined();
+    assert_eq!(watch(true, true, NONE), Verdict::Probe);
+    assert_eq!(watch(true, true, ANSWERED), Verdict::Settled);
+    assert_eq!(wellfed_wifi_radio(), 1, "on from boot");
+
+    link::set_radio(Radio::Off);
+    assert_eq!(wellfed_wifi_radio(), 0);
+    assert_eq!(watch(true, true, NONE), Verdict::Leave(Cause::Radio));
+    assert!(!net_status::read().live);
+
+    link::set_radio(Radio::On);
+    assert_eq!(wellfed_wifi_radio(), 1);
+    joined();
+    assert_eq!(watch(true, true, NONE), Verdict::Probe);
+
+    link::set_radio(Radio::Off);
+    link::leave_for_restart();
+    assert_eq!(watch(true, true, NONE), Verdict::Leave(Cause::Restart));
 }

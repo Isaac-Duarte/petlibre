@@ -254,6 +254,8 @@ impl Sim {
             record(self.boot);
         }
 
+        let supply = self.feeder.platform().sim_supply();
+        self.feeds.sense(now_ms, supply);
         let (fed, feed_delay) = self.feeds.step(now_ms);
         if let Some(body) = fed {
             self.feeder.record_outcome(now_ms, body);

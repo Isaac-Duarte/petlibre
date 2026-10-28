@@ -31,6 +31,7 @@ use wellfed_feeder::feeder::platform::{
     Accepted, BleDrop, BleLink, BleStep, Boot, Check, Datagram, DriverRecord, DriverStep,
     EventSlot, EventsFill, Link, Received, TaskCount, TaskStack, TraceRead, TracesFill,
 };
+use wellfed_feeder::feeder::supply::Radio;
 use wellfed_feeder::stats::Totals;
 use wellfed_feeder::store;
 use wellfed_feeder::store::events::{BODY_BYTES, Read};
@@ -43,7 +44,7 @@ use wellfed_sdk::hal::interlock::INTERLOCK;
 use wellfed_sdk::hal::leds::{self, Decision, Led};
 use wellfed_sdk::hal::ota::mailbox::{self, Request};
 use wellfed_sdk::hal::sdk::{self, ApiRecv};
-use wellfed_sdk::hal::{buzzer, clock, net_status, power, rng, settings, startup};
+use wellfed_sdk::hal::{buzzer, clock, link, net_status, power, rng, settings, startup};
 use wellfed_sdk::storage::{TRACES_BASE, TRACES_UNITS};
 
 /// What the board's own drivers record: `PLBLE1` for setup mode's link,
@@ -214,6 +215,10 @@ impl Platform for Plaf103 {
 
     fn supply(&mut self, now_ms: u32) -> Reading {
         power::supply(now_ms)
+    }
+
+    fn radio(&mut self, radio: Radio) {
+        link::set_radio(radio);
     }
 
     fn link(&mut self) -> Link {

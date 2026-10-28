@@ -44,6 +44,9 @@ pub struct Status {
     pub readiness: Option<Readiness>,
     /// The desiccant reminder.
     pub desiccant: Desiccant,
+    /// The supply as the feeder judges it, with the pack's charge; absent
+    /// from a feeder that does not report it.
+    pub supply: Option<Supply>,
 }
 
 /// The desiccant reminder, counted in the feeder's local calendar days
@@ -84,6 +87,20 @@ impl fmt::Display for Days {
             days => write!(f, "{days} days"),
         }
     }
+}
+
+/// The supply as the feeder judges it: the adapter, the pack and the
+/// feeding owner's verdict on its floor.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct Supply {
+    /// The adapter's detect pin; absent with no fresh sample. Without the
+    /// adapter the feeder runs on its batteries, and turns its Wi-Fi off
+    /// 5 s later until the adapter returns.
+    pub adapter: Option<bool>,
+    pub battery: Battery,
+    /// Whether the feeding owner judges the pack below the floor a feed
+    /// needs; absent before it has judged.
+    pub below_floor: Option<bool>,
 }
 
 /// Whether the feeder can start a feed now: the one decision a feed
@@ -180,17 +197,16 @@ pub enum Battery {
     Absent,
     Reading {
         mv: u16,
+        /// The charge on stock's curve, 0-100 in steps of 10.
+        #[schema(maximum = 100)]
+        percent: u8,
     },
     /// A value no pack of the board can read, as read.
-    Implausible {
-        mv: u16,
-    },
+    Implausible { mv: u16 },
     /// Nothing sampled.
     Unread,
     /// The last sample is this old, past the feeder's limit.
-    Stale {
-        age_ms: u32,
-    },
+    Stale { age_ms: u32 },
 }
 
 /// The feeder's settings. Its `generation` goes back in `If-Match` with a

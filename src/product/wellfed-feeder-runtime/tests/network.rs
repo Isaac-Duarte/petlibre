@@ -121,6 +121,31 @@ fn joins_use_stored_credentials_until_they_keep_failing() {
     }
 }
 
+/// An attempt battery mode cut short (the radio asked off) says nothing
+/// about the credentials: it never counts toward the fallback.
+#[test]
+fn attempts_with_the_radio_off_never_count_toward_the_fallback() {
+    let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    fake::reset_hardware();
+    forget();
+    store(Some(
+        Credentials::new(b"stored-net", b"stored-pass").unwrap(),
+    ));
+
+    wellfed_hal::link::set_radio(wellfed_core::liveness::Radio::Off);
+    for _ in 0..2 * FALLBACK_AFTER {
+        assert_eq!(select().2, 1);
+        outcome(0);
+    }
+    wellfed_hal::link::set_radio(wellfed_core::liveness::Radio::On);
+    for attempt in 0..FALLBACK_AFTER {
+        assert_eq!(select().2, 1, "attempt {attempt}");
+        outcome(0);
+    }
+    assert_eq!(select().2, 2);
+    outcome(0);
+}
+
 #[test]
 fn a_save_mid_boot_is_joined_with_a_fresh_count() {
     let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());

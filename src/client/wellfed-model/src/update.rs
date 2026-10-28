@@ -125,4 +125,7 @@ pub enum UpdateRefusal {
     Store,
     /// Nobody pressed Dispense in time to confirm the key.
     Unconfirmed,
+    /// The feeder runs on its batteries: no install starts until the
+    /// adapter returns.
+    Battery,
 }

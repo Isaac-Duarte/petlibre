@@ -5278,12 +5278,20 @@
             "type": "object",
             "required": [
               "mv",
+              "percent",
               "state"
             ],
             "properties": {
               "mv": {
                 "type": "integer",
                 "format": "int32",
+                "minimum": 0
+              },
+              "percent": {
+                "type": "integer",
+                "format": "int32",
+                "description": "The charge on stock's curve, 0-100 in steps of 10.",
+                "maximum": 100,
                 "minimum": 0
               },
               "state": {
@@ -6945,6 +6953,17 @@
           },
           "settings_generation": {
             "$ref": "#/components/schemas/Generation"
+          },
+          "supply": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Supply",
+                "description": "The supply as the feeder judges it, with the pack's charge; absent\nfrom a feeder that does not report it."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "uptime_ms": {
             "type": "integer",
@@ -10147,6 +10166,32 @@
           }
         ]
       },
+      "Supply": {
+        "type": "object",
+        "description": "The supply as the feeder judges it: the adapter, the pack and the\nfeeding owner's verdict on its floor.",
+        "required": [
+          "battery"
+        ],
+        "properties": {
+          "adapter": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "The adapter's detect pin; absent with no fresh sample. Without the\nadapter the feeder runs on its batteries, and turns its Wi-Fi off\n5 s later until the adapter returns."
+          },
+          "battery": {
+            "$ref": "#/components/schemas/Battery"
+          },
+          "below_floor": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether the feeding owner judges the pack below the floor a feed\nneeds; absent before it has judged."
+          }
+        }
+      },
       "TaskStack": {
         "type": "object",
         "required": [
@@ -10600,7 +10645,8 @@
           "installing",
           "not_installing",
           "store",
-          "unconfirmed"
+          "unconfirmed",
+          "battery"
         ]
       },
       "UpdateStop": {

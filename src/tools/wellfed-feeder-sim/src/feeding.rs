@@ -21,6 +21,11 @@
 //!   first step, so a client sees `resolving` only briefly. A feed queued
 //!   but not yet reserved is lost with the restart, as on the feeder: the
 //!   motor never ran, and no `Fed` event names it.
+//! - The pack's floor is the firmware's (`wellfed_core::supply::Floor`
+//!   against `wellfed_hal::power::FLOOR`), judged on every step from the
+//!   simulated supply: on the pack alone, a feed is refused `Battery` until
+//!   the pack is judged above it. A feed already running is not stopped by
+//!   a sag; the firmware's owner and its plant (`wellfed-sim`) cover that.
 //! - [`SimFeeds::stall`] holds a feed in flight where it is, as a motor
 //!   that stopped moving would, so a test can act while a feed runs.
 
@@ -32,11 +37,13 @@ use wellfed_core::feed::controller::{FeedReason, FeedRequest};
 use wellfed_core::feed::progress::{BowlMode, Direction};
 use wellfed_core::feed::storage::{OwnerOutcome, OwnerRecovery, OwnerResult};
 use wellfed_core::store::feed_journal::{FeedJournal, JournalConfig, JournalError};
+use wellfed_core::supply::Floor;
 use wellfed_feeder::feed::{self, Durability};
 use wellfed_feeder::feeder::Feeds;
 use wellfed_proto::api::{Blocked, EventBody, PORTIONS_MAX, Refusal, Source};
 
 use crate::flash::{Flash, Region};
+use crate::platform::SimSupply;
 
 /// How long one portion takes to drive.
 pub const PORTION_MS: u32 = 200;
@@ -78,6 +85,10 @@ pub struct SimFeeds {
     stalled: bool,
     /// Refuse every feed `Busy`, as an owner that lost a race does.
     refusing: bool,
+    /// The pack against its floor, and whether the adapter was in at the
+    /// last step.
+    floor: Floor,
+    adapter: bool,
 }
 
 impl SimFeeds {
@@ -101,7 +112,27 @@ impl SimFeeds {
             unreserved: None,
             stalled: false,
             refusing: false,
+            floor: Floor::default(),
+            adapter: true,
         }
+    }
+
+    /// Judge the supply at `now_ms`, as the owner does on each poll: the
+    /// adapter, and the battery channel's pin millivolts. With no pack the
+    /// floor stays unjudged, so the simulator's default (the adapter, no
+    /// cells) records no floor crossing; on the pack alone that leaves
+    /// feeds refused.
+    pub fn sense(&mut self, now_ms: u32, supply: SimSupply) {
+        self.adapter = supply.adapter;
+        if let Some(pin_mv) = supply.pin_mv {
+            self.floor
+                .update(now_ms, Some(pin_mv), &wellfed_hal::power::FLOOR);
+        }
+    }
+
+    /// On the pack alone and not judged above its floor.
+    fn supply_low(&self) -> bool {
+        !self.adapter && !self.floor.above()
     }
 
     /// Hold a feed in flight where it is, or let it go on.
@@ -222,13 +253,24 @@ impl Feeds for SimFeeds {
             Some(Blocked::Resolving)
         } else if self.current.is_some() {
             Some(Blocked::Feeding)
+        } else if self.supply_low() {
+            Some(Blocked::Battery)
         } else {
             None
         }
     }
 
+    fn below_floor(&self) -> Option<bool> {
+        self.floor.below()
+    }
+
     fn submit(&mut self, portions: u8, by: Source) -> Result<u32, Refusal> {
-        if self.failed || self.interrupted.is_some() || self.current.is_some() || self.refusing {
+        if self.failed
+            || self.interrupted.is_some()
+            || self.current.is_some()
+            || self.refusing
+            || self.supply_low()
+        {
             return Err(Refusal::Busy);
         }
         let asked = portions;

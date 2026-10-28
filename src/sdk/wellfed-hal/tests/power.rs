@@ -146,7 +146,10 @@ fn the_supply_names_unread_and_stale_samples() {
         power::supply(10_000),
         Reading {
             adapter: Some(false),
-            pack: Pack::Reading { mv },
+            pack: Pack::Reading {
+                mv,
+                percent: power::PACK.curve.percent(pin_mv(2849)),
+            },
         }
     );
     assert_eq!(power::supply(10_000 + STALE_MS).pack_mv(), Some(mv));

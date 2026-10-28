@@ -728,6 +728,9 @@ pub enum Outcome<'a> {
         #[serde(borrow)]
         status: Status<'a>,
         readiness: Readiness,
+        /// The supply as the feeder judges it, to a session that shares
+        /// [`Capabilities::POWER`]; `None` otherwise.
+        supply: Option<Supply>,
     },
     /// One page of the trace [`Op::FeedTrace`] asked for.
     #[serde(borrow)]
@@ -984,6 +987,9 @@ pub enum UpdateRefusal {
     Store,
     /// Nobody pressed Dispense in time to confirm the key.
     Unconfirmed,
+    /// The feeder runs on its batteries: no install starts until the
+    /// adapter returns.
+    Battery,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1067,8 +1073,9 @@ pub struct Supply {
 pub enum Battery {
     /// No pack fitted: the channel reads near zero.
     Absent,
-    /// The pack's millivolts.
-    Reading { mv: u16 },
+    /// The pack's millivolts, and its charge (0–100 in steps of 10) on
+    /// stock's curve of the battery channel.
+    Reading { mv: u16, percent: u8 },
     /// A value no pack of this board can read (above fresh cells, or on
     /// the pack alone too low to be running), as read.
     Implausible { mv: u16 },
@@ -2037,6 +2044,14 @@ mod tests {
                 adapter: Some(true),
                 battery: Battery::Implausible { mv: u16::MAX },
                 below_floor: Some(false),
+            }),
+            EventBody::Supply(Supply {
+                adapter: Some(false),
+                battery: Battery::Reading {
+                    mv: u16::MAX,
+                    percent: u8::MAX,
+                },
+                below_floor: Some(true),
             }),
             EventBody::Fed {
                 feed: u32::MAX,

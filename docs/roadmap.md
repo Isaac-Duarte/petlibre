@@ -57,7 +57,7 @@ This page tracks what works today and what comes next. It covers the replacement
 | Capability | Status | Notes |
 | --- | --- | --- |
 | Command-line client (`wellfed`) | Partial | Pairing, status, settings, lock, Wi-Fi, events. |
-| Self-hosted server | Experimental | Accounts, history, releases and installs, tested in simulation. |
+| Self-hosted server | Partial | Adopts a real feeder and keeps its history whole across a server restart, a power cut and a Wi-Fi drop. A phone talking to the feeder directly gets no events while the server is connected. Feeds, accounts, releases and installs are tested in simulation only. |
 | Server web UI | Not started | |
 | Android app | Not started | |
 | Home Assistant | Not started | Paused. |

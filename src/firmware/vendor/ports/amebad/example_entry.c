@@ -382,6 +382,10 @@ void wellfed_wifi_radio_failed(void);
  * into a watchdog reset (see wellfed_wifi_task). Provisional: the teardown
  * has finished well within it on the bench. */
 #define WELLFED_RADIO_SETTLE_MS 2000
+/* After a leave, before wifi_off: the disconnect's key-table teardown may
+ * still be pending in the timer task. Inside the turn, so it holds feeds
+ * this much longer. Provisional, like WELLFED_RADIO_SETTLE_MS. */
+#define WELLFED_RADIO_LEAVE_SETTLE_MS 500
 /* How long a leave waits for the driver to report the association gone:
  * inside the watchdog's shortest expiry (2.4 s at its clock's bound) with a gateway probe's
  * second before it. */
@@ -772,8 +776,9 @@ static void wellfed_hold(unsigned int ms)
  * station mode, the same power-save settings) for a fresh join. wifi_off
  * stops lwIP's DHCP client and takes the interface down, so the device
  * API's address goes with it. The leave with wifi_off, and each wifi_on,
- * hold the join's turn, so neither runs under a moving feed; with no
- * association, a settle comes first, outside the turn. A restart asked for
+ * hold the join's turn, so neither runs under a moving feed. A settle
+ * comes before wifi_off: with no association, 2 s outside the turn; after
+ * a leave, 500 ms inside it. A restart asked for
  * meanwhile parks the task with the radio off. A wifi_on that fails is
  * tried again every WELLFED_RADIO_RETRY_MS, up to WELLFED_RADIO_TRIES
  * times; then the feeder restarts with the turn still held, so no feed
@@ -793,6 +798,7 @@ static void wellfed_radio_off(unsigned int attempt, int associated)
     wellfed_wifi_radio_begin();
     if (associated) {
         wellfed_leave(attempt);
+        wellfed_hold(WELLFED_RADIO_LEAVE_SETTLE_MS);
     }
     TickType_t begin = xTaskGetTickCount();
     LwIP_ReleaseIP(0);

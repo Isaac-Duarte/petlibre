@@ -63,11 +63,12 @@ A firmware gets four tasks (`FIRMWARE_TASKS`). The product uses two:
 
 | Task | Stack | Audited bound |
 | --- | --- | --- |
-| `wellfed-key`, the button service | 2 KiB | 1,272 B |
-| `wellfed-loop`, the loop | 8 KiB (2,048 words) | 5,412 B in the latest build; 4,784 B when the feeding owner and the join interlock arrived |
+| `wellfed-key`, the button service | 2 KiB | 1,248 B |
+| `wellfed-loop`, the loop | 8 KiB (2,048 words) | 5,852 B in the latest build (battery mode); 5,412 B with traces and the stock backup; 4,784 B when the feeding owner and the join interlock arrived |
 
 - Both bounds include the formatting the task can reach. The audit charges it, since it bounds indirect calls by class.
 - In the loop, a handshake operation's X25519 is the deepest path. The device API took the bound past a 6 KiB stack's 25 % margin; the feeding owner's step stays below it.
+- **The loop's headroom is narrowing.** The audit refuses a bound above 75 % of the stack: 6,144 B of 8 KiB. At 5,852 B the loop has 292 B left, down from 732 B at 5,412 B. The next feature that deepens the loop's deepest path may need a bigger stack or a shallower path. The build fails the audit rather than overflowing, so this cannot slip through unnoticed.
 - Test variants add a third task: `gap-probe` adds `wellfed-gap` (256 words at priority 4) for the [scheduling-gap measurement](#scheduling-gaps-across-wi-fi-rejoins), and `held-stall` adds `wellfed-hld` (256 words at priority 3) for the reset-storm drill.
 
 **Outside the audit.** The stack audit takes its roots from the firmware's `spawn` calls, so C-created tasks are outside it:
@@ -250,7 +251,7 @@ The vendor responder is 33.5 KB of code and 2.3 KB of BSS, and it creates its ow
 
 - **Observed** (October 23, 2026), the first product budget: the `feeder` firmware installed over the air as `fw44-budget-02` (v95, normal) and `fw44-setup-01` (v96, BLE setup mode from boot), each confirmed, then the normal build restored (`fw44-budget-04`, v97). The steady heap was held for three more minutes in `fw44-budget-03`. Sizes come from the builds' manifests and ELF sections; heap and handshake times from the feeder's `PLAPI1` records. Nothing was run by the owner. At that point the feeding owner, the vendor mDNS library and the device API protocol were not linked, and were costed from other builds.
 - **Observed** (October 23): the stack overflow that exposed the audit's `subw` gap, `fw44-budget-01` (v94).
-- **Modeled** (October 25–26, image audits): the loop's stack bounds of 4,784 B (the feeding owner and the join interlock) and 5,412 B (traces and the stock backup, [device API](device-api.md#stock-backup)), and the payloads of the later builds.
+- **Modeled** (October 25–26, image audits): the loop's stack bounds of 4,784 B (the feeding owner and the join interlock) 5,412 B (traces and the stock backup, [device API](device-api.md#stock-backup)) and 5,852 B (October 28, battery mode, on the desiccant reminder), and the payloads of the later builds.
 - **Observed** (October 24): the device API's figures, from the `feeder` builds' manifest audits and `PLAPI1` records ([device API](device-api.md#resources)).
 - **Observed** (October 25), the scheduling gaps: `gap-probe` v170 (`2b0806ce…`) on bank 1, six 180 s captures (`ar9-gap-20261025-cap-01`…`06`) while the hotspot was cycled ten times (60 s up, 15 s down). That gave 86 complete windows, 20 with a rejoin, across two boots. The hard fault was in `cap-04`. Bank 1 was then restored to the reviewed `e43324be…` (v171, `ar9-restore-20261025-01`).
 - **Observed** (October 25): the WPA3 SAE handshake holding the loop past 1 s, in `fw16-stall-01`.

@@ -58,7 +58,7 @@ On its batteries the feeder does what stock does ([stock firmware](../devices/pl
 
 1. with no association held (a join just failed or was rejected), waits 2 s first. A failed join's teardown runs in the driver's timer task and writes the key table, and powering the MAC down under it has stalled the bus into a watchdog reset before. The 2 s is provisional. If the adapter returns meanwhile, the radio stays on;
 2. takes the join's turn, which waits while a feed holds the outputs;
-3. leaves the network as it does before a restart, if it is joined: it stops DHCP, releases the address, disconnects, and waits up to 1 s for the association to go, so the access point drops it rather than holding it against the next join;
+3. leaves the network as it does before a restart, if it is joined: it stops DHCP, releases the address, disconnects, and waits up to 1 s for the association to go, so the access point drops it rather than holding it against the next join. It then waits 500 ms more, still holding the turn, for the disconnect's key-table teardown in the timer task. The 500 ms is provisional;
 4. calls the vendor's `wifi_off`, which takes the interface down and turns the WLAN driver and radio off, then gives the turn back;
 5. waits, polling every 50 ms, until the radio is asked on again.
 
@@ -155,7 +155,7 @@ Physical acceptance needs the cells in, which is the owner's call. The order kee
 - Whether a real brownout sets `BOOT_Reason`'s bit here. The storm breaker's brownout rule and the brownout hold both rest on it.
 - Sleep, and with it the KM0 flash users on the DLPS path.
 - Whether the vendor's `wifi_off` and `wifi_on` cycle cleanly on this board, again and again, how long each stalls the tasks, and how much current battery mode saves.
-- Whether 2 s is enough for a failed join's teardown before `wifi_off`.
+- Whether 2 s is enough for a failed join's teardown before `wifi_off`, and 500 ms for a leave's.
 - Whether a pack that browned out rebounds under 50 % at rest (the brownout hold's release).
 - Stock lights its warning at 20 % or less whenever a pack reads, and duty-cycles its beams on batteries. Neither is built.
 

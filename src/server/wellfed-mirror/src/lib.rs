@@ -38,7 +38,7 @@
 //! a caller are the caller's. Time and randomness come in through [`Clock`]
 //! and [`Random`], so tests can fix them.
 //!
-//! [API design]: ../../../../docs/api/README.md
+//! [API design]: ../../../../docs/server/design.md#runtime
 #![forbid(unsafe_code)]
 
 mod collect;

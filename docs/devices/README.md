@@ -1,16 +1,23 @@
 # Supported devices
 
-Wellfed is developed on one research unit. A model is listed as supported only when its own unit has been through the bench. Other models with the same SoC are not compatible by default: boards, pins, flash layouts and stock firmware differ.
+Wellfed runs on one feeder model today: the PETLIBRO Granary PLAF103. This page lists it and the related models we know of, and explains how a new model gets added.
+
+A model counts as supported only when a unit of that model has been through our bench. Sharing a chip is not enough. Boards, pins, flash layouts and stock firmware all differ between models.
 
 | Model | Product | SoC | Status | Notes |
 | --- | --- | --- | --- | --- |
-| [PLAF103](plaf103/README.md) | Granary 5 L | [RTL8721DM](../chips/rtl8721dm/README.md) | **Experimental** | The research device. Local server for stock 1.1.15; replacement firmware in development ([feature support](plaf103/feature-support.md)) |
-| PLAF108 | Feeder | ESP8266/ESP32 family (External) | Not supported | No unit inspected. A different SoC family; an ESPHome replacement exists outside this project ([references](../references.md#peer-projects)) |
-| PLAF203 | Camera feeder | Embedded Linux with Tuya IPC (External) | Not supported | No unit inspected. Root access and filesystem notes exist outside this project ([references](../references.md#peer-projects)) |
-| AF301 (mainboard PLNF301) | RFID feeder | RTL8721DM (External) | Not supported | Same SoC, reported by a peer project. Its pin map is a lead for [pins](../chips/rtl8721dm/pins.md), not a PLAF103 fact |
+| [PLAF103](plaf103/README.md) | Granary 5 L | [RTL8721DM](../chips/rtl8721dm/README.md) | **Partial** | Our research device. Feeding, updates and the device API work; see [its status table](plaf103/README.md#status). |
+| PLAF108 | Feeder | ESP8266/ESP32 family (External) | Not supported | No unit inspected. A different SoC family. An ESPHome replacement exists outside this project ([references](../references.md#peer-projects)). |
+| PLAF203 | Camera feeder | Embedded Linux with Tuya IPC (External) | Not supported | No unit inspected. Root access and filesystem notes exist outside this project ([references](../references.md#peer-projects)). |
+| AF301 (mainboard PLNF301) | RFID feeder | RTL8721DM (External) | Not supported | Same SoC, reported by a peer project. Its pin map is a lead for our [pin table](../chips/rtl8721dm/pins.md), not a PLAF103 fact. |
 
-Statuses: **Experimental** means bench-tested on a research unit with known gaps. **Not supported** means no Wellfed work on that model; anything listed comes from outside.
+**Not supported** means we have done no work on that model. Anything listed for it comes from other projects.
 
 ## Adding a device
 
-Copy [`_template/`](_template/README.md) to `devices/<model>/`, fill in each section with labelled findings, add the model's column to the [chip pin table](../chips/rtl8721dm/pins.md), and add a row here. Machine-readable layout and profile data goes in `src/firmware/devices/<model>/`, next to [`plaf103`](../../src/firmware/devices/plaf103/). Moving PLAF103 assumptions out of the HAL and runtime is [FW50](../../FIRMWARE_BOARD.md). A new model starts as **Not supported** until its own unit passes the read-only steps (identification, UART observe, matching backups).
+A new model starts as **Not supported**. It moves up once its own unit passes the read-only steps: identification, a receive-only UART capture and matching full backups.
+
+1. Copy [`_template/`](_template/README.md) to `docs/devices/<model>/` and fill in every section, giving each finding its [evidence level](../evidence.md).
+2. Add the model's column to the [chip pin table](../chips/rtl8721dm/pins.md).
+3. Put its machine-readable layout and profile in `src/firmware/devices/<model>/`, next to [`plaf103`](../../src/firmware/devices/plaf103/). The [device layer](../firmware/device-layer.md) explains how firmware picks them up.
+4. Add a row to the table above.

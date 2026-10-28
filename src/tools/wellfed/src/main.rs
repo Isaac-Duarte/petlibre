@@ -1,4 +1,4 @@
-//! `wellfed`, the owner's command line ([tools roadmap]).
+//! `wellfed`, the owner's command line ([tools]).
 //!
 //! It speaks two paths, and a command takes exactly one of them, never a
 //! fallback between them: a write whose outcome is unknown on one path is
@@ -21,8 +21,8 @@
 //! (the `install` module), running `wellfed-stock` beside it for stock's
 //! side.
 //!
-//! [tools roadmap]: ../../../../docs/development/tools-roadmap.md
-//! [two paths, one feed]: ../../../../docs/api/README.md#two-paths-one-feed
+//! [tools]: ../../../../src/tools/README.md
+//! [two paths, one feed]: ../../../../docs/server/README.md#two-paths-one-feed
 
 #![forbid(unsafe_code)]
 

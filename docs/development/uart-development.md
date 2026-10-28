@@ -1,50 +1,144 @@
-# Region-scoped UART development updates
+# Development updates over UART
 
-This is a separate experimental path for the tested PLAF103 bank-1 layout. It accepts complete, frozen source/target images and updates their required application sectors in an already established supervised helper session. The pinned stock-recovery writer retains its original restrictions.
+This guide installs a reviewed build on a PLAF103 over UART, rewriting only the application sectors that changed. It is for developers with a [bench](../devices/plaf103/bench.md) and a full backup. Status: **Experimental**, and only for the tested PLAF103 bank layout.
 
-It is not replacement OTA, automatic rollback, a boot controller, or a partial-write resume mechanism. The factory guards still require the original research baseline; another unit's backup is not automatically compatible.
+The path works inside an already established, supervised helper session. It accepts complete, frozen source and target images. The pinned stock-recovery writer keeps its original restrictions.
 
-## Review and scope
+It is not over-the-air update, automatic rollback, a boot controller, or a way to resume a partial write. The factory guards still require the original research baseline, so another unit's backup is not automatically compatible.
 
-`wellfed-build review` freezes either the exact stock OTA or a reviewed PLAF103 `firstboot` SDK build. Build review checks the current source snapshot, SDK revision/overlays, artifacts/archives, both core packages, linked mains/code, RAM parking/hooks, stock pulls, and the factory loader's own mapping and bank selection, executed under Unicorn (`wellfed-emu`) with the image alone in each bank. It replaced the Python `review-development-image.py` on October 23, 2026, after both froze the same build to identical reviews apart from the reviewer hash. Frozen source reviews remain useful after later source changes. Freezing an arbitrary new application does not establish its behavior or physical acceptance.
+## Freeze the images
 
-Offline build/review commands use new output directories:
+`wellfed-build review` freezes either the exact stock OTA or a reviewed PLAF103 `firstboot` SDK build. Reviewing a build checks:
 
-```sh
-target/release/wellfed-build review stock --output private/verification/stock-review
-make -C src/firmware/vendor firstboot
-target/release/wellfed-build review build \
-  --build private/firmware-build/plaf103/firstboot \
-  --output private/verification/development-review
-cargo run --locked -p wellfed-flash -- update --help
-```
+- the current source snapshot, SDK revision and overlays;
+- the artifacts and archives, and both core packages;
+- the linked mains and code, RAM parking and hooks, and stock pulls;
+- the factory loader's own mapping and bank selection, executed under Unicorn (`wellfed-emu`) with the image alone in each bank.
 
-The [Rust client](rust-flash.md) runs the inspect, prepare and execute sequence as `wellfed-flash update`. These commands do not open a serial port. Build snapshots copied from the research archive can be stale against Wellfed's changed source/input hashes. Rebuild and freeze new targets rather than editing manifests or substituting expected hashes. Retain a frozen source matching the actually installed application.
+A frozen review stays useful after later source changes. Freezing a new application does not establish its behavior or physical acceptance.
 
-## Inspection, planning, and execution
+These commands are offline and do not open a serial port. Each writes to a new output directory.
 
-The CLI exposes separate `inspect`, `prepare`, and `execute` modes. Supply explicit baseline, frozen source/target directories, port, pinned ROM report, fresh bounded-read report, and new private output locations. Preparation binds the complete inspected source region, report and tool hashes into a plan. Execution additionally requires that exact reviewed plan and its SHA-256. Reports and companion serial/read files must remain together.
+1. Freeze the stock image:
 
-Writable bank 1 starts at `0x186000` and cannot extend beyond `0x2d6000`. Each acquisition reads the union of the old/new application extents plus the 24 KiB factory range and the other bank's 4 KiB first sector. The current application must exactly match the frozen source, and the factory range must match the pinned baseline.
+   ```sh
+   target/release/wellfed-build review stock --output private/verification/stock-review
+   ```
 
-The other bank's first sector must be in a known state, and its hash is pinned in the plan, so it must stay byte-identical across every acquisition. For bank 1 that means bank 0 is either the pinned baseline (an invalidated marker) or a valid image. Until October 2026 this path required bank 0 to be invalid. The FW09 finding that the factory loader prefers bank 1 and falls back to bank 0 ([bank policy](../firmware/bank-policy.md)) made a valid bank 0 the safer case: an interrupted bank-1 update then boots bank 0 rather than waiting forever.
+2. Build and freeze the target:
 
-`--bank 0` updates bank 0 (`0x6000`–`0x156000`, the same reviewed footprint) under its own transaction kind. Bank 1 must be valid throughout, so the unit always has a bootable bank while bank 0's marker is withheld. Program packets are bounded to the selected bank in the updater itself, and the factory range `0x0`–`0x6000` is never a write target in either mode. Bank 0 may omit `--source`: bank 0 must then still be exactly the pinned baseline's bytes over the target's extent, with an invalid marker, and the target overwrites it with its marker last.
+   ```sh
+   make -C src/firmware/vendor firstboot
+   target/release/wellfed-build review build \
+     --build private/firmware-build/plaf103/firstboot \
+     --output private/verification/development-review
+   ```
 
-`wellfed-flash give-way` clears bank 1's first marker byte with one 1 KiB program frame, so the loader falls back to bank 0. It runs only when bank 0 holds exactly a frozen, reviewed image, read in full. The frame rewrites the other 1023 bytes unchanged, since NOR programming only clears bits, which is what stock's activation does. A development update with `--restore-marker` then restores bank 1. It accepts only the source with its first marker byte cleared, rewrites that one sector with the marker withheld, and commits the marker last.
+   You should see a review directory with `review.json` beside the frozen image.
 
-For changed images, execution verifies preimage, staged, and activated application regions and guards. It stages the marker sector first with eight erased bytes, then only other changed sectors, with status checks, durable intent, and exact sector readback. Whole-region verification precedes one 1 KiB no-erase marker commit, followed by final verification. A shorter target retains and verifies the old tail; a larger target explicitly includes additional sectors. No-op plans perform one acquisition and no writes.
+3. List the update's arguments:
 
-Readiness synchronization follows durable erase-intent fsync, immediately before transmission. This ports the fix for journal stalls crossing the helper's idle-ready interval. Missing ACKs, protocol errors, or drift stop terminally; there is no automatic resume, replay, fallback write, or boot command.
+   ```sh
+   cargo run --locked -p wellfed-flash -- update --help
+   ```
 
-`--interrupted` finishes a stopped development update from a fresh inspection, never from the stopped journal. It requires the marker sector to be staged, and every other sector to be exactly its source, its staged target or erased. One sector may instead hold the staged target's first one to three 1024-byte program frames followed by erased flash, the only state a program stopped after its erase leaves; it is erased and rewritten. The one other accepted state is a stop between the marker sector's erase and its first program frame: the marker sector wholly erased (every byte `0xFF`) and every other sector in the extent byte-identical to the source review; the plan then stages the marker sector first and commits the marker last, as a fresh update does. A partial erase, a second partial program, stray bytes or foreign frames in the marker sector, or any other content is refused, and the other bank's pinned first sector is checked as always. It then stages the remaining sectors and commits the marker with the same checks as a normal update. The flag is bound into the inspection, plan and execution, so a normal inspection cannot prepare an interrupted plan, nor the reverse.
+Keep a frozen source that matches the application actually installed. A build snapshot copied from the research archive can be stale against Wellfed's changed source and input hashes. Rebuild and freeze a new target rather than editing manifests or substituting expected hashes.
 
-Settings/audio/log areas outside the declared application footprint are not reread during each development update. Their preservation relies on the bounded mutation sequence, giving narrower evidence than a full-flash preservation audit. Full-flash audits remain appropriate for layout changes, recovery investigations, or unexplained drift.
+## Run the update
 
-## Evidence and remaining work
+The [Rust flash client](rust-flash.md) runs the update as `wellfed-flash update`, in three modes: `inspect`, `prepare` and `execute`. Supply explicit paths each time:
 
-Physical changed-build updates and their subsequent boots were demonstrated. One small-image iteration took approximately **2m22s** for inspection plus execution, excluding build, manual setup, and normal boot. Timing depends on image changes and hardware; a small source edit can move many linked sectors.
+- the baseline, and the frozen source and target directories;
+- the port;
+- the pinned ROM report and a fresh bounded-read report;
+- new private output locations.
 
-The conservative full-image stock restoration and subsequent stock 1.1.15 boot were completed separately. Stock return through this newer updater remains untested; do not infer it from emulator success or the conservative restoration. Power-cut and failed-boot acceptance remain open. Neither a feature-board card nor a copied historical plan authorizes a new physical operation.
+Reports and their companion serial and read files must stay together.
 
-See [startup diagnostics](../firmware/startup-diagnostics.md), [UART and loader](../devices/plaf103/uart.md), [recovery limits](../devices/plaf103/recovery.md), and [optional fixtures](fixtures.md).
+1. Run `wellfed-flash update inspect` with those inputs.
+
+   It reads the device and writes nothing. You should see an inspection report. The current application must exactly match the frozen source, and the factory range must match the pinned baseline.
+
+2. Run `wellfed-flash update prepare` on that inspection.
+
+   This step opens no port. It binds the complete inspected source region, the report and the tool hashes into a plan, and prints the plan's SHA-256.
+
+3. Check the plan before you write. Confirm the bank, the source and target reviews, and the sectors it will touch. Confirm the unit has a full backup.
+
+> [!WARNING]
+> The next step erases and programs flash. A wrong plan, a wrong unit or a stop at the wrong moment can leave the bank unbootable.
+
+4. Run `wellfed-flash update execute` with exactly that plan and its SHA-256.
+
+   You should see the final verification pass and exit 0. Exit 1 means it stopped after the port opened: read the report and journal, and see [finishing an interrupted update](#finish-an-interrupted-update).
+
+## What the updater writes
+
+**Bank 1** is the default. Writable bank 1 starts at `0x186000` and cannot extend beyond `0x2d6000`.
+
+Each acquisition reads the union of the old and new application extents, plus the 24 KiB factory range and the other bank's 4 KiB first sector. That other sector's hash is pinned in the plan, so it must stay byte-identical across every acquisition. For bank 1, bank 0 must be either the pinned baseline (an invalidated marker) or a valid image. A valid bank 0 is the safer case: the factory loader prefers bank 1 and falls back to bank 0 ([bank policy](../firmware/bank-policy.md)), so an interrupted bank-1 update boots bank 0 rather than waiting forever.
+
+**`--bank 0`** updates bank 0 (`0x6000`–`0x156000`, the same reviewed footprint) under its own transaction kind. Bank 1 must be valid throughout, so the unit always has a bootable bank while bank 0's marker is withheld. Bank 0 may omit `--source`. Bank 0 must then still be exactly the pinned baseline's bytes over the target's extent, with an invalid marker, and the target overwrites it with its marker last.
+
+In both modes the updater itself bounds program packets to the selected bank. The factory range `0x0`–`0x6000` is never a write target.
+
+### The write sequence
+
+For a changed image, execution:
+
+1. verifies the preimage application region and guards;
+2. stages the marker sector first, with eight erased bytes;
+3. stages only the other changed sectors, with status checks, durable intent and exact sector readback;
+4. verifies the whole region;
+5. commits the marker with one 1 KiB no-erase program;
+6. verifies again.
+
+A shorter target keeps and verifies the old tail. A larger target explicitly includes the additional sectors. A no-op plan performs one acquisition and no writes.
+
+Readiness synchronization follows the durable erase-intent fsync, immediately before transmission. This keeps a journal stall from crossing the helper's idle-ready interval.
+
+Missing ACKs, protocol errors or drift stop the session terminally. There is no automatic resume, replay, fallback write or boot command.
+
+### What it doesn't reread
+
+Settings, audio and log areas outside the declared application footprint are not reread during each update. Their preservation relies on the bounded mutation sequence, which is narrower evidence than a full-flash preservation audit. Use a full-flash audit for layout changes, recovery investigations or unexplained drift.
+
+## Give way to bank 0
+
+`wellfed-flash give-way` makes the loader fall back to bank 0. It runs only when bank 0 holds exactly a frozen, reviewed image, read in full.
+
+> [!WARNING]
+> Give-way programs flash. Check that bank 0 holds the reviewed image you expect before you execute.
+
+It clears bank 1's first marker byte with one 1 KiB program frame. The frame rewrites the other 1023 bytes unchanged, because NOR programming only clears bits. This is what stock's own activation does.
+
+To bring bank 1 back, run a development update with `--restore-marker`. It accepts only the source with its first marker byte cleared. It rewrites that one sector with the marker withheld, then commits the marker last.
+
+## Finish an interrupted update
+
+`--interrupted` finishes a stopped update from a fresh inspection, never from the stopped journal. The flag is bound into the inspection, plan and execution, so a normal inspection cannot prepare an interrupted plan, nor the reverse.
+
+It accepts only these states:
+
+- The marker sector is staged, and every other sector is exactly its source, its staged target, or erased.
+- One sector may instead hold the staged target's first one to three 1024-byte program frames followed by erased flash. That is the only state a program stopped after its erase leaves. The sector is erased and rewritten.
+- A stop between the marker sector's erase and its first program frame: the marker sector wholly erased (every byte `0xFF`), and every other sector in the extent byte-identical to the source review. The plan then stages the marker sector first and commits the marker last, as a fresh update does.
+
+Anything else is refused: a partial erase, a second partial program, stray bytes or foreign frames in the marker sector, or any other content. The other bank's pinned first sector is checked as always. The update then stages the remaining sectors and commits the marker with the same checks as a normal update.
+
+## Not yet established
+
+- Returning to stock through this updater is untested. Don't infer it from emulator success or from the full-image stock restoration.
+- Power-cut and failed-boot acceptance are open.
+- Neither a roadmap status nor a copied historical plan authorizes a new physical operation.
+
+## Next steps
+
+- [Rust flash client](rust-flash.md): exit codes, the bench lease and the other commands.
+- [UART and loader](../devices/plaf103/uart.md) and [recovery limits](../devices/plaf103/recovery.md).
+- [Startup diagnostics](../firmware/startup-diagnostics.md) and [optional fixtures](fixtures.md).
+
+## Evidence
+
+- **Observed:** changed-build updates and their following boots were demonstrated on the research unit. One small-image iteration took about **2m22s** for inspection plus execution, excluding build, manual setup and normal boot. Timing depends on the image changes and hardware; a small source edit can move many linked sectors.
+- **Observed:** the conservative full-image stock restoration and a following stock 1.1.15 boot were completed separately, not through this updater.

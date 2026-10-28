@@ -1,56 +1,108 @@
-# Firmware architecture and status
+# How the firmware works
 
-## Two independent implementations
+This page explains how the Wellfed replacement firmware is put together and why. It is for owners who want to know what runs inside their feeder, and for contributors finding their way around. For what works today, see the [roadmap](../roadmap.md).
 
-The local server talks to **stock 1.1.15** over its existing MQTT protocol. It does not run inside the feeder. The replacement firmware uses Rust application components on the Realtek AmebaD SDK. On hardware it has stopped-output startup, Wi-Fi and an encrypted device API, over-the-air updates with trial rollback, durable settings, buttons and the child lock, power inputs, audio and BLE setup ([firmware board](../../FIRMWARE_BOARD.md)); functional feeding remains unimplemented on hardware.
+## The one idea
 
-Stock 1.1.15 can install the replacement over its own updater, with no UART write (physical, FW40). [Consumer installation](consumer-installation.md) covers stock's setup protocol, the install flow an app would run, the way back to stock, and the server and app architecture. [Stock OTA requirements](../devices/plaf103/stock/ota-requirements.md) has the image contract. [Product architecture](product-architecture.md) has the target the SDK is built toward: one firmware, an optional server and a feeder-hosted API. [Resource budget](resource-budget.md) measures whether that product fits the PLAF103 (FW44). [Scheduling gaps](scheduling-gaps.md) is the `feeder` firmware's `gap-probe` variant, which measures how long the loop and a priority-4 task wait across Wi-Fi rejoins. [Device layer](device-layer.md) lists what is specific to the PLAF103 and where it lives (FW50). [Power](power.md) covers the supply as the feeder reports it, the battery floor a feed needs, brownout and why sleep is deferred (FW26). [Indicators](indicators.md) is the panel lights' service: requests with priority, cancellation and expiry, the provisional mapping and the bench check (FW23).
+One task owns the feeder. A single loop task runs the network, the panel and feeding, and inside it the [feeding owner](../glossary.md) is the only code allowed to move the motor. Everything that wants food asks that owner: the Dispense button, the `wellfed` CLI, the app and the server all go through the same [device API](device-api.md) requests, and all of them land in the same loop.
 
-| Crate | Responsibility |
-| --- | --- |
-| `wellfed-session` | `no_std` session layer the feeder and its clients share: Noise handshakes and transport, HMAC, the setup code, length-prefixed frames, and strict hex and base64 |
-| `wellfed-core` | `no_std` controller, portion accounting, sensor qualification, ADC scaling, motor gate, feedback queue, monotonic clock, flash authority, and the SDK's stores (journal, seed, update store) over the shared record layer |
-| `wellfed-hal-common` | The routines both cores link: RAM parking, SDK flash hooks, the KM0 park peer, the OTA boot-trial step and the panic handler. The KM0 image contains only this crate |
-| `wellfed-hal` | KM4 ports: GPIO/ADC board port, interrupt/timer supervision, watchdog, FreeRTOS owner, flash lease provider, the update stage, build-bound startup reports, stopped outputs, and LED diagnostics. It re-exports the common crate's `flash` and `trial` |
-| `wellfed-sdk` | The KM4 runtime every firmware runs inside: the `wellfed_app_start` entry, stopped-output startup and the synthetic diagnostic, the Wi-Fi join, the watchdog feeder, FW11 confirmation, the settings writer's turn (the writer itself is the product's, `wellfed_store_step`), and the update stage that takes offers through a firmware's device API, with the owners' update keys the writer publishes (`ota::signers`). A firmware defines its start hook with `#[start]`, declares its tasks with `#[task]` and starts them with `spawn`; `wellfed-sdk-macros` holds those attributes and `#[derive(Record)]` for log lines. No SDK crate depends on a product crate (`deny.toml` bans it) |
-| `wellfed-probes` | The bench probes, once for every firmware that runs them: optics (FW13), buttons (FW20), power inputs (FW14), the motor pulse (FW16), the speaker records, and the retired supervision probe, kept for its host tests |
-| `wellfed-proto` (`src/product/wellfed-proto`) | The device protocol's messages, `no_std` and allocation-free, shared by the feeder and its clients |
-| `wellfed-device-api` (`src/product/wellfed-device-api`) | The feeder's side of the [device API](device-api.md), `no_std` and host-tested: the sans-IO session server and its `Device` trait, what its requests hand the feeder's owners (`mailbox`), pairing and the setup exchange BLE and the recovery window share, and the client and Wi-Fi values the stores keep |
-| `wellfed-feeder` (`src/product/wellfed-feeder`) | Product policy, `no_std` and host-tested: the panel's child lock (FP11) and the product's stores (settings, Wi-Fi credentials, client keys and the event ring) over core's record layer; schedules and alerts later ([product architecture](product-architecture.md)). Its `feeder` module is the loop itself, `Feeder<P: Platform>::pass`: the panel's owner, BLE setup mode, the device API's socket driver and the event recorder, over a `Platform` the firmware and the simulator each implement; a `conformance` suite checks both answer the device API alike |
-| `wellfed-feeder-runtime` (`src/product/wellfed-feeder-runtime`) | The product's stores on the SDK runtime, linked by every PLAF103 firmware: the settings writer the runtime's service task steps, its mailboxes with the loop (client changes and the identity, Wi-Fi saves, the event queue), the Wi-Fi join's stored credentials (`wellfed_wifi_select`), and the settings store's retired power-cut probe |
-| `wellfed-fw-feeder` (`src/firmware/wellfed/feeder`) | The product firmware: the PLAF103's `Platform` for the product's loop (the four indicators, BLE link and speaker, lwIP sockets, the runtime's mailboxes), the button service and one loop task that steps the feeding owner and then the product's pass, and the bench variants |
-| `wellfed-fw-qa` (`src/firmware/wellfed/qa`) | The default firmware: a [guided self-test](qa.md) of optics, power, buttons, indicators and speaker |
-| `wellfed-fw-bringup` (`src/firmware/wellfed/bringup`) | One bring-up area per image variant (`optics`, `buttons`, `adc`, `speaker`, `pulse`) and the trial images (`stall`, `fail`) ([table](../../src/firmware/wellfed/README.md)); only the `pulse` variant drives the motor |
-| `wellfed-fw-blink` (`src/firmware/wellfed/blink`) | The minimal firmware: one task blinks the connection indicator. The [firmware guide](../../src/firmware/wellfed/README.md) covers writing one |
-| `wellfed-amebad-sys` | Bindgen-backed KM4 calls into the pinned AmebaD SDK, and the deterministic host fake SDK used by tests and the simulator |
-| `wellfed-board-plaf103` | The PLAF103 board: every pin and ADC channel the ports use, the storage region and its sector map |
-| `wellfed-testkit`, `wellfed-sim` | Fake NOR journal storage, and the virtual feeder: the owner under the PLAF103's feeding limits against the mechanism the bench measured ([development guide](../development/README.md#work-on-a-component)) |
+That one rule is what makes the safety promises simple. Two clients and a button press can't race each other into a double feed, because there is nobody to race. A feed is written down before the motor turns, so a power cut can't make the feeder repeat it. And the motor's stop guarantees live in timers and the watchdog, below the loop, so a slow network can't keep the motor running.
 
-Minimal C hooks call the Rust entrypoint. The SDK still supplies startup, FreeRTOS, radio code, linker scripts, and image packaging. KM0 and KM4 are built separately. Header-derived bindings are generated for SDK-backed KM4 builds; host tests use fake bindings.
+## One feed, end to end
+
+Here is a single one-portion feed, from your finger to the event your app shows.
+
+1. **You ask.** You press Dispense, or run `wellfed feed --portions 1`. The button service task only notices the gesture and queues it. The CLI's request arrives as an encrypted Noise message on the feeder's TCP port.
+2. **The loop picks it up.** On its next pass the loop reads the gesture or the request. A locked panel ignores the button; a client's request is checked against its role.
+3. **Is a feed allowed now?** One decision, called readiness, answers that. A feed is refused while another runs, while the owner is still starting or faulted, while Wi-Fi is joining, in Bluetooth setup mode, during an update, or on a battery below its floor. A refusal is final: nothing moved, and trying again is a new feed.
+4. **The owner writes it down.** The feeding owner reserves the feed in its [journal](../glossary.md) in flash, under the next feed number. Only then does the client's answer go out, naming that number.
+5. **The motor turns, supervised.** The owner claims the outputs, turns on the beams and drives the motor. One portion is one compartment of the rotor, about 9 s of drive, counted by a mark on the feedback line ([motor pulse](motor-pulse.md)). A hardware timer, a short motor lease and the watchdog each stop the motor on their own if the owner stops checking in.
+6. **The result is recorded.** With the outputs stopped, the owner writes the result to the journal. The loop then records a `Fed` event, which says who asked (`Panel` for the button) and how the feed ended.
+7. **Clients hear about it.** The event goes into the event history, and every subscribed client receives it. The CLI that asked prints the result.
+
+Feeds are silent: no tune plays.
+
+**If the power goes out mid-feed**, the reservation is still in the journal. At the next boot the owner records that feed as *uncertain* under its own number, reports it once, and never runs it again. Clients never resend a feed whose answer they didn't get either. The worst case is a feed you have to check, never a feed served twice.
+
+## The layers
+
+The firmware is Rust on top of Realtek's AmebaD SDK. The vendor SDK still supplies startup, FreeRTOS, the radio code, linker scripts and image packaging. Minimal C hooks call the Rust entry point. The chip's two cores, KM0 and KM4 ([glossary](../glossary.md)), are built separately. KM4 builds use bindings generated from the SDK's headers; host tests use fake bindings.
+
+From the bottom up:
+
+| Layer | What it does | Read |
+| --- | --- | --- |
+| Board | Every pin, ADC channel and storage sector of the PLAF103, in one crate | [Device layer](device-layer.md) |
+| SDK runtime | Startup with outputs stopped, the watchdog, Wi-Fi, flash coordination, updates and boot confirmation | [Startup diagnostics](startup-diagnostics.md), [OTA design](ota-design.md), [bank policy](bank-policy.md) |
+| Feeding owner | The motor, beams and feedback under supervision, and the journal | [Motor pulse](motor-pulse.md), [jams and sensor faults](jams-and-sensor-faults.md), [calibration](calibration.md) |
+| Product | The loop: the panel, the device API, pairing, events and settings | [Device API](device-api.md), [pairing](pairing.md), [Bluetooth](bluetooth.md) |
+| Peripherals | Buttons, lights, speaker, clock and power | [Buttons](buttons.md), [indicators](indicators.md), [audio](audio.md), [clock](clock.md), [power](power.md), [optical inputs](optical-inputs.md) |
+
+The design behind all of this, from "one firmware, server optional" to the choice of Noise, is in [product architecture](product-architecture.md). Whether it fits the chip is measured in [resource budget](resource-budget.md). How a stock feeder moves to Wellfed, and back, is in [consumer installation](consumer-installation.md).
+
+Wellfed has a second, separate path to the feeder. The `wellfed-stock` server talks to **stock 1.1.15** over stock's own MQTT protocol. It never runs inside the feeder, and the replacement firmware doesn't use it except to install itself. Stock 1.1.15 can install the replacement over its own updater, with no UART write.
 
 ## Runtime contracts
 
-The owner serializes requests and drives the controller from qualified inputs and captured feedback. The output gate uses stop intervals, leases, and fault latches. Timer supervision can stop drive when the owner stalls; one timer interrupt without SYSTIMER advance is tolerated (a pending update coalesced after a masked window), a second consecutive one is a frozen-clock fault. Closing supervision first verifies motor STOP and infrared OFF. Infrared OFF always requires LOW output latches, not only LOW pad inputs. Watchdog refresh requires progress, and the owner refuses a flash authority whose total lease budget plus two sample and two timer periods does not fit inside the watchdog progress gap. Interrupted feeding is reconciled conservatively rather than automatically resumed: at the next boot a pending reservation is recorded in the journal as an uncertain result under its own id, reported once as such and never retried, and the owner opens. A journal that does not decode, a resolution that cannot be recorded, or another initialization failure after the watchdog is armed latches a stopped fault, which keeps refreshing only while every iteration re-verifies STOP and infrared OFF, so it neither retries nor reset-loops, while a hang or lost output readback still resets. On KM4 a panic masks interrupts and requests motor STOP and infrared OFF with raw latch writes before halting; only an already armed watchdog resets it.
+These are the promises the runtime keeps, whatever the rest of the firmware does.
 
-The journal, settings, seed, Wi-Fi, client and update stores are one dual-slot store (`wellfed_core::store::slot`): alternating complete records, CRC, and a final commit marker, written in one order (erase the other unit, check it blank, program all but the marker, check, program the marker, check) so a power cut leaves the other unit untouched. That module documents the rule and what each store's policy makes of a cut unit; the journal's is the strictest, never falling back past a reservation. Golden-byte tests pin every record's layout. Host tests exercise torn writes and restart behavior, once against the slot layer and again per store, against a fake NOR at 256-byte, 4 KiB and odd-tail unit sizes. The fake models erase to 0xFF, bit-clearing programs, byte-ordered program cuts, and erase cuts that leave old data with an arbitrary deterministic subset of bits raised. It does not model weakly programmed or erased cells, unstable reads, page wrap, or a real part's timing; this is simulation, not flash evidence. A working physical flash adapter and verified storage allocation are still missing. Flash coordination, SDK hooks, and RAM parking are tested components; complete exclusive flash ownership across both cores is unfinished.
+**The owner and its stops.**
+- The owner serializes requests and drives the controller from qualified inputs and captured feedback.
+- The output gate uses stop intervals, leases and fault latches.
+- Timer supervision can stop the drive when the owner stalls. One timer interrupt without SYSTIMER advance is tolerated: it is a pending update coalesced after a masked window. A second in a row is a frozen-clock fault.
+- Closing supervision first verifies motor STOP and infrared OFF.
+- Infrared OFF always requires LOW output latches, not only LOW pad inputs.
 
-The core diagnostic uses synthetic inputs and memory-only motor outputs. Separately, the default application explicitly enables GPIO clocks, requests physical motor STOP/infrared-off, and runs a bounded LED probe. The minimal KM0 main restores the stock shared-pad supply prerequisite. The full feeding backend remains unopened. Voltage/transient acceptance and Port A input-readback faults remain unresolved; see [startup diagnostics](startup-diagnostics.md).
+**The watchdog.**
+- A watchdog refresh requires progress.
+- The owner refuses a flash authority whose total lease budget, plus two sample and two timer periods, does not fit inside the watchdog's progress gap.
 
-## Capability and acceptance map
+**Interrupted feeds.** Interrupted feeding is reconciled conservatively, never resumed. At the next boot a pending reservation is recorded in the journal as an uncertain result under its own id. It is reported once as such and never retried, and the owner opens.
 
-| Area | Present | Hardware/integration work remaining |
-| --- | --- | --- |
-| Manual feeding and single/double bowls | Host-tested controller, direction/portion accounting, bounded recovery; the rotor's phase from the journal and a homing mark after an interrupted feed, the single bowl as the only verified mode, and a stored portion weight ([calibration](calibration.md), simulation) | Measured portions, the phase cases on hardware, jams, verified stops |
-| Inputs and power | Host-tested filtering, stale/invalid-input rejection, ADC scaling | Calibration, optical timing/polarity, current limits, battery/brownout behavior |
-| Request persistence | Host-tested journal and owner integration | Physical flash provider, durable writes, power cuts |
-| Runtime reliability | Host-tested leases, ISR supervision, watchdog, and flash coordination | Real timing, reset/sleep behavior, sustained runs and complete flash mediation |
-| Networking and local protocol | Stock server implemented separately; replacement Wi-Fi join, DHCP and reconnect on hardware (FW07), with link liveness from association, lease and gateway rather than internet DNS (host-tested, October 25); the Noise [device API](device-api.md) over TCP with mDNS, events and samples (FW47), stored Wi-Fi credentials and device settings (FW25), and BLE setup (FW45), all on hardware; updates over the device API with bank 0 running the feeder (host-tested, October 25; no build opens an MQTT session) | The first bank-0 install and round trip on hardware; deleting the MQTT transport and its credentials (AR6); recovery over the LAN on hardware |
-| Schedules | Stock semantics investigated | Replacement persistence, timezone/DST, occurrence identity, interrupted-meal policy |
-| Panel and audio | Stock roles partially recovered; [button service](buttons.md) (debounce, holds, chords) and audio playback on hardware | Lock and reset behavior (FP11, FP15), complete indicator policies, audio deadlines |
-| Home Assistant | Paused by the owner (Oct 23); two [options](product-architecture.md#home-assistant) recorded (FW49, FP16) | Everything; follows the device-hosted API (FW47) |
+**Faults that stop.** After the watchdog is armed, some failures latch a stopped fault: a journal that does not decode, a resolution that cannot be recorded, or another initialization failure. A stopped fault keeps refreshing the watchdog only while every iteration re-verifies STOP and infrared OFF. So it neither retries nor reset-loops. A hang or a lost output readback still resets.
 
-Rust ports retain caller-owned objects shared with ISRs through critical sections; a fully interrupt-safe ownership model remains future work. SDK build success and model coverage do not establish electrical safety or physical reliability.
+**Panics.** On KM4 a panic masks interrupts and requests motor STOP and infrared OFF with raw latch writes, then halts. Only an already armed watchdog resets it.
 
-Continue with [boot and flash](../devices/plaf103/flash-layout.md), [audio](audio.md), [buttons](buttons.md), [Bluetooth](bluetooth.md), [stock behavior](../devices/plaf103/stock/README.md), [SDK builds](../development/firmware-builds.md), or [host simulation](../development/README.md).
+**The dual-slot store.** The journal, settings, seed, Wi-Fi, client and update stores are one dual-slot store (`wellfed_core::store::slot`).
+- Each store alternates complete records, with a CRC and a final commit marker.
+- Every write follows one order: erase the other unit, check it blank, program all but the marker, check, program the marker, check. A power cut therefore leaves the other unit untouched.
+- That module documents the rule, and what each store's policy makes of a cut unit. The journal's policy is the strictest: it never falls back past a reservation.
+- Golden-byte tests pin every record's layout.
 
-Use the [firmware feature board](../../FIRMWARE_BOARD.md) for FW01–FW29 prerequisites, current acceptance scope, and remaining work.
+**Interrupts.** Rust ports keep caller-owned objects shared with interrupt handlers behind critical sections. A fully interrupt-safe ownership model is future work.
+
+## What is still open
+
+- **Flash across both cores.** Flash coordination, the SDK hooks and RAM parking are tested, but complete exclusive flash ownership across both cores is unfinished. KM0's own SDK flash users are not yet mediated, which is safe only while KM0 never sleeps.
+- **Electrical acceptance.** Voltage and transient acceptance of the stopped outputs, and Port A input readback, are unresolved ([startup diagnostics](startup-diagnostics.md)).
+- **Schedules.** Stock's semantics are investigated. Persistence, time zones and DST, occurrence identity and the interrupted-meal policy are not built.
+- **The rest** is on the [roadmap](../roadmap.md): calibration, jams, lights and battery checks on hardware, and a long unattended run.
+
+## Crates
+
+The full inventory, with how to write a firmware, is the [firmware guide](../../src/firmware/wellfed/README.md).
+
+| Crate | In short |
+| --- | --- |
+| `wellfed-session` | Noise, HMAC, the setup code and framing, shared with clients |
+| `wellfed-core` | Controller, portions, sensors, motor gate, clock and the stores |
+| `wellfed-hal-common` | Code both cores link: RAM parking, flash hooks, the boot trial, panics |
+| `wellfed-hal` | KM4 ports: GPIO, ADC, timers, watchdog, flash leases, the update stage |
+| `wellfed-sdk` | The KM4 runtime every firmware runs inside |
+| `wellfed-probes` | The bench probes |
+| `wellfed-amebad-sys` | Bindings to the pinned AmebaD SDK, and its host fake |
+| `wellfed-board-plaf103` | The PLAF103's pins, ADC channels and storage map |
+| `wellfed-testkit`, `wellfed-sim` | Fake NOR storage and the virtual feeder |
+| `wellfed-proto` | The device protocol's messages |
+| `wellfed-device-api` | The feeder's side of the device API and pairing |
+| `wellfed-feeder` | Product policy and the loop itself |
+| `wellfed-feeder-runtime` | The product's stores on the SDK runtime |
+| `wellfed-fw-feeder` | The product firmware |
+| `wellfed-fw-qa`, `wellfed-fw-bringup`, `wellfed-fw-blink` | The self-test, bring-up and minimal firmwares |
+
+## Evidence
+
+- **Modeled:** the stores' torn writes and restart behavior are host-tested once against the slot layer and again per store. The fake NOR runs at 256-byte, 4 KiB and odd-tail unit sizes. It models erase to 0xFF, bit-clearing programs, byte-ordered program cuts, and erase cuts that leave old data with an arbitrary deterministic subset of bits raised. It does not model weakly programmed or erased cells, unstable reads, page wrap, or a real part's timing. This is simulation, not flash evidence.
+- **Modeled:** the core diagnostic uses synthetic inputs and memory-only motor outputs. Separately, the default application enables GPIO clocks, requests physical motor STOP and infrared off, and runs a bounded LED probe. The minimal KM0 main restores the stock shared-pad supply prerequisite.
+- **Observed:** feeds through the device API and the Dispense button, and power cuts during a feed resolving as uncertain, on the research unit. See the [roadmap](../roadmap.md) and the topic pages' Evidence sections.
+- SDK build success and model coverage do not establish electrical safety or physical reliability.

@@ -1,20 +1,22 @@
 # Realtek RTL8721DM (AmebaD)
 
-The SoC in the PLAF103, and the one Wellfed's SDK targets. Facts here hold for the chip and its SDK; how a given board wires them is on that [device's pages](../../devices/README.md). Labels follow the [evidence levels](../../evidence.md).
+The RTL8721DM is the Wi-Fi and Bluetooth chip inside the PLAF103, and the chip Wellfed's SDK targets. This page holds facts about the chip and its vendor SDK that hold on any board. How a particular feeder wires it is on that [device's pages](../../devices/README.md).
 
 ## Cores and SDK
 
-- **Two cores.** KM0 (the low-power core) and KM4 (the application core) run separate images built separately. Wellfed's KM0 image contains only `wellfed-hal-common`; the application and the Rust runtime run on KM4 ([firmware architecture](../../firmware/README.md)).
-- **The SDK** supplies startup, FreeRTOS, the radio stack, linker scripts and image packaging. Wellfed pins it under [`src/firmware/vendor/`](../../../src/firmware/vendor/README.md) and calls it from Rust through `wellfed-amebad-sys` (recovered).
-- **Bluetooth is LE only.** The SDK's `bt_flags.h` sets `F_BT_BREDR_SUPPORT 0`, and the stack has no A2DP or LE Audio (recovered; see [Bluetooth](../../firmware/bluetooth.md)).
+- **Two cores.** KM0, the low-power core, and KM4, the application core, run separate images built separately. Wellfed's KM0 image contains only `wellfed-hal-common`. The application and the Rust runtime run on KM4 ([firmware architecture](../../firmware/README.md)).
+- **The vendor SDK** supplies startup, FreeRTOS, the radio stack, linker scripts and image packaging. Wellfed pins it under [`src/firmware/vendor/`](../../../src/firmware/vendor/README.md) and calls it from Rust through `wellfed-amebad-sys`.
+- **Bluetooth is LE only.** The SDK's `bt_flags.h` sets `F_BT_BREDR_SUPPORT 0`, and the stack has no A2DP or LE Audio ([Bluetooth](../../firmware/bluetooth.md)).
 
 ## Pins
 
-The SDK encodes a pin as `(port << 5) | pin`, so `PA13` is 13 and `PB3` is 35. Some pins have a second fixed role that the board must release first. `PB3` is also `SWD_CLK`, and `PA7`/`PA8` are the LOGUART console (recovered). The [pin table](pins.md) lists every bonded pin with its SDK functions and each device's use of it.
+The SDK numbers a pin as `(port << 5) | pin`, so `PA13` is 13 and `PB3` is 35.
+
+Some pins have a second fixed role that the board must release first. `PB3` is also `SWD_CLK`, and `PA7`/`PA8` are the LOGUART console. The [pin table](pins.md) lists every bonded pin with its SDK functions and each device's use of it.
 
 ## Memory map
 
-From the linker scripts of the pinned SDK (`project/realtek_amebaD_va0_example/GCC-RELEASE/project_{hp,lp}/asdk/rlx8721d_layout*.ld`; recovered). The KM4 (`project_hp`) TrustZone layout is shown; the non-TrustZone `_is` variant differs only in the secure RAM split.
+These regions come from the pinned SDK's linker scripts, `project/realtek_amebaD_va0_example/GCC-RELEASE/project_{hp,lp}/asdk/rlx8721d_layout*.ld`. The table shows the KM4 (`project_hp`) TrustZone layout. The non-TrustZone `_is` variant differs only in the secure RAM split.
 
 | Region | Start | Size | Notes |
 | --- | --- | --- | --- |
@@ -39,15 +41,20 @@ The SDK reserves the first 24 KiB of flash for boot material:
 | `0x3000` | 4 KiB | XIP system data |
 | `0x4000` | 8 KiB | KM4 boot (XIP), 32-byte header |
 
-This matches the PLAF103's `0x000000–0x006000` pre-application range ([flash layout](../../devices/plaf103/flash-layout.md)). The SDK layout says where the SDK would put these, not what a factory image holds; a device's own backup is the authority.
+This matches the PLAF103's `0x000000–0x006000` pre-application range ([flash layout](../../devices/plaf103/flash-layout.md)). It says where the SDK would put these things, not what a factory image holds. A device's own backup is the authority.
 
 ## Boot and download mode
 
-- **ROM download mode.** The boot ROM enters UART download mode when the LOGUART TX line, `PA7`, is held low at cold power-on (recovered from manufacturer/SDK analysis). An SDK comment naming `PA30` conflicts with that. The PLAF103 entry that was actually tested is on its [UART page](../../devices/plaf103/uart.md).
-- **Factory loader and banks.** A factory loader in the first flash sectors chooses between two application banks by their validity markers. The bank offsets and selection order a given device uses are on its flash-layout page, e.g. [PLAF103](../../devices/plaf103/flash-layout.md) and [bank policy](../../firmware/bank-policy.md).
+- **ROM download mode.** The boot ROM enters UART download mode when the LOGUART TX line, `PA7`, is held low at cold power-on. An SDK comment naming `PA30` conflicts with that. The entry we actually tested on the PLAF103 is on its [UART page](../../devices/plaf103/uart.md#enter-download-mode).
+- **Factory loader and banks.** A factory loader in the first flash sectors picks one of two application banks by their validity markers. A device's flash-layout page gives its bank offsets and selection order, for example the [PLAF103's](../../devices/plaf103/flash-layout.md); see also [bank policy](../../firmware/bank-policy.md).
 
 ## External flash
 
-- External SPI NOR is mapped for execution at `0x08000000`. Flash offsets and mapped addresses are different coordinate systems, and so are OTA container offsets.
-- Flash reads can be decrypted on the fly (OTF). A RAM helper that reads flash changes controller state, including the OTF configuration (recovered; see [UART backups](../../devices/plaf103/uart.md#backup-boundaries)).
+- External SPI NOR is mapped for execution at `0x08000000`. Flash offsets, mapped addresses and OTA container offsets are three different coordinate systems.
+- Flash reads can be decrypted on the fly (OTF). A RAM helper that reads flash changes controller state, including the OTF configuration ([what a backup covers](../../devices/plaf103/uart.md#what-a-backup-covers)).
 - **OTP, eFuse and security registers are separate from external flash.** A full external-flash backup does not include them.
+- The flash clock is set by KM0's `Flash_Speed`. How fast a board can run it reliably depends on the board; the PLAF103 runs at 50 MHz ([flash clock](../../devices/plaf103/flash-layout.md#flash-clock)).
+
+## Evidence
+
+- **Recovered:** everything on this page comes from the pinned SDK (its linker scripts, `bt_flags.h` and HAL) and from manufacturer and SDK analysis, unless it links to a device page. The `PA7` download strap is from manufacturer and SDK analysis. The OTF side effect of the RAM helper is recovered from the helper's behavior.

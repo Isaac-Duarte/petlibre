@@ -55,6 +55,9 @@ const LINES: usize = 400;
 const TEST_LINES: usize = 600;
 /// Sources under `src/` that must not cite a board card.
 const CARD_FREE: [&str; 6] = ["rs", "c", "h", "toml", "md", "ts"];
+/// The one tracked page that may name cards: it tells agents how the
+/// ignored boards are kept. Every other page states the fact instead.
+const CARD_PAGE: &str = "AGENTS.md";
 
 macro_rules! regex {
     ($name:ident, $pattern:expr) => {
@@ -65,9 +68,9 @@ macro_rules! regex {
 
 regex!(USER_PATH, r"/(?:home|Users|mnt|media)/[A-Za-z0-9_.-]+/");
 regex!(DATED, r#"private/[^\s"']*202610\d{2}"#);
-// A board card's id: the firmware or feature board's prefix and a number.
-// Pinned policy names are lowercase and stay.
-regex!(CARD, r"\b(?:FW|FP)\d{1,3}[a-z]?\b");
+// A board card's id: a board's prefix and a number. Pinned policy names
+// are lowercase and stay.
+regex!(CARD, r"\b(?:FW|FP|SV|AR)\d{1,3}[a-z]?\b");
 regex!(CHANNEL, r#"(?m)^channel\s*=\s*"([^"]+)""#);
 
 // The raw output writers `wellfed-amebad-sys` marks `unsafe`; reads such
@@ -187,8 +190,11 @@ fn check_file(root: &Path, name: &str, summary: &mut Summary) {
             .errors
             .push(format!("{name}: dated private fixture path"));
     }
-    // Comments carry the constraint; a card's history lives on the boards.
-    if first == "src" && CARD_FREE.contains(&extension) && CARD.is_match(&content) {
+    // Comments and docs carry the constraint; a card's history lives on the
+    // boards, which are not published.
+    let cited = (first == "src" && CARD_FREE.contains(&extension))
+        || (extension == "md" && name != CARD_PAGE);
+    if cited && CARD.is_match(&content) {
         summary.errors.push(format!(
             "{name}: cites a board card; state the constraint instead"
         ));
@@ -523,6 +529,9 @@ mod tests {
         let card = ["FW", "16"].concat();
         fs::write(root.join("src/tools/b.rs"), format!("// {card}\n")).unwrap();
         fs::write(root.join("src/tools/c.rs"), "// fw16-pulse-v1\n").unwrap();
+        fs::create_dir_all(root.join("docs")).unwrap();
+        fs::write(root.join("docs/page.md"), format!("See {card}.\n")).unwrap();
+        fs::write(root.join("AGENTS.md"), format!("Board card {card}.\n")).unwrap();
         fs::create_dir_all(root.join("src/tools/page")).unwrap();
         fs::write(
             root.join("src/tools/page/Cargo.toml"),
@@ -548,6 +557,8 @@ mod tests {
             "src/tools/a.py",
             "src/tools/b.rs",
             "src/tools/c.rs",
+            "docs/page.md",
+            "AGENTS.md",
             "src/tools/page/Cargo.toml",
             "src/tools/client/Cargo.toml",
             "src/tools/auditor/Cargo.toml",
@@ -564,6 +575,7 @@ mod tests {
                 "dump.bin: binary/evidence files need explicit provenance review",
                 "src/tools/a.py: first-party tools are Rust; no Python sources under src/",
                 "src/tools/b.rs: cites a board card; state the constraint instead",
+                "docs/page.md: cites a board card; state the constraint instead",
                 "src/tools/page/Cargo.toml: links the stock server; run wellfed-stock and use wellfed-stock-api",
                 "src/tools/auditor/Cargo.toml: links the flash client; run wellfed-flash as a process and use wellfed-image",
             ]

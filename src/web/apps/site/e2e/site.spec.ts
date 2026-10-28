@@ -16,12 +16,12 @@ test("renders the landing page from its own origin only", async ({ page, baseURL
   await page.goto("/");
 
   await expect(page.locator("h1")).toHaveCount(1);
-  await expect(page.locator("h1")).toHaveText("Open firmware for your pet feeder.");
+  await expect(page.locator("h1")).toHaveText("Your pet's dinner shouldn't need the internet.");
   await expect(page.getByRole("link", { name: "View on GitHub" })).toHaveAttribute(
     "href",
     "https://github.com/Isaac-Duarte/wellfed",
   );
-  await expect(page.getByText("It is experimental and does not feed a pet yet.")).toBeVisible();
+  await expect(page.getByText("it isn't ready to look after a real pet yet", { exact: false })).toBeVisible();
   await expect(page.getByText("Not affiliated with or endorsed by PETLIBRO", { exact: false })).toBeVisible();
 
   // Every step and every Wellfed entry carries its stage in words.

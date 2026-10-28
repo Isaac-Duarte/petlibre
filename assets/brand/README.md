@@ -1,6 +1,6 @@
 # Brand
 
-Direction **Midnight** with mark **1a (slim band)**, chosen Oct 23, 2026. Licensed CC BY 4.0 ([assets](../README.md#license)).
+These are Wellfed's logo, icons and design tokens, and the rules for using them. The direction is **Midnight**, with mark **1a (slim band)**. Everything here is licensed CC BY 4.0 ([assets](../README.md#license)).
 
 | File | Use |
 | --- | --- |

@@ -1,6 +1,8 @@
 # well-fed.dev
 
-The project's landing page: one prerendered page in `src/web/apps/site`, served as static files by a Cloudflare Worker. It speaks to two readers, owners who want cloud-free feeding later and tinkerers who can help now, and it is as honest as the [README](../../README.md) about what works.
+This page is for maintainers of the project's landing page. The site is one prerendered page in `src/web/apps/site`, served as static files by a Cloudflare Worker.
+
+It speaks to two readers: owners who want cloud-free feeding later, and tinkerers who can help now. It is as honest as the [README](../../README.md) about what works.
 
 ## What it is
 
@@ -16,10 +18,11 @@ The project's landing page: one prerendered page in `src/web/apps/site`, served 
 ## Keeping it true
 
 The claims live in `src/lib/status.ts`:
-- the three setup steps, each with its stage (available now, works on the bench, in progress, planned);
-- the stock and Wellfed comparison. Its stock column comes from the [stock firmware notes](../devices/plaf103/stock/README.md); each Wellfed entry carries a stage.
 
-Update it by hand when a card's acceptance evidence changes on the [firmware board](../../FIRMWARE_BOARD.md) or the [feature board](../../FEATURE_BOARD.md). Set `UPDATED` to the day, and never claim more than the boards and notes do. Outbound links are in `src/lib/links.ts`.
+- the three setup steps, each with its stage (available now, works on the bench, in progress, planned);
+- the stock and Wellfed comparison. Its stock column comes from the [stock firmware notes](../devices/plaf103/stock/README.md), and each Wellfed entry carries a stage.
+
+Update it by hand when a status changes on the [roadmap](../roadmap.md). Set `UPDATED` to the day. Never claim more than the roadmap and the stock notes do. Outbound links are in `src/lib/links.ts`.
 
 ## Social card
 

@@ -8,7 +8,7 @@
 //! `WELLFED_RELEASE_SERVER` at another (a static release binary) to check
 //! that one. The container image's run is the ignored test: it needs
 //! `WELLFED_RELEASE_IMAGE` and a container runtime, so it never runs in
-//! `make check`. docs/api/README.md#packaging has both commands.
+//! `make check`. docs/server/running.md#packaging has both commands.
 #![cfg(unix)]
 
 use std::io::{BufRead, BufReader};

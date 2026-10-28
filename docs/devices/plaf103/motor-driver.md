@@ -1,10 +1,12 @@
-# Motor driver and FW30 electrical checks
+# Motor driver and electrical checks
 
-Status: FW30 in progress. The ROM-loader and firmware STOP states are measured, and a startup drive pulse was found at the motor and fixed. The emitter OFF levels, the power-on flicker with the inputs probed, and resets remain.
+The PLAF103 turns its food wheel with a small DC motor behind an H-bridge driver. This page covers that driver, what we measured at it, and the checks that show the motor never moves when it shouldn't. It is a reference for firmware and hardware contributors.
 
-## Driver
+The short version: in the ROM loader the driver sits in standby, and under Wellfed's stopped state it brakes. Wellfed's startup now goes from power-on straight to brake with no drive pulse. The emitter currents and the pin-to-input trace are still open.
 
-The motor driver is a **TC118AH** (Fine Made Microelectronics, SOP-8, single-channel H-bridge), designator U7, beside CON3. It was identified from the package marking (physical, October 21 2026); the datasheet is S&CIC2102 v1.1, kept in the ignored `private/references/`.
+## The driver
+
+The driver is a **TC118AH** (Fine Made Microelectronics, SOP-8, single-channel H-bridge), designator **U7**, beside CON3. Its datasheet is S&CIC2102 v1.1.
 
 | Pin | Name | Pin | Name |
 | --- | --- | --- | --- |
@@ -20,72 +22,51 @@ The motor driver is a **TC118AH** (Fine Made Microelectronics, SOP-8, single-cha
 | L | H | L | H | Reverse |
 | H | H | L | L | Brake |
 
-Datasheet facts that matter here:
-- **Pull-downs:** INA and INB have 150 kΩ internal pull-downs (120–200 kΩ). Undriven inputs therefore mean standby.
+What the datasheet tells us:
+
+- **Pull-downs:** INA and INB have 150 kΩ internal pull-downs (120–200 kΩ), so undriven inputs mean standby.
 - **Logic levels:** VIH is at least 2.0 V and VIL at most 0.8 V, so 3.3 V GPIO drives it directly.
 - **Supply:** VDD is 2.0–7.2 V.
-- **STOP is brake:** stock STOP (PA13 = PA14 = HIGH), which the replacement copies, puts the driver in **brake**, with both outputs driven low.
+- **STOP is brake:** stock's STOP (PA13 = PA14 = HIGH), which Wellfed copies, puts the driver in brake, with both outputs driven low.
 
-The mapping of PA13 and PA14 to INA and INB is inferred from stock's complementary drive table. It is not traced. The two resistors marked `102` (1 kΩ) beside pins 2 and 3 look like series resistors from the SoC, but they are not traced either.
+Which of PA13 and PA14 drives INA and which INB is inferred from stock's complementary drive table, not traced. The two resistors marked `102` (1 kΩ) beside pins 2 and 3 look like series resistors from the SoC, but they are not traced either.
 
-## Harness
+## The harness
 
-On the research unit (physical, owner photographs):
-- **Blue and white:** these go to a can-type DC motor with a disc suppression capacitor across its terminals. They are the motor leads, through the FB1/FB8 ferrite beads to OUTA/OUTB.
-- **Yellow pair:** in the ROM loader it read 0 V and 3.3 V to ground, 3.3 V between them. That is a pulled-up logic line and its ground, most likely the PA18 feedback sensor, which read HIGH throughout FW13. Earlier notes calling these the motor leads were wrong.
+- **Blue and white:** the motor leads, to a can-type DC motor with a disc suppression capacitor across its terminals. They run through the FB1 and FB8 ferrite beads to OUTA and OUTB.
+- **Yellow pair:** a pulled-up logic line and its ground. In the ROM loader it read 0 V and 3.3 V to ground, and 3.3 V between them. It is most likely the PA18 feedback sensor.
 
-## Measurements
+## Measured states
 
 Multimeter (Klein MM325), DC volts, COM on USB ground. The feeder was powered through the relay bench, with no batteries.
 
 | State | INA (2) | INB (3) | VDD (4) | OUTA (8) | OUTB (5) | Motor |
 | --- | --- | --- | --- | --- | --- | --- |
-| ROM loader (`bench.py loader`, no application code) | 0.0 V | 0.0 V | 5 V | 0.13 V | 0.13 V | Still, no hum |
-| Replacement firmware at STOP (FW13 review 02 running) | 3.3 V | 3.3 V | 5 V | 0 V | 0 V | Still; no hum at power-on |
+| ROM loader, no application code | 0.0 V | 0.0 V | 5 V | 0.13 V | 0.13 V | Still, no hum |
+| Wellfed at STOP | 3.3 V | 3.3 V | 5 V | 0 V | 0 V | Still, no hum at power-on |
 
-In the ROM loader the driver is in **standby**: both inputs are held low by its pull-downs and both outputs float. That is the state every bench flash and dump runs in, so loader entry cannot drive the motor. This is the guarantee FW31 relies on.
+- **In the ROM loader the driver is in standby.** Its pull-downs hold both inputs low and both outputs float. Every bench flash and dump runs in this state, so entering the loader cannot drive the motor.
+- **At Wellfed's STOP the driver brakes.** Both inputs are HIGH and both outputs sit at 0 V. Because the inputs are equal, this state can't show which GPIO drives which input.
 
-Under the replacement firmware's STOP, both inputs are driven HIGH and both outputs are held at 0 V, which is the driver's **brake**. This is the first electrical confirmation that stopped-output startup reaches the driver, and that its STOP is brake, not drive. Both inputs are equal in this state, so it does not show which GPIO drives INA and which INB.
+## Startup: straight to brake
 
-### Startup transients at the motor (October 24)
+Wellfed's stopped startup first writes both output latches HIGH. The data register holds them while the pins are still inputs. It then calls `gpio_enable_outputs`, which sets the pad and interrupt registers and turns both pins into outputs with one register write. The driver goes from whatever its undriven inputs read straight to brake. When the board opens later and the pins are already outputs, only the latch write changes, so there is no coast either.
 
-Logic analyzer at 2 MHz, `--probes outputs`: D2 and D3 on the legs of the motor's suppression capacitor (which join its two terminals), GND on the bench ground rail. Captures and reports are in the ignored `private/captures/fw30-outputs-*` and `private/reports/`.
+This matters because the old order enabled one pin per ROM call. For the length of one `gpio_init`, one input was driven while the other was left undriven. If the undriven input read the opposite level, the driver drove the motor for about 105 µs. The same per-pin order also coasted the motor for about 224 µs when the board opened.
 
-| Session | Build | Cycles | After power-on |
-| --- | --- | --- | --- |
-| `check-01`, `check-02` | `feeder` before the fix | 4 boots | About 100 ms both HIGH (standby, outputs undriven), then **104.5–105 µs with D3 HIGH and D2 LOW** in every cycle, then both LOW (brake) |
-| `check-03`, `boot-50` | `feeder` v154 (`e5b5c1dd…`) | 51 boots | 98–111 ms standby, then straight to brake. No differing read after the first millisecond in any cycle |
-| `loader-50` | ROM loader | 50 entries | Standby (both HIGH) throughout |
+The ROM's `GPIO_Init` for an output does, per pin, `Pinmux_Config` (pad function GPIO, pad shutdown cleared), `GPIO_INTMode` disable, and a `DDR` bit set. It sets no pull for an output, and the pinmap gives PA13 and PA14 no pull.
 
-**The 105 µs pulse was a real drive at every boot (physical; cause by static analysis).** Stopped startup preloaded both latches HIGH, then enabled the two pins as outputs one `gpio_init` call at a time, so PA13 drove HIGH while PA14 still read LOW through the driver's pull-down. The motor's winding joins the two leads, so one cannot sit at 5 V while the other is at 0 V unless the driver holds it there. Startup then enabled both pins LOW (standby) and wrote STOP to both in one port write; the pulse was absent from all 51 boots, but that fix still enabled one pin per call and only moved the assumption: it holds while the undriven inputs read LOW, which the next section shows they need not.
+Host tests run stopped startup and the board opening with the undriven inputs LOW and with them HIGH, sampling the driver inputs after every register write. The old order fails with HIGH (`motor driven: 0x4000`) and with the coast. The new one passes both.
 
-**Power-on flicker (physical; not attributable to our code).** Within the first ~0.3 ms after the relay closes, the two outputs read differently for 0.5–11.5 µs in 39 of 50 boots, and for up to 110 µs in the loader, where no application code runs and the inputs read 0 V on a meter. The supply and the relay contacts are still settling then.
+### What a logic analyzer can and can't tell
 
-**Limit of outputs-only captures.** Before power-on, with the board unpowered and still discharging after the previous loader cycle (2 s off), the two leads read differently for up to 39 ms. They are joined by the winding and nothing powers the driver, so this is the analyzer's two channels resolving one common level near their threshold differently. A differing read is therefore proof of drive only when the levels are firm. The power-on flicker happens during that kind of ramp, so the outputs alone cannot call it drive or noise; the inputs, which are always driven or pulled down, can.
-
-### Startup transients at the inputs (October 26)
-
-Logic analyzer at 2 MHz, `--probes driver`: D0 on INA (pin 2), D1 on INB (pin 3), D2 and D3 on the outputs. `feeder` v232 from master, 50 relay boots (`fw30-inputs-20261026-02`; cycle 001 truncated) and three loader entries (`fw30-inputs-loader-20261026-02`, aborted by an analyzer USB timeout). Every complete boot showed the same sequence (physical):
-
-| After the inputs rise | INA, INB | Lasting | What it is |
-| --- | --- | --- | --- |
-| 0 | LOW, LOW → HIGH, HIGH | INA first by 0.5–9 µs (once 30 µs, falling back once) | Power-on, undriven: the loader entries show the same rise and skew with no application code |
-| 97–105 ms | HIGH, LOW | 104.5–105.5 µs, OUTB HIGH | Drive, from stopped startup's first `gpio_init` |
-| +105 µs | LOW, LOW | 1.5–2 µs | Both pins enabled LOW, before the STOP write |
-| then | HIGH, HIGH | until the board opens | Brake |
-| 925–937 ms | LOW, LOW | 220–228 µs | Coast as the board opens, then brake again |
-
-**The undriven inputs read HIGH with the hooks on them (physical).** They read LOW before power-on and HIGH from the moment the board powers, in the loader as well, where a meter without the analyzer read 0 V. The likeliest reading is the analyzer's input bias overcoming the 150 kΩ pull-downs once the driver's supply clamps release; the outputs reading LOW (brake) in the loader suggests the driver acts on that level. The power-on skew between the two lines is not our code: nothing of ours runs then.
-
-**The 105 µs drive is the first enable, not a second one (static analysis against the capture).** Stopped startup wrote both latches LOW (no effect on inputs), then `gpio_init(PA13)` drove one input LOW against the other's undriven HIGH for the length of the ROM call, then `gpio_init(PA14)` drove the other LOW (the 1.5–2 µs LOW, LOW), then one port write made both HIGH. The ~100 ms before it is boot to application start, as in October 24's 98–111 ms. The second call of the same routine, as the board opens, takes the pins from brake through a LOW, LOW coast for two ROM calls (the 220–228 µs). It was INB that fell first, so PA13 drives INB here if the hooks are on the pins the session names; that is opposite to the stock-derived mapping and needs the hook wiring checked before it counts as the polarity check.
-
-**The fix makes the enable independent of the undriven level.** The ROM's `GPIO_Init` for an output is, per pin, `Pinmux_Config` (pad function GPIO, pad shutdown cleared), `GPIO_INTMode` disable and a `DDR` bit set (static analysis of the SDK's ROM image; it sets no pull for an output, and the pinmap sets PA13 and PA14 to no pull). `stopped::enable_motor_stopped` now writes both latches HIGH, which the data register holds while the pins are inputs (as the October 24 boot pulse showed), and then calls `gpio_enable_outputs`, which does the same pad and interrupt writes and then sets both direction bits in one register write. The driver goes from whatever its undriven inputs read straight to brake. When the pins are already outputs, as the board opens, the latch write is the only change, so there is no coast. Host tests run stopped startup and the board opening with undriven inputs LOW and HIGH and sample the driver's inputs after every register write; the previous order fails with HIGH (`motor driven: 0x4000`) and with the coast, and the new one passes both.
-
-**Bench check (open).** With the inputs probed: five loader entries (`--mode loader --off-seconds 10`) to record the undriven level and the power-on skew with no firmware running, then 50 boots of the fixed build. Pass: INA = INB at every sample after the MCU rail is up, with a single LOW-or-HIGH to HIGH, HIGH step at application start and no LOW, LOW interval when the board opens. The power-on skew, if present in the loader too, belongs to the probe and the supply ramp; measure the undriven input voltage with the meter while the analyzer is attached to settle which.
+- **The analyzer biases undriven inputs HIGH.** With it attached, a meter read INA and INB at 2.3 V in the loader, against 0 V without it. So the old boot pulse needed the probe's bias, and likely never happened unprobed. The coast at board open was driven by firmware and didn't depend on it. The fix holds either way.
+- **The outputs alone can't prove drive during a supply ramp.** The two motor leads are joined by the winding. When nothing powers the driver, the analyzer's two channels can resolve one common level differently near their threshold. A differing read counts as drive only when the levels are firm. The inputs, which are always driven or pulled down, settle it.
+- **In standby the outputs float** and read at the analyzer's floating level, HIGH on the owner's clone. An outputs-only capture therefore can't confirm the brake or the power-on edge.
 
 ## Emitter test points
 
-CON1 (silkscreen 余粮红外, "remaining-food infrared") carries the food-level sensor, with TP20 and TP21 beside it near Q5. CON2 carries the outlet sensor, with TP22 beside it. The `fw13-optics-v2` image (5 s windows) holds each emitter state long enough to read a meter.
+CON1 (silkscreen 余粮红外, "remaining-food infrared") carries the food-level sensor, with TP20 and TP21 beside it near Q5. CON2 carries the outlet sensor, with TP22 beside it. The `fw13-optics-v2` image holds each emitter state for 5 s, long enough to read a meter.
 
 | Test point | Emitters off | PA15 on | PB3 on | Both on |
 | --- | --- | --- | --- | --- |
@@ -93,23 +74,66 @@ CON1 (silkscreen 余粮红外, "remaining-food infrared") carries the food-level
 | TP21 | ~2.68 V | ~2.68 V | ~2.68 V | ~2.68 V |
 | TP22 | 0.66 V | 0.11 V | 0.66 V | 0.11 V |
 
-TP20 follows only the food emitter (PA15). It reads 3.3 V when off and about 1.2 V, a typical infrared LED forward voltage, when on. It is on the food emitter's drive path, and that emitter's OFF state is 3.3 V at this node (physical, one run). TP21, held for a whole run, read 2.67–2.68 V on 13 of 16 cues regardless of emitter state. The three ~0 V readings did not recur with any state and are taken as probe slips. It is not an emitter drive or receiver output, most likely a supply or bias node. TP22, held for a whole run, matched the table on all 19 cues over three cycles. It follows PA15 only, not PB3, despite sitting beside CON2. The levels (0.66 V dark, a base-emitter clamp; 0.11 V lit) fit the food receiver's phototransistor driving an inverting stage, which would make PA17 HIGH when lit, as FW13 measured. That is inferred from voltages, not traced.
+- **TP20** follows only the food emitter (PA15). It sits on that emitter's drive path: 3.3 V off, and about 1.2 V on, a typical infrared LED forward voltage. So **the food emitter's OFF state is confirmed**: 3.3 V, no LED current.
+- **TP21** reads 2.67–2.68 V whatever the emitters do. It is most likely a supply or bias node, not an emitter drive or receiver output.
+- **TP22** follows PA15, not PB3, despite sitting beside CON2. Its levels (0.66 V dark, a base-emitter clamp; 0.11 V lit) fit the food receiver's phototransistor driving an inverting stage. That would make PA17 HIGH when lit, as measured.
 
-The food emitter's OFF state is therefore confirmed electrically: TP20 at 3.3 V, no LED current. No test point found so far follows PB3; the outlet sensor's own connector does. **CON2, physical (October 26, owner probing at the wire entries, feeder v232 at rest, then during 1-portion feeds 46 and 47 with the emitters on):** green 0 V (ground), blue 3.3 V (supply), white 2.6 V at rest and 0.03 V while feeding, red 0.6 V at rest and 0.08 V while feeding. White is the emitter's switched side: the driver pulls it to ground to light the LED, and at rest it sits at 2.6 V with no current path, so the outlet emitter's OFF state is confirmed electrically. Red behaves like TP22 on the food sensor (a receiver output, pulled low when lit). The roles are inferred from the levels (static); the levels are physical.
+No test point follows PB3. The outlet sensor's own CON2 wires do:
 
-## Remaining for FW30
+| CON2 wire | At rest | Emitters on, feeding | Role (inferred) |
+| --- | --- | --- | --- |
+| Green | 0 V | 0 V | Ground |
+| Blue | 3.3 V | 3.3 V | Supply |
+| White | 2.6 V | 0.03 V | Emitter's switched side |
+| Red | 0.6 V | 0.08 V | Receiver output, pulled low when lit |
 
-1. **Outlet emitter OFF level (PB3):** done (CON2 white wire, above). Emitter current for both emitters remains: the voltage across each emitter's series resistor with a meter, or a supply-current meter.
-2. **Transients:** with the inputs probed, the boot pulse returned against undriven inputs that read HIGH; the enable no longer depends on that level, and the fixed build's bench check is open ([inputs](#startup-transients-at-the-inputs-october-26)). Left besides: the power-on skew in the loader, the hook wiring behind the PA13-to-INB reading, and resets. Use `--off-seconds 10` for loader sessions so the board has discharged before each capture starts. The procedure:
-   1. Install `sigrok-cli` and the `fx2lafw` firmware (Arch: `sigrok-firmware-fx2lafw`); without it the clone enumerates but cannot open.
-   2. Wire D0 to INA (pin 2), D1 to INB (pin 3), D2 to OUTA (pin 8), D3 to OUTB (pin 5), and analyzer GND to board GND. Check the analyzer's input rating before connecting the 5 V outputs.
-   3. Run `wellfed-bench transients NAME --cycles 50` and `--mode loader`.
-   4. Audit with `wellfed-audit transients --capture private/captures/NAME --output NEW-REPORT`.
+The driver pulls white to ground to light the LED. At rest it sits at 2.6 V with no current path, so **the outlet emitter's OFF state is confirmed** too.
 
-   A pass needs, on every cycle: an unpowered start, no sample with INA ≠ INB or OUTA ≠ OUTB, and the brake reached and held after boot, or standby held throughout a loader entry.
+## Open checks
 
-   **Outputs only:** the driver's pins are 1.27 mm apart, too close for ordinary hooks. `--probes outputs` records only D2 and D3 at the motor (on its terminals, or on the suppression capacitor's legs where glue covers the tabs: the curved leg on the blue-lead side to D2, the straight leg to D3; which of them is OUTA is not traced, and the check does not depend on it), with analyzer GND on the bench ground rail. The motor turns only while those two differ, but near the analyzer's threshold one common level can read differently on the two channels ([above](#startup-transients-at-the-motor-october-24)), so a differing read during a supply ramp needs the inputs to settle. In standby the outputs are undriven and read at the analyzer's floating level (HIGH on the owner's clone, whose unconnected channels also read HIGH), so the audit does not claim the brake reached, or the power-on edge. The report records `probed: outputs` and what was not seen, and the polarity item stays open.
-   **A reset mid-drive (open):** when a watchdog reset ended a drive (October 26, `fw16-stopfail-20261026-03`), the motor's leads read differently three more times, for 38–110 µs, within 0.2 ms of the drive's end. Two reads had the drive's polarity and one the opposite, and no drive followed (physical; [result](../../firmware/motor-pulse.md#result-october-26)). Back-EMF from the coasting motor would explain the first two but not the third, and outputs alone cannot tell. Check this transition with the inputs probed, beside the power-on flicker.
-3. **Polarity:** confirm the stock-derived polarity electrically, by tracing PA13/PA14 to INA/INB.
+1. **Emitter current** for both emitters: the voltage across each emitter's series resistor, or a supply-current meter.
+2. **Polarity:** trace PA13 and PA14 to INA and INB. The input captures suggest PA13 drives INB, opposite to the stock-derived mapping. Check the clip labels against the pin map before counting that as the polarity check.
+3. **A reset mid-drive:** when a watchdog reset ended a drive, the motor leads read differently three more times, for 38–110 µs, within 0.2 ms of the drive's end. Two had the drive's polarity and one the opposite, and no drive followed. Back-EMF from the coasting motor would explain the first two but not the third. Capture this transition with the inputs probed.
+4. **The power-on skew:** inside the supply ramp, before any code runs, single threshold skews of up to 4.5 µs remain between the inputs. Nobody has classified them yet. If they also appear when the loader runs instead of our code, they belong to the probe and the ramp. A scope on the inputs, or a meter on the undriven inputs with the analyzer attached, would settle which.
 
-Probe pins 2–4 at the tip of each foot. Pin 3 (INB) is next to pin 4 (VDD), and bridging them drives INB high, which with INA low is reverse drive.
+## Capture startup transients
+
+Use this to repeat the startup check, or to record resets.
+
+1. Install `sigrok-cli` and the `fx2lafw` firmware (Arch: `sigrok-firmware-fx2lafw`). Without the firmware the clone enumerates but cannot open.
+2. Wire the analyzer: D0 to INA (pin 2), D1 to INB (pin 3), D2 to OUTA (pin 8), D3 to OUTB (pin 5), and analyzer GND to board GND (pin 6 or 7).
+
+   > [!WARNING]
+   > Check the analyzer's input rating before you connect the 5 V outputs. Probe pins 2–4 at the tip of each foot. Pin 3 (INB) is next to pin 4 (VDD). Bridging them drives INB high, which with INA low is reverse drive.
+
+3. Run the captures:
+
+   ```sh
+   wellfed-bench transients NAME --cycles 50
+   wellfed-bench transients NAME --mode loader --off-seconds 10
+   ```
+
+   Use `--off-seconds 10` for loader sessions, so the board has discharged before each capture starts.
+
+4. Audit each capture:
+
+   ```sh
+   wellfed-audit transients --capture private/captures/NAME --output NEW-REPORT
+   ```
+
+A cycle passes when it starts unpowered, no sample has INA ≠ INB or OUTA ≠ OUTB, there is no LOW, LOW coast when the board opens, and the brake is reached and held after boot (or standby is held throughout a loader entry).
+
+**If you can only reach the outputs:** the driver's pins are 1.27 mm apart, too close for ordinary hooks. `--probes outputs` records only D2 and D3 at the motor, with analyzer GND on the bench ground rail. Clip them on the motor terminals, or on the suppression capacitor's legs where glue covers the tabs: the curved leg on the blue-lead side to D2, the straight leg to D3. Which of them is OUTA is not traced, and the check doesn't depend on it. The report records `probed: outputs` and what it could not see, and the polarity check stays open.
+
+## Evidence
+
+- **Observed, October 21, 2026:** the TC118AH identified from its package marking. The datasheet is kept in the ignored `private/references/`.
+- **Observed:** the harness colors and the can motor, from owner photographs. Earlier notes that called the yellow pair the motor leads were wrong. PA18 read HIGH throughout the optical-input bring-up.
+- **Observed:** the loader and STOP meter readings. The STOP reading was taken with the optics bring-up build running. This is the first electrical confirmation that stopped startup reaches the driver and that its STOP is brake.
+- **Observed, October 24, 2026 (outputs only, 2 MHz, captures `fw30-outputs-*`):** before the first fix, four boots each showed about 100 ms of standby, then 104.5–105 µs with D3 HIGH and D2 LOW, then brake. After a first fix (build v154, `e5b5c1dd…`), 51 boots went from 98–111 ms of standby straight to brake. Fifty loader entries held standby. Within about 0.3 ms of relay closure the outputs differed for 0.5–11.5 µs in 39 of 50 boots, and for up to 110 µs in the loader, where no code runs. Before power-on, with the board still discharging after a 2 s off, the leads read differently for up to 39 ms.
+- **Observed, October 26, 2026 (inputs probed, 2 MHz, build v232, `fw30-inputs-20261026-02` and `fw30-inputs-loader-20261026-02`):** every complete boot still showed the 105 µs forward input drive 97–105 ms after the inputs rose, a 1.5–2 µs LOW, LOW interval, then brake, and a 220–228 µs coast at 925–937 ms as the board opened. The inputs read HIGH from power-on even in the loader. INB fell first at board open. **Static analysis** against the capture: the pulse was the first `gpio_init`, and the first fix had only moved the assumption onto the undriven level.
+- **Observed, October 26, 2026 (evening, build v236 with the current fix):** a meter read INA and INB at 2.3 V in the loader with the analyzer attached, 0 V without. Two boots and four loader cycles showed no drive and no coast before the analyzer dropped off USB.
+- **Observed, October 27, 2026 (build v244, `807f7283`, sessions `fw30-latch50-20261027-01`…`07`, 10 s off):** the current fix passed 50 cold boots. After the first millisecond of the supply ramp, INA = INB and OUTA = OUTB at every sample of every boot. There was no drive at board open, and every boot ended in brake.
+- **Observed, October 26, 2026:** the reset mid-drive transitions, in `fw16-stopfail-20261026-03` ([motor pulse](../../firmware/motor-pulse.md)).
+- **Observed:** the TP20, TP21 and TP22 readings. TP21 read 2.67–2.68 V on 13 of 16 cues; three ~0 V readings did not track any state and are taken as probe slips. TP22 matched on all 19 cues over three cycles. The roles are inferred from the voltages, not traced.
+- **Observed, October 26, 2026:** the CON2 wire levels, probed by the owner at the wire entries with feeder v232 at rest and during 1-portion feeds 46 and 47. The roles are inferred from the levels.

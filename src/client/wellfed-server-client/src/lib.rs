@@ -18,7 +18,7 @@
 //! cannot make (a malformed one, in a test), with the same base, origin
 //! and credentials.
 //!
-//! [API design]: ../../../../docs/api/README.md
+//! [API design]: ../../../../docs/server/README.md#the-http-api
 #![forbid(unsafe_code)]
 
 mod audit;

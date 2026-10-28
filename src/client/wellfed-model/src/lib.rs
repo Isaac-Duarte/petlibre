@@ -12,7 +12,7 @@
 //! as they are, and its OpenAPI schemas come from their derives): fields
 //! `snake_case`, times RFC 3339, keys and fingerprints lowercase hex.
 //!
-//! [API design]: ../../../../docs/api/README.md
+//! [API design]: ../../../../docs/server/design.md#crates
 #![forbid(unsafe_code)]
 
 pub mod convert;

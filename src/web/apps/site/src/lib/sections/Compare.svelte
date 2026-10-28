@@ -7,10 +7,10 @@
 
 <section id="compare" class="section" aria-labelledby="compare-title">
   <div class="wrap">
-    <h2 id="compare-title">Stock firmware and Wellfed, side by side.</h2>
+    <h2 id="compare-title">What changes when you switch.</h2>
     <p class="lede">
-      The stock column comes from studying firmware 1.1.15. The Wellfed column is the goal, and each entry says how far
-      along it is as of <time datetime={UPDATED}>{updated}</time>.
+      We learned how stock works by studying firmware 1.1.15. The Wellfed column is where we're going, with how far
+      along each part is as of <time datetime={UPDATED}>{updated}</time>.
     </p>
 
     <!-- A real table: on phones each row restacks, and the column names come back as labels. -->

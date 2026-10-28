@@ -13,7 +13,7 @@
 # with zig, so an arm64 image builds on an x86_64 host with no emulation:
 # the arm64 stages only copy files.
 #
-# See docs/api/README.md#packaging for running it (host networking for mDNS
+# See docs/server/running.md#packaging for running it (host networking for mDNS
 # discovery, or `--no-discovery` on a bridged network).
 
 # The image's Rust is rust-toolchain.toml's channel (`cargo xtask

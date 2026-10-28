@@ -1,23 +1,47 @@
 # Import provenance
 
-Wellfed begins with a curated copy of first-party code from a private PLAF103 research archive. The archive remains separate and is not a runtime/build dependency. No old Git history, raw captures, private evidence, vendor binaries, device backups, or decompiled outputs were imported.
+Wellfed began as a curated copy of first-party code from a private PLAF103 research archive. This page records what came across, what stayed behind, and how the archive is kept. The archive is separate, and nothing builds or runs from it.
 
-[import-manifest.json](import-manifest.json) records the source revision and SHA-256 of each selected source file **before** portability/documentation changes. These hashes describe the import, not the current files or a deployable firmware image. The private revision is an audit reference, not a public dependency or reproducible public link.
+## What came across
 
-The selected code comprises the Rust server and firmware workspace, their tests, SDK pins/hooks/build audits, simulator scenarios, stock marker/probe preparation, UART read/guarded recovery tools, and their local dependencies. Unrelated stock-behavior emulators, Ghidra tooling, host-specific hotspot setup, experiment diaries, and historical commit mappings stay in the research archive.
+- The Rust server and firmware workspace, and their tests.
+- SDK pins, hooks and build audits.
+- Simulator scenarios.
+- Stock marker and probe preparation.
+- UART read and guarded recovery tools, and their local dependencies.
 
-Documentation consolidates label/board inspection, UART and backup observations, instruction-level analysis of stock 1.1.15, and host/model testing. Raw evidence is not public, so a summarized observation is explicitly not a publicly reproducible hardware acceptance result. Guides cite external reference documents and retain relevant firmware addresses/versions without copying vendor code or private device identifiers.
+No old Git history, raw captures, private evidence, vendor binaries, device backups or decompiled outputs were imported. Unrelated stock-behavior emulators, Ghidra tooling, host-specific hotspot setup, experiment diaries and historical commit mappings stayed in the archive.
 
-Portability changes make network/capture inputs explicit, default new configurations to UTC, replace dated fixture paths, separate contributor tests from optional binary evidence, and rewrite current instructions. Existing Rust crate names, wire formats, C ABI, and guarded recovery restrictions are retained. The initial repository is prepared for review; no publication, deployment, or hardware operation is part of this migration.
+[import-manifest.json](import-manifest.json) records the source revision and SHA-256 of each selected file **before** the portability and documentation changes. Those hashes describe the import, not the current files or any deployable image. The private revision is an audit reference, not a public dependency or a reproducible link.
 
-## Later code update
+## What changed on the way in
 
-[import-updates.json](import-updates.json) records the follow-up source snapshot and incoming hashes. This update carries the region-scoped development updater, startup evidence verifier, stopped outputs, LED diagnostic, shared-pad supply fix, helper-readiness synchronization, and associated tests. The feature board and guides consolidate new findings without importing the bench diary or personal agent permissions.
+- Network and capture inputs became explicit.
+- New configurations default to UTC.
+- Dated fixture paths became generic ones.
+- Contributor tests were separated from optional binary evidence.
+- Current instructions were rewritten.
 
-Private material was copied separately into ignored storage at the user's request. Copied SDK worktree administration points to the local copied SDK so later local builds do not modify the research archive; raw evidence content is retained. Generic fixture aliases preserve complete report bundles. Previous Wellfed code/docs are retained in an ignored migration backup. Neither copied receipts nor old source identities authorize a new physical operation.
+Crate names, wire formats, the C ABI and the guarded recovery restrictions stayed as they were. The import included no publication, deployment or hardware operation.
 
-## Self-contained research preservation
+The docs consolidate label and board inspection, UART and backup observations, instruction-level analysis of stock 1.1.15, and host and model testing. Raw evidence is not public, so a summarized observation is not a publicly reproducible hardware result. The guides cite external references and keep the relevant firmware addresses and versions, without copying vendor code or private device identifiers.
 
-The original research repository can be retired without making it a dependency of this checkout. Ignored `private/research-archive/files/` retains its complete tracked source/documentation snapshot, including omitted research utilities and dated records. `research-history.bundle` is a verified self-contained Git bundle of the original branches and history; it can be cloned locally without the original directory. `snapshot.json` identifies the archived revision and bundle hash. An imported firstboot SDK-build archive retains the original artifacts before a Wellfed rebuild.
+## A later code update
 
-Copied SDK worktree administration and toolchain links reference Wellfed's local copies. Generic fixture aliases point to local evidence bundles. Historical logs, receipts, frozen images, and archived source can still mention the old path as recorded metadata; they are preserved rather than rewritten into new evidence. Active public workflows use only this repository plus explicitly acquired dependencies. No external running service or physical bench session is moved by this migration.
+[import-updates.json](import-updates.json) records a follow-up source snapshot and its incoming hashes. It brought the region-scoped development updater, the startup evidence verifier, stopped outputs, the LED diagnostic, the shared-pad supply fix, helper-readiness synchronization, and their tests.
+
+Private material was copied separately into ignored storage. The copied SDK worktree's administration points to the local copy, so local builds never modify the archive. Raw evidence content is kept as it was. Neither copied receipts nor old source identities authorize a new physical operation.
+
+## The preserved research archive
+
+The original research repository can be retired without this checkout depending on it. The ignored `private/research-archive/` holds:
+
+| Path | Contents |
+| --- | --- |
+| `files/` | The complete tracked source and documentation snapshot, including omitted research utilities and dated records |
+| `research-history.bundle` | A verified, self-contained Git bundle of the original branches and history. You can clone it locally without the original directory |
+| `snapshot.json` | The archived revision and the bundle's hash |
+
+An imported firstboot SDK build archive keeps the original artifacts from before a Wellfed rebuild.
+
+Copied SDK worktree administration and toolchain links point to Wellfed's local copies, and generic fixture aliases point to local evidence bundles. Historical logs, receipts, frozen images and archived source may still name the old path as recorded metadata. They are kept as they are, not rewritten into new evidence. Active workflows use only this repository plus explicitly acquired dependencies. No external running service or physical bench session moved with the import.

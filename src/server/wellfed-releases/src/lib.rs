@@ -23,7 +23,7 @@
 //!
 //! Time comes in as `now` from the server's clock, so tests fix it.
 //!
-//! [API design]: ../../../../docs/api/README.md
+//! [API design]: ../../../../docs/server/design.md#releases
 #![forbid(unsafe_code)]
 
 mod cache;

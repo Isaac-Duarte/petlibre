@@ -3,7 +3,7 @@
 //! The compiler keeps the server's layers apart only if each crate's
 //! dependencies follow the drawn arrows, so a manifest change that adds a
 //! shortcut fails here instead of in review. The rules and their reasons are
-//! the API design's (docs/api/README.md#crates):
+//! the API design's (docs/server/design.md#crates):
 //!
 //! - only `wellfed-store` depends on sqlx, so SQL stays in one crate;
 //! - nothing below `wellfed-server` links axum, even through another crate;

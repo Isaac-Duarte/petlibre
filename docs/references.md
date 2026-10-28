@@ -1,6 +1,6 @@
 # References
 
-Outside sources the docs cite. These are leads and comparison material, never authority over what a unit actually shows. Anything taken from a peer project is labelled **External** ([evidence levels](evidence.md)) until it is observed on our own unit.
+These are the outside sources the docs cite. They are leads and comparison material, never authority over what a unit actually shows. Anything taken from a peer project is labelled **External** ([evidence levels](evidence.md)) until it is observed on our own unit.
 
 ## Datasheets and filings
 
@@ -24,4 +24,4 @@ Other people's work on PETLIBRO devices. Different models, different units, and 
 
 ## Documentation models
 
-Projects whose doc layout this tree follows: [Asahi Linux docs](https://github.com/AsahiLinux/docs) (per-block hardware pages, feature-support tables), [LibreTiny](https://github.com/libretiny-eu/libretiny) (per-chip and per-board pages, dumping and partition layouts), and [Valetudo](https://github.com/Hypfer/Valetudo) (supported-device lists, rooting and recovery pages).
+Projects whose layout these docs follow: [Asahi Linux docs](https://github.com/AsahiLinux/docs) (per-block hardware pages, feature-support tables), [LibreTiny](https://github.com/libretiny-eu/libretiny) (per-chip and per-board pages, dumping and partition layouts), and [Valetudo](https://github.com/Hypfer/Valetudo) (supported-device lists, rooting and recovery pages).

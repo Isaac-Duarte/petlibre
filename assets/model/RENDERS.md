@@ -93,9 +93,21 @@ For `panel`, `front` and `card`, write `<view>.json` beside the image: each name
 
 ## Status
 
-Priority 1 is rendered (October 23, 2026; simulation: renders of the model, not photographs). Open items for the owner:
-- **Model gaps.** The power port is a USB-C receptacle (`PowerPort`) low on the back, placed from photographs; `PCB_USBC` still sits inside the front of the band. There is no battery door (the underside is a flat disc), so `bottom` can't yet show one. `HopperFill` has no material; `render.py` gives it `PL_Kibble`.
-- **Lit icons.** The model lights `Icon_Lock` and `Icon_WiFi` blue. Since that color isn't recorded, `render.py` gives them the other icons' print material.
-- **Icon order.** On the feeder, seen from the front, the buttons run Lock, Dispense, Mic, Reset and the indicators low food, lock, Wi-Fi, error/warning, each from left to right (owner, Oct 24). The ring matches (Oct 27, from owner photographs): `Icon_LockButton` and `Icon_Portion` at the left, the four indicators grouped in the middle, `Icon_Mic` and `Icon_Reset` at the right. The Priority 1 renders predate this and the model's new proportions, and need regenerating.
+| Set | Status | Notes |
+| --- | --- | --- |
+| Priority 1: the app | Partial | Rendered, but predates the model's current proportions and icon placement; needs regenerating |
+| Priority 2: README, releases and store | Not started | |
+| Priority 3: docs | Not started | |
+
+Open items for the owner:
+
+- **Model gaps.** The power port is a USB-C receptacle (`PowerPort`) low on the back, placed from photographs. `PCB_USBC` still sits inside the front of the band. There is no battery door (the underside is a flat disc), so `bottom` can't yet show one. `HopperFill` has no material; `render.py` gives it `PL_Kibble`.
+- **Lit icons.** The model lights `Icon_Lock` and `Icon_WiFi` blue. That color isn't recorded, so `render.py` gives them the other icons' print material.
+- **Icon order.** Seen from the front, the buttons run Lock, Dispense, Mic, Reset, and the indicators low food, lock, Wi-Fi, error/warning, each from left to right. The model's ring matches: `Icon_LockButton` and `Icon_Portion` at the left, the four indicators grouped in the middle, `Icon_Mic` and `Icon_Reset` at the right.
 - **Uncertain mapping.** `led_food` is `Icon_Bowl` by elimination.
 - **Panel legibility.** The icons span 0.17 m of ring, so even at the tightest square frame each is about 10 px wide at 390 px.
+
+## Evidence
+
+- **Modeled.** The Priority 1 images were rendered on October 23, 2026. They are renders of the model, not photographs.
+- **Observed.** The button and indicator order comes from the owner, October 24, 2026. The ring's match to it was checked against owner photographs on October 27, 2026.

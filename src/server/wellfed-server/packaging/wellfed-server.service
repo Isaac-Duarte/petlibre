@@ -1,6 +1,6 @@
 # An example unit for the static wellfed-server binary. Copy the binary to
 # /usr/local/bin and this file to /etc/systemd/system, then
-# `systemctl enable --now wellfed-server`. docs/api/README.md#packaging has the
+# `systemctl enable --now wellfed-server`. docs/server/running.md#packaging has the
 # rest: the settings file, reset-owner under this unit's user, and backups.
 #
 # The data directory is /var/lib/wellfed-server (StateDirectory): the
@@ -10,7 +10,7 @@
 
 [Unit]
 Description=Wellfed server
-Documentation=https://github.com/Isaac-Duarte/wellfed/blob/master/docs/api/README.md#packaging
+Documentation=https://github.com/Isaac-Duarte/wellfed/blob/master/docs/server/running.md#packaging
 Wants=network-online.target
 After=network-online.target
 

@@ -14,7 +14,7 @@
 //! never filling) leaves no generator: [`fill`] refuses, and callers that
 //! need secrets go without rather than use weaker bytes.
 //!
-//! See [pairing](../../../../docs/firmware/pairing.md#measured-noise-physical-october-24).
+//! See [pairing](../../../../docs/firmware/pairing.md#measured-noise).
 
 use wellfed_core::named_enum;
 use wellfed_core::rng::{Drbg, Pool};

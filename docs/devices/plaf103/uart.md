@@ -1,39 +1,80 @@
 # UART and loader entry
 
-## Console connection
+This page shows how to connect a serial adapter to the PLAF103's console and how we entered the ROM's download mode on our unit. It is for developers who want backups or UART recovery. Most owners never need it: Wellfed installs over the air.
 
-The inspected board has a three-hole `CON5` header labeled **RX, TX, GND**. In the recorded inspection orientation, RX is the square pad, TX the middle round pad, and GND the round pad nearest the mounting screw. Use the actual silkscreen and measured ground on your board rather than positional descriptions alone.
+## The console header
 
-The research unit's idle TX was measured at approximately **3.29 V**. Readable normal boot output was captured at **115200 baud, 8N1**, without flow control. Use a compatible 3.3 V logic adapter. DTR/RTS remain false and unwired; the adapter's power pin remains disconnected. The feeder uses its normal power source. Disconnect external power, batteries, and USB before changing wiring. Support the opened halves without pulling the wire bundle or antenna lead.
+The board has a three-hole header, `CON5`, labelled **RX, TX, GND**.
 
-| Feeder | Receive-only connection | Active UART connection |
+| Setting | Value |
+| --- | --- |
+| Logic level | 3.3 V (idle TX measured at about 3.29 V) |
+| Baud rate | 115200, 8N1 |
+| Flow control | None. Leave DTR and RTS false and unwired. |
+| Pad positions on our unit | RX is the square pad, TX the middle round pad, GND the round pad nearest the mounting screw |
+
+Pad positions can differ. Go by the silkscreen and a measured ground on your own board.
+
+| Feeder | Receive-only | Two-way |
 | --- | --- | --- |
 | GND | Adapter GND | Adapter GND |
 | TX | Adapter RXD | Adapter RXD |
-| RX | Disconnected | Adapter TXD |
-| Power | No adapter connection | No adapter connection |
+| RX | Not connected | Adapter TXD |
+| Power | Not connected | Not connected |
 
-The [Rust flash client](../../development/rust-flash.md) owns the serial port:
+## Connect and watch the console
 
-```sh
-cargo build --locked --release -p wellfed-flash
-target/release/wellfed-flash read --help
-```
+You need a 3.3 V USB serial adapter and the [Rust flash client](../../development/rust-flash.md), which owns the serial port.
 
-The `read observe` mode receives without serial writes and records raw bytes plus metadata. Choose your own stable device path and a new output directory under `private/`. Close other serial clients first. Other modes can execute commands or upload a RAM helper; they are separate operations.
+1. Unplug external power, take out the batteries and disconnect USB.
 
-## Independent download entry
+   > [!WARNING]
+   > Change wiring only with every power source removed. Leave the adapter's power pin unconnected: the feeder runs from its own supply. Support the opened halves so you don't pull on the wire bundle or the antenna lead.
 
-The tested setup branched feeder TX through a **4.7 kΩ resistor and normally-open momentary button to GND**, retaining the TX-to-adapter-RXD connection. A button-held cold power-on produced the ROM download banner and repeated NAK bytes without a stock application command. Later bounded helper reads succeeded through this entry route.
+2. Wire GND and the feeder's TX to the adapter, as in the receive-only column above.
+3. Build the client and read its options:
 
-Manufacturer/SDK analysis associates download selection with active-low **PA7**, the LOGUART TX route; an SDK comment naming PA30 conflicts with that analysis. Physical continuity from the accessible header all the way to PA7 is not established. The observed header/R30/module route includes approximately 100 Ω in circuit. No direct TX-to-ground short is part of the documented setup.
+   ```sh
+   cargo build --locked --release -p wellfed-flash
+   target/release/wellfed-flash read --help
+   ```
 
-The [relay bench](bench.md) automates this entry: a relay replaces the button and another switches feeder power.
+4. Close any other program that has the serial port open.
+5. Start `read observe` with your adapter's stable device path and a new output directory under `private/`. This mode never writes to the serial port. It records the raw bytes and their metadata.
+6. Power the feeder from its normal supply. You should see readable boot output from stock.
 
-This describes the tested research arrangement, not a universal strap recipe. Establish your board identity, voltage levels, wiring, entry observation, and original backups before considering active operations. A working stock application's console loader does not prove application-independent entry.
+The other `read` modes send commands or upload a RAM helper. They are separate, active operations.
 
-## Backup boundaries
+## Enter download mode
 
-The pinned helper runs in RAM and changes controller state, including OTF decryption configuration. An external-flash read excludes separate OTP/eFuse/security registers. Matching dumps establish read consistency, not accepted write-back or power-cut recovery. Preserve independent backup copies before changes.
+We entered the ROM's download mode with a button, independent of the stock application:
 
-The [recovery reference](recovery.md) explains why retained write tools remain restricted to one tested profile.
+1. Keep feeder TX wired to adapter RXD.
+2. Add a branch from feeder TX through a **4.7 kΩ resistor and a normally-open momentary button to GND**.
+3. Hold the button and power the feeder on from cold. You should see the ROM download banner followed by repeated NAK bytes.
+
+   > [!WARNING]
+   > Never short TX directly to ground. The resistor is part of the setup.
+
+The [relay bench](bench.md) does the same with a relay in place of the button, and another relay to switch feeder power.
+
+This is the arrangement we tested, not a universal strap recipe. Before any active operation, confirm your board, its voltage levels, your wiring and the download banner, and keep your original backups. A working stock application's console loader does not prove you can enter download mode without it.
+
+## Which pin selects download mode
+
+Manufacturer and SDK analysis says the download strap is active-low **PA7**, the LOGUART TX line ([chip page](../../chips/rtl8721dm/README.md#boot-and-download-mode)). An SDK comment naming PA30 conflicts with that. We have not traced continuity from the header all the way to PA7. The route from the header through R30 to the module has about 100 Ω in circuit.
+
+## What a backup covers
+
+- The pinned read helper runs in RAM and changes controller state, including the flash decryption (OTF) configuration.
+- An external-flash read does not include the separate OTP, eFuse and security registers.
+- Matching dumps prove the reads are consistent. They do not prove that writing back works, or that recovery survives a power cut.
+
+Keep independent copies of your backups before you change anything. The [recovery page](recovery.md) explains why the write tools stay locked to one tested profile.
+
+## Evidence
+
+- **Observed** on the research unit: the `CON5` labels and pad positions in the inspection orientation, idle TX at about 3.29 V, and readable boot output at 115200 8N1 without flow control.
+- **Observed:** a button-held cold power-on produced the ROM download banner and repeated NAKs without a stock application command. Later bounded helper reads succeeded through this entry.
+- **Observed:** about 100 Ω in circuit on the header, R30 and module route.
+- **Recovered:** PA7 as the download strap, from manufacturer and SDK analysis.

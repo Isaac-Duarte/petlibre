@@ -1,5 +1,5 @@
 //! The owner's server database, and the only crate with SQL in it
-//! ([API design](../../../../docs/api/README.md#storage)).
+//! ([API design](../../../../docs/server/design.md#storage)).
 //!
 //! SQLite in WAL mode, with one writer connection and a small read pool,
 //! so writes never contend. Migrations are embedded and run at open, after

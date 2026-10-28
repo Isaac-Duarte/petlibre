@@ -12,9 +12,9 @@
 <section id="hardware" class="section" aria-labelledby="hardware-title">
   <div class="wrap grid">
     <div>
-      <h2 id="hardware-title">One feeder, done properly.</h2>
+      <h2 id="hardware-title">Built for one feeder, and tested on it.</h2>
       <p class="lede">
-        Wellfed is built and tested on the Granary PLAF103. To check yours, compare the FCC ID on its label.
+        Wellfed is built and tested on the Granary PLAF103. Not sure which one you have? Check the FCC ID on its label.
       </p>
     </div>
 
@@ -28,8 +28,8 @@
         {/each}
       </dl>
       <p class="not">
-        Other models are not supported, even those with the same chip, because their boards, pins and flash layouts
-        differ. That includes the PLAF108, PLAF203 and AF301.
+        Other models aren't supported, even ones with the same chip. Their boards, pins and flash layouts differ, and a
+        guess could brick them. That includes the PLAF108, PLAF203 and AF301.
       </p>
       <a class="quiet-link" href={DOCS.plaf103} rel="external">Read the PLAF103 notes</a>
     </div>

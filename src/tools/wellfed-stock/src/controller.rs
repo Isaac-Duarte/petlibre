@@ -6,7 +6,7 @@
 //! replayed: a repeated request ID returns the stored record without a second
 //! command, and loading the ledger or losing the broker connection marks an
 //! in-flight trial uncertain. Stock is only installed from and rolled back to
-//! (docs/development/tools-roadmap.md), so this server never feeds.
+//! (src/tools/README.md), so this server never feeds.
 
 use std::{collections::BTreeMap, fs, path::PathBuf};
 

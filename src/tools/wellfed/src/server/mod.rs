@@ -19,7 +19,7 @@
 //! prints the key and `wellfed server command <key>`, which reads the
 //! journal entry the feeder's history settles.
 //!
-//! [API design]: ../../../../../docs/api/README.md#the-cli-on-the-server
+//! [API design]: ../../../../../docs/server/design.md#the-cli-on-the-server
 
 mod accounts;
 mod clients;

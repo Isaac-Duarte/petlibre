@@ -1,5 +1,5 @@
 //! What stock PLAF103 1.1.15 speaks, and only what installing from it and
-//! rolling back to it need (docs/development/tools-roadmap.md): its MQTT
+//! rolling back to it need (src/tools/README.md): its MQTT
 //! protocol, the broker it connects to, the setup frame, the image server it
 //! downloads a replacement from, and the ledger that sends each install
 //! command at most once. The replacement firmware speaks no MQTT; its

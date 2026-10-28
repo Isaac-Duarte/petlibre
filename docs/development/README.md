@@ -1,45 +1,147 @@
-# Development setup and checks
+# Getting started
 
-Linux is the initial development platform. Ordinary checks require Rust **1.99.1** through rustup, `cargo-nextest` and `cargo-deny` (`cargo install cargo-nextest cargo-deny`), GNU Make, CMake and a C compiler (the `unicorn-engine` crate builds the Unicorn emulator library; on Linux it also links libatomic), and loopback socket access. [rust-toolchain.toml](../../rust-toolchain.toml) pins rustfmt, Clippy, and the three ARM targets. SDK-backed builds have [additional prerequisites](firmware-builds.md).
+This guide takes you from a fresh checkout to a passing `make check`. It then shows which tool does what, how to work on one component, and how to run the simulator and the fuzzers. Nothing here needs a feeder, and nothing here touches one.
 
-## Fresh checkout
+These docs follow the [writing guide](writing.md). The code follows the [Rust standard](rust.md) and the [TypeScript standard](typescript.md).
 
-Run from the repository root:
+## Prerequisites
 
-```sh
-cargo build --locked
-make check
-```
+We develop on Linux. You need:
 
-Every host tool is Rust; the [tools index](../../src/tools/README.md) lists what each does and which ones open a serial port. The crates live under `src/`, one folder per package; `wellfed-flash` is the [Rust UART flash client](rust-flash.md), `wellfed-bench` the [relay bench](../devices/plaf103/bench.md) (with `wellfed-rig` its operator sequences, `wellfed-relay` its relay board driver, `wellfed-itest` its integration suite and `wellfed-dashboard` its read-only page), `wellfed-audit` the offline evidence audits (startup, FW14 ADC, FW30 transients, full-flash comparison), `wellfed-build` the firmware build and the [frozen image review](uart-development.md), `wellfed-signing` update signing behind that review, `wellfed-image` the OTA image, its banks and frozen reviews as every tool checks them, `wellfed-emu` the vendor factory loader and flash helper executed under Unicorn, and `wellfed-formats` the files those tools pass to each other (build manifest and identity, stock layout, SDK/toolchain locks, serial-event records, credential and key files, the bench's config, progress document, run records and suite catalog), typed once rather than read as untyped JSON in each. `cargo xtask check-repository` is the repository check.
+- Rust **1.99.1** through rustup. [rust-toolchain.toml](../../rust-toolchain.toml) pins it, with rustfmt, Clippy and the three ARM targets, so rustup fetches them on first use.
+- `cargo-nextest` and `cargo-deny`: `cargo install cargo-nextest cargo-deny`.
+- GNU Make, CMake and a C compiler. The `unicorn-engine` crate builds the Unicorn emulator library with them. On Linux it also links libatomic.
+- Permission to open loopback sockets. Network tests bind them with synthetic identities.
 
-Rustup and Cargo download dependencies on initial setup. Check targets do not install packages, fetch SDKs, contact a device, change firewall rules, or start persistent services. Network tests bind loopback sockets with synthetic identities. Environments that prohibit local sockets need permission to run those tests; skipping them is not a passing result.
+Full firmware images need more: the pinned vendor SDK and its compiler. See [firmware builds](firmware-builds.md).
+
+## Set up
+
+1. Clone the repository and open its root.
+
+2. Run `cargo build --locked`.
+
+   Rustup and Cargo download the toolchain and dependencies the first time. You should see the build finish with no errors.
+
+3. Run `make check`.
+
+   You should see formatting, Clippy, the tests, the cross-builds, the simulator and the repository checks all pass. The first run of `check-deps` downloads the RustSec advisory database.
+
+If your environment forbids local sockets, give the network tests permission to run. Skipping them is not a passing result.
+
+## What checks do and don't touch
+
+The check targets never install packages, fetch an SDK, contact a device, change firewall rules or start a persistent service. Network tests use loopback only.
+
+Build output goes to `target/`. The simulator worker and temporary verification outputs may create ignored folders under `private/`. You don't need any existing backup or evidence. [.gitignore](../../.gitignore) is the storage boundary: keep secrets out of the tracked examples.
+
+The repository is self-contained. SDK and toolchain copies and fixtures resolve locally. The original research documents, tools and history sit in the ignored `private/research-archive/`; see [provenance](provenance.md). An evidence path recorded in an old file is a record, not an instruction to open another checkout.
 
 ## Check targets
 
-| Target | Coverage |
+| Target | What it covers |
 | --- | --- |
 | `check-rust` | Formatting, Clippy with warnings denied, workspace host tests under cargo-nextest, doctests |
 | `check-deps` | cargo-deny: licenses, advisories, duplicate versions and sources ([deny.toml](../../deny.toml)), then the fuzz crate's lockfile under [its own policy](../../src/fuzz/deny.toml) |
-| `check-cross` | SDK-independent KM0/KM4 FFI static libraries |
-| `check-virtual-feeder` | The `wellfed-sim` worker and harness: deterministic feeding against the measured mechanism, faults, journal cuts, restarts, and the liveness invariants (also part of `check-rust`) |
-| `check-docs` | Local Markdown links, repository portability checks, no Python under `src/`, and the source rules (raw output writers, card ids) |
-| `check-fixtures` | Explicit optional binary/SDK evidence suite; missing inputs or skips fail |
-| `check` | All contributor checks except optional fixture validation |
+| `check-cross` | The SDK-independent KM0 and KM4 FFI static libraries |
+| `check-virtual-feeder` | The simulator; see [the simulator](#the-simulator). Also part of `check-rust` |
+| `check-docs` | Local Markdown links, portability checks, no Python under `src/`, and the source rules (raw output writers, card ids) |
+| `check-fixtures` | The optional binary and SDK evidence suite. Missing inputs or skips fail ([fixtures](fixtures.md)) |
+| `check-web` | The web frontends: ESLint, Prettier, licenses, types, unit tests, the build and Playwright. Needs Node and pnpm ([TypeScript standard](typescript.md)) |
+| `check` | Every contributor check except `check-fixtures` and `check-web` |
 
-The server's committed contracts are checked inside `check-rust`: a test fails when `src/server/wellfed-server/openapi.json` is stale (`UPDATE_OPENAPI=1 cargo test -p wellfed-server --test openapi` rewrites it), and the store's SQL compiles only against its committed `.sqlx/` metadata. After changing a query or a migration, `make sqlx-prepare` rebuilds that metadata from a scratch database; it needs the `sqlite3` command line, and no other target does.
+Notes:
 
-`check-cross` checks portable compilation, not SDK-linked hardware ports. Evidence tests are explicitly ignored in the ordinary suite and selected by `check-fixtures`; an ignored test is not passing evidence.
+- `check-cross` proves portable compilation. It does not build SDK-linked hardware ports.
+- Evidence tests are `#[ignore]`d in the ordinary suite, and only `check-fixtures` selects them. An ignored test is not passing evidence.
+- `check-rust` also checks the server's committed contracts. A test fails when `src/server/wellfed-server/openapi.json` is stale; `UPDATE_OPENAPI=1 cargo test -p wellfed-server --test openapi` rewrites it.
+- The store's SQL compiles only against its committed `.sqlx/` metadata. After you change a query or a migration, run `make sqlx-prepare` to rebuild it from a scratch database. That target needs the `sqlite3` command line; no other target does.
 
-Generated Rust artifacts live in `target/`; the simulator worker and temporary verification outputs can create ignored `private/` subdirectories. No existing backups or evidence are required. Use [.gitignore](../../.gitignore) as the storage boundary, and keep secrets out of the tracked examples.
+## Which tool do I use?
+
+Every host tool is Rust. The full inventory, with which tools touch hardware, is in [src/tools/README.md](../../src/tools/README.md).
+
+| I want to… | Use | Read |
+| --- | --- | --- |
+| Pair with a feeder, feed, change settings | `wellfed` | [device API](../firmware/device-api.md) |
+| Run against a feeder without hardware | `wellfed-feeder-sim` | [tools](../../src/tools/README.md) |
+| Build a firmware image | `wellfed-build` | [firmware builds](firmware-builds.md) |
+| Freeze a build for installing, or sign it as an update | `wellfed-build review`, `sign` | [development updates](uart-development.md) |
+| Read or write the feeder's flash over UART | `wellfed-flash` | [Rust flash client](rust-flash.md) |
+| Drive the relay bench: power, loader, OTA, the suite | `wellfed-bench` | [relay bench](../devices/plaf103/bench.md) |
+| Serve stock 1.1.15 for an install | `wellfed-stock` | [stock server](stock-server.md) |
+| Audit a capture or compare full-flash backups | `wellfed-audit` | [tools](../../src/tools/README.md) |
+| Test feeding logic against a modeled mechanism | `wellfed-sim` | [the simulator](#the-simulator) |
+| Run the repository checks or a fuzzer | `cargo xtask` | [fuzzing](#fuzzing) |
+
+The files these tools pass to each other are typed once, in `wellfed-formats`.
+
+## Work on a component
+
+Run these from the repository root after an edit:
+
+```sh
+cargo fmt --all
+make check-rust
+make -C src/firmware/vendor test
+make check-virtual-feeder
+```
+
+Then run `make check` before you hand the change over. The [contribution guidance](../../CONTRIBUTING.md) covers the rest.
+
+## The simulator
+
+The simulator runs the real Rust feeding owner, controller and ports against fake SDK inputs and fake NOR storage. It uses the PLAF103 firmware's feeding limits (`wellfed_sim::plaf103`), and the firmware's tests hold those equal to `feeding::CONFIG`. No feeder needed.
+
+### The modeled mechanism
+
+The plant (`wellfed_sim::plant`) is the mechanism measured on real feeds ([motor pulse](../firmware/motor-pulse.md)):
+
+- The mark input, PA18, rests HIGH and reads LOW for about 1.19 s at each mark.
+- The next portion's mark arrives about 9.07 s of drive after the last one. With food in the hopper the period is about 9.8 s.
+- The start-up surge lasts one poll over the current limit.
+- While driving, the motor current has a mean near 60 (scaled), with peaks to about 167, as the empty feeds read.
+- The rotor keeps its position across stops, power cuts and restarts.
+
+A scenario's `plant` object can change the seed, the jitter, the rates of missed and bouncing edges, or the period.
+
+A `wedge` stalls the rotor going forward at the plant's stall current. That current is unmeasured. A wedge is either freed by the first reversal or not ([jams](../firmware/jams-and-sensor-faults.md)).
+
+The worker also stands in for the loop's claim on the outputs. It plays a background store writer too, which takes the write turn and a real flash lease (`write`).
+
+### What it checks
+
+Scenarios cover command IDs, sensor faults, a blocked outlet, missing and bouncing feedback, watchdog stalls and interrupted journal writes. Two liveness invariants hold across them:
+
+- After a power cut anywhere, a new feed ID is accepted and completes. "Anywhere" means each journal mutation of a reservation, result or resolution, and moments through a feed.
+- A feed completes, and every store write lands, with writes before, during and after it.
+
+> [!NOTE]
+> This is simulation evidence, not hardware reliability. It does not model all electrical behavior. A double bowl's mechanism is unmeasured, so its scenarios set their own marks.
+
+### Run a scenario
+
+Example scenarios are in [src/firmware/vendor/sim/scenarios](../../src/firmware/vendor/sim/scenarios).
+
+```sh
+cargo run -p wellfed-sim --bin virtual-feeder -- --scenario FILE --report NEW-FILE
+```
+
+You should see the report written to `NEW-FILE`. `make check-virtual-feeder` runs the whole set.
 
 ## Fuzzing
 
-The network parsers also have [cargo-fuzz](https://rust-fuzz.github.io/book/cargo-fuzz.html) targets in [src/fuzz/](../../src/fuzz/Cargo.toml), a crate outside the workspace with its own lockfile, so `make check` never builds it. Install the runner once with `cargo install cargo-fuzz` (it also needs a C++ compiler for libFuzzer), then run one target for a bounded time:
+The network parsers have [cargo-fuzz](https://rust-fuzz.github.io/book/cargo-fuzz.html) targets in [src/fuzz/](../../src/fuzz/Cargo.toml). That crate sits outside the workspace with its own lockfile, so `make check` never builds it.
 
-```sh
-cargo xtask fuzz api-connection --seconds 60
-```
+1. Run `cargo install cargo-fuzz` once. libFuzzer also needs a C++ compiler.
+
+2. Run one target for a bounded time:
+
+   ```sh
+   cargo xtask fuzz api-connection --seconds 60
+   ```
+
+   `--seconds` defaults to 60. The command uses the pinned toolchain with `RUSTC_BOOTSTRAP=1` for libFuzzer's unstable compiler flags, so you don't need a nightly toolchain.
 
 | Target | Input |
 | --- | --- |
@@ -50,21 +152,20 @@ cargo xtask fuzz api-connection --seconds 60
 | `setup` | BLE setup messages to the feeder's responder, and a genuine client's request, code proof and Wi-Fi |
 | `ota-manifest` | The version 2 update manifest an offer carries, and chunks to the bank-1 writer |
 
-`--seconds` defaults to 60. The command runs the pinned toolchain with `RUSTC_BOOTSTRAP=1` for libFuzzer's unstable compiler flags, so no nightly toolchain is needed. Builds, grown corpora and crash inputs stay in ignored `src/fuzz/target/`, `src/fuzz/corpus/` and `src/fuzz/artifacts/`; on disk a target is named with underscores (`api_connection`), as `src/fuzz/Cargo.toml` lists it. A crash is a bug in the parser: replay it with `cargo xtask fuzz <target> --replay src/fuzz/artifacts/<target_name>/<file>`, fix it, and add the input as a regression test beside the property that should have caught it. The device API and setup targets share their drivers with the property tests ([support](../../src/product/wellfed-device-api/tests/support/mod.rs)).
+Builds, grown corpora and crash inputs stay in the ignored `src/fuzz/target/`, `src/fuzz/corpus/` and `src/fuzz/artifacts/`. On disk a target's name uses underscores (`api_connection`), as `src/fuzz/Cargo.toml` lists it.
 
-## Work on a component
+A crash is a bug in the parser. To handle one:
 
-```sh
-cargo fmt --all
-make check-rust
-make -C src/firmware/vendor test
-make check-virtual-feeder
-```
+1. Replay it with `cargo xtask fuzz <target> --replay src/fuzz/artifacts/<target_name>/<file>`.
+2. Fix the parser.
+3. Add the input as a regression test beside the property that should have caught it.
 
-The simulator connects the real Rust owner/controller/ports to fake SDK inputs and NOR storage, under the PLAF103 firmware's feeding limits (`wellfed_sim::plaf103`, which the firmware's tests hold equal to `feeding::CONFIG`). Its plant (`wellfed_sim::plant`) is the mechanism the FW16 feeds measured ([motor pulse](../firmware/motor-pulse.md)): PA18 rests HIGH and reads LOW for about 1.19 s at each mark, a portion's rise about 9.07 s of drive after the last, the start-up surge one poll over the current limit, and the motor current while driving (a mean near 60 scaled with peaks to about 167, as the empty feeds read); a scenario's `plant` object changes the seed, the jitter, the rates of missed and bouncing edges, or the period (with food, about 9.8 s). A `wedge` stalls the rotor going forward at the plant's stall current (unmeasured), freed by the first reversal or not ([jams](../firmware/jams-and-sensor-faults.md)). The rotor keeps its position across stops, power cuts and restarts. The worker also stands in for the loop's claim on the outputs and for a background store writer that takes the write turn and a real flash lease (`write`).
+The device API and setup targets share their drivers with the property tests ([support](../../src/product/wellfed-device-api/tests/support/mod.rs)).
 
-It covers command IDs, sensor faults, blocked outlet, missing and bouncing feedback, watchdog stalls, interrupted journal writes, and two liveness invariants: after a power cut anywhere (each journal mutation of a reservation, result or resolution, and moments through a feed), a new feed ID is accepted and completes; and a feed completes, and every store write lands, with writes before, during and after it. Simulation evidence, not hardware reliability: it does not model all electrical behavior, and a double bowl's mechanism is unmeasured (its scenarios set their own marks). Example scenarios are in [src/firmware/vendor/sim/scenarios](../../src/firmware/vendor/sim/scenarios); run one with `cargo run -p wellfed-sim --bin virtual-feeder -- --scenario FILE --report NEW-FILE`.
+## Next steps
 
-The repository is self-contained: SDK/toolchain copies and fixtures resolve locally. Original research documents/tools/history are retained in ignored `private/research-archive/`; see [provenance](provenance.md). Historical evidence paths are records, not instructions to access another checkout.
-
-The rules the code follows are in the [Rust standard](rust.md) and the [TypeScript standard](typescript.md). See [stock server](stock-server.md), [SDK builds](firmware-builds.md), [optional fixtures](fixtures.md), and [contribution guidance](../../CONTRIBUTING.md).
+- [Firmware builds](firmware-builds.md): build a full image with the vendor SDK.
+- [Optional fixtures](fixtures.md): run the evidence suite.
+- [Stock server](stock-server.md): the server stock installs from.
+- [Roadmap](../roadmap.md): what works today.
+- [Glossary](../glossary.md): the terms these pages use.

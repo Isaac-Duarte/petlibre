@@ -1,12 +1,15 @@
 # RTL8721DM pins
 
-One row per GPIO bonded out on the QFN68 package, and one column per device. The same pin often does different jobs on different boards. `PA25` is the buzzer on the PLAF103 and an RFID UART line on the AF301, so a role in one column never says anything about another. Labels follow the [evidence levels](../../evidence.md).
+Every GPIO bonded out on the RTL8721DM's QFN68 package, one row each, with one column per device. It is a reference for porting Wellfed to a board.
+
+The same pin often does different jobs on different boards. `PA25` is the buzzer on the PLAF103 and an RFID UART line on the AF301, so a role in one column says nothing about another. Each role carries its [evidence level](../../evidence.md).
 
 ## Sources
 
-- **Bonded pins (External):** the 34 GPIOs come from [earlynerd's AF301 pin map](https://github.com/earlynerd/Petlibro-One-Custom-Firmware/blob/main/Docs/FEEDER_PINMAP.md), which checked them against the datasheet's package figure and a live chip. Every pin the PLAF103 map uses is in that list. `PA7`/`PA8` are the LOGUART. That project also reports that `PB13`, `PB14`, `PB16` and `PB17` fault in the SDK's `gpio_init` and are readable only through the ROM, and that re-muxing the internal flash pads hangs execute-in-place (External).
-- **Peripheral functions (Recovered):** the UART, ADC and PWM columns are the SDK HAL pin tables at the pinned revision (`component/common/mbed/targets/hal/rtl8721d/`: `serial_api.c`, `analogin_api.c`, `pwmout_api.c`). The pinmux supports more functions (I²C, SPI, I²S, keyscan, captouch) than these tables list; check `rtl8721d_pinmux.h` and the datasheet before relying on a pin's absence here.
-- **SDK number** is `(port << 5) | pin` ([chip](README.md#pins)).
+- **Bonded pins (External).** The 34 GPIOs come from [earlynerd's AF301 pin map](https://github.com/earlynerd/Petlibro-One-Custom-Firmware/blob/main/Docs/FEEDER_PINMAP.md), which checked them against the datasheet's package figure and a live chip. Every pin the PLAF103 uses is in that list.
+- **Pins to avoid (External).** The same project reports that `PB13`, `PB14`, `PB16` and `PB17` fault in the SDK's `gpio_init` and are readable only through the ROM, and that re-muxing the internal flash pads hangs execute-in-place.
+- **Peripheral functions (Recovered).** The UART, ADC and PWM columns are the SDK HAL pin tables at the pinned revision (`component/common/mbed/targets/hal/rtl8721d/`: `serial_api.c`, `analogin_api.c`, `pwmout_api.c`). The pinmux supports more functions (I²C, SPI, I²S, keyscan, captouch) than these tables list. Check `rtl8721d_pinmux.h` and the datasheet before you rely on a pin's absence here.
+- **SDK number** is `(port << 5) | pin` ([chip](README.md#pins)). `PA7`/`PA8` are the LOGUART.
 
 ## Table
 
@@ -23,7 +26,7 @@ One row per GPIO bonded out on the QFN68 package, and one column per device. The
 | PA15 | 15 | — | Food emitter enable (Observed) | — |
 | PA16 | 16 | — | Outlet input, LOW when blocked (Observed) | Driven, role unknown |
 | PA17 | 17 | — | Food-level input, LOW when blocked (Observed) | Driven, role unknown |
-| PA18 | 18 | UART0 TX | Portion feedback input (Recovered) | — |
+| PA18 | 18 | UART0 TX | Portion feedback input, LOW at each mark (Observed) | — |
 | PA19 | 19 | UART0 RX | External-power presence, HIGH on adapter (Observed) | — |
 | PA25 | 25 | UART3 RX, PWM4 | Buzzer output (Recovered) | RFID UART RX |
 | PA26 | 26 | UART3 TX, PWM5 | — | RFID UART TX |
@@ -47,4 +50,4 @@ One row per GPIO bonded out on the QFN68 package, and one column per device. The
 | PB29 | 61 | — | — | — |
 | PB31 | 63 | — | — | — |
 
-A dash in a device column means that device's docs record no role. It does not mean the pin is unused. The PLAF103 details, open questions and stock instruction anchors are on its [board page](../../devices/plaf103/board.md).
+A dash in a device column means that device's docs record no role. **It does not mean the pin is unused.** The PLAF103's details, open questions and stock instruction anchors are on its [board page](../../devices/plaf103/board.md).

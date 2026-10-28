@@ -9,7 +9,7 @@
 //! Fields are `snake_case`, IDs UUIDv7, and times RFC 3339. Feeder keys and
 //! fingerprints travel as lowercase hex.
 //!
-//! [API design]: ../../../../docs/api/README.md
+//! [API design]: ../../../../docs/server/README.md#the-http-api
 #![forbid(unsafe_code)]
 
 mod audit;

@@ -34,10 +34,11 @@
 
 <section class="hero" aria-labelledby="hero-title">
   <div class="wrap">
-    <h1 id="hero-title">Open firmware for your pet feeder.</h1>
+    <h1 id="hero-title">Your pet's dinner shouldn't need the internet.</h1>
     <p class="lede">
-      Wellfed replaces the firmware on the PETLIBRO Granary PLAF103 so it runs on your own Wi-Fi, with no vendor cloud
-      and no account. It is experimental and does not feed a pet yet.
+      Wellfed is open firmware for the PETLIBRO Granary PLAF103. Your feeder runs on your own Wi-Fi, with no vendor
+      cloud and no account. It's early days: Wellfed feeds on our test bench, but it isn't ready to look after a real
+      pet yet.
     </p>
     <div class="actions">
       <a class="button" href={REPO} rel="external"><GitHub /> View on GitHub</a>

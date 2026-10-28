@@ -5,8 +5,8 @@
 
 <section id="how" class="section" aria-labelledby="how-title">
   <div class="wrap">
-    <h2 id="how-title">From stock to yours in three steps.</h2>
-    <p class="lede">This is where the project is heading. Each step says how far along it is today.</p>
+    <h2 id="how-title">Switching takes three steps.</h2>
+    <p class="lede">Here's where we're headed, and how far along each step is today.</p>
 
     <!-- Numbered because the steps happen in this order. -->
     <ol class="steps">

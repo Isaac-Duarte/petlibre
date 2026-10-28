@@ -1,8 +1,12 @@
 # Web UI design
 
-The architecture, conventions and quality bar for `wellfed-server`'s web UI: the browser front end that household members use to feed, schedule, follow history and run the server. This is a design (Oct 24, 2026). Step 1 of the [build order](#build-order), the foundations, is built (FP20); the server app is not. It serves the [product architecture](../firmware/product-architecture.md) and sits on the [server HTTP API](../api/README.md#server-http-api), which it changes in a few places (listed under [API changes](#api-changes)).
+This is the design for `wellfed-server`'s web UI: the browser front end household members use to feed, schedule, follow history and run the server. It is for contributors. It covers the architecture, the conventions and the quality bar.
 
-The UI is a single-page app embedded in the server binary. It talks only to the server, never to a feeder, and ships in the same binary as the API it calls, so the two can never disagree about a version.
+The UI is a single-page app embedded in the server binary. It talks only to the server, never to a feeder, and ships in the same binary as the API it calls. So the two can never disagree about a version.
+
+**Status.** The foundations are built: the token pipeline and contrast test, `@wellfed/ui` on bits-ui, the bench on the new tokens, and ESLint and Prettier in `make check-web`. The server app itself is not started. See the [roadmap](../roadmap.md) and the [build order](#build-order).
+
+It serves the [product architecture](../firmware/product-architecture.md) and sits on the [server HTTP API](../../src/server/wellfed-server/openapi.json).
 
 ## Who it is for
 
@@ -129,11 +133,14 @@ The installer (stock to replacement) is not in v1; the Android app and the CLI i
 
 ## Feeding safety in the UI
 
-The [API rules](../api/README.md#server-runtime) carry through to the browser:
+The feeding rules of the [device API](../firmware/device-api.md) and the server carry through to the browser. An uncertain write is never resent under a new key or on another path:
 
 1. **One intent, one key.** Pressing Feed opens a confirm step with the portion count. Confirming creates the request's `Idempotency-Key` (a UUIDv7 from `crypto.getRandomValues`) and stores it in `sessionStorage` under that feeder until the result is terminal, so a reload mid-feed keeps it.
 2. **No automatic retry.** A timeout or a lost connection shows "result unknown" with "Check again" and "Retry with the same request". Retrying resends the same key, which the server and the feeder's request ring and journal turn into the first answer, never a second feed.
-3. **Live result.** The command result arrives over the stream: sent, running, done with requested and delivered portions, refused (locked, empty, busy, offline; a refusal from the feeder is final for its key, so feeding again is a new confirm and a new key) or uncertain. An uncertain feed reads as uncertain everywhere, never as success. Uncertain is terminal: the feeder may have dispensed, so no retry is offered, as in the app. Only "result unknown" (no answer reached the browser) offers a retry, and only with the same key.
+3. **Live result.** The command result arrives over the stream. It is one of: sent, running, done (with requested and delivered portions), refused (locked, empty, busy, offline) or uncertain.
+   - A refusal from the feeder is final for its key, so feeding again is a new confirm and a new key.
+   - An uncertain feed reads as uncertain everywhere, never as success. It is terminal: the feeder may have dispensed, so no retry is offered, as in the app.
+   - Only "result unknown" (no answer reached the browser) offers a retry, and only with the same key.
 4. **No double press.** The button is disabled from confirm to a terminal result, and the confirm dialog takes focus so a second tap lands on it.
 
 **Concurrent edits.** Plans and settings save with `If-Match`. A `412` opens a conflict view showing what changed on the server since the edit began, and the owner chooses to reload or reapply their change on top. Nothing overwrites silently.
@@ -175,14 +182,14 @@ The UI must work in both contexts, and Playwright runs every test over plain HTT
 - **Subpaths.** Behind a proxy at `/wellfed/`, relative asset and API paths keep working; the server redirects a missing trailing slash so relative URLs resolve. Cookies use `Path=/` and `Secure` only when a trusted proxy reports HTTPS.
 - **Development.** `pnpm dev` serves the app with hot reload and proxies `api/` to a `wellfed-server` running against the host simulator, so nothing touches a real feeder.
 
-## API changes
+## What the UI relies on in the API
 
-What this design asks of the [API doc](../api/README.md), applied there:
+The [server HTTP API](../../src/server/wellfed-server/openapi.json) already provides each of these:
 
-- **Types:** the web gets its types and client from `openapi.json` through `openapi-typescript`, and `wellfed-api` drops ts-rs. The bench keeps ts-rs for its own views.
-- **CSRF:** the check is `SameSite=Strict`, a JSON body, a matching `Origin`, and `Sec-Fetch-Site: same-origin` when present.
+- **Types.** The web gets its types and client from `openapi.json` through `openapi-typescript`, and `wellfed-api` carries no ts-rs. The bench keeps ts-rs for its own views.
+- **CSRF.** The check is `SameSite=Strict`, a JSON body, a matching `Origin`, and `Sec-Fetch-Site: same-origin` when present.
 - **Stream events** are typed schemas in `openapi.json` (a `StreamEvent` enum), with a `resync` event when `Last-Event-ID` is too old to resume.
-- **New resources:** `/setup` (first owner), `/household` (name, units, time format), `/audit`, `/pets/{id}/intake` and `/feeders/{id}/food` (the derived views).
+- **Resources** for the UI's own needs: `/setup` (first owner), `/household` (name, units, time format) and `/audit`. The derived views `/pets/{id}/intake` and the remaining food in `/feeders/{id}/food` are not built yet.
 
 ## Quality standard
 
@@ -207,14 +214,14 @@ Visual screenshot tests are left out of v1: fonts and rendering differ across ma
 
 ## Build order
 
-1. **Foundations (done, FP20):** the token pipeline and contrast test, `@wellfed/ui` on bits-ui, the bench moved to the new tokens, ESLint and Prettier in `make check-web`.
+1. **Foundations (done):** the token pipeline and contrast test, `@wellfed/ui` on bits-ui, the bench moved to the new tokens, ESLint and Prettier in `make check-web`.
 2. **Skeleton:** the SvelteKit app, client, errors, stream with leader election, auth and first-owner setup, Paraglide, the shell and navigation, and the Playwright harness against the server and simulator.
 3. **Feed, status and schedules:** home, feeder, plans and settings, with the feeding-safety tests.
 4. **History and charts.**
 5. **Pets, food and the derived views.**
 6. **Admin:** users and tokens, releases and installs, export and import, adoption.
 
-Each step waits on the server endpoints it uses; until `wellfed-server` exists, step 1 can proceed alone.
+Each step waits on the server endpoints it uses. Plans and the derived views are not on the server yet.
 
 ## Open questions
 

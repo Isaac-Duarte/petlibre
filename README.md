@@ -1,32 +1,52 @@
 # Wellfed
 
-Local control and experimental replacement firmware for the **PETLIBRO Granary PLAF103** pet feeder. Independent community research; no vendor affiliation.
+Wellfed frees the **PETLIBRO Granary PLAF103** pet feeder from the cloud. It gives the feeder replacement firmware, a command-line client and an optional self-hosted server, all running on your own network.
 
-Wellfed contains a Rust local server for stock firmware, a Rust replacement-firmware workspace, and documented hardware/firmware findings. You can build, test, and simulate the code without a feeder, vendor binaries, or private research files.
+Wellfed is not affiliated with PETLIBRO, and it is not ready for everyday use yet. It is independent community research, tested on one feeder on our bench.
 
-## Current capabilities
+## Status
 
-| Component | Established | Remaining work |
-| --- | --- | --- |
-| Stock install path | Stock 1.1.15 installs the replacement over its own updater and the round trip back runs over the air, with no UART write (FW40, FW41); local dispensing on stock was demonstrated, then retired with stock control (FW51) | The setup-frame provisioning (FW42) and rollback from the owner's own stock (FW43) |
-| Replacement firmware | Feeding, sensor, watchdog, journal, and flash-coordination components tested on host models; Rust diagnostic booted on one PLAF103; build-bound reports, stopped GPIO startup, and bounded LED control added | Functional physical feeding, networking, schedules, panel/audio behavior, real flash persistence, and hardware acceptance |
-| UART and recovery | UART access, matching full 8 MiB backups, independent loader entry, bounded write-back, stock restoration/boot, diagnostic installation, and faster development updates demonstrated on the research unit | General device compatibility and power-cut/full-bank recovery acceptance |
+The replacement firmware feeds, joins Wi-Fi and talks to its clients on a real feeder. Here is what works today:
 
-The replacement is experimental. A diagnostic PASS does not establish working physical feeding. See [firmware status and architecture](docs/firmware/README.md) and [recovery limits](docs/devices/plaf103/recovery.md).
+- **Feeding.** A supervised motor owner stops each feed on time and survives a power cut without feeding twice. The dispense button and the CLI both feed.
+- **Connecting.** The feeder joins Wi-Fi, pairs over Bluetooth and serves an encrypted local API to the clients you pair.
+- **Installing.** Stock firmware 1.1.15 installs Wellfed through its own updater, with no soldering. You can go back to stock over the air the same way.
+- **Updating.** Over-the-air updates fall back to the previous image if the new one fails to start.
 
-## Start here
+Schedules, the server's web UI and the Android app are not built yet. The [roadmap](docs/roadmap.md) has the full table and what comes next.
 
-- [Resume the current firmware work](RESUME.md): installed image, last bench state, evidence, and next task
-- [Supported devices](docs/devices/README.md) and the [PLAF103 device page](docs/devices/plaf103/README.md): identification, signal map, flash layout and stock firmware
-- [UART wiring and loader entry](docs/devices/plaf103/uart.md)
-- [Stock firmware and replacement architecture](docs/firmware/README.md)
-- [Development setup and checks](docs/development/README.md)
-- [Stock server setup and API](docs/development/stock-server.md)
-- [SDK firmware builds](docs/development/firmware-builds.md)
-- [Firmware board](FIRMWARE_BOARD.md), [feature parity board](FEATURE_BOARD.md) and [startup/indicator diagnostics](docs/firmware/startup-diagnostics.md)
-- [UART development updates](docs/development/uart-development.md)
+## Is Wellfed for you?
+
+Wellfed may suit you if:
+
+- you own a PLAF103 and want it to work without the vendor's cloud;
+- you are comfortable with a command line and a self-built Rust toolchain;
+- you want to help test, document or build a local-first feeder.
+
+Don't use it yet if:
+
+- a pet depends on the feeder for its meals. There are no schedules yet, and the firmware has not finished its long unattended run;
+- you want a phone app. The Android app is not started;
+- you have a different PETLIBRO model. Only the PLAF103 is supported, and a finding on one model never carries over to another;
+- you can't afford to lose the feeder. Recovery from a bad flash needs UART access, and it is proven on one unit only.
+
+## Documentation
+
+The [documentation index](docs/README.md) lists every page. Good places to start:
+
+| You want to… | Read |
+| --- | --- |
+| See what works and what's next | [Roadmap](docs/roadmap.md) |
+| Install Wellfed over stock's updater | [Consumer installation](docs/firmware/consumer-installation.md) |
+| Look up a word | [Glossary](docs/glossary.md) |
+| Understand the product | [Product architecture](docs/firmware/product-architecture.md), [device API](docs/firmware/device-api.md), [the server](docs/server/README.md) |
+| Understand the firmware | [Replacement firmware](docs/firmware/README.md), [OTA design](docs/firmware/ota-design.md), [bank policy](docs/firmware/bank-policy.md) |
+| Learn the hardware | [PLAF103 device page](docs/devices/plaf103/README.md), [UART wiring](docs/devices/plaf103/uart.md), [flash layout](docs/devices/plaf103/flash-layout.md), [recovery](docs/devices/plaf103/recovery.md) |
+| Contribute | [Contributing](CONTRIBUTING.md), [development setup](docs/development/README.md), [SDK builds](docs/development/firmware-builds.md), [writing docs](docs/development/writing.md) |
 
 ## Build and test
+
+You don't need a feeder, vendor binaries or private research files to build, test and simulate the code.
 
 Install Rust through rustup, GNU Make, CMake and a C compiler (for the Unicorn emulator the host tools link). The pinned Rust toolchain includes rustfmt, Clippy, and the ARM targets. On Linux:
 
@@ -35,22 +55,31 @@ cargo build --locked
 make check
 ```
 
-Initial setup downloads dependencies. Checks use host models and loopback networking; they do not connect to a feeder, open serial ports, or modify firewall rules. SDK downloads and hardware operations are separate, explicit workflows.
+The first run downloads dependencies. Checks use host models and loopback networking. They never connect to a feeder, open serial ports or change firewall rules. SDK downloads and hardware operations are separate, explicit workflows.
 
 ## Repository layout
 
-| Location | Contents |
+| Folder | Contents |
 | --- | --- |
-| `src/sdk/` | The Wellfed SDK that firmwares build on: `wellfed-sdk` (the runtime every firmware runs inside, and the firmware API), `wellfed-core` (hardware-independent feeding, journal and flash logic), `wellfed-session` (the Noise session, setup code and frames the feeder and its clients share), `wellfed-hal` and `wellfed-hal-common` (AmebaD ports; the latter is also the KM0 archive and holds the panic handler), `wellfed-amebad-sys` (pinned vendor SDK bindings and the host fake), `wellfed-board-plaf103` (the PLAF103's pins and storage sector map), `wellfed-probes` (the bench probes the firmwares share), `wellfed-testkit` and `wellfed-sim` (the virtual feeder) |
-| `src/tools/` | Host tools: `wellfed` (the owner's command line: BLE setup and the device API), `wellfed-feeder-sim` (a simulated feeder serving the device API), `wellfed-stock` (stock 1.1.15's protocol, and the bench's server for it: stock's broker, image server and install trials), `wellfed-flash` (UART flash reads, updates and recovery), `wellfed-bench` (relay bench), `wellfed-rig` (its operator sequences), `wellfed-relay` (its relay board driver), `wellfed-itest` (the real-device integration suite), `wellfed-dashboard` (the bench's read-only progress page, built in with `--features ui`), `wellfed-audit` (offline evidence audits), `wellfed-build` (SDK firmware builds, their link audits and the frozen image review), `wellfed-signing` (update signing behind a frozen review), `wellfed-image` (the OTA image, its banks and frozen reviews, as every tool checks them), `wellfed-emu` (the vendor factory loader and flash helper, executed under Unicorn), `wellfed-formats` (the file formats those host tools share), `xtask` (`cargo xtask check-repository`) |
-| `src/product/` | Product policy shared by the firmware and the server: `wellfed-proto` (the device protocol's messages), `wellfed-device-api` (`no_std`; the feeder's side of the device API: the session server, pairing and the setup exchange), `wellfed-feeder` (`no_std`; the child lock, the product's stores and the loop pass the firmware and the simulator share today, schedules and alerts later) and `wellfed-feeder-runtime` (those stores on the SDK runtime: the settings writer every firmware links) |
-| `src/client/` | `wellfed-client`: the sans-IO client of the feeder's protocols that the owner's CLI and the Android app share (BLE setup and the device API); `wellfed-connect`: its tokio driver for the CLI and the server; `wellfed-server-client`: the typed client of the server's HTTP API that the CLI and the server's tests share |
-| `src/server/` | The owner's optional server ([API design](docs/api/README.md)): `wellfed-server` (the binary: the HTTP API and its event stream), `wellfed-service` (users and one connection task per feeder), `wellfed-store` (SQLite through sqlx), `wellfed-api` (the HTTP types and OpenAPI schemas) and `wellfed-server-testkit` (what every server test builds) |
-| `src/firmware/wellfed/` | One crate per firmware built on the SDK ([guide](src/firmware/wellfed/README.md)): `feeder` (the product firmware: the panel's owner in its loop task), `qa` (the default: a guided self-test of every bring-up check), `bringup` (one image variant per bring-up area: `optics`, `buttons`, `adc`, `speaker`, the motor `pulse`, and the `stall` and `fail` trial images), and `blink` (the minimal template) |
-| `src/firmware/vendor/` | The vendor SDK side: C entry hooks and ports, the pinned SDK and toolchain locks, the stock layout, simulator scenarios, and the image build (`make -C src/firmware/vendor`) |
-| `src/web/` | Web frontends (pnpm workspace): the bench page, the [well-fed.dev](docs/web/site.md) landing page, shared design tokens and components, and API types generated from Rust. `make ui` builds them |
+| `src/sdk/` | The SDK every firmware builds on: runtime, feeding core, hardware ports, board map and simulator ([firmware architecture](docs/firmware/README.md)) |
+| `src/product/` | Product policy shared by the firmware and the server: the device protocol and the feeder's stores |
+| `src/client/` | The clients the CLI, the server and the Android app share ([server design](docs/server/design.md#crates)) |
+| `src/server/` | The owner's optional server ([the server](docs/server/README.md)) |
+| `src/tools/` | Host tools, including the `wellfed` CLI ([tool list](src/tools/README.md)) |
+| `src/firmware/wellfed/` | One crate per firmware: `feeder`, `qa`, `bringup` and `blink` ([firmware guide](src/firmware/wellfed/README.md)) |
+| `src/firmware/vendor/` | The vendor SDK side: C hooks and ports, pinned SDK and toolchain locks, the stock layout, simulator scenarios and the image build (`make -C src/firmware/vendor`) |
+| `src/firmware/devices/` | Per-device descriptions and layouts |
+| `src/web/` | Web frontends (a pnpm workspace): the bench page, the [well-fed.dev](docs/web/site.md) site, shared tokens and components, and API types generated from Rust. `make ui` builds them |
+| `src/fuzz/` | Fuzz targets ([fuzzing](docs/development/README.md#fuzzing)) |
 | `src/scripts/` | Developer scripts: `bench-dashboard` serves the bench page for this checkout |
-| `docs/` | Hardware findings, firmware contracts, and contributor workflows |
-| `private/` | Ignored contributor-owned secrets, evidence, dependencies, and artifacts |
+| `assets/` | Brand marks, design tokens, the feeder's 3D model and its renders ([assets](assets/README.md)) |
+| `docs/` | Hardware findings, firmware design and contributor guides |
+| `private/` | Ignored, contributor-owned secrets, evidence, dependencies and artifacts |
 
-The existing `wellfed-*` crate names are retained for compatibility. [Contributions](CONTRIBUTING.md) are welcome. First-party material is [MIT licensed](LICENSE); see [third-party provenance](THIRD_PARTY.md). This repository contains no vendor firmware or device backups.
+The existing `wellfed-*` crate names are kept for compatibility.
+
+## License and provenance
+
+First-party material is [MIT licensed](LICENSE). Dependencies and vendor components keep their own licenses; see [third-party provenance](THIRD_PARTY.md).
+
+This repository contains no vendor firmware or device backups. [Contributions](CONTRIBUTING.md) are welcome.

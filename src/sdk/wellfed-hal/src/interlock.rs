@@ -57,7 +57,7 @@
 //! boundaries (the outputs already stopped), so it takes no write turn.
 //! Writes and joins do not exclude each other.
 //!
-//! [scheduling gaps]: ../../../../docs/firmware/scheduling-gaps.md#result-october-25-2026-physical
+//! [scheduling gaps]: ../../../../docs/firmware/resource-budget.md#scheduling-gaps-across-wi-fi-rejoins
 
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 

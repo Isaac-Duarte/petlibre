@@ -5,9 +5,9 @@
 <section id="contribute" class="section" aria-labelledby="contribute-title">
   <div class="wrap grid">
     <div>
-      <h2 id="contribute-title">Help build it.</h2>
+      <h2 id="contribute-title">Want to help?</h2>
       <p class="lede">
-        Everything builds and tests on a laptop, against a simulated feeder. No hardware needed to start.
+        Everything builds and tests on a laptop against a simulated feeder, so you don't need any hardware to start.
       </p>
     </div>
 
@@ -19,8 +19,8 @@ cargo build --locked
 make check</code
         ></pre>
       <p>
-        With a PLAF103 and a USB serial adapter you can go further: full flash backups, recovery to stock, and the
-        diagnostic firmware all work on real hardware today.
+        Got a PLAF103 and a USB serial adapter? Then you can go further: full flash backups, recovery to stock and the
+        Wellfed firmware itself all run on real hardware today.
       </p>
       <ul>
         <li><a class="quiet-link" href={DOCS.development} rel="external">Development guide</a></li>

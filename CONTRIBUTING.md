@@ -1,13 +1,30 @@
 # Contributing
 
-Start with [development setup](docs/development/README.md), then choose the local server, portable firmware core, AmebaD port, or documentation. No hardware is needed for ordinary checks.
+Thanks for helping. You don't need a feeder for ordinary work: every check runs on the host. Start with [development setup](docs/development/README.md), then pick an area: the host tools, the portable firmware core, the AmebaD port, the server or the docs.
 
-Keep changes focused and include regression coverage for behavior changes. Run `cargo fmt --all` after Rust edits and `make check` before submitting. Report which optional evidence or hardware checks were actually performed; do not equate unavailable fixtures with passing validation.
+## Changes
 
-For hardware findings, record model/revision, stock firmware version, observation method, uncertainty, and a redacted result. Distinguish software pin assignments from measured electrical wiring. Describe reproduction without requiring another contributor's private archive.
+- Keep each change focused, and add a regression test for any change in behavior.
+- Run `cargo fmt --all` after Rust edits, and `make check` before you submit.
+- Say which optional evidence or hardware checks you actually ran. A fixture you couldn't run is not a passing check.
+- For docs, follow [writing docs](docs/development/writing.md).
 
-Use synthetic identifiers and inputs in examples and tests. Store real credentials, device dumps, logs, downloaded SDKs, and third-party binaries in ignored `private/`. Inspect proposed changes before sharing; ignore rules do not protect files deliberately added to Git.
+## Hardware findings
 
-Preserve command identifiers, durable request/journal behavior, authentication, and recovery integrity gates. Changes to feeding, flash, or boot behavior need explicit acceptance criteria and a recovery strategy appropriate to the tested board.
+Record the model and revision, the stock firmware version, how you observed it, how sure you are, and a redacted result. Label it with an [evidence level](docs/evidence.md).
 
-First-party contributions are submitted under the repository's [MIT license](LICENSE). Preserve third-party notices and document provenance for new dependencies or adapted material. Do not redistribute vendor firmware, ROM dumps, or raw device backups here.
+Keep software pin assignments apart from measured electrical wiring. Describe how to reproduce the finding without needing anyone's private archive.
+
+## Private data
+
+Use synthetic identifiers and inputs in examples and tests. Keep real credentials, device dumps, logs, downloaded SDKs and third-party binaries in the ignored `private/` folder.
+
+Look over your change before you share it. Ignore rules don't protect a file you add to Git on purpose.
+
+## Safety
+
+Preserve command identifiers, durable request and journal behavior, authentication and the recovery integrity gates. A change to feeding, flash or boot behavior needs explicit acceptance criteria and a recovery strategy that fits the board it was tested on.
+
+## License and provenance
+
+You submit first-party contributions under the repository's [MIT license](LICENSE). Keep third-party notices, and document the provenance of any new dependency or adapted material ([third-party provenance](THIRD_PARTY.md)). Don't redistribute vendor firmware, ROM dumps or raw device backups here.

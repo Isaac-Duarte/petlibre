@@ -9,7 +9,7 @@
 //! A feed's trace body ([`trace`]) is a compact format of its own,
 //! carried in the device API's pages and kept in the feeder's storage.
 //!
-//! [API design]: ../../../../docs/api/README.md
+//! [API design]: ../../../../docs/firmware/device-api.md
 #![no_std]
 
 pub mod api;

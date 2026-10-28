@@ -95,7 +95,7 @@ sqlx-prepare:
 # host needs only docker or podman (CONTAINER=podman). Never part of
 # `check`. check-server-release runs the release check against this host's
 # binary from dist/server/ and against the image; `check` already runs it
-# against the debug build. docs/api/README.md#packaging.
+# against the debug build. docs/server/running.md#packaging.
 CONTAINER ?= docker
 SERVER_CONTAINERFILE = src/server/wellfed-server/packaging/Containerfile
 SERVER_DIST = dist/server

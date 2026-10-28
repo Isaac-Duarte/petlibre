@@ -21,7 +21,7 @@
 //! bindings or the server has no lifetime tied to a frame buffer. The
 //! wire's borrowed types stay inside the crate.
 //!
-//! [API design]: ../../../../docs/api/README.md
+//! [API design]: ../../../../docs/firmware/device-api.md
 #![forbid(unsafe_code)]
 
 pub mod api;

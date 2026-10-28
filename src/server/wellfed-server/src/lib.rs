@@ -8,7 +8,7 @@
 //! [`config`] and [`key`] read what the server starts with from its data
 //! directory: the settings file and the sealing key.
 //!
-//! [API design]: ../../../../docs/api/README.md
+//! [API design]: ../../../../docs/server/design.md
 #![forbid(unsafe_code)]
 
 mod auth;

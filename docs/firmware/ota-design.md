@@ -1,235 +1,329 @@
-# FW10/FW11 over-the-air update design
+# OTA updates
 
-**Status (October 25, 2026): updates over the device API, host-tested.** Offers, downloads and key changes now go over the [device API](device-api.md) behind `Capabilities::UPDATE`, and both banks run the `feeder` build: bank 0 is the fallback a failed update lands on, and it feeds. No build opens an MQTT session. The bench and the simulator drive the same client steps (`wellfed_client::update`). Not yet on hardware: the first install of this bank-0 build is a UART install, then the no-motion round trip in the [bench procedure](#bench-procedure). The sections from [Updates over the device API](#updates-over-the-device-api) to [Storage-format rule](#storage-format-rule) describe it; the rest of this page is the history it builds on, the MQTT-era updater included. That updater's code, the broker offers, the version 1 manifest and its signer, and the broker credentials in the build are deleted (in Git history); only stock 1.1.15 still speaks MQTT, to `wellfed-stock`'s broker.
+This page explains how the replacement firmware updates itself over the network, and how a bad update rolls back on its own. It is for owners who want to know why an update can't brick their feeder, and for contributors working on the updater. The loader's bank rules it builds on are in [bank policy](bank-policy.md).
+
+## The one idea
+
+A new build always goes into bank 1, and bank 0 always holds a known-good build that can feed. The new build's marker is written last, so a half-written bank 1 is never booted. The new build then runs on trial. If it crashes, hangs or never proves it can feed, KM0 gives way to bank 0 after three boots, and the feeder keeps working on the old build.
+
+A few constraints shape everything below:
+
+- **Bank 1 always wins when valid.** The factory loader keeps bank 1 whenever its signatures pass; bank 0 boots only when bank 1 fails.
+- **No writing the running bank.** Code executes in place from the active bank, and rewriting it under execution is unsafe.
+- **The loader never falls back on its own.** A valid-marker image that crashes is selected again on every reset. Both banks invalid means a wait loop that only UART recovers.
+- **Writes go through the flash authority,** with outputs quiesced and KM0 parked for each lease. Nothing moves during an update.
+- **The update is trusted, not the transport.** The manifest carries the image's SHA-256, version, size and target bank, and is signed. The firmware embeds only public keys. An eavesdropper learns only the image, which is not secret.
 
 ## Updates over the device API
 
-**Roles.** The bank decides only what the update stage does; both banks start the firmware, the settings writer and the update stage (`wellfed_hal::ota::update`) in the service task:
+Offers, downloads and key changes go over the [device API](device-api.md), behind `Capabilities::UPDATE`. Both banks run the `feeder` build, and both start the firmware, the settings writer and the update stage (`wellfed_hal::ota::update`) in the service task. The bank decides only what the update stage does with an offer:
 
 | Bank | What it does with an offer |
 | --- | --- |
-| 1 | Checks it, then checks that bank 0 still holds exactly the image bank 0 recorded at its last boot (length from the bank's headers, SHA-256), records the offer as pending in the update store, answers `GivingWay`, and once that answer is out clears its own marker's first byte and restarts. It never writes bank 1. Until the build confirms its hooks are unarmed and every offer is refused `Busy`; a bank 1 in trial writes nothing. It also refuses (`Fallback`) an offer signed by a built-in key that bank 0's record does not name. |
-| 0 | Records its own image at boot (only when it changed). Installs only the pending manifest, or the offered one when none is pending (fresh from stock, or after a fallback). Refuses a manifest that was activated and failed its trial, and every offer after a reset mid-install until power is lost. Never confirms. |
+| 1 | Checks it, then checks that bank 0 still holds exactly the image bank 0 recorded at its last boot (length from the bank's headers, SHA-256). It records the offer as pending in the update store and answers `GivingWay`. Once that answer is out, it clears its own marker's first byte and restarts. It never writes bank 1. |
+| 0 | Records its own image at boot, only when it changed. Installs only the pending manifest, or the offered one when none is pending (fresh from stock, or after a fallback). Never confirms. |
 
-**Flow.** An owner's client offers a signed version 2 manifest to bank 1 (`OfferUpdate`); bank 1 gives way; the client reconnects (the same identity answers from bank 0) and offers the same manifest again; bank 0 answers `Receiving` and names the chunk offsets it wants; the client pushes them (`UpdateChunk`, 512 bytes, idempotent by offset); bank 0 erases, programs and reads back each sector, checks the whole image's SHA-256, records the activation in the update store, then writes bank 1's marker last and reads it back, answers `Activated` and restarts. The new build's trial and confirmation are unchanged; confirming raises the floor (below) before the confirmation record.
+Some refusals:
 
-**The loop never verifies.** The device API runs in the loop task on an 8 KiB stack; an Ed25519 check needs about 8 KiB. The loop copies requests and chunks into a mailbox (`wellfed_hal::ota::mailbox`) and answers from what the service task's update stage publishes. Feeder build stack bounds (static, the image audit, October 25): service task 11,504 of 16,384 bytes, its deepest path the install's start (the offer's `verify_strict` is shallower); loop 5,016 of 8,192, a handshake. Nothing on the loop's side calls a signature check.
+- Until bank 1's build confirms, its hooks are unarmed and every offer is refused `Busy`. A bank 1 on trial writes nothing.
+- Bank 1 refuses (`Fallback`) an offer signed by a built-in key that bank 0's record does not name.
+- Bank 0 refuses a manifest that was activated and failed its trial.
+- Bank 0 refuses every offer after a reset mid-install, until power is lost.
 
-**No store or bank write while a feed may move.** Every update request (offer, cancel, key statement) takes the install lease as it is queued, in the loop that alone starts feeds: each is refused `Busy` while a feed is queued or driven, and a feed is refused `Busy` while the lease is held, at the device API, in `Feeding::submit` and in the HAL feeding owner's `submit`. The stage releases the lease once it answers, except for an accepted offer: the install keeps it until it stops, a give-way or an activation until the restart; a cancel during an install rides on the install's lease. Every update-store save and bank-1 write also takes the write turn (`wellfed_hal::interlock::WriteTurn`, as the settings writer and the confirmation do), never by the forced path: a request waits in the mailbox, unanswered, while the outputs are claimed; bank 0's boot record of its image waits the same way; an install holds the turn from its first write until it stops, so every feed meanwhile is refused (`held=3`); a give-way or an activation keeps it until the restart, so no feed starts before the reset. The floor the confirmation raises is written under the confirmation's own turn. The attempt marker is set only once the turn is held, around each write, as the settings writer's are, so a hang inside one is skipped once after the reset. The install and the settings writer share the service task, so their flash writes never overlap; the journal's only come with feeds.
+The bench and the simulator drive the same client steps (`wellfed_client::update`).
 
-**Bootstrap.** Bank 1 gives way only to a bank 0 that recorded its own image (length, SHA-256 and built-in key id) in the update store, which bank 0 does at its first boot. So after a UART install of bank 0, bank 1 refuses every offer `Fallback` until bank 0 has booted once: the reviewed UART install boots bank 1, so the bank-0 record comes with the first give-way through UART (`give-way-execute --fallback`), or a failed trial. Both banks must carry the same built-in keys: bank 1 checks the offer's key against bank 0's recorded key id before it gives way, so an offer bank 0 could not admit never strands the feeder on bank 0.
+### One update, step by step
 
-**Stops.** Every failure before activation leaves bank 1's marker clear, so the loader keeps booting bank 0, which keeps answering and feeding: a flipped byte (the whole-image hash), a chunk the install did not want or of the wrong length (order), a failed program or readback (write), a marker that does not read back, a minute without a chunk (timeout), a cancel, an update store that cannot be written, a manifest or key the checks refuse. A stop leaves the candidate recorded, so bank 0 refuses any other manifest (`Pending`) until a `CancelUpdate` forgets it (`wellfed-bench ota NAME --cancel`); a cancel answers `Busy` when the store cannot be written then, rather than claiming it forgot. A dropped connection loses nothing: the install waits a minute for the next chunk, and `UpdateState` says where it stands. A power cut mid-download boots bank 0 again, which takes the offer again from the start. A reset mid-install sets the update-attempt bit (backup register 1, bit 9, beside the flash attempt bit): offers are refused until power is lost, but the hooks still arm, so bank 0 still saves and feeds. Host-tested: `wellfed-hal/tests/update.rs` (every FW10 stop against the fake SDK), `wellfed-client/tests/update.rs` and `wellfed-feeder-sim/tests/update.rs` (the client end to end, over the fake and over TCP against the simulator, which runs the real stage on two banks with the loader and KM0's trial).
+1. An owner's client offers a signed version 2 manifest to bank 1 (`OfferUpdate`).
+2. Bank 1 gives way and restarts into bank 0.
+3. The client reconnects; the same identity answers, now from bank 0. It offers the same manifest again.
+4. Bank 0 answers `Receiving` and names the chunk offsets it wants.
+5. The client pushes them (`UpdateChunk`, 512 bytes, idempotent by offset).
+6. Bank 0 erases, programs and reads back each sector, then checks the whole image's SHA-256.
+7. Bank 0 records the activation in the update store, then writes bank 1's marker last and reads it back.
+8. Bank 0 answers `Activated` and restarts.
+9. The new build boots on trial. Confirming raises the floor ([below](#keys-and-anti-rollback)) before the confirmation record is written.
+
+The device API's client pushes each offer once, and never again on its own.
+
+### The loop never verifies
+
+The device API runs in the loop task, on an 8 KiB stack. An Ed25519 check needs about 8 KiB. So the loop copies requests and chunks into a mailbox (`wellfed_hal::ota::mailbox`) and answers from what the service task's update stage publishes. Nothing on the loop's side calls a signature check.
+
+In the feeder build, the service task's stack bound is 11,504 of 16,384 bytes, its deepest path the install's start; the offer's `verify_strict` is shallower. The loop's is 5,016 of 8,192, a handshake.
+
+### No flash write while a feed may move
+
+Every update request (offer, cancel, key statement) takes the install lease as it is queued, in the loop that alone starts feeds.
+
+- Each request is refused `Busy` while a feed is queued or driven.
+- A feed is refused `Busy` while the lease is held: at the device API, in `Feeding::submit`, and in the HAL feeding owner's `submit`.
+- The stage releases the lease once it answers, except for an accepted offer. The install keeps it until it stops; a give-way or an activation keeps it until the restart. A cancel during an install rides on the install's lease.
+
+Every update-store save and bank-1 write also takes the write turn (`wellfed_hal::interlock::WriteTurn`), as the settings writer and the confirmation do, and never by the forced path:
+
+- A request waits in the mailbox, unanswered, while the outputs are claimed. Bank 0's boot record of its image waits the same way.
+- An install holds the turn from its first write until it stops, so every feed meanwhile is refused (`held=3`).
+- A give-way or an activation keeps the turn until the restart, so no feed starts before the reset.
+- The floor the confirmation raises is written under the confirmation's own turn.
+- The attempt marker is set only once the turn is held, around each write, as the settings writer's are. So a hang inside one is skipped once after the reset.
+
+The install and the settings writer share the service task, so their flash writes never overlap. The journal's writes come only with feeds.
+
+### Bootstrap
+
+Bank 1 gives way only to a bank 0 that recorded its own image (length, SHA-256 and built-in key id) in the update store. Bank 0 does that at its first boot.
+
+So after a UART install of bank 0, bank 1 refuses every offer `Fallback` until bank 0 has booted once. The reviewed UART install boots bank 1, so the bank-0 record comes with the first give-way through UART (`give-way-execute --fallback`), or with a failed trial.
+
+Both banks must carry the same built-in keys. Bank 1 checks the offer's key against bank 0's recorded key id before it gives way, so an offer bank 0 could not admit never strands the feeder on bank 0.
+
+### Stops
+
+Every failure before activation leaves bank 1's marker clear. The loader keeps booting bank 0, which keeps answering and feeding. The failures are:
+
+- a flipped byte (caught by the whole-image hash);
+- a chunk the install did not want, or of the wrong length (order);
+- a failed program or readback (write);
+- a marker that does not read back;
+- a minute without a chunk (timeout);
+- a cancel;
+- an update store that cannot be written;
+- a manifest or key the checks refuse.
+
+A stop leaves the candidate recorded, so bank 0 refuses any other manifest (`Pending`) until a `CancelUpdate` forgets it (`wellfed-bench ota NAME --cancel`). A cancel answers `Busy` when the store cannot be written, rather than claiming it forgot.
+
+A dropped connection loses nothing. The install waits a minute for the next chunk, and `UpdateState` says where it stands.
+
+A power cut mid-download boots bank 0 again, which takes the offer again from the start.
+
+A reset mid-install sets the update-attempt bit (backup register 1, bit 9, beside the flash attempt bit). Offers are then refused until power is lost. The hooks still arm, so bank 0 still saves and feeds.
+
+**A failed write says why.** A sector write that fails stops the install with:
+
+```
+PLOTA1 error stage=write sector=<bank-1 sector> step=erase|program|read|readback offset=<byte> expected=<word> read=<word> reread=<word> erase_ms=…
+```
+
+On a readback mismatch, the record holds the first differing word as programmed, as read back, and as read a second time with no write in between. The second read first invalidates the data-cache lines over the word, so it reads the flash rather than the line the first read filled.
+
+- A 0 bit where a 1 was programmed means the erase did not finish.
+- A word that reads `ffffffff` means the program did not take.
+- A second read that matches means the cells are right and the read path is at fault.
+
+The install still stops; nothing is rewritten.
+
+**Lease timing during an install.** Each `PLOTA1 progress` line is followed by `PLOTA1 leases count=… park_max=… release_max=… masked_max_ms=… masked_long=… feed_gap_max_ms=…`. Those are the leases so far, the slowest KM0 park and release exchanges (in 32 768 Hz ticks), the longest time IRQs were held masked (from the acquire's masking, request and quiesce included), how many leases held them past 100 ms, and the feeder task's longest gap between checkpoints on the system timer. A lease's acquire masks IRQs before it reads the lease clock, so a preemption between the request and the park can no longer count against the park budget and halt the board.
 
 ## Keys and anti-rollback
 
-**Manifest version 2** (`wellfed_core::ota::offer`): `PLOTA2\0\0`, version, image length, target bank, image kind (1 replacement, 2 stock) and three zero bytes, the signing key's id (the first 8 bytes of SHA-256 over its public key), the image's SHA-256 and the build ID: 96 bytes, then the Ed25519 signature. Version 1 (`PLOTA1`, the MQTT era's) is deleted; an offer carrying its magic is refused as the wrong version, and the bench still reads the versions of the ones on disk when it picks the next.
+**Manifest version 2** (`wellfed_core::ota::offer`) is 96 bytes, then the Ed25519 signature:
 
-**Trusted keys:** the key built into the firmware (the bench key, `WELLFED_OTA_PUBLIC_KEY`); the release slot, empty in the build and filled once by a `PLKEY1` statement a built-in key signed (`UpdateKeyStatement`), so a release key arrives without reinstalling bank 0; and owners' update keys, enrolled over the device API (`EnrollUpdateKey`) only once someone presses Dispense at the feeder, and removed like any client. A `PLREV1` statement retires any key id for good. Built-in keys and the release slot's key sign key statements, so retiring the bench key leaves rotation to the release key; an owner's key never signs one, and a retired key signs nothing. The bench key stays in `private/ota-key.json`, bench only; an offline release key is required before any public release.
+- `PLOTA2\0\0`, the version, the image length, the target bank;
+- the image kind (1 replacement, 2 stock) and three zero bytes;
+- the signing key's id (the first 8 bytes of SHA-256 over its public key);
+- the image's SHA-256 and the build ID.
 
-**The floor** (`min_version`): the highest version a build confirmed at. An offer at or below it, and every stock image, needs a `PLDWN1` downgrade statement naming this feeder's identity key, the exact manifest's digest and the current floor, signed by a trusted key; a replayed old manifest, a statement for another feeder or made before the floor last rose is refused. Confirmation raises the floor after arming and before it erases the confirmation sector; a store that cannot be written leaves the build unconfirmed. Sector 4's version field carries the version bank 0 activated, and 0 for a build installed over UART, or after a torn confirmation rewrite (the store's candidate was already confirmed, so the retry finds nothing naming the build). Nothing decides on that field; the floor lives in the update store.
+Version 1 (`PLOTA1`) is deleted. An offer carrying its magic is refused as the wrong version. The bench still reads the versions of the version 1 manifests on disk when it picks the next.
 
-**The update store** (`wellfed_core::store::update`, storage sectors 25–26): one 256-byte record A/B, newest valid wins, holding the floor, the candidate (pending, then activated), the release slot's key, up to four retired ids and bank 0's recorded image. A record that would lower the floor or forget a retired id is never written; a torn write leaves the older, consistent record. It is not the confirmation sector, which is erased before each write. The factory reset leaves it alone.
+**Trusted keys.**
+- The key built into the firmware: the bench key, `WELLFED_OTA_PUBLIC_KEY`.
+- The release slot, empty in the build and filled once by a `PLKEY1` statement a built-in key signed (`UpdateKeyStatement`). So a release key arrives without reinstalling bank 0.
+- Owners' update keys, enrolled over the device API (`EnrollUpdateKey`) only once someone presses Dispense at the feeder, and removed like any client.
 
-Signing: `wellfed-build sign` (version 2), `downgrade`, `revoke` and `add-key`, all with the bench key.
+A `PLREV1` statement retires any key id for good. Built-in keys and the release slot's key sign key statements, so retiring the bench key leaves rotation to the release key. An owner's key never signs one, and a retired key signs nothing.
+
+The bench key stays in `private/ota-key.json`, for the bench only. An offline release key is required before any public release.
+
+**The floor** (`min_version`) is the highest version a build confirmed at.
+- An offer at or below it, and every stock image, needs a `PLDWN1` downgrade statement signed by a trusted key. The statement names this feeder's identity key, the exact manifest's digest and the current floor.
+- A replayed old manifest, a statement for another feeder, or one made before the floor last rose is refused.
+- Confirmation raises the floor after arming, and before it erases the confirmation sector. A store that cannot be written leaves the build unconfirmed.
+- Sector 4's version field carries the version bank 0 activated. It is 0 for a build installed over UART, or after a torn confirmation rewrite (the store's candidate was already confirmed, so the retry finds nothing naming the build). Nothing decides on that field; the floor lives in the update store.
+
+**The update store** (`wellfed_core::store::update`, storage sectors 25–26) is one 256-byte record, A/B, newest valid wins. It holds the floor, the candidate (pending, then activated), the release slot's key, up to four retired ids, and bank 0's recorded image.
+- A record that would lower the floor or forget a retired id is never written.
+- A torn write leaves the older, consistent record.
+- It is not the confirmation sector, which is erased before each write.
+- The factory reset leaves it alone.
+
+**Signing** uses `wellfed-build sign` (version 2), `downgrade`, `revoke` and `add-key`, all with the bench key. `wellfed-build` signs only a frozen review.
 
 ## Storage-format rule
 
-Storage formats stay readable by the bank-0 build, or a format change ships a bank-0 refresh first. A store bank 0 cannot read (a newer schema) has no floor it can trust, so it refuses every offer: a format change that skipped the refresh strands the unit on bank 0 until a UART install.
+Storage formats stay readable by the bank-0 build, or a format change ships a bank-0 refresh first.
 
-## Bench procedure
+A store bank 0 cannot read (a newer schema) has no floor it can trust, so bank 0 refuses every offer. A format change that skipped the refresh would strand the unit on bank 0 until a UART install.
 
-Not run yet; the orchestrator's, with no motion. `wellfed-bench ota` and `itest` push updates over the device API ([bench](../devices/plaf103/bench.md)). In the push model a truncated download is a stall: the bench simply stops sending, and the install times out (`stage=timeout`). Between failure drills, `ota NAME --cancel` forgets the candidate a stop left recorded. The hands-off round trip offers bank 0's build back from bank 1, so the build in bank 1 must have another build ID: R1 is the feeder's `twin` variant (`--variant twin`), R0 the plain feeder. The first install of this bank-0 build is a reviewed UART install (`flash-prepare/flash-execute --bank 0`); bank 1 keeps running until a give-way. Bring-up firmwares (`qa`, `optics` and the rest) serve no device API, so a unit left on one in bank 1 takes no offer: leaving it needs a UART install or a failed trial.
+## Boot confirmation and fallback
 
-## History: the MQTT updater
+KM0 runs the trial before it starts KM4 (`wellfed-hal-common/src/trial.rs`, `wellfed_trial_step` in `firstboot_km0.c`).
 
-Status: the recovery-role updater is implemented (`wellfed-hal/src/ota/updater.rs`, host-tested in `wellfed-hal/tests/updater.rs`). On hardware (October 22, physical), the build booted from bank 0 after a UART give-way. It bound KM0, opened the watchdog, installed the lease provider into the flash-lock hooks and ran 180 s on one boot with the watchdog fed and no network; bank 1 was then restored. **First live update (October 22, physical).** With the hotspot up and `wellfed-local serve` holding an offer, a UART give-way booted bank 0, and the recovery role then:
-- joined the hotspot, connected, and verified manifest version 1 (663 552 bytes);
-- wrote 162 sectors under 2 703 leases, reading back every page;
-- programmed the marker last and logged `activated`;
-- let the watchdog reset it. The loader then booted the offered build (`ed15a3ff…`) from bank 1, and its health reached the server.
-
-The whole run, boot included, fit in the 180 s capture. The first attempt HardFaulted on its first manifest: the signature check needs about 12 KiB of stack, more than the task's 10 KiB. The watchdog reset it, the attempt marker skipped the next try, and the normal transport took over, as designed. The task now has 24 KiB, with the manifest step out of line. The normal role's give-way trigger and FW11's trial counter are not implemented.
-
-The updater: booted from bank 0, with a key built in (`WELLFED_OTA_PUBLIC_KEY`, the public half of `private/ota-key.json`), it runs in place of the transport and optics tasks. It sets an attempt marker (a boot that finds it set skips the update), and each erase and page program is one FW06 lease. A feeder task feeds the watchdog while the updater keeps stepping (10 s liveness); a hang, a hook fault or the activation stops it, and the watchdog reset boots the new bank 1. Without a key, or after a stop, the normal transport starts so health stays visible. Records are `PLOTA1` lines.
-
-**Health while waiting (FW40).** With no offer, the updater asks again every 10 s and never hands over to the transport. A build that stock just installed, which boots from bank 0 with bank 1 invalid, would then report nothing. So the updater publishes health from its own MQTT session after a `no_offer` answer, at most every 30 s. It reports bank 0 and `"role":"recovery"`. It is the only client: the transport shares its client ID. Nothing else changes in the recovery role: no flash access, no `Watch`, no firmware tasks. Only this role writes `role`, so normal health is unchanged. Host-tested (`tests/updater.rs`), with fresh builds passing every audit (`wellfed-ota` stack 10024 of 24576 B).
-
-**Hands-off update (October 22, physical).**
-- **The offer check:** a confirmed normal build runs `amebad/src/watch.rs`. Every minute it opens a short MQTT session of its own, as `<client_id>-ota`, publishes `ota/check`, and the server answers `ota/offered`.
-- **On hardware:** build W checked and found its own build on offer (`same=1`). After the owner side loaded signed v5 for another build, the next check made W clear its bank-1 marker (`sdk::bank1_give_way`, refused unless bank 0 is valid) and restart. Bank 0 installed v5, which confirmed itself after 30 s. Nothing went over UART.
-
-**Failure modes (October 22, physical).** `src/tools/wellfed-local/examples/ota_fault_server.rs` answers `ota/get` as the server role, beside `wellfed-local broker` only, with one injected fault:
-
-| Fault | Result |
-| --- | --- |
-| One bit flipped in the chunk at 8192 | Full download, then `error stage=hash` |
-| `Range` from 200 000 | `error stage=range` after 48 sectors |
-| No answers from 300 000 | Five asks 3 s apart, then `error stage=timeout` |
-| Broker and server restarted at 300 032 | `closed`, three refused connects, then resumed at 300 544 and activated |
-| Relay power cut at 201 728 | Next boot on bank 0, re-downloaded from 0, activated |
-
-After each stop, the marker was never written: the loader kept booting bank 0, and the recovery role handed over to the normal transport. The transfer ran at about 6.5 KB/s, a 672 KB image in about 100 s. Most of that was one 512-byte ask per round trip, each followed by the task's 50 ms poll delay.
-
-**Pipelined transfer (October 22, physical).** The recovery role now asks for all eight chunks of the sector it is staging at once, each with its own retries. It polls again after 1 ms while answers keep arriving. The writer accepts a sector's chunks in any order and hashes the sector in order once it is complete. Sectors are still written strictly in order, and the marker checks, readback, whole-image hash and marker-last commit are unchanged. It runs in bank 0, which was reflashed over UART for it. In `itest-20261022-18`, each 680 KB download took 18–19 s from manifest to activation, about 37 KB/s.
-
-The original design follows. It came from the FW09 bank policy (simulation and static analysis). Every write it describes is outside the bank-1 development updater's reviewed region, so the first hardware step needs an owner-reviewed procedure.
-
-## Constraints
-
-- **Bank 1 always wins when valid.** The factory loader checks bank 1 first and keeps it whenever its signatures pass; bank 0 boots only when bank 1 fails ([bank policy](bank-policy.md)).
-- **No writing the running bank.** Code executes in place from the active bank, and rewriting it under execution is unsafe.
-- **The loader never falls back on its own.** A valid-marker image that crashes is selected again on every reset. Both banks invalid means a wait loop that only UART recovers.
-- **Writes go through the FW06 flash authority,** with outputs quiesced and KM0 parked for each lease. No motion during an update.
-
-## Roles by bank (MQTT era)
-
-Superseded by [Updates over the device API](#updates-over-the-device-api), where both banks run the feeder. One firmware build runs from either bank, because both map to the same virtual addresses. Its role followed from the bank it started in, which the startup report already reads from the MMU:
-
-| Bank | Role |
-| --- | --- |
-| 1 | **Normal:** feeding, health and transport. Never writes its own bank. |
-| 0 | **Recovery and updater:** health and transport only, motor and emitters held off. It downloads, verifies and activates candidates into bank 1. |
-
-The bank-0 image is the confirmed known-good fallback. It changes rarely, and only by a reviewed procedure.
-
-## Update flow
-
-1. **Announce:** the server announces a signed update manifest. The normal image (bank 1) checks it: signature, version, target bank 1, size within the reviewed bound.
-2. **Give way:** the normal image verifies that bank 0 holds a valid, confirmed recovery image. It then clears the first byte of its own bank-1 marker (one page program under the flash authority) and resets. The loader boots bank 0.
-3. **Download:** the recovery image pulls the candidate in chunks over the local transport and writes bank 1 sector by sector, with readback, leaving the 8 marker bytes erased. It hashes as it writes.
-4. **Activate:** after the whole image matches the manifest's SHA-256, it writes bank 1's marker last and resets. Bank 1 now wins.
-5. **Trial:** the candidate boots unconfirmed. KM0 counts its boots (below). Once the candidate's startup report, stopped outputs, Wi-Fi and transport are healthy, it records itself confirmed and reports its build ID.
-
-If anything fails before step 4, bank 1's marker is still clear, so the loader keeps booting the recovery image, which reports the failure. Corrupt, truncated and interrupted transfers all land there.
-
-## Boot confirmation and fallback (FW11)
-
-Implemented on KM0 (`wellfed-hal-common/src/trial.rs`, `wellfed_trial_step` in `firstboot_km0.c`), before `km4_boot_on`:
 - **Running bank:** read from bank 1's physical marker.
-- **Confirmation:** keyed by the build identity, not the image hash, since the normal image does not know its own OTA hash. The record lives in storage sector 4 (`0x344000`). So reinstalling the build the record already names skips the trial. KM0 logs `PLTRL1 confirmed=1` straight after activation, and the build logs `PLCNF1 confirmed=1 already=1`. The integration suite saw this on hardware (October 22). A test that needs a trial must therefore install a build the record does not name.
-- **Count:** backup register 4. Bits 0–15 hold the peer boot count, bits 16–19 the trial count on a trial boot (or, with bit 19 set, the reset storm's backoff level on any other boot), bits 20–23 the reset-storm count ([below](#reset-storms)), bits 24–30 an identity tag, and bit 31 marks a register whose next boot may forgive no brownout ([below](#reset-storms)). (Before October 26 the trial count took bits 16–23; it never exceeds 3, so a register from an older KM0 reads the same.)
-- **Give way:** at boot 4, only if bank 0's marker is valid, KM0 clears byte 0 and resets with its own watchdog.
+- **Confirmation** is keyed by the build identity, not the image hash, since the running image does not know its own OTA hash. The record lives in storage sector 4 (`0x344000`). So reinstalling the build the record already names skips the trial: KM0 logs `PLTRL1 confirmed=1` straight after activation, and the build logs `PLCNF1 confirmed=1 already=1`. A test that needs a trial must install a build the record does not name.
+- **Count:** backup register 4.
 
-The program step bypasses `FLASH_Write_Lock`. After a watchdog reset, that lock's KM0 branch waits forever for an absent KM4, because `km4_status_on` still reads the HS clock bit set. This was observed on hardware, then fixed.
+  | Bits | Holds |
+  | --- | --- |
+  | 0–15 | The peer boot count |
+  | 16–19 | The trial count on a trial boot; with bit 19 set, the reset storm's backoff level on any other boot |
+  | 20–23 | The reset-storm count ([below](#reset-storms)) |
+  | 24–30 | An identity tag |
+  | 31 | The next boot may forgive no brownout ([below](#reset-storms)) |
 
-Physical (October 22): the `stall` test variant (now `wellfed-build build --profile firstboot --firmware bringup --variant stall`) was counted 1, 2, 3, then gave way and booted bank 0's recovery role. The normal role now confirms itself (`amebad/src/confirm.rs`). Once the startup probe has ended, the transport is ready and outputs are verified stopped for 30 s continuously, it arms the hooks and writes the record to sector 4, then reads it back. Without the MQTT session, "the transport is ready" became the Wi-Fi task's network check, and since October 25 that check is the [link's liveness](startup-diagnostics.md#link-liveness-without-internet-dns): associated, leased, and the lease's gateway answering an ICMP echo, or never having answered this join. It needs no internet DNS, so a candidate confirms on a LAN without a route out; a gateway that goes silent after answering restarts the 30 s. The normal role also opens the watchdog at startup. A feeder task feeds it while the transport and confirmation tasks keep stepping, and while outputs are stopped or sensing, so a hang becomes a reset that KM0 counts.
+  The trial count never exceeds 3, so a register written by an older KM0, whose trial count took bits 16–23, reads the same.
+- **Give way:** at boot 4, and only if bank 0's marker is valid, KM0 clears byte 0 of bank 1's marker and resets with its own watchdog.
 
-**Supervision from startup (October 22, physical).** The normal role used to open the watchdog only after its startup probes, so a fault before then hung with nothing to count it. That happened once: a crate-split build overflowed a task stack in early startup and needed a UART give-way. The feeder task now starts with the application and opens the watchdog on its first step (`PLSUP1 open watchdog=1 trial=N`), before the startup diagnostic. The decision is `amebad/src/supervise.rs`:
+The program step bypasses `FLASH_Write_Lock`. After a watchdog reset, that lock's KM0 branch waits forever for an absent KM4, because `km4_status_on` still reads the HS clock bit set.
+
+**How a build confirms.** Once the startup probe has ended, the link is live, and outputs have been verified stopped for 30 s continuously, the build arms the hooks, writes the record to sector 4 and reads it back (the service task in `wellfed-sdk`'s `runtime.rs`). A live link means associated, leased, and the lease's gateway answering an ICMP echo, or never having answered this join ([link liveness](startup-diagnostics.md#link-liveness-without-internet-dns)). It needs no internet DNS, so a build confirms on a LAN with no route out. A gateway that goes silent after answering restarts the 30 s.
+
+**Supervision from startup.** The watchdog opens with the application, before the startup diagnostic: the feeder task starts first and opens it on its first step (`PLSUP1 open watchdog=1 trial=N`). So a fault in early startup is a counted reset, not a hang. The decision lives in `wellfed-hal`'s `supervision` module:
+
 - **Startup:** feed while the startup task keeps stepping.
-- **Determined startup failure:** a trial image stops feeding, so the failure is a counted reset. A confirmed image keeps feeding and holds STOP, so there is no reset loop.
+- **A determined startup failure:** a trial image stops feeding, so the failure is a counted reset. A confirmed image keeps feeding and holds STOP, so there is no reset loop.
 - **Running:** feed while every running task steps and outputs stay stopped or sensing.
 - **Trial deadline:** a trial image that has not confirmed within 10 minutes of boot stops feeding.
 
-Each stop logs `PLSUP1 stop …` once. On hardware, over the air, each of these was counted 1, 2, 3 and then gave way to bank 0:
-- a failed-start variant (`--variant fail`), stopped 253 ms into each boot;
-- the hang variant (`--variant stall`);
-- a normal build whose server was stopped after activation, which reset at `ms=600192` on each boot.
-
-Physical (October 22), over the air:
-1. The first build with this code had a feeder bug: it demanded all outputs stopped and tripped during the optics windows. KM0 counted three resets and gave way. The recovery role then installed the fixed build (version 3) over the air.
-2. The fixed build confirmed after 30 s healthy (`PLCNF1 confirmed=1 healthy_ms=30000`).
-3. On the next cold boot KM0 reported `PLTRL1 confirmed=1`.
-
-**Resets that left no line (October 25, static analysis and host tests).** Two paths could reset the board without writing anything first:
-- **A failed flash lease.** The hook halts in RAM with IRQs masked, so nothing reaches the UART before the watchdog resets the board. The provider now writes the failure into the attempt register's top bits (bits 31–10; the attempt and update bits keep 9–0), and backup registers survive a watchdog reset. The next boot reports it before anything arms: `PLSUP1 lease_fault stage=<LeaseStage> phase=<FlashPhase> fault=<FlashFault> reply=<FlashReply> elapsed_ms=<from this lease's request, in 16 ms steps; 1008 means 1008 or more; 0 for a request-stage failure>`, then clears those bits. The skip rule still reads only the attempt bits.
-- **A refused watchdog checkpoint.** A gap over the 1 s progress limit, an altered register or a clock fault latches, and the hardware is never refreshed again. The feeder now logs `PLSUP1 stop watchdog_fault=<WatchdogFault> gap_ms=… fed_ms=… ms=…`. It shares one latch with `PLSUP1 stop startup=…`, so a boot logs whichever stop comes first, once.
-- **A hang that stops the feeder task itself** (a spin above its priority, or interrupts masked). The tick hook leaves the interrupted task and the time since the feeder last ran in backup register 2, and the next boot after a watchdog reset prints `PLSUP1 hang kind=spin|masked|stopped task=… since_ms=… suspended=…` ([silent watchdog resets](startup-diagnostics.md#silent-watchdog-resets)).
-
-**A restart leaves the network first (October 25, static analysis and host tests).** Every intentional restart (activation, give-way, a requested reboot) asks the Wi-Fi task to disconnect while the watchdog runs out, so the access point drops the association instead of rejecting the trial boot's join with status 30, after which the vendor's `wifi_connect` can hang the board into a silent reset and spend a trial boot. The feeding stops at once regardless ([leaving before a restart](startup-diagnostics.md#leaving-before-a-restart)).
+Each stop logs `PLSUP1 stop …` once.
 
 ### What confirmation proves
 
-October 26, static analysis and host tests; not yet run on hardware. A healthy network proves the update path still works, not that the build can feed. So a trial build of a firmware with a feeding owner (`feeder`, which says so with `wellfed_sdk::claim_feeding` in its start hook) confirms only once:
-1. the runtime's own health has held for 30 s, as before: the startup probes finished, outputs verified stopped, and the link live (associated, leased, the gateway answering or never having answered);
-2. the confirmation has armed the flash hooks. The owner opens only on armed hooks, and on a trial boot this is the first arming, so the confirmation now arms and then waits. Arming and the record's write each take the write turn and set the attempt marker for themselves only, so the wait between them leaves the marker clear;
-3. the owner has proved itself (`feeding::Proof`, reported each loop pass with `wellfed_sdk::report_feeding`): opened on its journal, any feed a reset interrupted resolved as uncertain, and at rest (Idle, no owner or supervisor fault, motor STOP and the emitters off read back) for 2 s, about a hundred of its 20 ms samples, each of which reads the sensors and the motor current;
-4. and the link is still live at that moment. Then the floor rises and the record is written, as before.
+A healthy network proves the update path still works, not that the build can feed. So a trial build of a firmware with a feeding owner confirms only once all of these hold. (`feeder` says it has one with `wellfed_sdk::claim_feeding` in its start hook.)
 
-A firmware with no feeding owner (`blink`, `qa`, the bring-up areas) has nothing to prove and confirms on step 1 alone.
+1. **The runtime's own health has held for 30 s:** the startup probes finished, outputs verified stopped, and the link live.
+2. **The confirmation has armed the flash hooks.** The owner opens only on armed hooks, and on a trial boot this is the first arming, so the confirmation arms and then waits. Arming and the record's write each take the write turn, and set the attempt marker for themselves only, so the wait between them leaves the marker clear.
+3. **The owner has proved itself** (`feeding::Proof`, reported each loop pass with `wellfed_sdk::report_feeding`). It has opened on its journal, resolved any feed a reset interrupted as uncertain, and stayed at rest for 2 s: Idle, no owner or supervisor fault, and motor STOP and the emitters off read back. That is about a hundred of its 20 ms samples, each of which reads the sensors and the motor current.
+4. **The link is still live at that moment.**
 
-A build whose owner cannot open never confirms. If the owner fails determinedly (its journal cannot be opened, or it faults in setup, recovery or a check), the runtime stops feeding the watchdog at once on a trial boot, as for a failed startup diagnostic, and the `PLSUP1 stop` line carries `feeding=3`; KM0 counts the reset, and after three gives way. If the owner just never gets there (arming skipped, a hang), the 10-minute trial deadline resets the boot. A confirmed build (or bank 0) whose owner fails holds STOP instead, as before.
+Then the floor rises and the record is written. A firmware with no feeding owner (`blink`, `qa`, the bring-up areas) has nothing to prove, and confirms on step 1 alone.
 
-While a trial build is unconfirmed, the feeder refuses feeds (readiness `Blocked::Starting`), clients' and the Dispense button's alike, so the confirmation never waits on a feed towards the deadline. The owner proving itself takes about 2 s after arming, so a healthy trial confirms a few seconds later than before. In practice the window runs from the activation's reset to the confirmation: typically 2–3 minutes (the boot, the Wi-Fi join, 30 s of health). If the network is down, a trial cannot confirm: each trial boot runs to its 10-minute deadline, and after the third (about 30 minutes) KM0 gives way to bank 0, which feeds. **For schedules (FP03):** a meal whose time falls in this window is refused like any feed, so the schedule must not drop it silently: it should retry once readiness turns `Ready`, if that is still within a grace period after the meal's time, and otherwise record it as missed, never feed it twice (the feed's write id stays the same across the retry).
+**A build whose owner can't open never confirms.**
+- If the owner fails determinedly (its journal cannot be opened, or it faults in setup, recovery or a check), the runtime stops feeding the watchdog at once on a trial boot, as for a failed startup diagnostic. The `PLSUP1 stop` line carries `feeding=3`. KM0 counts the reset, and after three gives way.
+- If the owner just never gets there (arming skipped, a hang), the 10-minute trial deadline resets the boot.
+- A confirmed build, or bank 0, whose owner fails holds STOP instead.
 
-A journal that stays unreadable (corrupt in flash, not just a bad build) makes every trial fall back: the owner fails to open on every trial boot. Bank 0 then runs with `Blocked::Journal` (it never confirms, so a failed owner holds STOP there rather than resetting), and no update can confirm until the journal is repaired or recreated.
+**Feeds wait for confirmation.** While a trial build is unconfirmed, the feeder refuses feeds (readiness `Blocked::Starting`), from clients and the Dispense button alike. So the confirmation never waits on a feed towards the deadline.
+- The owner proving itself takes about 2 s after arming, so a healthy trial confirms a few seconds later than it would on health alone.
+- The window runs from the activation's reset to the confirmation: typically 2–3 minutes (the boot, the Wi-Fi join, 30 s of health).
+- If the network is down, a trial cannot confirm. Each trial boot runs to its 10-minute deadline, and after the third (about 30 minutes) KM0 gives way to bank 0, which feeds.
+- **For schedules:** a meal whose time falls in this window is refused like any feed, so the schedule must not drop it silently. It should retry once readiness turns `Ready`, if that is still within a grace period after the meal's time, and otherwise record it as missed. It must never feed it twice; the feed's write id stays the same across the retry.
 
-The `owner-fail` variant of `feeder` exercises this: its owner never opens (the journal reads as failed and is left untouched), so each trial boot stops at once and the third gives way to bank 0.
+**A journal that stays unreadable** (corrupt in flash, not just a bad build) makes every trial fall back, since the owner fails to open on every trial boot. Bank 0 then runs with `Blocked::Journal`. It never confirms, so a failed owner holds STOP there rather than resetting. No update can confirm until the journal is repaired or recreated.
+
+The `owner-fail` variant of `feeder` exercises this. Its owner never opens (the journal reads as failed and is left untouched), so each trial boot stops at once and the third gives way to bank 0.
 
 ### Reset storms
 
-October 26, static analysis, host tests and the simulator; not yet run on hardware. Confirmation proves one boot. A confirmed build can still fault into a reset soon after every boot, and before this nothing stopped that: KM0 runs no trial for a confirmed build. Now KM0 also counts, in bits 20–23 of backup register 4, every boot that runs no trial (a confirmed bank 1, bank 0, or a trial that ran out with no bank 0 to fall back to), and KM4 gives the count back:
+Confirmation proves one boot. A confirmed build can still fault into a reset soon after every boot, and KM0 runs no trial for a confirmed build. So KM0 also counts, in bits 20–23 of backup register 4, every boot that runs no trial: a confirmed bank 1, bank 0, or a trial that ran out with no bank 0 to fall back to. KM4 gives the count back:
+
 - once a boot that is not held has run 10 minutes (`trial::STABLE_MS`, the trial's deadline; `PLSUP1 storm settled=1`);
 - before every restart it asks for (a reboot over the device API, an activation, a give-way, setup), since those are not faults.
-- KM0 takes it back for a boot that ended in a brownout (`trial::decide_after`): on a boot whose `BOOT_Reason` carries the brownout bit (bit 18), it removes the previous boot's pending count before deciding (`PLTRL1 brownout=1 reg=…`). A brownout is the supply, not the build: a pack weak enough to brown out at idle would otherwise make a storm within minutes and give a good bank 1 away to an older build. The brownout neither counts nor ends a burst, so a fault's resets still reach the limit with brownouts between them. A trial's count (the low nibble) is never touched: a brownout on trial still counts toward its three boots, so no trial is shortened or skipped. **The bit may be stale:** the loader that backs the ROM's flags up into `BOOT_Reason` returns early when it finds none set, leaving the previous value, so after one real brownout a fault reset that sets no flag can read as a brownout too. Forgiveness is therefore bounded: a boot that forgave sets bit 31 (`trial::FORGIVEN`), and the next boot forgives nothing; a halt's own reset sets it too, so its held count stands. Of any two early resets in a row at least one counts, so a fault reaches the storm limit within 10 early resets and the halt within 16 however the bit reads: the breaker's bounds hold, at worst twice as slow. Whether a real brownout on this board sets the bit is unverified ([power](power.md#brownout)).
 
-So the count KM0 finds at boot is the number of boots in a row that ended in a reset nobody asked for within 10 minutes of starting. Every boot reports it: `PLTRL1 confirmed=1 resets=N` or `PLTRL1 bank=0 resets=N`, and KM4's `PLSUP1 storm resets=N level=L mode=…` when either is not zero. At 5 (`trial::STORM_LIMIT`):
-- **A confirmed bank 1 with a valid bank 0 gives way**, exactly as a failed trial does (`PLTRL1 storm=5 limit=5`, then `PLTRL1 give_way=1 …`). Bank 0 is the full feeder, and a build that faults this often is the likeliest cause; it was confirmed, so the update floor stays at its version and a fixed build must carry a higher one. The give-way leaves no count for bank 0.
-- **Otherwise** (bank 0 itself, or a bank 1 with no valid bank 0), KM4 boots **held** (`PLTRL1 storm=N held=1`, `PLSUP1 storm resets=N level=L mode=held`): the feeding owner stays closed, so the motor and emitters stay as startup left them, stopped, and readiness reports `Blocked::Fault`. The device API, the settings writer and the update stage run, so the owner can read why (the log tail carries the lines), install a fix or reboot. **A hold is time-bounded:** a held boot that runs 10 minutes × 2^level (10, 20, 40, 80, at most 160 minutes; `trial::hold_ms`) opens the owner and feeds again in place (`PLSUP1 storm released=1 level=L`), with the count cleared and the level one up, so a fault that keeps coming back holds twice as long each time, and one that has cleared (a run of association hangs, a battery brownout) costs at most one hold. Every stable boot takes a level back: a normal boot after 10 minutes, a released boot once it has fed for its new level's hold.
-- **At 8** (`HALT_LIMIT`), when held boots keep resetting too (a fault in the network stack, say), KM4 starts nothing but a timer for an hour (`trial::HALT_MS`; `PLSUP1 storm resets=8 … mode=halted`): no network, no owner, outputs as `stopped::initialize` left them. Then it leaves KM0 a held count a level up and lets the watchdog reset the board (`PLSUP1 storm halt_over=1 reset=1`), so the next boot is held again, not halted. The `held-stall` variant reaches it on the bench: a priority-3 task starves the service task about a minute into every boot, held boots included, which `owner-stall` cannot (a held boot owes no owner beat).
-- **A trial that runs out with no bank 0** (`PLTRL1 error fallback=invalid boot=3`) used to reset at its deadline forever. It now runs on as a build in no trial: held at once, like a storm, then released, with no trial deadline (`trial::past_trial`); its resets count as a storm's. It can still confirm itself later if its owner proves itself. Its state is honoured only while bank 0 stays invalid: once bank 0 is valid again it is back on trial, counted from 0, and gives way after three boots. The same rule keeps a count another build left under the same tag (a reinstall of the same identity, or one identity byte in 128) from ever letting a new build skip its trial; an activation or give-way restart also clears the register's counts outright.
+**Brownouts are forgiven, within a bound.** A brownout is the supply, not the build. A pack weak enough to brown out at idle would otherwise make a storm within minutes, and give a good bank 1 away to an older build.
 
-Nothing is permanent: a build that faults at every boot resets at most 14 times in its first burst (6 on bank 1, then 8 on bank 0) and after that only the held boots' few resets around each hour-long halt, a handful an hour. Every count is in a backup register, and there is no flash record to tear. The registers survive a watchdog reset and a brownout, and clear only on **power loss, which means the adapter and the D cells both out**: with batteries in, pulling the adapter is no power loss. A brownout reset is forgiven, but never two boots in a row (above). One case the count does not see: a build that crashes just after 10 minutes on every boot settles each boot first, so it resets about every 11 minutes indefinitely, feeding between.
+- On a boot whose `BOOT_Reason` carries the brownout bit (bit 18), KM0 removes the previous boot's pending count before deciding (`trial::decide_after`; `PLTRL1 brownout=1 reg=…`).
+- The brownout neither counts nor ends a burst, so a fault's resets still reach the limit with brownouts between them.
+- A trial's count (the low nibble) is never touched. A brownout on trial still counts toward its three boots, so no trial is shortened or skipped.
+- **The bit may be stale.** The loader that backs the ROM's flags up into `BOOT_Reason` returns early when it finds none set, leaving the previous value. So after one real brownout, a fault reset that sets no flag can read as a brownout too.
+- So a boot that forgave sets bit 31 (`trial::FORGIVEN`), and the next boot forgives nothing. A halt's own reset sets it too, so its held count stands.
+- Of any two early resets in a row, at least one counts. A fault reaches the storm limit within 10 early resets, and the halt within 16, however the bit reads. The breaker's bounds hold, at worst twice as slow.
+- Whether a real brownout on this board sets the bit is unverified ([power](power.md)).
 
-**Until the bank-0 refresh**, bank 0 runs a build from before this breaker: a storm on bank 1 still gives way to it, but if bank 0 itself then resets at every boot, nothing bounds that.
+So the count KM0 finds at boot is the number of boots in a row that ended in a reset nobody asked for, within 10 minutes of starting. Every boot reports it: `PLTRL1 confirmed=1 resets=N` or `PLTRL1 bank=0 resets=N`, and KM4's `PLSUP1 storm resets=N level=L mode=…` when either is not zero.
 
-The simulator models it (`wellfed-feeder-sim`'s banks now run the firmware's own `trial::decide`): a build that confirms and then resets soon after each boot gives way to a bank 0 that answers, with the floor where the build raised it. On hardware, the `owner-stall` variant is a storm: once confirmed it resets about 3 minutes into every boot, so KM0 gives way at the sixth boot after the one that confirmed.
+**At 5 resets** (`trial::STORM_LIMIT`):
+
+- **A confirmed bank 1 with a valid bank 0 gives way,** exactly as a failed trial does (`PLTRL1 storm=5 limit=5`, then `PLTRL1 give_way=1 …`). Bank 0 is the full feeder, and a build that faults this often is the likeliest cause. It was confirmed, so the update floor stays at its version, and a fixed build must carry a higher one. The give-way leaves no count for bank 0.
+- **Otherwise** (bank 0 itself, or a bank 1 with no valid bank 0), KM4 boots **held** (`PLTRL1 storm=N held=1`, `PLSUP1 storm resets=N level=L mode=held`).
+  - The feeding owner stays closed, so the motor and emitters stay as startup left them, stopped. Readiness reports `Blocked::Fault`.
+  - The device API, the settings writer and the update stage run, so the owner can read why (the log tail carries the lines), install a fix or reboot.
+  - **A hold is time-bounded.** A held boot that runs 10 minutes × 2^level (10, 20, 40, 80, at most 160 minutes; `trial::hold_ms`) opens the owner and feeds again in place (`PLSUP1 storm released=1 level=L`), with the count cleared and the level one up. A fault that keeps coming back holds twice as long each time. One that has cleared (a run of association hangs, a battery brownout) costs at most one hold.
+  - Every stable boot takes a level back: a normal boot after 10 minutes, a released boot once it has fed for its new level's hold.
+
+**At 8 resets** (`HALT_LIMIT`), when held boots keep resetting too (a fault in the network stack, say), KM4 starts nothing but a timer for an hour (`trial::HALT_MS`; `PLSUP1 storm resets=8 … mode=halted`). No network, no owner, and outputs as `stopped::initialize` left them. Then it leaves KM0 a held count a level up and lets the watchdog reset the board (`PLSUP1 storm halt_over=1 reset=1`), so the next boot is held again, not halted. The `held-stall` variant reaches it on the bench: a priority-3 task starves the service task about a minute into every boot, held boots included, which `owner-stall` cannot do (a held boot owes no owner beat).
+
+**A trial that runs out with no bank 0** (`PLTRL1 error fallback=invalid boot=3`) runs on as a build in no trial: held at once, like a storm, then released, with no trial deadline (`trial::past_trial`). Its resets count as a storm's. It can still confirm itself later if its owner proves itself. Its state is honoured only while bank 0 stays invalid. Once bank 0 is valid again, it is back on trial, counted from 0, and gives way after three boots. The same rule keeps a count another build left under the same tag (a reinstall of the same identity, or one identity byte in 128) from ever letting a new build skip its trial. An activation or give-way restart also clears the register's counts outright.
+
+**Nothing is permanent.** A build that faults at every boot resets at most 14 times in its first burst (6 on bank 1, then 8 on bank 0). After that, only the held boots' few resets around each hour-long halt: a handful an hour.
+- Every count is in a backup register, so there is no flash record to tear.
+- The registers survive a watchdog reset and a brownout. They clear only on **power loss, which means the adapter and the D cells both out.** With batteries in, pulling the adapter is no power loss.
+- One case the count does not see: a build that crashes just after 10 minutes on every boot settles each boot first. It resets about every 11 minutes indefinitely, feeding between.
+
+The simulator models the breaker: `wellfed-feeder-sim`'s banks run the firmware's own `trial::decide`. On hardware, the `owner-stall` variant is a storm: once confirmed, it resets about 3 minutes into every boot, so KM0 gives way at the sixth boot after the one that confirmed.
 
 ### Recovering a held or halted feeder
 
-What the owner sees, and what to do:
-- **Held:** the app and server reach the feeder, but every feed is refused with a fault (`Blocked::Fault`), and the log tail shows `PLSUP1 storm … mode=held`. It feeds again by itself once the hold ends (10 minutes the first time, doubling for each storm in a row, at most 160 minutes). To retry at once, reboot it from the app: a requested reboot clears the count. If it keeps coming back, install a fixed build (an update installs as usual while held).
-- **Halted:** the feeder does not answer at all for up to an hour, then comes back held. Waiting is enough. To start over at once, cut power fully: unplug the adapter **and** take out the D cells for a few seconds.
-- **Bank 1 gave way:** the feeder answers as its bank-0 build (the update view shows bank 0) and feeds; install a build with a higher version than the one that stormed.
+What you see, and what to do:
+
+- **Held.** The app and server reach the feeder, but every feed is refused with a fault (`Blocked::Fault`), and the log tail shows `PLSUP1 storm … mode=held`. It feeds again by itself once the hold ends: 10 minutes the first time, doubling for each storm in a row, at most 160 minutes. To retry at once, reboot it from the app; a requested reboot clears the count. If it keeps coming back, install a fixed build. Updates install as usual while held.
+- **Halted.** The feeder does not answer at all for up to an hour, then comes back held. Waiting is enough. To start over at once, cut power fully: unplug the adapter **and** take out the D cells for a few seconds.
+- **Bank 1 gave way.** The feeder answers as its bank-0 build (the update view shows bank 0) and feeds. Install a build with a higher version than the one that stormed.
+
 ### The attempt marker and decided resets
 
-Every store write sets the flash attempt marker for its duration, and a boot that finds it set skips arming once per power cycle, so a write that hangs cannot reset the board over and over. FW16 found (statically) that a supervision reset could land inside a store write that started in the seconds before it, leaving the marker set, so the next boot skipped arming and the feeding owner did not open until a power cycle.
+Every store write sets the flash attempt marker for its duration. A boot that finds it set skips arming once per power cycle, so a write that hangs cannot reset the board over and over.
 
-Decided October 26 (static analysis and host tests): a reset the runtime decides never lands in a write it let start. From the first feeder pass that does not feed the watchdog, transient or certain, `supervision::writes_held` holds every new write: no write turn is granted, no arming starts, and an install (which holds its turn across sectors) goes no further. A transient stop holds them for under a second; a certain one until the reset. A write already running when the feeding stops has the rest of the watchdog's expiry, at least 2.4 s less a feed period, and takes tens of milliseconds. So the marker stays set only after a reset the runtime did not decide (a hang, a fault, a lease that halted), which is what it is for, and a withheld reset does not clear it. The storm breaker bounds the rest.
+A reset the runtime decides never lands in a write it let start. Without that rule, a supervision reset could land inside a store write that started in the seconds before it, leaving the marker set. The next boot would skip arming, and the feeding owner would not open until a power cycle.
 
-A sector write that fails stops the install with `PLOTA1 error stage=write sector=<bank-1 sector> step=erase|program|read|readback offset=<byte> expected=<word> read=<word> reread=<word> erase_ms=…`. On a readback mismatch, the record holds the first differing word as programmed, as read back, and as read a second time with no write in between. The second read first invalidates the data-cache lines over the word, so it reads the flash rather than the line the first read filled. A 0 bit where a 1 was programmed means the erase did not finish. A word that reads `ffffffff` means the program did not take. A second read that matches means the cells are right and the read path is at fault. The install still stops: nothing is rewritten.
+- From the first feeder pass that does not feed the watchdog, transient or certain, `supervision::writes_held` holds every new write. No write turn is granted, no arming starts, and an install (which holds its turn across sectors) goes no further.
+- A transient stop holds writes for under a second; a certain one until the reset.
+- A write already running when the feeding stops has the rest of the watchdog's expiry, at least 2.4 s less a feed period, and takes tens of milliseconds.
 
-During an install, each `PLOTA1 progress` line is followed by `PLOTA1 leases count=… park_max=… release_max=… masked_max_ms=… masked_long=… feed_gap_max_ms=…`: the leases so far, the slowest KM0 park and release exchanges (32 768 Hz ticks), the longest time IRQs were held masked (from the acquire's masking, request and quiesce included) and how many leases held them past 100 ms, and the feeder task's longest gap between checkpoints on the system timer. A lease's acquire now masks IRQs before it reads the lease clock. Before this change, a preemption of 50 ms or more between the request and the park counted against the park budget and halted the board (host-tested).
+So the marker stays set only after a reset the runtime did not decide (a hang, a fault, a lease that halted), which is what it is for. A withheld reset does not clear it. The storm breaker bounds the rest.
 
-Caution, observed (MQTT era): while an offer stayed loaded, a candidate that kept failing was re-downloaded after every fallback, so the server then served each offer to completion only once. The device API's client pushes each offer once and never on its own again.
+## Resets that tell you why
 
-The original design:
+Some resets used to leave no line on the UART. Each now leaves a breadcrumb for the next boot.
 
-- **Counting:** KM0 runs first on every boot. If bank 1's image is unconfirmed, KM0 increments a trial count in a backup register. Backup registers survive the watchdog reset but not power loss, so a power cut only restarts the count.
-- **Fallback:** when the count reaches 3, KM0 clears the first byte of bank 1's marker before releasing KM4, then resets. The loader boots bank 0, and the recovery image reports a failed trial.
-- **Confirmation:** a confirmation record, written once per installed image (keyed by the image's SHA-256) in the replacement storage region at `0x340000`. An image is confirmed only when the record names its exact hash.
-- **The hang case:** a KM4 hang becomes a counted reset through the FW05 watchdog.
+- **A failed flash lease.** The hook halts in RAM with IRQs masked, so nothing reaches the UART before the watchdog resets the board. The provider writes the failure into the attempt register's top bits (bits 31–10; the attempt and update bits keep 9–0), and backup registers survive a watchdog reset. The next boot reports it before anything arms, then clears those bits:
 
-Limits: if the candidate's own KM0 code is broken, nothing counts, and UART recovery is needed. That stays the documented backstop, and the relay bench can do it unattended.
+  ```
+  PLSUP1 lease_fault stage=<LeaseStage> phase=<FlashPhase> fault=<FlashFault> reply=<FlashReply> elapsed_ms=<…>
+  ```
 
-## Authentication
+  `elapsed_ms` counts from this lease's request, in 16 ms steps; 1008 means 1008 or more, and 0 means a request-stage failure. The skip rule still reads only the attempt bits.
+- **A refused watchdog checkpoint.** A gap over the 1 s progress limit, an altered register or a clock fault latches, and the hardware is never refreshed again. The feeder logs `PLSUP1 stop watchdog_fault=<WatchdogFault> gap_ms=… fed_ms=… ms=…`. It shares one latch with `PLSUP1 stop startup=…`, so a boot logs whichever stop comes first, once.
+- **A hang that stops the feeder task itself** (a spin above its priority, or interrupts masked). The tick hook leaves the interrupted task, and the time since the feeder last ran, in backup register 2. The next boot after a watchdog reset prints `PLSUP1 hang kind=spin|masked|stopped task=… since_ms=… suspended=…` ([silent watchdog resets](startup-diagnostics.md#silent-watchdog-resets)).
 
-The FW08 channel is plaintext on the shared hotspot, so the transport is not trusted. The update is: the manifest carries the image's SHA-256, version, size and target bank, and is signed by an owner-held key. The private key stays offline under `private/`, and the firmware embeds only the public key at build time.
+**A restart leaves the network first.** Every intentional restart (activation, give-way, a requested reboot) asks the Wi-Fi task to disconnect while the watchdog runs out. The access point then drops the association, instead of rejecting the trial boot's join with status 30. After such a rejection, the vendor's `wifi_connect` can hang the board into a silent reset and spend a trial boot. The feeding stops at once regardless ([leaving before a restart](startup-diagnostics.md#leaving-before-a-restart)).
 
-Candidate algorithm: Ed25519, verified in `wellfed-core` (`no_std`), with the SHA-256 also computed there, so both can be host-tested against known vectors. Replay and downgrade are refused by a monotonic version stored next to the confirmation record. The transport may still be sniffed; it reveals only the image, which is not secret.
+## Bank-0 download faults
 
-## Transfer
+Bank 0 used to fault now and then while downloading an update: hard faults at random places, imprecise bus errors, and once a single-bit read error caught by readback. Lowering the flash clock from 80 to 50 MHz stopped them. The working explanation is that the board's flash read margin at 80 MHz was too thin under download load, so the KM4 sometimes misread its flash. That is not yet established.
 
-MQTT era, deleted: updates now go over the device API, where the client pushes the chunks bank 0 asks for ([above](#updates-over-the-device-api)). The recovery image pulled; it was never pushed:
-- It publishes `ota/get {offset, length}` on its own namespace, and the server answers `ota/data` with that chunk.
-- Chunks were at most 512 bytes, so an answer fit the FW08 codec's 640-byte packet bound with its topic. The device API's download keeps the 512-byte chunk (`wellfed_core::ota::MAX_CHUNK`), which divides a sector.
-- The writer stages a whole sector in RAM, then the port erases, programs and reads it back in one lease.
-- The current sector's chunks are asked for together. A missing or late chunk is re-requested a bounded number of times, then the attempt fails into step 4's safe state.
+The builder sets KM0's `Flash_Speed` to 50 MHz. The read mode stays Dual IO, since the Quad check fails at the slow boot clock.
 
-The server-side broker ACL gave these two topics to the firmware role only.
+## How it's tested
 
-## What can be built and tested offline
+- **Core.** `wellfed-core::ota` uses `ed25519-dalek` and `sha2` with default features off, so it stays `no_std`. It holds manifest parsing and signature verification, the bank-1 sector writer, the trial decision and the confirmation record.
+  - The manifest check refuses tampering, the wrong key, a bank other than 1, a size outside one sector to 0x150000, and downgrades.
+  - The writer withholds the marker until every sector reads back and the whole-image SHA-256 matches. It refuses out-of-order chunks, a missing marker, failed readback, corruption and truncation.
+  - Host tests include RFC 8032 test 1.
+- **Stops.** `wellfed-hal/tests/update.rs` runs every stop against the fake SDK. `wellfed-client/tests/update.rs` and `wellfed-feeder-sim/tests/update.rs` run the client end to end, over the fake and over TCP against the simulator. The simulator runs the real stage on two banks, with the loader and KM0's trial.
+- **Emulation.** `every_ota_step_and_marker_cut_keeps_a_bootable_bank` in `src/tools/wellfed-emu/tests/factory.rs` hands each modeled flash state to the factory loader's own selection code. The states are every update step, a bank-1 marker cut after each of its 8 bytes, and erased or staged bodies. It passes all 14 states for both stock and the replacement build. Only the forbidden step, giving way with no valid build in bank 0, leaves nothing to boot. Any single cleared bit in bank 1's marker gives way to bank 0.
+- **Signing.** `wellfed-build keygen` and `sign`; a test checks a signed manifest against the firmware's own offer check.
 
-- **Core (done):** `wellfed-core::ota`, using `ed25519-dalek` and `sha2` with default features off, so it stays `no_std`. It holds manifest parsing and signature verification, the bank-1 sector writer, the trial decision and the confirmation record. The manifest refuses tampering, the wrong key, a bank other than 1, a size outside one sector to 0x150000, and downgrades. The writer withholds the marker until every sector reads back and the whole-image SHA-256 matches, and it refuses out-of-order chunks, a missing marker, failed readback, corruption and truncation. Host tests include RFC 8032 test 1.
-- **Fakes:** the bank-role decision and the KM0 trial counter, against the fake SDK.
-- **Emulation (done):** `every_ota_step_and_marker_cut_keeps_a_bootable_bank` in `src/tools/wellfed-emu/tests/factory.rs` (formerly `emulate-ota-markers.py`, ported October 23, 2026, and rerun on stock) hands each modeled flash state to the factory loader's own selection code. The states are every step above, a bank-1 marker cut after each of its 8 bytes, and erased or staged bodies. It passed all 14 states for both stock and the replacement build. Only the forbidden step, giving way with no valid recovery in bank 0, leaves nothing to boot. Any single cleared bit in bank 1's marker gives way to bank 0.
-- **Server:** manifest signing (done: `wellfed-build keygen` and `sign`, which signs only a frozen review and passes the firmware's own offer check in a test; the key is the bench key, and a public release needs an offline release key first). Delivery is the device API's (`wellfed_client::update`); the MQTT delivery (`ota-offer`, the broker ACL and the server's answers) is deleted.
+## On the bench
 
-## Hardware stages (owner-reviewed)
+`wellfed-bench ota` and `itest` push updates over the device API ([bench](../devices/plaf103/bench.md)). No motor moves.
 
-1. **Recovery in bank 0:** install a recovery-role image in bank 0, and confirm that bank 1 still boots (the FW09 confirmation).
-2. **Give way:** clear bank 1's marker, and confirm that bank 0's recovery role starts and reports.
-3. **Update:** a signed update of a changed build into bank 1. It must activate and confirm.
-4. **Failures:** corrupt, truncated and interrupted transfers, a trial that never confirms (it must fall back after 3 boots), and a power cut mid-sector.
+- In the push model, a truncated download is a stall: the bench simply stops sending, and the install times out (`stage=timeout`).
+- Between failure drills, `ota NAME --cancel` forgets the candidate a stop left recorded.
+- The hands-off round trip offers bank 0's build back from bank 1, so the build in bank 1 must have another build ID. R1 is the feeder's `twin` variant (`--variant twin`), R0 the plain feeder.
+- A bank-0 build is first installed by a reviewed UART install (`flash-prepare/flash-execute --bank 0`). Bank 1 keeps running until a give-way.
+- Bring-up firmwares (`qa`, `optics` and the rest) serve no device API, so a unit left on one in bank 1 takes no offer. Leaving it needs a UART install or a failed trial. After installing one, the bench has only the UART confirmation (`wellfed-bench ota` says so).
+- If a new build's own KM0 code is broken, nothing counts its boots, and UART recovery is needed. That stays the backstop, and the relay bench can do it unattended.
 
-Each stage ends with full-flash reads. The bank-1 UART updater stays the recovery path throughout.
+## Evidence
+
+- **Observed** (October 27, 2026): both banks run the same `feeder` build at a 50 MHz flash clock. Bank 0 was written over UART and booted by a give-way that recorded its image. Then 8 of 8 installs, alternating a `twin` and the baseline through bank 0's download, passed with no fault, each a full download and a confirmed trial (`otaloop-20261027-n01`…`n08`). That is one evening's runs, not yet the sustained run.
+- **Observed** (October 27), the faults before the change: at 80 MHz, bank 0's downloads faulted in 8 of 10 installs in one series (`otaloop-20261027-d01`…`d10`) and 6 of 8 after a full power-off (`g01`…`g08`). The dumps differed each time: a SecureFault on an instruction fetch in `FlashCoord::request`; a SecureFault in the SysTick handler through a corrupted ready-list pointer; an imprecise BusFault on `wellfed-loop`; a fault in `__aeabi_memclr4`. One install failed `stage=write` on a transient single-bit read error: `sector=237 step=readback offset=604 expected=bee707f1 read=bee707f5 reread=bee707f1`. At 50 MHz the boot's flash calibration window reads 29–31 (`calibration_ok:[2:31:17]`, 15 boots), against 11–17 at 80 MHz. Flash wear is ruled out by the feeder's own erase counts.
+- **Observed** (October 24), earlier bank-0 faults: 3 crashes and 1 silent watchdog hang in 157 bank-0 boots that started Wi-Fi, and none in 199 bank-1 boots, including the same build. The crashes were in `cmd_thread` (`fw47-itest-05`), and twice in `rtw_recv` (a backpower run, then `warm-20261024-05`). The last, symbolized with its ELF, was in the SDK's `report_survey_event` under `OnProbeRsp`, 11 s after boot, before any download. Static analysis: two of the faulting PCs hold valid instructions, so the CPU fetched wrong bytes from flash. Ruled out then: a power cut, UART back power (relays 3 and 4 now isolate it), the old `qa` image, and our flash leases, which held IRQs masked for 41–44 ms at most (`masked_max_ms`), none past 100 ms. The Wi-Fi driver takes no leases (17 per written sector, exactly), and both cores hold `PMU_OS`, so nothing sleeps.
+- **Observed** (October 26–27), what confirmation proves: an `owner-fail` build stopped each of three trial boots with `owner=0`, and KM0 gave way to bank 0. An `owner-stall` build confirmed, then reset about 190 s into every boot (`hang kind=stopped`); after `storm resets=1…4`, KM0 logged `storm=5 limit=5 give_way=1` and bank 0 started.
+- **Observed** (October 27), a held boot: the `owner-stall` build written to bank 0 and given way to reset five boots in a row (`PLTRL1 bank=0 resets=1…4`). The sixth booted `PLTRL1 storm=5 held=1`, readiness `blocked reason=fault`, and the device API answered from bank 0. The held boot ran its stalls without a reset, and 10 minutes in logged `PLSUP1 storm released=1 level=0`, opened the owner on its journal and went `ready`.
+- **Not yet run on hardware:** the halted state, which needs a variant that resets while held; a real brownout setting the forgiveness bit.
+- **Modeled:** the update stage, the device-API flow, the breaker and the decided-reset rule are host-tested and simulated, as listed under [How it's tested](#how-its-tested).
+- **Observed** (October 22), the trial: the `stall` test variant (`wellfed-build build --profile firstboot --firmware bringup --variant stall`) was counted 1, 2, 3, then gave way and booted bank 0. Over the air, each of these was counted 1, 2, 3 and then gave way: a failed-start variant (`--variant fail`), stopped 253 ms into each boot; the hang variant (`--variant stall`); and a normal build whose server was stopped after activation, which reset at `ms=600192` on each boot. A fixed build then confirmed after 30 s healthy (`PLCNF1 confirmed=1 healthy_ms=30000`), and the next cold boot reported `PLTRL1 confirmed=1`. Reinstalling a confirmed build skipped its trial, as designed.
+- **Observed** (October 22): the `FLASH_Write_Lock` hang after a watchdog reset, then its fix.
+- **Observed** (October 24), stops on hardware: a flipped bit, a short range, a stalled server, a restarted server and a power cut mid-download each stopped before activation, or resumed and activated, with bank 1's marker never written early. A power cut mid-download made bank 0 start over, and a cut early in a trial counted that boot again before the build confirmed (`qa-20261024-03`, `-04`). The earlier transport these ran over is retired.

@@ -282,6 +282,9 @@ pub enum Record {
     /// The boot found the factory reset's marker: no cleared store opens
     /// until the reset has erased them all.
     ResetPending,
+    /// The statistics' wear-only save failed, so the reset erased them:
+    /// the erase counts are lost, and the reset goes on.
+    ResetWearLost,
     /// The factory reset erased every cleared store, then its marker.
     ResetDone {
         erased: u32,
@@ -460,6 +463,7 @@ pub fn describe(record: Record, f: &mut impl fmt::Write) -> fmt::Result {
         } => write!(f, "trace saved feed={feed} seq={seq}"),
         Record::Trace { feed, seq: None } => write!(f, "trace error feed={feed}"),
         Record::ResetPending => f.write_str("reset pending"),
+        Record::ResetWearLost => f.write_str("reset wear_lost=1"),
         Record::ResetDone { erased } => write!(f, "reset done erased={erased}"),
         Record::ResetError {
             stage,
@@ -647,19 +651,49 @@ fn fresh_epoch() -> u32 {
     drawn.max(1)
 }
 
+/// What became of the lifetime statistics in a factory reset.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Wear {
+    /// Rewritten with only the erase counts, or nothing to rewrite.
+    Kept,
+    /// The save failed, so the store was erased: only the erase counts
+    /// are lost.
+    Lost,
+    /// Neither the save nor the erase took.
+    Failed,
+}
+
 /// The factory reset's step for the lifetime statistics: rewrite them
 /// keeping only the erase counts ([`Totals::wear_only`]), as one dual-slot
 /// save, so a cut leaves the old totals or the wear-only ones and the boot
 /// after does it again. A store with nothing in it, or one this build
 /// cannot write (a newer schema), is left as it is.
-fn keep_wear<F: FlashOps>() -> bool {
+///
+/// The statistics pair is the region's most written, so it may be the one
+/// to wear out. A save that fails must not stop the reset for good (every
+/// boot after would serve nothing): the pair is erased instead, losing the
+/// erase counts the reset meant to keep. A cut part-way leaves a pair the
+/// next boot saves or erases again.
+fn keep_wear<F: FlashOps>() -> Wear {
     let mut stats = StatsStore::default();
     stats.open(Slots::<F, STATS_BASE>::new());
     if stats.status != StatsStatus::Loaded || !stats.writable() {
-        return true;
+        return Wear::Kept;
     }
     let wear = stats.totals.wear_only();
-    stats.totals == wear || stats.save(&wear, SaveKind::Restart)
+    if stats.totals == wear || stats.save(&wear, SaveKind::Restart) {
+        return Wear::Kept;
+    }
+
+    let sectors = STATS_BASE..STATS_BASE + wellfed_hal::plaf103::storage::STATS.count;
+    if sectors
+        .into_iter()
+        .all(|sector| F::erase(sector) && blank::<F>(sector))
+    {
+        Wear::Lost
+    } else {
+        Wear::Failed
+    }
 }
 
 /// Whether `sector` reads erased, in small reads to spare the stack: an
@@ -1136,10 +1170,14 @@ impl<F: FlashOps> Writer<F> {
         let marker = Region::<F, RESET_BASE, 1>::new();
         arming::set_attempt();
         let noted = self.reset_attempted || reset_marker::note_attempt(&marker);
+        let mut wear = Wear::Kept;
         let step = match factory_cleared(index) {
             _ if !noted => None,
             Some(sector) => Some((sector, F::erase(sector) && blank::<F>(sector))),
-            None if index == FACTORY_CLEARED_SECTORS => Some((STATS_BASE, keep_wear::<F>())),
+            None if index == FACTORY_CLEARED_SECTORS => {
+                wear = keep_wear::<F>();
+                Some((STATS_BASE, wear != Wear::Failed))
+            }
             None => Some((RESET_BASE, F::erase(RESET_BASE) && blank::<F>(RESET_BASE))),
         };
         arming::clear_attempt();
@@ -1147,8 +1185,9 @@ impl<F: FlashOps> Writer<F> {
         self.reset_attempted = noted;
 
         // An attempt that did not land is a store this boot cannot count
-        // in, so it stops without asking for a restart; so does a save of
-        // the statistics that failed (an erase that failed may be retried).
+        // in, so it stops without asking for a restart; so do statistics
+        // that took neither their save nor their erase (an erase elsewhere
+        // that failed may be retried).
         let Some((sector, done)) = step else {
             return self.reset_stop(ErrorStage::Save, Some(RESET_BASE));
         };
@@ -1162,7 +1201,8 @@ impl<F: FlashOps> Writer<F> {
         }
         if index <= FACTORY_CLEARED_SECTORS {
             self.resetting = Some(index + 1);
-            return next(RESET_POLL_MS, None);
+            let record = (wear == Wear::Lost).then_some(Record::ResetWearLost);
+            return next(RESET_POLL_MS, record);
         }
         self.resetting = None;
         self.open_cleared();

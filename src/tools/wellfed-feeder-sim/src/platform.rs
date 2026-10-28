@@ -646,8 +646,13 @@ fn finish_reset(flash: &Rc<Flash>) {
     stats.open(Region::new(flash, storage::STATS));
     if stats.status == StatsStatus::Loaded && stats.writable() {
         let wear = stats.totals.wear_only();
-        if stats.totals != wear {
-            stats.save(&wear, SaveKind::Restart);
+        // A save that fails erases the pair instead, losing only the
+        // wear counts, as the writer does.
+        if stats.totals != wear && !stats.save(&wear, SaveKind::Restart) {
+            let region = Region::new(flash, storage::STATS);
+            for unit in 0..storage::STATS.count {
+                region.erase(unit);
+            }
         }
     }
     reset::clear(&marker);

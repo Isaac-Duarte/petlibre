@@ -38,6 +38,8 @@ thread_local! {
     static PROGRAM_FAILS: Cell<bool> = const { Cell::new(false) };
     /// Erases of this sector fail.
     static ERASE_FAILS: Cell<Option<u32>> = const { Cell::new(None) };
+    /// Programs of the statistics' sectors fail, as a worn-out pair's do.
+    static STATS_PROGRAMS_FAIL: Cell<bool> = const { Cell::new(false) };
 }
 
 struct NoMmio;
@@ -93,8 +95,14 @@ impl FlashOps for Armed {
         unsafe { sdk::storage_erase(sector) }
     }
     fn program(sector: u32, offset: u32, data: &[u8]) -> bool {
+        let stats = wellfed_hal::plaf103::storage::STATS;
+        let worn = STATS_PROGRAMS_FAIL.with(Cell::get)
+            && (stats.first..stats.first + stats.count).contains(&sector);
+        if PROGRAM_FAILS.with(Cell::get) || worn {
+            return false;
+        }
         // SAFETY: as in `erase`.
-        !PROGRAM_FAILS.with(Cell::get) && unsafe { sdk::storage_program(sector, offset, data) }
+        unsafe { sdk::storage_program(sector, offset, data) }
     }
     fn read(sector: u32, offset: u32, bytes: &mut [u8]) -> bool {
         sdk::storage_read(sector, offset, bytes)
@@ -118,6 +126,7 @@ fn start() -> (MutexGuard<'static, ()>, Writer<Armed>, Provider) {
     ARMED.with(|a| a.set(true));
     PROGRAM_FAILS.with(|f| f.set(false));
     ERASE_FAILS.with(|f| f.set(None));
+    STATS_PROGRAMS_FAIL.with(|f| f.set(false));
     (guard, Writer::default(), Provider::default())
 }
 
@@ -1969,6 +1978,7 @@ fn reset_records_format() {
         text
     };
     assert_eq!(line(Record::ResetPending), "reset pending");
+    assert_eq!(line(Record::ResetWearLost), "reset wear_lost=1");
     assert_eq!(
         line(Record::ResetDone { erased: 33 }),
         "reset done erased=33"
@@ -2021,4 +2031,72 @@ fn an_attempt_that_does_not_land_asks_for_no_restart() {
         records.contains(&Record::ResetDone { erased: 33 }),
         "{records:?}"
     );
+}
+
+/// Statistics whose pair takes no program (worn out) do not stop the reset
+/// for good: the wear-only save fails, the pair is erased instead (only the
+/// erase counts are lost), and the marker is erased. A cut after the pair's
+/// first erase, or after both, still converges on the next boot.
+#[test]
+fn a_worn_statistics_pair_loses_the_wear_counts_but_not_the_reset() {
+    use wellfed_hal::plaf103::storage;
+
+    let (_guard, mut provider) = filled_then_reset();
+    let marked = fake::with(|h| h.storage.clone());
+    STATS_PROGRAMS_FAIL.with(|f| f.set(true));
+
+    let records = reset_boot(&mut provider, None);
+    let lost = records
+        .iter()
+        .position(|record| *record == Record::ResetWearLost);
+    let done = records
+        .iter()
+        .position(|record| *record == Record::ResetDone { erased: 33 });
+    assert!(lost.is_some() && lost < done, "{records:?}");
+    assert!(!reset_marked());
+    assert!(
+        sectors(storage::STATS).iter().all(|&byte| byte == 0xff),
+        "the worn pair is erased, and its boot save fails"
+    );
+
+    // Cut after the pair's first erase, and after both: the next boot
+    // erases what is left, or finds nothing to keep, and finishes.
+    let erases = usize::try_from(storage::FACTORY_CLEARED_SECTORS).unwrap();
+    for erased in 1..=storage::STATS.count {
+        fake::with(|h| h.storage.clone_from(&marked));
+        let records = reset_boot(&mut provider, Some(erases + 1));
+        assert_eq!(records, [Record::ResetPending]);
+        for sector in storage::STATS.first..storage::STATS.first + erased {
+            // SAFETY: the fake's storage, which this test owns.
+            assert!(unsafe { sdk::storage_erase(sector) });
+        }
+
+        let records = reset_boot(&mut provider, None);
+        assert!(
+            records.contains(&Record::ResetDone { erased: 33 }),
+            "{erased} erased: {records:?}"
+        );
+        if erased == storage::STATS.count {
+            assert!(!records.contains(&Record::ResetWearLost), "nothing to keep");
+        }
+        assert!(!reset_marked());
+    }
+
+    // A pair that takes neither its save nor its erase stops the reset,
+    // as before.
+    fake::with(|h| h.storage.clone_from(&marked));
+    ERASE_FAILS.with(|f| f.set(Some(storage::STATS.first)));
+    let records = reset_boot(&mut provider, Some(erases + 5));
+    assert_eq!(
+        records,
+        [
+            Record::ResetPending,
+            Record::ResetError {
+                stage: ErrorStage::Save,
+                sector: Some(storage::STATS.first),
+                restart: false,
+            }
+        ]
+    );
+    assert!(reset_marked());
 }

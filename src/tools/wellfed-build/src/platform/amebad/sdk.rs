@@ -78,6 +78,8 @@ pub enum SdkAnchor {
     BtSystemData,
     #[error("Pinned fast-connect option changed")]
     FastConnect,
+    #[error("Pinned flash speed option changed")]
+    FlashSpeed,
 }
 
 /// The files staged into the worktree from the checkout.
@@ -118,6 +120,10 @@ const APP_START: &str = "component/soc/realtek/amebad/fwlib/ram_hp/rtl8721dhp_ap
 /// defines (it leaves a breadcrumb that survives a silent watchdog reset)
 /// and task names long enough for it to tell the tasks apart.
 const FREERTOS_CONFIG: &str = "project/realtek_amebaD_va0_example/inc/inc_hp/FreeRTOSConfig.h";
+/// KM0's flash options, whose SPI clock drops from 80 MHz to 50 MHz: at
+/// 80 MHz this board's flash returned transient single-bit read errors
+/// under load, which XIP turns into faults anywhere in the image.
+const FLASH_CONFIG: &str = "component/soc/realtek/amebad/fwlib/usrcfg/rtl8721dlp_flashcfg.c";
 /// Object suffixes the vendor makefiles leave beside a source.
 const OBJECT_SUFFIXES: [&str; 5] = [".o", ".d", ".i", ".s", ".su"];
 
@@ -186,6 +192,7 @@ fn managed_sdk_paths(profile: Profile) -> BTreeSet<String> {
             HCI_BOARD.to_string(),
             APP_START.to_string(),
             FREERTOS_CONFIG.to_string(),
+            FLASH_CONFIG.to_string(),
         ]);
     }
     if profile.has(Stage::Firstboot) {
@@ -360,6 +367,19 @@ fn freertos_options(pinned: &str) -> Result<String> {
         anchor,
         &anchor.replace("( 10 )", "( 16 )"),
         SdkAnchor::TaskNameLength,
+    )
+}
+
+/// Set KM0's flash clock option to 50 MHz, the vendor's slowest calibrated
+/// speed. KM0 applies it at every cold boot, before KM4 starts, so both
+/// banks read the flash at the clock their own image carries.
+fn flash_speed(pinned: &str) -> Result<String> {
+    let anchor = "const u16 Flash_Speed = 0xFFFF;";
+    replace_once(
+        pinned,
+        anchor,
+        "const u16 Flash_Speed = 0x0FFF;",
+        SdkAnchor::FlashSpeed,
     )
 }
 
@@ -568,6 +588,8 @@ fn rust_overlays(
     overlay(sdk, APP_START, &text, overrides)?;
     let text = freertos_options(&pinned(sdk, FREERTOS_CONFIG)?)?;
     overlay(sdk, FREERTOS_CONFIG, &text, overrides)?;
+    let text = flash_speed(&pinned(sdk, FLASH_CONFIG)?)?;
+    overlay(sdk, FLASH_CONFIG, &text, overrides)?;
 
     // SDK dependencies can retain the old public definitions otherwise.
     for core in Core::BOTH {
@@ -964,6 +986,27 @@ mod tests {
             SdkAnchor::TaskNameLength
         );
         assert_eq!(refused(&pinned.repeat(2)), SdkAnchor::TickHook);
+    }
+
+    #[test]
+    fn the_flash_speed_drops_to_50_mhz_and_the_read_mode_stays() {
+        let pinned = "const u16 Flash_Speed = 0xFFFF;\nconst u16 Flash_ReadMode = 0xFFFF;\n";
+        let text = flash_speed(pinned).unwrap();
+        assert_eq!(
+            text,
+            "const u16 Flash_Speed = 0x0FFF;\nconst u16 Flash_ReadMode = 0xFFFF;\n"
+        );
+
+        // A changed or repeated option is refused, not patched elsewhere.
+        for changed in [
+            pinned.replace("0xFFFF;\nconst", "0x7FFF;\nconst"),
+            pinned.repeat(2),
+        ] {
+            assert!(matches!(
+                flash_speed(&changed),
+                Err(crate::Error::Sdk(SdkError::Anchor(SdkAnchor::FlashSpeed)))
+            ));
+        }
     }
 
     #[test]

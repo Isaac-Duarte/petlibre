@@ -228,13 +228,12 @@ pub enum InstallError {
     WrongPromotion { reported: String },
     #[error("gave up waiting at {0:?}")]
     TimedOut(Phase),
-    #[error(
-        "stock's plans could not be read ({0}); nothing was promoted: the feeder runs the replacement from bank 0 and still holds stock in bank 1"
-    )]
+    /// Stock's plan sectors do not decode. Before promotion this stops the
+    /// run with stock intact in bank 1; with the owner's choice to go on, or
+    /// from a kept copy, it is the reason the plans were left behind.
+    #[error("stock's plans could not be read: {0}")]
     StockPlans(DecodeError),
-    #[error(
-        "the feeder did not serve stock's plans ({0:?}); nothing was promoted: the feeder runs the replacement from bank 0 and still holds stock in bank 1"
-    )]
+    #[error("the feeder did not serve stock's plans ({0:?})")]
     StockPlansUnread(Refusal),
     #[error(
         "the replacement is installed and confirmed, but it already has plans in slots {slots:?}; stock's plans were not applied over them"

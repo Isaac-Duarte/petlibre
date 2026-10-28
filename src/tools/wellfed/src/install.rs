@@ -402,11 +402,12 @@ impl Run {
                             eprintln!("Stock's plans were not imported: {skipped}.");
                         }
                         (None, None) => eprintln!(
-                            "Stock's plans were not read by this run, and none were kept by an \
-                             earlier one: nothing was set."
+                            "Stock's plans were not read by this run, and no earlier run kept \
+                             a copy it has not applied: nothing was set."
                         ),
                         (Some(import), None) if import.plans.iter().any(Option::is_some) => {
                             eprintln!("Stock's converted plans are set on the replacement.");
+                            self.kept_plans_applied()?;
                         }
                         (Some(import), None) if import.outcomes.is_empty() => {
                             eprintln!("Stock had no plans to set on the replacement.");
@@ -422,8 +423,9 @@ impl Run {
                     error @ (InstallError::StockPlans(_) | InstallError::StockPlansUnread(_)),
                 ) => {
                     return Err(anyhow::Error::from(error).context(
-                        "Promotion refused: stock's plans could not be read. Run again with \
-                         --from-bank0 --without-stock-plans to install without them",
+                        "Promotion refused: nothing was promoted, and the feeder runs the \
+                         replacement from bank 0 and still holds stock in bank 1. Run again with \
+                         --from-bank0 --without-stock-plans to install without stock's plans",
                     ));
                 }
                 Step::Failed(error) => return Err(error.into()),
@@ -783,6 +785,21 @@ impl Run {
         Ok(())
     }
 
+    /// Set the kept copy aside once its plans are on the replacement, as
+    /// `stock-plans.applied.bin` (or a name with the time if one is there
+    /// already), so a later resumed run does not put them back over plans
+    /// the owner has changed since.
+    fn kept_plans_applied(&self) -> Result<()> {
+        let Some(identity) = self.identity else {
+            return Ok(());
+        };
+        let kept = crate::backup::plans_path(&self.args.backups, &identity);
+        if let Some(applied) = set_aside(&kept, now_ms()?)? {
+            eprintln!("Set the applied copy aside at {}.", applied.display());
+        }
+        Ok(())
+    }
+
     /// The replacement's plans for the steps. A read changes nothing, so a
     /// session that fails is opened again until [`PLANS_WAIT`] runs out.
     async fn read_plans(&self, install: &mut Install) -> Result<()> {
@@ -994,6 +1011,26 @@ fn view(status: &StockStatus) -> StockView {
     }
 }
 
+/// Rename the kept plans at `kept` to `stock-plans.applied.bin` beside it,
+/// or to a name with `now_ms` when an earlier applied copy holds that name:
+/// nothing kept is overwritten. `None` when nothing is kept there.
+fn set_aside(kept: &Path, now_ms: u64) -> Result<Option<PathBuf>> {
+    if !kept.exists() {
+        return Ok(None);
+    }
+    let mut applied = kept.with_file_name("stock-plans.applied.bin");
+    if applied.exists() {
+        applied = kept.with_file_name(format!("stock-plans.applied-{now_ms}.bin"));
+    }
+    std::fs::rename(kept, &applied).with_context(|| {
+        format!(
+            "set {} aside as applied; delete it so a resumed run does not apply it again",
+            kept.display()
+        )
+    })?;
+    Ok(Some(applied))
+}
+
 /// Unix milliseconds now, which decides whether a stock skip still holds.
 fn now_ms() -> Result<u64> {
     let now = std::time::SystemTime::now()
@@ -1125,6 +1162,26 @@ mod tests {
         let latest = latest_report(&status, &id.to_string()).unwrap();
         assert_eq!(latest.progress, Some(40));
         assert!(latest_report(&status, "unknown").is_none());
+    }
+
+    /// An applied copy is set aside, never over an earlier one, so a
+    /// resumed run finds no kept copy to apply again.
+    #[test]
+    fn an_applied_copy_is_set_aside() {
+        let dir = tempfile::tempdir().unwrap();
+        let kept = crate::backup::plans_path(dir.path(), &[0xab; 32]);
+        assert_eq!(set_aside(&kept, 7).unwrap(), None);
+
+        crate::backup::keep_plans(&kept, &[1]).unwrap();
+        let first = set_aside(&kept, 7).unwrap().unwrap();
+        assert!(first.ends_with("stock-plans.applied.bin"));
+        assert!(!kept.exists());
+
+        crate::backup::keep_plans(&kept, &[2]).unwrap();
+        let second = set_aside(&kept, 7).unwrap().unwrap();
+        assert!(second.ends_with("stock-plans.applied-7.bin"));
+        assert_eq!(std::fs::read(first).unwrap(), [1]);
+        assert_eq!(std::fs::read(second).unwrap(), [2]);
     }
 
     #[test]

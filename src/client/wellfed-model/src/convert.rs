@@ -10,14 +10,14 @@ use wellfed_proto::api as proto;
 use wellfed_proto::setup as proto_setup;
 
 use crate::{
-    Answer, Bank1Page, Battery, Blocked, Bowl, Calibration, CalibrationView, Capabilities, Client,
-    ClientRole, Counters, Counts, Desiccant, EnrollPath, Erases, Event, EventBody, FeedFault,
-    FeedOutcome, FeedReason, Flash, Food, FoodLevel, Generation, Hello, Hex, Invite, Joined,
-    LogLines, MealReminder, Memory, MissedReason, NtpResult, NtpServer, Op, OpenRefusal, Phase,
-    Plan, Plans, Portions, Power, PowerStats, Readiness, Refusal, ResetCause, Resets, Sample,
-    SampleValue, Settings, SettingsPatch, Source, Stats, StatsSection, Status, StockPlanSectors,
-    Supply, TaskStack, TimeSource, TimeSync, TimeView, Tune, UpdatePhase, UpdateRefusal,
-    UpdateStop, UpdateView, Weekdays, WifiSource, Window, setup,
+    Answer, Bank1Page, Battery, Blocked, Bowl, Calibration, CalibrationView, CallClip, CallView,
+    Capabilities, Client, ClientRole, Counters, Counts, Desiccant, EnrollPath, Erases, Event,
+    EventBody, FeedFault, FeedOutcome, FeedReason, Flash, Food, FoodLevel, Generation, Hello, Hex,
+    Invite, Joined, LogLines, MealReminder, Memory, MissedReason, NtpResult, NtpServer, Op,
+    OpenRefusal, Phase, Plan, Plans, Portions, Power, PowerStats, Readiness, Refusal, ResetCause,
+    Resets, Sample, SampleValue, Settings, SettingsPatch, Source, Stats, StatsSection, Status,
+    StockPlanSectors, Supply, TaskStack, TimeSource, TimeSync, TimeView, Tune, UpdatePhase,
+    UpdateRefusal, UpdateStop, UpdateView, Weekdays, WifiSource, Window, setup,
 };
 use crate::{
     CurrentUnit, FeedStats, Malformed, Trace, TraceEntry, TraceMotor, TracePage, TraceSummary,
@@ -557,6 +557,7 @@ impl From<proto::Plan> for Plan {
             portions: plan.portions,
             days: Weekdays::from_bits(plan.days),
             enabled: plan.enabled,
+            call: plan.call,
         }
     }
 }
@@ -568,6 +569,35 @@ impl From<Plan> for proto::Plan {
             portions: plan.portions,
             days: plan.days.bits(),
             enabled: plan.enabled,
+            call: plan.call,
+        }
+    }
+}
+
+impl From<proto::CallClip> for CallClip {
+    fn from(clip: proto::CallClip) -> Self {
+        match clip {
+            proto::CallClip::None => Self::None,
+            proto::CallClip::Receiving {
+                bytes,
+                crc,
+                received,
+            } => Self::Receiving {
+                bytes,
+                crc,
+                received,
+            },
+            proto::CallClip::Stored { bytes, crc } => Self::Stored { bytes, crc },
+        }
+    }
+}
+
+impl From<proto::CallView> for CallView {
+    fn from(view: proto::CallView) -> Self {
+        let proto::CallView { writable, clip } = view;
+        Self {
+            writable,
+            clip: clip.into(),
         }
     }
 }
@@ -853,6 +883,7 @@ impl From<proto::Outcome<'_>> for Answer {
                     entries: entries.to_vec(),
                 })
             }
+            proto::Outcome::Call(view) => Self::Call(view.into()),
         }
     }
 }
@@ -1476,6 +1507,16 @@ impl Op {
                 plans: plans.map(|plan| plan.map(Into::into)),
             },
             Self::ResetDesiccant => proto::Op::ResetDesiccant,
+            Self::GetCall => proto::Op::GetCall,
+            Self::StartCall { bytes, crc } => proto::Op::StartCall {
+                bytes: *bytes,
+                crc: *crc,
+            },
+            Self::CallChunk { offset, data } => proto::Op::CallChunk {
+                offset: *offset,
+                data,
+            },
+            Self::DeleteCall => proto::Op::DeleteCall,
         }
     }
 }
@@ -1548,6 +1589,7 @@ impl From<proto::Capabilities> for Capabilities {
             backup: bits.contains(proto::Capabilities::BACKUP),
             plans: bits.contains(proto::Capabilities::PLANS),
             desiccant: bits.contains(proto::Capabilities::DESICCANT),
+            call: bits.contains(proto::Capabilities::CALL),
         }
     }
 }
@@ -1567,6 +1609,7 @@ impl From<Capabilities> for proto::Capabilities {
             backup,
             plans,
             desiccant,
+            call,
         } = capabilities;
         let mut bits = proto::Capabilities::V1.0;
         if feed {
@@ -1604,6 +1647,9 @@ impl From<Capabilities> for proto::Capabilities {
         }
         if desiccant {
             bits |= proto::Capabilities::DESICCANT.0;
+        }
+        if call {
+            bits |= proto::Capabilities::CALL.0;
         }
         Self(bits)
     }

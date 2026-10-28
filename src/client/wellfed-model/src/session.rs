@@ -45,6 +45,9 @@ pub struct Capabilities {
     /// The desiccant reminder's `ResetDesiccant` op and the `NoClock`
     /// refusal.
     pub desiccant: bool,
+    /// The meal call: `GetCall`, `StartCall`, `CallChunk`, `DeleteCall`
+    /// and the `Call` answer.
+    pub call: bool,
 }
 
 impl Capabilities {
@@ -62,6 +65,7 @@ impl Capabilities {
         backup: false,
         plans: false,
         desiccant: false,
+        call: false,
     };
     /// Every feature this crate knows: what a current client claims.
     pub const KNOWN: Self = Self {
@@ -77,6 +81,7 @@ impl Capabilities {
         backup: true,
         plans: true,
         desiccant: true,
+        call: true,
     };
 
     /// The features both `self` and `other` claim.
@@ -95,6 +100,7 @@ impl Capabilities {
             backup: self.backup && other.backup,
             plans: self.plans && other.plans,
             desiccant: self.desiccant && other.desiccant,
+            call: self.call && other.call,
         }
     }
 }

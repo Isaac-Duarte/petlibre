@@ -8,7 +8,7 @@ use std::sync::{Mutex, MutexGuard};
 use wellfed_feeder::conformance::Rig;
 use wellfed_feeder::feeder::Feeder;
 use wellfed_feeder_runtime::writer::Writer;
-use wellfed_feeder_runtime::{calibration, events, keys, network, plans, time, traces};
+use wellfed_feeder_runtime::{calibration, call, events, keys, network, plans, time, traces};
 use wellfed_fw_feeder::platform::Plaf103;
 use wellfed_proto::api::FoodLevel;
 use wellfed_sdk::hal::flash::park::Mmio;
@@ -17,7 +17,7 @@ use wellfed_sdk::hal::flash_lock::provider::Provider;
 use wellfed_sdk::hal::interlock::INTERLOCK;
 use wellfed_sdk::hal::ota::mailbox;
 use wellfed_sdk::hal::sdk::{self, fake};
-use wellfed_sdk::hal::{bringup, buttons, clock, rng, settings};
+use wellfed_sdk::hal::{audio, bringup, buttons, clock, rng, settings};
 use wellfed_sdk::storage::FlashOps;
 
 /// The writer runs with the hooks already armed, as after confirmation.
@@ -108,6 +108,8 @@ impl FirmwareRig {
         traces::reset();
         calibration::reset();
         plans::reset();
+        call::reset();
+        audio::reset();
         clock::reset();
         mailbox::reset();
         INTERLOCK.reset();

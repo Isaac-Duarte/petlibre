@@ -2,7 +2,8 @@
 //! runs at most once through the feeding owner, whatever restarts, clock
 //! jumps and daylight changes do around it, and one that cannot run is
 //! recorded missed. The meal reminder announces each occurrence ahead of
-//! it, and never changes whether or when it runs.
+//! it, and the meal call starts its length ahead of it; neither changes
+//! whether or when it runs.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -10,8 +11,10 @@ use std::rc::Rc;
 use wellfed_core::clock::wall::{Origin, Sync};
 use wellfed_core::clock::zone::Zone;
 use wellfed_core::schedule::{PLANS, Plan, Table, Weekdays};
+use wellfed_core::store::slot::crc32;
 use wellfed_device_api::mailbox::{
-    MealReminder, PlansChange, PlansResult, PlansView, SettingsFields, SettingsResult,
+    CallChange, CallClip, CallResult, MealReminder, PlansChange, PlansResult, PlansView,
+    SettingsFields, SettingsResult,
 };
 use wellfed_feeder::feeder::Platform;
 use wellfed_feeder::feeder::{self, schedule};
@@ -39,6 +42,9 @@ struct Feeder {
     boots: u32,
     /// Occurrences the loop has claimed: each is a write of the plans.
     claims: usize,
+    /// The meal calls the loop asked of the speaker: the uptime, the plan
+    /// and the occurrence.
+    calls: Vec<(u32, u8, u32)>,
 }
 
 impl Feeder {
@@ -53,6 +59,7 @@ impl Feeder {
             now: 0,
             boots: 1,
             claims: 0,
+            calls: Vec::new(),
         }
     }
 
@@ -95,13 +102,18 @@ impl Feeder {
         let end = u64::from(self.now) + ms;
         while u64::from(self.now) < end {
             let claims = &mut self.claims;
-            let delay = self.sim.pass(self.now, |record| {
-                if let Record::Feeder(feeder::Record::Schedule(schedule::Record::Claimed {
-                    ..
-                })) = record
-                {
+            let calls = &mut self.calls;
+            let now = self.now;
+            let delay = self.sim.pass(self.now, |record| match record {
+                Record::Feeder(feeder::Record::Schedule(schedule::Record::Claimed { .. })) => {
                     *claims += 1;
                 }
+                Record::Feeder(feeder::Record::Schedule(schedule::Record::Called {
+                    plan,
+                    due_s,
+                    ..
+                })) => calls.push((now, plan, due_s)),
+                _ => {}
             });
             let step = u64::from(delay.clamp(1, 1000)).min(end - u64::from(self.now));
             self.now += u32::try_from(step.max(1)).unwrap();
@@ -130,6 +142,27 @@ impl Feeder {
         let queued = self.sim.platform().plans_change(change);
         assert!(matches!(queued, PlansResult::Current { pending: true, .. }));
         self.run(1);
+    }
+
+    /// Upload `stream` as the meal call, a chunk a pass, as a client does.
+    fn upload(&mut self, stream: &[u8]) {
+        let bytes = u32::try_from(stream.len()).unwrap();
+        let crc = crc32(stream);
+        let start = self
+            .sim
+            .platform()
+            .call_change(CallChange::Start { bytes, crc });
+        assert!(matches!(start, CallResult::Current { pending: true, .. }));
+        self.run(1);
+        for (i, chunk) in stream.chunks(512).enumerate() {
+            let offset = u32::try_from(i * 512).unwrap();
+            assert_eq!(self.sim.platform().call_chunk(offset, chunk), Ok(()));
+            self.run(1);
+        }
+        let CallResult::Current { view, .. } = self.sim.platform().call() else {
+            panic!("the simulator keeps a meal call");
+        };
+        assert_eq!(view.clip, CallClip::Stored { bytes, crc });
     }
 
     /// Every event the ring holds, oldest first.
@@ -218,6 +251,7 @@ fn plan(minute: u16, portions: u8) -> Plan {
         portions,
         days: Weekdays::EVERY_DAY,
         enabled: true,
+        call: 0,
     }
 }
 
@@ -868,6 +902,7 @@ fn a_stored_claim_with_a_faulted_journal_holds_no_restart() {
             now: 0,
             boots: 1,
             claims: 0,
+            calls: Vec::new(),
         };
         feeder.run(100);
         feeder.sync(WEDNESDAY + 7 * HOUR_MS);
@@ -914,4 +949,107 @@ fn a_stored_claim_with_a_faulted_journal_holds_no_restart() {
         restarts(&mut feeder, u64::from(feeder::setup::IDLE_MS) + 60_000),
         "setup mode's restart came"
     );
+}
+
+/// Breakfast calling twice, with a 2,000-byte clip (500 ms a play): the
+/// call starts 2 s ahead of the meal (both plays and the spare second).
+fn called_breakfast() -> Feeder {
+    let mut feeder = breakfast();
+    let stream: Vec<u8> = (0..2_000).map(|i| (i % 251) as u8).collect();
+    feeder.upload(&stream);
+    let calling = Plan {
+        call: 2,
+        ..plan(7 * 60 + 30, 2)
+    };
+    feeder.put(table(&[(0, calling), (1, plan(7 * 60 + 40, 1))]));
+    feeder
+}
+
+#[test]
+fn the_call_starts_its_length_ahead_and_the_meal_runs_on_time_once() {
+    let mut feeder = called_breakfast();
+
+    feeder.run_until(BREAKFAST - 3_000);
+    assert!(feeder.calls.is_empty(), "nothing before the lead");
+    let due_at = feeder.now + 3_000;
+    feeder.run(2_500);
+    let [(at, plan, due)] = feeder.calls[..] else {
+        panic!("one call: {:?}", feeder.calls);
+    };
+    assert_eq!((plan, due), (0, seconds(BREAKFAST)));
+    assert!((due_at - 2_000..=due_at - 1_000).contains(&at), "{at}");
+
+    // The meal runs at its minute, as it would with no call; the plan
+    // without a call is fed without one.
+    feeder.run_until(BREAKFAST + 15 * MINUTE_MS);
+    assert_eq!(
+        feeder.fed(),
+        [
+            (1, 2, FeedOutcome::Done, Source::Schedule(0)),
+            (2, 1, FeedOutcome::Done, Source::Schedule(1)),
+        ]
+    );
+    assert_eq!(feeder.calls.len(), 1);
+    assert_eq!(feeder.claims, 2);
+}
+
+#[test]
+fn no_clip_or_a_plan_that_will_not_run_plays_no_call() {
+    // A plan with a call but no clip stored.
+    let mut feeder = breakfast();
+    let calling = Plan {
+        call: 3,
+        ..plan(7 * 60 + 30, 2)
+    };
+    feeder.put(table(&[(0, calling)]));
+    feeder.run_until(BREAKFAST + MINUTE_MS);
+    assert!(feeder.calls.is_empty());
+    assert_eq!(feeder.fed().len(), 1);
+
+    // A clip, and the clock set back inside the lead after the meal ran:
+    // its mark says it ran, so it is neither called nor fed again.
+    feeder.upload(&[0x77; 1_024]);
+    feeder.sync(BREAKFAST - 1_000);
+    feeder.run(5 * MINUTE_MS);
+    assert!(feeder.calls.is_empty());
+    assert_eq!(feeder.fed().len(), 1);
+}
+
+/// A feeder whose journal will not open runs no meal this boot, so it
+/// plays no call for one either.
+#[test]
+fn a_feeder_that_cannot_feed_this_boot_plays_no_call() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("journal.bin");
+    let flash = Flash::file(&path).unwrap();
+    let banks = Banks::new();
+    let sim = open(&flash, &banks, 1);
+    let mut feeder = Feeder {
+        flash,
+        banks,
+        sim,
+        now: 0,
+        boots: 1,
+        claims: 0,
+        calls: Vec::new(),
+    };
+    feeder.run(100);
+    feeder.upload(&[0x77; 1_024]);
+
+    // The journal's sectors spoiled, then a cold boot.
+    let mut bytes = std::fs::read(&path).unwrap();
+    bytes[..0x2000].fill(0);
+    std::fs::write(&path, bytes).unwrap();
+    feeder.flash = Flash::file(&path).unwrap();
+    feeder.restart();
+    feeder.run(1_000);
+    feeder.sync(WEDNESDAY + 7 * HOUR_MS);
+    let calling = Plan {
+        call: 2,
+        ..plan(7 * 60 + 30, 2)
+    };
+    feeder.put(table(&[(0, calling)]));
+    feeder.run_until(BREAKFAST + MINUTE_MS);
+    assert!(feeder.calls.is_empty());
+    assert!(feeder.fed().is_empty());
 }

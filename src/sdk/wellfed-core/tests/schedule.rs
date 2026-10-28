@@ -25,6 +25,7 @@ fn daily(minute: u16) -> Plan {
         portions: 2,
         days: Weekdays::EVERY_DAY,
         enabled: true,
+        call: 0,
     }
 }
 
@@ -216,7 +217,7 @@ proptest! {
         days in 1u8..0x80,
     ) {
         let denver = offsets(rule("MST7MDT,M3.2.0,M11.1.0"));
-        let plan = Plan { minute, portions: 1, days: Weekdays(days), enabled: true };
+        let plan = Plan { minute, portions: 1, days: Weekdays(days), enabled: true, call: 0 };
 
         let due = latest_due(&plan, now, &denver).unwrap();
         prop_assert!(due <= now);
@@ -241,7 +242,7 @@ proptest! {
         days in 0u8..0x80,
     ) {
         let denver = offsets(rule("MST7MDT,M3.2.0,M11.1.0"));
-        let plan = Plan { minute, portions: 1, days: Weekdays(days), enabled: true };
+        let plan = Plan { minute, portions: 1, days: Weekdays(days), enabled: true, call: 0 };
 
         let next = next_due(&plan, now, &denver).unwrap();
         prop_assert!(next > now);

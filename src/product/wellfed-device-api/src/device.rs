@@ -4,9 +4,9 @@
 
 use crate::clients::{Label, Role};
 use crate::mailbox::{
-    Calibration, CalibrationResult, LockResult, Origin, PlansResult, PlayResult, SettingsFields,
-    SettingsResult, Table, TimeFields, TimeResult, TimeSettings, TimeSettingsResult, TimeState,
-    WifiResult,
+    Calibration, CalibrationResult, CallChange, CallResult, LockResult, Origin, PlansResult,
+    PlayResult, SettingsFields, SettingsResult, Table, TimeFields, TimeResult, TimeSettings,
+    TimeSettingsResult, TimeState, WifiResult,
 };
 use crate::wifi::Credentials;
 use wellfed_core::log_tail::Batch as LogBatch;
@@ -144,6 +144,18 @@ pub trait Device {
     /// for the writer. A device without [`Capabilities::PLANS`] keeps none.
     fn plans(&mut self, _change: Option<Table>) -> PlansResult {
         PlansResult::Unserved
+    }
+    /// The meal call; with `Some`, an upload's start or a delete queued
+    /// for the writer. A device without [`Capabilities::CALL`] keeps none.
+    fn call(&mut self, _change: Option<CallChange>) -> CallResult {
+        CallResult::Unserved
+    }
+    /// Queue one chunk of the upload under way, at `offset`: `Busy` while
+    /// the last one is still being written, `Invalid` for an offset other
+    /// than where the upload stands or a wrong length. A chunk already
+    /// received is taken as done.
+    fn call_chunk(&mut self, _offset: u32, _data: &[u8]) -> Result<(), Refusal> {
+        Err(Refusal::Unavailable)
     }
     /// Today's local calendar day (days since 1970-01-01, UTC when the
     /// clock knows no offset) while the clock is valid: the day a desiccant

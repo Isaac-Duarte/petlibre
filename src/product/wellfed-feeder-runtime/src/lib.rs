@@ -16,7 +16,8 @@
 //! The rest carries work between the loop task and the writer, each a
 //! one-slot or bounded mailbox: client changes and the identity ([`keys`]),
 //! Wi-Fi saves ([`network`]), the time settings ([`time`]), the portion
-//! calibration ([`calibration`]), the feeding plans ([`plans`]), the event
+//! calibration ([`calibration`]), the feeding plans ([`plans`]), the meal
+//! call's upload ([`call`]), the event
 //! history ([`events`]) and its fill for the statistics ([`stats`]), and
 //! the latest feed's trace on its way to storage ([`traces`]).
 //! [`stress`]
@@ -30,6 +31,7 @@
 compile_error!("wellfed-feeder-runtime target builds are KM4-only");
 
 pub mod calibration;
+pub mod call;
 pub mod events;
 pub mod keys;
 pub mod network;

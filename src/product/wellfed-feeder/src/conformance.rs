@@ -25,10 +25,10 @@ use crate::feeder::{Feeder, Feeds, NoFeeds, Platform, Record};
 use wellfed_core::buttons::{Button, Buttons, Gesture};
 use wellfed_device_api::clients::{Label, Role};
 use wellfed_device_api::mailbox::{
-    Calibration, CalibrationResult, LockResult, MealReminder, NtpServer, Origin, PLANS, Plan,
-    PlansResult, SettingsFields, SettingsResult, SettingsView, Table, TimeFields, TimeResult,
-    TimeSettings, TimeSettingsResult, TimeSettingsView, Weekdays, WifiResult, WifiView, Window,
-    Zone,
+    Calibration, CalibrationResult, CallChange, CallClip, CallResult, LockResult, MealReminder,
+    NtpServer, Origin, PLANS, Plan, PlansResult, SettingsFields, SettingsResult, SettingsView,
+    Table, TimeFields, TimeResult, TimeSettings, TimeSettingsResult, TimeSettingsView, Weekdays,
+    WifiResult, WifiView, Window, Zone,
 };
 use wellfed_device_api::mailbox::{KeyResult, Requested};
 use wellfed_device_api::wifi::Credentials;
@@ -508,6 +508,7 @@ pub fn a_plans_table_lands_and_starts_from_its_save(rig: &mut impl Rig) {
         portions: 2,
         days: Weekdays::EVERY_DAY,
         enabled: true,
+        call: 0,
     });
     assert!(matches!(
         plans(rig, Some(table)),
@@ -530,6 +531,80 @@ pub fn a_plans_table_lands_and_starts_from_its_save(rig: &mut impl Rig) {
     rig.claim_outputs(true);
     assert_eq!(plans(rig, Some([None; PLANS])), PlansResult::Busy);
     rig.claim_outputs(false);
+}
+
+fn call(rig: &mut impl Rig, change: Option<CallChange>) -> CallResult {
+    device(rig, 0, |device| device.call(change))
+}
+
+fn call_clip(rig: &mut impl Rig) -> CallClip {
+    match call(rig, None) {
+        CallResult::Current {
+            view,
+            pending: false,
+        } => view.clip,
+        other => panic!("the call with nothing queued: {other:?}"),
+    }
+}
+
+/// The meal call starts with no clip; an upload lands chunk by chunk on
+/// the writer's turns, a chunk sent before the last one is written is
+/// `Busy`, and the clip is stored once its stream reads back against the
+/// CRC. A delete leaves none, and nothing is queued while the outputs are
+/// claimed.
+pub fn a_meal_call_uploads_in_chunks_and_deletes(rig: &mut impl Rig) {
+    assert_eq!(call_clip(rig), CallClip::None);
+    assert!(device(rig, 0, |device| device.capabilities()).contains(Capabilities::CALL));
+
+    let stream: [u8; 1_000] = core::array::from_fn(|i| (i * 13) as u8);
+    let crc = crc32(&stream);
+    let start = CallChange::Start { bytes: 1_000, crc };
+    assert!(matches!(
+        call(rig, Some(start)),
+        CallResult::Current { pending: true, .. }
+    ));
+    assert_eq!(call(rig, Some(start)), CallResult::Busy);
+    rig.write();
+    assert_eq!(
+        call_clip(rig),
+        CallClip::Receiving {
+            bytes: 1_000,
+            crc,
+            received: 0
+        }
+    );
+
+    let chunk = |rig: &mut _, offset: usize, len: usize| {
+        let data = &stream[offset..offset + len];
+        let offset = u32::try_from(offset).expect("small");
+        device(rig, 0, |device| device.call_chunk(offset, data))
+    };
+    assert_eq!(chunk(rig, 512, 488), Err(Refusal::Invalid), "ahead");
+    assert_eq!(chunk(rig, 0, 100), Err(Refusal::Invalid), "short");
+    assert_eq!(chunk(rig, 0, 512), Ok(()));
+    assert_eq!(
+        chunk(rig, 512, 488),
+        Err(Refusal::Busy),
+        "the last is queued"
+    );
+    rig.write();
+    assert_eq!(chunk(rig, 0, 512), Ok(()), "a chunk already in");
+    rig.claim_outputs(true);
+    assert_eq!(chunk(rig, 512, 488), Err(Refusal::Busy));
+    rig.claim_outputs(false);
+    assert_eq!(chunk(rig, 512, 488), Ok(()));
+    rig.write();
+    assert_eq!(call_clip(rig), CallClip::Stored { bytes: 1_000, crc });
+
+    rig.claim_outputs(true);
+    assert_eq!(call(rig, Some(CallChange::Delete)), CallResult::Busy);
+    rig.claim_outputs(false);
+    assert!(matches!(
+        call(rig, Some(CallChange::Delete)),
+        CallResult::Current { pending: true, .. }
+    ));
+    rig.write();
+    assert_eq!(call_clip(rig), CallClip::None);
 }
 
 /// A recorded event reads back from the ring, after the boot's, under the
@@ -961,6 +1036,7 @@ macro_rules! conformance {
             time_settings_land_and_set_the_zone,
             a_calibration_lands_and_weighs_the_portions,
             a_plans_table_lands_and_starts_from_its_save,
+            a_meal_call_uploads_in_chunks_and_deletes,
             the_desiccant_count_follows_the_clock_and_its_reset,
             a_recorded_event_reads_back,
             status_reports_the_build_and_the_time,

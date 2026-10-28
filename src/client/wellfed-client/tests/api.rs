@@ -2037,6 +2037,7 @@ fn a_connection_names_the_epoch_and_answers_each_request_once() {
                 backup: false,
                 plans: false,
                 desiccant: true,
+                call: false,
             },
             EPOCH
         )
@@ -2825,6 +2826,7 @@ fn only_an_owner_s_session_with_the_update_bit_may_update() {
             backup: false,
             plans: false,
             desiccant: false,
+            call: false,
         },
     };
     let slot = rig.accept().unwrap();

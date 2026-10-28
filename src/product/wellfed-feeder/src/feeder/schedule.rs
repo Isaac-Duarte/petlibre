@@ -33,7 +33,7 @@ use core::fmt;
 
 use wellfed_core::clock::wall::{Occurrence, occurrence};
 use wellfed_core::schedule::latest_due;
-use wellfed_device_api::mailbox::{Claim, PLANS, PlansChange, PlansResult, PlansView};
+use wellfed_device_api::mailbox::{Claim, PLANS, PlansChange, PlansResult, PlansView, PlayResult};
 use wellfed_proto::api::{Blocked, EventBody, MissedReason, Readiness, Refusal, Source};
 
 use super::Feeds;
@@ -93,6 +93,12 @@ pub enum Record {
     Dropped,
     /// The meal reminder recorded `MealSoon` for this occurrence.
     Reminded { plan: u8, due_s: u32 },
+    /// The meal call was asked of the speaker for this occurrence.
+    Called {
+        plan: u8,
+        due_s: u32,
+        result: PlayResult,
+    },
 }
 
 /// One record's body (`PLSCH1`).
@@ -118,6 +124,18 @@ pub fn describe(record: Record, f: &mut impl fmt::Write) -> fmt::Result {
         ),
         Record::Dropped => f.write_str("dropped"),
         Record::Reminded { plan, due_s } => write!(f, "reminded plan={plan} due={due_s}"),
+        Record::Called {
+            plan,
+            due_s,
+            result,
+        } => {
+            let result = match result {
+                PlayResult::Started => "started",
+                PlayResult::Muted => "muted",
+                PlayResult::Busy => "busy",
+            };
+            write!(f, "called plan={plan} due={due_s} result={result}")
+        }
     }
 }
 

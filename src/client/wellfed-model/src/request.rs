@@ -5,8 +5,8 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Bank1Page, ClientRole, Generation, Hex, PLANS, Plan, Plans, Settings, SettingsPatch, Stats,
-    StatsSection, Status, StockPlanSectors, TracePage, UpdateRefusal, UpdateView,
+    Bank1Page, CallView, ClientRole, Generation, Hex, PLANS, Plan, Plans, Settings, SettingsPatch,
+    Stats, StatsSection, Status, StockPlanSectors, TracePage, UpdateRefusal, UpdateView,
 };
 
 /// One operation. Reads may be repeated freely; a write's request id makes
@@ -136,6 +136,24 @@ pub enum Op {
     /// recovery role, as [`Self::ReadBank1`]: the installer's import of
     /// stock's plans before a promotion.
     ReadStockPlans,
+    /// The stored meal call.
+    GetCall,
+    /// Erase the meal call and start an upload of `bytes` stream bytes
+    /// whose CRC-32 is `crc` (`wellfed_client::call` makes both). Owners
+    /// only.
+    StartCall {
+        bytes: u32,
+        crc: u32,
+    },
+    /// The upload's stream bytes at `offset`, where it stands: a whole
+    /// [`CALL_CHUNK_MAX`](crate::CALL_CHUNK_MAX), or the rest. Idempotent
+    /// by offset; `Busy` while the chunk before is still being written.
+    CallChunk {
+        offset: u32,
+        data: Vec<u8>,
+    },
+    /// Erase the meal call. Owners only.
+    DeleteCall,
 }
 
 /// What the owner measured, as the feeder keeps it.
@@ -312,6 +330,7 @@ pub enum Answer {
     Bank1(Bank1Page),
     Plans(Plans),
     StockPlans(StockPlanSectors),
+    Call(CallView),
 }
 
 /// Why the feeder refused a request.

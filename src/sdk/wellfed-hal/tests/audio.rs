@@ -10,6 +10,7 @@ use wellfed_core::settings::{SettingsView, Window};
 use wellfed_core::tone::PlayResult;
 use wellfed_core::tone::Tune;
 use wellfed_hal::audio::{self, AMP_PIN, Record, Speaker};
+use wellfed_hal::plaf103::storage::CALL;
 use wellfed_hal::sdk::fake;
 use wellfed_hal::{clock, settings};
 
@@ -158,6 +159,90 @@ fn a_failed_open_frees_the_slot() {
     );
     assert!(!amp());
     assert_eq!(audio::request(Tune::Coin), PlayResult::Started);
+}
+
+/// A clip of `bytes` stream bytes in the meal call's sectors, published.
+fn store_call(bytes: usize) {
+    let at = (CALL.first * 4096 + 512) as usize;
+    fake::with(|h| {
+        for (i, byte) in h.storage[at..at + bytes].iter_mut().enumerate() {
+            // Loud codes, alternating in sign, so the clip is heard.
+            *byte = if i % 2 == 0 { 0x77 } else { 0xff };
+        }
+    });
+    audio::publish_call(Some(u32::try_from(bytes).unwrap()));
+}
+
+fn call_done(record: &Record) -> bool {
+    matches!(record, Record::CallDone { .. } | Record::Error { .. })
+}
+
+#[test]
+fn the_meal_call_plays_the_stored_clip_and_holds_off_the_writer() {
+    let _guard = start(true);
+    let mut speaker = Speaker::quiet();
+    assert_eq!(audio::request_call(2), PlayResult::Busy, "no clip yet");
+
+    store_call(400);
+    assert_eq!(audio::request_call(0), PlayResult::Busy);
+    assert_eq!(audio::request_call(2), PlayResult::Started);
+    assert_eq!(audio::request(Tune::Coin), PlayResult::Busy);
+    assert_eq!(
+        speaker.step().record,
+        Some(Record::CallPlay {
+            plays: 2,
+            ms: 200,
+            volume: 40
+        })
+    );
+    assert!(!audio::call_write_begin(), "the writer waits for the call");
+
+    let records = run(&mut speaker, 400, call_done);
+    let Some(&Record::CallDone {
+        ms,
+        underruns,
+        drained,
+    }) = records.last()
+    else {
+        panic!("{records:?}");
+    };
+    assert_eq!((underruns, drained), (0, true));
+    assert!(ms > 150, "{ms}: the settle, then the clip");
+    let played = fake::with(|h| h.audio_played.clone());
+    assert!(played.len() >= 200 * 16);
+    assert!(played.iter().any(|&s| s != 0));
+    assert!(!amp());
+
+    assert!(audio::call_write_begin());
+    audio::call_write_end();
+    assert_eq!(audio::request(Tune::Coin), PlayResult::Started);
+}
+
+#[test]
+fn a_call_while_the_writer_holds_the_clip_plays_nothing() {
+    let _guard = start(true);
+    let mut speaker = Speaker::quiet();
+    store_call(400);
+    assert_eq!(audio::request_call(1), PlayResult::Started);
+    assert!(audio::call_write_begin());
+
+    assert_eq!(
+        speaker.step().record,
+        Some(Record::Error {
+            stage: audio::ErrorStage::Clip
+        })
+    );
+    assert!(!fake::with(|h| h.audio_open));
+    assert_eq!(fake::with(|h| h.audio_opens), 0);
+    audio::call_write_end();
+    assert_eq!(audio::request(Tune::Coin), PlayResult::Started);
+}
+
+#[test]
+fn a_muted_feeder_plays_no_call() {
+    let _guard = start(false);
+    store_call(400);
+    assert_eq!(audio::request_call(1), PlayResult::Muted);
 }
 
 #[test]

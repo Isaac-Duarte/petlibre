@@ -20,6 +20,7 @@ const BREAKFAST: Plan = Plan {
     portions: 2,
     days: Weekdays::EVERY_DAY,
     enabled: true,
+    call: 0,
 };
 
 const ONCE: Plan = Plan {
@@ -106,6 +107,35 @@ fn power_cut_at_every_mutation_keeps_old_or_new_and_stays_writable() {
     }
 }
 
+#[test]
+fn a_plans_meal_call_round_trips_in_its_flag_bits() {
+    let mut f = FakeJournalFlash::with_unit(UNIT);
+    let mut s = open(&mut f);
+    let calling = Plan {
+        call: wellfed_core::clip::PLAYS_MAX,
+        ..BREAKFAST
+    };
+    let plans = Plans::default()
+        .changed(&PlansChange::Replace {
+            table: table(&[(0, BREAKFAST), (1, calling)]),
+            at_s: Some(1_000),
+        })
+        .unwrap();
+    assert!(s.save(&plans));
+
+    // Slot 1's flags: present, enabled and five plays in bits 2-4; slot 0,
+    // with no call, keeps the flags a record had before plans had calls.
+    assert_eq!(f.bytes[0][20], 0b0000_0011);
+    assert_eq!(f.bytes[0][25], 0b0001_0111);
+    let r = open(&mut f);
+    assert_eq!(r.status, PlansStatus::Loaded);
+    assert_eq!(r.plans.table[1], Some(calling));
+
+    // A call past the limit is no record of ours.
+    rewrite(&mut f, |record| record[25] = 0b0001_1011);
+    assert_eq!(open(&mut f).status, PlansStatus::Empty);
+}
+
 /// Rewrite slot 0's record with `change` applied and a valid checksum.
 fn rewrite(f: &mut FakeJournalFlash, change: impl FnOnce(&mut [u8])) {
     let mut record = f.bytes[0][..RECORD_BYTES].to_vec();
@@ -120,7 +150,7 @@ fn a_newer_schema_is_read_only_with_no_plans() {
     let mut f = FakeJournalFlash::with_unit(UNIT);
     let mut s = open(&mut f);
     assert!(s.save(&breakfast(1_000)));
-    rewrite(&mut f, |record| record[8] = 2);
+    rewrite(&mut f, |record| record[8] = 3);
 
     let mut r = open(&mut f);
     assert_eq!(
@@ -129,6 +159,20 @@ fn a_newer_schema_is_read_only_with_no_plans() {
     );
     assert!(!r.writable());
     assert!(!r.save(&breakfast(2_000)));
+}
+
+/// A version 1 record, from before plans had a meal call, is not read:
+/// the store starts empty and writable, and the plans are entered again.
+#[test]
+fn a_version_1_record_is_not_read() {
+    let mut f = FakeJournalFlash::with_unit(UNIT);
+    let mut s = open(&mut f);
+    assert!(s.save(&breakfast(1_000)));
+    rewrite(&mut f, |record| record[8] = 1);
+
+    let mut r = open(&mut f);
+    assert_eq!((r.status, r.plans), (PlansStatus::Empty, Plans::default()));
+    assert!(r.save(&breakfast(2_000)));
 }
 
 #[test]
@@ -140,7 +184,7 @@ fn records_that_fail_their_checks_are_not_read() {
         }),
         ("no portions", |r| r[23] = 0),
         ("days past Sunday", |r| r[24] = 0x80),
-        ("unknown plan flag", |r| r[20] |= 4),
+        ("unknown plan flag", |r| r[20] |= 0x20),
         ("bytes in an empty slot", |r| r[26] = 1),
         ("claim past the last slot", |r| {
             r[110] = 1;

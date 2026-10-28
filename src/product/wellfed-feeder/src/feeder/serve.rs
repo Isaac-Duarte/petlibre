@@ -49,9 +49,10 @@ use crate::stats::Keeper;
 use crate::store::events::Read;
 use crate::update as wire;
 use wellfed_device_api::mailbox::{
-    Calibration, CalibrationResult, ClientChange, KeyResult, LockFields, LockResult, NtpResult,
-    Origin, PlansChange, PlansResult, PlayResult, Requested, SettingsFields, SettingsResult, Table,
-    TimeFields, TimeResult, TimeSettings, TimeSettingsResult, TimeState, WifiResult, WifiSource,
+    Calibration, CalibrationResult, CallChange, CallResult, ClientChange, KeyResult, LockFields,
+    LockResult, NtpResult, Origin, PlansChange, PlansResult, PlayResult, Requested, SettingsFields,
+    SettingsResult, Table, TimeFields, TimeResult, TimeSettings, TimeSettingsResult, TimeState,
+    WifiResult, WifiSource,
 };
 use wellfed_device_api::pairing::{self, Pairing};
 use wellfed_device_api::wifi::Credentials;
@@ -837,6 +838,23 @@ impl<P: Platform, F: Feeds> Device for FeederDevice<'_, P, F> {
                     .plans_change(PlansChange::Replace { table, at_s })
             }
         }
+    }
+
+    /// A change to the clip waits, as any store write does, while a feed
+    /// holds the outputs.
+    fn call(&mut self, change: Option<CallChange>) -> CallResult {
+        match change {
+            None => self.platform.call(),
+            Some(_) if self.platform.outputs_claimed() => CallResult::Busy,
+            Some(change) => self.platform.call_change(change),
+        }
+    }
+
+    fn call_chunk(&mut self, offset: u32, data: &[u8]) -> Result<(), Refusal> {
+        if self.platform.outputs_claimed() {
+            return Err(Refusal::Busy);
+        }
+        self.platform.call_chunk(offset, data)
     }
 
     fn phase(&self) -> Option<proto::Phase> {

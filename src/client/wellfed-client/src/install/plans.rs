@@ -6,8 +6,8 @@
 //! them as stock's own boot does, and [`convert`] turns each plan into a
 //! [`Plan`] for the same slot. A plan the replacement cannot run as stock
 //! would is refused by name ([`Refused`]), never left out quietly. What a
-//! converted plan loses on the way (its meal call, a meal stock still
-//! owed) is a [`Note`] on it.
+//! converted plan loses or changes on the way (stock's clip behind its
+//! meal call, a meal stock still owed) is a [`Note`] on it.
 //!
 //! Stock checks none of its fields, so the decoder takes every byte as
 //! stored and the converter is where values are judged: "99:99", zero
@@ -19,7 +19,7 @@ use core::fmt;
 use core::fmt::Write as _;
 use core::ops::Range;
 
-use wellfed_model::{PLANS, PORTIONS_MAX, Plan, Weekday, Weekdays};
+use wellfed_model::{CALL_PLAYS_MAX, PLANS, PORTIONS_MAX, Plan, Weekday, Weekdays};
 
 /// The flash stock's plans occupy: the count sector, then the entries
 /// sector. Stock erases each sector before it writes it.
@@ -344,9 +344,10 @@ pub enum PlanRefusal {
 /// Something a converted plan does not carry over from stock.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Note {
-    /// Stock played the meal call `times` times before this feed. The
-    /// replacement has no meal call yet, so the meal runs without it.
-    CallDropped { times: u8 },
+    /// Stock played its meal call `times` times before this feed. The plan
+    /// keeps the call, at most [`CALL_PLAYS_MAX`] plays, but stock's clip
+    /// stays behind: it sounds once the owner uploads one.
+    Call { times: u8 },
     /// Stock had started or still owed this repeating plan's meal (due,
     /// waiting or resumed) when the table was saved. That meal is not run
     /// late: the plan runs from its next occurrence. A one-off in this
@@ -477,7 +478,7 @@ pub fn convert(stock: &StockPlans, now_ms: u64) -> Import {
                     slot,
                     stock,
                     plan,
-                    call: stock.call.then_some(Note::CallDropped {
+                    call: (plan.call > 0).then_some(Note::Call {
                         times: stock.call_times,
                     }),
                     pending: stock.state.pending().then_some(Note::PendingDropped),
@@ -535,9 +536,14 @@ pub fn report(import: &Import) -> String {
 
         for note in outcome.notes() {
             let note = match note {
-                Note::CallDropped { times } => {
-                    format!("its meal call ({times} plays) is not carried over")
-                }
+                Note::Call { times } if times > CALL_PLAYS_MAX => format!(
+                    "its meal call played {times} times; it plays {CALL_PLAYS_MAX}, the most \
+                     a plan asks, once a clip is uploaded (`wellfed call upload`)"
+                ),
+                Note::Call { times } => format!(
+                    "its meal call plays {times} times once a clip is uploaded \
+                     (`wellfed call upload`); stock's clip is not carried over"
+                ),
                 Note::PendingDropped => {
                     "the meal stock had started or still owed is not run again; \
                      it runs from its next occurrence"
@@ -601,6 +607,12 @@ fn plan(stock: &StockPlan, now_ms: u64) -> Result<Plan, PlanRefusal> {
         portions: stock.portions,
         days,
         enabled: stock.skip_until_ms <= now_ms,
+        // Stock plays the call `audioTimes` times, so none at 0.
+        call: if stock.call {
+            stock.call_times.min(CALL_PLAYS_MAX)
+        } else {
+            0
+        },
     })
 }
 
@@ -778,6 +790,7 @@ mod tests {
                 portions: 2,
                 days: Weekdays::DAILY,
                 enabled: true,
+                call: 0,
             }
         );
         assert_eq!(import.plans[1], None);
@@ -945,14 +958,41 @@ mod tests {
             state: StockPlanState::Waiting,
             ..daily()
         };
-        let import = convert(&table(&[Some(called)]), NOW);
+        let loud = StockPlan {
+            call: true,
+            call_times: 9,
+            ..daily()
+        };
+        let silent = StockPlan {
+            call: true,
+            call_times: 0,
+            ..daily()
+        };
+        let off = StockPlan {
+            call: false,
+            call_times: 3,
+            ..daily()
+        };
+        let import = convert(
+            &table(&[Some(called), Some(loud), Some(silent), Some(off)]),
+            NOW,
+        );
 
         assert!(converted(&import, 0).enabled);
+        assert_eq!(converted(&import, 0).call, 3);
         let notes: Vec<_> = import.outcomes[0].notes().collect();
+        assert_eq!(notes, [Note::Call { times: 3 }, Note::PendingDropped]);
+        // Capped at the replacement's most, and noted as stock's.
+        assert_eq!(converted(&import, 1).call, CALL_PLAYS_MAX);
         assert_eq!(
-            notes,
-            [Note::CallDropped { times: 3 }, Note::PendingDropped]
+            import.outcomes[1].notes().collect::<Vec<_>>(),
+            [Note::Call { times: 9 }]
         );
+        // No plays, or the call switched off: no call, and nothing lost.
+        for slot in [2, 3] {
+            assert_eq!(converted(&import, slot).call, 0);
+            assert_eq!(import.outcomes[slot].notes().count(), 0);
+        }
     }
 
     #[test]
@@ -1009,7 +1049,8 @@ mod tests {
         assert_eq!(
             lines,
             "slot 0: stock plan 42 -> 08:15 mon,tue, 3 portions\n  \
-             note: its meal call (2 plays) is not carried over\n\
+             note: its meal call plays 2 times once a clip is uploaded (`wellfed call upload`); \
+             stock's clip is not carried over\n\
              slot 1: stock plan 42 (08:15) refused: it asks for 0 portions, not 1 to 48\n"
         );
         assert_eq!(

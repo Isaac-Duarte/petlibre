@@ -2,7 +2,7 @@
 
 The feeder keeps up to ten feeding plans and runs them itself, with no server. This page explains what a plan is, when one runs, and how the feeder makes sure a meal runs at most once through restarts, clock jumps and daylight changes. It is for owners who want to know what to expect and for anyone changing the schedule code.
 
-Status: **Works**. Observed on our feeder; daylight changes and power cuts between a claim and its feed are tested in simulation only. The meal reminder is **Experimental**: tested in simulation only.
+Status: **Works**. Observed on our feeder; daylight changes and power cuts between a claim and its feed are tested in simulation only. The meal reminder and the meal call are **Experimental**: tested on the host and in simulation only.
 
 ## Plans
 
@@ -14,20 +14,21 @@ A plan feeds a number of portions at a time of the feeder's local day, on the we
 | Portions | 1 to 48, as a manual feed |
 | Days | Any of Monday to Sunday, or none for once |
 | Enabled | On or off |
+| Meal call | 0 to 5 plays of your clip before the meal; 0 for none ([below](#meal-call)) |
 
 The feeder has ten slots, as stock keeps at most ten plans. The slot number is the plan's name in the history and in `wellfed plans`.
 
 ```sh
 wellfed plans list
 wellfed plans add --at 07:30 --portions 2 --days daily
-wellfed plans edit 0 --days mon,wed,fri
+wellfed plans edit 0 --days mon,wed,fri --call 2
 wellfed plans disable 0
 wellfed plans delete 0
 ```
 
 Owners and members may change the plans, as they may change the settings. Each change reads the plans, edits that table and writes it back against the generation it read. If another client changed the plans meanwhile, or a one-off plan disabled itself, the write is refused `Stale` and nothing changes; read them again and retry. The command never retries by itself.
 
-A plan you add, enable again, or whose time or days you change, runs only from its next occurrence after the save. Saving a plan at 07:35 for 07:30 does not feed until tomorrow. Changing only a plan's portions keeps its occurrences as they were.
+A plan you add, enable again, or whose time or days you change, runs only from its next occurrence after the save. Saving a plan at 07:35 for 07:30 does not feed until tomorrow. Changing only a plan's portions or meal call keeps its occurrences as they were.
 
 ## When a plan runs
 
@@ -73,6 +74,26 @@ A `MealSoon` event names the plan's slot, the time the meal is due (and its minu
 
 The reminder only reads the plans. It never claims, delays or blocks a meal, and the meal runs exactly as it would with the reminder off. It keeps nothing on flash about what it sent. So a restart inside the lead announces the same meal again once the clock is back, with the same plan and due time, and a client can drop the repeat.
 
+## Meal call
+
+The feeder can call your pet before a scheduled meal with a clip you record: your voice, a bell, anything up to about 8 seconds. You upload one clip, and each plan says how many times it plays before its meal. Stock did the same with a clip recorded in its app; stock's own clips are not reused.
+
+```sh
+wellfed call upload dinner.wav     # convert and upload the clip
+wellfed plans edit 0 --call 2      # play it twice before plan 0's meal
+wellfed call show
+wellfed call delete
+```
+
+- **The clip.** The CLI converts a WAV file (integer PCM or 32-bit float, any rate, mono or stereo) on your computer: it mixes it to mono, resamples it to 8 kHz, trims the silence at either end and sets its peak just under full scale. For another format, convert it to WAV first, for example with `ffmpeg -i dinner.m4a dinner.wav`. A clip longer than about 8 seconds once trimmed is refused before anything is sent. Uploading a clip replaces the one stored, which is gone as soon as the upload starts. Only owners may upload or delete it.
+- **When it plays.** The call starts its own length ahead of the meal (every play, plus a second), so it ends as the meal is due and the meal runs on time. Stock played its call first and then ran the motor, so its meals ran late by the call's length.
+- **Never in the way.** The call only reads the plans and asks the speaker. It never claims, delays or blocks a meal: with sound off, outside the sound window, at volume 0, with no clip stored, or with the speaker busy, the meal runs silently. A call that has not started by the meal's minute is dropped for that meal.
+- **Which meals.** The same as the reminder: an enabled plan's next occurrence the feeder expects to run, with a valid clock and a plans store it can write. A restart inside the lead plays the call again. No call plays while BLE setup runs, or while the feeder cannot feed at all this boot (its feeding owner stopped on a fault, or its feed journal did not open).
+
+A feed you start yourself, from the CLI or the Dispense button, plays no call.
+
+The clip lives in storage sectors 40 to 47 (`wellfed_feeder::store::call`): a header and the stream. The header is written only once the whole stream reads back against its CRC, so a power cut during an upload leaves no clip, never a damaged one. Each boot checks the stream again. The [factory reset](pairing.md#factory-reset) erases the clip.
+
 ## Daylight saving and time zones
 
 Plans keep local time across daylight changes, from the zone's rule or a client's sync ([clock](clock.md#time-settings)):
@@ -106,15 +127,16 @@ A plans store the feeder cannot write runs nothing, since it could not keep the 
 | Field checks | None ("99:99" is stored) | Every field checked |
 | Time zone | Whole hours | Any offset, with daylight rules |
 | A one-off plan after it runs | Deleted | Kept, disabled |
-| A sound before the meal | Per plan | Not yet |
+| A sound before the meal | Per plan; plays first, then the motor runs | Per plan; ends as the meal is due, never delaying it |
 | A reminder before the meal | The vendor's cloud and app; nothing in the firmware | A `MealSoon` event on the feeder's event stream, 1 to 60 minutes ahead |
 
 ## Storage
 
-The plans live in storage sectors 11 and 12 (`wellfed_feeder::store::plans`): one 128-byte record holding the ten plans, each plan's mark and the last claim. Only the settings writer writes it, inside a marked attempt, after a feed has released the outputs. A save happens for each change you make and for each occurrence run or missed. A record of a newer format makes the store read-only with no plans, so this build runs nothing it cannot read. The [factory reset](pairing.md#factory-reset) erases it, last claim included; the feed journal it keeps still stops a claimed feed from running twice.
+The plans live in storage sectors 11 and 12 (`wellfed_feeder::store::plans`): one 128-byte record holding the ten plans (a plan's meal call in its flag byte), each plan's mark and the last claim. Only the settings writer writes it, inside a marked attempt, after a feed has released the outputs. A save happens for each change you make and for each occurrence run or missed. A record of a newer format makes the store read-only with no plans, so this build runs nothing it cannot read. The record is version 2, which added the meal call; a version 1 record is not read, so plans saved by a build from before the meal call are entered again. The [factory reset](pairing.md#factory-reset) erases it, last claim included; the feed journal it keeps still stops a claimed feed from running twice.
 
 ## Evidence
 
 - **Observed, October 28, 2026** (`fp03-ota-20261028`, hopper empty): a daily plan fed once at its minute; a reboot within that minute, with the clock carried across it, ran nothing again; a plan set to run once fed and disabled itself; a plan due while the feeder had no clock after a cold boot held, and the sync 16 minutes later recorded it missed, unfed.
+- **Simulated, October 28, 2026.** The meal call, on the same loop: a clip uploaded through the platform's chunks, a plan calling twice called once, between its lead and a second before its meal, and fed at its minute; a plan without a call, a plan with no clip stored, and an occurrence already run are not called. The call store's tests cover an upload chunk by chunk, a stream that misses its CRC, the longest clip, a delete, a changed byte, and a power cut at the header's every byte and through the rest. The conformance suite uploads and deletes a clip on both platforms.
 - **Simulated, October 28, 2026.** The meal reminder, on the same loop: off by default, its lead before the meal with the meal still run once, a disabled plan and a feeder without time, a plan edited inside the lead, a restart inside the lead, and Denver's spring and autumn changes.
 - **Simulated, October 28, 2026.** `wellfed-feeder-sim`'s schedule tests run the product loop in virtual time over the real stores and feed journal: on-time feeds, restarts, backward and forward jumps, a cold boot without time, plans due together, a wait past the grace, a cut between the claim and the feed, a cut mid-feed, a refused feed and its retries, one-off plans enabled again, a plan saved without time, and Denver's spring and autumn changes.

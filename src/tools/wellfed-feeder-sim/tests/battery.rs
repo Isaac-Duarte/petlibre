@@ -118,6 +118,7 @@ impl Feeder {
             portions: 1,
             days: Weekdays::EVERY_DAY,
             enabled: true,
+            call: 0,
         });
         let at_s = u32::try_from(self.wall() / 1000).ok();
         let change = PlansChange::Replace { table, at_s };

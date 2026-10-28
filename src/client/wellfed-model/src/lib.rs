@@ -15,6 +15,7 @@
 //! [API design]: ../../../../docs/server/design.md#crates
 #![forbid(unsafe_code)]
 
+mod call;
 pub mod convert;
 mod event;
 mod plan;
@@ -31,6 +32,7 @@ use std::fmt;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use utoipa::ToSchema;
 
+pub use call::{CALL_BYTES_MAX, CALL_CHUNK_MAX, CALL_PLAYS_MAX, CALL_RATE_HZ, CallClip, CallView};
 pub use event::{
     ClientRole, EnrollPath, Event, EventBody, EventKind, FeedOutcome, FeedReason, FoodLevel, Gap,
     LogLines, MetricKind, MissedReason, Pushed, Sample, SampleValue, Source,

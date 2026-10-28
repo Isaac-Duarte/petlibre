@@ -65,6 +65,9 @@ pub struct Plan {
     pub portions: u8,
     pub days: Weekdays,
     pub enabled: bool,
+    /// How many times the meal call plays before the feed, 0 to
+    /// [`crate::clip::PLAYS_MAX`]; 0 plays none.
+    pub call: u8,
 }
 
 impl Plan {
@@ -75,6 +78,7 @@ impl Plan {
             && self.portions >= 1
             && self.portions <= PORTIONS_MAX
             && self.days.valid()
+            && self.call <= crate::clip::PLAYS_MAX
     }
 
     /// Whether `other` keeps this plan's occurrences: the same minute and

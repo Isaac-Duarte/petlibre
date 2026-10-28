@@ -21,9 +21,9 @@ use wellfed_core::supply::Reading;
 use wellfed_core::tone::Tune;
 use wellfed_device_api::clients::{CLIENTS, Client};
 use wellfed_device_api::mailbox::{
-    Calibration, CalibrationResult, ClientChange, KeyResult, PlansChange, PlansResult, PlayResult,
-    Requested, SettingsFields, SettingsResult, SettingsView, TimeSettings, TimeSettingsResult,
-    WifiResult, WifiSource,
+    Calibration, CalibrationResult, CallChange, CallResult, ClientChange, KeyResult, PlansChange,
+    PlansResult, PlayResult, Requested, SettingsFields, SettingsResult, SettingsView, TimeSettings,
+    TimeSettingsResult, WifiResult, WifiSource,
 };
 use wellfed_device_api::wifi::Credentials;
 use wellfed_feeder::feeder::Platform;
@@ -35,7 +35,9 @@ use wellfed_feeder::feeder::supply::Radio;
 use wellfed_feeder::stats::Totals;
 use wellfed_feeder::store;
 use wellfed_feeder::store::events::{BODY_BYTES, Read};
-use wellfed_feeder_runtime::{calibration, events, keys, network, plans, stats, time, traces};
+use wellfed_feeder_runtime::{
+    calibration, call, events, keys, network, plans, stats, time, traces,
+};
 use wellfed_proto::api::{
     Capabilities, Counts, Erases, FLASH_SECTORS, Power, Refusal, STOCK_PLAN_ENTRIES_LEN, TASKS_MAX,
 };
@@ -171,6 +173,7 @@ impl Platform for Plaf103 {
             .union(Capabilities::BACKUP)
             .union(Capabilities::PLANS)
             .union(Capabilities::DESICCANT)
+            .union(Capabilities::CALL)
     }
 
     fn reset(&mut self) {
@@ -315,6 +318,18 @@ impl Platform for Plaf103 {
 
     fn plans_change(&mut self, change: PlansChange) -> PlansResult {
         plans::change(change)
+    }
+
+    fn call(&mut self) -> CallResult {
+        call::current()
+    }
+
+    fn call_change(&mut self, change: CallChange) -> CallResult {
+        call::change(change)
+    }
+
+    fn call_chunk(&mut self, offset: u32, data: &[u8]) -> Result<(), Refusal> {
+        call::chunk(offset, data)
     }
 
     fn queue_event(&mut self, at: Option<u32>, body: [u8; BODY_BYTES], slot: EventSlot) -> bool {
@@ -599,6 +614,10 @@ impl Platform for Plaf103 {
 
     fn play(&mut self, tune: Tune) -> PlayResult {
         audio::request(tune)
+    }
+
+    fn play_call(&mut self, plays: u8) -> PlayResult {
+        audio::request_call(plays)
     }
 
     fn speaker_step(&mut self) -> DriverStep<Driver> {

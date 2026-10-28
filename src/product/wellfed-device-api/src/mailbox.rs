@@ -449,3 +449,67 @@ pub enum PlansResult {
     /// This firmware keeps no plans.
     Unserved,
 }
+
+pub use wellfed_proto::api::{CallClip, CallView};
+
+const _: () = assert!(
+    wellfed_proto::api::CALL_BYTES_MAX == wellfed_core::clip::BYTES_MAX
+        && wellfed_proto::api::CALL_CHUNK_MAX == wellfed_core::clip::CHUNK_MAX as usize
+        && wellfed_proto::api::CALL_PLAYS_MAX == wellfed_core::clip::PLAYS_MAX
+        && wellfed_proto::api::CALL_RATE_HZ == wellfed_core::clip::RATE_HZ
+);
+
+/// A change to the meal call, queued for the writer, which alone writes it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CallChange {
+    /// Erase the clip and wait for an upload of `bytes` whose CRC is `crc`.
+    Start {
+        bytes: u32,
+        crc: u32,
+    },
+    Delete,
+}
+
+/// How a meal call request ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CallResult {
+    /// The call as the writer last published it; `pending` while a change
+    /// or a chunk is queued for it.
+    Current {
+        view: CallView,
+        pending: bool,
+    },
+    /// A change is already queued, or the store is still loading.
+    Busy,
+    ReadOnly,
+    /// This firmware keeps no meal call.
+    Unserved,
+}
+
+/// Whether a chunk of `len` bytes at `offset` is the next the upload in
+/// `clip` wants (`true`), one it already has (`false`), or neither:
+/// `Invalid`, as is any chunk with no upload under way. Every chunk but
+/// the last is a whole [`wellfed_core::clip::CHUNK_MAX`], so each lands in
+/// one sector.
+pub fn chunk_wanted(
+    clip: CallClip,
+    offset: u32,
+    len: usize,
+) -> Result<bool, wellfed_proto::api::Refusal> {
+    let CallClip::Receiving {
+        bytes, received, ..
+    } = clip
+    else {
+        return Err(wellfed_proto::api::Refusal::Invalid);
+    };
+    if offset < received && offset.is_multiple_of(wellfed_core::clip::CHUNK_MAX) {
+        return Ok(false);
+    }
+    let left = bytes.saturating_sub(received);
+    let whole = left.min(wellfed_core::clip::CHUNK_MAX);
+    if offset == received && left > 0 && u32::try_from(len).ok() == Some(whole) {
+        Ok(true)
+    } else {
+        Err(wellfed_proto::api::Refusal::Invalid)
+    }
+}

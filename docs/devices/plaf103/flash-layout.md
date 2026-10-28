@@ -46,7 +46,8 @@ The region is `STORAGE_OFFSET`/`STORAGE_SECTORS` in firmware, and `wellfed_board
 | 32–33 | Lifetime statistics |
 | 34–35 | Portion calibration |
 | 36 | Factory reset marker |
-| 37–47 | Free |
+| 37–39 | Free |
+| 40–47 | Meal call clip |
 
 The region only grows upward. A sector keeps its address, and a build compiled for a smaller region never reaches the sectors added after it.
 

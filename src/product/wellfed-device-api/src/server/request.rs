@@ -6,17 +6,18 @@ use super::memory::Remembered;
 use super::{Phase, Server, Waiting, slot_id};
 use crate::clients::{Label, Role};
 use crate::mailbox::{
-    Calibration, CalibrationResult, LockResult, MealReminder, NtpServer, Origin, PLANS, Plan,
-    PlansResult, PlayResult, SettingsFields, SettingsResult, Table, TimeFields, TimeResult,
-    TimeSettingsResult, Weekdays, WifiResult, Window, Zone,
+    Calibration, CalibrationResult, CallChange, CallResult, LockResult, MealReminder, NtpServer,
+    Origin, PLANS, Plan, PlansResult, PlayResult, SettingsFields, SettingsResult, Table,
+    TimeFields, TimeResult, TimeSettingsResult, Weekdays, WifiResult, Window, Zone,
 };
 use crate::pairing::{self, Pairing};
 use crate::wifi::Credentials;
 use crate::{Device, KeyChange, REBOOT_MS, Record, UpdateRequest};
 use wellfed_core::tone::Tune as CoreTune;
 use wellfed_proto::api::{
-    self as proto, Bowl, Capabilities, ClientMessage, EventBody, Op, Readiness, Refusal, RequestId,
-    Source, StatsSection, Tune, UPDATE_CHUNK_MAX, UpdateRefusal, UpdateView,
+    self as proto, Bowl, CALL_BYTES_MAX, CALL_CHUNK_MAX, Capabilities, ClientMessage, EventBody,
+    Op, Readiness, Refusal, RequestId, Source, StatsSection, Tune, UPDATE_CHUNK_MAX, UpdateRefusal,
+    UpdateView,
 };
 
 impl Server {
@@ -206,6 +207,29 @@ impl Server {
                 Ok(revision) => return self.wait(index, id, action, Waiting::Plans { revision }),
                 Err(refusal) => Reply::Refused(refusal),
             },
+            Action::GetCall => match device.call(None) {
+                CallResult::Current { .. } => Reply::Call,
+                CallResult::Busy => Reply::Refused(Refusal::Busy),
+                CallResult::ReadOnly | CallResult::Unserved => Reply::Refused(Refusal::Unavailable),
+            },
+            Action::StartCall { bytes, crc } => {
+                let change = CallChange::Start { bytes, crc };
+                match put_call(change, device) {
+                    Ok(()) => return self.wait(index, id, action, Waiting::Call { change }),
+                    Err(refusal) => Reply::Refused(refusal),
+                }
+            }
+            Action::DeleteCall => match put_call(CallChange::Delete, device) {
+                Ok(()) => {
+                    let change = CallChange::Delete;
+                    return self.wait(index, id, action, Waiting::Call { change });
+                }
+                Err(refusal) => Reply::Refused(refusal),
+            },
+            Action::CallChunk { offset } => match self.call_chunk(offset, device) {
+                Ok(()) => Reply::Call,
+                Err(refusal) => Reply::Refused(refusal),
+            },
             Action::Invalid => Reply::Refused(Refusal::Invalid),
             // Each of these may write the update store; none goes in while
             // a feed is queued or driven. A cancel during an install is not
@@ -339,6 +363,21 @@ impl Server {
         }
     }
 
+    /// The meal call's chunk in `plain`, handed to the device. Out of line,
+    /// as for an update's.
+    #[inline(never)]
+    fn call_chunk<D: Device>(&self, offset: u32, device: &mut D) -> Result<(), Refusal> {
+        let message: ClientMessage<'_> =
+            wellfed_proto::decode(&self.plain[..self.plain_len]).map_err(|_| Refusal::Invalid)?;
+        match message {
+            ClientMessage::Request {
+                op: Op::CallChunk { offset: at, data },
+                ..
+            } if at == offset => device.call_chunk(offset, data),
+            _ => Err(Refusal::Invalid),
+        }
+    }
+
     /// Queue the table in `plain` if the plans are still at `base`; the
     /// revision it produces once saved. Out of line, as for an update: the
     /// table is read again from the plaintext rather than carried in the
@@ -400,6 +439,23 @@ impl Server {
                 SettingsResult::ReadOnly => Err(Refusal::NotWritable),
             },
         }
+    }
+}
+
+/// Queue a meal call change for the writer. A new upload or a delete
+/// replaces whatever the store holds, so neither names a `base`.
+fn put_call<D: Device>(change: CallChange, device: &mut D) -> Result<(), Refusal> {
+    match device.call(None) {
+        CallResult::Current { pending: true, .. } | CallResult::Busy => return Err(Refusal::Busy),
+        CallResult::ReadOnly => return Err(Refusal::NotWritable),
+        CallResult::Unserved => return Err(Refusal::Unavailable),
+        CallResult::Current { .. } => {}
+    }
+    match device.call(Some(change)) {
+        CallResult::Current { pending: true, .. } => Ok(()),
+        CallResult::Current { .. } | CallResult::Busy => Err(Refusal::Busy),
+        CallResult::ReadOnly => Err(Refusal::NotWritable),
+        CallResult::Unserved => Err(Refusal::Unavailable),
     }
 }
 
@@ -550,6 +606,10 @@ const fn allowed(role: Role, action: Action) -> bool {
                 // The stock backup is the owner's copy to keep.
                 | Action::ReadBank1 { .. }
                 | Action::ReadStockPlans
+                // The meal call is the owner's voice, or the clip they chose.
+                | Action::StartCall { .. }
+                | Action::CallChunk { .. }
+                | Action::DeleteCall
         ),
         Role::UpdateSigner => false,
     }
@@ -664,6 +724,16 @@ pub(super) enum Action {
         base: u32,
     },
     ResetDesiccant,
+    GetCall,
+    StartCall {
+        bytes: u32,
+        crc: u32,
+    },
+    /// The bytes stay in the plaintext buffer, read again when the op runs.
+    CallChunk {
+        offset: u32,
+    },
+    DeleteCall,
     /// A field failed the stores' checks before anything ran.
     Invalid,
 }
@@ -782,6 +852,20 @@ impl From<Op<'_>> for Action {
             // portions in its refusal.
             Op::PutPlans { base, .. } => Self::PutPlans { base },
             Op::ResetDesiccant => Self::ResetDesiccant,
+            Op::GetCall => Self::GetCall,
+            Op::StartCall { bytes, crc } => {
+                if !(1..=CALL_BYTES_MAX).contains(&bytes) {
+                    return Self::Invalid;
+                }
+                Self::StartCall { bytes, crc }
+            }
+            Op::CallChunk { offset, data } => {
+                if data.is_empty() || data.len() > CALL_CHUNK_MAX {
+                    return Self::Invalid;
+                }
+                Self::CallChunk { offset }
+            }
+            Op::DeleteCall => Self::DeleteCall,
         }
     }
 }
@@ -789,6 +873,8 @@ impl From<Op<'_>> for Action {
 impl Action {
     /// The chunk op's name, which the answer's record leaves out.
     pub(super) const CHUNK: &'static str = "update-chunk";
+    /// The meal call's chunk op, whose answers the records leave out too.
+    pub(super) const CALL_CHUNK: &'static str = "call-chunk";
 
     /// Whether the request changes something, so its id is remembered.
     pub(super) const fn writes(self) -> bool {
@@ -808,6 +894,8 @@ impl Action {
                 | Self::ReadBank1 { .. }
                 | Self::ReadStockPlans
                 | Self::GetPlans
+                | Self::GetCall
+                | Self::CallChunk { .. }
         )
     }
 
@@ -844,6 +932,10 @@ impl Action {
             Self::GetPlans => "get-plans",
             Self::PutPlans { .. } => "put-plans",
             Self::ResetDesiccant => "reset-desiccant",
+            Self::GetCall => "get-call",
+            Self::StartCall { .. } => "start-call",
+            Self::CallChunk { .. } => Self::CALL_CHUNK,
+            Self::DeleteCall => "delete-call",
             Self::Invalid => "invalid",
         }
     }
@@ -879,6 +971,8 @@ pub(super) enum Reply {
     Plans,
     /// Stock's plan sectors, read when the answer is sealed.
     StockPlans,
+    /// The meal call, read when the answer is sealed.
+    Call,
 }
 
 fn saturate(jump_ms: i64) -> i32 {
@@ -907,6 +1001,7 @@ impl Name for Reply {
             Self::Bank1 { .. } => "bank1",
             Self::Plans => "plans",
             Self::StockPlans => "stock-plans",
+            Self::Call => "call",
             Self::Refused(refusal) => match refusal {
                 Refusal::Forbidden => "forbidden",
                 Refusal::Stale { .. } => "stale",
@@ -1007,6 +1102,7 @@ fn table(plans: &[Option<proto::Plan>; PLANS]) -> Result<Table, Refusal> {
                     portions: plan.portions,
                     days: Weekdays(plan.days),
                     enabled: plan.enabled,
+                    call: plan.call,
                 };
                 if !(1..=proto::PORTIONS_MAX).contains(&plan.portions) {
                     return Err(Refusal::Portions {
@@ -1031,6 +1127,7 @@ pub(super) fn wire_plans(table: &Table) -> [Option<proto::Plan>; PLANS] {
             portions: plan.portions,
             days: plan.days.0,
             enabled: plan.enabled,
+            call: plan.call,
         })
     })
 }

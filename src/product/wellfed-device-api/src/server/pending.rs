@@ -8,15 +8,15 @@ use super::request::{Action, Name, Reply, wire_plans};
 use super::{Pending, Phase, Server, Waiting, slot_id};
 use crate::clients::Role;
 use crate::mailbox::{
-    CalibrationResult, NtpResult, NtpServer, Origin, PlansResult, SettingsFields, SettingsResult,
-    TimeSettingsResult, WifiResult,
+    CalibrationResult, CallChange, CallResult, NtpResult, NtpServer, Origin, PlansResult,
+    SettingsFields, SettingsResult, TimeSettingsResult, WifiResult,
 };
 use crate::pairing::{self, Path};
 use crate::{Device, KeyChange, KeyOutcome, Reason, Record, UpdateAnswer, UpdateKeyChange};
 use wellfed_core::ota::offer::key_id;
 use wellfed_proto::api::{
-    self as proto, Capabilities, EventBody, FeederMessage, Outcome, Readiness, Refusal, RequestId,
-    Source, TimeView, UpdateRefusal,
+    self as proto, CallClip, Capabilities, EventBody, FeederMessage, Outcome, Readiness, Refusal,
+    RequestId, Source, TimeView, UpdateRefusal,
 };
 
 impl Server {
@@ -133,6 +133,34 @@ impl Server {
                 PlansResult::ReadOnly | PlansResult::Unserved => {
                     Reply::Refused(Refusal::NotWritable)
                 }
+            },
+            // A write the writer could not make leaves the store as it
+            // was: refused, never `Done`.
+            Waiting::Call { change } => match device.call(None) {
+                CallResult::Current {
+                    view,
+                    pending: false,
+                } => {
+                    let landed = match (change, view.clip) {
+                        (CallChange::Delete, CallClip::None) => true,
+                        (
+                            CallChange::Start { bytes, crc },
+                            CallClip::Receiving {
+                                bytes: held,
+                                crc: held_crc,
+                                ..
+                            },
+                        ) => held == bytes && held_crc == crc,
+                        _ => false,
+                    };
+                    if landed {
+                        Reply::Done(None)
+                    } else {
+                        Reply::Refused(Refusal::NotWritable)
+                    }
+                }
+                CallResult::Current { pending: true, .. } | CallResult::Busy => return Ok(None),
+                CallResult::ReadOnly | CallResult::Unserved => Reply::Refused(Refusal::NotWritable),
             },
             Waiting::Keys { ticket, revoked } => match device.keys_outcome(ticket) {
                 None => return Ok(None),
@@ -266,6 +294,7 @@ impl Server {
         // a line each: an image is about two thousand of them, and the log
         // would cost the loop seconds.
         if !(op == Action::CHUNK && matches!(reply, Reply::Update(_)))
+            && !(op == Action::CALL_CHUNK && matches!(reply, Reply::Call))
             && !matches!(reply, Reply::Bank1 { .. })
         {
             record(Record::Request {
@@ -339,6 +368,13 @@ impl Server {
                     plans: wire_plans(&view.table),
                 }),
                 _ => Outcome::Refused(Refusal::Unavailable),
+            },
+            Reply::Call => match device.call(None) {
+                CallResult::Current { view, .. } => Outcome::Call(view),
+                CallResult::Busy => Outcome::Refused(Refusal::Busy),
+                CallResult::ReadOnly | CallResult::Unserved => {
+                    Outcome::Refused(Refusal::Unavailable)
+                }
             },
             Reply::Stats(section) => {
                 let message = FeederMessage::Response {

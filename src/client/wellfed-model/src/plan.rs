@@ -31,12 +31,19 @@ pub struct Plan {
     pub portions: u8,
     pub days: Weekdays,
     pub enabled: bool,
+    /// How many times the meal call plays before the feed, 0 to
+    /// [`CALL_PLAYS_MAX`](crate::CALL_PLAYS_MAX); 0 plays none. It plays
+    /// only with a clip stored and sound allowed, ending as the meal is
+    /// due, and never delays it.
+    pub call: u8,
 }
 
 impl Plan {
     /// Whether the feeder accepts the plan.
     pub fn valid(&self) -> bool {
-        self.minute < 24 * 60 && (1..=PORTIONS_MAX).contains(&self.portions)
+        self.minute < 24 * 60
+            && (1..=PORTIONS_MAX).contains(&self.portions)
+            && self.call <= crate::CALL_PLAYS_MAX
     }
 }
 

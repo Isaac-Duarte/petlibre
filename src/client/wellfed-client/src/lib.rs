@@ -10,7 +10,8 @@
 //! feed's trace read a page at a time ([`trace`]), and the feeding history
 //! the event history records ([`history`]). A release file the owner
 //! keeps until they install it is checked with the feeder's own offer check
-//! ([`release`]).
+//! ([`release`]). The meal call's clip is converted from the owner's
+//! recording and uploaded a chunk at a time ([`call`]).
 //! The consumer installer's steps from stock to a confirmed replacement,
 //! stock's setup frame and the backup gate before promotion are
 //! [`install`].
@@ -26,6 +27,7 @@
 #![forbid(unsafe_code)]
 
 pub mod api;
+pub mod call;
 pub mod connection;
 pub mod history;
 pub mod install;

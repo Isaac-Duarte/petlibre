@@ -20,6 +20,7 @@ use self::recovery::Rescue;
 use self::samples::Samples;
 use self::wire::Wire;
 use crate::clients::{CLIENTS, Client, Label, Role};
+use crate::mailbox::CallChange;
 use crate::pairing::{self, Pairing, Path};
 use crate::setup::Responder;
 use crate::{BUFFER, Device, Reason, Record, SESSIONS};
@@ -66,6 +67,11 @@ enum Waiting {
     /// `Plans` event once the writer reports it saved.
     Plans {
         revision: u32,
+    },
+    /// A meal call upload's start, or its delete: done once the store
+    /// waits for that upload's first chunk, or holds no clip.
+    Call {
+        change: CallChange,
     },
     Keys {
         ticket: u32,

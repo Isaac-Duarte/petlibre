@@ -40,9 +40,10 @@ use wellfed_core::supply::{self, Reading, Sample};
 use wellfed_core::tone::Tune;
 use wellfed_device_api::clients::{CLIENTS, Client, Label, Role};
 use wellfed_device_api::mailbox::{
-    Calibration, CalibrationResult, CalibrationView, ClientChange, KeyResult, PlansChange,
-    PlansResult, PlayResult, Requested, SettingsFields, SettingsResult, SettingsView, TimeSettings,
-    TimeSettingsResult, TimeSettingsView, WifiResult, WifiSource, WifiView,
+    Calibration, CalibrationResult, CalibrationView, CallChange, CallResult, ClientChange,
+    KeyResult, PlansChange, PlansResult, PlayResult, Requested, SettingsFields, SettingsResult,
+    SettingsView, TimeSettings, TimeSettingsResult, TimeSettingsView, WifiResult, WifiSource,
+    WifiView, chunk_wanted,
 };
 use wellfed_device_api::wifi::Credentials;
 use wellfed_feeder::feeder::Platform;
@@ -53,6 +54,7 @@ use wellfed_feeder::feeder::platform::{
 use wellfed_feeder::feeder::supply::Radio;
 use wellfed_feeder::stats::{SAVE_MS, TOTAL_SECTORS, Totals, reset_cause};
 use wellfed_feeder::store::calibration::CalibrationStore;
+use wellfed_feeder::store::call::CallStore;
 use wellfed_feeder::store::clients::{ClientError, ClientStore};
 use wellfed_feeder::store::events::{BODY_BYTES, EventLog, Read};
 use wellfed_feeder::store::net::NetStore;
@@ -178,6 +180,10 @@ pub struct SimPlatform {
     calibration_pending: Option<Calibration>,
     plans: PlansStore<Region>,
     plans_pending: Option<PlansChange>,
+    call: CallStore<Region>,
+    /// An upload's start or a delete, or a chunk at its offset with its
+    /// bytes, as the writer's one slot holds them.
+    call_pending: Option<CallWork>,
     /// The NTP exchange's socket, on an ephemeral loopback-reachable port.
     ntp: Option<std::net::UdpSocket>,
     clients: ClientStore<Region>,
@@ -263,6 +269,8 @@ impl SimPlatform {
         calibration.open(Region::new(flash, storage::CALIBRATION));
         let mut plans = PlansStore::default();
         plans.open(Region::new(flash, storage::PLANS));
+        let mut call = CallStore::default();
+        call.open(Region::new(flash, storage::CALL));
         let mut clients = ClientStore::default();
         clients.open(Region::new(flash, storage::CLIENTS));
         if clients.identity().is_none() {
@@ -316,6 +324,8 @@ impl SimPlatform {
             calibration_pending: None,
             plans,
             plans_pending: None,
+            call,
+            call_pending: None,
             ntp: None,
             clients,
             clients_generation: 1,
@@ -504,6 +514,18 @@ impl SimPlatform {
         if let Some(change) = self.plans_pending.take() {
             self.plans.apply(&change);
         }
+        match self.call_pending.take() {
+            Some(CallWork::Change(CallChange::Start { bytes, crc })) => {
+                self.call.start(bytes, crc);
+            }
+            Some(CallWork::Change(CallChange::Delete)) => {
+                self.call.delete();
+            }
+            Some(CallWork::Chunk { offset, data }) => {
+                self.call.chunk(offset, &data);
+            }
+            None => {}
+        }
 
         let (ticket, change) = self.keys_pending.take()?;
         let result = match change {
@@ -631,6 +653,13 @@ fn finish_reset(flash: &Rc<Flash>) {
     reset::clear(&marker);
 }
 
+/// The meal call's work waiting for the writer's turn.
+#[derive(Clone, Debug)]
+enum CallWork {
+    Change(CallChange),
+    Chunk { offset: u32, data: Vec<u8> },
+}
+
 impl Platform for SimPlatform {
     type Socket = Socket;
     type Record = Infallible;
@@ -664,6 +693,7 @@ impl Platform for SimPlatform {
             .union(Capabilities::POWER)
             .union(Capabilities::BACKUP)
             .union(Capabilities::PLANS)
+            .union(Capabilities::CALL)
             .union(Capabilities::DESICCANT)
     }
 
@@ -796,6 +826,47 @@ impl Platform for SimPlatform {
         PlansResult::Current {
             view,
             pending: true,
+        }
+    }
+
+    fn call(&mut self) -> CallResult {
+        CallResult::Current {
+            view: self.call.view(true),
+            pending: self.call_pending.is_some(),
+        }
+    }
+
+    fn call_change(&mut self, change: CallChange) -> CallResult {
+        let view = self.call.view(true);
+        if !view.writable {
+            return CallResult::ReadOnly;
+        }
+        if self.call_pending.is_some() {
+            return CallResult::Busy;
+        }
+        self.call_pending = Some(CallWork::Change(change));
+        CallResult::Current {
+            view,
+            pending: true,
+        }
+    }
+
+    fn call_chunk(&mut self, offset: u32, data: &[u8]) -> Result<(), proto::Refusal> {
+        let view = self.call.view(true);
+        if !view.writable {
+            return Err(proto::Refusal::NotWritable);
+        }
+        match chunk_wanted(view.clip, offset, data.len()) {
+            Ok(false) => Ok(()),
+            Ok(true) if self.call_pending.is_none() => {
+                let data = data.to_vec();
+                self.call_pending = Some(CallWork::Chunk { offset, data });
+                Ok(())
+            }
+            Ok(true) => Err(proto::Refusal::Busy),
+            // The next chunk, sent while the one before is still queued.
+            Err(_) if self.call_pending.is_some() => Err(proto::Refusal::Busy),
+            Err(refusal) => Err(refusal),
         }
     }
 
@@ -1225,6 +1296,10 @@ impl Platform for SimPlatform {
 
     fn play(&mut self, _tune: Tune) -> PlayResult {
         // No speaker: as if `sound` were off.
+        PlayResult::Muted
+    }
+
+    fn play_call(&mut self, _plays: u8) -> PlayResult {
         PlayResult::Muted
     }
 

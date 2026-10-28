@@ -9,13 +9,16 @@
 //! | 0..12 | magic `PLFPLN01`, version, record size |
 //! | 12..16 | sequence: the save count, which picks the newest record |
 //! | 16..20 | revision: bumped by every change to the table |
-//! | 20..70 | ten plans of 5 bytes: flags (bit 0 present, bit 1 enabled), minute (u16), portions, weekdays |
+//! | 20..70 | ten plans of 5 bytes: flags (bit 0 present, bit 1 enabled, bits 2-4 the meal call's plays), minute (u16), portions, weekdays |
 //! | 70..110 | ten marks (Unix seconds, u32; 0 for none) |
 //! | 110..120 | the claim: flags (bit 0 present, bit 1 it disabled a plan that runs once), slot, due (Unix seconds, u32), the journal's high water (u32) |
 //! | 120..128 | CRC-32/ISO-HDLC of bytes 0..120, and the `CMIT` commit marker |
 //!
 //! An empty slot and an absent claim are all zero, and a plan is stored
-//! only if it is valid, so one encoding exists per value.
+//! only if it is valid, so one encoding exists per value. Version 2 added
+//! the meal call's plays in the flag byte; a build that reads version 1
+//! goes read-only on it rather than drop a plan's call, and this one reads
+//! no version 1 record (the plans are entered again).
 //!
 //! **Marks** make each occurrence run at most once. A mark is written when
 //! the loop takes an occurrence (the claim), passes one it will never run,
@@ -36,7 +39,7 @@ use wellfed_core::store::slot::{
 };
 use wellfed_device_api::mailbox::{Claim, PLANS, Plan, PlansChange, PlansView, Table, Weekdays};
 
-pub const VERSION: u16 = 1;
+pub const VERSION: u16 = 2;
 const LAYOUT: Layout = Layout {
     magic: *b"PLFPLN01",
     version: VERSION,
@@ -52,7 +55,12 @@ const CLAIM_END: usize = CLAIM_AT + 10;
 
 const PRESENT: u8 = 1;
 const ENABLED: u8 = 2;
+/// A plan's meal call, in plays (0 to `clip::PLAYS_MAX`, below 8).
+const CALL_SHIFT: u8 = 2;
+const CALL_MASK: u8 = 0b111 << CALL_SHIFT;
 const DISABLED: u8 = 2;
+
+const _: () = assert!(wellfed_core::clip::PLAYS_MAX <= CALL_MASK >> CALL_SHIFT);
 
 const _: () = assert!(CLAIM_END <= CRC_AT);
 
@@ -240,7 +248,7 @@ fn encode(sequence: u32, plans: &Plans) -> [u8; RECORD_BYTES] {
     for (slot, plan) in plans.table.iter().enumerate() {
         let at = PLANS_AT + slot * PLAN_BYTES;
         if let Some(plan) = plan {
-            p[at] = PRESENT | if plan.enabled { ENABLED } else { 0 };
+            p[at] = PRESENT | if plan.enabled { ENABLED } else { 0 } | plan.call << CALL_SHIFT;
             p[at + 1..at + 3].copy_from_slice(&plan.minute.to_le_bytes());
             p[at + 3] = plan.portions;
             p[at + 4] = plan.days.0;
@@ -275,12 +283,13 @@ fn decode(p: &[u8; RECORD_BYTES]) -> Option<(u32, Plans)> {
         let bytes = p.get(at..at + PLAN_BYTES)?;
         *entry = match bytes[0] {
             0 if bytes.iter().all(|&b| b == 0) => None,
-            flags if flags & !(PRESENT | ENABLED) == 0 && flags & PRESENT != 0 => {
+            flags if flags & !(PRESENT | ENABLED | CALL_MASK) == 0 && flags & PRESENT != 0 => {
                 let plan = Plan {
                     minute: u16::from_le_bytes([bytes[1], bytes[2]]),
                     portions: bytes[3],
                     days: Weekdays(bytes[4]),
                     enabled: flags & ENABLED != 0,
+                    call: (flags & CALL_MASK) >> CALL_SHIFT,
                 };
                 if !plan.valid() {
                     return None;

@@ -689,6 +689,7 @@ fn a_reset_hold_clears_the_decided_stores_and_keeps_the_calibration_and_journal(
             portions: 2,
             days: Weekdays::DAILY,
             enabled: true,
+            call: 0,
         });
         let plan = Op::PutPlans {
             base: Generation(0),
@@ -1397,6 +1398,7 @@ fn a_member_edits_the_plans_against_the_generation_it_read() {
             portions: 2,
             days: Weekdays::DAILY,
             enabled: true,
+            call: 0,
         };
         let mut table = [None; PLANS];
         table[0] = Some(breakfast);

@@ -6,7 +6,9 @@
 
 use anyhow::{Result, bail};
 use clap::{Args, Subcommand};
-use wellfed_model::{Answer, Op, PLANS, PORTIONS_MAX, Plan, Plans, Refusal, TimeOfDay, Weekdays};
+use wellfed_model::{
+    Answer, CALL_PLAYS_MAX, Op, PLANS, PORTIONS_MAX, Plan, Plans, Refusal, TimeOfDay, Weekdays,
+};
 
 use crate::{Target, ask_and_print, connect, print_answer};
 
@@ -36,9 +38,13 @@ enum Action {
         /// Store it disabled.
         #[arg(long)]
         disabled: bool,
+        /// Play the meal call this many times before the meal (0 to 5;
+        /// `wellfed call upload` stores the clip).
+        #[arg(long, default_value_t = 0, value_parser = plays())]
+        call: u8,
     },
-    /// Change a plan's time, portions or days. A new time or days runs
-    /// only from the next occurrence after the change.
+    /// Change a plan's time, portions, days or meal call. A new time or
+    /// days runs only from the next occurrence after the change.
     Edit {
         #[command(flatten)]
         target: Target,
@@ -50,6 +56,9 @@ enum Action {
         portions: Option<u8>,
         #[arg(long)]
         days: Option<Weekdays>,
+        /// The meal call's plays before the meal, 0 for none.
+        #[arg(long, value_parser = plays())]
+        call: Option<u8>,
     },
     Enable {
         #[command(flatten)]
@@ -82,6 +91,11 @@ pub(crate) fn portions() -> clap::builder::RangedI64ValueParser<u8> {
     clap::value_parser!(u8).range(1..=i64::from(PORTIONS_MAX))
 }
 
+/// The meal call's plays before a meal.
+fn plays() -> clap::builder::RangedI64ValueParser<u8> {
+    clap::value_parser!(u8).range(0..=i64::from(CALL_PLAYS_MAX))
+}
+
 /// What a change does to the table.
 #[derive(Clone, Copy)]
 enum Edit {
@@ -91,6 +105,7 @@ enum Edit {
         at: Option<TimeOfDay>,
         portions: Option<u8>,
         days: Option<Weekdays>,
+        call: Option<u8>,
     },
     Enabled {
         slot: u8,
@@ -110,12 +125,14 @@ pub(crate) async fn command(args: PlansArgs) -> Result<()> {
             portions,
             days,
             disabled,
+            call,
         } => {
             let plan = Plan {
                 minute: at.0,
                 portions,
                 days,
                 enabled: !disabled,
+                call,
             };
             (target, Edit::Add(plan))
         }
@@ -125,12 +142,14 @@ pub(crate) async fn command(args: PlansArgs) -> Result<()> {
             at,
             portions,
             days,
+            call,
         } => {
             let change = Edit::Change {
                 slot,
                 at,
                 portions,
                 days,
+                call,
             };
             (target, change)
         }
@@ -195,14 +214,16 @@ fn edited(plans: &Plans, edit: Edit) -> Result<[Option<Plan>; PLANS]> {
             at,
             portions,
             days,
+            call,
         } => {
             let mut plan = filled(&table, slot)?;
-            if at.is_none() && portions.is_none() && days.is_none() {
-                bail!("pass --at, --portions or --days");
+            if at.is_none() && portions.is_none() && days.is_none() && call.is_none() {
+                bail!("pass --at, --portions, --days or --call");
             }
             plan.minute = at.map_or(plan.minute, |at| at.0);
             plan.portions = portions.unwrap_or(plan.portions);
             plan.days = days.unwrap_or(plan.days);
+            plan.call = call.unwrap_or(plan.call);
             table[usize::from(slot)] = Some(plan);
         }
         Edit::Enabled { slot, enabled } => {
@@ -235,6 +256,7 @@ mod tests {
         portions: 2,
         days: Weekdays::DAILY,
         enabled: true,
+        call: 0,
     };
 
     #[test]
@@ -257,12 +279,14 @@ mod tests {
             at: None,
             portions: Some(3),
             days: None,
+            call: Some(2),
         };
         let table = edited(&plans(table), change).unwrap();
         assert_eq!(
             table[4],
             Some(Plan {
                 portions: 3,
+                call: 2,
                 ..BREAKFAST
             })
         );

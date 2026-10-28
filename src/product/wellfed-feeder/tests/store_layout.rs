@@ -1,6 +1,6 @@
 //! The on-flash bytes of every record the product's stores write, pinned:
 //! settings, Wi-Fi credentials and their clear, the client table, the time
-//! settings, the portion calibration, the feeding plans and the event
+//! settings, the portion calibration, the feeding plans, the meal call and the event
 //! ring's records. These are the layouts deployed feeders hold, so a
 //! change to the shared slot layer must leave every byte where it was. The
 //! units are larger than the records so the bytes after each record are
@@ -200,7 +200,7 @@ fn calibration_store_reads_the_pinned_records() {
     }
 }
 
-/// Breakfast every day in slot 0 and a one-off in slot 2, saved at
+/// Breakfast every day in slot 0, calling twice, and a one-off in slot 2, saved at
 /// 2026-10-28T07:00Z; then breakfast's occurrence claimed.
 fn plans() -> [Plans; 2] {
     let mut table = [None; PLANS];
@@ -209,12 +209,14 @@ fn plans() -> [Plans; 2] {
         portions: 2,
         days: Weekdays::EVERY_DAY,
         enabled: true,
+        call: 2,
     });
     table[2] = Some(Plan {
         minute: 18 * 60,
         portions: 1,
         days: Weekdays::ONCE,
         enabled: false,
+        call: 0,
     });
     let saved = Plans::default()
         .changed(&PlansChange::Replace {
@@ -269,16 +271,16 @@ fn plans_store_reads_the_pinned_records() {
 }
 
 const PLANS_SAVED: &[&str] = &[
-    "504c46504c4e303101008000010000000100000003c201027f00000000000138",
+    "504c46504c4e30310200800001000000010000000bc201027f00000000000138",
     "0401000000000000000000000000000000000000000000000000000000000000",
     "000000000000709de16a00000000709de16a0000000000000000000000000000",
-    "000000000000000000000000000000000000000000000000a6f513af434d4954",
+    "0000000000000000000000000000000000000000000000008d9d07e7434d4954",
 ];
 const PLANS_CLAIMED: &[&str] = &[
-    "504c46504c4e303101008000020000000100000003c201027f00000000000138",
+    "504c46504c4e30310200800002000000010000000bc201027f00000000000138",
     "0401000000000000000000000000000000000000000000000000000000000000",
     "000000000000709de16a00000000709de16a0000000000000000000000000000",
-    "0000000000000000000000000000010078a4e16a2900000036e38ece434d4954",
+    "0000000000000000000000000000010078a4e16a290000001d8b9a86434d4954",
 ];
 
 #[test]
@@ -632,4 +634,56 @@ const CLEARED: &[&str] = &[
     "0000000000000000000000000000000000000000000000000000000000000000",
     "0000000000000000000000000000000000000000000000000000000000000000",
     "00000000000000000000000000000000000000000000000058f10112434d4954",
+];
+
+/// A ten-byte clip uploaded whole: the header in the first 24 bytes of the
+/// first sector, erased to the stream at byte 512, the stream's last word
+/// padded with erased bytes.
+#[test]
+fn call_records() {
+    use wellfed_core::clip::{SECTOR_BYTES, SECTORS};
+    use wellfed_core::store::slot::crc32;
+    use wellfed_device_api::mailbox::CallClip;
+    use wellfed_feeder::store::call::{CallStatus, CallStore};
+
+    let stream: Vec<u8> = (1..=10).collect();
+    let crc = crc32(&stream);
+    let mut f = FakeJournalFlash::with_units(SECTOR_BYTES as usize, SECTORS as usize);
+    let mut s = CallStore::default();
+    // SAFETY: the fake flash outlives the store.
+    unsafe { s.open(f.io()) };
+    assert!(s.start(10, crc));
+    assert!(s.chunk(0, &stream));
+    pinned("a ten-byte clip", &f, 0, 524, A_TEN_BYTE_CLIP);
+
+    let mut f = FakeJournalFlash::with_units(SECTOR_BYTES as usize, SECTORS as usize);
+    let hex: String = A_TEN_BYTE_CLIP.concat();
+    for (i, pair) in hex.as_bytes().chunks(2).enumerate() {
+        let pair = core::str::from_utf8(pair).unwrap();
+        f.bytes[0][i] = u8::from_str_radix(pair, 16).unwrap();
+    }
+    let mut s = CallStore::default();
+    // SAFETY: the fake flash outlives the store.
+    assert_eq!(unsafe { s.open(f.io()) }, CallStatus::Ready);
+    assert_eq!(s.clip, CallClip::Stored { bytes: 10, crc });
+}
+
+const A_TEN_BYTE_CLIP: &[&str] = &[
+    "504c4643414c3031010000000a0000007b57202562e40eb2ffffffffffffffff",
+    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "0102030405060708090affff",
 ];

@@ -11,8 +11,11 @@
 //! A ring is not a dual-slot store: it appends records with no commit
 //! marker, and a torn one simply fails its checksum and is skipped, so it
 //! shares only the slot layer's I/O trait, checksum and field helpers.
+//! Nor is the meal call ([`call`]): one clip across eight units, written
+//! once a chunk at a time with its header last.
 
 pub mod calibration;
+pub mod call;
 pub mod clients;
 pub mod events;
 pub mod net;

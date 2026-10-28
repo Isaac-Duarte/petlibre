@@ -81,6 +81,13 @@ fn every_op() -> Vec<Op> {
         },
         Op::ResetDesiccant,
         Op::ReadStockPlans,
+        Op::GetCall,
+        Op::StartCall { bytes: 1, crc: 0 },
+        Op::CallChunk {
+            offset: 0,
+            data: vec![0],
+        },
+        Op::DeleteCall,
     ];
     let mut kinds: Vec<_> = ops.iter().map(kind).collect();
     kinds.sort_unstable();
@@ -123,6 +130,10 @@ fn kind(op: &Op) -> u8 {
         Op::PutPlans { .. } => 28,
         Op::ResetDesiccant => 29,
         Op::ReadStockPlans => 30,
+        Op::GetCall => 31,
+        Op::StartCall { .. } => 32,
+        Op::CallChunk { .. } => 33,
+        Op::DeleteCall => 34,
     }
 }
 

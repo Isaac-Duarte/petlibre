@@ -1,8 +1,8 @@
 # Speaker
 
-The PLAF103 has a real speaker, not a piezo buzzer. Stock uses it to play a meal call the owner records in the app. Wellfed drives the same audio path with a small set of built-in tunes, played one at a time and always bounded, so the speaker can never get in the way of a feed.
+The PLAF103 has a real speaker, not a piezo buzzer. Stock uses it to play a meal call the owner records in the app. Wellfed drives the same audio path with a small set of built-in tunes and the owner's own meal call, played one at a time and always bounded, so the speaker can never get in the way of a feed.
 
-Status: **Works** for playback. Which sounds play when is product policy and not settled. A feed plays no tune.
+Status: **Works** for the built-in tunes. The meal call's clip is **Experimental**: tested on the host and in simulation. Which sounds play when is product policy and not settled. A feed plays no tune.
 
 ## What stock does
 
@@ -37,6 +37,8 @@ Three pieces work together: a C shim that owns the codec, a tune renderer, and a
 - The tunes are `chime` (startup), `meal`, `coin`, `alert`, `test` (1 kHz for 1 s), `twinkle`, and `key` (one 80 ms tick, BLE setup's press feedback). Each lasts under 6 s.
 - **Loudness** follows the `volume` setting on a decibel scale: 0 is silent, then 0.3 dB per step up to a peak of 16000 (about −6 dBFS) at 100. A linear scale made 40 and 80 sound almost alike.
 
+**The meal call** (`wellfed-core/src/clip.rs`): one clip the owner uploads, stored on flash as 8 kHz 4-bit IMA ADPCM (two samples a byte), at most 32,256 bytes, about 8 s. The player decodes it a byte at a time straight from the mapped flash, with no buffer, and doubles each sample to the codec's 16 kHz, the second of each pair halfway to the next. Volume scales it as it scales a full-scale stream, on the tunes' decibel curve. A client converts the owner's recording before the upload ([meal call](schedules.md#meal-call)).
+
 **The speaker task** (`wellfed-hal/src/audio.rs`, task `wellfed-aud`, priority 2, normal role only):
 
 - A one-slot mailbox holds the tune. The slot stays taken until playback ends, so a second request is `busy` rather than queued.
@@ -44,7 +46,7 @@ Three pieces work together: a C shim that owns the codec, a tune renderer, and a
 - A ring that stops draining still ends playback at the tune's length plus 1 s, so the amplifier is never left on.
 - The QA firmware and the bring-up `speaker` variant play the startup chime once the settings are loaded, unless sound is muted as above. The `feeder` firmware starts its speaker quiet and boots silently.
 
-Audio is independent of feeding. The task touches only the codec, its DMA and PB23, never the motor, the emitters or flash.
+Audio is independent of feeding. The task touches only the codec, its DMA and PB23, never the motor or the emitters, and it only reads flash. The settings writer alone writes the clip's sectors, and only while no call plays from them: the speaker and the writer each take the sectors before using them, so a call never reads a clip being rewritten, and an upload's next write waits for a call to end.
 
 ## Asking for a tune
 
@@ -54,7 +56,9 @@ A tune is queued only through `audio::request`. It answers:
 - `Muted`, when the `sound` setting is off, the volume is 0, or the local time is outside the sound window (every window is open while the clock is invalid);
 - `Busy`, when another tune plays or the settings are not loaded yet.
 
-The device API's `Play` request carries a tune. The `feeder` firmware does not serve it yet, since it steps the speaker only in setup mode.
+The meal call is queued through `audio::request_call(plays)`, with the same answers; `Busy` too while no clip is stored. The `feeder` firmware's loop asks for it ahead of a plan's meal and steps the speaker while it plays.
+
+The device API's `Play` request carries a tune. The `feeder` firmware does not serve it yet, since it steps the speaker for its own sounds only.
 
 To build the speaker firmware, run `wellfed-build build --profile firstboot --firmware bringup --variant speaker`, or `wellfed-bench ota NAME --build --firmware speaker` to install it. It runs the tune task and plays the startup chime. It does not touch motion, and OTA, recovery and confirmation work as in every firmware.
 
@@ -66,12 +70,13 @@ The task logs `PLAUD1` lines:
 - `play tune=… volume=…`
 - `done tune=… ms=… underruns=… drained=0|1`
 - `muted tune=chime`
-- `error stage=open`
+- `error stage=open`, or `error stage=clip` when the call's clip was deleted or is being rewritten
+- `play tune=call plays=… ms=… volume=…` and `done tune=call ms=… underruns=… drained=0|1` for the meal call
 
 ## Not done yet
 
-- **Stored clips.** Playing stock's clips needs a read-only FAT reader, the SDK's Helix AAC decoder and a 44.1 kHz codec setup.
-- **A meal call** before a scheduled meal, when its plan enables one ([device API](device-api.md)).
+- **Stock's clips.** Playing stock's own clips needs a read-only FAT reader, the SDK's Helix AAC decoder and a 44.1 kHz codec setup. The owner's meal call replaces them.
+- **The meal call on the speaker.** Heard on the bench: not yet.
 
 ## Evidence
 
@@ -81,3 +86,4 @@ The task logs `PLAUD1` lines:
 - **Linear volume.** Observed: on a linear scale, 40 and 80 sounded almost alike.
 - **During feeds.** Observed (October 26): a tune played during feeds under load with `underruns=0`, and feeds still ended Done. Feeds play no tune since the owner's decision that day.
 - **Host.** Modeled: pitch, the volume scale, silence at volume 0, quiet note edges and tune bounds. The speaker task against a fake codec ring: the chime waits for the settings, mute is honored, the amplifier is on only while the codec is open, a failed open frees the slot, and a stalled ring still closes. `play` parsing.
+- **Meal call, host.** Modeled, October 28, 2026: the ADPCM round trip of a tone, the rate doubling, plays, volume 0 and a failed read, and every code held at the rails without overflow (`wellfed-core`'s `clip` tests). The speaker plays a stored clip from the fake's flash with no underruns, holds the writer off while it plays, plays nothing while the writer holds the clip, and stays silent when muted (`wellfed-hal`'s `audio` tests).

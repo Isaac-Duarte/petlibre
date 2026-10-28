@@ -79,15 +79,16 @@ The Reset hold restores the feeder to a new owner's state. Stock's own restore w
 | Time settings: the zone and the NTP server | The generator's seed |
 | Feeding plans, their marks and last claim | The flash erase counts by sector and of bank 1, the hardware's wear (owner, October 28) |
 | The event history and the per-feed traces | |
+| The meal call's clip | |
 | The rest of the lifetime statistics: uptime, feeds, portions, presses, sessions, link figures and boots by cause | |
 
 `wellfed_board_plaf103::storage::FACTORY_CLEARED` lists the erased stores in the order they are erased. The statistics are not erased but rewritten, as one atomic save, with only the erase counts (`Totals::wear_only`).
 
-**How it runs.** A reset erases 25 sectors and rewrites one store, so it is built to survive a power cut at any point:
+**How it runs.** A reset erases 33 sectors and rewrites one store, so it is built to survive a power cut at any point:
 1. **The hold.** The loop refuses the hold by name while a feed is queued or runs (`PLPANEL1 reset refused=feeding`) or an install is under way (`reset refused=updating`). Otherwise it queues the reset for the settings writer (`reset keys=queued`). From then until the restart, an install offer is refused `busy`, so the reset's boot never becomes an update's trial boot.
 2. **The marker.** The writer takes its write turn, so it waits for a feed's outputs to stop. It programs a 16-byte marker in sector 36. From there the reset is committed: the writer forgets every client and ends every session, and answers `done` even when the client store cannot be written, since the next boot erases it anyway (`PLCFG1 keys change=reset result=done`).
 3. **The restart.** The loop reads `done` (`reset result=done`) and restarts the feeder once no feed is queued or running and no plan's claimed meal waits for its feed (a claimed meal runs first, so it is never missed). From the moment a restart is asked for (this one, a client's reboot, or setup mode's end) no feed starts: readiness reports `restarting` and a feed is refused `busy`.
-4. **The erases.** The boot that finds the marker logs `PLCFG1 reset pending`. It opens and publishes nothing the reset clears. Once armed, it erases each cleared sector, each under its own write turn and attempt marker, and reads it back blank. Then it saves the statistics with only the erase counts (a store this build cannot write, a newer schema, is left as it is), and erases the marker last (`reset done erased=25`). Events the loop records meanwhile (the boot, the supply, a resolved uncertain feed) wait in its queue and land in the new ring.
+4. **The erases.** The boot that finds the marker logs `PLCFG1 reset pending`. It opens and publishes nothing the reset clears. Once armed, it erases each cleared sector, each under its own write turn and attempt marker, and reads it back blank. Then it saves the statistics with only the erase counts (a store this build cannot write, a newer schema, is left as it is), and erases the marker last (`reset done erased=33`). Events the loop records meanwhile (the boot, the supply, a resolved uncertain feed) wait in its queue and land in the new ring.
 5. **The fresh boot.** The stores open empty, a new identity is drawn, and the event ring starts under a new epoch.
 
 **Power cuts.**
@@ -122,7 +123,8 @@ All storage-region sectors are named in one table, `wellfed_board_plaf103::stora
 | 32–33 | Lifetime statistics ([device API](device-api.md#statistics)) |
 | 34–35 | Portion calibration ([calibration](calibration.md#storage)) |
 | 36 | The factory reset's marker ([factory reset](#factory-reset)) |
-| 37–47 | Free |
+| 37–39 | Free |
+| 40–47 | The meal call's clip ([schedules](schedules.md#meal-call)) |
 
 ## Clients
 

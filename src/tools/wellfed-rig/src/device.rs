@@ -236,7 +236,8 @@ impl Answer {
             | Model::Calibration(_)
             | Model::Bank1(_)
             | Model::Plans(_)
-            | Model::StockPlans(_) => Self::Unexpected,
+            | Model::StockPlans(_)
+            | Model::Call(_) => Self::Unexpected,
         }
     }
 }

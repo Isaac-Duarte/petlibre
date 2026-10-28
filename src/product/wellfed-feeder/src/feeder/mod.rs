@@ -13,13 +13,14 @@
 //! 3. the supply judged, its change recorded, battery mode's radio asked
 //!    of the platform and the brownout hold kept ([`supply`]); a Dispense
 //!    press the panel allowed, queued for the feeding owner; the feeding
-//!    plans ([`schedule`]) and the meal reminder ([`reminder`]); and
+//!    plans ([`schedule`]), the meal reminder ([`reminder`]) and the meal
+//!    call ([`call`]); and
 //!    readiness noted ([`feeding`]); then the panel's lights from what the pass now
 //!    knows ([`lights`]), and a press's beep ([`beep`]);
 //! 4. the device API: its sockets, the server's step and the live samples
 //!    ([`serve`]), with the time settings and the NTP exchange ([`time`]);
-//! 5. the speaker, while a tune a client asked for plays (setup mode steps
-//!    it itself). A feed plays none.
+//! 5. the speaker, while a tune or a plan's meal call plays (setup mode
+//!    steps it itself). A feed plays none.
 //!
 //! The feeding owner is the platform's: the firmware steps it before the
 //! pass and hands it in as [`Feeds`], and records its `Fed` events through
@@ -27,6 +28,7 @@
 //! recorder ([`events`]).
 
 pub mod beep;
+pub mod call;
 pub mod events;
 pub mod feeding;
 pub mod identity;
@@ -50,6 +52,7 @@ use wellfed_session::noise::Keypair;
 pub use platform::Platform;
 
 use beep::Beeper;
+use call::Call;
 use identity::Identity;
 use lights::Lights;
 use lock::LockBox;
@@ -211,6 +214,7 @@ pub struct Feeder<P: Platform> {
     reminder: Reminder,
     /// When a due restart began waiting for a plan's claim in flight.
     claim_wait: Option<u32>,
+    call: Call,
 }
 
 /// The longest a due restart waits for a plan's claim in flight: a writer
@@ -234,6 +238,7 @@ impl<P: Platform> Feeder<P> {
             schedule: Schedule::new(),
             reminder: Reminder::new(),
             claim_wait: None,
+            call: Call::new(),
         }
     }
 
@@ -390,6 +395,16 @@ impl<P: Platform> Feeder<P> {
         // the reminder only reads the plans.
         self.reminder
             .step(&mut self.platform, now_ms, |r| record(Record::Schedule(r)));
+        // Read only too: the call starts ahead of the meal it announces,
+        // and none plays for a meal a fault or setup mode will not let run.
+        let quiet = self.owner.setup_on()
+            || matches!(
+                ready,
+                Readiness::Blocked(Blocked::Fault | Blocked::Journal | Blocked::Setup)
+            );
+        self.call.step(&mut self.platform, now_ms, quiet, |r| {
+            record(Record::Schedule(r))
+        });
         let ready = self.readiness(feeds);
         self.readiness.note(&mut self.platform, now_ms, ready, |r| {
             record(Record::Feeding(r))

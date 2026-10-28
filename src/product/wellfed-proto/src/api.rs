@@ -132,6 +132,11 @@ impl Capabilities {
     /// [`Refusal::NoClock`]. The period ([`Settings::desiccant_days`]) and
     /// the count ([`Status::desiccant`]) are part of those messages.
     pub const DESICCANT: Self = Self(2048);
+    /// The meal call: [`Op::GetCall`], [`Op::StartCall`],
+    /// [`Op::CallChunk`] and [`Op::DeleteCall`] with [`Outcome::Call`].
+    /// A plan's [`Plan::call`] is part of the plans either way; without a
+    /// stored clip it plays nothing.
+    pub const CALL: Self = Self(4096);
     /// Every bit this crate defines: what a current client claims. A
     /// session then runs on the bits both sides claim, so a client adapts
     /// to whatever feeder it meets, however old.
@@ -147,7 +152,8 @@ impl Capabilities {
             | Self::POWER.0
             | Self::BACKUP.0
             | Self::PLANS.0
-            | Self::DESICCANT.0,
+            | Self::DESICCANT.0
+            | Self::CALL.0,
     );
 
     pub const fn union(self, other: Self) -> Self {
@@ -383,7 +389,8 @@ pub enum Op<'a> {
     /// `base` generation, answered `Done` once the store holds them. A
     /// plan asking for portions outside 1 to [`PORTIONS_MAX`] is refused
     /// [`Refusal::Portions`] (the first such slot's), one with another
-    /// field outside [`Plan`]'s limits `Invalid`. A
+    /// field outside [`Plan`]'s limits (a call over [`CALL_PLAYS_MAX`]
+    /// plays among them) `Invalid`. A
     /// plan whose minute or days changed (or a new one) runs only from
     /// its next occurrence after the save.
     PutPlans {
@@ -401,6 +408,73 @@ pub enum Op<'a> {
     /// [`Op::ReadBank1`] is (the bank-0 role, `Busy` while an install holds
     /// the flash).
     ReadStockPlans,
+    /// The stored meal call, answered [`Outcome::Call`].
+    GetCall,
+    /// Start uploading a new meal call of `bytes` stream bytes (1 to
+    /// [`CALL_BYTES_MAX`]) whose CRC-32/ISO-HDLC is `crc`: the clip stored
+    /// now is erased, and the answer is `Done` once the store waits for
+    /// the first chunk. Owner sessions only. The stream is the format
+    /// [`CALL_RATE_HZ`] describes; the feeder checks only its length and
+    /// CRC.
+    StartCall {
+        bytes: u32,
+        crc: u32,
+    },
+    /// Stream bytes at `offset`, which must be where the upload stands
+    /// ([`CallClip::Receiving::received`]): [`CALL_CHUNK_MAX`] bytes, or
+    /// the rest of the stream when fewer are left. Answered
+    /// [`Outcome::Call`] once queued for the store (its `received` counts
+    /// the chunk once written), `Busy` while the last chunk is still being
+    /// written, `Invalid` for any other offset or length. A chunk at an offset already received is answered with the
+    /// state and changes nothing, so a retry needs no remembered id. Once
+    /// the last chunk is written the feeder reads the whole stream back
+    /// against the CRC and stores the clip ([`CallClip::Stored`]), or
+    /// keeps none ([`CallClip::None`]).
+    CallChunk {
+        offset: u32,
+        #[serde(borrow)]
+        data: &'a [u8],
+    },
+    /// Erase the stored meal call, answered `Done` once the store holds
+    /// none. A plan's call then plays nothing. Owner sessions only.
+    DeleteCall,
+}
+
+/// The meal call's stream: 8 kHz mono, 4-bit IMA ADPCM, two samples a
+/// byte with the earlier in the low nibble, starting from a predictor and
+/// step index of 0. A client converts the owner's recording to it.
+pub const CALL_RATE_HZ: u32 = 8_000;
+/// The longest stream the feeder stores: about 8 s.
+pub const CALL_BYTES_MAX: u32 = 32_256;
+/// The stream bytes one [`Op::CallChunk`] carries.
+pub const CALL_CHUNK_MAX: usize = 512;
+/// The most times one meal plays the call.
+pub const CALL_PLAYS_MAX: u8 = 5;
+
+/// The meal call as the feeder stores it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CallClip {
+    None,
+    /// An upload of `bytes` with CRC `crc` has `received` of them. Lost
+    /// with a restart, which leaves no clip.
+    Receiving {
+        bytes: u32,
+        crc: u32,
+        received: u32,
+    },
+    /// A clip of `bytes` stream bytes (`bytes / 4` ms a play) whose CRC
+    /// is `crc`.
+    Stored {
+        bytes: u32,
+        crc: u32,
+    },
+}
+
+/// [`Op::GetCall`]'s answer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CallView {
+    pub writable: bool,
+    pub clip: CallClip,
 }
 
 /// The entries [`Outcome::StockPlans`] carries: stock's ten 44-byte
@@ -473,6 +547,10 @@ pub struct Plan {
     pub portions: u8,
     pub days: u8,
     pub enabled: bool,
+    /// How many times the meal call plays before the feed, 0 to
+    /// [`CALL_PLAYS_MAX`]; 0 plays none. It plays only with a clip stored
+    /// and sound allowed, and never delays the feed.
+    pub call: u8,
 }
 
 /// [`Op::GetPlans`]'s answer: the plan in each slot.
@@ -509,6 +587,8 @@ impl Op<'_> {
                 | Self::ReadBank1 { .. }
                 | Self::GetPlans
                 | Self::ReadStockPlans
+                | Self::GetCall
+                | Self::CallChunk { .. }
         )
     }
 
@@ -531,6 +611,9 @@ impl Op<'_> {
             Self::ReadBank1 { .. } | Self::ReadStockPlans => Capabilities::BACKUP,
             Self::GetPlans | Self::PutPlans { .. } => Capabilities::PLANS,
             Self::ResetDesiccant => Capabilities::DESICCANT,
+            Self::GetCall | Self::StartCall { .. } | Self::CallChunk { .. } | Self::DeleteCall => {
+                Capabilities::CALL
+            }
             Self::Status
             | Self::GetSettings
             | Self::PutSettings { .. }
@@ -776,6 +859,8 @@ pub enum Outcome<'a> {
     /// Stock's plan sectors, after [`Op::ReadStockPlans`].
     #[serde(borrow)]
     StockPlans(StockPlanSectors<'a>),
+    /// The meal call, after [`Op::GetCall`] or [`Op::CallChunk`].
+    Call(CallView),
 }
 
 /// One page of bank 1: `bytes` from `offset`, of the `total` the feeder
@@ -1924,6 +2009,7 @@ mod tests {
             portions: u8::MAX,
             days: u8::MAX,
             enabled: true,
+            call: u8::MAX,
         });
         let put = ClientMessage::Request {
             id: [0xff; 16],
@@ -1944,6 +2030,29 @@ mod tests {
         };
         let len = encode(&plans, &mut out).unwrap();
         assert_eq!(decode::<FeederMessage<'_>>(&out[..len]), Ok(plans));
+
+        let chunk = ClientMessage::Request {
+            id: [0xff; 16],
+            op: Op::CallChunk {
+                offset: u32::MAX,
+                data: &[0xff; CALL_CHUNK_MAX],
+            },
+        };
+        let len = encode(&chunk, &mut out).unwrap();
+        assert_eq!(decode::<ClientMessage<'_>>(&out[..len]), Ok(chunk));
+        let call = FeederMessage::Response {
+            id: [0xff; 16],
+            result: Outcome::Call(CallView {
+                writable: true,
+                clip: CallClip::Receiving {
+                    bytes: u32::MAX,
+                    crc: u32::MAX,
+                    received: u32::MAX,
+                },
+            }),
+        };
+        let len = encode(&call, &mut out).unwrap();
+        assert_eq!(decode::<FeederMessage<'_>>(&out[..len]), Ok(call));
     }
 
     /// A summary with every field at its largest encoding.

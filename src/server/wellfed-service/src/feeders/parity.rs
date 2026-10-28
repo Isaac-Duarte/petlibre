@@ -45,6 +45,9 @@ pub enum NoRoute {
     /// The feeding plans' route is still to come; until then the owner's
     /// CLI edits them on the feeder.
     PlansToCome,
+    /// The meal call's clip, converted on the owner's computer and
+    /// uploaded with the CLI; its route comes with the plans'.
+    CallToCome,
 }
 
 /// The server route for a device operation, or why it has none.
@@ -80,5 +83,8 @@ pub const fn parity(op: &Op) -> Parity {
         }
         Op::GetCalibration | Op::PutCalibration { .. } => Without(NoRoute::Calibration),
         Op::GetPlans | Op::PutPlans { .. } => Without(NoRoute::PlansToCome),
+        Op::GetCall | Op::StartCall { .. } | Op::CallChunk { .. } | Op::DeleteCall => {
+            Without(NoRoute::CallToCome)
+        }
     }
 }

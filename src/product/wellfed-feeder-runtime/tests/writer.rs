@@ -1268,6 +1268,7 @@ fn a_plans_change_is_applied_saved_inside_a_marked_attempt_and_published() {
         portions: 2,
         days: Weekdays::EVERY_DAY,
         enabled: true,
+        call: 0,
     });
     let replace = PlansChange::Replace {
         table,
@@ -1324,6 +1325,112 @@ fn a_plans_change_is_applied_saved_inside_a_marked_attempt_and_published() {
     assert_eq!(text, "plans saved sequence=1 revision=1");
 }
 
+/// The meal call's upload lands chunk by chunk inside marked attempts. A
+/// change queued while a call plays from the clip waits without holding
+/// up the writer's other work, and one asked for meanwhile is refused.
+#[test]
+fn a_meal_call_change_waits_for_a_call_without_holding_up_other_work() {
+    use wellfed_core::store::slot::crc32;
+    use wellfed_device_api::mailbox::{CallChange, CallClip, CallResult};
+    use wellfed_feeder_runtime::call;
+    use wellfed_hal::audio::{self, PlayResult, Record as Audio, Speaker};
+
+    let (_guard, mut writer, mut provider) = start();
+    call::reset();
+    audio::reset();
+    open_all(&mut writer, &mut provider);
+    step(&mut writer, &mut provider); // the stats store's early save
+
+    let stream: Vec<u8> = (0..600u32).map(|i| (i * 7) as u8).collect();
+    let crc = crc32(&stream);
+    let start = CallChange::Start { bytes: 600, crc };
+    assert!(matches!(
+        call::change(start),
+        CallResult::Current { pending: true, .. }
+    ));
+    ATTEMPT_SEEN.with(|s| s.set(false));
+    let receiving = CallClip::Receiving {
+        bytes: 600,
+        crc,
+        received: 0,
+    };
+    assert_eq!(
+        step(&mut writer, &mut provider),
+        Some(Record::Call { clip: receiving })
+    );
+    assert!(ATTEMPT_SEEN.with(Cell::get));
+    assert_eq!(call::chunk(0, &stream[..512]), Ok(()));
+    assert_eq!(step(&mut writer, &mut provider), None, "mid-upload");
+    assert_eq!(call::chunk(512, &stream[512..]), Ok(()));
+    let stored = CallClip::Stored { bytes: 600, crc };
+    assert_eq!(
+        step(&mut writer, &mut provider),
+        Some(Record::Call { clip: stored })
+    );
+
+    // A delete queued, then a call takes the clip before the writer's turn.
+    assert!(matches!(
+        call::change(CallChange::Delete),
+        CallResult::Current { pending: true, .. }
+    ));
+    assert_eq!(audio::request_call(1), PlayResult::Started);
+    let mut speaker = Speaker::quiet();
+    assert!(matches!(
+        speaker.step().record,
+        Some(Audio::CallPlay { plays: 1, .. })
+    ));
+    assert!(audio::call_playing());
+
+    // The settings change behind it is saved meanwhile; the delete waits.
+    let quieter = SettingsFields {
+        volume: Some(10),
+        ..SettingsFields::default()
+    };
+    assert!(matches!(
+        settings::request(quieter),
+        SettingsResult::Current { pending: true, .. }
+    ));
+    assert!(matches!(
+        step(&mut writer, &mut provider),
+        Some(Record::Saved { .. })
+    ));
+    let CallResult::Current { view, pending } = call::current() else {
+        panic!("the call is published");
+    };
+    assert_eq!((view.clip, pending), (stored, true));
+
+    // Once the call ends, the delete lands.
+    for _ in 0..400 {
+        let step = speaker.step();
+        fake::with(|h| h.uptime_ms += step.delay_ms);
+        fake::play_audio(2);
+        if matches!(step.record, Some(Audio::CallDone { .. })) {
+            break;
+        }
+    }
+    assert!(!audio::call_playing());
+    assert_eq!(
+        step(&mut writer, &mut provider),
+        Some(Record::Call {
+            clip: CallClip::None
+        })
+    );
+    // Refused, not queued, while a call plays.
+    assert!(matches!(
+        call::change(start),
+        CallResult::Current { pending: true, .. }
+    ));
+    step(&mut writer, &mut provider);
+    assert_eq!(call::chunk(0, &stream[..512]), Ok(()));
+    step(&mut writer, &mut provider);
+    assert_eq!(call::chunk(512, &stream[512..]), Ok(()));
+    step(&mut writer, &mut provider);
+    assert_eq!(audio::request_call(1), PlayResult::Started);
+    let mut speaker = Speaker::quiet();
+    speaker.step();
+    assert_eq!(call::change(CallChange::Delete), CallResult::Busy);
+}
+
 /// Whether the factory reset's marker is down.
 fn reset_marked() -> bool {
     use wellfed_feeder::store::reset::{MARKER, marked};
@@ -1353,6 +1460,7 @@ fn restart_mailboxes() {
     stats::reset();
     calibration::reset();
     plans::reset();
+    wellfed_feeder_runtime::call::reset();
     time::reset();
     traces::reset();
     supervision::reset();
@@ -1378,6 +1486,11 @@ fn filled_then_reset() -> (MutexGuard<'static, ()>, Provider) {
         }
         let traces = storage::TRACES.first as usize * 0x1000;
         h.storage[traces..traces + 64].fill(0x24);
+        // Bytes in the meal call's first and last sectors.
+        for sector in [storage::CALL.first, storage::CALL.first + 7] {
+            let first = sector as usize * 0x1000;
+            h.storage[first..first + 64].fill(0x77);
+        }
     });
     assert_eq!(rng::start().result, Ok(()));
     for _ in 0..7 {
@@ -1401,6 +1514,7 @@ fn filled_then_reset() -> (MutexGuard<'static, ()>, Provider) {
         portions: 2,
         days: Weekdays::EVERY_DAY,
         enabled: true,
+        call: 0,
     });
     plans::change(PlansChange::Replace {
         table,
@@ -1531,6 +1645,7 @@ fn assert_cleared(kept_before: &[Vec<u8>], old_epoch: u32) {
         storage::PLANS,
         storage::TRACES,
         storage::EVENTS,
+        storage::CALL,
     ] {
         assert!(
             sectors(cleared).iter().all(|&byte| byte == 0xff),
@@ -1550,7 +1665,7 @@ fn a_factory_reset_clears_the_decided_stores_on_the_next_boot_and_keeps_the_rest
     let records = reset_boot(&mut provider, None);
     assert_eq!(records.first(), Some(&Record::ResetPending));
     assert!(
-        records.contains(&Record::ResetDone { erased: 25 }),
+        records.contains(&Record::ResetDone { erased: 33 }),
         "{records:?}"
     );
     assert!(
@@ -1620,7 +1735,7 @@ fn a_power_cut_at_any_step_of_the_reset_leaves_it_to_the_next_boot() {
         let records = reset_boot(&mut provider, None);
         let finished = done <= erases;
         assert_eq!(
-            records.contains(&Record::ResetDone { erased: 25 }),
+            records.contains(&Record::ResetDone { erased: 33 }),
             finished,
             "cut after {done} steps: {records:?}"
         );
@@ -1725,7 +1840,7 @@ fn a_reset_that_cannot_finish_asks_for_one_restart_only() {
     ERASE_FAILS.with(|f| f.set(None));
     let records = reset_boot(&mut provider, None);
     assert!(
-        records.contains(&Record::ResetDone { erased: 25 }),
+        records.contains(&Record::ResetDone { erased: 33 }),
         "{records:?}"
     );
     assert!(!keys::restart_wanted());
@@ -1804,7 +1919,7 @@ fn a_reset_over_an_unwritable_client_store_still_completes() {
 
     let records = reset_boot(&mut provider, None);
     assert!(
-        records.contains(&Record::ResetDone { erased: 25 }),
+        records.contains(&Record::ResetDone { erased: 33 }),
         "{records:?}"
     );
     assert!(
@@ -1855,8 +1970,8 @@ fn reset_records_format() {
     };
     assert_eq!(line(Record::ResetPending), "reset pending");
     assert_eq!(
-        line(Record::ResetDone { erased: 25 }),
-        "reset done erased=25"
+        line(Record::ResetDone { erased: 33 }),
+        "reset done erased=33"
     );
     assert_eq!(
         line(Record::ResetError {
@@ -1903,7 +2018,7 @@ fn an_attempt_that_does_not_land_asks_for_no_restart() {
     PROGRAM_FAILS.with(|f| f.set(false));
     let records = reset_boot(&mut provider, None);
     assert!(
-        records.contains(&Record::ResetDone { erased: 25 }),
+        records.contains(&Record::ResetDone { erased: 33 }),
         "{records:?}"
     );
 }

@@ -21,7 +21,8 @@
 //! erases each cleared sector (`storage::FACTORY_CLEARED`) as its own
 //! step, rewrites the lifetime statistics keeping only the flash erase
 //! counts (the hardware's wear), erases the marker last, and only then
-//! opens the stores, empty. The feed journal, the calibration, the update
+//! opens the stores, empty (the meal call's clip among them). The feed
+//! journal, the calibration, the update
 //! store and the seed are never touched.
 //!
 //! It keeps the time settings too (sectors 27 and 28,
@@ -29,7 +30,9 @@
 //! published for the loop ([`time`]), the portion calibration (sectors 34
 //! and 35, `wellfed_feeder::store::calibration`, [`calibration`]), and the
 //! feeding plans (sectors 11 and 12, `wellfed_feeder::store::plans`,
-//! [`plans`]): a client's table, and the loop's claims and passes.
+//! [`plans`]): a client's table, and the loop's claims and passes. And the
+//! meal call (sectors 40-47, `wellfed_feeder::store::call`, [`call`]): an
+//! upload a chunk at a time, written only while no call plays from it.
 //!
 //! It also keeps the event history (sectors 13-24,
 //! `wellfed_feeder::store::events`). It appends the records the loop queues
@@ -65,8 +68,10 @@ use core::fmt;
 use wellfed_core::named_enum;
 
 use wellfed_core::store::seed::{SeedStatus, SeedStore};
+use wellfed_device_api::mailbox::{CallChange, CallClip};
 use wellfed_feeder::stats::{SAVE_MS, TOTAL_SECTORS, Totals, reset_cause};
 use wellfed_feeder::store::calibration::CalibrationStore;
+use wellfed_feeder::store::call::CallStore;
 use wellfed_feeder::store::clients::{ClientError, ClientStatus, ClientStore};
 use wellfed_feeder::store::events::EventLog;
 use wellfed_feeder::store::net::{NetStatus, NetStore};
@@ -81,13 +86,14 @@ use wellfed_hal::flash_lock::arming::{self, Arming, Hooks, Poll};
 use wellfed_hal::flash_lock::provider::Provider;
 use wellfed_hal::interlock::{INTERLOCK, WRITER_POLL_MS, WriteStep, WriteTurn};
 use wellfed_hal::plaf103::storage::{FACTORY_CLEARED_SECTORS, factory_cleared};
-use wellfed_hal::{rng, sdk, settings, supervision};
+use wellfed_hal::{audio, rng, sdk, settings, supervision};
 use wellfed_sdk::storage::{
     CLIENTS_BASE, EVENTS_BASE, EVENTS_UNITS, FlashOps, Region, SEED_BASE, SETTINGS_BASE,
     SETTINGS_BINDING, Slots, TRACES_BASE, TRACES_UNITS,
 };
 
 use crate::calibration::{self, CALIBRATION_BASE};
+use crate::call::{self, CALL_BASE, CALL_UNITS, Queued};
 use crate::events;
 pub use crate::keys::KeyResult;
 use crate::keys::{self, Change};
@@ -110,6 +116,16 @@ pub const EVENTS_POLL_MS: u32 = 5;
 /// waiting writer before passing it.
 pub const WRITE_WAIT_POLL_MS: u32 = POLL_MS;
 const _: () = assert!(WRITE_WAIT_POLL_MS <= WRITER_POLL_MS);
+
+/// Where the meal call's queued work stands after the writer's look.
+enum CallSave {
+    /// Written (or refused), with the record it makes, if any.
+    Done(Option<Record>),
+    /// A feed holds the outputs.
+    Turn,
+    /// A call plays from the clip.
+    Held,
+}
 
 /// The write turn for one store write, given back when dropped.
 struct WriteHeld;
@@ -223,6 +239,14 @@ pub enum Record {
     /// nothing written, and the loop decides again.
     PlansDropped,
     PlansError {
+        stage: ErrorStage,
+    },
+    /// The meal call (sectors 40-47) after an upload's start or end, or a
+    /// delete; a chunk mid-upload logs nothing.
+    Call {
+        clip: CallClip,
+    },
+    CallError {
         stage: ErrorStage,
     },
     /// The stored seed and the client store.
@@ -386,6 +410,14 @@ pub fn describe(record: Record, f: &mut impl fmt::Write) -> fmt::Result {
         }
         Record::PlansDropped => f.write_str("plans dropped"),
         Record::PlansError { stage } => write!(f, "plans error stage={stage}"),
+        Record::Call { clip } => match clip {
+            CallClip::None => f.write_str("call none"),
+            CallClip::Receiving { bytes, .. } => write!(f, "call receiving bytes={bytes}"),
+            CallClip::Stored { bytes, crc } => {
+                write!(f, "call stored bytes={bytes} crc={crc:08x}")
+            }
+        },
+        Record::CallError { stage } => write!(f, "call error stage={stage}"),
         Record::Keys {
             seed,
             mixed,
@@ -529,6 +561,8 @@ pub struct Writer<F> {
     calibration: CalibrationStore<Slots<F, CALIBRATION_BASE>>,
     /// As for the calibration: its status shows in the plans view.
     plans: PlansStore<Slots<F, PLANS_BASE>>,
+    /// Its status shows in the call's view.
+    call: CallStore<Region<F, CALL_BASE, CALL_UNITS>>,
     armed: bool,
     seed: SeedStore<Slots<F, SEED_BASE>>,
     clients: ClientStore<Slots<F, CLIENTS_BASE>>,
@@ -575,6 +609,7 @@ impl<F> Default for Writer<F> {
             time_opened: false,
             calibration: CalibrationStore::default(),
             plans: PlansStore::default(),
+            call: CallStore::default(),
             armed: false,
             seed: SeedStore::default(),
             clients: ClientStore::default(),
@@ -709,6 +744,49 @@ impl<F: FlashOps> Writer<F> {
             Record::PlansError {
                 stage: ErrorStage::Save,
             }
+        })
+    }
+
+    /// Apply the call's queued work, or say why it waits (it stays
+    /// queued).
+    fn save_call<H: Hooks>(&mut self, queued: Queued, data: &[u8]) -> CallSave {
+        if self.stage == Stage::Serve || !H::armed() {
+            return CallSave::Done(Some(Record::CallError {
+                stage: ErrorStage::Unarmed,
+            }));
+        }
+        // The sectors first: a call that plays reads them.
+        if !audio::call_write_begin() {
+            return CallSave::Held;
+        }
+        let Some(_turn) = self.take_turn() else {
+            audio::call_write_end();
+            return CallSave::Turn;
+        };
+
+        audio::publish_call(None);
+        arming::set_attempt();
+        let ok = match queued {
+            Queued::Change(CallChange::Start { bytes, crc }) => self.call.start(bytes, crc),
+            Queued::Change(CallChange::Delete) => self.call.delete(),
+            Queued::Chunk { offset, .. } => self.call.chunk(offset, data),
+        };
+        arming::clear_attempt();
+        audio::publish_call(self.call.stored());
+        audio::call_write_end();
+
+        let clip = self.call.clip;
+        CallSave::Done(if !ok {
+            Some(Record::CallError {
+                stage: ErrorStage::Save,
+            })
+        } else if matches!(
+            (queued, clip),
+            (Queued::Chunk { .. }, CallClip::Receiving { .. })
+        ) {
+            None
+        } else {
+            Some(Record::Call { clip })
         })
     }
 
@@ -1027,6 +1105,7 @@ impl<F: FlashOps> Writer<F> {
         self.net.open(Slots::new());
         self.time.open(Slots::new());
         self.plans.open(Slots::new());
+        self.call.open(Region::new());
         status
     }
 
@@ -1144,6 +1223,7 @@ impl<F: FlashOps> Writer<F> {
         time::publish(&self.time, self.armed);
         calibration::publish(&self.calibration, self.armed);
         plans::publish(&self.plans, self.armed);
+        call::publish(&self.call, self.armed);
     }
 
     /// One task iteration.
@@ -1354,6 +1434,20 @@ impl<F: FlashOps> Writer<F> {
                     self.publish();
                     plans::finish();
                     return next(POLL_MS, Some(record));
+                }
+                // The chunk's bytes are copied out of the mailbox only as the
+                // flash takes them.
+                match call::with_pending(|queued, data| self.save_call::<H>(queued, data)) {
+                    Some(CallSave::Done(record)) => {
+                        self.publish();
+                        call::finish();
+                        // An upload's next chunk follows at once.
+                        return next(EVENTS_POLL_MS, record);
+                    }
+                    Some(CallSave::Turn) => return self.waiting(),
+                    // A call plays from the clip for seconds: the work below
+                    // goes on meanwhile, and the change is tried each step.
+                    Some(CallSave::Held) | None => {}
                 }
                 let Some(fields) = settings::pending() else {
                     let writable = self.stage == Stage::Idle && H::armed();

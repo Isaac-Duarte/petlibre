@@ -675,6 +675,7 @@ fn plans_already_set_are_never_replaced() {
         portions: 1,
         days: Weekdays::ONCE,
         enabled: true,
+        call: 0,
     });
     let mut install = confirmed();
     assert_eq!(install.step(), Step::ReadPlans);

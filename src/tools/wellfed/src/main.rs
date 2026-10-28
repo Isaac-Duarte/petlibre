@@ -29,6 +29,7 @@
 mod access;
 mod backup;
 mod ble;
+mod call;
 mod configure;
 mod device;
 mod feeding;
@@ -70,6 +71,10 @@ enum Command {
     /// The feeding plans: list them, or add, edit, enable, disable or
     /// delete one (docs/firmware/schedules.md).
     Plans(plans::PlansArgs),
+    /// The meal call a plan plays before its meal: show the stored clip,
+    /// upload one from a WAV file, or delete it
+    /// (docs/firmware/schedules.md#meal-call).
+    Call(call::CallArgs),
     /// The desiccant reminder: days left until the pack is due, and with
     /// --reset record that it was replaced today
     /// (docs/firmware/desiccant.md). Its period is a setting.
@@ -146,6 +151,7 @@ fn main() -> Result<ExitCode> {
         Command::Status(target) => runtime.block_on(ask_and_print(&target, &Op::Status)),
         Command::Settings(args) => runtime.block_on(configure::settings_command(args)),
         Command::Plans(args) => runtime.block_on(plans::command(args)),
+        Command::Call(args) => runtime.block_on(call::command(args)),
         Command::Desiccant(args) => runtime.block_on(configure::desiccant_command(args)),
         Command::Lock(args) => runtime.block_on(configure::lock_command(args)),
         Command::Wifi(args) => runtime.block_on(configure::wifi_command(args)),
@@ -297,6 +303,16 @@ mod tests {
         ));
         let out_of_range = ["wellfed", "plans", "delete", "10"];
         assert!(Cli::try_parse_from(out_of_range).is_err());
+        // A plan's meal call plays 0 to 5 times.
+        let calling = ["wellfed", "plans", "edit", "3", "--call", "5"];
+        assert!(Cli::try_parse_from(calling).is_ok());
+        let too_loud = ["wellfed", "plans", "edit", "3", "--call", "6"];
+        assert!(Cli::try_parse_from(too_loud).is_err());
+        let upload = ["wellfed", "call", "upload", "dinner.wav"];
+        assert!(matches!(
+            Cli::try_parse_from(upload).map(|cli| cli.command),
+            Ok(Command::Call(_))
+        ));
         let too_many = [
             "wellfed",
             "plans",

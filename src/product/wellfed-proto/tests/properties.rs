@@ -145,18 +145,29 @@ fn op() -> impl Strategy<Value = Op<'static>> {
         (any::<u32>(), plans()).prop_map(|(base, plans)| Op::PutPlans { base, plans }),
         Just(Op::ResetDesiccant),
         Just(Op::ReadStockPlans),
+        Just(Op::GetCall),
+        (any::<u32>(), any::<u32>()).prop_map(|(bytes, crc)| Op::StartCall { bytes, crc }),
+        (any::<u32>(), bytes(CALL_CHUNK_MAX + 1))
+            .prop_map(|(offset, data)| Op::CallChunk { offset, data }),
+        Just(Op::DeleteCall),
     ]
 }
 
 fn plans() -> impl Strategy<Value = [Option<Plan>; PLANS_MAX]> {
-    let plan = (any::<u16>(), any::<u8>(), any::<u8>(), any::<bool>()).prop_map(
-        |(minute, portions, days, enabled)| Plan {
+    let plan = (
+        any::<u16>(),
+        any::<u8>(),
+        any::<u8>(),
+        any::<bool>(),
+        any::<u8>(),
+    )
+        .prop_map(|(minute, portions, days, enabled, call)| Plan {
             minute,
             portions,
             days,
             enabled,
-        },
-    );
+            call,
+        });
     proptest::array::uniform10(proptest::option::of(plan))
 }
 

@@ -156,7 +156,7 @@ The import keeps each plan's slot and converts it to a [replacement plan](../../
 | One-off flag | Once, whatever its days say |
 | Portions 1–48 | The same |
 | `skipEndTime` still ahead | The plan, disabled, with a note: the replacement has no skip, and a meal the owner skipped must not run |
-| Meal call | Dropped with a note; the meal still runs. Wellfed has no meal call yet |
+| Meal call | Kept, with a note: `audioTimes` plays (at most 5) when `enableAudio` is set, none otherwise. Stock's clip is not carried over, so the call sounds once the owner uploads one |
 | Repeating plan due, waiting or resumed | The meal stock started or owed is dropped with a note; the plan runs from its next occurrence |
 | One-off plan due, waiting or resumed | Refused. Its feed may already have run before a cut, and run late it would be a day late |
 

@@ -82,7 +82,8 @@ pub(super) fn remembered(reply: Reply) -> Remembered {
         | Reply::Bank1 { .. }
         | Reply::StockPlans
         | Reply::Calibration
-        | Reply::Plans => Remembered::Done(None),
+        | Reply::Plans
+        | Reply::Call => Remembered::Done(None),
     }
 }
 

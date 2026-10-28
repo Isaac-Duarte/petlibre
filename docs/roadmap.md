@@ -52,6 +52,7 @@ This page tracks what works today and what comes next. It covers the replacement
 | Lights and sound settings | Works | Lights and sound windows, volume-0 mute and a beep on every button press, checked on the bench. |
 | Desiccant reminder | Experimental | Counted on the feeder from the last replacement; tested in simulation. |
 | Meal reminder | Experimental | An event on the event stream before each scheduled meal; tested in simulation. |
+| Meal call | Experimental | Your own clip, uploaded from the CLI, played before each meal whose plan asks for it, ending as the meal is due; tested on the host and in simulation. |
 
 ## Apps and server
 

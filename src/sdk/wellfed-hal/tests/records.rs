@@ -219,7 +219,7 @@ fn stage_and_reason_words_are_unchanged() {
     );
     assert_eq!(
         displayed(audio::ErrorStage::ALL, audio::ErrorStage::as_str),
-        ["open"]
+        ["open", "clip"]
     );
     assert_eq!(
         displayed(ble::FailStage::ALL, ble::FailStage::as_str),

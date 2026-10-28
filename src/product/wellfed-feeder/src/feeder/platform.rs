@@ -27,9 +27,9 @@ use crate::stats::Totals;
 use crate::store::events::{BODY_BYTES, Read};
 use wellfed_device_api::clients::{CLIENTS, Client};
 use wellfed_device_api::mailbox::{
-    Calibration, CalibrationResult, ClientChange, KeyResult, PlansChange, PlansResult, PlayResult,
-    Requested, SettingsFields, SettingsResult, SettingsView, TimeSettings, TimeSettingsResult,
-    WifiResult, WifiSource,
+    Calibration, CalibrationResult, CallChange, CallResult, ClientChange, KeyResult, PlansChange,
+    PlansResult, PlayResult, Requested, SettingsFields, SettingsResult, SettingsView, TimeSettings,
+    TimeSettingsResult, WifiResult, WifiSource,
 };
 use wellfed_device_api::wifi::Credentials;
 
@@ -320,6 +320,12 @@ pub trait Platform {
     fn plans(&mut self) -> PlansResult;
     /// Queue one change to the plans for the writer.
     fn plans_change(&mut self, change: PlansChange) -> PlansResult;
+    /// The meal call as the writer last published it.
+    fn call(&mut self) -> CallResult;
+    /// Queue an upload's start or a delete for the writer.
+    fn call_change(&mut self, change: CallChange) -> CallResult;
+    /// Queue one chunk of the upload under way for the writer.
+    fn call_chunk(&mut self, offset: u32, data: &[u8]) -> Result<(), Refusal>;
 
     // ---- The event history.
 
@@ -474,6 +480,9 @@ pub trait Platform {
     fn speaker_idle(&self) -> bool;
     /// Queue a tune for the speaker.
     fn play(&mut self, tune: Tune) -> PlayResult;
+    /// Queue the meal call for the speaker, `plays` times. The loop steps
+    /// the speaker while it plays, outside setup mode as well.
+    fn play_call(&mut self, plays: u8) -> PlayResult;
     fn speaker_step(&mut self) -> DriverStep<Self::Record>;
 
     // ---- The buzzer.

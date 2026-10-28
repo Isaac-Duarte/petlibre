@@ -18,6 +18,7 @@ pub use wellfed_session::named_enum;
 pub mod adc_scale;
 pub mod ble_setup;
 pub mod buttons;
+pub mod clip;
 pub mod clock;
 pub mod desiccant;
 pub mod feed;

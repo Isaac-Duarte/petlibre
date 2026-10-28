@@ -1068,6 +1068,36 @@ fn messages() -> Vec<Fixture> {
             }),
             |b| decode::<EventBody>(b).is_ok(),
         ),
+        ("op-get-call", entry(&request(Op::GetCall)), client),
+        (
+            "op-start-call",
+            entry(&request(Op::StartCall {
+                bytes: 4_000,
+                crc: 0x1234_5678,
+            })),
+            client,
+        ),
+        (
+            "op-call-chunk",
+            entry(&request(Op::CallChunk {
+                offset: 512,
+                data: &[1, 2, 3],
+            })),
+            client,
+        ),
+        ("op-delete-call", entry(&request(Op::DeleteCall)), client),
+        (
+            "outcome-call",
+            entry(&response(Outcome::Call(CallView {
+                writable: true,
+                clip: CallClip::Receiving {
+                    bytes: 4_000,
+                    crc: 0x1234_5678,
+                    received: 512,
+                },
+            }))),
+            feeder,
+        ),
     ]
 }
 
@@ -1079,12 +1109,14 @@ fn plans() -> [Option<Plan>; PLANS_MAX] {
         portions: 2,
         days: 0x7f,
         enabled: true,
+        call: 2,
     });
     plans[2] = Some(Plan {
         minute: 18 * 60,
         portions: 1,
         days: 0,
         enabled: false,
+        call: 0,
     });
     plans
 }

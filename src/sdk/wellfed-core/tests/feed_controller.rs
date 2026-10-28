@@ -130,9 +130,9 @@ fn an_outlet_blocked_mid_feed_ends_it_with_its_portions_so_far() {
     assert_eq!(f.controller.progress.completed, 1);
 }
 
-/// Three ways the current ends a feed, each by its own name: a jam held
-/// past every reversal, a jam held while backing off, and one reading
-/// over the ceiling.
+/// The ways the current ends a feed, each by its own name: a jam held
+/// past every reversal or while backing off is `Jammed`; one reading over
+/// the ceiling, or the limit held with the motor stopped, `Overcurrent`.
 #[test]
 fn a_jam_and_a_current_spike_end_the_feed_by_name() {
     let mut f = begin(BowlMode::Single, Direction::D0, 3);
@@ -162,6 +162,18 @@ fn a_jam_and_a_current_spike_end_the_feed_by_name() {
     f.advance(1);
     f.expect_fault(FeedReason::Overcurrent);
     assert_eq!(f.controller.reverse_attempts, 0);
+
+    // Held in the pause after a reversal, with the motor stopped: nothing
+    // turns, so it is no jam but a reading at rest.
+    let mut f = begin(BowlMode::Single, Direction::D0, 3);
+    f.sample.current_ma = 301;
+    f.advance(OVERCURRENT_POLLS.into());
+    f.sample.current_ma = 100;
+    f.advance(3);
+    assert_eq!(f.controller.state, FeedState::DirectionPause);
+    f.sample.current_ma = 301;
+    f.advance(OVERCURRENT_POLLS.into());
+    f.expect_fault(FeedReason::Overcurrent);
 }
 
 #[test]
@@ -846,7 +858,7 @@ fn stopped_outputs_do_not_resume_on_bad_current() {
     assert_eq!(f.controller.motor, MotorCommand::Stop);
     f.sample.current_ma = 301;
     f.advance(OVERCURRENT_POLLS.into());
-    f.expect_fault(FeedReason::Jammed);
+    f.expect_fault(FeedReason::Overcurrent);
 
     let settings = FeedLimits {
         max_reverse_attempts: 0,

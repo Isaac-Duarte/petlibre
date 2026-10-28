@@ -167,7 +167,8 @@ pub enum EventBody {
 }
 
 /// What the food beam across the hopper reads. One reading with food shows
-/// food at once; the hopper reads empty after a second without, as stock's.
+/// food at once; the hopper reads empty after a second without (stock
+/// counts 20 readings; the second assumes its poll is 50 ms).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum FoodLevel {

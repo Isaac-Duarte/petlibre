@@ -1335,9 +1335,10 @@ pub struct FeedFault {
 
 /// What the food beam across the hopper reads, filtered as stock filters
 /// its `surplusGrain`: one reading with food shows food at once, and the
-/// hopper reads empty only after a second of readings without (stock's 20
-/// readings at its 50 ms poll). The beam is lit only during feeds, so the
-/// level is the last feed's.
+/// hopper reads empty only after a run of readings without. Stock counts 20
+/// readings; its poll rate is not recovered, and the firmware assumes the
+/// nominal 50 ms its outlet filter implies, so a second. The beam is lit
+/// only during feeds, so the level is the last feed's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FoodLevel {
     /// No qualified reading: no feed has lit the beam this boot, or this

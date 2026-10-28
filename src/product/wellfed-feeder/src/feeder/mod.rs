@@ -365,8 +365,9 @@ impl<P: Platform> Feeder<P> {
         self.readiness.note(&mut self.platform, now_ms, ready, |r| {
             record(Record::Feeding(r))
         });
-        self.readiness
-            .food(&mut self.platform, now_ms, feeds.food(), !feeds.busy());
+        if let Some(level) = self.readiness.food(feeds.food(), !feeds.busy()) {
+            events::record(&mut self.platform, now_ms, EventBody::Food { level });
+        }
 
         let local_ms = self
             .platform

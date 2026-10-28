@@ -14,7 +14,8 @@
 //! - `empty` empties the hopper and `fill` fills it, for the next feed's
 //!   food beam.
 //! - `block` blocks the outlet and `jam` jams the rotor once the next
-//!   feed's first portion is in: that feed ends there.
+//!   feed has driven a portion: that feed ends there, one portion in
+//!   (none for a feed of one).
 //! - `reboot` restarts the feeder; `quit` stops the simulator.
 
 use wellfed_client::setup::panel_position;

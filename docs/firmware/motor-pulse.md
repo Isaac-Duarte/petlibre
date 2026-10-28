@@ -20,7 +20,7 @@ What bounds a drive (limits in `feeding.rs`):
 - **Portions.** In single-bowl mode a portion is one rising PA18 edge, the end of a compartment's mark, at least 5 s (`feedback_inhibit_ms`) after the drive starts or after the last portion. Stock does the same. After a feed that stopped between marks, the next feed's first rise inside those 5 s is a homing mark, never credited, and that feed's deadline is 5 s longer ([calibration](calibration.md#phase)).
 - **Feedback.** No credited portion within `feedback_timeout_ms` (15 s) fails the feed `NoFeedback`. No PA18 edge for 11 s, or PA18 LOW for 4 s, also ends the drive ([jams and sensor faults](jams-and-sensor-faults.md#missing-or-stuck-feedback)).
 - **Whole feed.** 12 s a portion (`portion_ms`), capped at 48 portions' worth.
-- **Current.** A jam (over 300 scaled, held past the 150 ms after any change of drive) backs off 1 s and drives on, three times at most, then ends `Overcurrent`. One reading over 1000 stops at once ([jams](jams-and-sensor-faults.md#jams-bounded-reversals)).
+- **Current.** A jam (over 300 scaled, held past the 150 ms after any change of drive) backs off 1 s and drives on, three times at most, then ends `Jammed`. One reading over 1000 stops at once (`Overcurrent`) ([jams](jams-and-sensor-faults.md#jams-bounded-reversals)).
 - **Inputs.** A blocked outlet, an unreadable beam, low power or current over the limit at rest keeps a feed from starting, and it fails with that input's reason.
 - **Loop stalls.** The supervisor stops the motor 200 ms after the owner's last renewal. An owner beat older than 1 s while driving ends in a watchdog reset.
 

@@ -8,7 +8,7 @@ The limits are in `feeding::CONFIG` (`src/firmware/wellfed/feeder/src/feeding.rs
 
 ## Jams: bounded reversals
 
-A jam is motor current held over the limit: two consecutive polls, 20 ms apart, over 300 scaled, outside the 150 ms after any change of drive. The controller then backs off: 1 s the other way, a 0.5 s stop, and forward again. It does this at most three times, as stock does. After the third, the next jam ends the feed `Failed`, `Jammed`. A jam that holds while backing off or during the pause also ends it `Jammed`, at once. One reading over the 1000 ceiling ends it `Overcurrent`, with no reversal.
+A jam is motor current held over the limit: two consecutive polls, 20 ms apart, over 300 scaled, outside the 150 ms after any change of drive. The controller then backs off: 1 s the other way, a 0.5 s stop, and forward again. It does this at most three times, as stock does. After the third, the next jam ends the feed `Failed`, `Jammed`. A jam that holds while backing off also ends it `Jammed`, at once. The limit held during a pause, with the motor stopped, ends it `Overcurrent`: nothing turns, so it is a reading at rest, not a jam. So does one reading over the 1000 ceiling, with no reversal.
 
 | Limit | Value | Why |
 | --- | --- | --- |
@@ -65,7 +65,7 @@ The level comes from the owner's own acquisitions (one port read with PA16, PA17
 
 Stock pauses a feed on a blocked outlet and resumes it if the outlet clears within about 10 min, else ends it (record 2008). Wellfed ends it at once: a documented difference, the owner's decision (October 28), so a blocked chute never turns into a meal delivered minutes late or partly into a blocked outlet.
 
-**Food beam.** The owner reads the food beam only while a feed's emitters are on, and publishes its latest qualified reading (`OwnerStatus::food`), which outlasts the feed. Food shows at once, and empty only after 1 s of readings without: stock's `surplusGrain` filter, 20 readings at its nominal 50 ms poll. `Feeds::food()` returns the reading, so the status's `food`, the `Food` change event and the statistics' Food section (present, emptied, refilled, feeds since refill) follow it as feeds read it. `present` comes from the first feed after a boot. An emptied or refilled hopper shows as the reading changes between feeds, so a refill between two feeds shows at the second.
+**Food beam.** The owner reads the food beam only while a feed's emitters are on, and publishes its latest qualified reading (`OwnerStatus::food`), which outlasts the feed. Food shows at once, and empty only after 1 s of readings without. Stock's `surplusGrain` filter counts 20 readings; its poll rate is not recovered, so the 1 s assumes the nominal 50 ms its outlet filter implies (to confirm against stock). `Feeds::food()` returns the reading, so the status's `food`, the `Food` change event and the statistics' Food section (present, emptied, refilled, feeds since refill) follow it as feeds read it. `present` comes from the first feed after a boot. An emptied or refilled hopper shows as the reading changes between feeds, so a refill between two feeds shows at the second.
 
 Each feed's trace also keeps what the beam read during that feed (`FeedTrace::hopper`: empty once it read empty), which its `Fed` event carries as `hopper` and `PLOWN1 fed … hopper=` logs. A feed never waits on the beam and is never refused for it, as stock's: a beam stuck empty, or a hopper that really is empty, still feeds, and the history says the hopper read empty. A food beam stuck either way reads as a hopper that never changes.
 
@@ -113,7 +113,7 @@ The requested portions choose the case (`feed_faults::Planner`, host-tested):
 | `feed-jam` | 2 | A jam no reversal frees, 2 s into the drive | Three reversals, then `Failed`, `Jammed`, `reversals=3`, about 7 s from the start |
 | `feed-jam` | 3 | The mark input stuck LOW, 2 s into the drive | `Failed`, `MarkStuck`, about 6 s of drive |
 | `sensor-fault` | 1 | Marks lost from the drive's start (PA18 reads HIGH, its interrupts dropped) | `Failed`, `FeedbackTimeout`, at about 11 s |
-| `sensor-fault` | 2 | The outlet blocked before the feed starts | `Failed`, `Outlet`, no motion, about 2 s |
+| `sensor-fault` | 2 | The outlet blocked before the feed starts | `Failed`, `Outlet` (`OutletBlocked` on the wire), no motion, about 2 s |
 | `sensor-fault` | 3 | The ADC lost 2 s into the drive | `Failed`, `Sensor`; owner fault 7, readiness `Fault`, no reset until a `Reboot` |
 
 Records: `PLINJ1 show id= fault=` when a feed is shown its fault, with the `Injected` code (1 jam that frees, 2 jam that holds, 3 marks missing, 4 mark stuck LOW, 5 outlet blocked, 6 ADC lost). `PLINJ1 clear id= armed= readings= edges=` follows once that feed has ended: whether the fault is still armed (0 once a freed jam cleared itself), the captures it changed, and the feedback interrupts it dropped.
@@ -156,8 +156,8 @@ Unattended, hopper empty, D cells out, at most 3 portions a feed, the logic anal
 
 - **The variants on hardware.** Observed (October 26, `feed-jam` v233 and `sensor-fault` v234, hopper empty, feeds 48–53, UART captures `fw19-{jam,sensor}-20261026-feed{1,2,3}-uart`):
   - A jam that frees credited its portion after one reversal (feed 48, `Done`, 11.5 s).
-  - A jam that persists ended `Failed`, `Overcurrent` after three reversals (49, 7.2 s).
-  - A mark input stuck LOW ended `Sensor` (50, 6.1 s, no reversal).
+  - A jam that persists ended `Failed`, `Overcurrent` after three reversals (49, 7.2 s); that reason is now `Jammed`.
+  - A mark input stuck LOW ended `Sensor` (50, 6.1 s, no reversal); that reason is now `MarkStuck`.
   - Dropped mark interrupts ended `NoFeedback` at 11.0 s while the pin watch saw PA18 toggle (51).
   - A blocked outlet refused with no drive (52).
   - A lost ADC held owner fault 7 with readiness blocked `Fault` and no reset in 180 s, cleared by a reboot (53).

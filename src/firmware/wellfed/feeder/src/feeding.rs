@@ -147,7 +147,8 @@ pub const CONFIG: OwnerConfig = OwnerConfig {
     },
     // Stock: 100 ticks of settling after enable, about 1 s of bad samples
     // before a bad state. Its food flag (`surplusGrain`) clears after 20
-    // readings without food at its nominal 50 ms poll: the same second.
+    // readings without food; its poll rate is not recovered, so the food
+    // filter assumes the nominal 50 ms the outlet's implies: the same 1 s.
     sensors: SensorLimits {
         optical_settle_ms: 100,
         food_empty_delay_ms: 1000,

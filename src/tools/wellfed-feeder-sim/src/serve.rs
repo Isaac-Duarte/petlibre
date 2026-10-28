@@ -61,7 +61,7 @@ pub enum Control {
     /// Fill the hopper (`true`) or empty it, as the next feed's food beam
     /// reads it. A restart fills it again.
     Hopper(bool),
-    /// End the next feed on this fault once its first portion is in.
+    /// End the next feed on this fault once it has driven a portion.
     FaultFeed(FeedFault),
     /// Stop serving.
     Quit,

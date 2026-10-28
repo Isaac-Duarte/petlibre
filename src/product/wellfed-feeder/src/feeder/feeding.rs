@@ -38,7 +38,7 @@
 
 use core::fmt;
 
-use wellfed_proto::api::{Blocked, EventBody, PORTIONS_MAX, Readiness, Refusal, Source};
+use wellfed_proto::api::{Blocked, EventBody, FoodLevel, PORTIONS_MAX, Readiness, Refusal, Source};
 
 use crate::feed;
 
@@ -158,23 +158,12 @@ impl Watch {
     }
 
     /// The food beam's latest reading, `reading`, with no feed in flight
-    /// (`at_rest`): recorded as a `Food` event when it differs from the
-    /// last one recorded this boot. During a feed the level waits for its
-    /// end, so a beam that flickers records once.
-    pub fn food<P: Platform>(
-        &mut self,
-        platform: &mut P,
-        now_ms: u32,
-        reading: Option<bool>,
-        at_rest: bool,
-    ) {
-        let Some(present) = reading.filter(|_| at_rest) else {
-            return;
-        };
-        if self.food.replace(present) != Some(present) {
-            let level = feed::food_level(Some(present));
-            events::record(platform, now_ms, EventBody::Food { level });
-        }
+    /// (`at_rest`): the level to record as a `Food` event when it differs
+    /// from the last one recorded this boot. During a feed the level waits
+    /// for its end, so a beam that flickers records once.
+    pub fn food(&mut self, reading: Option<bool>, at_rest: bool) -> Option<FoodLevel> {
+        let present = reading.filter(|_| at_rest)?;
+        (self.food.replace(present) != Some(present)).then(|| feed::food_level(Some(present)))
     }
 
     /// A Dispense press that could not feed, for `reason`: recorded in the
@@ -251,5 +240,30 @@ pub(super) const fn refusal_name(refusal: Refusal) -> &'static str {
         | Refusal::Time
         | Refusal::NoClock
         | Refusal::Update(_) => "other",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// One `Food` event a change, and only at rest: none before the beam
+    /// has read, none while a feed runs however it flickers, none for a
+    /// level already recorded.
+    #[test]
+    fn the_food_level_is_recorded_once_a_change_at_rest() {
+        let mut watch = Watch::new();
+        assert_eq!(watch.food(None, true), None, "no reading at boot");
+
+        // A feed reads food, then empty, then food, and ends.
+        for reading in [true, false, true] {
+            assert_eq!(watch.food(Some(reading), false), None, "during a feed");
+        }
+        assert_eq!(watch.food(Some(true), true), Some(FoodLevel::Present));
+        assert_eq!(watch.food(Some(true), true), None, "no repeat");
+
+        assert_eq!(watch.food(Some(false), false), None);
+        assert_eq!(watch.food(Some(false), true), Some(FoodLevel::Empty));
+        assert_eq!(watch.food(Some(false), true), None);
     }
 }

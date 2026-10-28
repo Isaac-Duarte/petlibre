@@ -16,9 +16,11 @@
 //! bound that extension. The portion's inhibit window stays anchored to the
 //! last portion across a reversal, so the mark just past a cleared jam
 //! still counts, and the one boundary backing off can recross is not
-//! counted twice. The limit held while backing off or stopped (the jam
-//! holds both ways) ends it `Jammed` at once, and a reading over
-//! `current_max_ma` ends it `Overcurrent` at once, with no reversal.
+//! counted twice. The limit held while backing off (the jam holds both
+//! ways) ends it `Jammed` at once. The limit held while stopped (a pause,
+//! after a reversal or between a double bowl's directions), or one reading
+//! over `current_max_ma`, ends it `Overcurrent` at once, with no reversal:
+//! nothing turns while stopped, so that is no jam.
 //!
 //! Missing feedback is no jam: without marks the controller cannot tell a
 //! stopped rotor from a lost sensor, so it never reverses blind. The request
@@ -100,7 +102,7 @@ pub enum FeedReason {
     FeedbackStream = 11,
     Output = 12,
     /// Current held over the limit that no reversal freed: after
-    /// `max_reverse_attempts`, or held while backing off or stopped.
+    /// `max_reverse_attempts`, or held while backing off.
     Jammed = 13,
     /// The mark input read LOW for `mark_low_ms` of forward drive.
     MarkStuck = 14,
@@ -636,10 +638,15 @@ impl FeedController {
         let overcurrent = self.over_limit >= OVERCURRENT_POLLS;
 
         match self.state {
-            // The limit held while backing off or stopped: the jam holds
-            // both ways, or the reading is wrong. No more motion either way.
-            FeedState::Reversing | FeedState::DirectionPause if overcurrent => {
+            // The limit held while backing off: the jam holds both ways.
+            // Held while stopped, it is no jam (nothing turns) but a
+            // reading no motor at rest gives. No more motion either way.
+            FeedState::Reversing if overcurrent => {
                 self.stop(FeedState::Fault, FeedReason::Jammed);
+                return;
+            }
+            FeedState::DirectionPause if overcurrent => {
+                self.stop(FeedState::Fault, FeedReason::Overcurrent);
                 return;
             }
             FeedState::Reversing => {

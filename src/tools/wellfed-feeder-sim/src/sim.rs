@@ -219,7 +219,7 @@ impl Sim {
         self.feeds.stall(stalled);
     }
 
-    /// End the next feed on `reason` once its first portion is in.
+    /// End the next feed on `reason` once it has driven a portion.
     pub fn fault_feed(&mut self, reason: FeedReason) {
         self.feeds.fault(reason);
     }

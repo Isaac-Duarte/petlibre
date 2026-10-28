@@ -28,10 +28,11 @@
 //!   a sag; the firmware's owner and its plant (`wellfed-sim`) cover that.
 //! - [`SimFeeds::stall`] holds a feed in flight where it is, as a motor
 //!   that stopped moving would, so a test can act while a feed runs.
-//! - [`SimFeeds::fault`] makes the next feed end on a fault once its first
-//!   portion is in, as the firmware's owner ends it: a blocked outlet or a
-//!   jam no reversal freed, `Failed` with the portion delivered, never
-//!   resumed or retried.
+//! - [`SimFeeds::fault`] makes the next feed end on a fault once it has
+//!   driven a portion's time, as the firmware's owner ends it: a blocked
+//!   outlet or a jam no reversal freed, `Failed` with one portion delivered
+//!   (none for a feed of one, which ends before its mark), never resumed
+//!   or retried.
 //! - The hopper has food until [`SimFeeds::fill`] empties it. Each feed
 //!   reads it as the food beam would, runs whatever it reads (as the
 //!   firmware's and stock's do) and records the reading in its `Fed`
@@ -153,8 +154,10 @@ impl SimFeeds {
         !self.adapter && !self.floor.above()
     }
 
-    /// End the next feed on `reason` once its first portion is in (or at
-    /// once, for a feed of one): an outlet that blocks or a jam that holds.
+    /// End the next feed on `reason` once it has driven a portion's time:
+    /// an outlet that blocks or a jam that holds. A feed of more than one
+    /// portion ends with that one delivered; a feed of one ends `Failed`
+    /// with none, since it ends before its last mark.
     pub fn fault(&mut self, reason: FeedReason) {
         self.fault = Some(reason);
     }
@@ -218,8 +221,8 @@ impl SimFeeds {
         current.stepped_ms = Some(now_ms);
         let full = u32::from(current.portions) * PORTION_MS;
         let cancelled = current.cancelled.get();
-        // A fault comes once the first portion is in, and ends the feed
-        // with it: stopped, never resumed.
+        // A fault comes after a portion's drive and ends the feed there:
+        // stopped, never resumed. A feed of one has not reached its mark.
         let faulted = self.fault.filter(|_| current.driven_ms >= PORTION_MS);
         if !cancelled && faulted.is_none() && current.driven_ms < full {
             let next = if self.fault.is_some() {

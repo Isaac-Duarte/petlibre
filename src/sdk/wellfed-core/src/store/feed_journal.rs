@@ -332,13 +332,14 @@ impl<I: SlotIo> FeedJournal<I> {
     }
 
     /// Unit `slot` by the torn-write rule. The journal has no read-only
-    /// state: a newer format version is a record it cannot read.
+    /// state and never forgets a reservation: a record in a newer or an
+    /// older format version is one it cannot read, so it is invalid and
+    /// faults whatever it sits beside.
     fn scan(&self, slot: c_uint) -> Option<Found<JournalView>> {
         let found = self.units.scan(slot, |p| self.decode(p))?;
-        Some(if found.is_future() {
-            Found::Invalid
-        } else {
-            found
+        Some(match found {
+            Found::Future | Found::Older => Found::Invalid,
+            found => found,
         })
     }
 

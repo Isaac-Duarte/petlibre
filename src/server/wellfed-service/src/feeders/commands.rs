@@ -8,7 +8,7 @@ use wellfed_api::{
     CommandKind, CommandOutcome, ErrorCode, FeederDetail, FeederId, FeederRefusal, Generation,
     LockRequest, Settings, SettingsPatch, StatusSnapshot,
 };
-use wellfed_model::{Answer, Op};
+use wellfed_model::{Answer, Op, Window};
 
 use crate::feeders::journal::Write;
 use crate::{Caller, Error, IdempotencyKey, InternalError, Invalid, RequestId, Result, Service};
@@ -106,6 +106,13 @@ impl Service {
     ) -> Result<Settings> {
         if patch.volume.is_some_and(|volume| volume > 100) {
             return Err(Invalid::Volume.into());
+        }
+        if ![patch.lights_window, patch.sound_window]
+            .into_iter()
+            .flatten()
+            .all(Window::valid)
+        {
+            return Err(Invalid::Window.into());
         }
         self.live_row(id).await?;
 

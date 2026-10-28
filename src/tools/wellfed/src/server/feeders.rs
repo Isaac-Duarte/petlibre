@@ -14,7 +14,7 @@ use clap::{Args, ValueEnum};
 use uuid::Uuid;
 use wellfed_server_client::api::{
     Command, CommandOutcome, CommandQuery, CommandState, EventQuery, FeedOutcome, Feeder, FeederId,
-    SettingsPatch, StreamEvent, StreamQuery,
+    SettingsPatch, StreamEvent, StreamQuery, Window,
 };
 use wellfed_server_client::{Client, Lock, Updates};
 
@@ -70,6 +70,14 @@ pub(crate) struct SettingsArgs {
     /// 0-100.
     #[arg(long)]
     volume: Option<u8>,
+    /// When lit lights may show: `always`, or `HH:MM-HH:MM` on the
+    /// feeder's local clock (inclusive; may wrap midnight).
+    #[arg(long, value_name = "WINDOW")]
+    lights_window: Option<Window>,
+    /// When sounds may play: `always`, or `HH:MM-HH:MM` as for
+    /// `--lights-window`.
+    #[arg(long, value_name = "WINDOW")]
+    sound_window: Option<Window>,
 }
 
 #[derive(Args)]
@@ -177,6 +185,8 @@ pub(super) async fn settings(client: &Client, args: SettingsArgs, out: Output) -
         lights: args.lights.map(Toggle::on),
         sound: args.sound.map(Toggle::on),
         volume: args.volume,
+        lights_window: args.lights_window,
+        sound_window: args.sound_window,
     };
     if patch == SettingsPatch::default() {
         out.show(&current, text::settings)?;

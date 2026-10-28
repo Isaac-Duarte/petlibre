@@ -1,10 +1,15 @@
 //! Two-slot alternating device settings, in the dual-slot store
 //! (`wellfed_core::store::slot`) as the feed journal is.
 //!
-//! The on-flash v1 record is 128 bytes: magic `PLFSET01`, version, record
+//! The on-flash v2 record is 128 bytes: magic `PLFSET01`, version, record
 //! size, generation, binding, bowl mode, flags (bit 0 lights, bit 1 sound),
-//! volume, a zero byte, UTC offset in minutes, zero padding, CRC-32/ISO-HDLC
-//! of bytes 0..120 at 120 and the `CMIT` commit marker at 124.
+//! volume, a zero byte, UTC offset in minutes, the lights and sound windows
+//! (a kind byte each at 34 and 35, 0 always and 1 between, then each
+//! window's start and end minute as u16 at 36..40 and 40..44), zero
+//! padding, CRC-32/ISO-HDLC of bytes 0..120 at 120 and the `CMIT` commit
+//! marker at 124. A record in an older version (v1, without the windows) is
+//! never migrated: it counts as erased, so the store opens on defaults and
+//! the next save replaces it.
 //!
 //! Unlike the journal, losing the newest settings change is safe, so a torn
 //! or invalid newer slot falls back to the older valid one. Storage with no
@@ -16,12 +21,13 @@
 use core::ffi::c_uint;
 
 use wellfed_core::feed::progress::BowlMode;
+use wellfed_core::settings::{SettingsFields, SettingsView, Window};
 use wellfed_core::store::slot::{
     CRC_AT, DualSlot, Extent, Found, Layout, Pick, Prepare, RECORD_BYTES, SlotIo, get_u16, get_u64,
     newest, put_u16, put_u64, seal, target,
 };
 
-pub const VERSION: u16 = 1;
+pub const VERSION: u16 = 2;
 /// Settings read their whole units, as the journal does, so data another
 /// writer left is never taken for empty settings and overwritten.
 const LAYOUT: Layout = Layout {
@@ -47,6 +53,8 @@ pub struct Settings {
     pub sound: bool,
     pub volume: u8,
     pub utc_offset_minutes: i16,
+    pub lights_window: Window,
+    pub sound_window: Window,
 }
 
 impl Default for Settings {
@@ -57,6 +65,8 @@ impl Default for Settings {
             sound: true,
             volume: 50,
             utc_offset_minutes: 0,
+            lights_window: Window::Always,
+            sound_window: Window::Always,
         }
     }
 }
@@ -65,6 +75,35 @@ impl Settings {
     pub fn valid(&self) -> bool {
         self.volume <= MAX_VOLUME
             && (MIN_UTC_OFFSET..=MAX_UTC_OFFSET).contains(&self.utc_offset_minutes)
+            && self.lights_window.valid()
+            && self.sound_window.valid()
+    }
+
+    /// These settings with a request's fields applied; the writer's merge,
+    /// shared with the host simulator so the two cannot drift.
+    pub fn changed(self, fields: SettingsFields) -> Self {
+        Self {
+            lights: fields.lights.unwrap_or(self.lights),
+            sound: fields.sound.unwrap_or(self.sound),
+            volume: fields.volume.unwrap_or(self.volume),
+            lights_window: fields.lights_window.unwrap_or(self.lights_window),
+            sound_window: fields.sound_window.unwrap_or(self.sound_window),
+            ..self
+        }
+    }
+
+    /// The view the writer publishes for these settings.
+    pub fn view(&self, generation: u64, writable: bool) -> SettingsView {
+        SettingsView {
+            lights: self.lights,
+            sound: self.sound,
+            volume: self.volume,
+            lights_window: self.lights_window,
+            sound_window: self.sound_window,
+            // Reported as 32 bits; saturate rather than wrap to an old value.
+            generation: u32::try_from(generation).unwrap_or(u32::MAX),
+            writable,
+        }
     }
 }
 
@@ -74,7 +113,8 @@ pub enum SettingsStatus {
     /// A valid record; the other slot is erased or holds the older one.
     #[default]
     Loaded = 0,
-    /// Both slots erased: defaults, writable.
+    /// Each slot erased or holding an older format version: defaults,
+    /// writable.
     Empty = 1,
     /// A valid record, with the other slot torn or invalid.
     Recovered = 2,
@@ -108,6 +148,9 @@ pub enum SlotState {
     Dirty = 4,
     /// Anything else, including a unit whose erase was cut short.
     Invalid = 5,
+    /// A record in an older format version of this store, superseded: no
+    /// build migrates it, so it counts as erased.
+    Older = 6,
 }
 
 impl SlotState {
@@ -123,6 +166,7 @@ impl SlotState {
             Found::Erased => Self::Erased,
             Found::Valid(_) => Self::Valid,
             Found::Future => Self::Future,
+            Found::Older => Self::Older,
             Found::Partial => Self::Dirty,
             Found::Unmarked | Found::Torn | Found::Invalid => Self::Invalid,
         }
@@ -167,14 +211,21 @@ impl<I: SlotIo> SettingsStore<I> {
         p[29] = u8::from(s.lights) | (u8::from(s.sound) << 1);
         p[30] = s.volume;
         put_u16::<32, _>(&mut p, s.utc_offset_minutes as u16);
+        let (kind, start, end) = window_fields(s.lights_window);
+        p[34] = kind;
+        put_u16::<36, _>(&mut p, start);
+        put_u16::<38, _>(&mut p, end);
+        let (kind, start, end) = window_fields(s.sound_window);
+        p[35] = kind;
+        put_u16::<40, _>(&mut p, start);
+        put_u16::<42, _>(&mut p, end);
 
         seal(&mut p);
         p
     }
 
     /// The generation and the settings of a record whose header and
-    /// checksum hold. Only v1 exists; an older version would be migrated
-    /// in the slot layer's version check.
+    /// checksum hold.
     fn decode(&self, p: &[u8; RECORD_BYTES]) -> Option<(u64, Settings)> {
         if get_u64::<BINDING_AT, _>(p) != self.binding {
             return None;
@@ -187,11 +238,13 @@ impl<I: SlotIo> SettingsStore<I> {
             sound: p[29] & 2 != 0,
             volume: p[30],
             utc_offset_minutes: get_u16::<32, _>(p) as i16,
+            lights_window: window(p[34], get_u16::<36, _>(p), get_u16::<38, _>(p))?,
+            sound_window: window(p[35], get_u16::<40, _>(p), get_u16::<42, _>(p))?,
         };
         let generation = get_u64::<GENERATION_AT, _>(p);
         if p[29] & !3 != 0
             || p[31] != 0
-            || p[34..CRC_AT].iter().any(|&b| b != 0)
+            || p[44..CRC_AT].iter().any(|&b| b != 0)
             || !s.valid()
             || generation == 0
         {
@@ -224,13 +277,15 @@ impl<I: SlotIo> SettingsStore<I> {
         };
         self.slots = [SlotState::of(&a), SlotState::of(&b)];
 
+        // A record in an older version of this store is superseded, never
+        // migrated: it counts as an erased unit, so a format change starts
+        // from writable defaults rather than locking the store.
+        let blank = |found: &Found<_>| found.is_erased() || matches!(found, Found::Older);
         let both_valid = a.is_valid() && b.is_valid();
-        let either_erased = a.is_erased() || b.is_erased();
+        let either_erased = blank(&a) || blank(&b);
         // A torn first save never committed anything: still empty.
-        let first_cut = matches!(
-            (a, b),
-            (Found::Partial, Found::Erased) | (Found::Erased, Found::Partial)
-        );
+        let first_cut = (matches!(a, Found::Partial) && blank(&b))
+            || (blank(&a) && matches!(b, Found::Partial));
         self.status = match newest(a, b, |&(generation, _)| generation) {
             // A newer schema anywhere means this firmware must not write.
             Pick::Future => SettingsStatus::Future,
@@ -244,7 +299,7 @@ impl<I: SlotIo> SettingsStore<I> {
                     SettingsStatus::Recovered
                 }
             }
-            Pick::Nothing if (a.is_erased() && b.is_erased()) || first_cut => SettingsStatus::Empty,
+            Pick::Nothing if (blank(&a) && blank(&b)) || first_cut => SettingsStatus::Empty,
             Pick::Nothing => SettingsStatus::Corrupt,
         };
 
@@ -306,5 +361,24 @@ impl<I: SlotIo> SettingsStore<I> {
             SettingsStatus::Io
         };
         ok
+    }
+}
+
+/// A window's kind byte and its bounds, as the record keeps them (zero for
+/// always).
+fn window_fields(window: Window) -> (u8, u16, u16) {
+    match window {
+        Window::Always => (0, 0, 0),
+        Window::Between { start, end } => (1, start, end),
+    }
+}
+
+/// The window a record's kind byte and bounds name; `None` for an unknown
+/// kind, or an always window with bounds.
+fn window(kind: u8, start: u16, end: u16) -> Option<Window> {
+    match kind {
+        0 if start == 0 && end == 0 => Some(Window::Always),
+        1 => Some(Window::Between { start, end }),
+        _ => None,
     }
 }

@@ -54,7 +54,7 @@ The web frontends in `src/web/` follow the [TypeScript standard](docs/developmen
 
 Old on-disk evidence and stale file fields may break when that makes the code simpler; drop the legacy reader rather than carrying it. Some things are live interop rather than legacy, and must stay exact:
 - formats a current consumer reads (the frozen reviews, plans and journals `wellfed-flash` accepts, including those the former Python tools wrote);
-- the stock and replacement firmware wire protocols;
+- the stock firmware wire protocol, and the replacement's within the [device API's evolution rules](docs/firmware/device-api.md#evolution) (which allow in-place changes while the research unit is the only Wellfed feeder);
 - canonical JSON that is hashed;
 - every pinned check in the hard rules.
 

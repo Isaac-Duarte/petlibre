@@ -9058,6 +9058,8 @@
           "lights",
           "sound",
           "volume",
+          "lights_window",
+          "sound_window",
           "writable"
         ],
         "properties": {
@@ -9067,8 +9069,16 @@
           "lights": {
             "type": "boolean"
           },
+          "lights_window": {
+            "$ref": "#/components/schemas/Window",
+            "description": "When the lights may show while `lights` is on."
+          },
           "sound": {
             "type": "boolean"
+          },
+          "sound_window": {
+            "$ref": "#/components/schemas/Window",
+            "description": "When sounds may play while `sound` is on and `volume` is above 0."
           },
           "volume": {
             "type": "integer",
@@ -9092,10 +9102,30 @@
               "null"
             ]
           },
+          "lights_window": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Window"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "sound": {
             "type": [
               "boolean",
               "null"
+            ]
+          },
+          "sound_window": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Window"
+              },
+              {
+                "type": "null"
+              }
             ]
           },
           "volume": {
@@ -10428,6 +10458,53 @@
           "stored",
           "fallback"
         ]
+      },
+      "Window": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "mode"
+            ],
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "always"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "start",
+              "end",
+              "mode"
+            ],
+            "properties": {
+              "end": {
+                "type": "integer",
+                "format": "int32",
+                "maximum": 1439,
+                "minimum": 0
+              },
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "between"
+                ]
+              },
+              "start": {
+                "type": "integer",
+                "format": "int32",
+                "maximum": 1439,
+                "minimum": 0
+              }
+            }
+          }
+        ],
+        "description": "When lights or sound that are on may show or play: always, or only from\nminute `start` to minute `end` of the feeder's local day (0-1439, both\nincluded; an end before the start wraps past midnight). While the\nfeeder's clock is invalid every window is open.\n\nSpelled `always` or `HH:MM-HH:MM` on the command line."
       }
     }
   },

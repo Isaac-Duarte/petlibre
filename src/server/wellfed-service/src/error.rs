@@ -212,6 +212,8 @@ pub enum Invalid {
     AddressRequired,
     #[error("the volume is 0-100")]
     Volume,
+    #[error("a window's start and end are minutes of the day, 0-1439")]
+    Window,
     #[error("a page holds 1-500 events")]
     Limit,
     #[error("the server's label is 1-16 bytes with no NUL")]

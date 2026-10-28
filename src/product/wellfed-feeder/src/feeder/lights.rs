@@ -3,8 +3,7 @@
 //! ([`wellfed_core::indicator`]), and the driver that puts the winners on
 //! the pads.
 //!
-//! **Provisional mapping.** Which states show, how, and what the `lights`
-//! setting hides is the lights and sound settings' policy, still to be
+//! **Provisional mapping.** Which states show, and how, is still to be
 //! settled against stock. Until then the loop shows enough to exercise the
 //! service on the board ([indicators](../../../../../docs/firmware/indicators.md)):
 //!
@@ -20,8 +19,11 @@
 //! | the panel is locked | lock | steady | 10 |
 //! | the feeder has an address | connection | steady | 10 |
 //!
-//! With the `lights` setting off every light is dark, as stock drives them
-//! all LOW; the requests still hold, so the lights come back as they were.
+//! With the `lights` setting off, or outside its window on the local clock,
+//! every light is dark, faults included, as stock drives them all LOW; the
+//! requests still hold, so the lights come back as they were. The loop
+//! decides that ([`States::lights`]) each pass, which comes at least every
+//! 20 ms, so a window opens and closes within a pass of its minute.
 //!
 //! **Never in a feed's way.** A step is a few comparisons and at most one
 //! masked port write per light that changes, made whatever the motor does
@@ -114,7 +116,8 @@ pub struct States {
     pub feeding: bool,
     pub locked: bool,
     pub online: bool,
-    /// The `lights` setting; true until the settings load.
+    /// The `lights` setting inside its window; true until the settings
+    /// load, and while the clock is invalid.
     pub lights: bool,
 }
 

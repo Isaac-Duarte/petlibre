@@ -7,7 +7,7 @@ use std::time::Duration;
 use serde_json::json;
 use wellfed_model::{
     Counters, Counts, Generation, Memory, NtpServer, OpenRefusal, Refusal, ResetCause, Settings,
-    Stats, StatsSection, TimeView, WifiSource,
+    Stats, StatsSection, TimeView, WifiSource, Window,
 };
 
 use super::log::Log;
@@ -72,6 +72,8 @@ struct Feeder {
     lights: bool,
     sound: bool,
     volume: u8,
+    lights_window: Window,
+    sound_window: Window,
     generation: u32,
     stored: bool,
     wifi_generation: u32,
@@ -153,6 +155,8 @@ impl Feeder {
             lights: true,
             sound: true,
             volume: 40,
+            lights_window: Window::Always,
+            sound_window: Window::Always,
             generation: 2979,
             stored: false,
             wifi_generation: 4,
@@ -333,6 +337,8 @@ impl Feeder {
             lights: self.lights,
             sound: self.sound,
             volume: self.volume,
+            lights_window: self.lights_window,
+            sound_window: self.sound_window,
             writable: true,
         }
     }
@@ -567,6 +573,12 @@ impl Feeder {
                 }
                 if let Some(volume) = changes.volume {
                     self.volume = volume;
+                }
+                if let Some(window) = changes.lights_window {
+                    self.lights_window = window;
+                }
+                if let Some(window) = changes.sound_window {
+                    self.sound_window = window;
                 }
                 self.generation += 1;
                 let saved = format!(

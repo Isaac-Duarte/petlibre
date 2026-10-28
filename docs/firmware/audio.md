@@ -11,7 +11,7 @@ Recovered from the stock KM4 image (`DL_AUDIO`, `audio_play_http_file`):
 - **Audio path.** Stock decodes AAC (a downloaded meal call, or one of up to 11 named prompts) and streams PCM through SPORT by GDMA into the codec.
 - **Codec setup.** `CODEC_Init(rate, 16-bit, mono flag, 8)`, where application 8 is `APP_LINE_OUT`. The I2S PLL and divider are chosen per sample rate; 8, 16, 32, 44.1 and 48 kHz are supported.
 - **Amplifier.** PB23 (`0x37`) is written HIGH while it plays and LOW afterwards. This is the amplifier enable.
-- **PA25.** A separate GPIO buzzer line, pulsed HIGH by a one-shot 200-tick timer. It drives an active buzzer: a HIGH alone beeps ([evidence](#evidence)). Wellfed does not use it yet.
+- **PA25.** A separate GPIO buzzer line, pulsed HIGH by a one-shot 200-tick timer. It drives an active buzzer: a HIGH alone beeps ([evidence](#evidence)). The `feeder` firmware beeps it for 200 ms on every button press, as stock does, when sound may play: `sound` on, a volume above 0 and inside the sound window. The buzzer has one pitch and loudness, so volume only mutes it at 0.
 
 Stock also keeps clips in flash (recovered from a full-flash dump):
 
@@ -42,7 +42,7 @@ Three pieces work together: a C shim that owns the codec, a tune renderer, and a
 - A one-slot mailbox holds the tune. The slot stays taken until playback ends, so a second request is `busy` rather than queued.
 - For each tune it opens the codec, sets PB23 HIGH, and plays 150 ms of silence while the amplifier settles. It then streams the tune, waits at most 400 ms for the ring to drain, sets PB23 LOW and closes.
 - A ring that stops draining still ends playback at the tune's length plus 1 s, so the amplifier is never left on.
-- The QA firmware and the bring-up `speaker` variant play the startup chime once the settings are loaded, unless `sound` is off. The `feeder` firmware starts its speaker quiet and boots silently.
+- The QA firmware and the bring-up `speaker` variant play the startup chime once the settings are loaded, unless sound is muted as above. The `feeder` firmware starts its speaker quiet and boots silently.
 
 Audio is independent of feeding. The task touches only the codec, its DMA and PB23, never the motor, the emitters or flash.
 
@@ -51,7 +51,7 @@ Audio is independent of feeding. The task touches only the codec, its DMA and PB
 A tune is queued only through `audio::request`. It answers:
 
 - `Started`;
-- `Muted`, when the `sound` setting is off;
+- `Muted`, when the `sound` setting is off, the volume is 0, or the local time is outside the sound window (every window is open while the clock is invalid);
 - `Busy`, when another tune plays or the settings are not loaded yet.
 
 The device API's `Play` request carries a tune. The `feeder` firmware does not serve it yet, since it steps the speaker only in setup mode.
@@ -71,8 +71,6 @@ The task logs `PLAUD1` lines:
 ## Not done yet
 
 - **Stored clips.** Playing stock's clips needs a read-only FAT reader, the SDK's Helix AAC decoder and a 44.1 kHz codec setup.
-- **The buzzer.** PA25 beeps, but nothing in the product uses it yet; which events beep is light and sound policy.
-- **Quiet windows**, which are light and sound policy.
 - **A meal call** before a scheduled meal, when its plan enables one ([device API](device-api.md)).
 
 ## Evidence

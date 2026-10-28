@@ -6,7 +6,9 @@
 //! opens the codec, enables the amplifier, streams the tune into the DMA ring,
 //! waits for the ring to drain and closes everything again. The slot stays
 //! taken until then, so a second request is `busy`, never queued behind. The
-//! `sound` setting mutes requests and its `volume` sets loudness.
+//! `sound` setting, a volume of 0 and the sound window (on the local clock,
+//! open while the clock is invalid) mute requests, and `volume` sets
+//! loudness.
 //! Nothing here touches the motor, the emitters or flash, and the device
 //! API only reaches [`request`].
 
@@ -19,7 +21,7 @@ pub use wellfed_core::tone::PlayResult;
 use wellfed_core::tone::{Player, SAMPLE_RATE, Tune};
 
 use crate::sdk;
-use crate::settings;
+use crate::{clock, settings};
 
 /// The amplifier enable (stock writes it HIGH around playback).
 pub const AMP_PIN: u32 = crate::plaf103::pins::AMP;
@@ -69,13 +71,21 @@ pub fn request(tune: Tune) -> PlayResult {
     let Some(view) = settings::current() else {
         return PlayResult::Busy;
     };
-    if !view.sound {
+    if !view.sound_at(local_ms()) {
         return PlayResult::Muted;
     }
     match SLOT.compare_exchange(EMPTY, tune.code() + 1, Ordering::AcqRel, Ordering::Acquire) {
         Ok(_) => PlayResult::Started,
         Err(_) => PlayResult::Busy,
     }
+}
+
+/// Local wall time now, for the sound window; `None` while the clock is
+/// invalid or has no offset.
+fn local_ms() -> Option<i64> {
+    clock::state()
+        .reading
+        .and_then(|reading| reading.local_ms())
 }
 
 /// Forget everything (host tests).
@@ -213,7 +223,7 @@ impl Speaker {
                     return next(POLL_MS * 5, None);
                 };
                 self.stage = Stage::Idle;
-                if !view.sound {
+                if !view.sound_at(local_ms()) {
                     return next(POLL_MS, Some(Record::Muted { tune: Tune::Chime }));
                 }
                 let _ = SLOT.compare_exchange(

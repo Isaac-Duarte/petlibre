@@ -454,4 +454,14 @@ pub trait Platform {
     /// Queue a tune for the speaker.
     fn play(&mut self, tune: Tune) -> PlayResult;
     fn speaker_step(&mut self) -> DriverStep<Self::Record>;
+
+    // ---- The buzzer.
+
+    /// Make the buzzer's line an output, LOW. Called once, with no feed
+    /// queued or running, since it rewrites a port register the motor
+    /// shares.
+    fn buzzer_enable(&mut self);
+    /// Drive the panel's buzzer (PA25 on the PLAF103, an active buzzer:
+    /// on beeps at its own pitch), once enabled.
+    fn buzzer(&mut self, on: bool);
 }

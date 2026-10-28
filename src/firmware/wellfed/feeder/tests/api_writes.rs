@@ -78,6 +78,7 @@ fn start() -> MutexGuard<'static, ()> {
         volume: 50,
         generation: 1,
         writable: true,
+        ..Default::default()
     });
     let mut store = NetStore::default();
     store.open(FakeNet);

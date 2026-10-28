@@ -29,6 +29,10 @@
 //! - An existing struct or variant never gains, loses, reorders or retypes
 //!   a field: postcard is positional, so an old peer would misread every
 //!   byte after it. New data is a new variant behind a bit.
+//! - While the research unit is the only feeder running Wellfed, a message
+//!   may still change in place when that is simpler: the firmware and every
+//!   client are built from this repository together. The change rewrites
+//!   the message's fixture lines by hand (blessing only appends).
 //!
 //! The byte fixtures in `tests/fixtures/v1.txt` pin every v1 message, and
 //! their test refuses to re-bless a line that changed.
@@ -472,6 +476,22 @@ pub struct SettingsChanges {
     pub sound: Option<bool>,
     /// 0-100.
     pub volume: Option<u8>,
+    pub lights_window: Option<Window>,
+    pub sound_window: Option<Window>,
+}
+
+/// When lights or sound that are on may show or play: always, or only from
+/// minute `start` to minute `end` of the local day (0-1439, both included;
+/// an end before the start wraps past midnight). With no valid clock every
+/// window is open.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Window {
+    #[default]
+    Always,
+    Between {
+        start: u16,
+        end: u16,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -960,6 +980,8 @@ pub struct Settings {
     pub lights: bool,
     pub sound: bool,
     pub volume: u8,
+    pub lights_window: Window,
+    pub sound_window: Window,
     pub writable: bool,
 }
 

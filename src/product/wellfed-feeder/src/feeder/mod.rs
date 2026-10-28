@@ -13,7 +13,7 @@
 //! 3. the supply judged, its change recorded ([`supply`]); a Dispense
 //!    press the panel allowed, queued for the feeding owner, and readiness
 //!    noted ([`feeding`]); then the panel's lights from what the pass now
-//!    knows ([`lights`]);
+//!    knows ([`lights`]), and a press's beep ([`beep`]);
 //! 4. the device API: its sockets, the server's step and the live samples
 //!    ([`serve`]), with the time settings and the NTP exchange ([`time`]);
 //! 5. the speaker, while a tune a client asked for plays (setup mode steps
@@ -24,6 +24,7 @@
 //! [`Feeder::record_outcome`]. Every durable event goes through the
 //! recorder ([`events`]).
 
+pub mod beep;
 pub mod events;
 pub mod feeding;
 pub mod identity;
@@ -43,6 +44,7 @@ use wellfed_session::noise::Keypair;
 
 pub use platform::Platform;
 
+use beep::Beeper;
 use identity::Identity;
 use lights::Lights;
 use lock::LockBox;
@@ -184,6 +186,7 @@ pub struct Feeder<P: Platform> {
     readiness: feeding::Watch,
     supply: supply::Watch,
     lights: Lights,
+    beep: Beeper,
 }
 
 impl<P: Platform> Feeder<P> {
@@ -199,6 +202,7 @@ impl<P: Platform> Feeder<P> {
             readiness: feeding::Watch::new(),
             supply: supply::Watch::new(),
             lights: Lights::new(),
+            beep: Beeper::new(),
         }
     }
 
@@ -300,10 +304,26 @@ impl<P: Platform> Feeder<P> {
             record(Record::Feeding(r))
         });
 
-        let states = self.states(feeds, ready);
+        let local_ms = self
+            .platform
+            .clock_state(now_ms)
+            .reading
+            .and_then(|r| r.local_ms());
+        let states = self.states(feeds, ready, local_ms);
         let lights_delay = self.lights.step(&mut self.platform, now_ms, states, |r| {
             record(Record::Lights(r))
         });
+
+        // Every press beeps when sound may play; not before the settings load.
+        let pressed = self.owner.take_pressed();
+        let allowed = self
+            .platform
+            .settings()
+            .is_some_and(|view| view.sound_at(local_ms));
+        let at_rest = !feeds.busy();
+        let beep_delay = self
+            .beep
+            .step(&mut self.platform, now_ms, pressed, allowed, at_rest);
 
         // Requests read what the owner holds after this step.
         let lock = self.owner.lock();
@@ -339,12 +359,21 @@ impl<P: Platform> Feeder<P> {
             }
             speaker_delay = step.delay_ms;
         }
-        delay.min(serve_delay).min(speaker_delay).min(lights_delay)
+        delay
+            .min(serve_delay)
+            .min(speaker_delay)
+            .min(lights_delay)
+            .min(beep_delay)
     }
 
     /// The feeder's states as the lights show them, after this pass's
-    /// owner step and readiness.
-    fn states<F: Feeds>(&mut self, feeds: &F, ready: Readiness) -> lights::States {
+    /// owner step and readiness, at the local wall time `local_ms`.
+    fn states<F: Feeds>(
+        &mut self,
+        feeds: &F,
+        ready: Readiness,
+        local_ms: Option<i64>,
+    ) -> lights::States {
         let blocked = feeds.blocked();
         lights::States {
             fault: matches!(blocked, Some(Blocked::Fault | Blocked::Journal)),
@@ -357,7 +386,10 @@ impl<P: Platform> Feeder<P> {
             locked: self.owner.lock().is_some_and(Lock::locked),
             online: self.platform.ipv4().is_some(),
             // True until the settings load.
-            lights: self.platform.settings().is_none_or(|view| view.lights),
+            lights: self
+                .platform
+                .settings()
+                .is_none_or(|view| view.lights_at(local_ms)),
         }
     }
 

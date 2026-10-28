@@ -10,7 +10,7 @@
 //! names the store generation it read, so the feeder refuses it as stale if
 //! anything changed in between.
 
-use wellfed_model::{OpenRefusal, Refusal, Settings, SettingsPatch, WifiSource};
+use wellfed_model::{OpenRefusal, Refusal, Settings, SettingsPatch, WifiSource, Window};
 
 use std::ops::Deref;
 use std::time::Duration;
@@ -294,6 +294,8 @@ pub(super) fn changes_to(settings: &Settings) -> SettingsPatch {
         lights: Some(settings.lights),
         sound: Some(settings.sound),
         volume: Some(settings.volume),
+        lights_window: Some(settings.lights_window),
+        sound_window: Some(settings.sound_window),
     }
 }
 
@@ -302,6 +304,12 @@ fn shows(settings: &Settings, change: SettingsPatch) -> bool {
     change.lights.is_none_or(|on| settings.lights == on)
         && change.sound.is_none_or(|on| settings.sound == on)
         && change.volume.is_none_or(|volume| settings.volume == volume)
+        && change
+            .lights_window
+            .is_none_or(|window| settings.lights_window == window)
+        && change
+            .sound_window
+            .is_none_or(|window| settings.sound_window == window)
 }
 
 /// Change settings against the generation just read, see the writer save a
@@ -393,12 +401,27 @@ pub(super) fn started(event: &Event<'_>, build: &str) -> bool {
     matches!(event, Event::Start { build: b, bank: Some(1) } if b.eq_ignore_ascii_case(build))
 }
 
+/// A window that is not `window`, so a flip always changes the store.
+fn other_window(window: Window) -> Window {
+    let night = Window::Between {
+        start: 22 * 60,
+        end: 6 * 60,
+    };
+    if window == night {
+        Window::Always
+    } else {
+        night
+    }
+}
+
 fn settings_persist(ctx: &mut Ctx) -> Result<()> {
     let before = read_settings(ctx)?;
     let changed = SettingsPatch {
         lights: Some(!before.lights),
         sound: Some(!before.sound),
         volume: Some(if before.volume == 35 { 36 } else { 35 }),
+        lights_window: Some(other_window(before.lights_window)),
+        sound_window: Some(other_window(before.sound_window)),
     };
 
     let result = set_settings(ctx, changed).and_then(|base| {

@@ -88,6 +88,7 @@ impl Rig {
             volume: 50,
             generation: 1,
             writable: true,
+            ..Default::default()
         });
         let mut rig = Self {
             _serial: serial,

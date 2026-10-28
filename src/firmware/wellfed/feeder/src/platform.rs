@@ -42,7 +42,7 @@ use wellfed_sdk::hal::interlock::INTERLOCK;
 use wellfed_sdk::hal::leds::{self, Decision, Led};
 use wellfed_sdk::hal::ota::mailbox::{self, Request};
 use wellfed_sdk::hal::sdk::{self, ApiRecv};
-use wellfed_sdk::hal::{clock, net_status, power, rng, settings, startup};
+use wellfed_sdk::hal::{buzzer, clock, net_status, power, rng, settings, startup};
 use wellfed_sdk::storage::{TRACES_BASE, TRACES_UNITS};
 
 /// What the board's own drivers record: `PLBLE1` for setup mode's link,
@@ -570,6 +570,22 @@ impl Platform for Plaf103 {
         DriverStep {
             delay_ms: step.delay_ms,
             record: step.record.map(Driver::Audio),
+        }
+    }
+
+    // The `buzzer` variant's probe owns PA25 alone, so its records describe
+    // only what it drove: the product's beep stays silent there.
+    fn buzzer_enable(&mut self) {
+        if !cfg!(feature = "buzzer") {
+            // The latch is written LOW before the direction, so enabling
+            // never pulses the line.
+            buzzer::enable();
+        }
+    }
+
+    fn buzzer(&mut self, on: bool) {
+        if !cfg!(feature = "buzzer") {
+            buzzer::set(on);
         }
     }
 }

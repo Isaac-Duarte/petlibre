@@ -1,7 +1,7 @@
 //! PA25, the line stock drives as a buzzer: a GPIO it pulses HIGH for 200
-//! ticks. Wellfed sounds through the speaker, so nothing in the product
-//! drives it; this module is for the probe that finds out whether the line
-//! reaches anything.
+//! ticks, an active buzzer that beeps at its own pitch while HIGH. The
+//! `feeder` firmware beeps it for each button press (the product's
+//! `feeder::beep`); the `buzzer` variant probes the line on its own.
 
 use crate::sdk::{self, IrqGuard};
 

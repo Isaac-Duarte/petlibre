@@ -99,6 +99,8 @@ pub struct Owner {
     presses: u32,
     /// The panel allowed a Dispense press this step: one feed to queue.
     dispense: bool,
+    /// A button went down this step: one beep, as stock beeps every press.
+    pressed: bool,
 }
 
 impl fmt::Debug for Owner {
@@ -129,6 +131,7 @@ impl Owner {
             signer: None,
             presses: 0,
             dispense: false,
+            pressed: false,
         }
     }
 
@@ -138,6 +141,12 @@ impl Owner {
     /// runs anyway.
     pub fn take_dispense(&mut self) -> bool {
         core::mem::take(&mut self.dispense)
+    }
+
+    /// A button went down since the last call, whatever the press then
+    /// does (locked, refused or a code digit alike): the loop beeps once.
+    pub fn take_pressed(&mut self) -> bool {
+        core::mem::take(&mut self.pressed)
     }
 
     /// Gestures that ended this boot (every chord released, whatever it
@@ -198,6 +207,9 @@ impl Owner {
         // A setup offer's decision, for setup mode's session.
         let mut decided = None;
         while let Some(gesture) = platform.gesture() {
+            if matches!(gesture, Gesture::Down { .. }) {
+                self.pressed = true;
+            }
             if matches!(gesture, Gesture::Up { .. }) {
                 self.presses = self.presses.saturating_add(1);
             }

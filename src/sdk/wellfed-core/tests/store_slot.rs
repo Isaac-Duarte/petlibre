@@ -107,9 +107,9 @@ fn each_state_of_a_unit_reads_as_the_rule_names_it() {
         place(&mut f, 0, &torn);
         assert_eq!(scan(&mut f, layout, 0), Found::Torn);
 
-        // Checked, but another store's magic or length, an older version,
-        // or fields the store refuses.
-        for (at, value) in [(0, b'Q'), (10, 64), (8, 2), (100, 1)] {
+        // Checked, but another store's magic or length, or fields the store
+        // refuses.
+        for (at, value) in [(0, b'Q'), (10, 64), (100, 1)] {
             let mut p = valid;
             p[at] = value;
             let crc = crc32(&p[..120]);
@@ -117,6 +117,14 @@ fn each_state_of_a_unit_reads_as_the_rule_names_it() {
             place(&mut f, 0, &p);
             assert_eq!(scan(&mut f, layout, 0), Found::Invalid, "byte {at}");
         }
+
+        // An older version, checked: superseded, never decoded.
+        let mut p = valid;
+        p[8] = 2;
+        let crc = crc32(&p[..120]);
+        p[120..124].copy_from_slice(&crc.to_le_bytes());
+        place(&mut f, 0, &p);
+        assert_eq!(scan(&mut f, layout, 0), Found::Older);
 
         // A newer version, checked.
         let mut p = valid;

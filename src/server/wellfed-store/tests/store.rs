@@ -7,7 +7,7 @@ use tempfile::TempDir;
 use uuid::Uuid;
 use wellfed_api::{
     Blocked, ClientRole, EventBody, EventKind, FeederId, FeederStatus, Generation, Household,
-    Readiness, Role, Settings, Source, TimeFormat, Units, UserId, WifiSource,
+    Readiness, Role, Settings, Source, TimeFormat, Units, UserId, WifiSource, Window,
 };
 use wellfed_store::{
     Change, Error, FeederRow, NewEvent, NewFeeder, NewUser, SealedKey, Store, Synced,
@@ -423,6 +423,11 @@ async fn the_cached_status_and_settings_read_back() {
         lights: true,
         sound: false,
         volume: 60,
+        lights_window: Window::Between {
+            start: 1320,
+            end: 420,
+        },
+        sound_window: Window::Always,
         writable: true,
     };
     store.record_settings(id, &settings, at(100)).await.unwrap();

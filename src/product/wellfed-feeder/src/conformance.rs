@@ -25,7 +25,7 @@ use wellfed_device_api::clients::{Label, Role};
 use wellfed_device_api::mailbox::{
     Calibration, CalibrationResult, LockResult, NtpServer, Origin, SettingsFields, SettingsResult,
     SettingsView, TimeFields, TimeResult, TimeSettings, TimeSettingsResult, TimeSettingsView,
-    WifiResult, WifiView, Zone,
+    WifiResult, WifiView, Window, Zone,
 };
 use wellfed_device_api::wifi::Credentials;
 use wellfed_device_api::{Device, EventRead, KeyChange, KeyOutcome};
@@ -137,6 +137,28 @@ pub fn a_settings_change_lands_on_the_writer_turn(rig: &mut impl Rig) {
     assert_eq!(after.generation, before.generation + 1);
     let status = device(rig, 0, |device| device.status(0));
     assert_eq!(status.settings_generation, after.generation);
+
+    // Both windows land too, each on its own field.
+    let night = Window::Between {
+        start: 22 * 60,
+        end: 6 * 60,
+    };
+    let windows = SettingsFields {
+        lights_window: Some(night),
+        sound_window: Some(Window::Between { start: 0, end: 0 }),
+        ..SettingsFields::default()
+    };
+    assert!(matches!(
+        settings(rig, windows),
+        SettingsResult::Current { pending: true, .. }
+    ));
+    rig.write();
+
+    let windowed = settings_view(rig);
+    assert_eq!(windowed.lights_window, night);
+    assert_eq!(windowed.sound_window, Window::Between { start: 0, end: 0 });
+    assert_eq!(windowed.volume, target);
+    assert_eq!(windowed.generation, after.generation + 1);
 }
 
 /// Wi-Fi credentials are saved and cleared on the writer's turn, and the

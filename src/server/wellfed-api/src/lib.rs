@@ -84,7 +84,7 @@ pub use wellfed_model::{
     Blocked, ClientRole, CurrentUnit, EnrollPath, EventBody, EventKind, FeedOutcome, FeedReason,
     Food as FoodStats, Generation, Hex, MetricKind, Power, Readiness, SampleValue, Settings,
     SettingsPatch, Source, Stats, StatsSection, Status as FeederStatus, Trace, TraceEntry,
-    TraceSummary, WifiSource,
+    TraceSummary, WifiSource, Window,
 };
 
 /// The prefix every resource lives under.

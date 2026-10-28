@@ -171,6 +171,11 @@ fn messages() -> Vec<Fixture> {
                     lights: Some(false),
                     sound: None,
                     volume: Some(30),
+                    lights_window: Some(Window::Between {
+                        start: 1320,
+                        end: 420,
+                    }),
+                    sound_window: None,
                 },
             })),
             client,
@@ -243,6 +248,11 @@ fn messages() -> Vec<Fixture> {
                 lights: true,
                 sound: false,
                 volume: 40,
+                lights_window: Window::Always,
+                sound_window: Window::Between {
+                    start: 480,
+                    end: 1200,
+                },
                 writable: true,
             }))),
             feeder,

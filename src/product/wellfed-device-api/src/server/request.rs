@@ -7,7 +7,7 @@ use super::{Phase, Server, Waiting, slot_id};
 use crate::clients::{Label, Role};
 use crate::mailbox::{
     Calibration, CalibrationResult, LockResult, NtpServer, Origin, PlayResult, SettingsFields,
-    SettingsResult, TimeFields, TimeResult, TimeSettingsResult, WifiResult, Zone,
+    SettingsResult, TimeFields, TimeResult, TimeSettingsResult, WifiResult, Window, Zone,
 };
 use crate::pairing::{self, Pairing};
 use crate::wifi::Credentials;
@@ -88,6 +88,8 @@ impl Server {
                     lights: view.lights,
                     sound: view.sound,
                     volume: view.volume,
+                    lights_window: wire_window(view.lights_window),
+                    sound_window: wire_window(view.sound_window),
                     writable: view.writable,
                 }),
                 SettingsResult::Busy => Reply::Refused(Refusal::Busy),
@@ -572,17 +574,16 @@ impl From<Op<'_>> for Action {
             Op::Status => Self::Status,
             Op::GetSettings => Self::GetSettings,
             Op::PutSettings { base, changes } => {
-                if changes
-                    .volume
-                    .is_some_and(|v| v > crate::mailbox::MAX_VOLUME)
-                {
-                    return Self::Invalid;
-                }
                 let fields = SettingsFields {
                     lights: changes.lights,
                     sound: changes.sound,
                     volume: changes.volume,
+                    lights_window: changes.lights_window.map(window),
+                    sound_window: changes.sound_window.map(window),
                 };
+                if !fields.valid() {
+                    return Self::Invalid;
+                }
                 Self::PutSettings { base, fields }
             }
             Op::PutWifi { base, wifi: None } => Self::PutWifi { base, wifi: None },
@@ -823,5 +824,21 @@ fn update_refusal(refusal: UpdateRefusal) -> &'static str {
         UpdateRefusal::NotInstalling => "update-not-installing",
         UpdateRefusal::Store => "update-store",
         UpdateRefusal::Unconfirmed => "update-unconfirmed",
+    }
+}
+
+/// A window as the settings mailbox carries it.
+fn window(window: proto::Window) -> Window {
+    match window {
+        proto::Window::Always => Window::Always,
+        proto::Window::Between { start, end } => Window::Between { start, end },
+    }
+}
+
+/// A window as the wire carries it.
+fn wire_window(window: Window) -> proto::Window {
+    match window {
+        Window::Always => proto::Window::Always,
+        Window::Between { start, end } => proto::Window::Between { start, end },
     }
 }

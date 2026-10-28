@@ -170,6 +170,7 @@ impl Fake {
                 volume: 40,
                 generation: 7,
                 writable: true,
+                ..Default::default()
             },
             wifi_generation: 3,
             locked: Some(false),
@@ -202,6 +203,9 @@ impl Fake {
             self.settings.lights = fields.lights.unwrap_or(self.settings.lights);
             self.settings.sound = fields.sound.unwrap_or(self.settings.sound);
             self.settings.volume = fields.volume.unwrap_or(self.settings.volume);
+            self.settings.lights_window =
+                fields.lights_window.unwrap_or(self.settings.lights_window);
+            self.settings.sound_window = fields.sound_window.unwrap_or(self.settings.sound_window);
             self.settings.generation += 1;
         }
         if self.wifi_pending.take().is_some() {
@@ -865,6 +869,60 @@ fn a_stale_settings_write_is_refused_and_a_current_one_applies() {
             .iter()
             .any(|e| matches!(e.body, EventBody::Settings { generation: 8, .. }))
     );
+}
+
+/// A window crosses the wire both ways, and a bound past the last minute
+/// of the day is refused before it reaches the writer.
+#[test]
+fn a_window_is_written_and_read_back_and_a_bad_one_refused() {
+    let mut rig = Rig::new();
+    let mut owner = open(&mut rig, OWNER);
+    let night = model::Window::Between {
+        start: 22 * 60,
+        end: 6 * 60,
+    };
+
+    let done = ask(
+        &mut rig,
+        &mut owner,
+        1,
+        Op::PutSettings {
+            base: Generation(7),
+            changes: SettingsPatch {
+                sound_window: Some(night),
+                ..SettingsPatch::default()
+            },
+        },
+    );
+    assert_eq!(
+        done,
+        Answer::Done {
+            generation: Some(Generation(8))
+        }
+    );
+    let Answer::Settings(settings) = ask(&mut rig, &mut owner, 2, Op::GetSettings) else {
+        panic!("no settings");
+    };
+    assert_eq!(settings.sound_window, night);
+    assert_eq!(settings.lights_window, model::Window::Always);
+
+    let refused = ask(
+        &mut rig,
+        &mut owner,
+        3,
+        Op::PutSettings {
+            base: Generation(8),
+            changes: SettingsPatch {
+                lights_window: Some(model::Window::Between {
+                    start: 0,
+                    end: 1440,
+                }),
+                ..SettingsPatch::default()
+            },
+        },
+    );
+    assert_eq!(refused, Answer::Refused(model::Refusal::Invalid));
+    assert_eq!(rig.device.settings.generation, 8, "nothing written");
 }
 
 #[test]

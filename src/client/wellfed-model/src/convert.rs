@@ -16,7 +16,7 @@ use crate::{
     Op, OpenRefusal, Phase, Portions, Power, PowerStats, Readiness, Refusal, ResetCause, Resets,
     Sample, SampleValue, Settings, SettingsPatch, Source, Stats, StatsSection, Status, TaskStack,
     TimeSource, TimeSync, TimeView, Tune, UpdatePhase, UpdateRefusal, UpdateStop, UpdateView,
-    WifiSource, setup,
+    WifiSource, Window, setup,
 };
 use crate::{
     CurrentUnit, FeedStats, Malformed, Trace, TraceEntry, TraceMotor, TracePage, TraceSummary,
@@ -193,6 +193,8 @@ impl From<proto::Settings> for Settings {
             lights,
             sound,
             volume,
+            lights_window,
+            sound_window,
             writable,
         } = settings;
         Self {
@@ -200,7 +202,27 @@ impl From<proto::Settings> for Settings {
             lights,
             sound,
             volume,
+            lights_window: lights_window.into(),
+            sound_window: sound_window.into(),
             writable,
+        }
+    }
+}
+
+impl From<proto::Window> for Window {
+    fn from(window: proto::Window) -> Self {
+        match window {
+            proto::Window::Always => Self::Always,
+            proto::Window::Between { start, end } => Self::Between { start, end },
+        }
+    }
+}
+
+impl From<Window> for proto::Window {
+    fn from(window: Window) -> Self {
+        match window {
+            Window::Always => Self::Always,
+            Window::Between { start, end } => Self::Between { start, end },
         }
     }
 }
@@ -1228,11 +1250,15 @@ impl From<SettingsPatch> for proto::SettingsChanges {
             lights,
             sound,
             volume,
+            lights_window,
+            sound_window,
         } = patch;
         Self {
             lights,
             sound,
             volume,
+            lights_window: lights_window.map(Into::into),
+            sound_window: sound_window.map(Into::into),
         }
     }
 }

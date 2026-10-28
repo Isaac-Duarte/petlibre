@@ -6,7 +6,7 @@
 use anyhow::{Context, Result, bail};
 use clap::Args;
 use wellfed_model::{
-    self as model, Answer, NtpServer, Op, SettingsPatch, StatsSection, TimeChanges, Wifi,
+    self as model, Answer, NtpServer, Op, SettingsPatch, StatsSection, TimeChanges, Wifi, Window,
 };
 
 use crate::{Target, Toggle, ask_and_print, connect, passphrase, print_answer, print_json};
@@ -22,6 +22,14 @@ pub(crate) struct SettingsArgs {
     /// 0-100.
     #[arg(long)]
     volume: Option<u8>,
+    /// When lit lights may show: `always`, or `HH:MM-HH:MM` on the
+    /// feeder's local clock (inclusive; may wrap midnight).
+    #[arg(long, value_name = "WINDOW")]
+    lights_window: Option<Window>,
+    /// When sounds may play: `always`, or `HH:MM-HH:MM` as for
+    /// `--lights-window`.
+    #[arg(long, value_name = "WINDOW")]
+    sound_window: Option<Window>,
 }
 
 #[derive(Args)]
@@ -159,6 +167,8 @@ pub(crate) async fn settings_command(args: SettingsArgs) -> Result<()> {
         lights: args.lights.map(Toggle::on),
         sound: args.sound.map(Toggle::on),
         volume: args.volume,
+        lights_window: args.lights_window,
+        sound_window: args.sound_window,
     };
     if changes == SettingsPatch::default() {
         return ask_and_print(&args.target, &Op::GetSettings).await;

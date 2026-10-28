@@ -52,7 +52,7 @@ Startup still enables the indicators only from verified stopped outputs and leav
 
 ## What the feeder shows
 
-Which states show, how, and what the `lights` setting hides is product policy, still to be settled against stock. Until then `wellfed_feeder::feeder::lights` holds a provisional mapping that exercises the service on the board:
+`wellfed_feeder::feeder::lights` maps the feeder's states to the lights. What the settings hide follows stock: with `lights` off, or outside the lights window on the local clock, every light is dark, faults included, and the requests still hold so the lights come back as they were. While the clock is invalid the window is open. Which states show and how is still a provisional mapping that exercises the service on the board:
 
 | State | When | Light | Pattern | Priority |
 | --- | --- | --- | --- | --- |

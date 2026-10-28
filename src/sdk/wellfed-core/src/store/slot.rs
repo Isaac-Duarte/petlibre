@@ -43,8 +43,10 @@
 //! - **Settings** also falls back to the older record, reporting it
 //!   recovered unless the other unit is erased. With no valid record it
 //!   starts empty only after a cut first save of its own (`Partial` beside
-//!   `Erased`); anything else is corrupt, and a newer format version
-//!   read-only, until an explicit reset.
+//!   `Erased`), or when each unit is erased or holds an older format
+//!   version of its record (`Older`, superseded and never migrated);
+//!   anything else is corrupt, and a newer format version read-only, until
+//!   an explicit reset.
 //! - **The feed journal** may never forget a reservation. Two valid records
 //!   must be consecutive; one valid record stands beside an erased unit, or
 //!   beside a cut write (`Partial`, `Unmarked` or `Torn`): a pending
@@ -115,7 +117,8 @@ pub enum Extent {
 pub struct Layout {
     pub magic: [u8; 8],
     /// The format version this build writes and decodes. A higher one is
-    /// [`Found::Future`]; a lower one is invalid, as no migration exists.
+    /// [`Found::Future`]; a lower one is [`Found::Older`], as no migration
+    /// exists.
     pub version: u16,
     pub extent: Extent,
 }
@@ -153,6 +156,10 @@ pub enum Found<V> {
     Valid(V),
     /// Committed and checked, in a newer format version than this build's.
     Future,
+    /// Committed and checked, in an older format version of this store:
+    /// nothing this build decodes, but its own record, superseded. Only
+    /// settings treats it apart from [`Self::Invalid`].
+    Older,
     /// No marker, and the bytes are this store's own record cut short:
     /// some of the magic and then erased bytes, or the whole magic.
     Partial,
@@ -289,6 +296,7 @@ impl<I: SlotIo> DualSlot<I> {
             Class::Current => decode(&p).map_or(Found::Invalid, Found::Valid),
             Class::Erased => Found::Erased,
             Class::Future => Found::Future,
+            Class::Older => Found::Older,
             Class::Partial => Found::Partial,
             Class::Unmarked => Found::Unmarked,
             Class::Torn => Found::Torn,
@@ -334,8 +342,8 @@ impl<I: SlotIo> DualSlot<I> {
                 Class::Invalid
             } else if version > self.layout.version {
                 Class::Future
-            } else if version != self.layout.version {
-                Class::Invalid
+            } else if version < self.layout.version {
+                Class::Older
             } else {
                 Class::Current
             },
@@ -400,6 +408,7 @@ enum Class {
     /// Header, version and checksum hold: the store decodes the fields.
     Current,
     Future,
+    Older,
     Partial,
     Unmarked,
     Torn,

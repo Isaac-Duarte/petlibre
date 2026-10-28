@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use wellfed_api::{
     Connection as Link, EventBody, EventKind, EventQuery, Generation, SettingsPatch, Source,
-    StreamEvent,
+    StreamEvent, Window,
 };
 use wellfed_server_testkit::feeder::{self, Relay};
 use wellfed_server_testkit::fixed::NOW_MS;
@@ -65,6 +65,26 @@ fn settings_change_against_the_current_generation_only() {
                 .put_settings(&ada().into(), id, changed.generation, loud, Some([3; 16]))
                 .await,
             Err(Error::Invalid(Invalid::Volume))
+        ));
+
+        let past_midnight = SettingsPatch {
+            sound_window: Some(Window::Between {
+                start: 0,
+                end: 1440,
+            }),
+            ..SettingsPatch::default()
+        };
+        assert!(matches!(
+            service
+                .put_settings(
+                    &ada().into(),
+                    id,
+                    changed.generation,
+                    past_midnight,
+                    Some([4; 16])
+                )
+                .await,
+            Err(Error::Invalid(Invalid::Window))
         ));
 
         // The settings change's key names that change: reused for a lock,

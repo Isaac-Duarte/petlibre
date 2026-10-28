@@ -1,5 +1,8 @@
 //! What the feeder reports about itself, and its settings.
 
+use std::fmt;
+use std::str::FromStr;
+
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -157,6 +160,10 @@ pub struct Settings {
     pub sound: bool,
     /// 0-100.
     pub volume: u8,
+    /// When the lights may show while `lights` is on.
+    pub lights_window: Window,
+    /// When sounds may play while `sound` is on and `volume` is above 0.
+    pub sound_window: Window,
     /// Whether the settings store can take a write now.
     pub writable: bool,
 }
@@ -171,4 +178,159 @@ pub struct SettingsPatch {
     /// 0-100.
     #[serde(default)]
     pub volume: Option<u8>,
+    #[serde(default)]
+    pub lights_window: Option<Window>,
+    #[serde(default)]
+    pub sound_window: Option<Window>,
+}
+
+/// When lights or sound that are on may show or play: always, or only from
+/// minute `start` to minute `end` of the feeder's local day (0-1439, both
+/// included; an end before the start wraps past midnight). While the
+/// feeder's clock is invalid every window is open.
+///
+/// Spelled `always` or `HH:MM-HH:MM` on the command line.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+pub enum Window {
+    #[default]
+    Always,
+    Between {
+        #[schema(maximum = 1439)]
+        start: u16,
+        #[schema(maximum = 1439)]
+        end: u16,
+    },
+}
+
+/// Why a window's text did not parse.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum WindowError {
+    #[error("`{0}` is not `always` or HH:MM-HH:MM")]
+    Format(String),
+    #[error("`{0}` is not a time of day (00:00 to 23:59)")]
+    Time(String),
+}
+
+impl Window {
+    /// Whether both bounds are minutes of a day (0-1439); the feeder
+    /// refuses any other.
+    pub const fn valid(self) -> bool {
+        match self {
+            Self::Always => true,
+            Self::Between { start, end } => start < DAY_MINUTES && end < DAY_MINUTES,
+        }
+    }
+}
+
+/// Minutes in a day: a window's bounds are below it.
+const DAY_MINUTES: u16 = 24 * 60;
+
+impl fmt::Display for Window {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            Self::Always => f.write_str("always"),
+            Self::Between { start, end } => write!(
+                f,
+                "{:02}:{:02}-{:02}:{:02}",
+                start / 60,
+                start % 60,
+                end / 60,
+                end % 60
+            ),
+        }
+    }
+}
+
+impl FromStr for Window {
+    type Err = WindowError;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        if text == "always" {
+            return Ok(Self::Always);
+        }
+        let Some((start, end)) = text.split_once('-') else {
+            return Err(WindowError::Format(text.to_owned()));
+        };
+        Ok(Self::Between {
+            start: minute(start)?,
+            end: minute(end)?,
+        })
+    }
+}
+
+/// `HH:MM` as a minute of the day.
+fn minute(text: &str) -> Result<u16, WindowError> {
+    let invalid = || WindowError::Time(text.to_owned());
+    let (hours, minutes) = text.split_once(':').ok_or_else(invalid)?;
+    let digits = |part: &str| part.len() == 2 && part.bytes().all(|b| b.is_ascii_digit());
+    if !digits(hours) || !digits(minutes) {
+        return Err(invalid());
+    }
+    let hours: u16 = hours.parse().map_err(|_| invalid())?;
+    let minutes: u16 = minutes.parse().map_err(|_| invalid())?;
+    if hours >= 24 || minutes >= 60 {
+        return Err(invalid());
+    }
+    Ok(hours * 60 + minutes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Window, WindowError};
+
+    #[test]
+    fn a_window_parses_from_and_back_to_its_text() {
+        for text in [
+            "always",
+            "07:00-22:00",
+            "22:30-06:15",
+            "00:00-00:00",
+            "23:59-00:00",
+        ] {
+            let window: Window = text.parse().unwrap();
+            assert_eq!(window.to_string(), text);
+        }
+        assert_eq!(
+            "22:30-06:15".parse(),
+            Ok(Window::Between {
+                start: 22 * 60 + 30,
+                end: 6 * 60 + 15
+            })
+        );
+    }
+
+    #[test]
+    fn a_window_that_is_not_two_times_of_day_is_refused() {
+        for text in [
+            "",
+            "never",
+            "07:00",
+            "7:00-22:00",
+            "24:00-01:00",
+            "07:60-08:00",
+            "+7:00-08:00",
+        ] {
+            let refused = text.parse::<Window>();
+            assert!(
+                matches!(refused, Err(WindowError::Format(_) | WindowError::Time(_))),
+                "{text}: {refused:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_window_is_json_tagged_by_mode() {
+        let window = Window::Between {
+            start: 420,
+            end: 1320,
+        };
+        let json = serde_json::to_string(&window).unwrap();
+        assert_eq!(json, r#"{"mode":"between","start":420,"end":1320}"#);
+        assert_eq!(serde_json::from_str::<Window>(&json).unwrap(), window);
+        assert_eq!(
+            serde_json::to_string(&Window::Always).unwrap(),
+            r#"{"mode":"always"}"#
+        );
+    }
 }

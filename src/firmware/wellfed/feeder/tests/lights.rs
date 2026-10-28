@@ -6,7 +6,9 @@
 
 use std::sync::{Mutex, MutexGuard};
 
+use wellfed_core::clock::wall::{Origin, Sync};
 use wellfed_core::indicator::{Check, Failure, Light};
+use wellfed_core::settings::Window;
 use wellfed_device_api::mailbox::SettingsView;
 use wellfed_feeder::feeder::lights::{Lights, REFUSED_MS, Record, State, States, describe};
 use wellfed_feeder::feeder::{Feeder, Feeds, Record as PassRecord};
@@ -15,7 +17,7 @@ use wellfed_proto::api::{Blocked, Refusal, Source};
 use wellfed_sdk::hal::leds::{self, Led};
 use wellfed_sdk::hal::plaf103::pins::{IR_PA_BIT, MOTOR_A_BIT};
 use wellfed_sdk::hal::sdk::fake;
-use wellfed_sdk::hal::{buttons, settings, stopped};
+use wellfed_sdk::hal::{buttons, clock, settings, stopped};
 
 /// The settings and the button queue are process-wide.
 static SERIAL: Mutex<()> = Mutex::new(());
@@ -33,6 +35,7 @@ impl Rig {
         let serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         fake::reset_hardware();
         settings::reset();
+        clock::reset();
         buttons::reset();
         assert!(stopped::initialize().verified());
         assert!(leds::initialize());
@@ -347,6 +350,7 @@ fn the_loop_shows_the_lock_and_a_held_fault() {
         volume: 50,
         generation: 1,
         writable: true,
+        ..Default::default()
     });
     let mut feeder = Box::new(Feeder::new(Plaf103::new()));
     let mut lines = Vec::new();
@@ -361,5 +365,59 @@ fn the_loop_shows_the_lock_and_a_held_fault() {
     assert!(on(Light::Lock) && on(Light::Fault));
     assert!(lines.contains(&"PLIND1 show light=lock state=locked".to_owned()));
     assert!(lines.contains(&"PLIND1 show light=fault state=fault".to_owned()));
+    drop(rig);
+}
+
+/// Run the loop's passes over `ms`, 10 ms apart from `from`.
+fn passes(feeder: &mut Feeder<Plaf103>, from: u32, ms: u32) {
+    for now in (from..from + ms).step_by(10) {
+        fake::with(|h| h.uptime_ms = now);
+        feeder.pass(now, &mut Faulted, |_: PassRecord<Driver>| {});
+    }
+}
+
+#[test]
+fn the_lights_window_darkens_the_panel_outside_it() {
+    let rig = Rig::new();
+    // 07:00-22:00 local.
+    let view = SettingsView {
+        lights: true,
+        sound: false,
+        volume: 50,
+        lights_window: Window::Between {
+            start: 7 * 60,
+            end: 22 * 60,
+        },
+        generation: 1,
+        writable: true,
+        ..Default::default()
+    };
+    settings::publish(view);
+    let mut feeder = Box::new(Feeder::new(Plaf103::new()));
+
+    // No clock yet: the window is open, so the fault and the lock show.
+    passes(&mut feeder, 0, 200);
+    assert!(on(Light::Lock) && on(Light::Fault));
+
+    // 23:00 local at UTC-6: outside the window, every light dark.
+    clock::sync(
+        Sync {
+            unix_ms: 1_793_250_000_000,
+            offset_s: -6 * 3600,
+            next_change_s: 0,
+            next_offset_s: -6 * 3600,
+        },
+        Origin::Owner,
+    )
+    .unwrap();
+    passes(&mut feeder, 200, 200);
+    assert_eq!(lit(), [false; 4]);
+
+    settings::publish(SettingsView {
+        lights_window: Window::Always,
+        ..view
+    });
+    passes(&mut feeder, 400, 200);
+    assert!(on(Light::Lock) && on(Light::Fault));
     drop(rig);
 }

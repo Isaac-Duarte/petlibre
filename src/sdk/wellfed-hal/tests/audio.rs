@@ -5,12 +5,13 @@
 
 use std::sync::{Mutex, MutexGuard};
 
-use wellfed_core::settings::SettingsView;
+use wellfed_core::clock::wall::{Origin, Sync};
+use wellfed_core::settings::{SettingsView, Window};
 use wellfed_core::tone::PlayResult;
 use wellfed_core::tone::Tune;
 use wellfed_hal::audio::{self, AMP_PIN, Record, Speaker};
 use wellfed_hal::sdk::fake;
-use wellfed_hal::settings;
+use wellfed_hal::{clock, settings};
 
 /// The mailbox and settings are process-wide; the fake hardware is per thread.
 static SERIAL: Mutex<()> = Mutex::new(());
@@ -20,6 +21,7 @@ fn start(sound: bool) -> MutexGuard<'static, ()> {
     fake::reset_hardware();
     settings::reset();
     audio::reset();
+    clock::reset();
     publish(sound);
     guard
 }
@@ -31,6 +33,7 @@ fn publish(sound: bool) {
         volume: 40,
         generation: 1,
         writable: true,
+        ..Default::default()
     });
 }
 
@@ -197,4 +200,64 @@ fn records_describe_without_surprises() {
     )
     .unwrap();
     assert_eq!(line, "done tune=coin ms=620 underruns=0 drained=1");
+}
+
+#[test]
+fn volume_zero_mutes_a_request() {
+    let _guard = start(true);
+    settings::publish(SettingsView {
+        lights: true,
+        sound: true,
+        volume: 0,
+        generation: 1,
+        writable: true,
+        ..Default::default()
+    });
+
+    assert_eq!(audio::request(Tune::Coin), PlayResult::Muted);
+}
+
+#[test]
+fn the_sound_window_mutes_outside_it_and_opens_without_a_clock() {
+    let _guard = start(true);
+    // 08:00-20:00 local.
+    let view = SettingsView {
+        lights: true,
+        sound: true,
+        volume: 40,
+        sound_window: Window::Between {
+            start: 8 * 60,
+            end: 20 * 60,
+        },
+        generation: 1,
+        writable: true,
+        ..Default::default()
+    };
+    settings::publish(view);
+
+    // No clock yet: the window is open.
+    assert_eq!(audio::request(Tune::Coin), PlayResult::Started);
+    audio::reset();
+
+    // 2026-10-28 22:00 local, 04:00 UTC the next day at UTC-6.
+    clock::sync(
+        Sync {
+            unix_ms: 1_793_246_400_000,
+            offset_s: -6 * 3600,
+            next_change_s: 0,
+            next_offset_s: -6 * 3600,
+        },
+        Origin::Owner,
+    )
+    .unwrap();
+    assert_eq!(audio::request(Tune::Coin), PlayResult::Muted);
+
+    settings::publish(SettingsView {
+        sound_window: Window::Between {
+            start: 21 * 60,
+            end: 23 * 60,
+        },
+        ..view
+    });
+    assert_eq!(audio::request(Tune::Coin), PlayResult::Started);
 }

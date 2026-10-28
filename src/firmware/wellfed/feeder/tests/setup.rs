@@ -116,6 +116,7 @@ impl Bench {
             volume: 40,
             generation: 1,
             writable: true,
+            ..Default::default()
         });
     }
 

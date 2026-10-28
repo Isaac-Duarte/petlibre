@@ -14,7 +14,9 @@ use wellfed_core::named_enum;
 
 use crate::clients::{Label, Role};
 
-pub use wellfed_core::settings::{MAX_VOLUME, SettingsFields, SettingsResult, SettingsView};
+pub use wellfed_core::settings::{
+    MAX_VOLUME, SettingsFields, SettingsResult, SettingsView, Window,
+};
 pub use wellfed_core::tone::PlayResult;
 
 /// The fields of a `lock` request; none present reads the lock.

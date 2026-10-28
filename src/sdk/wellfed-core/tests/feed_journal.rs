@@ -17,7 +17,7 @@ use wellfed_core::feed::storage::{
     OwnerOutcome, OwnerRecovery, OwnerResult, OwnerStorage, RotorPhase,
 };
 use wellfed_core::store::feed_journal::{FeedJournal, JournalConfig, JournalError};
-use wellfed_core::store::slot::{RECORD_BYTES, SlotIo};
+use wellfed_core::store::slot::{RECORD_BYTES, SlotIo, crc32};
 use wellfed_testkit::journal_flash::{FakeJournalFlash, FlashIo, UNIT};
 
 /// Unit sizes for torn-write/restart coverage: the virtual feeder's 256, a
@@ -960,5 +960,31 @@ fn a_feed_that_never_moved_keeps_the_phase() {
         OwnerOutcome::Uncertain,
     ] {
         assert_eq!(RotorPhase::after(at, &moved(outcome, true)), unknown);
+    }
+}
+
+/// A checked record in another format version, older or newer, is one the
+/// journal cannot read: beside a valid record it faults the journal rather
+/// than being taken for a cut write and erased by the next one.
+#[test]
+fn a_record_in_another_version_beside_a_valid_one_is_corrupt() {
+    let mut original = FakeJournalFlash::default();
+    let mut j = create(&mut original, false);
+    assert!(reserve(&mut j, 41) && finish(&mut j, true, true));
+
+    for slot in 0..2 {
+        for version in [0u16, 2] {
+            let mut f = original.clone();
+            let record = &mut f.bytes[slot][..RECORD_BYTES];
+            record[8..10].copy_from_slice(&version.to_le_bytes());
+            let crc = crc32(&record[..RECORD_BYTES - 8]).to_le_bytes();
+            record[RECORD_BYTES - 8..RECORD_BYTES - 4].copy_from_slice(&crc);
+
+            assert_eq!(
+                reopen(&mut f, &mut j, &CONFIG),
+                JournalError::Corrupt,
+                "slot {slot} version {version}"
+            );
+        }
     }
 }

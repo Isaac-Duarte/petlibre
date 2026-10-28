@@ -46,17 +46,30 @@ fn tune() -> impl Strategy<Value = Tune> {
     ]
 }
 
+fn window() -> impl Strategy<Value = Window> {
+    prop_oneof![
+        Just(Window::Always),
+        (any::<u16>(), any::<u16>()).prop_map(|(start, end)| Window::Between { start, end }),
+    ]
+}
+
 fn op() -> impl Strategy<Value = Op<'static>> {
     let changes = (
         any::<Option<bool>>(),
         any::<Option<bool>>(),
         any::<Option<u8>>(),
+        proptest::option::of(window()),
+        proptest::option::of(window()),
     )
-        .prop_map(|(lights, sound, volume)| SettingsChanges {
-            lights,
-            sound,
-            volume,
-        });
+        .prop_map(
+            |(lights, sound, volume, lights_window, sound_window)| SettingsChanges {
+                lights,
+                sound,
+                volume,
+                lights_window,
+                sound_window,
+            },
+        );
     let sync = (any::<u64>(), any::<i32>(), any::<u64>(), any::<i32>()).prop_map(
         |(unix_ms, offset_s, next_change_s, next_offset_s)| TimeSync {
             unix_ms,

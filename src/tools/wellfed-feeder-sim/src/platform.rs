@@ -54,7 +54,7 @@ use wellfed_feeder::store::calibration::CalibrationStore;
 use wellfed_feeder::store::clients::{ClientError, ClientStore};
 use wellfed_feeder::store::events::{BODY_BYTES, EventLog, Read};
 use wellfed_feeder::store::net::NetStore;
-use wellfed_feeder::store::settings::{Settings, SettingsStatus, SettingsStore};
+use wellfed_feeder::store::settings::{SettingsStatus, SettingsStore};
 use wellfed_feeder::store::stats::{SaveKind, StatsStore};
 use wellfed_feeder::store::time::TimeStore;
 use wellfed_feeder::store::traces::{self, TraceRing};
@@ -406,12 +406,7 @@ impl SimPlatform {
     pub fn write(&mut self) -> Option<KeyResult> {
         if let Some(fields) = self.settings_pending.take() {
             let current = self.settings.settings;
-            let target = Settings {
-                lights: fields.lights.unwrap_or(current.lights),
-                sound: fields.sound.unwrap_or(current.sound),
-                volume: fields.volume.unwrap_or(current.volume),
-                ..current
-            };
+            let target = current.changed(fields);
             // A failed save leaves the generation where it was; the client
             // sees no change, as on the feeder.
             if target != current {
@@ -471,17 +466,13 @@ impl SimPlatform {
     }
 
     fn settings_view(&self) -> SettingsView {
-        let settings = &self.settings.settings;
-        SettingsView {
-            lights: settings.lights,
-            sound: settings.sound,
-            volume: settings.volume,
-            generation: u32::try_from(self.settings.generation).unwrap_or(u32::MAX),
-            writable: matches!(
-                self.settings.status,
-                SettingsStatus::Loaded | SettingsStatus::Empty | SettingsStatus::Recovered
-            ),
-        }
+        let writable = matches!(
+            self.settings.status,
+            SettingsStatus::Loaded | SettingsStatus::Empty | SettingsStatus::Recovered
+        );
+        self.settings
+            .settings
+            .view(self.settings.generation, writable)
     }
 
     fn wifi_view(&self) -> WifiView {
@@ -1063,4 +1054,9 @@ impl Platform for SimPlatform {
             record: None,
         }
     }
+
+    /// The host has no buzzer; a beep is silent.
+    fn buzzer_enable(&mut self) {}
+
+    fn buzzer(&mut self, _on: bool) {}
 }

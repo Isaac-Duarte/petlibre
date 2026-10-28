@@ -53,7 +53,6 @@ use core::fmt;
 use wellfed_core::named_enum;
 
 use wellfed_core::store::seed::{SeedStatus, SeedStore};
-use wellfed_device_api::mailbox::{SettingsFields, SettingsView};
 use wellfed_feeder::stats::{SAVE_MS, TOTAL_SECTORS, Totals, reset_cause};
 use wellfed_feeder::store::calibration::CalibrationStore;
 use wellfed_feeder::store::clients::{ClientError, ClientStatus, ClientStore};
@@ -229,10 +228,12 @@ pub fn describe(record: Record, f: &mut impl fmt::Write) -> fmt::Result {
     let values = |f: &mut dyn fmt::Write, s: &Settings| {
         write!(
             f,
-            "lights={} sound={} volume={}",
+            "lights={} sound={} volume={} lights_window={} sound_window={}",
             u8::from(s.lights),
             u8::from(s.sound),
-            s.volume
+            s.volume,
+            s.lights_window,
+            s.sound_window
         )
     };
     match record {
@@ -517,15 +518,6 @@ fn fresh_epoch() -> u32 {
         0
     };
     drawn.max(1)
-}
-
-fn changed(current: Settings, fields: SettingsFields) -> Settings {
-    Settings {
-        lights: fields.lights.unwrap_or(current.lights),
-        sound: fields.sound.unwrap_or(current.sound),
-        volume: fields.volume.unwrap_or(current.volume),
-        ..current
-    }
 }
 
 impl<F: FlashOps> Writer<F> {
@@ -866,14 +858,7 @@ impl<F: FlashOps> Writer<F> {
                 self.store.status,
                 SettingsStatus::Loaded | SettingsStatus::Empty | SettingsStatus::Recovered
             );
-        settings::publish(SettingsView {
-            lights: self.store.settings.lights,
-            sound: self.store.settings.sound,
-            volume: self.store.settings.volume,
-            // Reported as 32 bits; saturate rather than wrap to an old value.
-            generation: u32::try_from(self.store.generation).unwrap_or(u32::MAX),
-            writable,
-        });
+        settings::publish(self.store.settings.view(self.store.generation, writable));
         network::publish(&self.net, self.armed);
         time::publish(&self.time, self.armed);
         calibration::publish(&self.calibration, self.armed);
@@ -1091,7 +1076,7 @@ impl<F: FlashOps> Writer<F> {
                     }
                     return self.events_step(writable);
                 };
-                let target = changed(self.store.settings, fields);
+                let target = self.store.settings.changed(fields);
                 let record = if self.stage == Stage::Serve || !H::armed() {
                     Record::Error {
                         stage: ErrorStage::Unarmed,

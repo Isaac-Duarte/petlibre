@@ -72,6 +72,7 @@ fn step(
         volume: 50,
         generation: 1,
         writable: true,
+        ..Default::default()
     });
     let mut records = Vec::new();
     let delay = rig

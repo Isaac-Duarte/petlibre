@@ -10,6 +10,7 @@
 //! wrote them.
 
 use wellfed_core::feed::progress::BowlMode;
+use wellfed_core::settings::Window;
 use wellfed_device_api::clients::{Client, Label, Role};
 use wellfed_device_api::mailbox::{Calibration, NtpServer, TimeSettings, Zone};
 use wellfed_device_api::wifi::Credentials;
@@ -61,6 +62,14 @@ fn settings_records() {
         sound: true,
         volume: 100,
         utc_offset_minutes: -570,
+        lights_window: Window::Between {
+            start: 1320,
+            end: 420
+        },
+        sound_window: Window::Between {
+            start: 480,
+            end: 1200
+        },
     }));
     pinned("custom settings", &f, 1, 128, CUSTOM_SETTINGS);
     assert!(s.save(&Settings {
@@ -69,6 +78,8 @@ fn settings_records() {
         sound: false,
         volume: 0,
         utc_offset_minutes: 14 * 60,
+        lights_window: Window::Always,
+        sound_window: Window::Between { start: 0, end: 0 },
     }));
     pinned("third settings", &f, 0, 128, THIRD_SETTINGS);
 }
@@ -250,6 +261,14 @@ fn settings_store_reads_the_pinned_records() {
                 sound: true,
                 volume: 100,
                 utc_offset_minutes: -570,
+                lights_window: Window::Between {
+                    start: 1320,
+                    end: 420,
+                },
+                sound_window: Window::Between {
+                    start: 480,
+                    end: 1200,
+                },
             },
         ),
         (
@@ -262,6 +281,8 @@ fn settings_store_reads_the_pinned_records() {
                 sound: false,
                 volume: 0,
                 utc_offset_minutes: 14 * 60,
+                lights_window: Window::Always,
+                sound_window: Window::Between { start: 0, end: 0 },
             },
         ),
     ] {
@@ -362,26 +383,26 @@ fn event_ring_reads_the_pinned_records() {
 
 /// Default settings.
 const DEFAULT_SETTINGS: &[&str] = &[
-    "504c465345543031010080000100000000000000010002353157465000033200",
+    "504c465345543031020080000100000000000000010002353157465000033200",
     "0000000000000000000000000000000000000000000000000000000000000000",
     "0000000000000000000000000000000000000000000000000000000000000000",
-    "0000000000000000000000000000000000000000000000008be505f5434d4954",
+    "000000000000000000000000000000000000000000000000cab50da7434d4954",
 ];
 
 /// Custom settings.
 const CUSTOM_SETTINGS: &[&str] = &[
-    "504c465345543031010080000200000000000000010002353157465001026400",
-    "c6fd000000000000000000000000000000000000000000000000000000000000",
+    "504c465345543031020080000200000000000000010002353157465001026400",
+    "c6fd01012805a401e001b0040000000000000000000000000000000000000000",
     "0000000000000000000000000000000000000000000000000000000000000000",
-    "0000000000000000000000000000000000000000000000005eec6e13434d4954",
+    "0000000000000000000000000000000000000000000000009eee0f3c434d4954",
 ];
 
 /// Third settings.
 const THIRD_SETTINGS: &[&str] = &[
-    "504c465345543031010080000300000000000000010002353157465000010000",
-    "4803000000000000000000000000000000000000000000000000000000000000",
+    "504c465345543031020080000300000000000000010002353157465000010000",
+    "4803000100000000000000000000000000000000000000000000000000000000",
     "0000000000000000000000000000000000000000000000000000000000000000",
-    "000000000000000000000000000000000000000000000000f25491d6434d4954",
+    "00000000000000000000000000000000000000000000000032d8188f434d4954",
 ];
 
 /// Short credentials.

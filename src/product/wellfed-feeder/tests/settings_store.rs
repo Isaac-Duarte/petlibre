@@ -8,9 +8,10 @@
 //! explicit reset.
 
 use wellfed_core::feed::progress::BowlMode;
+use wellfed_core::settings::Window;
 use wellfed_core::store::slot::{RECORD_BYTES, crc32};
 use wellfed_feeder::store::settings::{
-    Settings, SettingsStatus, SettingsStore, SlotState, WEAR_LIMIT,
+    Settings, SettingsStatus, SettingsStore, SlotState, VERSION, WEAR_LIMIT,
 };
 use wellfed_testkit::journal_flash::{FakeJournalFlash, FlashIo, UNIT};
 
@@ -31,6 +32,11 @@ fn custom(volume: u8) -> Settings {
         sound: true,
         volume,
         utc_offset_minutes: -420,
+        lights_window: Window::Between {
+            start: 1320,
+            end: 420,
+        },
+        sound_window: Window::Always,
     }
 }
 
@@ -145,7 +151,7 @@ fn power_cut_at_every_byte_keeps_old_or_new() {
     }
 }
 
-/// A v2 record with a valid CRC: read as defaults, never overwritten until reset.
+/// A record from a newer version with a valid CRC: read as defaults, never overwritten until reset.
 #[test]
 fn newer_schema_is_read_only_until_reset() {
     let mut f = FakeJournalFlash::default();
@@ -153,7 +159,7 @@ fn newer_schema_is_read_only_until_reset() {
     assert!(s.save(&custom(5)));
 
     let mut record = f.bytes[0][..RECORD_BYTES].to_vec();
-    record[8] = 2;
+    record[8..10].copy_from_slice(&(VERSION + 1).to_le_bytes());
     let crc = crc32(&record[..120]).to_le_bytes();
     record[120..124].copy_from_slice(&crc);
     f.bytes[0][..RECORD_BYTES].copy_from_slice(&record);
@@ -231,4 +237,83 @@ fn wear_limit_refuses_saves() {
     let before = f.mutations;
     assert!(!s.save(&custom(2)));
     assert_eq!((s.status, f.mutations), (SettingsStatus::Worn, before));
+}
+
+/// Rewrite slot 0's record with `edit` and a fresh CRC.
+fn rewrite(f: &mut FakeJournalFlash, edit: impl FnOnce(&mut [u8])) {
+    let mut record = f.bytes[0][..RECORD_BYTES].to_vec();
+    edit(&mut record);
+    let crc = crc32(&record[..120]).to_le_bytes();
+    record[120..124].copy_from_slice(&crc);
+    f.bytes[0][..RECORD_BYTES].copy_from_slice(&record);
+}
+
+#[test]
+fn windows_survive_a_reopen() {
+    let mut f = FakeJournalFlash::default();
+    let mut s = open(&mut f);
+    let settings = Settings {
+        sound_window: Window::Between {
+            start: 480,
+            end: 1200,
+        },
+        ..custom(5)
+    };
+    assert!(s.save(&settings));
+
+    let s = open(&mut f);
+    assert_eq!(s.status, SettingsStatus::Loaded);
+    assert_eq!(s.settings, settings);
+}
+
+/// No migration: the version 1 record earlier builds wrote is superseded,
+/// so the store opens writable on defaults and the next save replaces it.
+#[test]
+fn a_version_1_record_opens_empty_and_writable() {
+    let mut f = FakeJournalFlash::default();
+    let mut s = open(&mut f);
+    assert!(s.save(&custom(5)));
+    rewrite(&mut f, |record| {
+        record[8..10].copy_from_slice(&1u16.to_le_bytes())
+    });
+
+    let mut s = open(&mut f);
+    assert_eq!(s.status, SettingsStatus::Empty);
+    assert_eq!(s.slots[0], SlotState::Older);
+    assert_eq!(s.settings, Settings::default());
+
+    assert!(s.save(&custom(7)));
+    let s = open(&mut f);
+    assert_eq!(s.status, SettingsStatus::Loaded);
+    assert_eq!(s.settings, custom(7));
+}
+
+#[test]
+fn a_bad_window_makes_the_record_invalid() {
+    for (at, byte) in [
+        // An unknown window kind.
+        (34, 2),
+        // An always window with a bound.
+        (36, 1),
+        // A start past the last minute of the day (1440 = 0x05a0).
+        (41, 0x05),
+    ] {
+        let mut f = FakeJournalFlash::default();
+        let mut s = open(&mut f);
+        let settings = Settings {
+            lights_window: Window::Always,
+            sound_window: Window::Between { start: 0, end: 0 },
+            ..custom(5)
+        };
+        assert!(s.save(&settings));
+        rewrite(&mut f, |record| {
+            if at == 41 {
+                record[40] = 0xa0;
+            }
+            record[at] = byte;
+        });
+
+        let s = open(&mut f);
+        assert_eq!(s.status, SettingsStatus::Corrupt, "byte {at}");
+    }
 }

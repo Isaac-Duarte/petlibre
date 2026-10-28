@@ -68,10 +68,12 @@ pub(super) fn status(detail: &FeederDetail) -> String {
 
 pub(super) fn settings(settings: &Settings) -> String {
     format!(
-        "Generation {}: lights {}, sound {}, volume {}{}",
+        "Generation {}: lights {} ({}), sound {} ({}), volume {}{}",
         settings.generation,
         on_off(settings.lights),
+        settings.lights_window,
         on_off(settings.sound),
+        settings.sound_window,
         settings.volume,
         if settings.writable {
             ""

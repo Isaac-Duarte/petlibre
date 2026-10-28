@@ -68,6 +68,7 @@ fn ready(sound: bool) -> (MutexGuard<'static, ()>, Qa) {
         volume: 40,
         generation: 1,
         writable: true,
+        ..Default::default()
     });
     (guard, Qa::default())
 }

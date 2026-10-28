@@ -80,6 +80,7 @@ fn every_op() -> Vec<Op> {
             plans: [None; PLANS],
         },
         Op::ResetDesiccant,
+        Op::ReadStockPlans,
     ];
     let mut kinds: Vec<_> = ops.iter().map(kind).collect();
     kinds.sort_unstable();
@@ -121,6 +122,7 @@ fn kind(op: &Op) -> u8 {
         Op::GetPlans => 27,
         Op::PutPlans { .. } => 28,
         Op::ResetDesiccant => 29,
+        Op::ReadStockPlans => 30,
     }
 }
 

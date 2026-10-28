@@ -31,8 +31,9 @@ use wellfed_core::ota::offer::{KeyStatement, key_id};
 use wellfed_core::tone::Tune;
 use wellfed_proto::api::{
     self as proto, BANK1_PAGE_MAX, Bank1Page, Battery, Capabilities, Desiccant, EventBody, Metric,
-    PORT, Power, Readiness, Refusal, Sample, Source, Stats, StatsSection, Status, Supply,
-    TASKS_MAX, TaskStack as WireTask, TracePage, UpdateRefusal, UpdateView,
+    PORT, Power, Readiness, Refusal, STOCK_PLAN_ENTRIES_LEN, Sample, Source, Stats, StatsSection,
+    Status, StockPlanSectors, Supply, TASKS_MAX, TaskStack as WireTask, TracePage, UpdateRefusal,
+    UpdateView,
 };
 use wellfed_proto::trace::PAGE_MAX;
 use wellfed_session::noise::Keypair;
@@ -60,12 +61,15 @@ use wellfed_device_api::{
 };
 
 /// The answer page buffer: a trace's page or a bank-1 page, whichever is
-/// larger.
+/// larger, or stock's plan entries.
 pub(super) const PAGE_BYTES: usize = if PAGE_MAX > BANK1_PAGE_MAX {
     PAGE_MAX
 } else {
     BANK1_PAGE_MAX
 };
+
+// Stock's plan entries borrow the same buffer.
+const _: () = assert!(STOCK_PLAN_ENTRIES_LEN <= PAGE_BYTES);
 
 /// A listener or mDNS socket that failed is opened again after this.
 const RETRY_MS: u32 = 2_000;
@@ -1015,6 +1019,31 @@ impl<P: Platform, F: Feeds> Device for FeederDevice<'_, P, F> {
             offset,
             total: BANK1_BYTES,
             bytes: out,
+        })
+    }
+
+    /// Stock's plan sectors, served where bank 1 is and for the same
+    /// reason: the bank-0 role still has stock's flash as stock left it,
+    /// for the installer to import before a promotion.
+    fn stock_plans(&mut self) -> Result<StockPlanSectors<'_>, Refusal> {
+        if self.boot.bank != 0 {
+            return Err(Refusal::Unavailable);
+        }
+        if self.platform.installing() {
+            return Err(Refusal::Busy);
+        }
+
+        let (entries, _) = self
+            .page
+            .split_first_chunk_mut::<STOCK_PLAN_ENTRIES_LEN>()
+            .ok_or(Refusal::Busy)?;
+        let count = self
+            .platform
+            .stock_plans_read(entries)
+            .ok_or(Refusal::Unavailable)?;
+        Ok(StockPlanSectors {
+            count,
+            entries: &entries[..],
         })
     }
 

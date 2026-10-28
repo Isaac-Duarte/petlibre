@@ -15,9 +15,9 @@ use crate::{
     FeedReason, Flash, Food, Generation, Hello, Hex, Invite, Joined, LogLines, MealReminder,
     Memory, MissedReason, NtpResult, NtpServer, Op, OpenRefusal, Phase, Plan, Plans, Portions,
     Power, PowerStats, Readiness, Refusal, ResetCause, Resets, Sample, SampleValue, Settings,
-    SettingsPatch, Source, Stats, StatsSection, Status, Supply, TaskStack, TimeSource, TimeSync,
-    TimeView, Tune, UpdatePhase, UpdateRefusal, UpdateStop, UpdateView, Weekdays, WifiSource,
-    Window, setup,
+    SettingsPatch, Source, Stats, StatsSection, Status, StockPlanSectors, Supply, TaskStack,
+    TimeSource, TimeSync, TimeView, Tune, UpdatePhase, UpdateRefusal, UpdateStop, UpdateView,
+    Weekdays, WifiSource, Window, setup,
 };
 use crate::{
     CurrentUnit, FeedStats, Malformed, Trace, TraceEntry, TraceMotor, TracePage, TraceSummary,
@@ -801,6 +801,12 @@ impl From<proto::Outcome<'_>> for Answer {
                 writable,
                 plans: plans.map(|plan| plan.map(Into::into)),
             }),
+            proto::Outcome::StockPlans(proto::StockPlanSectors { count, entries }) => {
+                Self::StockPlans(StockPlanSectors {
+                    count,
+                    entries: entries.to_vec(),
+                })
+            }
         }
     }
 }
@@ -1418,6 +1424,7 @@ impl Op {
             },
             Self::ReadBank1 { offset } => proto::Op::ReadBank1 { offset: *offset },
             Self::GetPlans => proto::Op::GetPlans,
+            Self::ReadStockPlans => proto::Op::ReadStockPlans,
             Self::PutPlans { base, plans } => proto::Op::PutPlans {
                 base: base.0,
                 plans: plans.map(|plan| plan.map(Into::into)),

@@ -235,7 +235,8 @@ impl Answer {
             | Model::FeedTrace(_)
             | Model::Calibration(_)
             | Model::Bank1(_)
-            | Model::Plans(_) => Self::Unexpected,
+            | Model::Plans(_)
+            | Model::StockPlans(_) => Self::Unexpected,
         }
     }
 }

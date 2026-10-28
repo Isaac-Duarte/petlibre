@@ -479,6 +479,18 @@ impl Device for Fake {
         })
     }
 
+    /// Served beside bank 1: one plan counted, its entries a fixed pattern.
+    fn stock_plans(&mut self) -> Result<proto::StockPlanSectors<'_>, Refusal> {
+        if self.installing {
+            return Err(Refusal::Busy);
+        }
+        self.bank1.as_ref().ok_or(Refusal::Unavailable)?;
+        Ok(proto::StockPlanSectors {
+            count: 1,
+            entries: &STOCK_ENTRIES,
+        })
+    }
+
     fn log_after(&mut self, after: Option<u32>, text: &mut [u8]) -> Option<LogBatch> {
         self.tail.read(after, text)
     }
@@ -2564,6 +2576,41 @@ fn bank_1_is_read_whole_by_an_owner_with_the_backup_bit() {
     let mut rig = Rig::new();
     let mut owner = open(&mut rig, OWNER);
     let answer = ask(&mut rig, &mut owner, 1, Op::ReadBank1 { offset: 0 });
+    assert_eq!(answer, Answer::Refused(model::Refusal::Unavailable));
+}
+
+/// Stock's plan sectors, as the stub feeder serves them.
+const STOCK_ENTRIES: [u8; proto::STOCK_PLAN_ENTRIES_LEN] = [0x5a; proto::STOCK_PLAN_ENTRIES_LEN];
+
+/// Stock's plan sectors go to an owner only, where bank 1 is served: a
+/// member is forbidden, a read while an install holds the flash is busy,
+/// and a feeder without the backup refuses it.
+#[test]
+fn stock_s_plan_sectors_are_read_by_an_owner_only() {
+    let mut rig = Rig::new();
+    rig.device.bank1 = Some(vec![0; 16]);
+    let mut owner = open(&mut rig, OWNER);
+    let answer = ask(&mut rig, &mut owner, 1, Op::ReadStockPlans);
+    assert_eq!(
+        answer,
+        Answer::StockPlans(model::StockPlanSectors {
+            count: 1,
+            entries: STOCK_ENTRIES.to_vec(),
+        })
+    );
+
+    rig.device.installing = true;
+    let answer = ask(&mut rig, &mut owner, 2, Op::ReadStockPlans);
+    assert_eq!(answer, Answer::Refused(model::Refusal::Busy));
+    rig.device.installing = false;
+
+    let mut member = open(&mut rig, MEMBER);
+    let answer = ask(&mut rig, &mut member, 1, Op::ReadStockPlans);
+    assert_eq!(answer, Answer::Refused(model::Refusal::Forbidden));
+
+    let mut rig = Rig::new();
+    let mut owner = open(&mut rig, OWNER);
+    let answer = ask(&mut rig, &mut owner, 1, Op::ReadStockPlans);
     assert_eq!(answer, Answer::Refused(model::Refusal::Unavailable));
 }
 

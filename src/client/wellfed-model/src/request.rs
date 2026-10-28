@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     Bank1Page, ClientRole, Generation, Hex, PLANS, Plan, Plans, Settings, SettingsPatch, Stats,
-    StatsSection, Status, TracePage, UpdateRefusal, UpdateView,
+    StatsSection, Status, StockPlanSectors, TracePage, UpdateRefusal, UpdateView,
 };
 
 /// One operation. Reads may be repeated freely; a write's request id makes
@@ -132,6 +132,10 @@ pub enum Op {
     /// calendar. Refused [`Refusal::NoClock`] while the feeder's clock is
     /// invalid.
     ResetDesiccant,
+    /// Stock's stored plan sectors. Owners only, and only from the bank-0
+    /// recovery role, as [`Self::ReadBank1`]: the installer's import of
+    /// stock's plans before a promotion.
+    ReadStockPlans,
 }
 
 /// What the owner measured, as the feeder keeps it.
@@ -307,6 +311,7 @@ pub enum Answer {
     Calibration(CalibrationView),
     Bank1(Bank1Page),
     Plans(Plans),
+    StockPlans(StockPlanSectors),
 }
 
 /// Why the feeder refused a request.

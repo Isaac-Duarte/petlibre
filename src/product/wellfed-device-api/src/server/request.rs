@@ -290,6 +290,7 @@ impl Server {
             Action::Stats { section } => return Some(Reply::Stats(section)),
             Action::FeedTrace { feed, offset } => return Some(Reply::FeedTrace { feed, offset }),
             Action::ReadBank1 { offset } => return Some(Reply::Bank1 { offset }),
+            Action::ReadStockPlans => return Some(Reply::StockPlans),
         };
         Some(self.remember(memory, id, action, outcome))
     }
@@ -548,6 +549,7 @@ const fn allowed(role: Role, action: Action) -> bool {
                 }
                 // The stock backup is the owner's copy to keep.
                 | Action::ReadBank1 { .. }
+                | Action::ReadStockPlans
         ),
         Role::UpdateSigner => false,
     }
@@ -654,6 +656,7 @@ pub(super) enum Action {
     ReadBank1 {
         offset: u32,
     },
+    ReadStockPlans,
     GetPlans,
     /// The table stays in the plaintext buffer, read again when the op
     /// runs.
@@ -773,6 +776,7 @@ impl From<Op<'_>> for Action {
                 }
             }
             Op::ReadBank1 { offset } => Self::ReadBank1 { offset },
+            Op::ReadStockPlans => Self::ReadStockPlans,
             Op::GetPlans => Self::GetPlans,
             // Checked when it runs ([`table`]), which names a plan's
             // portions in its refusal.
@@ -802,6 +806,7 @@ impl Action {
                 | Self::FeedTrace { .. }
                 | Self::GetCalibration
                 | Self::ReadBank1 { .. }
+                | Self::ReadStockPlans
                 | Self::GetPlans
         )
     }
@@ -835,6 +840,7 @@ impl Action {
             Self::GetCalibration => "get-calibration",
             Self::PutCalibration { .. } => "put-calibration",
             Self::ReadBank1 { .. } => "read-bank1",
+            Self::ReadStockPlans => "read-stock-plans",
             Self::GetPlans => "get-plans",
             Self::PutPlans { .. } => "put-plans",
             Self::ResetDesiccant => "reset-desiccant",
@@ -871,6 +877,8 @@ pub(super) enum Reply {
     },
     /// The plans, read when the answer is sealed.
     Plans,
+    /// Stock's plan sectors, read when the answer is sealed.
+    StockPlans,
 }
 
 fn saturate(jump_ms: i64) -> i32 {
@@ -898,6 +906,7 @@ impl Name for Reply {
             Self::Calibration => "calibration",
             Self::Bank1 { .. } => "bank1",
             Self::Plans => "plans",
+            Self::StockPlans => "stock-plans",
             Self::Refused(refusal) => match refusal {
                 Refusal::Forbidden => "forbidden",
                 Refusal::Stale { .. } => "stale",

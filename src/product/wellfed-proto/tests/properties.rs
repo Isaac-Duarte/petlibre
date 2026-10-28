@@ -144,6 +144,7 @@ fn op() -> impl Strategy<Value = Op<'static>> {
         Just(Op::GetPlans),
         (any::<u32>(), plans()).prop_map(|(base, plans)| Op::PutPlans { base, plans }),
         Just(Op::ResetDesiccant),
+        Just(Op::ReadStockPlans),
     ]
 }
 

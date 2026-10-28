@@ -66,7 +66,9 @@ use wellfed_hal::ota::mailbox::{self, Request};
 use wellfed_hal::ota::signers;
 use wellfed_hal::power;
 use wellfed_hal::sdk::LOG_TAIL_BYTES;
-use wellfed_proto::api::{self as proto, Capabilities, Counts, FLASH_SECTORS, TASKS_MAX};
+use wellfed_proto::api::{
+    self as proto, Capabilities, Counts, FLASH_SECTORS, STOCK_PLAN_ENTRIES_LEN, TASKS_MAX,
+};
 use wellfed_proto::trace::PAGE_MAX;
 
 use crate::banks::Banks;
@@ -958,6 +960,12 @@ impl Platform for SimPlatform {
         };
         out.copy_from_slice(bytes);
         true
+    }
+
+    fn stock_plans_read(&mut self, entries: &mut [u8; STOCK_PLAN_ENTRIES_LEN]) -> Option<u8> {
+        let banks = self.banks.as_ref()?.borrow();
+        entries.copy_from_slice(&banks.stock_plan_entries);
+        Some(banks.stock_plan_count)
     }
 
     fn listen(&mut self, _port: u16) -> Option<Socket> {

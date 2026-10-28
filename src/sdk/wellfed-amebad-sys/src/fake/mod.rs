@@ -208,6 +208,10 @@ pub struct Hardware {
     pub bank0: Vec<u8>,
     pub storage_erases: [u32; STORAGE_SECTORS as usize],
     pub bank1_erases: u32,
+    /// Stock's plan sectors outside both banks: the count byte and the
+    /// entries `stock_plans_read` serves.
+    pub stock_plan_count: u8,
+    pub stock_plan_entries: [u8; crate::STOCK_PLAN_ENTRIES_LEN],
     /// What `task_stacks` reports.
     pub task_stacks: Vec<crate::TaskStack>,
 
@@ -363,6 +367,8 @@ impl Default for Hardware {
             bank0: Vec::new(),
             storage_erases: [0; STORAGE_SECTORS as usize],
             bank1_erases: 0,
+            stock_plan_count: u8::MAX,
+            stock_plan_entries: [u8::MAX; crate::STOCK_PLAN_ENTRIES_LEN],
             task_stacks: Vec::new(),
 
             audio_open: false,

@@ -49,7 +49,7 @@ This page tracks what works today and what comes next. It covers the replacement
 | Clock and time zones | Partial | Needs a time source after each power-up. Offline time is experimental. |
 | Battery and brownout | Experimental | |
 | Statistics and per-feed traces | Experimental | |
-| Lights and sound settings | In progress | Lights and sound windows and volume-0 mute are built and host-tested; a bench check is next. |
+| Lights and sound settings | Works | Lights and sound windows, volume-0 mute and a beep on every button press, checked on the bench. |
 | Desiccant and meal reminders | Not started | |
 
 ## Apps and server

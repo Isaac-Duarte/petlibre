@@ -2,16 +2,16 @@
   "view": "panel",
   "size": [1024, 1024],
   "hotspots": {
-    "button_reset": {"x": 0.9198, "y": 0.4836, "r": 0.0147, "visible": true},
-    "button_mic": {"x": 0.8203, "y": 0.5061, "r": 0.0161, "visible": true},
-    "button_dispense": {"x": 0.1315, "y": 0.4926, "r": 0.0181, "visible": true},
-    "button_lock": {"x": 0.3894, "y": 0.5237, "r": 0.0146, "visible": true},
-    "led_connection": {"x": 0.5279, "y": 0.5255, "r": 0.0206, "visible": true},
-    "led_food": {"x": 0.2543, "y": 0.5091, "r": 0.0211, "visible": true},
-    "led_lock": {"x": 0.3894, "y": 0.5237, "r": 0.0146, "visible": true},
-    "led_fault": {"x": 0.6634, "y": 0.518, "r": 0.0164, "visible": true},
-    "window": {"x": 0.5, "y": -0.1268, "r": 0.3036, "visible": false},
-    "outlet": {"x": 0.5, "y": 0.8058, "r": 0.2065, "visible": true},
-    "bowl": {"x": 0.5, "y": 1.1791, "r": 0.6024, "visible": false}
+    "button_reset": {"x": 0.906, "y": 0.4884, "r": 0.0228, "visible": true},
+    "button_mic": {"x": 0.8033, "y": 0.5106, "r": 0.0211, "visible": true},
+    "button_dispense": {"x": 0.1977, "y": 0.507, "r": 0.0262, "visible": true},
+    "button_lock": {"x": 0.0955, "y": 0.4928, "r": 0.0217, "visible": true},
+    "led_connection": {"x": 0.5493, "y": 0.527, "r": 0.0277, "visible": true},
+    "led_food": {"x": 0.3539, "y": 0.5214, "r": 0.0292, "visible": true},
+    "led_lock": {"x": 0.4507, "y": 0.5273, "r": 0.0184, "visible": true},
+    "led_fault": {"x": 0.6459, "y": 0.5199, "r": 0.0212, "visible": true},
+    "window": {"x": 0.5, "y": -0.1644, "r": 0.3301, "visible": false},
+    "outlet": {"x": 0.5, "y": 0.773, "r": 0.2067, "visible": true},
+    "bowl": {"x": 0.5, "y": 1.0914, "r": 0.6045, "visible": false}
   }
 }

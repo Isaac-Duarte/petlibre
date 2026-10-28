@@ -523,6 +523,25 @@ def render_one(args):
             draw_check(out, data, CHECKS / f"{args.view}-hotspots.png")
     print(f"rendered {name} in {elapsed:.1f} s on {device}", flush=True)
 
+    # The cutout is the same image without the contact shadow, for layouts
+    # that ground the feeder themselves. The catcher stays in the scene, hidden
+    # only from the camera: removing it changes how Cycles lights the body and
+    # the cutout would come out darker. The view's hotspots still apply.
+    cutout = args.out / f"{name}-cutout.png"
+    catchers = [obj for obj in bpy.data.objects if obj.is_shadow_catcher]
+    if not catchers:
+        shutil.copyfile(out, cutout)
+        print(f"rendered {name}-cutout as a copy (no floor)", flush=True)
+        return
+    for catcher in catchers:
+        catcher.visible_camera = False
+    bpy.context.scene.render.filepath = str(cutout)
+    started = time.monotonic()
+    bpy.ops.render.render(write_still=True)
+    elapsed = time.monotonic() - started
+    optimize(cutout)
+    print(f"rendered {name}-cutout in {elapsed:.1f} s on {device}", flush=True)
+
 
 def render_all(args):
     # Each image gets a fresh Blender, so no state's changes leak into the next

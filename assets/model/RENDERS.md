@@ -13,7 +13,7 @@ The images the app, the web UI and the docs need from `plaf103.blend`, and the r
 
 ## Outputs
 
-`assets/renders/<view>[-<state>].png`, plus `<view>.json` for views with hotspots. They are committed and listed in `assets/README.md`. Unless a row says otherwise, images are square RGBA, transparent, with a contact shadow (the existing shadow catcher). A UI image is 1024 px and a marketing image the size given in its row. PNGs are optimized losslessly (`oxipng -o 4`); the app's build makes WebP, not this script.
+`assets/renders/<view>[-<state>].png` and `<view>[-<state>]-cutout.png`, plus `<view>.json` for views with hotspots. They are committed and listed in `assets/README.md`. Unless a row says otherwise, images are square RGBA, transparent, with a contact shadow (the existing shadow catcher); each `-cutout` image is the same render with the catcher hidden, so it has no shadow, and shares its view's hotspots. A UI image is 1024 px and a marketing image the size given in its row. PNGs are optimized losslessly (`oxipng -o 4`); the app's build makes WebP, not this script.
 
 ## The set
 

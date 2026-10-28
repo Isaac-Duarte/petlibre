@@ -52,9 +52,11 @@ The web frontends in `src/web/` follow the [TypeScript standard](docs/developmen
 
 ## Compatibility
 
-Old on-disk evidence and stale file fields may break when that makes the code simpler; drop the legacy reader rather than carrying it. Some things are live interop rather than legacy, and must stay exact:
-- formats a current consumer reads (the frozen reviews, plans and journals `wellfed-flash` accepts, including those the former Python tools wrote);
-- the stock firmware wire protocol, and the replacement's within the [device API's evolution rules](docs/firmware/device-api.md#evolution) (which allow in-place changes while the research unit is the only Wellfed feeder);
+Wellfed is in active development, and the research unit is the only device running it. **Never add backward compatibility.** Change a format in place and drop the old reader: on-flash records, the device API's messages, server JSON and database rows, file shapes and old evidence. No migrations, no `#[serde(default)]` shims, no capability bits or new variants added only to keep an old peer working. When a stored format changes, the change records the bench step that clears it (erasing or resetting the store) instead.
+
+This covers what this repository builds. Interop with things it does not build, and the safety pins, stay exact:
+- the stock firmware's wire protocol and on-flash formats;
+- the frozen reviews, plans and journals `wellfed-flash` accepts, including those the former Python tools wrote;
 - canonical JSON that is hashed;
 - every pinned check in the hard rules.
 

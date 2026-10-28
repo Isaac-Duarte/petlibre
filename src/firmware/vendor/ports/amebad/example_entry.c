@@ -53,11 +53,17 @@ void wellfed_app_start(void);
  * to cancel_timer_ex, rltk_set_mode_posthandle to mod_timer) and
  * freertos_intfs.o's own call to rtw_os_indicate_disconnect go unnoted.
  *
- * rtw_enter_critical guards every driver register access (bus_read and
- * bus_write), the WLAN interrupt and the receive tasklet, so the ring turns
- * over within microseconds. The rarer steps therefore also go to sticky
- * marks, one slot per kind, which that traffic never evicts: the last
- * wifi_connect call and return, indication, disconnect and timer call.
+ * The driver masks interrupts with save_and_cli around every packet buffer
+ * it allocates or frees, so the ring turns over many times during a join.
+ * The rarer steps therefore also go to sticky marks, one slot per kind,
+ * which that traffic never evicts: the last wifi_connect call and return,
+ * indication, disconnect and timer call.
+ *
+ * rtw_enter_critical and rtw_exit_critical are deliberately not wrapped.
+ * They guard every driver register access (bus_read and bus_write), the
+ * WLAN interrupt and the receive tasklet, and a note on that path stretched
+ * the first WPA3 SAE join's stall past the watchdog feeder's 1 s gap, so
+ * every trial boot of that build was stopped by the supervisor.
  *
  * A note masks nothing on the ring's path: it claims its ring slot by
  * incrementing the count with LDREX/STREX (which an interrupt between the
@@ -72,12 +78,11 @@ void wellfed_app_start(void);
  * number stored last, so a reset mid-mark leaves a mark the reader drops.
  * A note preempted between its claim and its mark finds a newer note there
  * and leaves it, so a mark always holds its kind's latest note.
- * Only the
- * critical-section wrappers change the depth, one counter for the whole
- * CPU, and they do it with interrupts already masked (PRIMASK, in a task
+ * Only the critical-section wrappers change the depth, one counter for the
+ * whole CPU, and they do it with interrupts already masked (PRIMASK, in a task
  * or an interrupt). A note never blocks, allocates or prints, and is safe
  * from any task or interrupt. The wrappers run from RAM, as the vendor's
- * save_and_cli, rtw_enter_critical and the driver's timer functions do.
+ * save_and_cli and the driver's timer functions do.
  * Nothing is noted until Rust's start has read the last boot's trail and
  * started this one's (wellfed_trail_start); the switch is in .bss, which
  * app_start clears before anything runs, so the SDK's own startup cannot
@@ -98,7 +103,7 @@ void wellfed_app_start(void);
 #define WELLFED_TRAIL_MARKS 5
 #define WELLFED_TRAIL_WORDS 220
 #define WELLFED_TRAIL_MAGIC 0x504c5452u /* "PLTR" */
-#define WELLFED_TRAIL_VERSION 2u
+#define WELLFED_TRAIL_VERSION 3u
 #define WELLFED_TRAIL_DEPTH_SHIFT 8
 #define WELLFED_TRAIL_ISR_SHIFT 15
 #define WELLFED_TRAIL_SEQ_SHIFT 16
@@ -107,17 +112,15 @@ void wellfed_app_start(void);
 enum {
     WELLFED_STEP_SAVE_AND_CLI = 1,
     WELLFED_STEP_RESTORE_FLAGS = 2,
-    WELLFED_STEP_ENTER_CRITICAL = 3,
-    WELLFED_STEP_EXIT_CRITICAL = 4,
-    WELLFED_STEP_SET_TIMER = 5,
-    WELLFED_STEP_DEL_TIMER = 6,
-    WELLFED_STEP_CANCEL_TIMER = 7,
-    WELLFED_STEP_INDICATION = 8,
-    WELLFED_STEP_INDICATION_RETURNED = 9,
-    WELLFED_STEP_INDICATE_DISCONNECT = 10,
-    WELLFED_STEP_INDICATE_DISCONNECT_RETURNED = 11,
-    WELLFED_STEP_CONNECT = 12,
-    WELLFED_STEP_CONNECT_RETURNED = 13,
+    WELLFED_STEP_SET_TIMER = 3,
+    WELLFED_STEP_DEL_TIMER = 4,
+    WELLFED_STEP_CANCEL_TIMER = 5,
+    WELLFED_STEP_INDICATION = 6,
+    WELLFED_STEP_INDICATION_RETURNED = 7,
+    WELLFED_STEP_INDICATE_DISCONNECT = 8,
+    WELLFED_STEP_INDICATE_DISCONNECT_RETURNED = 9,
+    WELLFED_STEP_CONNECT = 10,
+    WELLFED_STEP_CONNECT_RETURNED = 11,
 };
 
 /* Mark slots, shared with Rust (`trail::Mark`); none for critical sections. */
@@ -247,8 +250,6 @@ void wellfed_trail_start(unsigned int boot)
 
 void __real_save_and_cli(void);
 void __real_restore_flags(void);
-void __real_rtw_enter_critical(void *plock, void *pirqL);
-void __real_rtw_exit_critical(void *plock, void *pirqL);
 void __real_rtw_set_timer(void *ptimer, u32 delay_time);
 void __real_rtw_del_timer(void *ptimer);
 u8 __real_rtw_cancel_timer(void *ptimer);
@@ -256,8 +257,6 @@ void __real_wifi_indication(rtw_event_indicate_t event, char *buf, int buf_len, 
 void __real_rtw_os_indicate_disconnect(void *adapter);
 void __wrap_save_and_cli(void);
 void __wrap_restore_flags(void);
-void __wrap_rtw_enter_critical(void *plock, void *pirqL);
-void __wrap_rtw_exit_critical(void *plock, void *pirqL);
 void __wrap_rtw_set_timer(void *ptimer, u32 delay_time);
 void __wrap_rtw_del_timer(void *ptimer);
 u8 __wrap_rtw_cancel_timer(void *ptimer);
@@ -279,20 +278,6 @@ void __wrap_restore_flags(void)
 {
     wellfed_trail_note(WELLFED_STEP_RESTORE_FLAGS, -1, WELLFED_MARK_NONE, WELLFED_LR(), 0);
     __real_restore_flags();
-}
-
-IMAGE2_RAM_TEXT_SECTION
-void __wrap_rtw_enter_critical(void *plock, void *pirqL)
-{
-    __real_rtw_enter_critical(plock, pirqL);
-    wellfed_trail_note(WELLFED_STEP_ENTER_CRITICAL, 1, WELLFED_MARK_NONE, WELLFED_LR(), (unsigned int)plock);
-}
-
-IMAGE2_RAM_TEXT_SECTION
-void __wrap_rtw_exit_critical(void *plock, void *pirqL)
-{
-    wellfed_trail_note(WELLFED_STEP_EXIT_CRITICAL, -1, WELLFED_MARK_NONE, WELLFED_LR(), (unsigned int)plock);
-    __real_rtw_exit_critical(plock, pirqL);
 }
 
 /* Each timer call is noted before it runs: the driver's timer list is

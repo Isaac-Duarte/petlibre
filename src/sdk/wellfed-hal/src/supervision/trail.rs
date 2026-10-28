@@ -7,10 +7,13 @@
 //! builder's `TRAIL_WRAPS`), and each wrapper in `example_entry.c` notes its
 //! call in a ring of [`ENTRIES`] entries in `wellfed_status_trail`, just
 //! below the wall clock's time carry. The shim's Wi-Fi task also notes when
-//! `wifi_connect` starts and returns. `rtw_enter_critical` guards every
-//! driver register access, so the ring turns over within microseconds; the
-//! rarer steps therefore also go to one sticky [`Mark`] slot per kind,
-//! which that traffic never evicts. The next boot reads the trail once, at
+//! `wifi_connect` starts and returns. The driver masks interrupts with
+//! `save_and_cli` around every packet buffer it allocates or frees, so the
+//! ring turns over many times during a join; the rarer steps therefore
+//! also go to one sticky [`Mark`] slot per kind, which that traffic never
+//! evicts. The driver's `rtw_enter_critical`, which guards every register
+//! access, is deliberately not wrapped: a note there stretched the first
+//! WPA3 join past the watchdog feeder's 1 s supervision gap. The next boot reads the trail once, at
 //! startup, prints it after a hang the crumb names (`masked` or `spin`), and
 //! starts an empty one.
 //!
@@ -83,36 +86,30 @@ pub enum Step {
     SaveAndCli = 1,
     /// `restore_flags` is about to unmask them (noted while still masked).
     RestoreFlags = 2,
-    /// `rtw_enter_critical` entered; the argument is the lock.
-    EnterCritical = 3,
-    /// `rtw_exit_critical` is about to leave; the argument is the lock.
-    ExitCritical = 4,
     /// `rtw_set_timer` is called; the argument is the timer.
-    SetTimer = 5,
+    SetTimer = 3,
     /// `rtw_del_timer` is called; the argument is the timer.
-    DelTimer = 6,
+    DelTimer = 4,
     /// `rtw_cancel_timer` is called; the argument is the timer.
-    CancelTimer = 7,
+    CancelTimer = 5,
     /// `wifi_indication` is called; the argument is the event.
-    Indication = 8,
+    Indication = 6,
     /// `wifi_indication` returned.
-    IndicationReturned = 9,
+    IndicationReturned = 7,
     /// `rtw_os_indicate_disconnect` is called; the argument is the adapter.
-    IndicateDisconnect = 10,
+    IndicateDisconnect = 8,
     /// `rtw_os_indicate_disconnect` returned.
-    IndicateDisconnectReturned = 11,
+    IndicateDisconnectReturned = 9,
     /// The Wi-Fi task calls `wifi_connect`; the argument is the attempt.
-    Connect = 12,
+    Connect = 10,
     /// `wifi_connect` returned; the argument is its result.
-    ConnectReturned = 13,
+    ConnectReturned = 11,
 }
 
 impl Step {
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 11] = [
         Self::SaveAndCli,
         Self::RestoreFlags,
-        Self::EnterCritical,
-        Self::ExitCritical,
         Self::SetTimer,
         Self::DelTimer,
         Self::CancelTimer,
@@ -137,8 +134,6 @@ impl Step {
         match self {
             Self::SaveAndCli => "save_and_cli",
             Self::RestoreFlags => "restore_flags",
-            Self::EnterCritical => "rtw_enter_critical",
-            Self::ExitCritical => "rtw_exit_critical",
             Self::SetTimer => "rtw_set_timer",
             Self::DelTimer => "rtw_del_timer",
             Self::CancelTimer => "rtw_cancel_timer",
@@ -154,9 +149,7 @@ impl Step {
     /// The sticky mark the step also goes to, if any.
     pub const fn mark(self) -> Option<Mark> {
         match self {
-            Self::SaveAndCli | Self::RestoreFlags | Self::EnterCritical | Self::ExitCritical => {
-                None
-            }
+            Self::SaveAndCli | Self::RestoreFlags => None,
             Self::SetTimer | Self::DelTimer | Self::CancelTimer => Some(Mark::Timer),
             Self::Indication | Self::IndicationReturned => Some(Mark::Indication),
             Self::IndicateDisconnect | Self::IndicateDisconnectReturned => Some(Mark::Disconnect),

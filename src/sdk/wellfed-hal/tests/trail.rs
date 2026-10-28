@@ -82,11 +82,11 @@ fn steps(trail: &Trail<'_, [u32; TRAIL_WORDS]>) -> Vec<(u32, Step)> {
     trail.entries().map(|e| (e.seq, e.step)).collect()
 }
 
-/// Bus traffic: a register access's critical section, as `bus_read32` makes.
-fn bus(ram: &mut Ram, times: u32) {
+/// Masked traffic: a packet buffer.s critical section, as `alloc_skb` makes.
+fn masked(ram: &mut Ram, times: u32) {
     for _ in 0..times {
-        ram.note(Step::EnterCritical, 1, false, 0x1000_d01b, 0x1002_0040);
-        ram.note(Step::ExitCritical, -1, false, 0x1000_d02f, 0x1002_0040);
+        ram.note(Step::SaveAndCli, 1, false, 0x1000_d01b, 0);
+        ram.note(Step::RestoreFlags, -1, false, 0x1000_d02f, 0);
     }
 }
 
@@ -156,8 +156,8 @@ fn notes_read_oldest_first_with_their_depth_and_context() {
     let mut ram = Ram::started(BOOT);
     ram.note(Step::Connect, 0, false, 0, 1);
     ram.note(Step::SaveAndCli, 1, false, 0x1001_936d, 0);
-    ram.note(Step::EnterCritical, 1, true, 0x1000_d01b, 0x1002_0040);
-    ram.note(Step::ExitCritical, -1, true, 0x1000_d02f, 0x1002_0040);
+    ram.note(Step::SaveAndCli, 1, true, 0x1000_d01b, 0);
+    ram.note(Step::RestoreFlags, -1, true, 0x1000_d02f, 0);
 
     let trail = ram.trail();
     assert_eq!((trail.count, trail.depth, trail.skipped()), (4, 1, 0));
@@ -166,8 +166,8 @@ fn notes_read_oldest_first_with_their_depth_and_context() {
         [
             (0, Step::Connect),
             (1, Step::SaveAndCli),
-            (2, Step::EnterCritical),
-            (3, Step::ExitCritical),
+            (2, Step::SaveAndCli),
+            (3, Step::RestoreFlags),
         ]
     );
     let entries: Vec<Entry> = trail.entries().collect();
@@ -182,11 +182,11 @@ fn notes_read_oldest_first_with_their_depth_and_context() {
     );
     assert_eq!(
         entries[2].to_string(),
-        "seq=2 step=rtw_enter_critical depth=2 isr=1 lr=0x1000d01b arg=0x10020040"
+        "seq=2 step=save_and_cli depth=2 isr=1 lr=0x1000d01b arg=0x00000000"
     );
     assert_eq!(
         trail.to_string(),
-        "boot=41 count=4 n=4 skipped=0 depth=1 last=rtw_exit_critical"
+        "boot=41 count=4 n=4 skipped=0 depth=1 last=restore_flags"
     );
 }
 
@@ -213,7 +213,7 @@ fn the_ring_keeps_the_last_sixty_four_across_its_wrap() {
 }
 
 #[test]
-fn the_marks_outlast_the_bus_traffic_that_flushes_the_ring() {
+fn the_marks_outlast_the_masked_traffic_that_flushes_the_ring() {
     let mut ram = Ram::started(BOOT);
     ram.note(Step::Connect, 0, false, 0, 1);
     ram.note(Step::SetTimer, 0, false, 0x0e03_96f5, 0x1003_0430);
@@ -221,12 +221,12 @@ fn the_marks_outlast_the_bus_traffic_that_flushes_the_ring() {
     ram.note(Step::IndicationReturned, 0, false, 0x0e05_ae01, 1);
     ram.note(Step::IndicateDisconnect, 0, false, 0x0e03_8b71, 0x1003_5000);
     ram.note(Step::DelTimer, 0, false, 0x0e05_ac91, 0x1003_0510);
-    bus(&mut ram, 500);
+    masked(&mut ram, 500);
 
     let trail = ram.trail();
     assert!(
         trail.entries().all(|e| e.step.mark().is_none()),
-        "the ring holds only bus traffic"
+        "the ring holds only masked traffic"
     );
     let marks: BTreeMap<&str, Option<(u32, Step, u32)>> = trail
         .marks()
@@ -252,7 +252,7 @@ fn a_torn_or_misplaced_mark_is_none() {
     let mut ram = Ram::started(BOOT);
     ram.note(Step::Connect, 0, false, 0, 1);
     ram.note(Step::ConnectReturned, 0, false, 0, 0xffff_ffff);
-    bus(&mut ram, 3);
+    masked(&mut ram, 3);
     let connect = MARKS_AT + usize::from(Mark::Connect.code()) * 4;
     let returned = MARKS_AT + usize::from(Mark::ConnectReturned.code()) * 4;
     let timer = MARKS_AT + usize::from(Mark::Timer.code()) * 4;
@@ -289,7 +289,7 @@ fn note_numbers_past_sixteen_bits_still_match() {
 #[test]
 fn a_note_cut_by_the_reset_is_dropped() {
     let mut ram = Ram::started(BOOT);
-    bus(&mut ram, 50);
+    masked(&mut ram, 50);
     // The reset landed after the next note claimed its slot and stored
     // `lr`, before its first word: the slot is the window's newest and
     // still holds the number it had a ring earlier.
@@ -327,7 +327,7 @@ fn every_step_round_trips_and_has_its_name() {
         assert_eq!(Step::from_byte(step.code()), Some(step));
     }
     assert_eq!(Step::from_byte(0), None);
-    assert_eq!(Step::from_byte(14), None);
+    assert_eq!(Step::from_byte(12), None);
     assert_eq!(Step::ConnectReturned.name(), "wifi_connect_ret");
     assert_eq!(
         Step::IndicateDisconnect.name(),
@@ -373,7 +373,7 @@ fn the_boot_reads_the_last_trail_in_place_then_starts_its_own() {
 #[test]
 fn a_trail_of_the_last_layout_is_refused() {
     let mut words = Ram::started(BOOT).words;
-    words[2] = !(TRAIL_MAGIC ^ BOOT);
+    words[2] = !(TRAIL_MAGIC ^ BOOT ^ (TRAIL_VERSION - 1));
     assert_eq!(refusal(&words, BOOT + 1), Some(Refusal::NotStarted));
 }
 
@@ -381,7 +381,7 @@ fn a_trail_of_the_last_layout_is_refused() {
 fn a_mark_cut_by_the_reset_after_its_lr_is_none() {
     let mut ram = Ram::started(BOOT);
     ram.note(Step::SetTimer, 0, false, 0x0e03_96f5, 0x1003_0430);
-    bus(&mut ram, 2);
+    masked(&mut ram, 2);
     // The next timer note: its ring slot is whole, but the reset landed
     // in its mark after the cleared meta and the new `lr`.
     ram.note(Step::DelTimer, 0, false, 0x0e05_ac91, 0x1003_0510);
@@ -492,8 +492,8 @@ fn the_shim_shares_the_layout_and_codes() {
         });
         assert_eq!(mark, expected_mark, "{step:?}");
         let expected_change = match step {
-            Step::SaveAndCli | Step::EnterCritical => "1",
-            Step::RestoreFlags | Step::ExitCritical => "-1",
+            Step::SaveAndCli => "1",
+            Step::RestoreFlags => "-1",
             _ => "0",
         };
         assert_eq!(change, expected_change, "{step:?}");

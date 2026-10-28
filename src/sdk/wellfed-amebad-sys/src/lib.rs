@@ -123,7 +123,7 @@ pub const TRAIL_WORDS: usize = 220;
 pub const TRAIL_MAGIC: u32 = 0x504c_5452;
 /// The trail layout's version, folded into the header's check
 /// (`WELLFED_TRAIL_VERSION`).
-pub const TRAIL_VERSION: u32 = 2;
+pub const TRAIL_VERSION: u32 = 3;
 
 /// Samples in one codec DMA page (16 ms at 16 kHz, 16-bit mono),
 /// `WELLFED_AUDIO_PAGE` in `example_entry.c`.

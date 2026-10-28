@@ -336,12 +336,13 @@ fn retained_ram(linker: &str) -> Result<String> {
 /// The vendor primitives the KM4 link wraps for the call trail: every call
 /// to one from another object, the prebuilt Wi-Fi driver's included, goes
 /// through `__wrap_<name>` in `example_entry.c`. Each is an undefined
-/// reference in the driver objects that call it.
-const TRAIL_WRAPS: [&str; 9] = [
+/// reference in the driver objects that call it. `rtw_enter_critical` and
+/// `rtw_exit_critical` stay unwrapped: they guard every driver register
+/// access, and a note there stretched the first WPA3 join past the watchdog
+/// feeder's 1 s supervision gap.
+const TRAIL_WRAPS: [&str; 7] = [
     "save_and_cli",
     "restore_flags",
-    "rtw_enter_critical",
-    "rtw_exit_critical",
     "rtw_set_timer",
     "rtw_del_timer",
     "rtw_cancel_timer",
@@ -1127,6 +1128,10 @@ mod tests {
                 "{name}"
             );
         }
+        assert!(
+            !km4.contains("rtw_enter_critical") && !km4.contains("rtw_exit_critical"),
+            "the register-access sections stay unwrapped"
+        );
         assert_eq!(
             link_additions(Core::Lp, archive),
             archive.display().to_string()

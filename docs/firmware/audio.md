@@ -11,7 +11,7 @@ Recovered from the stock KM4 image (`DL_AUDIO`, `audio_play_http_file`):
 - **Audio path.** Stock decodes AAC (a downloaded meal call, or one of up to 11 named prompts) and streams PCM through SPORT by GDMA into the codec.
 - **Codec setup.** `CODEC_Init(rate, 16-bit, mono flag, 8)`, where application 8 is `APP_LINE_OUT`. The I2S PLL and divider are chosen per sample rate; 8, 16, 32, 44.1 and 48 kHz are supported.
 - **Amplifier.** PB23 (`0x37`) is written HIGH while it plays and LOW afterwards. This is the amplifier enable.
-- **PA25.** A separate GPIO "buzzer" line, pulsed HIGH by a one-shot 200-tick timer. Wellfed does not use it, and its role is unknown.
+- **PA25.** A separate GPIO buzzer line, pulsed HIGH by a one-shot 200-tick timer. It drives an active buzzer: a HIGH alone beeps ([evidence](#evidence)). Wellfed does not use it yet.
 
 Stock also keeps clips in flash (recovered from a full-flash dump):
 
@@ -71,12 +71,13 @@ The task logs `PLAUD1` lines:
 ## Not done yet
 
 - **Stored clips.** Playing stock's clips needs a read-only FAT reader, the SDK's Helix AAC decoder and a 44.1 kHz codec setup.
-- **PA25's role.**
+- **The buzzer.** PA25 beeps, but nothing in the product uses it yet; which events beep is light and sound policy.
 - **Quiet windows**, which are light and sound policy.
 - **A meal call** before a scheduled meal, when its plan enables one ([device API](device-api.md)).
 
 ## Evidence
 
+- **The buzzer.** Observed (October 28, owner listening, `feeder` `buzzer` variant v334): with the amplifier and codec off, a 200 ms HIGH on PA25 gave a clear beep, and 512 Hz and 2,048 Hz square waves on it sounded rough, as an active buzzer's own oscillator chopped by its supply would. The pad read back HIGH while driven HIGH and LOW while driven LOW. The normal build went back on afterwards.
 - **Playback.** Observed (October 22, OTA v20 and v21, owner listening). The startup chime played on the first boot (`done tune=chime ms=624 underruns=0 drained=1`) and was heard clearly, as were `coin` and `twinkle`. A `coin` sent during `twinkle` got `busy`. With the decibel scale, volumes 40, 80 and 100 were clearly stepped and clean. With `sound` off, a play request was refused with `muted`. Settings were then restored (sound on, volume 40, generation 2985). These requests went over the since-deleted MQTT transport, which reached the same `audio::request`.
 - **Amplifier settle.** Observed (October 24): a 60 ms settle swallowed a 50 ms tick whole, so the settle is 150 ms.
 - **Linear volume.** Observed: on a linear scale, 40 and 80 sounded almost alike.

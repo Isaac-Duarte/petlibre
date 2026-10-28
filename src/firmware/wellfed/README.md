@@ -29,7 +29,7 @@ The probes these firmwares run live once, in `src/sdk/wellfed-probes`, so a brin
 - **The feeding owner**, which holds the motor and emitters stopped and supervised between feeds, and runs the feeds the device API and the Dispense button ask for.
 - **Power health.** It claims the ADC for the owner, which publishes power health in the runtime monitor's place.
 
-Its two tasks are its loop task and the button service. Its test variants (`entropy`, `owner-stall`, `held-stall`, `gap-probe`, `feed-stall`, `stop-fail`, `owner-fail`, `feed-jam`, `sensor-fault` and `twin`) are each described in its `Cargo.toml`. They exist for the bench to show the supervision, rollback and fault handling at work.
+Its two tasks are its loop task and the button service. Its test variants (`entropy`, `owner-stall`, `held-stall`, `gap-probe`, `feed-stall`, `stop-fail`, `owner-fail`, `feed-jam`, `sensor-fault`, `buzzer` and `twin`) are each described in its `Cargo.toml`. They exist for the bench to show the supervision, rollback and fault handling at work, and `buzzer` to find out what PA25 reaches.
 
 ### Bring-up variants
 

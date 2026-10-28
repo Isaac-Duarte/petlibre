@@ -194,7 +194,7 @@ pub enum ArgError {
     UnknownFirmware { text: String },
     #[error(
         "unknown variant {text:?}; the trial firmware has stall and fail, the feeder entropy, \
-         owner-stall, held-stall, gap-probe, feed-stall, stop-fail, owner-fail, feed-jam, sensor-fault \
+         owner-stall, held-stall, gap-probe, feed-stall, stop-fail, owner-fail, feed-jam, sensor-fault, buzzer \
          and twin"
     )]
     UnknownVariant { text: String },
@@ -328,6 +328,8 @@ pub enum Variant {
     /// The feeder showing each feed a sensor fault chosen by its portions;
     /// moves the motor only for a feed request, like the feeder.
     SensorFault,
+    /// The feeder driving PA25, stock's buzzer line, at rest; no motion.
+    Buzzer,
     /// The feeder unchanged under another build identity, so installing it
     /// after the baseline goes through a trial and still serves the device
     /// API.
@@ -349,6 +351,7 @@ impl Variant {
             Self::OwnerFail => "owner-fail",
             Self::FeedJam => "feed-jam",
             Self::SensorFault => "sensor-fault",
+            Self::Buzzer => "buzzer",
             Self::Twin => "twin",
         }
     }
@@ -366,6 +369,7 @@ impl Variant {
             | Self::OwnerFail
             | Self::FeedJam
             | Self::SensorFault
+            | Self::Buzzer
             | Self::Twin => Firmware::Feeder,
         }
     }
@@ -385,6 +389,7 @@ pub fn parse_variant(text: &str) -> std::result::Result<Variant, ArgError> {
         "owner-fail" => Ok(Variant::OwnerFail),
         "feed-jam" => Ok(Variant::FeedJam),
         "sensor-fault" => Ok(Variant::SensorFault),
+        "buzzer" => Ok(Variant::Buzzer),
         "twin" => Ok(Variant::Twin),
         "pulse" => Err(ArgError::PulseVariant),
         other => Err(ArgError::UnknownVariant { text: other.into() }),
@@ -455,7 +460,7 @@ pub struct OtaArgs {
     #[arg(long, value_parser = parse_firmware)]
     pub firmware: Option<Firmware>,
     /// Variant for --build: stall or fail with --firmware trial, entropy, owner-stall,
-    /// held-stall, gap-probe, feed-stall, stop-fail, owner-fail, feed-jam, sensor-fault or twin with
+    /// held-stall, gap-probe, feed-stall, stop-fail, owner-fail, feed-jam, sensor-fault, buzzer or twin with
     /// --firmware feeder.
     #[arg(long, value_parser = parse_variant)]
     pub variant: Option<Variant>,

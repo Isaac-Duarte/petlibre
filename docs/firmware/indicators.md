@@ -2,20 +2,20 @@
 
 The panel has four single-color lights, one behind each icon. The indicator service decides what each light shows when several things want it at once, and it checks every change it makes. If a light cannot be trusted, the service turns them all off rather than show a wrong state.
 
-Status: **Experimental**. The service is built and host-tested, and the pins and polarity are observed. Colors and transitions wait for the [bench check](#bench-check) with the owner watching.
+Status: **Works**. The service is built and host-tested, and its colors and transitions passed the [bench check](#bench-check) with the owner watching (October 28). Which states show is still provisional.
 
 ## The lights
 
 Seen from the front, the icons run low food, lock, Wi-Fi, error/warning from left to right. Each light sits on its own pad and is lit HIGH.
 
-| Light (`wellfed_core::indicator::Light`) | Icon | Pad | Input readback |
-| --- | --- | --- | --- |
-| `connection` | Wi-Fi | PA0 | None |
-| `food` | Low food | PA2 | None |
-| `lock` | Lock | PA4 | None |
-| `fault` | Error/warning (red) | PB22 | Yes |
+| Light (`wellfed_core::indicator::Light`) | Icon | Color | Pad | Input readback |
+| --- | --- | --- | --- | --- |
+| `connection` | Wi-Fi | White | PA0 | None |
+| `food` | Low food | Red | PA2 | None |
+| `lock` | Lock | White | PA4 | None |
+| `fault` | Error/warning | Red | PB22 | Yes |
 
-Port A's low pads read LOW whatever is driven on our unit, so only PB22 can be read back ([startup](startup-diagnostics.md#shared-pad-power)). Only PB22's color (red) is recorded. The pads come from `wellfed_board_plaf103::pins` ([device layer](device-layer.md)).
+Port A's low pads read LOW whatever is driven on our unit, so only PB22 can be read back ([startup](startup-diagnostics.md#shared-pad-power)). The pads come from `wellfed_board_plaf103::pins` ([device layer](device-layer.md)).
 
 ## How the service decides
 
@@ -78,16 +78,17 @@ Run this with the owner watching. Nothing here moves the motor except step 7, wh
 2. **Boot.** You should see `show light=lock state=locked` and, once joined, `show light=connection state=online`. The lock and Wi-Fi icons are lit steady; food and warning are dark. Note each lit icon's color.
 3. **Lock.** Run `wellfed lock off`, then `wellfed lock on`. The lock icon goes dark, then lights again, and the log shows `state=none`, then `state=locked`.
 4. **Lights setting.** Run `wellfed settings --lights off`. All four icons go dark. Run `wellfed settings --lights on`, and lock and Wi-Fi return.
-5. **Pairing offer.** Unlock (`wellfed lock off`), hold Lock and Dispense to open the recovery window, then start `wellfed recover --address …`. The lock icon blinks about twice a second until the code is keyed in or the offer times out, then returns to its state.
-6. **Setup mode.** On an unlocked panel, hold Lock and Mic. The Wi-Fi icon blinks once a second until setup mode's reboot.
+5. **Pairing offer.** Unlock (`wellfed lock off`), press Lock first and then add Dispense, and hold both to open the recovery window. Dispense pressed alone, even a moment early, starts a feed on an unlocked panel. Then start `wellfed recover --address …`. The lock icon blinks about twice a second until the code is keyed in or the offer times out, then returns to its state.
+6. **Setup mode.** On an unlocked panel, hold Lock and Mic. The Wi-Fi icon blinks once a second until setup mode's reboot, which comes only after 15 minutes with no phone; `wellfed reboot` ends it sooner.
 7. **Feed.** Run `wellfed feed --portions 1`. The food icon blinks once a second while the feed runs, and goes dark after its result. Check the feed's result and trace as usual: the lights must not change either.
-8. **Refused press.** With a feed refused (for example during an install, or with the battery hold), press Dispense on an unlocked panel. The warning icon flashes quickly for about 3 s.
-9. **Steady fault.** With the `sensor-fault` variant installed ([jams and sensor faults](jams-and-sensor-faults.md#fault-injection-variants)), its third feed holds a fault. The warning icon is lit steady and red.
+8. **Refused press.** With a feed refused, press Dispense on an unlocked panel. The simplest case: press Dispense once to start a feed, then again about 3 s later while it runs. The second press is refused `busy`, and the warning icon flashes quickly for about 3 s.
+9. **Steady fault.** With the `sensor-fault` variant installed ([jams and sensor faults](jams-and-sensor-faults.md#fault-injection-variants)), a 3-portion feed holds a fault. The warning icon is lit steady and red.
 
 Record which steps passed, each icon's color, and any `PLIND1 fail` line. Watch especially for `fail light=fault`: PB22 is the one pad with input readback, so it is the only light whose check can catch an input mismatch. A `fail` line means the lights stayed off for that boot. That is the designed response, not a pass.
 
 ## Evidence
 
+- **The bench check.** Observed (October 28, owner watching, `feeder` `f1e4655c…` on bank 1, then the `sensor-fault` variant for step 9): every step passed, with no `PLIND1 fail` line. Lock and Wi-Fi lit steady at boot; the lock went dark on unlock and back on lock; the `lights` setting darkened all four and restored them; the lock blinked through a recovery offer that timed out; the Wi-Fi light blinked in setup mode; low food blinked through each 1-portion feed and went dark after its result; a second Dispense press during a feed was refused `busy` and flashed the warning for 3 s; a held sensor fault lit the warning steady, and a later Dispense press changed nothing. Colors: low food and warning red, lock and Wi-Fi white.
 - **Pins and polarity.** Observed: each light on its pad, lit HIGH, from the startup indicator probe with the operator watching and the owner's observation of the icon order (October 24). PB22 is red.
 - **The service.** Modeled (October 26):
   - `wellfed-core/tests/indicator.rs`: priority, ties, cancellation and stale handles, expiry including across the clock's wrap, blink edges and phase across the wrap, refusals, claims, and the driver's settle-and-check and failure.

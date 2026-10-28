@@ -135,6 +135,8 @@ fn loop_task() -> u32 {
     inject::step(&feeding);
     #[cfg(any(feature = "feed-jam", feature = "sensor-fault"))]
     show_faults::step(&feeding);
+    #[cfg(feature = "buzzer")]
+    let buzzer_delay = buzzer::step(&feeding);
     let began = sdk::systimer_ticks();
     let mut feed_delay = feeding.step(
         |record| log(format_args!("PLOWN1 {record}\r\n")),
@@ -159,6 +161,10 @@ fn loop_task() -> u32 {
     }
     if let Some(feed_delay) = feed_delay {
         delay_ms = delay_ms.min(feed_delay);
+    }
+    #[cfg(feature = "buzzer")]
+    {
+        delay_ms = delay_ms.min(buzzer_delay);
     }
 
     #[cfg(feature = "entropy")]
@@ -410,6 +416,161 @@ mod show_faults {
             }
             None => {}
         }
+    }
+}
+
+/// The `buzzer` variant: finds out whether PA25, stock's buzzer line,
+/// reaches anything. Stock pulses it HIGH for 200 ticks; an active buzzer
+/// beeps on that alone, a passive piezo only clicks, so each round also
+/// plays two short square waves. Rounds start a minute into the boot and
+/// repeat every 30 s, each logged with the pad's readback for a meter or
+/// the ear to compare against. The line never moves while a feed is queued
+/// or runs, and a feed that starts mid-round drops it LOW at once. The
+/// tones spin the loop for their 200 ms each, which only happens at rest,
+/// where the owner's beat allows 10 s. It goes back out after the check.
+#[cfg(feature = "buzzer")]
+mod buzzer {
+    use wellfed_core::{deadline_passed, until};
+    use wellfed_sdk::hal::buzzer;
+    use wellfed_sdk::hal::sdk;
+    use wellfed_sdk::hal::supervision::config::SYSTIMER_HZ;
+    use wellfed_sdk::{Slot, log};
+
+    use crate::feeding::Feeding;
+
+    const FIRST_MS: u32 = 60_000;
+    const ROUND_MS: u32 = 30_000;
+    /// Stock's pulse: 200 ticks of its 1 kHz scheduler.
+    const PULSE_MS: u32 = 200;
+    const GAP_MS: u32 = 1_000;
+    const TONE_MS: u32 = 200;
+    const TONES_HZ: [u32; 2] = [500, 2_000];
+
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Stage {
+        Off,
+        Idle,
+        Pulse,
+        Gap,
+    }
+
+    struct Probe {
+        stage: Stage,
+        at_ms: u32,
+        round: u32,
+    }
+
+    /// The loop task's.
+    static PROBE: Slot<Probe> = Slot::filled(Probe {
+        stage: Stage::Off,
+        at_ms: FIRST_MS,
+        round: 0,
+    });
+
+    /// One step; returns the delay to the next.
+    pub fn step(feeding: &Feeding) -> u32 {
+        let Some(mut probe) = PROBE.enter() else {
+            return ROUND_MS;
+        };
+        let now = sdk::uptime_ms();
+
+        if feeding.busy() {
+            if !matches!(probe.stage, Stage::Off | Stage::Idle) {
+                buzzer::set(false);
+                report("abandon", probe.round);
+                probe.stage = Stage::Idle;
+                probe.at_ms = now.wrapping_add(ROUND_MS);
+            }
+            return ROUND_MS;
+        }
+        // Configured only at rest, so a feed resumed at boot never sees port
+        // A's registers rewritten under it.
+        if probe.stage == Stage::Off {
+            buzzer::enable();
+            report("enable", probe.round);
+            probe.stage = Stage::Idle;
+        }
+        if !deadline_passed(now, probe.at_ms) {
+            return until(now, probe.at_ms);
+        }
+
+        match probe.stage {
+            // `Off` became `Idle` above.
+            Stage::Off | Stage::Idle => {
+                probe.round = probe.round.wrapping_add(1);
+                buzzer::set(true);
+                report("pulse-high", probe.round);
+                probe.stage = Stage::Pulse;
+                probe.at_ms = now.wrapping_add(PULSE_MS);
+                PULSE_MS
+            }
+            Stage::Pulse => {
+                buzzer::set(false);
+                report("pulse-low", probe.round);
+                probe.stage = Stage::Gap;
+                probe.at_ms = now.wrapping_add(GAP_MS);
+                GAP_MS
+            }
+            Stage::Gap => {
+                for hz in TONES_HZ {
+                    let played = tone(hz);
+                    log(format_args!(
+                        "PLBUZ1 tone round={} hz={} us={} edges={}\r\n",
+                        probe.round, played.hz, played.us, played.edges
+                    ));
+                }
+                report("idle", probe.round);
+                probe.stage = Stage::Idle;
+                probe.at_ms = now.wrapping_add(ROUND_MS);
+                ROUND_MS
+            }
+        }
+    }
+
+    /// What a tone really played: the 32 kHz timer rounds both the half
+    /// period and the length to whole ticks, so 500 Hz plays as 512 Hz and
+    /// 2 kHz as 2,048 Hz, each for about 195 ms. The log gives these, for a
+    /// meter to compare against.
+    struct Played {
+        hz: u32,
+        us: u32,
+        edges: u32,
+    }
+
+    /// A square wave near `hz` for about [`TONE_MS`], timed on the system
+    /// timer, with interrupts enabled between edges; ends LOW. An edge late
+    /// behind an interrupt is caught up at once, so `edges` counts those.
+    fn tone(hz: u32) -> Played {
+        let half = (SYSTIMER_HZ / (2 * hz)).max(1);
+        let total = SYSTIMER_HZ / 1_000 * TONE_MS;
+        let start = sdk::systimer_ticks();
+        let (mut edges, mut high, mut next) = (0u32, false, half);
+        while sdk::systimer_ticks().wrapping_sub(start) < total {
+            if sdk::systimer_ticks().wrapping_sub(start) >= next {
+                high = !high;
+                buzzer::set(high);
+                edges = edges.wrapping_add(1);
+                next = next.wrapping_add(half);
+            }
+            core::hint::spin_loop();
+        }
+        buzzer::set(false);
+        let us = u64::from(total) * 1_000_000 / u64::from(SYSTIMER_HZ);
+        Played {
+            hz: SYSTIMER_HZ / (2 * half),
+            us: u32::try_from(us).unwrap_or(u32::MAX),
+            edges,
+        }
+    }
+
+    fn report(what: &str, round: u32) {
+        let level = buzzer::level();
+        log(format_args!(
+            "PLBUZ1 {what} round={round} output={} latch={} input={}\r\n",
+            u8::from(level.output),
+            u8::from(level.latch_high),
+            u8::from(level.input_high)
+        ));
     }
 }
 

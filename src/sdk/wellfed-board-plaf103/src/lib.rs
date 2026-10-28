@@ -33,6 +33,9 @@ pub mod pins {
     pub const LED_FAULT: u32 = 32 + 22;
     /// Speaker amplifier enable, HIGH while playing.
     pub const AMP: u32 = 32 + 23;
+    /// The line stock pulses HIGH for 200 ms as a buzzer. Wellfed sounds
+    /// through the speaker, and what PA25 reaches is unmeasured.
+    pub const BUZZER: u32 = 25;
     /// ADC channels: motor current and the battery pack. Channel 10, the
     /// chip's own supply, is the AmebaD's, not the board's.
     pub const ADC_CURRENT: u32 = 4;

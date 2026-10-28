@@ -29,6 +29,7 @@ pub mod ble;
 pub mod board;
 pub mod bringup;
 pub mod buttons;
+pub mod buzzer;
 pub mod clock;
 pub mod entropy;
 pub mod link;

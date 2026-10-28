@@ -2060,6 +2060,7 @@ fn a_variant_needs_the_firmware_that_declares_it() {
         ("owner-fail", Variant::OwnerFail),
         ("feed-jam", Variant::FeedJam),
         ("sensor-fault", Variant::SensorFault),
+        ("buzzer", Variant::Buzzer),
     ] {
         assert_eq!(ota::parse_variant(name), Ok(variant));
         assert_eq!(

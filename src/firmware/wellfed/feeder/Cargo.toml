@@ -51,6 +51,9 @@ feed-jam = ["wellfed-sdk/feed-faults"]
 # a 1-portion feed, the outlet blocked before it starts for 2, the ADC lost
 # 2 s into its drive for 3.
 sensor-fault = ["wellfed-sdk/feed-faults"]
+# Pulse and toggle PA25, stock's buzzer line, at rest, for the bench to
+# find out whether it reaches anything.
+buzzer = []
 # Nothing but another build identity: installed after the feeder, it goes
 # through a trial and still serves the device API.
 twin = []
@@ -108,6 +111,9 @@ summary = "Shows each feed a jam on the current channel, 2 s into its drive: for
 
 [package.metadata.wellfed.variants.sensor-fault]
 summary = "Shows each feed a sensor fault: for one portion the marks lost from the drive's start (failed no-feedback after 11 s), for two the outlet blocked before it starts (failed outlet, no motion), for three the ADC lost 2 s into its drive (failed sensor, then the owner holds the fault until a restart)"
+
+[package.metadata.wellfed.variants.buzzer]
+summary = "Drives PA25, stock's buzzer line, a minute into the boot and every 30 s while no feed is queued or runs: stock's 200 ms HIGH pulse, then 200 ms square waves at 500 Hz and 2 kHz, each logged with the pad's readback; no motion"
 
 [package.metadata.wellfed.variants.twin]
 summary = "The feeder unchanged under another build identity, so the bench's drills can install a build that goes through a trial and still serves the device API"

@@ -16,10 +16,10 @@ The roles come from stock 1.1.15, and many have since been confirmed on the boar
 | PA19 | External-power presence. HIGH on the adapter, LOW on batteries. | Its electrical levels and timing at the switch-over |
 | PB1 | ADC motor-current estimate (channel 4) | Scaling to current, and trip thresholds |
 | PB2 | ADC battery and power measurement (channel 5). Tracks the pack through a divider of about 2.06. | Battery percentage and low-voltage thresholds |
-| PA25 | Buzzer output, low at start | Whether it reaches anything. Wellfed plays sound through the speaker instead. |
+| PA25 | Active buzzer, separate from the speaker. Low at start; a HIGH alone beeps at the buzzer's own pitch (stock pulses it for 200 ms). The pad reads back what is driven. | The buzzer's part, pitch and current |
 | PB23 | Audio amplifier enable. Stock holds it HIGH while the codec plays; Wellfed does the same and the speaker plays. | Electrical level and the amplifier part |
 | PB4 / PB5 / PB6 / PB7 | Buttons: Reset, Mic, Dispense one portion, Lock. Active LOW with board pull-ups. | Edges finer than 2 ms, long holds and simultaneous presses |
-| PA2 / PA0 / PA4 / PB22 | Indicators: low food, Wi-Fi and OTA, lock, warning. HIGH on, LOW off. | Colors other than PB22's red; input readback on PA0, PA2 and PA4 |
+| PA2 / PA0 / PA4 / PB22 | Indicators: low food (red), Wi-Fi and OTA (white), lock (white), warning (red). HIGH on, LOW off. | Input readback on PA0, PA2 and PA4 |
 
 Seen from the front, the buttons run **Lock, Dispense, Mic, Reset** from left to right. The indicator icons run **low food, lock, Wi-Fi, warning** from left to right.
 

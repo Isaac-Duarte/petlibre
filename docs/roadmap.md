@@ -44,7 +44,7 @@ This page tracks what works today and what comes next. It covers the replacement
 | Child lock | Works | |
 | Reset button | Partial | Forgets paired clients; settings are kept for now. |
 | Buttons | Works | |
-| Indicator lights | Experimental | |
+| Indicator lights | Works | Which states show is not settled. |
 | Speaker | Works | Plays sounds; which sounds play when is not settled. |
 | Clock and time zones | Partial | Needs a time source after each power-up. Offline time is experimental. |
 | Battery and brownout | Experimental | |

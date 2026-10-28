@@ -98,6 +98,7 @@ An install needs no capture. `init-installer` writes a config with fresh secrets
 - **Contested.** Inside the window, any second stock-shaped identity, or a wrong password for the enrolled one, is noted in `installer.contested.json`, without its credentials. The status document's `enrollment` shows the device, its address and the contest. `POST /api/ota/trial` refuses (409) while the contest stands, because which feeder is the owner's can no longer be told. Only attempts inside the window count. After it closes, a second identity is refused but not flagged, so the installer's owner check of the device ID and address is then the only one.
 - **One or the other.** A config that names a captured device and has an enrollment beside it is refused.
 - **No redirect.** An installer's config has no hotspot interface or feeder MAC, so `network` refuses it. `ota-images` admits the enrolled feeder's address unless `--peer` is given.
+- **Stock's plans are left alone.** An installer's config holds no plan snapshot, so `GET_FEEDING_PLAN_EVENT` goes unanswered and clock calibration is held. Stock erases and rewrites its plan table on any reply that has a `plans` key, even an empty one. It does not check the code or the message ID, and it takes the message unasked. With no reply it keeps its table; it asks once and does not retry. An empty answer would erase the owner's plans before the installer can import them. The server never sends a plan message on its own: the commands it sends unasked are a closed set (`protocol::Sent`). (Static analysis of 1.1.15's KM4 image, with one UART capture of a stock install.)
 
 `wellfed install` ([consumer installation](../firmware/consumer-installation.md#the-installer)) runs this server as its child.
 
@@ -144,7 +145,7 @@ Normal `serve` mode keeps trial dispatch disabled. Trial dispatch needs a clean,
 
    The lease records the served digest and the build's identity: the startup identity of the review's frozen `build-manifest.json`, which must match the review's `manifest_sha256`.
 
-2. Check the schedule snapshot is empty. The server answers stock's schedule queries from the imported snapshot, and a trial needs it empty.
+2. Check the schedule snapshot is empty or absent. A captured snapshot is replayed to stock's schedule queries, so a trial needs it empty. With no snapshot (an installer's config), the queries go unanswered and stock keeps its own plans, which the installer imports.
 
 3. Start a trial with `POST /api/ota/trial` against a `serve --enable-ota-trial`. It needs the lease, announces target version `2.0.0` with the lease's digest, and records both in the ledger.
 

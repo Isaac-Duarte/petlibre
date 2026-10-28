@@ -297,7 +297,9 @@ impl Controller {
 
         if input.request_id.is_nil()
             || input.server_token.is_nil()
-            || !self.config.plans.is_empty()
+            // A captured table would be replayed to stock; with none,
+            // stock's own plans are left for the installer to import.
+            || self.config.plans.as_ref().is_some_and(|plans| !plans.is_empty())
             || !Self::fresh(self.status.version_reported_at, now)
             || !Self::fresh(self.status.power_reported_at, now)
             || reported_version(&self.status) != Some(ORIGINAL_VERSION)

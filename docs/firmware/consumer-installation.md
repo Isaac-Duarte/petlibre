@@ -89,7 +89,7 @@ The vendor app provisions a PLAF103 through the feeder's **setup access point**,
 
 - a broker on TCP 1883 that accepts stock's legacy MQTT 3.1 CONNECT;
 - the `dl/PLAF103/<device-id>/…/post` and `/sub` topics;
-- replies to `NTP`, `BINDING` and `GET_FEEDING_PLAN_EVENT`;
+- replies to `NTP` and `BINDING`, and to `GET_FEEDING_PLAN_EVENT` only with a captured plan snapshot. An installer's config has none, so that request goes unanswered: stock erases its plan table on any reply with a `plans` key, and the installer must find the owner's plans intact ([stock server](../development/stock-server.md#an-installers-server-trust-on-first-use));
 - acknowledgements of the startup, attribute, log and error events.
 
 For a consumer it must also accept a device whose credentials it has never seen. **Trust on first use:** an installer's config (`wellfed-stock init-installer`) names no device. `serve --enroll-minutes N` admits the first stock-shaped CONNECT within the window. It records that client's ID, username, password and address beside the config (`installer.json`'s record is `installer.device.json`) and pins it, so nobody else logs in, then or later ([stock server](../development/stock-server.md#an-installers-server-trust-on-first-use)). Stock's client ID is its device ID. The captured-credential `init` and the `network` redirect stay for the bench until the frame has provisioned stock on hardware.

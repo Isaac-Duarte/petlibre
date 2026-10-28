@@ -69,7 +69,7 @@ fn acknowledgements() {
         r#"{"cmd":"GRAIN_OUTPUT_EVENT","code":0,"execStep":{"a":[2],"b":1},"linkId":"LINK","ts":1792271861000}"#
     );
 
-    config.plans = vec![json!({"z":1,"id":"p"}), json!(3)];
+    config.plans = Some(vec![json!({"z":1,"id":"p"}), json!(3)]);
     assert_eq!(
         answer(
             &config,
@@ -88,7 +88,7 @@ fn clock() {
         r#"{"calibrationTag":true,"cmd":"NTP","code":0,"linkId":"LINK","nextDSTOffsetSeconds":-25200,"nextDSTTransitionTs":1793520000000,"secondNextDSTOffsetSeconds":-21600,"secondNextDSTTransitionTs":1805014800000,"timezone":-6.0,"timezoneOffsetSeconds":-21600,"ts":1792271861000}"#
     );
 
-    config.plans = vec![json!({})];
+    config.plans = Some(vec![json!({})]);
     config.timezone = chrono_tz::UTC;
     assert_eq!(
         answer(&config, "ntp", json!({"cmd":"NTP"})),
@@ -120,7 +120,7 @@ fn commands() {
     let id = Uuid::parse_str(ID).unwrap();
     let now = Utc.with_ymd_and_hms(2026, 10, 17, 21, 17, 41).unwrap();
 
-    let query = protocol::service(&config, "ATTR_GET_SERVICE", id, now);
+    let query = protocol::service(&config, protocol::Sent::Attributes, id, now);
     assert_eq!(query.topic, config.topic("service/sub"));
     assert_eq!(
         bytes(&query),

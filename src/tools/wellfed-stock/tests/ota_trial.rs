@@ -137,13 +137,18 @@ fn default_disabled_and_guarded_by_version_power_and_plans() {
     ));
 
     c.status.attributes.insert("powerType".to_owned(), json!(1));
-    c.config.plans.push(json!({"id":"plan"}));
+    c.config.plans = Some(vec![json!({"id":"plan"})]);
     assert!(matches!(
         submit(&mut c, input(), Utc::now()),
         Err(Rejection::InvalidOta)
     ));
 
     assert!(c.status.ota_trials.is_empty());
+
+    // No snapshot (an installer's config): stock's own plans are left for
+    // the installer to import, so the trial may go ahead.
+    c.config.plans = None;
+    assert!(submit(&mut c, input(), Utc::now()).is_ok());
 }
 
 #[test]

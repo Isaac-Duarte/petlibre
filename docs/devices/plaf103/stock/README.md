@@ -57,7 +57,9 @@ Advertising runs only on mains power. Nothing ties BLE to feeding, schedules or 
 
 ## Clock and schedules
 
-Our stock server answers with the captured plan snapshot. It does not edit schedules or push plans on its own. Nonempty plans are unvalidated for this release, and clock calibration is held while plans exist. Responses use the configured IANA time zone, including DST transitions. Stock's full time zone and timer activation, and how the cloud builds plans, remain unresolved.
+Stock's reply handler for `GET_FEEDING_PLAN_EVENT` erases and rewrites both plan sectors whenever the reply has a `plans` key, so `plans: []` erases the table. It checks neither the code nor the message ID, and it accepts the message unasked. A reply without the key writes nothing, but stock then publishes a `FEEDING_PLAN_SERVICE` with code 2099. With no reply, stock keeps its table; it sends the request once and does not retry (static analysis of the 1.1.15 KM4 image, with one UART capture of a stock install).
+
+Our stock server answers that request only with a captured snapshot. An installer's config captures none, so the request goes unanswered and stock keeps its plans for the installer to import. The server never sends a plan message on its own. Nonempty plans are unvalidated for this release, and clock calibration is held while plans may exist (a captured nonempty snapshot, or none captured). Before this change, our server answered an installer's config with `plans: []`, so installs run before then may have erased stock's table. Responses use the configured IANA time zone, including DST transitions. Stock's full time zone and timer activation, and how the cloud builds plans, remain unresolved.
 
 Wellfed's schedules will still need durable occurrence identities, a time zone and DST policy, restart reconciliation and explicit handling of interrupted meals. A successful manual feed says nothing about scheduled or unattended reliability.
 
@@ -199,7 +201,7 @@ Restarting only the stock server reproduced repeated startups and a KM4 watchdog
 - **Observed, October 23, 2026:** Wellfed's panel rules, with the owner pressing the buttons; also host-tested. Before the device API, the deleted MQTT transport's signed `lock` request did what `SetLock` does now.
 - **Recovered, October 24, 2026:** the feature limits and defaults, from a static pass over the 1.1.15 image and the vendor app, combined with the earlier Unicorn emulations of the plan, manual-feed, panel, audio and Wi-Fi handlers.
 - **Recovered, October 28, 2026:** the plan records, from a static pass over stock's plan boot load, setter, due check and feed-end delete in the 1.1.15 KM4 image. The weekday numbering, the stored byte widths and the millisecond times come from the October 18 Unicorn emulations of the setter and the calendar.
-- **Observed, October 28, 2026:** every full flash read of our feeder (October 18 to 26) holds count 0 and an erased entries sector, which is what stock's setter leaves for an empty plan list. The decoder reads them as no plans. No read held a stored plan, so the entry layout is not yet checked against real bytes.
+- **Observed, October 28, 2026:** every full flash read of our feeder (October 18 to 26) holds count 0 and an erased entries sector, which is what stock's setter leaves for an empty plan list, as our server's `plans: []` replies wrote it. The decoder reads them as no plans. No read held a stored plan, so the entry layout is not yet checked against real bytes.
 - **Modeled, October 28, 2026:** the decoder and the conversion, host-tested on synthetic sectors.
 - **Recovered:** Bluetooth LE, from static analysis of the 1.1.15 KM4 image and the vendor app.
 - **Observed:** the MQTT protocol, from the feeder's traffic to our server. Our stock server's manual feeding was removed on October 24, 2026.

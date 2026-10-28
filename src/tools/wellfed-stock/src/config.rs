@@ -58,8 +58,15 @@ pub struct Config {
     pub http_listen: SocketAddr,
 
     pub timezone: Tz,
-    #[serde(default)]
-    pub plans: Vec<Value>,
+    /// Stock's plan table as a capture recorded the cloud sending it,
+    /// replayed verbatim to `GET_FEEDING_PLAN_EVENT`. `None` when nothing
+    /// was captured (an installer's config): the request then goes
+    /// unanswered, since stock erases and rewrites its stored table on any
+    /// reply with a `plans` key, and an empty list would erase the owner's
+    /// plans before the installer imports them. `Some([])` is a captured
+    /// empty table, answered as captured.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plans: Option<Vec<Value>>,
     /// The captured cloud `BINDING` reply, replayed verbatim.
     #[serde(default)]
     pub binding_response: Option<Map<String, Value>>,
@@ -378,7 +385,7 @@ pub fn import(
         mqtt_listen: options.mqtt_listen,
         http_listen: "127.0.0.1:8765".parse()?,
         timezone: options.timezone,
-        plans: plans.context("capture has no authoritative feeding-plan snapshot")?,
+        plans: Some(plans.context("capture has no authoritative feeding-plan snapshot")?),
         binding_response,
         hotspot_interface: Some(options.hotspot_interface),
         target_mac: Some(target_mac.context("capture lacks a device source MAC")?),
@@ -539,7 +546,10 @@ mod tests {
         assert_eq!(config.device_password, "its-own");
         assert_eq!(config.device_address, Some("192.168.4.20".parse().unwrap()));
         assert!(config.hotspot().is_err(), "no redirect for an installer");
-        assert!(config.plans.is_empty());
+        assert_eq!(
+            config.plans, None,
+            "no snapshot: stock's plans are left alone"
+        );
     }
 
     #[test]

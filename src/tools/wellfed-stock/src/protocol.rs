@@ -224,9 +224,10 @@ pub fn reply(
 
     match (channel, msg.cmd.as_str()) {
         (Channel::Ntp, "NTP") => {
-            // Only calibrate when there are no imported schedules. Large clock
-            // jumps with plans require a separately validated skipped-feed policy.
-            let calibration = config.plans.is_empty();
+            // Only calibrate when the captured table is empty. Large clock
+            // jumps with plans require a separately validated skipped-feed
+            // policy, and with no snapshot stock may hold plans of its own.
+            let calibration = config.plans.as_ref().is_some_and(Vec::is_empty);
             let ntp = ntp_response(config.timezone, now, calibration);
             return Some(Reply::new(topic, &ntp));
         }
@@ -243,7 +244,11 @@ pub fn reply(
             });
         }
 
-        (Channel::Event, "GET_FEEDING_PLAN_EVENT") => ack.plans = Some(&config.plans),
+        // Stock erases and rewrites its plan table on any reply with a
+        // `plans` key (and takes one unasked), so only a captured table is
+        // sent. With none, the request goes unanswered and stock keeps its
+        // own; it asks once, without retrying (static analysis of 1.1.15).
+        (Channel::Event, "GET_FEEDING_PLAN_EVENT") => ack.plans = Some(config.plans.as_deref()?),
         (Channel::Event, "GRAIN_OUTPUT_EVENT") => ack.exec_step = msg.fields.get("execStep"),
         (
             Channel::Event,
@@ -367,18 +372,39 @@ struct Command<'a, T> {
     body: &'a T,
 }
 
-/// The server command `name` with request `id` on `channel`; `body` adds its
+/// Every command the server sends unasked. A closed set with no plan
+/// message: stock acts on `GET_FEEDING_PLAN_EVENT` or `FEEDING_PLAN_SERVICE`
+/// whether or not it asked, erasing its stored plans, so the server never
+/// sends either on its own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Sent {
+    /// `ATTR_GET_SERVICE`: stock reports its attributes.
+    Attributes,
+    /// `OTA_UPGRADE`: the install trial's one request.
+    Upgrade,
+}
+
+impl Sent {
+    pub const fn cmd(self) -> &'static str {
+        match self {
+            Self::Attributes => "ATTR_GET_SERVICE",
+            Self::Upgrade => "OTA_UPGRADE",
+        }
+    }
+}
+
+/// The server command `sent` with request `id` on `channel`; `body` adds its
 /// fields beside the envelope's.
 pub fn command(
     config: &Config,
     channel: Channel,
-    name: &str,
+    sent: Sent,
     id: Uuid,
     now: DateTime<Utc>,
     body: &impl Serialize,
 ) -> Reply {
     let command = Command {
-        cmd: name,
+        cmd: sent.cmd(),
         msg_id: id.to_string(),
         ts: now.timestamp_millis(),
         body,
@@ -387,8 +413,8 @@ pub fn command(
 }
 
 /// A `service` command without fields of its own.
-pub fn service(config: &Config, name: &str, id: Uuid, now: DateTime<Utc>) -> Reply {
-    command(config, Channel::Service, name, id, now, &Plain {})
+pub fn service(config: &Config, sent: Sent, id: Uuid, now: DateTime<Utc>) -> Reply {
+    command(config, Channel::Service, sent, id, now, &Plain {})
 }
 
 #[cfg(test)]

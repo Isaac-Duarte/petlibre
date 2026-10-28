@@ -70,7 +70,7 @@ pub fn command(record: &Record, config: &Config) -> Reply {
     protocol::command(
         config,
         Channel::Service,
-        "OTA_UPGRADE",
+        protocol::Sent::Upgrade,
         record.input.request_id,
         record.created_at,
         &upgrade,

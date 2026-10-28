@@ -77,7 +77,7 @@ impl Actor {
     fn query_attributes(&self, client: &AsyncClient) -> Result<()> {
         let query = protocol::service(
             &self.config,
-            "ATTR_GET_SERVICE",
+            protocol::Sent::Attributes,
             uuid::Uuid::new_v4(),
             Utc::now(),
         );

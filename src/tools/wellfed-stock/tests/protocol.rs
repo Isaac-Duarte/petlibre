@@ -1,6 +1,6 @@
 //! Stock topic parsing and replies: only this device's `/post` topics parse,
-//! no reply carries a feed command, and clock calibration is withheld while
-//! imported plans exist.
+//! no reply carries a feed command, clock calibration is withheld while
+//! plans may exist, and no reply carries plans that were not captured.
 
 mod common;
 
@@ -82,7 +82,7 @@ fn configuration_reply_uses_its_own_channel_without_an_automatic_response() {
 #[test]
 fn plan_requests_return_imported_snapshot_and_clock_changes_are_held_for_nonempty_plans() {
     let mut config = common::config();
-    config.plans = vec![json!({"id":"existing-plan"})];
+    config.plans = Some(vec![json!({"id":"existing-plan"})]);
     let (_, msg) = protocol::parse(
         &config,
         &config.topic("event/post"),
@@ -91,7 +91,7 @@ fn plan_requests_return_imported_snapshot_and_clock_changes_are_held_for_nonempt
     .unwrap();
 
     let reply = protocol::reply(&config, Channel::Event, &msg, Utc::now()).unwrap();
-    assert_eq!(reply.payload["plans"], json!(config.plans));
+    assert_eq!(reply.payload["plans"], json!(config.plans.clone().unwrap()));
 
     let (_, msg) = protocol::parse(
         &config,
@@ -105,4 +105,61 @@ fn plan_requests_return_imported_snapshot_and_clock_changes_are_held_for_nonempt
             .payload["calibrationTag"],
         false
     );
+}
+
+/// Stock erases and rewrites its plan table on any message with a `plans`
+/// key. With no captured snapshot (an installer's or enrolled config), the
+/// plan request goes unanswered, no reply carries the key, and the clock is
+/// not calibrated; a captured snapshot, empty or not, is answered as
+/// captured.
+#[test]
+fn plans_are_sent_only_as_captured() {
+    let mut config = common::config();
+    config.plans = None;
+    let ask = |config: &wellfed_stock::config::Config, channel: Channel, topic: &str, cmd: &str| {
+        let body = json!({"cmd": cmd, "msgId": "m", "ts": 0, "execStep": "GRAIN_END"});
+        let (parsed, msg) = protocol::parse(
+            config,
+            &config.topic(topic),
+            &serde_json::to_vec(&body).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(parsed, channel);
+        protocol::reply(config, channel, &msg, Utc::now())
+    };
+
+    assert!(
+        ask(
+            &config,
+            Channel::Event,
+            "event/post",
+            "GET_FEEDING_PLAN_EVENT"
+        )
+        .is_none()
+    );
+    for (channel, topic, cmd) in [
+        (Channel::Ntp, "ntp/post", "NTP"),
+        (Channel::Event, "event/post", "GRAIN_OUTPUT_EVENT"),
+        (Channel::Event, "event/post", "DEVICE_START_EVENT"),
+        (Channel::Event, "event/post", "ATTR_PUSH_EVENT"),
+        (Channel::Event, "event/post", "DEVICE_LOG_REPORT_EVENT"),
+        (Channel::Event, "event/post", "ERROR_EVENT"),
+    ] {
+        let reply = ask(&config, channel, topic, cmd).expect("acknowledged");
+        assert!(reply.payload.get("plans").is_none(), "{cmd}");
+    }
+    let ntp = ask(&config, Channel::Ntp, "ntp/post", "NTP").unwrap();
+    assert_eq!(ntp.payload["calibrationTag"], false);
+
+    for captured in [vec![], vec![json!({"id": "p"})]] {
+        config.plans = Some(captured.clone());
+        let reply = ask(
+            &config,
+            Channel::Event,
+            "event/post",
+            "GET_FEEDING_PLAN_EVENT",
+        )
+        .unwrap();
+        assert_eq!(reply.payload["plans"], json!(captured));
+    }
 }

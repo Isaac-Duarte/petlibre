@@ -35,8 +35,305 @@
 #include <platform/platform_stdlib.h>
 #include "wellfed_wifi_credentials.h"
 #include "rl6548.h"
+#include <stddef.h>
 
 void wellfed_app_start(void);
+
+/* The call trail: the last calls into a few vendor primitives, kept where
+ * a watchdog reset leaves the RAM alone, so the boot after a silent hang
+ * can say where it stalled. The tick hook's crumb names the task; the trail
+ * names the calls. Rust decodes and prints it (wellfed-hal
+ * supervision/trail.rs, which shares the layout and step codes below).
+ *
+ * The builder links the KM4 image with --wrap for each primitive wrapped
+ * here, so a call to it from any other object, the prebuilt Wi-Fi driver's
+ * included, lands in __wrap_NAME, which notes the step and calls
+ * __real_NAME. A call inside the object that defines the primitive is not
+ * redirected: rtk_wlan_if.o's internal timer calls (rltk_set_mode_prehandle
+ * to cancel_timer_ex, rltk_set_mode_posthandle to mod_timer) and
+ * freertos_intfs.o's own call to rtw_os_indicate_disconnect go unnoted.
+ *
+ * rtw_enter_critical guards every driver register access (bus_read and
+ * bus_write), the WLAN interrupt and the receive tasklet, so the ring turns
+ * over within microseconds. The rarer steps therefore also go to sticky
+ * marks, one slot per kind, which that traffic never evicts: the last
+ * wifi_connect call and return, indication, disconnect and timer call.
+ *
+ * A note masks nothing on the ring's path: it claims its ring slot by
+ * incrementing the count with LDREX/STREX (which an interrupt between the
+ * two makes retry), then writes the slot with plain stores, meta last. A
+ * note from an interrupt that lands mid-note claims the next slot, so the
+ * two never share one. A reset between the claim and meta's store leaves
+ * the slot with the number it held a ring earlier, which the reader drops.
+ * A mark is rewritten with interrupts masked (PRIMASK saved and restored),
+ * so neither an interrupt nor a higher-priority task can mix two notes in
+ * it; that short section is only on the rare marked steps, never on a
+ * critical section's own note. A mark's meta is cleared first and its
+ * number stored last, so a reset mid-mark leaves a mark the reader drops.
+ * A note preempted between its claim and its mark finds a newer note there
+ * and leaves it, so a mark always holds its kind's latest note.
+ * Only the
+ * critical-section wrappers change the depth, one counter for the whole
+ * CPU, and they do it with interrupts already masked (PRIMASK, in a task
+ * or an interrupt). A note never blocks, allocates or prints, and is safe
+ * from any task or interrupt. The wrappers run from RAM, as the vendor's
+ * save_and_cli, rtw_enter_critical and the driver's timer functions do.
+ * Nothing is noted until Rust's start has read the last boot's trail and
+ * started this one's (wellfed_trail_start); the switch is in .bss, which
+ * app_start clears before anything runs, so the SDK's own startup cannot
+ * overwrite the trail before it is read. The header carries the KM4 boot
+ * count the start was given, so the reader takes only the boot just before,
+ * and the check folds in the layout's version, so a trail of another layout
+ * is refused.
+ *
+ * The trail sits just below the time carry, at 0x1007BC50, taken from the
+ * heap's end by the builder's linker script (its size is the builder's
+ * TRAIL_BYTES); the time carry's comment says why a warm reset leaves that
+ * RAM alone. Each store reaches the RAM before a reset: the ROM's mpu_init
+ * enables the MPU with the default map as background (PRIVDEFENA) and no
+ * region, app_mpu_nocache_init's regions miss this address, and the default
+ * map makes it Normal write-through, read-allocate, as the SDK's cache
+ * header says. */
+#define WELLFED_TRAIL_ENTRIES 64
+#define WELLFED_TRAIL_MARKS 5
+#define WELLFED_TRAIL_WORDS 220
+#define WELLFED_TRAIL_MAGIC 0x504c5452u /* "PLTR" */
+#define WELLFED_TRAIL_VERSION 2u
+#define WELLFED_TRAIL_DEPTH_SHIFT 8
+#define WELLFED_TRAIL_ISR_SHIFT 15
+#define WELLFED_TRAIL_SEQ_SHIFT 16
+
+/* Step codes, shared with Rust (`trail::Step`). */
+enum {
+    WELLFED_STEP_SAVE_AND_CLI = 1,
+    WELLFED_STEP_RESTORE_FLAGS = 2,
+    WELLFED_STEP_ENTER_CRITICAL = 3,
+    WELLFED_STEP_EXIT_CRITICAL = 4,
+    WELLFED_STEP_SET_TIMER = 5,
+    WELLFED_STEP_DEL_TIMER = 6,
+    WELLFED_STEP_CANCEL_TIMER = 7,
+    WELLFED_STEP_INDICATION = 8,
+    WELLFED_STEP_INDICATION_RETURNED = 9,
+    WELLFED_STEP_INDICATE_DISCONNECT = 10,
+    WELLFED_STEP_INDICATE_DISCONNECT_RETURNED = 11,
+    WELLFED_STEP_CONNECT = 12,
+    WELLFED_STEP_CONNECT_RETURNED = 13,
+};
+
+/* Mark slots, shared with Rust (`trail::Mark`); none for critical sections. */
+enum {
+    WELLFED_MARK_NONE = -1,
+    WELLFED_MARK_CONNECT = 0,
+    WELLFED_MARK_CONNECT_RETURNED = 1,
+    WELLFED_MARK_INDICATION = 2,
+    WELLFED_MARK_DISCONNECT = 3,
+    WELLFED_MARK_TIMER = 4,
+};
+
+/* One ring note. meta: the step in bits 0-7, the wrapped critical sections
+ * open (this one included, at most 127) in 8-14, an interrupt context in 15
+ * and the note's number's low 16 bits in 16-31, stored after lr and arg so
+ * a slot whose number matches holds a whole note. lr is the wrapped call's
+ * return address (0 for the shim's own steps); arg is the step's first
+ * argument or result. */
+struct wellfed_trail_entry {
+    unsigned int meta;
+    unsigned int lr;
+    unsigned int arg;
+};
+
+/* A mark: the same note with its whole number, stored last. */
+struct wellfed_trail_mark {
+    unsigned int seq;
+    unsigned int meta;
+    unsigned int lr;
+    unsigned int arg;
+};
+
+struct wellfed_trail {
+    unsigned int magic;
+    unsigned int boot;  /* the KM4 boot count the start was given */
+    unsigned int check; /* ~(magic ^ boot ^ version) */
+    unsigned int count; /* notes since the trail started */
+    unsigned int depth; /* wrapped critical sections open now, CPU-wide */
+    unsigned int reserved[3];
+    struct wellfed_trail_mark marks[WELLFED_TRAIL_MARKS];
+    struct wellfed_trail_entry entries[WELLFED_TRAIL_ENTRIES];
+};
+
+/* The word offsets Rust reads (trail.rs `MARKS_AT`, `ENTRIES_AT`). */
+_Static_assert(sizeof(struct wellfed_trail) == WELLFED_TRAIL_WORDS * sizeof(unsigned int),
+               "the trail's words must match the builder's TRAIL_BYTES and Rust's TRAIL_WORDS");
+_Static_assert(offsetof(struct wellfed_trail, marks) == 8 * sizeof(unsigned int), "marks at word 8");
+_Static_assert(offsetof(struct wellfed_trail, entries) == 28 * sizeof(unsigned int), "entries at word 28");
+_Static_assert(offsetof(struct wellfed_trail_mark, seq) == 0, "a mark's number is its first word");
+_Static_assert(offsetof(struct wellfed_trail_mark, meta) == sizeof(unsigned int), "then the note's meta");
+
+extern volatile struct wellfed_trail wellfed_status_trail;
+static volatile unsigned int wellfed_trail_on;
+
+/* change: +1 for a critical section's entry (counted before the note), -1
+ * for its exit (counted after), 0 for anything else; nonzero only with
+ * interrupts masked. mark: the step's mark slot, or WELLFED_MARK_NONE. */
+IMAGE2_RAM_TEXT_SECTION
+static void wellfed_trail_note(unsigned int step, int change, int mark, unsigned int lr, unsigned int arg)
+{
+    if (!wellfed_trail_on) {
+        return;
+    }
+    volatile struct wellfed_trail *t = &wellfed_status_trail;
+    unsigned int depth = t->depth;
+    if (change > 0) {
+        depth++;
+        t->depth = depth;
+    }
+
+    unsigned int n = __atomic_fetch_add(&t->count, 1u, __ATOMIC_RELAXED);
+    unsigned int meta = step | ((depth > 127u ? 127u : depth) << WELLFED_TRAIL_DEPTH_SHIFT) |
+                        ((__get_IPSR() != 0u ? 1u : 0u) << WELLFED_TRAIL_ISR_SHIFT) |
+                        (n << WELLFED_TRAIL_SEQ_SHIFT);
+    volatile struct wellfed_trail_entry *e = &t->entries[n % WELLFED_TRAIL_ENTRIES];
+    e->lr = lr;
+    e->arg = arg;
+    __asm volatile("" ::: "memory");
+    e->meta = meta;
+    if (mark >= 0) {
+        unsigned int primask = __get_PRIMASK();
+        __disable_irq();
+        volatile struct wellfed_trail_mark *m = &t->marks[mark];
+        if (m->meta == 0u || (int)(n - m->seq) > 0) {
+            m->meta = 0;
+            m->lr = lr;
+            m->arg = arg;
+            m->meta = meta;
+            m->seq = n;
+        }
+        __set_PRIMASK(primask);
+    }
+
+    if (change < 0 && depth > 0u) {
+        t->depth = depth - 1u;
+    }
+}
+
+/* One word of the last boot's trail, as the RAM holds it, read in place
+ * before wellfed_trail_start: what a power-on left, or a build without the
+ * trail, is refused by the reader's magic and check. 0 past the end. */
+unsigned int wellfed_trail_word(unsigned int index)
+{
+    volatile unsigned int *words = (volatile unsigned int *)&wellfed_status_trail;
+    return index < WELLFED_TRAIL_WORDS ? words[index] : 0u;
+}
+
+/* An empty trail for the boot numbered boot, then noting from here on. */
+void wellfed_trail_start(unsigned int boot)
+{
+    wellfed_trail_on = 0;
+    volatile unsigned int *words = (volatile unsigned int *)&wellfed_status_trail;
+    for (int i = 0; i < WELLFED_TRAIL_WORDS; i++) {
+        words[i] = 0;
+    }
+    wellfed_status_trail.magic = WELLFED_TRAIL_MAGIC;
+    wellfed_status_trail.boot = boot;
+    wellfed_status_trail.check = ~(WELLFED_TRAIL_MAGIC ^ boot ^ WELLFED_TRAIL_VERSION);
+    DCache_Clean((u32)&wellfed_status_trail, sizeof(struct wellfed_trail));
+    wellfed_trail_on = 1;
+}
+
+#define WELLFED_LR() ((unsigned int)__builtin_return_address(0))
+
+void __real_save_and_cli(void);
+void __real_restore_flags(void);
+void __real_rtw_enter_critical(void *plock, void *pirqL);
+void __real_rtw_exit_critical(void *plock, void *pirqL);
+void __real_rtw_set_timer(void *ptimer, u32 delay_time);
+void __real_rtw_del_timer(void *ptimer);
+u8 __real_rtw_cancel_timer(void *ptimer);
+void __real_wifi_indication(rtw_event_indicate_t event, char *buf, int buf_len, int flags);
+void __real_rtw_os_indicate_disconnect(void *adapter);
+void __wrap_save_and_cli(void);
+void __wrap_restore_flags(void);
+void __wrap_rtw_enter_critical(void *plock, void *pirqL);
+void __wrap_rtw_exit_critical(void *plock, void *pirqL);
+void __wrap_rtw_set_timer(void *ptimer, u32 delay_time);
+void __wrap_rtw_del_timer(void *ptimer);
+u8 __wrap_rtw_cancel_timer(void *ptimer);
+void __wrap_wifi_indication(rtw_event_indicate_t event, char *buf, int buf_len, int flags);
+void __wrap_rtw_os_indicate_disconnect(void *adapter);
+
+/* A critical section's entry is noted once it is masked and its exit
+ * before it unmasks, so a stall inside one ends the trail at its entry and
+ * the depth only ever changes with interrupts masked. */
+IMAGE2_RAM_TEXT_SECTION
+void __wrap_save_and_cli(void)
+{
+    __real_save_and_cli();
+    wellfed_trail_note(WELLFED_STEP_SAVE_AND_CLI, 1, WELLFED_MARK_NONE, WELLFED_LR(), 0);
+}
+
+IMAGE2_RAM_TEXT_SECTION
+void __wrap_restore_flags(void)
+{
+    wellfed_trail_note(WELLFED_STEP_RESTORE_FLAGS, -1, WELLFED_MARK_NONE, WELLFED_LR(), 0);
+    __real_restore_flags();
+}
+
+IMAGE2_RAM_TEXT_SECTION
+void __wrap_rtw_enter_critical(void *plock, void *pirqL)
+{
+    __real_rtw_enter_critical(plock, pirqL);
+    wellfed_trail_note(WELLFED_STEP_ENTER_CRITICAL, 1, WELLFED_MARK_NONE, WELLFED_LR(), (unsigned int)plock);
+}
+
+IMAGE2_RAM_TEXT_SECTION
+void __wrap_rtw_exit_critical(void *plock, void *pirqL)
+{
+    wellfed_trail_note(WELLFED_STEP_EXIT_CRITICAL, -1, WELLFED_MARK_NONE, WELLFED_LR(), (unsigned int)plock);
+    __real_rtw_exit_critical(plock, pirqL);
+}
+
+/* Each timer call is noted before it runs: the driver's timer list is
+ * walked inside it, under save_and_cli. */
+IMAGE2_RAM_TEXT_SECTION
+void __wrap_rtw_set_timer(void *ptimer, u32 delay_time)
+{
+    wellfed_trail_note(WELLFED_STEP_SET_TIMER, 0, WELLFED_MARK_TIMER, WELLFED_LR(), (unsigned int)ptimer);
+    __real_rtw_set_timer(ptimer, delay_time);
+}
+
+IMAGE2_RAM_TEXT_SECTION
+void __wrap_rtw_del_timer(void *ptimer)
+{
+    wellfed_trail_note(WELLFED_STEP_DEL_TIMER, 0, WELLFED_MARK_TIMER, WELLFED_LR(), (unsigned int)ptimer);
+    __real_rtw_del_timer(ptimer);
+}
+
+IMAGE2_RAM_TEXT_SECTION
+u8 __wrap_rtw_cancel_timer(void *ptimer)
+{
+    wellfed_trail_note(WELLFED_STEP_CANCEL_TIMER, 0, WELLFED_MARK_TIMER, WELLFED_LR(), (unsigned int)ptimer);
+    return __real_rtw_cancel_timer(ptimer);
+}
+
+/* The indications bracket the disconnect handler, which wakes wifi_connect,
+ * and the driver's own teardown after it. */
+IMAGE2_RAM_TEXT_SECTION
+void __wrap_wifi_indication(rtw_event_indicate_t event, char *buf, int buf_len, int flags)
+{
+    unsigned int lr = WELLFED_LR();
+    wellfed_trail_note(WELLFED_STEP_INDICATION, 0, WELLFED_MARK_INDICATION, lr, (unsigned int)event);
+    __real_wifi_indication(event, buf, buf_len, flags);
+    wellfed_trail_note(WELLFED_STEP_INDICATION_RETURNED, 0, WELLFED_MARK_INDICATION, lr, (unsigned int)event);
+}
+
+IMAGE2_RAM_TEXT_SECTION
+void __wrap_rtw_os_indicate_disconnect(void *adapter)
+{
+    unsigned int lr = WELLFED_LR();
+    wellfed_trail_note(WELLFED_STEP_INDICATE_DISCONNECT, 0, WELLFED_MARK_DISCONNECT, lr, (unsigned int)adapter);
+    __real_rtw_os_indicate_disconnect(adapter);
+    wellfed_trail_note(WELLFED_STEP_INDICATE_DISCONNECT_RETURNED, 0, WELLFED_MARK_DISCONNECT, lr, (unsigned int)adapter);
+}
 
 #define WELLFED_WIFI_EVENTS 16
 #define WELLFED_SCAN_WAIT_MS 10000
@@ -208,9 +505,12 @@ static int wellfed_join_once(unsigned int attempt)
         return 0;
     }
     begin = xTaskGetTickCount();
+    /* The trail shows whether wifi_connect returned before a stall. */
+    wellfed_trail_note(WELLFED_STEP_CONNECT, 0, WELLFED_MARK_CONNECT, 0, attempt);
     result = wifi_connect((char *)wellfed_creds.ssid, (rtw_security_t)wellfed_found_security,
                           (char *)wellfed_creds.psk, (int)wellfed_creds.ssid_len, (int)wellfed_creds.psk_len,
                           -1, NULL);
+    wellfed_trail_note(WELLFED_STEP_CONNECT_RETURNED, 0, WELLFED_MARK_CONNECT_RETURNED, 0, (unsigned int)result);
     /* The event's value names the credentials' source, never the credentials. */
     wellfed_event(WELLFED_EV_CONNECT, attempt, result, wellfed_creds.source, wellfed_ms(begin));
     if (result != RTW_SUCCESS) {
@@ -757,14 +1057,15 @@ void wellfed_rtc_read(unsigned int *out)
 
 /* The wall clock's record for the next boot after a warm reset: 16 words at
  * the top of KM4's main RAM (0x1007BFC0), which the builder's linker script
- * takes from the heap's end (__sram_end__) and names. A watchdog or system
- * reset leaves this RAM alone: the KM4 boot loader copies only the image's
- * .ram_image2.entry/.text/.data, app_start clears only .bss, the heap
- * starts below it, and the ROM, boot loader and stacks use the secure
- * regions above 0x1007C000 and the RAM below 0x10005000. A power-on leaves
- * whatever the cells hold, which the record's check refuses. The SDK's
- * cache header says the D-cache writes through; the clean makes the store
- * reach the RAM before a reset whichever way it is set. */
+ * takes from the heap's end and names, with the call trail below it. A
+ * watchdog or system reset leaves this RAM alone: the KM4 boot loader copies
+ * only the image's .ram_image2.entry/.text/.data, app_start clears only
+ * .bss, the heap ends below both, and the ROM, boot loader and stacks use
+ * the secure regions above 0x1007C000 and the RAM below 0x10005000. A
+ * power-on leaves whatever the cells hold, which the record's check
+ * refuses. The SDK's cache header says the D-cache writes through; the
+ * clean makes the store reach the RAM before a reset whichever way it is
+ * set. */
 extern unsigned int wellfed_time_carry[16];
 
 void wellfed_time_carry_load(unsigned int *out)

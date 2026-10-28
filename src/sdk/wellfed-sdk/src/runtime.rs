@@ -32,7 +32,7 @@ use wellfed_hal::ota::update::{self as update, Floor, SdkFlash, StoreSlots, Upda
 use wellfed_hal::supervision::beat;
 use wellfed_hal::supervision::supervise::{self, Feeding, LIVENESS_MS, Startup};
 use wellfed_hal::supervision::watchdog::Watchdog;
-use wellfed_hal::supervision::{self, config, crumb};
+use wellfed_hal::supervision::{self, config, crumb, trail};
 use wellfed_hal::{cell::TaskCell, leds, net_status, power, rng, sdk, startup, stopped, trial};
 
 use crate::slot::Slot;
@@ -1114,6 +1114,51 @@ unsafe extern "C" fn halt_task(_: *mut c_void) -> u32 {
 
 const HALT_POLL_MS: u32 = 1_000;
 
+/// The hang's call trail: a summary line, each sticky mark, then each
+/// note oldest first; or why the RAM held none of the last boot's.
+fn log_trail(trail: &Result<trail::Trail<'_, trail::Ram>, trail::Refusal>) {
+    let mut report = startup::Report::new();
+    let trail = match trail {
+        Ok(trail) => trail,
+        Err(trail::Refusal::NotStarted) => {
+            sdk::log(c"PLSUP1 trail refused=empty\r\n");
+            return;
+        }
+        &Err(trail::Refusal::OtherBoot { boot, current }) => {
+            if let Ok(line) = report.record(format_args!(
+                "PLSUP1 trail refused=boot boot={boot} current={current}\r\n"
+            )) {
+                sdk::log(line);
+            }
+            return;
+        }
+    };
+
+    if let Ok(line) = report.record(format_args!("PLSUP1 trail {trail}\r\n")) {
+        sdk::log(line);
+    }
+    for (mark, entry) in trail.marks() {
+        let line = match entry {
+            Some(entry) => report.record(format_args!(
+                "PLSUP1 trail_mark mark={} {entry}\r\n",
+                mark.name()
+            )),
+            None => report.record(format_args!(
+                "PLSUP1 trail_mark mark={} none\r\n",
+                mark.name()
+            )),
+        };
+        if let Ok(line) = line {
+            sdk::log(line);
+        }
+    }
+    for entry in trail.entries() {
+        if let Ok(line) = report.record(format_args!("PLSUP1 trail_step {entry}\r\n")) {
+            sdk::log(line);
+        }
+    }
+}
+
 /// Called once by the SDK's `example_entry`, before the scheduler starts.
 #[unsafe(no_mangle)]
 pub extern "C" fn wellfed_app_start() {
@@ -1134,14 +1179,23 @@ pub extern "C" fn wellfed_app_start() {
     }
     // Before the scheduler starts the tick hook that overwrites it. Only a
     // watchdog reset is a hang worth naming; any other reset just clears it.
-    if let Some(crumb) = crumb::take()
-        && startup::snapshot().reset & sdk::BOOT_KM4_WATCHDOG != 0
-    {
+    let hang = crumb::take().filter(|_| startup::snapshot().reset & sdk::BOOT_KM4_WATCHDOG != 0);
+    if let Some(crumb) = hang {
         let mut report = startup::Report::new();
         if let Ok(line) = report.record(format_args!("PLSUP1 hang {crumb}\r\n")) {
             sdk::log(line);
         }
     }
+    // The calls the hang's boot made last, then an empty trail for this
+    // boot: every boot starts one, and only the boot just before is read.
+    let hung = hang
+        .is_some_and(|crumb| matches!(crumb.stall(), crumb::Stall::Masked | crumb::Stall::Spin));
+    trail::take(|trail| {
+        if hung {
+            log_trail(&trail);
+        }
+    });
+
     // KM0 counted this boot in the reset-storm burst (`trial.rs`).
     let register = sdk::backup_read(trial::REGISTER);
     let resets = trial::resets(register, &trial::identity());

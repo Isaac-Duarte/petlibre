@@ -1014,6 +1014,21 @@ pub fn time_carry_store(words: &[u32; crate::TIME_CARRY_WORDS]) {
     with(|h| h.time_carry = *words);
 }
 
+pub fn trail_word(index: usize) -> u32 {
+    with(|h| h.trail.get(index).copied().unwrap_or(0))
+}
+
+/// As the shim does: an empty trail with its magic, boot and check.
+pub fn trail_start(boot: u32) {
+    with(|h| {
+        h.trail = [0; crate::TRAIL_WORDS];
+        h.trail[0] = crate::TRAIL_MAGIC;
+        h.trail[1] = boot;
+        h.trail[2] = !(crate::TRAIL_MAGIC ^ boot ^ crate::TRAIL_VERSION);
+        h.trail_starts += 1;
+    });
+}
+
 pub fn gateway() -> Option<u32> {
     with(|h| (h.gateway != 0).then_some(h.gateway))
 }

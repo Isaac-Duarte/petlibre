@@ -17,7 +17,7 @@ use wellfed_formats::layout::Layout;
 use wellfed_formats::lock::SdkLock;
 use wellfed_formats::require;
 
-use super::audit::{hooks, pinmap};
+use super::audit::{TRAIL_BYTES, hooks, pinmap};
 use super::credentials::wifi_header;
 use super::{Amebad, Core, PROJECT, WIFI_CREDENTIALS, source, toolchains};
 use crate::device::StockPaths;
@@ -312,20 +312,54 @@ fn replace_once(text: &str, anchor: &str, with: &str, which: SdkAnchor) -> Resul
     Ok(text.replacen(anchor, with, 1))
 }
 
-/// Take the last 64 bytes of KM4's main RAM from the heap and name them
-/// `wellfed_time_carry`: the wall clock's record for the next boot, which
-/// must sit where neither the image load, `.bss` clearing nor the heap
-/// reaches, at the same address in every build so it survives an
-/// activation.
-fn time_carry(linker: &str) -> Result<String> {
+/// Take the top of KM4's main RAM from the heap for what a warm reset
+/// carries to the next boot, where neither the image load, `.bss` clearing
+/// nor the heap reaches: the last 64 bytes are `wellfed_time_carry`, the
+/// wall clock's record, at the same address in every build so it survives
+/// an activation; the [`TRAIL_BYTES`] below them are
+/// `wellfed_status_trail`, the call trail a silent hang leaves
+/// (`example_entry.c`).
+fn retained_ram(linker: &str) -> Result<String> {
     let anchor = "__sram_end__ = ORIGIN(BD_RAM_NS) + LENGTH(BD_RAM_NS);";
     replace_once(
         linker,
         anchor,
-        "__sram_end__ = ORIGIN(BD_RAM_NS) + LENGTH(BD_RAM_NS) - 64;\n\
-         wellfed_time_carry = __sram_end__;",
+        &format!(
+            "wellfed_time_carry = ORIGIN(BD_RAM_NS) + LENGTH(BD_RAM_NS) - 64;\n\
+             wellfed_status_trail = wellfed_time_carry - {TRAIL_BYTES};\n\
+             __sram_end__ = wellfed_status_trail;"
+        ),
         SdkAnchor::SramEnd,
     )
+}
+
+/// The vendor primitives the KM4 link wraps for the call trail: every call
+/// to one from another object, the prebuilt Wi-Fi driver's included, goes
+/// through `__wrap_<name>` in `example_entry.c`. Each is an undefined
+/// reference in the driver objects that call it.
+const TRAIL_WRAPS: [&str; 9] = [
+    "save_and_cli",
+    "restore_flags",
+    "rtw_enter_critical",
+    "rtw_exit_critical",
+    "rtw_set_timer",
+    "rtw_del_timer",
+    "rtw_cancel_timer",
+    "wifi_indication",
+    "rtw_os_indicate_disconnect",
+];
+
+/// The KM4 link rule's additions: the Rust archive, then the trail's wraps.
+/// KM0 links only the archive.
+fn link_additions(core: Core, archive: &Path) -> String {
+    let wraps: String = match core {
+        Core::Hp => TRAIL_WRAPS
+            .iter()
+            .map(|name| format!(" -Wl,--wrap={name}"))
+            .collect(),
+        Core::Lp => String::new(),
+    };
+    format!("{}{wraps}", archive.display())
 }
 
 /// Print the Cortex-M33 fault status and address registers before the
@@ -551,7 +585,7 @@ fn rust_overlays(
         let text = replace_once(
             &pinned(sdk, &relative)?,
             anchor,
-            &format!("{anchor} {}", archive.display()),
+            &format!("{anchor} {}", link_additions(core, &archive)),
             SdkAnchor::Image2LinkRule,
         )?;
         overlay(sdk, &relative, &text, overrides)?;
@@ -578,7 +612,7 @@ fn rust_overlays(
             SdkAnchor::RamSection,
         )?;
         if core == Core::Hp {
-            text = time_carry(&text)?;
+            text = retained_ram(&text)?;
         }
         overlay(sdk, &relative, &text, overrides)?;
     }
@@ -1064,17 +1098,39 @@ mod tests {
     }
 
     #[test]
-    fn the_heap_leaves_the_time_carry_above_it() {
+    fn the_heap_leaves_the_trail_and_the_time_carry_above_it() {
         let pinned = "}\n\n__sram_end__ = ORIGIN(BD_RAM_NS) + LENGTH(BD_RAM_NS);\n";
-        let text = time_carry(pinned).unwrap();
-        assert!(text.contains("+ LENGTH(BD_RAM_NS) - 64;\nwellfed_time_carry = __sram_end__;"));
+        let text = retained_ram(pinned).unwrap();
+        assert!(text.contains(
+            "wellfed_time_carry = ORIGIN(BD_RAM_NS) + LENGTH(BD_RAM_NS) - 64;\n\
+             wellfed_status_trail = wellfed_time_carry - 880;\n\
+             __sram_end__ = wellfed_status_trail;"
+        ));
 
         for changed in [pinned.replace("BD_RAM_NS)", "BD_RAM)"), pinned.repeat(2)] {
             assert!(matches!(
-                time_carry(&changed),
+                retained_ram(&changed),
                 Err(crate::Error::Sdk(SdkError::Anchor(SdkAnchor::SramEnd)))
             ));
         }
+    }
+
+    #[test]
+    fn only_the_km4_link_wraps_the_trail_primitives() {
+        let archive = Path::new("/build/rust-lib/libwellfed_km4.a");
+        let km4 = link_additions(Core::Hp, archive);
+        assert!(km4.starts_with("/build/rust-lib/libwellfed_km4.a -Wl,--wrap=save_and_cli "));
+        for name in TRAIL_WRAPS {
+            assert_eq!(
+                km4.matches(&format!(" -Wl,--wrap={name}")).count(),
+                1,
+                "{name}"
+            );
+        }
+        assert_eq!(
+            link_additions(Core::Lp, archive),
+            archive.display().to_string()
+        );
     }
 
     #[test]

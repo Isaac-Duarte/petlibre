@@ -114,6 +114,17 @@ pub const SECTOR_BYTES: u32 = 0x1000;
 /// script leaves above the heap at the top of main RAM (`example_entry.c`).
 pub const TIME_CARRY_WORDS: usize = 16;
 
+/// Words of `wellfed_status_trail`, the call trail just below the time
+/// carry (`WELLFED_TRAIL_WORDS` in `example_entry.c`): an eight-word header,
+/// five four-word marks, then 64 three-word entries.
+pub const TRAIL_WORDS: usize = 220;
+/// The trail header's first word once a boot has started it
+/// (`WELLFED_TRAIL_MAGIC`, "PLTR").
+pub const TRAIL_MAGIC: u32 = 0x504c_5452;
+/// The trail layout's version, folded into the header's check
+/// (`WELLFED_TRAIL_VERSION`).
+pub const TRAIL_VERSION: u32 = 2;
+
 /// Samples in one codec DMA page (16 ms at 16 kHz, 16-bit mono),
 /// `WELLFED_AUDIO_PAGE` in `example_entry.c`.
 pub const AUDIO_PAGE_SAMPLES: usize = 256;

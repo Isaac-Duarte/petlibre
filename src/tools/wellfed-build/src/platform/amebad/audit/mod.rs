@@ -62,37 +62,49 @@ pub enum AuditError {
     PmapSymbol { found: usize },
     #[error("No {core} archive")]
     NoArchive { core: Core },
-    #[error("KM4 {name} is at {found:?}, not {TIME_CARRY:#x}")]
-    TimeCarry {
+    #[error("KM4 {name} is at {found:?}, not {pinned:#x}")]
+    RetainedRam {
         name: &'static str,
         found: Option<u64>,
+        pinned: u64,
     },
 }
 
-/// Where the KM4 link puts the wall clock's warm-reset record, and the
-/// heap's end with it. A record survives an activation only if the next
-/// build looks for it at the same address, so every build pins it.
+/// Where the KM4 link puts the wall clock's warm-reset record. A record
+/// survives an activation only if the next build looks for it at the same
+/// address, so every build pins it.
 pub(crate) const TIME_CARRY: u64 = 0x1007_bfc0;
+/// The call trail's size: `WELLFED_TRAIL_WORDS` words in `example_entry.c`
+/// (`wellfed_amebad_sys::TRAIL_WORDS`), which a test checks against the C.
+pub(crate) const TRAIL_BYTES: u64 = 220 * 4;
+/// Where the KM4 link puts the call trail, just below the time carry, and
+/// the heap's end with it.
+pub(crate) const STATUS_TRAIL: u64 = TIME_CARRY - TRAIL_BYTES;
 
-/// Refuse a KM4 link whose `wellfed_time_carry` or `__sram_end__` is not
-/// at [`TIME_CARRY`].
-pub(crate) fn time_carry(sdk: &Path, binutils: &Binutils) -> Result<()> {
+/// Refuse a KM4 link whose `wellfed_time_carry`, `wellfed_status_trail` or
+/// `__sram_end__` is not where it is pinned.
+pub(crate) fn retained_ram(sdk: &Path, binutils: &Binutils) -> Result<()> {
     let table = tool(&binutils.objdump(), &["-t"], &elf(sdk, Core::Hp))?;
-    time_carry_in(&table)
+    retained_ram_in(&table)
 }
 
 /// The check on an `objdump -t` listing.
-pub(crate) fn time_carry_in(table: &str) -> Result<()> {
-    for name in ["wellfed_time_carry", "__sram_end__"] {
+pub(crate) fn retained_ram_in(table: &str) -> Result<()> {
+    for (name, pinned) in [
+        ("wellfed_time_carry", TIME_CARRY),
+        ("wellfed_status_trail", STATUS_TRAIL),
+        ("__sram_end__", STATUS_TRAIL),
+    ] {
         let found: Vec<u64> = table
             .lines()
             .filter(|line| line.split_whitespace().last() == Some(name))
             .filter_map(|line| line.split_whitespace().next())
             .map(parse_hex)
             .collect::<Result<_>>()?;
-        require(found == [TIME_CARRY], || AuditError::TimeCarry {
+        require(found == [pinned], || AuditError::RetainedRam {
             name,
             found: found.first().copied(),
+            pinned,
         })?;
     }
     Ok(())
@@ -239,20 +251,42 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_time_carry_is_pinned_with_the_heap_end() {
-        let table = "1007bfc0 g       *ABS*\t00000000 wellfed_time_carry\n\
-                     1007bfc0 g       .bluetooth_trace.text\t00000000 __sram_end__\n";
-        time_carry_in(table).unwrap();
+    fn the_trail_size_is_the_shims() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../firmware/vendor/ports/amebad/example_entry.c"
+        );
+        let source = fs::read_to_string(path).unwrap();
+        let words: u64 = source
+            .lines()
+            .find_map(|line| line.strip_prefix("#define WELLFED_TRAIL_WORDS "))
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        assert_eq!(words * 4, TRAIL_BYTES);
+        assert_eq!(STATUS_TRAIL, 0x1007_bc50);
+        assert_eq!(STATUS_TRAIL % 16, 0, "the heap's end stays aligned");
+    }
 
-        let moved = table.replace("1007bfc0 g       .b", "1007c000 g       .b");
-        let missing = table.lines().next().unwrap().to_string();
+    #[test]
+    fn the_time_carry_and_the_trail_are_pinned_with_the_heap_end() {
+        let table = "1007bfc0 g       *ABS*\t00000000 wellfed_time_carry\n\
+                     1007bc50 g       *ABS*\t00000000 wellfed_status_trail\n\
+                     1007bc50 g       .bluetooth_trace.text\t00000000 __sram_end__\n";
+        retained_ram_in(table).unwrap();
+
+        let moved = table.replace("1007bc50 g       .b", "1007bfc0 g       .b");
+        let missing = table.lines().take(2).collect::<Vec<_>>().join("\n");
+        let no_trail = table.replace("1007bc50 g       *ABS*", "1007bfc0 g       *ABS*");
         for (table, name) in [
             (moved, "__sram_end__"),
             (missing, "__sram_end__"),
+            (no_trail, "wellfed_status_trail"),
             (table.repeat(2), "wellfed_time_carry"),
         ] {
-            match time_carry_in(&table) {
-                Err(crate::Error::Audit(AuditError::TimeCarry { name: found, .. })) => {
+            match retained_ram_in(&table) {
+                Err(crate::Error::Audit(AuditError::RetainedRam { name: found, .. })) => {
                     assert_eq!(found, name);
                 }
                 other => panic!("{other:?}"),

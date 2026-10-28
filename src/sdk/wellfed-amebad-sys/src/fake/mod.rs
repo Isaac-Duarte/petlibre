@@ -107,6 +107,10 @@ pub struct Hardware {
     pub rtc: [u32; 4],
     /// `wellfed_time_carry`, the RAM a warm reset keeps.
     pub time_carry: [u32; crate::TIME_CARRY_WORDS],
+    /// `wellfed_status_trail`, the call trail a warm reset keeps, and how
+    /// many times a boot started it afresh.
+    pub trail: [u32; crate::TRAIL_WORDS],
+    pub trail_starts: u32,
     /// Milliseconds; a timed-out receive advances it by its timeout.
     pub uptime_ms: u32,
 
@@ -275,6 +279,8 @@ impl Default for Hardware {
             gateway: 0,
             rtc: [0; 4],
             time_carry: [0; crate::TIME_CARRY_WORDS],
+            trail: [0; crate::TRAIL_WORDS],
+            trail_starts: 0,
             uptime_ms: 0,
 
             wifi_started: false,

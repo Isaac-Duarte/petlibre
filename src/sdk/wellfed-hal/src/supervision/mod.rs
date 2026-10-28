@@ -1,6 +1,6 @@
 //! KM4 supervision: the TIM2 tick and feedback capture, the feeding owner's
-//! beat, the watchdog and when it is fed, the breadcrumb a silent reset
-//! leaves, and the bench-derived constants they run with.
+//! beat, the watchdog and when it is fed, the breadcrumb and call trail a
+//! silent reset leaves, and the bench-derived constants they run with.
 //!
 //! **No store write starts into a reset.** Every store write sets the flash
 //! attempt marker for its duration, and a boot that finds the marker set
@@ -23,6 +23,7 @@ pub mod config;
 pub mod crumb;
 pub mod events;
 pub mod supervise;
+pub mod trail;
 pub mod watchdog;
 
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};

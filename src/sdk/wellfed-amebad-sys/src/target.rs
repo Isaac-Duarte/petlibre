@@ -1262,6 +1262,8 @@ unsafe extern "C" {
     fn wellfed_rtc_read(out: *mut u32);
     fn wellfed_time_carry_load(out: *mut u32);
     fn wellfed_time_carry_store(words: *const u32);
+    fn wellfed_trail_word(index: u32) -> u32;
+    fn wellfed_trail_start(boot: u32);
 }
 
 /// The KM0 RTC's TR, CR, ISR and PRER registers, read only.
@@ -1289,6 +1291,26 @@ pub fn time_carry_store(words: &[u32; crate::TIME_CARRY_WORDS]) {
     // SAFETY: the C shim in `example_entry.c` reads `TIME_CARRY_WORDS`
     // words from `words`, which is live for the call.
     unsafe { wellfed_time_carry_store(words.as_ptr()) };
+}
+
+/// Word `index` of what the last boot left in `wellfed_status_trail`, read
+/// in place: its call trail, or what a power-on or a build without the
+/// trail left in the RAM. 0 past the end.
+pub fn trail_word(index: usize) -> u32 {
+    let Ok(index) = u32::try_from(index) else {
+        return 0;
+    };
+    // SAFETY: the C shim in `example_entry.c` takes a plain word and reads
+    // only the trail's own RAM, bounds-checked.
+    unsafe { wellfed_trail_word(index) }
+}
+
+/// Empty the call trail for the boot numbered `boot` and start noting into
+/// it. Call once at startup, after the last trail is read ([`trail_word`]).
+pub fn trail_start(boot: u32) {
+    // SAFETY: the C shim in `example_entry.c` takes a plain word and only
+    // writes the trail's own RAM.
+    unsafe { wellfed_trail_start(boot) };
 }
 
 /// The device API's non-blocking listener on `port`, or `None`.

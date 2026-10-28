@@ -76,6 +76,8 @@ pub struct SimFeeds {
     /// The last feed that ended without a reservation, and why.
     unreserved: Option<(u64, Refusal)>,
     stalled: bool,
+    /// Refuse every feed `Busy`, as an owner that lost a race does.
+    refusing: bool,
 }
 
 impl SimFeeds {
@@ -98,12 +100,18 @@ impl SimFeeds {
             current: None,
             unreserved: None,
             stalled: false,
+            refusing: false,
         }
     }
 
     /// Hold a feed in flight where it is, or let it go on.
     pub fn stall(&mut self, stalled: bool) {
         self.stalled = stalled;
+    }
+
+    /// Refuse every feed `Busy` while readiness says ready, or stop.
+    pub fn refuse(&mut self, refusing: bool) {
+        self.refusing = refusing;
     }
 
     /// Step the owner at `now_ms`: the `Fed` event of a feed that ended,
@@ -220,7 +228,7 @@ impl Feeds for SimFeeds {
     }
 
     fn submit(&mut self, portions: u8, by: Source) -> Result<u32, Refusal> {
-        if self.failed || self.interrupted.is_some() || self.current.is_some() {
+        if self.failed || self.interrupted.is_some() || self.current.is_some() || self.refusing {
             return Err(Refusal::Busy);
         }
         let portions = u16::from(portions);
@@ -250,6 +258,13 @@ impl Feeds for SimFeeds {
             // Reserved, and ended since.
             _ => Some(Ok(())),
         }
+    }
+
+    fn high_water(&self) -> Option<u32> {
+        if self.failed {
+            return None;
+        }
+        u32::try_from(self.journal.view.recovery.high_water_id).ok()
     }
 
     fn cancel(&self, feed: u32) -> bool {

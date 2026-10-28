@@ -64,8 +64,7 @@ Subscribe { after, samples }          Event { seq, at, body }
 | `LOG` | `TailLog { after }`, answered with `Log` batches |
 | `CALIBRATION` | `GetCalibration`, `PutCalibration` |
 | `POWER` | The `Supply` metric and event, and the `Battery` readiness reason |
-
-Schedules will join behind a bit of their own, as updates did.
+| `PLANS` | `GetPlans`, answered `Plans { generation, writable, plans }`, and `PutPlans { base, plans }`, which replaces all ten slots. The `Plans` and `Missed` events, and the `Schedule` source of a plan's `Fed` event ([schedules](schedules.md)) |
 
 `Fed` carries the feed's number, the portions asked for and confirmed, an outcome and a reason. The outcome is `Done`, `Cancelled`, `Expired`, `Failed`, or `Uncertain`: the owner stopped without a durable result, or a reset interrupted the feed and the next boot resolved it.
 
@@ -189,7 +188,7 @@ Every flash lease checks that the outputs are stopped, and fails closed when the
 
 **Roles.**
 - An owner does everything, and may invite any role but an update signer.
-- A member, or the server, may feed, change settings and the lock, play, sync the clock, read the time view and list clients. Not Wi-Fi, the time settings, revocation or reboot.
+- A member, or the server, may feed, change settings, the plans and the lock, play, sync the clock, read the time view and list clients. Not Wi-Fi, the time settings, revocation or reboot.
 - A member may invite members. The server may invite no one (`pairing::Pairing::invite`). So an owner's server that makes its phones' invites, revokes their keys or changes Wi-Fi is adopted with an owner's invite.
 - An update-signer key never opens a session.
 - A clock sync from an owner may step the clock; a member's or the server's may only narrow it ([clock](clock.md#the-clock)).
@@ -215,6 +214,7 @@ Every flash lease checks that the outputs are stopped, and fails closed when the
 ### Time and calibration
 
 - **Time** (`Capabilities::TIME`). `GetTime` answers the time view. `PutTime` queues the zone's rule and the NTP server for the settings writer (storage sectors 27 and 28). It is answered `Done` once the store holds the settings asked for (or already held them), and refused `NotWritable` when the writer could not write them, with no event. The loop applies a new generation on its next pass, and runs the NTP exchange on one more UDP socket ([clock](clock.md#ntp)).
+- **Plans** (`Capabilities::PLANS`, bit 1024). `PutPlans` is checked against the plans' generation like a settings write, refused `Invalid` for a plan outside its limits before anything is queued, and `Busy` while the outputs are claimed. It is answered `Done { generation }` once the store holds the table, and records a `Plans` event with its client. The writer saves the table in storage sectors 11 and 12 ([schedules](schedules.md)).
 - **Calibration** (`Capabilities::CALIBRATION`, bit 256). `GetCalibration` answers the stored weight of one portion, the bowl mode the build runs and the rotor's phase. `PutCalibration` (owners only) queues a new weight for the settings writer (storage sectors 34 and 35). It is answered `Done` once stored, `Invalid` outside 1–50 g, and `Unverified` for a bowl mode the build was not verified for. The statistics' `Portions` section needs the same bit. There is no event: the calibration has its own generation ([calibration](calibration.md)).
 
 ### Events and samples
@@ -223,7 +223,7 @@ Every flash lease checks that the outputs are stopped, and fails closed when the
 - The queue holds 16 in RAM, the last kept for a feed's `Fed` event, since appends wait out a feed and events pile up meanwhile. Overflow is counted and recorded as a `Lost` event.
 - The settings writer appends them to the ring in storage sectors 13–24 (`wellfed_feeder::store::events`: 32-byte records, at least 1,408 kept) and answers the API's reads. It polls every 5 ms while either waits. While a feed holds the outputs, an append waits at the head of the queue.
 - A ring created empty draws a random epoch from the generator, and every record repeats it in bytes 4–7, the high half of the old 64-bit sequence field. So a ring written before epochs reads as epoch 0, and the layout is unchanged. The welcome carries the epoch, and the feeder welcomes no session until the writer has opened the ring and published it.
-- Recorded today: boot, lock changes (panel, idle relock, or which client), settings and Wi-Fi writes with their client, clock syncs, invites redeemed, recovery and revocations, feeds, and blocked feeding.
+- Recorded today: boot, lock changes (panel, idle relock, or which client), settings, plans and Wi-Fi writes with their client, clock syncs, invites redeemed, recovery and revocations, feeds, missed meals, and blocked feeding.
 
 **Samples** go only to subscribers: power every 5 s, Wi-Fi signal every 30 s, the statistics' metrics with `STATS` ([below](#statistics)), and the judged supply beside the power sample with `POWER`. A sample not sent before the next of its kind is replaced.
 

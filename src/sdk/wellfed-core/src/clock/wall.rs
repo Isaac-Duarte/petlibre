@@ -575,7 +575,10 @@ impl WallClock {
         })
     }
 
-    fn offset_at(&self, unix_ms: u64) -> Option<i32> {
+    /// The offset east of UTC at `unix_ms`: the zone's rule, else the last
+    /// client sync's offsets (its next offset from the change it named);
+    /// `None` with neither.
+    pub fn offset_at(&self, unix_ms: u64) -> Option<i32> {
         let unix_s = i64::try_from(unix_ms / 1000).ok()?;
         if let Some(rule) = self.rule {
             return Some(rule.offset_at(unix_s));

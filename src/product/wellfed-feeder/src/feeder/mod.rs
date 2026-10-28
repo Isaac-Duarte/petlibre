@@ -32,6 +32,7 @@ pub mod lights;
 pub mod lock;
 pub mod owner;
 pub mod platform;
+pub mod schedule;
 pub mod serve;
 pub mod setup;
 pub mod supply;
@@ -50,6 +51,7 @@ use lights::Lights;
 use lock::LockBox;
 use owner::Owner;
 use platform::DriverRecord;
+use schedule::Schedule;
 use serve::{FeederDevice, Inputs, Serve};
 use wellfed_device_api::mailbox::Lock;
 use wellfed_device_api::{Device, Server};
@@ -84,6 +86,11 @@ pub trait Feeds {
     /// Whether the owner judges the battery pack below the floor a feed
     /// needs; `None` before it has judged, or with no owner.
     fn below_floor(&self) -> Option<bool> {
+        None
+    }
+    /// The number of the newest feed the journal holds, once it is open:
+    /// the next feed is reserved as the one after it.
+    fn high_water(&self) -> Option<u32> {
         None
     }
 }
@@ -143,6 +150,8 @@ pub enum Record<D> {
     Feeding(feeding::Record),
     /// `PLIND1`.
     Lights(lights::Record),
+    /// `PLSCH1`.
+    Schedule(schedule::Record),
     /// The speaker's own record while a requested tune plays, under its tag.
     Driver(D),
 }
@@ -158,6 +167,7 @@ impl<D: DriverRecord> Record<D> {
             Self::Serve(_) => "PLAPI1",
             Self::Feeding(_) => "PLFEED1",
             Self::Lights(_) => "PLIND1",
+            Self::Schedule(_) => "PLSCH1",
             Self::Driver(record) => record.tag(),
         }
     }
@@ -172,6 +182,7 @@ impl<D: DriverRecord> fmt::Display for Record<D> {
             Self::Serve(record) => serve::describe(record, f),
             Self::Feeding(record) => feeding::describe(record, f),
             Self::Lights(record) => lights::describe(record, f),
+            Self::Schedule(record) => schedule::describe(record, f),
             Self::Driver(record) => fmt::Display::fmt(&record, f),
         }
     }
@@ -187,6 +198,7 @@ pub struct Feeder<P: Platform> {
     supply: supply::Watch,
     lights: Lights,
     beep: Beeper,
+    schedule: Schedule,
 }
 
 impl<P: Platform> Feeder<P> {
@@ -203,6 +215,7 @@ impl<P: Platform> Feeder<P> {
             supply: supply::Watch::new(),
             lights: Lights::new(),
             beep: Beeper::new(),
+            schedule: Schedule::new(),
         }
     }
 
@@ -242,6 +255,12 @@ impl<P: Platform> Feeder<P> {
 
     /// Whether a feed can start now, with the feeding owner `feeds`.
     pub fn readiness<F: Feeds>(&self, feeds: &F) -> Readiness {
+        feeding::held(self.ready(feeds), self.schedule.holds())
+    }
+
+    /// As [`Self::readiness`], without the schedule's own hold: what the
+    /// schedule's feed is asked under.
+    fn ready<F: Feeds>(&self, feeds: &F) -> Readiness {
         feeding::readiness(
             feeds,
             self.owner.setup_on(),
@@ -299,6 +318,11 @@ impl<P: Platform> Feeder<P> {
                 self.lights.refused(now_ms, |r| record(Record::Lights(r)));
             }
         }
+        let ready = self.ready(feeds);
+        self.schedule
+            .step(&mut self.platform, feeds, now_ms, ready, |r| {
+                record(Record::Schedule(r))
+            });
         let ready = self.readiness(feeds);
         self.readiness.note(&mut self.platform, now_ms, ready, |r| {
             record(Record::Feeding(r))
@@ -341,6 +365,7 @@ impl<P: Platform> Feeder<P> {
             identity: self.identity.keypair(),
             supply: reading,
             battery_hold: self.supply.holds(),
+            meal: self.schedule.holds(),
             feeds,
         };
         let serve_delay = self
@@ -394,8 +419,12 @@ impl<P: Platform> Feeder<P> {
     }
 
     /// Record a feed's `Fed` event, which may take the queue's reserved
-    /// slot.
-    pub fn record_outcome(&mut self, now_ms: u32, body: EventBody) {
+    /// slot. A restart's uncertain feed that a plan had claimed is the
+    /// plan's.
+    pub fn record_outcome(&mut self, now_ms: u32, mut body: EventBody) {
+        if let EventBody::Fed { feed, by, .. } = &mut body {
+            *by = Schedule::source(&mut self.platform, *feed, *by);
+        }
         self.serve.stats().fed(&body);
         events::record_outcome(&mut self.platform, now_ms, body);
     }
@@ -430,6 +459,7 @@ impl<P: Platform> Feeder<P> {
             tasks,
             page,
             battery_hold: self.supply.holds(),
+            meal: self.schedule.holds(),
         }
     }
 }

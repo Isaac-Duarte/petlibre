@@ -359,3 +359,92 @@ impl Lock {
         matches!(self, Self::Locked)
     }
 }
+
+pub use wellfed_core::schedule::{PLANS, Plan, Table, Weekdays};
+
+/// The occurrence the loop took before feeding it: the plan in slot
+/// `plan`, due at `due_s` (Unix seconds), fed as the next feed after
+/// `high_water` (the journal's newest when it was taken). It stays in the
+/// store after the feed, so a restart can tell whether that feed was ever
+/// reserved, until the next claim replaces it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Claim {
+    pub plan: u8,
+    pub due_s: u32,
+    pub high_water: u32,
+    /// The plan ran once, so taking the occurrence disabled it.
+    pub disabled: bool,
+}
+
+/// The plans as the writer last published them, with what the loop keeps
+/// beside them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PlansView {
+    pub table: Table,
+    /// Each slot's mark: the latest occurrence (Unix seconds) already run,
+    /// missed or before the plan's save, which never runs; 0 for none. The
+    /// claim's occurrence counts too ([`Self::mark`]).
+    pub marks: [u32; PLANS],
+    pub claim: Option<Claim>,
+    /// Bumped by every change to the table (a client's, or a plan that
+    /// ran once disabling itself), never by a mark: a client's `base`.
+    pub revision: u32,
+    /// The revision the last client table saved this boot produced (0 for
+    /// none): a client's write landed if this is its `base` plus one, even
+    /// once the loop has written since.
+    pub replaced: u32,
+    pub writable: bool,
+}
+
+impl PlansView {
+    /// Slot `plan`'s mark in Unix seconds, the claim's occurrence
+    /// included; `None` for none.
+    pub fn mark(&self, plan: usize) -> Option<u32> {
+        let mark = self.marks.get(plan).copied().unwrap_or(0);
+        let claimed = self
+            .claim
+            .filter(|claim| usize::from(claim.plan) == plan)
+            .map_or(0, |claim| claim.due_s);
+        Some(mark.max(claimed)).filter(|&mark| mark != 0)
+    }
+}
+
+/// A change to the plans, queued for the writer, which alone writes them.
+/// Each but [`Self::Replace`] is the loop's; one taken against a table
+/// that has changed since (`revision`) is dropped, and the loop decides
+/// again.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlansChange {
+    /// A client's whole new table, saved at `at_s` (Unix seconds, `None`
+    /// with no valid clock): a plan that is new, or whose minute or days
+    /// changed, runs only from its first occurrence after it.
+    Replace { table: Table, at_s: Option<u32> },
+    /// Take an occurrence before its feed is queued, so it can never run
+    /// twice; a plan that runs once is disabled with it.
+    Claim { claim: Claim, revision: u32 },
+    /// The claimed feed was refused before it was reserved: give the
+    /// occurrence back (re-enabling a plan that runs once).
+    Release { claim: Claim },
+    /// A restart found the claim's feed never reserved: the occurrence
+    /// is spent, and the claim cleared.
+    Settle { claim: Claim },
+    /// Slot `plan`'s occurrence `due_s` will never run: its mark moves
+    /// there, and a plan that runs once is disabled.
+    Pass { plan: u8, due_s: u32, revision: u32 },
+}
+
+/// How a plans request ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlansResult {
+    /// The current plans; `pending` once a change is queued for the
+    /// writer.
+    Current {
+        view: PlansView,
+        pending: bool,
+    },
+    /// A change is already queued, or the store is still loading.
+    Busy,
+    ReadOnly,
+    /// This firmware keeps no plans.
+    Unserved,
+}

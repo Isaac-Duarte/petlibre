@@ -4,7 +4,7 @@ The Wellfed server is an optional program you run at home, on a small Linux mach
 
 ## What it is, and what it isn't
 
-The feeder doesn't need the server. It keeps its own feed journal and event history (and will keep its schedules, once they exist), and the app and the `wellfed` CLI can talk to it directly on your home network. If the server is down, the feeder keeps feeding.
+The feeder doesn't need the server. It keeps its own feed journal, event history and schedules, and the app and the `wellfed` CLI can talk to it directly on your home network. If the server is down, the feeder keeps feeding.
 
 The server adds what a small device can't hold:
 

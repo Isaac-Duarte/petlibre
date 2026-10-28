@@ -1160,6 +1160,15 @@ mod target {
             })
         }
 
+        /// The newest feed the journal holds, once the owner has opened
+        /// it: a schedule's claim names it, and its feed is the next.
+        pub fn high_water(&self) -> Option<u32> {
+            let owner = OWNER
+                .enter()
+                .filter(|_| self.settled && !self.journal_failed)?;
+            u32::try_from(owner.status().high_water_id).ok()
+        }
+
         /// The owner's verdict on the pack's floor, once it has judged.
         pub fn below_floor(&self) -> Option<bool> {
             OWNER.enter().and_then(|owner| owner.status().below_floor)

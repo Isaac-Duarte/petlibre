@@ -120,7 +120,7 @@ A gap of `g` RTC seconds moves both estimates by `g` s and grows the error by 1 
 
 ## Missed-meal rule
 
-`wall_clock::occurrence(due, evaluated, now)` decides each scheduled occurrence. `evaluated` is a persisted high-water mark of time already evaluated; after each evaluation it becomes `max(evaluated, now)`.
+`wall_clock::occurrence(due, evaluated, now)` decides each scheduled occurrence. `evaluated` is a persisted mark per plan: the latest occurrence already run, missed or before the plan's save ([schedules](schedules.md#at-most-once)).
 
 | Situation | Result |
 | --- | --- |

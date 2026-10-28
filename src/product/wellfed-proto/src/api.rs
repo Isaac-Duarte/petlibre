@@ -122,6 +122,10 @@ impl Capabilities {
     /// sessions only, and served only by the bank-0 recovery role, which
     /// can read bank 1 while it holds the feeder's only copy of stock.
     pub const BACKUP: Self = Self(512);
+    /// Feeding plans: [`Op::GetPlans`] and [`Op::PutPlans`] with
+    /// [`Outcome::Plans`], and the [`EventBody::Plans`] and
+    /// [`EventBody::Missed`] history.
+    pub const PLANS: Self = Self(1024);
     /// Every bit this crate defines: what a current client claims. A
     /// session then runs on the bits both sides claim, so a client adapts
     /// to whatever feeder it meets, however old.
@@ -135,7 +139,8 @@ impl Capabilities {
             | Self::TRACES.0
             | Self::CALIBRATION.0
             | Self::POWER.0
-            | Self::BACKUP.0,
+            | Self::BACKUP.0
+            | Self::PLANS.0,
     );
 
     pub const fn union(self, other: Self) -> Self {
@@ -362,6 +367,17 @@ pub enum Op<'a> {
     ReadBank1 {
         offset: u32,
     },
+    /// The feeding plans, answered [`Outcome::Plans`].
+    GetPlans,
+    /// Replace every plan slot with `plans` if the plans are still at
+    /// `base` generation, answered `Done` once the store holds them. A
+    /// plan with a field outside [`Plan`]'s limits is refused `Invalid`. A
+    /// plan whose minute or days changed (or a new one) runs only from
+    /// its next occurrence after the save.
+    PutPlans {
+        base: u32,
+        plans: [Option<Plan>; PLANS_MAX],
+    },
 }
 
 /// The most bank-1 bytes one [`Outcome::Bank1`] carries: well within a
@@ -411,6 +427,33 @@ pub struct CalibrationView {
     pub phase: Option<Phase>,
 }
 
+/// Plan slots a feeder keeps, as stock keeps at most ten plans.
+pub const PLANS_MAX: usize = 10;
+/// The most portions one plan asks for: the most one feed may.
+pub const PLAN_PORTIONS_MAX: u8 = 48;
+
+/// One feeding plan: `portions` at minute `minute` of the local day
+/// (0-1439), on the weekdays `days` lists (bit 0 Monday to bit 6 Sunday),
+/// or once at its next occurrence when it lists none. A plan that ran once
+/// stays in its slot, disabled. With no valid clock, plans hold; an
+/// occurrence more than 15 minutes late never runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Plan {
+    pub minute: u16,
+    /// 1 to [`PLAN_PORTIONS_MAX`].
+    pub portions: u8,
+    pub days: u8,
+    pub enabled: bool,
+}
+
+/// [`Op::GetPlans`]'s answer: the plan in each slot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Plans {
+    pub generation: u32,
+    pub writable: bool,
+    pub plans: [Option<Plan>; PLANS_MAX],
+}
+
 /// The largest [`Op::UpdateChunk`]: an eighth of a flash sector, which
 /// a sealed request carries with room to spare.
 pub const UPDATE_CHUNK_MAX: usize = 512;
@@ -435,6 +478,7 @@ impl Op<'_> {
                 | Self::FeedTrace { .. }
                 | Self::GetCalibration
                 | Self::ReadBank1 { .. }
+                | Self::GetPlans
         )
     }
 
@@ -455,6 +499,7 @@ impl Op<'_> {
             Self::TailLog { .. } => Capabilities::LOG,
             Self::GetCalibration | Self::PutCalibration { .. } => Capabilities::CALIBRATION,
             Self::ReadBank1 { .. } => Capabilities::BACKUP,
+            Self::GetPlans | Self::PutPlans { .. } => Capabilities::PLANS,
             Self::Status
             | Self::GetSettings
             | Self::PutSettings { .. }
@@ -665,6 +710,8 @@ pub enum Outcome<'a> {
     /// One page of bank 1, after [`Op::ReadBank1`].
     #[serde(borrow)]
     Bank1(Bank1Page<'a>),
+    /// The plans, after [`Op::GetPlans`].
+    Plans(Plans),
 }
 
 /// One page of bank 1: `bytes` from `offset`, of the `total` the feeder
@@ -1077,6 +1124,18 @@ pub enum EventBody {
     /// one a minute: changes inside that minute are recorded together,
     /// as the supply stands at its end.
     Supply(Supply),
+    /// A client replaced the plans; `generation` is the store's after it.
+    Plans {
+        generation: u32,
+        by: Source,
+    },
+    /// The occurrence of plan `plan` due at `due` (Unix seconds) did not
+    /// run, and never will.
+    Missed {
+        plan: u8,
+        due: u32,
+        reason: MissedReason,
+    },
 }
 
 impl EventBody {
@@ -1088,6 +1147,7 @@ impl EventBody {
             Self::Fed { .. } => Capabilities::FEED,
             Self::FeedingBlocked { .. } => Capabilities::READINESS,
             Self::Supply(_) => Capabilities::POWER,
+            Self::Plans { .. } | Self::Missed { .. } => Capabilities::PLANS,
             Self::Boot { .. }
             | Self::Lock { .. }
             | Self::Settings { .. }
@@ -1147,6 +1207,21 @@ pub enum Source {
     Panel,
     Client(Fingerprint),
     Feeder,
+    /// The plan in this slot.
+    Schedule(u8),
+}
+
+/// Why a plan's occurrence did not run.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MissedReason {
+    /// It fell while the feeder was off or had no valid time, or the clock
+    /// moved past it, more than the grace (15 minutes) ago.
+    Late,
+    /// It waited past the grace for a feed it could not start: why.
+    Blocked(Blocked),
+    /// The feeder stopped after it took the occurrence and before the
+    /// feed was reserved.
+    Interrupted,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1636,6 +1711,32 @@ mod tests {
         assert_eq!(decode::<FeederMessage<'_>>(&out[..len]), Ok(bank1));
         // The bank is a whole number of pages.
         assert_eq!(0x15_0000 % BANK1_PAGE_MAX, 0);
+
+        let plan = Some(Plan {
+            minute: u16::MAX,
+            portions: u8::MAX,
+            days: u8::MAX,
+            enabled: true,
+        });
+        let put = ClientMessage::Request {
+            id: [0xff; 16],
+            op: Op::PutPlans {
+                base: u32::MAX,
+                plans: [plan; PLANS_MAX],
+            },
+        };
+        let len = encode(&put, &mut out).unwrap();
+        assert_eq!(decode::<ClientMessage<'_>>(&out[..len]), Ok(put));
+        let plans = FeederMessage::Response {
+            id: [0xff; 16],
+            result: Outcome::Plans(Plans {
+                generation: u32::MAX,
+                writable: true,
+                plans: [plan; PLANS_MAX],
+            }),
+        };
+        let len = encode(&plans, &mut out).unwrap();
+        assert_eq!(decode::<FeederMessage<'_>>(&out[..len]), Ok(plans));
     }
 
     /// A summary with every field at its largest encoding.
@@ -1868,6 +1969,23 @@ mod tests {
                 battery: Battery::Implausible { mv: u16::MAX },
                 below_floor: Some(false),
             }),
+            EventBody::Fed {
+                feed: u32::MAX,
+                requested: u8::MAX,
+                completed: u8::MAX,
+                outcome: FeedOutcome::Uncertain,
+                reason: FeedReason::Output,
+                by: Source::Schedule(u8::MAX),
+            },
+            EventBody::Plans {
+                generation: u32::MAX,
+                by: Source::Client(client),
+            },
+            EventBody::Missed {
+                plan: u8::MAX,
+                due: u32::MAX,
+                reason: MissedReason::Blocked(Blocked::Unserved),
+            },
         ] {
             let mut out = [0; 16];
             let len = encode(&body, &mut out).unwrap();

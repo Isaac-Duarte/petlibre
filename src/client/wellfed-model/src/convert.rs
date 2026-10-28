@@ -12,11 +12,11 @@ use wellfed_proto::setup as proto_setup;
 use crate::{
     Answer, Bank1Page, Battery, Blocked, Bowl, Calibration, CalibrationView, Capabilities, Client,
     ClientRole, Counters, Counts, EnrollPath, Erases, Event, EventBody, FeedOutcome, FeedReason,
-    Flash, Food, Generation, Hello, Hex, Invite, Joined, LogLines, Memory, NtpResult, NtpServer,
-    Op, OpenRefusal, Phase, Portions, Power, PowerStats, Readiness, Refusal, ResetCause, Resets,
-    Sample, SampleValue, Settings, SettingsPatch, Source, Stats, StatsSection, Status, TaskStack,
-    TimeSource, TimeSync, TimeView, Tune, UpdatePhase, UpdateRefusal, UpdateStop, UpdateView,
-    WifiSource, Window, setup,
+    Flash, Food, Generation, Hello, Hex, Invite, Joined, LogLines, Memory, MissedReason, NtpResult,
+    NtpServer, Op, OpenRefusal, Phase, Plan, Plans, Portions, Power, PowerStats, Readiness,
+    Refusal, ResetCause, Resets, Sample, SampleValue, Settings, SettingsPatch, Source, Stats,
+    StatsSection, Status, TaskStack, TimeSource, TimeSync, TimeView, Tune, UpdatePhase,
+    UpdateRefusal, UpdateStop, UpdateView, Weekdays, WifiSource, Window, setup,
 };
 use crate::{
     CurrentUnit, FeedStats, Malformed, Trace, TraceEntry, TraceMotor, TracePage, TraceSummary,
@@ -284,6 +284,15 @@ impl From<proto::EventBody> for EventBody {
                 battery: battery.into(),
                 below_floor,
             },
+            proto::EventBody::Plans { generation, by } => Self::Plans {
+                generation: Generation(generation),
+                by: by.into(),
+            },
+            proto::EventBody::Missed { plan, due, reason } => Self::Missed {
+                plan,
+                due: seconds(due),
+                reason: reason.into(),
+            },
         }
     }
 }
@@ -348,6 +357,16 @@ impl From<EventBody> for proto::EventBody {
                 battery: battery.into(),
                 below_floor,
             }),
+            EventBody::Plans { generation, by } => Self::Plans {
+                generation: generation.0,
+                by: by.into(),
+            },
+            // A due time came from the feeder's u32 seconds.
+            EventBody::Missed { plan, due, reason } => Self::Missed {
+                plan,
+                due: u32::try_from(due.as_second()).unwrap_or(u32::MAX),
+                reason: reason.into(),
+            },
         }
     }
 }
@@ -360,6 +379,7 @@ impl From<proto::Source> for Source {
                 client: Hex(client),
             },
             proto::Source::Feeder => Self::Feeder,
+            proto::Source::Schedule(plan) => Self::Schedule { plan },
         }
     }
 }
@@ -370,6 +390,51 @@ impl From<Source> for proto::Source {
             Source::Panel => Self::Panel,
             Source::Client { client } => Self::Client(client.0),
             Source::Feeder => Self::Feeder,
+            Source::Schedule { plan } => Self::Schedule(plan),
+        }
+    }
+}
+
+impl From<proto::MissedReason> for MissedReason {
+    fn from(reason: proto::MissedReason) -> Self {
+        match reason {
+            proto::MissedReason::Late => Self::Late,
+            proto::MissedReason::Blocked(reason) => Self::Blocked {
+                reason: reason.into(),
+            },
+            proto::MissedReason::Interrupted => Self::Interrupted,
+        }
+    }
+}
+
+impl From<MissedReason> for proto::MissedReason {
+    fn from(reason: MissedReason) -> Self {
+        match reason {
+            MissedReason::Late => Self::Late,
+            MissedReason::Blocked { reason } => Self::Blocked(reason.into()),
+            MissedReason::Interrupted => Self::Interrupted,
+        }
+    }
+}
+
+impl From<proto::Plan> for Plan {
+    fn from(plan: proto::Plan) -> Self {
+        Self {
+            minute: plan.minute,
+            portions: plan.portions,
+            days: Weekdays::from_bits(plan.days),
+            enabled: plan.enabled,
+        }
+    }
+}
+
+impl From<Plan> for proto::Plan {
+    fn from(plan: Plan) -> Self {
+        Self {
+            minute: plan.minute,
+            portions: plan.portions,
+            days: plan.days.bits(),
+            enabled: plan.enabled,
         }
     }
 }
@@ -628,6 +693,15 @@ impl From<proto::Outcome<'_>> for Answer {
                 offset,
                 total,
                 bytes: bytes.to_vec(),
+            }),
+            proto::Outcome::Plans(proto::Plans {
+                generation,
+                writable,
+                plans,
+            }) => Self::Plans(Plans {
+                generation: Generation(generation),
+                writable,
+                plans: plans.map(|plan| plan.map(Into::into)),
             }),
         }
     }
@@ -1240,6 +1314,11 @@ impl Op {
                 calibration: (*calibration).into(),
             },
             Self::ReadBank1 { offset } => proto::Op::ReadBank1 { offset: *offset },
+            Self::GetPlans => proto::Op::GetPlans,
+            Self::PutPlans { base, plans } => proto::Op::PutPlans {
+                base: base.0,
+                plans: plans.map(|plan| plan.map(Into::into)),
+            },
         }
     }
 }
@@ -1306,6 +1385,7 @@ impl From<proto::Capabilities> for Capabilities {
             calibration: bits.contains(proto::Capabilities::CALIBRATION),
             power: bits.contains(proto::Capabilities::POWER),
             backup: bits.contains(proto::Capabilities::BACKUP),
+            plans: bits.contains(proto::Capabilities::PLANS),
         }
     }
 }
@@ -1323,6 +1403,7 @@ impl From<Capabilities> for proto::Capabilities {
             calibration,
             power,
             backup,
+            plans,
         } = capabilities;
         let mut bits = proto::Capabilities::V1.0;
         if feed {
@@ -1354,6 +1435,9 @@ impl From<Capabilities> for proto::Capabilities {
         }
         if backup {
             bits |= proto::Capabilities::BACKUP.0;
+        }
+        if plans {
+            bits |= proto::Capabilities::PLANS.0;
         }
         Self(bits)
     }

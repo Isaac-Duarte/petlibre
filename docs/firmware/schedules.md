@@ -1,0 +1,96 @@
+# Feeding schedules
+
+The feeder keeps up to ten feeding plans and runs them itself, with no server. This page explains what a plan is, when one runs, and how the feeder makes sure a meal runs at most once through restarts, clock jumps and daylight changes. It is for owners who want to know what to expect and for anyone changing the schedule code.
+
+Status: **Experimental**. Built and tested in simulation; not yet run on the feeder.
+
+## Plans
+
+A plan feeds a number of portions at a time of the feeder's local day, on the weekdays it lists. A plan that lists no weekday runs once, at its next occurrence, and then disables itself; it stays in its slot so you can enable it again.
+
+| Field | Limits |
+| --- | --- |
+| Time | 00:00 to 23:59, local time |
+| Portions | 1 to 48, as a manual feed |
+| Days | Any of Monday to Sunday, or none for once |
+| Enabled | On or off |
+
+The feeder has ten slots, as stock keeps at most ten plans. The slot number is the plan's name in the history and in `wellfed plans`.
+
+```sh
+wellfed plans list
+wellfed plans add --at 07:30 --portions 2 --days daily
+wellfed plans edit 0 --days mon,wed,fri
+wellfed plans disable 0
+wellfed plans delete 0
+```
+
+Owners and members may change the plans, as they may change the settings. Each change reads the plans, edits that table and writes it back against the generation it read. If another client changed the plans meanwhile, or a one-off plan disabled itself, the write is refused `Stale` and nothing changes; read them again and retry. The command never retries by itself.
+
+A plan you add, enable again, or whose time or days you change, runs only from its next occurrence after the save. Saving a plan at 07:35 for 07:30 does not feed until tomorrow. Changing only a plan's portions keeps its occurrences as they were.
+
+## When a plan runs
+
+The feeder needs a valid clock with a zone offset to run plans. Until a time source sets the clock after a cold boot, plans hold and manual feeds still work ([clock](clock.md)).
+
+Each occurrence goes through the missed-meal rule ([clock](clock.md#missed-meal-rule)):
+
+- **On time.** It runs at its minute, through the same feeding owner, readiness and journal as a Dispense press.
+- **Late, within 15 minutes.** After a restart, a forward clock jump, or a wait for the feeder to be ready, it still runs once.
+- **Later than 15 minutes.** It never runs. The history records it as `Missed`, with the reason.
+- **Already run.** A backward clock jump or a restart never runs it again.
+
+A plan due while the feeder cannot feed waits: another feed, a Wi-Fi join, an install, BLE setup or a battery hold. It runs as soon as the feeder is ready, within the 15 minutes. Plans due at the same minute run one after another, by slot.
+
+A feed a plan started is a `Fed` event by `schedule` with the plan's slot. A missed occurrence is a `Missed` event:
+
+| Reason | Meaning |
+| --- | --- |
+| `late` | The feeder was off or had no time, or the clock moved past it |
+| `blocked` | It waited past 15 minutes; the event names what blocked it |
+| `interrupted` | The feeder stopped after taking the occurrence and before the feed was reserved |
+
+A plan you saved while the feeder had no time has no starting point, so it starts once the clock returns. An occurrence that falls before then, late or not, passes without a `Missed` event: it may have fallen before the save.
+
+## Daylight saving and time zones
+
+Plans keep local time across daylight changes, from the zone's rule or a client's sync ([clock](clock.md#time-settings)):
+
+- **A skipped time runs as far past the change as it was meant to be.** In spring, 02:30 runs at 03:30 when the clock jumps from 02:00 to 03:00.
+- **A repeated time runs on its first pass.** In autumn, 01:30 runs once, in daylight time.
+
+This is the rule RFC 5545 and JavaScript's Temporal call "compatible". Half-hour and quarter-hour zones work; stock rounded its zone to whole hours. The feeder works out each plan's occurrence once a minute, so a new zone applies to plans within a minute.
+
+## At most once
+
+The feeder never runs an occurrence twice, even if power fails at any moment. Each plan keeps a mark: the latest occurrence already run, missed or before the plan was saved. Nothing at or before the mark runs.
+
+Running an occurrence takes two steps:
+
+1. **The claim.** The writer saves the occurrence, the plan's slot and the feed journal's newest number. The claimed occurrence counts as the plan's mark from then on.
+2. **The feed.** Only once the claim is on flash does the loop hand the feed to the feeding owner. Every other feed waits meanwhile, so the claimed feed is the very next number the journal reserves.
+
+A cut between the two leaves a claim whose feed was never reserved. The next boot finds the journal where the claim left it, records the occurrence `interrupted`, and does not feed. A cut during the feed is the journal's usual case: the next boot resolves it `uncertain` and never runs it again. The event names the plan, since the claim says the feed was the plan's.
+
+If the feeding owner refuses the claimed feed (a join began in between, say), the loop gives the occurrence back and claims it again 5 seconds later, until the 15 minutes run out.
+
+A plans store the feeder cannot write runs nothing, since it could not keep the marks.
+
+## How it differs from stock
+
+| | Stock | Wellfed |
+| --- | --- | --- |
+| A plan due during another feed | Waits, with no limit, even across a restart | Waits up to 15 minutes, then is missed |
+| A meal missed while off | Not caught up, not reported | Run if at most 15 minutes late, otherwise reported |
+| Field checks | None ("99:99" is stored) | Every field checked |
+| Time zone | Whole hours | Any offset, with daylight rules |
+| A one-off plan after it runs | Deleted | Kept, disabled |
+| A sound before the meal | Per plan | Not yet |
+
+## Storage
+
+The plans live in storage sectors 11 and 12 (`wellfed_feeder::store::plans`): one 128-byte record holding the ten plans, each plan's mark and the last claim. Only the settings writer writes it, inside a marked attempt, after a feed has released the outputs. A save happens for each change you make and for each occurrence run or missed. A record of a newer format makes the store read-only with no plans, so this build runs nothing it cannot read.
+
+## Evidence
+
+- **Simulated, October 28, 2026.** `wellfed-feeder-sim`'s schedule tests run the product loop in virtual time over the real stores and feed journal: on-time feeds, restarts, backward and forward jumps, a cold boot without time, plans due together, a wait past the grace, a cut between the claim and the feed, a cut mid-feed, a refused feed and its retries, one-off plans enabled again, a plan saved without time, and Denver's spring and autumn changes.

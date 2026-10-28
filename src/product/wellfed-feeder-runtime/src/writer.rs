@@ -16,8 +16,10 @@
 //!
 //! It keeps the time settings too (sectors 27 and 28,
 //! `wellfed_feeder::store::time`): the owner's zone and the NTP server,
-//! published for the loop ([`time`]), and the portion calibration (sectors
-//! 34 and 35, `wellfed_feeder::store::calibration`, [`calibration`]).
+//! published for the loop ([`time`]), the portion calibration (sectors 34
+//! and 35, `wellfed_feeder::store::calibration`, [`calibration`]), and the
+//! feeding plans (sectors 11 and 12, `wellfed_feeder::store::plans`,
+//! [`plans`]): a client's table, and the loop's claims and passes.
 //!
 //! It also keeps the event history (sectors 13-24,
 //! `wellfed_feeder::store::events`). It appends the records the loop queues
@@ -58,6 +60,7 @@ use wellfed_feeder::store::calibration::CalibrationStore;
 use wellfed_feeder::store::clients::{ClientError, ClientStatus, ClientStore};
 use wellfed_feeder::store::events::EventLog;
 use wellfed_feeder::store::net::{NetStatus, NetStore};
+use wellfed_feeder::store::plans::PlansStore;
 use wellfed_feeder::store::settings::{Settings, SettingsStatus, SettingsStore};
 use wellfed_feeder::store::stats::{SaveKind, StatsStatus, StatsStore};
 use wellfed_feeder::store::time::{TimeStatus, TimeStore};
@@ -77,6 +80,7 @@ use crate::events;
 pub use crate::keys::KeyResult;
 use crate::keys::{self, Change};
 use crate::network::{self, NET_BASE};
+use crate::plans::{self, PLANS_BASE};
 use crate::stats::{self, STATS_BASE};
 use crate::time::{self, TIME_BASE};
 use crate::traces;
@@ -189,6 +193,17 @@ pub enum Record {
         portion_mg: Option<u32>,
     },
     CalibrationError {
+        stage: ErrorStage,
+    },
+    /// The feeding plans (sectors 11 and 12).
+    PlansSaved {
+        sequence: u32,
+        revision: u32,
+    },
+    /// A change of the loop's taken against plans that have moved on:
+    /// nothing written, and the loop decides again.
+    PlansDropped,
+    PlansError {
         stage: ErrorStage,
     },
     /// The stored seed and the client store.
@@ -325,6 +340,11 @@ pub fn describe(record: Record, f: &mut impl fmt::Write) -> fmt::Result {
             }
         }
         Record::CalibrationError { stage } => write!(f, "calibration error stage={stage}"),
+        Record::PlansSaved { sequence, revision } => {
+            write!(f, "plans saved sequence={sequence} revision={revision}")
+        }
+        Record::PlansDropped => f.write_str("plans dropped"),
+        Record::PlansError { stage } => write!(f, "plans error stage={stage}"),
         Record::Keys {
             seed,
             mixed,
@@ -453,6 +473,8 @@ pub struct Writer<F> {
     /// Opened with the others; its status shows in the device API's
     /// calibration view (writable, generation) rather than a record.
     calibration: CalibrationStore<Slots<F, CALIBRATION_BASE>>,
+    /// As for the calibration: its status shows in the plans view.
+    plans: PlansStore<Slots<F, PLANS_BASE>>,
     armed: bool,
     seed: SeedStore<Slots<F, SEED_BASE>>,
     clients: ClientStore<Slots<F, CLIENTS_BASE>>,
@@ -487,6 +509,7 @@ impl<F> Default for Writer<F> {
             time: TimeStore::default(),
             time_opened: false,
             calibration: CalibrationStore::default(),
+            plans: PlansStore::default(),
             armed: false,
             seed: SeedStore::default(),
             clients: ClientStore::default(),
@@ -558,6 +581,38 @@ impl<F: FlashOps> Writer<F> {
             saved(&self.calibration)
         } else {
             Record::CalibrationError {
+                stage: ErrorStage::Save,
+            }
+        })
+    }
+
+    /// Apply a queued plans change and save it: the record, or `None`
+    /// while a feed holds the outputs (the change stays queued).
+    fn save_plans<H: Hooks>(
+        &mut self,
+        change: &wellfed_device_api::mailbox::PlansChange,
+    ) -> Option<Record> {
+        if self.stage == Stage::Serve || !H::armed() {
+            return Some(Record::PlansError {
+                stage: ErrorStage::Unarmed,
+            });
+        }
+        // Checked before the turn, so a dropped change waits for no feed.
+        if self.plans.plans.changed(change).is_none() {
+            return Some(Record::PlansDropped);
+        }
+
+        let _turn = self.take_turn()?;
+        arming::set_attempt();
+        let ok = self.plans.apply(change) == Some(true);
+        arming::clear_attempt();
+        Some(if ok {
+            Record::PlansSaved {
+                sequence: self.plans.sequence,
+                revision: self.plans.plans.revision,
+            }
+        } else {
+            Record::PlansError {
                 stage: ErrorStage::Save,
             }
         })
@@ -862,6 +917,7 @@ impl<F: FlashOps> Writer<F> {
         network::publish(&self.net, self.armed);
         time::publish(&self.time, self.armed);
         calibration::publish(&self.calibration, self.armed);
+        plans::publish(&self.plans, self.armed);
     }
 
     /// One task iteration.
@@ -876,6 +932,7 @@ impl<F: FlashOps> Writer<F> {
                 self.net.open(Slots::new());
                 self.time.open(Slots::new());
                 self.calibration.open(Slots::new());
+                self.plans.open(Slots::new());
                 self.armed = H::armed();
                 self.stage = if self.armed { Stage::Idle } else { Stage::Arm };
                 self.publish();
@@ -1056,6 +1113,14 @@ impl<F: FlashOps> Writer<F> {
                     };
                     self.publish();
                     calibration::finish();
+                    return next(POLL_MS, Some(record));
+                }
+                if let Some(change) = plans::pending() {
+                    let Some(record) = self.save_plans::<H>(&change) else {
+                        return self.waiting();
+                    };
+                    self.publish();
+                    plans::finish();
                     return next(POLL_MS, Some(record));
                 }
                 let Some(fields) = settings::pending() else {

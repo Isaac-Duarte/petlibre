@@ -4,11 +4,11 @@
 
 use super::handshake::{find, fingerprint};
 use super::memory::remembered;
-use super::request::{Action, Name, Reply};
+use super::request::{Action, Name, Reply, wire_plans};
 use super::{Pending, Phase, Server, Waiting, slot_id};
 use crate::clients::Role;
 use crate::mailbox::{
-    CalibrationResult, NtpResult, NtpServer, Origin, SettingsFields, SettingsResult,
+    CalibrationResult, NtpResult, NtpServer, Origin, PlansResult, SettingsFields, SettingsResult,
     TimeSettingsResult, WifiResult,
 };
 use crate::pairing::{self, Path};
@@ -113,6 +113,24 @@ impl Server {
                     return Ok(None);
                 }
                 CalibrationResult::ReadOnly | CalibrationResult::Unserved => {
+                    Reply::Refused(Refusal::NotWritable)
+                }
+            },
+            // The loop may write the plans right after the client's table
+            // (a plan that runs once disabling itself), so the writer's
+            // record of that write decides, not the table now.
+            Waiting::Plans { revision } => match device.plans(None) {
+                PlansResult::Current {
+                    view,
+                    pending: false,
+                } if view.replaced == revision => {
+                    let generation = revision;
+                    device.record(now_ms, EventBody::Plans { generation, by });
+                    Reply::Done(Some(generation))
+                }
+                PlansResult::Current { pending: false, .. } => Reply::Refused(Refusal::NotWritable),
+                PlansResult::Current { pending: true, .. } | PlansResult::Busy => return Ok(None),
+                PlansResult::ReadOnly | PlansResult::Unserved => {
                     Reply::Refused(Refusal::NotWritable)
                 }
             },
@@ -303,6 +321,14 @@ impl Server {
                         phase: device.phase(),
                     })
                 }
+                _ => Outcome::Refused(Refusal::Unavailable),
+            },
+            Reply::Plans => match device.plans(None) {
+                PlansResult::Current { view, .. } => Outcome::Plans(proto::Plans {
+                    generation: view.revision,
+                    writable: view.writable,
+                    plans: wire_plans(&view.table),
+                }),
                 _ => Outcome::Refused(Refusal::Unavailable),
             },
             Reply::Stats(section) => {

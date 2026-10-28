@@ -1,6 +1,7 @@
 //! The on-flash bytes of every record the product's stores write, pinned:
 //! settings, Wi-Fi credentials and their clear, the client table, the time
-//! settings, the portion calibration and the event ring's records. These are the layouts deployed feeders hold, so a
+//! settings, the portion calibration, the feeding plans and the event
+//! ring's records. These are the layouts deployed feeders hold, so a
 //! change to the shared slot layer must leave every byte where it was. The
 //! units are larger than the records so the bytes after each record are
 //! pinned erased too.
@@ -12,12 +13,15 @@
 use wellfed_core::feed::progress::BowlMode;
 use wellfed_core::settings::Window;
 use wellfed_device_api::clients::{Client, Label, Role};
-use wellfed_device_api::mailbox::{Calibration, NtpServer, TimeSettings, Zone};
+use wellfed_device_api::mailbox::{
+    Calibration, Claim, NtpServer, PLANS, Plan, PlansChange, TimeSettings, Weekdays, Zone,
+};
 use wellfed_device_api::wifi::Credentials;
 use wellfed_feeder::store::calibration::{CalibrationStatus, CalibrationStore};
 use wellfed_feeder::store::clients::{ClientStatus, ClientStore};
 use wellfed_feeder::store::events::{BODY_BYTES, EventLog, Read, Record};
 use wellfed_feeder::store::net::{NetStatus, NetStore};
+use wellfed_feeder::store::plans::{Plans, PlansStatus, PlansStore};
 use wellfed_feeder::store::settings::{Settings, SettingsStatus, SettingsStore};
 use wellfed_feeder::store::time::{TimeStatus, TimeStore};
 use wellfed_testkit::journal_flash::FakeJournalFlash;
@@ -189,6 +193,87 @@ fn calibration_store_reads_the_pinned_records() {
         );
     }
 }
+
+/// Breakfast every day in slot 0 and a one-off in slot 2, saved at
+/// 2026-10-28T07:00Z; then breakfast's occurrence claimed.
+fn plans() -> [Plans; 2] {
+    let mut table = [None; PLANS];
+    table[0] = Some(Plan {
+        minute: 7 * 60 + 30,
+        portions: 2,
+        days: Weekdays::EVERY_DAY,
+        enabled: true,
+    });
+    table[2] = Some(Plan {
+        minute: 18 * 60,
+        portions: 1,
+        days: Weekdays::ONCE,
+        enabled: false,
+    });
+    let saved = Plans::default()
+        .changed(&PlansChange::Replace {
+            table,
+            at_s: Some(1_793_170_800),
+        })
+        .unwrap();
+    let claim = Claim {
+        plan: 0,
+        due_s: 1_793_172_600,
+        high_water: 41,
+        disabled: false,
+    };
+    let claimed = saved
+        .changed(&PlansChange::Claim {
+            claim,
+            revision: saved.revision,
+        })
+        .unwrap();
+    [saved, claimed]
+}
+
+#[test]
+fn plans_records() {
+    let mut f = FakeJournalFlash::with_unit(512);
+    let mut s = PlansStore::default();
+    // SAFETY: the fake flash outlives the store.
+    unsafe { s.open(f.io()) };
+
+    let [saved, claimed] = plans();
+    assert!(s.save(&saved));
+    pinned("plans saved", &f, 0, 128, PLANS_SAVED);
+    assert!(s.save(&claimed));
+    pinned("plans claimed", &f, 1, 128, PLANS_CLAIMED);
+}
+
+#[test]
+fn plans_store_reads_the_pinned_records() {
+    let [saved, claimed] = plans();
+    for (record, slot, sequence, plans) in
+        [(PLANS_SAVED, 0, 1, saved), (PLANS_CLAIMED, 1, 2, claimed)]
+    {
+        let mut f = flash(512, &[(slot, record)]);
+        let mut s = PlansStore::default();
+        // SAFETY: the fake flash outlives the store.
+        assert_eq!(unsafe { s.open(f.io()) }, PlansStatus::Loaded);
+        assert_eq!(
+            (s.sequence, s.slot, s.plans),
+            (sequence, slot as u32, plans)
+        );
+    }
+}
+
+const PLANS_SAVED: &[&str] = &[
+    "504c46504c4e303101008000010000000100000003c201027f00000000000138",
+    "0401000000000000000000000000000000000000000000000000000000000000",
+    "000000000000709de16a00000000709de16a0000000000000000000000000000",
+    "000000000000000000000000000000000000000000000000a6f513af434d4954",
+];
+const PLANS_CLAIMED: &[&str] = &[
+    "504c46504c4e303101008000020000000100000003c201027f00000000000138",
+    "0401000000000000000000000000000000000000000000000000000000000000",
+    "000000000000709de16a00000000709de16a0000000000000000000000000000",
+    "0000000000000000000000000000010078a4e16a2900000036e38ece434d4954",
+];
 
 #[test]
 fn client_records() {

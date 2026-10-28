@@ -24,8 +24,9 @@ use crate::stats::Totals;
 use crate::store::events::{BODY_BYTES, Read};
 use wellfed_device_api::clients::{CLIENTS, Client};
 use wellfed_device_api::mailbox::{
-    Calibration, CalibrationResult, ClientChange, KeyResult, PlayResult, Requested, SettingsFields,
-    SettingsResult, SettingsView, TimeSettings, TimeSettingsResult, WifiResult, WifiSource,
+    Calibration, CalibrationResult, ClientChange, KeyResult, PlansChange, PlansResult, PlayResult,
+    Requested, SettingsFields, SettingsResult, SettingsView, TimeSettings, TimeSettingsResult,
+    WifiResult, WifiSource,
 };
 use wellfed_device_api::wifi::Credentials;
 
@@ -309,6 +310,10 @@ pub trait Platform {
     fn calibration(&mut self) -> CalibrationResult;
     /// Queue the whole new calibration for the writer.
     fn calibration_change(&mut self, calibration: Calibration) -> CalibrationResult;
+    /// The feeding plans as the writer last published them.
+    fn plans(&mut self) -> PlansResult;
+    /// Queue one change to the plans for the writer.
+    fn plans_change(&mut self, change: PlansChange) -> PlansResult;
 
     // ---- The event history.
 
@@ -348,6 +353,9 @@ pub trait Platform {
     fn time_fix(&mut self, now_ms: u32, fix: Fix) -> Result<Jump, SyncError>;
     /// The clock's state now.
     fn clock_state(&mut self, now_ms: u32) -> ClockState;
+    /// The zone's offset east of UTC at `unix_ms`, from its rule or a
+    /// client sync's offsets; `None` with neither.
+    fn offset_at(&self, unix_ms: u64) -> Option<i32>;
     /// Set or clear the zone's rule.
     fn set_zone_rule(&mut self, rule: Option<Rule>);
 

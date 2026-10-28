@@ -42,6 +42,9 @@ pub enum NoRoute {
     /// The portion calibration is measured at the feeder with a scale and
     /// the owner's CLI.
     Calibration,
+    /// The feeding plans' route is still to come; until then the owner's
+    /// CLI edits them on the feeder.
+    PlansToCome,
 }
 
 /// The server route for a device operation, or why it has none.
@@ -74,5 +77,6 @@ pub const fn parity(op: &Op) -> Parity {
             Without(NoRoute::Diagnostics)
         }
         Op::GetCalibration | Op::PutCalibration { .. } => Without(NoRoute::Calibration),
+        Op::GetPlans | Op::PutPlans { .. } => Without(NoRoute::PlansToCome),
     }
 }

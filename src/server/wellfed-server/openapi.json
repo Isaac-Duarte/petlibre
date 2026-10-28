@@ -6118,6 +6118,61 @@
           },
           {
             "type": "object",
+            "description": "A client replaced the feeding plans.",
+            "required": [
+              "generation",
+              "by",
+              "kind"
+            ],
+            "properties": {
+              "by": {
+                "$ref": "#/components/schemas/Source"
+              },
+              "generation": {
+                "$ref": "#/components/schemas/Generation"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "plans"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A plan's occurrence did not run, and never will.",
+            "required": [
+              "plan",
+              "due",
+              "reason",
+              "kind"
+            ],
+            "properties": {
+              "due": {
+                "type": "string",
+                "format": "date-time",
+                "description": "When it was due."
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "missed"
+                ]
+              },
+              "plan": {
+                "type": "integer",
+                "format": "int32",
+                "description": "The plan's slot.",
+                "minimum": 0
+              },
+              "reason": {
+                "$ref": "#/components/schemas/MissedReason"
+              }
+            }
+          },
+          {
+            "type": "object",
             "description": "The adapter came or went, or the pack crossed its floor (at most\none a minute, as the supply stood at its end).",
             "required": [
               "battery",
@@ -7646,6 +7701,60 @@
             "minimum": 0
           }
         }
+      },
+      "MissedReason": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "It fell while the feeder was off or had no valid time, or the clock\nmoved past it, more than 15 minutes ago.",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "late"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "It waited past 15 minutes for a feed the feeder could not start.",
+            "required": [
+              "reason",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "blocked"
+                ]
+              },
+              "reason": {
+                "$ref": "#/components/schemas/Blocked"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The feeder stopped after it took the occurrence and before the\nfeed was reserved.",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "interrupted"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "Why a plan's occurrence did not run."
       },
       "NewFood": {
         "type": "object",
@@ -9227,6 +9336,28 @@
                 "enum": [
                   "feeder"
                 ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A feeding plan.",
+            "required": [
+              "plan",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "schedule"
+                ]
+              },
+              "plan": {
+                "type": "integer",
+                "format": "int32",
+                "description": "The plan's slot.",
+                "minimum": 0
               }
             }
           }

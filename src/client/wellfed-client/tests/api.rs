@@ -1902,6 +1902,7 @@ fn a_connection_names_the_epoch_and_answers_each_request_once() {
                 calibration: true,
                 power: false,
                 backup: false,
+                plans: false,
             },
             EPOCH
         )
@@ -2100,6 +2101,8 @@ fn every_body() -> Vec<EventBody> {
             EventBody::Fed { .. } => 8,
             EventBody::FeedingBlocked { .. } => 9,
             EventBody::Supply(_) => 10,
+            EventBody::Plans { .. } => 11,
+            EventBody::Missed { .. } => 12,
         }
     }
     let by = proto::Source::Panel;
@@ -2135,6 +2138,12 @@ fn every_body() -> Vec<EventBody> {
             battery: proto::Battery::Reading { mv: 4757 },
             below_floor: Some(false),
         }),
+        EventBody::Plans { generation: 1, by },
+        EventBody::Missed {
+            plan: 0,
+            due: 1_793_200_000,
+            reason: proto::MissedReason::Late,
+        },
     ];
     let mut seen: Vec<usize> = bodies.iter().map(variant).collect();
     seen.dedup();
@@ -2626,6 +2635,7 @@ fn only_an_owner_s_session_with_the_update_bit_may_update() {
             calibration: false,
             power: true,
             backup: false,
+            plans: false,
         },
     };
     let slot = rig.accept().unwrap();

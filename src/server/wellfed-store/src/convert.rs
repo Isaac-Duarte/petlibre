@@ -23,13 +23,15 @@ pub(crate) fn seconds(at: Option<i64>) -> Result<Option<Timestamp>> {
         .transpose()
 }
 
-/// Who caused an event, as its two columns: the kind, and the client's
-/// fingerprint for a client only.
-pub(crate) const fn source_columns(source: Source) -> (&'static str, Option<[u8; 4]>) {
+/// Who caused an event, as its two columns: the kind, and in the `client`
+/// column the client's fingerprint for a client, or the plan's slot (one
+/// byte) for a schedule.
+pub(crate) fn source_columns(source: Source) -> (&'static str, Option<Vec<u8>>) {
     match source {
         Source::Panel => ("panel", None),
-        Source::Client { client } => ("client", Some(client.0)),
+        Source::Client { client } => ("client", Some(client.0.to_vec())),
         Source::Feeder => ("feeder", None),
+        Source::Schedule { plan } => ("schedule", Some(vec![plan])),
     }
 }
 
@@ -37,6 +39,10 @@ pub(crate) fn source(kind: &str, client: Option<Vec<u8>>) -> Result<Source> {
     match (kind, client) {
         ("panel", None) => Ok(Source::Panel),
         ("feeder", None) => Ok(Source::Feeder),
+        ("schedule", Some(slot)) => match slot.as_slice() {
+            &[plan] => Ok(Source::Schedule { plan }),
+            _ => Err(Error::Corrupt("plan slot")),
+        },
         ("client", Some(client)) => {
             let client = <[u8; 4]>::try_from(client.as_slice())
                 .map_err(|_| Error::Corrupt("client fingerprint"))?;

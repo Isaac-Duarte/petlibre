@@ -21,8 +21,9 @@ use wellfed_core::supply::Reading;
 use wellfed_core::tone::Tune;
 use wellfed_device_api::clients::{CLIENTS, Client};
 use wellfed_device_api::mailbox::{
-    Calibration, CalibrationResult, ClientChange, KeyResult, PlayResult, Requested, SettingsFields,
-    SettingsResult, SettingsView, TimeSettings, TimeSettingsResult, WifiResult, WifiSource,
+    Calibration, CalibrationResult, ClientChange, KeyResult, PlansChange, PlansResult, PlayResult,
+    Requested, SettingsFields, SettingsResult, SettingsView, TimeSettings, TimeSettingsResult,
+    WifiResult, WifiSource,
 };
 use wellfed_device_api::wifi::Credentials;
 use wellfed_feeder::feeder::Platform;
@@ -33,7 +34,7 @@ use wellfed_feeder::feeder::platform::{
 use wellfed_feeder::stats::Totals;
 use wellfed_feeder::store;
 use wellfed_feeder::store::events::{BODY_BYTES, Read};
-use wellfed_feeder_runtime::{calibration, events, keys, network, stats, time, traces};
+use wellfed_feeder_runtime::{calibration, events, keys, network, plans, stats, time, traces};
 use wellfed_proto::api::{Capabilities, Counts, Erases, FLASH_SECTORS, Power, Refusal, TASKS_MAX};
 use wellfed_proto::trace::PAGE_MAX;
 use wellfed_sdk::hal::audio::{self, Speaker};
@@ -165,6 +166,7 @@ impl Platform for Plaf103 {
             .union(Capabilities::CALIBRATION)
             .union(Capabilities::POWER)
             .union(Capabilities::BACKUP)
+            .union(Capabilities::PLANS)
     }
 
     fn reset(&mut self) {
@@ -291,6 +293,14 @@ impl Platform for Plaf103 {
         calibration::change(change)
     }
 
+    fn plans(&mut self) -> PlansResult {
+        plans::current()
+    }
+
+    fn plans_change(&mut self, change: PlansChange) -> PlansResult {
+        plans::change(change)
+    }
+
     fn queue_event(&mut self, at: Option<u32>, body: [u8; BODY_BYTES], slot: EventSlot) -> bool {
         match slot {
             EventSlot::Shared => events::record(at, body),
@@ -339,6 +349,10 @@ impl Platform for Plaf103 {
 
     fn clock_state(&mut self, _now_ms: u32) -> ClockState {
         clock::state()
+    }
+
+    fn offset_at(&self, unix_ms: u64) -> Option<i32> {
+        clock::offset_at(unix_ms)
     }
 
     fn set_zone_rule(&mut self, rule: Option<Rule>) {

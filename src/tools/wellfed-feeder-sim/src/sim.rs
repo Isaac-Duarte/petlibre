@@ -218,6 +218,12 @@ impl Sim {
         self.feeds.stall(stalled);
     }
 
+    /// Refuse every feed `Busy` though readiness says ready, as an owner
+    /// that lost a race does, or stop.
+    pub fn refuse_feeds(&mut self, refusing: bool) {
+        self.feeds.refuse(refusing);
+    }
+
     /// Whether the serve loop should accept connections.
     pub(crate) fn listening(&self) -> bool {
         self.feeder.platform().listening()

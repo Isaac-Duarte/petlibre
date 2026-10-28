@@ -101,7 +101,7 @@ pub mod storage {
     pub const SEED: Sectors = Sectors { first: 7, count: 2 };
     /// The feeder's identity key and enrolled clients.
     pub const CLIENTS: Sectors = Sectors { first: 9, count: 2 };
-    /// Reserved for feeding plans.
+    /// The feeding plans, their marks and the last claim.
     pub const PLANS: Sectors = Sectors {
         first: 11,
         count: 2,
@@ -150,8 +150,7 @@ pub mod storage {
         count: 2,
     };
 
-    /// Every allocation, in region order; sectors 36-47 are free (planned
-    /// for feeding plans).
+    /// Every allocation, in region order; sectors 36-47 are free.
     pub const ALL: [Sectors; 13] = [
         JOURNAL,
         SETTINGS,

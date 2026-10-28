@@ -4,8 +4,9 @@
 
 use crate::clients::{Label, Role};
 use crate::mailbox::{
-    Calibration, CalibrationResult, LockResult, Origin, PlayResult, SettingsFields, SettingsResult,
-    TimeFields, TimeResult, TimeSettings, TimeSettingsResult, TimeState, WifiResult,
+    Calibration, CalibrationResult, LockResult, Origin, PlansResult, PlayResult, SettingsFields,
+    SettingsResult, Table, TimeFields, TimeResult, TimeSettings, TimeSettingsResult, TimeState,
+    WifiResult,
 };
 use crate::wifi::Credentials;
 use wellfed_core::log_tail::Batch as LogBatch;
@@ -127,6 +128,11 @@ pub trait Device {
     /// [`Capabilities::CALIBRATION`] keeps none.
     fn calibration(&mut self, _change: Option<Calibration>) -> CalibrationResult {
         CalibrationResult::Unserved
+    }
+    /// The feeding plans; with `Some`, a client's whole new table queued
+    /// for the writer. A device without [`Capabilities::PLANS`] keeps none.
+    fn plans(&mut self, _change: Option<Table>) -> PlansResult {
+        PlansResult::Unserved
     }
     /// The bowl mode this build runs: the only one a calibration may name,
     /// since a build runs only the mode it was verified for.

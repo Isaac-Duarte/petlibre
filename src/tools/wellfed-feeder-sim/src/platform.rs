@@ -39,9 +39,9 @@ use wellfed_core::store::slot::crc32;
 use wellfed_core::tone::Tune;
 use wellfed_device_api::clients::{CLIENTS, Client, Label, Role};
 use wellfed_device_api::mailbox::{
-    Calibration, CalibrationResult, CalibrationView, ClientChange, KeyResult, PlayResult,
-    Requested, SettingsFields, SettingsResult, SettingsView, TimeSettings, TimeSettingsResult,
-    TimeSettingsView, WifiResult, WifiSource, WifiView,
+    Calibration, CalibrationResult, CalibrationView, ClientChange, KeyResult, PlansChange,
+    PlansResult, PlayResult, Requested, SettingsFields, SettingsResult, SettingsView, TimeSettings,
+    TimeSettingsResult, TimeSettingsView, WifiResult, WifiSource, WifiView,
 };
 use wellfed_device_api::wifi::Credentials;
 use wellfed_feeder::feeder::Platform;
@@ -54,6 +54,7 @@ use wellfed_feeder::store::calibration::CalibrationStore;
 use wellfed_feeder::store::clients::{ClientError, ClientStore};
 use wellfed_feeder::store::events::{BODY_BYTES, EventLog, Read};
 use wellfed_feeder::store::net::NetStore;
+use wellfed_feeder::store::plans::PlansStore;
 use wellfed_feeder::store::settings::{SettingsStatus, SettingsStore};
 use wellfed_feeder::store::stats::{SaveKind, StatsStore};
 use wellfed_feeder::store::time::TimeStore;
@@ -147,6 +148,8 @@ pub struct SimPlatform {
     booted: Instant,
     calibration: CalibrationStore<Region>,
     calibration_pending: Option<Calibration>,
+    plans: PlansStore<Region>,
+    plans_pending: Option<PlansChange>,
     /// The NTP exchange's socket, on an ephemeral loopback-reachable port.
     ntp: Option<std::net::UdpSocket>,
     clients: ClientStore<Region>,
@@ -221,6 +224,8 @@ impl SimPlatform {
         stats_base.count_boot(reset_cause(0));
         let mut calibration = CalibrationStore::default();
         calibration.open(Region::new(flash, storage::CALIBRATION));
+        let mut plans = PlansStore::default();
+        plans.open(Region::new(flash, storage::PLANS));
         let mut clients = ClientStore::default();
         clients.open(Region::new(flash, storage::CLIENTS));
         if clients.identity().is_none() {
@@ -264,6 +269,8 @@ impl SimPlatform {
             booted: Instant::now(),
             calibration,
             calibration_pending: None,
+            plans,
+            plans_pending: None,
             ntp: None,
             clients,
             clients_generation: 1,
@@ -423,6 +430,11 @@ impl SimPlatform {
         if let Some(change) = self.calibration_pending.take() {
             self.calibration.save(&change);
         }
+        // A change the writer drops (the loop's, against plans that moved
+        // on) writes nothing, as on the feeder.
+        if let Some(change) = self.plans_pending.take() {
+            self.plans.apply(&change);
+        }
 
         let (ticket, change) = self.keys_pending.take()?;
         let result = match change {
@@ -551,6 +563,7 @@ impl Platform for SimPlatform {
             .union(Capabilities::CALIBRATION)
             .union(Capabilities::POWER)
             .union(Capabilities::BACKUP)
+            .union(Capabilities::PLANS)
     }
 
     fn reset(&mut self) {
@@ -633,6 +646,28 @@ impl Platform for SimPlatform {
         CalibrationResult::Current {
             view: self.calibration_view(),
             pending: self.calibration_pending.is_some(),
+        }
+    }
+
+    fn plans(&mut self) -> PlansResult {
+        PlansResult::Current {
+            view: self.plans.view(true),
+            pending: self.plans_pending.is_some(),
+        }
+    }
+
+    fn plans_change(&mut self, change: PlansChange) -> PlansResult {
+        let view = self.plans.view(true);
+        if !view.writable {
+            return PlansResult::ReadOnly;
+        }
+        if self.plans_pending.is_some() {
+            return PlansResult::Busy;
+        }
+        self.plans_pending = Some(change);
+        PlansResult::Current {
+            view,
+            pending: true,
         }
     }
 
@@ -784,6 +819,10 @@ impl Platform for SimPlatform {
 
     fn clock_state(&mut self, now_ms: u32) -> ClockState {
         self.clock.state(now_ms)
+    }
+
+    fn offset_at(&self, unix_ms: u64) -> Option<i32> {
+        self.clock.offset_at(unix_ms)
     }
 
     fn set_zone_rule(&mut self, rule: Option<Rule>) {

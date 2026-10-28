@@ -234,7 +234,8 @@ impl Answer {
             | Model::Invite(_)
             | Model::FeedTrace(_)
             | Model::Calibration(_)
-            | Model::Bank1(_) => Self::Unexpected,
+            | Model::Bank1(_)
+            | Model::Plans(_) => Self::Unexpected,
         }
     }
 }

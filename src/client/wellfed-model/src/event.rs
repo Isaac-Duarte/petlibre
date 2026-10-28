@@ -113,6 +113,19 @@ pub enum EventBody {
     FeedingBlocked {
         reason: Option<Blocked>,
     },
+    /// A client replaced the feeding plans.
+    Plans {
+        generation: Generation,
+        by: Source,
+    },
+    /// A plan's occurrence did not run, and never will.
+    Missed {
+        /// The plan's slot.
+        plan: u8,
+        /// When it was due.
+        due: Timestamp,
+        reason: MissedReason,
+    },
     /// The adapter came or went, or the pack crossed its floor (at most
     /// one a minute, as the supply stood at its end).
     Supply {
@@ -241,6 +254,8 @@ impl EventBody {
             Self::Fed { .. } => EventKind::Fed,
             Self::FeedingBlocked { .. } => EventKind::FeedingBlocked,
             Self::Supply { .. } => EventKind::Supply,
+            Self::Plans { .. } => EventKind::Plans,
+            Self::Missed { .. } => EventKind::Missed,
         }
     }
 }
@@ -260,10 +275,12 @@ pub enum EventKind {
     Fed,
     FeedingBlocked,
     Supply,
+    Plans,
+    Missed,
 }
 
 impl EventKind {
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 13] = [
         Self::Boot,
         Self::Lock,
         Self::Settings,
@@ -275,6 +292,8 @@ impl EventKind {
         Self::Fed,
         Self::FeedingBlocked,
         Self::Supply,
+        Self::Plans,
+        Self::Missed,
     ];
 
     /// The stored spelling, the same as the JSON one.
@@ -291,6 +310,8 @@ impl EventKind {
             Self::Fed => "fed",
             Self::FeedingBlocked => "feeding_blocked",
             Self::Supply => "supply",
+            Self::Plans => "plans",
+            Self::Missed => "missed",
         }
     }
 
@@ -310,6 +331,25 @@ pub enum Source {
         client: Hex<4>,
     },
     Feeder,
+    /// A feeding plan.
+    Schedule {
+        /// The plan's slot.
+        plan: u8,
+    },
+}
+
+/// Why a plan's occurrence did not run.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum MissedReason {
+    /// It fell while the feeder was off or had no valid time, or the clock
+    /// moved past it, more than 15 minutes ago.
+    Late,
+    /// It waited past 15 minutes for a feed the feeder could not start.
+    Blocked { reason: Blocked },
+    /// The feeder stopped after it took the occurrence and before the
+    /// feed was reserved.
+    Interrupted,
 }
 
 /// A role in the feeder's own client table.

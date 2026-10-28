@@ -62,12 +62,13 @@ impl Since {
 /// Whether a `Fed` event can be the server's own feed: by the server's
 /// key, or by the feeder. The feeder names itself only for a feed a
 /// restart interrupted, which the next boot resolves as `uncertain`, so a
-/// feeder's event with any other outcome is no client's feed.
+/// feeder's event with any other outcome is no client's feed. A plan's
+/// feed is never a client's, even one a restart interrupted.
 fn by_us(fed: &Feed, us: Option<[u8; 4]>) -> bool {
     match fed.by {
         Source::Client { client } => Some(client.0) == us,
         Source::Feeder => fed.outcome == FeedOutcome::Uncertain,
-        Source::Panel => false,
+        Source::Panel | Source::Schedule { .. } => false,
     }
 }
 

@@ -51,6 +51,15 @@ pub fn readiness<F: Feeds>(
     blocked.map_or(Readiness::Ready, Readiness::Blocked)
 }
 
+/// `ready`, unless a plan's claimed feed must be the next one (`meal`):
+/// then a feed is being prepared.
+pub const fn held(ready: Readiness, meal: bool) -> Readiness {
+    match ready {
+        Readiness::Ready if meal => Readiness::Blocked(Blocked::Feeding),
+        ready => ready,
+    }
+}
+
 /// Queue one feed of `portions` for `by` while `ready` allows it. The
 /// number the journal holds the feed under, or why it was refused.
 pub fn queue<F: Feeds>(
@@ -152,7 +161,7 @@ const fn blocked_name(blocked: Blocked) -> &'static str {
     }
 }
 
-const fn refusal_name(refusal: Refusal) -> &'static str {
+pub(super) const fn refusal_name(refusal: Refusal) -> &'static str {
     match refusal {
         Refusal::Busy => "busy",
         Refusal::Fault => "fault",

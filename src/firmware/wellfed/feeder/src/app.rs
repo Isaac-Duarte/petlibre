@@ -88,6 +88,10 @@ impl Feeds for Feeding {
         Feeding::below_floor(self)
     }
 
+    fn high_water(&self) -> Option<u32> {
+        Feeding::high_water(self)
+    }
+
     #[cfg(not(feature = "gap-probe"))]
     fn submit(&mut self, portions: u8, by: Source) -> Result<u32, Refusal> {
         Feeding::submit(self, portions, by, |record| {

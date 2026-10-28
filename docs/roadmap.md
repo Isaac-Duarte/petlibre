@@ -29,7 +29,7 @@ This page tracks what works today and what comes next. It covers the replacement
 | Feed from the CLI | Works | |
 | Portion calibration | Experimental | |
 | Jam and sensor fault handling | Experimental | |
-| Schedules | Not started | |
+| Schedules | Experimental | Up to ten plans, run on the feeder with no server; tested in simulation. |
 | Feeding history | Partial | Each feed is recorded as an event; a long history needs the server. |
 | Food level | Not started | The sensor is read; the feature isn't built. |
 | Importing your stock schedule | Not started | |

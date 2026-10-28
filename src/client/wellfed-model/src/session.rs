@@ -39,6 +39,9 @@ pub struct Capabilities {
     /// The stock backup: the `ReadBank1` op and the `Bank1` answer, which
     /// only the bank-0 recovery role serves.
     pub backup: bool,
+    /// Feeding plans: `GetPlans`, `PutPlans`, the `Plans` answer, and the
+    /// `Plans` and `Missed` events.
+    pub plans: bool,
 }
 
 impl Capabilities {
@@ -54,6 +57,7 @@ impl Capabilities {
         calibration: false,
         power: false,
         backup: false,
+        plans: false,
     };
     /// Every feature this crate knows: what a current client claims.
     pub const KNOWN: Self = Self {
@@ -67,6 +71,7 @@ impl Capabilities {
         calibration: true,
         power: true,
         backup: true,
+        plans: true,
     };
 
     /// The features both `self` and `other` claim.
@@ -83,6 +88,7 @@ impl Capabilities {
             calibration: self.calibration && other.calibration,
             power: self.power && other.power,
             backup: self.backup && other.backup,
+            plans: self.plans && other.plans,
         }
     }
 }

@@ -120,7 +120,21 @@ fn op() -> impl Strategy<Value = Op<'static>> {
             section: StatsSection::ALL[index],
         }),
         (any::<u32>(), any::<u16>()).prop_map(|(feed, offset)| Op::FeedTrace { feed, offset }),
+        Just(Op::GetPlans),
+        (any::<u32>(), plans()).prop_map(|(base, plans)| Op::PutPlans { base, plans }),
     ]
+}
+
+fn plans() -> impl Strategy<Value = [Option<Plan>; PLANS_MAX]> {
+    let plan = (any::<u16>(), any::<u8>(), any::<u8>(), any::<bool>()).prop_map(
+        |(minute, portions, days, enabled)| Plan {
+            minute,
+            portions,
+            days,
+            enabled,
+        },
+    );
+    proptest::array::uniform10(proptest::option::of(plan))
 }
 
 /// One trace entry, timed from `at_ms`, at most `step` ms after it.

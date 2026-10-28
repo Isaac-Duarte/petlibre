@@ -62,6 +62,11 @@ enum Waiting {
     Calibration {
         digest: u32,
     },
+    /// The revision a client's table written over `base` produces; a
+    /// `Plans` event once the writer reports it saved.
+    Plans {
+        revision: u32,
+    },
     Keys {
         ticket: u32,
         revoked: [u8; 32],

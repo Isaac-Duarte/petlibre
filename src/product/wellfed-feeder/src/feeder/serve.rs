@@ -48,8 +48,8 @@ use crate::store::events::Read;
 use crate::update as wire;
 use wellfed_device_api::mailbox::{
     Calibration, CalibrationResult, ClientChange, KeyResult, LockFields, LockResult, NtpResult,
-    Origin, PlayResult, Requested, SettingsFields, SettingsResult, TimeFields, TimeResult,
-    TimeSettings, TimeSettingsResult, TimeState, WifiResult, WifiSource,
+    Origin, PlansChange, PlansResult, PlayResult, Requested, SettingsFields, SettingsResult, Table,
+    TimeFields, TimeResult, TimeSettings, TimeSettingsResult, TimeState, WifiResult, WifiSource,
 };
 use wellfed_device_api::pairing::{self, Pairing};
 use wellfed_device_api::wifi::Credentials;
@@ -172,6 +172,8 @@ pub struct Inputs<'a, F> {
     pub supply: Supply,
     /// A brownout holds feeding until the adapter is seen.
     pub battery_hold: bool,
+    /// A plan's claimed feed must be the next one.
+    pub meal: bool,
     pub feeds: &'a mut F,
 }
 
@@ -286,6 +288,7 @@ impl<S: Copy> Serve<S> {
             signer,
             supply,
             battery_hold,
+            meal,
             feeds,
         } = inputs;
         let boot = self.boot(platform, now_ms);
@@ -351,6 +354,7 @@ impl<S: Copy> Serve<S> {
             tasks: &mut self.tasks,
             page: &mut self.page,
             battery_hold,
+            meal,
         };
         let busy = self.server.step(
             Pass {
@@ -655,6 +659,8 @@ pub struct FeederDevice<'a, P, F> {
     pub(super) page: &'a mut [u8; PAGE_BYTES],
     /// A brownout holds feeding until the adapter is seen.
     pub(super) battery_hold: bool,
+    /// A plan's claimed feed must be the next one.
+    pub(super) meal: bool,
 }
 
 /// How long a walk of the task stacks answers memory requests: the walk
@@ -778,6 +784,23 @@ impl<P: Platform, F: Feeds> Device for FeederDevice<'_, P, F> {
         }
     }
 
+    /// A client's table is saved at the wall time now, so a plan it adds
+    /// or moves never runs an occurrence already past.
+    fn plans(&mut self, change: Option<Table>) -> PlansResult {
+        match change {
+            None => self.platform.plans(),
+            Some(_) if self.platform.outputs_claimed() => PlansResult::Busy,
+            Some(table) => {
+                let at_s = self
+                    .platform
+                    .wall_ms(self.now_ms)
+                    .and_then(|ms| u32::try_from(ms / 1000).ok());
+                self.platform
+                    .plans_change(PlansChange::Replace { table, at_s })
+            }
+        }
+    }
+
     fn phase(&self) -> Option<proto::Phase> {
         self.feeds.marks().map(|marks| marks.phase)
     }
@@ -824,12 +847,13 @@ impl<P: Platform, F: Feeds> Device for FeederDevice<'_, P, F> {
     }
 
     fn readiness(&mut self) -> Readiness {
-        feeding::readiness(
+        let ready = feeding::readiness(
             &*self.feeds,
             self.setup,
             self.platform.installing(),
             self.battery_hold,
-        )
+        );
+        feeding::held(ready, self.meal)
     }
 
     fn feed(&mut self, portions: u8, by: Source) -> Result<u32, Refusal> {

@@ -79,14 +79,14 @@ All storage-region sectors are named in one table, `wellfed_board_plaf103::stora
 | 5–6 | Wi-Fi |
 | 7–8 | RNG seed |
 | 9–10 | Identity and clients |
-| 11–12 | Schedules (reserved) |
+| 11–12 | Feeding plans ([schedules](schedules.md#storage)) |
 | 13–24 | 7-day event ring ([device API](device-api.md#events-and-samples)) |
 | 25–26 | Update store: the anti-rollback floor, the give-way's candidate, update keys, bank 0's image ([OTA design](ota-design.md#keys-and-anti-rollback)) |
 | 27–28 | Time settings: the zone's rule and the NTP server ([clock](clock.md#time-settings)) |
 | 29–31 | Per-feed trace ring: the last 8 to 12 feeds' traces ([device API](device-api.md#feed-traces)) |
 | 32–33 | Lifetime statistics ([device API](device-api.md#statistics)) |
 | 34–35 | Portion calibration ([calibration](calibration.md#storage)) |
-| 36–47 | Free, planned for schedules |
+| 36–47 | Free |
 
 ## Clients
 

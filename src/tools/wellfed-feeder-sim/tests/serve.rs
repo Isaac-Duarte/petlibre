@@ -18,8 +18,9 @@ use wellfed_feeder_sim::serve::Event;
 use wellfed_feeder_sim::sim::Record;
 use wellfed_model::{
     Answer, Bowl, Calibration, CalibrationView, ClientRole, EventBody, Generation, Joined,
-    MetricKind, NtpResult, NtpServer, Op, Pushed, Refusal, SampleValue, SettingsPatch, Source,
-    Stats, StatsSection, Status, TimeChanges, TimeSource, TimeSync, Wifi,
+    MetricKind, NtpResult, NtpServer, Op, PLANS, Plan, Plans, Pushed, Refusal, SampleValue,
+    SettingsPatch, Source, Stats, StatsSection, Status, TimeChanges, TimeSource, TimeSync,
+    Weekdays, Wifi,
 };
 use wellfed_proto::api::RequestId;
 use wellfed_session::noise::Keypair;
@@ -1110,6 +1111,110 @@ fn an_owner_stores_the_portion_weight_and_only_the_verified_bowl() {
         let after = calibration(&mut sim, &mut owner).await;
         assert_eq!(after.generation, Generation(1));
         assert_eq!(after.calibration.portion_mg, Some(9_800));
+        sim.stop().await;
+    });
+}
+
+async fn plans(sim: &mut Running, connection: &mut Connection) -> Plans {
+    let answer = connection.ask(sim.id(), &Op::GetPlans).await.unwrap();
+    let Answer::Plans(plans) = answer else {
+        panic!("the plans: {answer:?}");
+    };
+    plans
+}
+
+/// A member may edit the plans as an owner may: each write names the
+/// generation it read, a stale one is refused, an invalid plan is
+/// refused before anything is written, and the history names who changed
+/// them. The plans survive a restart.
+#[test]
+fn a_member_edits_the_plans_against_the_generation_it_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("flash.bin");
+    local(async {
+        let flash = Flash::file(&path).unwrap();
+        let mut sim = Running::start(&flash, true).await;
+        let mut owner = sim.open(OWNER).await.unwrap();
+        assert!(owner.capabilities().plans);
+        let invite = owner
+            .ask(
+                sim.id(),
+                &Op::CreateInvite {
+                    role: ClientRole::Member,
+                },
+            )
+            .await
+            .unwrap();
+        let Answer::Invite(invite) = invite else {
+            panic!("{invite:?}");
+        };
+        let invite = Invite {
+            feeder: sim.identity,
+            id: invite.id,
+            secret: invite.secret.0,
+        };
+        join(&keys(MEMBER), invite, "member", sim.address, [0x92; 32])
+            .await
+            .unwrap();
+        let mut member = sim.open(MEMBER).await.unwrap();
+
+        let empty = plans(&mut sim, &mut member).await;
+        assert_eq!(empty.generation, Generation(0));
+        assert_eq!(empty.plans, [None; PLANS]);
+
+        let breakfast = Plan {
+            minute: 7 * 60 + 30,
+            portions: 2,
+            days: Weekdays::DAILY,
+            enabled: true,
+        };
+        let mut table = [None; PLANS];
+        table[0] = Some(breakfast);
+        let put = |base, plans| Op::PutPlans {
+            base: Generation(base),
+            plans,
+        };
+        let mut invalid = table;
+        invalid[1] = Some(Plan {
+            portions: 49,
+            ..breakfast
+        });
+        let refused = member.ask(sim.id(), &put(0, invalid)).await.unwrap();
+        assert_eq!(refused, Answer::Refused(Refusal::Invalid));
+        let stored = member.ask(sim.id(), &put(0, table)).await.unwrap();
+        assert_eq!(
+            stored,
+            Answer::Done {
+                generation: Some(Generation(1))
+            }
+        );
+        let stale = owner.ask(sim.id(), &put(0, [None; PLANS])).await.unwrap();
+        assert_eq!(
+            stale,
+            Answer::Refused(Refusal::Stale {
+                current: Generation(1)
+            })
+        );
+        let changed = backlog(&mut owner).await.into_iter().any(|body| {
+            matches!(
+                body,
+                EventBody::Plans {
+                    generation: Generation(1),
+                    by: Source::Client { .. }
+                }
+            )
+        });
+        assert!(changed, "the history records the change");
+        drop((owner, member));
+        sim.stop().await;
+        drop(flash);
+
+        let flash = Flash::file(&path).unwrap();
+        let mut sim = Running::start(&flash, false).await;
+        let mut owner = sim.open(OWNER).await.unwrap();
+        let after = plans(&mut sim, &mut owner).await;
+        assert_eq!(after.generation, Generation(1));
+        assert_eq!(after.plans, table);
         sim.stop().await;
     });
 }

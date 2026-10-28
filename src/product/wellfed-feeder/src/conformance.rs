@@ -23,9 +23,9 @@ use wellfed_proto::api::{
 use crate::feeder::{Feeder, Feeds, NoFeeds, Platform};
 use wellfed_device_api::clients::{Label, Role};
 use wellfed_device_api::mailbox::{
-    Calibration, CalibrationResult, LockResult, NtpServer, Origin, SettingsFields, SettingsResult,
-    SettingsView, TimeFields, TimeResult, TimeSettings, TimeSettingsResult, TimeSettingsView,
-    WifiResult, WifiView, Window, Zone,
+    Calibration, CalibrationResult, LockResult, NtpServer, Origin, PLANS, Plan, PlansResult,
+    SettingsFields, SettingsResult, SettingsView, Table, TimeFields, TimeResult, TimeSettings,
+    TimeSettingsResult, TimeSettingsView, Weekdays, WifiResult, WifiView, Window, Zone,
 };
 use wellfed_device_api::wifi::Credentials;
 use wellfed_device_api::{Device, EventRead, KeyChange, KeyOutcome};
@@ -408,6 +408,63 @@ pub fn a_calibration_lands_and_weighs_the_portions(rig: &mut impl Rig) {
     rig.claim_outputs(false);
 }
 
+fn plans(rig: &mut impl Rig, change: Option<Table>) -> PlansResult {
+    device(rig, 0, |device| device.plans(change))
+}
+
+/// The plans start empty; a client's table lands on the writer's turn
+/// under the next revision, a plan it adds marked at the clock's time (so
+/// none of its past occurrences runs), and none is queued while the
+/// outputs are claimed.
+pub fn a_plans_table_lands_and_starts_from_its_save(rig: &mut impl Rig) {
+    let PlansResult::Current {
+        view: before,
+        pending: false,
+    } = plans(rig, None)
+    else {
+        panic!("the plans with nothing queued");
+    };
+    assert!(before.writable, "the store opened writable");
+    assert_eq!(before.table, [None; PLANS]);
+    assert!(device(rig, 0, |device| device.capabilities()).contains(Capabilities::PLANS));
+
+    let sync = TimeFields {
+        unix_ms: 1_793_170_800_000,
+        offset_s: 0,
+        next_change_s: 0,
+        next_offset_s: 0,
+    };
+    device(rig, 0, |device| device.time_sync(sync, Origin::Owner));
+    let mut table = [None; PLANS];
+    table[4] = Some(Plan {
+        minute: 7 * 60 + 30,
+        portions: 2,
+        days: Weekdays::EVERY_DAY,
+        enabled: true,
+    });
+    assert!(matches!(
+        plans(rig, Some(table)),
+        PlansResult::Current { pending: true, .. }
+    ));
+    assert_eq!(plans(rig, Some(table)), PlansResult::Busy);
+    rig.write();
+    let PlansResult::Current {
+        view: after,
+        pending: false,
+    } = plans(rig, None)
+    else {
+        panic!("the plans after the writer's turn");
+    };
+    assert_eq!(after.table, table);
+    assert_eq!(after.revision, before.revision + 1);
+    let saved_s = u32::try_from(sync.unix_ms / 1000).expect("seconds fit");
+    assert!(after.mark(4).is_some_and(|mark| mark >= saved_s));
+
+    rig.claim_outputs(true);
+    assert_eq!(plans(rig, Some([None; PLANS])), PlansResult::Busy);
+    rig.claim_outputs(false);
+}
+
 /// A recorded event reads back from the ring, after the boot's, under the
 /// ring's epoch.
 pub fn a_recorded_event_reads_back(rig: &mut impl Rig) {
@@ -681,6 +738,7 @@ macro_rules! conformance {
             a_time_sync_sets_the_clock,
             time_settings_land_and_set_the_zone,
             a_calibration_lands_and_weighs_the_portions,
+            a_plans_table_lands_and_starts_from_its_save,
             a_recorded_event_reads_back,
             status_reports_the_build_and_the_time,
             a_feeder_without_a_feeding_owner_refuses_feeds,

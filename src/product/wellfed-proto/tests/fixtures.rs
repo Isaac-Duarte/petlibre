@@ -879,7 +879,72 @@ fn messages() -> Vec<Fixture> {
             }))),
             feeder,
         ),
+        ("op-get-plans", entry(&request(Op::GetPlans)), client),
+        (
+            "op-put-plans",
+            entry(&request(Op::PutPlans {
+                base: 4,
+                plans: plans(),
+            })),
+            client,
+        ),
+        (
+            "outcome-plans",
+            entry(&response(Outcome::Plans(Plans {
+                generation: 5,
+                writable: true,
+                plans: plans(),
+            }))),
+            feeder,
+        ),
+        (
+            "event-plans",
+            entry(&EventBody::Plans {
+                generation: 5,
+                by: Source::Client([1, 2, 3, 4]),
+            }),
+            |b| decode::<EventBody>(b).is_ok(),
+        ),
+        (
+            "event-missed",
+            entry(&EventBody::Missed {
+                plan: 2,
+                due: 1_793_200_000,
+                reason: MissedReason::Blocked(Blocked::Feeding),
+            }),
+            |b| decode::<EventBody>(b).is_ok(),
+        ),
+        (
+            "event-fed-scheduled",
+            entry(&EventBody::Fed {
+                feed: 9,
+                requested: 2,
+                completed: 2,
+                outcome: FeedOutcome::Done,
+                reason: FeedReason::Done,
+                by: Source::Schedule(2),
+            }),
+            |b| decode::<EventBody>(b).is_ok(),
+        ),
     ]
+}
+
+/// Two plans: breakfast every day in slot 0, and a one-off in slot 2.
+fn plans() -> [Option<Plan>; PLANS_MAX] {
+    let mut plans = [None; PLANS_MAX];
+    plans[0] = Some(Plan {
+        minute: 7 * 60 + 30,
+        portions: 2,
+        days: 0x7f,
+        enabled: true,
+    });
+    plans[2] = Some(Plan {
+        minute: 18 * 60,
+        portions: 1,
+        days: 0,
+        enabled: false,
+    });
+    plans
 }
 
 /// Every handshake binds the prologue, so changing it would split the

@@ -2,7 +2,7 @@
 //! the API document serves, with that method.
 
 use wellfed_model::{
-    Bowl, Calibration, ClientRole, Generation, Op, SettingsPatch, StatsSection, TimeChanges,
+    Bowl, Calibration, ClientRole, Generation, Op, PLANS, SettingsPatch, StatsSection, TimeChanges,
     TimeSync, Tune,
 };
 use wellfed_service::{Method, Parity, parity};
@@ -74,6 +74,11 @@ fn every_op() -> Vec<Op> {
             },
         },
         Op::ReadBank1 { offset: 0 },
+        Op::GetPlans,
+        Op::PutPlans {
+            base: Generation(0),
+            plans: [None; PLANS],
+        },
     ];
     let mut kinds: Vec<_> = ops.iter().map(kind).collect();
     kinds.sort_unstable();
@@ -112,6 +117,8 @@ fn kind(op: &Op) -> u8 {
         Op::GetCalibration => 24,
         Op::PutCalibration { .. } => 25,
         Op::ReadBank1 { .. } => 26,
+        Op::GetPlans => 27,
+        Op::PutPlans { .. } => 28,
     }
 }
 

@@ -28,6 +28,7 @@ pub mod mdns;
 pub mod ota;
 pub mod record;
 pub mod rng;
+pub mod schedule;
 pub mod settings;
 pub mod store;
 pub mod supply;

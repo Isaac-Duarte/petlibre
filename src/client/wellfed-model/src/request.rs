@@ -5,8 +5,8 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Bank1Page, ClientRole, Generation, Hex, Settings, SettingsPatch, Stats, StatsSection, Status,
-    TracePage, UpdateRefusal, UpdateView,
+    Bank1Page, ClientRole, Generation, Hex, PLANS, Plan, Plans, Settings, SettingsPatch, Stats,
+    StatsSection, Status, TracePage, UpdateRefusal, UpdateView,
 };
 
 /// One operation. Reads may be repeated freely; a write's request id makes
@@ -115,6 +115,15 @@ pub enum Op {
     /// installer's backup before a promotion overwrites it.
     ReadBank1 {
         offset: u32,
+    },
+    /// The feeding plans.
+    GetPlans,
+    /// Replace every plan slot if the plans are still at `base`. A plan
+    /// that is new, or whose minute or days changed, runs only from its
+    /// next occurrence after the save.
+    PutPlans {
+        base: Generation,
+        plans: [Option<Plan>; PLANS],
     },
 }
 
@@ -290,6 +299,7 @@ pub enum Answer {
     FeedTrace(TracePage),
     Calibration(CalibrationView),
     Bank1(Bank1Page),
+    Plans(Plans),
 }
 
 /// Why the feeder refused a request.

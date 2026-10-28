@@ -37,6 +37,7 @@ From the bottom up:
 | Feeding owner | The motor, beams and feedback under supervision, and the journal | [Motor pulse](motor-pulse.md), [jams and sensor faults](jams-and-sensor-faults.md), [calibration](calibration.md) |
 | Product | The loop: the panel, the device API, pairing, events and settings | [Device API](device-api.md), [pairing](pairing.md), [Bluetooth](bluetooth.md) |
 | Peripherals | Buttons, lights, speaker, clock and power | [Buttons](buttons.md), [indicators](indicators.md), [audio](audio.md), [clock](clock.md), [power](power.md), [optical inputs](optical-inputs.md) |
+| Schedules | Feeding plans: when each runs, at most once | [Schedules](schedules.md) |
 
 The design behind all of this, from "one firmware, server optional" to the choice of Noise, is in [product architecture](product-architecture.md). Whether it fits the chip is measured in [resource budget](resource-budget.md). How a stock feeder moves to Wellfed, and back, is in [consumer installation](consumer-installation.md).
 
@@ -75,7 +76,7 @@ These are the promises the runtime keeps, whatever the rest of the firmware does
 
 - **Flash across both cores.** Flash coordination, the SDK hooks and RAM parking are tested, but complete exclusive flash ownership across both cores is unfinished. KM0's own SDK flash users are not yet mediated, which is safe only while KM0 never sleeps.
 - **Electrical acceptance.** Voltage and transient acceptance of the stopped outputs, and Port A input readback, are unresolved ([startup diagnostics](startup-diagnostics.md)).
-- **Schedules.** Stock's semantics are investigated. Persistence, time zones and DST, occurrence identity and the interrupted-meal policy are not built.
+- **Schedules.** Built and simulated ([schedules](schedules.md)), not yet run on the feeder. The sound before a meal is not built.
 - **The rest** is on the [roadmap](../roadmap.md): calibration, jams, lights and battery checks on hardware, and a long unattended run.
 
 ## Crates

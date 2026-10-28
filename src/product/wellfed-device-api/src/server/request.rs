@@ -6,8 +6,9 @@ use super::memory::Remembered;
 use super::{Phase, Server, Waiting, slot_id};
 use crate::clients::{Label, Role};
 use crate::mailbox::{
-    Calibration, CalibrationResult, LockResult, NtpServer, Origin, PlayResult, SettingsFields,
-    SettingsResult, TimeFields, TimeResult, TimeSettingsResult, WifiResult, Window, Zone,
+    Calibration, CalibrationResult, LockResult, NtpServer, Origin, PLANS, Plan, PlansResult,
+    PlayResult, SettingsFields, SettingsResult, Table, TimeFields, TimeResult, TimeSettingsResult,
+    Weekdays, WifiResult, Window, Zone,
 };
 use crate::pairing::{self, Pairing};
 use crate::wifi::Credentials;
@@ -187,6 +188,17 @@ impl Server {
                 }
                 Err(refusal) => Reply::Refused(refusal),
             },
+            Action::GetPlans => match device.plans(None) {
+                PlansResult::Current { .. } => Reply::Plans,
+                PlansResult::Busy => Reply::Refused(Refusal::Busy),
+                PlansResult::ReadOnly | PlansResult::Unserved => {
+                    Reply::Refused(Refusal::Unavailable)
+                }
+            },
+            Action::PutPlans { base } => match self.put_plans(base, device) {
+                Ok(revision) => return self.wait(index, id, action, Waiting::Plans { revision }),
+                Err(refusal) => Reply::Refused(refusal),
+            },
             Action::Invalid => Reply::Refused(Refusal::Invalid),
             // Each of these may write the update store; none goes in while
             // a feed is queued or driven. A cancel during an install is not
@@ -311,6 +323,45 @@ impl Server {
                 ..
             } if at == offset => device.update_chunk(offset, data),
             _ => Err(Refusal::Invalid),
+        }
+    }
+
+    /// Queue the table in `plain` if the plans are still at `base`; the
+    /// revision it produces once saved. Out of line, as for an update: the
+    /// table is read again from the plaintext rather than carried in the
+    /// action.
+    #[inline(never)]
+    fn put_plans<D: Device>(&self, base: u32, device: &mut D) -> Result<u32, Refusal> {
+        let message: ClientMessage<'_> =
+            wellfed_proto::decode(&self.plain[..self.plain_len]).map_err(|_| Refusal::Invalid)?;
+        let ClientMessage::Request {
+            op: Op::PutPlans { plans, .. },
+            ..
+        } = message
+        else {
+            return Err(Refusal::Invalid);
+        };
+        let table = table(&plans).ok_or(Refusal::Invalid)?;
+
+        let view = match device.plans(None) {
+            PlansResult::Current { pending: true, .. } | PlansResult::Busy => {
+                return Err(Refusal::Busy);
+            }
+            PlansResult::ReadOnly => return Err(Refusal::NotWritable),
+            PlansResult::Unserved => return Err(Refusal::Unavailable),
+            PlansResult::Current { view, .. } => view,
+        };
+        if view.revision != base {
+            return Err(Refusal::Stale {
+                current: view.revision,
+            });
+        }
+
+        match device.plans(Some(table)) {
+            PlansResult::Current { pending: true, .. } => Ok(base.wrapping_add(1)),
+            PlansResult::Current { .. } | PlansResult::Busy => Err(Refusal::Busy),
+            PlansResult::ReadOnly => Err(Refusal::NotWritable),
+            PlansResult::Unserved => Err(Refusal::Unavailable),
         }
     }
 
@@ -564,6 +615,12 @@ pub(super) enum Action {
     ReadBank1 {
         offset: u32,
     },
+    GetPlans,
+    /// The table stays in the plaintext buffer, read again when the op
+    /// runs.
+    PutPlans {
+        base: u32,
+    },
     /// A field failed the stores' checks before anything ran.
     Invalid,
 }
@@ -674,6 +731,11 @@ impl From<Op<'_>> for Action {
                 }
             }
             Op::ReadBank1 { offset } => Self::ReadBank1 { offset },
+            Op::GetPlans => Self::GetPlans,
+            Op::PutPlans { base, plans } => match table(&plans) {
+                Some(_) => Self::PutPlans { base },
+                None => Self::Invalid,
+            },
         }
     }
 }
@@ -698,6 +760,7 @@ impl Action {
                 | Self::FeedTrace { .. }
                 | Self::GetCalibration
                 | Self::ReadBank1 { .. }
+                | Self::GetPlans
         )
     }
 
@@ -730,6 +793,8 @@ impl Action {
             Self::GetCalibration => "get-calibration",
             Self::PutCalibration { .. } => "put-calibration",
             Self::ReadBank1 { .. } => "read-bank1",
+            Self::GetPlans => "get-plans",
+            Self::PutPlans { .. } => "put-plans",
             Self::Invalid => "invalid",
         }
     }
@@ -761,6 +826,8 @@ pub(super) enum Reply {
     Bank1 {
         offset: u32,
     },
+    /// The plans, read when the answer is sealed.
+    Plans,
 }
 
 fn saturate(jump_ms: i64) -> i32 {
@@ -787,6 +854,7 @@ impl Name for Reply {
             Self::FeedTrace { .. } => "feed-trace",
             Self::Calibration => "calibration",
             Self::Bank1 { .. } => "bank1",
+            Self::Plans => "plans",
             Self::Refused(refusal) => match refusal {
                 Refusal::Forbidden => "forbidden",
                 Refusal::Stale { .. } => "stale",
@@ -841,4 +909,42 @@ fn wire_window(window: Window) -> proto::Window {
         Window::Always => proto::Window::Always,
         Window::Between { start, end } => proto::Window::Between { start, end },
     }
+}
+
+const _: () = assert!(PLANS == proto::PLANS_MAX);
+
+/// The wire's plans as the store keeps them; `None` when one fails its
+/// checks.
+fn table(plans: &[Option<proto::Plan>; PLANS]) -> Option<Table> {
+    let mut table: Table = [None; PLANS];
+    for (slot, plan) in table.iter_mut().zip(plans) {
+        *slot = match *plan {
+            None => None,
+            Some(plan) => {
+                let plan = Plan {
+                    minute: plan.minute,
+                    portions: plan.portions,
+                    days: Weekdays(plan.days),
+                    enabled: plan.enabled,
+                };
+                if !plan.valid() {
+                    return None;
+                }
+                Some(plan)
+            }
+        };
+    }
+    Some(table)
+}
+
+/// The store's plans as the wire carries them.
+pub(super) fn wire_plans(table: &Table) -> [Option<proto::Plan>; PLANS] {
+    table.map(|plan| {
+        plan.map(|plan| proto::Plan {
+            minute: plan.minute,
+            portions: plan.portions,
+            days: plan.days.0,
+            enabled: plan.enabled,
+        })
+    })
 }

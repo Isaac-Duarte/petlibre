@@ -1248,3 +1248,83 @@ fn a_calibration_is_saved_inside_a_marked_attempt_and_published() {
     writer::describe(saved, &mut text).unwrap();
     assert_eq!(text, "calibration saved generation=1 portion_mg=9800");
 }
+
+#[test]
+fn a_plans_change_is_applied_saved_inside_a_marked_attempt_and_published() {
+    use wellfed_device_api::mailbox::{Claim, PLANS, Plan, PlansChange, PlansResult, Weekdays};
+    use wellfed_feeder_runtime::plans;
+
+    let (_guard, mut writer, mut provider) = start();
+    plans::reset();
+    assert_eq!(plans::current(), PlansResult::Busy, "not opened yet");
+    open_all(&mut writer, &mut provider);
+    step(&mut writer, &mut provider); // the stats store's early save
+    let PlansResult::Current { view, pending } = plans::current() else {
+        panic!("the store is published");
+    };
+    assert_eq!(
+        (view.table, view.revision, pending, view.writable),
+        ([None; PLANS], 0, false, true)
+    );
+
+    let mut table = [None; PLANS];
+    table[0] = Some(Plan {
+        minute: 7 * 60 + 30,
+        portions: 2,
+        days: Weekdays::EVERY_DAY,
+        enabled: true,
+    });
+    let replace = PlansChange::Replace {
+        table,
+        at_s: Some(1_000),
+    };
+    assert!(matches!(
+        plans::change(replace),
+        PlansResult::Current { pending: true, .. }
+    ));
+    assert_eq!(plans::change(replace), PlansResult::Busy);
+    ATTEMPT_SEEN.with(|s| s.set(false));
+    let saved = Record::PlansSaved {
+        sequence: 1,
+        revision: 1,
+    };
+    assert_eq!(step(&mut writer, &mut provider), Some(saved));
+    assert!(ATTEMPT_SEEN.with(Cell::get));
+    assert_eq!(sdk::backup_read(MARKER_REGISTER), 0);
+
+    // A claim against a revision the table has left is dropped unwritten.
+    let claim = Claim {
+        plan: 0,
+        due_s: 2_000,
+        high_water: 7,
+        disabled: false,
+    };
+    let stale = PlansChange::Claim { claim, revision: 0 };
+    assert!(matches!(
+        plans::change(stale),
+        PlansResult::Current { pending: true, .. }
+    ));
+    ATTEMPT_SEEN.with(|s| s.set(false));
+    assert_eq!(step(&mut writer, &mut provider), Some(Record::PlansDropped));
+    assert!(!ATTEMPT_SEEN.with(Cell::get));
+
+    let current = PlansChange::Claim { claim, revision: 1 };
+    assert!(matches!(
+        plans::change(current),
+        PlansResult::Current { pending: true, .. }
+    ));
+    step(&mut writer, &mut provider);
+
+    // The next boot reads both back.
+    plans::reset();
+    let mut writer = Writer::default();
+    step(&mut writer, &mut provider);
+    let PlansResult::Current { view, .. } = plans::current() else {
+        panic!("the store is published");
+    };
+    assert_eq!((view.table, view.claim), (table, Some(claim)));
+
+    let mut text = String::new();
+    writer::describe(saved, &mut text).unwrap();
+    assert_eq!(text, "plans saved sequence=1 revision=1");
+}

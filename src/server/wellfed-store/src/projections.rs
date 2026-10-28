@@ -201,7 +201,7 @@ pub(crate) async fn project(
             by,
         } => {
             let (source, client) = source_columns(by);
-            let client = client.as_ref().map(<[u8; 4]>::as_slice);
+            let client = client.as_deref();
             let (outcome, reason) = (outcome.code(), reason.code());
             // A feed's later event replaces its row; an earlier one
             // arriving after it (a rebuild runs in order, live ingest
@@ -235,7 +235,7 @@ pub(crate) async fn project(
 
         EventBody::Lock { locked, by } => {
             let (source, client) = source_columns(by);
-            let client = client.as_ref().map(<[u8; 4]>::as_slice);
+            let client = client.as_deref();
             sqlx::query!(
                 "INSERT INTO lock_changes (feeder_id, epoch, seq, locked, source, client, at_s,
                                            received_ms)
@@ -271,7 +271,7 @@ pub(crate) async fn project(
 
         EventBody::ClockSync { by, jump_ms } => {
             let (source, client) = source_columns(by);
-            let client = client.as_ref().map(<[u8; 4]>::as_slice);
+            let client = client.as_deref();
             sqlx::query!(
                 "INSERT INTO clock_syncs (feeder_id, epoch, seq, source, client, jump_ms, at_s,
                                           received_ms)
@@ -305,11 +305,13 @@ pub(crate) async fn project(
             .await?;
         }
 
-        // Settings and Wi-Fi changes, enrolments and revocations, lost
-        // events and supply changes: nothing a view reads yet. A view that
+        // Settings, plans and Wi-Fi changes, missed meals, enrolments and
+        // revocations, lost events and supply changes: nothing a view reads yet. A view that
         // needs one adds its table and bumps the version, and the rebuild
         // fills it from the history already held.
         EventBody::Settings { .. }
+        | EventBody::Plans { .. }
+        | EventBody::Missed { .. }
         | EventBody::Wifi { .. }
         | EventBody::Enrolled { .. }
         | EventBody::Revoked { .. }

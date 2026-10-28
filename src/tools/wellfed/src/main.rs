@@ -36,6 +36,7 @@ mod history;
 mod install;
 mod keys;
 mod pairing;
+mod plans;
 mod push;
 mod server;
 mod trace;
@@ -66,6 +67,9 @@ enum Command {
     Status(Target),
     /// Read the settings, or change them (against the generation just read).
     Settings(configure::SettingsArgs),
+    /// The feeding plans: list them, or add, edit, enable, disable or
+    /// delete one (docs/firmware/schedules.md).
+    Plans(plans::PlansArgs),
     /// Lock or unlock the panel.
     Lock(configure::LockArgs),
     /// Store or clear the network the feeder joins next.
@@ -134,6 +138,7 @@ fn main() -> Result<ExitCode> {
         Command::Setup(args) => runtime.block_on(pairing::setup(args)),
         Command::Status(target) => runtime.block_on(ask_and_print(&target, &Op::Status)),
         Command::Settings(args) => runtime.block_on(configure::settings_command(args)),
+        Command::Plans(args) => runtime.block_on(plans::command(args)),
         Command::Lock(args) => runtime.block_on(configure::lock_command(args)),
         Command::Wifi(args) => runtime.block_on(configure::wifi_command(args)),
         Command::Time(args) => runtime.block_on(configure::time_command(args)),
@@ -255,6 +260,27 @@ mod tests {
         // Resuming on bank 0 sends no frame.
         let resumed = [&install[..6], &["--from-bank0", "--ssid", "Home"]].concat();
         assert!(Cli::try_parse_from(resumed).is_err());
+
+        // A plan's flags follow its verb, the slot first.
+        let edit = [
+            "wellfed", "plans", "edit", "3", "--at", "07:30", "--days", "mon,thu",
+        ];
+        assert!(matches!(
+            Cli::try_parse_from(edit).map(|cli| cli.command),
+            Ok(Command::Plans(_))
+        ));
+        let out_of_range = ["wellfed", "plans", "delete", "10"];
+        assert!(Cli::try_parse_from(out_of_range).is_err());
+        let too_many = [
+            "wellfed",
+            "plans",
+            "add",
+            "--at",
+            "07:30",
+            "--portions",
+            "49",
+        ];
+        assert!(Cli::try_parse_from(too_many).is_err());
 
         // A server command parses whole, its flags after the verb.
         let feed = ["wellfed", "server", "feed", "--portions", "2", "--json"];

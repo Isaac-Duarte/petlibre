@@ -260,7 +260,7 @@ impl FromStr for Window {
 }
 
 /// `HH:MM` as a minute of the day.
-fn minute(text: &str) -> Result<u16, WindowError> {
+pub(crate) fn minute(text: &str) -> Result<u16, WindowError> {
     let invalid = || WindowError::Time(text.to_owned());
     let (hours, minutes) = text.split_once(':').ok_or_else(invalid)?;
     let digits = |part: &str| part.len() == 2 && part.bytes().all(|b| b.is_ascii_digit());

@@ -345,6 +345,12 @@ pub fn state() -> State {
     clock.state(now)
 }
 
+/// The zone's offset east of UTC at `unix_ms`: its rule, or a client
+/// sync's offsets; `None` with neither.
+pub fn offset_at(unix_ms: u64) -> Option<i32> {
+    update(|clock, _, _| clock.offset_at(unix_ms))
+}
+
 /// Log the KM0 RTC's registers as `PLTIM1 rtc`, once at boot: whether it
 /// runs (`ISR` bit 4, the calendar initialized), and its count (`TR`: day
 /// count in bits 23-31, then BCD hours, minutes and seconds). The firmware

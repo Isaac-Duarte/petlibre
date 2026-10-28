@@ -1062,6 +1062,10 @@ pub struct Status<'a> {
     pub sessions: u8,
     /// The hopper as the food beam last read it.
     pub food: FoodLevel,
+    /// The last feed this boot that ended on a fault (`Failed` or
+    /// `Uncertain`), until a later feed completes: a jam, a blocked outlet
+    /// or a sensor that still wants seeing to. Its `Fed` event has the rest.
+    pub feed_fault: Option<FeedFault>,
     pub desiccant: Desiccant,
 }
 
@@ -1321,6 +1325,14 @@ pub enum FeedOutcome {
     Uncertain,
 }
 
+/// A feed that ended on a fault, as [`Status::feed_fault`] names it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FeedFault {
+    pub feed: u32,
+    pub outcome: FeedOutcome,
+    pub reason: FeedReason,
+}
+
 /// What the food beam across the hopper reads, filtered as stock filters
 /// its `surplusGrain`: one reading with food shows food at once, and the
 /// hopper reads empty only after a second of readings without (stock's 20
@@ -1347,17 +1359,29 @@ pub enum FeedReason {
     ObservationGap,
     /// The whole feed ran past its limit.
     Timeout,
-    /// No portion was confirmed for too long: empty, jammed or a sensor fault.
+    /// No rotor mark for too long: the mark sensor lost, or a rotor stalled
+    /// with no current to show it.
     NoFeedback,
     Power,
+    /// A sensor could not be read: the ADC, the beams, or current at rest
+    /// over the jam limit.
     Sensor,
-    /// The outlet beam read blocked.
-    Outlet,
+    /// The outlet beam read blocked. Mid-feed, the feed ends with the
+    /// portions delivered so far and is never resumed (stock pauses up to
+    /// about 10 minutes instead); at the start it ends with no motion.
+    OutletBlocked,
+    /// One current reading over the ceiling: stopped at once, no reversal.
     Overcurrent,
     /// The feedback sensor's edges could not be trusted.
     FeedbackStream,
     /// An output failed to apply or verify.
     Output,
+    /// A jam no reversal freed: the motor backed off three times, as
+    /// stock's does (its code 2031), or the jam held while backing off.
+    /// The feed ends, never retried; stock counts it done.
+    Jammed,
+    /// The mark sensor read a mark for longer than any mark lasts.
+    MarkStuck,
 }
 
 /// The first 4 bytes of a client's key: enough to tell clients apart in

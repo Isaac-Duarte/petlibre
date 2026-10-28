@@ -81,7 +81,7 @@ fn a_jam_that_holds_fails_the_feed_after_every_reversal() {
     let result = until_done(&mut f, 100);
     assert_eq!(
         (result.outcome, result.reason),
-        (OwnerOutcome::Failed, FeedReason::Overcurrent)
+        (OwnerOutcome::Failed, FeedReason::Jammed)
     );
     assert_eq!(f.status().trace.reversals, 3);
     assert_eq!(f.status().fault, OwnerFault::Ok, "a jam is not held");
@@ -108,7 +108,7 @@ fn marks_that_never_come_end_the_feed_on_its_feedback_timeout() {
 }
 
 #[test]
-fn a_mark_input_stuck_low_is_a_sensor_fault() {
+fn a_mark_input_stuck_low_is_a_stuck_mark() {
     let _serial = serial();
     let mut f = boot_with(|c| c.feed.mark_low_ms = 10);
     // The pad rests HIGH, as the rotor leaves it between marks.
@@ -119,7 +119,7 @@ fn a_mark_input_stuck_low_is_a_sensor_fault() {
     let result = until_done(&mut f, 100);
     assert_eq!(
         (result.outcome, result.reason),
-        (OwnerOutcome::Failed, FeedReason::Sensor)
+        (OwnerOutcome::Failed, FeedReason::MarkStuck)
     );
     assert_eq!(f.status().fault, OwnerFault::Ok, "a feed's fault, not held");
     feed_faults::arm(Injected::None);

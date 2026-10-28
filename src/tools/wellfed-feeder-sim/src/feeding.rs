@@ -28,6 +28,10 @@
 //!   a sag; the firmware's owner and its plant (`wellfed-sim`) cover that.
 //! - [`SimFeeds::stall`] holds a feed in flight where it is, as a motor
 //!   that stopped moving would, so a test can act while a feed runs.
+//! - [`SimFeeds::fault`] makes the next feed end on a fault once its first
+//!   portion is in, as the firmware's owner ends it: a blocked outlet or a
+//!   jam no reversal freed, `Failed` with the portion delivered, never
+//!   resumed or retried.
 //! - The hopper has food until [`SimFeeds::fill`] empties it. Each feed
 //!   reads it as the food beam would, runs whatever it reads (as the
 //!   firmware's and stock's do) and records the reading in its `Fed`
@@ -98,6 +102,8 @@ pub struct SimFeeds {
     hopper: bool,
     /// What the beam read in the last feed this boot, once one has run.
     food: Option<bool>,
+    /// The fault the next feed ends on, after its first portion.
+    fault: Option<FeedReason>,
 }
 
 impl SimFeeds {
@@ -125,6 +131,7 @@ impl SimFeeds {
             adapter: true,
             hopper: true,
             food: None,
+            fault: None,
         }
     }
 
@@ -144,6 +151,12 @@ impl SimFeeds {
     /// On the pack alone and not judged above its floor.
     fn supply_low(&self) -> bool {
         !self.adapter && !self.floor.above()
+    }
+
+    /// End the next feed on `reason` once its first portion is in (or at
+    /// once, for a feed of one): an outlet that blocks or a jam that holds.
+    pub fn fault(&mut self, reason: FeedReason) {
+        self.fault = Some(reason);
     }
 
     /// Put food in front of the beam (`true`), or empty the hopper.
@@ -205,11 +218,23 @@ impl SimFeeds {
         current.stepped_ms = Some(now_ms);
         let full = u32::from(current.portions) * PORTION_MS;
         let cancelled = current.cancelled.get();
-        if !cancelled && current.driven_ms < full {
-            return (None, Some(full - current.driven_ms));
+        // A fault comes once the first portion is in, and ends the feed
+        // with it: stopped, never resumed.
+        let faulted = self.fault.filter(|_| current.driven_ms >= PORTION_MS);
+        if !cancelled && faulted.is_none() && current.driven_ms < full {
+            let next = if self.fault.is_some() {
+                PORTION_MS
+            } else {
+                full
+            };
+            return (None, Some(next.saturating_sub(current.driven_ms).max(1)));
         }
 
-        let (outcome, reason, completed) = if cancelled {
+        let (outcome, reason, completed) = if let Some(reason) = faulted {
+            self.fault = None;
+            let delivered = u16::from(current.portions > 1);
+            (OwnerOutcome::Failed, reason, delivered)
+        } else if cancelled {
             let driven = current.driven_ms.min(full) / PORTION_MS;
             let driven = u16::try_from(driven).unwrap_or(current.portions);
             (OwnerOutcome::Cancelled, FeedReason::Cancelled, driven)

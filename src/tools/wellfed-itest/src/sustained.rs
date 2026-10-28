@@ -639,13 +639,13 @@ impl Run {
         match injected {
             Injected::Jam => {
                 self.feed(ctx, 1, Expect::done(1), OwnerState::Idle)?;
+                self.feed(ctx, 2, Expect::failed(FeedReason::Jammed), OwnerState::Idle)?;
                 self.feed(
                     ctx,
-                    2,
-                    Expect::failed(FeedReason::Overcurrent),
+                    3,
+                    Expect::failed(FeedReason::MarkStuck),
                     OwnerState::Idle,
                 )?;
-                self.feed(ctx, 3, Expect::failed(FeedReason::Sensor), OwnerState::Idle)?;
             }
             Injected::Sensor => {
                 self.feed(

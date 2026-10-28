@@ -10,20 +10,24 @@
 //! A jam is current held over the limit past a drive's start-up surge: the
 //! controller backs off (`reverse_ms` the other way, then a stop of
 //! `direction_pause_ms`) and drives on, at most `max_reverse_attempts`
-//! times, then ends the request `Overcurrent`. Each reversal lengthens the
+//! times, then ends the request `Jammed`. Each reversal lengthens the
 //! request's deadline and its feedback window by what it costs (the time
 //! back, the pause, and the time to win the ground back); the attempts
 //! bound that extension. The portion's inhibit window stays anchored to the
 //! last portion across a reversal, so the mark just past a cleared jam
 //! still counts, and the one boundary backing off can recross is not
-//! counted twice. A reading over `current_max_ma`, or the limit held while
-//! backing off or stopped, ends it at once.
+//! counted twice. The limit held while backing off or stopped (the jam
+//! holds both ways) ends it `Jammed` at once, and a reading over
+//! `current_max_ma` ends it `Overcurrent` at once, with no reversal.
 //!
 //! Missing feedback is no jam: without marks the controller cannot tell a
 //! stopped rotor from a lost sensor, so it never reverses blind. The request
 //! ends `FeedbackTimeout` (no edge of either level for `mark_gap_ms` of
-//! drive, or no portion within the feedback timeout) or `Sensor` (the mark
-//! input LOW for `mark_low_ms` of drive, longer than any mark lasts).
+//! drive, or no portion within the feedback timeout) or `MarkStuck` (the
+//! mark input LOW for `mark_low_ms` of drive, longer than any mark lasts).
+//!
+//! A blocked outlet, as any input fault, ends a running request at once
+//! with the portions it credited so far: it is never paused and resumed.
 //! A single bowl's request can start with the rotor's phase unknown
 //! ([`FeedRequest::homing`]): an earlier drive stopped between two marks.
 //! The first mark the rotor reaches inside the inhibit window is then a
@@ -74,7 +78,10 @@ impl FeedState {
     }
 }
 
-/// Persistent journal v1 encodes these values; never renumber without migration.
+/// Persistent journal v1 encodes these values; never renumber without
+/// migration. The journal stores only the reasons up to `Output`: it must
+/// stay byte-identical for bank 0 and the pinned tools, so the later ones
+/// are stored as the reasons they refine ([`Self::journaled`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[repr(u32)]
 pub enum FeedReason {
@@ -92,6 +99,11 @@ pub enum FeedReason {
     Overcurrent = 10,
     FeedbackStream = 11,
     Output = 12,
+    /// Current held over the limit that no reversal freed: after
+    /// `max_reverse_attempts`, or held while backing off or stopped.
+    Jammed = 13,
+    /// The mark input read LOW for `mark_low_ms` of forward drive.
+    MarkStuck = 14,
 }
 
 impl FeedReason {
@@ -121,7 +133,21 @@ impl FeedReason {
             10 => Some(Self::Overcurrent),
             11 => Some(Self::FeedbackStream),
             12 => Some(Self::Output),
+            13 => Some(Self::Jammed),
+            14 => Some(Self::MarkStuck),
             _ => None,
+        }
+    }
+
+    /// The reason the feed journal stores: its v1 record predates
+    /// `Jammed` and `MarkStuck`, so they go in as `Overcurrent` and
+    /// `Sensor`, which bank 0 decodes. The journal's reason only names how
+    /// a feed ended; the result the owner reports keeps the specific one.
+    pub const fn journaled(self) -> Self {
+        match self {
+            Self::Jammed => Self::Overcurrent,
+            Self::MarkStuck => Self::Sensor,
+            other => other,
         }
     }
 }
@@ -599,7 +625,7 @@ impl FeedController {
                 0
             };
             if self.state == FeedState::Running && self.stuck_low(now_ms, sample.mark_low) {
-                self.stop(FeedState::Fault, FeedReason::Sensor);
+                self.stop(FeedState::Fault, FeedReason::MarkStuck);
                 return;
             }
             // Before a rise the input reads LOW, before a fall HIGH.
@@ -613,7 +639,7 @@ impl FeedController {
             // The limit held while backing off or stopped: the jam holds
             // both ways, or the reading is wrong. No more motion either way.
             FeedState::Reversing | FeedState::DirectionPause if overcurrent => {
-                self.stop(FeedState::Fault, FeedReason::Overcurrent);
+                self.stop(FeedState::Fault, FeedReason::Jammed);
                 return;
             }
             FeedState::Reversing => {
@@ -633,7 +659,7 @@ impl FeedController {
 
         if overcurrent {
             if self.reverse_attempts >= self.limits.max_reverse_attempts {
-                self.stop(FeedState::Fault, FeedReason::Overcurrent);
+                self.stop(FeedState::Fault, FeedReason::Jammed);
             } else {
                 self.reverse(now_ms);
             }

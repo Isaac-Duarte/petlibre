@@ -47,6 +47,8 @@ fn persisted_variants_keep_their_bytes() {
         (FeedReason::Overcurrent, 10),
         (FeedReason::FeedbackStream, 11),
         (FeedReason::Output, 12),
+        (FeedReason::Jammed, 13),
+        (FeedReason::MarkStuck, 14),
     ];
     for (reason, byte) in reasons {
         assert_eq!(reason.byte(), byte);
@@ -59,6 +61,6 @@ fn unknown_bytes_name_no_variant() {
     assert_eq!(BowlMode::from_byte(2), None);
     assert_eq!(Direction::from_byte(2), None);
     assert_eq!(OwnerOutcome::from_byte(6), None);
-    assert_eq!(FeedReason::from_byte(13), None);
+    assert_eq!(FeedReason::from_byte(15), None);
     assert_eq!(FeedReason::from_byte(u8::MAX), None);
 }

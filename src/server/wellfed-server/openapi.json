@@ -6471,6 +6471,28 @@
           }
         }
       },
+      "FeedFault": {
+        "type": "object",
+        "description": "A feed that ended on a fault: its `Fed` event has the rest.",
+        "required": [
+          "feed",
+          "outcome",
+          "reason"
+        ],
+        "properties": {
+          "feed": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/FeedOutcome"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/FeedReason"
+          }
+        }
+      },
       "FeedOutcome": {
         "type": "string",
         "enum": [
@@ -6493,10 +6515,12 @@
           "no_feedback",
           "power",
           "sensor",
-          "outlet",
+          "outlet_blocked",
           "overcurrent",
           "feedback_stream",
-          "output"
+          "output",
+          "jammed",
+          "mark_stuck"
         ]
       },
       "FeedRequest": {
@@ -6959,6 +6983,17 @@
             "type": "integer",
             "format": "int32",
             "minimum": 0
+          },
+          "feed_fault": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/FeedFault",
+                "description": "The last feed this boot that ended on a fault (failed or\nuncertain), until a later feed completes."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "food": {
             "$ref": "#/components/schemas/FoodLevel",

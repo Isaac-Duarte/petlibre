@@ -454,6 +454,7 @@ async fn the_cached_status_and_settings_read_back() {
         last_event: Some(9),
         sessions: 1,
         food: FoodLevel::Empty,
+        feed_fault: None,
         readiness: Some(Readiness::Blocked(Blocked::Joining)),
         desiccant: Desiccant::Remaining {
             days: -2,

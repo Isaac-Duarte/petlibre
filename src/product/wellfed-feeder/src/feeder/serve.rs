@@ -752,6 +752,7 @@ impl<P: Platform, F: Feeds> Device for FeederDevice<'_, P, F> {
             sessions: 0,
             desiccant,
             food: crate::feed::food_level(self.feeds.food()),
+            feed_fault: self.stats.feed_fault(),
         }
     }
 

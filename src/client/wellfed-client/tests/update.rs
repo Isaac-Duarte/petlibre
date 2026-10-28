@@ -382,6 +382,7 @@ impl Device for Feeder {
             sessions: 0,
             desiccant: proto::Desiccant::Unset,
             food: FoodLevel::Unread,
+            feed_fault: None,
         }
     }
 

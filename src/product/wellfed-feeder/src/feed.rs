@@ -70,7 +70,9 @@ const fn reason(reason: CoreReason) -> FeedReason {
         CoreReason::FeedbackTimeout => FeedReason::NoFeedback,
         CoreReason::Power => FeedReason::Power,
         CoreReason::Sensor => FeedReason::Sensor,
-        CoreReason::Outlet => FeedReason::Outlet,
+        CoreReason::Outlet => FeedReason::OutletBlocked,
+        CoreReason::Jammed => FeedReason::Jammed,
+        CoreReason::MarkStuck => FeedReason::MarkStuck,
         CoreReason::Overcurrent => FeedReason::Overcurrent,
         CoreReason::FeedbackStream => FeedReason::FeedbackStream,
         // No reason: a result still pending, which ends as an output

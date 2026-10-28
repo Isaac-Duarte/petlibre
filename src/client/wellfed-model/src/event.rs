@@ -206,17 +206,26 @@ pub enum FeedReason {
     ObservationGap,
     /// The whole feed ran past its limit.
     Timeout,
-    /// No portion was confirmed for too long: empty, jammed or a sensor fault.
+    /// No rotor mark for too long: the mark sensor lost, or a rotor stalled
+    /// with no current to show it.
     NoFeedback,
     Power,
+    /// A sensor could not be read (the ADC or the beams).
     Sensor,
-    /// The outlet beam read blocked.
-    Outlet,
+    /// The outlet beam read blocked: mid-feed, the feed ended with the
+    /// portions delivered so far, never resumed; at the start, no motion.
+    OutletBlocked,
+    /// One current reading over the ceiling: stopped at once.
     Overcurrent,
     /// The feedback sensor's edges could not be trusted.
     FeedbackStream,
     /// An output failed to apply or verify.
     Output,
+    /// A jam three reversals did not free (or one that held while backing
+    /// off). Never retried.
+    Jammed,
+    /// The mark sensor read a mark for longer than any mark lasts.
+    MarkStuck,
 }
 
 impl FeedOutcome {
@@ -245,7 +254,7 @@ impl FeedOutcome {
 }
 
 impl FeedReason {
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 14] = [
         Self::Done,
         Self::Cancelled,
         Self::Clock,
@@ -254,10 +263,12 @@ impl FeedReason {
         Self::NoFeedback,
         Self::Power,
         Self::Sensor,
-        Self::Outlet,
+        Self::OutletBlocked,
         Self::Overcurrent,
         Self::FeedbackStream,
         Self::Output,
+        Self::Jammed,
+        Self::MarkStuck,
     ];
 
     /// The stored spelling, the same as the JSON one.
@@ -271,10 +282,12 @@ impl FeedReason {
             Self::NoFeedback => "no_feedback",
             Self::Power => "power",
             Self::Sensor => "sensor",
-            Self::Outlet => "outlet",
+            Self::OutletBlocked => "outlet_blocked",
             Self::Overcurrent => "overcurrent",
             Self::FeedbackStream => "feedback_stream",
             Self::Output => "output",
+            Self::Jammed => "jammed",
+            Self::MarkStuck => "mark_stuck",
         }
     }
 

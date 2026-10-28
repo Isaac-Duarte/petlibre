@@ -92,6 +92,8 @@ codes!(Reason {
     Overcurrent,
     FeedbackStream,
     Output,
+    Jammed,
+    MarkStuck,
 });
 
 codes!(
@@ -598,7 +600,8 @@ mod tests {
     #[test]
     fn codes_round_trip_by_index() {
         assert_eq!(Reason::from_index(12), Some(Reason::Output));
-        assert_eq!(Reason::from_index(13), None);
+        assert_eq!(Reason::from_index(14), Some(Reason::MarkStuck));
+        assert_eq!(Reason::from_index(15), None);
         assert_eq!(Submission::RejectStopped.index(), 5);
         assert_eq!(
             serde_json::to_value(State::ALL).unwrap()[6],

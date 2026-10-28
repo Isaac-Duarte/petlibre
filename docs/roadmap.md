@@ -28,7 +28,7 @@ This page tracks what works today and what comes next. It covers the replacement
 | Dispense button | Works | Respects the child lock. |
 | Feed from the CLI | Works | |
 | Portion calibration | Experimental | |
-| Jam and sensor fault handling | Experimental | |
+| Jam and sensor fault handling | Experimental | A jam, a blocked outlet or a sensor fault ends the feed by name, never retried, and shows in the status and history. Real jams with food wait for a bench check. |
 | Schedules | Works | Up to ten plans, run on the feeder with no server. |
 | Feeding history | Partial | Each feed is recorded as an event; a long history needs the server. |
 | Food level | Experimental | The status shows the hopper as the last feed read it. A feed on an empty hopper still runs, as stock's does, and its history entry says the hopper read empty. |

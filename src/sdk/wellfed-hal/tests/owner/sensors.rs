@@ -112,6 +112,35 @@ fn an_outlet_blocked_before_the_drive_fails_the_feed_with_no_motion() {
     f.stop();
 }
 
+/// An outlet that blocks during the drive ends the feed: the motor stops
+/// within the outlet filter's delay, the result is durable and names the
+/// outlet, and the outlet clearing again resumes nothing.
+#[test]
+fn an_outlet_blocked_during_the_drive_stops_it_for_good() {
+    let mut f = boot();
+    f.start_feed();
+    f.advance(2);
+
+    hw(|h| h.input[0] &= !bit(OUTLET));
+    f.advance(CONFIG.sensors.outlet_block_delay_ms + 2);
+    let s = f.status();
+    assert_eq!(motor_pins(), MOTOR_MASK, "stopped");
+    assert!(s.state == OwnerState::Terminal && s.result_durable);
+    assert!(s.result.motion_possible);
+    assert_eq!(
+        (s.result.outcome, s.result.reason, s.result.completed),
+        (OwnerOutcome::Failed, FeedReason::Outlet, 0)
+    );
+
+    hw(|h| h.input[0] |= bit(OUTLET));
+    for _ in 0..20 {
+        f.advance(1);
+        assert_eq!(motor_pins(), MOTOR_MASK, "never resumed");
+    }
+    assert_eq!(f.status().state, OwnerState::Terminal);
+    f.stop();
+}
+
 #[test]
 fn a_feed_that_only_ran_out_of_time_still_expires() {
     let mut f = boot();

@@ -63,6 +63,11 @@ fn messages() -> Vec<Fixture> {
         sessions: 1,
         desiccant: Desiccant::Remaining { days: -3 },
         food: FoodLevel::Present,
+        feed_fault: Some(FeedFault {
+            feed: 13,
+            outcome: FeedOutcome::Failed,
+            reason: FeedReason::Jammed,
+        }),
     };
     let counts = Counts {
         uptime_s: 3_600,
@@ -1021,6 +1026,45 @@ fn messages() -> Vec<Fixture> {
             "event-food",
             entry(&EventBody::Food {
                 level: FoodLevel::Empty,
+            }),
+            |b| decode::<EventBody>(b).is_ok(),
+        ),
+        (
+            "event-fed-outlet-blocked",
+            entry(&EventBody::Fed {
+                feed: 21,
+                requested: 3,
+                completed: 1,
+                outcome: FeedOutcome::Failed,
+                reason: FeedReason::OutletBlocked,
+                hopper: FoodLevel::Present,
+                by: Source::Panel,
+            }),
+            |b| decode::<EventBody>(b).is_ok(),
+        ),
+        (
+            "event-fed-jammed",
+            entry(&EventBody::Fed {
+                feed: 22,
+                requested: 2,
+                completed: 0,
+                outcome: FeedOutcome::Failed,
+                reason: FeedReason::Jammed,
+                hopper: FoodLevel::Present,
+                by: Source::Schedule(1),
+            }),
+            |b| decode::<EventBody>(b).is_ok(),
+        ),
+        (
+            "event-fed-mark-stuck",
+            entry(&EventBody::Fed {
+                feed: 23,
+                requested: 1,
+                completed: 0,
+                outcome: FeedOutcome::Failed,
+                reason: FeedReason::MarkStuck,
+                hopper: FoodLevel::Unread,
+                by: Source::Feeder,
             }),
             |b| decode::<EventBody>(b).is_ok(),
         ),

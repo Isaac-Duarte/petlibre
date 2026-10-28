@@ -13,20 +13,22 @@
 //!   4757) or takes the cells out. Both last across restarts.
 //! - `empty` empties the hopper and `fill` fills it, for the next feed's
 //!   food beam.
+//! - `block` blocks the outlet and `jam` jams the rotor once the next
+//!   feed's first portion is in: that feed ends there.
 //! - `reboot` restarts the feeder; `quit` stops the simulator.
 
 use wellfed_client::setup::panel_position;
 use wellfed_core::buttons::{Button, Buttons, Gesture};
 use wellfed_hal::power::DIVIDER_PER_MILLE;
 
-use crate::serve::Control;
+use crate::serve::{Control, FeedFault};
 
 /// A short press's length, as the button service would report it.
 const PRESS_MS: u32 = 120;
 /// Past the panel's 5 s hold.
 const HOLD_MS: u32 = 5_200;
 
-pub const HELP: &str = "commands: press <button>... | hold <button>[+<button>...] | adapter in|out | pack <mV>|out | empty | fill | reboot | quit\n\
+pub const HELP: &str = "commands: press <button>... | hold <button>[+<button>...] | adapter in|out | pack <mV>|out | empty | fill | block | jam | reboot | quit\n\
      buttons: lock dispense mic reset, or their positions 1-4";
 
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
@@ -102,6 +104,8 @@ pub fn parse(line: &str) -> Result<Vec<Control>, ConsoleError> {
         },
         "empty" => Ok(vec![Control::Hopper(false)]),
         "fill" => Ok(vec![Control::Hopper(true)]),
+        "block" => Ok(vec![Control::FaultFeed(FeedFault::OutletBlocked)]),
+        "jam" => Ok(vec![Control::FaultFeed(FeedFault::Jam)]),
         "reboot" => Ok(vec![Control::Reboot]),
         "quit" | "exit" => Ok(vec![Control::Quit]),
         other => Err(ConsoleError::Command(other.to_owned())),

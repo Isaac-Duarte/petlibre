@@ -15,8 +15,8 @@ use wellfed_feeder_sim::flash::Flash;
 use wellfed_feeder_sim::harness::Running;
 use wellfed_feeder_sim::serve::Control;
 use wellfed_model::{
-    Answer, Blocked, EventBody, FeedOutcome, FeedReason, FoodLevel, Op, Pushed, Readiness, Refusal,
-    Source,
+    Answer, Blocked, EventBody, FeedFault, FeedOutcome, FeedReason, FoodLevel, Op, Pushed,
+    Readiness, Refusal, Source,
 };
 use wellfed_session::noise::Keypair;
 
@@ -352,6 +352,71 @@ fn a_feed_on_an_empty_hopper_runs_and_records_that_it_read_empty() {
             assert_eq!(food(&mut owner, id + 1).await, level);
             id += 2;
         }
+        sim.stop().await;
+    });
+}
+
+async fn feed_fault(connection: &mut Connection, id: u8) -> Option<FeedFault> {
+    match connection.ask([id; 16], &Op::Status).await.unwrap() {
+        Answer::Status(status) => status.feed_fault,
+        other => panic!("{other:?}"),
+    }
+}
+
+/// An outlet that blocks mid-feed and a jam no reversal frees each end
+/// the feed with the portion delivered so far, by name, and never run it
+/// again; the status names the fault until a later feed completes.
+#[test]
+fn a_blocked_outlet_or_a_jam_ends_the_feed_by_name_with_its_portions_so_far() {
+    local(async {
+        let flash = Flash::memory();
+        let sim = start(&flash).await;
+        let mut owner = open(&sim).await;
+        owner.subscribe(None, false).await.unwrap();
+        assert_eq!(feed_fault(&mut owner, 1).await, None);
+
+        let mut id = 2;
+        for (line, reason) in [
+            ("block", FeedReason::OutletBlocked),
+            ("jam", FeedReason::Jammed),
+        ] {
+            sim.type_line(line).unwrap();
+            let answer = owner.ask([id; 16], &Op::Feed { portions: 3 }).await;
+            let Ok(Answer::Feeding { feed }) = answer else {
+                panic!("{answer:?}");
+            };
+            let EventBody::Fed {
+                feed: ended,
+                requested,
+                completed,
+                outcome,
+                reason: ended_by,
+                ..
+            } = next_fed(&mut owner).await
+            else {
+                unreachable!("next_fed returns a feed")
+            };
+            assert_eq!((ended, requested, completed), (feed, 3, 1));
+            assert_eq!((outcome, ended_by), (FeedOutcome::Failed, reason));
+            let fault = FeedFault {
+                feed,
+                outcome: FeedOutcome::Failed,
+                reason,
+            };
+            assert_eq!(feed_fault(&mut owner, id + 1).await, Some(fault));
+            id += 2;
+        }
+
+        // Never re-run: the next feed is a new number, and completing it
+        // clears the fault.
+        let answer = owner.ask([id; 16], &Op::Feed { portions: 1 }).await;
+        assert_eq!(answer.unwrap(), Answer::Feeding { feed: 3 });
+        let EventBody::Fed { outcome, .. } = next_fed(&mut owner).await else {
+            unreachable!("next_fed returns a feed")
+        };
+        assert_eq!(outcome, FeedOutcome::Done);
+        assert_eq!(feed_fault(&mut owner, id + 1).await, None);
+        assert_eq!(feeding::reserved(&flash), Some(3));
         sim.stop().await;
     });
 }

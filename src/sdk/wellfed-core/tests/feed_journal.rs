@@ -988,3 +988,33 @@ fn a_record_in_another_version_beside_a_valid_one_is_corrupt() {
         }
     }
 }
+
+/// The record's reasons stop at `Output`: a jam or a stuck mark goes in as
+/// the reason it refines, so bank 0 and the pinned tools still read every
+/// record, and the journal reads back what it wrote.
+#[test]
+fn a_jam_or_a_stuck_mark_is_journaled_as_the_reason_it_refines() {
+    for (reason, stored) in [
+        (FeedReason::Jammed, FeedReason::Overcurrent),
+        (FeedReason::MarkStuck, FeedReason::Sensor),
+    ] {
+        let mut f = FakeJournalFlash::default();
+        let mut j = create(&mut f, false);
+        assert!(reserve(&mut j, 1));
+        let mut phase = j.view.recovery;
+        phase.pending_request = false;
+        let result = OwnerResult {
+            completed: 0,
+            outcome: OwnerOutcome::Failed,
+            reason,
+            motion_possible: true,
+            ..j.view.result
+        };
+        assert!(j.finish(&result, &phase));
+
+        let config = j.config;
+        assert_eq!(reopen(&mut f, &mut j, &config), JournalError::Ok);
+        let read = j.last_result().expect("the result reads back");
+        assert_eq!((read.outcome, read.reason), (OwnerOutcome::Failed, stored));
+    }
+}

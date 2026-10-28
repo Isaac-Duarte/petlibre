@@ -109,6 +109,61 @@ impl Fixture {
     }
 }
 
+/// An outlet that blocks mid-feed ends it with what it credited: the
+/// motor stops, and a clear outlet afterwards never resumes it.
+#[test]
+fn an_outlet_blocked_mid_feed_ends_it_with_its_portions_so_far() {
+    let mut f = begin(BowlMode::Single, Direction::D0, 3);
+    f.advance(5);
+    f.edge(true);
+    assert_eq!(f.controller.progress.completed, 1);
+
+    f.sample.outlet_clear = false;
+    f.advance(1);
+    f.expect_fault(FeedReason::Outlet);
+    assert_eq!(f.controller.progress.completed, 1);
+
+    f.sample.outlet_clear = true;
+    f.advance(10);
+    f.edge(true);
+    f.expect_fault(FeedReason::Outlet);
+    assert_eq!(f.controller.progress.completed, 1);
+}
+
+/// Three ways the current ends a feed, each by its own name: a jam held
+/// past every reversal, a jam held while backing off, and one reading
+/// over the ceiling.
+#[test]
+fn a_jam_and_a_current_spike_end_the_feed_by_name() {
+    let mut f = begin(BowlMode::Single, Direction::D0, 3);
+    f.sample.current_ma = 301;
+    for _ in 0..LIMITS.max_reverse_attempts {
+        f.advance(OVERCURRENT_POLLS.into());
+        assert_eq!(f.controller.state, FeedState::Reversing);
+        f.sample.current_ma = 100;
+        f.advance(6);
+        assert_eq!(f.controller.state, FeedState::Running);
+        f.sample.current_ma = 301;
+    }
+    f.advance(OVERCURRENT_POLLS.into());
+    f.expect_fault(FeedReason::Jammed);
+    assert_eq!(f.controller.reverse_attempts, LIMITS.max_reverse_attempts);
+
+    let mut f = begin(BowlMode::Single, Direction::D0, 3);
+    f.sample.current_ma = 301;
+    f.advance(OVERCURRENT_POLLS.into());
+    assert_eq!(f.controller.state, FeedState::Reversing);
+    f.advance(OVERCURRENT_POLLS.into());
+    f.expect_fault(FeedReason::Jammed);
+    assert_eq!(f.controller.reverse_attempts, 1);
+
+    let mut f = begin(BowlMode::Single, Direction::D0, 3);
+    f.sample.current_ma = 1001;
+    f.advance(1);
+    f.expect_fault(FeedReason::Overcurrent);
+    assert_eq!(f.controller.reverse_attempts, 0);
+}
+
 #[test]
 fn single_feedback_and_terminal_events() {
     let mut f = begin(BowlMode::Single, Direction::D0, 2);
@@ -314,7 +369,7 @@ fn reverse_attempts_are_bounded() {
 
     f.sample.current_ma = 301;
     f.advance(OVERCURRENT_POLLS.into());
-    f.expect_fault(FeedReason::Overcurrent);
+    f.expect_fault(FeedReason::Jammed);
     assert_eq!(f.controller.reverse_attempts, 2);
 }
 
@@ -432,7 +487,7 @@ fn a_drive_with_no_edge_for_the_mark_gap_has_lost_its_feedback() {
 }
 
 #[test]
-fn a_mark_input_low_past_any_mark_is_a_sensor_fault() {
+fn a_mark_input_low_past_any_mark_is_a_stuck_mark() {
     let settings = FeedLimits {
         mark_low_ms: 5,
         ..LIMITS
@@ -448,7 +503,7 @@ fn a_mark_input_low_past_any_mark_is_a_sensor_fault() {
     f.advance(5);
     assert_eq!(f.controller.state, FeedState::Running);
     f.advance(1);
-    f.expect_fault(FeedReason::Sensor);
+    f.expect_fault(FeedReason::MarkStuck);
 
     // Only forward drive counts: a reversal starts the run again.
     let mut f = begin_with(&settings, BowlMode::Single, Direction::D0, 3, 0);
@@ -461,7 +516,7 @@ fn a_mark_input_low_past_any_mark_is_a_sensor_fault() {
     f.advance(5);
     assert_eq!(f.controller.state, FeedState::Running);
     f.advance(1);
-    f.expect_fault(FeedReason::Sensor);
+    f.expect_fault(FeedReason::MarkStuck);
 }
 
 #[test]
@@ -536,7 +591,7 @@ fn overcurrent_while_backing_off_ends_the_feed() {
     f.advance(OVERCURRENT_POLLS.into());
     assert_eq!(f.controller.state, FeedState::Reversing);
     f.advance(OVERCURRENT_POLLS.into());
-    f.expect_fault(FeedReason::Overcurrent);
+    f.expect_fault(FeedReason::Jammed);
     assert_eq!(f.controller.reverse_attempts, 1);
 }
 
@@ -791,7 +846,7 @@ fn stopped_outputs_do_not_resume_on_bad_current() {
     assert_eq!(f.controller.motor, MotorCommand::Stop);
     f.sample.current_ma = 301;
     f.advance(OVERCURRENT_POLLS.into());
-    f.expect_fault(FeedReason::Overcurrent);
+    f.expect_fault(FeedReason::Jammed);
 
     let settings = FeedLimits {
         max_reverse_attempts: 0,
@@ -800,7 +855,7 @@ fn stopped_outputs_do_not_resume_on_bad_current() {
     let mut f = begin_with(&settings, BowlMode::Single, Direction::D0, 3, 0);
     f.sample.current_ma = 301;
     f.advance(OVERCURRENT_POLLS.into());
-    f.expect_fault(FeedReason::Overcurrent);
+    f.expect_fault(FeedReason::Jammed);
     assert_eq!(f.controller.reverse_attempts, 0);
 
     let mut f = begin(BowlMode::Single, Direction::D0, 3);
@@ -1168,6 +1223,6 @@ fn a_homing_feed_ends_on_lost_feedback_or_a_stuck_mark() {
     f.advance(5);
     assert_eq!(f.controller.state, FeedState::Running);
     f.advance(1);
-    f.expect_fault(FeedReason::Sensor);
+    f.expect_fault(FeedReason::MarkStuck);
     assert_eq!(f.controller.homed_ms, None);
 }

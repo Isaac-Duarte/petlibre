@@ -23,6 +23,7 @@ use tokio::net::{TcpListener, UdpSocket};
 use tokio::sync::mpsc;
 use tokio::time::{Instant, sleep};
 use wellfed_core::buttons::Gesture;
+use wellfed_core::feed::controller::FeedReason;
 use wellfed_core::mdns;
 
 use crate::banks::Banks;
@@ -60,8 +61,28 @@ pub enum Control {
     /// Fill the hopper (`true`) or empty it, as the next feed's food beam
     /// reads it. A restart fills it again.
     Hopper(bool),
+    /// End the next feed on this fault once its first portion is in.
+    FaultFeed(FeedFault),
     /// Stop serving.
     Quit,
+}
+
+/// A fault the operator puts in the next feed's way.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FeedFault {
+    /// The outlet beam blocks.
+    OutletBlocked,
+    /// A jam no reversal frees.
+    Jam,
+}
+
+impl FeedFault {
+    fn reason(self) -> FeedReason {
+        match self {
+            Self::OutletBlocked => FeedReason::Outlet,
+            Self::Jam => FeedReason::Jammed,
+        }
+    }
 }
 
 /// Where the feeder advertises itself, and as which address.
@@ -142,6 +163,7 @@ pub async fn serve(
                     booted.sim.platform().set_supply(supply);
                 }
                 Some(Control::Hopper(food)) => booted.sim.fill_hopper(food),
+                Some(Control::FaultFeed(fault)) => booted.sim.fault_feed(fault.reason()),
                 Some(Control::Quit) => return Ok(()),
                 None => control = None,
             },

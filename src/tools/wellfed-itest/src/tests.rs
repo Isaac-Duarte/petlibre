@@ -395,8 +395,8 @@ impl Feeder {
         // the build injects.
         let injected = match (self.running.as_str(), portions) {
             (JAM, 1) => Some((11.5, 1, 1, 1)),
-            (JAM, 2) => Some((7.2, 0, 4, 10)),
-            (JAM, _) => Some((6.1, 0, 4, 8)),
+            (JAM, 2) => Some((7.2, 0, 4, 13)),
+            (JAM, _) => Some((6.1, 0, 4, 14)),
             (SENSOR, 1) => Some((11.0, 0, 4, 6)),
             (SENSOR, 2) => {
                 // The outlet reads blocked: failed before any drive.

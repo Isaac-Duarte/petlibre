@@ -25,7 +25,7 @@
       "values": {
         "state": "terminal",
         "outcome": "failed",
-        "reason": "overcurrent",
+        "reason": "jammed",
         "completed": 0,
         "durable": true,
         "motor": 0

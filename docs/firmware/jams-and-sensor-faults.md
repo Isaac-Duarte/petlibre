@@ -8,7 +8,7 @@ The limits are in `feeding::CONFIG` (`src/firmware/wellfed/feeder/src/feeding.rs
 
 ## Jams: bounded reversals
 
-A jam is motor current held over the limit: two consecutive polls, 20 ms apart, over 300 scaled, outside the 150 ms after any change of drive. The controller then backs off: 1 s the other way, a 0.5 s stop, and forward again. It does this at most three times, as stock does. After the third, the next jam ends the feed `Failed`, `Overcurrent`.
+A jam is motor current held over the limit: two consecutive polls, 20 ms apart, over 300 scaled, outside the 150 ms after any change of drive. The controller then backs off: 1 s the other way, a 0.5 s stop, and forward again. It does this at most three times, as stock does. After the third, the next jam ends the feed `Failed`, `Jammed`. A jam that holds while backing off or during the pause also ends it `Jammed`, at once. One reading over the 1000 ceiling ends it `Overcurrent`, with no reversal.
 
 | Limit | Value | Why |
 | --- | --- | --- |
@@ -42,7 +42,7 @@ Rules the controller keeps (host-tested in `wellfed-core`'s `feed_controller`):
 - `a_freed_jam_anywhere_in_a_mark_period_credits_each_mark_once` sweeps jam positions over two mark periods with one to three reversals. The simulator's `a_jam_next_to_a_mark_credits_each_mark_once` puts a jam just before a mark and just past one.
 - If a recross's LOW lasts less than one 20 ms poll, it is not seen, and the inhibit window covers it only for a single reversal (recovered).
 
-Stock counts a feed ended by a jam as done (record 2031). Wellfed records it failed, with what it completed: it never claims food it cannot count.
+Stock counts a feed ended by a jam as done (record 2031). Wellfed records it failed, `Jammed`, with what it completed: it never claims food it cannot count. Like stock, it never retries the feed. The status names it (`feed_fault`) until a later feed completes, and the trace keeps the reversal count.
 
 ## Missing or stuck feedback
 
@@ -51,7 +51,7 @@ The rotor's mark sensor (PA18) rests HIGH and reads LOW for 1.2–1.4 s at each 
 | Fault | Detection | Ends as |
 | --- | --- | --- |
 | Marks lost: sensor gone, PA18 stuck HIGH, or a rotor stalled with no current to show it | No edge of either level for `mark_gap_ms` (11 s) of forward drive, counted afresh at each resume; or no portion within the 15 s feedback timeout | `Failed`, `FeedbackTimeout` (`NoFeedback` on the wire) |
-| Mark input stuck LOW | PA18 LOW for `mark_low_ms` (4 s) of forward drive; a reversal or pause restarts the count | `Failed`, `Sensor` |
+| Mark input stuck LOW | PA18 LOW for `mark_low_ms` (4 s) of forward drive; a reversal or pause restarts the count | `Failed`, `MarkStuck` |
 
 Missing feedback is never a reason to reverse. Without marks the controller cannot tell a jammed rotor from a lost sensor, and backing off blind is motion it cannot account for. A one-portion feed with no marks ends at 11 s, inside its 12 s deadline, so the reason says what went wrong rather than `Timeout`.
 
@@ -59,11 +59,11 @@ The level comes from the owner's own acquisitions (one port read with PA16, PA17
 
 ## Outlet and food sensors
 
-**Blocked outlet.** A beam blocked for 1 s (the stock filter) during a drive ends the feed `Failed`, `Outlet`.
+**Blocked outlet.** A beam blocked for 1 s (the stock filter) during a drive ends the feed at once: the motor stops, and the result is `Failed`, `Outlet` (`OutletBlocked` on the wire) with the portions credited so far. The outlet clearing again resumes nothing, and the feed is never retried.
 
 **A feed that never starts** because of an input ends with that input's reason. A blocked outlet, an unsettled or unreadable beam, low power, or current over the limit at rest keeps it from starting until its 2 s prepare window runs out. It then ends `Failed` with `Outlet`, `Sensor` or `Power`, with no motion (`motion_possible` false). A feed that only ran out of time still ends `Expired`, `TotalTimeout`: the journal's format holds an expired result to that reason, and bank 0 reads it with the same rule, so a reason of its own takes the failed outcome.
 
-Stock pauses a feed on a blocked outlet and resumes within about 10 min (record 2008). Wellfed ends it. Whether to wait and retry is owner-visible policy.
+Stock pauses a feed on a blocked outlet and resumes it if the outlet clears within about 10 min, else ends it (record 2008). Wellfed ends it at once: a documented difference, the owner's decision (October 28), so a blocked chute never turns into a meal delivered minutes late or partly into a blocked outlet.
 
 **Food beam.** The owner reads the food beam only while a feed's emitters are on, and publishes its latest qualified reading (`OwnerStatus::food`), which outlasts the feed. Food shows at once, and empty only after 1 s of readings without: stock's `surplusGrain` filter, 20 readings at its nominal 50 ms poll. `Feeds::food()` returns the reading, so the status's `food`, the `Food` change event and the statistics' Food section (present, emptied, refilled, feeds since refill) follow it as feeds read it. `present` comes from the first feed after a boot. An emptied or refilled hopper shows as the reading changes between feeds, so a refill between two feeds shows at the second.
 
@@ -99,7 +99,7 @@ Only lost sensors are held. A lost supervisor (the timer, its clock, the owner's
 - `PLOWN1 state=7 fault=7`: the owner holds lost sensors.
 - `PLOWN1 recover restart=1 held_ms=`: the one recovery restart, about to happen.
 
-No format changes. The journal's reasons and outcomes are ones bank 0 already decodes (`Overcurrent`, `FeedbackTimeout`, `Sensor`, `Outlet`, `Power` with `Failed`), and the device API's types are unchanged. Owner fault 7 appears only in UART records and the simulator's reports.
+The journal's format is unchanged. Its record predates `Jammed` and `MarkStuck`, so it stores them as `Overcurrent` and `Sensor` (`FeedReason::journaled`), reasons bank 0 already decodes; the owner's reported result, the `Fed` event and the `PLOWN1 fed` line keep the specific reason (13 and 14 in the record's code). The device API's `FeedReason` names them `Jammed` and `MarkStuck`, and calls the outlet `OutletBlocked`; `Status.feed_fault` names the last feed that ended on a fault until one completes. Owner fault 7 appears only in UART records and the simulator's reports.
 
 ## Fault-injection variants
 
@@ -110,8 +110,8 @@ The requested portions choose the case (`feed_faults::Planner`, host-tested):
 | Variant | Portions | Shown | Expected, empty hopper |
 | --- | --- | --- | --- |
 | `feed-jam` | 1 | A jam the first reversal frees, 2 s into the drive (forward reads 1000 raw, about 620 scaled, until the motor first drives back) | One reversal, then `Done`, `completed=1`, `reversals=1`, about 11.5 s of drive |
-| `feed-jam` | 2 | A jam no reversal frees, 2 s into the drive | Three reversals, then `Failed`, `Overcurrent`, `reversals=3`, about 7 s from the start |
-| `feed-jam` | 3 | The mark input stuck LOW, 2 s into the drive | `Failed`, `Sensor`, about 6 s of drive |
+| `feed-jam` | 2 | A jam no reversal frees, 2 s into the drive | Three reversals, then `Failed`, `Jammed`, `reversals=3`, about 7 s from the start |
+| `feed-jam` | 3 | The mark input stuck LOW, 2 s into the drive | `Failed`, `MarkStuck`, about 6 s of drive |
 | `sensor-fault` | 1 | Marks lost from the drive's start (PA18 reads HIGH, its interrupts dropped) | `Failed`, `FeedbackTimeout`, at about 11 s |
 | `sensor-fault` | 2 | The outlet blocked before the feed starts | `Failed`, `Outlet`, no motion, about 2 s |
 | `sensor-fault` | 3 | The ADC lost 2 s into the drive | `Failed`, `Sensor`; owner fault 7, readiness `Fault`, no reset until a `Reboot` |

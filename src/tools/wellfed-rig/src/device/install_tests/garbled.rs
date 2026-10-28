@@ -287,6 +287,7 @@ fn status() -> proto::Status<'static> {
         sessions: 1,
         desiccant: proto::Desiccant::Unset,
         food: FoodLevel::Unread,
+        feed_fault: None,
     }
 }
 

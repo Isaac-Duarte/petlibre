@@ -11,13 +11,13 @@ use wellfed_proto::setup as proto_setup;
 
 use crate::{
     Answer, Bank1Page, Battery, Blocked, Bowl, Calibration, CalibrationView, Capabilities, Client,
-    ClientRole, Counters, Counts, Desiccant, EnrollPath, Erases, Event, EventBody, FeedOutcome,
-    FeedReason, Flash, Food, FoodLevel, Generation, Hello, Hex, Invite, Joined, LogLines,
-    MealReminder, Memory, MissedReason, NtpResult, NtpServer, Op, OpenRefusal, Phase, Plan, Plans,
-    Portions, Power, PowerStats, Readiness, Refusal, ResetCause, Resets, Sample, SampleValue,
-    Settings, SettingsPatch, Source, Stats, StatsSection, Status, StockPlanSectors, Supply,
-    TaskStack, TimeSource, TimeSync, TimeView, Tune, UpdatePhase, UpdateRefusal, UpdateStop,
-    UpdateView, Weekdays, WifiSource, Window, setup,
+    ClientRole, Counters, Counts, Desiccant, EnrollPath, Erases, Event, EventBody, FeedFault,
+    FeedOutcome, FeedReason, Flash, Food, FoodLevel, Generation, Hello, Hex, Invite, Joined,
+    LogLines, MealReminder, Memory, MissedReason, NtpResult, NtpServer, Op, OpenRefusal, Phase,
+    Plan, Plans, Portions, Power, PowerStats, Readiness, Refusal, ResetCause, Resets, Sample,
+    SampleValue, Settings, SettingsPatch, Source, Stats, StatsSection, Status, StockPlanSectors,
+    Supply, TaskStack, TimeSource, TimeSync, TimeView, Tune, UpdatePhase, UpdateRefusal,
+    UpdateStop, UpdateView, Weekdays, WifiSource, Window, setup,
 };
 use crate::{
     CurrentUnit, FeedStats, Malformed, Trace, TraceEntry, TraceMotor, TracePage, TraceSummary,
@@ -71,6 +71,7 @@ impl From<proto::Status<'_>> for Status {
             sessions,
             desiccant,
             food,
+            feed_fault,
         } = status;
         Self {
             build: build.to_owned(),
@@ -95,6 +96,11 @@ impl From<proto::Status<'_>> for Status {
             last_event,
             sessions,
             food: food.into(),
+            feed_fault: feed_fault.map(|fault| FeedFault {
+                feed: fault.feed,
+                outcome: fault.outcome.into(),
+                reason: fault.reason.into(),
+            }),
             readiness: None,
             desiccant: desiccant.into(),
             supply: None,
@@ -641,7 +647,9 @@ impl From<proto::FeedReason> for FeedReason {
             proto::FeedReason::NoFeedback => Self::NoFeedback,
             proto::FeedReason::Power => Self::Power,
             proto::FeedReason::Sensor => Self::Sensor,
-            proto::FeedReason::Outlet => Self::Outlet,
+            proto::FeedReason::OutletBlocked => Self::OutletBlocked,
+            proto::FeedReason::Jammed => Self::Jammed,
+            proto::FeedReason::MarkStuck => Self::MarkStuck,
             proto::FeedReason::Overcurrent => Self::Overcurrent,
             proto::FeedReason::FeedbackStream => Self::FeedbackStream,
             proto::FeedReason::Output => Self::Output,
@@ -660,7 +668,9 @@ impl From<FeedReason> for proto::FeedReason {
             FeedReason::NoFeedback => Self::NoFeedback,
             FeedReason::Power => Self::Power,
             FeedReason::Sensor => Self::Sensor,
-            FeedReason::Outlet => Self::Outlet,
+            FeedReason::OutletBlocked => Self::OutletBlocked,
+            FeedReason::Jammed => Self::Jammed,
+            FeedReason::MarkStuck => Self::MarkStuck,
             FeedReason::Overcurrent => Self::Overcurrent,
             FeedReason::FeedbackStream => Self::FeedbackStream,
             FeedReason::Output => Self::Output,
@@ -1816,6 +1826,7 @@ mod tests {
             sessions: 1,
             desiccant: proto::Desiccant::Unknown,
             food: proto::FoodLevel::Unread,
+            feed_fault: None,
         };
         assert_eq!(Status::from(status).clock, None);
     }

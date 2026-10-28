@@ -207,6 +207,11 @@ impl Device for Fake {
             // The widest count, so a frame that holds it holds any.
             desiccant: proto::Desiccant::Remaining { days: i32::MIN },
             food: FoodLevel::Unread,
+            feed_fault: Some(proto::FeedFault {
+                feed: u32::MAX,
+                outcome: proto::FeedOutcome::Uncertain,
+                reason: proto::FeedReason::MarkStuck,
+            }),
         }
     }
 

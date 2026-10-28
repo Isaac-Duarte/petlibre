@@ -231,7 +231,7 @@ impl<I: SlotIo> FeedJournal<I> {
         put_u16::<40, _>(&mut p, v.result.requested);
         put_u16::<42, _>(&mut p, v.result.completed);
         p[44] = v.result.outcome.byte();
-        p[45] = v.result.reason.byte();
+        p[45] = v.result.reason.journaled().byte();
         put_u16::<46, _>(&mut p, self.config.max_portions);
 
         seal(&mut p);
@@ -265,7 +265,8 @@ impl<I: SlotIo> FeedJournal<I> {
                 requested: get_u16::<40, _>(p),
                 completed: get_u16::<42, _>(p),
                 outcome: OwnerOutcome::from_byte(p[44])?,
-                reason: FeedReason::from_byte(p[45])?,
+                // A reason the journal never stores is no record of its.
+                reason: FeedReason::from_byte(p[45]).filter(|r| r.journaled() == *r)?,
                 motion_possible: p[15] & 4 != 0,
             },
         };

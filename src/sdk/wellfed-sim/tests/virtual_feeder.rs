@@ -353,7 +353,7 @@ fn faults_stop_and_finish_without_success() {
             "wedged",
             vec![act(3000, "wedge", &[2])],
             16_000,
-            json!({"reason": "overcurrent"}),
+            json!({"reason": "jammed"}),
         ),
         (
             "outlet",
@@ -803,7 +803,7 @@ fn the_start_up_surge_is_tolerated_inside_its_window() {
     let report = checked(&long);
     let status = last_status(&report);
     assert_eq!(status["outcome"], 4, "failed");
-    assert_eq!(status["reason"], 10, "overcurrent");
+    assert_eq!(status["reason"], 13, "jammed");
     assert_eq!(
         drives(&report, 2),
         1,
@@ -874,7 +874,7 @@ fn a_jam_the_first_reversal_frees_lets_the_feed_complete() {
 }
 
 /// A wedge no reversal frees: three reversals, as stock makes, then the
-/// feed ends failed `Overcurrent`, stopped, and is not started again. The
+/// feed ends failed `Jammed`, stopped, and is not started again. The
 /// whole drive stays inside the deadline the reversals lengthened.
 #[test]
 fn a_jam_that_holds_ends_the_feed_after_three_reversals() {
@@ -884,7 +884,7 @@ fn a_jam_that_holds_ends_the_feed_after_three_reversals() {
             act(3000, "wedge", &[2]),
             expect(
                 12_000,
-                json!({"state": "terminal", "outcome": "failed", "reason": "overcurrent",
+                json!({"state": "terminal", "outcome": "failed", "reason": "jammed",
                        "completed": 0, "durable": true, "motor": 0, "optics": 0}),
             ),
             act(12_001, "ack", &[1]),
@@ -921,9 +921,9 @@ fn lost_marks_end_the_feed_without_a_reversal() {
 }
 
 /// The mark input held LOW past any mark (4 s; a mark reads LOW for about
-/// 1.2 s) is a sensor fault, not a portion.
+/// 1.2 s) is a stuck mark, not a portion.
 #[test]
-fn a_mark_input_stuck_low_is_a_sensor_fault() {
+fn a_mark_input_stuck_low_is_a_stuck_mark() {
     let report = passing(
         vec![
             act(SUBMIT, "submit", &[1, 3]),
@@ -932,7 +932,7 @@ fn a_mark_input_stuck_low_is_a_sensor_fault() {
             expect(4900, json!({"state": "feeding"})),
             expect(
                 5100,
-                json!({"state": "terminal", "outcome": "failed", "reason": "sensor",
+                json!({"state": "terminal", "outcome": "failed", "reason": "mark_stuck",
                        "completed": 0, "durable": true, "motor": 0}),
             ),
         ],
@@ -960,6 +960,50 @@ fn a_blocked_outlet_fails_the_feed_before_any_motion() {
         "single",
     );
     assert_eq!(drives(&report, 1), 0);
+}
+
+/// An outlet that blocks after the first portion ends the feed with that
+/// portion: the motor stops, the result names the outlet and counts one,
+/// and the outlet clearing again resumes nothing (stock would pause up to
+/// about 10 minutes and resume).
+#[test]
+fn an_outlet_blocked_mid_feed_ends_it_with_the_portions_so_far() {
+    let report = passing(
+        vec![
+            act(SUBMIT, "submit", &[1, 3]),
+            act(ONE_PORTION + 500, "inputs", &[4]),
+            expect(
+                ONE_PORTION + 1700,
+                json!({"state": "terminal", "outcome": "failed", "reason": "outlet",
+                       "completed": 1, "durable": true, "motor": 0}),
+            ),
+            act(ONE_PORTION + 1800, "inputs", &[5]),
+            act(ONE_PORTION + 1801, "ack", &[1]),
+            expect(THREE_PORTIONS, json!({"state": "idle", "motor": 0})),
+        ],
+        THREE_PORTIONS + 100,
+        "single",
+    );
+    assert_eq!(drives(&report, 1), 1, "one drive, never resumed");
+}
+
+/// A feed runs whatever the food beam reads, as stock's does: with the
+/// beam reading no food it delivers every portion.
+#[test]
+fn a_feed_on_an_empty_hopper_completes() {
+    passing(
+        vec![
+            act(50, "inputs", &[7]),
+            act(SUBMIT, "submit", &[1, 1]),
+            expect(
+                ONE_PORTION,
+                json!({"state": "terminal", "outcome": "done", "completed": 1,
+                       "durable": true}),
+            ),
+        ],
+        ONE_PORTION + 100,
+        "single",
+    );
 }
 
 /// Lost sensors are held, not reset on: at rest, or after the feed they

@@ -22,6 +22,7 @@ use std::rc::Rc;
 use tokio::net::{TcpStream, UdpSocket};
 use wellfed_board_plaf103::storage;
 use wellfed_core::buttons::Gesture;
+use wellfed_core::feed::controller::FeedReason;
 use wellfed_core::ota::{self, CONFIRM_LEN};
 use wellfed_core::store::slot::SlotIo;
 use wellfed_core::store::update::{State, UpdateStore};
@@ -216,6 +217,11 @@ impl Sim {
     /// lets go.
     pub fn stall_feeds(&mut self, stalled: bool) {
         self.feeds.stall(stalled);
+    }
+
+    /// End the next feed on `reason` once its first portion is in.
+    pub fn fault_feed(&mut self, reason: FeedReason) {
+        self.feeds.fault(reason);
     }
 
     /// Fill the hopper (`true`) or empty it, for the next feed's food beam.

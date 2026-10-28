@@ -7,7 +7,10 @@ use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::{FoodLevel, Generation, MEAL_REMINDER_MINUTES_MAX, MEAL_REMINDER_MINUTES_MIN};
+use crate::{
+    FeedOutcome, FeedReason, FoodLevel, Generation, MEAL_REMINDER_MINUTES_MAX,
+    MEAL_REMINDER_MINUTES_MIN,
+};
 
 /// What the feeder reports about itself.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -41,6 +44,9 @@ pub struct Status {
     pub sessions: u8,
     /// The hopper as the food beam last read it (during the last feed).
     pub food: FoodLevel,
+    /// The last feed this boot that ended on a fault (failed or
+    /// uncertain), until a later feed completes.
+    pub feed_fault: Option<FeedFault>,
     /// Whether a feed can start now; absent from a feeder that does not
     /// report it.
     pub readiness: Option<Readiness>,
@@ -103,6 +109,14 @@ pub struct Supply {
     /// Whether the feeding owner judges the pack below the floor a feed
     /// needs; absent before it has judged.
     pub below_floor: Option<bool>,
+}
+
+/// A feed that ended on a fault: its `Fed` event has the rest.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct FeedFault {
+    pub feed: u32,
+    pub outcome: FeedOutcome,
+    pub reason: FeedReason,
 }
 
 /// Whether the feeder can start a feed now: the one decision a feed

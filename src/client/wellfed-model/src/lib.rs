@@ -46,8 +46,8 @@ pub use stats::{
     Resets, Stats, StatsSection, TaskStack,
 };
 pub use status::{
-    Battery, Blocked, Desiccant, MealReminder, MealReminderError, Power, Readiness, Settings,
-    SettingsPatch, Status, Supply, WifiSource, Window, WindowError,
+    Battery, Blocked, Desiccant, FeedFault, MealReminder, MealReminderError, Power, Readiness,
+    Settings, SettingsPatch, Status, Supply, WifiSource, Window, WindowError,
 };
 pub use trace::{CurrentUnit, Malformed, Trace, TraceEntry, TraceMotor, TracePage, TraceSummary};
 pub use update::{Bank1Page, StockPlanSectors, UpdatePhase, UpdateRefusal, UpdateStop, UpdateView};

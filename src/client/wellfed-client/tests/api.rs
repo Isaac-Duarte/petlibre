@@ -299,6 +299,7 @@ impl Device for Fake {
                 Count::Remaining(days) => proto::Desiccant::Remaining { days },
             },
             food: FoodLevel::Unread,
+            feed_fault: None,
         }
     }
 

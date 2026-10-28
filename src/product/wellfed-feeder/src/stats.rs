@@ -15,8 +15,9 @@
 //! of a boot's counts.
 
 use wellfed_proto::api::{
-    self as proto, Counters, Counts, CurrentUnit, EventBody, FLASH_SECTORS, FeedOutcome, FeedStats,
-    Food, Metric, POWER_HISTORY, Portions, Power, PowerStats, ResetCause, Resets, TraceSummary,
+    self as proto, Counters, Counts, CurrentUnit, EventBody, FLASH_SECTORS, FeedFault, FeedOutcome,
+    FeedStats, Food, Metric, POWER_HISTORY, Portions, Power, PowerStats, ResetCause, Resets,
+    TraceSummary,
 };
 
 use crate::feeder::Marks;
@@ -414,6 +415,8 @@ pub struct Keeper {
     beam: Beam,
     passes: PassTimes,
     traces: Traced,
+    /// The last feed that ended on a fault, until one completes.
+    feed_fault: Option<FeedFault>,
 }
 
 impl Default for Keeper {
@@ -455,6 +458,7 @@ impl Keeper {
             },
             passes: PassTimes::new(),
             traces: Traced::new(),
+            feed_fault: None,
         }
     }
 
@@ -506,11 +510,28 @@ impl Keeper {
     /// A feed's `Fed` event, the one record of how it ended.
     pub fn fed(&mut self, body: &EventBody) {
         let EventBody::Fed {
-            completed, outcome, ..
+            feed,
+            completed,
+            outcome,
+            reason,
+            ..
         } = *body
         else {
             return;
         };
+        // A cancel or an expiry is no fault of the feeder's to see to; a
+        // completed feed shows the fault is past.
+        match outcome {
+            FeedOutcome::Failed | FeedOutcome::Uncertain => {
+                self.feed_fault = Some(FeedFault {
+                    feed,
+                    outcome,
+                    reason,
+                });
+            }
+            FeedOutcome::Done => self.feed_fault = None,
+            FeedOutcome::Cancelled | FeedOutcome::Expired => {}
+        }
         self.feeds = self.feeds.saturating_add(1);
         if outcome != FeedOutcome::Done {
             self.feeds_failed = self.feeds_failed.saturating_add(1);
@@ -681,6 +702,12 @@ impl Keeper {
             portion_mg,
             delivered_mg: portion_mg.map(|mg| u64::from(mg) * u64::from(self.portions)),
         }
+    }
+
+    /// The last feed this boot that ended on a fault, until a later feed
+    /// completes.
+    pub const fn feed_fault(&self) -> Option<FeedFault> {
+        self.feed_fault
     }
 
     pub fn food_stats(&self) -> Food {

@@ -34,7 +34,7 @@ use wellfed_core::feed::storage::{OwnerOutcome, OwnerRecovery, OwnerResult};
 use wellfed_core::store::feed_journal::{FeedJournal, JournalConfig, JournalError};
 use wellfed_feeder::feed::{self, Durability};
 use wellfed_feeder::feeder::Feeds;
-use wellfed_proto::api::{Blocked, EventBody, Refusal, Source};
+use wellfed_proto::api::{Blocked, EventBody, PORTIONS_MAX, Refusal, Source};
 
 use crate::flash::{Flash, Region};
 
@@ -46,7 +46,7 @@ pub const PORTION_MS: u32 = 200;
 const JOURNAL: JournalConfig = JournalConfig {
     binding: 0x5349_4d5f_4645_4544,
     mode: BowlMode::Single,
-    max_portions: 48,
+    max_portions: PORTIONS_MAX as u16,
 };
 
 /// The feed the owner holds, from its reservation to its result.
@@ -231,9 +231,10 @@ impl Feeds for SimFeeds {
         if self.failed || self.interrupted.is_some() || self.current.is_some() || self.refusing {
             return Err(Refusal::Busy);
         }
+        let asked = portions;
         let portions = u16::from(portions);
         if portions == 0 || portions > JOURNAL.max_portions {
-            return Err(Refusal::Invalid);
+            return Err(Refusal::Portions { asked });
         }
         let feed = self.journal.view.recovery.high_water_id.wrapping_add(1);
         let number = u32::try_from(feed).map_err(|_| Refusal::NotWritable)?;

@@ -293,6 +293,9 @@ impl From<proto::EventBody> for EventBody {
                 due: seconds(due),
                 reason: reason.into(),
             },
+            proto::EventBody::DispenseRefused { reason } => Self::DispenseRefused {
+                reason: reason.into(),
+            },
         }
     }
 }
@@ -365,6 +368,9 @@ impl From<EventBody> for proto::EventBody {
             EventBody::Missed { plan, due, reason } => Self::Missed {
                 plan,
                 due: u32::try_from(due.as_second()).unwrap_or(u32::MAX),
+                reason: reason.into(),
+            },
+            EventBody::DispenseRefused { reason } => Self::DispenseRefused {
                 reason: reason.into(),
             },
         }
@@ -1223,6 +1229,8 @@ impl From<proto::UpdateRefusal> for UpdateRefusal {
     }
 }
 
+const _: () = assert!(crate::PORTIONS_MAX == proto::PORTIONS_MAX);
+
 impl From<proto::Refusal> for Refusal {
     fn from(refusal: proto::Refusal) -> Self {
         match refusal {
@@ -1241,6 +1249,7 @@ impl From<proto::Refusal> for Refusal {
             proto::Refusal::Fault => Self::Fault,
             proto::Refusal::Update(refusal) => Self::Update(refusal.into()),
             proto::Refusal::Unverified => Self::Unverified,
+            proto::Refusal::Portions { asked } => Self::Portions { asked },
         }
     }
 }

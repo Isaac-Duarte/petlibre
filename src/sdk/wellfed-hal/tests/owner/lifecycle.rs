@@ -15,6 +15,8 @@ fn serialized_lifecycle_and_durable_success() {
     let mut f = boot();
     assert_eq!(f.owner.submit(0, 1), SubmitResult::RejectId);
     assert_eq!(f.owner.submit(1, 0), SubmitResult::RejectRequest);
+    let over = CONFIG.feed.max_portions + 1;
+    assert_eq!(f.owner.submit(1, over), SubmitResult::RejectRequest);
 
     f.start_feed();
     assert_eq!(f.owner.submit(2, 1), SubmitResult::RejectBusy);

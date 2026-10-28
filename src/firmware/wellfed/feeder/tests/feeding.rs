@@ -57,6 +57,9 @@ fn the_journal_matches_the_owner() {
     assert_eq!(JOURNAL.mode, CONFIG.bowl_mode);
     assert_eq!(JOURNAL.max_portions, CONFIG.feed.max_portions);
     assert_eq!(JOURNAL.max_portions, MAX_PORTIONS);
+    // Every feed request is checked against the wire's cap before it
+    // reaches the owner, which must accept every one that passes.
+    assert_eq!(MAX_PORTIONS, u16::from(wellfed_proto::api::PORTIONS_MAX));
     assert_ne!(JOURNAL.binding, 0);
 }
 

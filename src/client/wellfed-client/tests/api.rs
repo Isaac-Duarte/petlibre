@@ -1064,7 +1064,7 @@ fn a_feed_answers_once_reserved_and_a_retry_never_feeds_twice() {
     let mut owner = open(&mut rig, OWNER);
 
     let zero = ask(&mut rig, &mut owner, 1, Op::Feed { portions: 0 });
-    assert_eq!(zero, Answer::Refused(model::Refusal::Invalid));
+    assert_eq!(zero, Answer::Refused(model::Refusal::Portions { asked: 0 }));
     let feed = ask(&mut rig, &mut owner, 2, Op::Feed { portions: 3 });
     assert_eq!(feed, Answer::Feeding { feed: 1 });
     let by = proto::Source::Client(public(OWNER)[..4].try_into().unwrap());
@@ -2103,6 +2103,7 @@ fn every_body() -> Vec<EventBody> {
             EventBody::Supply(_) => 10,
             EventBody::Plans { .. } => 11,
             EventBody::Missed { .. } => 12,
+            EventBody::DispenseRefused { .. } => 13,
         }
     }
     let by = proto::Source::Panel;
@@ -2143,6 +2144,9 @@ fn every_body() -> Vec<EventBody> {
             plan: 0,
             due: 1_793_200_000,
             reason: proto::MissedReason::Late,
+        },
+        EventBody::DispenseRefused {
+            reason: proto::Blocked::Feeding,
         },
     ];
     let mut seen: Vec<usize> = bodies.iter().map(variant).collect();

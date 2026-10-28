@@ -218,6 +218,68 @@ fn a_press_obeys_readiness_and_a_lasting_reason_is_recorded() {
     assert_eq!(readiness, Readiness::Blocked(Blocked::Resolving));
 }
 
+/// A press while a feed runs starts nothing and is not queued; the first
+/// of the spell is a `DispenseRefused` event, the rest only log lines, and
+/// once the feeder is ready again the next spell's first is recorded too.
+#[test]
+fn a_press_during_a_feed_is_recorded_once_a_spell_and_not_queued() {
+    let mut rig = Rig::new();
+    rig.unlock();
+    let _ = rig.events();
+
+    rig.owner.blocked = Some(Blocked::Feeding);
+    rig.press_dispense();
+    rig.press_dispense();
+    assert!(rig.owner.submitted.is_empty(), "nothing queued");
+    let busy = rig
+        .lines
+        .iter()
+        .filter(|l| *l == "PLFEED1 dispense refused=busy")
+        .count();
+    assert_eq!(busy, 2, "every press is logged: {:?}", rig.lines);
+
+    rig.owner.blocked = None;
+    rig.pass();
+    rig.owner.blocked = Some(Blocked::Resolving);
+    rig.press_dispense();
+    assert!(rig.owner.submitted.is_empty());
+
+    let refused: Vec<_> = rig
+        .events()
+        .into_iter()
+        .filter(|body| matches!(body, EventBody::DispenseRefused { .. }))
+        .collect();
+    assert_eq!(
+        refused,
+        [
+            EventBody::DispenseRefused {
+                reason: Blocked::Feeding
+            },
+            EventBody::DispenseRefused {
+                reason: Blocked::Resolving
+            },
+        ]
+    );
+}
+
+/// Every source asks for 1 to 48 portions, through the one queue: anything
+/// else is refused by name and never reaches the owner.
+#[test]
+fn a_feed_outside_one_to_48_portions_never_reaches_the_owner() {
+    let mut rig = Rig::new();
+    let by = Source::Client([7; 4]);
+
+    for asked in [0, 49, u8::MAX] {
+        let feed = rig.feeder.device(rig.now, &mut rig.owner).feed(asked, by);
+        assert_eq!(feed, Err(Refusal::Portions { asked }));
+    }
+    assert!(rig.owner.submitted.is_empty());
+
+    let feed = rig.feeder.device(rig.now, &mut rig.owner).feed(48, by);
+    assert_eq!(feed, Ok(1));
+    assert_eq!(rig.owner.submitted, [(48, by)]);
+}
+
 #[test]
 fn a_client_feed_plays_no_tune() {
     let mut rig = Rig::new();

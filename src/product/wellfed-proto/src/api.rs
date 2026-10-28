@@ -260,8 +260,11 @@ pub enum Op<'a> {
         key: [u8; 32],
     },
     /// Answered [`Outcome::Feeding`] once the feed is durably reserved; its
-    /// result is a [`EventBody::Fed`] in the history. Refused `Unavailable`
-    /// by a feeder without [`Capabilities::FEED`].
+    /// result is a [`EventBody::Fed`] in the history, with the portions
+    /// asked for and those delivered. `portions` outside 1 to
+    /// [`PORTIONS_MAX`] is refused [`Refusal::Portions`] before anything
+    /// else is checked. Refused `Unavailable` by a feeder without
+    /// [`Capabilities::FEED`].
     Feed {
         portions: u8,
     },
@@ -371,7 +374,9 @@ pub enum Op<'a> {
     GetPlans,
     /// Replace every plan slot with `plans` if the plans are still at
     /// `base` generation, answered `Done` once the store holds them. A
-    /// plan with a field outside [`Plan`]'s limits is refused `Invalid`. A
+    /// plan asking for portions outside 1 to [`PORTIONS_MAX`] is refused
+    /// [`Refusal::Portions`] (the first such slot's), one with another
+    /// field outside [`Plan`]'s limits `Invalid`. A
     /// plan whose minute or days changed (or a new one) runs only from
     /// its next occurrence after the save.
     PutPlans {
@@ -429,8 +434,10 @@ pub struct CalibrationView {
 
 /// Plan slots a feeder keeps, as stock keeps at most ten plans.
 pub const PLANS_MAX: usize = 10;
-/// The most portions one plan asks for: the most one feed may.
-pub const PLAN_PORTIONS_MAX: u8 = 48;
+/// The most portions one feed asks for, whoever asks (a client, a plan or
+/// Dispense): the vendor app's cap on this model. Every feed asks for 1 to
+/// this many; anything else is refused [`Refusal::Portions`].
+pub const PORTIONS_MAX: u8 = 48;
 
 /// One feeding plan: `portions` at minute `minute` of the local day
 /// (0-1439), on the weekdays `days` lists (bit 0 Monday to bit 6 Sunday),
@@ -440,7 +447,7 @@ pub const PLAN_PORTIONS_MAX: u8 = 48;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Plan {
     pub minute: u16,
-    /// 1 to [`PLAN_PORTIONS_MAX`].
+    /// 1 to [`PORTIONS_MAX`].
     pub portions: u8,
     pub days: u8,
     pub enabled: bool,
@@ -844,6 +851,11 @@ pub enum Refusal {
     Update(UpdateRefusal),
     /// A bowl mode this feeder has not verified on hardware.
     Unverified,
+    /// A feed, or a plan's, asked for `asked` portions, outside 1 to
+    /// [`PORTIONS_MAX`].
+    Portions {
+        asked: u8,
+    },
 }
 
 /// Where an update stands. The install itself does not depend on the
@@ -1136,6 +1148,12 @@ pub enum EventBody {
         due: u32,
         reason: MissedReason,
     },
+    /// Dispense was pressed on an unlocked panel while a feed could not
+    /// start (`reason`), during a feed among them: it started nothing and
+    /// is not queued.
+    DispenseRefused {
+        reason: Blocked,
+    },
 }
 
 impl EventBody {
@@ -1144,7 +1162,7 @@ impl EventBody {
     /// past it). No wildcard, as for [`Op::capability`].
     pub const fn capability(&self) -> Capabilities {
         match self {
-            Self::Fed { .. } => Capabilities::FEED,
+            Self::Fed { .. } | Self::DispenseRefused { .. } => Capabilities::FEED,
             Self::FeedingBlocked { .. } => Capabilities::READINESS,
             Self::Supply(_) => Capabilities::POWER,
             Self::Plans { .. } | Self::Missed { .. } => Capabilities::PLANS,
@@ -1985,6 +2003,9 @@ mod tests {
                 plan: u8::MAX,
                 due: u32::MAX,
                 reason: MissedReason::Blocked(Blocked::Unserved),
+            },
+            EventBody::DispenseRefused {
+                reason: Blocked::Battery,
             },
         ] {
             let mut out = [0; 16];

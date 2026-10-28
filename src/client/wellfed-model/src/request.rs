@@ -43,7 +43,10 @@ pub enum Op {
         key: [u8; 32],
     },
     /// Answered [`Answer::Feeding`] once the feed is durably reserved; its
-    /// result is a [`crate::EventBody::Fed`] in the history.
+    /// result is a [`crate::EventBody::Fed`] in the history, with the
+    /// portions asked for and those delivered. `portions` outside 1 to
+    /// [`PORTIONS_MAX`](crate::PORTIONS_MAX) is refused
+    /// [`Refusal::Portions`].
     Feed {
         portions: u8,
     },
@@ -333,6 +336,11 @@ pub enum Refusal {
     Update(UpdateRefusal),
     /// A bowl mode this feeder has not verified on hardware.
     Unverified,
+    /// A feed, or a plan's, asked for `asked` portions, outside 1 to
+    /// [`PORTIONS_MAX`](crate::PORTIONS_MAX).
+    Portions {
+        asked: u8,
+    },
 }
 
 /// One enrolled client.

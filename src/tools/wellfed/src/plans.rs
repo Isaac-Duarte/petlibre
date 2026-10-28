@@ -6,9 +6,7 @@
 
 use anyhow::{Result, bail};
 use clap::{Args, Subcommand};
-use wellfed_model::{
-    Answer, Op, PLAN_PORTIONS_MAX, PLANS, Plan, Plans, Refusal, TimeOfDay, Weekdays,
-};
+use wellfed_model::{Answer, Op, PLANS, PORTIONS_MAX, Plan, Plans, Refusal, TimeOfDay, Weekdays};
 
 use crate::{Target, ask_and_print, connect, print_answer};
 
@@ -78,8 +76,10 @@ fn slot() -> clap::builder::RangedI64ValueParser<u8> {
     clap::value_parser!(u8).range(0..i64::try_from(PLANS).unwrap_or(i64::MAX))
 }
 
-fn portions() -> clap::builder::RangedI64ValueParser<u8> {
-    clap::value_parser!(u8).range(1..=i64::from(PLAN_PORTIONS_MAX))
+/// Portions for a feed or a plan: 1 to the feeder's cap, which it checks
+/// again and refuses by name.
+pub(crate) fn portions() -> clap::builder::RangedI64ValueParser<u8> {
+    clap::value_parser!(u8).range(1..=i64::from(PORTIONS_MAX))
 }
 
 /// What a change does to the table.

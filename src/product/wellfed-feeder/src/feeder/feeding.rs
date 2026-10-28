@@ -13,8 +13,14 @@
 //! event; every change goes to the log.
 //!
 //! **One path.** A Dispense press asks for one portion, as stock's does,
-//! through [`queue`], which a client's `Feed` also takes: the same
-//! readiness, the same owner, the same `Fed` event (by the panel).
+//! through [`queue`], which a client's `Feed` and a plan's also take: the
+//! same readiness, the same owner, the same `Fed` event (by the panel)
+//! with the portions asked for and those delivered. A press while a feed
+//! cannot start (one running among the reasons) starts nothing and is not
+//! queued; stock logs it (record code 2022), and here the first such press
+//! of each spell is a `DispenseRefused` event ([`Watch::refused`]), so a
+//! child at the panel cannot fill the event queue during a long feed. Every
+//! press goes to the log.
 //!
 //! **Silent.** A feed plays no tune; that is the owner's choice. A tune a
 //! client asks for with `play` is stepped after the owner and the device
@@ -23,7 +29,7 @@
 
 use core::fmt;
 
-use wellfed_proto::api::{Blocked, EventBody, Readiness, Refusal, Source};
+use wellfed_proto::api::{Blocked, EventBody, PORTIONS_MAX, Readiness, Refusal, Source};
 
 use super::Feeds;
 use super::events;
@@ -61,13 +67,17 @@ pub const fn held(ready: Readiness, meal: bool) -> Readiness {
 }
 
 /// Queue one feed of `portions` for `by` while `ready` allows it. The
-/// number the journal holds the feed under, or why it was refused.
+/// number the journal holds the feed under, or why it was refused:
+/// portions outside 1 to [`PORTIONS_MAX`] first, by name, whoever asks.
 pub fn queue<F: Feeds>(
     feeds: &mut F,
     ready: Readiness,
     portions: u8,
     by: Source,
 ) -> Result<u32, Refusal> {
+    if !(1..=PORTIONS_MAX).contains(&portions) {
+        return Err(Refusal::Portions { asked: portions });
+    }
     if let Readiness::Blocked(blocked) = ready {
         return Err(blocked.refusal());
     }
@@ -102,11 +112,25 @@ pub fn describe(record: Record, f: &mut impl fmt::Write) -> fmt::Result {
     }
 }
 
-/// The last readiness logged and the last lasting reason recorded.
+/// Why a refused Dispense press could not feed: the reason of the
+/// readiness it was asked under, or, for one the owner refused although it
+/// was asked while ready (it lost a race), the owner's own reason now.
+pub fn refused_reason<F: Feeds>(feeds: &F, ready: Readiness) -> Blocked {
+    match ready {
+        Readiness::Blocked(blocked) => blocked,
+        Readiness::Ready => feeds.blocked().unwrap_or(Blocked::Feeding),
+    }
+}
+
+/// The last readiness logged, the last lasting reason recorded, and
+/// whether this spell's refused Dispense press was.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Watch {
     logged: Option<Readiness>,
     lasting: Option<Blocked>,
+    /// A refused Dispense press was recorded since the feeder was last
+    /// ready.
+    refused: bool,
 }
 
 impl Watch {
@@ -114,6 +138,16 @@ impl Watch {
         Self {
             logged: None,
             lasting: None,
+            refused: false,
+        }
+    }
+
+    /// A Dispense press that could not feed, for `reason`: the first of
+    /// the spell (since the feeder was last ready) is recorded in the
+    /// history, the rest only in the log.
+    pub fn refused<P: Platform>(&mut self, platform: &mut P, now_ms: u32, reason: Blocked) {
+        if !core::mem::replace(&mut self.refused, true) {
+            events::record(platform, now_ms, EventBody::DispenseRefused { reason });
         }
     }
 
@@ -130,6 +164,9 @@ impl Watch {
         if self.logged != Some(now) {
             self.logged = Some(now);
             record(Record::Readiness(now));
+        }
+        if now == Readiness::Ready {
+            self.refused = false;
         }
         let lasting = match now {
             Readiness::Blocked(blocked) if blocked.lasting() => Some(blocked),
@@ -169,6 +206,7 @@ pub(super) const fn refusal_name(refusal: Refusal) -> &'static str {
         Refusal::Invalid => "invalid",
         Refusal::NotWritable => "not-writable",
         Refusal::Unverified => "unverified",
+        Refusal::Portions { .. } => "portions",
         Refusal::Forbidden
         | Refusal::Stale { .. }
         | Refusal::Full

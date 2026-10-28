@@ -6202,6 +6202,25 @@
                 ]
               }
             }
+          },
+          {
+            "type": "object",
+            "description": "Dispense was pressed on an unlocked panel while a feed could not\nstart, during a feed among them: it started nothing and was not\nqueued.",
+            "required": [
+              "reason",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "dispense_refused"
+                ]
+              },
+              "reason": {
+                "$ref": "#/components/schemas/Blocked"
+              }
+            }
           }
         ]
       },
@@ -6633,7 +6652,8 @@
           "not_found",
           "muted",
           "time",
-          "fault"
+          "fault",
+          "portions"
         ]
       },
       "FeederSample": {

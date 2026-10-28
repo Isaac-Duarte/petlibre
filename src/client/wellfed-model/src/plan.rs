@@ -11,8 +11,10 @@ use crate::status::{WindowError, minute};
 
 /// Plan slots a feeder keeps.
 pub const PLANS: usize = 10;
-/// The most portions one plan asks for: the most one feed may.
-pub const PLAN_PORTIONS_MAX: u8 = 48;
+/// The most portions one feed asks for, whoever asks (a client, a plan or
+/// Dispense); a request outside 1 to this is refused
+/// [`Refusal::Portions`](crate::Refusal::Portions).
+pub const PORTIONS_MAX: u8 = 48;
 
 /// One feeding plan: `portions` at minute `minute` of the feeder's local
 /// day, on the weekdays `days` lists, or once at its next occurrence when
@@ -25,7 +27,7 @@ pub const PLAN_PORTIONS_MAX: u8 = 48;
 pub struct Plan {
     /// 0-1439.
     pub minute: u16,
-    /// 1 to [`PLAN_PORTIONS_MAX`].
+    /// 1 to [`PORTIONS_MAX`].
     pub portions: u8,
     pub days: Weekdays,
     pub enabled: bool,
@@ -34,7 +36,7 @@ pub struct Plan {
 impl Plan {
     /// Whether the feeder accepts the plan.
     pub fn valid(&self) -> bool {
-        self.minute < 24 * 60 && (1..=PLAN_PORTIONS_MAX).contains(&self.portions)
+        self.minute < 24 * 60 && (1..=PORTIONS_MAX).contains(&self.portions)
     }
 }
 

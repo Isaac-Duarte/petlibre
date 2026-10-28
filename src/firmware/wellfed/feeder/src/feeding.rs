@@ -1021,7 +1021,7 @@ mod target {
                     self.unreserved = None;
                     Ok(number)
                 }
-                SubmitResult::RejectRequest => Err(Refusal::Invalid),
+                SubmitResult::RejectRequest => Err(Refusal::Portions { asked: portions }),
                 SubmitResult::RejectStopped if status.state == OwnerState::Fault => {
                     Err(Refusal::Fault)
                 }

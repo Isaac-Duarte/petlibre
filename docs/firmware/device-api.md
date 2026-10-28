@@ -47,7 +47,7 @@ Subscribe { after, samples }          Event { seq, at, body }
 | `PutWifi { base, wifi }` | `None` clears |
 | `SetLock`, `Play`, `TimeSync` | An owner's `TimeSync` may step the clock; anyone else's may only narrow it, and is refused `Time` when it disagrees with a valid clock beyond both error bounds |
 | `CreateInvite { role }`, `ListClients`, `RevokeClient { key }` | |
-| `Feed { portions }` | Answered `Feeding { feed }` once the owner has reserved it; the result is a `Fed` event |
+| `Feed { portions }` | 1 to 48 portions. Answered `Feeding { feed }` once the owner has reserved it; the result is a `Fed` event. Any other number is refused `Portions { asked }` |
 | `CancelFeed { feed }` | `Done` while that feed runs, `NotFound` once it has ended |
 | `Reboot` | |
 
@@ -55,7 +55,7 @@ Subscribe { after, samples }          Event { seq, at, body }
 
 | Bit | Ops |
 | --- | --- |
-| `FEED` | The feed ops, the `Feeding` answer, the `Fed` event and the `Fault` refusal. A feeder answers a client whose hello lacks the bit `Unavailable`, and never pushes it a `Fed` event |
+| `FEED` | The feed ops, the `Feeding` answer, the `Fed` and `DispenseRefused` events and the `Fault` and `Portions` refusals. A feeder answers a client whose hello lacks the bit `Unavailable`, and never pushes it a `Fed` event |
 | `TIME` | `GetTime`, answered `Time(TimeView)`: the zone's rule, the NTP server, the clock with its error bound (or `None` while the feeder needs the time), the learned rate, the last source and the last NTP result. `PutTime { base, changes }`, owners only ([clock](clock.md)) |
 | `UPDATE` | `OfferUpdate`, `UpdateChunk`, `UpdateState`, `CancelUpdate`, `EnrollUpdateKey`, `UpdateKeyStatement` |
 | `STATS` | `Stats { section }`, and four more metrics |
@@ -66,7 +66,7 @@ Subscribe { after, samples }          Event { seq, at, body }
 | `POWER` | The `Supply` metric and event, and the `Battery` readiness reason |
 | `PLANS` | `GetPlans`, answered `Plans { generation, writable, plans }`, and `PutPlans { base, plans }`, which replaces all ten slots. The `Plans` and `Missed` events, and the `Schedule` source of a plan's `Fed` event ([schedules](schedules.md)) |
 
-`Fed` carries the feed's number, the portions asked for and confirmed, an outcome and a reason. The outcome is `Done`, `Cancelled`, `Expired`, `Failed`, or `Uncertain`: the owner stopped without a durable result, or a reset interrupted the feed and the next boot resolved it.
+`Fed` carries the feed's number, the portions asked for (`requested`) and those delivered (`completed`, one per rotor mark the feedback sensor confirmed), an outcome and a reason. The outlet beam's breaks are a lower bound on food passing, not a count, so they stay in the log and the statistics ([calibration](calibration.md#delivered-food-estimate)). The outcome is `Done`, `Cancelled`, `Expired`, `Failed`, or `Uncertain`: the owner stopped without a durable result, or a reset interrupted the feed and the next boot resolved it.
 
 **Samples** `Power` (every supply sample, 5 s) and `Rssi` (30 s) are major version 1's. `Heap`, `Loop`, `Gateway` and `Wifi` (30 s) go only to a subscriber whose hello claims `STATS`, and `Supply` only to one that claims `POWER`.
 
@@ -106,6 +106,7 @@ A client that may want to cancel keeps its session open across the feed, as `wel
 **A `Feed` goes to the feeding owner** in the same loop (`feeding::Feeding`), under the next journal id. The answer waits until the owner has reserved the feed, then names it. When the owner reports the result, the loop logs `PLOWN1 fed …` with what the drive measured, records a `Fed` event and acknowledges the result, so the owner takes the next.
 
 **Refusals.** Like every refusal, these are final for that write id. Nothing moved, so trying again is a new feed the user asks for.
+- Every feed asks for 1 to 48 portions (`PORTIONS_MAX`, the vendor app's cap on this model), whoever asks: a client, a plan or Dispense. Any other number is refused `Portions { asked }` before anything else is checked, so the refusal says what to change rather than when to try again. Stock takes any byte unchecked.
 - One feed at a time: a second is refused `Busy`.
 - A faulted owner refuses `Fault`.
 - A feed is refused `Busy` while a Wi-Fi join attempt runs (from its scan through association to DHCP) or waits for the outputs. An association holds every task for up to 0.72 s ([resource budget](resource-budget.md#scheduling-gaps-across-wi-fi-rejoins)), so feeds and joins take turns (`wellfed_hal::interlock`).
@@ -152,6 +153,8 @@ A client that may want to cancel keeps its session open across the feed, as `wel
 - The panel lock is not a reason: it holds only the Dispense button.
 
 **The Dispense button** asks for one portion, as stock's does. It goes through the same readiness and the same owner as a client's `Feed`, and its `Fed` event says `by: Panel`. A locked panel ignores it, and a pending pairing confirmation takes the press first. The loop logs `PLFEED1 dispense feed=N` or `dispense refused=…`.
+
+A press while a feed cannot start, a feed running among the reasons, starts nothing and is not queued, as stock's (its record code 2022). The first such press after the feeder was last ready is recorded as a `DispenseRefused { reason }` event; later presses in the same spell are only logged, so presses during a long feed cannot fill the event queue, whose appends wait for the feed's end.
 
 **Feeds are silent.** A feed, by a press or a client, asks nothing of the speaker. The loop still steps the speaker outside setup mode for a client's `play` request, after the owner and the device API. So a tune that is playing, will not open or stalls leaves a feed, its cancel and its `Fed` event alone. An owner-chosen call before a scheduled meal belongs to the schedule feature.
 
@@ -214,7 +217,7 @@ Every flash lease checks that the outputs are stopped, and fails closed when the
 ### Time and calibration
 
 - **Time** (`Capabilities::TIME`). `GetTime` answers the time view. `PutTime` queues the zone's rule and the NTP server for the settings writer (storage sectors 27 and 28). It is answered `Done` once the store holds the settings asked for (or already held them), and refused `NotWritable` when the writer could not write them, with no event. The loop applies a new generation on its next pass, and runs the NTP exchange on one more UDP socket ([clock](clock.md#ntp)).
-- **Plans** (`Capabilities::PLANS`, bit 1024). `PutPlans` is checked against the plans' generation like a settings write, refused `Invalid` for a plan outside its limits before anything is queued, and `Busy` while the outputs are claimed. It is answered `Done { generation }` once the store holds the table, and records a `Plans` event with its client. The writer saves the table in storage sectors 11 and 12 ([schedules](schedules.md)).
+- **Plans** (`Capabilities::PLANS`, bit 1024). `PutPlans` is checked against the plans' generation like a settings write, refused `Portions { asked }` for a plan asking for other than 1 to 48 portions and `Invalid` for one with another field outside its limits, before anything is queued, and `Busy` while the outputs are claimed. It is answered `Done { generation }` once the store holds the table, and records a `Plans` event with its client. The writer saves the table in storage sectors 11 and 12 ([schedules](schedules.md)).
 - **Calibration** (`Capabilities::CALIBRATION`, bit 256). `GetCalibration` answers the stored weight of one portion, the bowl mode the build runs and the rotor's phase. `PutCalibration` (owners only) queues a new weight for the settings writer (storage sectors 34 and 35). It is answered `Done` once stored, `Invalid` outside 1–50 g, and `Unverified` for a bowl mode the build was not verified for. The statistics' `Portions` section needs the same bit. There is no event: the calibration has its own generation ([calibration](calibration.md)).
 
 ### Events and samples

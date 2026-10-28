@@ -1180,6 +1180,13 @@ fn a_member_edits_the_plans_against_the_generation_it_read() {
             ..breakfast
         });
         let refused = member.ask(sim.id(), &put(0, invalid)).await.unwrap();
+        assert_eq!(refused, Answer::Refused(Refusal::Portions { asked: 49 }));
+        let mut late = table;
+        late[1] = Some(Plan {
+            minute: 24 * 60,
+            ..breakfast
+        });
+        let refused = member.ask(sim.id(), &put(0, late)).await.unwrap();
         assert_eq!(refused, Answer::Refused(Refusal::Invalid));
         let stored = member.ask(sim.id(), &put(0, table)).await.unwrap();
         assert_eq!(

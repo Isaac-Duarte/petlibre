@@ -91,7 +91,8 @@ pub(crate) struct LockArgs {
 pub(crate) struct FeedArgs {
     #[command(flatten)]
     which: Which,
-    #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u8).range(1..))]
+    /// Portions to dispense, 1-48.
+    #[arg(long, default_value_t = 1, value_parser = crate::plans::portions())]
     portions: u8,
 }
 

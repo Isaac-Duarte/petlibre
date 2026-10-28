@@ -926,6 +926,18 @@ fn messages() -> Vec<Fixture> {
             }),
             |b| decode::<EventBody>(b).is_ok(),
         ),
+        (
+            "refused-portions",
+            entry(&response(Outcome::Refused(Refusal::Portions { asked: 49 }))),
+            feeder,
+        ),
+        (
+            "event-dispense-refused",
+            entry(&EventBody::DispenseRefused {
+                reason: Blocked::Feeding,
+            }),
+            |b| decode::<EventBody>(b).is_ok(),
+        ),
     ]
 }
 

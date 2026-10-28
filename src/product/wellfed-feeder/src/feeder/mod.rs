@@ -315,6 +315,8 @@ impl<P: Platform> Feeder<P> {
             let result = feeding::queue(feeds, ready, portions, Source::Panel);
             record(Record::Feeding(feeding::Record::Dispense { result }));
             if result.is_err() {
+                let reason = feeding::refused_reason(feeds, ready);
+                self.readiness.refused(&mut self.platform, now_ms, reason);
                 self.lights.refused(now_ms, |r| record(Record::Lights(r)));
             }
         }

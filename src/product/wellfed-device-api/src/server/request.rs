@@ -240,6 +240,11 @@ impl Server {
                     _ => Reply::Refused(Refusal::Forbidden),
                 }
             }
+            // Named before anything else is checked, so the refusal says
+            // what to change rather than when to try again.
+            Action::Feed { portions } if !(1..=proto::PORTIONS_MAX).contains(&portions) => {
+                Reply::Refused(Refusal::Portions { asked: portions })
+            }
             // A restart is due: a feed now would be cut by it.
             Action::Feed { .. } if self.reboot_at.is_some() => Reply::Refused(Refusal::Busy),
             Action::Feed { portions } => match device.readiness() {
@@ -341,7 +346,7 @@ impl Server {
         else {
             return Err(Refusal::Invalid);
         };
-        let table = table(&plans).ok_or(Refusal::Invalid)?;
+        let table = table(&plans)?;
 
         let view = match device.plans(None) {
             PlansResult::Current { pending: true, .. } | PlansResult::Busy => {
@@ -669,7 +674,6 @@ impl From<Op<'_>> for Action {
             },
             Op::ListClients => Self::ListClients,
             Op::RevokeClient { key } => Self::RevokeClient { key },
-            Op::Feed { portions: 0 } => Self::Invalid,
             Op::Feed { portions } => Self::Feed { portions },
             Op::Reboot => Self::Reboot,
             Op::CancelFeed { feed } => Self::CancelFeed { feed },
@@ -732,10 +736,9 @@ impl From<Op<'_>> for Action {
             }
             Op::ReadBank1 { offset } => Self::ReadBank1 { offset },
             Op::GetPlans => Self::GetPlans,
-            Op::PutPlans { base, plans } => match table(&plans) {
-                Some(_) => Self::PutPlans { base },
-                None => Self::Invalid,
-            },
+            // Checked when it runs ([`table`]), which names a plan's
+            // portions in its refusal.
+            Op::PutPlans { base, .. } => Self::PutPlans { base },
         }
     }
 }
@@ -868,6 +871,7 @@ impl Name for Reply {
                 Refusal::Time => "time",
                 Refusal::Fault => "fault",
                 Refusal::Unverified => "unverified",
+                Refusal::Portions { .. } => "portions",
                 Refusal::Update(refusal) => update_refusal(*refusal),
             },
         }
@@ -912,10 +916,12 @@ fn wire_window(window: Window) -> proto::Window {
 }
 
 const _: () = assert!(PLANS == proto::PLANS_MAX);
+const _: () = assert!(wellfed_core::schedule::PORTIONS_MAX == proto::PORTIONS_MAX);
 
-/// The wire's plans as the store keeps them; `None` when one fails its
-/// checks.
-fn table(plans: &[Option<proto::Plan>; PLANS]) -> Option<Table> {
+/// The wire's plans as the store keeps them. A plan's portions outside
+/// 1 to [`proto::PORTIONS_MAX`] are refused by name, as a feed's are; any
+/// other field that fails its checks is `Invalid`.
+fn table(plans: &[Option<proto::Plan>; PLANS]) -> Result<Table, Refusal> {
     let mut table: Table = [None; PLANS];
     for (slot, plan) in table.iter_mut().zip(plans) {
         *slot = match *plan {
@@ -927,14 +933,19 @@ fn table(plans: &[Option<proto::Plan>; PLANS]) -> Option<Table> {
                     days: Weekdays(plan.days),
                     enabled: plan.enabled,
                 };
+                if !(1..=proto::PORTIONS_MAX).contains(&plan.portions) {
+                    return Err(Refusal::Portions {
+                        asked: plan.portions,
+                    });
+                }
                 if !plan.valid() {
-                    return None;
+                    return Err(Refusal::Invalid);
                 }
                 Some(plan)
             }
         };
     }
-    Some(table)
+    Ok(table)
 }
 
 /// The store's plans as the wire carries them.

@@ -134,6 +134,12 @@ pub enum EventBody {
         /// Whether the feeding owner judged the pack below its floor.
         below_floor: Option<bool>,
     },
+    /// Dispense was pressed on an unlocked panel while a feed could not
+    /// start, during a feed among them: it started nothing and was not
+    /// queued.
+    DispenseRefused {
+        reason: Blocked,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -256,6 +262,7 @@ impl EventBody {
             Self::Supply { .. } => EventKind::Supply,
             Self::Plans { .. } => EventKind::Plans,
             Self::Missed { .. } => EventKind::Missed,
+            Self::DispenseRefused { .. } => EventKind::DispenseRefused,
         }
     }
 }
@@ -277,10 +284,11 @@ pub enum EventKind {
     Supply,
     Plans,
     Missed,
+    DispenseRefused,
 }
 
 impl EventKind {
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 14] = [
         Self::Boot,
         Self::Lock,
         Self::Settings,
@@ -294,6 +302,7 @@ impl EventKind {
         Self::Supply,
         Self::Plans,
         Self::Missed,
+        Self::DispenseRefused,
     ];
 
     /// The stored spelling, the same as the JSON one.
@@ -312,6 +321,7 @@ impl EventKind {
             Self::Supply => "supply",
             Self::Plans => "plans",
             Self::Missed => "missed",
+            Self::DispenseRefused => "dispense_refused",
         }
     }
 

@@ -18,7 +18,7 @@
 use core::fmt;
 use core::ops::Range;
 
-use wellfed_model::{PLAN_PORTIONS_MAX, PLANS, Plan, Weekday, Weekdays};
+use wellfed_model::{PLANS, PORTIONS_MAX, Plan, Weekday, Weekdays};
 
 /// The flash stock's plans occupy: the count sector, then the entries
 /// sector. Stock erases each sector before it writes it.
@@ -270,7 +270,7 @@ pub enum PlanRefusal {
     #[error("its time {hour:02}:{minute:02} is not a time of day")]
     Time { hour: u8, minute: u8 },
     /// Outside the 1 to 48 portions every replacement feed asks for.
-    #[error("it asks for {portions} portions, not 1 to {PLAN_PORTIONS_MAX}")]
+    #[error("it asks for {portions} portions, not 1 to {PORTIONS_MAX}")]
     Portions { portions: u8 },
     /// A repeat-day value other than 1 (Monday) to 7 (Sunday).
     #[error("its repeat days hold {value}, which is not a weekday")]
@@ -462,7 +462,7 @@ fn plan(stock: &StockPlan, now_ms: u64) -> Result<Plan, PlanRefusal> {
             minute: stock.minute,
         });
     }
-    if !(1..=PLAN_PORTIONS_MAX).contains(&stock.portions) {
+    if !(1..=PORTIONS_MAX).contains(&stock.portions) {
         return Err(PlanRefusal::Portions {
             portions: stock.portions,
         });

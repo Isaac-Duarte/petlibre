@@ -1,7 +1,8 @@
 //! The simulator's feeding owner over the device API: a feed's number is
 //! its journal id, its result is a `Fed` event, a cancel ends it, and a
 //! restart in the middle of one resolves it as uncertain under its own
-//! number, never as a new feed.
+//! number, never as a new feed. A feed asks for 1 to 48 portions, and a
+//! Dispense press takes the same owner.
 
 use std::future::Future;
 use std::rc::Rc;
@@ -96,6 +97,124 @@ fn a_feed_is_numbered_by_the_journal_and_ends_in_its_fed_event() {
         assert_eq!(next, Answer::Feeding { feed: 2 });
         next_fed(&mut owner).await;
         assert_eq!(feeding::reserved(&flash), Some(2));
+        sim.stop().await;
+    });
+}
+
+/// Every feed asks for 1 to 48 portions; anything else is refused by
+/// name, with the value, before readiness is checked, and reserves no
+/// number.
+#[test]
+fn a_feed_outside_one_to_48_portions_is_refused_by_name() {
+    local(async {
+        let flash = Flash::memory();
+        let sim = start(&flash).await;
+        sim.control(Control::StallFeeds(true));
+        let mut owner = open(&sim).await;
+        owner.subscribe(None, false).await.unwrap();
+
+        for (id, asked) in [(1, 0), (2, 49), (3, u8::MAX)] {
+            let answer = owner.ask([id; 16], &Op::Feed { portions: asked }).await;
+            let refused = Answer::Refused(Refusal::Portions { asked });
+            assert_eq!(answer.unwrap(), refused, "{asked} portions");
+        }
+        let most = owner
+            .ask([4; 16], &Op::Feed { portions: 48 })
+            .await
+            .unwrap();
+        assert_eq!(most, Answer::Feeding { feed: 1 }, "48 is allowed");
+
+        // Named even while a feed runs: what to change, not when to retry.
+        let during = owner.ask([5; 16], &Op::Feed { portions: 0 }).await.unwrap();
+        assert_eq!(during, Answer::Refused(Refusal::Portions { asked: 0 }));
+        let cancel = owner.ask([6; 16], &Op::CancelFeed { feed: 1 }).await;
+        assert!(matches!(cancel, Ok(Answer::Done { .. })), "{cancel:?}");
+        let EventBody::Fed {
+            feed, requested, ..
+        } = next_fed(&mut owner).await
+        else {
+            unreachable!("next_fed returns a feed")
+        };
+        assert_eq!((feed, requested), (1, 48));
+        sim.stop().await;
+    });
+}
+
+/// Dispense goes through the owner a client's feed takes: one portion, by
+/// the panel. A press while a feed runs starts nothing, queues nothing and
+/// is recorded once for the spell; the next feed takes the next number.
+#[test]
+fn a_dispense_press_feeds_one_portion_and_one_during_a_feed_is_recorded_not_queued() {
+    local(async {
+        let flash = Flash::memory();
+        let sim = start(&flash).await;
+        let mut owner = open(&sim).await;
+        owner.subscribe(None, false).await.unwrap();
+        // The panel starts locked; a locked press would do nothing.
+        sim.type_line("hold lock").unwrap();
+        loop {
+            let pushed = owner.next(Duration::from_secs(10)).await.unwrap();
+            if let Pushed::Event(event) = pushed
+                && matches!(event.body, EventBody::Lock { locked: false, .. })
+            {
+                break;
+            }
+        }
+
+        sim.type_line("press dispense").unwrap();
+        let EventBody::Fed {
+            feed,
+            requested,
+            completed,
+            outcome,
+            by,
+            ..
+        } = next_fed(&mut owner).await
+        else {
+            unreachable!("next_fed returns a feed")
+        };
+        assert_eq!((feed, requested, completed), (1, 1, 1));
+        assert_eq!((outcome, by), (FeedOutcome::Done, Source::Panel));
+
+        sim.control(Control::StallFeeds(true));
+        let answer = owner.ask([1; 16], &Op::Feed { portions: 2 }).await.unwrap();
+        assert_eq!(answer, Answer::Feeding { feed: 2 });
+        sim.type_line("press dispense").unwrap();
+        sim.type_line("press dispense").unwrap();
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let cancel = owner.ask([2; 16], &Op::CancelFeed { feed: 2 }).await;
+        assert!(matches!(cancel, Ok(Answer::Done { .. })), "{cancel:?}");
+
+        // Event appends wait for the outputs, so the refused press's event
+        // may follow the feed's result.
+        let mut bodies = Vec::new();
+        while let Ok(Pushed::Event(event)) = owner.next(Duration::from_millis(500)).await {
+            bodies.push(event.body);
+        }
+        let fed: Vec<u32> = bodies
+            .iter()
+            .filter_map(|body| match body {
+                EventBody::Fed { feed, .. } => Some(*feed),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(fed, [2], "the presses queued no feed");
+        let refused: Vec<&EventBody> = bodies
+            .iter()
+            .filter(|body| matches!(body, EventBody::DispenseRefused { .. }))
+            .collect();
+        assert_eq!(
+            refused,
+            [&EventBody::DispenseRefused {
+                reason: Blocked::Feeding
+            }],
+            "one event for the spell"
+        );
+
+        sim.control(Control::StallFeeds(false));
+        let next = owner.ask([3; 16], &Op::Feed { portions: 1 }).await.unwrap();
+        assert_eq!(next, Answer::Feeding { feed: 3 });
+        next_fed(&mut owner).await;
         sim.stop().await;
     });
 }

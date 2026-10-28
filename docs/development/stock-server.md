@@ -80,6 +80,8 @@ The configuration format is version 1. An older configuration may still carry `m
 2. Run `network apply`.
 3. Check the counters and the actual traffic. Don't assume WAN isolation without checking.
 
+`--redirect off` (on `apply` and `preview`) leaves out only the 1883 redirect. The WAN block and both input accepts stay, so the feeder reaches the broker only by the name it resolves, as on the DNS route.
+
 `network remove` removes Wellfed's dedicated table and its tagged input rules. Their names are unchanged since the server was renamed, so rules applied before the rename are removed too.
 
 Setting up the access point, host-wide firewall policy, persistent services and reboot persistence are outside this workflow. If the feeder depends on the redirected route, restore the prior routing before you shut the service down.
@@ -104,6 +106,7 @@ An install needs no capture. `init-installer` writes a config with fresh secrets
 
 The consumer install moves a stock that is already set up: the owner's resolver answers stock's broker name with this server's address, and stock restarts ([moving stock by DNS](../firmware/consumer-installation.md#moving-stock-by-dns)). The server needs nothing new for it:
 
+- **Its firewall on the bench.** `network apply --redirect off` keeps the feeder's WAN block and both input accepts but redirects nothing, so stock reaches the broker only by the name it resolves, and a failed override fails closed.
 - **Its port.** Stock keeps its stored port, so `--mqtt-listen` must use port 1883 on an address the owner's resolver can name. `wellfed install --broker-name` refuses any other port.
 - **Its credentials.** Stock presents its own, as after a setup frame, so enrollment trusts it on first use the same way.
 - **No binding.** A set-up stock sends no `BINDING` when it connects (observed). An installer's config has no captured binding reply, which only a stock fresh from the setup frame would ask for.
@@ -143,7 +146,7 @@ The import is only proven against a stock that holds plans. Stock stores whateve
 
    You should see stock online with version 1.1.15 in `wellfed-stock status --config private/seed.json`. A full flash read then decodes with `wellfed-stock plans <flash read>`: each plan disabled, with a note that its skip is still ahead.
 
-4. Stop `serve`, and delete `private/seed.json`. Before any install trial, the server that stock reaches must hold no snapshot (`plans` absent), so the request goes unanswered and stock keeps the seeded table. A trial refuses while a nonempty snapshot is configured.
+4. Stop `serve`, and delete `private/seed.json`. Before any install trial, the server that stock reaches must hold no snapshot (`plans` absent), so the request goes unanswered and stock keeps the seeded table. A trial refuses while a nonempty snapshot is configured, and `wellfed install` refuses any config with a `plans` key.
 
 The seeded plans reach the replacement disabled. Delete them with `wellfed plans delete` after the run.
 

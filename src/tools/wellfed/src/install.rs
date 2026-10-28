@@ -120,9 +120,10 @@ pub(crate) struct InstallArgs {
     /// pairing, and ask stock nothing.
     #[arg(long, conflicts_with = "ssid")]
     from_bank0: bool,
-    /// `wellfed-stock`'s config: an installer's (`init-installer`) or the
-    /// bench's.
-    #[arg(long, default_value = "private/server.json")]
+    /// `wellfed-stock`'s config: an installer's (`init-installer`). One
+    /// with a plan snapshot, as the bench's captured config has, is
+    /// refused.
+    #[arg(long)]
     stock_config: PathBuf,
     /// The `wellfed-stock` binary; beside this one otherwise.
     #[arg(long)]
@@ -145,6 +146,19 @@ pub(crate) struct InstallArgs {
     /// promotion, with stock intact in bank 1.
     #[arg(long)]
     without_stock_plans: bool,
+}
+
+/// A stock config the install will not run on.
+#[derive(Debug, thiserror::Error)]
+enum ConfigRefused {
+    /// The server would answer stock's plan request with this snapshot,
+    /// and stock replaces its stored table with whatever a reply carries
+    /// (an empty list erases it), before the run can import the owner's
+    /// plans.
+    #[error(
+        "{path} holds a plan snapshot, which the stock server would send stock in place of its own plans; nothing was started. Use an installer's config (wellfed-stock init-installer), or remove the `plans` key"
+    )]
+    PlanSnapshot { path: PathBuf },
 }
 
 /// The run's IO state beside the steps.
@@ -175,6 +189,9 @@ pub(crate) async fn run(args: InstallArgs) -> Result<()> {
     let config_path = std::path::absolute(&args.stock_config).context("--stock-config")?;
     let config: ServerConfig = wellfed_formats::load(&config_path)
         .with_context(|| format!("read {}", config_path.display()))?;
+    if config.has_plan_snapshot() {
+        return Err(ConfigRefused::PlanSnapshot { path: config_path }.into());
+    }
     let directory = config_path.parent().context("config directory missing")?;
     let _lease = Lease::acquire_in(directory).context("bench lease")?;
 
@@ -357,10 +374,10 @@ fn confirm(prompt: &str) -> Result<()> {
     Ok(())
 }
 
-/// Guide the owner through the DNS override and the feeder's restart,
-/// then look the name up from this computer. The lookup is advice only:
-/// this computer may ask another resolver than the feeder does, so the run
-/// waits for stock at the broker whatever it shows.
+/// Guide the owner through the DNS override, then look the name up from
+/// this computer and show what it found, before the feeder restarts. The
+/// lookup is advice only: this computer may ask another resolver than the
+/// feeder does, so the run waits for stock at the broker whatever it shows.
 async fn point_dns(dns: &DnsOverride) -> Result<()> {
     let (name, broker) = (dns.name(), dns.broker());
     eprintln!(
@@ -368,12 +385,11 @@ async fn point_dns(dns: &DnsOverride) -> Result<()> {
          resolver you run, if your router hands that one out), make {name} resolve to \
          {broker}. Only that name changes; stock keeps its Wi-Fi, its credentials and its \
          plans, and nothing is written to it. Remove the override once the install is done: \
-         a feeder rolled back to stock would otherwise keep looking for this computer."
+         a feeder rolled back to stock would otherwise keep looking for this computer. \
+         While it stands, any other device that uses the same name reaches this computer \
+         too, and loses its connection to the vendor."
     );
-    confirm(
-        "Then restart the feeder so stock looks the name up again: unplug its adapter for \
-         about 10 s (take its batteries out too, if fitted) and plug it back in.",
-    )?;
+    confirm("Set the override.")?;
 
     let resolved: Vec<IpAddr> = tokio::net::lookup_host((name, STOCK_BROKER_PORT))
         .await
@@ -381,12 +397,25 @@ async fn point_dns(dns: &DnsOverride) -> Result<()> {
         .unwrap_or_default();
     match dns.check(&resolved) {
         DnsCheck::Points => eprintln!("This computer resolves {name} to {broker}, as it should."),
+        DnsCheck::Mixed(addresses) => eprintln!(
+            "This computer resolves {name} to {addresses:?}: {broker} and others. Stock may \
+             take any of them, so make {broker} the only answer."
+        ),
         DnsCheck::Elsewhere(addresses) => eprintln!(
             "This computer resolves {name} to {addresses:?}, not {broker}. If it asks the \
              same resolver as the feeder, the override is not in place yet."
         ),
         DnsCheck::Unresolved => eprintln!("This computer cannot resolve {name}."),
     }
+    Ok(())
+}
+
+/// Ask the owner to restart the feeder, with the broker already listening.
+fn restart_feeder() -> Result<()> {
+    confirm(
+        "Restart the feeder so stock looks the name up again: unplug its adapter for about \
+         10 s (take its batteries out too, if fitted) and plug it back in.",
+    )?;
     eprintln!(
         "Waiting for stock to connect here. If it does not within a few minutes, check the \
          override in the resolver your router hands out and restart the feeder again; \
@@ -400,8 +429,11 @@ impl Run {
         loop {
             match install.step() {
                 Step::PointDns(dns) => {
-                    self.serve().await?;
                     point_dns(&dns).await?;
+                    // The enrollment window opens only now, just before
+                    // stock restarts into it.
+                    self.serve().await?;
+                    restart_feeder()?;
                     install.dns_pointed();
                 }
                 Step::ConfirmReset => {
@@ -1135,6 +1167,53 @@ mod tests {
     use super::*;
     use serde_json::json;
     use wellfed_client::update::{Installer, Next};
+
+    #[derive(clap::Parser)]
+    struct Line {
+        #[command(flatten)]
+        args: InstallArgs,
+    }
+
+    /// A config with a plan snapshot, even an empty one, is refused before
+    /// the lease, the server or the feeder: the server would send stock
+    /// that snapshot in place of its own plans.
+    #[tokio::test]
+    async fn a_config_with_a_plan_snapshot_is_refused_before_anything_starts() {
+        use clap::Parser;
+
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("server.json");
+        std::fs::write(
+            &config,
+            json!({"api_token": "t", "http_listen": "127.0.0.1:8765",
+                   "mqtt_listen": "10.42.103.1:1883", "plans": []})
+            .to_string(),
+        )
+        .unwrap();
+        let line = Line::parse_from([
+            "install",
+            "--review",
+            "missing-review",
+            "--manifest",
+            "missing.bin",
+            "--stock-config",
+            config.to_str().unwrap(),
+            "--broker-name",
+            "broker.example.net",
+        ]);
+
+        let error = run(line.args).await.unwrap_err();
+        assert!(matches!(
+            error.downcast_ref::<ConfigRefused>(),
+            Some(ConfigRefused::PlanSnapshot { .. })
+        ));
+        // Nothing beside the config: no lease (nor its lock), no enrollment.
+        let beside: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(beside, ["server.json"]);
+    }
 
     #[test]
     fn the_server_s_document_becomes_the_steps_view() {

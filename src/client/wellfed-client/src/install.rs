@@ -296,9 +296,10 @@ pub enum PlansPut {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Step {
     /// Ask the owner to have their resolver answer the override's name with
-    /// its broker, then to restart the feeder so stock looks the name up
-    /// again; then [`Install::dns_pointed`]. The caller may look the name up
-    /// itself and show [`DnsOverride::check`], as advice only.
+    /// its broker; look the name up and show [`DnsOverride::check`], as
+    /// advice only; then start the broker, so its enrollment window opens
+    /// just before the owner restarts the feeder and stock looks the name up
+    /// again; then [`Install::dns_pointed`].
     PointDns(DnsOverride),
     /// Warn the owner, before the feeder is touched, that the Reset hold
     /// runs stock's factory restore and erases its plans, so they note them

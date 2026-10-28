@@ -4,6 +4,12 @@
 //! `ota-images` port stock downloads an update from. Both input rules carry
 //! the same tag, so `remove` deletes them together.
 //!
+//! The broker redirect is one rule in its own chain, and it can be left out
+//! ([`Redirect::Off`]): the feeder then reaches the broker only by the name
+//! it resolves, as a consumer's DNS-first install has it, while its WAN stays
+//! blocked. A failed DNS override then fails closed: stock cannot reach the
+//! vendor's cloud through a public resolver's answer.
+//!
 //! Linux gateway only, run as root through `nft`. `rules` renders the
 //! transaction for preview; `apply` refuses unless the broker is listening and
 //! checks the complete transaction before committing it; `remove` deletes only
@@ -37,6 +43,16 @@ struct Rule {
     chain: String,
     handle: u64,
     comment: Option<String>,
+}
+
+/// Whether the feeder's TCP 1883 is redirected to the broker.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum Redirect {
+    /// Whatever address stock connects to on 1883 reaches the broker.
+    Broker,
+    /// No redirect: stock reaches the broker only if its name resolves
+    /// here. Its WAN stays blocked and the input accepts stay.
+    Off,
 }
 
 fn nft(args: &[&str]) -> Result<()> {
@@ -81,7 +97,7 @@ pub fn remove() -> Result<()> {
     Ok(())
 }
 
-pub fn rules(config: &Config) -> Result<String> {
+pub fn rules(config: &Config, redirect: Redirect) -> Result<String> {
     config.validate()?;
     ensure!(
         !config.mqtt_listen.ip().is_loopback(),
@@ -91,14 +107,20 @@ pub fn rules(config: &Config) -> Result<String> {
     let (interface, mac) = config.hotspot()?;
     let ip = config.mqtt_listen.ip();
     let port = config.mqtt_listen.port();
-
-    Ok(format!(
-        r#"table inet {TABLE} {{
-  chain prerouting {{
+    let prerouting = match redirect {
+        Redirect::Broker => format!(
+            r#"  chain prerouting {{
     type nat hook prerouting priority dstnat - 10; policy accept;
     iifname "{interface}" ether saddr {mac} tcp dport 1883 counter dnat ip to {ip}:{port}
   }}
-  chain forward {{
+"#
+        ),
+        Redirect::Off => String::new(),
+    };
+
+    Ok(format!(
+        r#"table inet {TABLE} {{
+{prerouting}  chain forward {{
     type filter hook forward priority filter - 20; policy accept;
     iifname "{interface}" ether saddr {mac} meta l4proto tcp counter reject with tcp reset
     iifname "{interface}" ether saddr {mac} counter reject
@@ -111,11 +133,11 @@ insert rule inet computer_security input iifname "{interface}" ether saddr {mac}
     ))
 }
 
-pub fn apply(config: &Config) -> Result<()> {
+pub fn apply(config: &Config, redirect: Redirect) -> Result<()> {
     // Fail before changing connectivity if the prepared broker is absent.
     std::net::TcpStream::connect_timeout(&config.mqtt_listen, std::time::Duration::from_secs(2))
         .context("local broker is not listening; start serve first")?;
-    let rules = rules(config)?;
+    let rules = rules(config, redirect)?;
 
     // Check the complete transaction before removing any previous lab rules.
     let existing = Command::new("nft")

@@ -31,7 +31,7 @@ const LABEL_MAX: usize = 63;
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum DnsError {
     #[error(
-        "{name:?} is not a DNS name: letters, digits and hyphens in dot-separated labels of 1-{LABEL_MAX}, at most {NAME_MAX} in all"
+        "{name:?} is not a DNS name: letters, digits and hyphens in dot-separated labels of 1-{LABEL_MAX}, at most {NAME_MAX} in all, and not an address"
     )]
     Name { name: String },
     #[error(
@@ -51,8 +51,11 @@ pub struct DnsOverride {
 /// What a resolver answered for stock's broker name.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DnsCheck {
-    /// Among its answers is the installer's broker.
+    /// It answers with the installer's broker alone.
     Points,
+    /// It answers with the broker and other addresses too: a client may
+    /// take any of them, so stock may still reach the vendor.
+    Mixed(Vec<IpAddr>),
     /// It answers with other addresses only: the override is not in place
     /// for that resolver.
     Elsewhere(Vec<IpAddr>),
@@ -93,10 +96,12 @@ impl DnsOverride {
     /// installer's host may ask another resolver than the feeder does (the
     /// bench's host does), so stock reaching the broker is the real check.
     pub fn check(&self, resolved: &[IpAddr]) -> DnsCheck {
-        if resolved.contains(&self.broker) {
-            DnsCheck::Points
-        } else if resolved.is_empty() {
+        if resolved.is_empty() {
             DnsCheck::Unresolved
+        } else if resolved.iter().all(|address| *address == self.broker) {
+            DnsCheck::Points
+        } else if resolved.contains(&self.broker) {
+            DnsCheck::Mixed(resolved.to_vec())
         } else {
             DnsCheck::Elsewhere(resolved.to_vec())
         }
@@ -104,7 +109,8 @@ impl DnsOverride {
 }
 
 /// A dotted name of letters, digits and inner hyphens, with at least two
-/// labels: stock looks up a public name, never a bare host.
+/// labels: stock looks up a public name, never a bare host. A last label of
+/// digits alone is an IPv4 address, which no resolver overrides.
 fn valid_name(name: &str) -> bool {
     let label = |label: &str| {
         (1..=LABEL_MAX).contains(&label.len())
@@ -114,7 +120,11 @@ fn valid_name(name: &str) -> bool {
             && !label.starts_with('-')
             && !label.ends_with('-')
     };
-    name.len() <= NAME_MAX && name.contains('.') && name.split('.').all(label)
+    let address = name
+        .rsplit('.')
+        .next()
+        .is_some_and(|last| last.bytes().all(|b| b.is_ascii_digit()));
+    name.len() <= NAME_MAX && name.contains('.') && !address && name.split('.').all(label)
 }
 
 #[cfg(test)]
@@ -134,7 +144,17 @@ mod tests {
 
     #[test]
     fn what_stock_could_not_look_up_or_reach_is_refused() {
-        for name in ["", "localhost", "a..b", "-a.b", "a-.b", "a b.c", "a_b.c"] {
+        for name in [
+            "",
+            "localhost",
+            "a..b",
+            "-a.b",
+            "a-.b",
+            "a b.c",
+            "a_b.c",
+            "192.0.2.7",
+            "10.42.103.1.",
+        ] {
             assert!(
                 matches!(DnsOverride::new(name, broker()), Err(DnsError::Name { .. })),
                 "{name:?}"
@@ -152,7 +172,12 @@ mod tests {
     fn the_check_needs_the_broker_among_the_answers() {
         let dns = DnsOverride::new("broker.example.net", broker()).unwrap();
         let other: IpAddr = "192.0.2.7".parse().unwrap();
-        assert_eq!(dns.check(&[other, broker().ip()]), DnsCheck::Points);
+        assert_eq!(dns.check(&[broker().ip()]), DnsCheck::Points);
+        assert_eq!(dns.check(&[broker().ip(), broker().ip()]), DnsCheck::Points);
+        assert_eq!(
+            dns.check(&[other, broker().ip()]),
+            DnsCheck::Mixed(vec![other, broker().ip()])
+        );
         assert_eq!(dns.check(&[other]), DnsCheck::Elsewhere(vec![other]));
         assert_eq!(dns.check(&[]), DnsCheck::Unresolved);
     }

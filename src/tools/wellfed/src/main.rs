@@ -259,6 +259,8 @@ mod tests {
             "private/review",
             "--manifest",
             "private/manifest.bin",
+            "--stock-config",
+            "private/installer.json",
             "--ssid",
             "Home",
         ];
@@ -267,8 +269,23 @@ mod tests {
             Ok(Command::Install(_))
         ));
         // Resuming on bank 0 sends no frame.
-        let resumed = [&install[..6], &["--from-bank0", "--ssid", "Home"]].concat();
+        let resumed = [&install[..8], &["--from-bank0", "--ssid", "Home"]].concat();
         assert!(Cli::try_parse_from(resumed).is_err());
+        // The stock config is always named: the bench's captured one is no
+        // default.
+        assert!(Cli::try_parse_from(&install[..6]).is_err());
+        // DNS first, or the frame, or a resumed run: one at a time.
+        let dns = [&install[..8], &["--broker-name", "broker.example.net"]].concat();
+        assert!(matches!(
+            Cli::try_parse_from(&dns).map(|cli| cli.command),
+            Ok(Command::Install(_))
+        ));
+        for other in [&["--ssid", "Home"][..], &["--from-bank0"][..]] {
+            assert!(Cli::try_parse_from([&dns[..], other].concat()).is_err());
+        }
+        // The frame's broker means nothing without the frame.
+        let broker = [&install[..8], &["--broker", "10.42.103.1:1883"]].concat();
+        assert!(Cli::try_parse_from(broker).is_err());
 
         // A plan's flags follow its verb, the slot first.
         let edit = [

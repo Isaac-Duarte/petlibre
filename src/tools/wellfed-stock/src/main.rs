@@ -205,11 +205,17 @@ enum NetworkAction {
     Apply {
         #[arg(long, default_value = "private/server.json")]
         config: PathBuf,
+        /// `off` keeps the WAN block and the input accepts but redirects
+        /// nothing: stock reaches the broker only by DNS.
+        #[arg(long, value_enum, default_value_t = network::Redirect::Broker)]
+        redirect: network::Redirect,
     },
     Remove,
     Preview {
         #[arg(long, default_value = "private/server.json")]
         config: PathBuf,
+        #[arg(long, value_enum, default_value_t = network::Redirect::Broker)]
+        redirect: network::Redirect,
     },
 }
 
@@ -445,18 +451,23 @@ async fn main() -> Result<()> {
         }
 
         Action::Network { action } => match action {
-            NetworkAction::Apply { config } => {
-                network::apply(&config::load(&config)?)?;
-                println!(
-                    "Test-feeder MQTT redirected locally; its forwarded WAN traffic is blocked."
-                );
+            NetworkAction::Apply { config, redirect } => {
+                network::apply(&config::load(&config)?, redirect)?;
+                match redirect {
+                    network::Redirect::Broker => println!(
+                        "Test-feeder MQTT redirected locally; its forwarded WAN traffic is blocked."
+                    ),
+                    network::Redirect::Off => println!(
+                        "Test-feeder MQTT not redirected (it reaches the broker only by DNS); its forwarded WAN traffic is blocked."
+                    ),
+                }
             }
             NetworkAction::Remove => {
                 network::remove()?;
                 println!("Local broker routing removed; prior hotspot forwarding remains.");
             }
-            NetworkAction::Preview { config } => {
-                println!("{}", network::rules(&config::load(&config)?)?)
+            NetworkAction::Preview { config, redirect } => {
+                println!("{}", network::rules(&config::load(&config)?, redirect)?)
             }
         },
     }

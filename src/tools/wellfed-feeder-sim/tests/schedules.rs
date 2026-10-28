@@ -797,3 +797,50 @@ fn a_plan_saved_without_a_clock_is_reminded_once_the_clock_returns() {
     feeder.run_until(BREAKFAST + MINUTE_MS);
     assert_eq!(feeder.fed().len(), 1);
 }
+
+/// A restart asked for while a plan's meal is claimed but not yet fed (a
+/// factory reset held in the claim's own pass) waits for the meal: it runs
+/// once, before the restart, and the boot after neither runs it again nor
+/// records it interrupted.
+#[test]
+fn a_restart_asked_for_while_a_meal_is_claimed_waits_for_the_meal() {
+    use wellfed_core::buttons::{Button, Buttons, Gesture};
+    use wellfed_feeder_sim::feeding;
+
+    let held = |button| Gesture::Hold {
+        chord: Buttons::of(button),
+        level: 1,
+    };
+    let mut feeder = breakfast();
+    feeder.run_until(WEDNESDAY + 7 * HOUR_MS + 29 * MINUTE_MS + 50_000);
+    feeder.sim.gesture(held(Button::Lock));
+    while feeder.wall().expect("a valid clock") < WEDNESDAY + 7 * HOUR_MS + 30 * MINUTE_MS {
+        feeder.run(1);
+    }
+
+    // The meal's claim and the reset hold in the same pass.
+    feeder.sim.gesture(held(Button::Reset));
+    feeder.run(1);
+    assert_eq!(feeder.claims, 1, "claimed in the hold's pass");
+    let mut rebooted = false;
+    for _ in 0..10_000 {
+        feeder.run(1);
+        if feeder.sim.take_reboot() {
+            rebooted = true;
+            break;
+        }
+    }
+    assert!(rebooted, "the reset's restart came");
+    assert_eq!(
+        feeder.fed(),
+        [(1, 2, FeedOutcome::Done, Source::Schedule(0))],
+        "the meal ran before the restart"
+    );
+    assert!(feeder.missed().is_empty());
+
+    feeder.restart();
+    feeder.run(10_000);
+    assert_eq!(feeding::reserved(&feeder.flash), Some(1), "fed once");
+    assert!(feeder.fed().is_empty(), "the reset's new history");
+    assert!(feeder.missed().is_empty());
+}

@@ -36,6 +36,8 @@ thread_local! {
     static ATTEMPT_SEEN: Cell<bool> = const { Cell::new(false) };
     /// Programs fail, as a write cut short reports.
     static PROGRAM_FAILS: Cell<bool> = const { Cell::new(false) };
+    /// Erases of this sector fail.
+    static ERASE_FAILS: Cell<Option<u32>> = const { Cell::new(None) };
 }
 
 struct NoMmio;
@@ -84,6 +86,9 @@ impl FlashOps for Armed {
     fn erase(sector: u32) -> bool {
         // Every write runs inside a marked attempt.
         ATTEMPT_SEEN.with(|s| s.set(sdk::backup_read(MARKER_REGISTER) != 0));
+        if ERASE_FAILS.with(Cell::get) == Some(sector) {
+            return false;
+        }
         // SAFETY: the fake's storage, which this test owns.
         unsafe { sdk::storage_erase(sector) }
     }
@@ -112,6 +117,7 @@ fn start() -> (MutexGuard<'static, ()>, Writer<Armed>, Provider) {
     supervision::reset();
     ARMED.with(|a| a.set(true));
     PROGRAM_FAILS.with(|f| f.set(false));
+    ERASE_FAILS.with(|f| f.set(None));
     (guard, Writer::default(), Provider::default())
 }
 
@@ -1652,50 +1658,83 @@ fn a_torn_marker_is_no_reset() {
     assert_eq!(current().2, 9);
 }
 
-/// An unarmed boot cannot erase: it stops the reset, serves nothing, keeps
-/// the marker, and asks the loop for one restart, unless it is itself an
-/// intentional restart's boot, which waits for a power cycle instead.
+/// An unarmed boot that no arming skip explains cannot erase and could
+/// not after a restart either: it stops the reset, serves nothing, keeps
+/// the marker and waits for a power cycle, asking for no restart.
 #[test]
-fn an_unarmed_boot_serves_nothing_keeps_the_marker_and_asks_to_restart_once() {
+fn an_unarmed_boot_serves_nothing_and_keeps_the_marker() {
     let (_guard, mut provider) = filled_then_reset();
+    restart_mailboxes();
+    let mut writer = Writer::default();
+    assert_eq!(step(&mut writer, &mut provider), Some(Record::ResetPending));
+    // The hooks went away after the open (arming itself is the
+    // confirmation's to test).
+    ARMED.with(|a| a.set(false));
 
-    for (flags, restart) in [(0, true), (0x0008_0000, false)] {
-        restart_mailboxes();
-        ARMED.with(|a| a.set(true));
+    assert_eq!(
+        step(&mut writer, &mut provider),
+        Some(Record::ResetError {
+            stage: ErrorStage::Unarmed,
+            sector: None,
+            restart: false,
+        })
+    );
+    assert!(!keys::restart_wanted());
+    assert_eq!(step(&mut writer, &mut provider), None, "stopped");
+    assert_eq!(
+        settings::request(SettingsFields::default()),
+        SettingsResult::Busy
+    );
+    assert_eq!(keys::identity_since(0), None);
+    assert!(reset_marked());
+}
+
+/// A boot whose erase fails asks for one restart; the restarted boot (the
+/// watchdog's flags, as every intentional restart on this board) fails
+/// again and asks for none, since the marker sector counts both attempts.
+/// A later boot that can erase finishes the reset and clears the marker
+/// with its attempts.
+#[test]
+fn a_reset_that_cannot_finish_asks_for_one_restart_only() {
+    use wellfed_feeder::store::reset::{ATTEMPT, MARKER};
+    use wellfed_hal::plaf103::storage;
+
+    let (_guard, mut provider) = filled_then_reset();
+    let stuck = storage::factory_cleared(3).unwrap();
+    ERASE_FAILS.with(|f| f.set(Some(stuck)));
+    let error = |restart| Record::ResetError {
+        stage: ErrorStage::Erase,
+        sector: Some(stuck),
+        restart,
+    };
+
+    for (flags, restart) in [(0, true), (0x0010_0000, false), (0x0010_0000, false)] {
         fake::with(|h| h.boot_reason = flags);
-        let mut writer = Writer::default();
-        assert_eq!(step(&mut writer, &mut provider), Some(Record::ResetPending));
-        // The hooks went away after the open (arming itself is the
-        // confirmation's to test).
-        ARMED.with(|a| a.set(false));
-
+        let records = reset_boot(&mut provider, Some(10));
         assert_eq!(
-            step(&mut writer, &mut provider),
-            Some(Record::ResetError {
-                stage: ErrorStage::Unarmed,
-                sector: None,
-                restart,
-            }),
-            "boot flags {flags:#x}"
+            records,
+            [Record::ResetPending, error(restart)],
+            "flags {flags:#x}"
         );
         assert_eq!(keys::restart_wanted(), restart);
-        assert_eq!(step(&mut writer, &mut provider), None, "stopped");
-        assert_eq!(
-            settings::request(SettingsFields::default()),
-            SettingsResult::Busy
-        );
-        assert_eq!(keys::identity_since(0), None);
         assert!(reset_marked());
     }
+    let first = storage::RESET.first as usize * 0x1000;
+    let words = fake::with(|h| h.storage[first..first + 48].to_vec());
+    assert_eq!(words, [MARKER, ATTEMPT, ATTEMPT].concat(), "two attempts");
 
-    // The restart arms, and finishes the reset.
-    ARMED.with(|a| a.set(true));
+    ERASE_FAILS.with(|f| f.set(None));
     let records = reset_boot(&mut provider, None);
     assert!(
         records.contains(&Record::ResetDone { erased: 27 }),
         "{records:?}"
     );
     assert!(!keys::restart_wanted());
+    let words = fake::with(|h| h.storage[first..first + 48].to_vec());
+    assert!(
+        words.iter().all(|&b| b == 0xff),
+        "marker and attempts cleared"
+    );
 }
 
 /// A client store the writer cannot write (a newer schema reads as

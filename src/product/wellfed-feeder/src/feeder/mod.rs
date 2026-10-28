@@ -319,9 +319,12 @@ impl<P: Platform> Feeder<P> {
         // Setup mode's and the factory reset's restart, and the one the
         // writer asks for when a reset could not finish, wait for a feed in
         // flight, which they would otherwise leave uncertain; none starts a
-        // feed itself, and once asked for no feed starts (`restarting`).
+        // feed itself, and once asked for no feed starts (`restarting`). They
+        // wait for a plan's claimed meal too: once claimed it must run, and
+        // a restart before its feed is queued would leave it missed.
         let due = self.owner.reboot_due(now_ms) || self.platform.restart_wanted();
-        if due && !feeds.busy() && !self.platform.restarting() {
+        let at_rest = !feeds.busy() && !self.schedule.holds();
+        if due && at_rest && !self.platform.restarting() {
             // The writer's restart save takes this boot's counts as they are now.
             let counts = self.serve.stats().counts(now_ms);
             self.platform.hand_counts(counts);

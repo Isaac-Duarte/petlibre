@@ -65,3 +65,30 @@ fn a_cut_mark_is_pending_only_once_whole() {
     }
     assert!(mutations.is_some_and(|n| n > 0));
 }
+
+/// Attempts count up to the limit with no erase, a torn one counts, they
+/// leave the marker pending, and clearing the marker clears them.
+#[test]
+fn attempts_count_without_an_erase_and_clear_with_the_marker() {
+    let mut flash = one_unit();
+    // SAFETY: as above.
+    let io = unsafe { flash.io() };
+    assert!(reset::mark(&io));
+    assert_eq!(reset::attempts(&io), 0);
+
+    for used in 1..=reset::ATTEMPTS {
+        assert!(reset::note_attempt(&io));
+        assert_eq!(reset::attempts(&io), used);
+        assert!(reset::pending(&io));
+    }
+    assert!(reset::note_attempt(&io), "past the limit, nothing to write");
+    assert_eq!(reset::attempts(&io), reset::ATTEMPTS);
+
+    assert!(reset::clear(&io));
+    assert_eq!(reset::attempts(&io), 0);
+
+    flash.bytes[0][16] = 0x7f;
+    // SAFETY: as above.
+    let io = unsafe { flash.io() };
+    assert_eq!(reset::attempts(&io), 1, "a torn attempt counts");
+}

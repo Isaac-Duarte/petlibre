@@ -14,6 +14,12 @@
 //! reads as the pattern, so the boot erases the cleared stores again, or as
 //! no reset, which is right because they are already erased. Bits a sector
 //! never written may hold are not a reset either.
+//!
+//! After the marker come [`ATTEMPTS`] attempt words, each programmed (no
+//! erase) by an armed boot as it starts the erases. A boot's reset flags
+//! cannot tell an intentional restart from a hang (both are the watchdog's
+//! reset on this board), and every backup register is taken, so the count
+//! lives here: it bounds the restarts a boot that cannot finish asks for.
 
 use wellfed_core::store::slot::SlotIo;
 
@@ -49,7 +55,46 @@ pub fn mark<I: SlotIo>(io: &I) -> bool {
     io.program(0, 0, &MARKER) && pending(io)
 }
 
-/// Erase the marker: the reset is over.
+/// Erase the marker and its attempts: the reset is over.
 pub fn clear<I: SlotIo>(io: &I) -> bool {
     io.erase(0)
+}
+
+/// Armed boots that may start the reset's erases: after this many, a boot
+/// that cannot finish waits for a power cycle instead of asking for a
+/// restart. The first is the boot the hold restarts into; the second is the
+/// one escape restart.
+pub const ATTEMPTS: u32 = 2;
+
+/// What an attempt programs, in its own 16 bytes after the marker.
+pub const ATTEMPT: [u8; 16] = *b"PLFRST01ATTEMPT!";
+
+/// The byte offset of attempt `index`.
+fn attempt_at(index: u32) -> u32 {
+    (index + 1) * 16
+}
+
+/// How many boots started the erases, up to [`ATTEMPTS`]. Any programmed
+/// bit counts, so a torn attempt is one: it can only stop a restart, never
+/// start one. Unreadable reads as all used.
+pub fn attempts<I: SlotIo>(io: &I) -> u32 {
+    (0..ATTEMPTS)
+        .filter(|&index| {
+            let mut bytes = [0; ATTEMPT.len()];
+            !io.read(0, attempt_at(index), &mut bytes) || bytes.iter().any(|&b| b != u8::MAX)
+        })
+        .count()
+        .try_into()
+        .unwrap_or(ATTEMPTS)
+}
+
+/// Record that this boot starts the erases: program the next blank
+/// attempt, with no erase, so it survives every reset until the marker is
+/// cleared. True once recorded, or when every attempt is already used.
+pub fn note_attempt<I: SlotIo>(io: &I) -> bool {
+    let used = attempts(io);
+    if used >= ATTEMPTS {
+        return true;
+    }
+    io.program(0, attempt_at(used), &ATTEMPT)
 }

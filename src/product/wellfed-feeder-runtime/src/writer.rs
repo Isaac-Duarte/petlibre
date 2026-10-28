@@ -81,7 +81,6 @@ use wellfed_hal::flash_lock::provider::Provider;
 use wellfed_hal::interlock::{INTERLOCK, WRITER_POLL_MS, WriteStep, WriteTurn};
 use wellfed_hal::plaf103::storage::{FACTORY_CLEARED_SECTORS, factory_cleared};
 use wellfed_hal::{rng, sdk, settings, supervision};
-use wellfed_proto::api::ResetCause;
 use wellfed_sdk::storage::{
     CLIENTS_BASE, EVENTS_BASE, EVENTS_UNITS, FlashOps, Region, SEED_BASE, SETTINGS_BASE,
     SETTINGS_BINDING, Slots, TRACES_BASE, TRACES_UNITS,
@@ -557,6 +556,10 @@ pub struct Writer<F> {
     resetting: Option<u32>,
     /// The reset could not go on this boot (unarmed, or an erase failed).
     reset_stopped: bool,
+    /// This boot recorded its attempt in the marker sector.
+    reset_attempted: bool,
+    /// Arming skipped this boot: the boot before reset inside a write.
+    skipped: bool,
 }
 
 impl<F> Default for Writer<F> {
@@ -587,6 +590,8 @@ impl<F> Default for Writer<F> {
             turn: WriteTurn::new(),
             resetting: None,
             reset_stopped: false,
+            reset_attempted: false,
+            skipped: false,
         }
     }
 }
@@ -1033,11 +1038,14 @@ impl<F: FlashOps> Writer<F> {
             return next(WRITE_WAIT_POLL_MS, None);
         };
 
+        let marker = Region::<F, RESET_BASE, 1>::new();
         let sector = factory_cleared(index).unwrap_or(RESET_BASE);
         arming::set_attempt();
-        let erased = F::erase(sector) && blank::<F>(sector);
+        let noted = self.reset_attempted || reset_marker::note_attempt(&marker);
+        let erased = noted && F::erase(sector) && blank::<F>(sector);
         arming::clear_attempt();
         drop(turn);
+        self.reset_attempted = noted;
 
         if !erased {
             return self.reset_stop(ErrorStage::Erase, Some(sector));
@@ -1056,15 +1064,21 @@ impl<F: FlashOps> Writer<F> {
     }
 
     /// The reset cannot go on this boot. A boot that serves nothing has no
-    /// identity, API, recovery window or BLE setup, so unless this boot is
-    /// itself an intentional restart it asks the loop for one (the loop
-    /// waits for a feed in flight): an erase that hung was the watchdog's
-    /// reset, its arming skip has cleared the attempt marker, and the
-    /// restart arms again. A restarted boot that also fails stays put until
-    /// a power cycle rather than restarting for ever.
+    /// identity, API, recovery window or BLE setup, so it may ask the loop
+    /// for a restart (the loop waits for a feed in flight), but only once
+    /// per reset: while fewer than `reset::ATTEMPTS` armed boots have
+    /// started the erases (counted in the marker sector, since a boot's
+    /// reset flags cannot tell a hang from an intentional restart), and only
+    /// when a restart can help. That is a failed erase, or an arming skip:
+    /// the boot before hung inside a write, the skip has cleared the
+    /// attempt marker, and the restart arms again. Arming that failed for
+    /// any other reason would fail again, so that boot waits for a power
+    /// cycle.
     fn reset_stop(&mut self, stage: ErrorStage, sector: Option<u32>) -> Step {
         self.reset_stopped = true;
-        let restart = reset_cause(sdk::boot_reason()) != ResetCause::Software;
+        let helps = stage == ErrorStage::Erase || self.skipped;
+        let marker = Region::<F, RESET_BASE, 1>::new();
+        let restart = helps && reset_marker::attempts(&marker) < reset_marker::ATTEMPTS;
         if restart {
             keys::want_restart();
         }
@@ -1145,6 +1159,7 @@ impl<F: FlashOps> Writer<F> {
                     }
                 }
                 Poll::Failed(event) => {
+                    self.skipped = matches!(event, arming::Event::Skip { .. });
                     self.stage = Stage::Serve;
                     self.publish();
                     Step {

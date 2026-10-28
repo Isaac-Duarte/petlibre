@@ -149,8 +149,9 @@ A client that may want to cancel keeps its session open across the feed, as `wel
 | `Setup` | BLE setup mode, which ends in a restart that would leave a feed uncertain | `Busy` |
 | `Updating` | An install | `Busy` |
 | `Unserved` | No owner at all (the simulator, the `gap-probe` image) | `Unavailable` |
+| `Restarting` | A restart was asked for (a client's reboot, setup mode's end, the [factory reset](pairing.md#factory-reset)) and comes within seconds; a feed started now would be cut | `Busy` |
 
-- It starts from the owner's own reason (`Feeding::blocked`), then adds `Setup` and `Updating`.
+- It starts from the owner's own reason (`Feeding::blocked`), then adds `Restarting`, `Setup` and `Updating`.
 - A session that claims the bit gets `Status` answered as `FeederStatus { status, readiness, supply }` (the model's `Status.readiness`). `supply` is the judged supply with the pack's charge, for a session that also claims `POWER`, and `None` otherwise.
 - A `Feed` is asked of the owner only while it is `Ready`. The owner's own checks stand behind that, for a feed that lost a race.
 - A change of a lasting reason (`Journal`, `Fault`, `Updating`, `Setup`) is recorded as a `FeedingBlocked { reason }` event, and `FeedingBlocked { reason: None }` once it clears. Passing reasons (a feed, a join) only go to the log (`PLFEED1 readiness …`), so they never fill the history. Each boot starts with none recorded.

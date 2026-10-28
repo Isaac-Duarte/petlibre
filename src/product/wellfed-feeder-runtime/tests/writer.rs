@@ -1652,41 +1652,160 @@ fn a_torn_marker_is_no_reset() {
     assert_eq!(current().2, 9);
 }
 
-/// An unarmed boot cannot erase: it stops the reset, serves nothing, and
-/// leaves the marker for the next boot.
+/// An unarmed boot cannot erase: it stops the reset, serves nothing, keeps
+/// the marker, and asks the loop for one restart, unless it is itself an
+/// intentional restart's boot, which waits for a power cycle instead.
 #[test]
-fn an_unarmed_boot_serves_nothing_and_keeps_the_marker() {
+fn an_unarmed_boot_serves_nothing_keeps_the_marker_and_asks_to_restart_once() {
+    let (_guard, mut provider) = filled_then_reset();
+
+    for (flags, restart) in [(0, true), (0x0008_0000, false)] {
+        restart_mailboxes();
+        ARMED.with(|a| a.set(true));
+        fake::with(|h| h.boot_reason = flags);
+        let mut writer = Writer::default();
+        assert_eq!(step(&mut writer, &mut provider), Some(Record::ResetPending));
+        // The hooks went away after the open (arming itself is the
+        // confirmation's to test).
+        ARMED.with(|a| a.set(false));
+
+        assert_eq!(
+            step(&mut writer, &mut provider),
+            Some(Record::ResetError {
+                stage: ErrorStage::Unarmed,
+                sector: None,
+                restart,
+            }),
+            "boot flags {flags:#x}"
+        );
+        assert_eq!(keys::restart_wanted(), restart);
+        assert_eq!(step(&mut writer, &mut provider), None, "stopped");
+        assert_eq!(
+            settings::request(SettingsFields::default()),
+            SettingsResult::Busy
+        );
+        assert_eq!(keys::identity_since(0), None);
+        assert!(reset_marked());
+    }
+
+    // The restart arms, and finishes the reset.
+    ARMED.with(|a| a.set(true));
+    let records = reset_boot(&mut provider, None);
+    assert!(
+        records.contains(&Record::ResetDone { erased: 27 }),
+        "{records:?}"
+    );
+    assert!(!keys::restart_wanted());
+}
+
+/// A client store the writer cannot write (a newer schema reads as
+/// read-only) is when an owner reaches for a reset: once the marker is down
+/// the answer is `Done`, so the loop restarts, every session ends, and the
+/// next boot erases the store and draws a new identity.
+#[test]
+fn a_reset_over_an_unwritable_client_store_still_completes() {
+    use wellfed_feeder::store::clients::RECORD_BYTES;
+    use wellfed_hal::plaf103::storage;
+
+    let (_guard, mut writer, mut provider) = start();
+    fake::with(|h| h.adc_noise = 0x3c3c_a5a5);
+    assert_eq!(rng::start().result, Ok(()));
+    for _ in 0..7 {
+        step(&mut writer, &mut provider);
+    }
+    let phone = Change::Enroll {
+        key: [7; 32],
+        label: Label::new(b"phone").unwrap(),
+        role: Role::Owner,
+    };
+    change(&mut writer, &mut provider, phone);
+
+    // Every valid slot claims a newer schema.
+    fake::with(|h| {
+        for slot in 0..2 {
+            let first = (storage::CLIENTS.first as usize + slot) * 0x1000;
+            let record = &mut h.storage[first..first + RECORD_BYTES];
+            if record[..4] == [0xff; 4] {
+                continue;
+            }
+            record[8] = 0x7f;
+            let crc_at = RECORD_BYTES - 8;
+            let crc = wellfed_core::store::slot::crc32(&record[..crc_at]);
+            record[crc_at..crc_at + 4].copy_from_slice(&crc.to_le_bytes());
+        }
+    });
+    restart_mailboxes();
+    let mut writer = Writer::default();
+    let records: Vec<Record> = (0..7)
+        .filter_map(|_| step(&mut writer, &mut provider))
+        .collect();
+    assert!(
+        records.iter().any(|record| matches!(
+            record,
+            Record::Keys {
+                clients: ClientStatus::ReadOnly,
+                ..
+            }
+        )),
+        "{records:?}"
+    );
+
+    let Record::KeysChanged {
+        change: kind,
+        result,
+        ..
+    } = change(&mut writer, &mut provider, Change::Reset)
+    else {
+        panic!("the reset's record");
+    };
+    assert_eq!((kind, result), (KeyChange::Reset, KeyResult::Done));
+    assert!(reset_marked());
+    let mut table = [None; wellfed_device_api::clients::CLIENTS];
+    assert!(keys::clients_since(0, &mut table).is_some());
+    assert!(table.iter().all(Option::is_none), "no session outlives it");
+
+    let records = reset_boot(&mut provider, None);
+    assert!(
+        records.contains(&Record::ResetDone { erased: 27 }),
+        "{records:?}"
+    );
+    assert!(
+        records.iter().any(|record| matches!(
+            record,
+            Record::Keys {
+                clients: ClientStatus::Empty,
+                identity: Identity::Created,
+                ..
+            }
+        )),
+        "{records:?}"
+    );
+}
+
+/// Events the loop records while the boot erases (its `Boot` and `Supply`,
+/// a resolved uncertain feed) wait in the queue, and land in the new ring
+/// once it opens, in order.
+#[test]
+fn events_recorded_during_the_reset_wait_for_the_new_ring() {
     let (_guard, mut provider) = filled_then_reset();
     restart_mailboxes();
     let mut writer = Writer::default();
     assert_eq!(step(&mut writer, &mut provider), Some(Record::ResetPending));
-    // The hooks went away after the open (arming itself is the
-    // confirmation's to test).
-    ARMED.with(|a| a.set(false));
+    assert!(events::record(None, [1; 16]));
+    step(&mut writer, &mut provider);
+    assert!(events::record_outcome(None, [2; 16]));
 
-    let mut records = Vec::new();
-    for _ in 0..2_000 {
-        records.extend(step(&mut writer, &mut provider));
-        if records
-            .iter()
-            .any(|record| matches!(record, Record::ResetError { .. }))
-        {
+    let mut done = false;
+    for _ in 0..100 {
+        let record = step(&mut writer, &mut provider);
+        done |= matches!(record, Some(Record::ResetDone { .. }));
+        if done && events::last_seq() == Some(2) {
             break;
         }
     }
-    assert!(
-        records.contains(&Record::ResetError {
-            stage: ErrorStage::Unarmed,
-            sector: None
-        }),
-        "{records:?}"
-    );
-    assert_eq!(
-        settings::request(SettingsFields::default()),
-        SettingsResult::Busy
-    );
-    assert_eq!(keys::identity_since(0), None);
-    assert!(reset_marked());
+    assert!(done);
+    assert_eq!(events::last_seq(), Some(2), "both landed");
+    assert_eq!(events::take_lost(), 0);
 }
 
 #[test]
@@ -1704,15 +1823,17 @@ fn reset_records_format() {
     assert_eq!(
         line(Record::ResetError {
             stage: ErrorStage::Erase,
-            sector: Some(13)
+            sector: Some(13),
+            restart: true,
         }),
-        "reset error stage=erase sector=13"
+        "reset error stage=erase sector=13 restart=1"
     );
     assert_eq!(
         line(Record::ResetError {
             stage: ErrorStage::Unarmed,
-            sector: None
+            sector: None,
+            restart: false,
         }),
-        "reset error stage=unarmed"
+        "reset error stage=unarmed restart=0"
     );
 }

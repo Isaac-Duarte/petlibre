@@ -81,7 +81,7 @@ fn step(
     let delay = rig.owner.step(
         &mut rig.platform,
         now_ms,
-        rig.feeding,
+        rig.feeding.then_some(ResetRefusal::Feeding),
         remote,
         None,
         |record| {

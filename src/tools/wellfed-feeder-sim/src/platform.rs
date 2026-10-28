@@ -517,12 +517,13 @@ impl SimPlatform {
             // ([`Self::open`]) erases the cleared stores.
             ClientChange::Reset => match (self.random)() {
                 Some(_) if !reset::mark(&Region::new(&self.flash, storage::RESET)) => KeyResult::Io,
+                // Marked, so committed: `Done` whatever the client store
+                // took, and the next boot erases it.
                 Some(secret) => {
-                    let result = applied(self.clients.reset(&secret));
-                    if result == KeyResult::Done {
+                    if applied(self.clients.reset(&secret)) == KeyResult::Done {
                         self.identity_generation += 1;
                     }
-                    result
+                    KeyResult::Done
                 }
                 None => KeyResult::NoGenerator,
             },
@@ -659,6 +660,15 @@ impl Platform for SimPlatform {
 
     fn reset(&mut self) {
         self.reboot = true;
+    }
+
+    fn restarting(&self) -> bool {
+        self.reboot
+    }
+
+    /// The simulator's reset never stops part-way: its boot erases at once.
+    fn restart_wanted(&self) -> bool {
+        false
     }
 
     fn random(&mut self, out: &mut [u8; 32]) -> bool {

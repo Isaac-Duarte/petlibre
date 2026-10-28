@@ -178,6 +178,14 @@ impl Platform for Plaf103 {
         wellfed_sdk::request_reset();
     }
 
+    fn restarting(&self) -> bool {
+        wellfed_sdk::hal::supervision::restart_requested()
+    }
+
+    fn restart_wanted(&self) -> bool {
+        keys::restart_wanted()
+    }
+
     fn random(&mut self, out: &mut [u8; 32]) -> bool {
         rng::fill(out)
     }

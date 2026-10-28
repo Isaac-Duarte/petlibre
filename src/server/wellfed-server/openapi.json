@@ -5375,7 +5375,8 @@
           "updating",
           "setup",
           "unserved",
-          "battery"
+          "battery",
+          "restarting"
         ]
       },
       "ClientOwner": {

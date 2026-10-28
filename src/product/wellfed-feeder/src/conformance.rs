@@ -32,7 +32,7 @@ use wellfed_device_api::mailbox::{
 };
 use wellfed_device_api::mailbox::{KeyResult, Requested};
 use wellfed_device_api::wifi::Credentials;
-use wellfed_device_api::{Device, EventRead, KeyChange, KeyOutcome};
+use wellfed_device_api::{Device, EventRead, KeyChange, KeyOutcome, UpdateRequest};
 
 /// Writer turns a check waits for one result, at most.
 const TURNS: usize = 64;
@@ -48,6 +48,9 @@ pub trait Rig {
     fn claim_outputs(&mut self, claimed: bool);
     /// Queue a gesture from the buttons for the next pass.
     fn gesture(&mut self, gesture: Gesture);
+    /// Ask for an intentional restart, as `Platform::reset` does on the
+    /// board (its grace begins; the reset comes after).
+    fn begin_restart(&mut self);
 }
 
 /// One loop pass at `now_ms`, with no feeding owner.
@@ -872,6 +875,16 @@ pub fn a_reset_hold_is_refused_while_feeding_and_marked_at_rest(rig: &mut impl R
             ..ResetSeen::default()
         }
     );
+    // Queued, then marked: no install may start before the restart.
+    let offer = UpdateRequest::Offer {
+        manifest: &[],
+        downgrade: None,
+        device: [0; 32],
+    };
+    assert_eq!(
+        device(rig, 70, |device| device.update(offer)),
+        Err(Refusal::Busy)
+    );
     rig.write();
     assert_eq!(
         reset_seen(rig, 80, &mut NoFeeds),
@@ -880,6 +893,58 @@ pub fn a_reset_hold_is_refused_while_feeding_and_marked_at_rest(rig: &mut impl R
             ..ResetSeen::default()
         }
     );
+    assert_eq!(
+        device(rig, 90, |device| device.update(offer)),
+        Err(Refusal::Busy)
+    );
+}
+
+/// An owner ready to feed, which no feed may reach in this check.
+struct Ready;
+
+impl Feeds for Ready {
+    fn feeding(&self) -> bool {
+        false
+    }
+
+    fn busy(&self) -> bool {
+        false
+    }
+
+    fn blocked(&self) -> Option<Blocked> {
+        None
+    }
+
+    fn submit(&mut self, _: u8, _: Source) -> Result<u32, Refusal> {
+        panic!("a feed reached the owner during a restart's grace")
+    }
+
+    fn reserved(&self, _: u32) -> Option<Result<(), Refusal>> {
+        None
+    }
+
+    fn cancel(&self, _: u32) -> bool {
+        false
+    }
+}
+
+/// Once a restart is asked for (a client's reboot, setup mode's end, the
+/// factory reset), no feed starts before it comes: the restart would cut
+/// it and leave it uncertain. A client and the panel are refused by name.
+pub fn no_feed_starts_once_a_restart_is_asked_for(rig: &mut impl Rig) {
+    assert_eq!(rig.feeder().readiness(&Ready), Readiness::Ready);
+
+    rig.begin_restart();
+    assert_eq!(
+        rig.feeder().readiness(&Ready),
+        Readiness::Blocked(Blocked::Restarting)
+    );
+    let fed = {
+        let mut feeds = Ready;
+        rig.feeder().device(0, &mut feeds).feed(1, Source::Panel)
+    };
+    assert_eq!(fed, Err(Refusal::Busy));
+    rig.feeder().pass(20, &mut Ready, |_| {});
 }
 
 /// One test per check, each on a fresh rig from `$rig`.
@@ -905,6 +970,7 @@ macro_rules! conformance {
             a_lasting_reason_not_to_feed_is_recorded_once,
             bank_1_is_read_only_from_bank_0,
             a_reset_hold_is_refused_while_feeding_and_marked_at_rest,
+            no_feed_starts_once_a_restart_is_asked_for,
         );
     };
     (@tests $rig:expr; $($check:ident),* $(,)?) => {

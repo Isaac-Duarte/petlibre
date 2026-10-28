@@ -54,6 +54,12 @@ pub fn begin_restart_grace(now_ms: u32) {
     }
 }
 
+/// Whether an intentional restart was asked for this boot: its grace runs,
+/// or has ended and the reset is coming.
+pub fn restart_requested() -> bool {
+    GRACE.load(Ordering::Acquire)
+}
+
 /// Whether an intentional restart's grace runs: save now.
 pub fn restart_grace() -> bool {
     GRACE.load(Ordering::Acquire) && !GRACE_ENDED.load(Ordering::Acquire)

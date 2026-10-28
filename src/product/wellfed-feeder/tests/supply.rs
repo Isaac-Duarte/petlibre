@@ -484,32 +484,45 @@ impl Feeds for Owner {
 fn the_battery_reason_sits_after_the_lasting_ones_and_refuses_busy() {
     let battery = Readiness::Blocked(Blocked::Battery);
     assert_eq!(
-        readiness(&Owner(None), false, false, false),
+        readiness(&Owner(None), false, false, false, false),
         Readiness::Ready
     );
-    assert_eq!(readiness(&Owner(None), false, false, true), battery);
+    assert_eq!(readiness(&Owner(None), false, false, false, true), battery);
     assert_eq!(
-        readiness(&Owner(Some(Blocked::Battery)), false, false, false),
+        readiness(&Owner(Some(Blocked::Battery)), false, false, false, false),
         battery
     );
     assert_eq!(
-        readiness(&Owner(Some(Blocked::Fault)), false, false, true),
+        readiness(&Owner(Some(Blocked::Fault)), false, false, false, true),
         Readiness::Blocked(Blocked::Fault)
     );
     assert_eq!(
-        readiness(&Owner(None), true, false, true),
+        readiness(&Owner(None), false, true, false, true),
         Readiness::Blocked(Blocked::Setup)
     );
     // The owner's passing reason, the more specific one, wins over the hold.
     assert_eq!(
-        readiness(&Owner(Some(Blocked::Feeding)), false, false, true),
+        readiness(&Owner(Some(Blocked::Feeding)), false, false, false, true),
         Readiness::Blocked(Blocked::Feeding)
     );
     assert_eq!(
-        readiness(&NoFeeds, false, false, true),
+        readiness(&NoFeeds, false, false, false, true),
         Readiness::Blocked(Blocked::Unserved)
     );
 
     assert_eq!(Blocked::Battery.refusal(), Refusal::Busy);
     assert!(!Blocked::Battery.lasting());
+
+    // A restart asked for outranks setup mode, an install and the owner's
+    // passing reasons, but not a lasting fault.
+    assert_eq!(
+        readiness(&Owner(None), true, true, true, true),
+        Readiness::Blocked(Blocked::Restarting)
+    );
+    assert_eq!(
+        readiness(&Owner(Some(Blocked::Fault)), true, false, false, false),
+        Readiness::Blocked(Blocked::Fault)
+    );
+    assert_eq!(Blocked::Restarting.refusal(), Refusal::Busy);
+    assert!(!Blocked::Restarting.lasting());
 }

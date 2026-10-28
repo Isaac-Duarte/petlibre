@@ -246,6 +246,12 @@ pub trait Platform {
     fn capabilities(&self) -> Capabilities;
     /// Restart the feeder (a watchdog reset on hardware).
     fn reset(&mut self);
+    /// A restart was asked for ([`Self::reset`]) and has not come yet: no
+    /// feed may start, since the restart would leave it uncertain.
+    fn restarting(&self) -> bool;
+    /// The settings writer could not finish a factory reset this boot and
+    /// asks for a restart to try again.
+    fn restart_wanted(&self) -> bool;
     /// Fill `out` from the vetted generator; false when it has no output.
     fn random(&mut self, out: &mut [u8; 32]) -> bool;
     /// The identity secret and its generation, if published since `seen`

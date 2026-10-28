@@ -143,6 +143,7 @@ impl From<proto::Blocked> for Blocked {
             proto::Blocked::Setup => Self::Setup,
             proto::Blocked::Unserved => Self::Unserved,
             proto::Blocked::Battery => Self::Battery,
+            proto::Blocked::Restarting => Self::Restarting,
         }
     }
 }
@@ -160,6 +161,7 @@ impl From<Blocked> for proto::Blocked {
             Blocked::Setup => Self::Setup,
             Blocked::Unserved => Self::Unserved,
             Blocked::Battery => Self::Battery,
+            Blocked::Restarting => Self::Restarting,
         }
     }
 }

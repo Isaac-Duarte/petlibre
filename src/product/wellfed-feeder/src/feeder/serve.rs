@@ -179,6 +179,8 @@ pub struct Inputs<'a, F> {
     pub battery_hold: bool,
     /// A plan's claimed feed must be the next one.
     pub meal: bool,
+    /// A factory reset is queued or marked: no install starts.
+    pub reset: bool,
     pub feeds: &'a mut F,
 }
 
@@ -294,6 +296,7 @@ impl<S: Copy> Serve<S> {
             supply,
             battery_hold,
             meal,
+            reset,
             feeds,
         } = inputs;
         let boot = self.boot(platform, now_ms);
@@ -361,6 +364,7 @@ impl<S: Copy> Serve<S> {
             battery_hold,
             supply,
             meal,
+            reset,
         };
         let busy = self.server.step(
             Pass {
@@ -669,6 +673,9 @@ pub struct FeederDevice<'a, P, F> {
     pub(super) supply: Supply,
     /// A plan's claimed feed must be the next one.
     pub(super) meal: bool,
+    /// A factory reset is queued or marked: an install offer is refused,
+    /// so the reset's boot never becomes an update's trial boot.
+    pub(super) reset: bool,
 }
 
 /// How long a walk of the task stacks answers memory requests: the walk
@@ -872,6 +879,7 @@ impl<P: Platform, F: Feeds> Device for FeederDevice<'_, P, F> {
     fn readiness(&mut self) -> Readiness {
         let ready = feeding::readiness(
             &*self.feeds,
+            self.platform.restarting(),
             self.setup,
             self.platform.installing(),
             self.battery_hold,
@@ -1058,6 +1066,7 @@ impl<P: Platform, F: Feeds> Device for FeederDevice<'_, P, F> {
             return Err(Refusal::Update(UpdateRefusal::Battery));
         }
         let ticket = match request {
+            UpdateRequest::Offer { .. } if self.reset => return Err(Refusal::Busy),
             UpdateRequest::Offer {
                 manifest,
                 downgrade,

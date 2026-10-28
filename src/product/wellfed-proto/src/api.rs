@@ -837,6 +837,10 @@ pub enum Blocked {
     /// or the pack recovers past the floor's hysteresis. Only to a session
     /// that claims [`Capabilities::POWER`].
     Battery,
+    /// A restart was asked for (a client's reboot, setup mode's end, the
+    /// factory reset) and comes within seconds: a feed started now would be
+    /// cut, so none starts.
+    Restarting,
 }
 
 impl Blocked {
@@ -851,7 +855,8 @@ impl Blocked {
             | Self::Joining
             | Self::Updating
             | Self::Setup
-            | Self::Battery => Refusal::Busy,
+            | Self::Battery
+            | Self::Restarting => Refusal::Busy,
         }
     }
 
@@ -883,7 +888,8 @@ impl Blocked {
             | Self::Feeding
             | Self::Joining
             | Self::Unserved
-            | Self::Battery => false,
+            | Self::Battery
+            | Self::Restarting => false,
         }
     }
 }

@@ -50,16 +50,20 @@ use super::platform::Platform;
 pub const DISPENSE_PORTIONS: u8 = 1;
 
 /// Whether a feed can start now. The owner's lasting reasons come first,
-/// since they outlast setup mode and an install; then those two; then the
-/// owner's passing ones; then a brownout's `battery_hold`.
+/// since they outlast setup mode and an install; then a restart that was
+/// asked for (`restarting`), which would cut a feed started now; then setup
+/// mode and an install; then the owner's passing ones; then a brownout's
+/// `battery_hold`.
 pub fn readiness<F: Feeds>(
     feeds: &F,
+    restarting: bool,
     setup: bool,
     installing: bool,
     battery_hold: bool,
 ) -> Readiness {
     let blocked = match feeds.blocked() {
         Some(blocked) if blocked.lasting() || blocked == Blocked::Unserved => Some(blocked),
+        _ if restarting => Some(Blocked::Restarting),
         _ if setup => Some(Blocked::Setup),
         _ if installing => Some(Blocked::Updating),
         None if battery_hold => Some(Blocked::Battery),
@@ -220,6 +224,7 @@ const fn blocked_name(blocked: Blocked) -> &'static str {
         Blocked::Setup => "setup",
         Blocked::Unserved => "unserved",
         Blocked::Battery => "battery",
+        Blocked::Restarting => "restarting",
     }
 }
 

@@ -36,6 +36,9 @@ named_enum! {
         /// A feed is queued or runs: the reset's restart would cut it, so
         /// the hold is refused rather than deferred past the feed.
         Feeding = "feeding",
+        /// An install is under way: its restart into a trial boot would
+        /// meet the reset's marker.
+        Updating = "updating",
     }
 }
 
@@ -194,6 +197,12 @@ impl Owner {
         self.reset_restart || self.setup.reboot_due(now_ms)
     }
 
+    /// A factory reset is queued for the writer or marked and waits for its
+    /// restart: no install may start meanwhile.
+    pub const fn reset_pending(&self) -> bool {
+        self.reset_ticket.is_some() || self.reset_restart
+    }
+
     /// The LAN recovery offer's decision this step (its code keyed in, or
     /// its timeout), for the device API's recovery session.
     pub fn take_recovery(&mut self) -> Option<pairing::Event> {
@@ -221,15 +230,16 @@ impl Owner {
         self.setup.is_on()
     }
 
-    /// One step at `now`: `feeding` says a feed is queued or runs (a Reset
-    /// hold is then refused), `remote` is a queued remote change (true to
+    /// One step at `now`: `refusal` is why a Reset hold would be refused
+    /// now (a feed queued or running, an install), `remote` is a queued
+    /// remote change (true to
     /// lock), `identity` the feeder's once the writer has published it;
     /// `record` receives what happened, in order.
     pub fn step<P: Platform>(
         &mut self,
         platform: &mut P,
         now: u32,
-        feeding: bool,
+        refusal: Option<ResetRefusal>,
         remote: Option<bool>,
         identity: Option<&Keypair>,
         mut record: impl FnMut(Record<P::Record>),
@@ -286,7 +296,7 @@ impl Owner {
                     allowed: true,
                 })
             {
-                reset_hold(platform, feeding, &mut self.reset_ticket, &mut record);
+                reset_hold(platform, refusal, &mut self.reset_ticket, &mut record);
             }
         }
         if let Some(ticket) = self.reset_ticket
@@ -325,17 +335,15 @@ impl Owner {
 }
 
 /// An allowed Reset hold: the factory reset, queued for the settings
-/// writer unless a feed is queued or runs; `ticket` takes its ticket.
+/// writer unless `refusal` names why not; `ticket` takes its ticket.
 fn reset_hold<P: Platform>(
     platform: &mut P,
-    feeding: bool,
+    refusal: Option<ResetRefusal>,
     ticket: &mut Option<u32>,
     record: &mut impl FnMut(Record<P::Record>),
 ) {
-    if feeding {
-        record(Record::ResetRefused {
-            reason: ResetRefusal::Feeding,
-        });
+    if let Some(reason) = refusal {
+        record(Record::ResetRefused { reason });
         return;
     }
 

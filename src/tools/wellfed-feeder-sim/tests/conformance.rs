@@ -60,6 +60,11 @@ impl Rig for SimRig {
     fn gesture(&mut self, gesture: wellfed_core::buttons::Gesture) {
         self.feeder.platform_mut().gesture_in(gesture);
     }
+
+    fn begin_restart(&mut self) {
+        use wellfed_feeder::feeder::Platform;
+        self.feeder.platform_mut().reset();
+    }
 }
 
 wellfed_feeder::conformance!(SimRig::start());

@@ -81,6 +81,7 @@ use wellfed_hal::flash_lock::provider::Provider;
 use wellfed_hal::interlock::{INTERLOCK, WRITER_POLL_MS, WriteStep, WriteTurn};
 use wellfed_hal::plaf103::storage::{FACTORY_CLEARED_SECTORS, factory_cleared};
 use wellfed_hal::{rng, sdk, settings, supervision};
+use wellfed_proto::api::ResetCause;
 use wellfed_sdk::storage::{
     CLIENTS_BASE, EVENTS_BASE, EVENTS_UNITS, FlashOps, Region, SEED_BASE, SETTINGS_BASE,
     SETTINGS_BINDING, Slots, TRACES_BASE, TRACES_UNITS,
@@ -266,6 +267,8 @@ pub enum Record {
     ResetError {
         stage: ErrorStage,
         sector: Option<u32>,
+        /// The loop was asked for a restart to try again.
+        restart: bool,
     },
 }
 
@@ -428,12 +431,15 @@ pub fn describe(record: Record, f: &mut impl fmt::Write) -> fmt::Result {
         Record::ResetDone { erased } => write!(f, "reset done erased={erased}"),
         Record::ResetError {
             stage,
-            sector: Some(sector),
-        } => write!(f, "reset error stage={stage} sector={sector}"),
-        Record::ResetError {
-            stage,
-            sector: None,
-        } => write!(f, "reset error stage={stage}"),
+            sector,
+            restart,
+        } => {
+            write!(f, "reset error stage={stage}")?;
+            if let Some(sector) = sector {
+                write!(f, " sector={sector}")?;
+            }
+            write!(f, " restart={}", u8::from(restart))
+        }
     }
 }
 
@@ -600,6 +606,16 @@ fn fresh_epoch() -> u32 {
     drawn.max(1)
 }
 
+/// Whether `sector` reads erased, in small reads to spare the stack: an
+/// erase that reported success but left bits behind stops the reset.
+fn blank<F: FlashOps>(sector: u32) -> bool {
+    const CHUNK: u32 = 64;
+    let mut chunk = [0u8; CHUNK as usize];
+    (0..sdk::SECTOR_BYTES / CHUNK).all(|i| {
+        F::read(sector, i * CHUNK, &mut chunk) && chunk.iter().all(|&byte| byte == u8::MAX)
+    })
+}
+
 impl<F: FlashOps> Writer<F> {
     /// The write turn for one store write, or `None` while a feed holds the
     /// outputs: the caller then leaves its work queued.
@@ -747,8 +763,9 @@ impl<F: FlashOps> Writer<F> {
     /// generator or does not happen: a weaker key is never written. It
     /// programs the reset's marker first, so whatever happens next the boot
     /// after finishes it, then forgets every client at once (their sessions
-    /// end now, not at the restart). The loop restarts the feeder once it
-    /// reads `Done`, and that boot erases the cleared stores.
+    /// end now, not at the restart). Once the marker is down the answer is
+    /// `Done`: the loop restarts the feeder, and that boot erases the
+    /// cleared stores.
     fn change(&mut self, change: Change, writable: bool) -> Record {
         let kind = match change {
             Change::Enroll { .. } => KeyChange::Enroll,
@@ -767,7 +784,14 @@ impl<F: FlashOps> Writer<F> {
                     let marked = reset_marker::mark(&Region::<F, RESET_BASE, 1>::new());
                     arming::clear_attempt();
                     if marked {
-                        self.apply(|clients| clients.reset(&identity))
+                        // Committed: the next boot erases the client store
+                        // whatever this write does, so a store it cannot
+                        // write (read-only, torn) still answers `Done` and
+                        // the loop restarts. A marker left down unanswered
+                        // would clear everything on some later, unrelated
+                        // boot.
+                        self.apply(|clients| clients.reset(&identity));
+                        KeyResult::Done
                     } else {
                         KeyResult::Io
                     }
@@ -776,13 +800,16 @@ impl<F: FlashOps> Writer<F> {
             },
         };
 
-        if kind == KeyChange::Reset
-            && result == KeyResult::Done
-            && let Some(secret) = self.clients.identity()
-        {
+        let reset = kind == KeyChange::Reset && result == KeyResult::Done;
+        if reset && let Some(secret) = self.clients.identity() {
             keys::publish_identity(secret);
         }
-        keys::publish_clients(self.clients.clients().copied());
+        if reset {
+            // No session outlives a reset, even one the store kept.
+            keys::publish_clients(core::iter::empty());
+        } else {
+            keys::publish_clients(self.clients.clients().copied());
+        }
         keys::finish(result);
         Record::KeysChanged {
             change: kind,
@@ -997,12 +1024,7 @@ impl<F: FlashOps> Writer<F> {
             return next(POLL_MS, None);
         }
         if self.stage == Stage::Serve || !H::armed() {
-            self.reset_stopped = true;
-            let record = Record::ResetError {
-                stage: ErrorStage::Unarmed,
-                sector: None,
-            };
-            return next(POLL_MS, Some(record));
+            return self.reset_stop(ErrorStage::Unarmed, None);
         }
         let Some(index) = self.resetting else {
             return next(POLL_MS, None);
@@ -1013,17 +1035,12 @@ impl<F: FlashOps> Writer<F> {
 
         let sector = factory_cleared(index).unwrap_or(RESET_BASE);
         arming::set_attempt();
-        let erased = F::erase(sector);
+        let erased = F::erase(sector) && blank::<F>(sector);
         arming::clear_attempt();
         drop(turn);
 
         if !erased {
-            self.reset_stopped = true;
-            let record = Record::ResetError {
-                stage: ErrorStage::Erase,
-                sector: Some(sector),
-            };
-            return next(POLL_MS, Some(record));
+            return self.reset_stop(ErrorStage::Erase, Some(sector));
         }
         if index < FACTORY_CLEARED_SECTORS {
             self.resetting = Some(index + 1);
@@ -1034,6 +1051,27 @@ impl<F: FlashOps> Writer<F> {
         self.publish();
         let record = Record::ResetDone {
             erased: FACTORY_CLEARED_SECTORS,
+        };
+        next(POLL_MS, Some(record))
+    }
+
+    /// The reset cannot go on this boot. A boot that serves nothing has no
+    /// identity, API, recovery window or BLE setup, so unless this boot is
+    /// itself an intentional restart it asks the loop for one (the loop
+    /// waits for a feed in flight): an erase that hung was the watchdog's
+    /// reset, its arming skip has cleared the attempt marker, and the
+    /// restart arms again. A restarted boot that also fails stays put until
+    /// a power cycle rather than restarting for ever.
+    fn reset_stop(&mut self, stage: ErrorStage, sector: Option<u32>) -> Step {
+        self.reset_stopped = true;
+        let restart = reset_cause(sdk::boot_reason()) != ResetCause::Software;
+        if restart {
+            keys::want_restart();
+        }
+        let record = Record::ResetError {
+            stage,
+            sector,
+            restart,
         };
         next(POLL_MS, Some(record))
     }

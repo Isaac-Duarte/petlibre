@@ -53,7 +53,7 @@ use beep::Beeper;
 use identity::Identity;
 use lights::Lights;
 use lock::LockBox;
-use owner::Owner;
+use owner::{Owner, ResetRefusal};
 use platform::DriverRecord;
 use reminder::Reminder;
 use schedule::Schedule;
@@ -274,6 +274,7 @@ impl<P: Platform> Feeder<P> {
     fn ready<F: Feeds>(&self, feeds: &F) -> Readiness {
         feeding::readiness(
             feeds,
+            self.platform.restarting(),
             self.owner.setup_on(),
             self.platform.installing(),
             self.supply.holds(),
@@ -295,18 +296,32 @@ impl<P: Platform> Feeder<P> {
         }
 
         let remote = self.lock.take();
+        let refusal = if feeds.busy() {
+            Some(ResetRefusal::Feeding)
+        } else if self.platform.installing()
+            || self
+                .platform
+                .update_progress()
+                .is_some_and(|progress| progress.phase != InstallPhase::Idle)
+        {
+            Some(ResetRefusal::Updating)
+        } else {
+            None
+        };
         let delay = self.owner.step(
             &mut self.platform,
             now_ms,
-            feeds.busy(),
+            refusal,
             remote,
             self.identity.keypair(),
             |r| record(Record::Owner(r)),
         );
-        // Setup mode's and the factory reset's restart wait for a feed in
-        // flight, which they would otherwise leave uncertain; neither starts
-        // a feed itself.
-        if self.owner.reboot_due(now_ms) && !feeds.busy() {
+        // Setup mode's and the factory reset's restart, and the one the
+        // writer asks for when a reset could not finish, wait for a feed in
+        // flight, which they would otherwise leave uncertain; none starts a
+        // feed itself, and once asked for no feed starts (`restarting`).
+        let due = self.owner.reboot_due(now_ms) || self.platform.restart_wanted();
+        if due && !feeds.busy() && !self.platform.restarting() {
             // The writer's restart save takes this boot's counts as they are now.
             let counts = self.serve.stats().counts(now_ms);
             self.platform.hand_counts(counts);
@@ -398,6 +413,7 @@ impl<P: Platform> Feeder<P> {
             self.lock.publish(lock.locked());
         }
         self.serve.stats().presses(self.owner.presses());
+        let reset = self.owner.reset_pending();
         let inputs = Inputs {
             now_ms,
             setup: self.owner.setup_on(),
@@ -409,6 +425,7 @@ impl<P: Platform> Feeder<P> {
             supply: reading,
             battery_hold: self.supply.holds(),
             meal: self.schedule.holds(),
+            reset,
             feeds,
         };
         let serve_delay = self
@@ -505,6 +522,7 @@ impl<P: Platform> Feeder<P> {
             battery_hold: self.supply.holds(),
             supply,
             meal: self.schedule.holds(),
+            reset: self.owner.reset_pending(),
         }
     }
 }

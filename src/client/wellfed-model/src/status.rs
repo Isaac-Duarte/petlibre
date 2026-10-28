@@ -153,10 +153,12 @@ pub enum Blocked {
     /// On its batteries, below the floor a feed needs (or unread), or
     /// after a brownout until the adapter returns.
     Battery,
+    /// A restart is coming within seconds.
+    Restarting,
 }
 
 impl Blocked {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::Starting,
         Self::Journal,
         Self::Fault,
@@ -167,6 +169,7 @@ impl Blocked {
         Self::Setup,
         Self::Unserved,
         Self::Battery,
+        Self::Restarting,
     ];
 
     /// The stored spelling, the same as the JSON one.
@@ -182,6 +185,7 @@ impl Blocked {
             Self::Setup => "setup",
             Self::Unserved => "unserved",
             Self::Battery => "battery",
+            Self::Restarting => "restarting",
         }
     }
 

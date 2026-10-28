@@ -18,7 +18,7 @@
 //! publishes the enrolled clients ([`publish_clients`]), which the device
 //! API reads to admit a session.
 
-use core::sync::atomic::{AtomicU8, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 
 use wellfed_device_api::clients::{CLIENTS as STORE_CLIENTS, Client, Role};
 pub use wellfed_device_api::mailbox::{ClientChange as Change, KeyResult, Requested};
@@ -190,9 +190,24 @@ pub fn clients_since(seen: u32, table: &mut [Option<Client>; STORE_CLIENTS]) -> 
     })
 }
 
+/// The writer could not finish a factory reset this boot and asks the loop
+/// for one restart to try again.
+static RESTART: AtomicBool = AtomicBool::new(false);
+
+/// The writer's half: ask for the restart.
+pub fn want_restart() {
+    RESTART.store(true, Ordering::Release);
+}
+
+/// The loop's half: whether the writer asked for a restart.
+pub fn restart_wanted() -> bool {
+    RESTART.load(Ordering::Acquire)
+}
+
 /// Forget everything (host tests).
 #[cfg(not(target_os = "none"))]
 pub fn reset() {
+    RESTART.store(false, Ordering::Release);
     STATE.store(Hand::Empty as u8, Ordering::Release);
     TICKET.store(0, Ordering::Release);
     FINISHED.store(0, Ordering::Release);

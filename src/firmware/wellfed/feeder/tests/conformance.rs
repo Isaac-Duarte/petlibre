@@ -98,6 +98,7 @@ impl FirmwareRig {
         let serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         fake::reset_hardware();
         buttons::reset();
+        wellfed_sdk::hal::supervision::reset();
         settings::reset();
         // SAFETY: the test holds `SERIAL` and runs no Wi-Fi task.
         unsafe { network::reset() };
@@ -157,6 +158,10 @@ impl Rig for FirmwareRig {
 
     fn gesture(&mut self, gesture: wellfed_sdk::buttons::Gesture) {
         buttons::inject(gesture);
+    }
+
+    fn begin_restart(&mut self) {
+        wellfed_sdk::hal::supervision::begin_restart_grace(0);
     }
 }
 

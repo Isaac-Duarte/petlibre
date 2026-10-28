@@ -16,6 +16,7 @@
 //! [stock plan records]: ../../../../../docs/devices/plaf103/stock/README.md#plan-records
 
 use core::fmt;
+use core::fmt::Write as _;
 use core::ops::Range;
 
 use wellfed_model::{PLANS, PORTIONS_MAX, Plan, Weekday, Weekdays};
@@ -30,6 +31,8 @@ const SECTOR: usize = 0x1000;
 pub const ENTRY_LEN: usize = 0x2c;
 /// The most plans stock stores; its setter drops an eleventh.
 pub const STOCK_PLANS: usize = 10;
+/// The entries stock's boot can read: its ten slots.
+pub const ENTRIES_LEN: usize = STOCK_PLANS * ENTRY_LEN;
 
 /// The count byte of an erased count sector, which stock's boot reads as
 /// no plans.
@@ -49,15 +52,18 @@ const STATE: usize = 0x11;
 const SYNC: Range<usize> = 0x12..0x1a;
 const SKIP_UNTIL: Range<usize> = 0x1a..0x22;
 
-// The replacement's slots are stock's, one for one.
+// The replacement's slots are stock's, one for one, and the feeder serves
+// every entry stock's boot reads.
 const _: () = assert!(STOCK_PLANS == PLANS);
+const _: () = assert!(ENTRIES_LEN == wellfed_proto::api::STOCK_PLAN_ENTRIES_LEN);
 
 /// Why stock's plan sectors could not be read at all. Each plan in a
 /// readable table is judged on its own by [`convert`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum DecodeError {
-    /// The bytes are not the two plan sectors.
-    #[error("stock's plan sectors are {expected} bytes, not {len}")]
+    /// The bytes are not the two plan sectors (or, read in parts, not the
+    /// ten entries).
+    #[error("stock's plan bytes are {expected} long, not {len}")]
     Length { len: usize, expected: usize },
     /// A count stock's setter never writes. Stock's own boot would read
     /// past its table, so nothing in it can be trusted.
@@ -203,6 +209,19 @@ fn word<const N: usize>(field: &[u8]) -> [u8; N] {
     bytes
 }
 
+/// The copy of stock's plan sectors an install keeps beside the stock
+/// backup: the count byte, then the [`ENTRIES_LEN`] bytes of entries, as
+/// the feeder served them.
+pub const KEPT_LEN: usize = 1 + ENTRIES_LEN;
+
+/// The kept copy of the count byte and entries the feeder served.
+pub fn kept(count: u8, entries: &[u8]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(1 + entries.len());
+    bytes.push(count);
+    bytes.extend_from_slice(entries);
+    bytes
+}
+
 /// Stock's plan table, a slot per stored entry.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct StockPlans {
@@ -223,7 +242,24 @@ impl StockPlans {
             });
         }
         let entries = &sectors[SECTOR..];
-        let count = match sectors[0] {
+        if sectors[0] == ERASED && entries.iter().any(|&byte| byte != ERASED) {
+            return Err(DecodeError::Torn);
+        }
+        Self::decode_parts(sectors[0], &entries[..ENTRIES_LEN])
+    }
+
+    /// Read the count byte and the first [`ENTRIES_LEN`] bytes of the
+    /// entries sector, as the bank-0 role serves them (`ReadStockPlans`):
+    /// everything stock's boot can read. A save never writes past them, so
+    /// the rest of the sector is erased.
+    pub fn decode_parts(count: u8, entries: &[u8]) -> Result<Self, DecodeError> {
+        if entries.len() != ENTRIES_LEN {
+            return Err(DecodeError::Length {
+                len: entries.len(),
+                expected: ENTRIES_LEN,
+            });
+        }
+        let count = match count {
             ERASED if entries.iter().any(|&byte| byte != ERASED) => {
                 return Err(DecodeError::Torn);
             }
@@ -240,6 +276,17 @@ impl StockPlans {
             }
         }
         Ok(plans)
+    }
+
+    /// Read a copy an install kept ([`kept`]).
+    pub fn decode_kept(bytes: &[u8]) -> Result<Self, DecodeError> {
+        let Some((&count, entries)) = bytes.split_first() else {
+            return Err(DecodeError::Length {
+                len: 0,
+                expected: KEPT_LEN,
+            });
+        };
+        Self::decode_parts(count, entries)
     }
 
     /// The two plan sectors as stock's setter leaves them for these
@@ -451,6 +498,61 @@ pub fn convert(stock: &StockPlans, now_ms: u64) -> Import {
     Import { plans, outcomes }
 }
 
+/// One line per stock plan: what it became, or why it was refused.
+pub fn report(import: &Import) -> String {
+    let mut out = String::new();
+    if import.outcomes.is_empty() {
+        out.push_str("Stock holds no plans.\n");
+    }
+
+    for outcome in &import.outcomes {
+        let line = match outcome {
+            Outcome::Converted {
+                slot, stock, plan, ..
+            } => format!(
+                "slot {slot}: stock plan {} -> {:02}:{:02} {}, {} portions{}",
+                stock.id,
+                plan.minute / 60,
+                plan.minute % 60,
+                plan.days,
+                plan.portions,
+                if plan.enabled { "" } else { ", disabled" },
+            ),
+            Outcome::Refused {
+                slot,
+                stock,
+                refusal,
+            } => format!(
+                "slot {slot}: stock plan {} ({}) refused: {refusal}",
+                stock.id,
+                StockTime {
+                    hour: stock.hour,
+                    minute: stock.minute
+                },
+            ),
+        };
+        let _ = writeln!(out, "{line}");
+
+        for note in outcome.notes() {
+            let note = match note {
+                Note::CallDropped { times } => {
+                    format!("its meal call ({times} plays) is not carried over")
+                }
+                Note::PendingDropped => {
+                    "the meal stock had started or still owed is not run again; \
+                     it runs from its next occurrence"
+                        .to_owned()
+                }
+                Note::SkipDisabled { until_ms } => {
+                    format!("skipped until {until_ms} ms, so it arrives disabled")
+                }
+            };
+            let _ = writeln!(out, "  note: {note}");
+        }
+    }
+    out
+}
+
 /// The replacement plan that runs `stock`'s meals.
 fn plan(stock: &StockPlan, now_ms: u64) -> Result<Plan, PlanRefusal> {
     if stock.erased() {
@@ -623,6 +725,37 @@ mod tests {
         let decoded = StockPlans::decode(&full.encode()).unwrap();
         assert_eq!(decoded, full);
         assert_eq!(convert(&decoded, NOW).plans.iter().flatten().count(), 10);
+    }
+
+    /// The count byte and ten entries the feeder serves read as the whole
+    /// sectors do, with the same refusals.
+    #[test]
+    fn the_served_parts_read_as_the_sectors_do() {
+        let parts = |sectors: &[u8]| {
+            StockPlans::decode_parts(sectors[0], &sectors[SECTOR..SECTOR + ENTRIES_LEN])
+        };
+
+        let full = table(&[Some(daily()); STOCK_PLANS]).encode();
+        let gapped = table(&[Some(daily()), None, Some(daily())]).encode();
+        let fresh = vec![0xff; 0x2000];
+        for sectors in [&full, &gapped, &fresh] {
+            assert_eq!(parts(sectors), StockPlans::decode(sectors));
+            assert!(parts(sectors).is_ok());
+        }
+
+        let mut torn = gapped.clone();
+        torn[0] = 0xff;
+        assert_eq!(parts(&torn), Err(DecodeError::Torn));
+        let mut eleven = gapped;
+        eleven[0] = 11;
+        assert_eq!(parts(&eleven), Err(DecodeError::Count { count: 11 }));
+        assert_eq!(
+            StockPlans::decode_parts(1, &full[SECTOR..SECTOR + ENTRY_LEN]),
+            Err(DecodeError::Length {
+                len: ENTRY_LEN,
+                expected: ENTRIES_LEN
+            })
+        );
     }
 
     #[test]
@@ -847,5 +980,41 @@ mod tests {
             [Note::SkipDisabled { until_ms: NOW + 1 }]
         );
         assert_eq!(import.outcomes[1].notes().count(), 0);
+    }
+
+    /// Plan 42 at hh:15 on Monday and Tuesday, with a meal call.
+    fn noted(hour: u8, portions: u8) -> StockPlan {
+        StockPlan {
+            id: 42,
+            hour,
+            minute: 15,
+            once: false,
+            days: [1, 2, 0, 0, 0, 0, 0],
+            call: true,
+            call_times: 2,
+            portions,
+            state: StockPlanState::Idle,
+            sync_ms: 0,
+            skip_until_ms: 0,
+        }
+    }
+
+    #[test]
+    fn the_report_names_each_plan() {
+        let mut stock = StockPlans::default();
+        stock.slots[0] = Some(noted(8, 3));
+        stock.slots[1] = Some(noted(8, 0));
+
+        let lines = report(&convert(&stock, 0));
+        assert_eq!(
+            lines,
+            "slot 0: stock plan 42 -> 08:15 mon,tue, 3 portions\n  \
+             note: its meal call (2 plays) is not carried over\n\
+             slot 1: stock plan 42 (08:15) refused: it asks for 0 portions, not 1 to 48\n"
+        );
+        assert_eq!(
+            report(&convert(&StockPlans::default(), 0)),
+            "Stock holds no plans.\n"
+        );
     }
 }

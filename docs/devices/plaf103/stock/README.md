@@ -81,7 +81,7 @@ What stock does at the edges of each feature, and what it writes as defaults whe
 
 #### Plan records
 
-Stock keeps its plans in two flash sectors and rereads them at every boot. The installer reads the same bytes to import them (`wellfed_client::install::plans`, and `wellfed-stock plans <file>` for a flash read). The import itself is not wired into the installer yet.
+Stock keeps its plans in two flash sectors and rereads them at every boot. The installer reads the same bytes from the replacement on bank 0 (`ReadStockPlans`) to import them before promotion ([consumer installation](../../../firmware/consumer-installation.md#the-installer)), and keeps them beside the stock backup. `wellfed-stock plans <file>` reads a flash read, the sectors alone or the installer's kept copy offline (`wellfed_client::install::plans`). Wellfed never writes either sector.
 
 - **0x7d0000, the count.** One byte. Stock's boot reads an erased byte (0xff) as no plans, and reads the count without bounding it. Its setter never writes more than 10. A count over 10 makes the import refuse the whole table.
 - **0x7d1000, the entries.** Count × 44 bytes, entry *i* in plan slot *i*. Bytes past the count are not read.

@@ -417,7 +417,9 @@ async fn main() -> Result<()> {
             let now_ms = u64::try_from(now.as_millis()).context("the clock is past 2554")?;
             print!(
                 "{}",
-                plans::report(&wellfed_client::install::plans::convert(&stock, now_ms))
+                wellfed_client::install::plans::report(&wellfed_client::install::plans::convert(
+                    &stock, now_ms
+                ))
             );
         }
 

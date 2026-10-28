@@ -348,6 +348,7 @@ fn bank_0_serves_stock_s_plan_sectors_and_bank_1_none() {
         };
         assert_eq!(count, 2, "a deleted slot stays counted");
         assert_eq!(entries, &sectors[SECTOR..SECTOR + STOCK_PLAN_ENTRIES_LEN]);
+        assert_eq!(StockPlans::decode_parts(count, &entries), Ok(stock));
         rig.sim.stop().await;
     });
 }

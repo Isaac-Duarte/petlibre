@@ -16,7 +16,8 @@
 //! The run holds the bench lease beside the stock config for its whole
 //! length; `serve` runs on it as a descendant. Nothing is retried that the
 //! steps say must not be: the install request goes once, and a refusal or
-//! an uncertain outcome ends the run.
+//! an uncertain outcome ends the run; so does the put of stock's plans,
+//! which an unanswered put judges by reading the plans back.
 //!
 //! [consumer installation]: ../../../../docs/firmware/consumer-installation.md
 
@@ -29,8 +30,9 @@ use clap::Args;
 use serde::de::IgnoredAny;
 use tokio::process::{Child, Command};
 use wellfed_client::install::{
-    CONTAINER_HEADER, FeederTrust, Install, Provision, Replacement, Requested, SETUP_ADDRESS,
-    SetupFrame, Step, StockBackup, StockPower, StockView, manifest_version,
+    CONTAINER_HEADER, FeederTrust, Install, InstallError, PlansPut, Provision, Replacement,
+    Requested, SETUP_ADDRESS, SetupFrame, Step, StockBackup, StockPower, StockView,
+    manifest_version, plans,
 };
 use wellfed_client::update::{Image, InstallError as UpdateError};
 use wellfed_formats::bench::lease::Lease;
@@ -38,7 +40,7 @@ use wellfed_formats::manifest::BuildManifest;
 use wellfed_formats::stock::{
     ImageLease, OtaReport, ServerConfig, StockStatus, TrialAnswer, TrialPhase, TrialRequest,
 };
-use wellfed_model::{Answer, Op};
+use wellfed_model::{Answer, Generation, Op, PLANS, Plan, Plans};
 use wellfed_proto::api::PORT;
 use wellfed_stock_api::{ApiError, Auth, StockApi};
 
@@ -65,6 +67,8 @@ const CONFIRM_WAIT: Duration = Duration::from_secs(6 * 60);
 const IMAGES_WAIT: Duration = Duration::from_secs(30);
 /// How long a child process gets to exit after SIGTERM.
 const STOP_WAIT: Duration = Duration::from_secs(5);
+/// Reading the plans back may wait for a session to open again.
+const PLANS_WAIT: Duration = Duration::from_secs(60);
 
 #[derive(Args)]
 pub(crate) struct InstallArgs {
@@ -123,6 +127,11 @@ pub(crate) struct InstallArgs {
     /// The replacement's address; where stock connected from otherwise.
     #[arg(long)]
     address: Option<String>,
+    /// Promote even if stock's stored plans cannot be read (a cut save, or
+    /// a build that does not serve them). Without it the run stops before
+    /// promotion, with stock intact in bank 1.
+    #[arg(long)]
+    without_stock_plans: bool,
 }
 
 /// The run's IO state beside the steps.
@@ -181,6 +190,9 @@ pub(crate) async fn run(args: InstallArgs) -> Result<()> {
     } else {
         Install::new(provision(&args, &config)?, &build, version)?
     };
+    if args.without_stock_plans {
+        install.without_stock_plans();
+    }
     if let Some(backup) = &backup {
         install.backup(
             backup
@@ -364,18 +376,42 @@ impl Run {
                             .context("--stock-backup is not stock's pinned image")?,
                     );
                 }
+                Step::ReadStockPlans => self.stock_plans(install).await?,
                 Step::Promote => {
                     self.keep_given()?;
                     let outcome = self.promote(install.build()).await?;
                     install.promoted(outcome);
                 }
                 Step::AwaitConfirm => self.await_confirm(install).await?,
+                Step::ReadPlans => self.read_plans(install).await?,
+                Step::PutPlans { base, plans } => {
+                    let outcome = self.put_plans(base, plans).await?;
+                    install.plans_put(outcome);
+                }
+                Step::AwaitPut => bail!("the plans' put was answered before this step"),
                 Step::Done => {
                     eprintln!(
                         "Installed: build {} confirmed on bank 1. This computer is its owner.",
                         short(install.build())
                     );
+                    match (install.import(), install.plans_skipped()) {
+                        (_, Some(skipped)) => {
+                            eprintln!("Stock's plans were not imported: {skipped}.");
+                        }
+                        (Some(import), None) if import.plans.iter().any(Option::is_some) => {
+                            eprintln!("Stock's converted plans are set on the replacement.");
+                        }
+                        _ => eprintln!("Stock had no plans to set on the replacement."),
+                    }
                     return Ok(());
+                }
+                Step::Failed(
+                    error @ (InstallError::StockPlans(_) | InstallError::StockPlansUnread(_)),
+                ) => {
+                    return Err(anyhow::Error::from(error).context(
+                        "Promotion refused: stock's plans could not be read. Run again with \
+                         --from-bank0 --without-stock-plans to install without them",
+                    ));
                 }
                 Step::Failed(error) => return Err(error.into()),
             }
@@ -664,6 +700,105 @@ impl Run {
         Ok(backup)
     }
 
+    /// Stock's plan sectors from the bank-0 role: kept beside the backup,
+    /// then decoded and converted, and the import shown to the owner.
+    async fn stock_plans(&self, install: &mut Install) -> Result<()> {
+        let identity = self
+            .identity
+            .context("the feeder's identity is not known yet")?;
+        let mut connection = self.connect().await?;
+        // A feeder that predates the backup would end the session on it.
+        if !connection.capabilities().backup {
+            bail!("this build serves no stock backup or plans; update bank 0 first");
+        }
+
+        let answer = connection
+            .ask(crate::device::random()?, &Op::ReadStockPlans)
+            .await?;
+        let sectors = match answer {
+            Answer::StockPlans(sectors) => sectors,
+            Answer::Refused(refusal) => {
+                install.stock_plans_unread(refusal);
+                return Ok(());
+            }
+            other => bail!("the feeder answered {other:?} to a stock plans request"),
+        };
+        let path = crate::backup::plans_path(&self.args.backups, &identity);
+        crate::backup::keep_plans(&path, &plans::kept(sectors.count, &sectors.entries)).context(
+            "Promotion refused: stock's plans could not be kept; the feeder runs the \
+             replacement from bank 0 and still holds stock in bank 1",
+        )?;
+        eprintln!("Kept stock's plan sectors at {}.", path.display());
+
+        install.stock_plans(sectors.count, &sectors.entries, now_ms()?);
+        if let Some(import) = install.import() {
+            eprint!(
+                "Stock's plans, as the replacement will run them:\n{}",
+                plans::report(import)
+            );
+        }
+        if let Some(skipped) = install.plans_skipped() {
+            eprintln!("Going on without stock's plans (--without-stock-plans): {skipped}.");
+        }
+        Ok(())
+    }
+
+    /// The replacement's plans for the steps. A read changes nothing, so a
+    /// session that fails is opened again until [`PLANS_WAIT`] runs out.
+    async fn read_plans(&self, install: &mut Install) -> Result<()> {
+        let deadline = Instant::now() + PLANS_WAIT;
+        loop {
+            match self.plans().await {
+                Ok(view) => {
+                    install.plans(&view);
+                    return Ok(());
+                }
+                Err(error) if Instant::now() >= deadline => {
+                    eprintln!("The replacement's plans could not be read ({error:#}).");
+                    install.gave_up();
+                    return Ok(());
+                }
+                Err(_) => tokio::time::sleep(POLL).await,
+            }
+        }
+    }
+
+    async fn plans(&self) -> Result<Plans> {
+        let mut connection = self.connect().await?;
+        match connection
+            .ask(crate::device::random()?, &Op::GetPlans)
+            .await?
+        {
+            Answer::Plans(view) => Ok(view),
+            other => bail!("the feeder answered {other:?} to a plans request"),
+        }
+    }
+
+    /// Put the import once. Anything but an answer is unanswered, which
+    /// the steps judge by reading the plans back; it is never sent again.
+    async fn put_plans(&self, base: Generation, plans: [Option<Plan>; PLANS]) -> Result<PlansPut> {
+        eprintln!("Setting stock's converted plans on the replacement.");
+        // Opening a session sends nothing, so it may be tried again; the
+        // put itself goes once.
+        let deadline = Instant::now() + PLANS_WAIT;
+        let mut connection = loop {
+            match self.connect().await {
+                Ok(connection) => break connection,
+                Err(error) if Instant::now() >= deadline => {
+                    return Err(error
+                        .context("stock's plans were not sent: no session with the replacement"));
+                }
+                Err(_) => tokio::time::sleep(POLL).await,
+            }
+        };
+        let op = Op::PutPlans { base, plans };
+        Ok(match connection.ask(crate::device::random()?, &op).await {
+            Ok(Answer::Done { .. }) => PlansPut::Done,
+            Ok(Answer::Refused(refusal)) => PlansPut::Refused(refusal),
+            Ok(_) | Err(_) => PlansPut::Unanswered,
+        })
+    }
+
     async fn connect(&self) -> Result<wellfed_connect::Connection> {
         let identity = self
             .identity
@@ -817,6 +952,14 @@ fn view(status: &StockStatus) -> StockView {
             },
         },
     }
+}
+
+/// Unix milliseconds now, which decides whether a stock skip still holds.
+fn now_ms() -> Result<u64> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .context("the clock is before 1970")?;
+    u64::try_from(now.as_millis()).context("the clock is past 2554")
 }
 
 fn short(build: &str) -> &str {

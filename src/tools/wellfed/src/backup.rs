@@ -150,6 +150,35 @@ pub(crate) fn path(backups: &Path, identity: &[u8; 32]) -> PathBuf {
         .join(format!("stock-{STOCK_VERSION}.bin"))
 }
 
+/// Where the install keeps stock's plan sectors, beside the feeder's
+/// backup: the count byte and entries as the feeder served them
+/// (`wellfed_client::install::plans::kept`), which `wellfed-stock plans`
+/// reads again.
+pub(crate) fn plans_path(backups: &Path, identity: &[u8; 32]) -> PathBuf {
+    backups.join(hex::encode(identity)).join("stock-plans.bin")
+}
+
+/// Keep stock's plan bytes at `path`. As with the backup, a copy already
+/// there stays: the same bytes are kept as they are, and different ones
+/// refuse rather than replace what an earlier run read.
+pub(crate) fn keep_plans(path: &Path, bytes: &[u8]) -> Result<()> {
+    match std::fs::read(path) {
+        Ok(kept) if kept == bytes => return Ok(()),
+        Ok(_) => bail!(
+            "{} already holds another copy of stock's plans; it is never replaced: move it \
+             aside to keep this one",
+            path.display()
+        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error).with_context(|| format!("read {}", path.display())),
+    }
+    let directory = path.parent().context("a plans path has a directory")?;
+    std::fs::create_dir_all(directory)
+        .with_context(|| format!("create {}", directory.display()))?;
+    wellfed_formats::private::write_new_whole(path, bytes)
+        .with_context(|| format!("write {}", path.display()))
+}
+
 /// The backup kept at `path`, checked again; `None` when there is none.
 pub(crate) fn load(path: &Path) -> Result<Option<StockBackup>> {
     let bytes = match std::fs::read(path) {
@@ -365,5 +394,19 @@ mod tests {
         let output = dir.path().join("exported.bin");
         assert!(export(&at, &output).is_err());
         assert!(!output.exists(), "nothing exported from a foreign file");
+    }
+
+    /// Stock's plans are kept beside the backup, and never replaced by a
+    /// different read.
+    #[test]
+    fn kept_plans_sit_beside_the_backup_and_are_never_replaced() {
+        let dir = tempfile::tempdir().unwrap();
+        let at = plans_path(dir.path(), &[0xab; 32]);
+        assert_eq!(at.parent(), path(dir.path(), &[0xab; 32]).parent());
+
+        keep_plans(&at, &[1, 2, 3]).unwrap();
+        keep_plans(&at, &[1, 2, 3]).unwrap();
+        assert!(keep_plans(&at, &[1, 2, 4]).is_err());
+        assert_eq!(std::fs::read(&at).unwrap(), [1, 2, 3]);
     }
 }

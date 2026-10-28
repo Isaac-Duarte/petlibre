@@ -32,7 +32,7 @@ This page tracks what works today and what comes next. It covers the replacement
 | Schedules | Works | Up to ten plans, run on the feeder with no server. |
 | Feeding history | Partial | Each feed is recorded as an event; a long history needs the server. |
 | Food level | Not started | The sensor is read; the feature isn't built. |
-| Importing your stock schedule | Not started | Stock's plan records are decoded; the installer does not read them yet. |
+| Importing your stock schedule | Experimental | The installer reads stock's plans before promotion and sets them on the replacement once it confirms. |
 
 ## The feeder itself
 

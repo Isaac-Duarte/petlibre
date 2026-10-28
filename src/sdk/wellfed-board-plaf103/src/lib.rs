@@ -150,8 +150,55 @@ pub mod storage {
         count: 2,
     };
 
-    /// Every allocation, in region order; sectors 36-47 are free.
-    pub const ALL: [Sectors; 13] = [
+    /// The factory reset's marker: written before the reset erases
+    /// anything and erased after it erased everything, so a boot that finds
+    /// it finishes the reset. Blank in every earlier build.
+    pub const RESET: Sectors = Sectors {
+        first: 36,
+        count: 1,
+    };
+
+    /// What the factory reset erases, in the order it erases them: the
+    /// clients and identity first, then the Wi-Fi credentials, the
+    /// settings, the time settings, the plans, the statistics, the traces
+    /// and the event history. It keeps the feed journal (a feed is never
+    /// re-run and its numbers never go back), the portion calibration (a
+    /// property of the hardware), the update store and confirmation record
+    /// (the anti-rollback floor and the build in trial) and the generator's
+    /// seed.
+    pub const FACTORY_CLEARED: [Sectors; 8] =
+        [CLIENTS, NET, SETTINGS, TIME, PLANS, STATS, TRACES, EVENTS];
+
+    /// The sectors [`FACTORY_CLEARED`] names, one by one.
+    pub const FACTORY_CLEARED_SECTORS: u32 = cleared_count();
+
+    const fn cleared_count() -> u32 {
+        let mut total = 0;
+        let mut i = 0;
+        while i < FACTORY_CLEARED.len() {
+            total += FACTORY_CLEARED[i].count;
+            i += 1;
+        }
+        total
+    }
+
+    /// The `index`th sector the factory reset erases, in its order.
+    pub const fn factory_cleared(index: u32) -> Option<u32> {
+        let mut skipped = 0;
+        let mut i = 0;
+        while i < FACTORY_CLEARED.len() {
+            let store = FACTORY_CLEARED[i];
+            if index < skipped + store.count {
+                return Some(store.first + (index - skipped));
+            }
+            skipped += store.count;
+            i += 1;
+        }
+        None
+    }
+
+    /// Every allocation, in region order; sectors 37-47 are free.
+    pub const ALL: [Sectors; 14] = [
         JOURNAL,
         SETTINGS,
         CONFIRM,
@@ -165,6 +212,7 @@ pub mod storage {
         TRACES,
         STATS,
         CALIBRATION,
+        RESET,
     ];
 
     const fn disjoint_and_inside() -> bool {

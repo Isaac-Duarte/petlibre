@@ -9,7 +9,7 @@ use std::sync::{Mutex, MutexGuard};
 use wellfed_device_api::mailbox::Lock;
 use wellfed_device_api::mailbox::SettingsView;
 use wellfed_device_api::pairing;
-use wellfed_feeder::feeder::owner::{Owner, POLL_MS, Record};
+use wellfed_feeder::feeder::owner::{Owner, POLL_MS, Record, ResetRefusal};
 use wellfed_feeder::feeder::setup;
 use wellfed_feeder::panel::{Action, Event, Source};
 use wellfed_feeder_runtime::keys::{self, Change, KeyResult, Requested};
@@ -27,6 +27,8 @@ struct Rig {
     _serial: MutexGuard<'static, ()>,
     owner: Owner,
     platform: Plaf103,
+    /// A feed is queued or runs.
+    feeding: bool,
 }
 
 impl Rig {
@@ -51,6 +53,7 @@ fn ready() -> Rig {
         _serial: serial,
         owner: Owner::default(),
         platform: Plaf103::new(),
+        feeding: false,
     }
 }
 
@@ -75,11 +78,16 @@ fn step(
         ..Default::default()
     });
     let mut records = Vec::new();
-    let delay = rig
-        .owner
-        .step(&mut rig.platform, now_ms, remote, None, |record| {
+    let delay = rig.owner.step(
+        &mut rig.platform,
+        now_ms,
+        rig.feeding,
+        remote,
+        None,
+        |record| {
             records.push(record);
-        });
+        },
+    );
     (delay, records)
 }
 
@@ -231,6 +239,18 @@ fn records_read_as_uart_lines() {
         }),
         "reset keys=queued"
     );
+    assert_eq!(
+        line(Record::ResetRefused {
+            reason: ResetRefusal::Feeding
+        }),
+        "reset refused=feeding"
+    );
+    assert_eq!(
+        line(Record::ResetWritten {
+            result: KeyResult::Done
+        }),
+        "reset result=done"
+    );
 }
 
 fn down(buttons: &[Button]) -> Gesture {
@@ -347,7 +367,54 @@ fn an_unlocked_reset_hold_queues_the_key_reset() {
         },
         "one reset waits for the writer at a time"
     );
+    assert!(!owner.reboot_due(now), "nothing marked yet");
+
+    // The writer marked the reset: the loop restarts to finish it.
     keys::finish(KeyResult::Done);
+    let (_, records) = step(&mut owner, now, &[], None, true);
+    assert_eq!(
+        records,
+        [Record::ResetWritten {
+            result: KeyResult::Done
+        }]
+    );
+    assert!(owner.reboot_due(now));
+}
+
+#[test]
+fn a_reset_hold_during_a_feed_is_refused_and_a_failed_one_does_not_restart() {
+    let mut owner = ready();
+    let now = settle(&mut owner, 0, true);
+    step(&mut owner, now, &[lock_hold()], None, true);
+
+    owner.feeding = true;
+    let (_, records) = step(&mut owner, now, &[hold(&[Button::Reset])], None, true);
+    assert_eq!(
+        records,
+        [
+            Record::Panel(Event::Asked {
+                action: Action::Reset,
+                allowed: true,
+            }),
+            Record::ResetRefused {
+                reason: ResetRefusal::Feeding
+            },
+        ]
+    );
+    assert_eq!(keys::pending(), None, "nothing queued for the writer");
+
+    owner.feeding = false;
+    step(&mut owner, now, &[hold(&[Button::Reset])], None, true);
+    assert_eq!(keys::pending(), Some(Change::Reset));
+    keys::finish(KeyResult::Io);
+    let (_, records) = step(&mut owner, now, &[], None, true);
+    assert_eq!(
+        records,
+        [Record::ResetWritten {
+            result: KeyResult::Io
+        }]
+    );
+    assert!(!owner.reboot_due(now), "an unmarked reset restarts nothing");
 }
 
 #[test]

@@ -11,6 +11,7 @@ use wellfed_connect::{Connection, Error as ConnectError, join};
 use wellfed_core::clock::ntp;
 use wellfed_device_api::mailbox::KeyResult;
 use wellfed_device_api::mailbox::Lock;
+use wellfed_feeder::feeder::{self, owner};
 use wellfed_feeder::panel::{Action, Event as PanelEvent, Source as PanelSource};
 use wellfed_feeder_sim::flash::Flash;
 use wellfed_feeder_sim::harness;
@@ -598,49 +599,226 @@ fn the_panel_buttons_unlock_and_the_idle_panel_relocks() {
     });
 }
 
+/// What the simulator logged from now until the boot after a factory reset:
+/// whether each Reset hold was allowed, the writer's results, and the
+/// identity the new boot started with.
+async fn until_reset_boot(sim: &mut Running) -> (Vec<bool>, Vec<KeyResult>, [u8; 32]) {
+    let (mut asked, mut resets, mut identity) = (Vec::new(), Vec::new(), None);
+    loop {
+        match sim.events.recv().await {
+            Some(Event::Started { identity: started }) => identity = Some(started),
+            Some(Event::Sim(Record::Keys(result))) => resets.push(result),
+            Some(Event::Sim(Record::Boot { .. })) if !resets.is_empty() => {
+                return (asked, resets, identity.expect("the new boot's identity"));
+            }
+            Some(Event::Sim(record)) => {
+                if let Some(PanelEvent::Asked {
+                    action: Action::Reset,
+                    allowed,
+                }) = record.panel()
+                {
+                    asked.push(allowed);
+                }
+            }
+            Some(_) => {}
+            None => panic!("the simulator stopped"),
+        }
+    }
+}
+
+/// The factory reset end to end: an owner and a member pair, set every
+/// setting, the Wi-Fi, the zone, a plan and the portion weight, and feed.
+/// A locked panel refuses the Reset hold; an unlocked one forgets every
+/// client, restarts under a new identity, and the new boot has cleared
+/// the settings, Wi-Fi, time settings, plans and history (a new epoch)
+/// while the calibration stays and feed numbers carry on from the journal.
+/// The test's owner is enrolled again at every boot by the operator's
+/// preparation, as `--owner` does; the member, enrolled by invite, is gone.
 #[test]
-fn a_reset_hold_takes_a_new_identity_and_forgets_every_client() {
+fn a_reset_hold_clears_the_decided_stores_and_keeps_the_calibration_and_journal() {
     local(async {
-        // The owner is enrolled at boot only, so the reset sticks.
         let mut sim = Running::start(&Flash::memory(), true).await;
         let mut owner = sim.open(OWNER).await.unwrap();
-        let old = sim.identity;
+        let old = (sim.identity, owner.epoch());
+
+        let invite = owner
+            .ask(
+                sim.id(),
+                &Op::CreateInvite {
+                    role: ClientRole::Member,
+                },
+            )
+            .await
+            .unwrap();
+        let Answer::Invite(invite) = invite else {
+            panic!("{invite:?}");
+        };
+        let invite = Invite {
+            feeder: sim.identity,
+            id: invite.id,
+            secret: invite.secret.0,
+        };
+        join(&keys(MEMBER), invite, "member", sim.address, [0x93; 32])
+            .await
+            .unwrap();
+
+        let settings = Op::PutSettings {
+            base: Generation(0),
+            changes: SettingsPatch {
+                volume: Some(20),
+                ..SettingsPatch::default()
+            },
+        };
+        let wifi = Op::PutWifi {
+            base: Generation(0),
+            wifi: Some(Wifi {
+                ssid: b"home".to_vec(),
+                psk: "correct horse".to_owned(),
+            }),
+        };
+        let time = Op::PutTime {
+            base: Generation(0),
+            changes: TimeChanges {
+                zone: Some("<+0530>-5:30".to_owned()),
+                ntp: None,
+            },
+        };
+        let mut table = [None; PLANS];
+        table[0] = Some(Plan {
+            minute: 7 * 60 + 30,
+            portions: 2,
+            days: Weekdays::DAILY,
+            enabled: true,
+        });
+        let plan = Op::PutPlans {
+            base: Generation(0),
+            plans: table,
+        };
+        let weight = Op::PutCalibration {
+            base: Generation(0),
+            calibration: Calibration {
+                portion_mg: Some(9_800),
+                bowl: Bowl::Single,
+            },
+        };
+        let first = Answer::Done {
+            generation: Some(Generation(1)),
+        };
+        for op in [&settings, &wifi, &time, &plan, &weight] {
+            assert_eq!(owner.ask(sim.id(), op).await.unwrap(), first, "{op:?}");
+        }
+        owner.subscribe(None, false).await.unwrap();
+        let fed = owner
+            .ask(sim.id(), &Op::Feed { portions: 1 })
+            .await
+            .unwrap();
+        let Answer::Feeding { feed: before } = fed else {
+            panic!("{fed:?}");
+        };
+        loop {
+            if let Pushed::Event(event) = owner.next(WAIT).await.unwrap()
+                && matches!(event.body, EventBody::Fed { .. })
+            {
+                break;
+            }
+        }
 
         // A locked panel refuses the hold; an unlocked one resets, once.
+        while sim.events.try_recv().is_ok() {}
         sim.type_line("hold reset");
         sim.type_line("hold lock");
         sim.type_line("hold reset");
-        let (mut asked, mut resets) = (Vec::new(), Vec::new());
-        let identity = loop {
+        let (asked, resets, identity) = until_reset_boot(&mut sim).await;
+        assert_eq!(asked, [false, true]);
+        assert_eq!(
+            resets,
+            [KeyResult::Done],
+            "the writer marked the reset once"
+        );
+        assert_ne!(identity, old.0, "a new identity");
+        // Events pushed before the reset, then the session's end.
+        let ended = loop {
+            if let Err(error) = owner.next(WAIT).await {
+                break error;
+            }
+        };
+        assert!(
+            matches!(ended, ConnectError::Closed | ConnectError::Io(_)),
+            "{ended:?}"
+        );
+        sim.identity = identity;
+        assert!(matches!(
+            sim.open(MEMBER).await,
+            Err(ConnectError::UnknownKey)
+        ));
+
+        let mut owner = sim.open(OWNER).await.unwrap();
+        assert_ne!(owner.epoch(), old.1, "the history starts a new epoch");
+        let history = backlog(&mut owner).await;
+        assert!(
+            !history.iter().any(|body| matches!(
+                body,
+                EventBody::Fed { .. } | EventBody::Plans { .. } | EventBody::Wifi { .. }
+            )),
+            "nothing from before the reset: {history:?}"
+        );
+        for op in [&settings, &wifi, &time, &plan] {
+            assert_eq!(
+                owner.ask(sim.id(), op).await.unwrap(),
+                first,
+                "{op:?} writes against an emptied store"
+            );
+        }
+        let kept = calibration(&mut sim, &mut owner).await;
+        assert_eq!(
+            (kept.generation, kept.calibration.portion_mg),
+            (Generation(1), Some(9_800)),
+            "the calibration stays"
+        );
+        let fed = owner
+            .ask(sim.id(), &Op::Feed { portions: 1 })
+            .await
+            .unwrap();
+        assert!(
+            matches!(fed, Answer::Feeding { feed } if feed > before),
+            "feed numbers carry on from the journal: {fed:?} after {before}"
+        );
+
+        // A new owner can still recover the feeder from the panel.
+        recover(&sim, [0x41; 32]).await;
+        sim.stop().await;
+    });
+}
+
+/// A Reset hold while a feed runs is refused by name and starts nothing;
+/// the feed ends as it would have.
+#[test]
+fn a_reset_hold_during_a_feed_is_refused() {
+    local(async {
+        let mut sim = Running::start(&Flash::memory(), true).await;
+        let mut owner = sim.open(OWNER).await.unwrap();
+        sim.control(wellfed_feeder_sim::serve::Control::StallFeeds(true));
+        let fed = owner
+            .ask(sim.id(), &Op::Feed { portions: 1 })
+            .await
+            .unwrap();
+        assert!(matches!(fed, Answer::Feeding { .. }), "{fed:?}");
+
+        sim.type_line("hold lock");
+        sim.type_line("hold reset");
+        let refused = Record::Feeder(feeder::Record::Owner(owner::Record::ResetRefused {
+            reason: owner::ResetRefusal::Feeding,
+        }));
+        loop {
             match sim.events.recv().await {
-                Some(Event::Started { identity }) => break identity,
-                Some(Event::Sim(Record::Keys(result))) => resets.push(result),
-                Some(Event::Sim(record)) => {
-                    if let Some(PanelEvent::Asked {
-                        action: Action::Reset,
-                        allowed,
-                    }) = record.panel()
-                    {
-                        asked.push(allowed);
-                    }
-                }
+                Some(Event::Sim(record)) if record == refused => break,
+                Some(Event::Sim(Record::Keys(result))) => panic!("the writer took {result:?}"),
                 Some(_) => {}
                 None => panic!("the simulator stopped"),
             }
-        };
-        // The new identity came only after the second, unlocked hold.
-        assert_eq!(asked, [false, true]);
-        assert_eq!(resets, [KeyResult::Done], "the writer reset the keys once");
-        assert_ne!(identity, old);
-        assert!(matches!(
-            owner.next(WAIT).await,
-            Err(ConnectError::Closed | ConnectError::Io(_))
-        ));
-        sim.identity = identity;
-        assert!(matches!(
-            sim.open(OWNER).await,
-            Err(ConnectError::UnknownKey)
-        ));
+        }
+        sim.control(wellfed_feeder_sim::serve::Control::StallFeeds(false));
+        assert!(status(&mut sim, &mut owner).await.readiness.is_some());
         sim.stop().await;
     });
 }
@@ -884,61 +1062,65 @@ fn a_session_polled_with_dropped_next_futures_stays_alive() {
 /// exchange over the device API, and the operator keys in its code.
 #[test]
 fn the_recovery_window_admits_a_new_owner_who_proves_the_code() {
+    local(async {
+        let sim = Running::start(&Flash::memory(), false).await;
+        recover(&sim, [0x41; 32]).await;
+        sim.stop().await;
+    });
+}
+
+/// Unlock the panel, open the recovery window, and enroll `secret` as an
+/// owner through it, keying the code in on the panel.
+async fn recover(sim: &Running, secret: [u8; 32]) {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use wellfed_client::setup::{Ask, Deframer, Session, Step, frame, panel_position};
     use wellfed_model::setup::Reply;
     use wellfed_session::setup_code::Code;
 
-    const STRANGER: [u8; 32] = [0x41; 32];
+    sim.type_line("hold lock");
+    sim.type_line("hold lock+dispense");
 
-    local(async {
-        let sim = Running::start(&Flash::memory(), false).await;
-        sim.type_line("hold lock");
-        sim.type_line("hold lock+dispense");
+    let code = Code::from_bits(0x0bad);
+    let ask = Ask {
+        label: "stranger".into(),
+        wifi: None,
+    };
+    let mut session = Session::new(&keys(secret), [0x42; 32], ask, code, [0x43; 32]).unwrap();
+    let mut stream = tokio::net::TcpStream::connect(sim.address).await.unwrap();
+    // The clear opening frame names the recovery session.
+    let mut hello = vec![1, 0, 2];
+    hello.extend(frame(&session.start().unwrap()).unwrap());
+    stream.write_all(&hello).await.unwrap();
 
-        let code = Code::from_bits(0x0bad);
-        let ask = Ask {
-            label: "stranger".into(),
-            wifi: None,
-        };
-        let mut session = Session::new(&keys(STRANGER), [0x42; 32], ask, code, [0x43; 32]).unwrap();
-        let mut stream = tokio::net::TcpStream::connect(sim.address).await.unwrap();
-        // The clear opening frame names the recovery session.
-        let mut hello = vec![1, 0, 2];
-        hello.extend(frame(&session.start().unwrap()).unwrap());
-        stream.write_all(&hello).await.unwrap();
-
-        let mut deframer = Deframer::default();
-        let mut buffer = [0u8; 1024];
-        let reply = 'exchange: loop {
-            let n = tokio::time::timeout(WAIT, stream.read(&mut buffer))
-                .await
-                .unwrap()
-                .unwrap();
-            assert_ne!(n, 0, "the feeder closed the recovery session");
-            deframer.push(&buffer[..n]);
-            while let Some(message) = deframer.next_message().unwrap() {
-                match session.receive(&message).unwrap() {
-                    Step::Send(bytes) => stream.write_all(&frame(&bytes).unwrap()).await.unwrap(),
-                    Step::Reply(Reply::EnterCode { .. }) => {
-                        let presses: Vec<String> = code
-                            .presses()
-                            .iter()
-                            .map(|&b| panel_position(b).to_string())
-                            .collect();
-                        sim.type_line(&format!("press {}", presses.join(" ")));
-                    }
-                    Step::Reply(reply) => break 'exchange reply,
+    let mut deframer = Deframer::default();
+    let mut buffer = [0u8; 1024];
+    let reply = 'exchange: loop {
+        let n = tokio::time::timeout(WAIT, stream.read(&mut buffer))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_ne!(n, 0, "the feeder closed the recovery session");
+        deframer.push(&buffer[..n]);
+        while let Some(message) = deframer.next_message().unwrap() {
+            match session.receive(&message).unwrap() {
+                Step::Send(bytes) => stream.write_all(&frame(&bytes).unwrap()).await.unwrap(),
+                Step::Reply(Reply::EnterCode { .. }) => {
+                    let presses: Vec<String> = code
+                        .presses()
+                        .iter()
+                        .map(|&b| panel_position(b).to_string())
+                        .collect();
+                    sim.type_line(&format!("press {}", presses.join(" ")));
                 }
+                Step::Reply(reply) => break 'exchange reply,
             }
-        };
-        assert!(matches!(reply, Reply::Done { .. }), "{reply:?}");
-        assert_eq!(session.feeder_key(), Some(sim.identity));
+        }
+    };
+    assert!(matches!(reply, Reply::Done { .. }), "{reply:?}");
+    assert_eq!(session.feeder_key(), Some(sim.identity));
 
-        let stranger = sim.open(STRANGER).await.unwrap();
-        assert_eq!(stranger.role(), ClientRole::Owner);
-        sim.stop().await;
-    });
+    let recovered = sim.open(secret).await.unwrap();
+    assert_eq!(recovered.role(), ClientRole::Owner);
 }
 
 /// The lines the next batches carry, until one ends with a line `until`

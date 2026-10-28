@@ -20,7 +20,9 @@ use wellfed_proto::api::{
     FoodLevel, Readiness, Refusal, Resets, Source, Stats, StatsSection, TraceSummary,
 };
 
-use crate::feeder::{Feeder, Feeds, NoFeeds, Platform};
+use crate::feeder::owner::{self, ResetRefusal};
+use crate::feeder::{Feeder, Feeds, NoFeeds, Platform, Record};
+use wellfed_core::buttons::{Button, Buttons, Gesture};
 use wellfed_device_api::clients::{Label, Role};
 use wellfed_device_api::mailbox::{
     Calibration, CalibrationResult, LockResult, MealReminder, NtpServer, Origin, PLANS, Plan,
@@ -28,6 +30,7 @@ use wellfed_device_api::mailbox::{
     TimeSettings, TimeSettingsResult, TimeSettingsView, Weekdays, WifiResult, WifiView, Window,
     Zone,
 };
+use wellfed_device_api::mailbox::{KeyResult, Requested};
 use wellfed_device_api::wifi::Credentials;
 use wellfed_device_api::{Device, EventRead, KeyChange, KeyOutcome};
 
@@ -43,6 +46,8 @@ pub trait Rig {
     fn write(&mut self);
     /// Hold the outputs as a running feed does, or give them back.
     fn claim_outputs(&mut self, claimed: bool);
+    /// Queue a gesture from the buttons for the next pass.
+    fn gesture(&mut self, gesture: Gesture);
 }
 
 /// One loop pass at `now_ms`, with no feeding owner.
@@ -787,6 +792,96 @@ pub fn a_lasting_reason_not_to_feed_is_recorded_once(rig: &mut impl Rig) {
     assert_eq!(seen, 1);
 }
 
+/// An owner with a feed queued or running.
+struct Feeding;
+
+impl Feeds for Feeding {
+    fn feeding(&self) -> bool {
+        true
+    }
+
+    fn busy(&self) -> bool {
+        true
+    }
+
+    fn blocked(&self) -> Option<Blocked> {
+        None
+    }
+
+    fn submit(&mut self, _: u8, _: Source) -> Result<u32, Refusal> {
+        Err(Refusal::Busy)
+    }
+
+    fn reserved(&self, _: u32) -> Option<Result<(), Refusal>> {
+        None
+    }
+
+    fn cancel(&self, _: u32) -> bool {
+        false
+    }
+}
+
+/// What one pass at `now_ms` with `feeds` recorded of a Reset hold.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct ResetSeen {
+    refused: Option<ResetRefusal>,
+    requested: Option<Requested>,
+    written: Option<KeyResult>,
+}
+
+fn reset_seen(rig: &mut impl Rig, now_ms: u32, feeds: &mut impl Feeds) -> ResetSeen {
+    let mut seen = ResetSeen::default();
+    rig.feeder().pass(now_ms, feeds, |record| match record {
+        Record::Owner(owner::Record::ResetRefused { reason }) => seen.refused = Some(reason),
+        Record::Owner(owner::Record::Reset { requested }) => seen.requested = Some(requested),
+        Record::Owner(owner::Record::ResetWritten { result }) => seen.written = Some(result),
+        _ => {}
+    });
+    seen
+}
+
+fn held(button: Button) -> Gesture {
+    Gesture::Hold {
+        chord: Buttons::of(button),
+        level: 1,
+    }
+}
+
+/// An unlocked Reset hold while a feed is queued or runs is refused by
+/// name and queues nothing; at rest it queues the factory reset, which the
+/// writer marks and answers `Done`.
+pub fn a_reset_hold_is_refused_while_feeding_and_marked_at_rest(rig: &mut impl Rig) {
+    pass(rig, 0);
+    rig.gesture(held(Button::Lock));
+    pass(rig, 20);
+
+    rig.gesture(held(Button::Reset));
+    assert_eq!(
+        reset_seen(rig, 40, &mut Feeding),
+        ResetSeen {
+            refused: Some(ResetRefusal::Feeding),
+            ..ResetSeen::default()
+        }
+    );
+
+    rig.gesture(held(Button::Reset));
+    assert_eq!(
+        reset_seen(rig, 60, &mut NoFeeds),
+        ResetSeen {
+            requested: Some(Requested::Queued),
+            ..ResetSeen::default()
+        }
+    );
+    rig.write();
+    assert_eq!(
+        reset_seen(rig, 80, &mut NoFeeds),
+        ResetSeen {
+            written: Some(KeyResult::Done),
+            ..ResetSeen::default()
+        }
+    );
+}
+
 /// One test per check, each on a fresh rig from `$rig`.
 #[macro_export]
 macro_rules! conformance {
@@ -809,6 +904,7 @@ macro_rules! conformance {
             traces_are_served_beside_the_statistics,
             a_lasting_reason_not_to_feed_is_recorded_once,
             bank_1_is_read_only_from_bank_0,
+            a_reset_hold_is_refused_while_feeding_and_marked_at_rest,
         );
     };
     (@tests $rig:expr; $($check:ident),* $(,)?) => {

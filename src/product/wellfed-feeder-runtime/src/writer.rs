@@ -12,7 +12,16 @@
 //! feeder's identity secret on the first boot that has a generator. It
 //! publishes the identity for the loop task and applies the client changes
 //! the loop queues ([`keys`]): enrollments, revocations and the
-//! Reset, which forgets every client and draws a new identity.
+//! Reset, the factory reset.
+//!
+//! The factory reset ([`reset_marker`]) is split across a restart so a
+//! power cut anywhere leaves it safe. The Reset change programs the marker
+//! (sector 36) and forgets every client; the loop then restarts. A boot
+//! that finds the marker opens and publishes nothing the reset clears,
+//! erases each cleared sector (`storage::FACTORY_CLEARED`) as its own
+//! step, the marker last, and only then opens the stores, empty. The feed
+//! journal, the calibration, the update store and the seed are never
+//! touched.
 //!
 //! It keeps the time settings too (sectors 27 and 28,
 //! `wellfed_feeder::store::time`): the owner's zone and the NTP server,
@@ -61,6 +70,7 @@ use wellfed_feeder::store::clients::{ClientError, ClientStatus, ClientStore};
 use wellfed_feeder::store::events::EventLog;
 use wellfed_feeder::store::net::{NetStatus, NetStore};
 use wellfed_feeder::store::plans::PlansStore;
+use wellfed_feeder::store::reset as reset_marker;
 use wellfed_feeder::store::settings::{Settings, SettingsStatus, SettingsStore};
 use wellfed_feeder::store::stats::{SaveKind, StatsStatus, StatsStore};
 use wellfed_feeder::store::time::{TimeStatus, TimeStore};
@@ -69,6 +79,7 @@ use wellfed_hal::flash::park::Mmio;
 use wellfed_hal::flash_lock::arming::{self, Arming, Hooks, Poll};
 use wellfed_hal::flash_lock::provider::Provider;
 use wellfed_hal::interlock::{INTERLOCK, WRITER_POLL_MS, WriteStep, WriteTurn};
+use wellfed_hal::plaf103::storage::{FACTORY_CLEARED_SECTORS, factory_cleared};
 use wellfed_hal::{rng, sdk, settings, supervision};
 use wellfed_sdk::storage::{
     CLIENTS_BASE, EVENTS_BASE, EVENTS_UNITS, FlashOps, Region, SEED_BASE, SETTINGS_BASE,
@@ -86,7 +97,12 @@ use crate::time::{self, TIME_BASE};
 use crate::traces;
 use wellfed_feeder::feeder::platform::EventsFill;
 
+/// The factory reset's marker sector (`storage::RESET`).
+pub const RESET_BASE: u32 = wellfed_hal::plaf103::storage::RESET.first;
+
 pub const POLL_MS: u32 = 200;
+/// Between a factory reset's erases, each its own step and write turn.
+pub const RESET_POLL_MS: u32 = 1;
 /// While events wait to be written or read.
 pub const EVENTS_POLL_MS: u32 = 5;
 /// While a write waits for a feed to end: within the poll a claim allows a
@@ -108,6 +124,8 @@ named_enum! {
     pub enum ErrorStage {
         Unarmed = "unarmed",
         Save = "save",
+        /// A factory reset's erase failed.
+        Erase = "erase",
     }
 }
 
@@ -235,6 +253,19 @@ pub enum Record {
     Trace {
         feed: u32,
         seq: Option<u32>,
+    },
+    /// The boot found the factory reset's marker: no cleared store opens
+    /// until the reset has erased them all.
+    ResetPending,
+    /// The factory reset erased every cleared store, then its marker.
+    ResetDone {
+        erased: u32,
+    },
+    /// The factory reset stopped for this boot: unarmed, or an erase of
+    /// `sector` failed. The marker stays, so the next boot tries again.
+    ResetError {
+        stage: ErrorStage,
+        sector: Option<u32>,
     },
 }
 
@@ -393,6 +424,16 @@ pub fn describe(record: Record, f: &mut impl fmt::Write) -> fmt::Result {
             seq: Some(seq),
         } => write!(f, "trace saved feed={feed} seq={seq}"),
         Record::Trace { feed, seq: None } => write!(f, "trace error feed={feed}"),
+        Record::ResetPending => f.write_str("reset pending"),
+        Record::ResetDone { erased } => write!(f, "reset done erased={erased}"),
+        Record::ResetError {
+            stage,
+            sector: Some(sector),
+        } => write!(f, "reset error stage={stage} sector={sector}"),
+        Record::ResetError {
+            stage,
+            sector: None,
+        } => write!(f, "reset error stage={stage}"),
     }
 }
 
@@ -503,6 +544,13 @@ pub struct Writer<F> {
     stats_restart_saved: bool,
     /// This writer's wait for the write turn.
     turn: WriteTurn,
+    /// A factory reset this boot finishes: the index (in
+    /// `storage::factory_cleared`) of the next sector to erase, the marker
+    /// itself after the last. Until it is `None` no cleared store opens and
+    /// nothing is published.
+    resetting: Option<u32>,
+    /// The reset could not go on this boot (unarmed, or an erase failed).
+    reset_stopped: bool,
 }
 
 impl<F> Default for Writer<F> {
@@ -531,6 +579,8 @@ impl<F> Default for Writer<F> {
             stats_boot_saved: false,
             stats_restart_saved: false,
             turn: WriteTurn::new(),
+            resetting: None,
+            reset_stopped: false,
         }
     }
 }
@@ -691,8 +741,14 @@ impl<F: FlashOps> Writer<F> {
     }
 
     /// Apply one queued client change, each write under its own attempt
-    /// marker, and free the mailbox with its result. A reset draws its new identity from the generator or does not
-    /// happen: a weaker key is never written.
+    /// marker, and free the mailbox with its result.
+    ///
+    /// A reset is the factory reset. It draws its new identity from the
+    /// generator or does not happen: a weaker key is never written. It
+    /// programs the reset's marker first, so whatever happens next the boot
+    /// after finishes it, then forgets every client at once (their sessions
+    /// end now, not at the restart). The loop restarts the feeder once it
+    /// reads `Done`, and that boot erases the cleared stores.
     fn change(&mut self, change: Change, writable: bool) -> Record {
         let kind = match change {
             Change::Enroll { .. } => KeyChange::Enroll,
@@ -706,7 +762,16 @@ impl<F: FlashOps> Writer<F> {
             }
             Change::Revoke { key } => self.apply(|clients| clients.revoke(&key)),
             Change::Reset => match rng::bytes() {
-                Some(identity) => self.apply(|clients| clients.reset(&identity)),
+                Some(identity) => {
+                    arming::set_attempt();
+                    let marked = reset_marker::mark(&Region::<F, RESET_BASE, 1>::new());
+                    arming::clear_attempt();
+                    if marked {
+                        self.apply(|clients| clients.reset(&identity))
+                    } else {
+                        KeyResult::Io
+                    }
+                }
                 None => KeyResult::NoGenerator,
             },
         };
@@ -907,6 +972,72 @@ impl<F: FlashOps> Writer<F> {
         next(POLL_MS, Some(record))
     }
 
+    /// Open the stores the Open stage serves that a factory reset clears;
+    /// the settings store's status.
+    fn open_cleared(&mut self) -> SettingsStatus {
+        let status = self.store.open(Slots::new(), SETTINGS_BINDING);
+        self.net.open(Slots::new());
+        self.time.open(Slots::new());
+        self.plans.open(Slots::new());
+        status
+    }
+
+    /// One step of a factory reset this boot finishes: one erase, under
+    /// its own write turn (so it waits for a feed's outputs to stop) and
+    /// attempt marker; then, after the marker's, the cleared stores open
+    /// empty and everything is published. A reset that cannot go on stops
+    /// for the boot with nothing served, and the marker brings it back on
+    /// the next.
+    fn reset_step<H: Hooks>(&mut self) -> Step {
+        if self.reset_stopped {
+            if supervision::restart_grace() {
+                // Nothing to save before a restart.
+                supervision::restart_flushed();
+            }
+            return next(POLL_MS, None);
+        }
+        if self.stage == Stage::Serve || !H::armed() {
+            self.reset_stopped = true;
+            let record = Record::ResetError {
+                stage: ErrorStage::Unarmed,
+                sector: None,
+            };
+            return next(POLL_MS, Some(record));
+        }
+        let Some(index) = self.resetting else {
+            return next(POLL_MS, None);
+        };
+        let Some(turn) = self.take_turn() else {
+            return next(WRITE_WAIT_POLL_MS, None);
+        };
+
+        let sector = factory_cleared(index).unwrap_or(RESET_BASE);
+        arming::set_attempt();
+        let erased = F::erase(sector);
+        arming::clear_attempt();
+        drop(turn);
+
+        if !erased {
+            self.reset_stopped = true;
+            let record = Record::ResetError {
+                stage: ErrorStage::Erase,
+                sector: Some(sector),
+            };
+            return next(POLL_MS, Some(record));
+        }
+        if index < FACTORY_CLEARED_SECTORS {
+            self.resetting = Some(index + 1);
+            return next(RESET_POLL_MS, None);
+        }
+        self.resetting = None;
+        self.open_cleared();
+        self.publish();
+        let record = Record::ResetDone {
+            erased: FACTORY_CLEARED_SECTORS,
+        };
+        next(POLL_MS, Some(record))
+    }
+
     fn publish_fill(&self) {
         stats::publish_fill(EventsFill {
             kept: self.events.kept(),
@@ -914,7 +1045,12 @@ impl<F: FlashOps> Writer<F> {
         });
     }
 
+    /// Publish every store's view; nothing while a factory reset is
+    /// unfinished, so no client, plan or credential it clears is served.
     fn publish(&self) {
+        if self.resetting.is_some() {
+            return;
+        }
         let writable = self.armed
             && matches!(
                 self.store.status,
@@ -935,22 +1071,22 @@ impl<F: FlashOps> Writer<F> {
     pub unsafe fn step<M: Mmio, H: Hooks>(&mut self, provider: *mut Provider) -> Step {
         match self.stage {
             Stage::Open => {
-                let status = self.store.open(Slots::new(), SETTINGS_BINDING);
-                self.net.open(Slots::new());
-                self.time.open(Slots::new());
                 self.calibration.open(Slots::new());
-                self.plans.open(Slots::new());
-                self.armed = H::armed();
-                self.stage = if self.armed { Stage::Idle } else { Stage::Arm };
-                self.publish();
-                let mut step = next(
-                    POLL_MS,
-                    Some(Record::Open {
+                let record = if reset_marker::pending(&Region::<F, RESET_BASE, 1>::new()) {
+                    self.resetting = Some(0);
+                    Record::ResetPending
+                } else {
+                    let status = self.open_cleared();
+                    Record::Open {
                         status,
                         generation: self.store.generation,
                         settings: self.store.settings,
-                    }),
-                );
+                    }
+                };
+                self.armed = H::armed();
+                self.stage = if self.armed { Stage::Idle } else { Stage::Arm };
+                self.publish();
+                let mut step = next(POLL_MS, Some(record));
                 step.settled = self.armed;
                 step
             }
@@ -982,6 +1118,11 @@ impl<F: FlashOps> Writer<F> {
             },
 
             Stage::Idle | Stage::Serve => {
+                // Before the keys, the event ring and the totals open: each
+                // is a store the reset clears.
+                if self.resetting.is_some() {
+                    return self.reset_step::<H>();
+                }
                 if !self.net_opened {
                     self.net_opened = true;
                     return next(

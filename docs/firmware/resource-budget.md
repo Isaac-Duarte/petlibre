@@ -10,7 +10,7 @@ It fits.
 - **Heap:** about 120 KB free in Bluetooth setup mode, the tightest case.
 - **Tasks:** none spare, by design. Everything new joins the loop task.
 - **Latency:** two rules keep the loop responsive: one handshake operation per pass, and feeds and Wi-Fi joins take turns.
-- **Storage:** a 48-sector region, with 12 sectors still free for schedules.
+- **Storage:** a 48-sector region, with 11 sectors still free.
 
 ## Flash
 

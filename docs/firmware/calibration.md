@@ -58,7 +58,7 @@ The weight never changes how far the motor turns. A portion is a mark, whatever 
 
 ### Storage
 
-A dual-slot store, `PLFCAL01` (`wellfed_feeder::store::calibration`), holds the generation, `portion_mg` at bytes 20–23 (0 for none), zero padding, a CRC and a commit marker, pinned in `store_layout.rs`. Its sectors, 34 and 35 of the 48-sector storage region (`storage::CALIBRATION`), were never allocated before. So a build that predates the store never reads or writes them: the old bank 0 (`feeder` `92c7adec…`) and any older bank 1 ignore it. The settings record, the journal and every other store are unchanged. The settings writer saves it on its write turn, never during a feed, inside a marked attempt like the time settings.
+A dual-slot store, `PLFCAL01` (`wellfed_feeder::store::calibration`), holds the generation, `portion_mg` at bytes 20–23 (0 for none), zero padding, a CRC and a commit marker, pinned in `store_layout.rs`. Its sectors, 34 and 35 of the 48-sector storage region (`storage::CALIBRATION`), were never allocated before. So a build that predates the store never reads or writes them: the old bank 0 (`feeder` `92c7adec…`) and any older bank 1 ignore it. The settings record, the journal and every other store are unchanged. The settings writer saves it on its write turn, never during a feed, inside a marked attempt like the time settings. The [factory reset](pairing.md#factory-reset) keeps it: the weight belongs to the hardware, not the owner.
 
 ### Wire
 

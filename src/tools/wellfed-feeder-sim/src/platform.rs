@@ -35,7 +35,7 @@ use wellfed_core::clock::zone::Rule;
 use wellfed_core::indicator::Light;
 use wellfed_core::log_tail::{Batch as LogBatch, LogTail};
 use wellfed_core::ota::install::{Answer, Progress, Refused};
-use wellfed_core::store::slot::crc32;
+use wellfed_core::store::slot::{SlotIo, crc32};
 use wellfed_core::supply::{self, Reading, Sample};
 use wellfed_core::tone::Tune;
 use wellfed_device_api::clients::{CLIENTS, Client, Label, Role};
@@ -57,6 +57,7 @@ use wellfed_feeder::store::clients::{ClientError, ClientStore};
 use wellfed_feeder::store::events::{BODY_BYTES, EventLog, Read};
 use wellfed_feeder::store::net::NetStore;
 use wellfed_feeder::store::plans::PlansStore;
+use wellfed_feeder::store::reset;
 use wellfed_feeder::store::settings::{SettingsStatus, SettingsStore};
 use wellfed_feeder::store::stats::{SaveKind, StatsStore};
 use wellfed_feeder::store::time::TimeStore;
@@ -246,6 +247,7 @@ impl SimPlatform {
         build: [u8; 32],
         mdns: Option<(UdpSocket, Ipv4Addr)>,
     ) -> Result<Self, DeviceError> {
+        finish_reset(flash);
         let mut settings = SettingsStore::default();
         settings.open(Region::new(flash, storage::SETTINGS), BINDING);
         let mut net = NetStore::default();
@@ -272,10 +274,18 @@ impl SimPlatform {
                 .set_identity(&secret)
                 .map_err(|_| DeviceError::Clients(clients.status))?;
         }
-        // A new ring's epoch, drawn as the writer draws it.
+        // A new ring's epoch, drawn as the writer draws it: every word of
+        // the draw folded in, so a test's counting generator, which varies
+        // only some bytes, still gives each new ring its own.
         let fresh = random()
-            .and_then(|bytes| bytes.first_chunk().copied())
-            .map_or(1, u32::from_le_bytes);
+            .map(|bytes| {
+                bytes
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .fold(0, |epoch, &word| epoch ^ u32::from_le_bytes(word))
+            })
+            .map_or(1, |epoch: u32| epoch.max(1));
         let mut events = EventLog::default();
         events.open(
             Region::new(flash, storage::EVENTS),
@@ -400,7 +410,7 @@ impl SimPlatform {
     }
 
     /// A gesture from the buttons, for the next pass.
-    pub(crate) fn gesture_in(&mut self, gesture: Gesture) {
+    pub fn gesture_in(&mut self, gesture: Gesture) {
         self.gestures.push_back(gesture);
     }
 
@@ -501,9 +511,12 @@ impl SimPlatform {
                 applied(self.clients.enroll(key, label, role))
             }
             ClientChange::Revoke { key } => applied(self.clients.revoke(&key)),
-            // A reset draws its identity from the generator or does not
-            // happen, as the writer's.
+            // The factory reset, as the writer's: it draws its identity from
+            // the generator or does not happen, marks the reset, then
+            // forgets every client; the loop restarts and the next boot
+            // ([`Self::open`]) erases the cleared stores.
             ClientChange::Reset => match (self.random)() {
+                Some(_) if !reset::mark(&Region::new(&self.flash, storage::RESET)) => KeyResult::Io,
                 Some(secret) => {
                     let result = applied(self.clients.reset(&secret));
                     if result == KeyResult::Done {
@@ -588,6 +601,24 @@ impl SimPlatform {
 /// A client store write's result, as the writer reports it.
 fn applied(result: Result<(), ClientError>) -> KeyResult {
     result.map_or_else(KeyResult::from, |()| KeyResult::Done)
+}
+
+/// Finish a factory reset an earlier boot marked, before any store opens,
+/// as the writer does: erase every cleared store in the board's order, then
+/// the marker. The simulator's image cannot lose power part-way through a
+/// boot's erases; the firmware's writer, which can, is tested for it.
+fn finish_reset(flash: &Rc<Flash>) {
+    let marker = Region::new(flash, storage::RESET);
+    if !reset::pending(&marker) {
+        return;
+    }
+    for store in storage::FACTORY_CLEARED {
+        let region = Region::new(flash, store);
+        for unit in 0..store.count {
+            region.erase(unit);
+        }
+    }
+    reset::clear(&marker);
 }
 
 impl Platform for SimPlatform {

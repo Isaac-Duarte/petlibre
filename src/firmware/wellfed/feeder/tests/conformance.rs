@@ -17,7 +17,7 @@ use wellfed_sdk::hal::flash_lock::provider::Provider;
 use wellfed_sdk::hal::interlock::INTERLOCK;
 use wellfed_sdk::hal::ota::mailbox;
 use wellfed_sdk::hal::sdk::{self, fake};
-use wellfed_sdk::hal::{bringup, clock, rng, settings};
+use wellfed_sdk::hal::{bringup, buttons, clock, rng, settings};
 use wellfed_sdk::storage::FlashOps;
 
 /// The writer runs with the hooks already armed, as after confirmation.
@@ -97,6 +97,7 @@ impl FirmwareRig {
     fn start() -> Self {
         let serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         fake::reset_hardware();
+        buttons::reset();
         settings::reset();
         // SAFETY: the test holds `SERIAL` and runs no Wi-Fi task.
         unsafe { network::reset() };
@@ -152,6 +153,10 @@ impl Rig for FirmwareRig {
         } else {
             INTERLOCK.release_feed();
         }
+    }
+
+    fn gesture(&mut self, gesture: wellfed_sdk::buttons::Gesture) {
+        buttons::inject(gesture);
     }
 }
 

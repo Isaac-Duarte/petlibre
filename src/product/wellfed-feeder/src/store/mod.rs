@@ -4,7 +4,8 @@
 //! (`wellfed_core::store::slot`: two alternating erase units under one
 //! torn-write rule, with the store's own fields and recovery policy), and
 //! the event history and the per-feed traces, each in a ring of units
-//! ([`events`], [`traces`]). Each keeps its sectors in the board's map and
+//! ([`events`], [`traces`]), and the factory reset's marker ([`reset`]).
+//! Each keeps its sectors in the board's map and
 //! its on-flash layout as the firmware has always written it.
 //!
 //! A ring is not a dual-slot store: it appends records with no commit
@@ -16,6 +17,7 @@ pub mod clients;
 pub mod events;
 pub mod net;
 pub mod plans;
+pub mod reset;
 pub mod settings;
 pub mod stats;
 pub mod time;

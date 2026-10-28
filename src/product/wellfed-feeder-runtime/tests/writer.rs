@@ -324,7 +324,7 @@ fn wifi_credentials_are_saved_inside_a_marked_attempt_and_cleared() {
 #[test]
 fn error_records_format_as_before() {
     let words: Vec<_> = ErrorStage::ALL.iter().map(|s| s.as_str()).collect();
-    assert_eq!(words, ["unarmed", "save"]);
+    assert_eq!(words, ["unarmed", "save", "erase"]);
 
     let mut text = String::new();
     writer::describe(
@@ -472,18 +472,7 @@ fn key_changes_apply_and_a_reset_publishes_a_new_identity() {
     );
     let (_, new) = keys::identity_since(first).expect("the new identity");
     assert_ne!(new, identity);
-
-    // The next boot loads the reset table.
-    keys::reset();
-    assert!(matches!(
-        boot_keys(),
-        Record::Keys {
-            enrolled: 0,
-            identity: Identity::Loaded,
-            ..
-        }
-    ));
-    assert_eq!(keys::identity_since(0).map(|(_, secret)| secret), Some(new));
+    assert!(reset_marked(), "the next boot finishes the factory reset");
 }
 
 #[test]
@@ -1327,4 +1316,403 @@ fn a_plans_change_is_applied_saved_inside_a_marked_attempt_and_published() {
     let mut text = String::new();
     writer::describe(saved, &mut text).unwrap();
     assert_eq!(text, "plans saved sequence=1 revision=1");
+}
+
+/// Whether the factory reset's marker is down.
+fn reset_marked() -> bool {
+    use wellfed_feeder::store::reset::{MARKER, marked};
+
+    let first = wellfed_hal::plaf103::storage::RESET.first as usize * 0x1000;
+    let bytes: [u8; MARKER.len()] =
+        fake::with(|h| h.storage[first..first + MARKER.len()].try_into().unwrap());
+    marked(&bytes)
+}
+
+/// The bytes of `sectors`, as the fake holds them.
+fn sectors(sectors: wellfed_hal::plaf103::storage::Sectors) -> Vec<u8> {
+    let first = sectors.first as usize * 0x1000;
+    let end = first + sectors.count as usize * 0x1000;
+    fake::with(|h| h.storage[first..end].to_vec())
+}
+
+/// Every mailbox the writer publishes to, as a restart leaves them.
+fn restart_mailboxes() {
+    use wellfed_feeder_runtime::{calibration, plans, time, traces};
+
+    settings::reset();
+    // SAFETY: the test holds `SERIAL` and runs no Wi-Fi task.
+    unsafe { network::reset() };
+    keys::reset();
+    events::reset();
+    stats::reset();
+    calibration::reset();
+    plans::reset();
+    time::reset();
+    traces::reset();
+    supervision::reset();
+}
+
+/// A first boot with a generator that fills the stores the reset clears
+/// and the calibration it keeps, then takes an unlocked Reset hold's
+/// change. Sentinels stand in for the journal, the confirmation record and
+/// the update store, which this writer never writes, and for a trace.
+fn filled_then_reset() -> (MutexGuard<'static, ()>, Provider) {
+    use wellfed_device_api::mailbox::{Calibration, PLANS, Plan, PlansChange, Weekdays};
+    use wellfed_device_api::wifi::Credentials;
+    use wellfed_feeder_runtime::{calibration, plans};
+    use wellfed_hal::plaf103::storage;
+
+    let (guard, mut writer, mut provider) = start();
+    restart_mailboxes();
+    fake::with(|h| {
+        h.adc_noise = 0x0f0f_5a5a;
+        for kept in [storage::JOURNAL, storage::CONFIRM, storage::UPDATE] {
+            let first = kept.first as usize * 0x1000;
+            h.storage[first..first + 64].fill(0x42);
+        }
+        let traces = storage::TRACES.first as usize * 0x1000;
+        h.storage[traces..traces + 64].fill(0x24);
+    });
+    assert_eq!(rng::start().result, Ok(()));
+    for _ in 0..7 {
+        step(&mut writer, &mut provider);
+    }
+
+    settings::request(SettingsFields {
+        volume: Some(7),
+        ..SettingsFields::default()
+    });
+    step(&mut writer, &mut provider);
+    network::change(Some(Credentials::new(b"home", b"passphrase").unwrap()));
+    step(&mut writer, &mut provider);
+    calibration::change(Calibration {
+        portion_mg: Some(9_800),
+    });
+    step(&mut writer, &mut provider);
+    let mut table = [None; PLANS];
+    table[0] = Some(Plan {
+        minute: 8 * 60,
+        portions: 2,
+        days: Weekdays::EVERY_DAY,
+        enabled: true,
+    });
+    plans::change(PlansChange::Replace {
+        table,
+        at_s: Some(1_000),
+    });
+    step(&mut writer, &mut provider);
+    let phone = Change::Enroll {
+        key: [7; 32],
+        label: Label::new(b"phone").unwrap(),
+        role: Role::Owner,
+    };
+    change(&mut writer, &mut provider, phone);
+    assert!(events::record(Some(1_700_000_000), [1; 16]));
+    step(&mut writer, &mut provider);
+    for cleared in [
+        storage::SETTINGS,
+        storage::NET,
+        storage::PLANS,
+        storage::EVENTS,
+        storage::TRACES,
+        storage::STATS,
+    ] {
+        assert!(
+            sectors(cleared).iter().any(|&byte| byte != 0xff),
+            "{cleared:?} holds something to clear"
+        );
+    }
+
+    assert_eq!(
+        change(&mut writer, &mut provider, Change::Reset),
+        changed(KeyChange::Reset, KeyResult::Done, 0)
+    );
+    assert!(reset_marked());
+    (guard, provider)
+}
+
+/// What the reset keeps, byte for byte: the journal (its high water and
+/// any uncertain feed's record), the confirmation record, the update store
+/// and the calibration.
+fn kept() -> Vec<Vec<u8>> {
+    use wellfed_hal::plaf103::storage;
+
+    [
+        storage::JOURNAL,
+        storage::CONFIRM,
+        storage::UPDATE,
+        storage::CALIBRATION,
+    ]
+    .into_iter()
+    .map(sectors)
+    .collect()
+}
+
+/// A boot that finds the marker: `steps` writer steps, or until the stores
+/// are open and the boot's stats save is done; its records.
+fn reset_boot(provider: &mut Provider, steps: Option<usize>) -> Vec<Record> {
+    restart_mailboxes();
+    let mut writer = Writer::default();
+    let mut records = Vec::new();
+    let mut left: Option<usize> = None;
+    for taken in 0..100 {
+        if steps == Some(taken) || left == Some(0) {
+            return records;
+        }
+        let record = step(&mut writer, provider);
+        left = left.map(|n| n - 1);
+        if matches!(record, Some(Record::ResetDone { .. } | Record::Open { .. })) {
+            // Net, time, keys, events, stats and the stats save.
+            left = Some(6);
+        }
+        records.extend(record);
+    }
+    panic!("the boot never settled: {records:?}");
+}
+
+/// After a finished reset: every cleared store opens empty and writable,
+/// the clients are gone under a new identity, the history starts again
+/// under a new epoch, the totals start from this boot, and what it keeps is
+/// unchanged.
+fn assert_cleared(kept_before: &[Vec<u8>], old_epoch: u32) {
+    use wellfed_device_api::mailbox::{
+        Calibration, CalibrationResult, PLANS, PlansResult, TimeSettingsResult, WifiResult,
+    };
+    use wellfed_feeder_runtime::{calibration, plans, time};
+    use wellfed_hal::plaf103::storage;
+
+    assert!(!reset_marked());
+    assert_eq!(current(), (true, true, 50, 0, true), "default settings");
+    let WifiResult::Current { view, .. } = network::current() else {
+        panic!("the Wi-Fi store is published");
+    };
+    assert_eq!((view.stored_ssid_crc, view.generation), (None, 0));
+    let TimeSettingsResult::Current { view, .. } = time::current() else {
+        panic!("the time settings are published");
+    };
+    assert_eq!((view.generation, view.writable), (0, true));
+    let PlansResult::Current { view, .. } = plans::current() else {
+        panic!("the plans are published");
+    };
+    assert_eq!((view.table, view.revision), ([None; PLANS], 0));
+    let CalibrationResult::Current { view, .. } = calibration::current() else {
+        panic!("the calibration is published");
+    };
+    let measured = Calibration {
+        portion_mg: Some(9_800),
+    };
+    assert_eq!((view.calibration, view.generation), (measured, 1));
+
+    let mut table = [None; wellfed_device_api::clients::CLIENTS];
+    assert!(keys::clients_since(0, &mut table).is_some());
+    assert!(table.iter().all(Option::is_none), "every client forgotten");
+    assert!(keys::identity_since(0).is_some(), "a new identity");
+    let epoch = events::epoch().expect("the ring is open");
+    assert_ne!(epoch, old_epoch, "a new history, under its own epoch");
+    assert_eq!(events::last_seq(), None, "the history is empty");
+    let totals = stats::totals().expect("the totals are published");
+    assert_eq!(totals.resets.power_on, 1, "the totals start from this boot");
+
+    for cleared in [
+        storage::SETTINGS,
+        storage::NET,
+        storage::TIME,
+        storage::PLANS,
+        storage::TRACES,
+        storage::EVENTS,
+    ] {
+        assert!(
+            sectors(cleared).iter().all(|&byte| byte == 0xff),
+            "{cleared:?} erased"
+        );
+    }
+    assert_eq!(kept(), kept_before, "the kept stores are unchanged");
+}
+
+#[test]
+fn a_factory_reset_clears_the_decided_stores_on_the_next_boot_and_keeps_the_rest() {
+    let (_guard, mut provider) = filled_then_reset();
+    let old_epoch = events::epoch().unwrap();
+    let kept_before = kept();
+
+    ATTEMPT_SEEN.with(|s| s.set(false));
+    let records = reset_boot(&mut provider, None);
+    assert_eq!(records.first(), Some(&Record::ResetPending));
+    assert!(
+        records.contains(&Record::ResetDone { erased: 27 }),
+        "{records:?}"
+    );
+    assert!(
+        records.iter().any(|record| matches!(
+            record,
+            Record::Keys {
+                clients: ClientStatus::Empty,
+                identity: Identity::Created,
+                ..
+            }
+        )),
+        "{records:?}"
+    );
+    assert_cleared(&kept_before, old_epoch);
+    assert!(ATTEMPT_SEEN.with(Cell::get));
+    assert_eq!(sdk::backup_read(MARKER_REGISTER), 0);
+
+    // The boot after is an ordinary one.
+    let records = reset_boot(&mut provider, None);
+    assert!(
+        matches!(records.first(), Some(Record::Open { .. })),
+        "{records:?}"
+    );
+}
+
+/// A power cut after any number of the reset's erases, the marker's
+/// included, with the erase it cut torn: the next boot finishes the reset
+/// with the same result. Nothing is published while it runs.
+#[test]
+fn a_power_cut_at_any_step_of_the_reset_leaves_it_to_the_next_boot() {
+    use wellfed_hal::plaf103::storage;
+
+    let (_guard, mut provider) = filled_then_reset();
+    let old_epoch = events::epoch().unwrap();
+    let kept_before = kept();
+    let marked = fake::with(|h| h.storage.clone());
+
+    // `done` erases landed, and the next one (the marker's last) was torn.
+    for done in 0..=storage::FACTORY_CLEARED_SECTORS {
+        fake::with(|h| h.storage.clone_from(&marked));
+        let steps = usize::try_from(done).unwrap() + 1;
+        let records = reset_boot(&mut provider, Some(steps));
+        assert_eq!(records, [Record::ResetPending], "cut after {done} erases");
+        assert_eq!(
+            settings::request(SettingsFields::default()),
+            SettingsResult::Busy,
+            "nothing is served mid-reset"
+        );
+        assert_eq!(keys::identity_since(0), None, "no identity mid-reset");
+
+        let torn = storage::factory_cleared(done).unwrap_or(storage::RESET.first);
+        fake::with(|h| {
+            let first = torn as usize * 0x1000;
+            h.storage[first..first + 0x800].fill(0xff);
+        });
+
+        // A torn marker reads as no reset: every store is already erased.
+        let records = reset_boot(&mut provider, None);
+        let finished = done < storage::FACTORY_CLEARED_SECTORS;
+        assert_eq!(
+            records.contains(&Record::ResetDone { erased: 27 }),
+            finished,
+            "cut after {done} erases: {records:?}"
+        );
+        assert_cleared(&kept_before, old_epoch);
+    }
+
+    // The cut came after the marker's erase, before anything opened.
+    fake::with(|h| h.storage.clone_from(&marked));
+    for index in 0..storage::FACTORY_CLEARED_SECTORS {
+        // SAFETY: the fake's storage, which this test owns.
+        assert!(unsafe { sdk::storage_erase(storage::factory_cleared(index).unwrap()) });
+    }
+    // SAFETY: as above.
+    assert!(unsafe { sdk::storage_erase(storage::RESET.first) });
+    let records = reset_boot(&mut provider, None);
+    assert!(
+        matches!(records.first(), Some(Record::Open { .. })),
+        "{records:?}"
+    );
+    assert_cleared(&kept_before, old_epoch);
+}
+
+/// A cut while the marker is programmed leaves it torn, which is no reset:
+/// nothing had been erased, and the stores open as they were.
+#[test]
+fn a_torn_marker_is_no_reset() {
+    use wellfed_feeder::store::reset::MARKER;
+    use wellfed_hal::plaf103::storage;
+
+    let (_guard, mut writer, mut provider) = start();
+    for _ in 0..7 {
+        step(&mut writer, &mut provider);
+    }
+    settings::request(SettingsFields {
+        volume: Some(9),
+        ..SettingsFields::default()
+    });
+    step(&mut writer, &mut provider);
+    fake::with(|h| {
+        let first = storage::RESET.first as usize * 0x1000;
+        h.storage[first..first + 8].copy_from_slice(&MARKER[..8]);
+    });
+
+    let records = reset_boot(&mut provider, None);
+    assert!(
+        matches!(records.first(), Some(Record::Open { generation: 1, .. })),
+        "{records:?}"
+    );
+    assert_eq!(current().2, 9);
+}
+
+/// An unarmed boot cannot erase: it stops the reset, serves nothing, and
+/// leaves the marker for the next boot.
+#[test]
+fn an_unarmed_boot_serves_nothing_and_keeps_the_marker() {
+    let (_guard, mut provider) = filled_then_reset();
+    restart_mailboxes();
+    let mut writer = Writer::default();
+    assert_eq!(step(&mut writer, &mut provider), Some(Record::ResetPending));
+    // The hooks went away after the open (arming itself is the
+    // confirmation's to test).
+    ARMED.with(|a| a.set(false));
+
+    let mut records = Vec::new();
+    for _ in 0..2_000 {
+        records.extend(step(&mut writer, &mut provider));
+        if records
+            .iter()
+            .any(|record| matches!(record, Record::ResetError { .. }))
+        {
+            break;
+        }
+    }
+    assert!(
+        records.contains(&Record::ResetError {
+            stage: ErrorStage::Unarmed,
+            sector: None
+        }),
+        "{records:?}"
+    );
+    assert_eq!(
+        settings::request(SettingsFields::default()),
+        SettingsResult::Busy
+    );
+    assert_eq!(keys::identity_since(0), None);
+    assert!(reset_marked());
+}
+
+#[test]
+fn reset_records_format() {
+    let line = |record: Record| {
+        let mut text = String::new();
+        writer::describe(record, &mut text).unwrap();
+        text
+    };
+    assert_eq!(line(Record::ResetPending), "reset pending");
+    assert_eq!(
+        line(Record::ResetDone { erased: 27 }),
+        "reset done erased=27"
+    );
+    assert_eq!(
+        line(Record::ResetError {
+            stage: ErrorStage::Erase,
+            sector: Some(13)
+        }),
+        "reset error stage=erase sector=13"
+    );
+    assert_eq!(
+        line(Record::ResetError {
+            stage: ErrorStage::Unarmed,
+            sector: None
+        }),
+        "reset error stage=unarmed"
+    );
 }

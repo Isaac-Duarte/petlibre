@@ -298,12 +298,14 @@ impl<P: Platform> Feeder<P> {
         let delay = self.owner.step(
             &mut self.platform,
             now_ms,
+            feeds.busy(),
             remote,
             self.identity.keypair(),
             |r| record(Record::Owner(r)),
         );
-        // Setup mode's restart waits for a feed in flight, which it would
-        // otherwise leave uncertain; setup mode starts no feed itself.
+        // Setup mode's and the factory reset's restart wait for a feed in
+        // flight, which they would otherwise leave uncertain; neither starts
+        // a feed itself.
         if self.owner.reboot_due(now_ms) && !feeds.busy() {
             // The writer's restart save takes this boot's counts as they are now.
             let counts = self.serve.stats().counts(now_ms);

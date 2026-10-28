@@ -111,7 +111,7 @@ A plans store the feeder cannot write runs nothing, since it could not keep the 
 
 ## Storage
 
-The plans live in storage sectors 11 and 12 (`wellfed_feeder::store::plans`): one 128-byte record holding the ten plans, each plan's mark and the last claim. Only the settings writer writes it, inside a marked attempt, after a feed has released the outputs. A save happens for each change you make and for each occurrence run or missed. A record of a newer format makes the store read-only with no plans, so this build runs nothing it cannot read.
+The plans live in storage sectors 11 and 12 (`wellfed_feeder::store::plans`): one 128-byte record holding the ten plans, each plan's mark and the last claim. Only the settings writer writes it, inside a marked attempt, after a feed has released the outputs. A save happens for each change you make and for each occurrence run or missed. A record of a newer format makes the store read-only with no plans, so this build runs nothing it cannot read. The [factory reset](pairing.md#factory-reset) erases it, last claim included; the feed journal it keeps still stops a claimed feed from running twice.
 
 ## Evidence
 

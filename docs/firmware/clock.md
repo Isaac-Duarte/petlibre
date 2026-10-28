@@ -89,7 +89,7 @@ Without a zone setting, local time comes from the last client sync's offset and 
 - The bit is 8 (`FEED` 1, `UPDATE` 2, `READINESS` 4).
 - The view carries the settings' generation, whether they are writable, the zone's rule, the server, the clock (`clock_ms`, `error_ms`, `offset_s`), the learned rate and its bound, the sync count, the last fix's source and age, and the last NTP result.
 
-**Storage.** The settings live in a store of their own, storage sectors 27 and 28 (`wellfed_feeder::store::time`): a 128-byte dual-slot record, magic `PLFTIM01`, version 1, pinned in `store_layout.rs`. The settings writer opens it with the Wi-Fi store and writes it under the write turn and the arming attempt marker, as every store write. The settings record (sectors 2 and 3) is unchanged, and so is its stale `utc_offset_minutes` field. No bank-0 refresh is needed: a build that predates this store never reads or writes sectors 27 and 28, so bank 0 keeps running on its own settings, and bank 1 reads defaults until an owner writes them.
+**Storage.** The settings live in a store of their own, storage sectors 27 and 28 (`wellfed_feeder::store::time`): a 128-byte dual-slot record, magic `PLFTIM01`, version 1, pinned in `store_layout.rs`. The settings writer opens it with the Wi-Fi store and writes it under the write turn and the arming attempt marker, as every store write. The settings record (sectors 2 and 3) is unchanged, and so is its stale `utc_offset_minutes` field. No bank-0 refresh is needed: a build that predates this store never reads or writes sectors 27 and 28, so bank 0 keeps running on its own settings, and bank 1 reads defaults until an owner writes them. The [factory reset](pairing.md#factory-reset) erases them with the other settings.
 
 ## Warm resets
 

@@ -59,13 +59,46 @@ We streamed a million one-byte samples from each source over the UART, from a co
 - The settings writer alone writes the client store. The loop task alone reads the panel and runs the handshakes.
 - The loop queues one change at a time (enroll, revoke or reset) in a one-slot mailbox. A second before the writer takes the first is `busy`.
 - The writer logs each result as `PLCFG1 keys change=… result=… enrolled=…`.
-- A reset draws its new identity from the generator, or does not happen (`result=no-generator`). Nothing weaker is ever written.
+- A reset is the [factory reset](#factory-reset). It needs the generator, or it does not happen (`result=no-generator`). Nothing weaker is ever written.
 
 **The identity in the loop.** The writer publishes the identity secret in RAM with a per-boot generation. The loop derives the public key (one X25519 on the Montgomery ladder) and keeps the key pair for handshakes. It logs `PLID1 identity generation=N fingerprint=<the public key's first 8 bytes>`. The fingerprint tells identities apart; no record carries the secret.
 
 **Gestures.** Pairing sees each gesture before the panel, which gets only the gestures pairing leaves.
 - **Recovery:** press Lock first, then add Dispense, and hold both. Dispense pressed alone first would be a feed request. Lock alone does nothing until its own 5 s hold, and that hold toggles the lock only when Lock is alone.
-- **Reset:** a Reset hold on an unlocked panel queues the key reset. A locked panel refuses it, so the keys stay.
+- **Reset:** a Reset hold (about 5 s) on an unlocked panel starts the [factory reset](#factory-reset). A locked panel refuses it, so nothing changes.
+
+## Factory reset
+
+The Reset hold restores the feeder to a new owner's state. Stock's own restore was never decompiled, so the owner decided what it clears (October 28, 2026).
+
+| Cleared | Kept |
+| --- | --- |
+| Paired clients and the identity | The feed journal: its high water and any uncertain feed's record, so a feed is never re-run and feed numbers never go back |
+| Wi-Fi credentials | The portion calibration, a property of the hardware |
+| Settings (lights, sound, volume, their windows, and what later joins the record) | The update store and the boot confirmation: the anti-rollback floor and the build in trial |
+| Time settings: the zone and the NTP server | The generator's seed |
+| Feeding plans, their marks and last claim | |
+| The event history, the per-feed traces and the lifetime statistics | |
+
+`wellfed_board_plaf103::storage::FACTORY_CLEARED` lists the cleared stores in the order they are erased.
+
+**How it runs.** A reset spans 27 sectors, so it is built to survive a power cut at any point:
+1. **The hold.** The loop refuses the hold by name while a feed is queued or runs (`PLPANEL1 reset refused=feeding`). Otherwise it queues the reset for the settings writer (`reset keys=queued`).
+2. **The marker.** The writer takes its write turn, so it waits for a feed's outputs to stop. It programs a 16-byte marker in sector 36, then forgets every client at once, so their sessions end now (`PLCFG1 keys change=reset result=done`).
+3. **The restart.** The loop reads `done` (`reset result=done`) and restarts the feeder once no feed is queued or running.
+4. **The erases.** The boot that finds the marker logs `PLCFG1 reset pending`. It opens and publishes nothing the reset clears. Once armed, it erases each cleared sector, each under its own write turn and attempt marker, then the marker (`reset done erased=27`).
+5. **The fresh boot.** The stores open empty, a new identity is drawn, and the event ring starts under a new epoch.
+
+**Power cuts.**
+- A cut before the marker is whole leaves no reset. Nothing was erased, and the owner holds Reset again.
+- A cut after it leaves a reset the next boot finishes, however far the erases got. A torn erase is erased again.
+- A torn erase of the marker itself reads either as the marker, so the erases run again, or as no reset, which is right because they are done.
+- The Wi-Fi task reads stored credentials only when no marker is down, so an unfinished reset never joins the old network.
+- A boot that cannot erase (unarmed, or a failed erase) logs `reset error stage=…`, serves nothing (no identity, no stores) and keeps the marker for the next boot.
+
+**After the reset.**
+- The feeder joins with the build's credentials, if it has any, until BLE setup provisions new ones. Setup and the LAN recovery window (Lock then Dispense held, unlocked panel) both admit a new owner, since neither needs stored credentials or a client.
+- Event numbers restart at 1 under a new epoch. That is how a client tells a reset from a rewind: a cursor counts within one epoch, so a new epoch means a new history, never missing events ([device API](device-api.md#events-and-samples)). Every old client is forgotten and the identity is new, so an old client cannot reconnect anyway; the server sees the reset feeder as a new one.
 
 ## Storage sectors
 
@@ -86,7 +119,8 @@ All storage-region sectors are named in one table, `wellfed_board_plaf103::stora
 | 29–31 | Per-feed trace ring: the last 8 to 12 feeds' traces ([device API](device-api.md#feed-traces)) |
 | 32–33 | Lifetime statistics ([device API](device-api.md#statistics)) |
 | 34–35 | Portion calibration ([calibration](calibration.md#storage)) |
-| 36–47 | Free |
+| 36 | The factory reset's marker ([factory reset](#factory-reset)) |
+| 37–47 | Free |
 
 ## Clients
 
@@ -99,7 +133,7 @@ All storage-region sectors are named in one table, `wellfed_board_plaf103::stora
   - **Member:** feeding and settings.
   - **Server:** the optional server.
   - **Update signer:** an owner's Ed25519 update-signing key, enrolled with `EnrollUpdateKey` once someone presses Dispense ([OTA design](ota-design.md#keys-and-anti-rollback)). It never opens a session.
-- **Reset:** the panel's reset forgets every client and takes a new identity.
+- **Reset:** the panel's factory reset forgets every client, then erases the store, and the next boot draws a new identity.
 
 > [!NOTE]
 > The identity secret and the RNG seed sit in plain flash. The board has no secure element, so anyone who reads the flash chip can impersonate the feeder until its next reset. The seed matters less, since every boot mixes fresh input in.
@@ -153,3 +187,4 @@ Setup starts on a gesture rather than at boot because every free KM0 backup regi
 - **Observed** (October 24), setup and recovery: BLE setup mode end to end, first with a Dispense press and then with the setup code, and recovery over the LAN with the code ([Bluetooth](bluetooth.md#evidence), [device API](device-api.md#evidence)). An invite's redemption and a revocation ran on hardware the same day.
 - **Not yet covered:** battery power and temperature; the full restart test.
 - **Modeled:** the invite, signer and recovery paths, a wrong recovery code, and the client store under a power cut at every mutation are host-tested.
+- **Modeled** (October 28), the factory reset: the settings writer against the SDK fake clears exactly the decided stores and keeps the journal, confirmation, update store and calibration byte for byte, with a power cut after every erase (the cut one torn) and after the marker's (`wellfed-feeder-runtime/tests/writer.rs`). The marker is never pending after a cut part-way through its program (`wellfed-feeder/tests/reset_marker.rs`). Both platforms' conformance suites refuse a hold during a feed and mark one at rest. In the simulator, an owner and a member pair, set everything and feed; after the hold, the member is gone, every cleared store writes from generation 0, the history has a new epoch, the calibration stays, feed numbers carry on, and the recovery window admits a new owner (`wellfed-feeder-sim/tests/serve.rs`). **Not yet on hardware:** the hold with the clearing and the restart.

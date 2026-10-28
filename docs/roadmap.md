@@ -42,7 +42,7 @@ This page tracks what works today and what comes next. It covers the replacement
 | Bluetooth setup and pairing | Works | |
 | Encrypted local API | Works | See [device API](firmware/device-api.md). |
 | Child lock | Works | |
-| Reset button | Partial | Forgets paired clients; settings are kept for now. |
+| Reset button | Partial | Clears clients, Wi-Fi, settings, plans and history, and keeps the calibration and the feed journal. Tested in simulation; not yet on hardware. |
 | Buttons | Works | |
 | Indicator lights | Works | Which states show is not settled. |
 | Speaker | Works | Plays sounds; which sounds play when is not settled. |

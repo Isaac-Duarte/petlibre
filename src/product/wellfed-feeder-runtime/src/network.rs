@@ -26,6 +26,7 @@ use wellfed_core::store::slot::SlotIo;
 use wellfed_device_api::mailbox::{WifiResult, WifiSource, WifiView};
 use wellfed_device_api::wifi::Credentials;
 use wellfed_feeder::store::net::NetStore;
+use wellfed_feeder::store::reset;
 
 use wellfed_hal::cell::TaskCell;
 use wellfed_hal::interlock::INTERLOCK;
@@ -33,6 +34,8 @@ use wellfed_hal::{link, sdk};
 
 /// The credential slots within the storage region (`0x345000`).
 pub const NET_BASE: u32 = wellfed_hal::plaf103::storage::NET.first;
+/// The factory reset's marker sector.
+const RESET_BASE: u32 = wellfed_hal::plaf103::storage::RESET.first;
 /// Consecutive failed joins before the build's credentials take over.
 pub const FALLBACK_AFTER: u32 = 5;
 
@@ -237,11 +240,17 @@ impl SlotIo for MappedNet {
 }
 
 /// The stored credentials, read once through the flash map (no lease).
+/// None while a factory reset is unfinished: the Wi-Fi task may ask before
+/// the settings writer has erased the credentials the reset clears.
 fn stored(join: &mut Join) -> Option<Credentials> {
     if !join.opened {
         join.opened = true;
+        let mut marker = [0; reset::MARKER.len()];
+        let resetting = sdk::storage_read(RESET_BASE, 0, &mut marker) && reset::marked(&marker);
         let mut store = NetStore::default();
-        store.open(MappedNet);
+        if !resetting {
+            store.open(MappedNet);
+        }
         join.stored = store.credentials;
     }
     join.stored

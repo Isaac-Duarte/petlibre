@@ -6,9 +6,12 @@
 //! show the lock and a pending offer from what it holds. Pairing
 //! sees each gesture first and the panel gets only those it leaves, so a
 //! Dispense press that confirms a pairing, or that is part of setup's code,
-//! feeds nothing. An allowed Reset hold queues the key reset for the
-//! settings writer. An allowed Lock and Mic hold starts BLE setup mode
-//! ([`setup`](super::setup)), which runs in this loop until it reboots. A
+//! feeds nothing. An allowed Reset hold queues the factory reset for the
+//! settings writer, or is refused while a feed is queued or runs; once the
+//! writer has marked it, the loop restarts the feeder (waiting for any feed
+//! in flight) and the next boot finishes it. An allowed Lock and Mic hold
+//! starts BLE setup mode ([`setup`](super::setup)), which runs in this loop
+//! until it reboots. A
 //! lock change made here (a button, the idle relock) goes to the event
 //! history; a client's is recorded by the device API, with who made it.
 
@@ -22,9 +25,19 @@ use super::events;
 use super::platform::Platform;
 use super::setup::{self, Setup};
 use crate::panel::{Action, Config, Event, Panel, Source};
+use wellfed_core::named_enum;
 use wellfed_device_api::mailbox::Lock;
-use wellfed_device_api::mailbox::{ClientChange, Requested};
+use wellfed_device_api::mailbox::{ClientChange, KeyResult, Requested};
 use wellfed_device_api::pairing::{self, Pairing, Path, Refusal};
+
+named_enum! {
+    /// Why an allowed Reset hold started no reset.
+    pub enum ResetRefusal {
+        /// A feed is queued or runs: the reset's restart would cut it, so
+        /// the hold is refused rather than deferred past the feed.
+        Feeding = "feeding",
+    }
+}
 
 /// Between steps; a gesture waits at most this long in the queue.
 pub const POLL_MS: u32 = 20;
@@ -37,9 +50,19 @@ pub enum Record<D> {
     },
     Panel(Event),
     Pairing(pairing::Event),
-    /// An allowed Reset hold asked the settings writer for the key reset.
+    /// An allowed Reset hold asked the settings writer for the factory
+    /// reset.
     Reset {
         requested: Requested,
+    },
+    /// An allowed Reset hold that started nothing.
+    ResetRefused {
+        reason: ResetRefusal,
+    },
+    /// The writer's answer to the reset: `Done` once its marker is down and
+    /// the clients forgotten, and the feeder restarts to finish it.
+    ResetWritten {
+        result: KeyResult,
     },
     /// BLE setup mode.
     Setup(setup::Record<D>),
@@ -60,6 +83,8 @@ pub fn describe<D: fmt::Display>(record: Record<D>, f: &mut impl fmt::Write) -> 
         ),
         Record::Pairing(event) => pair(event, f),
         Record::Reset { requested } => write!(f, "reset keys={requested}"),
+        Record::ResetRefused { reason } => write!(f, "reset refused={reason}"),
+        Record::ResetWritten { result } => write!(f, "reset result={result}"),
         Record::Setup(record) => setup::describe(record, f),
     }
 }
@@ -101,6 +126,11 @@ pub struct Owner {
     dispense: bool,
     /// A button went down this step: one beep, as stock beeps every press.
     pressed: bool,
+    /// The factory reset's ticket in the client mailbox, until the writer
+    /// answers it.
+    reset_ticket: Option<u32>,
+    /// The writer marked the factory reset: restart to finish it.
+    reset_restart: bool,
 }
 
 impl fmt::Debug for Owner {
@@ -132,6 +162,8 @@ impl Owner {
             presses: 0,
             dispense: false,
             pressed: false,
+            reset_ticket: None,
+            reset_restart: false,
         }
     }
 
@@ -155,9 +187,11 @@ impl Owner {
         self.presses
     }
 
-    /// Setup mode has ended and asks for the reboot that drops BLE.
+    /// Setup mode has ended and asks for the reboot that drops BLE, or the
+    /// factory reset is marked and the next boot finishes it. The loop
+    /// waits for a feed in flight either way.
     pub fn reboot_due(&self, now_ms: u32) -> bool {
-        self.setup.reboot_due(now_ms)
+        self.reset_restart || self.setup.reboot_due(now_ms)
     }
 
     /// The LAN recovery offer's decision this step (its code keyed in, or
@@ -187,13 +221,15 @@ impl Owner {
         self.setup.is_on()
     }
 
-    /// One step at `now`: `remote` is a queued remote change (true to
+    /// One step at `now`: `feeding` says a feed is queued or runs (a Reset
+    /// hold is then refused), `remote` is a queued remote change (true to
     /// lock), `identity` the feeder's once the writer has published it;
     /// `record` receives what happened, in order.
     pub fn step<P: Platform>(
         &mut self,
         platform: &mut P,
         now: u32,
+        feeding: bool,
         remote: Option<bool>,
         identity: Option<&Keypair>,
         mut record: impl FnMut(Record<P::Record>),
@@ -250,9 +286,15 @@ impl Owner {
                     allowed: true,
                 })
             {
-                let requested = platform.keys_request(ClientChange::Reset);
-                record(Record::Reset { requested });
+                reset_hold(platform, feeding, &mut self.reset_ticket, &mut record);
             }
+        }
+        if let Some(ticket) = self.reset_ticket
+            && let Some(result) = platform.keys_outcome(ticket)
+        {
+            self.reset_ticket = None;
+            self.reset_restart = result == KeyResult::Done;
+            record(Record::ResetWritten { result });
         }
         let remote = remote.and_then(|locked| panel.remote(now, Lock::from_locked(locked)));
         for event in [remote, panel.tick(now)].into_iter().flatten() {
@@ -280,6 +322,28 @@ impl Owner {
         );
         delay.min(setup_delay.max(1))
     }
+}
+
+/// An allowed Reset hold: the factory reset, queued for the settings
+/// writer unless a feed is queued or runs; `ticket` takes its ticket.
+fn reset_hold<P: Platform>(
+    platform: &mut P,
+    feeding: bool,
+    ticket: &mut Option<u32>,
+    record: &mut impl FnMut(Record<P::Record>),
+) {
+    if feeding {
+        record(Record::ResetRefused {
+            reason: ResetRefusal::Feeding,
+        });
+        return;
+    }
+
+    let requested = platform.keys_request(ClientChange::Reset);
+    if requested == Requested::Queued {
+        *ticket = Some(platform.keys_ticket());
+    }
+    record(Record::Reset { requested });
 }
 
 /// A panel event: a lock change made here goes to the history (a client's

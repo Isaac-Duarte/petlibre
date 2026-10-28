@@ -56,6 +56,10 @@ impl Rig for SimRig {
             INTERLOCK.release_feed();
         }
     }
+
+    fn gesture(&mut self, gesture: wellfed_core::buttons::Gesture) {
+        self.feeder.platform_mut().gesture_in(gesture);
+    }
 }
 
 wellfed_feeder::conformance!(SimRig::start());

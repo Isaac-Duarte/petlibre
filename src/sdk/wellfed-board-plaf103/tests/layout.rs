@@ -30,6 +30,7 @@ fn storage_region_and_sector_map_are_pinned() {
     assert_eq!(storage::TRACES, at(29, 3));
     assert_eq!(storage::STATS, at(32, 2));
     assert_eq!(storage::CALIBRATION, at(34, 2));
+    assert_eq!(storage::RESET, at(36, 1));
 
     assert_eq!(
         storage::ALL,
@@ -47,8 +48,42 @@ fn storage_region_and_sector_map_are_pinned() {
             storage::TRACES,
             storage::STATS,
             storage::CALIBRATION,
+            storage::RESET,
         ]
     );
+}
+
+/// The factory reset erases exactly the stores the owner decided, and
+/// never the journal, calibration, update store, confirmation or seed.
+#[test]
+fn the_factory_reset_clears_the_decided_stores_only() {
+    let cleared: Vec<u32> = (0..storage::FACTORY_CLEARED_SECTORS)
+        .map(|index| storage::factory_cleared(index).unwrap())
+        .collect();
+    assert_eq!(
+        cleared,
+        [9, 10, 5, 6, 2, 3, 27, 28, 11, 12, 32, 33, 29, 30, 31]
+            .into_iter()
+            .chain(13..25)
+            .collect::<Vec<u32>>()
+    );
+    assert_eq!(
+        storage::factory_cleared(storage::FACTORY_CLEARED_SECTORS),
+        None
+    );
+
+    for kept in [
+        storage::JOURNAL,
+        storage::CONFIRM,
+        storage::SEED,
+        storage::UPDATE,
+        storage::CALIBRATION,
+        storage::RESET,
+    ] {
+        for sector in kept.first..kept.first + kept.count {
+            assert!(!cleared.contains(&sector), "sector {sector} is kept");
+        }
+    }
 }
 
 #[test]

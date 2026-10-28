@@ -36,7 +36,7 @@ Subscribe { after, samples }          Event { seq, at, body }
 - **`id`** is a client-generated 128-bit request ID. The feeder remembers the last 32 write IDs per client key, across reconnects, with their compact outcomes, so a retried request returns the first answer rather than running again. Reads are not remembered; they simply run again. An ID that has left the ring is no longer recognized, which is safe for everything but feeds, whose IDs are handled [below](#feeds).
 - **Results** are typed enums of outcomes and refusals. There is no free-text error.
 - **Subscribe** asks for every event after a cursor (`None`: the oldest kept), then each new one, and the live samples if asked.
-- **Events** are the durable records described in [data](product-architecture.md#data). `seq` is monotonic across reboots within the ring's epoch. A ring re-created by a storage wipe draws a new epoch and counts from 1 again.
+- **Events** are the durable records described in [data](product-architecture.md#data). `seq` is monotonic across reboots within the ring's epoch. A ring re-created by a storage wipe or the [factory reset](pairing.md#factory-reset) draws a new epoch and counts from 1 again.
 
 **Ops of major version 1:**
 

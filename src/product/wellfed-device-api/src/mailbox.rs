@@ -314,7 +314,8 @@ pub enum ClientChange {
     Revoke {
         key: [u8; 32],
     },
-    /// Forget every client and take a new identity.
+    /// The factory reset: mark it, forget every client, and leave the rest
+    /// to the restart that follows.
     Reset,
 }
 

@@ -28,12 +28,24 @@
 //! then `wifi_on` and a fresh join. A shim between attempts checks it too,
 //! so it neither scans nor joins while the radio should be off. A restart
 //! wins over both.
+//!
+//! **A radio change takes the join's turn.** `wifi_off` (the driver's
+//! deinit) and `wifi_on` (its RF bring-up) stall every task in the vendor
+//! driver as an association does, which would break a moving feed's beat.
+//! So the shim brackets the leave and `wifi_off`, and each `wifi_on`, with
+//! [`wellfed_wifi_radio_begin`] and [`wellfed_wifi_radio_end`]: the
+//! interlock's join turn ([`crate::interlock`]). A claimed feed defers the
+//! change (up to the claim's bound, as it defers a join), and a feed asked
+//! for during one is refused as during a join. A `wifi_on` that keeps
+//! failing ends in a restart ([`wellfed_wifi_radio_failed`]), asked for
+//! with the turn still held, so no feed starts into the reset.
 
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use wellfed_core::liveness::{Cause, Liveness, Probe, Radio, Verdict};
 
 use crate::cell::TaskCell;
+use crate::interlock::INTERLOCK;
 use crate::{net_status, sdk};
 
 /// Set once, by the restart; nothing clears it but the reset.
@@ -68,6 +80,27 @@ pub fn radio_off() -> bool {
 #[unsafe(no_mangle)]
 pub extern "C" fn wellfed_wifi_radio() -> i32 {
     i32::from(!RADIO_OFF.load(Ordering::Acquire))
+}
+
+/// Before a radio change (the leave and `wifi_off`, or one `wifi_on`):
+/// take the join's turn, waiting while a feed holds the outputs.
+#[unsafe(no_mangle)]
+pub extern "C" fn wellfed_wifi_radio_begin() {
+    let _start = INTERLOCK.begin_join(sdk::uptime_ms, sdk::delay_ms);
+}
+
+/// After the radio change: give the turn back.
+#[unsafe(no_mangle)]
+pub extern "C" fn wellfed_wifi_radio_end() {
+    INTERLOCK.end_join();
+}
+
+/// `wifi_on` failed too many times in a row: restart, with the turn the
+/// caller still holds keeping every feed out until the reset. An
+/// intentional restart with its grace, so the writer saves first.
+#[unsafe(no_mangle)]
+pub extern "C" fn wellfed_wifi_radio_failed() {
+    crate::supervision::begin_restart_grace(sdk::uptime_ms());
 }
 
 /// Host tests only: back to the boot state.

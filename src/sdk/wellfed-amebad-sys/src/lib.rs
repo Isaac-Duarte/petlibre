@@ -148,7 +148,8 @@ pub struct WifiEvent {
     pub result: i32,
     /// Scan: network found; DHCP: assigned IPv4; lost: ms connected;
     /// backoff: ms; gateway: the gateway's IPv4; leave: still associated;
-    /// access point: its BSSID's last 4 bytes.
+    /// access point: its BSSID's last 4 bytes; on: battery mode's
+    /// `wifi_on` failures in a row.
     pub value: u32,
     /// Scan only: the network's RSSI (dBm) and `rtw_security_t`.
     pub rssi: i32,

@@ -21,6 +21,7 @@ use wellfed_connect::Connection;
 use wellfed_core::ota::install::IDLE_MS;
 use wellfed_core::ota::offer::{self, ImageKind, Signed, key_id};
 use wellfed_core::ota::{MARKER, Manifest, SECTOR};
+use wellfed_feeder::feeder::supply::RADIO_OFF_MS;
 use wellfed_feeder_sim::banks::{Banks, Trial};
 use wellfed_feeder_sim::flash::Flash;
 use wellfed_feeder_sim::harness;
@@ -31,6 +32,8 @@ use wellfed_session::noise::Keypair;
 
 const OWNER: [u8; 32] = [0x22; 32];
 const BENCH: [u8; 32] = [0x0b; 32];
+/// Three fresh D cells at the pack's pin: battery mode needs a pack.
+const FRESH_PIN_MV: u32 = 2306;
 
 fn bench() -> SigningKey {
     SigningKey::from_bytes(&BENCH)
@@ -148,6 +151,9 @@ struct Faults {
     cut_after: Option<u32>,
     /// Send nothing from this offset on, for longer than the install waits.
     stall_at: Option<u32>,
+    /// Pull the adapter once this chunk is answered, until battery mode
+    /// has turned the radio off, then fit it again.
+    unplug_after: Option<u32>,
 }
 
 /// Run an update until it activates (and the feeder restarted into it) or
@@ -174,6 +180,15 @@ async fn update(rig: &mut Rig, image: Image<'_>, faults: &mut Faults) -> Result<
                     let Sent::Chunk(offset) = sent else { continue };
                     if faults.drop_after.take_if(|at| *at == offset).is_some() {
                         installer.lost();
+                        connection = rig.open().await;
+                        installer.opened(rig.state(&mut connection).await.bank);
+                    } else if faults.unplug_after.take_if(|at| *at == offset).is_some() {
+                        installer.lost();
+                        rig.sim.control(Control::Adapter(false));
+                        let off = u64::from(RADIO_OFF_MS) + 1_000;
+                        tokio::time::sleep(Duration::from_millis(off)).await;
+                        rig.sim.control(Control::Adapter(true));
+                        tokio::time::sleep(Duration::from_millis(100)).await;
                         connection = rig.open().await;
                         installer.opened(rig.state(&mut connection).await.bank);
                     } else if faults.cut_after.take_if(|at| *at == offset).is_some() {
@@ -316,6 +331,33 @@ fn a_truncated_or_stalled_transfer_times_out() {
         let stopped = update(&mut rig, offer.image(), &mut faults).await;
         assert_eq!(stopped, Err(InstallError::Stopped(UpdateStop::Timeout)));
         assert_on_bank_0(&mut rig, Some(UpdateStop::Timeout)).await;
+        rig.sim.stop().await;
+    });
+}
+
+/// Battery mode stops an install that is receiving: with the radio off no
+/// chunk could reach it, and it would hold the write turn until it timed
+/// out. Bank 1 stays invalid, and the next offer starts afresh.
+#[test]
+fn battery_mode_stops_an_install_mid_transfer() {
+    paused(async {
+        let mut rig = Rig::start().await;
+        rig.sim.control(Control::Pack(Some(FRESH_PIN_MV)));
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let offer = Offer::new(7, 0x77, 3 * SECTOR);
+        let mut faults = Faults {
+            unplug_after: Some(SECTOR as u32),
+            ..Faults::default()
+        };
+        let stopped = update(&mut rig, offer.image(), &mut faults).await;
+        assert_eq!(stopped, Err(InstallError::Stopped(UpdateStop::Cancelled)));
+        assert_on_bank_0(&mut rig, Some(UpdateStop::Cancelled)).await;
+
+        update(&mut rig, offer.image(), &mut Faults::default())
+            .await
+            .unwrap();
+        assert_eq!(rig.bank().await, 1);
         rig.sim.stop().await;
     });
 }

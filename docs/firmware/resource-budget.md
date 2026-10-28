@@ -131,6 +131,7 @@ There were two ways to keep a feed's beat inside 1 s: move the owner to its own 
 
 - The loop claims the outputs before it submits a feed. It releases them once no feed is in flight and the owner is at rest, with motor STOP and the emitters off.
 - The shim calls `wellfed_wifi_select` before each attempt and `wellfed_wifi_outcome` after it. The select takes the join's turn and the outcome ends it, so the turn covers the scan, the association and DHCP.
+- Battery mode's radio changes take the same turn: the leave with `wifi_off`, and each `wifi_on` (`wellfed_wifi_radio_begin` and `wellfed_wifi_radio_end`). They stall the driver as an association does ([battery mode](power.md#battery-mode)).
 - Watching a joined link takes no turn. That watch no longer leaves a network that has no internet, so such a network no longer costs a rejoin, and a refused feed, every few seconds ([link liveness](startup-diagnostics.md#link-liveness-without-internet-dns)).
 
 How each case plays out:

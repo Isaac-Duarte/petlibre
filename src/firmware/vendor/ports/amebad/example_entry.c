@@ -341,7 +341,7 @@ void __wrap_rtw_os_indicate_disconnect(void *adapter)
 
 /* Event kinds; shared with Rust (`sdk::WifiEvent`). */
 enum {
-    WELLFED_EV_ON = 1,      /* result: wifi_on; ms: duration */
+    WELLFED_EV_ON = 1,      /* result: wifi_on; value: battery mode's failures in a row; ms: duration */
     WELLFED_EV_SCAN = 2,    /* result: scan; value: found (0/1); rssi, security */
     WELLFED_EV_CONNECT = 3, /* result: wifi_connect; ms */
     WELLFED_EV_DHCP = 4,    /* result: LwIP_DHCP state; value: IPv4 (host order) when assigned; ms */
@@ -364,8 +364,24 @@ enum {
 int wellfed_wifi_restarting(void);
 /* 1 while the radio should be up, 0 while battery mode wants it off. */
 int wellfed_wifi_radio(void);
+/* A radio change takes the join's turn (wellfed-hal link.rs): wifi_off and
+ * wifi_on stall every task in the driver as an association does, so a
+ * claimed feed defers them and a feed is refused while one runs. */
+void wellfed_wifi_radio_begin(void);
+void wellfed_wifi_radio_end(void);
+/* wifi_on failed WELLFED_RADIO_TRIES times in a row: restart. */
+void wellfed_wifi_radio_failed(void);
 /* How long the radio's return waits before trying wifi_on again. */
 #define WELLFED_RADIO_RETRY_MS 5000
+/* wifi_on failures in a row, WELLFED_RADIO_RETRY_MS apart, before the
+ * feeder restarts: about 30 s without Wi-Fi on the adapter. */
+#define WELLFED_RADIO_TRIES 6
+/* Before wifi_off with no association held: a failed or rejected join's
+ * teardown runs in the timer task (rtw_clearstakey_cmd, then the key
+ * table's CAM writes), and powering the MAC down under it stalled the bus
+ * into a watchdog reset (see wellfed_wifi_task). Provisional: the teardown
+ * has finished well within it on the bench. */
+#define WELLFED_RADIO_SETTLE_MS 2000
 /* How long a leave waits for the driver to report the association gone:
  * inside the watchdog's shortest expiry (2.4 s at its clock's bound) with a gateway probe's
  * second before it. */
@@ -743,20 +759,47 @@ static void wellfed_wait(unsigned int ms)
     }
 }
 
-/* Battery mode, with no association held: turn the radio off and wait
+/* Wait `ms` in polls, ending early only for a restart. */
+static void wellfed_hold(unsigned int ms)
+{
+    for (unsigned int waited = 0; waited < ms && !wellfed_wifi_restarting(); waited += WELLFED_POLL_MS) {
+        vTaskDelay(WELLFED_POLL_MS / portTICK_PERIOD_MS);
+    }
+}
+
+/* Battery mode: leave (when `associated`), turn the radio off and wait
  * until Rust asks for it on again, then turn it on as at boot (wifi_on in
  * station mode, the same power-save settings) for a fresh join. wifi_off
  * stops lwIP's DHCP client and takes the interface down, so the device
- * API's address goes with it. A restart asked for meanwhile parks the task
- * with the radio off. A wifi_on that fails is tried again every
- * WELLFED_RADIO_RETRY_MS; the boot's own wifi_on gives up instead, but here
- * the radio has worked this boot. */
-static void wellfed_radio_off(unsigned int attempt)
+ * API's address goes with it. The leave with wifi_off, and each wifi_on,
+ * hold the join's turn, so neither runs under a moving feed; with no
+ * association, a settle comes first, outside the turn. A restart asked for
+ * meanwhile parks the task with the radio off. A wifi_on that fails is
+ * tried again every WELLFED_RADIO_RETRY_MS, up to WELLFED_RADIO_TRIES
+ * times; then the feeder restarts with the turn still held, so no feed
+ * starts into the reset. */
+static void wellfed_radio_off(unsigned int attempt, int associated)
 {
+    if (!associated) {
+        wellfed_hold(WELLFED_RADIO_SETTLE_MS);
+        if (wellfed_wifi_restarting()) {
+            wellfed_park();
+        }
+        /* The adapter came back meanwhile: the radio is still on. */
+        if (wellfed_wifi_radio()) {
+            return;
+        }
+    }
+    wellfed_wifi_radio_begin();
+    if (associated) {
+        wellfed_leave(attempt);
+    }
     TickType_t begin = xTaskGetTickCount();
     LwIP_ReleaseIP(0);
     int off = wifi_off();
+    wellfed_wifi_radio_end();
     wellfed_event(WELLFED_EV_OFF, attempt, off, 0, wellfed_ms(begin));
+    unsigned int failed = 0;
     for (;;) {
         while (!wellfed_wifi_radio() && !wellfed_wifi_restarting()) {
             vTaskDelay(WELLFED_POLL_MS / portTICK_PERIOD_MS);
@@ -764,18 +807,27 @@ static void wellfed_radio_off(unsigned int attempt)
         if (wellfed_wifi_restarting()) {
             wellfed_park();
         }
+        wellfed_wifi_radio_begin();
         begin = xTaskGetTickCount();
         /* 0 started, 1 already running; below 0 the driver failed. */
         int on = wifi_on(RTW_MODE_STA);
-        wellfed_event(WELLFED_EV_ON, attempt, on, 0, wellfed_ms(begin));
         if (on >= 0) {
             wifi_set_power_mode(0, 1);
+        }
+        failed = on >= 0 ? 0 : failed + 1;
+        if (failed >= WELLFED_RADIO_TRIES) {
+            wellfed_wifi_radio_failed();
+        } else {
+            wellfed_wifi_radio_end();
+        }
+        wellfed_event(WELLFED_EV_ON, attempt, on, failed, wellfed_ms(begin));
+        if (on >= 0) {
             return;
         }
-        for (unsigned int waited = 0; waited < WELLFED_RADIO_RETRY_MS && !wellfed_wifi_restarting();
-             waited += WELLFED_POLL_MS) {
-            vTaskDelay(WELLFED_POLL_MS / portTICK_PERIOD_MS);
+        if (failed >= WELLFED_RADIO_TRIES) {
+            wellfed_park();
         }
+        wellfed_hold(WELLFED_RADIO_RETRY_MS);
     }
 }
 
@@ -806,7 +858,7 @@ static void wellfed_wifi_task(void *unused)
             wellfed_park();
         }
         if (!wellfed_wifi_radio()) {
-            wellfed_radio_off(attempt);
+            wellfed_radio_off(attempt, 0);
             backoff = WELLFED_BACKOFF_MIN_MS;
         }
         attempt++;
@@ -817,10 +869,10 @@ static void wellfed_wifi_task(void *unused)
                 wellfed_leave(attempt);
                 wellfed_park();
             }
-            /* Battery mode: no loss to count; the radio goes off at the
-             * top of the loop. */
+            /* Battery mode: no loss to count. */
             if (cause == WELLFED_CAUSE_RADIO) {
-                wellfed_leave(attempt);
+                wellfed_radio_off(attempt, 1);
+                backoff = WELLFED_BACKOFF_MIN_MS;
                 continue;
             }
             wellfed_event(WELLFED_EV_LOST, attempt, cause, wellfed_ms(joined), 0);

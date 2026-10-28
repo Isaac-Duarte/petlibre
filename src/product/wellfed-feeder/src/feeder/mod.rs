@@ -41,6 +41,7 @@ pub mod time;
 
 use core::fmt;
 
+use wellfed_core::ota::install::Phase as InstallPhase;
 use wellfed_proto::api::{Blocked, EventBody, Phase, Readiness, Refusal, Source, TraceSummary};
 use wellfed_session::noise::Keypair;
 
@@ -316,10 +317,24 @@ impl<P: Platform> Feeder<P> {
         if let Some(changed) = changed {
             events::record(&mut self.platform, now_ms, EventBody::Supply(changed));
         }
-        let radio = self
-            .supply
-            .radio(self.owner.setup_on(), |r| record(Record::Supply(r)));
+        let mut went_off = false;
+        let radio = self.supply.radio(now_ms, self.owner.setup_on(), |r| {
+            went_off |= r == supply::Record::Radio(supply::Radio::Off);
+            record(Record::Supply(r));
+        });
         self.platform.radio(radio);
+        // No chunk can reach an install once the radio is off: stop it now
+        // rather than hold the write turn until it times out. Bank 1 stays
+        // invalid, as at any stop before activation.
+        if went_off
+            && self
+                .platform
+                .update_progress()
+                .is_some_and(|p| p.phase == InstallPhase::Receiving)
+        {
+            let stopped = self.platform.update_cancel().is_ok();
+            record(Record::Supply(supply::Record::InstallStopped { stopped }));
+        }
 
         if self.owner.take_dispense() {
             let ready = self.readiness(feeds);

@@ -28,7 +28,11 @@
 //! mode: with no cells fitted, the decaying 5 V rail reads as a plausible
 //! pack with the adapter gone, for the moment before the board stops,
 //! well inside the wait. Setup mode keeps the radio on, since the vendor's
-//! BLE stack runs only while the WLAN driver is up.
+//! BLE stack runs only while the WLAN driver is up. Once the radio has
+//! come back on it stays on for at least [`RADIO_MIN_ON_MS`], so an
+//! adapter that chatters cannot cycle the WLAN driver (its heap, its
+//! firmware load) every few seconds. When the radio goes off the loop
+//! also stops an install that is receiving: no chunk could reach it.
 //!
 //! **Brownout.** A boot whose reset was a brownout (the ROM's flag) holds
 //! feeding as `Blocked::Battery`. The pack recovers at rest, so its reading
@@ -54,6 +58,10 @@ pub const EVENT_MS: u32 = 60_000;
 
 /// How long the adapter stays gone before the radio goes off: stock's 5 s.
 pub const RADIO_OFF_MS: u32 = 5_000;
+
+/// The least time the radio stays on after battery mode brought it back,
+/// before battery mode may turn it off again.
+pub const RADIO_MIN_ON_MS: u32 = 60_000;
 
 /// The charge a pack must read to lift a brownout's hold: stock's 50 %
 /// step, a pin reading above 1890 mV, the floor (1650) plus 240 mV, or a
@@ -108,6 +116,11 @@ pub enum Record {
     /// This boot followed a brownout: feeding holds.
     Held,
     Released(Released),
+    /// Battery mode stopped an install that was receiving; `stopped` is
+    /// false when the stage did not take the cancel.
+    InstallStopped {
+        stopped: bool,
+    },
 }
 
 /// One record's body (`PLBAT2`).
@@ -116,6 +129,9 @@ pub fn describe(record: Record, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         Record::Radio(radio) => write!(f, "radio {}", radio.name()),
         Record::Held => f.write_str("hold brownout"),
         Record::Released(by) => write!(f, "hold released by={}", by.name()),
+        Record::InstallStopped { stopped } => {
+            write!(f, "install stop queued={}", u8::from(stopped))
+        }
     }
 }
 
@@ -153,6 +169,8 @@ pub struct Watch {
     mode: Mode,
     /// The radio last asked for.
     radio: Option<Radio>,
+    /// When battery mode last brought the radio back on.
+    radio_on_ms: Option<u32>,
 }
 
 impl Default for Watch {
@@ -169,6 +187,7 @@ impl Watch {
             recorded: None,
             mode: Mode::Mains,
             radio: None,
+            radio_on_ms: None,
         }
     }
 
@@ -257,17 +276,30 @@ impl Watch {
         self.mode == Mode::Battery
     }
 
-    /// The radio this pass asks for; `setup` (BLE setup mode runs) keeps it
-    /// on. Recorded when it changes.
-    pub fn radio(&mut self, setup: bool, mut record: impl FnMut(Record)) -> Radio {
-        let radio = if self.on_battery() && !setup {
+    /// The radio this pass asks for at `now_ms`; `setup` (BLE setup mode
+    /// runs) keeps it on, and so does a radio back on for less than
+    /// [`RADIO_MIN_ON_MS`]. Recorded when it changes.
+    pub fn radio(&mut self, now_ms: u32, setup: bool, mut record: impl FnMut(Record)) -> Radio {
+        let settled = self
+            .radio_on_ms
+            .is_none_or(|on| now_ms.wrapping_sub(on) >= RADIO_MIN_ON_MS);
+        let radio = if self.on_battery() && !setup && settled {
             Radio::Off
         } else {
             Radio::On
         };
+
         // The boot starts with the radio on: only a change is a record.
-        if self.radio.unwrap_or(Radio::On) != radio {
+        let last = self.radio.unwrap_or(Radio::On);
+        if last != radio {
             record(Record::Radio(radio));
+        }
+        if last == Radio::Off && radio == Radio::On {
+            self.radio_on_ms = Some(now_ms);
+        } else if settled {
+            // Past the minimum: forget it, so the uptime's wrap never
+            // brings it back.
+            self.radio_on_ms = None;
         }
         self.radio = Some(radio);
         radio

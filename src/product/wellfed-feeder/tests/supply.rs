@@ -6,7 +6,8 @@
 use wellfed_core::supply::{Pack, Reading};
 use wellfed_feeder::feeder::feeding::readiness;
 use wellfed_feeder::feeder::supply::{
-    EVENT_MS, RADIO_OFF_MS, RELEASE_MS, RELEASE_PERCENT, Radio, Record, Released, Watch, supply,
+    EVENT_MS, RADIO_MIN_ON_MS, RADIO_OFF_MS, RELEASE_MS, RELEASE_PERCENT, Radio, Record, Released,
+    Watch, supply,
 };
 use wellfed_feeder::feeder::{Feeds, NoFeeds};
 use wellfed_proto::api::{Battery, Blocked, Readiness, Refusal, ResetCause, Source, Supply};
@@ -45,7 +46,7 @@ fn note(watch: &mut Watch, at: u32, reset: ResetCause, supply: Supply) -> Option
 /// The radio after noting `supply` at `at`, outside setup mode.
 fn radio_at(watch: &mut Watch, at: u32, supply: Supply) -> Radio {
     note(watch, at, ResetCause::PowerOn, supply);
-    watch.radio(false, |_| {})
+    watch.radio(at, false, |_| {})
 }
 
 #[test]
@@ -161,7 +162,7 @@ fn the_radio_goes_off_five_seconds_after_the_adapter_and_back_with_it() {
     let mut step = |watch: &mut Watch, at: u32, adapter: bool| {
         let supply = on(Some(adapter), Some(false));
         watch.note(at, ResetCause::PowerOn, supply, |r| records.push(r));
-        watch.radio(false, |r| records.push(r))
+        watch.radio(at, false, |r| records.push(r))
     };
 
     assert_eq!(step(&mut watch, 0, true), Radio::On);
@@ -179,12 +180,11 @@ fn the_radio_goes_off_five_seconds_after_the_adapter_and_back_with_it() {
     // loss waits its own 5 s.
     assert_eq!(step(&mut watch, 61_000, false), Radio::On);
     assert_eq!(step(&mut watch, 63_000, true), Radio::On);
-    assert_eq!(step(&mut watch, 64_000, false), Radio::On);
-    assert_eq!(
-        step(&mut watch, 64_000 + RADIO_OFF_MS - 1, false),
-        Radio::On
-    );
-    assert_eq!(step(&mut watch, 64_000 + RADIO_OFF_MS, false), Radio::Off);
+    // Past the radio's minute back on.
+    let gone = 60_020 + RADIO_MIN_ON_MS;
+    assert_eq!(step(&mut watch, gone, false), Radio::On);
+    assert_eq!(step(&mut watch, gone + RADIO_OFF_MS - 1, false), Radio::On);
+    assert_eq!(step(&mut watch, gone + RADIO_OFF_MS, false), Radio::Off);
     assert_eq!(
         records,
         [
@@ -196,6 +196,43 @@ fn the_radio_goes_off_five_seconds_after_the_adapter_and_back_with_it() {
     );
 }
 
+/// An adapter that chatters cannot cycle the WLAN driver: once back on,
+/// the radio stays on for a minute before battery mode may take it again.
+#[test]
+fn the_radio_stays_on_a_minute_after_it_returns() {
+    let mut watch = Watch::new();
+    let step = |watch: &mut Watch, at: u32, adapter: bool| {
+        let supply = on(Some(adapter), Some(false));
+        watch.note(at, ResetCause::PowerOn, supply, |_| {});
+        watch.radio(at, false, |_| {})
+    };
+
+    // The boot's first loss is not held back: stock's 5 s.
+    step(&mut watch, 0, false);
+    assert_eq!(step(&mut watch, RADIO_OFF_MS, false), Radio::Off);
+    let back = 10_000;
+    assert_eq!(step(&mut watch, back, true), Radio::On);
+
+    step(&mut watch, back + 1_000, false);
+    assert_eq!(
+        step(&mut watch, back + 1_000 + RADIO_OFF_MS, false),
+        Radio::On
+    );
+    assert!(watch.on_battery(), "battery mode, with the radio held on");
+    assert_eq!(
+        step(&mut watch, back + RADIO_MIN_ON_MS - 1, false),
+        Radio::On
+    );
+    assert_eq!(step(&mut watch, back + RADIO_MIN_ON_MS, false), Radio::Off);
+
+    // Long after, the next loss waits only its 5 s again.
+    let back = 200_000;
+    assert_eq!(step(&mut watch, back, true), Radio::On);
+    assert_eq!(step(&mut watch, back + RADIO_MIN_ON_MS, true), Radio::On);
+    let gone = back + RADIO_MIN_ON_MS + 1_000;
+    step(&mut watch, gone, false);
+    assert_eq!(step(&mut watch, gone + RADIO_OFF_MS, false), Radio::Off);
+}
 /// A boot on the batteries alone goes to battery mode too, and the wait
 /// survives the uptime's wrap.
 #[test]
@@ -255,8 +292,8 @@ fn setup_mode_keeps_the_radio_on() {
     note(&mut watch, 0, reset, on(Some(false), None));
     note(&mut watch, RADIO_OFF_MS, reset, on(Some(false), None));
     assert!(watch.on_battery());
-    assert_eq!(watch.radio(true, |_| {}), Radio::On);
-    assert_eq!(watch.radio(false, |_| {}), Radio::Off);
+    assert_eq!(watch.radio(RADIO_OFF_MS, true, |_| {}), Radio::On);
+    assert_eq!(watch.radio(RADIO_OFF_MS, false, |_| {}), Radio::Off);
 }
 
 /// The phantom battery at a power cut: with no cells fitted, cutting the
@@ -276,19 +313,19 @@ fn a_decaying_rail_at_a_cut_is_not_battery_mode() {
     for mv in [3861, 3500, 3100, 2700] {
         let rail = pack(Some(false), Battery::Reading { mv, percent: 100 });
         watch.note(at, reset, rail, |r| records.push(r));
-        assert_eq!(watch.radio(false, |r| records.push(r)), Radio::On);
+        assert_eq!(watch.radio(at, false, |r| records.push(r)), Radio::On);
         at += 20;
     }
     let gone = pack(Some(false), Battery::Implausible { mv: 2_100 });
     watch.note(1_100, reset, gone, |r| records.push(r));
-    assert_eq!(watch.radio(false, |r| records.push(r)), Radio::On);
+    assert_eq!(watch.radio(at, false, |r| records.push(r)), Radio::On);
     assert!(!watch.holds());
     assert!(records.is_empty(), "{records:?}");
 
     // A relay blip the board rode through: back on the adapter, nothing
     // left behind.
     watch.note(1_200, reset, mains, |r| records.push(r));
-    assert_eq!(watch.radio(false, |r| records.push(r)), Radio::On);
+    assert_eq!(watch.radio(at, false, |r| records.push(r)), Radio::On);
     assert!(!watch.on_battery());
 
     // A stale brownout bit on the next boot, on the adapter with no cells:
@@ -384,7 +421,7 @@ fn a_held_battery_feeder_still_drops_its_radio() {
     note(&mut watch, 0, ResetCause::Brownout, good);
     note(&mut watch, RADIO_OFF_MS, ResetCause::Brownout, good);
     assert!(watch.holds());
-    assert_eq!(watch.radio(false, |_| {}), Radio::Off);
+    assert_eq!(watch.radio(RADIO_OFF_MS, false, |_| {}), Radio::Off);
 }
 
 #[test]
@@ -399,6 +436,10 @@ fn records_name_what_happened() {
         (Record::Radio(Radio::Off), "radio off"),
         (Record::Radio(Radio::On), "radio on"),
         (Record::Held, "hold brownout"),
+        (
+            Record::InstallStopped { stopped: true },
+            "install stop queued=1",
+        ),
         (
             Record::Released(Released::Adapter),
             "hold released by=adapter",

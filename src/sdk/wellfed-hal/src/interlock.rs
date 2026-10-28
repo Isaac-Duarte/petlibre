@@ -15,7 +15,10 @@
 //!   ([`Interlock::begin_join`]), waiting while the outputs are claimed; the
 //!   attempt's outcome (`wellfed_wifi_outcome`) ends it
 //!   ([`Interlock::end_join`]). So the turn covers the whole attempt: scan,
-//!   association and DHCP.
+//!   association and DHCP. Battery mode's radio changes (the leave with
+//!   `wifi_off`, and each `wifi_on`) take the same turn
+//!   ([`crate::link::wellfed_wifi_radio_begin`]): they stall the driver as
+//!   an association does.
 //!
 //! **Neither starves.** A join that finds a feed running marks itself
 //! waiting: no new feed is admitted, and the release hands the turn straight

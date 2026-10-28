@@ -2,11 +2,17 @@
 //! to `net_status`, and the shim's loss events counted by cause.
 
 use std::sync::{Mutex, MutexGuard};
+use std::thread;
+use std::time::Duration;
 
 use wellfed_core::liveness::{Cause, PROBE_PERIOD_MS, Radio, Verdict};
-use wellfed_hal::link::{self, wellfed_wifi_radio, wellfed_wifi_restarting, wellfed_wifi_watch};
-use wellfed_hal::net_status;
+use wellfed_hal::interlock::{Held, INTERLOCK, Turn};
+use wellfed_hal::link::{
+    self, wellfed_wifi_radio, wellfed_wifi_radio_begin, wellfed_wifi_radio_end,
+    wellfed_wifi_radio_failed, wellfed_wifi_restarting, wellfed_wifi_watch,
+};
 use wellfed_hal::sdk::{WifiEvent, fake};
+use wellfed_hal::{net_status, supervision};
 
 /// `net_status` and the watch are process-wide.
 static SERIAL: Mutex<()> = Mutex::new(());
@@ -244,4 +250,54 @@ fn the_radio_off_leaves_the_link_until_it_is_asked_on() {
     link::set_radio(Radio::Off);
     link::leave_for_restart();
     assert_eq!(watch(true, true, NONE), Verdict::Leave(Cause::Restart));
+}
+
+/// A radio change stalls every task as a join does, so it takes the join's
+/// turn: a feed asked for during one is refused, and a claimed feed defers
+/// it until the outputs are released.
+#[test]
+fn a_radio_change_takes_turns_with_feeds() {
+    let _guard = start();
+    INTERLOCK.reset();
+
+    wellfed_wifi_radio_begin();
+    assert_eq!(INTERLOCK.turn(), Turn::Joining);
+    assert_eq!(INTERLOCK.claim_feed(u32::MAX), Err(Held::Joining));
+    wellfed_wifi_radio_end();
+    assert_eq!(INTERLOCK.turn(), Turn::Free);
+
+    // A feed holds the outputs: the change waits for its release.
+    INTERLOCK.claim_feed(u32::MAX).unwrap();
+    let change = thread::spawn(|| {
+        wellfed_wifi_radio_begin();
+        INTERLOCK.turn()
+    });
+    thread::sleep(Duration::from_millis(50));
+    assert!(
+        !change.is_finished(),
+        "no radio change while a feed is claimed"
+    );
+    assert_eq!(
+        INTERLOCK.turn(),
+        Turn::FeedingJoinWaits,
+        "no new feed meanwhile"
+    );
+    INTERLOCK.release_feed();
+    assert_eq!(change.join().unwrap(), Turn::Joining);
+    let status = INTERLOCK.status();
+    assert_eq!((status.deferred, status.forced), (1, 0));
+    wellfed_wifi_radio_end();
+    INTERLOCK.reset();
+}
+
+/// A `wifi_on` that keeps failing asks for an intentional restart.
+#[test]
+fn a_radio_that_will_not_come_back_restarts_the_feeder() {
+    let _guard = start();
+    supervision::reset();
+    assert!(!supervision::restart_grace());
+
+    wellfed_wifi_radio_failed();
+    assert!(supervision::restart_grace());
+    supervision::reset();
 }

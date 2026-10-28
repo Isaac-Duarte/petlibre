@@ -37,6 +37,9 @@
 //! 9. **Promote:** the signed update ([`crate::update::Installer`]) writes
 //!    bank 1 from bank 0, and its trial boot confirms on bank 1.
 //!
+//! Stock's stored feeding plans, and their conversion to the replacement's,
+//! are [`plans`]; no step reads them yet.
+//!
 //! A step that fails ends the run ([`Step::Failed`]); nothing is retried
 //! here, and the caller bounds every wait ([`Install::gave_up`]).
 //!
@@ -44,6 +47,7 @@
 
 pub mod backup;
 pub mod frame;
+pub mod plans;
 
 pub use backup::{
     BackupError, Bank1Reader, CONTAINER_HEADER, DOWNGRADE_LEN, ReadError, RestoreError,

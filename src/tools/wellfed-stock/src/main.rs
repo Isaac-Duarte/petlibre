@@ -30,7 +30,7 @@ use wellfed_stock::{
     controller::{self, Controller},
     enroll::Enrollment,
     mqtt::{self, broker, broker::DeviceAuth},
-    neighbour, network, ota,
+    neighbour, network, ota, plans,
 };
 
 #[derive(Parser)]
@@ -180,6 +180,11 @@ enum Action {
         #[arg(long, default_value_t = std::net::SocketAddr::V4(SETUP_ADDRESS))]
         to: std::net::SocketAddr,
     },
+
+    /// Read stock's stored feeding plans from a file (its two plan
+    /// sectors, or a whole flash read) and show what an install would
+    /// import: each plan converted, or refused by name. Touches no feeder.
+    Plans { file: PathBuf },
 
     /// Explicit feeder-only gateway routing and WAN isolation; needs sudo.
     Network {
@@ -400,6 +405,20 @@ async fn main() -> Result<()> {
                 }),
             )
             .await?;
+        }
+
+        Action::Plans { file } => {
+            let bytes =
+                std::fs::read(&file).with_context(|| format!("reading {}", file.display()))?;
+            let stock = plans::decode(&bytes)?;
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .context("the clock is before 1970")?;
+            let now_ms = u64::try_from(now.as_millis()).context("the clock is past 2554")?;
+            print!(
+                "{}",
+                plans::report(&wellfed_client::install::plans::convert(&stock, now_ms))
+            );
         }
 
         Action::Network { action } => match action {

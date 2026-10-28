@@ -21,7 +21,7 @@ The PLAF103 uses the AmebaD's dual-core startup: factory loader and configuratio
 | `0x3f0000–0x400000` | Stock clock-checkpoint block. Stock block-erases it when it saves the clock. Preserved (`clock_checkpoint_block`). |
 | `0x400000–0x401000` | Stock audio-start sector |
 | `0x7cb000–0x7cc000` | Stock log sector |
-| `0x7d0000–0x7d7000` | Stock plan-record sectors |
+| `0x7d0000–0x7d7000` | Stock plan and feed-record sectors: the plan count and entries (`0x7d0000–0x7d2000`, [plan records](stock/README.md#plan-records)), four record-ring indices, then the feed records |
 | `0x7da000–0x7db000` | Stock error-record sector |
 
 This is not a complete partition map. **Unknown gaps are not free storage.** Physical flash ends at `0x800000`. The OTP, eFuse and security registers sit outside it and are not in a normal flash backup.

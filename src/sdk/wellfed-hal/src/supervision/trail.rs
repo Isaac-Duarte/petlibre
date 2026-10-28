@@ -16,7 +16,7 @@
 //!
 //! **Layout** (words, shared with `example_entry.c`): the magic
 //! [`sdk::TRAIL_MAGIC`], the KM4 boot count the start was given, the check
-//! `!(magic ^ boot)`, the notes since the start, the wrapped critical
+//! `!(magic ^ boot ^ version)`, the notes since the start, the wrapped critical
 //! sections open now (one counter for the whole CPU) and three reserved
 //! words; then [`MARKS`] marks of four words (the whole note number, then a
 //! note's three words) and [`ENTRIES`] entries of three. A note's first
@@ -352,10 +352,8 @@ impl<'a, W: Words + ?Sized> Trail<'a, W> {
         let at = MARKS_AT + usize::from(mark.code()) * MARK_WORDS;
         let word = |offset| self.words.word(at + offset);
         let seq = word(0);
-        // A mark is only as new as the count; a torn one fails its number
-        // or its cleared step.
-        Entry::read(seq, word(1), word(2), word(3))
-            .filter(|entry| seq < self.count && entry.step.mark() == Some(mark))
+        // A torn mark fails its number or its cleared step.
+        Entry::read(seq, word(1), word(2), word(3)).filter(|entry| entry.step.mark() == Some(mark))
     }
 
     /// Every mark with its last note, in [`Mark::ALL`]'s order.

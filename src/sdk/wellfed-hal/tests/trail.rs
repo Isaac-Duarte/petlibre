@@ -429,6 +429,7 @@ fn the_shim_shares_the_layout_and_codes() {
         define("WELLFED_TRAIL_MAGIC"),
         format!("{TRAIL_MAGIC:#010x}u")
     );
+    assert_eq!(define("WELLFED_TRAIL_VERSION"), format!("{TRAIL_VERSION}u"));
     assert_eq!(define("WELLFED_TRAIL_ENTRIES"), ENTRIES.to_string());
     assert_eq!(define("WELLFED_TRAIL_MARKS"), MARKS.to_string());
     assert_eq!(define("WELLFED_TRAIL_WORDS"), TRAIL_WORDS.to_string());

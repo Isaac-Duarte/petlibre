@@ -201,7 +201,10 @@ static void wellfed_trail_note(unsigned int step, int change, int mark, unsigned
         unsigned int primask = __get_PRIMASK();
         __disable_irq();
         volatile struct wellfed_trail_mark *m = &t->marks[mark];
-        if (m->meta == 0u || (int)(n - m->seq) > 0) {
+        /* Only a note preempted between its claim and here can find a newer one
+         * already marked, a few notes ahead at most; anything else is older,
+         * however far the count has run since. */
+        if (m->meta == 0u || (m->seq - n) > 4096u) {
             m->meta = 0;
             m->lr = lr;
             m->arg = arg;

@@ -382,7 +382,10 @@ impl Run {
                     let outcome = self.promote(install.build()).await?;
                     install.promoted(outcome);
                 }
-                Step::AwaitConfirm => self.await_confirm(install).await?,
+                Step::AwaitConfirm => {
+                    self.kept_plans(install)?;
+                    self.await_confirm(install).await?;
+                }
                 Step::ReadPlans => self.read_plans(install).await?,
                 Step::PutPlans { base, plans } => {
                     let outcome = self.put_plans(base, plans).await?;
@@ -398,10 +401,20 @@ impl Run {
                         (_, Some(skipped)) => {
                             eprintln!("Stock's plans were not imported: {skipped}.");
                         }
+                        (None, None) => eprintln!(
+                            "Stock's plans were not read by this run, and none were kept by an \
+                             earlier one: nothing was set."
+                        ),
                         (Some(import), None) if import.plans.iter().any(Option::is_some) => {
                             eprintln!("Stock's converted plans are set on the replacement.");
                         }
-                        _ => eprintln!("Stock had no plans to set on the replacement."),
+                        (Some(import), None) if import.outcomes.is_empty() => {
+                            eprintln!("Stock had no plans to set on the replacement.");
+                        }
+                        (Some(_), None) => eprintln!(
+                            "None of stock's plans could be converted (see the report above): \
+                             nothing was set."
+                        ),
                     }
                     return Ok(());
                 }
@@ -739,6 +752,33 @@ impl Run {
         }
         if let Some(skipped) = install.plans_skipped() {
             eprintln!("Going on without stock's plans (--without-stock-plans): {skipped}.");
+        }
+        Ok(())
+    }
+
+    /// A run that reaches the confirmation without reading stock's
+    /// sectors (resumed after the promotion) takes the copy an earlier
+    /// run kept beside the backup, if there is one.
+    fn kept_plans(&self, install: &mut Install) -> Result<()> {
+        if install.import().is_some() || install.plans_skipped().is_some() {
+            return Ok(());
+        }
+        let Some(identity) = self.identity else {
+            return Ok(());
+        };
+        let path = crate::backup::plans_path(&self.args.backups, &identity);
+        let kept = match std::fs::read(&path) {
+            Ok(kept) => kept,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error).with_context(|| format!("read {}", path.display())),
+        };
+        install.kept_stock_plans(&kept, now_ms()?);
+        if let Some(import) = install.import() {
+            eprint!(
+                "Stock's plans, from the copy kept at {}:\n{}",
+                path.display(),
+                plans::report(import)
+            );
         }
         Ok(())
     }

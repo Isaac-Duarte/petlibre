@@ -680,14 +680,17 @@ fn the_put_goes_once_and_an_unanswered_one_is_read_back() {
     lost.plans_put(PlansPut::Done);
     assert_eq!(lost.step(), Step::Failed(InstallError::PlansUncertain));
 
-    // Giving up on the read back names the plans' step.
+    // Giving up on the read back leaves it uncertain, never resent.
     let mut silent = put();
     silent.plans_put(PlansPut::Unanswered);
     silent.gave_up();
-    assert_eq!(
-        silent.step(),
-        Step::Failed(InstallError::TimedOut(Phase::ApplyPlans))
-    );
+    assert_eq!(silent.step(), Step::Failed(InstallError::PlansUncertain));
+
+    // Giving up before the put: installed, with the plans unread.
+    let mut unread = confirmed();
+    assert_eq!(unread.step(), Step::ReadPlans);
+    unread.gave_up();
+    assert_eq!(unread.step(), Step::Failed(InstallError::PlansUnread));
 }
 
 /// Stock with no plans, or only refused ones, leaves nothing to apply: the
@@ -716,4 +719,66 @@ fn nothing_converted_leaves_nothing_to_apply() {
         );
         assert_eq!(install.step(), Step::Done);
     }
+}
+
+/// A run resumed after the promotion reads no sectors from bank 1: it takes
+/// the copy an earlier run kept, under the same empty-table check, and a
+/// table already holding the import (a put that landed unanswered) is done.
+#[test]
+fn a_resumed_run_applies_the_kept_copy() {
+    let resumed = || {
+        let mut install = Install::from_bank0(BUILD, VERSION);
+        install.paired();
+        install.replacement(Replacement {
+            build: BUILD,
+            bank: 1,
+        });
+        assert_eq!(install.step(), Step::AwaitConfirm);
+        install
+    };
+    let (count, entries) = stock_sectors(&[Some(breakfast())]);
+    let kept = plans::kept(count, &entries);
+    let running = Replacement {
+        build: BUILD,
+        bank: 1,
+    };
+
+    // The kept copy goes on through the usual check and one put.
+    let mut install = resumed();
+    install.kept_stock_plans(&kept, NOW);
+    let imported = install.import().expect("the kept copy converts").plans;
+    install.confirmed(running, VERSION);
+    assert_eq!(install.step(), Step::ReadPlans);
+    install.plans(&view([None; PLANS], true));
+    assert_eq!(
+        install.step(),
+        Step::PutPlans {
+            base: Generation(4),
+            plans: imported
+        }
+    );
+
+    // The import already there counts as applied; other plans still stop it.
+    let mut landed = resumed();
+    landed.kept_stock_plans(&kept, NOW);
+    landed.confirmed(running, VERSION);
+    landed.plans(&view(imported, true));
+    assert_eq!(landed.step(), Step::Done);
+
+    // Too late once the plans are being checked, and never over an import.
+    let mut late = confirmed();
+    let before = late.import().cloned();
+    late.kept_stock_plans(&plans::kept(0, &entries), NOW);
+    assert_eq!(late.import().cloned(), before);
+
+    // A kept copy that does not decode is the reason none were applied.
+    let mut torn = resumed();
+    torn.kept_stock_plans(&plans::kept(0xff, &entries), NOW);
+    assert!(torn.import().is_none());
+    assert_eq!(
+        torn.plans_skipped(),
+        Some(&InstallError::StockPlans(DecodeError::Torn))
+    );
+    torn.confirmed(running, VERSION);
+    assert_eq!(torn.step(), Step::Done);
 }

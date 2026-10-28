@@ -257,6 +257,10 @@ pub enum InstallError {
         "the replacement is installed and confirmed, but the put of stock's plans went unanswered and the plans read back are not the import; it is not sent again: check the plans on the feeder"
     )]
     PlansUncertain,
+    #[error(
+        "the replacement is installed and confirmed, but its plans could not be read; stock's plans were not applied"
+    )]
+    PlansUnread,
 }
 
 /// What became of the one `PutPlans` of the import.
@@ -673,6 +677,27 @@ impl Install {
         }
     }
 
+    /// Stock's plans as an earlier run kept them (`plans::kept`), for a
+    /// run that did not read the sectors itself: one resumed after the
+    /// promotion, when bank 0 no longer serves them. Taken only before the
+    /// plans are checked and only when this run has no import, so the same
+    /// empty-and-writable check applies. A copy that does not decode is
+    /// recorded as the reason the plans were left behind: the run that
+    /// kept it promoted without them.
+    pub fn kept_stock_plans(&mut self, kept: &[u8], now_ms: u64) {
+        let before_check = matches!(
+            self.stage,
+            Stage::Pair | Stage::ReadStatus | Stage::AwaitConfirm | Stage::Promote
+        );
+        if !before_check || self.import.is_some() || self.plans_skipped.is_some() {
+            return;
+        }
+        match StockPlans::decode_kept(kept) {
+            Ok(stock) => self.import = Some(plans::convert(&stock, now_ms)),
+            Err(error) => self.plans_skipped = Some(InstallError::StockPlans(error)),
+        }
+    }
+
     fn skip_plans(&mut self, error: InstallError) {
         if self.without_plans {
             self.plans_skipped = Some(error);
@@ -733,6 +758,15 @@ impl Install {
     /// is never sent again.
     pub fn plans(&mut self, view: &Plans) {
         match self.stage {
+            // The import already there: a put an earlier run sent landed.
+            Stage::CheckPlans
+                if self
+                    .import
+                    .as_ref()
+                    .is_some_and(|import| import.plans == view.plans) =>
+            {
+                self.stage = Stage::Done;
+            }
             Stage::CheckPlans => {
                 let slots: Vec<usize> = view
                     .plans
@@ -783,9 +817,14 @@ impl Install {
 
     /// The caller's bound on the current wait ran out.
     pub fn gave_up(&mut self) {
-        if !matches!(self.stage, Stage::Done | Stage::Failed(_)) {
-            self.stage = Stage::Failed(InstallError::TimedOut(self.phase()));
-        }
+        self.stage = match self.stage {
+            Stage::Done | Stage::Failed(_) => return,
+            // Installed and confirmed: what is left unknown is the plans,
+            // and the put is never sent again.
+            Stage::CheckPlans | Stage::PutPlans { .. } => Stage::Failed(InstallError::PlansUnread),
+            Stage::Putting | Stage::VerifyPlans => Stage::Failed(InstallError::PlansUncertain),
+            _ => Stage::Failed(InstallError::TimedOut(self.phase())),
+        };
     }
 }
 

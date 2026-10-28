@@ -42,7 +42,7 @@ The status reports one of:
 | `unknown` | The clock is invalid, so today's date is unknown. |
 | `remaining` | `days` left of the period, and `due` from 0 on. |
 
-The feeder has no battery-backed clock. After a cold boot the count is `unknown` until a time source sets the clock ([clock](clock.md)). With no zone and no offset from a sync, local time is UTC.
+The feeder has no battery-backed clock. After a cold boot the count is `unknown` until a time source sets the clock ([clock](clock.md)). With no zone and no offset from a sync, local time is UTC. So a reset made before the zone is set is dated in UTC, and may count one day off once a zone is set or changed.
 
 ## Recording a replacement
 

@@ -47,9 +47,7 @@ pub struct Status {
 }
 
 /// The desiccant reminder, counted in the feeder's local calendar days
-/// from the last replacement ([desiccant reminder]).
-///
-/// [desiccant reminder]: ../../../../docs/firmware/desiccant.md
+/// from the last replacement.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum Desiccant {

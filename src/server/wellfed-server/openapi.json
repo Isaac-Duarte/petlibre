@@ -5927,7 +5927,7 @@
             }
           }
         ],
-        "description": "The desiccant reminder, counted in the feeder's local calendar days\nfrom the last replacement ([desiccant reminder]).\n\n[desiccant reminder]: ../../../../docs/firmware/desiccant.md"
+        "description": "The desiccant reminder, counted in the feeder's local calendar days\nfrom the last replacement."
       },
       "EnrollPath": {
         "type": "string",

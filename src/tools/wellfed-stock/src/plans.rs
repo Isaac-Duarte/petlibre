@@ -76,7 +76,11 @@ pub fn report(import: &Import) -> String {
                 Note::CallDropped { times } => {
                     format!("its meal call ({times} plays) is not carried over")
                 }
-                Note::PendingDropped => "the meal stock still owed is not run late".to_owned(),
+                Note::PendingDropped => {
+                    "the meal stock had started or still owed is not run again; \
+                     it runs from its next occurrence"
+                        .to_owned()
+                }
                 Note::SkipDisabled { until_ms } => {
                     format!("skipped until {until_ms} ms, so it arrives disabled")
                 }

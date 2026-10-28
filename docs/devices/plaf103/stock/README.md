@@ -85,7 +85,10 @@ Stock keeps its plans in two flash sectors and rereads them at every boot. The i
 
 - **0x7d0000, the count.** One byte. Stock's boot reads an erased byte (0xff) as no plans, and reads the count without bounding it. Its setter never writes more than 10. A count over 10 makes the import refuse the whole table.
 - **0x7d1000, the entries.** Count × 44 bytes, entry *i* in plan slot *i*. Bytes past the count are not read.
-- **Writes.** Each save erases the count sector and writes it, then erases the entries sector and writes it. Nothing makes the pair atomic: a cut between them leaves the new count over the old or erased entries.
+- **Writes.** Each save erases the count sector and writes it, then erases the entries sector and writes it. Nothing makes the pair atomic:
+  - A cut after the count's erase leaves an erased count over the old entries. An empty save writes count 0, and a feeder that never saved has both sectors erased, so the import refuses an erased count over entries that are not erased.
+  - A cut between the two writes leaves the new count over the old or erased entries. The import refuses each erased entry by name.
+  - The same cut can bring back a one-off plan stock had just deleted, which then imports as once. Stock has the same flaw, and nothing in the sectors shows it.
 - **Deletes.** After a one-off plan's feed, stock zeroes its 44 bytes and keeps the count. An all-zero entry is a deleted plan.
 
 | Offset | Bytes | Field | Meaning |
@@ -117,9 +120,10 @@ The import keeps each plan's slot and converts it to a [replacement plan](../../
 | Portions 1–48 | The same |
 | `skipEndTime` still ahead | The plan, disabled, with a note: the replacement has no skip, and a meal the owner skipped must not run |
 | Meal call | Dropped with a note; the meal still runs. Wellfed has no meal call yet |
-| Run state due, waiting or resumed | Dropped with a note; the plan runs from its next occurrence |
+| Repeating plan due, waiting or resumed | The meal stock started or owed is dropped with a note; the plan runs from its next occurrence |
+| One-off plan due, waiting or resumed | Refused. Its feed may already have run before a cut, and run late it would be a day late |
 
-Refused, each with its own reason: a time no day has (hour over 23 or minute over 59, including an erased entry under a torn count), portions 0 or over 48, a repeat-day value outside 1–7, no repeat day and no one-off flag (stock never runs it), and a run state stock never writes.
+Also refused, each with its own reason: an erased entry, a time no day has (hour over 23 or minute over 59), portions 0 or over 48, a repeat-day value outside 1–7, no repeat day and no one-off flag (stock never runs it), and a run state stock never writes.
 
 ### Feeding
 

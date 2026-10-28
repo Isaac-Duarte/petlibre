@@ -63,6 +63,12 @@ pub enum DecodeError {
     /// past its table, so nothing in it can be trusted.
     #[error("stock's plan count is {count}, more than its {STOCK_PLANS} slots")]
     Count { count: u8 },
+    /// An erased count over entries that are not erased. Stock's empty
+    /// save writes count 0, and a feeder that never saved has both
+    /// sectors erased, so only a cut between erasing the count and
+    /// writing it leaves this: how many plans there were is lost.
+    #[error("stock's plan count is erased over stored entries: a save was cut")]
+    Torn,
 }
 
 /// The run state stock keeps in each entry. Stock writes it while a plan
@@ -173,6 +179,23 @@ impl StockPlan {
     }
 }
 
+impl StockPlan {
+    /// Whether the entry reads as erased flash: every field all ones. No
+    /// save writes that; a cut between stock's count and entry writes
+    /// leaves it under the new count.
+    pub fn erased(&self) -> bool {
+        self.id == u32::MAX
+            && self.hour == u8::MAX
+            && self.minute == u8::MAX
+            && self.days == [u8::MAX; 7]
+            && self.call_times == u8::MAX
+            && self.portions == u8::MAX
+            && self.state == StockPlanState::Unknown(u8::MAX)
+            && self.sync_ms == u64::MAX
+            && self.skip_until_ms == u64::MAX
+    }
+}
+
 /// `N` bytes from a field whose range has exactly that length.
 fn word<const N: usize>(field: &[u8]) -> [u8; N] {
     let mut bytes = [0; N];
@@ -199,14 +222,18 @@ impl StockPlans {
                 expected,
             });
         }
+        let entries = &sectors[SECTOR..];
         let count = match sectors[0] {
+            ERASED if entries.iter().any(|&byte| byte != ERASED) => {
+                return Err(DecodeError::Torn);
+            }
             ERASED => 0,
             count if usize::from(count) <= STOCK_PLANS => usize::from(count),
             count => return Err(DecodeError::Count { count }),
         };
 
         let mut plans = Self::default();
-        let (entries, _) = sectors[SECTOR..].as_chunks::<ENTRY_LEN>();
+        let (entries, _) = entries.as_chunks::<ENTRY_LEN>();
         for (slot, entry) in plans.slots.iter_mut().zip(entries.iter().take(count)) {
             if entry.iter().any(|&byte| byte != 0) {
                 *slot = Some(StockPlan::decode(entry));
@@ -256,6 +283,15 @@ pub enum PlanRefusal {
     /// saved whole.
     #[error("its run state {byte} is not one stock writes")]
     State { byte: u8 },
+    /// An erased entry under the count: a save cut between writing the
+    /// count and writing the entries.
+    #[error("its entry is erased: stock's last save was cut")]
+    Erased,
+    /// A one-off whose meal stock had started or still owed. Its feed may
+    /// already have run before a cut, and run late it would be a day
+    /// late, so it is not imported.
+    #[error("it is a one-off stock had already started or still owed ({state:?})")]
+    OnceOwed { state: StockPlanState },
 }
 
 /// Something a converted plan does not carry over from stock.
@@ -264,9 +300,10 @@ pub enum Note {
     /// Stock played the meal call `times` times before this feed. The
     /// replacement has no meal call yet, so the meal runs without it.
     CallDropped { times: u8 },
-    /// Stock still owed this plan's meal (due or waiting) when the table
-    /// was saved. It is not run late: the plan runs from its next
-    /// occurrence.
+    /// Stock had started or still owed this repeating plan's meal (due,
+    /// waiting or resumed) when the table was saved. That meal is not run
+    /// late: the plan runs from its next occurrence. A one-off in this
+    /// state is refused instead ([`PlanRefusal::OnceOwed`]).
     PendingDropped,
     /// The owner skipped this plan until `until_ms` (Unix milliseconds).
     /// The replacement has no skip, so the plan arrives disabled rather
@@ -416,6 +453,9 @@ pub fn convert(stock: &StockPlans, now_ms: u64) -> Import {
 
 /// The replacement plan that runs `stock`'s meals.
 fn plan(stock: &StockPlan, now_ms: u64) -> Result<Plan, PlanRefusal> {
+    if stock.erased() {
+        return Err(PlanRefusal::Erased);
+    }
     if stock.hour >= 24 || stock.minute >= 60 {
         return Err(PlanRefusal::Time {
             hour: stock.hour,
@@ -441,7 +481,12 @@ fn plan(stock: &StockPlan, now_ms: u64) -> Result<Plan, PlanRefusal> {
     }
     // Stock runs a one-off on any day, whatever its repeat days say, and
     // deletes it afterwards: the replacement's once.
+    // A one-off stock had started may have fed before a cut, and one it
+    // still owed would run a day late, so neither imports.
     let days = if stock.once {
+        if stock.state.pending() {
+            return Err(PlanRefusal::OnceOwed { state: stock.state });
+        }
         Weekdays::ONCE
     } else if repeat.is_empty() {
         return Err(PlanRefusal::NeverRuns);
@@ -535,11 +580,16 @@ mod tests {
         );
         assert_eq!(StockPlans::decode(&sectors), Ok(stock));
 
-        // An erased count sector and a zero count both hold no plans, and
-        // entries past the count are not read.
-        let mut erased = sectors.clone();
-        erased[0] = 0xff;
-        assert_eq!(StockPlans::decode(&erased), Ok(StockPlans::default()));
+        // Both sectors erased (never saved) and a zero count over erased
+        // entries (an empty save) hold no plans; an erased count over
+        // stored entries is a cut save, not an empty table.
+        let mut fresh = vec![0xff; 0x2000];
+        assert_eq!(StockPlans::decode(&fresh), Ok(StockPlans::default()));
+        fresh[0] = 0;
+        assert_eq!(StockPlans::decode(&fresh), Ok(StockPlans::default()));
+        let mut torn = sectors.clone();
+        torn[0] = 0xff;
+        assert_eq!(StockPlans::decode(&torn), Err(DecodeError::Torn));
         let mut none = sectors.clone();
         none[0] = 0;
         assert_eq!(StockPlans::decode(&none), Ok(StockPlans::default()));
@@ -715,28 +765,43 @@ mod tests {
         let refused: Vec<_> = import.refused().map(|r| (r.slot, r.refusal)).collect();
         assert_eq!(
             refused,
-            [
-                (
-                    0,
-                    PlanRefusal::Time {
-                        hour: 255,
-                        minute: 255
-                    }
-                ),
-                (
-                    1,
-                    PlanRefusal::Time {
-                        hour: 255,
-                        minute: 255
-                    }
-                ),
-            ]
+            [(0, PlanRefusal::Erased), (1, PlanRefusal::Erased)]
         );
         assert_eq!(
             import.refused().next().unwrap().to_string(),
             "stock plan 4294967295 in slot 0 (255:255) was not imported: \
-             its time 255:255 is not a time of day"
+             its entry is erased: stock's last save was cut"
         );
+    }
+
+    /// A one-off stock had started may already have fed, and one it owed
+    /// would run a day late: neither imports. A repeating plan in the same
+    /// state imports, its owed meal noted.
+    #[test]
+    fn a_one_off_stock_started_or_owed_is_refused() {
+        for state in [
+            StockPlanState::Due,
+            StockPlanState::Waiting,
+            StockPlanState::Resumed,
+        ] {
+            let once = StockPlan {
+                once: true,
+                days: [0; 7],
+                state,
+                ..daily()
+            };
+            let repeating = StockPlan { state, ..daily() };
+            let import = convert(&table(&[Some(once), Some(repeating)]), NOW);
+
+            assert_eq!(import.plans[0], None);
+            let refused: Vec<_> = import.refused().map(|r| (r.slot, r.refusal)).collect();
+            assert_eq!(refused, [(0, PlanRefusal::OnceOwed { state })]);
+            assert_eq!(converted(&import, 1).days, Weekdays::DAILY);
+            assert_eq!(
+                import.outcomes[1].notes().collect::<Vec<_>>(),
+                [Note::PendingDropped]
+            );
+        }
     }
 
     #[test]

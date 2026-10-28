@@ -4,22 +4,15 @@
 
 use std::fmt::Write as _;
 
-use serde::Serialize;
+use jiff::tz::TimeZone;
 use wellfed_client::history::Delivered;
+use wellfed_model::Event;
 use wellfed_server_client::api::{
     Command, CommandOutcome, Feeder, FeederDetail, FeederEvent, Gap, Install, InstallTarget,
-    MealReminder, Release, Settings, StockBackup, StockState, Token, User,
+    Release, StockBackup, StockState, Token, User,
 };
 
-/// A value as the API spells it: a bare word for an enum's name, its JSON
-/// otherwise.
-pub(super) fn word(value: &impl Serialize) -> String {
-    match serde_json::to_value(value) {
-        Ok(serde_json::Value::String(word)) => word,
-        Ok(other) => other.to_string(),
-        Err(_) => "?".to_owned(),
-    }
-}
+pub(super) use crate::text::{settings, word};
 
 /// An optional value, or a dash.
 fn or_dash(value: Option<impl ToString>) -> String {
@@ -44,27 +37,13 @@ pub(super) fn status(detail: &FeederDetail) -> String {
         return text;
     };
 
-    let status = &snapshot.status;
     let read = if snapshot.live { "live" } else { "last read" };
     // Writing to a String cannot fail.
     let _ = write!(
         text,
-        "\nStatus ({read} {}): build {}, bank {}, boot {}, up {} s\n\
-         clock {}, locked {}, readiness {}, Wi-Fi {} dBm, sessions {}\n\
-         desiccant {}",
+        "\nStatus ({read} {}):\n{}",
         snapshot.at,
-        status.build,
-        status.bank,
-        status.boot_count,
-        status.uptime_ms / 1000,
-        or_dash(status.clock),
-        or_dash(status.locked),
-        status
-            .readiness
-            .map_or_else(|| "-".to_owned(), |r| word(&r)),
-        status.rssi,
-        status.sessions,
-        status.desiccant,
+        crate::text::status(&snapshot.status, &TimeZone::system()),
     );
     text
 }
@@ -81,45 +60,21 @@ pub(super) fn desiccant(detail: &FeederDetail) -> String {
     }
 }
 
-pub(super) fn settings(settings: &Settings) -> String {
-    format!(
-        "Generation {}: lights {} ({}), sound {} ({}), volume {}, meal reminder {}, desiccant \
-         every {} days (replaced {}){}",
-        settings.generation,
-        on_off(settings.lights),
-        settings.lights_window,
-        on_off(settings.sound),
-        settings.sound_window,
-        settings.volume,
-        reminder(settings.meal_reminder),
-        settings.desiccant_days,
-        or_dash(settings.desiccant_replaced),
-        if settings.writable {
-            ""
-        } else {
-            " (not writable now)"
-        },
-    )
-}
-
-fn reminder(reminder: MealReminder) -> String {
-    match reminder {
-        MealReminder::Off => "off".to_owned(),
-        MealReminder::Before { minutes } => format!("{minutes} min ahead"),
-    }
-}
-
-const fn on_off(on: bool) -> &'static str {
-    if on { "on" } else { "off" }
-}
-
+/// An event as the server mirrored it, in this computer's time zone.
 pub(super) fn event(event: &FeederEvent) -> String {
+    let zone = TimeZone::system();
+    let model = Event {
+        epoch: event.epoch,
+        seq: event.seq,
+        at: event.at,
+        body: event.body,
+    };
     format!(
         "{}.{}  {}  {}",
         event.epoch,
         event.seq,
-        or_dash(event.at),
-        serde_json::to_string(&event.body).unwrap_or_default(),
+        crate::text::time(event.at, &zone),
+        crate::text::event(&model, &zone),
     )
 }
 

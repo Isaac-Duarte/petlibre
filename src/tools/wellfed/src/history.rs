@@ -1,4 +1,4 @@
-//! Reading what the feeder recorded over the device API: its events and
+//! Reading the feeder over the device API: its status, its events and
 //! samples, its feeding history, its debug log, its statistics and one
 //! feed's trace.
 
@@ -6,13 +6,22 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use clap::{Args, ValueEnum};
-use jiff::Timestamp;
 use jiff::tz::TimeZone;
-use wellfed_client::history::{Entry, Feed};
+use wellfed_client::history::Entry;
 use wellfed_client::trace::Pages;
-use wellfed_model::{self as model, Answer, FoodLevel, Gap, Op, Pushed, Source, StatsSection};
+use wellfed_model::{self as model, Answer, Gap, Op, Pushed, StatsSection};
 
+use crate::text::{self, time};
 use crate::{Target, connect, print_answer, print_json, trace};
+
+#[derive(Args)]
+pub(crate) struct StatusArgs {
+    #[command(flatten)]
+    target: Target,
+    /// The status as JSON, as the wire spells it, instead of text.
+    #[arg(long)]
+    json: bool,
+}
 
 #[derive(Args)]
 pub(crate) struct EventsArgs {
@@ -26,8 +35,14 @@ pub(crate) struct EventsArgs {
     /// happen.
     #[arg(long)]
     follow: bool,
+    /// With --follow, the live samples too (power, signal, memory, the
+    /// loop, the gateway, Wi-Fi and the supply).
     #[arg(long)]
     samples: bool,
+    /// Each message as JSON, one a line, as the wire spells it, instead of
+    /// one line of text an event.
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Args)]
@@ -162,6 +177,7 @@ pub(crate) async fn events_command(args: EventsArgs) -> Result<()> {
     connection
         .subscribe(args.after, args.samples && args.follow)
         .await?;
+    let zone = TimeZone::system();
     // Without --follow, stop once the backlog has been quiet for a moment.
     let wait = if args.follow {
         Duration::from_secs(3600)
@@ -176,7 +192,24 @@ pub(crate) async fn events_command(args: EventsArgs) -> Result<()> {
             Ok(None) => return Ok(()),
             Err(error) => return Err(error),
         };
-        println!("{}", serde_json::to_string(&pushed)?);
+        if args.json {
+            println!("{}", serde_json::to_string(&pushed)?);
+        } else {
+            println!("{}", text::pushed(&pushed, &zone));
+        }
+    }
+}
+
+/// The status, as text in this computer's time zone or as JSON.
+pub(crate) async fn status_command(args: StatusArgs) -> Result<()> {
+    let (_, _, mut connection) = connect(&args.target).await?;
+    let answer = connection.ask(&Op::Status).await?;
+    match answer {
+        Answer::Status(status) if !args.json => {
+            println!("{}", text::status(&status, &TimeZone::system()));
+            Ok(())
+        }
+        answer => print_answer(&answer),
     }
 }
 
@@ -219,51 +252,12 @@ fn line(entry: &Entry, zone: &TimeZone) -> String {
         }
     };
 
-    let Feed {
-        seq,
-        feed: number,
-        requested,
-        outcome,
-        reason,
-        hopper,
-        ..
-    } = feed;
-    let empty = match hopper {
-        FoodLevel::Empty => "  hopper read empty",
-        FoodLevel::Unread | FoodLevel::Present => "",
-    };
     format!(
-        "{seq:>6}  {}  feed {number}  by {}  {} ({}){empty}",
+        "{:>6}  {}  {}",
+        feed.seq,
         time(feed.at, zone),
-        source(feed.by),
-        feed.delivered.describe(requested, outcome),
-        reason.code()
+        text::fed(&feed)
     )
-}
-
-/// The feeder's time in `zone`, with its offset so a line reads the same
-/// on any computer.
-fn time(at: Option<Timestamp>, zone: &TimeZone) -> String {
-    at.map_or_else(
-        || "(clock not set)".to_owned(),
-        |at| {
-            at.to_zoned(zone.clone())
-                .strftime("%Y-%m-%d %H:%M:%S %:z")
-                .to_string()
-        },
-    )
-}
-
-/// Who asked; nobody known for a feed a reset interrupted that no plan
-/// had claimed.
-fn source(by: Option<Source>) -> String {
-    match by {
-        Some(Source::Panel) => "panel".to_owned(),
-        Some(Source::Client { client }) => format!("client {client}"),
-        Some(Source::Feeder) => "feeder".to_owned(),
-        Some(Source::Schedule { plan }) => format!("plan {plan}"),
-        None => "unknown".to_owned(),
-    }
 }
 
 /// The lines as the feeder logged them, one per line on standard output;
@@ -313,7 +307,9 @@ const LOGS_BOUND: Duration = Duration::from_secs(10);
 
 #[cfg(test)]
 mod tests {
-    use wellfed_model::{Event, EventBody, FeedOutcome, FeedReason, Hex};
+    use jiff::Timestamp;
+    use wellfed_client::history::Feed;
+    use wellfed_model::{Event, EventBody, FeedOutcome, FeedReason, FoodLevel, Hex, Source};
 
     use super::*;
 

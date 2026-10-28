@@ -11,7 +11,7 @@ use wellfed_model::{
     NtpServer, Op, SettingsPatch, StatsSection, TimeChanges, Wifi, Window,
 };
 
-use crate::{Target, Toggle, ask_and_print, connect, passphrase, print_answer, print_json};
+use crate::{Target, Toggle, ask_and_print, connect, passphrase, print_answer, print_json, text};
 
 #[derive(Args)]
 pub(crate) struct SettingsArgs {
@@ -39,6 +39,9 @@ pub(crate) struct SettingsArgs {
     /// meal, or `off`.
     #[arg(long, value_name = "off|MINUTES")]
     meal_reminder: Option<MealReminder>,
+    /// The feeder's answer as JSON, as the wire spells it, instead of text.
+    #[arg(long)]
+    json: bool,
 }
 
 /// A `--desiccant-days` value: the period's limits are the feeder's.
@@ -59,6 +62,9 @@ pub(crate) struct DesiccantArgs {
     /// clock, which must be valid).
     #[arg(long)]
     reset: bool,
+    /// The reminder as JSON instead of text.
+    #[arg(long)]
+    json: bool,
 }
 
 /// The reminder as `wellfed desiccant` prints it.
@@ -212,20 +218,36 @@ pub(crate) async fn settings_command(args: SettingsArgs) -> Result<()> {
         desiccant_days: args.desiccant_days,
         meal_reminder: args.meal_reminder,
     };
-    if changes == SettingsPatch::default() {
-        return ask_and_print(&args.target, &Op::GetSettings).await;
-    }
     let (_, _, mut connection) = connect(&args.target).await?;
-    let Answer::Settings(settings) = connection.ask(&Op::GetSettings).await? else {
-        bail!("the feeder did not return its settings");
+    let answer = connection.ask(&Op::GetSettings).await?;
+    let Answer::Settings(settings) = answer else {
+        return print_answer(&answer);
     };
+    if changes == SettingsPatch::default() {
+        return match args.json {
+            true => print_answer(&Answer::Settings(settings)),
+            false => {
+                println!("{}", text::settings(&settings));
+                Ok(())
+            }
+        };
+    }
+
     let answer = connection
         .ask(&Op::PutSettings {
             base: settings.generation,
             changes,
         })
         .await?;
-    print_answer(&answer)
+    match answer {
+        Answer::Done {
+            generation: Some(generation),
+        } if !args.json => {
+            println!("Saved: settings generation {generation}.");
+            Ok(())
+        }
+        answer => print_answer(&answer),
+    }
 }
 
 /// The reminder, read from the status and settings; with `--reset`, a
@@ -254,12 +276,29 @@ pub(crate) async fn desiccant_command(args: DesiccantArgs) -> Result<()> {
     let Answer::Settings(settings) = connection.ask(&Op::GetSettings).await? else {
         bail!("the feeder did not return its settings");
     };
-    print_json(&DesiccantView {
+    let view = DesiccantView {
         count: status.desiccant,
         text: status.desiccant.to_string(),
         period_days: settings.desiccant_days,
         replaced: settings.desiccant_replaced,
-    })
+    };
+    if args.json {
+        return print_json(&view);
+    }
+    println!("{}", desiccant_line(&view));
+    Ok(())
+}
+
+/// The reminder as one line: where the count stands, and its period and
+/// last replacement.
+fn desiccant_line(view: &DesiccantView) -> String {
+    let replaced = view
+        .replaced
+        .map_or_else(|| "none recorded".to_owned(), |date| date.to_string());
+    format!(
+        "Desiccant: {} (every {} days; last replaced {replaced})",
+        view.text, view.period_days
+    )
 }
 
 pub(crate) async fn wifi_command(args: WifiArgs) -> Result<()> {

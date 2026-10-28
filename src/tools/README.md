@@ -33,6 +33,32 @@ Build them with `cargo build --locked --release`, and run the binaries from `tar
 
 Outside `src/tools/`, the simulator `wellfed-sim` (in `src/sdk/`) has the `virtual-feeder` binary ([the simulator](../../docs/development/README.md#the-simulator)), and the owner's server is `wellfed-server` (in `src/server/`).
 
+## The `wellfed` command line
+
+`wellfed` is the owner's client until the app exists. Every command below speaks the [device API](../../docs/firmware/device-api.md) through `wellfed-client`, as the app will, except `setup` (Bluetooth), `install` and `server`. Each takes `--keys` (default `private/wellfed-owner.json`), `--feeder` when the key file knows more than one feeder, and `--address` to skip mDNS. `wellfed <command> --help` has the rest.
+
+| Command | What it does |
+| --- | --- |
+| `setup` | Pair with a feeder in BLE setup mode, give it Wi-Fi and enroll this computer as its owner |
+| `status` | The clock, whether a feed can start and why not, the food level, the last failed or uncertain feed, the supply and charge, the desiccant reminder, the panel lock and the link |
+| `settings [--lights on\|off] [--sound on\|off] [--volume N] [--lights-window W] [--sound-window W] [--desiccant-days N] [--meal-reminder off\|N]` | Read the settings, or change them against the generation just read |
+| `plans list` / `add --at HH:MM --portions N [--days D] [--disabled]` / `edit SLOT` / `enable SLOT` / `disable SLOT` / `delete SLOT` | The feeding plans, up to ten ([schedules](../../docs/firmware/schedules.md)) |
+| `feed [--portions N]` | Feed 1–48 portions and wait for the result; never retried |
+| `cancel-feed FEED` | Stop a running feed |
+| `feeds [--after N]` | The feeding history, one line a feed; an uncertain feed reads as a range |
+| `events [--after N] [--follow [--samples]]` | Every recorded event, and with `--follow` new ones and live samples |
+| `desiccant [--reset]` | Days until the desiccant is due; `--reset` records a replacement today |
+| `lock on\|off` | The panel's child lock |
+| `time [--zone Z\|--clear-zone] [--ntp S] [--show]` | Set the clock from this computer, or change and read the time settings |
+| `wifi --ssid S \| --clear` | Store or forget the network the feeder joins next |
+| `invite`, `join`, `clients`, `revoke`, `recover` | Who may use the feeder, and the owner's way back in through the recovery window |
+| `calibrate`, `stats`, `trace FEED`, `logs` | Portion weight, statistics, one feed's drive trace and the debug log |
+| `reboot` | Restart the feeder |
+| `install`, `backup`, `restore-stock` | Move from stock 1.1.15 to Wellfed (importing stock's plans), keep stock's image, and go back |
+| `server …` | The same reads and writes through the owner's server, with its history |
+
+`status`, `settings`, `plans list`, `events`, `feeds` and `desiccant` print text for a person, and `--json` prints the feeder's values as the wire spells them, for scripts. The other commands print the feeder's answer as JSON.
+
 ## How the tools fit together
 
 Each crate does one job, with one-way dependencies:

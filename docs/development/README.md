@@ -63,7 +63,7 @@ Every host tool is Rust. The full inventory, with which tools touch hardware, is
 
 | I want to… | Use | Read |
 | --- | --- | --- |
-| Pair with a feeder, feed, change settings | `wellfed` | [device API](../firmware/device-api.md) |
+| Pair with a feeder, feed, plans, settings, history and status | `wellfed` | [commands](../../src/tools/README.md#the-wellfed-command-line), [device API](../firmware/device-api.md) |
 | Run against a feeder without hardware | `wellfed-feeder-sim` | [tools](../../src/tools/README.md) |
 | Build a firmware image | `wellfed-build` | [firmware builds](firmware-builds.md) |
 | Freeze a build for installing, or sign it as an update | `wellfed-build review`, `sign` | [development updates](uart-development.md) |

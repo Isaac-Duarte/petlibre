@@ -10,7 +10,7 @@ use wellfed_model::{
     Answer, CALL_PLAYS_MAX, Op, PLANS, PORTIONS_MAX, Plan, Plans, Refusal, TimeOfDay, Weekdays,
 };
 
-use crate::{Target, ask_and_print, connect, print_answer};
+use crate::{Target, connect, print_answer, text};
 
 #[derive(Args)]
 pub(crate) struct PlansArgs {
@@ -21,7 +21,13 @@ pub(crate) struct PlansArgs {
 #[derive(Subcommand)]
 enum Action {
     /// The plan in each slot.
-    List(Target),
+    List {
+        #[command(flatten)]
+        target: Target,
+        /// The plans as JSON, as the wire spells them, instead of text.
+        #[arg(long)]
+        json: bool,
+    },
     /// Add a plan in the first free slot.
     Add {
         #[command(flatten)]
@@ -118,7 +124,7 @@ enum Edit {
 
 pub(crate) async fn command(args: PlansArgs) -> Result<()> {
     let (target, edit) = match args.action {
-        Action::List(target) => return ask_and_print(&target, &Op::GetPlans).await,
+        Action::List { target, json } => return list(&target, json).await,
         Action::Add {
             target,
             at,
@@ -190,6 +196,18 @@ pub(crate) async fn command(args: PlansArgs) -> Result<()> {
         eprintln!("The plans changed since they were read; read them again and retry.");
     }
     print_answer(&answer)
+}
+
+/// The plans, a line a filled slot, or as JSON.
+async fn list(target: &Target, json: bool) -> Result<()> {
+    let (_, _, mut connection) = connect(target).await?;
+    match connection.ask(&Op::GetPlans).await? {
+        Answer::Plans(plans) if !json => {
+            println!("{}", text::plans(&plans));
+            Ok(())
+        }
+        answer => print_answer(&answer),
+    }
 }
 
 /// The table `plans` holds with `edit` applied.

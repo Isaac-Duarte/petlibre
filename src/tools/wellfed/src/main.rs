@@ -11,8 +11,10 @@
 //!   owner and records the feeder's identity. The protocol is
 //!   `wellfed-client`'s, the same the Android app runs. The other device
 //!   commands open a session on the device API, Noise over TCP to the feeder
-//!   found over mDNS, as a key it enrolled, and print the feeder's answers
-//!   as JSON: `configure`, `history`, `feeding` and `access`.
+//!   found over mDNS, as a key it enrolled: `configure`, `plans`,
+//!   `history`, `feeding` and `access`. What a person reads prints as text
+//!   (`text`), with `--json` for scripts; the rest prints the feeder's
+//!   answers as JSON.
 //! - **The owner's server.** `wellfed server …` (the `server` module)
 //!   speaks the server's HTTP API through `wellfed-server-client`, with
 //!   the token `wellfed server login` keeps.
@@ -40,6 +42,7 @@ mod pairing;
 mod plans;
 mod push;
 mod server;
+mod text;
 mod trace;
 
 use std::io::BufRead;
@@ -64,8 +67,10 @@ struct Cli {
 enum Command {
     /// Pair with a feeder in BLE setup mode and give it Wi-Fi.
     Setup(pairing::SetupArgs),
-    /// The feeder's status.
-    Status(Target),
+    /// The feeder's status: its clock, whether it can feed, the food
+    /// level, the last failed feed, the supply, the desiccant reminder,
+    /// the panel lock and its link.
+    Status(history::StatusArgs),
     /// Read the settings, or change them (against the generation just read).
     Settings(configure::SettingsArgs),
     /// The feeding plans: list them, or add, edit, enable, disable or
@@ -148,7 +153,7 @@ fn main() -> Result<ExitCode> {
     let device = match cli.command {
         Command::Server(args) => return runtime.block_on(server::run(args)),
         Command::Setup(args) => runtime.block_on(pairing::setup(args)),
-        Command::Status(target) => runtime.block_on(ask_and_print(&target, &Op::Status)),
+        Command::Status(args) => runtime.block_on(history::status_command(args)),
         Command::Settings(args) => runtime.block_on(configure::settings_command(args)),
         Command::Plans(args) => runtime.block_on(plans::command(args)),
         Command::Call(args) => runtime.block_on(call::command(args)),
@@ -347,6 +352,19 @@ mod tests {
         }
         let through = ["wellfed", "server", "settings", "--meal-reminder", "5"];
         assert!(Cli::try_parse_from(through).is_ok());
+
+        // What a person reads is text, and --json gives scripts the wire's
+        // spelling.
+        for read in [
+            &["wellfed", "status", "--json"][..],
+            &["wellfed", "settings", "--json"],
+            &["wellfed", "plans", "list", "--json"],
+            &["wellfed", "events", "--follow", "--samples", "--json"],
+            &["wellfed", "desiccant", "--json"],
+            &["wellfed", "feeds", "--json"],
+        ] {
+            assert!(Cli::try_parse_from(read).is_ok(), "{read:?}");
+        }
 
         // A server command parses whole, its flags after the verb.
         let feed = ["wellfed", "server", "feed", "--portions", "2", "--json"];

@@ -167,6 +167,19 @@ impl Schedule {
         }
     }
 
+    /// Whether a claim is being written, given back or settled: a meal the
+    /// schedule has committed to and whose feed is not yet queued. A
+    /// restart waits for it, so the meal is not missed. Unlike
+    /// [`Self::holds`], a stored claim still waiting for the journal
+    /// (`Resolving`) is not one: with a faulted journal that wait lasts the
+    /// whole boot.
+    pub fn claim_in_flight(&self) -> bool {
+        match self.step {
+            Step::Queue(_, expect) | Step::Wait(expect) => !matches!(expect, Expect::Passed { .. }),
+            Step::Resolving | Step::Boot | Step::Idle => false,
+        }
+    }
+
     /// One pass at `now_ms`; `ready` is the feeder's readiness without the
     /// schedule's own hold.
     pub fn step<P: Platform, F: Feeds>(

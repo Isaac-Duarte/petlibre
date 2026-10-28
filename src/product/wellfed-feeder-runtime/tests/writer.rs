@@ -1518,6 +1518,11 @@ fn assert_cleared(kept_before: &[Vec<u8>], old_epoch: u32) {
     assert_eq!(events::last_seq(), None, "the history is empty");
     let totals = stats::totals().expect("the totals are published");
     assert_eq!(totals.resets.power_on, 1, "the totals start from this boot");
+    assert_eq!(totals.counts.uptime_s, 0);
+    assert!(
+        totals.storage.iter().any(|&erases| erases > 0),
+        "the flash erase counts, the hardware's wear, are kept"
+    );
 
     for cleared in [
         storage::SETTINGS,
@@ -1545,7 +1550,7 @@ fn a_factory_reset_clears_the_decided_stores_on_the_next_boot_and_keeps_the_rest
     let records = reset_boot(&mut provider, None);
     assert_eq!(records.first(), Some(&Record::ResetPending));
     assert!(
-        records.contains(&Record::ResetDone { erased: 27 }),
+        records.contains(&Record::ResetDone { erased: 25 }),
         "{records:?}"
     );
     assert!(
@@ -1583,12 +1588,15 @@ fn a_power_cut_at_any_step_of_the_reset_leaves_it_to_the_next_boot() {
     let kept_before = kept();
     let marked = fake::with(|h| h.storage.clone());
 
-    // `done` erases landed, and the next one (the marker's last) was torn.
-    for done in 0..=storage::FACTORY_CLEARED_SECTORS {
+    // `done` steps landed (each sector's erase, then the statistics'
+    // wear-only save, then the marker's erase) and the next was cut: an
+    // erase left half its sector, the save is all or nothing.
+    let erases = storage::FACTORY_CLEARED_SECTORS;
+    for done in 0..=erases + 1 {
         fake::with(|h| h.storage.clone_from(&marked));
         let steps = usize::try_from(done).unwrap() + 1;
         let records = reset_boot(&mut provider, Some(steps));
-        assert_eq!(records, [Record::ResetPending], "cut after {done} erases");
+        assert_eq!(records, [Record::ResetPending], "cut after {done} steps");
         assert_eq!(
             settings::request(SettingsFields::default()),
             SettingsResult::Busy,
@@ -1596,37 +1604,28 @@ fn a_power_cut_at_any_step_of_the_reset_leaves_it_to_the_next_boot() {
         );
         assert_eq!(keys::identity_since(0), None, "no identity mid-reset");
 
-        let torn = storage::factory_cleared(done).unwrap_or(storage::RESET.first);
-        fake::with(|h| {
-            let first = torn as usize * 0x1000;
-            h.storage[first..first + 0x800].fill(0xff);
-        });
+        let torn = match done {
+            _ if done < erases => storage::factory_cleared(done),
+            _ if done == erases => None,
+            _ => Some(storage::RESET.first),
+        };
+        if let Some(torn) = torn {
+            fake::with(|h| {
+                let first = torn as usize * 0x1000;
+                h.storage[first..first + 0x800].fill(0xff);
+            });
+        }
 
-        // A torn marker reads as no reset: every store is already erased.
+        // A torn marker reads as no reset: every step before it is done.
         let records = reset_boot(&mut provider, None);
-        let finished = done < storage::FACTORY_CLEARED_SECTORS;
+        let finished = done <= erases;
         assert_eq!(
-            records.contains(&Record::ResetDone { erased: 27 }),
+            records.contains(&Record::ResetDone { erased: 25 }),
             finished,
-            "cut after {done} erases: {records:?}"
+            "cut after {done} steps: {records:?}"
         );
         assert_cleared(&kept_before, old_epoch);
     }
-
-    // The cut came after the marker's erase, before anything opened.
-    fake::with(|h| h.storage.clone_from(&marked));
-    for index in 0..storage::FACTORY_CLEARED_SECTORS {
-        // SAFETY: the fake's storage, which this test owns.
-        assert!(unsafe { sdk::storage_erase(storage::factory_cleared(index).unwrap()) });
-    }
-    // SAFETY: as above.
-    assert!(unsafe { sdk::storage_erase(storage::RESET.first) });
-    let records = reset_boot(&mut provider, None);
-    assert!(
-        matches!(records.first(), Some(Record::Open { .. })),
-        "{records:?}"
-    );
-    assert_cleared(&kept_before, old_epoch);
 }
 
 /// A cut while the marker is programmed leaves it torn, which is no reset:
@@ -1726,7 +1725,7 @@ fn a_reset_that_cannot_finish_asks_for_one_restart_only() {
     ERASE_FAILS.with(|f| f.set(None));
     let records = reset_boot(&mut provider, None);
     assert!(
-        records.contains(&Record::ResetDone { erased: 27 }),
+        records.contains(&Record::ResetDone { erased: 25 }),
         "{records:?}"
     );
     assert!(!keys::restart_wanted());
@@ -1805,7 +1804,7 @@ fn a_reset_over_an_unwritable_client_store_still_completes() {
 
     let records = reset_boot(&mut provider, None);
     assert!(
-        records.contains(&Record::ResetDone { erased: 27 }),
+        records.contains(&Record::ResetDone { erased: 25 }),
         "{records:?}"
     );
     assert!(
@@ -1856,8 +1855,8 @@ fn reset_records_format() {
     };
     assert_eq!(line(Record::ResetPending), "reset pending");
     assert_eq!(
-        line(Record::ResetDone { erased: 27 }),
-        "reset done erased=27"
+        line(Record::ResetDone { erased: 25 }),
+        "reset done erased=25"
     );
     assert_eq!(
         line(Record::ResetError {
@@ -1874,5 +1873,37 @@ fn reset_records_format() {
             restart: false,
         }),
         "reset error stage=unarmed restart=0"
+    );
+}
+
+/// Flash that takes no program cannot count an attempt: the boot stops
+/// the reset without asking for a restart, so dead flash never restarts
+/// the feeder over and over.
+#[test]
+fn an_attempt_that_does_not_land_asks_for_no_restart() {
+    use wellfed_hal::plaf103::storage;
+
+    let (_guard, mut provider) = filled_then_reset();
+    PROGRAM_FAILS.with(|f| f.set(true));
+    let records = reset_boot(&mut provider, Some(5));
+    assert_eq!(
+        records,
+        [
+            Record::ResetPending,
+            Record::ResetError {
+                stage: ErrorStage::Save,
+                sector: Some(storage::RESET.first),
+                restart: false,
+            }
+        ]
+    );
+    assert!(!keys::restart_wanted());
+    assert!(reset_marked());
+
+    PROGRAM_FAILS.with(|f| f.set(false));
+    let records = reset_boot(&mut provider, None);
+    assert!(
+        records.contains(&Record::ResetDone { erased: 25 }),
+        "{records:?}"
     );
 }

@@ -114,6 +114,17 @@ impl Totals {
         update: 0,
     };
 
+    /// What a factory reset keeps of these totals: the erases by storage
+    /// sector and of bank 1, the hardware's wear. Every owner figure, and
+    /// the boots, start again from zero.
+    pub const fn wear_only(&self) -> Self {
+        Self {
+            storage: self.storage,
+            update: self.update,
+            ..Self::ZERO
+        }
+    }
+
     /// One more boot, for `cause`.
     pub fn count_boot(&mut self, cause: ResetCause) {
         let resets = &mut self.resets;

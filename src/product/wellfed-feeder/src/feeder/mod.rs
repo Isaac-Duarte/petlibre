@@ -209,7 +209,13 @@ pub struct Feeder<P: Platform> {
     beep: Beeper,
     schedule: Schedule,
     reminder: Reminder,
+    /// When a due restart began waiting for a plan's claim in flight.
+    claim_wait: Option<u32>,
 }
+
+/// The longest a due restart waits for a plan's claim in flight: a writer
+/// turn, a feed's outputs to stop, and room to spare.
+pub const CLAIM_WAIT_MS: u32 = 30_000;
 
 impl<P: Platform> Feeder<P> {
     /// Const, so the firmware builds it in its static: the server's table
@@ -227,6 +233,7 @@ impl<P: Platform> Feeder<P> {
             beep: Beeper::new(),
             schedule: Schedule::new(),
             reminder: Reminder::new(),
+            claim_wait: None,
         }
     }
 
@@ -320,11 +327,13 @@ impl<P: Platform> Feeder<P> {
         // writer asks for when a reset could not finish, wait for a feed in
         // flight, which they would otherwise leave uncertain; none starts a
         // feed itself, and once asked for no feed starts (`restarting`). They
-        // wait for a plan's claimed meal too: once claimed it must run, and
-        // a restart before its feed is queued would leave it missed.
+        // wait for a plan's claim in flight too, which a restart before its
+        // feed is queued would leave missed; that wait is bounded
+        // (`CLAIM_WAIT_MS`), so a claim the writer never finishes cannot
+        // hold a restart for ever.
         let due = self.owner.reboot_due(now_ms) || self.platform.restart_wanted();
-        let at_rest = !feeds.busy() && !self.schedule.holds();
-        if due && at_rest && !self.platform.restarting() {
+        let claim = due && self.claim_holds_restart(now_ms);
+        if due && !feeds.busy() && !claim && !self.platform.restarting() {
             // The writer's restart save takes this boot's counts as they are now.
             let counts = self.serve.stats().counts(now_ms);
             self.platform.hand_counts(counts);
@@ -429,6 +438,7 @@ impl<P: Platform> Feeder<P> {
             battery_hold: self.supply.holds(),
             meal: self.schedule.holds(),
             reset,
+            claim: self.schedule.claim_in_flight(),
             feeds,
         };
         let serve_delay = self
@@ -481,6 +491,17 @@ impl<P: Platform> Feeder<P> {
         }
     }
 
+    /// Whether a plan's claim in flight still holds a restart that is due:
+    /// until it is settled, or for at most [`CLAIM_WAIT_MS`].
+    fn claim_holds_restart(&mut self, now_ms: u32) -> bool {
+        if !self.schedule.claim_in_flight() {
+            self.claim_wait = None;
+            return false;
+        }
+        let since = *self.claim_wait.get_or_insert(now_ms);
+        !wellfed_core::deadline_passed(now_ms, since.wrapping_add(CLAIM_WAIT_MS))
+    }
+
     /// Record a feed's `Fed` event, which may take the queue's reserved
     /// slot. A restart's uncertain feed that a plan had claimed is the
     /// plan's.
@@ -526,6 +547,7 @@ impl<P: Platform> Feeder<P> {
             supply,
             meal: self.schedule.holds(),
             reset: self.owner.reset_pending(),
+            claim: self.schedule.claim_in_flight(),
         }
     }
 }

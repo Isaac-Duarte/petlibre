@@ -19,9 +19,10 @@
 //! (sector 36) and forgets every client; the loop then restarts. A boot
 //! that finds the marker opens and publishes nothing the reset clears,
 //! erases each cleared sector (`storage::FACTORY_CLEARED`) as its own
-//! step, the marker last, and only then opens the stores, empty. The feed
-//! journal, the calibration, the update store and the seed are never
-//! touched.
+//! step, rewrites the lifetime statistics keeping only the flash erase
+//! counts (the hardware's wear), erases the marker last, and only then
+//! opens the stores, empty. The feed journal, the calibration, the update
+//! store and the seed are never touched.
 //!
 //! It keeps the time settings too (sectors 27 and 28,
 //! `wellfed_feeder::store::time`): the owner's zone and the NTP server,
@@ -550,9 +551,9 @@ pub struct Writer<F> {
     /// This writer's wait for the write turn.
     turn: WriteTurn,
     /// A factory reset this boot finishes: the index (in
-    /// `storage::factory_cleared`) of the next sector to erase, the marker
-    /// itself after the last. Until it is `None` no cleared store opens and
-    /// nothing is published.
+    /// `storage::factory_cleared`) of the next sector to erase; past the
+    /// last, the statistics' wear-only save, then the marker itself. Until
+    /// it is `None` no cleared store opens and nothing is published.
     resetting: Option<u32>,
     /// The reset could not go on this boot (unarmed, or an erase failed).
     reset_stopped: bool,
@@ -609,6 +610,21 @@ fn fresh_epoch() -> u32 {
         0
     };
     drawn.max(1)
+}
+
+/// The factory reset's step for the lifetime statistics: rewrite them
+/// keeping only the erase counts ([`Totals::wear_only`]), as one dual-slot
+/// save, so a cut leaves the old totals or the wear-only ones and the boot
+/// after does it again. A store with nothing in it, or one this build
+/// cannot write (a newer schema), is left as it is.
+fn keep_wear<F: FlashOps>() -> bool {
+    let mut stats = StatsStore::default();
+    stats.open(Slots::<F, STATS_BASE>::new());
+    if stats.status != StatsStatus::Loaded || !stats.writable() {
+        return true;
+    }
+    let wear = stats.totals.wear_only();
+    stats.totals == wear || stats.save(&wear, SaveKind::Restart)
 }
 
 /// Whether `sector` reads erased, in small reads to spare the stack: an
@@ -1039,18 +1055,33 @@ impl<F: FlashOps> Writer<F> {
         };
 
         let marker = Region::<F, RESET_BASE, 1>::new();
-        let sector = factory_cleared(index).unwrap_or(RESET_BASE);
         arming::set_attempt();
         let noted = self.reset_attempted || reset_marker::note_attempt(&marker);
-        let erased = noted && F::erase(sector) && blank::<F>(sector);
+        let step = match factory_cleared(index) {
+            _ if !noted => None,
+            Some(sector) => Some((sector, F::erase(sector) && blank::<F>(sector))),
+            None if index == FACTORY_CLEARED_SECTORS => Some((STATS_BASE, keep_wear::<F>())),
+            None => Some((RESET_BASE, F::erase(RESET_BASE) && blank::<F>(RESET_BASE))),
+        };
         arming::clear_attempt();
         drop(turn);
         self.reset_attempted = noted;
 
-        if !erased {
-            return self.reset_stop(ErrorStage::Erase, Some(sector));
+        // An attempt that did not land is a store this boot cannot count
+        // in, so it stops without asking for a restart; so does a save of
+        // the statistics that failed (an erase that failed may be retried).
+        let Some((sector, done)) = step else {
+            return self.reset_stop(ErrorStage::Save, Some(RESET_BASE));
+        };
+        if !done {
+            let stage = if sector == STATS_BASE {
+                ErrorStage::Save
+            } else {
+                ErrorStage::Erase
+            };
+            return self.reset_stop(stage, Some(sector));
         }
-        if index < FACTORY_CLEARED_SECTORS {
+        if index <= FACTORY_CLEARED_SECTORS {
             self.resetting = Some(index + 1);
             return next(RESET_POLL_MS, None);
         }

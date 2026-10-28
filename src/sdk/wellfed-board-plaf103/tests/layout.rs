@@ -54,7 +54,8 @@ fn storage_region_and_sector_map_are_pinned() {
 }
 
 /// The factory reset erases exactly the stores the owner decided, and
-/// never the journal, calibration, update store, confirmation or seed.
+/// never the journal, calibration, update store, confirmation or seed, nor
+/// the statistics, which it rewrites keeping the erase counts.
 #[test]
 fn the_factory_reset_clears_the_decided_stores_only() {
     let cleared: Vec<u32> = (0..storage::FACTORY_CLEARED_SECTORS)
@@ -62,7 +63,7 @@ fn the_factory_reset_clears_the_decided_stores_only() {
         .collect();
     assert_eq!(
         cleared,
-        [9, 10, 5, 6, 2, 3, 27, 28, 11, 12, 32, 33, 29, 30, 31]
+        [9, 10, 5, 6, 2, 3, 27, 28, 11, 12, 29, 30, 31]
             .into_iter()
             .chain(13..25)
             .collect::<Vec<u32>>()
@@ -78,6 +79,7 @@ fn the_factory_reset_clears_the_decided_stores_only() {
         storage::SEED,
         storage::UPDATE,
         storage::CALIBRATION,
+        storage::STATS,
         storage::RESET,
     ] {
         for sector in kept.first..kept.first + kept.count {

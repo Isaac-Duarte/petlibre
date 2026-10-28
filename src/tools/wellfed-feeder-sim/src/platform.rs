@@ -59,7 +59,7 @@ use wellfed_feeder::store::net::NetStore;
 use wellfed_feeder::store::plans::PlansStore;
 use wellfed_feeder::store::reset;
 use wellfed_feeder::store::settings::{SettingsStatus, SettingsStore};
-use wellfed_feeder::store::stats::{SaveKind, StatsStore};
+use wellfed_feeder::store::stats::{SaveKind, StatsStatus, StatsStore};
 use wellfed_feeder::store::time::TimeStore;
 use wellfed_feeder::store::traces::{self, TraceRing};
 use wellfed_hal::interlock::INTERLOCK;
@@ -605,7 +605,8 @@ fn applied(result: Result<(), ClientError>) -> KeyResult {
 }
 
 /// Finish a factory reset an earlier boot marked, before any store opens,
-/// as the writer does: erase every cleared store in the board's order, then
+/// as the writer does: erase every cleared store in the board's order,
+/// rewrite the statistics keeping only the flash erase counts, then erase
 /// the marker. The simulator's image cannot lose power part-way through a
 /// boot's erases; the firmware's writer, which can, is tested for it.
 fn finish_reset(flash: &Rc<Flash>) {
@@ -617,6 +618,14 @@ fn finish_reset(flash: &Rc<Flash>) {
         let region = Region::new(flash, store);
         for unit in 0..store.count {
             region.erase(unit);
+        }
+    }
+    let mut stats = StatsStore::default();
+    stats.open(Region::new(flash, storage::STATS));
+    if stats.status == StatsStatus::Loaded && stats.writable() {
+        let wear = stats.totals.wear_only();
+        if stats.totals != wear {
+            stats.save(&wear, SaveKind::Restart);
         }
     }
     reset::clear(&marker);

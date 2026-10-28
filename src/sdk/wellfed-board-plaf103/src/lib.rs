@@ -160,14 +160,14 @@ pub mod storage {
 
     /// What the factory reset erases, in the order it erases them: the
     /// clients and identity first, then the Wi-Fi credentials, the
-    /// settings, the time settings, the plans, the statistics, the traces
-    /// and the event history. It keeps the feed journal (a feed is never
-    /// re-run and its numbers never go back), the portion calibration (a
-    /// property of the hardware), the update store and confirmation record
-    /// (the anti-rollback floor and the build in trial) and the generator's
-    /// seed.
-    pub const FACTORY_CLEARED: [Sectors; 8] =
-        [CLIENTS, NET, SETTINGS, TIME, PLANS, STATS, TRACES, EVENTS];
+    /// settings, the time settings, the plans, the traces and the event
+    /// history. The lifetime statistics are not erased but rewritten with
+    /// only the flash erase counts, which are the hardware's wear. It keeps
+    /// the feed journal (a feed is never re-run and its numbers never go
+    /// back), the portion calibration (a property of the hardware), the
+    /// update store and confirmation record (the anti-rollback floor and the
+    /// build in trial) and the generator's seed.
+    pub const FACTORY_CLEARED: [Sectors; 7] = [CLIENTS, NET, SETTINGS, TIME, PLANS, TRACES, EVENTS];
 
     /// The sectors [`FACTORY_CLEARED`] names, one by one.
     pub const FACTORY_CLEARED_SECTORS: u32 = cleared_count();

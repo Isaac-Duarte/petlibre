@@ -181,6 +181,8 @@ pub struct Inputs<'a, F> {
     pub meal: bool,
     /// A factory reset is queued or marked: no install starts.
     pub reset: bool,
+    /// A plan's claim is in flight: its meal is the next feed.
+    pub claim: bool,
     pub feeds: &'a mut F,
 }
 
@@ -297,6 +299,7 @@ impl<S: Copy> Serve<S> {
             battery_hold,
             meal,
             reset,
+            claim,
             feeds,
         } = inputs;
         let boot = self.boot(platform, now_ms);
@@ -365,6 +368,7 @@ impl<S: Copy> Serve<S> {
             supply,
             meal,
             reset,
+            claim,
         };
         let busy = self.server.step(
             Pass {
@@ -676,6 +680,10 @@ pub struct FeederDevice<'a, P, F> {
     /// A factory reset is queued or marked: an install offer is refused,
     /// so the reset's boot never becomes an update's trial boot.
     pub(super) reset: bool,
+    /// A plan's claim is in flight: counted as a feed, so a client's
+    /// reboot (and an install) is refused `Busy` rather than cutting the
+    /// meal before its feed is queued.
+    pub(super) claim: bool,
 }
 
 /// How long a walk of the task stacks answers memory requests: the walk
@@ -1123,7 +1131,7 @@ impl<P: Platform, F: Feeds> Device for FeederDevice<'_, P, F> {
     }
 
     fn feed_active(&self) -> bool {
-        self.feeds.busy()
+        self.feeds.busy() || self.claim
     }
 
     fn log_after(&mut self, after: Option<u32>, text: &mut [u8]) -> Option<LogBatch> {

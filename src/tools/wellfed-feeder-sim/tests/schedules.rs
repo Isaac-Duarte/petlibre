@@ -844,3 +844,74 @@ fn a_restart_asked_for_while_a_meal_is_claimed_waits_for_the_meal() {
     assert!(feeder.fed().is_empty(), "the reset's new history");
     assert!(feeder.missed().is_empty());
 }
+
+/// A feeder whose journal will not open keeps a stored claim unresolved
+/// for the whole boot (no high water to compare it with). That is no claim
+/// in flight: a factory reset's restart and setup mode's still come.
+#[test]
+fn a_stored_claim_with_a_faulted_journal_holds_no_restart() {
+    use wellfed_core::buttons::{Button, Buttons, Gesture};
+
+    let dir = tempfile::tempdir().unwrap();
+    let held = |chord| Gesture::Hold { chord, level: 1 };
+    // Breakfast runs, which leaves its claim stored, then the journal's
+    // sectors are spoiled.
+    let faulted = |name: &str| {
+        let path = dir.path().join(name);
+        let flash = Flash::file(&path).unwrap();
+        let banks = Banks::new();
+        let sim = open(&flash, &banks, 1);
+        let mut feeder = Feeder {
+            flash,
+            banks,
+            sim,
+            now: 0,
+            boots: 1,
+            claims: 0,
+        };
+        feeder.run(100);
+        feeder.sync(WEDNESDAY + 7 * HOUR_MS);
+        feeder.put(table(&[(0, plan(7 * 60 + 30, 2))]));
+        feeder.run_until(WEDNESDAY + 7 * HOUR_MS + 31 * MINUTE_MS);
+        assert_eq!(feeder.fed().len(), 1);
+        assert!(feeder.plans().claim.is_some(), "the claim is stored");
+
+        let mut bytes = std::fs::read(&path).unwrap();
+        bytes[..0x2000].fill(0);
+        std::fs::write(&path, bytes).unwrap();
+        feeder.flash = Flash::file(&path).unwrap();
+        feeder.restart();
+        feeder.run(1_000);
+        assert!(feeder.plans().claim.is_some());
+        let ready = feeder.sim.platform().plans();
+        assert!(matches!(ready, PlansResult::Current { .. }));
+        feeder
+    };
+    let restarts = |feeder: &mut Feeder, ms: u64| {
+        let end = u64::from(feeder.now) + ms;
+        while u64::from(feeder.now) < end {
+            feeder.run(1_000);
+            if feeder.sim.take_reboot() {
+                return true;
+            }
+        }
+        false
+    };
+
+    let mut feeder = faulted("reset.bin");
+    feeder.sim.gesture(held(Buttons::of(Button::Lock)));
+    feeder.run(100);
+    feeder.sim.gesture(held(Buttons::of(Button::Reset)));
+    assert!(restarts(&mut feeder, 10_000), "the reset's restart came");
+
+    let mut feeder = faulted("setup.bin");
+    feeder.sim.gesture(held(Buttons::of(Button::Lock)));
+    feeder.run(100);
+    feeder
+        .sim
+        .gesture(held(Buttons::of(Button::Lock).with(Button::Mic)));
+    assert!(
+        restarts(&mut feeder, u64::from(feeder::setup::IDLE_MS) + 60_000),
+        "setup mode's restart came"
+    );
+}

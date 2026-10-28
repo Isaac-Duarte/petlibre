@@ -90,11 +90,14 @@ pub fn attempts<I: SlotIo>(io: &I) -> u32 {
 
 /// Record that this boot starts the erases: program the next blank
 /// attempt, with no erase, so it survives every reset until the marker is
-/// cleared. True once recorded, or when every attempt is already used.
+/// cleared. True once the count reads back one higher, or when every
+/// attempt is already used. A program that does not land is false (the
+/// reset stops without asking for a restart), so flash that takes no
+/// write can never restart the feeder over and over.
 pub fn note_attempt<I: SlotIo>(io: &I) -> bool {
     let used = attempts(io);
     if used >= ATTEMPTS {
         return true;
     }
-    io.program(0, attempt_at(used), &ATTEMPT)
+    io.program(0, attempt_at(used), &ATTEMPT) && attempts(io) > used
 }

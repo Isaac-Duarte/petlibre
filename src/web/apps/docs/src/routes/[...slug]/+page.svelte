@@ -1,6 +1,7 @@
 <script lang="ts">
   import { resolve } from "$app/paths";
   import { OG_IMAGE, SITE } from "#lib/links.ts";
+  import ModeSwitch from "#lib/ModeSwitch.svelte";
   import Toc from "#lib/Toc.svelte";
   import type { PageProps } from "./$types";
 
@@ -25,7 +26,12 @@
 
 <main id="main" class="content">
   <article data-pagefind-body>
-    {#if data.section}<p class="eyebrow" data-pagefind-ignore>{data.section}</p>{/if}
+    {#if data.section !== undefined || doc.hasDetails}
+      <div class="page-head">
+        {#if data.section}<p class="eyebrow" data-pagefind-ignore>{data.section}</p>{/if}
+        {#if doc.hasDetails}<ModeSwitch />{/if}
+      </div>
+    {/if}
     <div class="prose">
       <!-- eslint-disable-next-line svelte/no-at-html-tags -- rendered at build time from the repository's own docs/ -->
       {@html doc.html}

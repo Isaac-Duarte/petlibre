@@ -1,7 +1,8 @@
 <script lang="ts">
   // "On this page": the h2 and h3 outline, with the section being read marked
   // once the page hydrates. The section is the last heading scrolled past the
-  // top quarter of the viewport.
+  // top quarter of the viewport. A detail heading is hidden in Overview, and
+  // a hidden heading (no offsetParent) is never the one being read.
   import type { Heading } from "#lib/doc.ts";
 
   let { headings }: { headings: Heading[] } = $props();
@@ -11,7 +12,7 @@
     const targets = headings.map((h) => document.getElementById(h.id)).filter((el) => el !== null);
     const update = () => {
       const line = window.innerHeight / 4;
-      const passed = targets.filter((el) => el.getBoundingClientRect().top < line);
+      const passed = targets.filter((el) => el.offsetParent !== null && el.getBoundingClientRect().top < line);
       current = passed.at(-1)?.id ?? targets[0]?.id ?? "";
     };
 
@@ -28,7 +29,7 @@
     <p id="toc-title">On this page</p>
     <ul>
       {#each headings as heading (heading.id)}
-        <li class:sub={heading.depth === 3}>
+        <li class:sub={heading.depth === 3} class:detail={heading.detail}>
           <a href="#{heading.id}" aria-current={heading.id === current ? "location" : undefined}>{heading.text}</a>
         </li>
       {/each}
@@ -50,6 +51,9 @@
     padding: 0;
     list-style: none;
     border-left: 1px solid var(--color-line);
+  }
+  :global(:root[data-mode="overview"]) li.detail {
+    display: none;
   }
   li.sub a {
     padding-left: calc(var(--space-3) + var(--space-3));

@@ -51,6 +51,7 @@ export const NAV: NavGroup[] = [
   {
     label: "Feeder components",
     entries: [
+      { file: "firmware/schedules.md", label: "Schedules" },
       { file: "firmware/motor-pulse.md", label: "Motor pulse" },
       { file: "firmware/calibration.md", label: "Portions and calibration" },
       { file: "firmware/jams-and-sensor-faults.md", label: "Jams and sensor faults" },
@@ -60,6 +61,7 @@ export const NAV: NavGroup[] = [
       { file: "firmware/audio.md", label: "Audio" },
       { file: "firmware/clock.md", label: "Clock" },
       { file: "firmware/power.md", label: "Power" },
+      { file: "firmware/desiccant.md", label: "Desiccant reminder" },
     ],
   },
   {

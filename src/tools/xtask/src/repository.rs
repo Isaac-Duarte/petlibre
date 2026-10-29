@@ -16,8 +16,8 @@ use regex::Regex;
 // Top-level directories that hold local inputs or agent state.
 const UNPUBLISHED: [&str; 6] = ["private", ".venv", "target", ".aws", ".codex", ".agents"];
 const EVIDENCE: [&str; 5] = ["bin", "pcap", "pcapng", "img", "apk"];
-const TEXT: [&str; 10] = [
-    "md", "rs", "py", "toml", "json", "yml", "txt", "c", "h", "ts",
+const TEXT: [&str; 11] = [
+    "md", "rs", "py", "toml", "json", "yml", "txt", "c", "h", "ts", "svg",
 ];
 /// Product code, which reaches the motor pins, the watchdog and flash only
 /// through the HAL's owners: it may name neither the raw writers nor the
@@ -103,7 +103,7 @@ pub(crate) struct Summary {
 }
 
 /// Tracked and untracked-but-not-ignored files, as Git lists them.
-fn listed(root: &Path) -> io::Result<Vec<String>> {
+pub(crate) fn listed(root: &Path) -> io::Result<Vec<String>> {
     let output = Command::new("git")
         .args([
             "ls-files",
@@ -141,6 +141,11 @@ pub(crate) fn check(root: &Path) -> io::Result<Summary> {
         check_file(&root, name, &mut summary);
     }
     check_release_toolchain(&root, &mut summary);
+    summary.errors.extend(
+        crate::diagrams::check(&root, &names)
+            .iter()
+            .map(|error| crate::chain(error)),
+    );
 
     Ok(summary)
 }

@@ -1,6 +1,12 @@
+import { createHash } from "node:crypto";
 import adapter from "@sveltejs/adapter-static";
 import { sveltekit } from "@sveltejs/kit/vite";
 import { defineConfig } from "vite";
+import { HEAD_SCRIPT } from "./src/lib/mode.ts";
+
+// The one inline script SvelteKit doesn't write itself: it sets the
+// Overview | Details mode before first paint, so the CSP allows it by hash.
+const headScript = `sha256-${createHash("sha256").update(HEAD_SCRIPT).digest("base64")}` as const;
 
 // docs.well-fed.dev renders the repository's docs/ at build time
 // (docs/web/docs-site.md). Every page is prerendered, and the crawl fails on
@@ -16,7 +22,7 @@ export default defineConfig({
       // each inline script SvelteKit writes. static/_headers holds the rest.
       csp: {
         mode: "hash",
-        directives: { "script-src": ["self", "wasm-unsafe-eval"] },
+        directives: { "script-src": ["self", "wasm-unsafe-eval", headScript] },
       },
     }),
   ],

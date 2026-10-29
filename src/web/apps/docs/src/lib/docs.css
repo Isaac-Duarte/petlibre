@@ -233,6 +233,17 @@ body {
 
 /* The page */
 
+.page-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+}
+.page-head .eyebrow {
+  margin: 0;
+}
 .eyebrow {
   margin: 0 0 var(--space-2);
   color: var(--color-accent);
@@ -353,6 +364,173 @@ body {
 }
 .prose pre code {
   font-size: inherit;
+}
+
+/*
+ * Overview | Details. A page's overview ends with `<!-- details -->`; what
+ * follows is .details, hidden in Overview. data-mode is set before first
+ * paint (mode.ts), and never without JavaScript, when everything shows.
+ */
+.details-more {
+  display: none;
+}
+:root[data-mode="overview"] .details {
+  display: none;
+}
+:root[data-mode="details"] .details {
+  margin-top: var(--space-6);
+}
+:root[data-mode="overview"] .details-more {
+  display: block;
+  margin-top: var(--space-6);
+}
+.details-more button {
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--color-line-strong);
+  border-radius: var(--radius-pill);
+  background: none;
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+}
+.details-more button:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+.details-more button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus);
+}
+
+/*
+ * Diagrams: hand-drawn SVGs inlined from docs/ (content.ts), styled only by
+ * these classes so they follow light and dark. The class list is closed:
+ * `cargo xtask check-repository` reads the `.d-` names here and refuses an SVG
+ * that uses any other class, or a color of its own. Text is legible down to
+ * 600px wide; a narrower screen scrolls the drawing instead of shrinking it.
+ */
+.diagram {
+  margin: var(--space-6) 0;
+  overflow-x: auto;
+}
+.diagram svg {
+  display: block;
+  width: 100%;
+  min-width: 600px;
+  height: auto;
+  font-family: var(--font);
+  font-size: 13px;
+}
+.diagram text {
+  fill: var(--color-text);
+}
+.diagram .d-box {
+  fill: var(--color-surface);
+  stroke: var(--color-line-strong);
+  stroke-width: 1.25;
+}
+.diagram .d-panel {
+  fill: var(--color-sunken);
+  stroke: var(--color-line);
+  stroke-width: 1;
+}
+.diagram .d-accent {
+  fill: var(--color-accent-soft);
+  stroke: var(--color-accent);
+  stroke-width: 1.5;
+}
+.diagram .d-ok {
+  fill: var(--color-ok-soft);
+  stroke: var(--color-ok);
+  stroke-width: 1.5;
+}
+.diagram .d-warn {
+  fill: var(--color-warning-soft);
+  stroke: var(--color-warning);
+  stroke-width: 1.5;
+}
+.diagram .d-fault {
+  fill: var(--color-fault-soft);
+  stroke: var(--color-fault);
+  stroke-width: 1.5;
+}
+.diagram .d-food {
+  fill: var(--color-food);
+  stroke: none;
+}
+.diagram .d-unknown {
+  fill: none;
+  stroke: var(--color-line-strong);
+  stroke-width: 1;
+  stroke-dasharray: 4 4;
+}
+.diagram .d-wire {
+  fill: none;
+  stroke: var(--color-line-strong);
+  stroke-width: 1.5;
+}
+.diagram .d-wire-accent {
+  fill: none;
+  stroke: var(--color-accent);
+  stroke-width: 2;
+}
+.diagram .d-wire-ok {
+  fill: none;
+  stroke: var(--color-ok);
+  stroke-width: 2;
+}
+.diagram .d-wire-fault {
+  fill: none;
+  stroke: var(--color-fault);
+  stroke-width: 2;
+}
+.diagram .d-beam {
+  fill: none;
+  stroke: var(--color-accent);
+  stroke-width: 2;
+  stroke-dasharray: 2 4;
+  stroke-linecap: round;
+}
+.diagram .d-dashed {
+  stroke-dasharray: 5 4;
+}
+.diagram .d-head {
+  fill: var(--color-line-strong);
+}
+.diagram .d-head-accent {
+  fill: var(--color-accent);
+}
+.diagram .d-head-ok {
+  fill: var(--color-ok);
+}
+.diagram .d-head-fault {
+  fill: var(--color-fault);
+}
+.diagram .d-title {
+  font-size: 14px;
+  font-weight: var(--weight-semibold);
+}
+.diagram .d-muted {
+  fill: var(--color-text-muted);
+  font-size: 12px;
+}
+.diagram .d-mono {
+  font-family: var(--mono);
+  font-size: 11.5px;
+}
+.diagram .d-text-accent {
+  fill: var(--color-accent);
+}
+.diagram .d-text-ok {
+  fill: var(--color-ok);
+}
+.diagram .d-text-warn {
+  fill: var(--color-warning);
+}
+.diagram .d-text-fault {
+  fill: var(--color-fault);
 }
 .tok-keyword {
   color: var(--color-accent);

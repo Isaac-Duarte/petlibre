@@ -2,6 +2,50 @@
 
 This page explains how the feeder's factory loader picks which of its two firmware banks to boot, and the rules Wellfed follows so a feeder always has something to boot. It is for owners curious about why updates are safe, and for contributors touching the updater. Bank 0 and bank 1 are in the [glossary](../glossary.md).
 
+## In short
+
+The feeder has room for two firmware images, in bank 0 and bank 1. At power-on it always boots bank 1 if bank 1 is valid. Bank 0 holds a known-good build and only boots when bank 1 can't.
+
+```mermaid
+%% svg: boot-flow.svg
+flowchart TD
+  power(["Power on"]) --> rom["Boot ROM"]
+  rom --> strap{"TX held low<br/>at power-on?"}
+  strap -->|yes| uart["UART download mode:<br/>the bench's way in"]
+  strap -->|no| loader["Factory loader"]
+  loader --> bank1{"Bank 1 valid?"}
+  bank1 -->|yes| boot1["Boot bank 1"]
+  bank1 -->|no| bank0{"Bank 0 valid?"}
+  bank0 -->|yes| boot0["Boot bank 0:<br/>the known-good fallback"]
+  bank0 -->|no| wait["Wait forever: only UART recovers"]
+```
+
+## An update, start to finish
+
+An update never overwrites the build that is running. Bank 1 hands over to bank 0, and bank 0 writes the new build into bank 1. The new build then runs on **trial**. It confirms itself once it has started cleanly. If it keeps failing, KM0 sends the feeder back to bank 0, which still works.
+
+```mermaid
+%% svg: ota-update.svg
+sequenceDiagram
+  participant C as Client
+  participant B1 as Bank 1
+  participant B0 as Bank 0
+  C->>B1: Offer the signed update
+  B1-->>C: GivingWay
+  Note over B1: Clears its own marker and restarts
+  B1--)B0: The loader boots bank 0
+  C->>B0: The same offer again
+  B0-->>C: Receiving: these chunks
+  C->>B0: Chunks, 512 bytes each
+  Note over B0: Writes bank 1, checks the whole image's SHA-256,<br/>then writes bank 1's marker last
+  B0-->>C: Activated
+  B0--)B1: Restart: bank 1 wins
+  Note over B1: New build on trial, confirms once healthy
+  Note over B1,B0: Three unconfirmed boots: KM0 clears bank 1's marker,<br/>and the loader boots bank 0 again
+```
+
+<!-- details -->
+
 ## The one rule: bank 1 wins
 
 The loader checks bank 1 first and boots it whenever it is valid. Bank 0 boots only when bank 1 fails. **Bank 1 has fixed priority; bank 0 is only a fallback.**

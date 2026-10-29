@@ -8,6 +8,7 @@
   import type { Snippet } from "svelte";
   import { favicon, lockup, lockupOnLight, themeColor } from "#lib/brand.ts";
   import { HOME, REPO } from "#lib/links.ts";
+  import { HEAD_HTML } from "#lib/mode.ts";
   import Search from "#lib/Search.svelte";
   import type { LayoutProps } from "./$types";
 
@@ -19,6 +20,8 @@
 </script>
 
 <svelte:head>
+  <!-- eslint-disable-next-line svelte/no-at-html-tags -- a constant, hashed into the CSP by vite.config.ts -->
+  {@html HEAD_HTML}
   <link rel="icon" href={favicon} type="image/svg+xml" />
   <meta name="theme-color" content={themeColor.light} media="(prefers-color-scheme: light)" />
   <meta name="theme-color" content={themeColor.dark} media="(prefers-color-scheme: dark)" />

@@ -4,7 +4,7 @@
 // routes or GitHub URLs, code is highlighted, and each page's headings feed
 // its table of contents. It runs only during prerender, so none of it ships.
 import { posix } from "node:path";
-import type { Element, Root as Hast } from "hast";
+import type { Element, ElementContent, Root as Hast } from "hast";
 import { toString } from "hast-util-to-string";
 import type { Root as Mdast } from "mdast";
 import rehypeSlug from "rehype-slug";
@@ -24,7 +24,15 @@ const sources = import.meta.glob<string>("../../../../../../../docs/**/*.md", {
   eager: true,
 });
 
-const files = new Map(Object.entries(sources).map(([key, text]) => [key.replace(/^(\.\.\/)+docs\//, ""), text]));
+const drawings = import.meta.glob<string>("../../../../../../../docs/**/*.svg", {
+  query: "?raw",
+  import: "default",
+  eager: true,
+});
+
+const underDocs = (key: string) => key.replace(/^(\.\.\/)+docs\//, "");
+const files = new Map(Object.entries(sources).map(([key, text]) => [underDocs(key), text]));
+const svgs = new Map(Object.entries(drawings).map(([key, text]) => [underDocs(key), text]));
 
 /** `firmware/README.md` → `firmware`, `README.md` → the root. */
 export function slugOf(file: string): string {
@@ -89,6 +97,70 @@ const alerts: Plugin<[], Mdast> = () => (tree) => {
   });
 };
 
+// `<!-- details -->` on a line of its own ends a page's overview. GitHub hides
+// the comment and shows the whole page. Here it becomes a marked <hr>, and
+// wrapDetails puts what follows in .details, which the Overview | Details
+// switch hides, after a button that shows it.
+const DETAILS = "<!-- details -->";
+
+const markDetails: Plugin<[], Mdast> = () => (tree) => {
+  const at = tree.children.findIndex((node) => node.type === "html" && node.value.trim() === DETAILS);
+  if (at >= 0) tree.children[at] = { type: "thematicBreak", data: { hProperties: { dataDetails: "" } } };
+};
+
+const wrapDetails: Plugin<[Collected], Hast> = (out) => (tree) => {
+  const at = tree.children.findIndex(
+    (node) => node.type === "element" && node.tagName === "hr" && node.properties.dataDetails !== undefined,
+  );
+  if (at < 0) return;
+
+  const rest = tree.children.splice(at).slice(1);
+  tree.children.push(
+    {
+      type: "element",
+      tagName: "p",
+      properties: { className: ["details-more"], dataPagefindIgnore: "" },
+      children: [
+        {
+          type: "element",
+          tagName: "button",
+          properties: { type: "button", dataShowDetails: "" },
+          children: [{ type: "text", value: "Show the details" }],
+        },
+      ],
+    },
+    {
+      type: "element",
+      tagName: "div",
+      properties: { className: ["details"] },
+      children: rest.filter((node): node is ElementContent => node.type !== "doctype"),
+    },
+  );
+  out.hasDetails = true;
+};
+
+// A mermaid block whose first line names its drawing, `%% svg: name.svg` (a
+// Mermaid comment, so GitHub hides it), becomes that SVG beside the page.
+// GitHub draws the Mermaid instead. The SVG is inlined so docs.css colors its
+// classes from the tokens, and `cargo xtask check-repository` holds each pair
+// to its hashes in docs/diagrams.lock.
+const DRAWING = /^%% svg: (\S+\.svg)\s*$/;
+
+function diagram(source: string, file: string): Element {
+  const name = DRAWING.exec(source.split("\n", 1)[0] ?? "")?.[1];
+  if (name === undefined) throw new Error(`docs/${file}: a mermaid block must start with "%% svg: <file>.svg"`);
+  const path = posix.normalize(posix.join(posix.dirname(file), name));
+  const svg = svgs.get(path);
+  if (svg === undefined) throw new Error(`docs/${file}: its mermaid block names docs/${path}, which doesn't exist`);
+
+  return {
+    type: "element",
+    tagName: "div",
+    properties: { className: ["diagram"] },
+    children: [{ type: "raw", value: svg.trim() }],
+  };
+}
+
 // One theme whose colors are CSS variables, so code follows the page's light
 // or dark tokens. The transformer turns each inline color into a class, since
 // the site's CSP allows no inline styles; docs.css colors the classes.
@@ -112,16 +184,23 @@ const tokenClasses: ShikiTransformer = {
   },
 };
 
-function highlight(pre: Element): Element | undefined {
+/** The language a fenced block declares, such as `rust` for ```` ```rust ````. */
+function languageOf(pre: Element): string | undefined {
   const [code] = pre.children;
   if (code?.type !== "element" || code.tagName !== "code") return undefined;
   const classes = code.properties.className;
-  const declared = Array.isArray(classes)
+  return Array.isArray(classes)
     ? classes
         .map(String)
         .find((name) => name.startsWith("language-"))
         ?.slice("language-".length)
     : undefined;
+}
+
+function highlight(pre: Element): Element | undefined {
+  const [code] = pre.children;
+  if (code?.type !== "element" || code.tagName !== "code") return undefined;
+  const declared = languageOf(pre);
   const lang = declared !== undefined && languages.has(declared) ? declared : "text";
 
   const root = highlighter.codeToHast(toString(code).replace(/\n$/, ""), {
@@ -147,20 +226,31 @@ interface Collected {
   title: string;
   description: string;
   headings: Heading[];
+  hasDetails: boolean;
 }
 
 // After headings have ids: collect the title, the first paragraph as the
-// description and the h2/h3 outline, give each heading a self-link, highlight
-// code, and let wide tables scroll inside the column instead of the page.
-const decorate: Plugin<[Collected], Hast> = (out) => (tree) => {
+// description and the h2/h3 outline, give each heading a self-link, draw
+// diagrams, highlight code, and let wide tables scroll inside the column
+// instead of the page.
+const decorate: Plugin<[Collected, string], Hast> = (out, file) => (tree) => {
+  // .details is the root's last child and the walk is in document order, so
+  // every heading after it is a detail heading.
+  let inDetails = false;
   visit(tree, "element", (node, index, parent) => {
+    if (
+      node.tagName === "div" &&
+      Array.isArray(node.properties.className) &&
+      node.properties.className.includes("details")
+    )
+      inDetails = true;
     if (node.tagName === "h1" && out.title === "") out.title = toString(node);
     if (node.tagName === "p" && out.description === "" && parent?.type === "root")
       out.description = excerpt(toString(node));
 
     if (node.tagName === "h2" || node.tagName === "h3") {
       const id = typeof node.properties.id === "string" ? node.properties.id : "";
-      out.headings.push({ depth: node.tagName === "h2" ? 2 : 3, id, text: toString(node) });
+      out.headings.push({ depth: node.tagName === "h2" ? 2 : 3, id, text: toString(node), detail: inDetails });
       node.children.push({
         type: "element",
         tagName: "a",
@@ -178,8 +268,8 @@ const decorate: Plugin<[Collected], Hast> = (out) => (tree) => {
     if (parent === undefined || index === undefined) return undefined;
 
     if (node.tagName === "pre") {
-      const highlighted = highlight(node);
-      if (highlighted !== undefined) parent.children[index] = highlighted;
+      const replaced = languageOf(node) === "mermaid" ? diagram(toString(node), file) : highlight(node);
+      if (replaced !== undefined) parent.children[index] = replaced;
       return SKIP;
     }
 
@@ -198,16 +288,19 @@ const decorate: Plugin<[Collected], Hast> = (out) => (tree) => {
 };
 
 function render(file: string, markdown: string): Doc {
-  const out: Collected = { title: "", description: "", headings: [] };
+  const out: Collected = { title: "", description: "", headings: [], hasDetails: false };
   const html = unified()
     .use(remarkParse)
     .use(remarkGfm)
     .use(rewriteLinks, file)
     .use(alerts)
+    .use(markDetails)
     .use(remarkRehype)
     .use(rehypeSlug)
-    .use(decorate, out)
-    .use(rehypeStringify)
+    .use(wrapDetails, out)
+    .use(decorate, out, file)
+    // Only the diagrams are raw HTML: remarkRehype drops any in the Markdown.
+    .use(rehypeStringify, { allowDangerousHtml: true })
     .processSync(markdown);
 
   return {
@@ -217,6 +310,7 @@ function render(file: string, markdown: string): Doc {
     description: out.description,
     html: String(html),
     headings: out.headings,
+    hasDetails: out.hasDetails,
     editUrl: edit(`docs/${file}`),
   };
 }

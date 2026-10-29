@@ -62,6 +62,35 @@ Keep `WARNING` for bricking, data loss and electrical or battery hazards. Use `N
 
 Lead with the one idea that makes the rest make sense. Then follow one concrete thing through the system, such as a single feed from the button press to the event the app sees. Link out to the detailed pages rather than repeating them.
 
+## Overviews
+
+A dense reference page can open with an **overview** for a reader who is new to the subject: what the thing is, a diagram, and each new term defined where it first appears. End the overview with this line on its own:
+
+```markdown
+<!-- details -->
+```
+
+GitHub hides the comment and shows the whole page. The docs site shows an **Overview | Details** switch on that page, and in Overview it shows only what comes before the line. Keep facts in the details. An overview simplifies, so it links to the detail it leaves out rather than restating it.
+
+## Diagrams
+
+A diagram is a hand-drawn SVG beside the page, paired with a Mermaid block that stands in for it on GitHub. The block's first line names the SVG relative to the page:
+
+````markdown
+```mermaid
+%% svg: boot-flow.svg
+flowchart TD
+  power(["Power on"]) --> rom["Boot ROM"]
+```
+````
+
+The site replaces the block with the SVG. The two need not look alike, but they must say the same thing. Another page can show the same drawing by naming its path, and its block must carry the same Mermaid.
+
+- Style the SVG only with the `.d-` classes in the docs site's [`docs.css`](../../src/web/apps/docs/src/lib/docs.css), so it follows light and dark. Give it no colors, inline styles, scripts or external links of its own.
+- Give it a `viewBox`, a `<title>` and a `<desc>`, and prefix its `id`s with the file's name, since several drawings can share a page.
+- Draw it about 720 units wide. The site scales it to the column and scrolls it on screens narrower than 600 px.
+- `docs/diagrams.lock` holds a hash of each Mermaid block and its SVG. After changing either, compare the two, then run `cargo xtask bless-diagrams`. `make check-docs` fails until you do.
+
 ## Lists of crates and tools
 
 Don't explain a crate list in a paragraph. Use a table:

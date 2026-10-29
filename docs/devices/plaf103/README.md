@@ -2,6 +2,64 @@
 
 The 5 L Granary feeder is the model Wellfed is built on. Every Wellfed feature is developed and tested on one PLAF103 on our bench. This page says how to recognize one, what is inside, and what works.
 
+## How it feeds
+
+Dry food sits in the hopper at the top. Under it, a small motor turns a rotor that carries food into the outlet chute, and the food falls into the bowl.
+
+Three light beams watch the food. Each is an **emitter**, a small light, facing a **receiver** across a gap. Food in the gap blocks the beam:
+
+- The **food-level sensor** looks across the hopper. A blocked beam means there is food.
+- The **feedback sensor** sees one mark go by for each portion as the rotor turns. That is how the feeder counts what it gave.
+- The **outlet sensor** looks across the chute and sees food leave.
+
+```mermaid
+%% svg: food-path.svg
+flowchart TB
+  hopper["Hopper: 5 L of dry food"] --> rotor["Rotor, turned by the motor"]
+  rotor --> chute["Outlet chute"] --> bowl["Bowl"]
+  level{{"Food-level sensor: food blocks the beam"}} -.-> hopper
+  feedback{{"Feedback: one mark a portion"}} -.-> rotor
+  outlet{{"Outlet sensor: sees food leave"}} -.-> chute
+```
+
+## How the parts reach the chip
+
+Everything runs from one chip, the [RTL8721DM](../../chips/rtl8721dm/README.md). Each part connects to one or more of its pins. A pin's name says where it sits: `PA13` is pin 13 of port A.
+
+- A **GPIO** (general-purpose input/output) pin is either read or driven. Read, it reports high or low: a button pressed or not, a beam lit or blocked. Driven, it switches something on or off, like a light.
+- An **ADC** (analog-to-digital converter) measures a voltage instead. The feeder uses two, for the battery and for the motor's current.
+- The motor needs more current than a pin can give, so the pins drive an **H-bridge**. That is a motor driver chip with four switches, which can run the motor either way or brake it.
+- **Flash** is a separate memory chip that keeps its contents with the power off. It holds the firmware and the settings. See the [flash layout](flash-layout.md).
+- The **console** is a UART, a simple serial line on a three-hole header. Owners never need it. It is how the bench reads, writes and recovers the feeder.
+
+```mermaid
+%% svg: parts.svg
+flowchart LR
+  subgraph reads["The chip reads"]
+    optical["Optical sensors<br/>food level PA17 · outlet PA16 · feedback PA18"]
+    buttons["Buttons<br/>Lock, Dispense, Mic, Reset · PB4–PB7"]
+    power["Power<br/>adapter PA19 · battery PB2 ADC · motor current PB1 ADC"]
+  end
+  chip(["RTL8721DM<br/>Wi-Fi + Bluetooth LE chip, runs Wellfed"])
+  subgraph drives["The chip drives"]
+    motor["Motor, through a TC118AH H-bridge<br/>PA13 PA14"]
+    lights["Four indicator lights<br/>PA2 PA4 PA0 PB22"]
+    sound["Sound<br/>speaker amplifier PB23 · buzzer PA25"]
+  end
+  optical --> chip
+  buttons --> chip
+  power --> chip
+  chip --> motor
+  chip --> lights
+  chip --> sound
+  chip <-->|SPI| flash["Flash: 8 MiB, keeps its data with the power off"]
+  chip <-->|UART| console["Console: UART on CON5, for recovery"]
+```
+
+The [board page](board.md) lists every pin and what we still don't know about each.
+
+<!-- details -->
+
 ## Sold as
 
 PETLIBRO Granary automatic feeder, 5 L, model **PLAF103**, with FCC ID **2A3DEPLAF103S**. It shipped with stock firmware 1.1.15 on our unit.

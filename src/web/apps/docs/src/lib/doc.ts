@@ -3,6 +3,8 @@ export interface Heading {
   depth: 2 | 3;
   id: string;
   text: string;
+  /** After the page's `<!-- details -->`, so hidden in Overview. */
+  detail: boolean;
 }
 
 export interface Doc {
@@ -14,5 +16,7 @@ export interface Doc {
   description: string;
   html: string;
   headings: Heading[];
+  /** The page ends an overview with `<!-- details -->`. */
+  hasDetails: boolean;
   editUrl: string;
 }

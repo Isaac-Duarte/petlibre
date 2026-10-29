@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 600" role="img" aria-labelledby="boot-flow-title boot-flow-desc">
+  <title id="boot-flow-title">How the feeder picks what to boot</title>
+  <desc id="boot-flow-desc">At power-on the boot ROM runs. If the console's TX line is held low, it enters UART download mode. Otherwise the factory loader boots bank 1 if it is valid, else bank 0 if that is valid. With neither valid it waits forever, and only UART recovers it.</desc>
+  <defs>
+    <marker id="boot-flow-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path class="d-head" d="M0,0 L10,5 L0,10 z"/>
+    </marker>
+  </defs>
+
+  <rect class="d-panel" x="190" y="20" width="140" height="40" rx="20"/>
+  <text x="260" y="45" text-anchor="middle" class="d-title">Power on</text>
+  <line class="d-wire" x1="260" y1="60" x2="260" y2="86" marker-end="url(#boot-flow-arrow)"/>
+
+  <rect class="d-box" x="170" y="90" width="180" height="44" rx="8"/>
+  <text x="260" y="117" text-anchor="middle" class="d-title">Boot ROM</text>
+  <line class="d-wire" x1="260" y1="134" x2="260" y2="160" marker-end="url(#boot-flow-arrow)"/>
+
+  <polygon class="d-box" points="260,164 380,204 260,244 140,204"/>
+  <text x="260" y="200" text-anchor="middle">TX held low</text>
+  <text x="260" y="217" text-anchor="middle">at power-on?</text>
+  <line class="d-wire" x1="380" y1="204" x2="466" y2="204" marker-end="url(#boot-flow-arrow)"/>
+  <text x="420" y="196" text-anchor="middle" class="d-muted">yes</text>
+  <rect class="d-warn" x="470" y="178" width="230" height="52" rx="8"/>
+  <text x="486" y="200" class="d-title">UART download mode</text>
+  <text x="486" y="219" class="d-muted">The bench's way in, always there</text>
+  <line class="d-wire" x1="260" y1="244" x2="260" y2="270" marker-end="url(#boot-flow-arrow)"/>
+  <text x="270" y="262" class="d-muted">no</text>
+
+  <rect class="d-box" x="170" y="274" width="180" height="44" rx="8"/>
+  <text x="260" y="301" text-anchor="middle" class="d-title">Factory loader</text>
+  <line class="d-wire" x1="260" y1="318" x2="260" y2="344" marker-end="url(#boot-flow-arrow)"/>
+
+  <polygon class="d-box" points="260,348 380,388 260,428 140,388"/>
+  <text x="260" y="393" text-anchor="middle">Bank 1 valid?</text>
+  <line class="d-wire" x1="380" y1="388" x2="466" y2="388" marker-end="url(#boot-flow-arrow)"/>
+  <text x="420" y="380" text-anchor="middle" class="d-muted">yes</text>
+  <rect class="d-ok" x="470" y="362" width="230" height="52" rx="8"/>
+  <text x="486" y="384" class="d-title">Boot bank 1</text>
+  <text x="486" y="403" class="d-muted">Always first, whatever bank 0 holds</text>
+  <line class="d-wire" x1="260" y1="428" x2="260" y2="454" marker-end="url(#boot-flow-arrow)"/>
+  <text x="270" y="446" class="d-muted">no</text>
+
+  <polygon class="d-box" points="260,458 380,498 260,538 140,498"/>
+  <text x="260" y="503" text-anchor="middle">Bank 0 valid?</text>
+  <line class="d-wire" x1="380" y1="498" x2="466" y2="498" marker-end="url(#boot-flow-arrow)"/>
+  <text x="420" y="490" text-anchor="middle" class="d-muted">yes</text>
+  <rect class="d-ok" x="470" y="472" width="230" height="52" rx="8"/>
+  <text x="486" y="494" class="d-title">Boot bank 0</text>
+  <text x="486" y="513" class="d-muted">The known-good fallback</text>
+  <polyline class="d-wire" points="140,498 70,498 70,562 166,562" marker-end="url(#boot-flow-arrow)"/>
+  <text x="104" y="490" text-anchor="middle" class="d-muted">no</text>
+  <rect class="d-fault" x="170" y="540" width="280" height="44" rx="8"/>
+  <text x="186" y="567" class="d-title">Wait forever: only UART recovers</text>
+
+  <text x="470" y="140" class="d-muted">Valid: the marker 81958711,</text>
+  <text x="470" y="157" class="d-muted">then good KM0 and KM4 signatures</text>
+</svg>

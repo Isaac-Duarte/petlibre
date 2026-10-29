@@ -48,8 +48,47 @@ test("search finds a page and opens it", async ({ page }) => {
   await expect(page.locator("h1")).toBeVisible();
 });
 
+test("a page opens on its overview and remembers Details", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") errors.push(message.text());
+  });
+
+  await page.goto("/devices/plaf103");
+  const details = page.getByRole("heading", { name: "Sold as" });
+  await expect(page.locator(".diagram svg").first()).toBeVisible();
+  await expect(details).toBeHidden();
+
+  await page.getByRole("button", { name: "Show the details" }).click();
+  await expect(details).toBeVisible();
+  await expect(page.getByRole("button", { name: "Details", exact: true })).toHaveAttribute("aria-pressed", "true");
+
+  await page.goto("/firmware/bank-policy");
+  await expect(page.getByRole("heading", { name: "Capacities" })).toBeVisible();
+  await page.getByRole("button", { name: "Overview", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Capacities" })).toBeHidden();
+  expect(errors).toEqual([]);
+});
+
+test("a link into the details opens them", async ({ page }) => {
+  await page.goto("/devices/plaf103/flash-layout#flash-clock");
+
+  await expect(page.getByRole("heading", { name: "Flash clock" })).toBeVisible();
+});
+
+test("without JavaScript a page shows in full", async ({ browser }) => {
+  const context = await browser.newContext({ javaScriptEnabled: false });
+  const page = await context.newPage();
+
+  await page.goto("/devices/plaf103");
+
+  await expect(page.getByRole("heading", { name: "Sold as" })).toBeVisible();
+  await expect(page.locator(".mode-switch")).toBeHidden();
+  await context.close();
+});
+
 test("never scrolls sideways", async ({ page }) => {
-  for (const path of ["/", "/development/rust", "/firmware/product-architecture"]) {
+  for (const path of ["/", "/development/rust", "/firmware/product-architecture", "/devices/plaf103"]) {
     await page.goto(path);
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
     expect(overflow, path).toBeLessThanOrEqual(0);

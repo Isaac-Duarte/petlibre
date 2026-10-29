@@ -5,12 +5,18 @@
 //!
 //! `check-repository` checks local documentation links, portable repository
 //! inputs, that no Python returns under `src/`, and the source rules (raw
-//! output writers only through the HAL's owners, no board card ids), then
-//! the server's crate layering from `cargo metadata`. It is a maintenance
-//! check, not a secret scanner or a licensing audit.
+//! output writers only through the HAL's owners, no board card ids), that
+//! each diagram in `docs/` still matches its Mermaid, then the server's crate
+//! layering from `cargo metadata`. It is a maintenance check, not a secret
+//! scanner or a licensing audit.
+//!
+//! `bless-diagrams` records each diagram pair's hashes in
+//! `docs/diagrams.lock`, once its author has checked the SVG and its Mermaid
+//! still show the same thing.
 
 #![forbid(unsafe_code)]
 
+mod diagrams;
 mod fuzz;
 mod layers;
 mod repository;
@@ -35,6 +41,8 @@ struct Cli {
 enum Task {
     /// Documentation links, tool dependencies, portable inputs, source rules.
     CheckRepository,
+    /// Record each docs diagram's SVG and Mermaid hashes, after checking they match.
+    BlessDiagrams,
     /// One bounded libFuzzer run of a network-parser target (needs cargo-fuzz).
     Fuzz {
         #[arg(value_enum)]
@@ -96,6 +104,24 @@ fn main() -> ExitCode {
                 ExitCode::from(2)
             }
         },
+        Task::BlessDiagrams => {
+            let blessed = repository::listed(&cli.root)
+                .map_err(|error| vec![error.to_string()])
+                .and_then(|names| {
+                    diagrams::bless(&cli.root, &names)
+                        .map_err(|errors| errors.iter().map(|e| chain(e)).collect())
+                });
+            match blessed {
+                Ok(count) => {
+                    println!("Blessed {count} diagrams in {}.", diagrams::LOCK);
+                    ExitCode::SUCCESS
+                }
+                Err(errors) => {
+                    eprintln!("{}", errors.join("\n"));
+                    ExitCode::from(1)
+                }
+            }
+        }
         Task::Fuzz {
             target,
             seconds,

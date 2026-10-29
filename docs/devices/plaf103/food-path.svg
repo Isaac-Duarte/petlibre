@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 460" role="img" aria-labelledby="food-path-title food-path-desc">
+  <title id="food-path-title">How food moves through the PLAF103</title>
+  <desc id="food-path-desc">Food sits in the hopper, where a light beam tells whether food is present. A motor turns a rotor under the hopper, and a feedback sensor sees one mark per portion. The rotor pushes food into the outlet chute, where a second beam sees it pass, and it falls into the bowl.</desc>
+  <defs>
+    <marker id="food-path-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path class="d-head" d="M0,0 L10,5 L0,10 z"/>
+    </marker>
+  </defs>
+
+  <!-- Hopper, with food filling its lower part -->
+  <polygon class="d-box" points="120,40 400,40 330,190 190,190"/>
+  <text x="260" y="78" text-anchor="middle" class="d-title">Hopper</text>
+  <text x="260" y="96" text-anchor="middle" class="d-muted">5 L of dry food</text>
+  <g class="d-food">
+    <circle cx="190" cy="150" r="5"/><circle cx="204" cy="146" r="5"/><circle cx="218" cy="151" r="5"/><circle cx="232" cy="147" r="5"/><circle cx="246" cy="150" r="5"/><circle cx="260" cy="146" r="5"/><circle cx="274" cy="151" r="5"/><circle cx="288" cy="147" r="5"/><circle cx="302" cy="150" r="5"/><circle cx="316" cy="146" r="5"/><circle cx="330" cy="150" r="5"/>
+    <circle cx="186" cy="162" r="5"/><circle cx="200" cy="160" r="5"/><circle cx="214" cy="163" r="5"/><circle cx="228" cy="160" r="5"/><circle cx="242" cy="163" r="5"/><circle cx="256" cy="160" r="5"/><circle cx="270" cy="163" r="5"/><circle cx="284" cy="160" r="5"/><circle cx="298" cy="163" r="5"/><circle cx="312" cy="160" r="5"/><circle cx="326" cy="163" r="5"/>
+    <circle cx="196" cy="174" r="5"/><circle cx="210" cy="176" r="5"/><circle cx="224" cy="173" r="5"/><circle cx="238" cy="176" r="5"/><circle cx="252" cy="173" r="5"/><circle cx="266" cy="176" r="5"/><circle cx="280" cy="173" r="5"/><circle cx="294" cy="176" r="5"/><circle cx="308" cy="173" r="5"/><circle cx="322" cy="176" r="5"/>
+    <circle cx="202" cy="185" r="4"/><circle cx="216" cy="186" r="4"/><circle cx="230" cy="185" r="4"/><circle cx="244" cy="186" r="4"/><circle cx="258" cy="185" r="4"/><circle cx="272" cy="186" r="4"/><circle cx="286" cy="185" r="4"/><circle cx="300" cy="186" r="4"/><circle cx="314" cy="185" r="4"/>
+  </g>
+
+  <!-- Food-level beam across the hopper -->
+  <rect class="d-accent" x="166" y="157" width="10" height="14" rx="2"/>
+  <rect class="d-accent" x="344" y="157" width="10" height="14" rx="2"/>
+  <line class="d-beam" x1="178" y1="164" x2="342" y2="164"/>
+  <line class="d-wire" x1="356" y1="164" x2="452" y2="164"/>
+  <text x="460" y="160" class="d-title">Food-level sensor</text>
+  <text x="460" y="178" class="d-muted">Food blocks the beam: food present</text>
+
+  <!-- Motor, rotor and the portion feedback -->
+  <rect class="d-box" x="30" y="214" width="120" height="52" rx="8"/>
+  <text x="90" y="236" text-anchor="middle" class="d-title">Motor</text>
+  <text x="90" y="254" text-anchor="middle" class="d-muted">turns the rotor</text>
+  <line class="d-wire" x1="150" y1="240" x2="212" y2="240"/>
+
+  <circle class="d-box" cx="260" cy="240" r="48"/>
+  <g class="d-wire">
+    <line x1="260" y1="198" x2="260" y2="282"/>
+    <line x1="223.6" y1="219" x2="296.4" y2="261"/>
+    <line x1="223.6" y1="261" x2="296.4" y2="219"/>
+  </g>
+  <circle class="d-panel" cx="260" cy="240" r="9"/>
+  <circle class="d-food" cx="276" cy="214" r="5"/>
+  <circle class="d-food" cx="246" cy="268" r="5"/>
+  <text x="318" y="224" class="d-title">Rotor</text>
+
+  <rect class="d-accent" x="212" y="282" width="16" height="10" rx="2"/>
+  <polyline class="d-wire" points="212,287 160,287 160,330 150,330"/>
+  <rect class="d-box" x="30" y="304" width="120" height="52" rx="8"/>
+  <text x="90" y="326" text-anchor="middle" class="d-title">Feedback</text>
+  <text x="90" y="344" text-anchor="middle" class="d-muted">one mark a portion</text>
+
+  <!-- Outlet chute, its beam, and the bowl -->
+  <polygon class="d-panel" points="282,278 312,256 470,345 438,375"/>
+  <circle class="d-food" cx="340" cy="296" r="5"/>
+  <circle class="d-food" cx="402" cy="330" r="5"/>
+  <rect class="d-accent" x="361" y="327" width="12" height="10" rx="2" transform="rotate(30 367 332)"/>
+  <rect class="d-accent" x="393" y="300" width="12" height="10" rx="2" transform="rotate(30 399 305)"/>
+  <line class="d-beam" x1="371" y1="326" x2="395" y2="310"/>
+  <line class="d-wire" x1="405" y1="300" x2="452" y2="270"/>
+  <text x="460" y="262" class="d-title">Outlet sensor</text>
+  <text x="460" y="280" class="d-muted">Sees food leave the chute</text>
+
+  <path class="d-wire" d="M455,378 Q470,392 482,398" marker-end="url(#food-path-arrow)"/>
+  <path class="d-box" d="M470,396 L650,396 Q640,440 560,440 Q480,440 470,396 Z"/>
+  <circle class="d-food" cx="540" cy="406" r="5"/><circle class="d-food" cx="554" cy="410" r="5"/><circle class="d-food" cx="568" cy="406" r="5"/><circle class="d-food" cx="582" cy="410" r="5"/>
+  <text x="560" y="430" text-anchor="middle" class="d-title">Bowl</text>
+
+  <!-- Key -->
+  <line class="d-beam" x1="30" y1="424" x2="62" y2="424"/>
+  <text x="70" y="428" class="d-muted">light beam: an emitter and a receiver</text>
+  <text x="30" y="448" class="d-muted">Schematic, not to scale</text>
+</svg>

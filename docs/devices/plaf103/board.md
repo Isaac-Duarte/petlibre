@@ -2,6 +2,36 @@
 
 What the PLAF103 main board connects to each [RTL8721DM](../../chips/rtl8721dm/README.md) pin, and what we still don't know about each connection. It is a reference for firmware work. Identification and support status are on the [device page](README.md).
 
+## At a glance
+
+The chip reads the sensors, buttons and power inputs on its left, and drives the motor, lights and sound on its right. The [device page](README.md#how-the-parts-reach-the-chip) explains each kind of connection.
+
+```mermaid
+%% svg: parts.svg
+flowchart LR
+  subgraph reads["The chip reads"]
+    optical["Optical sensors<br/>food level PA17 · outlet PA16 · feedback PA18"]
+    buttons["Buttons<br/>Lock, Dispense, Mic, Reset · PB4–PB7"]
+    power["Power<br/>adapter PA19 · battery PB2 ADC · motor current PB1 ADC"]
+  end
+  chip(["RTL8721DM<br/>Wi-Fi + Bluetooth LE chip, runs Wellfed"])
+  subgraph drives["The chip drives"]
+    motor["Motor, through a TC118AH H-bridge<br/>PA13 PA14"]
+    lights["Four indicator lights<br/>PA2 PA4 PA0 PB22"]
+    sound["Sound<br/>speaker amplifier PB23 · buzzer PA25"]
+  end
+  optical --> chip
+  buttons --> chip
+  power --> chip
+  chip --> motor
+  chip --> lights
+  chip --> sound
+  chip <-->|SPI| flash["Flash: 8 MiB, keeps its data with the power off"]
+  chip <-->|UART| console["Console: UART on CON5, for recovery"]
+```
+
+<!-- details -->
+
 ## Signal map
 
 The roles come from stock 1.1.15, and many have since been confirmed on the board. The SDK numbers a pin as `(port << 5) | pin` ([chip](../../chips/rtl8721dm/README.md#pins)).

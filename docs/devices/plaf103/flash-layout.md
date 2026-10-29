@@ -2,6 +2,40 @@
 
 This page maps what we know of the PLAF103's 8 MiB flash: the boot material, the two application banks, Wellfed's storage region and the sectors stock uses. It is a reference for anyone writing tools or firmware that touch flash.
 
+## What flash holds
+
+Flash is the feeder's long-term memory: an 8 MiB chip that keeps its contents with the power off. It is erased in 4 KiB **sectors** before it is written. An **offset** is a position in it, counted in bytes from the start and written in hexadecimal, such as `0x186000`.
+
+The drawing is to scale. Most of the front half is two **banks**, each big enough for a whole firmware image. Wellfed's settings, feed journal and history live in their own small region. Stock firmware left data in a few places further on. The rest is not mapped, which is not the same as free: we don't write where we haven't checked.
+
+```mermaid
+%% svg: flash-map.svg
+flowchart LR
+  boot["0x000000<br/>Boot material, 24 KiB"] --> bank0["0x006000<br/>Bank 0, 1.5 MiB"] --> bank1["0x186000<br/>Bank 1, 1.3 MiB"]
+  bank1 --> gap1["not mapped"] --> storage["0x340000<br/>Wellfed storage, 48 sectors"] --> gap2["not mapped"]
+  gap2 --> settings["0x3e8000<br/>Stock settings and clock"] --> gap3["not mapped"] --> records["0x7cb000<br/>Stock logs, plans, feed records"]
+```
+
+## Picking a bank
+
+At power-on the chip's boot ROM hands over to a **factory loader** at the start of flash. It boots bank 1 whenever bank 1 is valid, and falls back to bank 0 only when it isn't. That rule is what makes updates safe; [bank policy](../../firmware/bank-policy.md) explains how.
+
+```mermaid
+%% svg: ../../firmware/boot-flow.svg
+flowchart TD
+  power(["Power on"]) --> rom["Boot ROM"]
+  rom --> strap{"TX held low<br/>at power-on?"}
+  strap -->|yes| uart["UART download mode:<br/>the bench's way in"]
+  strap -->|no| loader["Factory loader"]
+  loader --> bank1{"Bank 1 valid?"}
+  bank1 -->|yes| boot1["Boot bank 1"]
+  bank1 -->|no| bank0{"Bank 0 valid?"}
+  bank0 -->|yes| boot0["Boot bank 0:<br/>the known-good fallback"]
+  bank0 -->|no| wait["Wait forever: only UART recovers"]
+```
+
+<!-- details -->
+
 All values are flash offsets, with exclusive ends. Mapped external flash begins at `0x08000000`. The machine-readable version is [layout.json](../../../src/firmware/devices/plaf103/layout.json).
 
 ## How it boots

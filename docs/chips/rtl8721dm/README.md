@@ -2,6 +2,34 @@
 
 The RTL8721DM is the Wi-Fi and Bluetooth chip inside the PLAF103, and the chip Wellfed's SDK targets. This page holds facts about the chip and its vendor SDK that hold on any board. How a particular feeder wires it is on that [device's pages](../../devices/README.md).
 
+## The chip at a glance
+
+The RTL8721DM is a **system on a chip** (SoC). Processor cores, memory, a radio and the circuits behind each pin all sit in one package. The board around it adds the flash chip, the motor driver and the sensors.
+
+- **Two cores.** KM4 is the fast one and runs the firmware. KM0 is the small one: it starts first, picks which firmware bank to boot and then starts KM4.
+- **SRAM** is each core's working memory. It is fast and it forgets everything at power-off.
+- **The boot ROM** is code built into the chip that can never change. It runs first at every power-on. It also holds a UART download mode that can rewrite flash, so the chip can always be recovered, whatever flash holds.
+- **The radio** does Wi-Fi, which carries the [device API](../../firmware/device-api.md), and Bluetooth LE, which carries setup and [pairing](../../firmware/pairing.md).
+- **Flash** is outside the chip, on an SPI bus. The chip runs code straight out of it.
+
+```mermaid
+%% svg: soc.svg
+flowchart LR
+  subgraph soc["RTL8721DM: one chip"]
+    km4["KM4: application core<br/>runs the firmware and its Rust runtime<br/>512 KiB SRAM"]
+    km0["KM0: low-power core<br/>boots first, picks a bank, starts KM4<br/>64 KiB SRAM"]
+    rom["Boot ROM<br/>first code at power-on, UART download mode"]
+    radio["Radio<br/>Wi-Fi and Bluetooth LE"]
+    km0 -->|starts| km4
+  end
+  flash[("Flash: a separate chip<br/>holds firmware and settings")]
+  pins["Pins: GPIO, ADC, PWM, UART and more"]
+  soc <-->|SPI| flash
+  soc <--> pins
+```
+
+<!-- details -->
+
 ## Cores and SDK
 
 - **Two cores.** KM0, the low-power core, and KM4, the application core, run separate images built separately. Wellfed's KM0 image contains only `wellfed-hal-common`. The application and the Rust runtime run on KM4 ([firmware architecture](../../firmware/README.md)).

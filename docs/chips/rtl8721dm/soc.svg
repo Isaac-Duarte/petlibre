@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 440" role="img" aria-labelledby="soc-title soc-desc">
+  <title id="soc-title">Inside the RTL8721DM</title>
+  <desc id="soc-desc">One chip holds two processor cores, KM4 and KM0, with their own working memory, a boot ROM and a Wi-Fi and Bluetooth LE radio. KM0 starts KM4. Flash sits outside the chip on an SPI bus, and the pins lead out to the board.</desc>
+  <defs>
+    <marker id="soc-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path class="d-head" d="M0,0 L10,5 L0,10 z"/>
+    </marker>
+  </defs>
+
+  <rect class="d-panel" x="20" y="20" width="530" height="320" rx="16"/>
+  <text x="40" y="48" class="d-title">RTL8721DM</text>
+  <text x="128" y="48" class="d-muted">one chip, the size of a fingernail</text>
+
+  <rect class="d-accent" x="40" y="68" width="230" height="116" rx="10"/>
+  <text x="56" y="94" class="d-title">KM4: application core</text>
+  <text x="56" y="116" class="d-muted">The fast one. Runs the firmware</text>
+  <text x="56" y="134" class="d-muted">and its Rust runtime.</text>
+  <text x="56" y="166" class="d-mono">512 KiB SRAM</text>
+
+  <rect class="d-box" x="300" y="68" width="230" height="116" rx="10"/>
+  <text x="316" y="94" class="d-title">KM0: low-power core</text>
+  <text x="316" y="116" class="d-muted">The small one. Boots first, picks</text>
+  <text x="316" y="134" class="d-muted">a bank and starts KM4.</text>
+  <text x="316" y="166" class="d-mono">64 KiB SRAM</text>
+
+  <line class="d-wire" x1="300" y1="126" x2="274" y2="126" marker-end="url(#soc-arrow)"/>
+
+  <rect class="d-box" x="40" y="204" width="230" height="116" rx="10"/>
+  <text x="56" y="230" class="d-title">Boot ROM</text>
+  <text x="56" y="252" class="d-muted">Built in and never changes. The</text>
+  <text x="56" y="270" class="d-muted">first code at power-on, and the</text>
+  <text x="56" y="288" class="d-muted">UART download mode that can</text>
+  <text x="56" y="306" class="d-muted">always rewrite flash.</text>
+
+  <rect class="d-box" x="300" y="204" width="230" height="116" rx="10"/>
+  <text x="316" y="230" class="d-title">Radio</text>
+  <text x="316" y="252" class="d-muted">Wi-Fi, for the device API.</text>
+  <text x="316" y="270" class="d-muted">Bluetooth LE, for setup and</text>
+  <text x="316" y="288" class="d-muted">pairing. No classic Bluetooth.</text>
+
+  <!-- Outside the chip -->
+  <rect class="d-box" x="590" y="78" width="120" height="96" rx="10"/>
+  <text x="606" y="104" class="d-title">Flash</text>
+  <text x="606" y="126" class="d-muted">A separate chip.</text>
+  <text x="606" y="144" class="d-muted">Holds firmware</text>
+  <text x="606" y="162" class="d-muted">and settings.</text>
+  <line class="d-wire" x1="554" y1="126" x2="586" y2="126" marker-start="url(#soc-arrow)" marker-end="url(#soc-arrow)"/>
+  <text x="570" y="116" text-anchor="middle" class="d-mono">SPI</text>
+
+  <rect class="d-box" x="40" y="370" width="490" height="54" rx="10"/>
+  <text x="56" y="393" class="d-title">Pins</text>
+  <text x="56" y="412" class="d-muted">GPIO, ADC, PWM, UART and more. Each board wires them its own way.</text>
+  <line class="d-wire" x1="285" y1="344" x2="285" y2="366" marker-start="url(#soc-arrow)" marker-end="url(#soc-arrow)"/>
+</svg>

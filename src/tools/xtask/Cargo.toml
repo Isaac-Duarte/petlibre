@@ -4,7 +4,7 @@ name = "xtask"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
-description = "Repository maintenance tasks: documentation links, tool dependencies, portability, source rules, the server's crate layering and bounded fuzz runs"
+description = "Repository maintenance tasks: documentation links, paired diagrams, tool dependencies, portability, source rules, the server's crate layering and bounded fuzz runs"
 publish.workspace = true
 
 [dependencies]
@@ -13,6 +13,7 @@ regex = "1"
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+wellfed-formats.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

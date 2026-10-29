@@ -6,6 +6,20 @@ These are the words the rest of the docs use without stopping to explain them.
 
 **KM0 and KM4.** The chip's two processor cores. KM4 is the fast one and runs the firmware. KM0 is the small one: it boots first, picks which bank to start, and stays in charge of low-level duties.
 
+**SoC.** A system on a chip: processor cores, memory, a radio and the circuits behind each pin in one package. The PLAF103's is the RTL8721DM.
+
+**Boot ROM.** Code built into the chip that can never change. It runs first at every power-on and holds the UART download mode, so the chip can always be recovered.
+
+**Flash.** The memory chip that keeps the firmware and settings with the power off. It is erased in 4 KiB sectors before it is written. See [flash layout](devices/plaf103/flash-layout.md).
+
+**GPIO.** A general-purpose input/output pin. Read, it reports high or low, such as a button or a light beam. Driven, it switches something on or off.
+
+**ADC.** An analog-to-digital converter: a pin that measures a voltage, such as the battery's.
+
+**H-bridge.** A motor driver chip with four switches, which lets two pins run a motor either way or brake it.
+
+**UART.** A simple serial line. The feeder's console is one, and it is how the bench reads, writes and recovers the feeder.
+
 **Bank 0 and bank 1.** The two places in flash where a firmware image can live. A new image goes into the other bank and is given a trial. If it fails, the feeder starts the old one again. See [bank policy](firmware/bank-policy.md).
 
 **Trial and confirmation.** A freshly installed image runs on trial. It becomes the image the feeder boots by confirming that it started cleanly. One that crashes or hangs during its trial is abandoned.

@@ -177,14 +177,8 @@ pub struct JobOptions {
 #[derive(Debug, Parser)]
 #[command(name = "wellfed-bench", no_binary_name = true)]
 struct JobLine {
-    /// The client's checkout. It named this server's socket, so it is this
-    /// server's root and is not read again.
-    #[expect(
-        dead_code,
-        reason = "taken so a client's `--root` parses; the server has its own"
-    )]
-    #[arg(long, global = true)]
-    root: Option<PathBuf>,
+    // No `--root`: the client sends its checkout beside the words, and the
+    // server refuses one that is not its own.
     #[command(flatten)]
     options: JobOptions,
     #[command(subcommand)]

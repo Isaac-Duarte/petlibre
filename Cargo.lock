@@ -4248,6 +4248,7 @@ dependencies = [
  "clap",
  "rustix",
  "tempfile",
+ "thiserror",
  "tokio",
  "wellfed-bench-server",
  "wellfed-dashboard",

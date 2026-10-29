@@ -16,7 +16,7 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use crate::page;
+use crate::{orphans, page};
 use clap::{Args, Parser, Subcommand};
 use tokio::sync::mpsc;
 use wellfed_bench_server::{
@@ -164,7 +164,7 @@ fn run(cli: Cli, argv: &[String]) -> anyhow::Result<u8> {
                 check_name(name)?;
             }
             seconds_arg("--off-seconds", cli.options.off_seconds)?;
-            runtime.block_on(submit(&Client::new(&root), argv, &command))
+            runtime.block_on(submit(&Client::new(&root), &root, argv, &command))
         }
     }
 }
@@ -187,10 +187,30 @@ fn interrupts() -> anyhow::Result<mpsc::UnboundedReceiver<Interrupt>> {
     Ok(received)
 }
 
+/// The words a job posts: the command line without `--root`, which goes
+/// beside them, canonical, for the server to check against its own.
+fn job_words(argv: &[String]) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut rest = argv.iter();
+    while let Some(word) = rest.next() {
+        if word == "--root" {
+            rest.next();
+        } else if !word.starts_with("--root=") {
+            words.push(word.clone());
+        }
+    }
+    words
+}
+
 /// Post the job's words and follow it to its end.
-async fn submit(client: &Client, argv: &[String], command: &JobCommand) -> anyhow::Result<u8> {
+async fn submit(
+    client: &Client,
+    root: &Path,
+    argv: &[String],
+    command: &JobCommand,
+) -> anyhow::Result<u8> {
     let mut interrupts = interrupts()?;
-    let id = client.submit(argv).await?;
+    let id = client.submit(root, &job_words(argv)).await?;
     wellfed_rig::say!(
         "Job {id}: {} (Ctrl+C cancels it; a second Ctrl+C leaves it running)",
         command.describe()
@@ -335,6 +355,9 @@ fn status(root: &Path, break_lease: bool, runtime: &tokio::runtime::Runtime) -> 
 /// opens, so it shows even while a holder keeps the board's port.
 fn report_lease(root: &Path, break_lease: bool) -> anyhow::Result<()> {
     if break_lease {
+        // A killed server's flash client may still be writing: a new server
+        // on a freed lease could open the UART under it.
+        orphans::no_flash(root)?;
         let holder = lease::break_stale(root)?;
         wellfed_rig::say!("Lease: broke the stale lease of {holder}");
     }
@@ -345,10 +368,19 @@ fn report_lease(root: &Path, break_lease: bool) -> anyhow::Result<()> {
         Ok(Some((holder, Liveness::Unknown))) => {
             wellfed_rig::say!("Lease: held by {holder}, on another host");
         }
-        Ok(Some((holder, Liveness::Gone))) => wellfed_rig::say!(
-            "Lease: left by {holder}, which is gone (a killed run?); check the relays below, \
-             then `status --break-lease` frees the bench"
-        ),
+        Ok(Some((holder, Liveness::Gone))) => {
+            wellfed_rig::say!(
+                "Lease: left by {holder}, which is gone (a killed run?); check the relays below, \
+                 then `status --break-lease` frees the bench"
+            );
+            for orphan in orphans::running(root) {
+                wellfed_rig::say!(
+                    "  still running here: pid {} `{}`",
+                    orphan.pid,
+                    orphan.command
+                );
+            }
+        }
         // An unreadable lease is reported; the relays are still worth showing.
         Err(error) => wellfed_rig::say!("Lease: {error}"),
     }

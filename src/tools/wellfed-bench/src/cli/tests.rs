@@ -242,6 +242,82 @@ fn a_held_bench_refuses_a_server_before_it_opens_anything() {
 }
 
 #[test]
+fn a_flash_client_a_killed_server_left_keeps_the_lease_from_breaking() {
+    let root = tempfile::tempdir().unwrap();
+    let mut holder = hold(root.path());
+    holder.0.kill().unwrap();
+    holder.0.wait().unwrap();
+    // Stands in for the killed server's wellfed-flash: a process of that
+    // name running from this checkout.
+    let tools = tempfile::tempdir().unwrap();
+    let flash = tools.path().join("wellfed-flash");
+    std::os::unix::fs::symlink(which("sleep"), &flash).unwrap();
+    let left = Other(
+        std::process::Command::new(&flash)
+            .arg("60")
+            .current_dir(root.path())
+            .spawn()
+            .unwrap(),
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while orphans::running(root.path()).is_empty() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the stand-in never showed"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+
+    let found = orphans::running(root.path());
+    assert_eq!(
+        (found[0].pid, found[0].name.as_str()),
+        (left.0.id(), "wellfed-flash")
+    );
+    let error = run_in(root.path(), &["status", "--break-lease"]).unwrap_err();
+    let refused: orphans::OrphanError = error.downcast().unwrap();
+    assert!(
+        matches!(&refused, orphans::OrphanError::FlashAlive { pid, .. } if *pid == left.0.id()),
+        "{refused:?}"
+    );
+    assert!(lease::inspect(root.path()).unwrap().is_some());
+    // A flash client of another checkout is not this bench's.
+    assert!(orphans::running(tools.path()).is_empty());
+
+    drop(left);
+    assert!(run_in(root.path(), &["status", "--break-lease"]).is_err());
+    assert!(lease::inspect(root.path()).unwrap().is_none());
+}
+
+/// `name` on the PATH.
+fn which(name: &str) -> PathBuf {
+    std::env::split_paths(&std::env::var_os("PATH").unwrap())
+        .map(|dir| dir.join(name))
+        .find(|path| path.is_file())
+        .unwrap()
+}
+
+#[test]
+fn a_job_posts_its_words_without_the_root() {
+    let words = |argv: &[&str]| {
+        let argv: Vec<String> = argv.iter().map(|word| (*word).to_string()).collect();
+        job_words(&argv)
+    };
+
+    assert_eq!(
+        words(&[
+            "--root",
+            "/r",
+            "dump",
+            "d1",
+            "--root=/r",
+            "--off-seconds",
+            "1"
+        ]),
+        ["dump", "d1", "--off-seconds", "1"]
+    );
+}
+
+#[test]
 fn a_killed_holder_is_reported_until_status_breaks_it() {
     let root = tempfile::tempdir().unwrap();
     let mut holder = hold(root.path());

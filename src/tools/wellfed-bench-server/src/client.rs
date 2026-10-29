@@ -87,10 +87,11 @@ impl Client {
         answer(response, StatusCode::OK).await
     }
 
-    /// Post a command line, such as `["dump", "unit-01"]`, as a job; the
-    /// server parses it.
-    pub async fn submit(&self, argv: &[String]) -> Result<JobId, ClientError> {
+    /// Post a command line, such as `["dump", "unit-01"]` (no `--root`), as
+    /// a job of the checkout at `root`, canonical; the server parses it.
+    pub async fn submit(&self, root: &Path, argv: &[String]) -> Result<JobId, ClientError> {
         let body = serde_json::to_vec(&JobRequest {
+            root: root.to_path_buf(),
             argv: argv.to_vec(),
         })?;
         let response = self.send(Method::POST, "/jobs", Some(body)).await?;

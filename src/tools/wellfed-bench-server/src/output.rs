@@ -66,6 +66,13 @@ pub(crate) fn install() -> io::Result<Arc<Output>> {
         return Ok(Arc::clone(output));
     }
 
+    let output = attach()?;
+    *installed = Some(Arc::clone(&output));
+    Ok(output)
+}
+
+/// Point descriptors 1 and 2 at a new pipe and start its pump.
+fn attach() -> io::Result<Arc<Output>> {
     // Duplicates are close-on-exec, so no child holds the terminal.
     let terminal = io::stdout().as_fd().try_clone_to_owned()?;
     let console = File::from(terminal.try_clone()?);
@@ -94,13 +101,13 @@ pub(crate) fn install() -> io::Result<Arc<Output>> {
     std::thread::Builder::new()
         .name("output pump".into())
         .spawn(move || {
-            let _ = catch_unwind(AssertUnwindSafe(|| pump(reader, &pumped)));
-            pumped.pumping.store(false, Ordering::SeqCst);
-            pumped.marked(u64::MAX);
-            restore(&pumped.terminal);
+            let mut reader = BufReader::new(reader);
+            let _ = catch_unwind(AssertUnwindSafe(|| pump(&mut reader, &pumped)));
+            pumped.pump_stopped();
+            // Only now, with nothing left writing to it, may the pipe
+            // close: a writer never sees EPIPE.
+            drop(reader);
         })?;
-
-    *installed = Some(Arc::clone(&output));
     Ok(output)
 }
 
@@ -190,6 +197,15 @@ impl Output {
         }
     }
 
+    /// The pump has stopped (a read error or a panic): nothing waits on it
+    /// any more, and the terminal goes back on 1 and 2 while the pipe is
+    /// still open.
+    fn pump_stopped(&self) {
+        self.pumping.store(false, Ordering::SeqCst);
+        self.marked(u64::MAX);
+        restore(&self.terminal);
+    }
+
     fn marked(&self, mark: u64) {
         let mut seen = lock(&self.seen);
         *seen = (*seen).max(mark);
@@ -206,8 +222,7 @@ impl Output {
 
 /// Read the pipe until every writer is gone, which while descriptors 1 and
 /// 2 point at it is never.
-fn pump(reader: PipeReader, output: &Output) {
-    let mut reader = BufReader::new(reader);
+fn pump(reader: &mut BufReader<PipeReader>, output: &Output) {
     let mut bytes = Vec::new();
     loop {
         bytes.clear();
@@ -248,4 +263,93 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Run `body` with a file standing as the terminal on descriptors 1 and
+    /// 2, then put the test's own back; what reached the file.
+    fn on_a_terminal(body: impl FnOnce()) -> String {
+        // Descriptors 1 and 2 are the process's: no server test may run
+        // meanwhile.
+        let _one = crate::tests::ONE_SERVER.blocking_lock();
+        let terminal = tempfile::NamedTempFile::new().unwrap();
+        let saved = (
+            io::stdout().as_fd().try_clone_to_owned().unwrap(),
+            io::stderr().as_fd().try_clone_to_owned().unwrap(),
+        );
+        rustix::stdio::dup2_stdout(terminal.as_file()).unwrap();
+        rustix::stdio::dup2_stderr(terminal.as_file()).unwrap();
+
+        body();
+
+        rustix::stdio::dup2_stdout(&saved.0).unwrap();
+        rustix::stdio::dup2_stderr(&saved.1).unwrap();
+        std::fs::read_to_string(terminal.path()).unwrap()
+    }
+
+    // Written straight to the descriptors: the test harness captures the
+    // print macros.
+    fn print(line: &str) {
+        writeln!(io::stdout(), "{line}").unwrap();
+    }
+
+    #[test]
+    fn closing_writes_out_every_line_then_prints_straight_to_the_terminal() {
+        let written = on_a_terminal(|| {
+            let output = attach().unwrap();
+            print("a job's last line");
+            output.say("the server's last line".into());
+
+            output.close();
+            print("Stopped: after the close");
+        });
+
+        let lines: Vec<&str> = written.lines().collect();
+        for line in [
+            "a job's last line",
+            "the server's last line",
+            "Stopped: after the close",
+        ] {
+            assert!(lines.contains(&line), "{line:?} missing from {lines:?}");
+        }
+        assert_eq!(lines.last(), Some(&"Stopped: after the close"));
+    }
+
+    #[test]
+    fn a_stopped_pump_puts_the_terminal_back_and_waits_on_nothing() {
+        let written = on_a_terminal(|| {
+            let output = attach().unwrap();
+
+            output.pump_stopped();
+            print("straight to the terminal");
+            let started = Instant::now();
+            output.sync();
+            assert!(started.elapsed() < SYNC_WAIT);
+        });
+
+        assert!(written.contains("straight to the terminal"), "{written}");
+    }
+
+    #[test]
+    fn a_mark_after_a_partial_line_still_counts() {
+        let written = on_a_terminal(|| {
+            let output = attach().unwrap();
+            let started = Instant::now();
+
+            write!(io::stdout(), "half a line").unwrap();
+            io::stdout().flush().unwrap();
+            output.sync();
+            assert!(started.elapsed() < SYNC_WAIT, "the mark was missed");
+            output.close();
+        });
+
+        assert!(
+            written.lines().any(|line| line == "half a line"),
+            "{written}"
+        );
+        assert!(!written.contains(MARK), "{written}");
+    }
 }

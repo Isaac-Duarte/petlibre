@@ -47,6 +47,7 @@ impl IntoResponse for Refusal {
             Self::NoSuchJob { .. } => StatusCode::NOT_FOUND,
             Self::Unparsed { .. }
             | Self::NotAJob { .. }
+            | Self::OtherCheckout { .. }
             | Self::BadName { .. }
             | Self::BadLength { .. } => StatusCode::BAD_REQUEST,
         };
@@ -59,7 +60,7 @@ async fn state(State(shared): State<Arc<Shared>>) -> Json<BenchState> {
 }
 
 async fn submit(State(shared): State<Arc<Shared>>, Json(request): Json<JobRequest>) -> Response {
-    match shared.start(&request.argv) {
+    match shared.start(&request) {
         Ok(id) => (StatusCode::CREATED, Json(Accepted { id })).into_response(),
         Err(refusal) => refusal.into_response(),
     }

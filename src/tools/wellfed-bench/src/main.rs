@@ -10,6 +10,7 @@
 use std::process::ExitCode;
 
 mod cli;
+mod orphans;
 mod page;
 
 fn main() -> ExitCode {

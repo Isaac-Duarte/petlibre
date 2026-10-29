@@ -20,7 +20,7 @@ use super::*;
 
 /// The output pipe is process-wide, so tests that run a server take turns
 /// when they share a process.
-static ONE_SERVER: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+pub(crate) static ONE_SERVER: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 /// A checkout with a bench config and a stand-in flash client:
 /// - `read observe` holds the port for `hold` seconds; a capture named
@@ -113,11 +113,16 @@ struct Running {
     stop: Option<oneshot::Sender<()>>,
     done: tokio::task::JoinHandle<Result<(), ServeError>>,
     client: Client,
+    /// The checkout the server runs for: its socket's `private/`'s parent.
+    root: PathBuf,
+    shared: Arc<crate::server::Shared>,
 }
 
 impl Running {
     fn start(server: Server) -> Self {
         let client = Client::at(server.socket().to_path_buf());
+        let root = server.socket().ancestors().nth(2).unwrap().to_path_buf();
+        let shared = server.shared();
         let (stop, stopped) = oneshot::channel();
         let done = tokio::spawn(server.run(async {
             let _ = stopped.await;
@@ -126,11 +131,13 @@ impl Running {
             stop: Some(stop),
             done,
             client,
+            root,
+            shared,
         }
     }
 
     async fn submit(&self, words: &[&str]) -> Result<JobId, ClientError> {
-        self.client.submit(&argv(words)).await
+        self.client.submit(&self.root, &argv(words)).await
     }
 
     async fn state(&self) -> BenchState {
@@ -286,15 +293,26 @@ async fn the_server_parses_every_job_and_refuses_what_clap_refuses() {
         refusal(server.submit(&["capture", "../c3"]).await),
         api::Refusal::BadName { .. }
     ));
+    let words = ["on".to_string(), "--off-seconds".into(), "1e9".into()];
     assert!(matches!(
-        refusal(
-            server
-                .client
-                .submit(&["on".into(), "--off-seconds".into(), "1e9".into()])
-                .await
-        ),
+        refusal(server.client.submit(&server.root, &words).await),
         api::Refusal::BadLength { .. }
     ));
+    // The client sends its checkout beside the words, never as a flag.
+    assert!(matches!(
+        refusal(server.submit(&["on", "--root", "/elsewhere"]).await),
+        api::Refusal::Unparsed { .. }
+    ));
+    // A checkout whose private/ links here reaches this server, and is
+    // refused rather than run against this checkout's sources.
+    let other = tempfile::tempdir().unwrap();
+    let refused = refusal(server.client.submit(other.path(), &argv(&["off"])).await);
+    assert!(
+        matches!(&refused, api::Refusal::OtherCheckout { server: ours, client }
+            if *ours == server.root.display().to_string()
+                && *client == other.path().display().to_string()),
+        "{refused:?}"
+    );
     // Nothing ran.
     assert!(server.state().await.job.is_none());
     assert!(checkout.board.log().is_empty());
@@ -448,6 +466,29 @@ async fn a_panicking_job_ends_and_the_next_one_runs() {
     let next = server.submit(&["on"]).await.unwrap();
     assert_eq!(follow(&server.client, next).await.0.code, 0);
     assert!(checkout.board.state()[0]);
+    server.quit().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_relay_poll_skips_while_a_job_runs() {
+    let _one = ONE_SERVER.lock().await;
+    let checkout = Checkout::new(2.0);
+    let server = Running::start(checkout.open());
+    let id = server.submit(&["capture", "c1"]).await.unwrap();
+    state_until(&server, "the capture", |state| !state.activity.is_empty()).await;
+
+    let shared = Arc::clone(&server.shared);
+    let during = tokio::task::spawn_blocking(move || shared.poll_relays())
+        .await
+        .unwrap();
+    assert!(!during, "polled the board under a job");
+
+    follow(&server.client, id).await;
+    let shared = Arc::clone(&server.shared);
+    let after = tokio::task::spawn_blocking(move || shared.poll_relays())
+        .await
+        .unwrap();
+    assert!(after);
     server.quit().await;
 }
 

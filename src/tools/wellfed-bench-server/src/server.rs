@@ -26,7 +26,7 @@ use wellfed_relay::Board;
 use wellfed_rig::Cancel;
 use wellfed_rig::tools::Children;
 
-use crate::api::{Refusal, SOCKET};
+use crate::api::{JobRequest, Refusal, SOCKET};
 use crate::board::SharedBoard;
 use crate::jobs::{self, Bed, JobError, Run, ToolPaths};
 use crate::output::{self, Output};
@@ -145,6 +145,12 @@ impl Server {
 
     pub fn socket(&self) -> &Path {
         &self.socket
+    }
+
+    /// What the socket's handlers share, for a test to reach past them.
+    #[cfg(test)]
+    pub(crate) fn shared(&self) -> Arc<Shared> {
+        Arc::clone(&self.shared)
     }
 
     /// A line on the server's console, which is no job's output.
@@ -310,10 +316,17 @@ impl Shared {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    /// Parse `argv` as a job and start it on a thread of its own, unless a
-    /// job is running or the server is stopping.
-    pub(crate) fn start(self: &Arc<Self>, argv: &[String]) -> Result<JobId, Refusal> {
-        let spec = jobs::parse(argv)?;
+    /// Parse the request's words as a job and start it on a thread of its
+    /// own, unless it comes from another checkout, a job is running or the
+    /// server is stopping.
+    pub(crate) fn start(self: &Arc<Self>, request: &JobRequest) -> Result<JobId, Refusal> {
+        if request.root != self.bed.root {
+            return Err(Refusal::OtherCheckout {
+                server: self.bed.root.display().to_string(),
+                client: request.root.display().to_string(),
+            });
+        }
+        let spec = jobs::parse(&request.argv)?;
 
         let mut jobs = self.jobs();
         if jobs.stopping {
@@ -520,17 +533,24 @@ impl Shared {
         thread
     }
 
-    /// Read the relays unless a job runs; the jobs lock is held throughout,
-    /// so none starts meanwhile.
-    fn poll_relays(&self) {
-        let jobs = self.jobs();
-        if jobs.running.is_some() || jobs.stopping {
-            return;
+    /// Read the relays unless a job runs; whether it did.
+    ///
+    /// The jobs lock is held only for the check: four AT round trips to a
+    /// slow or unplugged board must not stall new jobs, streams and
+    /// cancels. A job that starts during the read waits at its first
+    /// switch, since the board's lock is held for the whole read, and its
+    /// switches then go out after it, never between two of its queries.
+    pub(crate) fn poll_relays(&self) -> bool {
+        {
+            let jobs = self.jobs();
+            if jobs.running.is_some() || jobs.stopping {
+                return false;
+            }
         }
         if let Err(error) = self.bed.board.query() {
             self.output.say(format!("Relay board: {error}"));
         }
-        drop(jobs);
+        true
     }
 
     /// The output of job `id`, running or among the last few.

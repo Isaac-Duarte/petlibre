@@ -16,6 +16,7 @@ wellfed-formats.workspace = true
 wellfed-relay = { path = "../wellfed-relay" }
 wellfed-rig = { path = "../wellfed-rig" }
 rustix = { version = "1", features = ["fs", "process"] }
+thiserror.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal", "sync"] }
 
 [dev-dependencies]

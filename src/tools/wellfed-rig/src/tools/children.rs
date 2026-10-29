@@ -6,9 +6,9 @@
 //! server, never a `wellfed-flash` writing flash, and the server forwards a
 //! cancel itself:
 //! - **`wellfed-flash`** gets SIGINT, to its pid alone, and then stops its
-//!   session terminally and records it. A cancel never sends it SIGTERM,
-//!   SIGHUP or SIGKILL: each would end it without that record, possibly
-//!   mid-write.
+//!   session terminally and records it. A flash session that writes is
+//!   only ever sent SIGINT. A receive-only capture is still killed after it
+//!   by the sequence that waits on it, as it always was.
 //! - **Every other child** gets SIGTERM to its whole group, so a build's
 //!   `cargo` and `make` stop with it rather than run on under the next job.
 

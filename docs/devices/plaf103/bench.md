@@ -132,7 +132,7 @@ Every command from `on` down is a job: it needs the server running, and refuses 
 - the control socket `private/bench.sock`, mode 0600 whatever the umask, which only the checkout's owner can reach;
 - its console: every job's output, as it comes, and one line as each job starts and ends.
 
-It runs one job at a time. A job is the command line a client posts (`POST /jobs` with its words), parsed by the server with the same checks as the command line, so a bad flag or name is refused before anything runs. It runs the same sequence the command always ran, in the server's process. A second job while one runs is refused with the running job named:
+It runs one job at a time. A job is the command line a client posts (`POST /jobs` with its words), parsed by the server with the same checks as the command line, so a bad flag or name is refused before anything runs. The client sends its checkout beside the words, and the server refuses another checkout's: a worktree whose `private/` links to this one's reaches this server, and must not run this checkout's sources under its session names. A job runs the same sequence the command always ran, in the server's process. A second job while one runs is refused with the running job named:
 
 ```
 Stopped: The bench is busy with job 3 (dump fw-01); wait for it, or cancel it first
@@ -214,9 +214,11 @@ Stopped: The bench lease of pid 81234 (…) outlived its process: that run was k
 With no server, only `status` runs, and that is the way back:
 
 1. Run `target/release/wellfed-bench status`. It shows the lease first (free, held, or left by a process that is gone), finds no server, and reads the relays itself, without taking the lease.
-2. Look for children the killed server's job started, which may still be running on their own: `pgrep -a wellfed-`. They no longer count as the bench's, so stop them by hand.
-3. Run `target/release/wellfed-bench status --break-lease`. It removes the lease only when its holder is gone, then shows the relays.
+2. Stop what the killed server's job left running. Under a lease whose holder is gone, `status` lists every `wellfed-flash`, `wellfed-stock`, `wellfed-build` and `sigrok-cli` running from this checkout, with its pid and command line. They no longer count as the bench's. Let a `wellfed-flash` finish, or stop it with SIGINT (`kill -INT PID`) so it records its stop. Stop the others by hand.
+3. Run `target/release/wellfed-bench status --break-lease`. It refuses while a `wellfed-flash` still runs from this checkout, naming it, since it may be writing. Otherwise it removes the lease, only when its holder is gone, then shows the relays.
 4. Start the server again.
+
+The tools are found by process name and working directory, since every job's child runs from the checkout. So another checkout's tools are never counted, and the killed server needed to record nothing.
 
 `--break-lease` never breaks a live holder's lease, one written on another host, or a file that is not a lease. Remove the last two by hand once the bench is idle. Against a file that is not a lease, `--break-lease` stops before the relays; plain `status` still shows them.
 
@@ -551,6 +553,8 @@ Each job records its steps, the flash client's progress lines (bytes read, secto
 | --- | --- |
 | `jobs/ID-NAME.log` | Each job's output, complete once it ends |
 | `history.jsonl` | One line per job, including the reviewed next command after a prepare |
+
+Lines in `history.jsonl` from before the bench server may not parse, and the page skips them. To clear them, delete the file; the next job starts a new one.
 
 ### Serve it
 

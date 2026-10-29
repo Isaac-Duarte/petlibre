@@ -52,7 +52,7 @@ Lettering is never rendered. Layouts add the lockup from `assets/brand/` afterwa
 
 ## Line art
 
-`lineart.py` traces the `card` view into `renders/card-lines.json` for the website's hero: the visible silhouettes, creases and open edges as 2D paths grouped by part (body, bowl, window, ring icons, food), and the visible hotspots in the same units. It imports `render.py` for the camera, unbranding and hotspot projection, so the lines and the `card` render agree. Visibility is a ray cast per sample along each edge; a run of 10 or fewer hidden samples between visible ones is treated as noise and drawn. The output is deterministic, so a retrace without a model change leaves no diff.
+`lineart.py` traces the `card` view into `renders/card-lines.json` for the website's hero: the visible silhouettes, creases and open edges as 2D paths grouped by part (body, bowl, window, ring icons, food), and the visible hotspots in the same units. It imports `render.py` for the camera, unbranding and hotspot projection, so the lines and the `card` render agree. It traces with the model's bevel modifiers off, so a crease is the designed sharp edge rather than a strip of shallow bevel facets that would draw as dashes. Edges are chained into lines that run straight on, and visibility is a ray cast per sample along each whole line; a hidden run of 20 or fewer samples between visible ones is treated as noise and drawn. The output is deterministic, so a retrace without a model change leaves no diff.
 
 ## Hotspots
 

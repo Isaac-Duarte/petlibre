@@ -34,14 +34,30 @@ VIEW = "card"
 # Drawing units: the camera frame is SIZE across, origin top left.
 SIZE = 1000
 CREASE = math.radians(32)
+# Past this, two faces fold back on each other (a thin flange or lip). Seen
+# from any side it reads as an edge of the part, so it draws as an outline
+# whichever way its faces turn; otherwise it flickers between outline and
+# crease from facet to facet.
+FOLD = math.radians(100)
+# A face turned this little away from the camera still counts as facing it
+# for creases. The band's lower cone is nearly edge-on, so its facets turn
+# just toward and just away from the camera in turn; judged strictly, the
+# creases along it would draw only on every other facet.
+GRAZE = 0.2
+# The sharpest turn a chain takes from one edge to the next.
+TURN = math.radians(40)
 STEP_PX = 1.2
 # A sample is visible when the first surface its ray meets is the sample's
 # own: within this distance of it. That holds at grazing silhouettes and
 # doesn't depend on which way the model's normals point.
 REACH = 0.0025
-# Hidden stretches this many samples long or shorter, between visible ones,
-# are ray-cast noise along a crease, not occlusion.
-BRIDGE = 10
+# Hidden stretches this many samples long or shorter, between visible ones
+# along one line, are ray-cast noise in a narrow groove or a seam, not
+# occlusion. Bridging runs along whole lines, not single edges, so a gap of a
+# few facets closes too.
+BRIDGE = 20
+# Visible scraps shorter than this, left between real occlusions, are noise.
+SPECK_PX = 4.0
 SIMPLIFY_PX = 0.35
 SHORTEST_PX = 1.5
 PAD_PX = 12
@@ -100,8 +116,66 @@ def camera():
     return cam
 
 
+def kind_of(edge, eye, obj, role):
+    """Whether an edge draws, and as what: outline, crease, edge or None."""
+    a, b = edge.verts[0].co, edge.verts[1].co
+    view = (eye - (a + b) / 2).normalized()
+    faces = edge.link_faces
+    if len(faces) == 1:
+        # Flat prints (the ring icons are curves) draw every boundary.
+        return "edge" if obj.type != "MESH" or faces[0].normal.dot(view) > -0.05 else None
+    if len(faces) != 2:
+        return None
+    n1, n2 = faces[0].normal, faces[1].normal
+    f1, f2 = n1.dot(view), n2.dot(view)
+    angle = n1.angle(n2, 0.0)
+    if angle > FOLD and (f1 > 0 or f2 > 0):
+        return "outline"
+    # Kibble reads as outlines; its facets would only add noise.
+    if role != "food" and angle > CREASE and min(f1, f2) > -GRAZE and max(f1, f2) > 0:
+        return "crease"
+    if (f1 > 0) != (f2 > 0):
+        return "outline"
+    return None
+
+
+def walk(pairs, co):
+    """Join edges (vertex index pairs) into vertex chains that run straight on.
+
+    At each vertex a chain continues to the unused edge that turns least, and
+    stops where every edge turns more than TURN, so a chain follows one line
+    of the part (a rim, a seam) instead of zig-zagging across a strip of
+    facets.
+    """
+    links = {}
+    for i, j in pairs:
+        links.setdefault(i, []).append(j)
+        links.setdefault(j, []).append(i)
+    used = set()
+    chains = []
+    for i, j in pairs:
+        if (i, j) in used:
+            continue
+        used.update({(i, j), (j, i)})
+        chain = [i, j]
+        # Grow from the tail, then turn the chain round and grow the other end.
+        for _ in range(2):
+            while True:
+                prev, tip = chain[-2], chain[-1]
+                heading = co[tip] - co[prev]
+                turns = [(heading.angle(co[k] - co[tip], math.pi), k) for k in links[tip] if (tip, k) not in used and (co[k] - co[tip]).length > 0]
+                if not turns or min(turns)[0] > TURN:
+                    break
+                nxt = min(turns)[1]
+                used.update({(tip, nxt), (nxt, tip)})
+                chain.append(nxt)
+            chain.reverse()
+        chains.append(chain)
+    return chains
+
+
 def candidates(eye):
-    """World-space edges that could draw: silhouettes, creases and boundaries."""
+    """World-space lines that could draw, as point chains by part and kind."""
     depsgraph = bpy.context.evaluated_depsgraph_get()
     found = []
     for obj in list(bpy.data.objects):
@@ -114,22 +188,18 @@ def candidates(eye):
         bm.transform(obj.matrix_world)
         bm.normal_update()
 
+        # Chain each kind's edges along the mesh, so visibility is judged
+        # along a whole line rather than edge by edge.
+        kinds = {}
         for edge in bm.edges:
-            a, b = edge.verts[0].co.copy(), edge.verts[1].co.copy()
-            view = (eye - (a + b) / 2).normalized()
-            faces = edge.link_faces
-            if len(faces) == 1:
-                # Flat prints (the ring icons are curves) draw every boundary.
-                if obj.type != "MESH" or faces[0].normal.dot(view) > -0.05:
-                    found.append((role, "edge", a, b))
-            elif len(faces) == 2:
-                n1, n2 = faces[0].normal, faces[1].normal
-                f1, f2 = n1.dot(view), n2.dot(view)
-                if (f1 > 0) != (f2 > 0):
-                    found.append((role, "outline", a, b))
-                # Kibble reads as outlines; its facets would only add noise.
-                elif f1 > 0 and role != "food" and n1.angle(n2, 0.0) > CREASE:
-                    found.append((role, "crease", a, b))
+            kind = kind_of(edge, eye, obj, role)
+            if kind is not None:
+                kinds.setdefault(kind, []).append((edge.verts[0].index, edge.verts[1].index))
+        bm.verts.ensure_lookup_table()
+        co = [v.co.copy() for v in bm.verts]
+        for kind, pairs in kinds.items():
+            for chain in walk(pairs, co):
+                found.append((role, kind, [co[i] for i in chain]))
 
         bm.free()
         evaluated.to_mesh_clear()
@@ -167,9 +237,11 @@ def visible_runs(edges, cam):
         return not hit or (location - p).length < REACH
 
     runs = {}
-    for role, kind, a, b in edges:
-        steps = max(1, math.ceil(math.dist(project(a), project(b)) / STEP_PX))
-        points = [a.lerp(b, i / steps) for i in range(steps + 1)]
+    for role, kind, chain in edges:
+        points = [chain[0]]
+        for a, b in zip(chain, chain[1:]):
+            steps = max(1, math.ceil(math.dist(project(a), project(b)) / STEP_PX))
+            points += [a.lerp(b, i / steps) for i in range(1, steps + 1)]
         run = []
         for p, seen in zip(points, bridged([visible(p) for p in points])):
             if seen:
@@ -237,6 +309,15 @@ def main():
     started = time.monotonic()
     render.unbrand()
     render.truthful()
+    # Trace the designed edges, not their rounding. A bevel modifier turns a
+    # sharp edge into a strip of shallow facets, each under CREASE, so the
+    # crease would vanish or show only where a facet happens to cross the
+    # threshold. Off for the tracing and the ray casts alike, so the two agree;
+    # the model file keeps them.
+    for obj in bpy.data.objects:
+        for modifier in obj.modifiers:
+            if modifier.type == "BEVEL":
+                modifier.show_viewport = modifier.show_render = False
     cam = camera()
 
     # Anchors first: the hotspot projection needs the window glass, which the
@@ -253,7 +334,8 @@ def main():
         paths = []
         for line in chain(runs.get((role, kind), [])):
             line = simplify(line)
-            if sum(math.dist(line[i], line[i + 1]) for i in range(len(line) - 1)) < SHORTEST_PX:
+            shortest = SHORTEST_PX if role in ("icon", "food") else SPECK_PX
+            if sum(math.dist(line[i], line[i + 1]) for i in range(len(line) - 1)) < shortest:
                 continue
             xs += [p[0] for p in line]
             ys += [p[1] for p in line]
@@ -269,7 +351,7 @@ def main():
     body = ",\n".join(f"    {json.dumps(g)}" for g in groups)
     OUT.write_text(f'{{\n  "view": "{VIEW}",\n  "viewBox": {json.dumps(box)},\n  "anchors": {json.dumps(anchors)},\n  "groups": [\n{body}\n  ]\n}}\n')
     count = sum(len(g["paths"]) for g in groups)
-    print(f"traced {OUT.name}: {count} paths from {len(edges)} edges in {time.monotonic() - started:.1f} s", flush=True)
+    print(f"traced {OUT.name}: {count} paths from {len(edges)} lines in {time.monotonic() - started:.1f} s", flush=True)
 
 
 main()

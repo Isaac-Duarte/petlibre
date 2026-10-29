@@ -119,6 +119,38 @@ fn records_keep_their_order_and_numbers_across_reopens() {
     assert_eq!(sixth.at, None);
 }
 
+/// A batch from the middle of a unit starts at its cursor's slot and stops
+/// once full: a few reads, not a scan of the whole unit.
+#[test]
+fn a_batch_from_mid_unit_reads_only_its_slots() {
+    const PER_UNIT: usize = 128;
+    let mut f = FakeJournalFlash::with_units(PER_UNIT * RECORD_BYTES, UNITS);
+    let mut log = EventLog::closed();
+    // SAFETY: the fake flash outlives the log.
+    unsafe { log.open(f.io(), UNITS, EPOCH) };
+    for n in 0..100 {
+        log.append(None, &body(n)).unwrap();
+    }
+
+    let before = f.reads;
+    let mut batch = [EMPTY; 16];
+    assert_eq!(log.read_batch(Some(60), &mut batch), Batch::Records(16));
+    let seqs: Vec<u64> = batch.iter().map(|r| r.seq).collect();
+    assert_eq!(seqs, (61..=76).collect::<Vec<_>>());
+    assert_eq!(f.reads - before, 16, "one read a record");
+
+    // One record after a cursor reads one slot, at the end of the unit
+    // too.
+    let before = f.reads;
+    assert!(matches!(log.read_after(Some(98)), Read::Record(r) if r.seq == 99));
+    assert_eq!(f.reads - before, 1);
+
+    // The last record ends a batch short of full without reading on.
+    let before = f.reads;
+    assert_eq!(log.read_batch(Some(90), &mut batch), Batch::Records(10));
+    assert_eq!(f.reads - before, 10);
+}
+
 #[test]
 fn a_full_ring_drops_its_oldest_unit_and_reports_the_gap() {
     let mut f = FakeJournalFlash::with_units(UNIT, UNITS);

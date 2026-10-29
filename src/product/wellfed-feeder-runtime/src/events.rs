@@ -13,12 +13,19 @@
 //!   [`read_result`]; the writer takes the request from [`read_request`]
 //!   and answers with [`finish_read`], and the loop collects it with
 //!   [`read_result`] again. One read is outstanding at a time. An answer is
-//!   a batch of up to [`READ_BATCH`] records and stays until the next
-//!   request, so a subscriber catching up walks through all of it in one
-//!   pass, into one frame of events, and several subscribers within it
-//!   share it. A subscriber at the newest record is told so without a read,
-//!   which leaves the slot to those still catching up.
-//!
+//!   a batch of up to [`READ_BATCH`] records, so a subscriber catching up
+//!   walks through all of it in one pass, into one frame of events, and
+//!   several subscribers within it share it. A subscriber at the newest
+//!   record is told so without a read, which leaves the slot to those still
+//!   catching up.
+//! - **Turns:** subscribers at cursors one batch cannot answer take turns.
+//!   A batch nobody has read yet stays for its asker (up to [`MISSES_MAX`]
+//!   asks it turns away), and the first subscriber it could not answer is
+//!   next in line: once the batch has been read, the next request is that
+//!   subscriber's. So two subscribers catching up from different units
+//!   each get a batch every other writer round trip, whatever order the
+//!   loop visits them in, rather than evicting each other's answer before
+//!   it is collected.
 //! - **Epoch:** the writer publishes the ring's epoch once it has opened
 //!   it ([`publish_open`]); the device API welcomes no session before then,
 //!   since a welcome names the epoch its event numbers count in.
@@ -56,8 +63,20 @@ enum ReadSlot {
         after: Option<u64>,
         batch: Batch,
         last: Option<u64>,
+        /// Whether a subscriber has taken anything from it.
+        read: bool,
+        /// Asks it could not answer while unread.
+        misses: u8,
     },
 }
+
+/// Asks an unread batch turns away before another may replace it: its
+/// asker has gone (a closed session) or stopped asking (one whose last
+/// frame is still going out). A waiting subscriber asks at most once a
+/// loop pass, so with every other slot waiting this is 17 passes or more,
+/// about a third of a second; a reader that comes back later just asks
+/// again.
+pub const MISSES_MAX: u8 = 50;
 
 struct Shared {
     queue: [Option<Queued>; QUEUE],
@@ -67,6 +86,9 @@ struct Shared {
     last: Option<u64>,
     epoch: Option<u32>,
     read: ReadSlot,
+    /// The first cursor turned away since the last request: the next one
+    /// asked for once the slot frees.
+    next: Option<Option<u64>>,
     /// The records of a `Ready` batch, at the front.
     records: [Record; READ_BATCH],
 }
@@ -79,6 +101,7 @@ static SHARED: TaskCell<Shared> = TaskCell::new(Shared {
     last: None,
     epoch: None,
     read: ReadSlot::Idle,
+    next: None,
     records: [EMPTY; READ_BATCH],
 });
 
@@ -176,24 +199,61 @@ pub fn read_result(after: Option<u64>) -> Option<Read> {
         if after.is_some() && after == shared.last {
             return Some(Read::End);
         }
-        match shared.read {
+        match &mut shared.read {
             ReadSlot::Ready {
                 after: answered,
                 batch,
                 last,
+                read,
+                misses,
             } => {
-                if let Some(read) =
-                    answer(answered, batch, last, &shared.records, shared.last, after)
-                {
-                    return Some(read);
+                if let Some(found) = answer(
+                    *answered,
+                    *batch,
+                    *last,
+                    &shared.records,
+                    shared.last,
+                    after,
+                ) {
+                    *read = true;
+                    return Some(found);
+                }
+                // An end the ring has since moved past answers nobody.
+                let stale = *batch == Batch::End && *last != shared.last;
+                if !*read && !stale && *misses < MISSES_MAX {
+                    *misses += 1;
+                    wait_turn(&mut shared.next, after);
+                    return None;
                 }
             }
-            ReadSlot::Requested(_) => return None,
+            ReadSlot::Requested(asked) => {
+                if *asked != after {
+                    wait_turn(&mut shared.next, after);
+                }
+                return None;
+            }
             ReadSlot::Idle => {}
         }
-        shared.read = ReadSlot::Requested(after);
+
+        // The slot is free: a subscriber turned away earlier goes first,
+        // and this one waits its turn.
+        let asked = match shared.next.take() {
+            Some(waiting) if waiting != after => {
+                shared.next = Some(after);
+                waiting
+            }
+            _ => after,
+        };
+        shared.read = ReadSlot::Requested(asked);
         None
     })
+}
+
+/// Queue `after` for the next read, unless a subscriber already waits.
+fn wait_turn(next: &mut Option<Option<u64>>, after: Option<u64>) {
+    if next.is_none() {
+        *next = Some(after);
+    }
 }
 
 /// What a `Ready` batch answers for `after`: the asked cursor's answer, or
@@ -246,6 +306,8 @@ pub fn finish_read(after: Option<u64>, batch: Batch, records: &[Record]) {
             after,
             batch,
             last: shared.last,
+            read: false,
+            misses: 0,
         };
     });
 }
@@ -261,5 +323,6 @@ pub fn reset() {
         shared.last = None;
         shared.epoch = None;
         shared.read = ReadSlot::Idle;
+        shared.next = None;
     });
 }

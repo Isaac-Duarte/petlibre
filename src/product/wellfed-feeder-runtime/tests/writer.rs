@@ -669,6 +669,94 @@ fn a_reader_catching_up_takes_a_batch_a_read() {
     assert_eq!(delay, Some(writer::POLL_MS));
 }
 
+/// One loop pass's reads for a subscriber at `after`: everything the slot
+/// answers it now; true once it is at the newest record.
+fn drain(after: &mut Option<u64>, got: &mut Vec<u64>) -> bool {
+    loop {
+        match events::read_result(*after) {
+            Some(Read::Record(record)) => {
+                got.push(record.seq);
+                *after = Some(record.seq);
+            }
+            Some(Read::Gap { to, .. }) => *after = Some(to),
+            Some(Read::End) => return true,
+            None => return false,
+        }
+    }
+}
+
+/// A writer with `total` records appended, ready for reads.
+fn with_records(total: u8) -> (MutexGuard<'static, ()>, Writer<Armed>, Provider) {
+    let (guard, mut writer, mut provider) = start();
+    for _ in 0..7 {
+        step(&mut writer, &mut provider); // open, net open, time open, keys, events, stats, its save
+    }
+    for n in 0..total {
+        assert!(events::record(None, [n; 16]));
+        step(&mut writer, &mut provider);
+    }
+    assert_eq!(events::last_seq(), Some(u64::from(total)));
+    (guard, writer, provider)
+}
+
+/// Two subscribers catching up from different units, whichever the loop
+/// visits first, take turns: each gets a batch every other writer round
+/// trip, and neither evicts the other's answer before it is read.
+#[test]
+fn two_readers_in_different_units_take_turns() {
+    for first in [0, 1] {
+        let (_guard, mut writer, mut provider) = with_records(200);
+        // One from the oldest record, one from the second unit.
+        let mut cursors = [None, Some(150)];
+        let mut got = [Vec::new(), Vec::new()];
+        let mut done = [false; 2];
+        let mut idle = [0; 2];
+        let order = [first, 1 - first];
+
+        let mut trips = 0;
+        while done != [true; 2] {
+            for reader in order {
+                let before = got[reader].len();
+                done[reader] = drain(&mut cursors[reader], &mut got[reader]);
+                idle[reader] = if done[reader] || got[reader].len() > before {
+                    0
+                } else {
+                    idle[reader] + 1
+                };
+                assert!(idle[reader] <= 2, "reader {reader} starves (first {first})");
+            }
+            step(&mut writer, &mut provider);
+            trips += 1;
+            assert!(trips < 40, "no progress (first {first})");
+        }
+
+        assert_eq!(got[0], (1..=200).collect::<Vec<_>>());
+        assert_eq!(got[1], (151..=200).collect::<Vec<_>>());
+    }
+}
+
+/// A batch its asker never collects (its session closed) holds the slot
+/// only for a bounded number of asks; then another reader's request
+/// replaces it.
+#[test]
+fn an_abandoned_batch_gives_way_after_its_bound() {
+    let (_guard, mut writer, mut provider) = with_records(200);
+    assert_eq!(events::read_result(None), None, "asked");
+    step(&mut writer, &mut provider);
+
+    // The asker has gone. Another reader waits its bound out.
+    for _ in 0..events::MISSES_MAX {
+        assert_eq!(events::read_result(Some(150)), None, "held for its asker");
+        step(&mut writer, &mut provider);
+    }
+    assert_eq!(events::read_result(Some(150)), None, "asked");
+    step(&mut writer, &mut provider);
+    assert!(matches!(
+        events::read_result(Some(150)),
+        Some(Read::Record(r)) if r.seq == 151
+    ));
+}
+
 /// Every store the writer keeps defers its write while a feed holds the
 /// outputs, and completes it after the release, in order, with nothing lost.
 #[test]

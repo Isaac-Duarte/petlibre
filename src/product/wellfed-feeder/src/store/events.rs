@@ -25,8 +25,10 @@
 //! - **Room:** when the newest unit is full the oldest is erased and
 //!   becomes the newest, so `units - 1` units always hold history. With 12
 //!   units of 4 KiB that is 1,408 records, 7 days at 200 a day.
-//! - **Reads** find the first record after a cursor. A cursor older than the
-//!   oldest record kept reads as a gap, so a client knows what it lost.
+//! - **Reads** find the first record after a cursor, starting at the slot
+//!   its number puts it at or after in its unit, and stop once they have
+//!   what they were asked for. A cursor older than the oldest record kept
+//!   reads as a gap, so a client knows what it lost.
 //!
 //! A torn erase leaves a unit with arbitrary bits raised; its surviving old
 //! records still check and keep their old numbers, and anything else fails
@@ -317,9 +319,9 @@ impl<I: SlotIo> EventLog<I> {
     }
 
     /// As [`Self::read_after`], but up to `out.len()` records at once: the
-    /// first after `after`, then those after it in its unit, in order, from
-    /// one pass over the unit. A reader catching up takes a batch rather
-    /// than scanning the unit again for each record.
+    /// first after `after`, then those after it in its unit, in order. A
+    /// reader catching up takes a batch rather than scanning the unit again
+    /// for each record.
     pub fn read_batch(&self, after: Option<u64>, out: &mut [Record]) -> Batch {
         let Some(oldest) = self.oldest_seq() else {
             return Batch::End;
@@ -345,24 +347,59 @@ impl<I: SlotIo> EventLog<I> {
             if !(first..=last).contains(&want) {
                 continue;
             }
-            let mut len = 0;
-            for slot in 0..self.table[index].free {
-                let Some(record) = self
-                    .read_slot(index, slot)
-                    .and_then(|b| decode(&b))
-                    .filter(|&(epoch, _)| epoch == self.epoch)
-                    .map(|(_, record)| record)
-                    .filter(|record| (want..=last).contains(&record.seq))
-                else {
-                    continue;
-                };
-                insert(&mut out[..], &mut len, record);
+            // A unit's records rise one number a slot from its first, and
+            // a torn record, another epoch's or a torn erase's survivor
+            // only pushes the rest further in: no record at or past `want`
+            // sits before slot `want - first`. The scan from 0 is kept for a
+            // unit where that does not hold.
+            let start = u32::try_from(want - first).unwrap_or(u32::MAX);
+            let mut len = self.scan_from(index, start, want, last, out);
+            if out.get(..len).and_then(|held| held.first()).map(|r| r.seq) != Some(want) {
+                len = self.scan_from(index, 0, want, last, out);
             }
             if len > 0 {
                 return Batch::Records(len);
             }
         }
         Batch::End
+    }
+
+    /// The smallest `out.len()` records of unit `index` numbered `want` to
+    /// `last`, scanning from `start`: how many it holds. The scan stops once
+    /// `out` holds an unbroken run from `want` that is full or reaches
+    /// `last`, since a later slot can then only repeat a number it holds,
+    /// and the first record of a number wins.
+    fn scan_from(
+        &self,
+        index: usize,
+        start: u32,
+        want: u64,
+        last: u64,
+        out: &mut [Record],
+    ) -> usize {
+        let mut len = 0;
+        for slot in start..self.table[index].free {
+            let Some(record) = self
+                .read_slot(index, slot)
+                .and_then(|b| decode(&b))
+                .filter(|&(epoch, _)| epoch == self.epoch)
+                .map(|(_, record)| record)
+                .filter(|record| (want..=last).contains(&record.seq))
+            else {
+                continue;
+            };
+            insert(&mut out[..], &mut len, record);
+            let held = out.get(..len).unwrap_or_default();
+            let (Some(oldest), Some(newest)) = (held.first(), held.last()) else {
+                continue;
+            };
+            let unbroken = oldest.seq == want
+                && u64::try_from(len).is_ok_and(|len| newest.seq - want + 1 == len);
+            if unbroken && (len == out.len() || newest.seq == last) {
+                break;
+            }
+        }
+        len
     }
 }
 

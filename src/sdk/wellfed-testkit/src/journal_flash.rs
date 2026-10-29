@@ -26,6 +26,8 @@ pub struct FakeJournalFlash {
     pub budget: i64,
 
     pub calls: u32,
+    /// Reads that returned bytes: what a scan costs.
+    pub reads: u32,
     /// Fail this 1-based call number; zero disables injection.
     pub fail_call: u32,
     pub mutations: u32,
@@ -59,6 +61,7 @@ impl FakeJournalFlash {
             bytes: vec![vec![u8::MAX; unit]; count],
             budget: -1,
             calls: 0,
+            reads: 0,
             fail_call: 0,
             mutations: 0,
             silent_program: false,
@@ -194,6 +197,7 @@ impl SlotIo for FlashIo {
         }
 
         bytes.copy_from_slice(&f.bytes[slot][offset..offset + bytes.len()]);
+        f.reads += 1;
         true
     }
 

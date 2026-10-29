@@ -223,7 +223,8 @@ fn an_install_over_stock_waits_for_a_kept_backup() {
             StatusCode::NOT_FOUND,
             ErrorCode::NotFound,
         );
-        assert_eq!(rig.banks.borrow().bank1()[1..], rig.stock[1..]);
+        // Stock's activation programmed only the marker's first word.
+        assert_eq!(rig.banks.borrow().bank1()[4..], rig.stock[4..]);
 
         rig.http.read_stock(rig.feeder).await.unwrap();
         rig.promote().await;

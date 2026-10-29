@@ -151,7 +151,8 @@ fn only_a_qa_build_is_audited() {
     // The firmware name is part of the source identity.
     let identity = crate::digest(
         &wellfed_formats::canonical::canonical(
-            &json!({"device": "plaf103", "profile": "firstboot", "inputs": inputs, "firmware": "optics"}),
+            &json!({"device": "plaf103", "profile": "firstboot", "inputs": inputs,
+                    "firmware": "optics", "provisioning": "bench"}),
         )
         .unwrap(),
     );

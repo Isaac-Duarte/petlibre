@@ -1,8 +1,9 @@
-//! The private credential and key files: the hotspot's Wi-Fi credentials
-//! and the bench update key `wellfed-build keygen` writes, which
-//! `wellfed-build` turns into headers the firmware embeds, and an owner's
-//! update key `wellfed update-key new` writes, which a feeder trusts only
-//! once the owner enrolls it.
+//! The private credential and key files: the hotspot's Wi-Fi credentials,
+//! the bench update key `wellfed-build keygen` writes and the release key's
+//! public half a consumer build embeds, which `wellfed-build` turns into
+//! headers and build settings, and an owner's update key
+//! `wellfed update-key new` writes, which a feeder trusts only once the
+//! owner enrolls it.
 
 use serde::{Deserialize, Serialize};
 
@@ -43,4 +44,45 @@ pub enum KeyScope {
     /// image embeds it, and a feeder that did not enroll it refuses what it
     /// signs.
     Owner,
+}
+
+/// The project release key's public half, `private/release-key.pub.json`,
+/// which a consumer build embeds as its built-in update key.
+///
+/// The release key itself is kept offline and never becomes a file in a
+/// checkout. Unknown fields are refused, so a file that also carries a
+/// `seed` (an [`OtaKeyFile`] copied by mistake) never feeds a build.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReleaseKeyFile {
+    /// [`RELEASE_KEY_VERSION`].
+    pub version: u32,
+    /// Ed25519 public key, 64 lowercase hex characters.
+    pub public_key: String,
+}
+
+/// The one [`ReleaseKeyFile`] version.
+pub const RELEASE_KEY_VERSION: u32 = 1;
+
+/// Where a checkout keeps the [`ReleaseKeyFile`], root-relative.
+pub const RELEASE_KEY_PATH: &str = "private/release-key.pub.json";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_release_key_file_holds_only_the_public_half() {
+        let public = "ab".repeat(32);
+        let file: ReleaseKeyFile =
+            serde_json::from_str(&format!(r#"{{"version": 1, "public_key": "{public}"}}"#))
+                .unwrap();
+        assert_eq!(file.public_key, public);
+
+        let with_seed = format!(
+            r#"{{"version": 1, "seed": "{}", "public_key": "{public}"}}"#,
+            "cd".repeat(32)
+        );
+        assert!(serde_json::from_str::<ReleaseKeyFile>(&with_seed).is_err());
+    }
 }

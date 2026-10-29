@@ -16,7 +16,7 @@ use wellfed_build::catalog::Catalog;
 use wellfed_build::identity::{SourceId, current_inputs, source_id};
 use wellfed_build::image::{Request, audit_build, build};
 use wellfed_build::review::freeze;
-use wellfed_build::{Device, Firmware, Profile, Repo, Variant};
+use wellfed_build::{Device, Firmware, Profile, Provisioning, Repo, Variant};
 use wellfed_formats::credentials::KeyScope;
 use wellfed_formats::review::ImageKind;
 use wellfed_signing::{self as signing, Frozen, Key, Motion};
@@ -169,6 +169,11 @@ struct Target {
     /// An image variant the firmware declares (`wellfed-build list`).
     #[arg(long)]
     variant: Option<String>,
+    /// Who the image is for: `bench` (the bench hotspot and update key) or
+    /// `consumer` (no build Wi-Fi; the release key in
+    /// `private/release-key.pub.json`).
+    #[arg(long, value_enum, default_value_t = Provisioning::Bench)]
+    provisioning: Provisioning,
 }
 
 /// What a command stops on: a refused argument, or the builder's, the
@@ -200,6 +205,7 @@ struct Resolved {
     device: Device,
     firmware: Firmware,
     variant: Option<Variant>,
+    provisioning: Provisioning,
 }
 
 impl Target {
@@ -215,6 +221,7 @@ impl Target {
             device,
             firmware,
             variant,
+            provisioning: self.provisioning,
         })
     }
 }
@@ -236,13 +243,20 @@ fn run(command: Command) -> Result<()> {
                     &target.device,
                     &target.firmware,
                     target.variant.as_ref(),
+                    target.provisioning,
                     which
                 )?
             );
         }
         Command::Inputs { profile, target } => {
             let target = target.resolve(&repo)?;
-            let inputs = current_inputs(&repo, &target.device, profile, &target.firmware)?;
+            let inputs = current_inputs(
+                &repo,
+                &target.device,
+                profile,
+                target.provisioning,
+                &target.firmware,
+            )?;
             println!("{}", serde_json::to_string_pretty(&inputs)?);
         }
         Command::Audit { build } => {
@@ -375,6 +389,7 @@ fn run(command: Command) -> Result<()> {
                 profile,
                 &target.firmware,
                 target.variant.as_ref(),
+                target.provisioning,
             )?;
 
             private_outputs();

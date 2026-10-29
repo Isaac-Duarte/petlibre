@@ -1,13 +1,16 @@
 //! Local firmware builds, without connecting to the feeder.
 //!
-//! A build combines three things:
+//! A build combines four things:
 //! - a **device** (`src/firmware/devices/<name>/device.json`, [`device`]): the board,
 //!   naming its platform and the board-level files that platform stages;
 //! - a **firmware** (`src/firmware/wellfed/<name>`, [`firmware`]): the KM4
 //!   application crate, whose `[package.metadata.wellfed]` table declares the
 //!   devices, policies and image variants it has;
 //! - a **profile** ([`Profile`]): which stages of the ladder from the
-//!   unchanged SDK example to the reviewed first-boot image run.
+//!   unchanged SDK example to the reviewed first-boot image run;
+//! - a **provisioning** ([`Provisioning`]): a bench image joins the bench
+//!   hotspot and trusts the bench update key, a consumer image has no build
+//!   network and trusts the project release key.
 //!
 //! The platform ([`platform`]) is code: its SDK and toolchain are pinned and
 //! verified on every run, each profile builds in its own private SDK worktree
@@ -61,6 +64,7 @@ pub use platform::amebad::sdk::{SdkAnchor, SdkError, StagedFile};
 pub use platform::amebad::toolchain::ToolchainError;
 pub use review::ReviewError;
 pub(crate) use wellfed_formats::canonical::sha256;
+pub use wellfed_formats::manifest::Provisioning;
 
 /// The build profiles, from the unchanged SDK example to the reviewed
 /// UART-only first-boot image. Each adds stages to the one before.

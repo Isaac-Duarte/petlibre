@@ -22,8 +22,10 @@
  * at boot) and joins afresh. Between attempts and inside one it checks the
  * wish too, so it neither scans nor associates while the radio should be
  * off. A restart wins over both.
- * The SSID and password come from a generated header built from a private
- * file; neither is ever logged here. Nothing registers fast connect or
+ * A bench image's SSID and password come from a generated header built from
+ * a private file; neither is ever logged here. A consumer image's header
+ * defines neither, so it joins only the network the owner stored, and with
+ * none it waits without scanning. Nothing registers fast connect or
  * calls rtw_efuse_boot_write.
  *
  * Non-blocking socket helpers for the Rust device API; its protocol is Rust
@@ -457,8 +459,8 @@ static unsigned int wellfed_ms(TickType_t since)
 }
 
 /* Join credentials, shared with Rust (`network::JoinCredentials`):
- * prefilled with the build's, replaced by stored ones unless the fallback
- * has taken over (wellfed-hal network.rs). */
+ * prefilled with the build's (empty without), replaced by stored ones unless
+ * the fallback has taken over (wellfed-feeder-runtime network.rs). */
 struct wellfed_join_credentials {
     const unsigned char *ssid;
     unsigned int ssid_len;
@@ -605,15 +607,34 @@ static int wellfed_dhcp_bound(void)
     return dhcp != NULL && dhcp->state == DHCP_STATE_BOUND;
 }
 
-/* One attempt with the credentials Rust selects, reporting the outcome. */
+/* wellfed_join's result when Rust selected no credentials. */
+#define WELLFED_JOIN_NOTHING (-1)
+
+/* One attempt with the credentials Rust selects, reporting the outcome: 1
+ * joined, 0 failed, WELLFED_JOIN_NOTHING with nothing to join. A consumer
+ * image has no build network (the generated header defines nothing), so
+ * until the owner stores one Rust selects empty credentials; the attempt
+ * then neither scans nor associates and still reports its outcome, which
+ * ends the join's turn. */
 static int wellfed_join(unsigned int attempt)
 {
+#ifdef WELLFED_WIFI_SSID
     wellfed_creds.ssid = (const unsigned char *)WELLFED_WIFI_SSID;
     wellfed_creds.ssid_len = sizeof(WELLFED_WIFI_SSID) - 1;
     wellfed_creds.psk = (const unsigned char *)WELLFED_WIFI_PASSWORD;
     wellfed_creds.psk_len = sizeof(WELLFED_WIFI_PASSWORD) - 1;
+#else
+    wellfed_creds.ssid = NULL;
+    wellfed_creds.ssid_len = 0;
+    wellfed_creds.psk = NULL;
+    wellfed_creds.psk_len = 0;
+#endif
     wellfed_creds.source = 0;
     wellfed_wifi_select(&wellfed_creds);
+    if (wellfed_creds.ssid_len == 0) {
+        wellfed_wifi_outcome(0);
+        return WELLFED_JOIN_NOTHING;
+    }
     /* A restart asked for while the turn waited: join no more; nor while
      * battery mode wants the radio off. */
     int joined = !wellfed_wifi_restarting() && wellfed_wifi_radio() && wellfed_join_once(attempt);
@@ -868,7 +889,13 @@ static void wellfed_wifi_task(void *unused)
             backoff = WELLFED_BACKOFF_MIN_MS;
         }
         attempt++;
-        if (wellfed_join(attempt)) {
+        int result = wellfed_join(attempt);
+        /* Nothing to join: look again at the longest interval, which still
+         * picks up credentials BLE setup stores within one. The radio stays
+         * on, since BLE needs it. */
+        if (result == WELLFED_JOIN_NOTHING) {
+            backoff = WELLFED_BACKOFF_MAX_MS;
+        } else if (result) {
             TickType_t joined = xTaskGetTickCount();
             int cause = wellfed_watch(attempt, &backoff);
             if (cause == WELLFED_CAUSE_RESTART) {

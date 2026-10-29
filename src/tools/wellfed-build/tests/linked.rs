@@ -14,7 +14,7 @@ use wellfed_build::identity::current_inputs;
 use wellfed_build::image::audit_build;
 use wellfed_build::platform::amebad::audit::{self, Binutils, elf, hex, hooks, mains, park, tool};
 use wellfed_build::platform::amebad::{Core, PROJECT, binutils};
-use wellfed_build::{Device, Error, Firmware, HookError, MainsError, Profile, Repo};
+use wellfed_build::{Device, Error, Firmware, HookError, MainsError, Profile, Provisioning, Repo};
 
 struct Build {
     repo: Repo,
@@ -26,13 +26,20 @@ struct Build {
 fn build() -> Build {
     let repo = Repo::here().unwrap();
     let device = Device::new(&repo, "plaf103").unwrap();
-    let dir = device.output(&repo, Profile::Firstboot);
+    let dir = device.output(&repo, Profile::Firstboot, Provisioning::Bench);
     let manifest: Value = serde_json::from_slice(
         &fs::read(dir.join("manifest.json")).expect("completed ignored first-boot build"),
     )
     .unwrap();
     let firmware = Firmware::new(&repo, manifest["firmware"].as_str().unwrap()).unwrap();
-    let inputs = current_inputs(&repo, &device, Profile::Firstboot, &firmware).unwrap();
+    let inputs = current_inputs(
+        &repo,
+        &device,
+        Profile::Firstboot,
+        Provisioning::Bench,
+        &firmware,
+    )
+    .unwrap();
     let current = serde_json::to_value(inputs).unwrap();
     assert_eq!(
         manifest["inputs"], current,

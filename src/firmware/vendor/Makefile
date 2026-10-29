@@ -6,10 +6,15 @@
 DEVICE ?=
 FIRMWARE ?= qa
 VARIANT ?=
+# Who the image is for: bench (the bench hotspot and update key) or consumer
+# (no build Wi-Fi; the release key in private/release-key.pub.json), whose
+# builds go to <profile>-consumer beside the bench's.
+PROVISION ?= bench
 
 BUILD = ../../../target/release/wellfed-build
 DEVICE_ARG = $(if $(DEVICE),--device $(DEVICE))
 VARIANT_ARG = $(if $(VARIANT),--variant $(VARIANT))
+PROVISION_ARG = --provisioning $(PROVISION)
 
 help:
 	@echo "bootstrap: fetch and verify the device platform's pinned SDK and toolchain"
@@ -20,6 +25,7 @@ help:
 	@echo "firstboot: build/audit UART-only SDK mains and the Rust application"
 	@echo "test: run hardware-independent Rust firmware tests on the host"
 	@echo "DEVICE=<name> FIRMWARE=<name> VARIANT=<name> pick what to build (default: the only device, qa, none)."
+	@echo "PROVISION=consumer builds an image with no build Wi-Fi that trusts the release key (default: bench)."
 	@echo "These targets only build desktop artifacts; there is no flash target."
 
 # wellfed-build runs as its own executable: `cargo run` would set
@@ -34,7 +40,7 @@ list: $(BUILD)
 	$(BUILD) list
 
 baseline bringup device firstboot: $(BUILD)
-	$(BUILD) build --profile $@ $(DEVICE_ARG) --firmware $(FIRMWARE) $(VARIANT_ARG)
+	$(BUILD) build --profile $@ $(DEVICE_ARG) --firmware $(FIRMWARE) $(VARIANT_ARG) $(PROVISION_ARG)
 
 test:
 	cargo test --locked -p wellfed-session -p wellfed-core -p wellfed-hal-common -p wellfed-hal -p wellfed-sdk -p wellfed-probes \

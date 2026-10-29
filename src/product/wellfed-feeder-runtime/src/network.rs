@@ -12,6 +12,11 @@
 //!   feeder. A save during the boot (a device API write, or BLE setup)
 //!   takes effect at the next join: the new credentials are read again and
 //!   get their own run of attempts before the build's take over.
+//! - **No build network:** a consumer image has no build credentials
+//!   ([`BUILD_WIFI`]). Stored credentials are then used however often they
+//!   fail, and with none stored there is nothing to join: the select hands
+//!   the C task empty credentials, which it reports as a failed attempt
+//!   without scanning.
 //! - **Turn:** the select takes the join's turn in the [`interlock`], waiting
 //!   while a feed holds the outputs, and the outcome ends it, so no feed
 //!   starts while the attempt scans, associates or waits for DHCP.
@@ -39,13 +44,40 @@ const RESET_BASE: u32 = wellfed_hal::plaf103::storage::RESET.first;
 /// Consecutive failed joins before the build's credentials take over.
 pub const FALLBACK_AFTER: u32 = 5;
 
-/// Which credentials to use for the next join.
-pub fn choose(stored: bool, failures: u32, joined_once: bool) -> WifiSource {
-    match (stored, joined_once) {
-        (false, _) => WifiSource::Build,
-        (true, true) => WifiSource::Stored,
-        (true, false) if failures >= FALLBACK_AFTER => WifiSource::Fallback,
-        (true, false) => WifiSource::Stored,
+/// Whether the image was built with Wi-Fi credentials of its own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BuildWifi {
+    /// A bench image: the C entry prefills the bench hotspot.
+    Present,
+    /// A consumer image: the only network is the one the owner stores.
+    Absent,
+}
+
+/// This image's build Wi-Fi. `wellfed-build` sets `WELLFED_BUILD_WIFI`
+/// exactly when the generated header the C entry prefills from names a
+/// network, so the two always agree; only its presence counts, never a value.
+pub const BUILD_WIFI: BuildWifi = match option_env!("WELLFED_BUILD_WIFI") {
+    Some(_) => BuildWifi::Present,
+    None => BuildWifi::Absent,
+};
+
+/// Which credentials to use for the next join; `None` when there is
+/// nothing to join (no build network and none stored).
+pub fn choose(
+    build: BuildWifi,
+    stored: bool,
+    failures: u32,
+    joined_once: bool,
+) -> Option<WifiSource> {
+    match (build, stored, joined_once) {
+        (BuildWifi::Absent, false, _) => None,
+        (BuildWifi::Absent, true, _) => Some(WifiSource::Stored),
+        (BuildWifi::Present, false, _) => Some(WifiSource::Build),
+        (BuildWifi::Present, true, true) => Some(WifiSource::Stored),
+        (BuildWifi::Present, true, false) if failures >= FALLBACK_AFTER => {
+            Some(WifiSource::Fallback)
+        }
+        (BuildWifi::Present, true, false) => Some(WifiSource::Stored),
     }
 }
 
@@ -256,7 +288,8 @@ fn stored(join: &mut Join) -> Option<Credentials> {
     join.stored
 }
 
-/// The C view of one join's credentials; prefilled with the build's.
+/// The C view of one join's credentials; prefilled with the build's, or
+/// empty without a build network.
 #[repr(C)]
 pub struct JoinCredentials {
     pub ssid: *const u8,
@@ -275,6 +308,17 @@ pub struct JoinCredentials {
 /// `out` is valid; called only from the Wi-Fi task, which may block here.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn wellfed_wifi_select(out: *mut JoinCredentials) {
+    // SAFETY: the caller's contract.
+    unsafe { select(BUILD_WIFI, out) }
+}
+
+/// [`wellfed_wifi_select`] for an image with or without build credentials.
+/// With nothing to join, `out` is emptied (a zero SSID length), which the C
+/// task reports as a failed attempt without scanning.
+///
+/// # Safety
+/// As [`wellfed_wifi_select`]'s.
+pub unsafe fn select(build: BuildWifi, out: *mut JoinCredentials) {
     INTERLOCK.begin_join(sdk::uptime_ms, sdk::delay_ms);
 
     // SAFETY: only the Wi-Fi task calls this.
@@ -283,12 +327,21 @@ pub unsafe extern "C" fn wellfed_wifi_select(out: *mut JoinCredentials) {
         *join = Join::default();
     }
     let stored = stored(join);
-    let choice = choose(stored.is_some(), join.failures, join.joined_once);
-    let code = choice.code();
+    let choice = choose(build, stored.is_some(), join.failures, join.joined_once);
+    // Nothing to join reads as the build's source, as before any join: the
+    // device API's view has no value for it.
+    let code = choice.unwrap_or(WifiSource::Build).code();
     SOURCE.store(code, Ordering::Release);
     // SAFETY: the caller's contract; JOIN is static, so the pointers live on.
     let out = unsafe { &mut *out };
     out.source = u32::from(code);
+    let Some(choice) = choice else {
+        out.ssid = core::ptr::null();
+        out.ssid_len = 0;
+        out.psk = core::ptr::null();
+        out.psk_len = 0;
+        return;
+    };
     if let (WifiSource::Stored, Some(c)) = (choice, join.stored.as_ref()) {
         out.ssid = c.ssid().as_ptr();
         out.ssid_len = u32::try_from(c.ssid().len()).unwrap_or(0);

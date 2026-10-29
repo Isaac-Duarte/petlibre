@@ -27,7 +27,7 @@ use self::toolchain::{toolchain_lock, verify_toolchain};
 use super::{Built, Job};
 use crate::device::StockPaths;
 use crate::environment::Environment;
-use crate::{Error, Firmware, Profile, Repo, Result, Stage, digest, relative, text};
+use crate::{Error, Firmware, Profile, Provisioning, Repo, Result, Stage, digest, relative, text};
 use wellfed_formats::require;
 
 pub mod audit;
@@ -74,7 +74,21 @@ const SDK_LOCK: &str = "src/firmware/vendor/sdk.lock.json";
 pub(crate) const TOOL_LOCK: &str = "src/firmware/vendor/probe/toolchain.lock.json";
 /// The application entry's generated-header input: read from an ignored
 /// private file; only its hash reaches the manifest.
-pub(crate) const WIFI_CREDENTIALS: &str = "private/hotspot.json";
+const WIFI_CREDENTIALS: &str = "private/hotspot.json";
+/// Set, with no meaningful value, exactly when the image has build Wi-Fi;
+/// the feeder runtime reads its presence (`network::BUILD_WIFI`).
+const BUILD_WIFI_VARIABLE: &str = "WELLFED_BUILD_WIFI";
+
+/// The private Wi-Fi file a provisioning builds in: the bench hotspot, or
+/// none for a consumer image. The identity input, the generated header and
+/// the Rust build's [`BUILD_WIFI_VARIABLE`] all follow from this one answer,
+/// so the C entry and the runtime never disagree about a build network.
+pub(crate) fn wifi_credentials(provisioning: Provisioning) -> Option<&'static str> {
+    match provisioning {
+        Provisioning::Bench => Some(WIFI_CREDENTIALS),
+        Provisioning::Consumer => None,
+    }
+}
 
 /// The AmebaD's two cores. The SDK names their projects `lp` and `hp`; the
 /// manifest and audits call them KM0 and KM4.
@@ -207,6 +221,7 @@ fn cargo_environment(
     toolchain: &Path,
     identity: &str,
     ota_key: Option<&str>,
+    provisioning: Provisioning,
 ) -> Environment {
     let mut environment = environment.clone();
     environment.insert("WELLFED_BUILD_ID".into(), identity.into());
@@ -221,6 +236,10 @@ fn cargo_environment(
     environment.remove("WELLFED_OTA_PUBLIC_KEY");
     if let Some(key) = ota_key {
         environment.insert("WELLFED_OTA_PUBLIC_KEY".into(), key.into());
+    }
+    environment.remove(BUILD_WIFI_VARIABLE);
+    if wifi_credentials(provisioning).is_some() {
+        environment.insert(BUILD_WIFI_VARIABLE.into(), "1".into());
     }
     environment
 }
@@ -447,6 +466,7 @@ impl Build<'_> {
                 job.toolchain,
                 job.identity,
                 job.ota_key,
+                job.provisioning,
             );
             archives = build_rust(
                 job.repo,
@@ -673,13 +693,14 @@ impl Amebad {
         &self,
         repo: &Repo,
         profile: Profile,
+        provisioning: Provisioning,
         firmware: &Firmware,
     ) -> Result<Vec<PathBuf>> {
         let mut paths = vec![repo.path(SDK_LOCK), repo.path(TOOL_LOCK)];
         if profile.has(Stage::Rust) {
             // The entry includes the generated Wi-Fi header.
             paths.push(self.entry.clone());
-            paths.push(repo.path(WIFI_CREDENTIALS));
+            paths.extend(wifi_credentials(provisioning).map(|path| repo.path(path)));
             paths.extend(self.bluetooth_source(firmware)?.map(Path::to_path_buf));
         }
         if profile.has(Stage::Firstboot) {

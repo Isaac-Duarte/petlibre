@@ -42,6 +42,30 @@ Each profile adds stages to the one before.
 | `device` | The application with the device's stock-derived bank addresses and audited KM0 pin pulls. Needs the device's verified stock OTA |
 | `firstboot` | Minimal UART-only SDK mains plus the application, Wi-Fi, the device API and updates. Same stock-reference need. This is the image the bench reviews and installs, and the only profile that takes a variant |
 
+### Bench and consumer images
+
+A Rust profile is also built for someone: the bench (the default) or a consumer. Pick it with `--provisioning bench|consumer`, or `PROVISION=consumer` for make.
+
+| | Bench | Consumer |
+| --- | --- | --- |
+| Build Wi-Fi | The hotspot in `private/hotspot.json`, generated into the entry's header | None. The header defines nothing, so the image joins only the network the owner stores |
+| Built-in update key (`firstboot`) | The bench key's public half from `private/ota-key.json`, if there is one | The project release key's public half from `private/release-key.pub.json`. Without it the build is refused; it never falls back to the bench key |
+| Output | `private/firmware-build/<device>/<profile>/` | `private/firmware-build/<device>/<profile>-consumer/` |
+
+```sh
+make -C src/firmware/vendor firstboot FIRMWARE=feeder PROVISION=consumer
+```
+
+The release key file holds only the public half:
+
+```json
+{"version": 1, "public_key": "<64 lowercase hex characters>"}
+```
+
+Any other field is refused, so a file that also holds a `seed` never reaches a build. The release key itself stays offline.
+
+The manifest records `provisioning`, and the source identity binds it, so a bench and a consumer image of the same sources never share an identity. `source-id` and `inputs` take `--provisioning` too. The image's Rust learns whether build Wi-Fi exists from the presence of `WELLFED_BUILD_WIFI`, which the builder sets exactly when the generated header names a network.
+
 ## Build an image
 
 1. Fetch the SDK and compiler:
@@ -81,6 +105,7 @@ Builds run KM0 before KM4. They keep input hashes, artifact hashes, logs and suc
 | `private/upstream/ameba-rtos-d/` | The pinned upstream checkout |
 | `private/toolchains/` | The downloaded archive and extracted compiler |
 | `private/firmware-build/<device>/<profile>/` | The generated SDK worktree, Rust archives, logs and manifest |
+| `private/firmware-build/<device>/<profile>-consumer/` | The same, for a consumer image |
 
 Make your changes in tracked source, never in a generated SDK worktree. Profiles stage tracked files and apply audited overlays.
 
@@ -119,7 +144,7 @@ Every build carries a source identity that binds exactly what it was built from.
 
 - `cargo run -q -p wellfed-build -- source-id` computes the current firstboot-profile source ID offline, without bootstrapping the SDK. `check-cross` supplies that ID to the SDK-independent KM0 port compile.
 - `source-id --image` (with `--variant`, if any) prints the identity a build would embed instead. That one also binds the variant and the update key.
-- Every identity binds the device and profile names. `wellfed-bench` uses it to reuse a review of the same sources.
+- Every identity binds the device and profile names and the provisioning. `wellfed-bench` uses it to reuse a review of the same sources.
 
 The Rust inputs are the Git-tracked and untracked, non-ignored files of:
 

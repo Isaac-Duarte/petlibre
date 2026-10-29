@@ -1,6 +1,6 @@
 //! The source-bound startup identity: a hash of the device, the profile,
-//! the firmware and its variant, the update key and every input file's
-//! digest.
+//! the firmware and its variant, the provisioning, the update key and every
+//! input file's digest.
 //!
 //! Every Rust-linked image prints it (`PLFW1 start build=…`), the manifest
 //! records it, and the bench reuses a frozen review whose identity matches
@@ -10,12 +10,16 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use wellfed_formats::credentials::{KeyScope, OtaKeyFile};
+use wellfed_formats::credentials::{
+    KeyScope, OtaKeyFile, RELEASE_KEY_PATH, RELEASE_KEY_VERSION, ReleaseKeyFile,
+};
 use wellfed_formats::hex::is_lower_hex;
 use wellfed_formats::manifest::IdentitySnapshot;
 use wellfed_formats::require;
 
-use crate::{Device, Firmware, Profile, Repo, Result, Stage, Variant, digest, relative};
+use crate::{
+    Device, Firmware, Profile, Provisioning, Repo, Result, Stage, Variant, digest, relative,
+};
 
 /// Why the source identity could not be bound.
 #[derive(Debug, thiserror::Error)]
@@ -32,6 +36,14 @@ pub enum IdentityError {
     /// statements.
     #[error("{} is an owner's update key; images embed only the bench key", path.display())]
     OwnerKey { path: PathBuf },
+    /// A consumer image trusts only the release key, never the bench key.
+    #[error(
+        "A consumer first-boot build needs the release key's public half in {}",
+        path.display()
+    )]
+    NoReleaseKey { path: PathBuf },
+    #[error("Release key file version {version} is not {RELEASE_KEY_VERSION}")]
+    ReleaseKeyVersion { version: u32 },
 }
 
 /// Crates linked into, or testing, every firmware build: the whole SDK and the
@@ -97,9 +109,12 @@ fn source_inputs(
     repo: &Repo,
     device: &Device,
     profile: Profile,
+    provisioning: Provisioning,
     firmware: &Firmware,
 ) -> Result<Vec<PathBuf>> {
-    let mut paths = device.platform(repo).inputs(repo, profile, firmware)?;
+    let mut paths = device
+        .platform(repo)
+        .inputs(repo, profile, provisioning, firmware)?;
     paths.push(repo.path(&device.config_path()));
     paths.extend(rust_sources(repo, &[BUILDER_SOURCES])?);
     paths.extend(BUILDER_SHARED.map(|p| repo.path(p)));
@@ -134,28 +149,60 @@ pub fn current_inputs(
     repo: &Repo,
     device: &Device,
     profile: Profile,
+    provisioning: Provisioning,
     firmware: &Firmware,
 ) -> Result<BTreeMap<String, String>> {
-    digests(repo, &source_inputs(repo, device, profile, firmware)?)
+    digests(
+        repo,
+        &source_inputs(repo, device, profile, provisioning, firmware)?,
+    )
 }
 
-/// The update-signing public key built into recovery-role images, or None
-/// without a key file.
-pub(crate) fn ota_public_key(repo: &Repo, profile: Profile) -> Result<Option<String>> {
-    // Only the key's public half reaches the build, the identity and the manifest.
-    let path = repo.path(wellfed_signing::KEY_PATH);
-    if !profile.has(Stage::Firstboot) || !path.is_file() {
+/// The update-signing public key built into a first-boot image: the bench
+/// key (None without its file), or for a consumer image the release key,
+/// whose file it cannot build without. A consumer build never falls back to
+/// the bench key.
+///
+/// Only a key's public half reaches the build, the identity and the
+/// manifest.
+pub(crate) fn ota_public_key(
+    repo: &Repo,
+    profile: Profile,
+    provisioning: Provisioning,
+) -> Result<Option<String>> {
+    if !profile.has(Stage::Firstboot) {
         return Ok(None);
     }
 
-    let key: OtaKeyFile = wellfed_formats::load(&path)?;
-    require(key.scope == KeyScope::Bench, || IdentityError::OwnerKey {
-        path: path.clone(),
-    })?;
-    require(is_lower_hex(&key.public_key, 64), || {
-        IdentityError::PublicKey
-    })?;
-    Ok(Some(key.public_key))
+    let public_key = match provisioning {
+        Provisioning::Bench => {
+            let path = repo.path(wellfed_signing::KEY_PATH);
+            if !path.is_file() {
+                return Ok(None);
+            }
+            let key: OtaKeyFile = wellfed_formats::load(&path)?;
+            require(key.scope == KeyScope::Bench, || IdentityError::OwnerKey {
+                path: path.clone(),
+            })?;
+            key.public_key
+        }
+        Provisioning::Consumer => {
+            let path = repo.path(RELEASE_KEY_PATH);
+            require(path.is_file(), || IdentityError::NoReleaseKey {
+                path: path.clone(),
+            })?;
+            let key: ReleaseKeyFile = wellfed_formats::load(&path)?;
+            require(key.version == RELEASE_KEY_VERSION, || {
+                IdentityError::ReleaseKeyVersion {
+                    version: key.version,
+                }
+            })?;
+            key.public_key
+        }
+    };
+
+    require(is_lower_hex(&public_key, 64), || IdentityError::PublicKey)?;
+    Ok(Some(public_key))
 }
 
 /// What one build binds into its identity, besides its inputs.
@@ -164,11 +211,13 @@ pub(crate) struct Subject<'a> {
     pub(crate) profile: Profile,
     pub(crate) firmware: &'a Firmware,
     pub(crate) variant: Option<&'a Variant>,
+    pub(crate) provisioning: Provisioning,
 }
 
 /// Bind the identity to the device, the profile, the firmware a Rust
-/// profile links, the variant, the update key and root-relative input
-/// digests: SHA-256 of their canonical (sorted, compact) JSON.
+/// profile links, the variant, the provisioning, the update key and
+/// root-relative input digests: SHA-256 of their canonical (sorted, compact)
+/// JSON.
 pub(crate) fn source_identity(
     subject: &Subject,
     inputs: &BTreeMap<String, String>,
@@ -183,6 +232,7 @@ pub(crate) fn source_identity(
             .has(Stage::Rust)
             .then(|| subject.firmware.name()),
         variant: subject.variant.map(Variant::name),
+        provisioning: subject.provisioning,
         ota_public_key: ota_key,
     };
     Ok(snapshot.identity()?)
@@ -198,26 +248,28 @@ pub enum SourceId {
     Image,
 }
 
-/// The first-boot identity of `firmware` on `device`. A bare identity binds
-/// no variant.
+/// The first-boot identity of `firmware` on `device`, provisioned as
+/// `provisioning`. A bare identity binds no variant.
 pub fn source_id(
     repo: &Repo,
     device: &Device,
     firmware: &Firmware,
     variant: Option<&Variant>,
+    provisioning: Provisioning,
     which: SourceId,
 ) -> Result<String> {
     let profile = Profile::Firstboot;
-    let inputs = current_inputs(repo, device, profile, firmware)?;
+    let inputs = current_inputs(repo, device, profile, provisioning, firmware)?;
     let mut subject = Subject {
         device,
         profile,
         firmware,
         variant,
+        provisioning,
     };
     match which {
         SourceId::Image => {
-            let key = ota_public_key(repo, profile)?;
+            let key = ota_public_key(repo, profile, provisioning)?;
             source_identity(&subject, &inputs, key.as_deref())
         }
         SourceId::Bare => {
@@ -229,32 +281,205 @@ pub fn source_id(
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
-    use crate::error::Error;
+    use crate::Error;
+
+    const HOTSPOT: &str = "private/hotspot.json";
+
+    /// A checkout with only what `ota_public_key` reads, so no real key file
+    /// is needed or touched.
+    fn scratch() -> (tempfile::TempDir, Repo) {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join("private")).unwrap();
+        let repo = Repo {
+            root: root.path().to_path_buf(),
+        };
+        (root, repo)
+    }
+
+    fn release_key(repo: &Repo, text: &str) {
+        fs::write(repo.path(RELEASE_KEY_PATH), text).unwrap();
+    }
+
+    /// The paths a profile's image depends on before the source listing,
+    /// root-relative: the platform's and the board's.
+    fn platform_inputs(provisioning: Provisioning) -> Vec<String> {
+        let repo = Repo::here().unwrap();
+        let device = Device::new(&repo, "plaf103").unwrap();
+        let firmware = Firmware::new(&repo, "feeder").unwrap();
+        device
+            .platform(&repo)
+            .inputs(&repo, Profile::Firstboot, provisioning, &firmware)
+            .unwrap()
+            .iter()
+            .map(|path| relative(path, &repo.root).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn a_consumer_image_depends_on_no_build_wifi() {
+        let bench = platform_inputs(Provisioning::Bench);
+        let consumer = platform_inputs(Provisioning::Consumer);
+
+        assert!(bench.iter().any(|path| path == HOTSPOT));
+        assert!(!consumer.iter().any(|path| path == HOTSPOT));
+        let without: Vec<&String> = bench.iter().filter(|path| *path != HOTSPOT).collect();
+        assert_eq!(without, consumer.iter().collect::<Vec<_>>());
+    }
+
+    /// A bench image's inputs are what they were before consumer builds:
+    /// the pins, the entry and the hotspot file it is generated from.
+    #[test]
+    fn the_bench_inputs_keep_the_hotspot_after_the_entry() {
+        let bench = platform_inputs(Provisioning::Bench);
+        let repo = Repo::here().unwrap();
+        let device = Device::new(&repo, "plaf103").unwrap();
+        let crate::platform::Platform::Amebad(board) = device.platform(&repo);
+        let entry = relative(&board.entry, &repo.root).unwrap();
+
+        assert_eq!(
+            bench[..4],
+            [
+                "src/firmware/vendor/sdk.lock.json",
+                "src/firmware/vendor/probe/toolchain.lock.json",
+                entry.as_str(),
+                HOTSPOT,
+            ]
+        );
+    }
 
     /// Only the bench key is built in: an owner's key file under the
     /// bench key's path is refused before anything is embedded.
     #[test]
     fn an_image_embeds_the_bench_key_and_never_an_owner_s() {
-        let checkout = tempfile::tempdir().unwrap();
-        let repo = Repo {
-            root: checkout.path().to_path_buf(),
-        };
+        let (_root, repo) = scratch();
         let path = repo.path(wellfed_signing::KEY_PATH);
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let bench = Provisioning::Bench;
 
         let public = wellfed_signing::keygen(&path, KeyScope::Bench).unwrap();
         assert_eq!(
-            ota_public_key(&repo, Profile::Firstboot).unwrap(),
+            ota_public_key(&repo, Profile::Firstboot, bench).unwrap(),
             Some(public)
         );
 
-        std::fs::remove_file(&path).unwrap();
+        fs::remove_file(&path).unwrap();
         wellfed_signing::keygen(&path, KeyScope::Owner).unwrap();
-        let refused = ota_public_key(&repo, Profile::Firstboot).unwrap_err();
+        let refused = ota_public_key(&repo, Profile::Firstboot, bench).unwrap_err();
         assert!(
             matches!(&refused, Error::Identity(IdentityError::OwnerKey { path: named }) if *named == path),
             "{refused:?}"
+        );
+    }
+
+    #[test]
+    fn a_consumer_build_trusts_only_the_release_key() {
+        let (_root, repo) = scratch();
+        let firstboot = Profile::Firstboot;
+        fs::write(
+            repo.path(wellfed_signing::KEY_PATH),
+            format!(
+                r#"{{"version": 1, "scope": "bench", "seed": "{}", "public_key": "{}"}}"#,
+                "11".repeat(32),
+                "22".repeat(32)
+            ),
+        )
+        .unwrap();
+
+        // The bench key is there, but a consumer build refuses without the
+        // release key rather than fall back to it.
+        let missing = ota_public_key(&repo, firstboot, Provisioning::Consumer);
+        assert!(
+            matches!(
+                missing,
+                Err(Error::Identity(IdentityError::NoReleaseKey { ref path }))
+                    if path.ends_with("release-key.pub.json")
+            ),
+            "{missing:?}"
+        );
+        assert_eq!(
+            ota_public_key(&repo, firstboot, Provisioning::Bench).unwrap(),
+            Some("22".repeat(32))
+        );
+
+        // A synthetic release key: the owner has not generated the real one.
+        let release = "ab".repeat(32);
+        release_key(
+            &repo,
+            &format!(r#"{{"version": 1, "public_key": "{release}"}}"#),
+        );
+        assert_eq!(
+            ota_public_key(&repo, firstboot, Provisioning::Consumer).unwrap(),
+            Some(release)
+        );
+        assert_eq!(
+            ota_public_key(&repo, Profile::Device, Provisioning::Consumer).unwrap(),
+            None,
+            "only a first-boot image embeds a key"
+        );
+    }
+
+    #[test]
+    fn a_bad_release_key_file_is_refused() {
+        let (_root, repo) = scratch();
+        let consumer = |text: &str| {
+            release_key(&repo, text);
+            ota_public_key(&repo, Profile::Firstboot, Provisioning::Consumer)
+        };
+
+        assert!(matches!(
+            consumer(&format!(
+                r#"{{"version": 2, "public_key": "{}"}}"#,
+                "ab".repeat(32)
+            )),
+            Err(Error::Identity(IdentityError::ReleaseKeyVersion {
+                version: 2
+            }))
+        ));
+        assert!(matches!(
+            consumer(&format!(
+                r#"{{"version": 1, "public_key": "{}"}}"#,
+                "AB".repeat(32)
+            )),
+            Err(Error::Identity(IdentityError::PublicKey))
+        ));
+        // The private half never enters a build.
+        assert!(
+            consumer(&format!(
+                r#"{{"version": 1, "seed": "{}", "public_key": "{}"}}"#,
+                "cd".repeat(32),
+                "ab".repeat(32)
+            ))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn the_identity_binds_the_provisioning_and_the_release_key() {
+        let repo = Repo::here().unwrap();
+        let device = Device::new(&repo, "plaf103").unwrap();
+        let firmware = Firmware::new(&repo, "feeder").unwrap();
+        let inputs = BTreeMap::from([("a".to_string(), "00".repeat(32))]);
+        let subject = |provisioning| Subject {
+            device: &device,
+            profile: Profile::Firstboot,
+            firmware: &firmware,
+            variant: None,
+            provisioning,
+        };
+        let id = |provisioning, key: &str| {
+            source_identity(&subject(provisioning), &inputs, Some(key)).unwrap()
+        };
+
+        let (one, two) = ("ab".repeat(32), "cd".repeat(32));
+        assert_ne!(
+            id(Provisioning::Bench, &one),
+            id(Provisioning::Consumer, &one)
+        );
+        assert_ne!(
+            id(Provisioning::Consumer, &one),
+            id(Provisioning::Consumer, &two)
         );
     }
 }

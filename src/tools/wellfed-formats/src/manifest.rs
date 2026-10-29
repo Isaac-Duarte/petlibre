@@ -28,6 +28,8 @@ pub struct BuildManifest {
     /// The firmware under `src/firmware/wellfed/` a Rust profile linked.
     pub firmware: Option<String>,
     pub variant: Option<String>,
+    /// Who the image is for: the bench's Wi-Fi and key, or a consumer's.
+    pub provisioning: Provisioning,
     pub ota_public_key: Option<String>,
     /// Root-relative source path to its SHA-256.
     pub inputs: BTreeMap<String, String>,
@@ -74,6 +76,7 @@ impl BuildManifest {
             inputs: &self.inputs,
             firmware: self.firmware.as_deref(),
             variant: self.variant.as_deref(),
+            provisioning: self.provisioning,
             ota_public_key: self.ota_public_key.as_deref(),
         }
         .identity()
@@ -146,7 +149,9 @@ pub struct BuildChecks {
 
 /// What a build identity binds: SHA-256 of this snapshot's canonical JSON.
 /// The firmware, variant and update key are left out when absent (not
-/// written as `null`), so a plain build binds only what it has.
+/// written as `null`), so a plain build binds only what it has. The
+/// provisioning is always bound: a bench and a consumer image of the same
+/// sources are different images.
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct IdentitySnapshot<'a> {
     pub device: &'a str,
@@ -156,8 +161,39 @@ pub struct IdentitySnapshot<'a> {
     pub firmware: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub variant: Option<&'a str>,
+    pub provisioning: Provisioning,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ota_public_key: Option<&'a str>,
+}
+
+/// Who an image is provisioned for, which decides the Wi-Fi network and
+/// update key compiled into it.
+///
+/// A bench image joins the bench hotspot (`private/hotspot.json`) and trusts
+/// the bench update key (`private/ota-key.json`, when present). A consumer
+/// image, which an installer puts on an owner's stock feeder, has no build
+/// Wi-Fi and trusts the project release key
+/// (`private/release-key.pub.json`, [`ReleaseKeyFile`]) instead; the
+/// owner's own key is enrolled later, over the device API.
+///
+/// [`ReleaseKeyFile`]: crate::credentials::ReleaseKeyFile
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
+#[serde(rename_all = "lowercase")]
+pub enum Provisioning {
+    #[default]
+    Bench,
+    Consumer,
+}
+
+impl Provisioning {
+    /// The manifest's and the identity's name.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Bench => "bench",
+            Self::Consumer => "consumer",
+        }
+    }
 }
 
 impl IdentitySnapshot<'_> {
@@ -185,11 +221,12 @@ mod tests {
             inputs: &inputs,
             firmware: Some("trial"),
             variant: Some("fail"),
+            provisioning: Provisioning::Consumer,
             ota_public_key: Some("ab"),
         };
         let untyped = json!({"device": "plaf103", "profile": "firstboot", "inputs": inputs,
                              "firmware": "trial", "variant": "fail",
-                             "ota_public_key": "ab"});
+                             "provisioning": "consumer", "ota_public_key": "ab"});
         assert_eq!(
             snapshot.identity().unwrap(),
             sha256(&canonical(&untyped).unwrap())
@@ -199,9 +236,11 @@ mod tests {
             firmware: None,
             variant: None,
             ota_public_key: None,
+            provisioning: Provisioning::Bench,
             ..snapshot
         };
-        let untyped = json!({"device": "plaf103", "profile": "firstboot", "inputs": inputs});
+        let untyped = json!({"device": "plaf103", "profile": "firstboot", "inputs": inputs,
+                             "provisioning": "bench"});
         assert_eq!(
             bare.identity().unwrap(),
             sha256(&canonical(&untyped).unwrap())
@@ -209,7 +248,7 @@ mod tests {
     }
 
     #[test]
-    fn manifest_identity_binds_device_firmware_variant_and_key() {
+    fn manifest_identity_binds_device_firmware_variant_provisioning_and_key() {
         let manifest = BuildManifest {
             device: "plaf103".into(),
             profile: "firstboot".into(),
@@ -232,12 +271,35 @@ mod tests {
             device: "plaf203".into(),
             ..keyed.clone()
         };
-        let ids =
-            [&manifest, &keyed, &variant, &blink, &board].map(|m| m.source_identity().unwrap());
+        let consumer = BuildManifest {
+            provisioning: Provisioning::Consumer,
+            ..keyed.clone()
+        };
+        let ids = [&manifest, &keyed, &variant, &blink, &board, &consumer]
+            .map(|m| m.source_identity().unwrap());
         assert_ne!(ids[0], ids[1]);
         assert_ne!(ids[1], ids[2]);
         assert_ne!(ids[1], ids[3]);
         assert_ne!(ids[1], ids[4]);
+        assert_ne!(ids[1], ids[5]);
+    }
+
+    #[test]
+    fn the_provisioning_round_trips_by_name() {
+        for provisioning in [Provisioning::Bench, Provisioning::Consumer] {
+            let manifest = BuildManifest {
+                provisioning,
+                ..Default::default()
+            };
+            let written = serde_json::to_value(&manifest).unwrap();
+            assert_eq!(written["provisioning"], json!(provisioning.name()));
+
+            let read: BuildManifest = serde_json::from_value(written).unwrap();
+            assert_eq!(read.provisioning, provisioning);
+        }
+
+        let unknown = json!({"provisioning": "factory"});
+        assert!(serde_json::from_value::<BuildManifest>(unknown).is_err());
     }
 
     #[test]

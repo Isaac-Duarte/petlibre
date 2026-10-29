@@ -18,11 +18,11 @@ use wellfed_formats::lock::SdkLock;
 use wellfed_formats::require;
 
 use super::audit::{TRAIL_BYTES, hooks, pinmap};
-use super::credentials::wifi_header;
-use super::{Amebad, Core, PROJECT, WIFI_CREDENTIALS, source, toolchains};
+use super::credentials::{no_wifi_header, wifi_header};
+use super::{Amebad, Core, PROJECT, source, toolchains, wifi_credentials};
 use crate::device::StockPaths;
 use crate::platform::Job;
-use crate::{Profile, Repo, Result, Stage, digest, git, revision, run};
+use crate::{Profile, Provisioning, Repo, Result, Stage, digest, git, revision, run};
 
 /// Why a profile's SDK worktree was refused or could not be overlaid. A
 /// refused worktree is left unchanged for review.
@@ -509,7 +509,7 @@ pub(crate) fn prepare(
         overlay(&sdk, PINMAP, &source, &mut overrides)?;
     }
     if profile.has(Stage::Rust) {
-        rust_overlays(repo, board, &sdk, &mut overrides, &staged)?;
+        rust_overlays(repo, board, job.provisioning, &sdk, &mut overrides, &staged)?;
         let bluetooth = board.bluetooth_source(job.firmware)?;
         bluetooth_overlays(&sdk, bluetooth, &mut overrides, &staged)?;
     }
@@ -555,6 +555,7 @@ fn worktree(repo: &Repo, output: &Path, profile: Profile, lock: &SdkLock) -> Res
 fn rust_overlays(
     repo: &Repo,
     board: &Amebad,
+    provisioning: Provisioning,
     sdk: &Path,
     overrides: &mut Overrides,
     staged: &dyn Fn(&Path, &Path, StagedFile) -> Result<()>,
@@ -646,7 +647,11 @@ fn rust_overlays(
         }
     }
 
-    let wifi = repo.path(WIFI_CREDENTIALS);
+    // The entry always includes the header; a consumer image's names no
+    // network.
+    let Some(wifi) = wifi_credentials(provisioning).map(|path| repo.path(path)) else {
+        return write_if_changed(&sdk.join(WIFI_HEADER), no_wifi_header().as_bytes());
+    };
     write_if_changed(
         &sdk.join(WIFI_HEADER),
         wifi_header(&fs::read(&wifi)?)?.as_bytes(),

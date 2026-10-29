@@ -16,13 +16,17 @@ use wellfed_formats::require;
 use crate::environment::{Rust, rust_compiler};
 use crate::identity::{Subject, current_inputs, ota_public_key, source_identity};
 use crate::platform::{Job, Linked};
-use crate::{Device, Firmware, Profile, Repo, Result, Stage, Variant};
+use crate::{Device, Firmware, Profile, Provisioning, Repo, Result, Stage, Variant};
 
 /// Why a build request or a finished build was refused.
 #[derive(Debug, thiserror::Error)]
 pub enum ImageError {
     #[error("Image variants apply to the firstboot profile only")]
     VariantProfile,
+    /// Only a profile that links the application entry has a network or a
+    /// key to provision.
+    #[error("A consumer build needs a profile that links the Rust application")]
+    ProvisioningProfile,
     /// The vendor recipes take minutes, and an editor may touch the tree
     /// meanwhile.
     #[error("Sources changed during the build; rerun before trusting these outputs")]
@@ -43,12 +47,14 @@ fn remove_manifest(output: &Path) -> Result<()> {
     }
 }
 
-/// What to build: a profile of a firmware (and variant) on a device.
+/// What to build: a profile of a firmware (and variant) on a device,
+/// provisioned for the bench or a consumer.
 pub struct Request<'a> {
     device: &'a Device,
     profile: Profile,
     firmware: &'a Firmware,
     variant: Option<&'a Variant>,
+    provisioning: Provisioning,
 }
 
 impl<'a> Request<'a> {
@@ -59,10 +65,15 @@ impl<'a> Request<'a> {
         profile: Profile,
         firmware: &'a Firmware,
         variant: Option<&'a Variant>,
+        provisioning: Provisioning,
     ) -> Result<Self> {
         require(variant.is_none() || profile.has(Stage::Firstboot), || {
             ImageError::VariantProfile
         })?;
+        require(
+            provisioning == Provisioning::Bench || profile.has(Stage::Rust),
+            || ImageError::ProvisioningProfile,
+        )?;
         if profile.has(Stage::Rust) {
             firmware.check_device(device.name())?;
         }
@@ -72,6 +83,7 @@ impl<'a> Request<'a> {
             profile,
             firmware,
             variant,
+            provisioning,
         })
     }
 }
@@ -85,6 +97,9 @@ fn describe(request: &Request) -> String {
     if let Some(variant) = request.variant {
         line.push_str(&format!(" variant {}", variant.name()));
     }
+    if request.provisioning == Provisioning::Consumer {
+        line.push_str(" for consumers");
+    }
     line
 }
 
@@ -95,8 +110,12 @@ pub fn build(repo: &Repo, request: &Request, toolchain: &Path) -> Result<PathBuf
         profile,
         firmware,
         variant,
+        provisioning,
     } = *request;
-    let output = device.output(repo, profile);
+    // A consumer build without the release key is refused before it touches
+    // its output.
+    let ota_key = ota_public_key(repo, profile, provisioning)?;
+    let output = device.output(repo, profile, provisioning);
     remove_manifest(&output)?;
 
     let rust = if profile.has(Stage::Rust) {
@@ -104,19 +123,19 @@ pub fn build(repo: &Repo, request: &Request, toolchain: &Path) -> Result<PathBuf
     } else {
         None
     };
-    let expected = current_inputs(repo, device, profile, firmware)?;
-    let ota_key = ota_public_key(repo, profile)?;
+    let expected = current_inputs(repo, device, profile, provisioning, firmware)?;
     let subject = Subject {
         device,
         profile,
         firmware,
         variant,
+        provisioning,
     };
     let identity = source_identity(&subject, &expected, ota_key.as_deref())?;
 
     let recheck = || -> Result<()> {
         require(
-            current_inputs(repo, device, profile, firmware)? == expected,
+            current_inputs(repo, device, profile, provisioning, firmware)? == expected,
             || ImageError::SourcesChanged,
         )?;
         if let Some(rust) = &rust {
@@ -133,6 +152,7 @@ pub fn build(repo: &Repo, request: &Request, toolchain: &Path) -> Result<PathBuf
         profile,
         firmware,
         variant,
+        provisioning,
         toolchain,
         log: output.join("build.log"),
         output: output.clone(),
@@ -179,6 +199,7 @@ pub fn build(repo: &Repo, request: &Request, toolchain: &Path) -> Result<PathBuf
         startup_trial_policy: policy(|p| &p.trial),
         firmware: rust_build.then(|| firmware.name().into()),
         variant: variant.map(|v| v.name().into()),
+        provisioning,
         ota_public_key: ota_key,
         toolchain_sha256: built.toolchain_sha256,
         built_at: Utc::now().to_rfc3339_opts(SecondsFormat::Micros, false),

@@ -128,7 +128,7 @@ The install still stops; nothing is rewritten.
 Version 1 (`PLOTA1`) is deleted. An offer carrying its magic is refused as the wrong version. The bench still reads the versions of the version 1 manifests on disk when it picks the next.
 
 **Trusted keys.**
-- The key built into the firmware: the bench key, `WELLFED_OTA_PUBLIC_KEY`.
+- The key built into the firmware, `WELLFED_OTA_PUBLIC_KEY`: the bench key in a bench image, the project release key in a consumer image ([bench and consumer images](../development/firmware-builds.md#bench-and-consumer-images)). A consumer build refuses to run without the release key's public half rather than fall back to the bench key.
 - The release slot, empty in the build and filled once by a `PLKEY1` statement a built-in key signed (`UpdateKeyStatement`). So a release key arrives without reinstalling bank 0.
 - Owners' update keys, enrolled over the device API (`EnrollUpdateKey`) only once someone presses Dispense at the feeder, and removed like any client.
 

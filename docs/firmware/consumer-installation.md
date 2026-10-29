@@ -187,7 +187,7 @@ One run, `wellfed install`, goes from stock to a confirmed replacement. Its step
 It holds the bench lease beside the stock config for its whole length.
 
 **Not done yet:**
-- The consumer image (no build Wi-Fi or update key), and its setup mode at first boot. Until then the replacement joins with its build's Wi-Fi, so on the bench the home network is the hotspot.
+- Installing a consumer image. The builder makes one (`PROVISION=consumer`: no build Wi-Fi, the release key built in), but it is not yet tried on a feeder, it does not start setup mode at first boot, and the owner's update key is not yet enrolled at install. The release key itself is not generated yet. Until then installs use bench images, which join with their build's Wi-Fi, so on the bench the home network is the hotspot.
 - Bluetooth setup as the pairing step; the CLI uses the LAN recovery window.
 - Deleting `init` and `network` from `wellfed-stock`, which waits for the frame to work on hardware.
 

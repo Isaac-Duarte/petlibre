@@ -2,7 +2,8 @@
 //! described by its `device.json` ([`DeviceConfig`]).
 //!
 //! The device decides the platform a build runs on and where its outputs go
-//! (`private/firmware-build/<device>/<profile>`). `device.json` and every
+//! (`private/firmware-build/<device>/<profile>`, `<profile>-consumer` for a
+//! consumer image). `device.json` and every
 //! file it names that a profile reads are identity inputs.
 
 use std::fs;
@@ -13,7 +14,7 @@ use wellfed_formats::require;
 
 use crate::catalog::DeviceEntry;
 use crate::platform::Platform;
-use crate::{Profile, Repo, Result, checked_name};
+use crate::{Profile, Provisioning, Repo, Result, checked_name};
 
 /// The directory every device lives in.
 const DEVICES: &str = "src/firmware/devices";
@@ -132,12 +133,17 @@ impl Device {
         })
     }
 
-    /// Where a profile's build of this device goes.
-    pub fn output(&self, repo: &Repo, profile: Profile) -> PathBuf {
+    /// Where a profile's build of this device goes. A consumer build has its
+    /// own directory (and SDK worktree), so it never replaces the bench's.
+    pub fn output(&self, repo: &Repo, profile: Profile, provisioning: Provisioning) -> PathBuf {
+        let name = match provisioning {
+            Provisioning::Bench => profile.name().to_string(),
+            Provisioning::Consumer => format!("{}-consumer", profile.name()),
+        };
         repo.private()
             .join("firmware-build")
             .join(&self.name)
-            .join(profile.name())
+            .join(name)
     }
 
     /// What `wellfed-build list` prints for it.

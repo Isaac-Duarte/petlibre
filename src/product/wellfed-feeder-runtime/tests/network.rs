@@ -6,7 +6,7 @@ use std::sync::Mutex;
 use wellfed_device_api::mailbox::{WifiResult, WifiSource};
 use wellfed_device_api::wifi::Credentials;
 use wellfed_feeder::store::net::NetStore;
-use wellfed_feeder_runtime::network::*;
+use wellfed_feeder_runtime::network::{self, *};
 use wellfed_hal::sdk::fake;
 
 /// The module's state is process-wide.
@@ -15,6 +15,7 @@ static SERIAL: Mutex<()> = Mutex::new(());
 const BUILD_SSID: &[u8] = b"build-net";
 const BUILD_PSK: &[u8] = b"build-pass";
 
+/// One select by a bench image, whose C entry prefills the build's network.
 fn select() -> (Vec<u8>, Vec<u8>, u32) {
     let mut out = JoinCredentials {
         ssid: BUILD_SSID.as_ptr(),
@@ -24,12 +25,35 @@ fn select() -> (Vec<u8>, Vec<u8>, u32) {
         source: 0,
     };
     // SAFETY: `out` is live; the test is the only Wi-Fi task.
-    unsafe { wellfed_wifi_select(&mut out) };
+    unsafe { network::select(BuildWifi::Present, &mut out) };
     // SAFETY: the pointers name the build's constants or the static credentials.
     let ssid = unsafe { std::slice::from_raw_parts(out.ssid, out.ssid_len as usize) }.to_vec();
     // SAFETY: the shim view points into the static join state.
     let psk = unsafe { std::slice::from_raw_parts(out.psk, out.psk_len as usize) }.to_vec();
     (ssid, psk, out.source)
+}
+
+/// One select by a consumer image, whose C entry prefills nothing: the
+/// stored credentials, or `None` for nothing to join.
+fn select_consumer() -> Option<(Vec<u8>, Vec<u8>, u32)> {
+    let mut out = JoinCredentials {
+        ssid: std::ptr::null(),
+        ssid_len: 0,
+        psk: std::ptr::null(),
+        psk_len: 0,
+        source: 0,
+    };
+    // SAFETY: `out` is live; the test is the only Wi-Fi task.
+    unsafe { network::select(BuildWifi::Absent, &mut out) };
+    if out.ssid_len == 0 {
+        assert!(out.ssid.is_null() && out.psk.is_null() && out.psk_len == 0);
+        return None;
+    }
+    // SAFETY: the pointers name the static stored credentials.
+    let ssid = unsafe { std::slice::from_raw_parts(out.ssid, out.ssid_len as usize) }.to_vec();
+    // SAFETY: as above.
+    let psk = unsafe { std::slice::from_raw_parts(out.psk, out.psk_len as usize) }.to_vec();
+    Some((ssid, psk, out.source))
 }
 
 /// The C Wi-Fi task's report after a join attempt.
@@ -75,14 +99,77 @@ fn store(credentials: Option<Credentials>) {
 
 #[test]
 fn the_fallback_rule() {
-    assert_eq!(choose(false, 99, false), WifiSource::Build);
-    assert_eq!(choose(true, FALLBACK_AFTER - 1, false), WifiSource::Stored);
-    assert_eq!(choose(true, FALLBACK_AFTER, false), WifiSource::Fallback);
+    let bench = BuildWifi::Present;
+    assert_eq!(choose(bench, false, 99, false), Some(WifiSource::Build));
     assert_eq!(
-        choose(true, 99, true),
-        WifiSource::Stored,
+        choose(bench, true, FALLBACK_AFTER - 1, false),
+        Some(WifiSource::Stored)
+    );
+    assert_eq!(
+        choose(bench, true, FALLBACK_AFTER, false),
+        Some(WifiSource::Fallback)
+    );
+    assert_eq!(
+        choose(bench, true, 99, true),
+        Some(WifiSource::Stored),
         "joined once: just a lost network"
     );
+}
+
+/// Without build credentials there is nothing to fall back to: stored
+/// credentials are kept however often they fail, and with none there is
+/// nothing to join.
+#[test]
+fn without_build_wifi_only_stored_credentials_join() {
+    let consumer = BuildWifi::Absent;
+    for (stored, failures, joined_once) in
+        [(false, 0, false), (false, 99, false), (false, 99, true)]
+    {
+        assert_eq!(choose(consumer, stored, failures, joined_once), None);
+    }
+    for failures in [0, FALLBACK_AFTER - 1, FALLBACK_AFTER, 99] {
+        for joined_once in [false, true] {
+            assert_eq!(
+                choose(consumer, true, failures, joined_once),
+                Some(WifiSource::Stored),
+                "{failures} failures, joined once {joined_once}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_consumer_image_joins_only_what_is_stored() {
+    let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    fake::reset_hardware();
+    forget();
+    store(None);
+    for _ in 0..2 * FALLBACK_AFTER {
+        assert_eq!(select_consumer(), None, "nothing stored");
+        outcome(0);
+    }
+    assert_eq!(source(), WifiSource::Build);
+    assert_eq!(
+        wellfed_hal::interlock::INTERLOCK.turn(),
+        wellfed_hal::interlock::Turn::Free,
+        "the outcome ended the empty attempt's turn"
+    );
+
+    // BLE setup saves credentials: the next select joins them, and keeps
+    // them however often they fail.
+    store(Some(
+        Credentials::new(b"stored-net", b"stored-pass").unwrap(),
+    ));
+    for attempt in 0..3 * FALLBACK_AFTER {
+        assert_eq!(
+            select_consumer(),
+            Some((b"stored-net".to_vec(), b"stored-pass".to_vec(), 1)),
+            "attempt {attempt}"
+        );
+        outcome(0);
+    }
+    assert_eq!(source(), WifiSource::Stored);
+    forget();
 }
 
 #[test]

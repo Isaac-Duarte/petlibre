@@ -3,7 +3,8 @@
 //!
 //! Only the private file's hash reaches the manifest (it is an identity
 //! input). Values are octal-escaped C strings, so no SSID or password can
-//! break out of its literal.
+//! break out of its literal. A consumer image gets the header without either
+//! macro ([`no_wifi_header`]), so the entry compiles without a build network.
 
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
@@ -62,9 +63,23 @@ pub(crate) fn wifi_header(raw: &[u8]) -> Result<String> {
     ))
 }
 
+/// The header of an image without a build network: no macros, so the
+/// entry's `#ifdef WELLFED_WIFI_SSID` prefill is compiled out.
+pub(crate) fn no_wifi_header() -> String {
+    format!("{BANNER}/* No build Wi-Fi: the image joins only stored credentials. */\n")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_header_without_build_wifi_defines_nothing() {
+        let text = no_wifi_header();
+        assert!(text.starts_with(BANNER));
+        assert!(!text.contains("#define"), "{text}");
+        assert!(!text.contains("WELLFED_WIFI"), "{text}");
+    }
 
     #[test]
     fn wifi_values_are_escaped_and_sized() {

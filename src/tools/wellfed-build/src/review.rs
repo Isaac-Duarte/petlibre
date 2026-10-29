@@ -203,7 +203,7 @@ fn review(repo: &Repo, build: &Path) -> Result<(Vec<u8>, Vec<u8>, BuildDetails)>
     })?;
 
     // Inputs, overlays, artifacts and archives, each re-hashed.
-    let inputs = current_inputs(repo, &device, Profile::Firstboot, &firmware)?;
+    let inputs = current_inputs(repo, &device, Profile::Firstboot, m.provisioning, &firmware)?;
     require(m.inputs == inputs, || ReviewError::StaleInputs)?;
     for (name, expected) in &m.inputs {
         require(digest(&local(&repo.root, name)?)? == *expected, || {
@@ -260,7 +260,8 @@ fn review(repo: &Repo, build: &Path) -> Result<(Vec<u8>, Vec<u8>, BuildDetails)>
     // Refuse edits made during the (long) audits and emulation.
     require(
         fs::read(build.join("manifest.json"))? == raw
-            && current_inputs(repo, &device, Profile::Firstboot, &firmware)? == inputs,
+            && current_inputs(repo, &device, Profile::Firstboot, m.provisioning, &firmware)?
+                == inputs,
         || ReviewError::Changed,
     )?;
     for artifact in &m.artifacts {

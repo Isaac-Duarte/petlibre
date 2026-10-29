@@ -16,7 +16,7 @@ use wellfed_formats::device::PlatformConfig;
 use wellfed_formats::manifest::{Artifact, Audits, CompiledArchive};
 
 use crate::environment::Rust;
-use crate::{Device, Firmware, Profile, Repo, Result, Variant};
+use crate::{Device, Firmware, Profile, Provisioning, Repo, Result, Variant};
 
 pub mod amebad;
 
@@ -36,6 +36,7 @@ pub(crate) struct Job<'a> {
     pub(crate) profile: Profile,
     pub(crate) firmware: &'a Firmware,
     pub(crate) variant: Option<&'a Variant>,
+    pub(crate) provisioning: Provisioning,
     /// The toolchain [`Platform::bootstrap`] verified.
     pub(crate) toolchain: &'a Path,
     /// The profile's output directory.
@@ -104,10 +105,11 @@ impl Platform {
         &self,
         repo: &Repo,
         profile: Profile,
+        provisioning: Provisioning,
         firmware: &Firmware,
     ) -> Result<Vec<PathBuf>> {
         match self {
-            Self::Amebad(amebad) => amebad.inputs(repo, profile, firmware),
+            Self::Amebad(amebad) => amebad.inputs(repo, profile, provisioning, firmware),
         }
     }
 

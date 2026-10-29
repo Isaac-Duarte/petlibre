@@ -12,7 +12,7 @@ chrono = { version = "0.4.45", default-features = false, features = ["std", "clo
 clap.workspace = true
 wellfed-core.workspace = true
 wellfed-emu.workspace = true
-wellfed-formats.workspace = true
+wellfed-formats = { workspace = true, features = ["clap"] }
 wellfed-image.workspace = true
 wellfed-signing.workspace = true
 regex = "1"

@@ -17,7 +17,7 @@ The Markdown stays plain GitHub-flavored Markdown that reads the same on GitHub.
 | Search | Pagefind indexes `build/` after the prerender and serves its index from `/pagefind/`, so a query never leaves the site |
 | Style | The [tokens](../../assets/brand/tokens.json) and `@wellfed/ui`'s base, as on [well-fed.dev](site.md): type and hairlines, no cards or gradients. Light or dark follows the system |
 | Requests | None off its own origin. Each page carries a CSP `<meta>` with a hash for every inline script, and `static/_headers` sets the rest |
-| Tests | `svelte-check`, ESLint and Prettier with the workspace, Vitest checks that the sidebar lists every doc and that overviews and diagrams render, and Playwright against `vite preview` at desktop and phone width |
+| Tests | `svelte-check`, ESLint and Prettier with the workspace, Vitest checks that the sidebar lists every doc, that overviews and diagrams render, and that every Mermaid block parses (Mermaid in jsdom), and Playwright against `vite preview` at desktop and phone width |
 
 ## Adding a page
 

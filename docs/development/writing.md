@@ -89,6 +89,7 @@ The site replaces the block with the SVG. The two need not look alike, but they 
 - Style the SVG only with the `.d-` classes in the docs site's [`docs.css`](../../src/web/apps/docs/src/lib/docs.css), so it follows light and dark. Give it no colors, inline styles, scripts or external links of its own.
 - Give it a `viewBox`, a `<title>` and a `<desc>`, and prefix its `id`s with the file's name, since several drawings can share a page.
 - Draw it about 720 units wide. The site scales it to the column and scrolls it on screens narrower than 600 px.
+- `make check-web` parses every Mermaid block with Mermaid itself, since nothing else would notice one GitHub can't draw.
 - `docs/diagrams.lock` holds a hash of each Mermaid block and its SVG. After changing either, compare the two, then run `cargo xtask bless-diagrams`. `make check-docs` fails until you do.
 
 ## Lists of crates and tools

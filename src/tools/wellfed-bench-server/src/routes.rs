@@ -6,7 +6,10 @@
 //! - `GET /jobs/{id}/stream`: the job's output from its first line, then its
 //!   end, as newline-delimited JSON; a client that disconnects only stops
 //!   reading;
-//! - `POST /jobs/{id}/cancel`: stop the running job.
+//! - `POST /jobs/{id}/cancel`: stop the running job;
+//! - `/device/ask`, `/device/pushed`, `/device/session`, `/banks` and
+//!   `/banks/seed`: the feeder session and the bank ledger, merged in from
+//!   `device_routes`, which documents them.
 
 use std::convert::Infallible;
 use std::sync::Arc;

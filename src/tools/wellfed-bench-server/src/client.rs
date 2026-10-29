@@ -21,7 +21,9 @@ use wellfed_formats::bench::live::{BenchState, JobEnd, JobEvent, JobId};
 use std::time::Duration;
 
 use wellfed_formats::bench::banks::Ledger;
-use wellfed_formats::bench::feeder::{Ask, Asked, DeviceUnavailable, PushedPage, SessionInfo};
+use wellfed_formats::bench::feeder::{
+    Ask, Asked, DeviceUnavailable, PushedPage, SessionInfo, Stream,
+};
 use wellfed_model::Op;
 
 use crate::api::{Accepted, JobRequest, Refusal, SOCKET, Seed, Seeded};
@@ -116,10 +118,22 @@ impl Client {
         device(response).await
     }
 
-    /// The messages the server's session was pushed from number `from`,
-    /// waiting up to `wait` for the first.
-    pub async fn pushed(&self, from: u64, wait: Duration) -> Result<PushedPage, ClientError> {
-        let path = format!("/device/pushed?from={from}&wait={}", wait.as_millis());
+    /// The `stream` messages the server's session was pushed from number
+    /// `from`, waiting up to `wait` for the first.
+    pub async fn pushed(
+        &self,
+        stream: Stream,
+        from: u64,
+        wait: Duration,
+    ) -> Result<PushedPage, ClientError> {
+        let stream = match stream {
+            Stream::Events => "events",
+            Stream::Logs => "logs",
+        };
+        let path = format!(
+            "/device/pushed?stream={stream}&from={from}&wait={}",
+            wait.as_millis()
+        );
         let response = self.send(Method::GET, &path, None).await?;
         device(response).await
     }
@@ -255,7 +269,7 @@ async fn device<T: DeserializeOwned>(response: Response<Incoming>) -> Result<T, 
     let body = response.into_body().collect().await?.to_bytes();
     match status {
         StatusCode::OK => Ok(serde_json::from_slice(&body)?),
-        StatusCode::SERVICE_UNAVAILABLE => {
+        StatusCode::SERVICE_UNAVAILABLE | StatusCode::CONFLICT => {
             let refused: DeviceUnavailable = serde_json::from_slice(&body)?;
             Err(refused.into())
         }

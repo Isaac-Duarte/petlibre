@@ -56,6 +56,12 @@ pub enum Content {
     Stock,
     /// No valid image: bank 1 after a give-way.
     Invalid,
+    /// A build known only by its OTA image's hash, which no feeder report
+    /// names: it is never checked.
+    Image { sha256: String },
+    /// A write began and did not finish (it stopped, or was cancelled):
+    /// the bank may hold anything until a read or a write settles it.
+    Unknown,
 }
 
 /// The job result an entry came from.
@@ -75,6 +81,8 @@ pub enum Source {
     StockOta,
     /// The pinned stock image back into bank 1 over UART.
     StockExecute,
+    /// An install the integration suite saw confirm, or fall back.
+    Itest,
 }
 
 /// What a job's sequence says it left in a bank, for the server to record.
@@ -155,6 +163,10 @@ impl Ledger {
         let Some(entry) = self.banks.get_mut(&bank) else {
             return false;
         };
+        // Nothing the feeder reports can be compared with these.
+        if matches!(entry.content, Content::Image { .. } | Content::Unknown) {
+            return false;
+        }
         let same = match &entry.check {
             Check::Unchecked => false,
             Check::Confirmed { by: was, .. } => entry.content == seen && *was == by,

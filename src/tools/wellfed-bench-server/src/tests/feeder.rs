@@ -1,16 +1,19 @@
 //! The feeder session against the simulator, the UART capture beside the
 //! jobs, and the bank ledger, over the socket in a temporary checkout.
 
+use wellfed_feeder_sim::harness::Relay;
 use wellfed_feeder_sim::harness::Threaded;
 use wellfed_feeder_sim::serve::Control;
 use wellfed_formats::bench::banks::{Bank, Check, Content, Source, Witness};
-use wellfed_formats::bench::feeder::Asked;
+use wellfed_formats::bench::feeder::{Asked, Stream};
 use wellfed_formats::bench::live::{DEVICE_CURSOR, DeviceCursor, Pause, Session, Unavailable};
+use wellfed_formats::bench::rendezvous;
 use wellfed_model::{Answer, Op, Pushed};
+use wellfed_rig::device::{Ask as RigAsk, DeviceLink};
 
 use super::*;
 use crate::api::{Seed, SeedError, SeededFrom};
-use crate::feeder::DeviceOptions;
+use crate::feeder::{ClockSync, DeviceOptions};
 
 const OWNER: [u8; 32] = [0x22; 32];
 const BUILT: &str = "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1";
@@ -33,6 +36,9 @@ case "$3 $4" in
   echo '{"status":"running"}' > "$out/report.json"
   sleep "${10}" & wait $!
   echo '{"status":"complete","result":{"bytes":7}}' > "$out/report.json"
+  ;;
+*" execute")
+  [ -f "$2/stop-writes" ] && exit 1
   ;;
 esac
 exit 0
@@ -64,15 +70,18 @@ impl Checkout {
     }
 
     fn open_at(&self, feeder: Option<&Threaded>) -> Server {
-        let board = self.board.clone();
-        let device = DeviceOptions {
+        self.open_device(DeviceOptions {
             address: feeder.map(|feeder| feeder.address),
             ..DeviceOptions::default()
-        };
+        })
+        .unwrap()
+    }
+
+    fn open_device(&self, device: DeviceOptions) -> Result<Server, ServeError> {
+        let board = self.board.clone();
         Server::open_with(self.options(), &device, move |_| {
             Ok(Box::new(AtBoard::new(Box::new(board))))
         })
-        .unwrap()
     }
 }
 
@@ -88,7 +97,7 @@ fn open(state: &BenchState) -> bool {
 async fn events(server: &Running) -> Vec<u64> {
     let page = server
         .client
-        .pushed(0, Duration::from_millis(10))
+        .pushed(Stream::Events, 0, Duration::from_millis(10))
         .await
         .unwrap();
     page.messages
@@ -197,7 +206,8 @@ async fn the_session_reads_status_sets_the_clock_and_resumes_after_its_cursor() 
     .unwrap()
     .unwrap();
     assert!(
-        matches!(&answer, wellfed_rig::device::Answer::Status(status) if status.build == info.build.to_ascii_lowercase()),
+        matches!(&answer, wellfed_rig::device::Answer::Status(status)
+            if status.build == info.opened.as_ref().unwrap().build.to_ascii_lowercase()),
         "{answer:?}"
     );
     server.quit().await;
@@ -444,4 +454,297 @@ async fn a_seed_takes_the_operator_s_word_when_the_inspection_names_no_build() {
         (&Content::Build { id: BUILT.into() }, Source::Seed)
     );
     server.quit().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_read_lost_with_its_session_goes_once_more_and_a_write_comes_back_uncertain() {
+    let _one = ONE_SERVER.lock().await;
+    let feeder = simulator();
+    let relay = Relay::start(feeder.address).await;
+    let checkout = checkout();
+    checkout.enroll(&feeder);
+    let server = Running::start(
+        checkout
+            .open_device(DeviceOptions {
+                address: Some(relay.address),
+                clock: ClockSync::Off,
+                ..DeviceOptions::default()
+            })
+            .unwrap(),
+    );
+    state_until(&server, "the session", |state| {
+        open(state) && state.feeder.status.is_some()
+    })
+    .await;
+
+    // Both go out; the feeder's answers are held back, then the
+    // connection is cut under them.
+    relay.hold_answers();
+    let client = Client::at(server.client_socket());
+    let write =
+        tokio::spawn(async move { client.ask([1; 16], Op::SetLock { locked: true }).await });
+    let client = Client::at(server.client_socket());
+    let read = tokio::spawn(async move { client.ask([2; 16], Op::Status).await });
+    // The same id again while the first is out is refused, not sent.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let twice = server
+        .client
+        .ask([1; 16], Op::SetLock { locked: false })
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&twice, ClientError::Unavailable(refused)
+            if matches!(refused.reason, Unavailable::DuplicateId { .. })),
+        "{twice:?}"
+    );
+    relay.cut();
+    relay.resume();
+
+    assert_eq!(write.await.unwrap().unwrap(), Asked::Uncertain);
+    let read = read.await.unwrap().unwrap();
+    assert!(
+        matches!(
+            &read,
+            Asked::Answered {
+                answer: Answer::Status(_)
+            }
+        ),
+        "{read:?}"
+    );
+    server.quit().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_install_push_closes_the_session_until_it_ends_and_no_clock_sync_leaves_the_clock() {
+    let _one = ONE_SERVER.lock().await;
+    let feeder = simulator();
+    let checkout = checkout();
+    checkout.enroll(&feeder);
+    let server = Running::start(
+        checkout
+            .open_device(DeviceOptions {
+                address: Some(feeder.address),
+                clock: ClockSync::Off,
+                ..DeviceOptions::default()
+            })
+            .unwrap(),
+    );
+    let state = state_until(&server, "a status", |state| {
+        open(state) && state.feeder.status.is_some()
+    })
+    .await;
+    assert_eq!(state.feeder.clock.synced_at, None);
+    assert_eq!(state.feeder.clock.skew_ms, None, "the clock stays unset");
+
+    let (_, mut link) = server.shared.feeder().link();
+    let release = link.hold_for_push().unwrap();
+    state_until(&server, "the install pause", |state| {
+        state.feeder.session
+            == Session::Paused {
+                pause: Pause::Install,
+            }
+    })
+    .await;
+    let refused = tokio::task::spawn_blocking(move || link.ask(&RigAsk::Status))
+        .await
+        .unwrap()
+        .unwrap_err();
+    assert!(
+        matches!(
+            refused,
+            wellfed_rig::device::DeviceError::Unavailable(Unavailable::Paused {
+                pause: Pause::Install
+            })
+        ),
+        "{refused:?}"
+    );
+
+    release();
+    state_until(&server, "the session after the push", open).await;
+    server.quit().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_capture_never_starts_under_a_job_however_the_starts_interleave() {
+    let _one = ONE_SERVER.lock().await;
+    let checkout = checkout();
+    let server = Running::start(checkout.open_at(None));
+    state_until(&server, "the capture", |state| {
+        state.capture.segment.is_some()
+    })
+    .await;
+
+    for round in 0..5 {
+        let shared = Arc::clone(&server.shared);
+        let stop = Arc::new(AtomicBool::new(false));
+        let stopping = Arc::clone(&stop);
+        // The relay poll and a job's end both start the capture: race them
+        // against the job's start.
+        let racing = std::thread::spawn(move || {
+            while !stopping.load(Ordering::SeqCst) {
+                shared.resume_capture();
+            }
+        });
+        let id = server
+            .submit(&["capture", &format!("c{round}"), "--seconds", "0.5"])
+            .await
+            .unwrap();
+        // Once the job's thread has stopped the capture, nothing starts it
+        // again until the job ends.
+        state_until(&server, "the job's own capture", |state| {
+            state.activity.len() == 1
+        })
+        .await;
+        for _ in 0..10 {
+            let state = server.state().await;
+            if state.job.as_ref().is_some_and(|job| job.end.is_none()) {
+                assert!(
+                    !server.shared.capture().is_running(),
+                    "round {round}: the capture runs under job {id}"
+                );
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert_eq!(follow(&server.client, id).await.0.code, 0);
+        stop.store(true, Ordering::SeqCst);
+        racing.join().unwrap();
+    }
+    server.quit().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_write_that_stops_leaves_its_bank_unknown_and_a_seed_waits_for_no_job() {
+    let _one = ONE_SERVER.lock().await;
+    let checkout = checkout();
+    let root = checkout.root();
+    fs::write(root.join("stop-writes"), "").unwrap();
+    fs::write(root.join("private/verification/g1-plan.json"), "{}").unwrap();
+    let server = Running::start(checkout.open_at(None));
+
+    let id = server
+        .submit(&[
+            "give-way-execute",
+            "g1",
+            "--fallback",
+            "f",
+            "--expected-plan-sha256",
+            "00",
+        ])
+        .await
+        .unwrap();
+    assert_eq!(follow(&server.client, id).await.0.code, 1);
+    let entry = server.client.banks().await.unwrap().banks[&Bank::One].clone();
+    assert_eq!(
+        (entry.content, entry.source),
+        (Content::Unknown, Source::GiveWay)
+    );
+
+    let id = server
+        .submit(&["capture", "c1", "--seconds", "1"])
+        .await
+        .unwrap();
+    let refused = server
+        .client
+        .seed(&Seed {
+            session: "d1".into(),
+            bank: Some(0),
+            build: Some(BUILT.into()),
+        })
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&refused, ClientError::Refused(api::Refusal::Busy { id: busy, .. }) if *busy == id),
+        "{refused:?}"
+    );
+    follow(&server.client, id).await;
+    server.quit().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_ledger_that_does_not_read_refuses_the_server_and_stays() {
+    let _one = ONE_SERVER.lock().await;
+    let checkout = checkout();
+    let ledger = checkout.root().join(wellfed_formats::bench::banks::BANKS);
+    fs::create_dir_all(ledger.parent().unwrap()).unwrap();
+    fs::write(&ledger, "{ not json").unwrap();
+
+    let refused = checkout
+        .open_device(DeviceOptions::default())
+        .err()
+        .unwrap();
+
+    assert!(matches!(refused, ServeError::Banks(_)), "{refused}");
+    assert_eq!(fs::read_to_string(&ledger).unwrap(), "{ not json");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_server_points_the_user_s_clients_at_itself_and_withdraws_when_it_quits() {
+    let _one = ONE_SERVER.lock().await;
+    let pointers = tempfile::tempdir().unwrap();
+    let checkout = checkout();
+    let device = || DeviceOptions {
+        rendezvous: Some(pointers.path().to_path_buf()),
+        ..DeviceOptions::default()
+    };
+    let server = Running::start(checkout.open_device(device()).unwrap());
+
+    let pointer = rendezvous::live(pointers.path()).unwrap();
+    assert_eq!(pointer.root, checkout.root());
+    assert_eq!(pointer.socket, checkout.root().join(api::SOCKET));
+
+    // Another checkout's server is refused while this one answers.
+    let other = self::checkout();
+    let refused = other.open_device(device()).err().unwrap();
+    assert!(
+        matches!(&refused, ServeError::OtherServer { root, .. } if *root == checkout.root()),
+        "{refused}"
+    );
+
+    server.quit().await;
+    assert!(rendezvous::live(pointers.path()).is_none());
+}
+
+#[test]
+fn the_hotspot_is_read_only_while_no_job_and_no_loader_or_write_runs() {
+    let mut state = BenchState {
+        now: 0.0,
+        server: wellfed_formats::bench::live::ServerView {
+            pid: 1,
+            started: 0.0,
+            phase: Phase::Serving,
+        },
+        job: None,
+        activity: Vec::new(),
+        uart: Uart::Idle,
+        relays: Default::default(),
+        feeder: Default::default(),
+        capture: Default::default(),
+        banks: Default::default(),
+    };
+    assert!(crate::server::hotspot_due(&state));
+
+    state.uart = Uart::Writing { done: 1, total: 2 };
+    assert!(!crate::server::hotspot_due(&state));
+    state.uart = Uart::Loader;
+    assert!(!crate::server::hotspot_due(&state));
+
+    state.uart = Uart::Idle;
+    state.job = Some(wellfed_formats::bench::live::JobView {
+        id: 1,
+        label: "ota o1".into(),
+        log: String::new(),
+        accepted: 0.0,
+        record: None,
+        upcoming: Vec::new(),
+        cancel: CancelState::None,
+        end: None,
+    });
+    assert!(!crate::server::hotspot_due(&state));
+}
+
+impl Running {
+    /// The socket, for a second client of its own.
+    fn client_socket(&self) -> PathBuf {
+        self.root.join(api::SOCKET)
+    }
 }

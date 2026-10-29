@@ -120,6 +120,13 @@ pub enum DeviceError {
 pub trait DeviceLink {
     /// One request and its answer.
     fn ask(&mut self, ask: &Ask) -> Result<Answer, DeviceError>;
+
+    /// An install push is about to open a session of its own: a link that
+    /// shares the feeder's owner sessions closes its own for the push, and
+    /// the returned call, made once the push ends, lets it open again.
+    fn hold_for_push(&mut self) -> Option<Box<dyn FnOnce() + Send>> {
+        None
+    }
 }
 
 impl DeviceLink for Device {
@@ -426,7 +433,7 @@ pub enum Rebuffed {
 
 /// The parts of `wellfed-stock`'s config the device client uses.
 #[derive(Debug, Clone, Default, Deserialize)]
-pub struct Hotspot {
+pub(crate) struct Hotspot {
     #[serde(default)]
     pub hotspot_interface: String,
     #[serde(default)]
@@ -458,13 +465,27 @@ struct Connection {
 /// bench server's.
 #[derive(Clone)]
 pub struct Owner {
-    pub keys: Keypair,
-    pub identity: [u8; 32],
-    pub hotspot: Hotspot,
-    pub zone: jiff::tz::TimeZone,
+    keys: Keypair,
+    identity: [u8; 32],
+    hotspot: Hotspot,
+    zone: jiff::tz::TimeZone,
 }
 
 impl Owner {
+    pub fn keys(&self) -> &Keypair {
+        &self.keys
+    }
+
+    /// The feeder's identity key.
+    pub fn identity(&self) -> [u8; 32] {
+        self.identity
+    }
+
+    /// The server config's time zone, which a job's clock sync carries.
+    pub fn zone(&self) -> &jiff::tz::TimeZone {
+        &self.zone
+    }
+
     /// The key file at `keys` and the hotspot fields of the server config
     /// at `config`, both under `root`.
     pub fn open(root: &Path, keys: &Path, config: &Path) -> crate::Result<Self> {
@@ -498,7 +519,8 @@ impl Owner {
 
     /// The owner with `secret` and the feeder `identity`, found by nothing
     /// but a given address (host tests, against the simulator).
-    pub fn of(secret: [u8; 32], identity: [u8; 32]) -> Self {
+    #[cfg(test)]
+    pub(crate) fn of(secret: [u8; 32], identity: [u8; 32]) -> Self {
         Self {
             keys: Keypair::from_secret(secret),
             identity,
@@ -552,7 +574,8 @@ impl Device {
 
     /// `owner` reaching its feeder at `address` alone (host tests, against
     /// the simulator).
-    pub fn at(owner: Owner, address: SocketAddr) -> Self {
+    #[cfg(test)]
+    pub(crate) fn at(owner: Owner, address: SocketAddr) -> Self {
         Self {
             owner,
             address: Some(address),

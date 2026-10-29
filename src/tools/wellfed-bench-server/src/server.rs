@@ -16,13 +16,15 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use tokio::sync::Notify;
-use wellfed_formats::bench::lease::{self, Lease};
+use wellfed_formats::bench::banks::BANKS;
+use wellfed_formats::bench::lease::{self, Holder, Lease};
 use wellfed_formats::bench::live::{
     BenchState, CancelState, JOBS, JobEnd, JobId, JobView, Pause, Phase, ServerView, Uart,
 };
 use wellfed_formats::bench::progress::{Current, ProgressSink};
+use wellfed_formats::bench::rendezvous::{self, Rendezvous};
 use wellfed_formats::bench::{CONFIG, Config, now, relative};
-use wellfed_relay::Board;
+use wellfed_relay::{Board, POWER};
 use wellfed_rig::Cancel;
 use wellfed_rig::tools::Children;
 
@@ -64,6 +66,19 @@ pub enum ServeError {
     },
     #[error("The output pipe: {0}")]
     Output(std::io::Error),
+    /// The ledger is kept as it is for the operator: a server that started
+    /// on an empty one would overwrite it at its first job.
+    #[error("{BANKS}: {0}; repair or remove it")]
+    Banks(wellfed_formats::Error),
+    /// Another checkout's server answers for this user: the `wellfed` CLI
+    /// finds one server, so one serves at a time.
+    #[error("A bench server for {} already runs ({holder}); stop it first", root.display())]
+    OtherServer { root: PathBuf, holder: Box<Holder> },
+    #[error("{}: {error}", directory.display())]
+    Rendezvous {
+        directory: PathBuf,
+        error: wellfed_formats::Error,
+    },
 }
 
 /// Where the server runs and the tools its jobs run.
@@ -82,6 +97,8 @@ pub struct Server {
     socket: PathBuf,
     /// The feeder session's task, started by [`Self::run`].
     session: Task,
+    /// The pointer this server published, to withdraw when it quits.
+    rendezvous: Option<(PathBuf, Holder)>,
     /// Held until the server is dropped, after its last job.
     _lease: Lease,
 }
@@ -129,7 +146,7 @@ impl Server {
         });
         let board = SharedBoard::new(board, store.clone());
         board.query()?;
-        let banks = Banks::open(&options.root, store.clone());
+        let banks = Banks::open(&options.root, store.clone()).map_err(ServeError::Banks)?;
         let (feeder, session) = Feeder::new(&options.root, device, store.clone(), banks.clone());
         let capture = CaptureService::new(
             options.root.clone(),
@@ -139,11 +156,24 @@ impl Server {
             banks.clone(),
         );
 
+        if let Some(directory) = &device.rendezvous
+            && let Some(other) = rendezvous::live(directory)
+            && other.root != options.root
+        {
+            return Err(ServeError::OtherServer {
+                root: other.root,
+                holder: Box::new(other.holder),
+            });
+        }
         let socket = options.root.join(SOCKET);
         let listener = bind(&socket).map_err(|error| ServeError::Socket {
             socket: socket.clone(),
             error,
         })?;
+        let rendezvous = match &device.rendezvous {
+            Some(directory) => Some(publish(directory, &options.root, &socket)?),
+            None => None,
+        };
         let output = output::install().map_err(ServeError::Output)?;
 
         let jobs = Jobs {
@@ -169,6 +199,7 @@ impl Server {
             listener,
             socket,
             session,
+            rendezvous,
             _lease: lease,
         })
     }
@@ -272,6 +303,9 @@ impl Server {
             }
         };
         let _ = std::fs::remove_file(&self.socket);
+        if let Some((directory, holder)) = &self.rendezvous {
+            rendezvous::withdraw(directory, holder);
+        }
 
         match served {
             Ok(Err(error)) => Err(socket_error(error)),
@@ -302,6 +336,31 @@ fn bind(socket: &Path) -> std::io::Result<std::os::unix::net::UnixListener> {
     Ok(listener)
 }
 
+/// Point `directory`'s rendezvous at this server.
+fn publish(directory: &Path, root: &Path, socket: &Path) -> Result<(PathBuf, Holder), ServeError> {
+    let failed = |error| ServeError::Rendezvous {
+        directory: directory.to_path_buf(),
+        error,
+    };
+    let holder = Holder::current()?;
+    let pointer = Rendezvous {
+        socket: socket.to_path_buf(),
+        root: root.to_path_buf(),
+        holder: holder.clone(),
+    };
+    rendezvous::publish(directory, &pointer).map_err(failed)?;
+    Ok((directory.to_path_buf(), holder))
+}
+
+/// Whether the hotspot may be read now: never while a job runs or the UART
+/// is in a loader session or a write, as the relays are not polled then
+/// either. A process spawned mid-write is load the write does not need.
+pub(crate) fn hotspot_due(state: &BenchState) -> bool {
+    let job_running = state.job.as_ref().is_some_and(|job| job.end.is_none());
+    let uart_busy = matches!(state.uart, Uart::Loader | Uart::Writing { .. });
+    !job_running && !uart_busy
+}
+
 /// Whether the bench hotspot's connection is up, every [`HOTSPOT_POLL`],
 /// into the feeder's view. Read-only: nmcli only lists what is active.
 async fn hotspot(root: PathBuf, store: Store) {
@@ -310,6 +369,9 @@ async fn hotspot(root: PathBuf, store: Store) {
     let mut ticks = tokio::time::interval(HOTSPOT_POLL);
     loop {
         ticks.tick().await;
+        if !hotspot_due(&store.read()) {
+            continue;
+        }
         let Ok(file) = wellfed_formats::load::<HotspotFile>(&root.join(HOTSPOT)) else {
             store.update(|state| state.feeder.hotspot = None);
             continue;
@@ -503,6 +565,8 @@ impl Shared {
                 job: id,
                 label: spec.command.describe(),
             }));
+        } else if spec.command.own_sessions() {
+            self.bed.feeder.hold(Some(Pause::StockOta { job: id }));
         }
         self.capture.stop();
 
@@ -535,22 +599,49 @@ impl Shared {
 
     /// Capture the UART while no job runs and the feeder is powered; stop
     /// capturing once relay 1 is off.
+    ///
+    /// Decided and started under the jobs lock, as a job is accepted: a job
+    /// is either running here, so no capture starts, or it starts after,
+    /// and its own stop (the first thing its thread does) ends this one.
     pub(crate) fn resume_capture(&self) {
-        let idle = {
-            let jobs = self.jobs();
-            jobs.running.is_none() && !jobs.stopping
-        };
         let powered = self
             .store
             .read()
             .relays
-            .get("1")
+            .get(&POWER.to_string())
             .is_some_and(|relay| relay.on);
+        let jobs = self.jobs();
+        let idle = jobs.running.is_none() && !jobs.stopping;
         if idle && powered {
             self.capture.start();
-        } else if !powered {
+            return;
+        }
+        drop(jobs);
+        if !powered {
             self.capture.stop();
         }
+    }
+
+    /// `run` while no job runs, under the jobs lock so none starts during
+    /// it, or the refusal a job would get.
+    pub(crate) fn while_idle<T>(&self, run: impl FnOnce() -> T) -> Result<T, Refusal> {
+        let jobs = self.jobs();
+        if jobs.stopping {
+            return Err(Refusal::Stopping);
+        }
+        if let Some(running) = &jobs.running {
+            return Err(Refusal::Busy {
+                id: running.id,
+                label: running.label.clone(),
+            });
+        }
+        Ok(run())
+    }
+
+    /// The capture service, for a test to watch.
+    #[cfg(test)]
+    pub(crate) fn capture(&self) -> &CaptureService {
+        &self.capture
     }
 
     pub(crate) fn feeder(&self) -> &Feeder {

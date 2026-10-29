@@ -39,7 +39,7 @@ mod server;
 mod state;
 
 pub use client::{Client, ClientError, Followed, Interrupt};
-pub use feeder::DeviceOptions;
+pub use feeder::{ClockSync, DeviceOptions};
 pub use jobs::{JobCommand, JobOptions, ToolPaths};
 pub use server::{Options, ServeError, Server, restore_output};
 pub use state::Store;

@@ -25,6 +25,7 @@ pub use args::{ItestArgs, StockOtaArgs};
 pub use error::{Error, Result};
 use serde::Serialize;
 use wellfed_formats::bench::VERIFICATION;
+use wellfed_formats::bench::banks::{Bank, Content};
 use wellfed_formats::bench::catalog::Need;
 use wellfed_formats::bench::progress::StepState;
 use wellfed_formats::bench::run::{Evidence, RunRecord, SUFFIX, ScenarioRecord, ScenarioVerdict};
@@ -149,6 +150,9 @@ impl Hotspot {
 trait Rig {
     /// Build (when `build`), review and sign the next version: [`Bench::ota_stage`].
     fn stage(&mut self, args: &OtaArgs) -> Result<Option<Staged>>;
+    /// An install this run watched left `content` in `bank`, for the
+    /// bench's ledger.
+    fn wrote(&mut self, _bank: Bank, _content: Content) {}
     /// A frozen review's startup build ID.
     fn review_build(&mut self, review: &Path) -> Result<String>;
     /// Replace whatever answers the feeder now.
@@ -447,6 +451,18 @@ impl<'r> Ctx<'r> {
             short(&staged.build)
         ));
         let outcome = self.watch(&staged.build, since, INSTALL_WAIT)?;
+        // The UART's verdict is what bank 1 holds, whatever the status
+        // check after it says.
+        match outcome {
+            Outcome::Passed => self.rig.wrote(
+                Bank::One,
+                Content::Build {
+                    id: staged.build.to_ascii_lowercase(),
+                },
+            ),
+            Outcome::FellBack { .. } => self.rig.wrote(Bank::One, Content::Invalid),
+            Outcome::Failed { .. } | Outcome::Skipped => {}
+        }
         if outcome == Outcome::Passed {
             self.confirm(&staged.build)?;
         }

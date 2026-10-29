@@ -17,6 +17,7 @@ pub mod lease;
 pub mod live;
 pub mod notes;
 pub mod progress;
+pub mod rendezvous;
 pub mod run;
 
 use std::collections::BTreeMap;

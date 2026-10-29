@@ -28,17 +28,25 @@ pub(crate) struct Banks {
 }
 
 impl Banks {
-    /// The ledger in the checkout at `root`, or an empty one: a file that
-    /// does not read is left for the operator and replaced at the first
-    /// change.
-    pub(crate) fn open(root: &Path, store: Store) -> Self {
-        let ledger: Ledger = wellfed_formats::load(&root.join(BANKS)).unwrap_or_default();
+    /// The ledger in the checkout at `root`, or an empty one when there is
+    /// none. One that does not read is refused, never replaced: it is the
+    /// operator's to repair.
+    pub(crate) fn open(root: &Path, store: Store) -> Result<Self, wellfed_formats::Error> {
+        let ledger: Ledger = match wellfed_formats::load(&root.join(BANKS)) {
+            Ok(ledger) => ledger,
+            Err(wellfed_formats::Error::Io(error))
+                if error.kind() == std::io::ErrorKind::NotFound =>
+            {
+                Ledger::default()
+            }
+            Err(error) => return Err(error),
+        };
         store.update(|state| state.banks = ledger.clone());
-        Self {
+        Ok(Self {
             ledger: Arc::new(Mutex::new(ledger)),
             root: root.to_path_buf(),
             store,
-        }
+        })
     }
 
     fn lock(&self) -> MutexGuard<'_, Ledger> {

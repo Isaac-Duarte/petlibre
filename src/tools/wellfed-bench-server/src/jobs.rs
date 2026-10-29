@@ -166,6 +166,14 @@ impl JobCommand {
         }
     }
 
+    /// Whether the job runs device API sessions of its own throughout:
+    /// `stock-ota` meets stock, which serves no device API, then the build
+    /// it installs on bank 0. The server's session closes for it rather
+    /// than search for a feeder that cannot answer.
+    pub(crate) fn own_sessions(&self) -> bool {
+        matches!(self, Self::StockOta(_))
+    }
+
     /// One of the integration suite's commands.
     fn suite(&self) -> bool {
         matches!(self, Self::Itest(_) | Self::StockOta(_))
@@ -338,9 +346,6 @@ fn open(bed: &Bed, spec: &JobSpec, run: &Run) -> Result<Bench, JobError> {
     } else {
         Relay::detached()
     };
-    // Every device API request the job makes goes through the server's one
-    // session, never a second one of the job's own.
-    let (keys, link) = bed.feeder.link();
     let tools = Processes::new(
         bed.root.clone(),
         bed.tools.flash_bin.clone(),
@@ -348,8 +353,16 @@ fn open(bed: &Bed, spec: &JobSpec, run: &Run) -> Result<Bench, JobError> {
         bed.tools.build_bin.clone(),
         run.cancel.clone(),
         run.children.clone(),
-    )
-    .with_link(keys, Box::new(link));
+    );
+    // Every device API request the job makes goes through the server's one
+    // session, never a second one of the job's own; but for a job whose
+    // sessions are its own, which the server closes its session for.
+    let tools = if spec.command.own_sessions() {
+        tools
+    } else {
+        let (keys, link) = bed.feeder.link();
+        tools.with_link(keys, Box::new(link))
+    };
 
     Ok(Bench {
         root: bed.root.clone(),
@@ -474,7 +487,7 @@ mod tests {
             banks: Default::default(),
         });
         let root = PathBuf::from("/nonexistent");
-        let banks = crate::banks::Banks::open(&root, store.clone());
+        let banks = crate::banks::Banks::open(&root, store.clone()).unwrap();
         let (feeder, _) = Feeder::new(
             &root,
             &crate::feeder::DeviceOptions::default(),

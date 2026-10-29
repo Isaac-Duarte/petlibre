@@ -174,6 +174,17 @@ pub trait Installing {
     fn stop(&mut self);
 }
 
+/// A push's release, run when dropped.
+struct Released(Option<Release>);
+
+impl Drop for Released {
+    fn drop(&mut self) {
+        if let Some(release) = self.0.take() {
+            release();
+        }
+    }
+}
+
 /// [`Tools::install`] on a thread with its own device session.
 struct Pushing {
     stop: Arc<AtomicBool>,
@@ -182,8 +193,14 @@ struct Pushing {
     result: Option<std::result::Result<(), Arc<PushError>>>,
 }
 
+/// Called once a push has ended, however it ended.
+type Release = Box<dyn FnOnce() + Send>;
+
 impl Pushing {
-    fn start(root: &Path, job: &InstallJob) -> Result<Self> {
+    /// Start the push; `release` runs once it has ended, or at once if it
+    /// cannot start.
+    fn start(root: &Path, job: &InstallJob, release: Option<Release>) -> Result<Self> {
+        let release = Released(release);
         let manifest = fs::read(root.join(&job.manifest))?;
         let container = fs::read(root.join(&job.image))?;
         require(container.len() > CONTAINER_HEADER, || {
@@ -207,6 +224,8 @@ impl Pushing {
         let (send, notes) = mpsc::channel();
         let stopping = Arc::clone(&stop);
         let done = std::thread::spawn(move || {
+            // Dropped, and so run, whichever way the push ends.
+            let _release = release;
             let mut note = |text: String| {
                 let _ = send.send(text);
             };
@@ -632,7 +651,13 @@ impl Tools for Processes {
     }
 
     fn install(&mut self, job: &InstallJob) -> Result<Box<dyn Installing>> {
-        Ok(Box::new(Pushing::start(&self.root, job)?))
+        // The push opens owner sessions of its own: a shared link closes its
+        // session until the push ends, so the feeder never has both.
+        let release = self
+            .link
+            .as_mut()
+            .and_then(|link| link.device.hold_for_push());
+        Ok(Box::new(Pushing::start(&self.root, job, release)?))
     }
 
     fn device_status(&mut self, keys: &Path, config: &Path) -> Result<DeviceStatus> {

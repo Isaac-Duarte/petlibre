@@ -47,11 +47,12 @@ mod text;
 mod trace;
 
 use std::io::BufRead;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use wellfed_formats::bench::rendezvous;
 use wellfed_model::{Answer, Op};
 
 use crate::device::Connection;
@@ -162,16 +163,11 @@ fn main() -> Result<ExitCode> {
         Command::RestoreStock(_) => Some("restore-stock"),
         _ => None,
     };
-    if let Some(command) = own_sessions
-        && runtime
-            .block_on(bench::Bench::probe(std::path::Path::new(bench::SOCKET)))?
-            .is_some()
-    {
-        bail!(
-            "`wellfed {command}` opens its own sessions, and the bench server on {} holds the \
-             feeder's; stop `wellfed-bench serve` first",
-            bench::SOCKET
-        );
+    if let Some(command) = own_sessions {
+        runtime.block_on(refuse_beside_bench(
+            command,
+            rendezvous::directory().as_deref(),
+        ))?;
     }
 
     let device = match cli.command {
@@ -244,10 +240,27 @@ impl Toggle {
     }
 }
 
+/// Refuse `command`, which opens device sessions of its own, while a bench
+/// server holds the feeder's (its pointer in `rendezvous`).
+async fn refuse_beside_bench(command: &'static str, rendezvous: Option<&Path>) -> Result<()> {
+    match bench::Bench::find(rendezvous).await? {
+        Some(bench) => Err(bench.refuse(command).into()),
+        None => Ok(()),
+    }
+}
+
 /// A session with the feeder: the bench server's whenever one answers for
-/// this checkout, and otherwise this computer's own.
+/// this user, and otherwise this computer's own.
 async fn connect(target: &Target) -> Result<(OwnerKey, [u8; 32], Connection)> {
-    if let Some(bench) = bench::Bench::probe(&bench::beside(&target.keys)).await? {
+    connect_via(target, rendezvous::directory().as_deref()).await
+}
+
+/// [`connect`], finding the bench server by its pointer in `rendezvous`.
+async fn connect_via(
+    target: &Target,
+    rendezvous: Option<&Path>,
+) -> Result<(OwnerKey, [u8; 32], Connection)> {
+    if let Some(bench) = bench::Bench::find(rendezvous).await? {
         let lent = bench::lend(
             bench,
             &target.keys,

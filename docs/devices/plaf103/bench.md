@@ -157,8 +157,8 @@ The socket's routes:
 | `GET /jobs/{id}/stream` | The job's output lines, then its end, as newline-delimited JSON |
 | `POST /jobs/{id}/cancel` | 202, or 409 for a job that already ended |
 | `POST /device/ask` | `{"id": [...], "op": {...}}`, one device API request on the server's session: 200 with `answered` and the answer, or `uncertain`; 503 `{"reason": ...}` when nothing was sent |
-| `GET /device/pushed?from=N&wait=MS` | The messages the session was pushed from number `N` on (events, gaps, log lines), waiting up to `MS` (at most 30 s) for the first |
-| `GET /device/session` | Whom the session is with: the key file, the feeder, its build, role and capabilities; 503 while it is closed |
+| `GET /device/pushed?stream=events\|logs&from=N&wait=MS` | The history (events and gaps) or the log lines the session was pushed, from number `N` on, waiting up to `MS` (at most 30 s) for the first; with the event the held history starts after |
+| `GET /device/session` | Whom the session speaks as and with: the checkout, the key file and its public key, the feeder, and once open its build, role and capabilities; 503 while paused or unconfigured |
 | `GET /banks`, `POST /banks/seed` | The bank ledger, and `banks --seed` |
 
 #### The feeder session
@@ -167,20 +167,33 @@ The server opens one session with the feeder, as the owner key the bench already
 
 - subscribes after the newest event it took, which it keeps in `private/bench-status/device-cursor.json`, so a new server does not replay the history;
 - follows the feeder's debug log into the state and into `private/bench-status/device-log/YYYY-MM-DD.log`, one file a UTC day, each line stamped with the host's time, through a buffer that is never synced;
-- reads the status every 10 s, and sets the clock as `wellfed time` does when it is invalid or more than 2 s off;
-- reads whether the hotspot's connection is up every 30 s, with `nmcli` listing the active connections only.
+- reads the status every 10 s, and sets the clock as `wellfed time` does (this host's clock and zone) when it is invalid or more than 2 s off. After the feeder refuses a sync it waits 5 min before the next. `serve --no-clock-sync` leaves the clock alone, for a check that needs it invalid;
+- reads whether the hotspot's connection is up every 30 s, with `nmcli` listing the active connections only, and never while a job runs or the UART is in a loader session or a write.
 
-It closes while a job that holds the UART runs (`capture`, `boot`, `loader`, `transients`, `dump` and every prepare and execute), while relay 1 is off, and while the server stops. Otherwise it reopens after a loss, after 1 s and then twice as long each time up to 30 s. `ota`, `itest` and `stock-ota` keep it open and ask through it: their status checks, cancels and the suite's requests are the server's session's, and only `itest`'s deliberate second and intruding sessions, and the pushes of an install, open sessions of their own.
+It closes:
 
-It never resends a request. One that went out and got no answer is reported uncertain: it may have run, and it is not sent again on any path. A request while the session is paused or unconfigured is refused with the reason, and nothing is sent; one while it is opening waits for it up to 20 s.
+- while a job that holds the UART runs (`capture`, `boot`, `loader`, `transients`, `dump` and every prepare and execute);
+- while an install push runs (`ota`'s, or one of `itest`'s), which opens owner sessions of its own; it reopens after its cursor once the push ends;
+- for the whole of `stock-ota`, which meets stock (no device API) and then runs its own sessions with the build on bank 0;
+- while relay 1 is off, and while the server stops.
 
-**The `wellfed` CLI.** Whenever a server answers on the `bench.sock` beside the key file (`private/bench.sock` for the default key), every `wellfed` device command goes through it, and a direct session is refused rather than opened beside it. So is `--address`, any key file but the server's, and `setup`, `install`, `recover`, `join` and `restore-stock`, which open sessions of their own. `events` and `feeds` read the history the server's session kept, and `logs` its log lines, so neither moves the server's own subscription or tail; `--samples` is refused.
+Otherwise it reopens after a loss, after 1 s and then twice as long each time up to 30 s. `ota` and `itest` ask through it: their status checks, cancels and the suite's requests are the server's session's. Only `itest`'s deliberate second and intruding sessions, the pushes of an install, and `stock-ota` open sessions of their own.
+
+A read (status, settings, plans, statistics and the like) that got no answer, or whose session dropped under it, goes once more under the same id. Nothing else is sent again: a write that got no answer is reported uncertain, since it may have run, and it is not sent again on any path. A request while the session is paused or unconfigured is refused with the reason, and nothing is sent; one while it is opening waits for it up to 20 s. A second request under an id still out is refused (409).
+
+**Finding the server.** Once it listens, the server writes a per-user pointer to itself, `$XDG_RUNTIME_DIR/wellfed-bench.json` (or `~/.local/state/wellfed/wellfed-bench.json` without XDG), naming its socket, checkout and process; it removes its own when it quits. A pointer whose process is gone, or whose socket refuses, names no server. While another checkout's server answers, `serve` refuses to start: one server holds the bench.
+
+**The `wellfed` CLI.** Every device command reads that pointer first, whatever its working directory or key file. While the server it names answers, a command whose key file holds the server's key (a copy counts) goes through it, and a direct session is never opened beside it or used as a fallback. Everything else is refused, naming the server: another key, `--address`, and `setup`, `install`, `recover`, `join` and `restore-stock`, which open sessions of their own.
+
+`events` and `feeds` read the history the server's session kept, and `logs` its log lines, so neither moves the server's own subscription or tail; `--samples` is refused. The server keeps the newest 4096 events and gaps, and 1024 log batches, apart. History older than it holds is refused with the event it starts after: pass `--after` that number, or stop the server to read further back.
 
 #### The UART capture
 
 While no job runs and relay 1 is on, the server holds the UART with back-to-back receive-only captures, `private/captures/bench-MILLIS-uart-NN`, through the same capture chain the suite uses. Its lines feed the state's UART tail as they arrive. `PLFW1 start` checks the bank ledger, and the last `PLOTA1` record is shown.
 
-Before every job it stops the capture, killing its observe (which only receives), and waits for it to let go of the port; it starts a fresh one after the job, and when the relays read relay 1 on again. A capture that stops on its own, a missing port say, stays stopped with its reason until then.
+Before every job it stops the capture, killing its observe (which only receives), and waits for it to let go of the port; it starts a fresh one after the job, and when the relays read relay 1 on again. The decision to start one is made under the same lock that accepts a job, so a capture never starts under a job that is starting. A capture that stops on its own, a missing port say, stays stopped with its reason until then.
+
+`wellfed-flash` caps one observe at 180 s, so an idle bench writes about 480 segment directories a day, each with its `serial-rx.bin`, `serial-tx.bin`, events and report. Clear old `bench-*-uart-*` directories from `private/captures/` now and then.
 
 #### The bank ledger
 
@@ -188,13 +201,15 @@ Before every job it stops the capture, killing its observe (which only receives)
 
 | Job | Records |
 | --- | --- |
-| `flash-execute` | The plan's bank: its target review's startup identity, or the stock image, or else the review's OTA image hash |
+| `flash-execute` | The plan's bank: its target review's startup identity, or the stock image, or else the review's OTA image hash, which no report names and so is never checked |
 | `give-way-execute` | Bank 1 holds no valid image |
+| `flash-execute` or `give-way-execute` that stops or is cancelled once the flash client ran | That bank is unknown, until a write or a seed settles it. A refusal before any serial access (exit 2) records nothing. |
 | `stock-execute` | Bank 1 holds stock |
 | `ota` | Confirmed: bank 1 holds the offered build (or stock). Fell back: bank 1 holds no valid image. `--fault give-way-only`: bank 1 gave way |
 | `stock-ota` | Stock's install: bank 0 holds the build and bank 1 no valid image. The promotion: bank 1 holds the build |
+| `itest` | Each install the suite watched: confirmed, bank 1 holds the build; fell back, no valid image |
 
-Each entry is then checked against what the feeder says it runs: the `PLFW1 start build= bank=` banner on the capture, and the build and bank in the session's status. A report that names another build marks the entry disputed rather than replacing it, since either side may be wrong; the operator decides. `banks --seed DUMP_SESSION` starts the ledger. Today's flash inspections pin region hashes and name no build, so the seed takes `--bank` and `--build`, and says so. Like every file the server keeps, it is replaced whole and never synced, and nothing writes it while a job holds the UART.
+Each entry is then checked against what the feeder says it runs: the `PLFW1 start build= bank=` banner on the capture, and the build and bank in the session's status. A report that names another build marks the entry disputed rather than replacing it, since either side may be wrong; the operator decides. `banks --seed DUMP_SESSION` starts the ledger. Today's flash inspections pin region hashes and name no build, so the seed takes `--bank` and `--build`, and says so. A seed is refused while a job runs. Like every file the server keeps, it is replaced whole and never synced, and nothing writes it while a job holds the UART. A `banks.json` that does not read refuses `serve`, and is left for the operator to repair or remove.
 
 ### Flash over UART
 

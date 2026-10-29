@@ -28,6 +28,7 @@ use std::time::{Duration, Instant};
 use serde::de::IgnoredAny;
 
 use crate::args::ItestArgs;
+use wellfed_formats::bench::banks::{Bank, Content, Source};
 use wellfed_formats::bench::live::ActivityKind;
 use wellfed_formats::bench::progress::StepState;
 use wellfed_formats::bench::{CAPTURES, VERIFICATION};
@@ -397,6 +398,10 @@ impl Drop for LiveRig<'_> {
 impl Rig for LiveRig<'_> {
     fn stage(&mut self, args: &OtaArgs) -> Result<Option<Staged>> {
         Ok(self.bench.ota_stage(args, &mut Timing::default())?)
+    }
+
+    fn wrote(&mut self, bank: Bank, content: Content) {
+        self.bench.wrote(bank, content, Source::Itest);
     }
 
     fn review_build(&mut self, review: &Path) -> Result<String> {

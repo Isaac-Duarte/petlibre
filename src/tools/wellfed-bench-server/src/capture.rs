@@ -118,6 +118,13 @@ impl CaptureService {
         running.stop.cancel();
         let _ = running.thread.join();
     }
+
+    #[cfg(test)]
+    pub(crate) fn is_running(&self) -> bool {
+        self.running()
+            .as_ref()
+            .is_some_and(|running| !running.thread.is_finished())
+    }
 }
 
 impl Inner {
@@ -168,6 +175,12 @@ impl Inner {
         };
         let segment = relative(&self.root, newest);
         let lines = reader.read(segments);
+        // An idle feeder sends nothing for long stretches: the state, and
+        // every reader of it, wakes only for news.
+        if lines.is_empty() && reader.published.as_ref() == Some(&segment) {
+            return;
+        }
+        reader.published = Some(segment.clone());
         let mut start = None;
         let mut update = None;
         for line in &lines {
@@ -245,6 +258,8 @@ struct Reader {
     index: usize,
     offset: u64,
     pending: Vec<u8>,
+    /// The segment the state last showed.
+    published: Option<String>,
 }
 
 impl Reader {

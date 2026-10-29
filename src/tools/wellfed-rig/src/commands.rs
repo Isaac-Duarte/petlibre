@@ -913,9 +913,18 @@ impl Bench {
                 &self.out(&p.execute),
             ],
         );
-        if self.run(&command)? != 0 {
-            say!("Update stopped; the feeder stays powered and is not booted. No retry.");
-            return Ok(1);
+        match self.run(&command) {
+            Ok(0) => {}
+            Ok(code) => {
+                say!("Update stopped; the feeder stays powered and is not booted. No retry.");
+                self.stopped_write(code, args.update.bank, Source::FlashExecute);
+                return Ok(1);
+            }
+            Err(Error::Interrupted) => {
+                self.stopped_write(1, args.update.bank, Source::FlashExecute);
+                return Err(Error::Interrupted);
+            }
+            Err(error) => return Err(error),
         }
 
         if let (Some(bank), Some(content)) = (
@@ -1019,9 +1028,19 @@ impl Bench {
                 &self.out(&p.execute),
             ],
         );
-        if self.run(&command)? != 0 {
-            say!("Give-way stopped; the feeder stays powered and is not booted. No retry.");
-            return Ok(1);
+        match self.run(&command) {
+            Ok(0) => {}
+            Ok(code) => {
+                say!("Give-way stopped; the feeder stays powered and is not booted. No retry.");
+                self.stopped_write(code, 1, Source::GiveWay);
+                return Ok(1);
+            }
+            // The flash client ran and stopped on the cancel.
+            Err(Error::Interrupted) => {
+                self.stopped_write(1, 1, Source::GiveWay);
+                return Err(Error::Interrupted);
+            }
+            Err(error) => return Err(error),
         }
 
         self.wrote(Bank::One, Content::Invalid, Source::GiveWay);
@@ -1177,7 +1196,22 @@ impl Bench {
     }
 }
 
+/// `wellfed-flash`'s exit code for a refusal before any serial access: a
+/// write that never began.
+const FLASH_REFUSED: i32 = 2;
+
 impl Bench {
+    /// A write that exited `code` short of complete: unless the flash
+    /// client refused before touching the port, the bank may hold part of
+    /// it.
+    fn stopped_write(&mut self, code: i32, bank: u8, source: Source) {
+        if code != FLASH_REFUSED
+            && let Some(bank) = Bank::of(bank)
+        {
+            self.wrote(bank, Content::Unknown, source);
+        }
+    }
+
     /// Note what this sequence left in `bank`, for the bank ledger.
     pub fn wrote(&mut self, bank: Bank, content: Content, source: Source) {
         self.written.push(Written {
@@ -1201,8 +1235,8 @@ fn installed(root: &Path, review: &Path) -> Option<Content> {
     let frozen: ImageReview = wellfed_formats::load(&review.join("review.json")).ok()?;
     Some(match frozen.image_kind {
         ImageKind::Stock => Content::Stock,
-        ImageKind::Build => Content::Build {
-            id: frozen.ota_sha256.to_ascii_lowercase(),
+        ImageKind::Build => Content::Image {
+            sha256: frozen.ota_sha256.to_ascii_lowercase(),
         },
     })
 }

@@ -21,13 +21,14 @@ use clap::{Args, Parser, Subcommand};
 use tokio::sync::mpsc;
 use wellfed_bench_server::api::{Seed, SeededFrom};
 use wellfed_bench_server::{
-    Client, ClientError, DeviceOptions, Followed, Interrupt, JobCommand, JobOptions, Options,
-    Server, ToolPaths,
+    Client, ClientError, ClockSync, DeviceOptions, Followed, Interrupt, JobCommand, JobOptions,
+    Options, Server, ToolPaths,
 };
 use wellfed_formats::bench::banks::{Bank, Check, Content, Entry};
 use wellfed_formats::bench::catalog;
 use wellfed_formats::bench::lease::{self, Liveness};
 use wellfed_formats::bench::live::{BenchState, JobId, Phase, Session, Uart};
+use wellfed_formats::bench::rendezvous;
 use wellfed_formats::bench::{CONFIG, Config};
 use wellfed_relay::{AtBoard, Relay};
 use wellfed_rig::Cancel;
@@ -115,6 +116,10 @@ struct ServeArgs {
     /// or the hotspot's neighbour table (a simulated feeder, say).
     #[arg(long)]
     feeder_address: Option<std::net::SocketAddr>,
+    /// Leave the feeder's clock as it is, rather than set it when it is
+    /// invalid or off by more than 2 s.
+    #[arg(long)]
+    no_clock_sync: bool,
 }
 
 #[derive(Debug, Args)]
@@ -281,8 +286,21 @@ fn serve(root: &Path, args: ServeArgs, runtime: &tokio::runtime::Runtime) -> any
         root: root.to_path_buf(),
         tools: tools.clone(),
     };
+    // The `wellfed` CLI finds the server through this, from any checkout or
+    // key file; without it, it could open a session beside the server's.
+    let Some(rendezvous) = rendezvous::directory() else {
+        anyhow::bail!(
+            "Neither XDG_RUNTIME_DIR nor HOME is an absolute path: the `wellfed` CLI could not find this server"
+        );
+    };
     let device = DeviceOptions {
         address: args.feeder_address,
+        clock: if args.no_clock_sync {
+            ClockSync::Off
+        } else {
+            ClockSync::On
+        },
+        rendezvous: Some(rendezvous),
         ..DeviceOptions::default()
     };
     let server = Server::open_with(options, &device, |config| {
@@ -522,6 +540,8 @@ fn content_text(content: &Content) -> String {
         Content::Build { id } => format!("build {}", short(id)),
         Content::Stock => "stock".into(),
         Content::Invalid => "no valid image".into(),
+        Content::Image { sha256 } => format!("the image {}", short(sha256)),
+        Content::Unknown => "unknown (a write stopped partway)".into(),
     }
 }
 

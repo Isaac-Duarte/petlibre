@@ -276,6 +276,12 @@ pub enum Pause {
     /// a loader session or a write, and the feeder is about to lose power
     /// or its application anyway.
     UartJob { job: JobId, label: String },
+    /// A job's install push holds a session of its own: the feeder's owner
+    /// sessions are the push's until it ends.
+    Install,
+    /// `stock-ota` runs, with sessions of its own: the feeder runs stock,
+    /// which serves no device API, until the build it installs answers.
+    StockOta { job: JobId },
     /// Relay 1 is off: there is no feeder to talk to.
     PowerOff,
     /// The server is quitting.
@@ -286,6 +292,8 @@ impl std::fmt::Display for Pause {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::UartJob { job, label } => write!(f, "job {job} ({label}) holds the UART"),
+            Self::Install => f.write_str("an install push holds the feeder's session"),
+            Self::StockOta { job } => write!(f, "job {job} (stock-ota) holds its own sessions"),
             Self::PowerOff => f.write_str("relay 1 is off"),
             Self::Stopping => f.write_str("the bench server is stopping"),
         }
@@ -306,6 +314,9 @@ pub enum Unavailable {
     NotOpen { error: Option<String> },
     #[error("the bench server's feeder session has ended")]
     Ended,
+    /// A request under this id is still out; `id` is hex.
+    #[error("request {id} is already out on the bench server's feeder session")]
+    DuplicateId { id: String },
 }
 
 fn not_open(error: Option<&str>) -> String {

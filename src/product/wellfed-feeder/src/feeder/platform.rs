@@ -25,6 +25,7 @@ use wellfed_proto::trace::PAGE_MAX;
 use super::supply::Radio;
 use crate::stats::Totals;
 use crate::store::events::{BODY_BYTES, Read};
+use wellfed_device_api::Reader;
 use wellfed_device_api::clients::{CLIENTS, Client};
 use wellfed_device_api::mailbox::{
     Calibration, CalibrationResult, CallChange, CallResult, ClientChange, KeyResult, PlansChange,
@@ -334,8 +335,11 @@ pub trait Platform {
     fn queue_event(&mut self, at: Option<u32>, body: [u8; BODY_BYTES], slot: EventSlot) -> bool;
     /// Records the queue dropped since the last call.
     fn take_lost(&mut self) -> u32;
-    /// The ring's answer for `after`, `None` while the writer reads it.
-    fn event_after(&mut self, after: Option<u64>) -> Option<Read>;
+    /// The ring's answer for `after`, for the subscriber in slot `reader`;
+    /// `None` while the writer reads it, or while it waits its turn.
+    fn event_after(&mut self, reader: Reader, after: Option<u64>) -> Option<Read>;
+    /// The subscriber in slot `reader` ended.
+    fn reader_left(&mut self, _reader: Reader) {}
     /// The ring's epoch, once the writer has opened it.
     fn epoch(&self) -> Option<u32>;
     /// The ring's newest record.

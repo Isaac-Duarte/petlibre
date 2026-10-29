@@ -1,5 +1,5 @@
 //! An open session's turn each pass: finish a pending write, else read one
-//! request, else push one event or sample. A redeemed invite's key is
+//! request, else push a frame of events, a sample or log lines. A redeemed invite's key is
 //! enrolled here before its connection closes.
 
 use super::handshake::fingerprint;
@@ -7,12 +7,44 @@ use super::recovery::Rescue;
 use super::request::{Action, proto_role};
 use super::{Phase, Server, proto_encode, slot_id};
 use crate::pairing::Pairing;
-use crate::{Device, EventRead, HANDSHAKE_MS, IDLE_MS, KeyChange, KeyOutcome, Reason, Record};
+use crate::{
+    Device, EventRead, HANDSHAKE_MS, IDLE_MS, KeyChange, KeyOutcome, Reader, Reason, Record,
+};
 use wellfed_core::deadline_passed;
 use wellfed_proto::api::{
-    self as proto, ClientMessage, Clients, EventBody, FeederMessage, Joined, LOG_TEXT_MAX, Open,
-    Outcome, Refusal, RequestId,
+    self as proto, ClientMessage, Clients, EventBatchWriter, EventBody, FeederMessage, Joined,
+    LOG_TEXT_MAX, Open, Outcome, Refusal, RequestId,
 };
+
+/// The most events one pass reads for a session. A batch fills a frame in
+/// fewer from a device whose reads come in batches; the bound keeps a pass
+/// short where reads never wait and the session skips every body it meets.
+const READS_PER_PASS: usize = 64;
+
+/// What a pass's events came to.
+enum Push {
+    /// A batch or a gap is sealed.
+    Sent,
+    /// Nothing sealed, but the events are not done: a read is on its way,
+    /// or the pass skipped bodies the session cannot decode.
+    Busy,
+    /// The session's cursor is at the newest event.
+    Nothing,
+}
+
+/// Why a batch stopped growing.
+enum Stop {
+    /// The pass read its bound.
+    Bound,
+    /// The next event might not fit.
+    Full,
+    /// A gap is next, which goes in a message of its own.
+    Gap,
+    /// The device is reading the next ones.
+    Wait,
+    /// No newer event.
+    End,
+}
 
 impl Server {
     /// Everything but handshake operations, for one slot.
@@ -147,7 +179,7 @@ impl Server {
     }
 
     /// An open session: finish a pending write, else read one request, else
-    /// push one event or sample.
+    /// push a frame of events, a sample or log lines.
     fn open<D: Device>(
         &mut self,
         index: usize,
@@ -249,42 +281,23 @@ impl Server {
         self.seal_plain(index, len)
     }
 
-    /// Push the next event, else the latest sample, else the next log
+    /// Push the next events, else the latest sample, else the next log
     /// lines: one frame, and only once the last is out.
     fn push<D: Device>(&mut self, index: usize, device: &mut D) -> Result<bool, Reason> {
-        let Phase::Open {
-            events,
-            sample,
-            capabilities,
-            log,
-            ..
-        } = &mut self.slots[index].phase
-        else {
+        let Phase::Open { events, log, .. } = &self.slots[index].phase else {
             return Ok(false);
         };
-        let log = *log;
-        if let Some(after) = *events {
-            let message = match device.event_after(after) {
-                EventRead::Event(event) => {
-                    *events = Some(Some(event.seq));
-                    // A body the session's hello did not claim would not
-                    // decode there: skip it, as an old client would want.
-                    if !capabilities.contains(event.body.capability()) {
-                        return Ok(true);
-                    }
-                    Some(FeederMessage::Event(event))
-                }
-                EventRead::Gap { from, to } => {
-                    *events = Some(Some(to));
-                    Some(FeederMessage::Gap { from, to })
-                }
-                EventRead::Wait => return Ok(true),
-                EventRead::None => None,
-            };
-            if let Some(message) = message {
-                return self.seal_and_send(index, &message).map(|()| true);
+        let (after, log) = (*events, *log);
+        if let Some(after) = after {
+            match self.push_events(index, after, device)? {
+                Push::Sent | Push::Busy => return Ok(true),
+                Push::Nothing => {}
             }
         }
+
+        let Phase::Open { sample, .. } = &mut self.slots[index].phase else {
+            return Ok(false);
+        };
         if let Some(next) = sample.take() {
             return self
                 .seal_and_send(index, &FeederMessage::Sample(next))
@@ -294,6 +307,87 @@ impl Server {
             Some(after) => self.push_log(index, after, device),
             None => Ok(false),
         }
+    }
+
+    /// The events after `after` that fit one frame, encoded into the
+    /// sealing buffer (free until the message is sealed), so no array of
+    /// them is kept. The session's cursor moves past each event the batch
+    /// takes, and past each it skips.
+    fn push_events<D: Device>(
+        &mut self,
+        index: usize,
+        mut after: Option<u64>,
+        device: &mut D,
+    ) -> Result<Push, Reason> {
+        let Phase::Open {
+            events,
+            capabilities,
+            ..
+        } = &mut self.slots[index].phase
+        else {
+            return Ok(Push::Nothing);
+        };
+        let capabilities = *capabilities;
+        let mut writer = EventBatchWriter::new(&mut self.out);
+        let mut stop = Stop::Bound;
+
+        for _ in 0..READS_PER_PASS {
+            if !writer.has_room() {
+                stop = Stop::Full;
+                break;
+            }
+            match device.event_after(Reader::slot(index), after) {
+                EventRead::Event(event) => {
+                    // A body the session's hello did not claim would not
+                    // decode there: skip it, as an old client would want.
+                    // An event that does not fit stays for the next batch.
+                    // `has_room` leaves room for the largest event, so a
+                    // push never fails, and above all never on an empty
+                    // batch, which would leave the event for ever.
+                    if capabilities.contains(event.body.capability())
+                        && writer.push(&event).is_err()
+                    {
+                        stop = Stop::Full;
+                        break;
+                    }
+                    after = Some(event.seq);
+                    *events = Some(after);
+                }
+                // A gap goes in a message of its own. Met behind a batch's
+                // events it is left where it is: the next pass meets it
+                // first.
+                EventRead::Gap { from, to } => {
+                    if !writer.is_empty() {
+                        stop = Stop::Gap;
+                        break;
+                    }
+                    *events = Some(Some(to));
+                    return self
+                        .seal_and_send(index, &FeederMessage::Gap { from, to })
+                        .map(|()| Push::Sent);
+                }
+                EventRead::Wait => {
+                    stop = Stop::Wait;
+                    break;
+                }
+                EventRead::None => {
+                    stop = Stop::End;
+                    break;
+                }
+            }
+        }
+
+        if writer.is_empty() {
+            // Only a cursor at the newest event leaves the frame to the
+            // samples and the log; a read on its way, or a run of skipped
+            // events, carries on next pass.
+            return Ok(match stop {
+                Stop::End => Push::Nothing,
+                Stop::Bound | Stop::Full | Stop::Gap | Stop::Wait => Push::Busy,
+            });
+        }
+        let len = proto_encode(&FeederMessage::Events(writer.batch()), &mut self.plain)?;
+        self.seal_plain(index, len).map(|()| Push::Sent)
     }
 
     /// The lines after `after` that fit one frame. The text is read into

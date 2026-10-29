@@ -73,16 +73,57 @@ fn read_batched(log: &EventLog<FlashIo>, mut after: Option<u64>, size: usize) ->
     }
 }
 
-/// Batches of every size read the ring as single reads do, from every
-/// cursor.
-fn batches_match(log: &EventLog<FlashIo>) {
+/// What a read after `after` must return, worked out from the raw flash
+/// rather than through the log: every slot of every unit decoded, the
+/// records of the ring's epoch in units it began, the first record of a
+/// number winning, and a gap for a cursor older than the oldest kept.
+fn oracle(log: &EventLog<FlashIo>, f: &FakeJournalFlash, after: Option<u64>) -> Vec<(u64, u64)> {
+    let word = |b: &[u8], at: usize| u32::from_le_bytes(b[at..at + 4].try_into().unwrap());
+    let mut kept = std::collections::BTreeMap::new();
+    for unit in &f.bytes {
+        let mut unit_epoch = None;
+        for slot in unit.as_chunks::<RECORD_BYTES>().0 {
+            if slot.iter().all(|&b| b == 0xff) {
+                break;
+            }
+            let seq = word(slot, 0);
+            if word(slot, 28) != crc32(&slot[..28]) || seq == 0 || seq == u32::MAX {
+                continue;
+            }
+            let epoch = *unit_epoch.get_or_insert(word(slot, 4));
+            if word(slot, 4) != epoch || epoch != log.epoch() {
+                continue;
+            }
+            kept.entry(u64::from(seq)).or_insert(u64::from(slot[12]));
+        }
+    }
+
+    let mut out = Vec::new();
+    let Some(oldest) = log.oldest_seq() else {
+        return out;
+    };
+    let want = after.map_or(oldest, |after| after + 1);
+    if want < oldest {
+        out.push((want, oldest - 1 + 1000));
+    }
+    out.extend(
+        kept.range(want.max(oldest)..)
+            .map(|(&seq, &body)| (seq, body)),
+    );
+    out
+}
+
+/// Batches of every size, and single reads, read the ring as the raw flash
+/// says they must, from every cursor.
+fn batches_match(log: &EventLog<FlashIo>, f: &FakeJournalFlash) {
     let last = log.last_seq().unwrap_or(0);
     for after in std::iter::once(None).chain((0..=last + 1).map(Some)) {
-        let single = read_all(log, after);
+        let expected = oracle(log, f, after);
+        assert_eq!(read_all(log, after), expected, "after {after:?}, single");
         for size in [1, 2, 3, 5, 16] {
             assert_eq!(
                 read_batched(log, after, size),
-                single,
+                expected,
                 "after {after:?}, size {size}"
             );
         }
@@ -119,6 +160,38 @@ fn records_keep_their_order_and_numbers_across_reopens() {
     assert_eq!(sixth.at, None);
 }
 
+/// A batch from the middle of a unit starts at its cursor's slot and stops
+/// once full: a few reads, not a scan of the whole unit.
+#[test]
+fn a_batch_from_mid_unit_reads_only_its_slots() {
+    const PER_UNIT: usize = 128;
+    let mut f = FakeJournalFlash::with_units(PER_UNIT * RECORD_BYTES, UNITS);
+    let mut log = EventLog::closed();
+    // SAFETY: the fake flash outlives the log.
+    unsafe { log.open(f.io(), UNITS, EPOCH) };
+    for n in 0..100 {
+        log.append(None, &body(n)).unwrap();
+    }
+
+    let before = f.reads;
+    let mut batch = [EMPTY; 16];
+    assert_eq!(log.read_batch(Some(60), &mut batch), Batch::Records(16));
+    let seqs: Vec<u64> = batch.iter().map(|r| r.seq).collect();
+    assert_eq!(seqs, (61..=76).collect::<Vec<_>>());
+    assert_eq!(f.reads - before, 16, "one read a record");
+
+    // One record after a cursor reads one slot, at the end of the unit
+    // too.
+    let before = f.reads;
+    assert!(matches!(log.read_after(Some(98)), Read::Record(r) if r.seq == 99));
+    assert_eq!(f.reads - before, 1);
+
+    // The last record ends a batch short of full without reading on.
+    let before = f.reads;
+    assert_eq!(log.read_batch(Some(90), &mut batch), Batch::Records(10));
+    assert_eq!(f.reads - before, 10);
+}
+
 #[test]
 fn a_full_ring_drops_its_oldest_unit_and_reports_the_gap() {
     let mut f = FakeJournalFlash::with_units(UNIT, UNITS);
@@ -135,7 +208,7 @@ fn a_full_ring_drops_its_oldest_unit_and_reports_the_gap() {
     assert_eq!(read[1], (5, 5));
     assert_eq!(read.last(), Some(&(20, 20)));
     assert_eq!(read_all(&log, None).len(), 16);
-    batches_match(&log);
+    batches_match(&log, &f);
 }
 
 #[test]
@@ -182,7 +255,7 @@ fn a_power_cut_at_every_mutation_loses_at_most_the_record_being_written() {
             let next = log.append(None, &body(100)).unwrap();
             assert_eq!(next, log.last_seq().unwrap());
             assert_eq!(read_all(&log, Some(next - 1)), [(next, 100)]);
-            batches_match(&log);
+            batches_match(&log, &f);
         }
     }
 }

@@ -357,6 +357,28 @@ proptest! {
         stable!(Joined, &bytes);
         stable!(FeederMessage<'_>, &bytes);
         stable!(Reply, &bytes);
+
+        // A batch's bytes are read only when it is walked: any bytes as a
+        // batch walk to an end, and every event they yield re-encodes.
+        let mut message = vec![1u8];
+        let mut len = bytes.len();
+        while len >= 0x80 {
+            message.push(u8::try_from(len & 0x7f).unwrap() | 0x80);
+            len >>= 7;
+        }
+        message.push(u8::try_from(len).unwrap());
+        message.extend_from_slice(&bytes);
+        if let Ok(FeederMessage::Events(batch)) = decode::<FeederMessage<'_>>(&message) {
+            let mut walked = 0;
+            for event in batch.iter() {
+                walked += 1;
+                let Ok(event) = event else { break };
+                let mut out = [0u8; FRAME_MAX];
+                let len = encode(&event, &mut out).unwrap();
+                prop_assert_eq!(decode::<Event>(&out[..len]), Ok(event));
+            }
+            prop_assert!(walked <= bytes.len());
+        }
     }
 
     /// A message is exactly its bytes: one more trailing byte is refused,

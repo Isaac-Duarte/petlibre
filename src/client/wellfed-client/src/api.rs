@@ -7,7 +7,8 @@
 //!   arrives to [`Session::receive`] and drain [`Session::next_incoming`]: the first
 //!   message is the feeder's welcome ([`Incoming::Opened`] or
 //!   [`Incoming::Refused`]), then answers, events, gaps and samples, each
-//!   already `wellfed-model`'s owned value.
+//!   already `wellfed-model`'s owned value. The feeder sends events in
+//!   batches; they come out one [`Pushed::Event`] at a time, in order.
 //! - [`Session::request`] seals one request under the caller's id. A write
 //!   whose answer never arrived is retried with the same id (after a
 //!   reconnect too), so the feeder answers it once.
@@ -188,6 +189,9 @@ pub struct Session {
     deframer: Deframer,
     /// Opened messages waiting for [`Self::next_incoming`], oldest first.
     inbox: std::collections::VecDeque<Vec<u8>>,
+    /// The rest of a batch of events, oldest first: they come before
+    /// anything still in `inbox`.
+    events: std::collections::VecDeque<Pushed>,
     claimed: Capabilities,
     /// The welcome's epoch, once it has arrived: what pushed events count
     /// in.
@@ -242,6 +246,7 @@ impl Session {
             state: State::Handshake(Box::new(handshake)),
             deframer: Deframer::default(),
             inbox: std::collections::VecDeque::new(),
+            events: std::collections::VecDeque::new(),
             claimed: hello.capabilities,
             epoch: None,
         };
@@ -291,7 +296,11 @@ impl Session {
         // refusal is never read, so it cannot pass for a second welcome.
         if matches!(self.state, State::Ended) {
             self.inbox.clear();
+            self.events.clear();
             return Ok(None);
+        }
+        if let Some(event) = self.events.pop_front() {
+            return Ok(Some(Incoming::Pushed(event)));
         }
         let Some(plain) = self.inbox.pop_front() else {
             return Ok(None);
@@ -330,8 +339,20 @@ impl Session {
                 id,
                 answer: result.into(),
             },
-            FeederMessage::Event(event) => {
-                Incoming::Pushed(Pushed::Event(convert::event(epoch, event)))
+            // One batch, one event at a time: the whole batch decodes
+            // before any of it is handed on, so a garbled one is refused
+            // whole, as any other malformed message is.
+            FeederMessage::Events(batch) => {
+                let events = batch
+                    .iter()
+                    .map(|event| event.map(|event| Pushed::Event(convert::event(epoch, event))))
+                    .collect::<Result<std::collections::VecDeque<_>, _>>()
+                    .map_err(|_| Error::Malformed(Garbled::of(&plain)))?;
+                self.events = events;
+                let Some(first) = self.events.pop_front() else {
+                    return Err(Error::Malformed(Garbled::of(&plain)));
+                };
+                Incoming::Pushed(first)
             }
             FeederMessage::Gap { from, to } => {
                 Incoming::Pushed(Pushed::Gap(Gap { epoch, from, to }))

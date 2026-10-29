@@ -27,7 +27,7 @@ All messages are serde enums in `wellfed-proto`.
 ```text
 Client → feeder                       Feeder → client
 Request { id, op }                    Response { id, result }
-Subscribe { after, samples }          Event { seq, at, body }
+Subscribe { after, samples }          Events [{ seq, at, body }, …]   // as many as fit a frame
                                       Gap { from, to }   // events lost to the ring
                                       Sample { at_ms, metric }
                                       Log { seq, dropped, text }   // after TailLog
@@ -37,6 +37,7 @@ Subscribe { after, samples }          Event { seq, at, body }
 - **Results** are typed enums of outcomes and refusals. There is no free-text error.
 - **Subscribe** asks for every event after a cursor (`None`: the oldest kept), then each new one, and the live samples if asked.
 - **Events** are the durable records described in [data](product-architecture.md#data). `seq` is monotonic across reboots within the ring's epoch. A ring re-created by a storage wipe or the [factory reset](pairing.md#factory-reset) draws a new epoch and counts from 1 again.
+- **`Events`** carries the next events after the session's cursor, oldest first, each postcard-encoded in turn: as many as fit `EVENTS_BYTES_MAX` (1,005 bytes), or as many as the feeder has to hand. A `Gap` always goes in a message of its own. `wellfed-client` hands the events on one at a time, so a client sees one event per `Pushed::Event` either way.
 
 **Ops of major version 1:**
 
@@ -85,7 +86,7 @@ How the protocol may change is under [Evolution](#evolution).
 - **Two tasks.** The feeder runs the button service and the loop ([task slots](../../src/firmware/wellfed/README.md#what-the-sdk-runtime-guarantees)). `wellfed-fw-feeder`'s `api` module steps the API inside the loop, after the panel's owner.
 - **Nothing blocks.** Every socket call is non-blocking (`wellfed_api_*` in `example_entry.c`): the loop takes what is ready and moves on.
 - **Four session slots.** A fifth connection is closed at accept.
-- **One frame per pass.** A slot reads one frame per pass, and writes again only once its last frame is out. So a flooding client costs only its own turn.
+- **One frame per pass.** A slot reads one frame per pass, and writes again only once its last frame is out. So a flooding client costs only its own turn. That is why events go in batches: a subscriber catching up gets a frame of them a pass, not one event.
 - **Sockets:** one listener, four sessions, the mDNS socket and the NTP socket.
 
 ### Handshakes, and handshakes during a feed
@@ -234,7 +235,10 @@ Every flash lease checks that the outputs are stopped, and fails closed when the
 **Events.** The loop's event recorder (`wellfed_feeder::feeder::events`) queues records in `wellfed_feeder_runtime::events`.
 - The queue holds 16 in RAM, the last kept for a feed's `Fed` event, since appends wait out a feed and events pile up meanwhile. Overflow is counted and recorded as a `Lost` event.
 - The settings writer appends them to the ring in storage sectors 13–24 (`wellfed_feeder::store::events`: 32-byte records, at least 1,408 kept) and answers the API's reads. It polls every 5 ms while either waits, and for about 1 s after its last read. While a feed holds the outputs, an append waits at the head of the queue.
-- A read answers up to 16 records from one pass over their unit. A subscriber catching up then takes one record a loop pass from RAM, and other subscribers inside the same batch share it. Answering one record a read cost a writer poll per record, 200 ms whenever the reader missed the 5 ms window, so a full ring took minutes to send: about 3 events a second (physical, October 29). With batches, 1,140 events took 37 s (physical, v356), about 16 ms a record, the loop's pass while it sends a frame.
+- A read answers up to 32 records from one pass over their unit, about a frame of events. A subscriber catching up takes the whole batch from RAM in one pass and sends it as one `Events` message, and other subscribers inside the same batch share it. Answering one record a read cost a writer poll per record, 200 ms whenever the reader missed the 5 ms window: about 3 events a second (physical, October 29). Batched reads with one event a frame still cost a loop pass per event, so 1,140 events took 16.5 s (physical, v359). A frame of events per pass removes that pass per event (static analysis, not yet measured).
+- Subscribers take turns by session slot. A batch is fetched for one subscriber and stays until that subscriber has taken from it; others whose cursor falls inside it read from it meanwhile. One it cannot answer waits, and the next read goes to the next waiting slot, round robin. So a subscriber catching up goes without a record for at most one pass more than there are subscribers, whatever order the loop visits them in (simulation, up to four subscribers). A subscriber whose session ends gives its turn and its batch up at once. One that stops asking without ending (its last frame still going out) keeps its batch for at most 50 asks from the others: 50 passes, about a second, with one other subscriber waiting, and about 17 with three.
+- A read starts at the cursor's slot in its unit, since a unit's records rise one number a slot, and stops once the batch is full. So it reads about as many slots as it returns, rather than the whole unit.
+- A batch stops before an event that might not fit (`EVENT_BYTES_MAX`, 32 bytes, the largest any event encodes to), at the newest event, when the next read has not come back yet, and before a gap. The session's cursor moves past each event the batch takes, and past each body the session's hello did not claim. A gap behind a batch's events is left for the next pass, which sends it alone.
 - A ring created empty draws a random epoch from the generator, and every record repeats it in bytes 4–7, the high half of the old 64-bit sequence field. So a ring written before epochs reads as epoch 0, and the layout is unchanged. The welcome carries the epoch, and the feeder welcomes no session until the writer has opened the ring and published it.
 - Recorded today: boot, lock changes (panel, idle relock, or which client), settings, plans and Wi-Fi writes with their client, clock syncs, invites redeemed, recovery and revocations, feeds, refused Dispense presses, meal reminders, missed meals, and blocked feeding.
 
@@ -289,7 +293,7 @@ An owner can read what the feeder's UART prints without opening the feeder: `wel
   - A line too long for the ring (over 255 bytes; the record buffer is 192) is counted the same way.
 - **Overrun drops the oldest.** A line that needs room drops whole lines from the old end. A session whose cursor fell behind learns how many it missed: each batch's `dropped` counts the numbers after its cursor that the batch does not hold.
 - **Batches fit the frame, only when the session has room.** `TailLog { after }` is answered `Done`. `None` starts from the oldest line kept, and asking again moves the cursor. The session then pushes `Log { seq, dropped, text }`: as many whole lines as fit `LOG_TEXT_MAX` (992 bytes), each ending in `\n`, with `seq` the last line's number.
-  - Like an event or a sample, a batch goes only when the session's last frame is out, after any event and sample waiting, one frame per pass. So a session that cannot keep up costs only its own lines.
+  - Like events or a sample, a batch goes only when the session's last frame is out, after any events and sample waiting, one frame per pass. So a session that cannot keep up costs only its own lines.
   - Text is printable ASCII; any other byte reads `?`.
   - A cursor past the newest line can only be an earlier boot's, and reads from the oldest. One below it cannot be told from this boot's own, so a client resumes with a cursor only within one boot (the status's `boot_count`).
   - Lines dropped after the newest written one show in `dropped` only once the next line is written.
@@ -307,7 +311,7 @@ An owner can read what the feeder's UART prints without opening the feeder: `wel
 The intended rules:
 
 1. **The prologue never changes.** `wellfed-api-v1` is bound into every handshake. A new major is negotiated in `Hello.major`. A feeder that does not serve it answers with the typed `OpenRefusal::Version { supported }`, so a client can say which side to update. A changed prologue would instead fail the handshake with no reason. Enforced by `the_prologue_never_changes` (`wellfed-proto/tests/fixtures.rs`) and `a_major_2_hello_gets_the_typed_version_refusal` (`wellfed-client/tests/api.rs`).
-2. **Every new op, event body, outcome or refusal is gated by a `Capabilities` bit both sides claim,** as `FEED` gates feeding and `UPDATE` updates. `Op::capability` and `EventBody::capability` name each variant's bit with no wildcard, so a new variant does not compile without its decision. The feeder serves an op only when the session's hello and the feeder both carry its bit (otherwise `Unavailable`). It pushes an event only when the hello carries its bit (otherwise the session's cursor moves past it). Enforced by `a_v1_only_session_never_receives_a_body_outside_v1`, which records one event of every body, an exhaustive match keeping the list whole.
+2. **Every new op, event body, outcome or refusal is gated by a `Capabilities` bit both sides claim,** as `FEED` gates feeding and `UPDATE` updates. `Op::capability` and `EventBody::capability` name each variant's bit with no wildcard, so a new variant does not compile without its decision. The feeder serves an op only when the session's hello and the feeder both carry its bit (otherwise `Unavailable`). It pushes an event only when the hello carries its bit (otherwise the session's cursor moves past it, inside a batch as between them). Enforced by `a_v1_only_session_never_receives_a_body_outside_v1`, which records one event of every body, an exhaustive match keeping the list whole.
 3. **Existing messages never gain, lose, reorder or retype a field.** Postcard is positional, so an old peer would misread every byte after a new field. New data is a new variant behind a bit. Enforced by `tests/fixtures/v1.txt`, which pins every v1 message's bytes. `WELLFED_BLESS=1` only appends fixtures for new variants; it refuses to rewrite a pinned line. For now, see the note above.
 4. **The event history carries an epoch.** `Welcome::Open.epoch` is drawn at random when the ring is created, and kept with it. Event numbers count within an epoch. So a cursor from a re-created ring (a storage wipe, which restarts the numbers at 1) is recognized, rather than freezing a mirror that waits for numbers it already has. `wellfed-client`'s `Connection::subscribe` resumes after a cursor only in the feeder's current epoch, and otherwise starts from the oldest event kept (`Resume::Restarted`). The server keys events and gaps by (feeder, epoch, seq), and keeps an older epoch's history readable (`?epoch=`). Enforced by `a_cursor_resumes_in_its_epoch_and_restarts_from_another`, the event ring's epoch tests, and the store's `a_new_epoch_keeps_its_own_history_and_restarts_the_cursor`.
 5. **Clients adapt to the feeder's capabilities indefinitely.** An owner may hold an update forever, so there is no "N and N−1" window. A client claims every bit it knows (`Capabilities::KNOWN`), runs on the intersection the welcome gives it (`Opened::capabilities`), and keeps speaking every older major it ever spoke. A feeder keeps serving every bit it ever shipped within its major.
@@ -316,7 +320,7 @@ The intended rules:
 
 `Capabilities::STATS` (bit 16). The loop keeps the figures in RAM as it runs (`wellfed_feeder::stats::Keeper`): no task, no wait and no flash write, a few additions per pass. The lifetime totals are the settings writer's, in storage sectors 32–33.
 
-**`Stats { section }`** answers one section in one frame, for any role that opens a session (`Memory` for owners only). The widest of each is checked against `MESSAGE_MAX` (`the_largest_messages_fit_a_frame`, and the device API's property test through the server).
+**`Stats { section }`** answers one section in one frame, for any role that opens a session (`Memory` for owners only). The widest of each is checked against `MESSAGE_MAX` (`the_largest_messages_fit_a_frame`, and the device API's property test through the server). So is the fullest `Events` batch, and every event body against the ring's 16 bytes (`every_event_body_fits_sixteen_bytes`).
 
 | Section | Holds |
 | --- | --- |

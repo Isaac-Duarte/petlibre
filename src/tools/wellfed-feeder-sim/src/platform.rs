@@ -38,6 +38,7 @@ use wellfed_core::ota::install::{Answer, Progress, Refused};
 use wellfed_core::store::slot::{SlotIo, crc32};
 use wellfed_core::supply::{self, Reading, Sample};
 use wellfed_core::tone::Tune;
+use wellfed_device_api::Reader;
 use wellfed_device_api::clients::{CLIENTS, Client, Label, Role};
 use wellfed_device_api::mailbox::{
     Calibration, CalibrationResult, CalibrationView, CallChange, CallResult, ClientChange,
@@ -988,7 +989,7 @@ impl Platform for SimPlatform {
         0
     }
 
-    fn event_after(&mut self, after: Option<u64>) -> Option<Read> {
+    fn event_after(&mut self, _reader: Reader, after: Option<u64>) -> Option<Read> {
         Some(self.events.read_after(after))
     }
 

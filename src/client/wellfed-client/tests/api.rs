@@ -25,8 +25,8 @@ use wellfed_device_api::mailbox::{
 use wellfed_device_api::pairing::{Config, Event as PairingEvent, Pairing};
 use wellfed_device_api::wifi::Credentials;
 use wellfed_device_api::{
-    Device, EventRead, KeyChange, KeyOutcome, Pass, Reason, Record, SESSIONS, Server, UpdateAnswer,
-    UpdateKeyChange, UpdateRequest,
+    Device, EventRead, KeyChange, KeyOutcome, Pass, Reader, Reason, Record, SESSIONS, Server,
+    UpdateAnswer, UpdateKeyChange, UpdateRequest,
 };
 use wellfed_model as model;
 use wellfed_model::{Answer, Generation, Hello, Joined, Op, OpenRefusal, SettingsPatch};
@@ -67,6 +67,8 @@ struct Fake {
     events: Vec<proto::Event>,
     /// Events before this sequence number left the ring.
     oldest: u64,
+    /// Events lost inside the ring (a body this build cannot read, say).
+    lost: Option<(u64, u64)>,
     /// `None` until the writer has opened the ring.
     epoch: Option<u32>,
     rebooted: bool,
@@ -617,13 +619,18 @@ impl Device for Fake {
         });
     }
 
-    fn event_after(&mut self, after: Option<u64>) -> EventRead {
+    fn event_after(&mut self, _reader: Reader, after: Option<u64>) -> EventRead {
         let after = after.unwrap_or(0);
         if after + 1 < self.oldest {
             return EventRead::Gap {
                 from: after + 1,
                 to: self.oldest - 1,
             };
+        }
+        if let Some((from, to)) = self.lost
+            && after + 1 == from
+        {
+            return EventRead::Gap { from, to };
         }
         self.events
             .iter()
@@ -1657,6 +1664,166 @@ fn a_subscriber_reads_every_event_after_its_cursor_and_learns_of_a_gap() {
         live.is_some()
     });
     assert_eq!(live, Some(6));
+}
+
+/// What arrived in each pass's frames, until `count` events and gaps.
+fn frames(rig: &mut Rig, client: &mut Client_, count: usize) -> Vec<Vec<(u64, u64)>> {
+    let mut frames = Vec::new();
+    let mut seen = 0;
+    run(rig, client, |session| {
+        let mut frame = Vec::new();
+        while let Some(incoming) = session.next_incoming().unwrap() {
+            match incoming {
+                Incoming::Pushed(model::Pushed::Gap(gap)) => frame.push((gap.from, gap.to)),
+                Incoming::Pushed(model::Pushed::Event(event)) => frame.push((event.seq, 0)),
+                _ => {}
+            }
+        }
+        seen += frame.len();
+        if !frame.is_empty() {
+            frames.push(frame);
+        }
+        seen >= count
+    });
+    frames
+}
+
+#[test]
+fn a_catch_up_arrives_in_frames_of_many_events() {
+    let mut rig = Rig::new();
+    for generation in 0..200 {
+        let body = EventBody::Settings {
+            generation,
+            by: proto::Source::Panel,
+        };
+        rig.device.record(0, body);
+    }
+
+    let mut owner = open(&mut rig, OWNER);
+    let bytes = owner.session.subscribe(None, false).unwrap();
+    owner.outbox.extend(bytes);
+    let frames = frames(&mut rig, &mut owner, 200);
+
+    let seqs: Vec<u64> = frames.iter().flatten().map(|&(seq, _)| seq).collect();
+    assert_eq!(seqs, (1..=200).collect::<Vec<_>>());
+    // One frame a pass, each as full as a pass reads: a few frames, not
+    // two hundred.
+    assert!(frames.len() <= 4, "{} frames", frames.len());
+    assert!(frames.iter().all(|frame| frame.len() >= 8), "{frames:?}");
+}
+
+/// Events as large as any encodes fill a frame and stop there: each frame
+/// holds as many as fit beside the room the largest needs, and the rest
+/// follow, in order.
+#[test]
+fn the_largest_events_fill_a_frame_and_the_rest_follow() {
+    let mut rig = Rig::new();
+    let first = u64::MAX - 100;
+    for seq in first..first + 70 {
+        rig.device.events.push(proto::Event {
+            seq,
+            at: Some(u32::MAX),
+            body: EventBody::Fed {
+                feed: u32::MAX,
+                requested: u8::MAX,
+                completed: u8::MAX,
+                outcome: proto::FeedOutcome::Uncertain,
+                reason: proto::FeedReason::Output,
+                hopper: FoodLevel::Unread,
+                by: proto::Source::Client([0xff; 4]),
+            },
+        });
+    }
+
+    let mut owner = open(&mut rig, OWNER);
+    let bytes = owner.session.subscribe(None, false).unwrap();
+    owner.outbox.extend(bytes);
+    let frames = frames(&mut rig, &mut owner, 70);
+
+    // 32 bytes each: 31 fill all but 13 of the batch's 1,005.
+    let per_frame = (proto::EVENTS_BYTES_MAX - proto::EVENT_BYTES_MAX) / proto::EVENT_BYTES_MAX + 1;
+    assert_eq!(per_frame, 31);
+    let sizes: Vec<usize> = frames.iter().map(Vec::len).collect();
+    assert_eq!(sizes, [per_frame, per_frame, 70 - 2 * per_frame]);
+    let seqs: Vec<u64> = frames.iter().flatten().map(|&(seq, _)| seq).collect();
+    assert_eq!(seqs, (first..first + 70).collect::<Vec<_>>());
+}
+
+#[test]
+fn a_gap_ends_a_batch_and_arrives_next() {
+    let mut rig = Rig::new();
+    for count in 1..=10 {
+        rig.device.record(0, EventBody::Lost { count });
+    }
+    rig.device.events.retain(|e| !(4..=6).contains(&e.seq));
+    rig.device.lost = Some((4, 6));
+
+    let mut owner = open(&mut rig, OWNER);
+    let bytes = owner.session.subscribe(None, false).unwrap();
+    owner.outbox.extend(bytes);
+    let frames = frames(&mut rig, &mut owner, 8);
+
+    assert_eq!(
+        frames,
+        [
+            vec![(1, 0), (2, 0), (3, 0)],
+            vec![(4, 6)],
+            vec![(7, 0), (8, 0), (9, 0), (10, 0)],
+        ]
+    );
+}
+
+#[test]
+fn bodies_a_session_cannot_read_are_skipped_inside_a_batch() {
+    let mut rig = Rig::new();
+    let fed = EventBody::Fed {
+        feed: 1,
+        requested: 1,
+        completed: 1,
+        outcome: proto::FeedOutcome::Done,
+        reason: proto::FeedReason::Done,
+        hopper: FoodLevel::Present,
+        by: proto::Source::Panel,
+    };
+    let lock = EventBody::Lock {
+        locked: true,
+        by: proto::Source::Panel,
+    };
+    for body in [lock, fed, lock, fed, lock, fed] {
+        rig.device.record(0, body);
+    }
+
+    let slot = rig.accept().unwrap();
+    let hello = Hello {
+        major: 1,
+        capabilities: model::Capabilities::V1,
+    };
+    let (session, outbox) = Session::connect_with(
+        &Keypair::from_secret(OWNER),
+        public(FEEDER),
+        [0x77; 32],
+        hello,
+    )
+    .unwrap();
+    let mut old = Client_ {
+        slot,
+        session,
+        outbox,
+    };
+    run(&mut rig, &mut old, |session| {
+        matches!(session.next_incoming(), Ok(Some(Incoming::Opened(_))))
+    });
+    let bytes = old.session.subscribe(None, false).unwrap();
+    old.outbox.extend(bytes);
+    assert_eq!(
+        frames(&mut rig, &mut old, 3),
+        [vec![(1, 0), (3, 0), (5, 0)]]
+    );
+
+    // The cursor moved past the skipped feed at the end: the next event
+    // is the only one to arrive.
+    rig.device.record(0, lock);
+    assert_eq!(frames(&mut rig, &mut old, 1), [vec![(7, 0)]]);
 }
 
 #[test]

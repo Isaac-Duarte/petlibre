@@ -67,7 +67,7 @@ pub mod setup;
 pub mod wifi;
 
 pub use device::{
-    Device, EventRead, KeyChange, KeyOutcome, UpdateAnswer, UpdateKeyChange, UpdateRequest,
+    Device, EventRead, KeyChange, KeyOutcome, Reader, UpdateAnswer, UpdateKeyChange, UpdateRequest,
 };
 pub use record::{Reason, Record};
 pub use server::handshake::fingerprint;

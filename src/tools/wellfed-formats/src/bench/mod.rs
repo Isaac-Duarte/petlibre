@@ -1,7 +1,8 @@
 //! The relay bench's files and shapes: its config, the evidence layout of a
 //! session, the lease every tool driving the bench takes, a command's
 //! progress record, the bench server's live state, the bank ledger, the
-//! operator's notes, and the integration suite's run records and catalog.
+//! operator's notes, the installer's prompts and their answers, and the
+//! integration suite's run records and catalog.
 //!
 //! The bench server and the suite write these; the page
 //! (`wellfed-dashboard`) and the clients only read them, and the page links
@@ -17,6 +18,7 @@ pub mod lease;
 pub mod live;
 pub mod notes;
 pub mod progress;
+pub mod prompt;
 pub mod rendezvous;
 pub mod run;
 

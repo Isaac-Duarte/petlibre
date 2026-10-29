@@ -31,7 +31,7 @@ This page tracks what works today and what comes next. It covers the replacement
 | Jam and sensor fault handling | Partial | A jam, a blocked outlet or a sensor fault ends the feed by name, never retried, and shows in the status and history. Simulated jams on the feeder end as `jammed` and `mark_stuck`; real jams with food wait for a bench check. |
 | Schedules | Works | Up to ten plans, run on the feeder with no server. |
 | Feeding history | Partial | `wellfed feeds` lists each feed the feeder keeps, across reboots; a long history needs the server. |
-| Food level | Partial | The status shows the hopper as the last feed read it. A feed on an empty hopper still runs, as stock's does, and its history entry says the hopper read empty. Checked on the feeder with the hopper empty; not yet with food. |
+| Food level | Works | The status shows the hopper as the last feed read it. A feed on an empty hopper still runs, as stock's does, and its history entry says the hopper read empty. Checked on the feeder with and without food. The food beam is a low warning, reading empty while about five portions are still left. |
 
 ## The feeder itself
 
@@ -51,7 +51,7 @@ This page tracks what works today and what comes next. It covers the replacement
 | Lights and sound settings | Works | Lights and sound windows, volume-0 mute and a beep on every button press, checked on the bench. |
 | Desiccant reminder | Works | Counted on the feeder from the last replacement; the period and the date survive a reboot. |
 | Meal reminder | Works | An event on the event stream before each scheduled meal, repeated once after a reboot inside the lead. |
-| Meal call | Partial | Your own clip, uploaded from the CLI, played before each meal whose plan asks for it, ending as the meal is due, and muted with the sound off. Played on the feeder; how it sounds at each volume is not yet checked. |
+| Meal call | Works | Your own clip, uploaded from the CLI, played before each meal whose plan asks for it, ending as the meal is due, and muted with the sound off. Checked by ear on the feeder at low, middle and full volume. |
 
 ## Apps and server
 

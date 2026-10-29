@@ -2,7 +2,7 @@
 
 The feeder counts portions, not grams. A portion is one compartment of the rotor, and the feeder knows one has dropped when the rotor's mark sensor sees it pass. What a portion weighs comes from your kitchen scale, entered once with `wellfed calibrate`. This page explains what a portion is, how the feeder copes when the rotor stopped between marks, and how to weigh a portion.
 
-Status: **Experimental**. Phase handling is observed on our unit. No portion has been weighed yet.
+Status: **Experimental**. Phase handling is observed on our unit, and one portion of the owner's dry food weighs 7.11 g on it.
 
 ## What a portion is
 
@@ -95,8 +95,8 @@ Record per run the hopper level, each feed's `completed`, `outlet_breaks` and `d
 ## Still to check
 
 1. After an install, `wellfed calibrate` answers with `"portion_mg": null`, `"bowl": "single"` and a phase.
-2. The weighing session above, with food.
-3. The stored weight survives a reboot and an install, and bank 0's role install leaves sectors 34–35 alone.
+2. The weighing session's low-hopper and phase-effect runs (step 3 and 4).
+3. The stored weight survives an install, and bank 0's role install leaves sectors 34–35 alone.
 
 ## Evidence
 
@@ -105,4 +105,5 @@ Record per run the hopper level, each feed's `completed`, `outlet_breaks` and `d
 - **Phase across a cancel.** Observed (October 26, v236, hopper empty, `phd-*` captures): feed 54 credited 1 and ended `at_mark`; feed 55, cancelled at 6.28 s, left the phase `unknown`; feed 56 homed at 2,848 ms, completed 1 and ended `at_mark`.
 - **Phase across a power cut.** Observed (same session): feed 57 was cut by relay 1 mid-drive and never resent. The next boot logged an uncertain `Fed` (outcome 5) and phase `unknown`. Feed 58 homed at 3,301 ms, completed 1 and ended `at_mark`, and the Portions statistics read `homed 1`.
 - **A feed after a mid-drive cut.** Observed (October 27, the sustained bench run): the first feed after a cut saw two mark edges for one credited portion, its first edge at 3.1 s against the usual 7.9 s. That is likely the rotor finishing the cut portion; the weighing session should measure it.
+- **Weighing.** Observed (October 29, one dry food, hopper refilled between runs): two 5-portion feeds, 5 of 5 each with drives of 48.0 and 48.6 s, dropped 71.1 g, 7.11 g a portion; an earlier 3-portion feed dropped 21.3 g, 7.10 g a portion. Their outlet beam broke 11 and 6 times, and 2 times for the 3 portions, so beam breaks do not count portions. `wellfed calibrate --weighed 71.1 --portions 10` stored 7,110 mg, which read the same after a reboot.
 - **Host and simulation.** Modeled (October 26): phase from the journal, the homing window and deadline, the compile-time bound (8.0 s of forward drive against the 9.1 s empty mark period), the bowl refusal, the store, the wire messages and the Portions statistics.

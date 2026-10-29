@@ -20,7 +20,8 @@
 
 - **The smallest complete change.** Build what the task needs and nothing for later: no option, abstraction, wrapper or config nobody asked for. Deletion beats addition, and the code keeps its existing layers and interfaces. Name what you left out in one line. When part of a request asks for more than the need seems to justify, build it, and say in one line what the smaller version would be.
 - **Reuse before writing.** Take a helper the workspace already has, then the standard library, then a crate already in `Cargo.lock`. Never add a dependency for a few lines.
-- **Finish what you break.** Find every caller before changing a function. Fix a bug once, at its root in the shared code, not in one caller. Update every test, fixture and doc the change breaks. Code you move or merge keeps its validation and error handling.
+- **Finish what you break.** Find every caller before changing a function. Fix a bug once, at its root in the shared code, not in one caller. Update every test, fixture and doc the change breaks, except what the hard rules and [Compatibility](#compatibility) pin: a pinned check, frozen format or hashed canonical JSON that fails means the change is wrong, not the pin. Code you move or merge keeps its validation and error handling.
+- **Never cut for size.** Small never means removing validation of input from flash, the wire or a user, error handling that prevents data loss or a feed from repeating, the interlocks, the no-retry rule, security, or hardware calibration.
 - **Mark a deliberate shortcut.** A known limit gets one comment, `// shortcut: <the limit>, <when to revisit>`, so `rg 'shortcut:'` finds every one.
 
 ## Reports and reviews

@@ -85,8 +85,24 @@ pub(crate) async fn note(client: &Client, root: &Path, args: NoteArgs) -> anyhow
     Ok(0)
 }
 
+/// A note's words after `note`, as the MCP tools build them, parsed as the
+/// command line is.
+pub(crate) fn from_words(words: &[String]) -> anyhow::Result<NoteArgs> {
+    #[derive(clap::Parser)]
+    #[command(name = "note", no_binary_name = true)]
+    struct Words {
+        #[command(flatten)]
+        note: NoteArgs,
+    }
+
+    let rest = words.strip_prefix(&["note".to_string()]).unwrap_or(words);
+    let parsed = <Words as clap::Parser>::try_parse_from(rest)
+        .map_err(|error| anyhow::anyhow!("{}", error.render()))?;
+    Ok(parsed.note)
+}
+
 /// The note `args` asks for, as of `now`, with a path taken from `cwd`.
-fn body(args: NoteArgs, root: &Path, cwd: &Path, now: &Zoned) -> anyhow::Result<Body> {
+pub(crate) fn body(args: NoteArgs, root: &Path, cwd: &Path, now: &Zoned) -> anyhow::Result<Body> {
     Ok(match args.what {
         What::Step { text } => Body::Step { text },
         What::Next { steps } => Body::Next { steps },

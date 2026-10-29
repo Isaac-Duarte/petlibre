@@ -14,6 +14,8 @@ use std::io::{BufWriter, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use tokio::sync::broadcast;
+
 use wellfed_formats::bench::live::Uart;
 use wellfed_formats::bench::notes::{Body, Expect, NOTES, Note, Operator, Seen};
 use wellfed_formats::bench::now;
@@ -28,7 +30,19 @@ use crate::state::Store;
 pub(crate) struct Notes {
     inner: Arc<Mutex<Inner>>,
     store: Store,
+    /// Every line and event, for `GET /wait`; sent only while one listens.
+    heard: broadcast::Sender<Heard>,
 }
+
+/// A line or a device event's kind, as [`Notes::seen`] got it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Heard {
+    Line(String),
+    Event(String),
+}
+
+/// How far a slow listener may fall behind before it misses lines.
+const HEARD: usize = 1024;
 
 struct Inner {
     path: PathBuf,
@@ -59,6 +73,7 @@ impl Notes {
                 file: None,
             })),
             store,
+            heard: broadcast::channel(HEARD).0,
         }
     }
 
@@ -78,8 +93,22 @@ impl Notes {
         Ok(note)
     }
 
-    /// Settle every waiting timer that `seen` matches.
+    /// Every line and event from now on.
+    pub(crate) fn listen(&self) -> broadcast::Receiver<Heard> {
+        self.heard.subscribe()
+    }
+
+    /// Settle every waiting timer that `seen` matches, and tell whoever
+    /// waits for it.
     pub(crate) fn seen(&self, seen: &Seen<'_>) {
+        if self.heard.receiver_count() > 0 {
+            let heard = match seen {
+                Seen::Line(line) => Heard::Line((*line).to_string()),
+                Seen::Event(kind) => Heard::Event((*kind).to_string()),
+            };
+            let _ = self.heard.send(heard);
+        }
+
         let at = now();
         let mut inner = self.lock();
         for body in inner.operator.seen(seen, at) {

@@ -27,7 +27,7 @@ use wellfed_formats::bench::feeder::{
 use wellfed_formats::bench::notes::{Body, Note};
 use wellfed_model::Op;
 
-use crate::api::{Accepted, JobRequest, Refusal, SOCKET, Seed, Seeded};
+use crate::api::{Accepted, JobRequest, OutputPage, Refusal, SOCKET, Seed, Seeded, Wait, Waited};
 
 /// Why a client request did not get its answer.
 #[derive(Debug, thiserror::Error)]
@@ -62,6 +62,8 @@ pub enum ClientError {
     Json(#[from] serde_json::Error),
     #[error("The bench server closed job {id}'s stream before it ended")]
     StreamCut { id: JobId },
+    #[error("The wait's query: {0}")]
+    Query(serde_urlencoded::ser::Error),
 }
 
 /// How following a job ended.
@@ -156,6 +158,23 @@ impl Client {
         let body = serde_json::to_vec(seed)?;
         let response = self.send(Method::POST, "/banks/seed", Some(body)).await?;
         answer(response, StatusCode::CREATED).await
+    }
+
+    /// Wait on the server until `wait`'s condition holds or its timeout
+    /// passes.
+    pub async fn wait(&self, wait: &Wait) -> Result<Waited, ClientError> {
+        let query = serde_urlencoded::to_string(wait).map_err(ClientError::Query)?;
+        let response = self
+            .send(Method::GET, &format!("/wait?{query}"), None)
+            .await?;
+        answer(response, StatusCode::OK).await
+    }
+
+    /// Job `id`'s kept output after line `after`, a page at a time.
+    pub async fn output(&self, id: JobId, after: u64) -> Result<OutputPage, ClientError> {
+        let path = format!("/jobs/{id}/output?after={after}");
+        let response = self.send(Method::GET, &path, None).await?;
+        answer(response, StatusCode::OK).await
     }
 
     /// One operator's note, as the server kept it.

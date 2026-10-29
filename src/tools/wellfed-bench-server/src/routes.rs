@@ -7,6 +7,10 @@
 //!   end, as newline-delimited JSON; a client that disconnects only stops
 //!   reading;
 //! - `POST /jobs/{id}/cancel`: stop the running job;
+//! - `GET /jobs/{id}/output?after=N`: a page of the job's kept output
+//!   after line `N`, with its end once that is all;
+//! - `GET /wait?for=...`: hold until a condition holds or the timeout
+//!   passes (`wait`, which documents them);
 //! - `POST /notes`: an operator's note, folded into the live state (201
 //!   with the note as kept, 400 for one refused);
 //! - `/device/ask`, `/device/pushed`, `/device/session`, `/banks` and
@@ -18,7 +22,7 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::body::Body;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{StatusCode, header};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Json, Response};
@@ -30,7 +34,7 @@ use wellfed_formats::bench::live::{BenchState, JobEvent, JobId, Phase};
 use wellfed_formats::bench::notes::Body as NoteBody;
 use wellfed_formats::bench::now;
 
-use crate::api::{Accepted, JobRequest, Refusal};
+use crate::api::{Accepted, JobRequest, OUTPUT_PAGE, OutputPage, Refusal};
 
 use crate::server::Shared;
 use crate::state::JobLog;
@@ -42,7 +46,9 @@ pub(crate) fn router(shared: Arc<Shared>) -> Router {
         .route("/jobs", post(submit))
         .route("/jobs/{id}/stream", get(follow))
         .route("/jobs/{id}/cancel", post(cancel))
+        .route("/jobs/{id}/output", get(output))
         .route("/notes", post(note))
+        .route("/wait", get(crate::wait::wait))
         .merge(crate::device_routes::routes())
         .with_state(shared)
 }
@@ -59,7 +65,8 @@ impl IntoResponse for Refusal {
             | Self::BadName { .. }
             | Self::BadLength { .. }
             | Self::Seed { .. }
-            | Self::Note { .. } => StatusCode::BAD_REQUEST,
+            | Self::Note { .. }
+            | Self::Wait { .. } => StatusCode::BAD_REQUEST,
         };
         (status, Json(self)).into_response()
     }
@@ -83,6 +90,31 @@ async fn note(State(shared): State<Arc<Shared>>, Json(body): Json<NoteBody>) -> 
         Ok(Err(error)) => Refusal::Note { error }.into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
+}
+
+#[derive(serde::Deserialize)]
+struct After {
+    #[serde(default)]
+    after: u64,
+}
+
+async fn output(
+    State(shared): State<Arc<Shared>>,
+    Path(id): Path<JobId>,
+    Query(after): Query<After>,
+) -> Response {
+    let Some(log) = shared.log(id) else {
+        return Refusal::NoSuchJob { id }.into_response();
+    };
+    let cursor = usize::try_from(after.after).unwrap_or(usize::MAX);
+    let (from, page) = log.page(cursor, OUTPUT_PAGE);
+    Json(OutputPage {
+        from: u64::try_from(from).unwrap_or(u64::MAX),
+        lines: page.lines,
+        next: u64::try_from(page.cursor).unwrap_or(u64::MAX),
+        end: page.end,
+    })
+    .into_response()
 }
 
 async fn cancel(State(shared): State<Arc<Shared>>, Path(id): Path<JobId>) -> Response {

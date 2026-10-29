@@ -103,6 +103,7 @@ The files and shapes they share (the bench config, a command's progress record, 
 | `attach ID` | Follow job `ID` of the running server again, from its first kept line |
 | `banks` | The [bank ledger](#the-bank-ledger). `--seed DUMP_SESSION` starts it, from that dump's inspection or, when the inspection names no build, from `--bank N --build HASH`. |
 | `note` | The [operator's notes](#the-operators-notes): the step under way, the next steps, timers and evidence by card |
+| `mcp` | The bench's tools for an agent, over the [Model Context Protocol](#mcp) on stdio, as a client of the server |
 | `on`, `off` | Power the feeder with the strap released, or release the strap and cut power |
 | `capture NAME` | Receive-only recording of the running feeder. Power is untouched. |
 | `boot NAME` | Power off, start a receive-only capture, confirm it holds the port, then power on |
@@ -156,11 +157,13 @@ The socket's routes:
 | `GET /events` | The live state again on every change, as server-sent events |
 | `POST /jobs` | `{"argv": [...]}`, the command's words: 201 with the job's number, 400 for words that are no job, 409 while a job runs |
 | `GET /jobs/{id}/stream` | The job's output lines, then its end, as newline-delimited JSON |
+| `GET /jobs/{id}/output?after=N` | A page of at most 500 of the job's kept lines after line `N`, the next line number, and the job's end once that is all |
 | `POST /jobs/{id}/cancel` | 202, or 409 for a job that already ended |
 | `POST /device/ask` | `{"id": [...], "op": {...}}`, one device API request on the server's session: 200 with `answered` and the answer, or `uncertain`; 503 `{"reason": ...}` when nothing was sent |
 | `GET /device/pushed?stream=events\|logs&from=N&wait=MS` | The history (events and gaps) or the log lines the session was pushed, from number `N` on, waiting up to `MS` (at most 30 s) for the first; with the event the held history starts after |
 | `GET /device/session` | Whom the session speaks as and with: the checkout, the key file and its public key, the feeder, and once open its build, role and capabilities; 503 while paused or unconfigured |
 | `GET /banks`, `POST /banks/seed` | The bank ledger, and `banks --seed` |
+| `GET /wait?for=...&timeout_ms=MS` | Holds until a condition holds, at most 10 minutes: `for=job&id=N` (it ended), `for=line&text=T` (a UART, device log or job output line containing `T` after the wait began), `for=event&kind=K`, `for=status&build=B&bank=N`, `for=timer&label=L` (due, seen or missed) or `for=idle` (no job, no loader or write). 200 with `met` and how, or `timed-out`; 400 for a condition missing a field. It only reads. |
 | `POST /notes` | One [operator's note](#the-operators-notes), the body of a line of `notes.jsonl`: 201 with the note as kept, 400 `{"note": {"error": ...}}` for one refused |
 
 #### The feeder session
@@ -243,6 +246,30 @@ wellfed-bench note evidence --card schedule private/captures/boot-01 --pass --te
 A card is the operator's own name for the work, free text. Evidence must name a file or directory inside `private/`, given from the working directory; the server keeps it root-relative and refuses anything else.
 
 **Timers.** `--at HH:MM` is the next time the bench host's clock reads it; `--in` takes lengths such as `90s`, `5m` or `1h30m`. A timer with `--expect TEXT` is marked seen by the first UART line, device log line or job output line containing `TEXT` from its start until its window ends; `--expect-event KIND` does the same for a device event of that kind (`boot`, `fed`, `clock_sync`, as the device API names them). The window ends 2 minutes after the due time unless `--window` says otherwise. A timer still unseen then is marked missed. Both are notes the server appends, so a restarted server shows the same. Lines reach the timers from the capture while no job runs, the session's device log, and the running job's output, so a `boot` job's own banner counts.
+
+#### MCP
+
+`wellfed-bench mcp` serves the bench's tools to an agent over the Model Context Protocol on stdin and stdout. It is a client of the running server like every other command, holding nothing of its own, so it needs `serve` running in the same checkout. Register it with the agent from the checkout's root, for example in `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "wellfed-bench": {
+      "command": "wellfed-bench",
+      "args": ["--root", "/path/to/wellfed", "mcp"]
+    }
+  }
+}
+```
+
+Every tool's description says what it does physically.
+
+- **Reads:** `bench_status` (the live state, with its tails cut to 20 lines), `job_output {id, after}`, `logs_tail {source: device|uart|job, lines}`, `banks`, and `wait_for {for, …, timeout}` over `GET /wait`, with the timeout in seconds.
+- **Notes:** `note_step`, `note_next`, `note_timer` and `note_evidence`, the same as `wellfed-bench note`.
+- **The feeder:** `device_read {op}` asks the server's session for one read: status, settings, time, plans, clients, update state, calibration, the meal call or a stats section. `clock_sync` sets the clock from this host. Nothing else goes to the feeder from here: never a feed, a cancel, a plan, a setting or an update. A read that comes back uncertain is reported as such.
+- **Hardware:** `job_cancel`, and one tool a command: `power {state: on|off}`, `boot`, `capture`, `loader`, `dump`, `flash_prepare`, `flash_execute` (`plan_sha256` required), `give_way_prepare`, `give_way_execute`, `stock_prepare`, `stock_execute`, `ota`, `itest` and `transients`. Each builds the command's words and posts them as a job, so the server's parse and every check apply as they do to a person's command line; it answers with the job's number, to follow with `wait_for {for: job, id}` and `job_output`.
+
+Refused over MCP, before anything is posted, as they need a person at the bench: `attended_motion`, the suite's `feeds`, `break_lease`, and a `destructive` suite run without `confirm_destructive: true`. Arguments a tool does not name are refused too. Stdout carries the protocol alone; nothing else prints there.
 
 1. With the server running, prepare the update:
 

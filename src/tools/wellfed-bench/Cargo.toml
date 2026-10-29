@@ -15,6 +15,12 @@ jiff = "0.2.38"
 # `serve`'s full-screen console on /dev/tty, and its keys.
 ratatui = { version = "0.30.2", default-features = false, features = ["crossterm_0_29", "layout-cache"] }
 crossterm = "0.29.0"
+# `wellfed-bench mcp`: the bench's tools for an agent, over stdio.
+rmcp = { version = "3.8.0", default-features = false, features = ["server", "transport-io"] }
+# The MCP tools' argument schemas, as rmcp's own are made.
+schemars = "1.2.3"
+serde.workspace = true
+serde_json.workspace = true
 wellfed-bench-server = { path = "../wellfed-bench-server" }
 wellfed-dashboard = { path = "../wellfed-dashboard", optional = true }
 wellfed-formats.workspace = true
@@ -26,6 +32,8 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal", "
 
 [dev-dependencies]
 tempfile.workspace = true
+# The MCP test runs a real server on a scripted relay board.
+wellfed-relay = { path = "../wellfed-relay", features = ["fake"] }
 
 [features]
 # The read-only page (`serve --ui`), served by wellfed-dashboard. Build

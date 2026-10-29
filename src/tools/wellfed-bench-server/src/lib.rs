@@ -41,6 +41,7 @@ mod output;
 mod routes;
 mod server;
 mod state;
+mod wait;
 
 pub use client::{Client, ClientError, Followed, Interrupt};
 pub use feeder::{ClockSync, DeviceOptions};

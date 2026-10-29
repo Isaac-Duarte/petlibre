@@ -146,6 +146,19 @@ impl JobLog {
         inner.first + inner.lines.len()
     }
 
+    /// At most `most` lines from `cursor` on, with the end once they are
+    /// the last; and the line number the page starts after.
+    pub(crate) fn page(&self, cursor: usize, most: usize) -> (usize, Unread) {
+        let inner = self.lock();
+        let skip = cursor.saturating_sub(inner.first);
+        let lines: Vec<String> = inner.lines.iter().skip(skip).take(most).cloned().collect();
+        let from = inner.first + skip.min(inner.lines.len());
+        let cursor = from + lines.len();
+        let last = cursor == inner.first + inner.lines.len();
+        let end = inner.end.clone().filter(|_| last);
+        (from, Unread { lines, cursor, end })
+    }
+
     pub(crate) fn read_from(&self, cursor: usize) -> Unread {
         let inner = self.lock();
         let skip = cursor.saturating_sub(inner.first);

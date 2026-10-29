@@ -10,6 +10,8 @@ publish.workspace = true
 [dependencies]
 axum.workspace = true
 bytes = "1"
+# The `GET /wait` query, from the clients' side.
+serde_urlencoded = "0.7.1"
 clap.workspace = true
 futures-util = { workspace = true, default-features = false }
 http-body-util.workspace = true

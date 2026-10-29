@@ -16,7 +16,7 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use crate::{note, orphans, page, tui};
+use crate::{mcp, note, orphans, page, tui};
 use clap::{Args, Parser, Subcommand};
 use tokio::sync::mpsc;
 use wellfed_bench_server::api::{Seed, SeededFrom};
@@ -91,6 +91,11 @@ enum Command {
     /// Record the operator's step, next steps, timers and evidence on the
     /// running server, for the page and the console.
     Note(note::NoteArgs),
+    /// Serve the bench's tools to an agent over the Model Context Protocol
+    /// on stdio, as a client of the running server: status, waits, notes,
+    /// device reads and every hardware job, with what needs a person at
+    /// the bench refused.
+    Mcp,
     #[command(flatten)]
     Job(JobCommand),
 }
@@ -197,6 +202,7 @@ fn run(cli: Cli, argv: &[String]) -> anyhow::Result<u8> {
         Command::Serve(args) => serve(&root, &args, &runtime),
         Command::Banks(args) => runtime.block_on(banks(&Client::new(&root), args)),
         Command::Note(args) => runtime.block_on(note::note(&Client::new(&root), &root, args)),
+        Command::Mcp => runtime.block_on(mcp::serve(&root)),
         Command::Attach { id } => runtime.block_on(async {
             let mut interrupts = interrupts()?;
             follow(&Client::new(&root), id, &mut interrupts).await

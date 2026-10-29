@@ -10,6 +10,7 @@ import '../src/rust/api/setup.dart';
 class SetupLink {
   SetupLink._(this._ble, this._connection, this._control, this.notifications);
 
+  /// How long a scan waits for the first feeder.
   static const findTimeout = Duration(seconds: 30);
   static const connectTimeout = Duration(seconds: 15);
 
@@ -20,19 +21,14 @@ class SetupLink {
   /// Each notification's bytes, in order; the session reassembles frames.
   final Stream<List<int>> notifications;
 
-  /// The first feeder advertising the setup service now.
-  static Future<DiscoveredDevice> find() {
-    final ble = FlutterReactiveBle();
-    return ble
-        .scanForDevices(
-          withServices: [Uuid.parse(setupService())],
-          scanMode: ScanMode.lowLatency,
-          // BLUETOOTH_SCAN is declared neverForLocation (Android 12+).
-          requireLocationServicesEnabled: false,
-        )
-        .first
-        .timeout(findTimeout);
-  }
+  /// Every advertisement of the setup service until cancelled; a feeder
+  /// shows up again as its signal changes.
+  static Stream<DiscoveredDevice> scan() => FlutterReactiveBle().scanForDevices(
+    withServices: [Uuid.parse(setupService())],
+    scanMode: ScanMode.lowLatency,
+    // BLUETOOTH_SCAN is declared neverForLocation (Android 12+).
+    requireLocationServicesEnabled: false,
+  );
 
   /// Connect to `device`, then enable notifications before anything is
   /// written: the feeder answers the first message at once.

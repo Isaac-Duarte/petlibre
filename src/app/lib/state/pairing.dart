@@ -85,8 +85,22 @@ class PairingFlow extends ChangeNotifier {
   SetupRefusal? refusal;
   String? message;
   Enrolled? enrolled;
+  WifiSaved? wifiSaved;
   KnownFeeder? feeder;
 
+  /// What this phone calls the feeder; only this phone uses it.
+  String feederName = defaultFeederName;
+
+  /// The network the feeder was given, for "Keep this phone on …".
+  String? network;
+
+  /// Feeders in setup mode heard so far, by radio id; each sighting
+  /// replaces the last, so the signal is current.
+  final found = <String, DiscoveredDevice>{};
+
+  static const defaultFeederName = 'Feeder';
+
+  Completer<DiscoveredDevice>? _chosen;
   SetupLink? _link;
   StreamSubscription<List<int>>? _notifications;
   Timer? _timer;
@@ -97,8 +111,12 @@ class PairingFlow extends ChangeNotifier {
   Future<void> _writing = Future.value();
   bool _disposed = false;
 
-  /// BLE setup: `wifi` for the feeder's next join, or `null` to keep its own.
-  Future<void> runSetup({required WifiCredentials? wifi}) async {
+  /// BLE setup: `wifi` for the feeder's next join, or `null` to keep its
+  /// own; `name` is what this phone calls the feeder.
+  Future<void> runSetup({
+    required WifiCredentials? wifi,
+    required String name,
+  }) async {
     final SetupDriver driver;
     try {
       driver = SetupDriver(key: _app.key, label: _app.label, wifi: wifi);
@@ -107,20 +125,21 @@ class PairingFlow extends ChangeNotifier {
       return;
     }
     code = driver.code();
+    feederName = name;
+    network = wifi?.ssid;
 
     _set(PairingPhase.finding);
     final DiscoveredDevice device;
     try {
-      device = await SetupLink.find();
+      device = await _pick();
     } on TimeoutException {
       _stop(PairingFailure.notFound, null);
       return;
-    } catch (error) {
-      _stop(PairingFailure.link, '$error');
+    } on _Failed catch (failed) {
+      _stop(failed.why, failed.detail);
       return;
     }
-    // The scan cannot be cut short, but a screen that went away must not
-    // then hold the feeder's only link.
+    // A screen that went away must not then hold the feeder's only link.
     if (_disposed) return;
 
     final SetupStep end;
@@ -161,7 +180,11 @@ class PairingFlow extends ChangeNotifier {
   }
 
   /// LAN recovery with the feeder at `address`, whose window is open.
-  Future<void> runRecovery({required String address}) async {
+  Future<void> runRecovery({
+    required String address,
+    required String name,
+  }) async {
+    feederName = name;
     final Recovery recovery;
     try {
       recovery = Recovery(key: _app.key, label: _app.label);
@@ -212,6 +235,41 @@ class PairingFlow extends ChangeNotifier {
     await _finish(ended, knownAddress: address);
   }
 
+  /// Scan until the owner picks a feeder; a timeout when none shows up.
+  Future<DiscoveredDevice> _pick() async {
+    final chosen = Completer<DiscoveredDevice>();
+    _chosen = chosen;
+    final scanning = SetupLink.scan().listen(
+      (device) {
+        found[device.id] = device;
+        if (!_disposed) notifyListeners();
+      },
+      onError: (Object error) {
+        if (!chosen.isCompleted) {
+          chosen.completeError(_Failed(PairingFailure.link, '$error'));
+        }
+      },
+    );
+    final nothing = Timer(SetupLink.findTimeout, () {
+      if (found.isEmpty && !chosen.isCompleted) {
+        chosen.completeError(TimeoutException(null));
+      }
+    });
+    try {
+      return await chosen.future;
+    } finally {
+      nothing.cancel();
+      _chosen = null;
+      await scanning.cancel();
+    }
+  }
+
+  /// Connect to `device`, one of [found].
+  void choose(DiscoveredDevice device) {
+    final chosen = _chosen;
+    if (chosen != null && !chosen.isCompleted) chosen.complete(device);
+  }
+
   /// One notification: hand it to the session and act on what it says.
   Future<void> _received(SetupDriver driver, List<int> bytes) async {
     final ended = _ended;
@@ -255,8 +313,13 @@ class PairingFlow extends ChangeNotifier {
         refusal = why;
         _stop(PairingFailure.refused, null);
         return;
-      case SetupStep_Done(enrolled: final how, feeder: final identity):
+      case SetupStep_Done(
+        enrolled: final how,
+        :final wifi,
+        feeder: final identity,
+      ):
         enrolled = how;
+        wifiSaved = wifi;
         final hex = identityHex(identity: identity);
         _set(PairingPhase.joining);
 
@@ -264,7 +327,7 @@ class PairingFlow extends ChangeNotifier {
         final address = knownAddress ?? await Discovery.locate(hex, rejoinWait);
         final known = KnownFeeder(
           identity: hex,
-          name: 'Feeder',
+          name: feederName,
           address: address,
         );
         // The feeder enrolled this phone whatever happens here; a failed
@@ -332,6 +395,12 @@ class PairingFlow extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    final choosing = _chosen;
+    if (choosing != null && !choosing.isCompleted) {
+      choosing.completeError(
+        _Failed(PairingFailure.other, 'the screen closed'),
+      );
+    }
     _fail(PairingFailure.other, 'the screen closed');
     // Hang up in Rust too, so the feeder's window is free for a retry.
     _recovery?.close();

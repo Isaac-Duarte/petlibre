@@ -6,6 +6,8 @@ import '../platform/discovery.dart';
 import '../state/app_state.dart';
 import '../state/pairing.dart';
 import '../theme/theme.dart';
+import '../widgets/code_tiles.dart';
+import '../widgets/icons.dart';
 import '../widgets/layout.dart';
 import 'name_step.dart';
 import 'pairing_view.dart';
@@ -26,7 +28,7 @@ class RecoverScreen extends StatefulWidget {
 class _RecoverScreenState extends State<RecoverScreen> {
   late _Step _step = widget.app.label.isEmpty ? _Step.name : _Step.pick;
   PairingFlow? _flow;
-  String? _address;
+  (String, String)? _picked;
 
   @override
   void dispose() {
@@ -34,40 +36,45 @@ class _RecoverScreenState extends State<RecoverScreen> {
     super.dispose();
   }
 
-  Future<void> _pair(String address) async {
-    _address = address;
+  /// Pair with the feeder at `address`, saved under `name`.
+  Future<void> _pair(String address, String name) async {
+    _picked = (address, name);
     _flow?.dispose();
     final flow = PairingFlow(widget.app);
     setState(() {
       _flow = flow;
       _step = _Step.pairing;
     });
-    await flow.runRecovery(address: address);
+    await flow.runRecovery(address: address, name: name);
   }
 
   @override
   Widget build(BuildContext context) => switch (_step) {
     _Step.name => NameStep(
       initial: widget.app.label,
-      onDone: (label) async {
+      action: 'Continue',
+      onDone: (label, _) async {
         await widget.app.setLabel(label);
         setState(() => _step = _Step.pick);
       },
     ),
-    _Step.pick => _Pick(onPicked: (address) => unawaited(_pair(address))),
+    _Step.pick => _Pick(
+      onPicked: (address, name) => unawaited(_pair(address, name)),
+    ),
     _Step.pairing => PairingView(
       flow: _flow!,
       ble: false,
-      onRetry: () => unawaited(_pair(_address!)),
+      onRetry: () => unawaited(_pair(_picked!.$1, _picked!.$2)),
     ),
   };
 }
 
-/// Feeders answering on this network, or an address typed in.
+/// How to open the window, then the feeders answering on this network, or
+/// an address typed in.
 class _Pick extends StatefulWidget {
   const _Pick({required this.onPicked});
 
-  final ValueChanged<String> onPicked;
+  final void Function(String address, String name) onPicked;
 
   @override
   State<_Pick> createState() => _PickState();
@@ -98,58 +105,81 @@ class _PickState extends State<_Pick> {
   Widget build(BuildContext context) {
     final c = context.colors;
     return StepScaffold(
-      appBarTitle: 'Become its owner again',
-      title: 'Open the window, then pick the feeder',
+      appBarTitle: 'Recover a feeder',
       body:
-          'On the feeder, unlock the panel, then hold Lock and Dispense '
-          'together. It takes a new owner for 2 minutes.',
+          'Lost every phone that could open it? If the feeder is still on '
+          'your Wi-Fi, you can add this phone as an owner without erasing '
+          'anything.',
       content: [
+        const PanelPhoto(held: [1, 2], caption: 'Lock, then Dispense'),
+        const SizedBox(height: 18),
+        const NumberedSteps([
+          'Unlock the panel if the lock light is on.',
+          'Hold **Lock**, then also **Dispense**, for 5 seconds. The lock '
+              'light blinks fast.',
+          'Within 2 minutes, pick the feeder below and press the code it '
+              'shows, just like setup.',
+        ]),
+        const SizedBox(height: Space.s5),
         if (_found.isEmpty)
-          Row(
-            children: [
-              const SizedBox.square(
-                dimension: 16,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-              const SizedBox(width: Space.s3),
-              Text(
-                'Looking for feeders on this network…',
-                style: TextStyle(color: c.textMuted, fontSize: Sizes.base),
-              ),
-            ],
-          ),
-        for (final feeder in _found.values)
-          Padding(
-            padding: const EdgeInsets.only(bottom: Space.s2),
-            child: Card(
-              clipBehavior: Clip.antiAlias,
-              child: ListTile(
-                title: Text(feeder.name),
-                subtitle: Text(
-                  feeder.address,
-                  style: const TextStyle(fontFamily: Fonts.mono),
+          const Searching('Looking for feeders on this network…'),
+        for (final feeder in _found.values) ...[
+          Panel(
+            onTap: () => widget.onPicked(feeder.address, feeder.name),
+            padding: const EdgeInsets.all(Space.s4),
+            child: Row(
+              children: [
+                const FeederImage(size: 48),
+                const SizedBox(width: Space.s3),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        feeder.name,
+                        style: TextStyle(
+                          fontSize: Sizes.md,
+                          fontWeight: Fonts.semibold,
+                          color: c.text,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        feeder.address,
+                        style: TextStyle(
+                          fontFamily: Fonts.mono,
+                          fontSize: Sizes.sm,
+                          color: c.textMuted,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () => widget.onPicked(feeder.address),
-              ),
+                StrokeIcon(Glyph.chevron, size: 20, color: c.textMuted),
+              ],
             ),
           ),
+          const SizedBox(height: Space.s2),
+        ],
         const SizedBox(height: Space.s5),
-        TextField(
-          controller: _typed,
-          keyboardType: TextInputType.url,
-          decoration: const InputDecoration(
-            labelText: 'Or its address',
-            hintText: '192.168.1.20',
+        LabeledField(
+          label: 'Or its address',
+          child: TextField(
+            controller: _typed,
+            keyboardType: TextInputType.url,
+            decoration: const InputDecoration(hintText: '192.168.1.20'),
+            onChanged: (_) => setState(() {}),
           ),
-          onChanged: (_) => setState(() {}),
         ),
       ],
       actions: [
         OutlinedButton(
           onPressed: _typed.text.trim().isEmpty
               ? null
-              : () => widget.onPicked(_typed.text.trim()),
+              : () => widget.onPicked(
+                  _typed.text.trim(),
+                  PairingFlow.defaultFeederName,
+                ),
           child: const Text('Use this address'),
         ),
       ],

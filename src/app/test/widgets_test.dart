@@ -78,6 +78,55 @@ void main() {
     expect(action.dy, greaterThan(content.dy));
   });
 
+  testWidgets('a step screen shows its step and how far the flow is', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: wellfedTheme(Brightness.light),
+        home: const StepScaffold(
+          stepLabel: 'Step 2 of 4',
+          progress: 0.5,
+          title: 'Title',
+        ),
+      ),
+    );
+
+    expect(find.text('Step 2 of 4'), findsOneWidget);
+    final bar = tester.widget<LinearProgressIndicator>(
+      find.byType(LinearProgressIndicator),
+    );
+    expect(bar.value, 0.5);
+  });
+
+  testWidgets('the panel photo names the buttons to hold, in order', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _themed(const SizedBox(width: 364, child: PanelPhoto(held: [1, 3]))),
+    );
+
+    expect(
+      find.bySemanticsLabel("The feeder's button panel: hold Lock, then Mic"),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('numbered steps keep their order and their bold names', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _themed(const NumberedSteps(['Unlock it.', 'Hold **Lock**.'])),
+    );
+
+    expect(find.text('1'), findsOneWidget);
+    expect(find.text('2'), findsOneWidget);
+    expect(
+      find.textContaining('Hold Lock.', findRichText: true),
+      findsOneWidget,
+    );
+  });
+
   test('every reason a feed cannot start has words', () {
     for (final reason in Blocked.values) {
       expect(blockedWords(reason), isNotEmpty);

@@ -35,7 +35,7 @@ ThemeData wellfedTheme(Brightness brightness) {
   final controlShape = RoundedRectangleBorder(
     borderRadius: BorderRadius.circular(Radii.control),
   );
-  const buttonSize = Size(64, 48);
+  const buttonSize = Size(64, 52);
 
   return ThemeData(
     useMaterial3: true,
@@ -68,6 +68,8 @@ ThemeData wellfedTheme(Brightness brightness) {
     filledButtonTheme: FilledButtonThemeData(
       style: FilledButton.styleFrom(
         minimumSize: buttonSize,
+        disabledBackgroundColor: t.sunken,
+        disabledForegroundColor: t.textMuted,
         shape: controlShape,
         textStyle: const TextStyle(
           fontSize: Sizes.md,
@@ -79,7 +81,7 @@ ThemeData wellfedTheme(Brightness brightness) {
       style: OutlinedButton.styleFrom(
         minimumSize: buttonSize,
         shape: controlShape,
-        side: BorderSide(color: t.line),
+        side: BorderSide(color: t.lineStrong),
         foregroundColor: t.text,
         textStyle: const TextStyle(
           fontSize: Sizes.md,
@@ -88,18 +90,23 @@ ThemeData wellfedTheme(Brightness brightness) {
       ),
     ),
     textButtonTheme: TextButtonThemeData(
-      style: TextButton.styleFrom(minimumSize: const Size(48, 48)),
+      style: TextButton.styleFrom(
+        minimumSize: const Size(48, 44),
+        textStyle: const TextStyle(fontSize: 15, fontWeight: Fonts.semibold),
+      ),
     ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
       fillColor: t.surface,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
+      hintStyle: TextStyle(color: t.textMuted),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(Radii.control),
-        borderSide: BorderSide(color: t.line),
+        borderSide: BorderSide(color: t.lineStrong),
       ),
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(Radii.control),
-        borderSide: BorderSide(color: t.line),
+        borderSide: BorderSide(color: t.lineStrong),
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(Radii.control),
@@ -109,8 +116,10 @@ ThemeData wellfedTheme(Brightness brightness) {
     bottomSheetTheme: BottomSheetThemeData(
       backgroundColor: t.surface,
       showDragHandle: true,
+      dragHandleColor: t.lineStrong,
+      dragHandleSize: const Size(36, 4),
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(Radii.card)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
     ),
     dividerTheme: DividerThemeData(color: t.line, space: 1),

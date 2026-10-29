@@ -51,6 +51,8 @@ class FeedState {
     this.result,
     this.refusal,
     this.cancelUnconfirmed = false,
+    this.sentAt,
+    this.endedAt,
   });
 
   static const idle = FeedState(FeedPhase.idle);
@@ -64,6 +66,12 @@ class FeedState {
   /// "Stop feeding" was refused or went unanswered; the feed may still run
   /// to its end.
   final bool cancelUnconfirmed;
+
+  /// When this phone sent the feed, for "We sent the feed at …".
+  final DateTime? sentAt;
+
+  /// When its end arrived.
+  final DateTime? endedAt;
 
   bool get active => phase == FeedPhase.sending || phase == FeedPhase.running;
 }
@@ -111,12 +119,16 @@ class FeederController extends ChangeNotifier {
   void feedNow(int portions) {
     final session = _session;
     if (session == null || feed.active) return;
-    _setFeed(FeedState(FeedPhase.sending, portions: portions));
+    _setFeed(
+      FeedState(FeedPhase.sending, portions: portions, sentAt: DateTime.now()),
+    );
     try {
       session.feed(portions: portions);
     } on BridgeError {
       // The session had already ended; the request never went out.
-      _setFeed(FeedState(FeedPhase.notSent, portions: portions));
+      _setFeed(
+        FeedState(FeedPhase.notSent, portions: portions, sentAt: feed.sentAt),
+      );
     }
   }
 
@@ -205,7 +217,12 @@ class FeederController extends ChangeNotifier {
           _notify();
         case SessionUpdate_FeedStarted(:final feed, :final portions):
           _setFeed(
-            FeedState(FeedPhase.running, portions: portions, feed: feed),
+            FeedState(
+              FeedPhase.running,
+              portions: portions,
+              feed: feed,
+              sentAt: this.feed.sentAt,
+            ),
           );
         case SessionUpdate_FeedRefused(:final refusal):
           _setFeed(
@@ -213,10 +230,17 @@ class FeederController extends ChangeNotifier {
               FeedPhase.refused,
               portions: feed.portions,
               refusal: refusal,
+              sentAt: feed.sentAt,
             ),
           );
         case SessionUpdate_FeedUnanswered():
-          _setFeed(FeedState(FeedPhase.unanswered, portions: feed.portions));
+          _setFeed(
+            FeedState(
+              FeedPhase.unanswered,
+              portions: feed.portions,
+              sentAt: feed.sentAt,
+            ),
+          );
         case SessionUpdate_FeedEnded(:final result):
           // Ours only when it carries our number: an unanswered feed has
           // none, and the next end may be a meal or another phone's.
@@ -227,6 +251,8 @@ class FeederController extends ChangeNotifier {
                 portions: result.requested,
                 feed: result.feed,
                 result: result,
+                sentAt: feed.sentAt,
+                endedAt: DateTime.now(),
               ),
             );
           }
@@ -238,6 +264,7 @@ class FeederController extends ChangeNotifier {
                 portions: feed.portions,
                 feed: feed.feed,
                 cancelUnconfirmed: true,
+                sentAt: feed.sentAt,
               ),
             );
           }
@@ -251,11 +278,22 @@ class FeederController extends ChangeNotifier {
     // The session reports every feed it sent as started, refused or
     // unanswered before it closes, so one still sending never went out.
     if (feed.phase == FeedPhase.sending) {
-      _setFeed(FeedState(FeedPhase.notSent, portions: feed.portions));
+      _setFeed(
+        FeedState(
+          FeedPhase.notSent,
+          portions: feed.portions,
+          sentAt: feed.sentAt,
+        ),
+      );
     }
     if (feed.phase == FeedPhase.running) {
       _setFeed(
-        FeedState(FeedPhase.lost, portions: feed.portions, feed: feed.feed),
+        FeedState(
+          FeedPhase.lost,
+          portions: feed.portions,
+          feed: feed.feed,
+          sentAt: feed.sentAt,
+        ),
       );
     }
     if (!_disposed) _set(Connection.offline);

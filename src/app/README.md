@@ -4,9 +4,9 @@ This is Wellfed's phone app. It sets up a feeder over Bluetooth, finds it on the
 
 So far it does the first milestone:
 
-- **Setup:** BLE setup of a new or reset feeder. You hold Lock, then Mic, then key in the 6-press code, and the app gives the feeder your Wi-Fi.
+- **Setup:** BLE setup of a new or reset feeder. You hold Lock, then Mic, give the Wi-Fi and the names, pick the feeder from those nearby in setup mode, then key in the 6-press code.
 - **Recovery:** taking a feeder already on your network as its owner again. You hold Lock, then Dispense, and key in the same kind of code.
-- **Home:** a card per feeder, with the food, power, panel lock, clock and whether it can feed now.
+- **Home:** a card per feeder (compact when there are several), with whether it can feed now, the food, power, panel lock, Wi-Fi signal and anything that needs attention.
 - **Feed now:** a feed of 1 to 48 portions, followed to its result.
 
 Installing on a stock feeder, invites, schedules, history, settings and servers come later ([roadmap](../../docs/roadmap.md)).
@@ -54,7 +54,7 @@ The simulator has no Bluetooth, so use recovery:
    ```
 
 2. Install the app: `flutter run` with the phone on the same network.
-3. In the app, choose **Become its owner again**, name the phone, and pick the feeder.
+3. In the app, choose **Recover a feeder**, name the phone, and pick the feeder.
 4. At the simulator's prompt, open the window with `hold lock`, then `hold lock+dispense`.
 5. When the app shows the code, type it at the prompt as positions: `press 1 3 2 …` (1 Lock, 2 Dispense, 3 Mic, 4 Reset).
 

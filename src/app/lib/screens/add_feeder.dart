@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../theme/theme.dart';
+import '../widgets/icons.dart';
 import '../widgets/layout.dart';
 
 /// The ways in. Only the routes that are built are listed; installing on a
@@ -11,76 +12,26 @@ class AddFeederScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => StepScaffold(
-    title: 'Add a feeder',
-    body: 'Wellfed firmware is already on the feeder. Pick how to reach it.',
+    appBarTitle: 'Add a feeder',
+    body: 'How is this feeder getting to you?',
     content: [
-      _Route(
-        title: 'Set up a feeder',
+      RouteCard(
+        glyph: Glyph.bluetooth,
+        title: 'Set up a reset feeder',
         body:
-            'A new or reset feeder. You hold two buttons, the phone gives '
-            'it your Wi-Fi over Bluetooth, and you key in a code.',
+            'It already runs Wellfed but was reset, or can\'t reach your '
+            'Wi-Fi. Set up over Bluetooth.',
         onTap: () => context.push('/setup'),
       ),
       const SizedBox(height: Space.s3),
-      _Route(
-        title: 'Become its owner again',
+      RouteCard(
+        glyph: Glyph.key,
+        title: 'Recover a feeder',
         body:
-            'The feeder is already on your Wi-Fi but this phone is not '
-            'paired. You hold two buttons and key in a code.',
+            'It is on your Wi-Fi, but no phone can open it any more. Add '
+            'this phone as an owner without erasing anything.',
         onTap: () => context.push('/recover'),
       ),
     ],
   );
-}
-
-class _Route extends StatelessWidget {
-  const _Route({required this.title, required this.body, required this.onTap});
-
-  final String title;
-  final String body;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.all(Space.s4),
-          child: Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: TextStyle(
-                        fontSize: Sizes.md,
-                        fontWeight: Fonts.semibold,
-                        color: c.text,
-                      ),
-                    ),
-                    const SizedBox(height: Space.s1),
-                    Text(
-                      body,
-                      style: TextStyle(
-                        fontSize: Sizes.base,
-                        color: c.textMuted,
-                        height: 1.4,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: Space.s3),
-              Icon(Icons.chevron_right, color: c.textMuted),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
 }

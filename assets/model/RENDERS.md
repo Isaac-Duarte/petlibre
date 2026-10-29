@@ -9,7 +9,7 @@ The images the app, the web UI and the docs need from `plaf103.blend`, and the r
 - **Unbranded, always.** Keep the `Logo` and `PCB_ChipLabel` objects hidden; `render.py`'s `unbrand()` already does this. No vendor marks, no vendor app UI, no device identifiers, and nothing fictional printed on the hardware.
 - **Locked cameras within a set.** Every state of a view uses the same camera, framing and lights, so the app can swap images (food levels, lid open) without the feeder jumping. Name cameras per view in code, not per state.
 - **Truthful states.** Show only what the hardware does. The only recorded indicator color is the **red fault light**; the others are unknown, so render them **unlit** and let the UI draw light through [hotspots](#hotspots). Buttons don't move or glow.
-- **Color management:** AgX, Cycles, denoised, with the GPU when available. The look matches `renders/card.png`: soft studio key, fill and rim, matte charcoal body, chrome ring.
+- **Color management:** AgX with the Medium High Contrast look, Cycles, denoised, with the GPU when available. The look matches `renders/card.png` and the owner's photographs: tall strip softboxes for key, fill and rim over a world that is dark except overhead, so the near-black satin body carries clean vertical highlights, the ring reads as gloss black and the bowl as mirror-polished steel. Those finishes are applied in `render.py` (`FINISHES`), not saved in the model.
 
 ## Outputs
 

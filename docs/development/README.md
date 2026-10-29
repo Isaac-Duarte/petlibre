@@ -29,6 +29,29 @@ Full firmware images need more: the pinned vendor SDK and its compiler. See [fir
 
 If your environment forbids local sockets, give the network tests permission to run. Skipping them is not a passing result.
 
+## Repository layout
+
+| Folder | Contents |
+| --- | --- |
+| `src/sdk/` | The SDK every firmware builds on: runtime, feeding core, hardware ports, board map and simulator ([firmware architecture](../firmware/README.md)) |
+| `src/product/` | Product policy shared by the firmware and the server: the device protocol and the feeder's stores |
+| `src/client/` | The clients the CLI, the server and the Android app share ([server design](../server/design.md#crates)) |
+| `src/server/` | The owner's optional server ([the server](../server/README.md)) |
+| `src/tools/` | Host tools, including the `wellfed` CLI ([tool list](../../src/tools/README.md)) |
+| `src/firmware/wellfed/` | One crate per firmware: `feeder`, `qa`, `bringup` and `blink` ([firmware guide](../../src/firmware/wellfed/README.md)) |
+| `src/firmware/vendor/` | The vendor SDK side: C hooks and ports, pinned SDK and toolchain locks, the stock layout, simulator scenarios and the image build (`make -C src/firmware/vendor`) |
+| `src/firmware/devices/` | Per-device descriptions and layouts |
+| `src/firmware/bench/` | The bench board's RP2040 firmware and its relay protocol crate ([bench firmware](../../src/firmware/bench/README.md)) |
+| `src/hardware/bench/` | The Wellfed Bench board: KiCad project, fab outputs and enclosure ([bench board](../../src/hardware/bench/README.md)) |
+| `src/web/` | Web frontends (a pnpm workspace): the bench page, the [well-fed.dev](../web/site.md) site, shared tokens and components, and API types generated from Rust. `make ui` builds them |
+| `src/fuzz/` | Fuzz targets ([fuzzing](#fuzzing)) |
+| `src/scripts/` | Developer scripts: `bench-dashboard` serves the bench page for this checkout |
+| `assets/` | Brand marks, design tokens, the feeder's 3D model and its renders ([assets](../../assets/README.md)) |
+| `docs/` | Hardware findings, firmware design and contributor guides |
+| `private/` | Ignored, contributor-owned secrets, evidence, dependencies and artifacts |
+
+The existing `wellfed-*` crate names are kept for compatibility.
+
 ## What checks do and don't touch
 
 The check targets never install packages, fetch an SDK, contact a device, change firewall rules or start a persistent service. Network tests use loopback only.

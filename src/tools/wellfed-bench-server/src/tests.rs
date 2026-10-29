@@ -385,7 +385,12 @@ async fn a_cancel_mid_write_only_interrupts_the_flash_client_and_waits_for_it() 
         .await
         .unwrap();
     let state = state_until(&server, "the write's first count", |state| {
-        state.uart == Uart::Writing { done: 3, total: 19 }
+        state.uart
+            == Uart::Writing {
+                done: 3,
+                total: 19,
+                counted: true,
+            }
     })
     .await;
     assert_eq!(state.activity[0].label, "update execute");
@@ -591,4 +596,28 @@ async fn with_no_server_a_client_says_how_to_start_one() {
         "{refused:?}"
     );
     assert!(refused.to_string().contains("wellfed-bench serve"));
+}
+
+#[test]
+fn a_bank_ledger_that_does_not_read_refuses_the_start_before_the_board_opens() {
+    let checkout = Checkout::new(0.1);
+    fs::create_dir_all(checkout.root().join("private/bench-status")).unwrap();
+    fs::write(checkout.root().join("private/bench-status/banks.json"), "{").unwrap();
+    let opened = AtomicBool::new(false);
+
+    let refused = Server::open(checkout.options(), |_| {
+        opened.store(true, Ordering::SeqCst);
+        Ok(Box::new(AtBoard::new(Box::new(checkout.board.clone()))))
+    });
+
+    let Err(ServeError::Banks { path, .. }) = refused else {
+        panic!("a corrupt ledger was taken for an empty one");
+    };
+    assert!(path.ends_with("private/bench-status/banks.json"));
+    assert!(!opened.load(Ordering::SeqCst));
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        "{",
+        "the ledger stays for the operator"
+    );
 }

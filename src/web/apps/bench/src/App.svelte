@@ -6,6 +6,7 @@
   import { route, TABS, type Tab } from "./lib/route.svelte";
   import { theme } from "./lib/theme.svelte";
   import BenchStrip from "./parts/BenchStrip.svelte";
+  import UartBanner from "./parts/UartBanner.svelte";
   import Overview from "./views/Overview.svelte";
   import Tests from "./views/Tests.svelte";
   import Sessions from "./views/Sessions.svelte";
@@ -15,11 +16,14 @@
 
   onMount(() => app.start());
 
-  const current = $derived(app.snapshot?.current ?? null);
-  const live = $derived(current?.outcome === "running");
+  const job = $derived(app.state?.job ?? null);
+  const live = $derived(app.running);
+  const writing = $derived(app.state?.uart.state === "writing");
 
+  // The tab title is outside Svelte's tree; a write outranks the job.
   $effect(() => {
-    document.title = current ? `${current.outcome} ${current.command} – wellfed bench` : "wellfed bench";
+    const what = writing ? "WRITING" : job ? (job.end ? `ended ${job.label}` : `running ${job.label}`) : null;
+    document.title = what ? `${what} – wellfed bench` : "wellfed bench";
   });
 
   // "g" then a tab's letter, as in most developer tools; "/" filters the log
@@ -68,7 +72,7 @@
       {#each TABS as tab (tab)}
         <a href={route.href(tab)} class:on={route.tab === tab} aria-current={route.tab === tab ? "page" : undefined}>
           {NAMES[tab]}
-          {#if tab === "tests" && current?.command === "itest" && live}
+          {#if tab === "tests" && job?.record?.command === "itest" && live}
             <LiveDot pulse label="Integration run in progress" />
           {/if}
         </a>
@@ -110,6 +114,7 @@
   </header>
 
   <BenchStrip />
+  <UartBanner />
 
   <main>
     {#if route.tab === "overview"}

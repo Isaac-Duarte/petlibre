@@ -1,24 +1,32 @@
 <script lang="ts">
   // One run's record and the evidence beside it. Opened from the matrix by
   // its route, so a run's link can be shared; closing it goes back.
-  import { bench, type RunView } from "@wellfed/api";
+  import { Deferred, bench, type RunView } from "@wellfed/api";
   import { Badge, Command, Dialog, Empty, bytes, duration, fullTime } from "@wellfed/ui";
+  import { app } from "../lib/bench.svelte";
   import { route } from "../lib/route.svelte";
+  import { holdsUart } from "../lib/uart";
   import Verdict from "./Verdict.svelte";
 
   let { name }: { name: string } = $props();
 
-  let run = $state<RunView | null | undefined>(undefined);
+  /** `undefined` while reading, `null` when there is no record. */
+  let run = $state<RunView | null | "deferred" | undefined>(undefined);
+  // Read again when the flash client lets go of the UART.
+  const held = $derived(holdsUart(app.state?.uart));
 
   $effect(() => {
     const wanted = name;
-    run = undefined;
+    run = held ? "deferred" : undefined;
+    if (held) return;
     bench
       .run(wanted)
       .then((view) => {
         if (wanted === name) run = view;
       })
-      .catch(() => (run = null));
+      .catch((error: unknown) => {
+        if (wanted === name) run = error instanceof Deferred ? "deferred" : null;
+      });
   });
 </script>
 
@@ -30,11 +38,15 @@
 >
   {#snippet title()}<span class="visually-hidden">Run </span><span class="run-name">{name}</span>{/snippet}
   {#snippet meta()}
-    {#if run}Finished {run.modified ? fullTime(run.modified) : "at an unknown time"}{/if}
+    {#if run && run !== "deferred"}Finished {run.modified ? fullTime(run.modified) : "at an unknown time"}{/if}
   {/snippet}
 
   {#if run === undefined}
     <Empty title="Reading the run" />
+  {:else if run === "deferred"}
+    <Empty title="Deferred until the write ends">
+      The flash client holds the UART, so the bench reads no evidence file until it lets go.
+    </Empty>
   {:else if run === null}
     <Empty title="No record for this run">
       Its <code>{name}-itest.json</code> is missing or unreadable under <code>private/verification/</code>.

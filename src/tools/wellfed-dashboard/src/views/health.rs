@@ -1,7 +1,7 @@
-//! `/api/health`: whether the bench is ready, from its config, the last relay
-//! states, the flash client and the image the feeder last booted.
+//! `/api/health`: whether the bench is ready, from its config, the flash
+//! client and the image the feeder last booted. The relays and the running
+//! job are the server's live state.
 
-use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
@@ -9,7 +9,6 @@ use serde::Serialize;
 use wellfed_core::record::{Event, Record, Tag};
 
 use super::{Sources, captures_by_age, modified, printable};
-use wellfed_formats::bench::progress::{BenchCommand, RelayState};
 use wellfed_formats::bench::relative;
 use wellfed_formats::bench::{CONFIG, Config};
 use wellfed_formats::canonical::sha256;
@@ -18,8 +17,8 @@ use wellfed_formats::canonical::sha256;
 const BANNER_SCAN_BYTES: u64 = 4 << 20;
 const BANNER_SCAN_CAPTURES: usize = 25;
 
-/// `/api/health`: ports, last relay states, flash client and the image the
-/// feeder last booted.
+/// `/api/health`: ports, the flash client and the image the feeder last
+/// booted.
 #[derive(Debug, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 pub(crate) struct HealthView {
@@ -27,11 +26,8 @@ pub(crate) struct HealthView {
     config: &'static str,
     config_ok: bool,
     ports: Ports,
-    relays: Option<BTreeMap<String, RelayState>>,
     flash_tool: FlashToolView,
     installed: Option<Installed>,
-    /// The command a live bench process is running.
-    busy: Option<BenchCommand>,
 }
 
 /// Whether each configured path exists, or why the config does not read.
@@ -101,22 +97,24 @@ pub(crate) fn health(sources: &Sources, flash: &mut FlashCache) -> HealthView {
         config: CONFIG,
         config_ok: config.is_ok(),
         ports,
-        relays: sources.live.relays(),
         flash_tool: flash.get(sources),
-        installed: installed(root),
-        busy: sources
-            .current()
-            .filter(crate::live)
-            .map(|current| current.command),
+        installed: installed(sources),
     }
 }
 
 /// The newest capture that shows a replacement-firmware start banner.
-fn installed(root: &Path) -> Option<Installed> {
+/// The scan reads up to 25 captures of up to 4 MiB each, so a write that
+/// starts during it stops it at the next capture: the scan never runs
+/// beside a write.
+fn installed(sources: &Sources) -> Option<Installed> {
+    let root = &sources.root;
     let start = format!("{} start build=", Tag::Start);
     let start = start.as_bytes();
 
     for (at, dir) in captures_by_age(root).into_iter().take(BANNER_SCAN_CAPTURES) {
+        if sources.uart_busy() {
+            return None;
+        }
         let rx = dir.join("serial-rx.bin");
         if fs::metadata(&rx).map_or(true, |m| m.len() > BANNER_SCAN_BYTES) {
             continue;
@@ -209,8 +207,26 @@ mod tests {
 
     use super::*;
     use crate::views::tests::{json, live_sources, sources};
+    use wellfed_formats::bench::live::Uart;
+
+    #[test]
+    fn the_banner_scan_stops_while_the_flash_client_holds_the_uart() {
+        let (_tmp, sources, live) = live_sources();
+        let dir = sources.root.join(CAPTURES).join("x-boot");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("serial-rx.bin"),
+            b"PLFW1 start build=abc123 bank=1\r\n",
+        )
+        .unwrap();
+
+        live.state.send_modify(|state| state.uart = Uart::Loader);
+
+        assert!(installed(&sources).is_none());
+        live.state.send_modify(|state| state.uart = Uart::Idle);
+        assert!(installed(&sources).is_some());
+    }
     use wellfed_formats::bench::CAPTURES;
-    use wellfed_formats::bench::progress::BenchCommand;
 
     #[test]
     fn health_reads_the_last_banner() {
@@ -239,15 +255,13 @@ mod tests {
         assert_eq!(view["config"], CONFIG);
         assert_eq!(view["config_ok"], false);
         assert!(view["ports"]["error"].as_str().unwrap().contains(CONFIG));
-        assert!(view["relays"].is_null());
-        assert!(view["busy"].is_null());
         assert_eq!(view["flash_tool"]["present"], false);
         assert!(view["flash_tool"].get("sha256").is_none());
     }
 
     #[test]
-    fn health_reports_present_ports_relays_and_the_flash_hash() {
-        let (_tmp, sources, live) = live_sources();
+    fn health_reports_present_ports_and_the_flash_hash() {
+        let (_tmp, sources) = sources();
         fs::create_dir_all(sources.root.join("private")).unwrap();
         fs::write(sources.root.join("baseline.bin"), b"").unwrap();
         fs::write(
@@ -256,18 +270,6 @@ mod tests {
         )
         .unwrap();
         fs::write(&sources.flash_bin, b"tool").unwrap();
-        let relays = [("1".to_string(), RelayState { on: true, at: 1.0 })];
-        *live.relays.lock().unwrap() = Some(relays.into_iter().collect());
-        let mut status = live.status(&sources);
-        status.begin(BenchCommand::On, None, &[]).unwrap();
-        // A finished command is not what keeps the bench busy.
-        status.finish(0, None);
-        assert!(json(health(&sources, &mut FlashCache::default()))["busy"].is_null());
-        status.begin(BenchCommand::On, None, &[]).unwrap();
-        assert_eq!(
-            json(health(&sources, &mut FlashCache::default()))["busy"],
-            "on"
-        );
 
         let mut cache = FlashCache::default();
         let view = json(health(&sources, &mut cache));
@@ -276,7 +278,6 @@ mod tests {
             view["ports"],
             json!({"relay_port": false, "uart_port": true, "baseline": true, "rom_report": false})
         );
-        assert_eq!(view["relays"]["1"]["on"], true);
         assert_eq!(
             view["flash_tool"],
             json!({"path": "wellfed-flash", "sha256": sha256(b"tool"), "present": true})

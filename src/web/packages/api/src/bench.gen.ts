@@ -90,6 +90,302 @@ silent: string | null,
  */
 captures: Array<string>, };
 
+export type Capture = { 
+/**
+ * Root-relative capture directory.
+ */
+path: string, seconds: number, started: number, };
+
+export type Transfer = { 
+/**
+ * Root-relative session directory.
+ */
+path: string, tx: number, rx: number, started: number | null, };
+
+export type Current = { pid: number, command: BenchCommand, name: string | null, started: number, finished: number | null, outcome: Outcome, error: string | null, steps: Array<Step>, progress: Progress | null, capture: Capture | null, transfer: Transfer | null, relay: { [key in string]: boolean }, lines: Array<string>, 
+/**
+ * The command to run after review, such as a prepared plan's execute.
+ */
+next?: string | null, flash_tool?: FlashTool | null, };
+
+/**
+ * Everything a reader shows of the bench right now.
+ */
+export type BenchState = { 
+/**
+ * The bench host's clock when the state was read, so a reader's
+ * timers agree with it.
+ */
+now: number, server: ServerView, 
+/**
+ * The running job, or else the last one to finish.
+ */
+job: JobView | null, 
+/**
+ * Every child process a job has running, as it starts and exits.
+ */
+activity: Array<Activity>, uart: Uart, 
+/**
+ * By channel, `"1"` to `"4"`: what the board last answered or
+ * acknowledged. The server holds the board, so nothing else switches
+ * a relay between reads, except the board's own front buttons.
+ */
+relays: { [key in string]: RelayState }, 
+/**
+ * The owner's device API session and what it last read.
+ */
+feeder: FeederView, 
+/**
+ * The receive-only capture's newest lines and the records parsed
+ * from them.
+ */
+capture: CaptureView, 
+/**
+ * Which build the bench believes each bank holds.
+ */
+banks: Ledger, 
+/**
+ * What the operator's notes say now.
+ */
+operator: Operator, };
+
+/**
+ * The server process.
+ */
+export type ServerView = { pid: number, started: number, phase: Phase, 
+/**
+ * Whether the configured UART adapter's port exists, as the server
+ * last looked: at its start, after every job and with every idle
+ * relay read. The relay board's port is the server's own.
+ */
+uart_port: boolean, };
+
+/**
+ * Whether the server takes jobs.
+ */
+export type Phase = "serving" | "stopping";
+
+/**
+ * One job: what was asked, how far it is, and how it ended.
+ */
+export type JobView = { id: number, 
+/**
+ * The command as the client asked for it, such as `dump unit-01`.
+ */
+label: string, 
+/**
+ * Root-relative: the file its output is kept in.
+ */
+log: string, accepted: number, 
+/**
+ * The command's own record, from its first step on.
+ */
+record: Current | null, 
+/**
+ * The labels of the next few steps still pending.
+ */
+upcoming: Array<string>, cancel: CancelState, end: JobEnd | null, };
+
+/**
+ * Whether anyone asked the job to stop.
+ */
+export type CancelState = "none" | "requested";
+
+/**
+ * How a job ended: its exit code (0 complete, 1 stopped, 2 a suite's
+ * silent feeder) and the error it stopped on.
+ */
+export type JobEnd = { code: number, error: string | null, finished: number, };
+
+/**
+ * One child process a job has running.
+ */
+export type Activity = { kind: ActivityKind, pid: number, 
+/**
+ * Its subcommand words, such as `update execute` or `serve`.
+ */
+label: string, started: number, };
+
+/**
+ * What a child is, which decides how a cancel stops it.
+ */
+export type ActivityKind = "flash" | "build" | "stock" | "analyzer";
+
+/**
+ * What the feeder's UART is doing, for the banner that says not to touch
+ * the bench during a write.
+ */
+export type Uart = { "state": "idle" } | { "state": "capturing", path: string | null, } | { "state": "loader" } | { "state": "writing", done: number, total: number, 
+/**
+ * Whether this write reports a sector count at all: a give-way
+ * and a stock recovery print none, so theirs stays 0 of 0.
+ */
+counted: boolean, };
+
+/**
+ * The owner's device API session, as the server holds it.
+ */
+export type FeederView = { session: Session, 
+/**
+ * The last status read, and when.
+ */
+status: FeederStatus | null, status_at: number | null, clock: ClockView, 
+/**
+ * The newest event the feeder has recorded, as its status or the
+ * last pushed event said.
+ */
+journal: Journal | null, 
+/**
+ * Whether the bench hotspot's connection is up, read with nmcli;
+ * `None` without a `private/hotspot.json`, or when nmcli failed.
+ */
+hotspot: boolean | null, 
+/**
+ * The feeder's newest debug log lines.
+ */
+log: Array<string>, 
+/**
+ * Device API sessions open on the feeder besides the server's, at the
+ * last status: anything above 0 is a session the bench did not open
+ * through the server, which the page and the console warn of.
+ */
+other_sessions: number, };
+
+/**
+ * Where the session stands.
+ */
+export type Session = { "state": "idle" } | { "state": "unconfigured", error: string, } | { "state": "paused", pause: Pause, } | { "state": "connecting", attempt: number, error: string | null, retry: number | null, } | { "state": "open", address: string, build: string, since: number, };
+
+/**
+ * Why the server closed its session.
+ */
+export type Pause = { "kind": "uart-job", job: number, label: string, } | { "kind": "install" } | { "kind": "stock-ota", job: number, } | { "kind": "power-off" } | { "kind": "stopping" };
+
+/**
+ * The parts of the feeder's status the page shows.
+ */
+export type FeederStatus = { 
+/**
+ * The startup identity, lowercase hex.
+ */
+build: string, bank: number, uptime_ms: number, boot_count: number, rssi: number, 
+/**
+ * Unix milliseconds; `None` while the clock is invalid.
+ */
+clock_ms: number | null, locked: boolean | null, last_event: number | null, sessions: number, };
+
+/**
+ * The feeder's clock against the bench host's.
+ */
+export type ClockView = { 
+/**
+ * The feeder's clock minus the host's at the last status, in
+ * milliseconds; `None` while it is invalid or unread.
+ */
+skew_ms: number | null, 
+/**
+ * When the server last set it.
+ */
+synced_at: number | null, };
+
+/**
+ * The newest event the feeder holds.
+ */
+export type Journal = { seq: number, 
+/**
+ * The history the number counts in, once an event has named it.
+ */
+epoch: number | null, from: JournalSource, };
+
+export type JournalSource = "status" | "event";
+
+/**
+ * The receive-only capture the server holds while the feeder is idle and
+ * powered.
+ */
+export type CaptureView = { 
+/**
+ * Root-relative: the segment being written, while one is.
+ */
+segment: string | null, 
+/**
+ * Why the capture stopped on its own, until it starts again.
+ */
+failure: string | null, 
+/**
+ * The newest UART lines, from this capture or an earlier one.
+ */
+lines: Array<string>, 
+/**
+ * The last `PLFW1 start` seen.
+ */
+start: StartRecord | null, 
+/**
+ * The last `PLOTA1` record seen.
+ */
+update: UartRecord | null, };
+
+export type StartRecord = { build: string, bank: number | null, };
+
+export type UartRecord = { line: string, at: number, };
+
+/**
+ * The ledger: an entry per bank the bench has evidence for.
+ */
+export type Ledger = { banks: { [key in Bank]?: Entry }, };
+
+/**
+ * A flash bank: 0 is the factory loader's fallback, 1 the application.
+ */
+export type Bank = "0" | "1";
+
+/**
+ * What one bank holds, by whose word, and whether the feeder agrees.
+ */
+export type Entry = { content: Content, source: Source, 
+/**
+ * The session name of the job that wrote it.
+ */
+session: string | null, at: number, check: Check, };
+
+export type Content = { "kind": "build", id: string, } | { "kind": "stock" } | { "kind": "invalid" } | { "kind": "image", sha256: string, } | { "kind": "unknown" };
+
+/**
+ * The job result an entry came from.
+ */
+export type Source = "seed" | "flash-execute" | "give-way" | "ota-confirmed" | "ota-fell-back" | "stock-ota" | "stock-execute" | "itest";
+
+/**
+ * Whether the feeder's own report agrees with the entry.
+ */
+export type Check = { "state": "unchecked" } | { "state": "confirmed", by: Witness, at: number, } | { "state": "disputed", by: Witness, at: number, seen: Content, };
+
+/**
+ * What reported a bank's build.
+ */
+export type Witness = "banner" | "status";
+
+/**
+ * What the notes say now.
+ */
+export type Operator = { step: string | null, next: Array<string>, timers: Array<Timer>, 
+/**
+ * By card, in the order each card was first noted.
+ */
+evidence: Array<[string, Array<CardEvidence>]>, };
+
+/**
+ * A timer still running or run out, as the notes leave it.
+ */
+export type Timer = { label: string, started: number, seconds: number, expect: string | null, };
+
+/**
+ * One card's evidence, in the order it was noted.
+ */
+export type CardEvidence = { at: number, verdict: Verdict, text: string, path: string | null, };
+
+export type Verdict = "pass" | "fail";
+
 /**
  * A file's size, modification time and printable tail: a capture's
  * serial-rx.bin or a run's server log.
@@ -100,14 +396,7 @@ export type TailView = {
  */
 path: string, bytes: number, modified: number | null, tail: Array<string>, };
 
-/**
- * `/api/status`: everything the "Now" view shows, as one snapshot.
- */
-export type Snapshot = { 
-/**
- * The bench host's clock, so the page's timers agree with it.
- */
-now: number, current: CurrentView | null, 
+export type EvidenceView = { 
 /**
  * Newest first.
  */
@@ -120,28 +409,6 @@ rx: TailView | null, script: ScriptView | null,
  * The QA firmware's guided run in the latest capture.
  */
 qa: QaView | null, };
-
-/**
- * The running command's record as the page reads it: a dead process's
- * `running` record shows as `ended`, and capture and transfer carry what has
- * arrived so far.
- */
-export type CurrentView = { pid: number, command: BenchCommand, name: string | null, started: number, finished: number | null, outcome: Outcome, error: string | null, steps: Array<Step>, progress: Progress | null, capture: CaptureView | null, transfer: TransferView | null, relay: { [key in string]: boolean }, lines: Array<string>, next: string | null, flash_tool: FlashTool | null, 
-/**
- * The recording process still exists.
- */
-alive: boolean, };
-
-export type CaptureView = { seconds: number, elapsed: number, 
-/**
- * Root-relative: the capture directory, or the file itself.
- */
-path: string, bytes: number, modified: number | null, tail: Array<string>, };
-
-/**
- * Serial bytes so far against the plan's estimate, for the install bar.
- */
-export type TransferView = { tx: number, rx: number, tx_expected: number, rx_expected: number, started: number | null, };
 
 /**
  * One instruction, shown from `at` seconds after the anchor arrived.
@@ -248,18 +515,14 @@ export type PartDetail = { "plan": JsonValue | null } | { "report": JsonValue | 
 export type Serial = { tx: number, rx: number, };
 
 /**
- * `/api/health`: ports, last relay states, flash client and the image the
- * feeder last booted.
+ * `/api/health`: ports, the flash client and the image the feeder last
+ * booted.
  */
 export type HealthView = { 
 /**
  * Root-relative `bench.json`.
  */
-config: string, config_ok: boolean, ports: Ports, relays: { [key in string]: RelayState } | null, flash_tool: FlashToolView, installed: Installed | null, 
-/**
- * The command a live bench process is running.
- */
-busy: BenchCommand | null, };
+config: string, config_ok: boolean, ports: Ports, flash_tool: FlashToolView, installed: Installed | null, };
 
 /**
  * Whether each configured path exists, or why the config does not read.
@@ -352,7 +615,7 @@ silent: string | null,
  */
 captures: Array<string>, };
 
-export type FeederView = { "server": "unconfigured", config: string, error: string, } | { "server": "down", address: string, error: string, } | { "server": "up", address: string, 
+export type StockView = { "server": "unconfigured", config: string, error: string, } | { "server": "down", address: string, error: string, } | { "server": "up", address: string, 
 /**
  * The server's own session with its broker.
  */

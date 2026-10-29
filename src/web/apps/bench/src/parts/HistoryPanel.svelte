@@ -1,11 +1,12 @@
 <script lang="ts">
   import { Empty, LiveDot, Panel, clockTime, duration, fullTime, toneOf } from "@wellfed/ui";
   import { app } from "../lib/bench.svelte";
+  import { holdsUart } from "../lib/uart";
 
   let all = $state(false);
   const SHORT = 8;
 
-  const history = $derived(app.snapshot?.history ?? []);
+  const history = $derived(app.evidence?.history ?? []);
   const shown = $derived(all ? history : history.slice(0, SHORT));
 </script>
 
@@ -39,7 +40,9 @@
       </tbody>
     </table>
   {:else}
-    <Empty title="No commands recorded yet" />
+    <Empty
+      title={!app.evidence && holdsUart(app.state?.uart) ? "Deferred until the write ends" : "No commands recorded yet"}
+    />
   {/if}
 </Panel>
 

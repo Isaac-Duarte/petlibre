@@ -21,6 +21,7 @@ use wellfed_formats::bench::lease::{self, Holder, Lease};
 use wellfed_formats::bench::live::{
     BenchState, CancelState, JOBS, JobEnd, JobId, JobView, Pause, Phase, ServerView, Uart,
 };
+use wellfed_formats::bench::notes::{NOTES, Note, Operator};
 use wellfed_formats::bench::progress::{Current, ProgressSink};
 use wellfed_formats::bench::rendezvous::{self, Rendezvous};
 use wellfed_formats::bench::{CONFIG, Config, now, relative};
@@ -36,7 +37,7 @@ use crate::feeder::{DeviceOptions, Feeder, Task};
 use crate::jobs::{self, Bed, JobError, Ran, Run, ToolPaths};
 use crate::output::{self, Output};
 use crate::routes;
-use crate::state::{JobLog, Logs, Store};
+use crate::state::{JobLog, JobOutput, Logs, Store};
 
 /// How long a quitting server lets its clients' connections finish once
 /// the job has ended.
@@ -66,10 +67,14 @@ pub enum ServeError {
     },
     #[error("The output pipe: {0}")]
     Output(std::io::Error),
-    /// The ledger is kept as it is for the operator: a server that started
-    /// on an empty one would overwrite it at its first job.
-    #[error("{BANKS}: {0}; repair or remove it")]
-    Banks(wellfed_formats::Error),
+    /// A ledger that does not read is never taken for an empty one: the
+    /// page would show the banks as unknown and the next job's entry would
+    /// overwrite what the bench knew.
+    #[error("{}: {error}; fix it or delete it, then start the server again", path.display())]
+    Banks {
+        path: PathBuf,
+        error: wellfed_formats::Error,
+    },
     /// Another checkout's server answers for this user: the `wellfed` CLI
     /// finds one server, so one serves at a time.
     #[error("A bench server for {} already runs ({holder}); stop it first", root.display())]
@@ -127,7 +132,6 @@ impl Server {
         let lease = Lease::acquire(&options.root)?;
         let config: Config =
             wellfed_formats::load(&options.root.join(CONFIG)).map_err(ServeError::Config)?;
-        let board = open_board(&config)?;
 
         let store = Store::new(BenchState {
             now: now(),
@@ -135,6 +139,7 @@ impl Server {
                 pid: std::process::id(),
                 started: now(),
                 phase: Phase::Serving,
+                uart_port: Path::new(&config.uart_port).exists(),
             },
             job: None,
             activity: Vec::new(),
@@ -143,10 +148,15 @@ impl Server {
             feeder: Default::default(),
             capture: Default::default(),
             banks: Default::default(),
+            operator: operator(&options.root),
         });
-        let board = SharedBoard::new(board, store.clone());
+        let banks =
+            Banks::open(&options.root, store.clone()).map_err(|error| ServeError::Banks {
+                path: options.root.join(BANKS),
+                error,
+            })?;
+        let board = SharedBoard::new(open_board(&config)?, store.clone());
         board.query()?;
-        let banks = Banks::open(&options.root, store.clone()).map_err(ServeError::Banks)?;
         let (feeder, session) = Feeder::new(&options.root, device, store.clone(), banks.clone());
         let capture = CaptureService::new(
             options.root.clone(),
@@ -207,6 +217,11 @@ impl Server {
     /// The live state, for a reader in this process (the page).
     pub fn store(&self) -> Store {
         self.shared.store.clone()
+    }
+
+    /// The jobs' output, for a reader in this process (the page).
+    pub fn outputs(&self) -> Outputs {
+        Outputs(Arc::clone(&self.shared))
     }
 
     pub fn socket(&self) -> &Path {
@@ -392,6 +407,17 @@ async fn hotspot(root: PathBuf, store: Store) {
     }
 }
 
+/// What the operator's notes say, replayed from the start; a line that
+/// does not read is skipped, as the page skips one.
+fn operator(root: &Path) -> Operator {
+    let text = std::fs::read_to_string(root.join(NOTES)).unwrap_or_default();
+    let notes: Vec<Note> = text
+        .lines()
+        .filter_map(|line| serde_json::from_str(line).ok())
+        .collect();
+    Operator::fold(&notes)
+}
+
 /// The highest job number among the logs in `directory`, so a new server
 /// carries on from it rather than overwrite an earlier job's log.
 fn last_job(directory: &Path) -> JobId {
@@ -406,6 +432,16 @@ fn last_job(directory: &Path) -> JobId {
         })
         .max()
         .unwrap_or(0)
+}
+
+/// The output of the running job and of the last few, by id.
+#[derive(Clone)]
+pub struct Outputs(Arc<Shared>);
+
+impl Outputs {
+    pub fn get(&self, id: JobId) -> Option<JobOutput> {
+        self.0.log(id).map(JobOutput)
+    }
 }
 
 /// What the socket's handlers and the job thread share.
@@ -593,9 +629,7 @@ impl Shared {
         self.output.sync();
         self.output.route(None);
         // The board's front buttons may have moved a relay meanwhile.
-        if let Err(error) = self.bed.board.query() {
-            self.output.say(format!("Relay board: {error}"));
-        }
+        self.look_at_bench();
         self.banks.record(&written, spec.command.name());
         let stopping = self.jobs().stopping;
         if !stopping {
@@ -771,11 +805,20 @@ impl Shared {
                 return false;
             }
         }
+        self.look_at_bench();
+        self.resume_capture();
+        true
+    }
+
+    /// Read the relays and look for the UART adapter's port: the board's
+    /// front buttons may have moved a relay, and a replugged adapter may
+    /// have come or gone.
+    fn look_at_bench(&self) {
         if let Err(error) = self.bed.board.query() {
             self.output.say(format!("Relay board: {error}"));
         }
-        self.resume_capture();
-        true
+        let present = Path::new(&self.bed.config.uart_port).exists();
+        self.store.update(|state| state.server.uart_port = present);
     }
 
     /// The output of job `id`, running or among the last few.

@@ -13,56 +13,59 @@
   }
 
   const items = $derived.by((): Item[] => {
+    const state = app.state;
     const health = app.health;
-    if (!health) return [];
+    if (!state) return [];
     const out: Item[] = [];
 
-    if ("error" in health.ports) {
-      out.push({
-        label: "Config",
-        value: "unreadable",
-        tone: "fail",
-        title: `${health.config}: ${health.ports.error}`,
-      });
-    } else {
-      const found = (yes: boolean) => (yes ? "found" : "missing");
-      out.push({
-        label: "Relay board",
-        value: found(health.ports.relay_port),
-        tone: health.ports.relay_port ? "pass" : "fail",
-      });
-      out.push({ label: "UART", value: found(health.ports.uart_port), tone: health.ports.uart_port ? "pass" : "fail" });
-    }
+    // The server holds the relay board for its life and looks for the UART
+    // adapter itself, so both come from its state, not from the page
+    // looking at paths.
+    const read = Object.keys(state.relays).length;
+    out.push({
+      label: "Relay board",
+      value: read ? "held by the server" : "not read",
+      tone: read ? "pass" : "fail",
+    });
+    out.push({
+      label: "UART",
+      value: state.server.uart_port ? "found" : "missing",
+      tone: state.server.uart_port ? "pass" : "fail",
+    });
 
-    // The live command's relay states are newer than the last recorded ones.
-    const relay = (channel: string) => app.snapshot?.current?.relay[channel] ?? health.relays?.[channel]?.on;
+    // The server holds the board, so its last answers are the relays.
     for (const [channel, label] of [
       ["1", "Power"],
       ["2", "Loader strap"],
     ] as const) {
-      const on = relay(channel);
+      const on = state.relays[channel]?.on;
       out.push({ label, value: on === undefined ? "unknown" : on ? "on" : "off", tone: on ? "warn" : "muted" });
     }
 
-    out.push({
-      label: "wellfed-flash",
-      value: health.flash_tool.present ? shortHash(health.flash_tool.sha256) : "not built",
-      tone: health.flash_tool.present ? "muted" : "fail",
-      title: health.flash_tool.path,
-      mono: health.flash_tool.present,
-    });
-
-    if (health.installed) {
-      const role = health.installed.role === "recovery" ? ", recovery role" : "";
+    // Read from files, so absent while the flash client holds the UART on
+    // a page opened then.
+    if (health) {
       out.push({
-        label: `Last boot, bank ${health.installed.bank ?? "?"}${role}`,
-        value: shortHash(health.installed.build),
-        tone: "muted",
-        title: `From ${health.installed.capture}`,
-        mono: true,
+        label: "wellfed-flash",
+        value: health.flash_tool.present ? shortHash(health.flash_tool.sha256) : "not built",
+        tone: health.flash_tool.present ? "muted" : "fail",
+        title: health.flash_tool.path,
+        mono: health.flash_tool.present,
       });
+      if (health.installed) {
+        const role = health.installed.role === "recovery" ? ", recovery role" : "";
+        out.push({
+          label: `Last boot, bank ${health.installed.bank ?? "?"}${role}`,
+          value: shortHash(health.installed.build),
+          tone: "muted",
+          title: `From ${health.installed.capture}`,
+          mono: true,
+        });
+      }
     }
-    if (health.busy) out.push({ label: "Running", value: health.busy, tone: "live" });
+
+    const job = state.job;
+    if (job && !job.end) out.push({ label: `Job ${String(job.id)}`, value: job.label, tone: "live" });
     return out;
   });
 </script>

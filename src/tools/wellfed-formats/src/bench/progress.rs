@@ -378,6 +378,12 @@ impl Status {
         let excess = state.lines.len().saturating_sub(KEPT_LINES);
         state.lines.drain(..excess);
 
+        // A sector count comes at most once per sector and drives the
+        // write banner, so it is published at once: a throttled one is
+        // dropped, and a writer that goes quiet after it would leave the
+        // count behind. Byte counts come fast and stay throttled.
+        let mut when = Flush::Throttled;
+
         if let Some((done, total, unit)) = progress_count(text) {
             let at = now();
             // The first report of a count sets the rate baseline for the ETA.
@@ -395,8 +401,11 @@ impl Status {
                 since_done,
                 at,
             });
+            if unit == Unit::Sectors {
+                when = Flush::Now;
+            }
         }
-        self.write_quietly(Flush::Throttled);
+        self.write_quietly(when);
     }
 
     pub fn capture(&mut self, output: Option<&Path>, seconds: f64) {
@@ -627,6 +636,25 @@ mod tests {
             (BenchCommand::Dump, Outcome::Stopped)
         );
         assert_eq!(entry.error.as_deref(), Some("Observer failed"));
+    }
+
+    #[test]
+    fn a_sector_count_is_published_at_once_and_a_byte_count_is_throttled() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sink = Recorded::default();
+        let mut status =
+            Status::new(tmp.path(), tmp.path().to_path_buf()).with_sink(Box::new(sink.clone()));
+        status
+            .begin(BenchCommand::FlashExecute, Some("unit"), &[])
+            .unwrap();
+
+        status.line("Loader answered");
+        status.line("Read 4096/8388608 bytes");
+        assert!(sink.last()["progress"].is_null());
+
+        status.line("Verified changed sectors: 3/19");
+        assert_eq!(sink.last()["progress"]["done"], 3);
+        assert_eq!(sink.last()["progress"]["unit"], "sectors");
     }
 
     #[test]

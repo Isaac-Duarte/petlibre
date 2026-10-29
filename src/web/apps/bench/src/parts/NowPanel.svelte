@@ -1,4 +1,6 @@
 <script lang="ts">
+  // The server's job: what was asked, the step it is on, how long it has
+  // run, and the steps it says come next.
   import {
     Badge,
     Command,
@@ -15,7 +17,8 @@
   import type { StepState } from "@wellfed/api";
   import { app } from "../lib/bench.svelte";
 
-  const current = $derived(app.snapshot?.current ?? null);
+  const job = $derived(app.state?.job ?? null);
+  const record = $derived(job?.record ?? null);
   const now = $derived(app.now);
 
   const STEP_TONE: Record<StepState, string> = {
@@ -26,78 +29,90 @@
     skipped: "skipped",
   };
 
+  const running = $derived(!!job && !job.end);
+  /** The job's state in a word, from its end's code once it has one. */
+  const word = $derived.by(() => {
+    if (!job) return "";
+    if (job.end) return job.end.code === 0 ? "pass" : "stopped";
+    if (!app.connected) return "last known";
+    if (job.cancel === "requested") return "cancelling";
+    return "running";
+  });
+  const step = $derived(record?.steps.find((s) => s.state === "running") ?? null);
   const finishedSteps = $derived(
-    current
-      ? current.outcome === "pass"
-        ? current.steps.length
-        : current.steps.filter((s) => s.state !== "pending" && s.state !== "running").length
-      : 0,
+    record ? record.steps.filter((s) => s.state !== "pending" && s.state !== "running").length : 0,
   );
-
-  // A finished command's counts are where it stopped, not progress.
-  const meters = $derived(
-    current?.outcome === "running" && !!(current.transfer ?? current.progress ?? current.capture),
-  );
+  const error = $derived(job?.end?.error ?? record?.error ?? null);
+  // A finished job's counts are where it stopped, not progress.
+  const meters = $derived(running && !!(record?.progress ?? record?.capture));
 
   const etaText = (t: number | null) => (t ? `, done about ${clockTime(t, false)}` : "");
 </script>
 
-{#if !current}
+{#if !job}
   <section class="now panel">
-    <Empty title="No bench command recorded yet">
-      Commands run with <code>wellfed-bench</code> show here as they happen.
+    <Empty title="No job yet">
+      Each <code>wellfed-bench</code> command is a job of <code>wellfed-bench serve</code>, shown here as it runs.
     </Empty>
   </section>
 {:else}
-  {@const end = current.finished ?? now}
-  {@const running = current.outcome === "running"}
-  <section class="now panel" aria-label="Current command">
+  {@const end = job.end?.finished ?? now}
+  <section class="now panel" aria-label="Current job">
     <div class="head">
       <div class="what">
-        <Badge
-          tone={toneOf(current.outcome)}
-          label={current.outcome}
-          quiet={current.outcome === "ended"}
-          title={current.outcome === "ended"
-            ? "The process exited without recording a finish; the outcome is unknown"
-            : undefined}
-        />
-        <h1>{current.command}</h1>
-        {#if current.name}<span class="name">{current.name}</span>{/if}
+        <Badge tone={word === "cancelling" ? "warn" : toneOf(word)} label={word} />
+        <h1>{record?.command ?? job.label.split(" ")[0]}</h1>
+        {#if record?.name}<span class="name">{record.name}</span>{/if}
+        <span class="id">job {job.id}</span>
       </div>
       <div class="elapsed" title={running ? "Running for" : "Took"}>
-        {duration(end - current.started)}
+        {duration(end - job.accepted)}
       </div>
     </div>
 
     <p class="since">
-      Started {clockTime(current.started)}
-      {#if current.flash_tool}
-        with wellfed-flash <code>{shortHash(current.flash_tool.sha256)}</code>
+      Started {clockTime(job.accepted)}
+      {#if record?.flash_tool}
+        with wellfed-flash <code>{shortHash(record.flash_tool.sha256)}</code>
       {/if}
-      {#if current.steps.length}
-        <span class="count">{finishedSteps} of {current.steps.length} steps</span>
+      {#if record?.steps.length}
+        <span class="count">{finishedSteps} of {record.steps.length} steps</span>
       {/if}
     </p>
 
-    {#if current.error}
-      <p class="error" role="alert">{current.error}</p>
+    {#if running && !app.connected}
+      <p class="stale" role="status">
+        Disconnected from the bench server: this is the last known state of the job, which may have moved on or ended.
+      </p>
+    {/if}
+
+    {#if running && step}
+      <p class="step">
+        Now <strong>{step.label}</strong>{#if step.started}, for {duration(now - step.started)}{/if}
+      </p>
+    {/if}
+    {#if running && job.upcoming.length}
+      <p class="upcoming" aria-label="Next steps">Then {job.upcoming.join(", then ")}</p>
+    {/if}
+
+    {#if error}
+      <p class="error" role="alert">{error}</p>
     {/if}
 
     <div class="body" class:solo={!meters}>
-      {#if current.steps.length}
+      {#if record?.steps.length}
         <ol class="steps">
-          {#each current.steps as step, i (i)}
-            <li class={STEP_TONE[step.state]}>
+          {#each record.steps as s, i (i)}
+            <li class={STEP_TONE[s.state]}>
               <span class="n">{i + 1}</span>
-              <span class="label">{step.label}</span>
+              <span class="label">{s.label}</span>
               <span class="st">
-                {#if step.state === "running" && step.started}
-                  {duration(now - step.started)}
-                {:else if step.started && step.finished}
-                  {duration(step.finished - step.started)}
+                {#if s.state === "running" && s.started}
+                  {duration(now - s.started)}
+                {:else if s.started && s.finished}
+                  {duration(s.finished - s.started)}
                 {:else}
-                  {step.state}
+                  {s.state}
                 {/if}
               </span>
             </li>
@@ -105,40 +120,24 @@
         </ol>
       {/if}
 
-      {#if meters}
+      {#if meters && record}
         <div class="meters">
-          {#if current.transfer}
-            {@const x = current.transfer}
-            {@const got = x.tx + x.rx}
-            {@const want = x.tx_expected + x.rx_expected}
-            <Meter
-              label="Install, estimated: sent {bytes(x.tx)} of ~{bytes(x.tx_expected)}, read back {bytes(
-                x.rx,
-              )} of ~{bytes(x.rx_expected)}"
-              value="~{percent(Math.min(got, want * 0.99), want)}{running
-                ? etaText(eta(now, x.started, 0, got, want))
-                : ''}"
-              done={got}
-              total={want}
-            />
-          {/if}
-          {#if current.progress}
-            {@const p = current.progress}
+          {#if record.progress}
+            {@const p = record.progress}
             <Meter
               label={p.unit === "bytes" ? `${bytes(p.done)} of ${bytes(p.total)}` : `${p.done} of ${p.total} ${p.unit}`}
-              value="{percent(p.done, p.total)}{running
-                ? etaText(eta(now, p.since, p.since_done, p.done, p.total))
-                : ''}"
+              value="{percent(p.done, p.total)}{etaText(eta(now, p.since, p.since_done, p.done, p.total))}"
               done={p.done}
               total={p.total}
             />
           {/if}
-          {#if current.capture}
-            {@const c = current.capture}
+          {#if record.capture}
+            {@const c = record.capture}
+            {@const elapsed = Math.min(now - c.started, c.seconds)}
             <Meter
-              label="Capture {c.path}, {bytes(c.bytes)}"
-              value="{duration(c.elapsed)} of {duration(c.seconds)}"
-              done={c.elapsed}
+              label="Capture {c.path}"
+              value="{duration(elapsed)} of {duration(c.seconds)}"
+              done={elapsed}
               total={c.seconds}
             />
           {/if}
@@ -146,8 +145,8 @@
       {/if}
     </div>
 
-    {#if current.next}
-      <div class="next"><Command caption="Next, after review" command={current.next} /></div>
+    {#if record?.next}
+      <div class="next"><Command caption="Next, after review" command={record.next} /></div>
     {/if}
   </section>
 {/if}
@@ -187,6 +186,10 @@
     color: var(--color-text-muted);
     overflow-wrap: anywhere;
   }
+  .id {
+    color: var(--color-text-muted);
+    font-size: var(--text-xs);
+  }
   /* The figure a glance is for: how long this has been going. */
   .elapsed {
     font-size: var(--text-xxl);
@@ -203,6 +206,29 @@
   }
   .count {
     margin-left: var(--space-3);
+  }
+  .stale {
+    margin: var(--space-3) 0 0;
+    padding: var(--space-2) var(--space-3);
+    background: var(--color-warning-soft);
+    color: var(--color-warning);
+    border-radius: var(--radius-control);
+    font-size: var(--text-sm);
+  }
+  .step {
+    margin: var(--space-3) 0 0;
+    font-size: var(--text-md);
+    overflow-wrap: anywhere;
+  }
+  .step strong {
+    color: var(--color-accent);
+    font-weight: 600;
+  }
+  .upcoming {
+    margin: var(--space-1) 0 0;
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
+    overflow-wrap: anywhere;
   }
   .error {
     margin: var(--space-3) 0 0;

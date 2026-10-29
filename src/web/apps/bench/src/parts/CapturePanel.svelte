@@ -1,8 +1,9 @@
 <script lang="ts">
   import { LogView, Panel, bytes, clockTime } from "@wellfed/ui";
   import { app } from "../lib/bench.svelte";
+  import { holdsUart } from "../lib/uart";
 
-  const rx = $derived(app.snapshot?.rx ?? null);
+  const rx = $derived(app.evidence?.rx ?? null);
 </script>
 
 <Panel title="Latest capture">
@@ -10,7 +11,12 @@
     {#if rx}{bytes(rx.bytes)}{rx.modified ? `, updated ${clockTime(rx.modified)}` : ""}{/if}
   {/snippet}
   {#if rx}<p class="path"><code>{rx.path}</code></p>{/if}
-  <LogView lines={rx?.tail ?? []} height="40vh" label="Latest capture" empty="No capture yet" />
+  <LogView
+    lines={rx?.tail ?? []}
+    height="40vh"
+    label="Latest capture"
+    empty={!app.evidence && holdsUart(app.state?.uart) ? "Deferred until the write ends" : "No capture yet"}
+  />
 </Panel>
 
 <style>

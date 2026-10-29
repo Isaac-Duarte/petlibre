@@ -73,7 +73,6 @@ The first run downloads dependencies. Checks use host models and loopback networ
 | `src/hardware/bench/` | The Wellfed Bench board: KiCad project, fab outputs and enclosure ([bench board](src/hardware/bench/README.md)) |
 | `src/web/` | Web frontends (a pnpm workspace): the bench page, the [well-fed.dev](docs/web/site.md) site, shared tokens and components, and API types generated from Rust. `make ui` builds them |
 | `src/fuzz/` | Fuzz targets ([fuzzing](docs/development/README.md#fuzzing)) |
-| `src/scripts/` | Developer scripts: `bench-dashboard` serves the bench page for this checkout |
 | `assets/` | Brand marks, design tokens, the feeder's 3D model and its renders ([assets](assets/README.md)) |
 | `docs/` | Hardware findings, firmware design and contributor guides |
 | `private/` | Ignored, contributor-owned secrets, evidence, dependencies and artifacts |

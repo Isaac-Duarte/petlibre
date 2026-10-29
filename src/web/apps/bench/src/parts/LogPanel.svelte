@@ -8,12 +8,12 @@
 
   const needle = $derived(filter.trim().toLowerCase());
   const shown = $derived(needle ? app.lines.filter((l) => l.toLowerCase().includes(needle)) : app.lines);
-  const current = $derived(app.snapshot?.current ?? null);
+  const current = $derived(app.state?.job ?? null);
 </script>
 
 <Panel title="Live log">
   {#snippet meta()}
-    {#if current}<code>{current.command}{current.name ? ` ${current.name}` : ""}</code>{/if}
+    {#if current}<code>job {current.id}: {current.label}</code>{/if}
     {app.lines.length ? `${app.lines.length} lines${needle ? `, ${shown.length} shown` : ""}` : ""}
   {/snippet}
   {#snippet actions()}
@@ -21,14 +21,7 @@
     <label class="follow"><input type="checkbox" bind:checked={follow} /> Follow</label>
     <CopyButton text={shown.join("\n")} />
   {/snippet}
-  <LogView
-    lines={shown}
-    {classify}
-    bind:follow
-    height="60vh"
-    label="Live log"
-    empty="Waiting for output from a bench command"
-  />
+  <LogView lines={shown} {classify} bind:follow height="60vh" label="Live log" empty="Waiting for a job's output" />
 </Panel>
 
 <style>

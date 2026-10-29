@@ -1,4 +1,4 @@
-import type { BenchCommand, CatalogEntry, ScenarioStats, Snapshot } from "@wellfed/api";
+import type { BenchCommand, CatalogEntry, JobView, ScenarioStats } from "@wellfed/api";
 import { describe, expect, it } from "vitest";
 import {
   includes,
@@ -40,14 +40,16 @@ const options: RunOptions = {
   keepGoing: false,
 };
 
-function snapshot(outcome: "running" | "pass", command: BenchCommand = "itest"): Snapshot {
+function job(outcome: "running" | "pass", command: BenchCommand = "itest"): JobView {
   return {
-    now: 1000,
-    history: [],
-    rx: null,
-    qa: null,
-    script: null,
-    current: {
+    id: 4,
+    label: `${command} itest-20261022-15`,
+    log: "private/bench-status/jobs/4-itest.log",
+    accepted: 899,
+    upcoming: ["soak"],
+    cancel: "none",
+    end: outcome === "running" ? null : { code: 0, error: null, finished: 990 },
+    record: {
       pid: 1,
       command,
       name: "itest-20261022-15",
@@ -65,24 +67,21 @@ function snapshot(outcome: "running" | "pass", command: BenchCommand = "itest"):
       transfer: null,
       relay: {},
       lines: [],
-      next: null,
-      flash_tool: null,
-      alive: true,
     },
   };
 }
 
 describe("live run", () => {
   it("joins a running suite's steps to the catalog with elapsed times", () => {
-    const live = liveRun(snapshot("running"), catalog, 1000);
+    const live = liveRun(job("running"), catalog, 1000);
     expect(live?.running?.name).toBe("requests");
     expect(live?.scenarios.map((s) => s.elapsed)).toEqual([60, 40, null]);
     expect(live?.scenarios[1]?.about).toBe("ping");
   });
 
   it("is absent once the run finished, or for another command", () => {
-    expect(liveRun(snapshot("pass"), catalog, 1000)).toBeNull();
-    expect(liveRun(snapshot("running", "ota"), catalog, 1000)).toBeNull();
+    expect(liveRun(job("pass"), catalog, 1000)).toBeNull();
+    expect(liveRun(job("running", "ota"), catalog, 1000)).toBeNull();
     expect(liveRun(null, catalog, 1000)).toBeNull();
   });
 });
@@ -108,15 +107,15 @@ describe("run builder", () => {
   });
 
   it("writes the command a developer would type", () => {
-    expect(itestCommand(options)).toBe("wellfed-bench --ui itest itest-20261022-15");
+    expect(itestCommand(options)).toBe("wellfed-bench itest itest-20261022-15");
     expect(itestCommand({ ...options, tier: "smoke", power: true, keepGoing: true })).toBe(
-      "wellfed-bench --ui itest itest-20261022-15 --tier smoke --power --keep-going",
+      "wellfed-bench itest itest-20261022-15 --tier smoke --power --keep-going",
     );
     expect(itestCommand({ ...options, only: ["requests", "soak"], build: true })).toBe(
-      "wellfed-bench --ui itest itest-20261022-15 --only requests,soak --build",
+      "wellfed-bench itest itest-20261022-15 --only requests,soak --build",
     );
     expect(itestCommand({ ...options, only: ["feed-writes"], feeds: true })).toBe(
-      "wellfed-bench --ui itest itest-20261022-15 --only feed-writes --feeds",
+      "wellfed-bench itest itest-20261022-15 --only feed-writes --feeds",
     );
   });
 

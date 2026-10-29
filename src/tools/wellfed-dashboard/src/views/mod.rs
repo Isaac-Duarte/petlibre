@@ -1,19 +1,19 @@
-//! Read-only views of the status files and evidence directories, as the
-//! documents `assets/app.js` reads.
+//! Read-only views of the evidence directories and the command history, as
+//! the page reads them.
 //!
-//! Each public view backs one of the `--ui` page's API routes in the parent
+//! Each public view backs one of the page's API routes in the parent
 //! module, which runs it on the blocking pool; each route's view has its own
 //! submodule, and this module holds what they share. Field names and shapes
-//! are the page's contract: change one only with the script.
+//! are the page's contract, through the generated TypeScript types.
 //!
 //! Nothing here opens a serial port or writes a file. Every evidence path
-//! from a status file must stay inside its private/ folder; others are ignored.
+//! from a record must stay inside its private/ folder; others are ignored.
 
+pub(super) mod evidence;
 pub(super) mod health;
 mod qa;
 mod script;
 pub(super) mod sessions;
-pub(super) mod snapshot;
 pub(super) mod tail;
 
 use std::fs;
@@ -21,7 +21,10 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::UNIX_EPOCH;
 
+use tokio::sync::watch;
+
 use crate::Live;
+use wellfed_formats::bench::live::{BenchState, Uart};
 use wellfed_formats::bench::progress::{Current, HISTORY, HistoryEntry};
 use wellfed_formats::bench::{CAPTURES, STATUS_DIR};
 
@@ -31,17 +34,54 @@ use wellfed_formats::bench::{CAPTURES, STATUS_DIR};
 pub(crate) struct Sources {
     pub root: PathBuf,
     pub flash_bin: PathBuf,
+    #[cfg_attr(
+        not(feature = "ui"),
+        expect(
+            dead_code,
+            reason = "only the page's event stream follows a job's output"
+        )
+    )]
     pub live: Arc<dyn Live>,
+    /// The server's state, read without waiting on it.
+    state: watch::Receiver<BenchState>,
 }
 
 impl Sources {
+    pub(crate) fn new(root: PathBuf, flash_bin: PathBuf, live: Arc<dyn Live>) -> Self {
+        Self {
+            state: live.subscribe(),
+            root,
+            flash_bin,
+            live,
+        }
+    }
+
     fn status(&self) -> PathBuf {
         self.root.join(STATUS_DIR)
     }
 
-    /// The running command's record, if a server runs one.
-    fn current(&self) -> Option<Current> {
-        self.live.current()
+    /// The state as of its last change.
+    pub(crate) fn state(&self) -> BenchState {
+        self.state.borrow().clone()
+    }
+
+    /// The flash client holds the UART: writing flash, or in a loader
+    /// session that may be about to. Nothing reads an evidence file then,
+    /// so the page adds no load to a write and never reads a capture the
+    /// writer is recording.
+    pub(crate) fn uart_busy(&self) -> bool {
+        Self::holds_uart(&self.state.borrow())
+    }
+
+    /// Whether `state` has the flash client holding the UART.
+    pub(crate) fn holds_uart(state: &BenchState) -> bool {
+        matches!(state.uart, Uart::Writing { .. } | Uart::Loader)
+    }
+
+    /// The running job's record, from its first step until it ends.
+    fn running(&self) -> Option<Current> {
+        let job = self.state.borrow().job.clone()?;
+        job.end.is_none().then_some(job.record).flatten()
     }
 }
 
@@ -123,7 +163,7 @@ fn latest_capture(root: &Path) -> Option<PathBuf> {
 #[cfg(test)]
 pub(super) fn bindings(cfg: &ts_rs::Config) -> Vec<String> {
     let mut decls = tail::bindings(cfg);
-    decls.extend(snapshot::bindings(cfg));
+    decls.extend(evidence::bindings(cfg));
     decls.extend(script::bindings(cfg));
     decls.extend(qa::bindings(cfg));
     decls.extend(sessions::bindings(cfg));
@@ -132,44 +172,84 @@ pub(super) fn bindings(cfg: &ts_rs::Config) -> Vec<String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use serde::Serialize;
     use serde_json::{Value, json};
 
+    use super::evidence::evidence;
     use super::sessions::sessions;
-    use super::snapshot::snapshot;
     use super::*;
-    use std::collections::BTreeMap;
-    use std::sync::Mutex;
-    use wellfed_formats::bench::progress::{ProgressSink, RelayState, Status};
+    use wellfed_formats::bench::live::{CancelState, JobEnd, JobId, JobView, Phase, ServerView};
+    use wellfed_formats::bench::progress::{Outcome, ProgressSink, Status};
 
     /// What a bench server would hand the page, set by the test.
-    #[derive(Default)]
     pub(crate) struct Recorded {
-        pub current: Mutex<Option<Current>>,
-        pub relays: Mutex<Option<BTreeMap<String, RelayState>>>,
+        pub state: watch::Sender<BenchState>,
+    }
+
+    impl Default for Recorded {
+        fn default() -> Self {
+            Self {
+                state: watch::Sender::new(idle()),
+            }
+        }
+    }
+
+    /// A server with no job yet.
+    pub(crate) fn idle() -> BenchState {
+        BenchState {
+            now: 0.0,
+            server: ServerView {
+                pid: 1,
+                started: 0.0,
+                phase: Phase::Serving,
+                uart_port: false,
+            },
+            job: None,
+            activity: Vec::new(),
+            uart: Uart::Idle,
+            relays: Default::default(),
+            feeder: Default::default(),
+            capture: Default::default(),
+            banks: Default::default(),
+            operator: Default::default(),
+        }
     }
 
     impl Live for Recorded {
-        fn current(&self) -> Option<Current> {
-            self.current.lock().unwrap().clone()
+        fn subscribe(&self) -> watch::Receiver<BenchState> {
+            self.state.subscribe()
         }
 
-        fn relays(&self) -> Option<BTreeMap<String, RelayState>> {
-            self.relays.lock().unwrap().clone()
-        }
-
-        fn log(&self) -> Option<String> {
+        fn output(&self, _: JobId) -> Option<Arc<dyn crate::JobOutput>> {
             None
         }
     }
 
-    /// The record of a command, as the server's sink publishes it.
+    /// The record of a job, as the server's sink publishes it: its end
+    /// with its outcome.
     struct Publish(Arc<Recorded>);
 
     impl ProgressSink for Publish {
         fn publish(&mut self, current: &Current) {
-            *self.0.current.lock().unwrap() = Some(current.clone());
+            self.0.state.send_modify(|state| {
+                let job = state.job.get_or_insert_with(|| JobView {
+                    id: 1,
+                    label: current.command.word().into(),
+                    log: String::new(),
+                    accepted: current.started,
+                    record: None,
+                    upcoming: Vec::new(),
+                    cancel: CancelState::None,
+                    end: None,
+                });
+                job.update(current);
+                job.end = (current.outcome != Outcome::Running).then(|| JobEnd {
+                    code: 0,
+                    error: None,
+                    finished: current.finished.unwrap_or(current.started),
+                });
+            });
         }
     }
 
@@ -190,11 +270,11 @@ mod tests {
     pub(crate) fn live_sources() -> (tempfile::TempDir, Sources, Arc<Recorded>) {
         let tmp = tempfile::tempdir().unwrap();
         let live = Arc::new(Recorded::default());
-        let sources = Sources {
-            root: tmp.path().to_path_buf(),
-            flash_bin: tmp.path().join("wellfed-flash"),
-            live: Arc::clone(&live) as Arc<dyn Live>,
-        };
+        let sources = Sources::new(
+            tmp.path().to_path_buf(),
+            tmp.path().join("wellfed-flash"),
+            Arc::clone(&live) as Arc<dyn Live>,
+        );
         (tmp, sources, live)
     }
 
@@ -207,13 +287,37 @@ mod tests {
     fn empty() {
         let (_tmp, sources) = sources();
 
-        let view = json(snapshot(&sources));
-        assert!(view["current"].is_null());
+        let view = json(evidence(&sources));
         assert_eq!(view["history"], json!([]));
         assert!(view["rx"].is_null());
         assert!(view["script"].is_null());
         assert!(view["qa"].is_null());
         assert_eq!(json(sessions(&sources))["sessions"], json!([]));
+    }
+
+    #[test]
+    fn the_uart_is_held_while_the_flash_client_writes_or_has_the_loader() {
+        let (_tmp, sources, live) = live_sources();
+        assert!(!sources.uart_busy());
+
+        for (uart, held) in [
+            (
+                Uart::Writing {
+                    done: 0,
+                    total: 0,
+                    counted: true,
+                },
+                true,
+            ),
+            (Uart::Loader, true),
+            (Uart::Capturing { path: None }, false),
+            (Uart::Idle, false),
+        ] {
+            live.state.send_modify(|state| state.uart = uart.clone());
+
+            assert_eq!(sources.uart_busy(), held, "{uart:?}");
+            assert_eq!(sources.state().uart, uart);
+        }
     }
 
     #[test]

@@ -26,6 +26,9 @@ tempfile.workspace = true
 # The read-only page (`serve --ui`), served by wellfed-dashboard. Build
 # src/web/apps/bench/dist first (`make ui`); the page embeds it.
 ui = ["dep:wellfed-dashboard", "wellfed-dashboard/ui"]
+# `serve --fake-board`: a scripted relay board, so the page's end-to-end
+# tests run the real server with no hardware. `make check-web` builds it.
+fake-board = ["wellfed-relay/fake"]
 
 [lints]
 workspace = true

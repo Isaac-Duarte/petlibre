@@ -2,7 +2,7 @@
 //! run's `NAME-itest.json` record, and per-scenario history across runs.
 //!
 //! Like every view, this only reads. A run in progress has no record yet;
-//! the page follows it through the status snapshot, whose steps are the
+//! the page follows it through the server's live state, whose job steps are the
 //! run's scenarios.
 
 use std::fs;

@@ -661,23 +661,6 @@ async fn a_write_that_stops_leaves_its_bank_unknown_and_a_seed_waits_for_no_job(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_ledger_that_does_not_read_refuses_the_server_and_stays() {
-    let _one = ONE_SERVER.lock().await;
-    let checkout = checkout();
-    let ledger = checkout.root().join(wellfed_formats::bench::banks::BANKS);
-    fs::create_dir_all(ledger.parent().unwrap()).unwrap();
-    fs::write(&ledger, "{ not json").unwrap();
-
-    let refused = checkout
-        .open_device(DeviceOptions::default())
-        .err()
-        .unwrap();
-
-    assert!(matches!(refused, ServeError::Banks(_)), "{refused}");
-    assert_eq!(fs::read_to_string(&ledger).unwrap(), "{ not json");
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_server_points_the_user_s_clients_at_itself_and_withdraws_when_it_quits() {
     let _one = ONE_SERVER.lock().await;
     let pointers = tempfile::tempdir().unwrap();
@@ -718,6 +701,7 @@ fn the_hotspot_is_read_only_while_no_job_and_no_loader_or_write_runs() {
             pid: 1,
             started: 0.0,
             phase: Phase::Serving,
+            uart_port: false,
         },
         job: None,
         activity: Vec::new(),
@@ -726,10 +710,15 @@ fn the_hotspot_is_read_only_while_no_job_and_no_loader_or_write_runs() {
         feeder: Default::default(),
         capture: Default::default(),
         banks: Default::default(),
+        operator: Default::default(),
     };
     assert!(crate::server::hotspot_due(&state));
 
-    state.uart = Uart::Writing { done: 1, total: 2 };
+    state.uart = Uart::Writing {
+        done: 1,
+        total: 2,
+        counted: true,
+    };
     assert!(!crate::server::hotspot_due(&state));
     state.uart = Uart::Loader;
     assert!(!crate::server::hotspot_due(&state));

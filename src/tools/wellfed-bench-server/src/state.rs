@@ -34,13 +34,18 @@ impl Store {
         state
     }
 
-    /// A receiver that wakes on every change.
-    pub(crate) fn subscribe(&self) -> watch::Receiver<BenchState> {
+    /// A receiver that wakes on every change. Its value's `now` is when it
+    /// last changed; a reader that sends it on stamps its own, so the
+    /// page's clock follows the host's even while nothing changes.
+    pub fn subscribe(&self) -> watch::Receiver<BenchState> {
         self.sender.subscribe()
     }
 
     pub(crate) fn update(&self, change: impl FnOnce(&mut BenchState)) {
-        self.sender.send_modify(change);
+        self.sender.send_modify(|state| {
+            change(state);
+            state.now = now();
+        });
     }
 }
 
@@ -119,6 +124,22 @@ impl JobLog {
         self.changed.subscribe()
     }
 
+    /// At most `most` lines from `cursor` on, and the cursor after them,
+    /// so a reader catching up holds the lock for a bounded copy.
+    pub(crate) fn read_some(&self, cursor: usize, most: usize) -> (Vec<String>, usize) {
+        let inner = self.lock();
+        let skip = cursor.saturating_sub(inner.first);
+        let lines: Vec<String> = inner.lines.iter().skip(skip).take(most).cloned().collect();
+        let cursor = inner.first + skip.min(inner.lines.len()) + lines.len();
+        (lines, cursor)
+    }
+
+    /// The cursor after the last line.
+    pub(crate) fn end(&self) -> usize {
+        let inner = self.lock();
+        inner.first + inner.lines.len()
+    }
+
     pub(crate) fn read_from(&self, cursor: usize) -> Unread {
         let inner = self.lock();
         let skip = cursor.saturating_sub(inner.first);
@@ -135,6 +156,29 @@ impl JobLog {
         self.inner
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+/// One job's output for a reader in this process (the page), which follows
+/// it as the socket's stream does.
+#[derive(Clone)]
+pub struct JobOutput(pub(crate) Arc<JobLog>);
+
+impl JobOutput {
+    /// At most `most` kept lines from line `cursor` on, and the cursor
+    /// after them.
+    pub fn read_from(&self, cursor: usize, most: usize) -> (Vec<String>, usize) {
+        self.0.read_some(cursor, most)
+    }
+
+    /// The cursor after the last line, read without copying any.
+    pub fn end(&self) -> usize {
+        self.0.end()
+    }
+
+    /// A receiver that wakes on every line and at the end.
+    pub fn subscribe(&self) -> watch::Receiver<u64> {
+        self.0.subscribe()
     }
 }
 
@@ -201,6 +245,21 @@ mod tests {
 
         assert_eq!(unread.lines.first().map(String::as_str), Some("2"));
         assert_eq!(unread.cursor, KEPT_LINES + 2);
+    }
+
+    #[test]
+    fn a_bounded_read_copies_at_most_its_limit_and_carries_on() {
+        let log = JobLog::new(None);
+        for n in 0..5 {
+            log.push(n.to_string());
+        }
+
+        let (first, at) = log.read_some(log.end() - 4, 3);
+        let (rest, end) = log.read_some(at, 3);
+
+        assert_eq!(first, ["1", "2", "3"]);
+        assert_eq!((rest.as_slice(), end), (["4".to_string()].as_slice(), 5));
+        assert_eq!(log.read_some(end, 3), (Vec::new(), 5));
     }
 
     #[test]

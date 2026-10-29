@@ -2,34 +2,58 @@
 // read-only. Paths are relative so the page works under any host and port
 // the bench serves it on (loopback, or a tailnet address).
 
-import type { FeederView, HealthView, RunView, SessionView, Sessions, Snapshot, TestsView } from "./bench.gen";
+import type {
+  BenchState,
+  EvidenceView,
+  StockView,
+  HealthView,
+  RunView,
+  SessionView,
+  Sessions,
+  TestsView,
+} from "./bench.gen";
+
+/**
+ * The bench refused a view that reads files because the flash client holds
+ * the UART (503): it is deferred until the write ends, not missing.
+ */
+export class Deferred extends Error {
+  constructor(path: string) {
+    super(`GET ${path}: deferred until the UART write ends`);
+    this.name = "Deferred";
+  }
+}
 
 async function get<T>(path: string): Promise<T | null> {
   const response = await fetch(path, { cache: "no-store" });
   if (response.status === 404) return null;
+  if (response.status === 503) throw new Deferred(path);
   if (!response.ok) throw new Error(`GET ${path}: ${response.status}`);
   return (await response.json()) as T;
 }
 
 export const bench = {
-  status: () => get<Snapshot>("api/status"),
+  state: () => get<BenchState>("api/state"),
+  evidence: () => get<EvidenceView>("api/evidence"),
   health: () => get<HealthView>("api/health"),
   sessions: () => get<Sessions>("api/sessions"),
   session: (name: string) => get<SessionView>(`api/sessions/${encodeURIComponent(name)}`),
   tests: () => get<TestsView>("api/tests"),
   run: (name: string) => get<RunView>(`api/tests/${encodeURIComponent(name)}`),
-  feeder: () => get<FeederView>("api/feeder"),
+  stock: () => get<StockView>("api/stock"),
 };
 
 export interface StreamHandlers {
-  /** The status snapshot, sent whenever it changes. */
-  status(snapshot: Snapshot): void;
-  /** A new command started, or the log shrank: drop what was shown. */
+  /** The bench server's live state, on connecting and on every change. */
+  state(state: BenchState): void;
+  /** The history and the latest capture, sent when they change. */
+  evidence(view: EvidenceView): void;
+  /** Another job's output follows (its number as the data, since a browser drops an empty event): drop what was shown. */
   logReset(): void;
-  /** Whole new lines of the current command's log. */
+  /** Whole new lines of the job's output. */
   log(text: string): void;
-  /** The local server's view of the feeder, sent when it changes. */
-  feeder(view: FeederView): void;
+  /** The local stock server's view of the feeder, sent when it changes. */
+  stock(view: StockView): void;
   /** Whether the stream is connected; the browser reconnects on its own. */
   connected(open: boolean): void;
 }
@@ -46,8 +70,11 @@ export function stream(handlers: StreamHandlers): () => void {
   source.addEventListener("error", () => {
     handlers.connected(false);
   });
-  source.addEventListener("status", (e) => {
-    handlers.status(JSON.parse(data(e)) as Snapshot);
+  source.addEventListener("state", (e) => {
+    handlers.state(JSON.parse(data(e)) as BenchState);
+  });
+  source.addEventListener("evidence", (e) => {
+    handlers.evidence(JSON.parse(data(e)) as EvidenceView);
   });
   source.addEventListener("log-reset", () => {
     handlers.logReset();
@@ -55,8 +82,8 @@ export function stream(handlers: StreamHandlers): () => void {
   source.addEventListener("log", (e) => {
     handlers.log(data(e));
   });
-  source.addEventListener("feeder", (e) => {
-    handlers.feeder(JSON.parse(data(e)) as FeederView);
+  source.addEventListener("stock", (e) => {
+    handlers.stock(JSON.parse(data(e)) as StockView);
   });
 
   return () => {

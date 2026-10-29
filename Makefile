@@ -5,8 +5,8 @@ help:
 	@echo "check-rust / check-deps / check-cross / check-virtual-feeder / check-docs: individual checks"
 	@echo "check-bench-board: Clippy and a release build of the bench board's RP2040 firmware (part of check-cross)"
 	@echo "check-fixtures: optional reference-binary/SDK evidence; fails if unavailable"
-	@echo "ui: build the web page (pnpm in src/web/) that wellfed-dashboard embeds with --features ui"
-	@echo "check-web: web types, unit tests, build, then the page end to end against wellfed-bench --ui"
+	@echo "ui: build the web page (pnpm in src/web/) that wellfed-bench serve --ui embeds (built with --features ui)"
+	@echo "check-web: web types, unit tests, build, then the page end to end against wellfed-bench serve --ui on a fake relay board"
 	@echo "sqlx-prepare: regenerate the server store's query metadata (.sqlx/) after changing a query or migration"
 	@echo "server-dist / server-image: the server's static release binaries in dist/server/ and its container image (docker or podman)"
 	@echo "check-server-release: the release check against dist/server/ and the image"
@@ -73,19 +73,26 @@ ui:
 	pnpm -C src/web install --frozen-lockfile
 	pnpm -C src/web build
 
-# The end-to-end tests serve a synthetic private/ tree from a temporary
-# directory; they never read this checkout's evidence or open a port to hardware.
-# The page's crate and the bench, which serves it with `--ui`, are linted
-# and tested with it built in, the production lints included.
+# The end-to-end tests run `wellfed-bench serve --ui` on a synthetic private/
+# tree under target/e2e/roots, with a scripted relay board (`fake-board`)
+# and a stand-in flash client; they never read this checkout's evidence or
+# open a port to hardware. The page's crate and the bench, which serves it
+# with `--ui`, are linted and tested with it built in, the production lints
+# included. The binary with the fake board is built into a target directory
+# of its own, so it never replaces the operator's `wellfed-bench`. That is a
+# second debug build of the bench and its dependencies, about 1.5 GB of
+# disk beside target/debug; `rm -rf target/e2e` reclaims it.
 PAGE_CRATES = -p wellfed-dashboard -p wellfed-bench
+PAGE_FEATURES = ui,wellfed-bench/fake-board
+E2E_TARGET = $(CURDIR)/target/e2e
 check-web: ui
 	pnpm -C src/web check
 	pnpm -C src/web test
-	cargo clippy --locked $(PAGE_CRATES) --all-targets --features ui -- -D warnings
-	cargo clippy --locked $(PAGE_CRATES) --lib --bins --features ui -- -D warnings $(PRODUCTION_LINTS)
+	cargo clippy --locked $(PAGE_CRATES) --all-targets --features $(PAGE_FEATURES) -- -D warnings
+	cargo clippy --locked $(PAGE_CRATES) --lib --bins --features $(PAGE_FEATURES) -- -D warnings $(PRODUCTION_LINTS)
 	cargo test --locked $(PAGE_CRATES) --features ui
-	cargo build --locked $(PAGE_CRATES) --features ui
-	pnpm -C src/web e2e
+	CARGO_TARGET_DIR=$(E2E_TARGET) cargo build --locked -p wellfed-bench --features $(PAGE_FEATURES)
+	BENCH_BIN=$(E2E_TARGET)/debug/wellfed-bench pnpm -C src/web e2e
 
 # The server store's queries are checked at build time against committed
 # metadata, so no build needs a database. After changing a query or a

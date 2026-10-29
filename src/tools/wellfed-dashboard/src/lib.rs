@@ -1,24 +1,26 @@
-//! The bench's read-only page: the feeder, bench progress, the integration
-//! suite's runs, and the evidence sessions.
+//! The bench's read-only page: the bench server's live state, the feeder,
+//! the integration suite's runs and the evidence sessions.
 //!
-//! The views read the evidence directories, the command history, the local
-//! stock server's status and, under the bench server, its live state
-//! ([`Live`]). The crate links no relay driver and no flash client, so
-//! nothing here can switch a relay or open a serial port: it cannot disturb
-//! an update, a dump or a capture, and nothing writes. The
-//! `wellfed-dashboard` binary serves it alone, with no live state;
-//! `wellfed-bench serve --ui` serves it beside the bench server. The views
-//! always build, so their tests and
-//! TypeScript bindings run in the contributor gate; the server and its
-//! embedded web app need the `ui` feature and a built
-//! `src/web/apps/bench/dist` (`make ui`).
+//! `wellfed-bench serve --ui` serves it beside the bench server, which
+//! hands it the live state and the jobs' output through [`Live`]. The crate
+//! links no relay driver, no flash client and not the server itself, so
+//! nothing here can switch a relay, open a serial port or start a job: it
+//! cannot disturb an update, a dump or a capture, and nothing writes. The
+//! views always build, so their tests and TypeScript bindings run in the
+//! contributor gate; the server and its embedded web app need the `ui`
+//! feature and a built `src/web/apps/bench/dist` (`make ui`).
 
 #![forbid(unsafe_code)]
 
-#[cfg(any(feature = "ui", test))]
-mod feeder;
+use std::sync::Arc;
+
+use tokio::sync::watch;
+use wellfed_formats::bench::live::{BenchState, JobId};
+
 #[cfg(any(feature = "ui", test))]
 mod runs;
+#[cfg(any(feature = "ui", test))]
+mod stock;
 #[cfg(any(feature = "ui", test))]
 mod views;
 
@@ -30,36 +32,26 @@ pub use serve::{Listen, start};
 #[cfg(test)]
 mod bindings;
 
-/// The running command's record and the relays, which only the bench
-/// server holds: `wellfed-bench serve --ui` hands the page its live state
-/// through this. The page alone has neither, and its views show none.
+/// What only the bench server holds: its live state and its jobs' output,
+/// both in memory, so the page follows a job without reading a file the
+/// job is still writing through a buffer.
 pub trait Live: Send + Sync {
-    fn current(&self) -> Option<wellfed_formats::bench::progress::Current>;
-    fn relays(
-        &self,
-    ) -> Option<std::collections::BTreeMap<String, wellfed_formats::bench::progress::RelayState>>;
-    /// Root-relative: the running or last job's output file.
-    fn log(&self) -> Option<String>;
+    /// The state, woken on every change.
+    fn subscribe(&self) -> watch::Receiver<BenchState>;
+    /// Job `id`'s output, while the server keeps it.
+    fn output(&self, id: JobId) -> Option<Arc<dyn JobOutput>>;
 }
 
-/// No bench server: the page shows the evidence and the history only.
-pub struct NoLive;
-
-impl Live for NoLive {
-    fn current(&self) -> Option<wellfed_formats::bench::progress::Current> {
-        None
-    }
-
-    fn relays(
-        &self,
-    ) -> Option<std::collections::BTreeMap<String, wellfed_formats::bench::progress::RelayState>>
-    {
-        None
-    }
-
-    fn log(&self) -> Option<String> {
-        None
-    }
+/// One job's output lines, as the server keeps them.
+pub trait JobOutput: Send + Sync {
+    /// At most `most` kept lines from line `cursor` on, and the cursor
+    /// after them: a page catching up copies a bounded batch at a time
+    /// under the job's lock, never the whole log.
+    fn read_from(&self, cursor: usize, most: usize) -> (Vec<String>, usize);
+    /// The cursor after the last line, read without copying any.
+    fn end(&self) -> usize;
+    /// Woken on every line and at the job's end.
+    fn subscribe(&self) -> watch::Receiver<u64>;
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -71,24 +63,3 @@ pub enum Error {
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
-
-/// Whether a recorded process still exists (one owned by another user counts).
-#[cfg(any(feature = "ui", test))]
-fn alive(pid: u32) -> bool {
-    let Some(pid) = i32::try_from(pid)
-        .ok()
-        .and_then(rustix::process::Pid::from_raw)
-    else {
-        return false;
-    };
-    match rustix::process::test_kill_process(pid) {
-        Ok(()) => true,
-        Err(error) => error == rustix::io::Errno::PERM,
-    }
-}
-
-/// Recorded as running by a process that still exists.
-#[cfg(any(feature = "ui", test))]
-fn live(current: &wellfed_formats::bench::progress::Current) -> bool {
-    current.outcome == wellfed_formats::bench::progress::Outcome::Running && alive(current.pid)
-}

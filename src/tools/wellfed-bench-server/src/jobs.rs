@@ -477,6 +477,7 @@ mod tests {
                 pid: 1,
                 started: 0.0,
                 phase: Phase::Serving,
+                uart_port: false,
             },
             job: None,
             activity: Vec::new(),
@@ -485,6 +486,7 @@ mod tests {
             feeder: Default::default(),
             capture: Default::default(),
             banks: Default::default(),
+            operator: Default::default(),
         });
         let root = PathBuf::from("/nonexistent");
         let banks = crate::banks::Banks::open(&root, store.clone()).unwrap();

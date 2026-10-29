@@ -1,4 +1,4 @@
-//! `/api/feeder`: stock as `wellfed-stock serve` last heard it.
+//! `/api/stock`: stock as `wellfed-stock serve` last heard it.
 //!
 //! The page asks the server, never the feeder: one `GET /api/status` on the
 //! server's loopback API, with the token from `private/server.json`. That
@@ -23,7 +23,7 @@ const TIMEOUT: Duration = Duration::from_secs(2);
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(tag = "server", rename_all = "lowercase")]
-pub(crate) enum FeederView {
+pub(crate) enum StockView {
     /// No readable `private/server.json`.
     Unconfigured { config: &'static str, error: String },
     /// Configured, but nothing answers (serve is not running) or it refused.
@@ -39,11 +39,11 @@ pub(crate) enum FeederView {
     },
 }
 
-pub(crate) fn feeder(root: &Path) -> FeederView {
+pub(crate) fn stock(root: &Path) -> StockView {
     let config: ServerConfig = match wellfed_formats::load(&root.join(SERVER_CONFIG)) {
         Ok(config) => config,
         Err(error) => {
-            return FeederView::Unconfigured {
+            return StockView::Unconfigured {
                 config: SERVER_CONFIG,
                 error: format!("{SERVER_CONFIG}: {error}"),
             };
@@ -54,15 +54,15 @@ pub(crate) fn feeder(root: &Path) -> FeederView {
 
     match api.get::<StockStatus>("/api/status", Auth::Token) {
         Ok(status) => view(address, &status),
-        Err(error) => FeederView::Down {
+        Err(error) => StockView::Down {
             address,
             error: error.to_string(),
         },
     }
 }
 
-fn view(address: String, status: &StockStatus) -> FeederView {
-    FeederView::Up {
+fn view(address: String, status: &StockStatus) -> StockView {
+    StockView::Up {
         address,
         broker_connected: status.broker_connected,
         stock_online: status.device_online,
@@ -78,7 +78,7 @@ fn view(address: String, status: &StockStatus) -> FeederView {
 #[cfg(test)]
 pub(super) fn bindings(cfg: &ts_rs::Config) -> Vec<String> {
     use super::bindings::decl;
-    vec![decl::<FeederView>(cfg)]
+    vec![decl::<StockView>(cfg)]
 }
 
 #[cfg(test)]
@@ -90,7 +90,7 @@ mod tests {
     fn without_a_config_the_feeder_is_unconfigured() {
         let tmp = tempfile::tempdir().unwrap();
 
-        let view = serde_json::to_value(feeder(tmp.path())).unwrap();
+        let view = serde_json::to_value(stock(tmp.path())).unwrap();
 
         assert_eq!(view["server"], "unconfigured");
         assert_eq!(view["config"], SERVER_CONFIG);
@@ -113,7 +113,7 @@ mod tests {
         std::fs::create_dir_all(tmp.path().join("private")).unwrap();
         std::fs::write(tmp.path().join(SERVER_CONFIG), config.to_string()).unwrap();
 
-        let view = serde_json::to_value(feeder(tmp.path())).unwrap();
+        let view = serde_json::to_value(stock(tmp.path())).unwrap();
 
         assert_eq!(view["server"], "down");
         assert_eq!(view["address"], format!("127.0.0.1:{port}"));

@@ -4,27 +4,25 @@ name = "wellfed-dashboard"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
-description = "The bench's read-only progress page: the feeder, bench progress, the integration suite's runs and the evidence sessions"
+description = "The bench's read-only progress page, which wellfed-bench serve --ui serves: the server's live state, the feeder, the integration suite's runs and the evidence sessions"
 publish.workspace = true
 
 # The page only reads: it links neither the relay driver, the flash client
 # nor the server, so nothing it does can switch a relay, open the UART or
 # write flash.
 [dependencies]
-anyhow = { workspace = true, optional = true }
 axum = { workspace = true, optional = true }
-clap = { workspace = true, optional = true }
-ctrlc = { workspace = true, optional = true }
 futures-util = { version = "0.3", default-features = false, optional = true }
 wellfed-core.workspace = true
 wellfed-formats.workspace = true
 wellfed-stock-api = { path = "../wellfed-stock-api" }
 rust-embed = { version = "8.13.0", features = ["debug-embed"], optional = true }
-rustix = { version = "1", features = ["fs", "process"] }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread", "net", "time", "macros"], optional = true }
+# The live state and the jobs' output arrive on watch channels; serving
+# the page needs the rest.
+tokio = { workspace = true, features = ["sync"] }
 
 [dev-dependencies]
 chrono = { version = "0.4.45", default-features = false, features = ["std"] }
@@ -36,11 +34,7 @@ ts-rs = { version = "12", features = ["serde-json-impl"] }
 [features]
 # The server and its embedded web app. Build src/web/apps/bench/dist first
 # (`make ui`); the server embeds it at compile time.
-ui = ["dep:anyhow", "dep:axum", "dep:clap", "dep:ctrlc", "dep:futures-util", "dep:rust-embed", "dep:tokio"]
-
-[[bin]]
-name = "wellfed-dashboard"
-required-features = ["ui"]
+ui = ["dep:axum", "dep:futures-util", "dep:rust-embed", "tokio/rt-multi-thread", "tokio/net", "tokio/time", "tokio/macros"]
 
 [lints]
 workspace = true

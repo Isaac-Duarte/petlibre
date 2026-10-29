@@ -31,7 +31,7 @@ use super::runs;
 use super::views::health::{self, FlashCache};
 use super::views::snapshot::{self, Snapshot};
 use super::views::{Sources, sessions};
-use wellfed_formats::bench::progress::{self, LOG};
+use wellfed_formats::bench::progress::LOG;
 use wellfed_formats::bench::{Cancel, STATUS_DIR};
 
 use crate::{Error, Result};
@@ -208,7 +208,7 @@ impl Cursor {
 
         // A new command, or a log that shrank, restarts the page's log view
         // near the end of the current file.
-        let started = progress::current(&directory).map(|c| c.started);
+        let started = self.ui.sources.live.current().map(|c| c.started);
         let log = directory.join(LOG);
         let size = fs::metadata(&log).map_or(0, |m| m.len());
         if first || started != self.started || size < self.offset {
@@ -288,17 +288,23 @@ async fn events(
 /// Bind now (so a busy port fails before any bench command), then serve on a
 /// background thread until `stop` is cancelled (the operator's interrupt).
 /// `flash_bin` is the flash client the page reports by hash; it is never run.
+/// `live` is the bench server's state, or [`crate::NoLive`] for the page alone.
 pub fn start(
     root: PathBuf,
     flash_bin: PathBuf,
     listen: &Listen,
     stop: Cancel,
+    live: Arc<dyn crate::Live>,
 ) -> Result<std::thread::JoinHandle<()>> {
     let listener = TcpListener::bind(listen.address)?;
     listener.set_nonblocking(true)?;
 
     let ui = Ui {
-        sources: Sources { root, flash_bin },
+        sources: Sources {
+            root,
+            flash_bin,
+            live,
+        },
         flash: Arc::default(),
         stop: stop.clone(),
     };
@@ -341,6 +347,7 @@ mod tests {
             sources: Sources {
                 root: tmp.path().into(),
                 flash_bin: tmp.path().join("wellfed-flash"),
+                live: Arc::new(crate::NoLive),
             },
             flash: Arc::default(),
             stop: Cancel::new(),

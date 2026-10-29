@@ -18,21 +18,30 @@ pub(super) mod tail;
 
 use std::fs;
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 use std::time::UNIX_EPOCH;
 
-use wellfed_formats::bench::progress::{HISTORY, HistoryEntry};
+use crate::Live;
+use wellfed_formats::bench::progress::{Current, HISTORY, HistoryEntry};
 use wellfed_formats::bench::{CAPTURES, STATUS_DIR};
 
-/// Where the views look: the checkout root and the flash client in use.
+/// Where the views look: the checkout root, the flash client in use, and
+/// the bench server's live state when it serves the page.
 #[derive(Clone)]
 pub(crate) struct Sources {
     pub root: PathBuf,
     pub flash_bin: PathBuf,
+    pub live: Arc<dyn Live>,
 }
 
 impl Sources {
     fn status(&self) -> PathBuf {
         self.root.join(STATUS_DIR)
+    }
+
+    /// The running command's record, if a server runs one.
+    fn current(&self) -> Option<Current> {
+        self.live.current()
     }
 }
 
@@ -130,14 +139,59 @@ mod tests {
     use super::sessions::sessions;
     use super::snapshot::snapshot;
     use super::*;
+    use std::collections::BTreeMap;
+    use std::sync::Mutex;
+    use wellfed_formats::bench::progress::{ProgressSink, RelayState, Status};
 
-    pub(super) fn sources() -> (tempfile::TempDir, Sources) {
+    /// What a bench server would hand the page, set by the test.
+    #[derive(Default)]
+    pub(crate) struct Recorded {
+        pub current: Mutex<Option<Current>>,
+        pub relays: Mutex<Option<BTreeMap<String, RelayState>>>,
+    }
+
+    impl Live for Recorded {
+        fn current(&self) -> Option<Current> {
+            self.current.lock().unwrap().clone()
+        }
+
+        fn relays(&self) -> Option<BTreeMap<String, RelayState>> {
+            self.relays.lock().unwrap().clone()
+        }
+    }
+
+    /// The record of a command, as the server's sink publishes it.
+    struct Publish(Arc<Recorded>);
+
+    impl ProgressSink for Publish {
+        fn publish(&mut self, current: &Current) {
+            *self.0.current.lock().unwrap() = Some(current.clone());
+        }
+    }
+
+    impl Recorded {
+        /// A progress recorder whose record the page then reads.
+        pub(crate) fn status(self: &Arc<Self>, sources: &Sources) -> Status {
+            Status::new(&sources.root, sources.status())
+                .with_sink(Box::new(Publish(Arc::clone(self))))
+        }
+    }
+
+    pub(crate) fn sources() -> (tempfile::TempDir, Sources) {
+        let (tmp, sources, _) = live_sources();
+        (tmp, sources)
+    }
+
+    /// Sources with a live state the test sets.
+    pub(crate) fn live_sources() -> (tempfile::TempDir, Sources, Arc<Recorded>) {
         let tmp = tempfile::tempdir().unwrap();
+        let live = Arc::new(Recorded::default());
         let sources = Sources {
             root: tmp.path().to_path_buf(),
             flash_bin: tmp.path().join("wellfed-flash"),
+            live: Arc::clone(&live) as Arc<dyn Live>,
         };
-        (tmp, sources)
+        (tmp, sources, live)
     }
 
     /// A view as the page receives it.

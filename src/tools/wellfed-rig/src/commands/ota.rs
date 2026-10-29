@@ -28,6 +28,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use clap::Args;
+use serde::{Deserialize, Serialize};
 use wellfed_core::ota;
 use wellfed_core::ota::install::{RefusedReason, StopStage};
 use wellfed_core::record::{self, Confirm, Record, Trial, Update, Watch as Watching};
@@ -211,7 +212,8 @@ pub enum ArgError {
 /// authenticated feed request, which the bench sends only in the
 /// suite's `feed-writes` scenario under `--feeds`. The motor
 /// firmware is refused here: motion builds stay a manual, attended step.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum Firmware {
     /// The guided QA self-test; `wellfed-build`'s default.
     #[default]
@@ -296,7 +298,8 @@ pub fn parse_firmware(text: &str) -> std::result::Result<Firmware, ArgError> {
 
 /// A variant the bench may build: the trial firmware's and the feeder's.
 /// Motion variants are never among them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum Variant {
     /// Never confirms; the watchdog resets it, so KM0 falls back.
     Stall,
@@ -441,7 +444,7 @@ impl fmt::Display for Image {
     }
 }
 
-#[derive(Debug, Clone, Args)]
+#[derive(Debug, Clone, Args, Serialize, Deserialize)]
 pub struct OtaArgs {
     /// Session name: private/verification/NAME-vN.manifest, private/captures/NAME-01, -02, …
     pub name: String,

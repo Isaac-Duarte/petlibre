@@ -4,25 +4,26 @@ name = "wellfed-bench"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
-description = "Relay bench for the PLAF103 research unit: the command line over the rig's sequences and the integration suite, and the read-only progress page beside them"
+description = "Relay bench for the PLAF103 research unit: the bench server in the foreground, the command line that is its client, and the read-only progress page beside it"
 publish.workspace = true
 
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
-ctrlc.workspace = true
+wellfed-bench-server = { path = "../wellfed-bench-server" }
 wellfed-dashboard = { path = "../wellfed-dashboard", optional = true }
 wellfed-formats.workspace = true
-wellfed-itest = { path = "../wellfed-itest" }
 wellfed-relay = { path = "../wellfed-relay" }
 wellfed-rig = { path = "../wellfed-rig" }
 rustix = { version = "1", features = ["fs", "process"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal", "sync"] }
 
 [dev-dependencies]
+serde_json.workspace = true
 tempfile.workspace = true
 
 [features]
-# The read-only page (`--ui`), served by wellfed-dashboard. Build
+# The read-only page (`serve --ui`), served by wellfed-dashboard. Build
 # src/web/apps/bench/dist first (`make ui`); the page embeds it.
 ui = ["dep:wellfed-dashboard", "wellfed-dashboard/ui"]
 

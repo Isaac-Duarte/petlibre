@@ -4246,12 +4246,13 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "ctrlc",
  "rustix",
+ "serde_json",
  "tempfile",
+ "tokio",
+ "wellfed-bench-server",
  "wellfed-dashboard",
  "wellfed-formats",
- "wellfed-itest",
  "wellfed-relay",
  "wellfed-rig",
 ]
@@ -4261,6 +4262,29 @@ name = "wellfed-bench-at"
 version = "0.1.0"
 dependencies = [
  "heapless",
+]
+
+[[package]]
+name = "wellfed-bench-server"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "bytes",
+ "clap",
+ "futures-util",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "rustix",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "wellfed-formats",
+ "wellfed-itest",
+ "wellfed-relay",
+ "wellfed-rig",
 ]
 
 [[package]]
@@ -4656,6 +4680,7 @@ dependencies = [
  "ed25519-dalek",
  "jiff",
  "mdns-sd",
+ "rustix",
  "serde",
  "serde_json",
  "serialport",

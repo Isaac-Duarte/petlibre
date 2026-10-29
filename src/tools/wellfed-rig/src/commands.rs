@@ -16,13 +16,13 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use clap::{Args, ValueEnum};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use wellfed_formats::canonical::sha256;
 use wellfed_formats::flash_plan::{DevelopmentPlan, GiveWayPlan, StockRecoveryReviewed};
 use wellfed_formats::manifest::BuildManifest;
 use wellfed_formats::transients::{self, TransientCycle, TransientsManifest};
 
-use crate::tools::{Analyzer, Observation, Observer, Tools};
+use crate::tools::{Analyzer, Children, Observation, Observer, Tools};
 use crate::{Cancel, Error, Result};
 use wellfed_formats::bench::progress::{BenchCommand, Status};
 use wellfed_formats::bench::{CAPTURES, Config, Paths, plain_name, relative};
@@ -113,7 +113,7 @@ pub enum CommandsError {
     NotFullRead { read: PathBuf },
 }
 
-#[derive(Debug, Clone, Args)]
+#[derive(Debug, Clone, Args, Serialize, Deserialize)]
 pub struct UpdateArgs {
     /// Session name for private evidence paths.
     pub name: String,
@@ -141,7 +141,7 @@ pub struct UpdateArgs {
     pub attended_motion: bool,
 }
 
-#[derive(Debug, Clone, Args)]
+#[derive(Debug, Clone, Args, Serialize, Deserialize)]
 pub struct ExecuteArgs {
     #[command(flatten)]
     pub update: UpdateArgs,
@@ -151,7 +151,7 @@ pub struct ExecuteArgs {
     pub boot_seconds: f64,
 }
 
-#[derive(Debug, Clone, Args)]
+#[derive(Debug, Clone, Args, Serialize, Deserialize)]
 pub struct GiveWayArgs {
     /// Session name for private evidence paths.
     pub name: String,
@@ -160,7 +160,7 @@ pub struct GiveWayArgs {
     pub fallback: PathBuf,
 }
 
-#[derive(Debug, Clone, Args)]
+#[derive(Debug, Clone, Args, Serialize, Deserialize)]
 pub struct GiveWayExecuteArgs {
     #[command(flatten)]
     pub give_way: GiveWayArgs,
@@ -171,7 +171,7 @@ pub struct GiveWayExecuteArgs {
 }
 
 /// The original stock application back into bank 1 over UART.
-#[derive(Debug, Clone, Args)]
+#[derive(Debug, Clone, Args, Serialize, Deserialize)]
 pub struct StockArgs {
     /// Session name for private evidence paths.
     pub name: String,
@@ -181,7 +181,7 @@ pub struct StockArgs {
     pub fallback: Option<PathBuf>,
 }
 
-#[derive(Debug, Clone, Args)]
+#[derive(Debug, Clone, Args, Serialize, Deserialize)]
 pub struct StockExecuteArgs {
     #[command(flatten)]
     pub stock: StockArgs,
@@ -192,14 +192,14 @@ pub struct StockExecuteArgs {
     pub boot_seconds: f64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Serialize, Deserialize)]
 pub enum TransientMode {
     Boot,
     Loader,
 }
 
 /// Which driver lines the analyzer is clipped to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Serialize, Deserialize)]
 pub enum Probes {
     /// INA, INB, OUTA and OUTB on D0-D3, at the driver's pins.
     Driver,
@@ -208,7 +208,7 @@ pub enum Probes {
     Outputs,
 }
 
-#[derive(Debug, Clone, Args)]
+#[derive(Debug, Clone, Args, Serialize, Deserialize)]
 pub struct TransientArgs {
     /// Session name under private/captures/.
     pub name: String,
@@ -241,7 +241,7 @@ fn argv(head: &[&str], parts: &[&[String]]) -> Vec<String> {
 }
 
 /// What the UART lines do while the feeder is off.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum, Serialize, Deserialize)]
 pub enum UartWhenOff {
     /// Relays 3 and 4 open, so the adapter cannot back-power the feeder.
     #[default]
@@ -256,6 +256,9 @@ pub struct Bench {
     pub relay: Relay,
     pub status: Status,
     pub tools: Box<dyn Tools>,
+    /// The registry the tools' children run in; the suite registers the
+    /// servers it starts there too, so a cancel reaches them.
+    pub children: Children,
     /// The operator's interrupt, which every wait of a sequence ends on.
     pub cancel: Cancel,
     /// Interruptible in production ([`crate::sleep`]); instant in tests.

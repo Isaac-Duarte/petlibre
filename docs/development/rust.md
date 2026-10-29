@@ -69,7 +69,7 @@ Every crate sets `license.workspace = true` and `publish.workspace = true`, and 
 
 cargo-deny's `wrappers` keep the bench's hardware edge inside the crates that need it:
 
-- `wellfed-relay` may be linked only from `wellfed-bench`, `wellfed-rig` and `wellfed-itest`.
+- `wellfed-relay` may be linked only from `wellfed-bench`, `wellfed-bench-server`, `wellfed-rig` and `wellfed-itest`.
 - `wellfed-build` may be linked only from `wellfed-rig`. Its tests freeze a stock review; the rig signs through `wellfed-signing`.
 - So the read-only page, `wellfed-dashboard`, cannot link either. Adding one to it fails `check-deps`.
 

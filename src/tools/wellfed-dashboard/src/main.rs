@@ -1,7 +1,9 @@
-//! `wellfed-dashboard`: serve the bench's read-only page until Ctrl+C,
-//! attached to whatever runs: a bench command or integration run in another
-//! terminal, and a `wellfed-stock serve` if one is up.
+//! `wellfed-dashboard`: serve the bench's read-only page until Ctrl+C: the
+//! evidence sessions, the integration suite's runs, the command history and
+//! a `wellfed-stock serve` if one is up.
 //!
+//! The running command and the relays are the bench server's, which the
+//! page alone cannot see; `wellfed-bench serve --ui` serves it with them.
 //! It links no relay driver and no flash client, so it can run beside any
 //! bench operation without touching relays, the UART or flash.
 
@@ -63,7 +65,13 @@ fn run(cli: Cli, stop: Cancel) -> anyhow::Result<()> {
     let flash_bin = cli.flash_bin.unwrap_or_else(default_flash_bin);
 
     let listen = Listen::new(&cli.listen, cli.ui_port)?;
-    let page = wellfed_dashboard::start(root, flash_bin, &listen, stop)?;
+    let page = wellfed_dashboard::start(
+        root,
+        flash_bin,
+        &listen,
+        stop,
+        std::sync::Arc::new(wellfed_dashboard::NoLive),
+    )?;
     println!("Bench page on {} (Ctrl+C to stop)", listen.url());
 
     page.join()

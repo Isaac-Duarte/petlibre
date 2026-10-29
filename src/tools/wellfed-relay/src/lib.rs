@@ -109,23 +109,63 @@ impl Link for SerialLink {
     }
 }
 
+/// A board with the bench's four switches. The SH-UR04A speaks AT commands
+/// ([`AtBoard`]); a board that reports more (the Wellfed Bench board's
+/// telemetry) implements this beside it, and the bench drives either
+/// through [`Relay`].
+pub trait Board: Send {
+    /// Switch `channel`, returning only once the board acknowledged it.
+    fn set(&mut self, channel: u8, switch: Switch) -> Result<()>;
+    /// The channel's state as the board reports it.
+    fn get(&mut self, channel: u8) -> Result<bool>;
+}
+
+/// The relay board a sequence drives.
 pub struct Relay {
-    link: Box<dyn Link>,
+    board: Box<dyn Board>,
 }
 
 impl Relay {
+    /// An AT board over `link`.
     pub fn new(link: Box<dyn Link>) -> Self {
-        Self { link }
+        Self::of(Box::new(AtBoard { link }))
+    }
+
+    pub fn of(board: Box<dyn Board>) -> Self {
+        Self { board }
     }
 
     pub fn open(path: &str) -> Result<Self> {
-        Ok(Self::new(Box::new(SerialLink::open(path)?)))
+        Ok(Self::of(Box::new(AtBoard::open(path)?)))
     }
 
     /// No board: every command fails. For a command that never switches a
     /// relay, so it does not hold the board's port while it runs.
     pub fn detached() -> Self {
         Self::new(Box::new(Detached))
+    }
+
+    pub fn set(&mut self, channel: u8, switch: Switch) -> Result<()> {
+        self.board.set(channel, switch)
+    }
+
+    pub fn get(&mut self, channel: u8) -> Result<bool> {
+        self.board.get(channel)
+    }
+}
+
+/// The SH-UR04A's AT protocol over a serial link.
+pub struct AtBoard {
+    link: Box<dyn Link>,
+}
+
+impl AtBoard {
+    pub fn new(link: Box<dyn Link>) -> Self {
+        Self { link }
+    }
+
+    pub fn open(path: &str) -> Result<Self> {
+        Ok(Self::new(Box::new(SerialLink::open(path)?)))
     }
 
     fn command(&mut self, text: &str) -> Result<Vec<u8>> {
@@ -139,8 +179,10 @@ impl Relay {
         }
         Ok(reply)
     }
+}
 
-    pub fn set(&mut self, channel: u8, switch: Switch) -> Result<()> {
+impl Board for AtBoard {
+    fn set(&mut self, channel: u8, switch: Switch) -> Result<()> {
         let value = u8::from(switch.is_on());
         let reply = self.command(&format!("AT+CH{channel}={value}"))?;
         if reply != format!("OK+CH{channel}={value}").as_bytes() {
@@ -152,7 +194,7 @@ impl Relay {
         Ok(())
     }
 
-    pub fn get(&mut self, channel: u8) -> Result<bool> {
+    fn get(&mut self, channel: u8) -> Result<bool> {
         let reply = self.command(&format!("AT+CH{channel}=?"))?;
         let on = reply == format!("OK+CH{channel}=1").as_bytes();
         if !on && reply != format!("OK+CH{channel}=0").as_bytes() {

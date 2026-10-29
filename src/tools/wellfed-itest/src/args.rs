@@ -5,12 +5,13 @@
 use std::path::PathBuf;
 
 use clap::Args;
+use serde::{Deserialize, Serialize};
 use wellfed_formats::bench::catalog::Tier;
 use wellfed_formats::stock::SERVER_CONFIG;
 use wellfed_rig::commands::ota::{Firmware, Variant, parse_firmware, parse_variant};
 use wellfed_rig::device::OWNER_KEYS;
 
-#[derive(Debug, Clone, Args)]
+#[derive(Debug, Clone, Args, Serialize, Deserialize)]
 pub struct ItestArgs {
     /// Session name: private/captures/NAME-uart-01, …, private/verification/NAME-*.
     #[arg(required_unless_present = "list")]
@@ -80,7 +81,7 @@ impl ItestArgs {
     }
 }
 
-#[derive(Debug, Clone, Args)]
+#[derive(Debug, Clone, Args, Serialize, Deserialize)]
 pub struct StockOtaArgs {
     /// Session name: private/captures/NAME-uart-01, …, private/verification/NAME-*.
     pub name: String,

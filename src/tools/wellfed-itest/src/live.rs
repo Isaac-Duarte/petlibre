@@ -29,6 +29,7 @@ use serde::Deserialize;
 use serde::de::IgnoredAny;
 
 use crate::args::ItestArgs;
+use wellfed_formats::bench::live::ActivityKind;
 use wellfed_formats::bench::progress::StepState;
 use wellfed_formats::bench::{CAPTURES, VERIFICATION};
 use wellfed_formats::require;
@@ -38,7 +39,7 @@ use wellfed_rig::commands::Bench;
 use wellfed_rig::commands::ota::{self, OtaArgs, Staged, Target, Timing};
 use wellfed_rig::device::{Answer, Ask, Device, Intruder, Rebuffed};
 use wellfed_rig::server::{StockStatus, TrialAnswer, TrialRequest, TrialResolve};
-use wellfed_rig::tools::{Capture, CaptureFailure, InstallJob, Installing, PushError};
+use wellfed_rig::tools::{Capture, CaptureFailure, InstallJob, Installing, PushError, Tracked};
 use wellfed_rig::{Waited, say, wait_child};
 use wellfed_stock_api::{Auth, StockApi};
 
@@ -100,10 +101,14 @@ struct HotspotFile {
 /// The fixed trial port stock's URL names (`wellfed_stock::ota::image::PORT`).
 const IMAGE_PORT: u16 = 8088;
 
+/// A `wellfed-stock` child, registered with the bench's children while it
+/// runs, so a cancel reaches it.
+type Running = (Child, Tracked);
+
 #[derive(Default)]
 struct Children {
-    serve: Option<Child>,
-    images: Option<Child>,
+    serve: Option<Running>,
+    images: Option<Running>,
 }
 
 pub(super) struct LiveRig<'b> {
@@ -260,7 +265,7 @@ impl<'b> LiveRig<'b> {
             .any(|line| line == self.connection))
     }
 
-    fn spawn(&self, program: &Path, args: &[&str]) -> Result<Child> {
+    fn spawn(&self, program: &Path, args: &[&str]) -> Result<Running> {
         let log = File::options()
             .create(true)
             .append(true)
@@ -272,7 +277,12 @@ impl<'b> LiveRig<'b> {
             .stdout(log.try_clone()?)
             .stderr(log)
             .spawn()?;
-        Ok(child)
+        let label = args.first().copied().unwrap_or_default();
+        let tracked = self
+            .bench
+            .children
+            .track(&child, ActivityKind::Stock, label);
+        Ok((child, tracked))
     }
 
     /// Wait for `ready`, failing early if `child` exits first.
@@ -312,7 +322,7 @@ impl<'b> LiveRig<'b> {
             args.push("--enable-ota-trial");
         }
         let mut child = self.spawn(&self.stock_bin(), &args)?;
-        let ready = self.until_ready(&mut child, "wellfed-stock serve", || {
+        let ready = self.until_ready(&mut child.0, "wellfed-stock serve", || {
             self.api
                 .get::<IgnoredAny>("/health", Auth::Anonymous)
                 .is_ok()
@@ -323,8 +333,10 @@ impl<'b> LiveRig<'b> {
 
     /// SIGTERM, which `serve` handles by stopping its broker child too; a
     /// kill if it is still running after [`STOP_WAIT`].
-    fn stop(child: Option<Child>) {
-        let Some(mut child) = child else { return };
+    fn stop(running: Option<Running>) {
+        let Some((mut child, _tracked)) = running else {
+            return;
+        };
         let pid = rustix::process::Pid::from_child(&child);
         let _ = rustix::process::kill_process(pid, rustix::process::Signal::TERM);
 
@@ -588,7 +600,7 @@ impl Rig for LiveRig<'_> {
         ];
         let mut child = self.spawn(&self.stock_bin(), &args)?;
         let listener = SocketAddr::new(self.mqtt.ip(), IMAGE_PORT);
-        let ready = self.until_ready(&mut child, "wellfed-stock ota-images", || {
+        let ready = self.until_ready(&mut child.0, "wellfed-stock ota-images", || {
             read(&lease_path).is_some_and(|lease| Some(&lease) != before.as_ref())
                 && TcpStream::connect_timeout(&listener, Duration::from_millis(500)).is_ok()
         });

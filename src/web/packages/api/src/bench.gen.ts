@@ -5,7 +5,7 @@
 export type JsonValue = number | string | boolean | Array<JsonValue> | { [key in string]: JsonValue } | null;
 
 /**
- * How a command went, as `current.json` and the history record it.
+ * How a command went, as its record and the history keep it.
  */
 export type Outcome = "running" | "pass" | "stopped" | "ended";
 
@@ -42,6 +42,9 @@ export type BenchCommand = "status" | "off" | "on" | "capture" | "boot" | "loade
 
 export type HistoryEntry = { command: BenchCommand, name: string | null, started: number, finished: number | null, outcome: Outcome, error: string | null, next?: string | null, };
 
+/**
+ * A relay's state as the board last acknowledged or reported it, and when.
+ */
 export type RelayState = { on: boolean, at: number, };
 
 /**
@@ -119,8 +122,9 @@ rx: TailView | null, script: ScriptView | null,
 qa: QaView | null, };
 
 /**
- * `current.json` as the page reads it: a dead process's `running` record
- * shows as `ended`, and capture and transfer carry what has arrived so far.
+ * The running command's record as the page reads it: a dead process's
+ * `running` record shows as `ended`, and capture and transfer carry what has
+ * arrived so far.
  */
 export type CurrentView = { pid: number, command: BenchCommand, name: string | null, started: number, finished: number | null, outcome: Outcome, error: string | null, steps: Array<Step>, progress: Progress | null, capture: CaptureView | null, transfer: TransferView | null, relay: { [key in string]: boolean }, lines: Array<string>, next: string | null, flash_tool: FlashTool | null, 
 /**

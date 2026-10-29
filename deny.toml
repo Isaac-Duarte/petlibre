@@ -60,7 +60,7 @@ allow-wildcard-paths = true
 # cargo-deny cannot express without banning the crate itself, so
 # `cargo xtask check-repository` refuses a manifest under src/ that names it.
 deny = [
-    { crate = "wellfed-relay", wrappers = ["wellfed-bench", "wellfed-itest", "wellfed-rig"], reason = "the relay board is driven only by the bench, its rig and its suite" },
+    { crate = "wellfed-relay", wrappers = ["wellfed-bench", "wellfed-bench-server", "wellfed-itest", "wellfed-rig"], reason = "the relay board is driven only by the bench, its server, its rig and its suite" },
     { crate = "wellfed-build", wrappers = ["wellfed-rig"], reason = "the builder runs as its own process; only the rig's tests link it, to freeze a stock review" },
     # The SDK (src/sdk) depends on no product crate: product policy and
     # schema reach the firmware above it. The feeder's stores reach the SDK

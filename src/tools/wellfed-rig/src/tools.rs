@@ -19,16 +19,23 @@ use wellfed_formats::canonical::sha256;
 
 use crate::device::{Answer, Ask, Device, DeviceError, DeviceStatus, Fault};
 use crate::{Cancel, Error, Result, Waited, wait_child};
+use wellfed_formats::bench::live::ActivityKind;
 use wellfed_formats::bench::progress::{FlashTool, Status};
 use wellfed_formats::bench::relative;
 use wellfed_formats::require;
 use wellfed_formats::session::Status as SessionStatus;
 use wellfed_signing::CONTAINER_HEADER;
 
+mod children;
+pub use children::{Children, Tracked};
+
 /// How long a receive-only capture may take to hold the UART port.
 const OBSERVER_START: Duration = Duration::from_secs(10);
 /// How often a running child is looked at again.
 const CHILD_POLL: Duration = Duration::from_millis(50);
+/// A receive-only capture's label in the registry, which the live state
+/// reads as the UART being captured.
+const OBSERVE_LABEL: &str = "read observe";
 
 pub trait Tools {
     /// Start a receive-only capture of `length` and return once it holds the
@@ -345,6 +352,9 @@ pub struct Processes {
     /// Ends every wait on a child, which is then killed or left to its own
     /// interrupt handling.
     cancel: Cancel,
+    /// Every child runs registered here while it runs, so a cancel can
+    /// signal it and the server can show it.
+    children: Children,
     /// Opened at the first status check and kept, with its session.
     device: Option<Device>,
 }
@@ -356,6 +366,7 @@ impl Processes {
         stock_bin: PathBuf,
         build_bin: PathBuf,
         cancel: Cancel,
+        children: Children,
     ) -> Self {
         Self {
             root,
@@ -363,9 +374,19 @@ impl Processes {
             stock_bin,
             build_bin,
             cancel,
+            children,
             device: None,
         }
     }
+}
+
+/// A child's label in the registry: its first two words, the subcommand.
+fn subcommand(args: &[String]) -> String {
+    args.iter()
+        .take(2)
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn beside_this(name: &str) -> PathBuf {
@@ -417,13 +438,21 @@ fn exit_code(status: std::process::ExitStatus) -> i32 {
     status.code().unwrap_or(1)
 }
 
+/// What a streamed child is, for the registry.
+struct Spawn<'a> {
+    children: &'a Children,
+    kind: ActivityKind,
+    label: String,
+}
+
 /// Run a child to completion: stderr streams as it comes, stdout (a summary)
 /// is shown after; both are kept with the progress.
-fn stream(mut command: Command, status: &mut Status) -> Result<i32> {
+fn stream(mut command: Command, status: &mut Status, spawn: &Spawn<'_>) -> Result<i32> {
     let mut child = command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
+    let _tracked = spawn.children.track(&child, spawn.kind, &spawn.label);
 
     // Drain stdout on its own thread so neither pipe fills and blocks the
     // child while stderr streams here.
@@ -451,12 +480,13 @@ fn stream(mut command: Command, status: &mut Status) -> Result<i32> {
 /// Run a child to completion with both outputs streamed line by line as they
 /// come (a build prints its progress on stdout). Lines are read as bytes, so
 /// output that is not UTF-8 is shown lossily rather than left unread.
-fn stream_both(mut command: Command, status: &mut Status) -> Result<i32> {
+fn stream_both(mut command: Command, status: &mut Status, spawn: &Spawn<'_>) -> Result<i32> {
     let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
+    let _tracked = spawn.children.track(&child, spawn.kind, &spawn.label);
 
     let (sender, lines) = mpsc::channel();
     let pipes: [(Box<dyn Read + Send>, bool); 2] = [
@@ -522,9 +552,13 @@ impl Tools for Processes {
             .args(["--seconds", &length.as_secs_f64().to_string()])
             .stdout(Stdio::null())
             .spawn()?;
+        let tracked = self
+            .children
+            .track(&child, ActivityKind::Flash, OBSERVE_LABEL);
         let mut observer = Observing {
             child,
             output: output.to_path_buf(),
+            _tracked: tracked,
         };
 
         let waited = wait_child(
@@ -554,7 +588,12 @@ impl Tools for Processes {
     fn flash(&mut self, args: &[String], status: &mut Status) -> Result<i32> {
         let mut command = self.flash_command()?;
         command.args(args);
-        stream(command, status)
+        let spawn = Spawn {
+            children: &self.children,
+            kind: ActivityKind::Flash,
+            label: subcommand(args),
+        };
+        stream(command, status, &spawn)
     }
 
     fn install(&mut self, job: &InstallJob) -> Result<Box<dyn Installing>> {
@@ -583,15 +622,28 @@ impl Tools for Processes {
     fn build(&mut self, args: &[String], status: &mut Status) -> Result<i32> {
         let mut command = self.build_command()?;
         command.args(args);
-        stream_both(command, status)
+        let spawn = Spawn {
+            children: &self.children,
+            kind: ActivityKind::Build,
+            label: subcommand(args),
+        };
+        stream_both(command, status, &spawn)
     }
 
     fn build_query(&mut self, args: &[String]) -> Result<Captured> {
-        let output = self
+        let child = self
             .build_command()?
             .args(args)
             .stdin(Stdio::null())
-            .output()?;
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+        let tracked = self
+            .children
+            .track(&child, ActivityKind::Build, &subcommand(args));
+        let output = child.wait_with_output()?;
+        drop(tracked);
+
         Ok(Captured {
             code: exit_code(output.status),
             stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
@@ -611,10 +663,11 @@ impl Tools for Processes {
         let chain = Arc::clone(&shared);
         let port = port.to_string();
         let seconds = length.as_secs_f64().to_string();
-        let (flash, root, cancel) = (
+        let (flash, root, cancel, children) = (
             self.flash_bin.clone(),
             self.root.clone(),
             self.cancel.clone(),
+            self.children.clone(),
         );
 
         let thread = std::thread::spawn(move || {
@@ -636,6 +689,7 @@ impl Tools for Processes {
                     Ok(child) => child,
                     Err(error) => return chain.fail(CaptureFailure::Spawn(error)),
                 };
+                let _tracked = children.track(&child, ActivityKind::Flash, OBSERVE_LABEL);
                 chain.started(output);
 
                 let waited = wait_child(
@@ -687,9 +741,13 @@ impl Tools for Processes {
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .spawn()?;
+        let tracked = self
+            .children
+            .track(&child, ActivityKind::Analyzer, "capture");
         Ok(Box::new(Sigrok {
             child,
             cancel: self.cancel.clone(),
+            _tracked: tracked,
         }))
     }
 
@@ -764,6 +822,7 @@ impl Drop for Chain {
 struct Observing {
     child: Child,
     output: PathBuf,
+    _tracked: Tracked,
 }
 
 impl Observer for Observing {
@@ -786,6 +845,7 @@ impl Observer for Observing {
 struct Sigrok {
     child: Child,
     cancel: Cancel,
+    _tracked: Tracked,
 }
 
 impl Analyzer for Sigrok {
@@ -869,6 +929,7 @@ mod tests {
             stock_bin: tmp.path().join("absent"),
             build_bin: tmp.path().join("absent"),
             cancel: Cancel::new(),
+            children: Children::new(),
             device: None,
         };
         let mut status = Status::new(tmp.path(), tmp.path().join("status"));
@@ -900,6 +961,7 @@ echo '{"status":"complete","result":{"bytes":7}}' > "$8/report.json""#,
             stock_bin: tmp.path().join("absent"),
             build_bin: tmp.path().join("absent"),
             cancel: Cancel::new(),
+            children: Children::new(),
             device: None,
         };
         let output = tmp.path().join("capture");
@@ -921,6 +983,7 @@ echo '{"status":"complete","result":{"bytes":7}}' > "$8/report.json""#,
             stock_bin: tmp.path().join("absent"),
             build_bin: tmp.path().join("absent"),
             cancel: Cancel::new(),
+            children: Children::new(),
             device: None,
         };
 
@@ -949,6 +1012,7 @@ echo '{"status":"complete","result":{"bytes":7}}' > "$8/report.json""#,
             stock_bin: "/bin/sh".into(),
             build_bin: tmp.join("absent"),
             cancel: Cancel::new(),
+            children: Children::new(),
             device: None,
         };
         let root = tmp.to_path_buf();
@@ -1048,6 +1112,7 @@ echo '{"status":"complete","result":{"bytes":7}}' > "$8/report.json""#,
             stock_bin: tmp.path().join("absent"),
             build_bin: builder,
             cancel: Cancel::new(),
+            children: Children::new(),
             device: None,
         };
         let mut status = Status::new(tmp.path(), tmp.path().join("status"));
@@ -1086,6 +1151,7 @@ echo '{"status":"complete","result":{"bytes":7}}' > "$8/report.json""#,
             stock_bin: tmp.path().join("absent"),
             build_bin: tmp.path().join("absent"),
             cancel: Cancel::new(),
+            children: Children::new(),
             device: None,
         };
         let mut status = Status::disabled();

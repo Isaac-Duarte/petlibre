@@ -1,12 +1,15 @@
-//! The bench's progress document for its page, in `private/bench-status/`:
-//! - `current.json`: rewritten atomically, at most every 0.2 s while output streams
+//! A bench command's progress: its steps, the counts its tools print, its
+//! relay changes and its active capture.
+//!
+//! [`Status`] keeps the running command's record ([`Current`]) in memory and
+//! hands each change to a [`ProgressSink`]. The bench server's sink
+//! publishes it as live state, which the page and the clients follow. Two
+//! files in `private/bench-status/` outlive the process:
 //! - `current.log`: the full output of the running command
 //! - `history.jsonl`: one line per command
-//! - `relays.json`: the last state each relay was set to or read as
 //!
-//! The bench writes them through [`Status`]; the page only reads them, and
-//! never queries or drives the bench. The JSON fields are the ones `bench.py`
-//! wrote, so older history still reads.
+//! The history's fields are the ones `bench.py` wrote, so older history
+//! still reads.
 
 use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
@@ -19,13 +22,11 @@ use serde::{Deserialize, Serialize};
 use super::{now, relative};
 use crate::Result;
 
-pub const CURRENT: &str = "current.json";
 pub const LOG: &str = "current.log";
 pub const HISTORY: &str = "history.jsonl";
-pub const RELAYS: &str = "relays.json";
 const KEPT_LINES: usize = 40;
 
-/// How a command went, as `current.json` and the history record it.
+/// How a command went, as its record and the history keep it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "lowercase")]
@@ -65,6 +66,31 @@ pub enum BenchCommand {
     StockOta,
 }
 
+impl BenchCommand {
+    /// The command's CLI name, as the history records it.
+    pub fn word(self) -> &'static str {
+        match self {
+            Self::Status => "status",
+            Self::Off => "off",
+            Self::On => "on",
+            Self::Capture => "capture",
+            Self::Boot => "boot",
+            Self::Loader => "loader",
+            Self::Transients => "transients",
+            Self::Dump => "dump",
+            Self::FlashPrepare => "flash-prepare",
+            Self::FlashExecute => "flash-execute",
+            Self::GiveWayPrepare => "give-way-prepare",
+            Self::GiveWayExecute => "give-way-execute",
+            Self::StockPrepare => "stock-prepare",
+            Self::StockExecute => "stock-execute",
+            Self::Ota => "ota",
+            Self::Itest => "itest",
+            Self::StockOta => "stock-ota",
+        }
+    }
+}
+
 /// What a progress count counts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -92,7 +118,7 @@ impl StepState {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct Current {
     #[serde(default)]
@@ -176,7 +202,7 @@ pub struct Progress {
     pub at: f64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct Capture {
     /// Root-relative capture directory.
@@ -185,7 +211,7 @@ pub struct Capture {
     pub started: f64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct Transfer {
     /// Root-relative session directory.
@@ -219,6 +245,7 @@ pub struct HistoryEntry {
     pub next: Option<String>,
 }
 
+/// A relay's state as the board last acknowledged or reported it, and when.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct RelayState {
@@ -226,22 +253,30 @@ pub struct RelayState {
     pub at: f64,
 }
 
-/// When a progress write reaches `current.json`: at once, for a change the
-/// page must show (a step, an outcome), or at most every 0.2 s, for the
-/// stream of tool output lines.
+/// When a change reaches the sink: at once, for a change the page must show
+/// (a step, an outcome), or at most every 0.2 s, for the stream of tool
+/// output lines.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Flush {
     Now,
     Throttled,
 }
 
-/// What this process did. Disabled (no directory) in tests and for `status`.
+/// Where a command's record goes each time it changes. It is called on the
+/// command's own thread, between its steps, so it must return promptly and
+/// never wait on the command.
+pub trait ProgressSink: Send {
+    fn publish(&mut self, current: &Current);
+}
+
+/// What this process did. Disabled (no directory, no sink) in tests.
 pub struct Status {
     directory: Option<PathBuf>,
     root: PathBuf,
     state: Option<Current>,
     written: Option<Instant>,
     log: Option<File>,
+    sink: Option<Box<dyn ProgressSink>>,
     /// The steps are the command's own (the suite's scenarios); a child's
     /// step, such as a build inside one, does not add to them.
     fixed: bool,
@@ -255,16 +290,24 @@ impl Status {
             state: None,
             written: None,
             log: None,
+            sink: None,
             fixed: false,
         }
     }
 
+    /// Keeps the log and the history in `directory`. The record itself goes
+    /// only to a sink given with [`Self::with_sink`].
     pub fn new(root: &Path, directory: PathBuf) -> Self {
         Self {
             directory: Some(directory),
             root: root.to_path_buf(),
             ..Self::disabled()
         }
+    }
+
+    pub fn with_sink(mut self, sink: Box<dyn ProgressSink>) -> Self {
+        self.sink = Some(sink);
+        self
     }
 
     pub fn begin(
@@ -405,21 +448,11 @@ impl Status {
         self.write_quietly(Flush::Now);
     }
 
+    /// A relay this command set or read. The server's live state carries the
+    /// board's own view of all four.
     pub fn relay(&mut self, channel: u8, on: bool) {
         if let Some(state) = &mut self.state {
             state.relay.insert(channel.to_string(), on);
-        }
-
-        if let Some(directory) = &self.directory {
-            let path = directory.join(RELAYS);
-            let mut relays: BTreeMap<String, RelayState> = fs::read_to_string(&path)
-                .ok()
-                .and_then(|text| serde_json::from_str(&text).ok())
-                .unwrap_or_default();
-            relays.insert(channel.to_string(), RelayState { on, at: now() });
-            if let Ok(text) = serde_json::to_string(&relays) {
-                let _ = replace(&path, text.as_bytes());
-            }
         }
         self.write_quietly(Flush::Now);
     }
@@ -492,7 +525,7 @@ impl Status {
     }
 
     pub fn write(&mut self, when: Flush) -> Result<()> {
-        let Some(directory) = &self.directory else {
+        let (Some(sink), Some(state)) = (&mut self.sink, &self.state) else {
             return Ok(());
         };
         if when == Flush::Throttled
@@ -504,8 +537,7 @@ impl Status {
         }
 
         self.written = Some(Instant::now());
-        fs::create_dir_all(directory)?;
-        replace(&directory.join(CURRENT), &serde_json::to_vec(&self.state)?)?;
+        sink.publish(state);
         Ok(())
     }
 }
@@ -518,20 +550,6 @@ fn append_history(directory: &Path, entry: &HistoryEntry) -> Result<()> {
         .open(directory.join(HISTORY))?;
     writeln!(stream, "{line}")?;
     Ok(())
-}
-
-/// The record of the last command in `directory`, if it reads.
-pub fn current(directory: &Path) -> Option<Current> {
-    let text = fs::read_to_string(directory.join(CURRENT)).ok()?;
-    serde_json::from_str(&text).ok()
-}
-
-/// Write beside the target, then rename over it, so a reader never sees a
-/// half-written file.
-fn replace(path: &Path, data: &[u8]) -> std::io::Result<()> {
-    let temporary = path.with_extension("json.tmp");
-    fs::write(&temporary, data)?;
-    fs::rename(temporary, path)
 }
 
 /// `Read N/M bytes`, `Verified changed sectors: N/M` or the over-the-air
@@ -564,10 +582,31 @@ fn progress_count(text: &str) -> Option<(u64, u64, Unit)> {
 mod tests {
     use super::*;
 
+    /// Keeps every record it is given, as JSON, for the test to read back.
+    #[derive(Clone, Default)]
+    struct Recorded(std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>>);
+
+    impl ProgressSink for Recorded {
+        fn publish(&mut self, current: &Current) {
+            self.0
+                .lock()
+                .unwrap()
+                .push(serde_json::to_value(current).unwrap());
+        }
+    }
+
+    impl Recorded {
+        fn last(&self) -> serde_json::Value {
+            self.0.lock().unwrap().last().cloned().unwrap()
+        }
+    }
+
     #[test]
     fn records_steps_progress_relays_and_history() {
         let tmp = tempfile::tempdir().unwrap();
-        let mut status = Status::new(tmp.path(), tmp.path().to_path_buf());
+        let sink = Recorded::default();
+        let mut status =
+            Status::new(tmp.path(), tmp.path().to_path_buf()).with_sink(Box::new(sink.clone()));
         status
             .begin(
                 BenchCommand::Dump,
@@ -582,17 +621,15 @@ mod tests {
         status.line("Read 4096/8388608 bytes\n");
         status.write(Flush::Now).unwrap();
 
-        let read = |name| -> serde_json::Value {
-            serde_json::from_str(&fs::read_to_string(tmp.path().join(name)).unwrap()).unwrap()
-        };
-        let current = read(CURRENT);
+        let current = sink.last();
         assert_eq!(current["steps"][0]["state"], "done");
         assert_eq!(current["steps"][1]["state"], "running");
         assert_eq!(current["outcome"], "running");
         assert_eq!(current["progress"]["done"], 4096);
         assert_eq!(current["progress"]["unit"], "bytes");
         assert_eq!(current["relay"], serde_json::json!({"1": true}));
-        assert_eq!(read(RELAYS)["1"]["on"], true);
+        // The record lives only in the sink.
+        assert!(!tmp.path().join("current.json").exists());
 
         let first = status.state.as_ref().unwrap().progress.clone().unwrap();
         status.line("Read 8192/8388608 bytes");
@@ -604,7 +641,7 @@ mod tests {
         );
 
         status.finish(1, Some("Observer failed".into()));
-        let current = read(CURRENT);
+        let current = sink.last();
         assert_eq!(current["outcome"], "stopped");
         assert_eq!(current["steps"][1]["state"], "failed");
 
@@ -681,6 +718,20 @@ mod tests {
                 ("requests", StepState::Failed)
             ]
         );
+    }
+
+    #[test]
+    fn a_command_s_word_is_its_history_name() {
+        for command in [
+            BenchCommand::Status,
+            BenchCommand::Capture,
+            BenchCommand::FlashExecute,
+            BenchCommand::GiveWayPrepare,
+            BenchCommand::StockOta,
+        ] {
+            let named = serde_json::to_value(command).unwrap();
+            assert_eq!(named, command.word(), "{command:?}");
+        }
     }
 
     #[test]

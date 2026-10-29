@@ -386,6 +386,7 @@ fn rig() -> Rig {
         relay: Relay::new(Box::new(board.clone())),
         status: Status::disabled(),
         tools: Box::new(tools.clone()),
+        children: crate::tools::Children::new(),
         cancel: Cancel::new(),
         sleep: |_, _| Ok(()),
         off_time: Duration::from_secs(2),

@@ -11,7 +11,6 @@ use wellfed_formats::canonical::sha256;
 use wellfed_formats::session::{Lifecycle, Status};
 
 use super::{Sources, history, modified, read, serial_sizes};
-use wellfed_formats::bench::progress;
 use wellfed_formats::bench::{CAPTURES, FLASH_BACKUPS, Paths, VERIFICATION, plain_name, relative};
 
 const SESSIONS_SHOWN: usize = 40;
@@ -119,7 +118,8 @@ pub(crate) fn sessions(sources: &Sources) -> Sessions {
     list.truncate(SESSIONS_SHOWN);
 
     // A report left "running" by a process that exited without finishing it.
-    let live = progress::current(&sources.status())
+    let live = sources
+        .current()
         .filter(crate::live)
         .and_then(|current| current.name);
     let sessions = list
@@ -307,18 +307,18 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::views::tests::{json, sources};
-    use wellfed_formats::bench::progress::{BenchCommand, Status};
+    use crate::views::tests::{json, live_sources};
+    use wellfed_formats::bench::progress::BenchCommand;
 
     #[test]
     fn a_running_report_reads_as_ended_unless_its_command_is_live() {
-        let (_tmp, sources) = sources();
+        let (_tmp, sources, live) = live_sources();
         let p = Paths::new(&sources.root, "s2");
         fs::create_dir_all(&p.execute).unwrap();
         fs::write(p.execute.join("report.json"), r#"{"status": "running"}"#).unwrap();
         assert_eq!(json(sessions(&sources))["sessions"][0]["outcome"], "ended");
 
-        let mut status = Status::new(&sources.root, sources.status());
+        let mut status = live.status(&sources);
         status
             .begin(BenchCommand::FlashExecute, Some("s2"), &[])
             .unwrap();
@@ -331,7 +331,7 @@ mod tests {
 
     #[test]
     fn sessions_group_evidence_and_show_the_plan_and_next_command() {
-        let (_tmp, sources) = sources();
+        let (_tmp, sources, live) = live_sources();
         let p = Paths::new(&sources.root, "s1");
         fs::create_dir_all(&p.loader).unwrap();
         fs::create_dir_all(&p.inspect).unwrap();
@@ -346,7 +346,7 @@ mod tests {
             r#"{"operation_plan": {"bank": 1, "erase_sectors": 2, "ordered_sectors": [{}, {}]}}"#;
         fs::write(&p.plan, plan).unwrap();
 
-        let mut status = Status::new(&sources.root, sources.status());
+        let mut status = live.status(&sources);
         status
             .begin(BenchCommand::FlashPrepare, Some("s1"), &[])
             .unwrap();

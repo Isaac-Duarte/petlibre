@@ -4,6 +4,8 @@ The relay bench lets one computer power the feeder, enter its ROM loader, flash 
 
 `wellfed-bench` ([source](../../../src/tools/wellfed-bench)) adds power and strap control only. Every serial read, inspection, plan and write runs as a separate `wellfed-flash` process, so the [flash client's](../../development/rust-flash.md) pinned checks, plan hashes and no-retry stops apply unchanged.
 
+The bench is one server. `wellfed-bench serve` runs in a terminal of its own and holds the bench for as long as it runs. Every other command is its client: it asks the server to run the command as a job, prints the job's output and exits with its code.
+
 Running any bench command is a physical operation on the feeder. Build and check targets never call it: `cargo test` and `make check` never reach the bench.
 
 ## Safety rules
@@ -11,7 +13,7 @@ Running any bench command is a physical operation on the feeder. Build and check
 These hold for every command on this page. The sections below give the detail.
 
 - **Relay 1 is feeder power, and the kill switch.** All four relays are normally open, so if the relay board loses USB the feeder goes off and the strap is released ([wiring](#wiring)).
-- **One tool drives the bench at a time.** Every command that touches relays, serial, an install or flash takes the [bench lease](#bench-lease) first. A killed run leaves a lease the next run refuses to override.
+- **One tool drives the bench at a time.** The bench server holds the [bench lease](#bench-lease) for its life and runs one job at a time. A second job is refused, never queued. A killed server leaves a lease the next one refuses to override.
 - **Unattended motion follows the owner's rules:** hopper empty, the D cells out so relay 1 is the kill switch, nobody at the bench, the bench lease free, and at most 3 portions a feed. Only `feed-writes` and `sustained`, under `--feeds`, ask the feeder to feed ([sustained run](#sustained-run)).
 - **Motion builds stay manual.** The bench never offers a startup-motion build, refuses the motor pulse under `--build`, and needs `--attended-motion` for any image whose manifest names a motion policy.
 - **A halt cuts relay 1 and leaves it off.** A person looks before power returns.
@@ -46,7 +48,7 @@ A DSD TECH SH-UR04A USB relay board (CP2102 serial, 9600 8N1) adds four switches
    cargo build --locked --release -p wellfed-bench -p wellfed-flash -p wellfed-stock
    ```
 
-   The bench runs the `wellfed-flash` beside itself unless `--flash-bin` names another. `itest` and `stock-ota` run the `wellfed-stock` beside it unless `--stock-bin` names another ([stock server](../../development/stock-server.md)).
+   The server runs the `wellfed-flash` beside itself unless `serve --flash-bin` names another. `itest` and `stock-ota` run the `wellfed-stock` beside it unless `serve --stock-bin` names another ([stock server](../../development/stock-server.md)).
 
 2. Write the ignored `private/bench.json`. The relay board also enumerates as a USB serial port and can take the name the UART adapter used to have, so use `/dev/serial/by-id/` paths:
 
@@ -59,35 +61,46 @@ A DSD TECH SH-UR04A USB relay board (CP2102 serial, 9600 8N1) adds four switches
    }
    ```
 
-3. Check the bench:
+3. Check the bench without a server:
 
    ```sh
    target/release/wellfed-bench status
    ```
 
-   You should see the lease (free), the four relay states and both ports present.
+   You should see the lease (free), no server, the four relay states and both ports present.
 
-Run the bench from the repository root, or pass `--root`. Because the bench never links the flash client in, rebuilding the bench alone does not affect a plan.
+4. Start the server in a terminal of its own:
+
+   ```sh
+   target/release/wellfed-bench serve
+   ```
+
+   You should see the socket, the lease and the four relays. It runs until Ctrl+C. Run every other command from a second terminal.
+
+Run the bench from the repository root, or pass `--root`. A job reads the paths you give it, such as `--target`, from the server's directory, so start the server at the repository root and give paths relative to it. Because the bench never links the flash client in, rebuilding the bench alone does not affect a plan.
 
 ### The crates
 
-The bench is five crates with one-way dependencies:
+The bench is six crates with one-way dependencies:
 
 | Crate | What it does |
 | --- | --- |
-| `wellfed-relay` | The relay board driver |
+| `wellfed-relay` | The relay board driver, behind a `Board` trait the Wellfed Bench board can implement |
 | `wellfed-rig` | The operator sequences, and the steps the suite builds on |
 | `wellfed-itest` | The integration suite, on the rig |
+| `wellfed-bench-server` | The server: the lease, the board and the socket, and the sequences and the suite as its jobs |
 | `wellfed-dashboard` | The read-only progress page. It links neither the relay driver nor the flash client. |
-| `wellfed-bench` | The command line over all of them, as one binary |
+| `wellfed-bench` | The command line over all of them, as one binary: `serve` and its clients |
 
-The files they share (the bench config, the progress document, the run records and the suite's catalog) are typed in `wellfed-formats`. The rig signs offers through `wellfed-signing`. Every build runs as a `wellfed-build` process, and every flash read and write as a `wellfed-flash` process.
+The files and shapes they share (the bench config, a command's progress record, the server's live state, the run records and the suite's catalog) are typed in `wellfed-formats`. The rig signs offers through `wellfed-signing`. Every build runs as a `wellfed-build` process, and every flash read and write as a `wellfed-flash` process.
 
 ## Commands
 
 | Command | Effect |
 | --- | --- |
-| `status` | The [bench lease](#bench-lease), relay states and port presence. `--break-lease` first frees a lease a killed run left. |
+| `serve` | The bench server, in the foreground until Ctrl+C or SIGTERM ([below](#the-bench-server)). `--ui` serves the [progress page](#progress-page) beside it. |
+| `status` | The [bench lease](#bench-lease), then the server's job, its children, the UART and the relays. With no server, it reads the relay board itself. `--break-lease` first frees a lease a killed server left. |
+| `attach ID` | Follow job `ID` of the running server again, from its first kept line |
 | `on`, `off` | Power the feeder with the strap released, or release the strap and cut power |
 | `capture NAME` | Receive-only recording of the running feeder. Power is untouched. |
 | `boot NAME` | Power off, start a receive-only capture, confirm it holds the port, then power on |
@@ -104,13 +117,46 @@ The files they share (the bench config, the progress document, the run records a
 
 `wellfed-bench <command> --help` lists the flags. `flash-prepare` and `flash-execute` take the updater's `--bank`, `--source`, `--original-read`, `--target`, `--interrupted` and `--restore-marker`, and `--attended-motion` for a target whose manifest names a motion policy.
 
+Every command from `on` down is a job: it needs the server running, and refuses otherwise, naming `wellfed-bench serve`.
+
 **Names and evidence.** Session evidence goes to new directories under `private/captures/`, `private/flash-backups/` and `private/verification/`, named after `NAME`. It must be a single plain name. An existing path is refused before any relay changes.
 
-**Stopping.** Ctrl+C stops the running sequence. The `wellfed-flash` child stops itself terminally and records it, and the bench runs the same cleanup as for any stop: the loader and transient sequences power off, and the demo turns the spares off.
+**Stopping.** Ctrl+C in the client's terminal asks the server to cancel the job, and the client keeps printing its cleanup. The server sends SIGINT to the `wellfed-flash` child, which stops itself terminally and records it, and SIGTERM to the job's other children. It never kills the flash client. The sequence then runs the same cleanup as for any stop: the loader and transient sequences power off, and the demo turns the spares off. A second Ctrl+C leaves the job running and exits; `attach ID` follows it again.
+
+### The bench server
+
+`serve` holds four things for its whole life:
+
+- the [bench lease](#bench-lease), which the jobs' children run on;
+- the relay board, opened and read once at the start and read again after every job;
+- the control socket `private/bench.sock`, mode 0600, which only the checkout's owner can reach;
+- its console: every job's output, as it comes, and one line as each job starts and ends.
+
+It runs one job at a time. A job is the same sequence the command always ran, in the server's process. A second job while one runs is refused with the running job named:
+
+```
+Stopped: The bench is busy with job 3 (dump fw-01); wait for it, or cancel it first
+```
+
+A client that disconnects, a closed terminal say, only stops reading. The job runs on, and `attach ID` prints its output again from the start. The server keeps the output of its last 8 jobs.
+
+`ota`, and `itest` or `stock-ota` without `--power`, get a board that refuses every switch, as when they ran without opening it.
+
+Ctrl+C or SIGTERM in the server's terminal stops the server. It refuses new jobs, cancels the running one as a client's Ctrl+C does, waits for its cleanup, then removes the socket and releases the lease.
+
+The socket's routes:
+
+| Route | Answer |
+| --- | --- |
+| `GET /state` | The live state: the job and its next steps, every child it runs, the UART (idle, capturing, a loader session, or writing with sectors verified), and the relays |
+| `GET /events` | The live state again on every change, as server-sent events |
+| `POST /jobs` | 201 with the job's number, 409 while a job runs |
+| `GET /jobs/{id}/stream` | The job's output lines, then its end, as newline-delimited JSON |
+| `POST /jobs/{id}/cancel` | 202, or 409 for a job that already ended |
 
 ### Flash over UART
 
-1. Prepare the update:
+1. With the server running, prepare the update:
 
    ```sh
    target/release/wellfed-bench flash-prepare NAME
@@ -135,7 +181,7 @@ Stock recovery keeps its own commands. Use `loader` to enter the ROM, then run `
 
 One tool drives the bench at a time. Before they touch anything, these take the lease `private/bench.lease`, and remove it when they end, on a stop or Ctrl+C as on success:
 
-- every `wellfed-bench` command except `status` (and `itest --list`);
+- `wellfed-bench serve`, for as long as it runs. The commands that are its jobs take no lease of their own, and `status` only reads it;
 - every `wellfed-flash` command that opens the serial port (`read`, `update`, `give-way`, `stock-recovery`);
 - `wellfed-stock setup-send`;
 - `wellfed-stock serve --enable-ota-trial`, for as long as it runs.
@@ -143,35 +189,40 @@ One tool drives the bench at a time. Before they touch anything, these take the 
 The lease names its holder: its pid, its start time and boot (so a reused pid is not mistaken for it), its host, its command line and when it started. A second tool is refused with that holder named, before it opens a port or switches a relay:
 
 ```
-Stopped: The bench is held by pid 81234 (`wellfed-bench dump fw-01`, since 2026-10-26 12:00:00 UTC on bench); wait for it to finish or stop it
+Stopped: The bench is held by pid 81234 (`wellfed-bench serve`, since 2026-10-26 12:00:00 UTC on bench); wait for it to finish or stop it
 ```
 
-**Chained tools.** A process descended from the holder runs on the holder's lease and leaves it in place. So the children the bench starts (`wellfed-flash` captures, reads and updates; the `serve --enable-ota-trial` of `itest` and `stock-ota`) never wait on their own parent. That is checked once, when the child starts, and the bench waits for or stops its children before it releases. Run by hand, `wellfed-flash` takes the lease itself, so a hand-run read cannot open the UART under a running bench command.
+**Chained tools.** A process descended from the holder runs on the holder's lease and leaves it in place. So the children the server's jobs start (`wellfed-flash` captures, reads and updates; the `serve --enable-ota-trial` of `itest` and `stock-ota`) never wait on their own parent. That is checked once, when the child starts, and a job waits for or stops its children before it ends, as the server waits for its job before it releases. Run by hand, `wellfed-flash` takes the lease itself, so a hand-run read cannot open the UART under a running server.
 
-**Tools that take no lease.** The progress page, alone or as `--ui`, only reads. With a command, the command holds the lease. The offline `wellfed-flash` commands (`plan-stock-recovery`, `decode-status`, `inspect-journal`) and an emulated helper (`WELLFED_FLASH_EMULATOR`, the host tests) take none.
+**Tools that take no lease.** The progress page, alone or as `serve --ui`, only reads; under the server, the server holds the lease. A client only asks the server. The offline `wellfed-flash` commands (`plan-stock-recovery`, `decode-status`, `inspect-journal`) and an emulated helper (`WELLFED_FLASH_EMULATOR`, the host tests) take none.
 
 **The stock server.** `wellfed-stock` keeps the lease beside its `--config`, which on the bench is `private/`.
 
-- A trial-enabled `serve` holds the bench for its whole life, because the install it dispatches runs for minutes after the request. `wellfed-bench off` or `dump` from another terminal is refused until the server stops.
+- A trial-enabled `serve` holds the bench for its whole life, because the install it dispatches runs for minutes after the request. A `wellfed-bench serve` from another terminal is refused until it stops.
 - `ota-trial` takes no lease of its own. It only asks that server, which already holds the bench, so it works from any shell.
 - A plain `serve`, `broker` and `ota-images` take none. They only answer the feeder, beside the bench command that drives it (`ota` beside an operator's `serve`).
 - `network apply` and `network remove` take none either. They change the host's routing, not the bench, and they run under sudo, where a lease would leave a root-owned `private/bench.lease.lock` that later runs as the operator could not open. If one ever does (`Permission denied` on that file), remove it with sudo; it holds nothing.
 
 ### After a killed run
 
-A run killed outright (SIGKILL, a closed terminal) cannot remove its lease. It may have left relays on, a capture running or an update half done. The next tool refuses rather than take the bench over:
+A server killed outright (SIGKILL, a closed terminal) cannot remove its lease or run its job's cleanup. It may have left relays on, a capture running or an update half done. The next server refuses rather than take the bench over:
 
 ```
 Stopped: The bench lease of pid 81234 (…) outlived its process: that run was killed and may have left relays on or an update half done. Check `wellfed-bench status`, then free the bench with `wellfed-bench status --break-lease`
 ```
 
-1. Run `target/release/wellfed-bench status`. It shows the lease first (free, held, or left by a process that is gone) and then the relays, without taking the lease.
-2. Look for children the killed bench started, which may still be running on their own: `pgrep -a wellfed-`. They no longer count as the bench's, so stop them by hand.
+With no server, only `status` runs, and that is the way back:
+
+1. Run `target/release/wellfed-bench status`. It shows the lease first (free, held, or left by a process that is gone), finds no server, and reads the relays itself, without taking the lease.
+2. Look for children the killed server's job started, which may still be running on their own: `pgrep -a wellfed-`. They no longer count as the bench's, so stop them by hand.
 3. Run `target/release/wellfed-bench status --break-lease`. It removes the lease only when its holder is gone, then shows the relays.
+4. Start the server again.
 
 `--break-lease` never breaks a live holder's lease, one written on another host, or a file that is not a lease. Remove the last two by hand once the bench is idle. Against a file that is not a lease, `--break-lease` stops before the relays; plain `status` still shows them.
 
-While a holder keeps the relay port open (a `capture` does for its whole run), `status` shows the lease and then stops with "Serial port: Device or resource busy" instead of the relays.
+While a server runs, `status` shows the relays as the server last read them, since the server holds the board's port. While another holder keeps the port open (a hand-run tool), `status` shows the lease and then stops with "Serial port: Device or resource busy" instead of the relays.
+
+A server killed outright also leaves `private/bench.sock` behind. The next server replaces it once it holds the lease, and until then a client finds nothing answering and says to start one.
 
 Taking, breaking and releasing run under an advisory lock on `private/bench.lease.lock`, which the kernel drops with the process, so two tools racing for a free or stale lease cannot both win. The lease is replaced atomically, so `status` never reads it torn. The lease and its rules are `wellfed_formats::bench::lease`.
 
@@ -229,7 +280,7 @@ The bring-up areas and the trial images are variants of one `bringup` firmware. 
 
 **Timing.** Once any child has run, the command ends with a timing summary: build, review, sign and offer, give-way to activation (the download), activation to confirmation, the status check, and the total. The bench measures build, review and offer itself. The two feeder phases come from each capture's `serial-events.jsonl` chunk times; without that file they fall back to the end of the 60 s segment and say so.
 
-After a fallback, bank 0 refuses the manifest that failed its trial, so sign a new version. Ctrl+C stops the child, the capture or the poll, and the command.
+After a fallback, bank 0 refuses the manifest that failed its trial, so sign a new version. A cancel stops the child, the capture or the poll, and the job.
 
 To install stock instead, see [to stock over the air](#to-stock-over-the-air).
 
@@ -237,7 +288,7 @@ To install stock instead, see [to stock over the air](#to-stock-over-the-air).
 
 `itest` runs named real-device scenarios against the feeder on the bench. It is a bench command, not a test target. Builds go in over the air. The UART stays attached, receive-only, for the whole run: it is what the scenarios assert on, it is the evidence, and it is the way back when the feeder stops answering.
 
-The suite is the `wellfed-itest` crate, which `wellfed-bench` links. `itest` and `stock-ota` run the scenarios on the rig in the bench's own process, so the run, its interrupt and its exit status are the command's. `--list` answers before anything opens.
+The suite is the `wellfed-itest` crate, which the bench server links. `itest` and `stock-ota` are jobs: the server runs the scenarios on the rig in its own process, so the run, its cancel and its exit status are the job's, and the client exits with that status. `--list` answers in the client, with no server.
 
 ```sh
 cargo build --release --bins --examples
@@ -494,23 +545,18 @@ From the confirmed baseline:
 
 ## Progress page
 
-Each command except `status` records its steps, the flash client's progress lines (bytes read, sectors verified), relay changes and the active capture in `private/bench-status/`:
+Each job records its steps, the flash client's progress lines (bytes read, sectors verified), relay changes and the active capture. The record lives in the server's memory, as its live state (`GET /state`). Two files in `private/bench-status/` outlive the server:
 
 | File | Contents |
 | --- | --- |
-| `current.json` | The running command's state |
-| `current.log` | The command's full output |
-| `history.jsonl` | One line per command, including the reviewed next command after a prepare |
-| `relays.json` | The last state each relay was set to or read as |
+| `current.log` | The running job's tool output |
+| `history.jsonl` | One line per job, including the reviewed next command after a prepare |
 
-The fields match what the former Python bench wrote, so older history still shows.
+The history's fields match what the former Python bench wrote, so older history still shows.
 
 ### Serve it
 
-`--ui` serves a read-only page on `http://127.0.0.1:8780/`:
-
-- `wellfed-bench --ui` alone runs until Ctrl+C, as does `wellfed-dashboard` (what `src/scripts/bench-dashboard` builds and runs, with the same `--listen` and `--ui-port`).
-- `wellfed-bench --ui flash-execute …` serves it while that command runs, `itest` included.
+`serve --ui` serves a read-only page on `http://127.0.0.1:8780/`, beside the server and fed by its live state. `wellfed-dashboard` (what `src/scripts/bench-dashboard` builds and runs, with the same `--listen` and `--ui-port`) serves it alone. Alone it has no live state, so it shows the evidence and the history but no running job and no relays.
 
 The page is optional. It is a Svelte app in `src/web/apps/bench`, which the binary embeds only when built with the `ui` feature:
 
@@ -519,15 +565,15 @@ make ui                                   # pnpm in src/web/: builds src/web/app
 cargo build --locked --release -p wellfed-bench -p wellfed-dashboard --features ui
 ```
 
-A binary built without the feature refuses `--ui` before any bench command runs. Node and pnpm are needed only for `make ui` and `make check-web`, never for `make check`. The page's TypeScript types (`src/web/packages/api/src/bench.gen.ts`) are generated from the Rust views, and a test in `make check` fails when they are stale (`UPDATE_BINDINGS=1 cargo test -p wellfed-dashboard bindings` rewrites them).
+A binary built without the feature refuses `--ui` before the server takes the bench. Node and pnpm are needed only for `make ui` and `make check-web`, never for `make check`. The page's TypeScript types (`src/web/packages/api/src/bench.gen.ts`) are generated from the Rust views, and a test in `make check` fails when they are stale (`UPDATE_BINDINGS=1 cargo test -p wellfed-dashboard bindings` rewrites them).
 
-**What it reads.** Only the status files, the evidence directories and the stock server's status. It links no relay or flash code and never opens a serial port, so it can run beside any command, and nothing it does writes. The feeder panel asks `wellfed-stock serve` for `GET /api/status` on the address and token in `private/server.json`, every 5 seconds. That read changes nothing on the server or the feeder. When the server is down or not configured, the panel says so.
+**What it reads.** Only the bench server's live state, the history, the evidence directories and the stock server's status. It links no relay or flash code and never opens a serial port, so it can run beside any job, and nothing it does writes. The feeder panel asks `wellfed-stock serve` for `GET /api/status` on the address and token in `private/server.json`, every 5 seconds. That read changes nothing on the server or the feeder. When the server is down or not configured, the panel says so.
 
 **Network.** The page binds to loopback by default because it shows private UART output. `--listen ADDRESS` serves another interface, for example the Tailscale address to reach it from a phone. There is no access token: anyone who can reach that address can read the page, so prefer a private interface such as Tailscale. `--listen 0.0.0.0` (or `::`) serves every interface, including the feeder hotspot and any container bridges; the owner chose to allow it. Allowing that port through the host firewall is the owner's change. `--ui-port` changes the port.
 
 ### Views
 
-The page has four views (keys `g o`, `g t`, `g s`, `g l`; `/` filters the log). A strip on every view shows relay and UART port presence, the last recorded relay states (not queried), the `wellfed-flash` hash, the build and bank from the newest replacement-firmware start banner in a capture, and the running command.
+The page has four views (keys `g o`, `g t`, `g s`, `g l`; `/` filters the log). A strip on every view shows relay and UART port presence, the relay states as the server last read or set them, the `wellfed-flash` hash, the build and bank from the newest replacement-firmware start banner in a capture, and the running command.
 
 - **Overview**
   - **Guided QA** (when the latest capture holds `PLQA1` records) coaches the newest [QA](../../firmware/qa.md) run from its records. It shows what to do now in plain words ("Look at the Wi-Fi light. Lit: press Dispense. Dark: press Lock."), the time left on a button prompt, each check's state with the answers so far, and the result. **Enable sound** beeps at each new prompt. It follows the records only; `wellfed-audit qa` still grades the run. The records are parsed by `wellfed_formats::qa`, which the audit shares.
@@ -568,4 +614,5 @@ Light and dark follow the system; the button in the header cycles auto, light an
 - **Observed, October 23, 2026:** the progress page's feeder panel followed a live stock server, and its run record matched the suite's.
 - **Observed, October 26, 2026:** the bench lease refused a second command and a hand-run read while a capture held it; after the holder was killed, `status` reported the stale lease until `--break-lease`. While a capture holds the relay port, `status` shows the lease but not the relays.
 - **Observed, October 27, 2026:** the sustained run's first hardware attempts. Cycles 1–5 passed in one run. Halts in other runs came from two checks that were wrong (since fixed) and an intermittent bank-0 download fault, which stopped at a 50 MHz flash clock ([flash layout](flash-layout.md#flash-clock)). A full 16-cycle run has not yet passed.
+- **Modeled, October 28, 2026:** the bench server over a socket in a temporary checkout, with a fake relay board and a stand-in flash client: a job streams its output and ends with its code; a second job is refused while one runs; a cancel sends the flash client SIGINT, and the loader's cleanup cuts power and isolates the UART; a client detaches and another follows the job from its first line; quitting cancels the job, waits for its cleanup and frees the lease; with no server, every hardware command refuses. No hardware ran.
 - **Modeled:** the bench with a fake relay board and flash client, the page's handlers in process, and the real binary against synthetic status files. The web page with unit tests and Playwright against the real binary serving a synthetic `private/` tree, on desktop and phone sizes in both themes. The suite's scenarios, including `sustained`, against a scripted feeder that emits the firmware's record formats.

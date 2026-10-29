@@ -306,7 +306,8 @@ impl DeviceStatus {
 
 /// A fault the bench puts into its own transfer, to see the feeder stop it
 /// before activation. Offsets are image bytes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum Fault {
     None,
     /// Flip one bit of the image byte here: the whole-image hash fails.

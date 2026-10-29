@@ -10,8 +10,8 @@
 //! and evidence paths come from the ignored `private/bench.json`; see
 //! docs/devices/plaf103/bench.md.
 //!
-//! The read-only page (`wellfed-dashboard`) reads the progress this crate
-//! records, and `wellfed-bench --ui` serves it.
+//! The bench server (`wellfed-bench-server`) runs these sequences as its
+//! jobs, publishing the progress they record as its live state.
 
 #![forbid(unsafe_code)]
 

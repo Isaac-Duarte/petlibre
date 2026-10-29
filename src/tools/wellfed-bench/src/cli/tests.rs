@@ -1,7 +1,16 @@
 use super::*;
+use wellfed_formats::bench::progress::BenchCommand;
+use wellfed_rig::commands;
+
+fn job(cli: &Cli) -> &JobCommand {
+    match &cli.command {
+        Command::Job(command) => command,
+        _ => panic!("not a job"),
+    }
+}
 
 #[test]
-fn ota_takes_its_flags_and_the_global_stock_bin() {
+fn ota_takes_its_flags_and_serve_its_tools() {
     let cli = Cli::try_parse_from([
         "wellfed-bench",
         "ota",
@@ -12,18 +21,24 @@ fn ota_takes_its_flags_and_the_global_stock_bin() {
         "14",
         "--minutes",
         "5",
-        "--stock-bin",
-        "bin/wellfed-stock",
     ])
     .unwrap();
 
-    let Some(Command::Ota(args)) = &cli.command else {
+    let JobCommand::Ota(args) = job(&cli) else {
         panic!("not ota")
     };
     assert_eq!((args.version, args.minutes), (Some(14), 5.0));
     assert!(!args.attended_motion && !args.build);
     assert_eq!(args.config, PathBuf::from("private/server.json"));
-    assert_eq!(cli.stock_bin, Some(PathBuf::from("bin/wellfed-stock")));
+
+    let cli = Cli::try_parse_from(["wellfed-bench", "serve", "--stock-bin", "bin/wellfed-stock"])
+        .unwrap();
+    let Command::Serve(args) = &cli.command else {
+        panic!("not serve")
+    };
+    assert_eq!(args.stock_bin, Some(PathBuf::from("bin/wellfed-stock")));
+    // The tools are the server's, not a job's.
+    assert!(Cli::try_parse_from(["wellfed-bench", "on", "--flash-bin", "f"]).is_err());
 }
 
 #[test]
@@ -37,15 +52,12 @@ fn stock_ota_takes_a_name_its_firmware_and_no_promote() {
         "--no-promote",
     ])
     .unwrap();
-    let Some(Command::StockOta(args)) = &cli.command else {
+    let JobCommand::StockOta(args) = job(&cli) else {
         panic!("not stock-ota")
     };
     assert_eq!(args.name, "poc-01");
     assert!(args.no_promote && !args.power);
-    assert_eq!(
-        cli.command.as_ref().map(Command::label),
-        Some(BenchCommand::StockOta)
-    );
+    assert_eq!(job(&cli).label(), BenchCommand::StockOta);
 
     assert!(Cli::try_parse_from(["wellfed-bench", "stock-ota"]).is_err());
 }
@@ -53,7 +65,7 @@ fn stock_ota_takes_a_name_its_firmware_and_no_promote() {
 #[test]
 fn itest_lists_without_a_name_and_takes_its_scenarios() {
     let cli = Cli::try_parse_from(["wellfed-bench", "itest", "--list"]).unwrap();
-    let Some(Command::Itest(args)) = &cli.command else {
+    let JobCommand::Itest(args) = job(&cli) else {
         panic!("not itest")
     };
     assert!(args.list && args.name.is_none());
@@ -68,12 +80,12 @@ fn itest_lists_without_a_name_and_takes_its_scenarios() {
         "requests,network-bounce",
     ])
     .unwrap();
-    let Some(Command::Itest(args)) = &cli.command else {
+    let JobCommand::Itest(args) = job(&cli) else {
         panic!("not itest")
     };
     assert_eq!(args.only, ["requests", "network-bounce"]);
     assert!(args.build && args.power && !args.keep_going);
-    assert_eq!(cli.command.as_ref().unwrap().name(), Some("run1"));
+    assert_eq!(job(&cli).name(), Some("run1"));
 
     for argv in [
         &["wellfed-bench", "itest"][..],
@@ -100,7 +112,7 @@ fn ota_build_takes_a_no_motion_image_and_config() {
     ])
     .unwrap();
 
-    let Some(Command::Ota(args)) = &cli.command else {
+    let JobCommand::Ota(args) = job(&cli) else {
         panic!("not ota")
     };
     assert!(args.build && args.review.is_none());
@@ -125,25 +137,24 @@ fn ota_refuses_motion_and_mixed_sources() {
 }
 
 #[test]
-fn every_command_but_status_takes_the_lease() {
-    let parse = |argv: &[&str]| {
-        let cli = Cli::try_parse_from(["wellfed-bench"].iter().chain(argv)).unwrap();
-        cli.command.unwrap().lease()
-    };
+fn a_parsed_job_crosses_the_socket_unchanged() {
+    let cli = ota(&[
+        "--build",
+        "--firmware",
+        "feeder",
+        "--variant",
+        "owner-stall",
+    ])
+    .unwrap();
 
-    assert_eq!(parse(&["status"]), LeaseUse::Report);
-    assert_eq!(parse(&["status", "--break-lease"]), LeaseUse::Report);
-    for argv in [
-        &["off"][..],
-        &["on"],
-        &["capture", "c1"],
-        &["dump", "d1"],
-        &["ota", "o1", "--build"],
-        &["itest", "i1"],
-        &["stock-ota", "s1"],
-    ] {
-        assert_eq!(parse(argv), LeaseUse::Take, "{argv:?}");
-    }
+    let text = serde_json::to_string(job(&cli)).unwrap();
+    let back: JobCommand = serde_json::from_str(&text).unwrap();
+
+    let JobCommand::Ota(args) = back else {
+        panic!("not ota: {text}")
+    };
+    assert_eq!(args.variant, Some(commands::Variant::OwnerStall));
+    assert_eq!(args.name, "fw12-x");
 }
 
 /// Another tool's process, killed when the test ends, passed or not.
@@ -165,7 +176,7 @@ fn hold(root: &Path) -> Other {
             .spawn()
             .unwrap(),
     );
-    let command = vec!["wellfed-bench".into(), "on".into()];
+    let command = vec!["wellfed-bench".into(), "serve".into()];
     let holder = lease::Holder::of(child.0.id(), command).unwrap();
     wellfed_formats::private::write_json(&root.join(lease::LEASE), &holder).unwrap();
     child
@@ -174,23 +185,67 @@ fn hold(root: &Path) -> Other {
 fn run_in(root: &Path, argv: &[&str]) -> anyhow::Result<u8> {
     let root = root.display().to_string();
     let head = ["wellfed-bench", "--root", &root];
-    run(
-        Cli::try_parse_from(head.iter().chain(argv)).unwrap(),
-        &Cancel::new(),
-    )
+    run(Cli::try_parse_from(head.iter().chain(argv)).unwrap())
 }
 
+/// The lease's refusal, from `serve` or from `status`.
 fn lease_error(result: anyhow::Result<u8>) -> lease::LeaseError {
-    result.unwrap_err().downcast().unwrap()
+    match result.unwrap_err().downcast() {
+        Ok(wellfed_bench_server::ServeError::Lease(error)) => error,
+        Ok(other) => panic!("not a lease refusal: {other:?}"),
+        Err(error) => error.downcast().unwrap(),
+    }
 }
 
 #[test]
-fn a_held_bench_refuses_a_command_before_it_opens_anything() {
+fn with_no_server_every_hardware_command_refuses_and_names_serve() {
+    let root = tempfile::tempdir().unwrap();
+
+    for argv in [
+        &["off"][..],
+        &["on"],
+        &["capture", "c1"],
+        &["dump", "d1"],
+        &["ota", "o1", "--build"],
+        &["itest", "i1"],
+        &["stock-ota", "s1"],
+        &["attach", "1"],
+    ] {
+        let error = run_in(root.path(), argv).unwrap_err();
+        let refused: ClientError = error.downcast().unwrap();
+        assert!(
+            matches!(refused, ClientError::NoServer { .. }),
+            "{argv:?}: {refused:?}"
+        );
+        assert!(refused.to_string().contains("wellfed-bench serve"));
+    }
+    // Nothing took the bench.
+    assert!(lease::inspect(root.path()).unwrap().is_none());
+}
+
+#[test]
+fn a_bad_name_is_refused_before_the_server_is_asked() {
+    let root = tempfile::tempdir().unwrap();
+
+    let error = run_in(root.path(), &["capture", "../x"]).unwrap_err();
+
+    let refused: wellfed_rig::Error = error.downcast().unwrap();
+    assert!(
+        matches!(
+            refused,
+            wellfed_rig::Error::Command(commands::CommandsError::BadName { .. })
+        ),
+        "{refused:?}"
+    );
+}
+
+#[test]
+fn a_held_bench_refuses_a_server_before_it_opens_anything() {
     let root = tempfile::tempdir().unwrap();
     let holder = hold(root.path());
 
     // There is no bench.json either: the lease refuses first.
-    let refused = lease_error(run_in(root.path(), &["off"]));
+    let refused = lease_error(run_in(root.path(), &["serve"]));
     assert!(matches!(refused, lease::LeaseError::Held(_)), "{refused:?}");
 
     let kept = lease_error(run_in(root.path(), &["status", "--break-lease"]));
@@ -206,24 +261,24 @@ fn a_killed_holder_is_reported_until_status_breaks_it() {
     holder.0.kill().unwrap();
     holder.0.wait().unwrap();
 
-    let refused = lease_error(run_in(root.path(), &["on"]));
+    let refused = lease_error(run_in(root.path(), &["serve"]));
     assert!(
         matches!(refused, lease::LeaseError::Stale(_)),
         "{refused:?}"
     );
 
-    // Breaking frees the bench; the status itself then stops on the
-    // missing bench.json, before any relay.
+    // Breaking frees the bench; the status itself then finds no server and
+    // stops on the missing bench.json, before any relay.
     assert!(run_in(root.path(), &["status", "--break-lease"]).is_err());
     assert!(lease::inspect(root.path()).unwrap().is_none());
 }
 
 #[test]
-fn a_command_frees_the_lease_it_took_when_it_stops() {
+fn a_server_frees_the_lease_it_took_when_it_stops() {
     let root = tempfile::tempdir().unwrap();
 
-    // Taken, then the missing bench.json stops the command.
-    assert!(run_in(root.path(), &["off"]).is_err());
+    // Taken, then the missing bench.json stops the server.
+    assert!(run_in(root.path(), &["serve"]).is_err());
 
     assert!(root.path().join("private/bench.lease.lock").is_file());
     assert!(lease::inspect(root.path()).unwrap().is_none());

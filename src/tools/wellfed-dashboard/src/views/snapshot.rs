@@ -12,7 +12,7 @@ use super::tail::{TailView, rx_view};
 use super::{Sources, history, inside, latest_capture, serial_sizes};
 use wellfed_formats::bench::now;
 use wellfed_formats::bench::progress::{
-    self, BenchCommand, Current, FlashTool, HistoryEntry, Outcome, Progress, Step,
+    BenchCommand, Current, FlashTool, HistoryEntry, Outcome, Progress, Step,
 };
 use wellfed_formats::bench::{CAPTURES, VERIFICATION};
 
@@ -46,7 +46,7 @@ impl Snapshot {
 
 pub(crate) fn snapshot(sources: &Sources) -> Snapshot {
     let root = &sources.root;
-    let current = progress::current(&sources.status()).map(|current| current_view(root, current));
+    let current = sources.current().map(|current| current_view(root, current));
 
     let mut history = history(sources);
     let shown = history.len().saturating_sub(HISTORY_SHOWN);
@@ -64,8 +64,9 @@ pub(crate) fn snapshot(sources: &Sources) -> Snapshot {
     }
 }
 
-/// `current.json` as the page reads it: a dead process's `running` record
-/// shows as `ended`, and capture and transfer carry what has arrived so far.
+/// The running command's record as the page reads it: a dead process's
+/// `running` record shows as `ended`, and capture and transfer carry what has
+/// arrived so far.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 struct CurrentView {
@@ -180,28 +181,25 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::views::tests::{json, sources};
-    use wellfed_formats::bench::STATUS_DIR;
-    use wellfed_formats::bench::progress::{BenchCommand, CURRENT, Status};
+    use crate::views::tests::{json, live_sources, sources};
+    use wellfed_formats::bench::progress::BenchCommand;
 
     #[test]
     fn a_dead_running_process_reads_as_ended_and_history_is_newest_first() {
-        let (_tmp, sources) = sources();
-        let mut status = Status::new(&sources.root, sources.root.join(STATUS_DIR));
+        let (_tmp, sources, live) = live_sources();
+        let mut status = live.status(&sources);
         for name in ["one", "two"] {
             status.begin(BenchCommand::Boot, Some(name), &[]).unwrap();
             status.finish(0, None);
         }
 
         // A pid that cannot exist stands in for a process that died mid-run.
-        let mut current = progress::current(&sources.status()).unwrap();
-        current.outcome = Outcome::Running;
-        current.pid = u32::MAX;
-        fs::write(
-            sources.status().join(CURRENT),
-            serde_json::to_string(&current).unwrap(),
-        )
-        .unwrap();
+        {
+            let mut current = live.current.lock().unwrap();
+            let current = current.as_mut().unwrap();
+            current.outcome = Outcome::Running;
+            current.pid = u32::MAX;
+        }
 
         let view = json(snapshot(&sources));
         assert_eq!(view["current"]["outcome"], "ended");
@@ -232,13 +230,13 @@ mod tests {
 
     #[test]
     fn update_transfer_counts_session_bytes() {
-        let (_tmp, sources) = sources();
+        let (_tmp, sources, live) = live_sources();
         let execute = sources.root.join(VERIFICATION).join("s-execute");
         fs::create_dir_all(&execute).unwrap();
         fs::write(execute.join("serial-tx.bin"), [0u8; 3]).unwrap();
         fs::write(execute.join("serial-rx.bin"), [0u8; 5]).unwrap();
 
-        let mut status = Status::new(&sources.root, sources.root.join(STATUS_DIR));
+        let mut status = live.status(&sources);
         status
             .begin(BenchCommand::FlashExecute, Some("s"), &[])
             .unwrap();
@@ -257,12 +255,12 @@ mod tests {
 
     #[test]
     fn a_running_capture_shows_its_tail_and_time() {
-        let (_tmp, sources) = sources();
+        let (_tmp, sources, live) = live_sources();
         let dir = sources.root.join(CAPTURES).join("c");
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("serial-rx.bin"), b"hello\r\n").unwrap();
 
-        let mut status = Status::new(&sources.root, sources.root.join(STATUS_DIR));
+        let mut status = live.status(&sources);
         status
             .begin(BenchCommand::Capture, Some("c"), &["capture"])
             .unwrap();

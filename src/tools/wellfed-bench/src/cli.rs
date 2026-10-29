@@ -1,45 +1,53 @@
-//! `wellfed-bench`'s command line: relay power, the loader strap, and
-//! supervised captures, dumps and updates through `wellfed-flash`. `--ui`
-//! serves the read-only progress page (`wellfed-dashboard`), alone or beside
-//! a command.
+//! `wellfed-bench`'s command line: `serve` runs the bench server in the
+//! foreground, and every hardware command is its client.
 //!
-//! Every subcommand except `status` is a physical bench operation. All but
-//! `status` hold the bench lease (`private/bench.lease`) while they run and
-//! record their steps under `private/bench-status`, which the page reads;
-//! `status` reports the lease, and with `--break-lease` frees one a killed
-//! run left.
-//!
-//! The rig's sequences (`wellfed-rig`) and the integration suite's commands
-//! (`itest`, `stock-ota`, `wellfed-itest`) run in this one process, so a
-//! run, its interrupt and its exit status are the command's own.
+//! - `serve` takes the bench lease (`private/bench.lease`) and the relay
+//!   board for its life and answers on `private/bench.sock`; `--ui` serves
+//!   the read-only progress page beside it.
+//! - A hardware command (`boot`, `flash-execute`, `ota`, `itest`, …) posts
+//!   its job, prints its output as it comes, and exits with its code. Ctrl+C
+//!   asks the server to cancel the job and keeps printing its cleanup; a
+//!   second Ctrl+C detaches, and `attach ID` follows the job again.
+//! - With no server running, only `status` (and `status --break-lease`)
+//!   runs: it reports the lease and reads the relay board itself, which is
+//!   the way back after a killed server. Every other command refuses and
+//!   names `wellfed-bench serve`.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::time::Duration;
 
-use clap::{Parser, Subcommand};
-use wellfed_formats::bench::catalog;
-use wellfed_formats::bench::lease::{self, Lease, Liveness};
-use wellfed_formats::bench::progress::{BenchCommand, Status};
-use wellfed_formats::bench::{CONFIG, Config, STATUS_DIR};
-use wellfed_itest::{ItestArgs, StockOtaArgs};
-use wellfed_relay::Relay;
-use wellfed_rig::Cancel;
-use wellfed_rig::commands::{
-    self, Bench, ExecuteArgs, GiveWayArgs, GiveWayExecuteArgs, OtaArgs, StockArgs,
-    StockExecuteArgs, TransientArgs, UartWhenOff, UpdateArgs, check_name, seconds_arg,
+use crate::page;
+use clap::{Args, Parser, Subcommand};
+use tokio::sync::mpsc;
+use wellfed_bench_server::{
+    Client, ClientError, Followed, Interrupt, JobCommand, JobSpec, Options, Server, ToolPaths,
 };
-use wellfed_rig::tools::{Processes, default_build_bin, default_flash_bin, default_stock_bin};
+use wellfed_formats::bench::catalog;
+use wellfed_formats::bench::lease::{self, Liveness};
+use wellfed_formats::bench::live::{BenchState, JobId, Phase, Uart};
+use wellfed_formats::bench::{CONFIG, Config};
+use wellfed_relay::{AtBoard, Relay};
+use wellfed_rig::Cancel;
+use wellfed_rig::commands::{Bench, UartWhenOff, check_name, seconds_arg};
+use wellfed_rig::tools::{
+    Children, Processes, default_build_bin, default_flash_bin, default_stock_bin,
+};
+
+/// A client that detached from a job it left running exits with this, as
+/// an interrupted command does.
+const DETACHED: u8 = 130;
 
 #[derive(Parser)]
 #[command(
     version,
     about = "Relay bench for the PLAF103 research unit",
     long_about = "Relay bench for the PLAF103 research unit.\n\n\
-        Relay 1 switches the feeder's USB 5V; relay 2 holds feeder TX to GND through the 4.7 kΩ strap. \
-        Serial work is delegated unchanged to wellfed-flash, so its pinned checks, plan hashes and \
-        no-retry rules apply. A failed step stops without retry; a stopped update is never followed \
-        by a boot. Ports and evidence paths come from the ignored private/bench.json; see \
+        `wellfed-bench serve` is the bench: it holds the bench lease and the relay board, and runs \
+        one job at a time. Every other command but `status` is its client. Relay 1 switches the \
+        feeder's USB 5V; relay 2 holds feeder TX to GND through the 4.7 kΩ strap. Serial work is \
+        delegated unchanged to wellfed-flash, so its pinned checks, plan hashes and no-retry rules \
+        apply. A failed step stops without retry; a stopped update is never followed by a boot. \
+        Ports and evidence paths come from the ignored private/bench.json; see \
         docs/devices/plaf103/bench.md. Running a command is a physical bench operation.",
     arg_required_else_help = true
 )]
@@ -53,182 +61,62 @@ struct Cli {
     /// What the UART lines (relays 3 and 4) do while the feeder is off.
     #[arg(long, global = true, value_enum, default_value_t = UartWhenOff::Isolated)]
     uart_when_off: UartWhenOff,
-    /// The wellfed-flash binary (default: beside this one).
-    #[arg(long, global = true)]
-    flash_bin: Option<PathBuf>,
-    /// The wellfed-stock binary for `itest` and `stock-ota` (default: beside this one).
-    #[arg(long, global = true)]
-    stock_bin: Option<PathBuf>,
-    /// The wellfed-build binary for `--build` (default: beside this one).
-    #[arg(long, global = true)]
-    build_bin: Option<PathBuf>,
-
-    /// Serve the read-only progress page: alone until Ctrl+C, or while a command runs.
-    #[arg(long, global = true)]
-    ui: bool,
-    /// Address for the page: loopback, or one named interface such as Tailscale.
-    #[arg(long, global = true, default_value = "127.0.0.1", requires = "ui")]
-    listen: String,
-    #[arg(long, global = true, default_value_t = 8780, requires = "ui")]
-    ui_port: u16,
 
     #[command(subcommand)]
-    command: Option<Command>,
+    command: Command,
 }
 
 #[derive(Subcommand)]
 enum Command {
-    /// Show the bench lease, relay states and port presence.
+    /// Show the bench lease, the server and its job, relay states and port
+    /// presence; with no server, read the relay board directly.
     Status {
         /// First free a bench whose lease outlived its holder (a killed
         /// run); a live holder's lease is never broken.
         #[arg(long)]
         break_lease: bool,
     },
-    /// Release the strap and cut feeder power.
-    Off,
-    /// Power the feeder without the strap or a capture.
-    On,
-
-    /// Record the running feeder without touching power.
-    Capture {
-        /// Capture name under private/captures/.
-        name: String,
-        #[arg(long, default_value_t = 60.0)]
-        seconds: f64,
+    /// Run the bench server in the foreground until Ctrl+C: it holds the
+    /// lease and the relay board, and runs one job at a time.
+    Serve(ServeArgs),
+    /// Follow a job of the running server again, from its first kept line.
+    Attach {
+        /// The job's number, as its command printed it.
+        id: JobId,
     },
-    /// Cold boot into the application while capturing.
-    Boot {
-        /// Capture name under private/captures/.
-        name: String,
-        #[arg(long, default_value_t = 30.0)]
-        seconds: f64,
-    },
-    /// Cold boot into the ROM loader and leave it powered.
-    Loader {
-        /// Capture name under private/captures/.
-        name: String,
-    },
-    /// Repeated logic-analyzer captures of power-ons or loader entries.
-    Transients(TransientArgs),
-
-    /// Loader, bounded read, then full flash read.
-    Dump {
-        /// Session name under private/flash-backups/.
-        name: String,
-    },
-    /// Loader, bounded read, inspect and plan; stops for review.
-    FlashPrepare(UpdateArgs),
-    /// Execute the reviewed plan, then boot.
-    FlashExecute(ExecuteArgs),
-    /// Loader, bounded read, give-way inspection and plan; stops for review.
-    GiveWayPrepare(GiveWayArgs),
-    /// Clear bank 1's first marker byte, then boot.
-    GiveWayExecute(GiveWayExecuteArgs),
-    /// The pinned original stock back into bank 1 over UART: with --fallback,
-    /// the give-way to bank 0 first; otherwise loader, full read and the
-    /// recovery plan. Stops for review.
-    StockPrepare(StockArgs),
-    /// Execute what stock-prepare planned, then boot.
-    StockExecute(StockExecuteArgs),
-    /// Sign and offer a review (or `--build` one first) to the running local
-    /// server, watch the UART until it confirms or falls back, then check the
-    /// feeder's status over the device API; never touches power.
-    Ota(OtaArgs),
-    /// Real-device integration scenarios: runs its own hotspot, server and
-    /// UART capture, installs over the air, restores the bench afterwards.
-    /// Cold boots only with --power; never flashes over UART.
-    Itest(ItestArgs),
-    /// Stock-to-replacement POC: with the feeder on stock 1.1.15, build a
-    /// replacement image and have stock install it over its own updater.
-    /// Runs its own hotspot, trial-enabled server and UART capture, sends
-    /// stock one request, restores the bench afterwards. Never flashes over
-    /// UART and never changes routing (`wellfed-stock network apply` is the
-    /// operator's).
-    StockOta(StockOtaArgs),
+    #[command(flatten)]
+    Job(JobCommand),
 }
 
-/// What a command does with the bench lease (`private/bench.lease`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum LeaseUse {
-    /// Holds it for the whole run: the command drives the relays, the UART,
-    /// the hotspot, an over-the-air install or a flash write.
-    Take,
-    /// Shows who holds it, and frees a stale one only when asked.
-    Report,
-}
+#[derive(Debug, Args)]
+struct ServeArgs {
+    /// The wellfed-flash binary every job runs (default: beside this one).
+    #[arg(long)]
+    flash_bin: Option<PathBuf>,
+    /// The wellfed-stock binary for `itest` and `stock-ota` (default: beside this one).
+    #[arg(long)]
+    stock_bin: Option<PathBuf>,
+    /// The wellfed-build binary for `--build` (default: beside this one).
+    #[arg(long)]
+    build_bin: Option<PathBuf>,
 
-impl Command {
-    fn label(&self) -> BenchCommand {
-        match self {
-            Self::Status { .. } => BenchCommand::Status,
-            Self::Off => BenchCommand::Off,
-            Self::On => BenchCommand::On,
-            Self::Capture { .. } => BenchCommand::Capture,
-            Self::Boot { .. } => BenchCommand::Boot,
-            Self::Loader { .. } => BenchCommand::Loader,
-            Self::Transients(_) => BenchCommand::Transients,
-            Self::Dump { .. } => BenchCommand::Dump,
-            Self::FlashPrepare(_) => BenchCommand::FlashPrepare,
-            Self::FlashExecute(_) => BenchCommand::FlashExecute,
-            Self::GiveWayPrepare(_) => BenchCommand::GiveWayPrepare,
-            Self::GiveWayExecute(_) => BenchCommand::GiveWayExecute,
-            Self::StockPrepare(_) => BenchCommand::StockPrepare,
-            Self::StockExecute(_) => BenchCommand::StockExecute,
-            Self::Ota(_) => BenchCommand::Ota,
-            Self::Itest(_) => BenchCommand::Itest,
-            Self::StockOta(_) => BenchCommand::StockOta,
-        }
-    }
-
-    fn name(&self) -> Option<&str> {
-        match self {
-            Self::Status { .. } | Self::Off | Self::On => None,
-            Self::Capture { name, .. }
-            | Self::Boot { name, .. }
-            | Self::Loader { name }
-            | Self::Dump { name } => Some(name),
-            Self::Transients(args) => Some(&args.name),
-            Self::FlashPrepare(args) => Some(&args.name),
-            Self::FlashExecute(args) => Some(&args.update.name),
-            Self::GiveWayPrepare(args) => Some(&args.name),
-            Self::GiveWayExecute(args) => Some(&args.give_way.name),
-            Self::StockPrepare(args) => Some(&args.name),
-            Self::StockExecute(args) => Some(&args.stock.name),
-            Self::Ota(args) => Some(&args.name),
-            Self::Itest(args) => args.name.as_deref(),
-            Self::StockOta(args) => Some(&args.name),
-        }
-    }
-
-    /// Whether the command takes the bench lease: every command but
-    /// `status`, which only reads (the relay states, and the lease itself).
-    fn lease(&self) -> LeaseUse {
-        match self {
-            Self::Status { .. } => LeaseUse::Report,
-            _ => LeaseUse::Take,
-        }
-    }
-
-    /// One of the integration suite's commands.
-    fn suite(&self) -> bool {
-        matches!(self, Self::Itest(_) | Self::StockOta(_))
-    }
+    /// Serve the read-only progress page beside the server.
+    #[arg(long)]
+    ui: bool,
+    /// Address for the page: loopback, or one named interface such as Tailscale.
+    #[arg(long, default_value = "127.0.0.1", requires = "ui")]
+    listen: String,
+    #[arg(long, default_value_t = 8780, requires = "ui")]
+    ui_port: u16,
 }
 
 /// Parse the command line and run it.
 pub(crate) fn main() -> ExitCode {
     let cli = Cli::parse();
-
-    // An interrupt stops the running sequence, through its power-off cleanup.
-    // wellfed-flash children get the terminal's interrupt too, and stop themselves.
-    let cancel = Cancel::new();
-    let interrupt = cancel.clone();
-    let _ = ctrlc::set_handler(move || interrupt.cancel());
-    // Evidence and status are private.
+    // Evidence, status and the socket are private.
     rustix::process::umask(rustix::fs::Mode::from_raw_mode(0o077));
 
-    match run(cli, &cancel) {
+    match run(cli) {
         Ok(code) => ExitCode::from(code),
         Err(error) => {
             eprintln!("Stopped: {error}");
@@ -237,95 +125,174 @@ pub(crate) fn main() -> ExitCode {
     }
 }
 
-fn run(cli: Cli, cancel: &Cancel) -> anyhow::Result<u8> {
+fn run(cli: Cli) -> anyhow::Result<u8> {
     let root = cli
         .root
         .canonicalize()
         .map_err(|error| anyhow::anyhow!("--root {}: {error}", cli.root.display()))?;
-    let tools = Processes::new(
-        root.clone(),
-        cli.flash_bin.unwrap_or_else(default_flash_bin),
-        cli.stock_bin.unwrap_or_else(default_stock_bin),
-        cli.build_bin.unwrap_or_else(default_build_bin),
-        cancel.clone(),
-    );
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()?;
 
-    // The catalog needs no bench.
-    if let Some(Command::Itest(args)) = &cli.command
-        && args.list
-    {
-        for line in catalog::listing() {
-            wellfed_rig::say!("{line}");
+    match cli.command {
+        // The catalog needs no bench.
+        Command::Job(JobCommand::Itest(args)) if args.list => {
+            for line in catalog::listing() {
+                wellfed_rig::say!("{line}");
+            }
+            Ok(0)
         }
-        return Ok(0);
+        Command::Status { break_lease } => status(&root, break_lease, &runtime),
+        Command::Serve(args) => serve(&root, args, &runtime),
+        Command::Attach { id } => runtime.block_on(follow(&Client::new(&root), id)),
+        Command::Job(command) => {
+            // Refused here as the server would, before anything is sent.
+            if let Some(name) = command.name() {
+                check_name(name)?;
+            }
+            seconds_arg("--off-seconds", cli.off_seconds)?;
+            let spec = JobSpec {
+                command,
+                off_seconds: cli.off_seconds,
+                uart_when_off: cli.uart_when_off,
+            };
+            runtime.block_on(submit(&Client::new(&root), &spec))
+        }
     }
+}
 
-    // Taken before the page binds or anything opens, so a second tool is
-    // refused before it touches the bench; held until this function
-    // returns, and the `wellfed-flash` children run on it. The page alone
-    // only reads.
-    let _lease = match cli.command.as_ref().map(Command::lease) {
-        Some(LeaseUse::Take) => Some(Lease::acquire(&root)?),
-        Some(LeaseUse::Report) | None => None,
+/// Post the job and follow it to its end.
+async fn submit(client: &Client, spec: &JobSpec) -> anyhow::Result<u8> {
+    let id = client.submit(spec).await?;
+    wellfed_rig::say!(
+        "Job {id}: {} (Ctrl+C cancels it; a second Ctrl+C leaves it running)",
+        spec.command.describe()
+    );
+    follow(client, id).await
+}
+
+/// Print job `id`'s output until it ends: its code, or [`DETACHED`].
+async fn follow(client: &Client, id: JobId) -> anyhow::Result<u8> {
+    let (interrupts, mut received) = mpsc::unbounded_channel();
+    tokio::spawn(async move {
+        let mut asked = Interrupt::Cancel;
+        while tokio::signal::ctrl_c().await.is_ok() {
+            if interrupts.send(asked).is_err() {
+                return;
+            }
+            asked = Interrupt::Detach;
+        }
+    });
+
+    match client
+        .follow(id, |line| wellfed_rig::say!("{line}"), &mut received)
+        .await?
+    {
+        Followed::Ended(end) => {
+            if let Some(error) = end.error {
+                eprintln!("Stopped: {error}");
+            }
+            Ok(end.code)
+        }
+        Followed::Detached => {
+            wellfed_rig::say!(
+                "Left job {id} running; `wellfed-bench attach {id}` follows it again"
+            );
+            Ok(DETACHED)
+        }
+    }
+}
+
+/// Run the server until Ctrl+C or SIGTERM.
+fn serve(root: &Path, args: ServeArgs, runtime: &tokio::runtime::Runtime) -> anyhow::Result<u8> {
+    let tools = ToolPaths {
+        flash_bin: args.flash_bin.unwrap_or_else(default_flash_bin),
+        stock_bin: args.stock_bin.unwrap_or_else(default_stock_bin),
+        build_bin: args.build_bin.unwrap_or_else(default_build_bin),
     };
+    if args.ui {
+        page::available()?;
+    }
+    let options = Options {
+        root: root.to_path_buf(),
+        tools: tools.clone(),
+    };
+    let server = Server::open(options, |config| {
+        Ok(Box::new(AtBoard::open(&config.relay_port)?))
+    })?;
 
-    let page = if cli.ui {
-        Some(start_page(
-            &root,
-            &tools.flash_bin,
-            &cli.listen,
-            cli.ui_port,
-            cancel,
-        )?)
+    let stop_page = Cancel::new();
+    let page = if args.ui {
+        let page = page::Page {
+            root,
+            flash_bin: &tools.flash_bin,
+            address: &args.listen,
+            port: args.ui_port,
+        };
+        Some(page.start(&stop_page, server.store())?)
     } else {
         None
     };
 
-    let Some(command) = cli.command else {
-        // Viewer only: serve until the operator interrupts.
-        if let Some(page) = page {
-            let _ = page.join();
-        }
-        return Ok(0);
-    };
-    if let Some(name) = command.name() {
-        check_name(name)?;
+    let relays: Vec<String> = server
+        .store()
+        .read()
+        .relays
+        .iter()
+        .map(|(channel, relay)| format!("{channel} {}", on_off(relay.on)))
+        .collect();
+    server.say(format!(
+        "Bench server on {}, holding the bench lease; relays {} (Ctrl+C stops it)",
+        server.socket().display(),
+        relays.join(", ")
+    ));
+    let served = runtime.block_on(server.run(shutdown()));
+
+    stop_page.cancel();
+    if let Some(page) = page {
+        let _ = page.join();
     }
-
-    if let Command::Status { break_lease } = &command {
-        report_lease(&root, *break_lease)?;
-    }
-
-    let status_dir = root.join(STATUS_DIR);
-
-    let stock_bin = tools.stock_bin.clone();
-    let off_time = seconds_arg("--off-seconds", cli.off_seconds)?;
-    let mut bench = open_bench(
-        root,
-        tools,
-        &command,
-        cancel.clone(),
-        off_time,
-        cli.uart_when_off,
-    )?;
-    // `status` only reads, so it leaves no status record behind.
-    if !matches!(command, Command::Status { .. }) {
-        record_start(&mut bench, &command, status_dir)?;
-    }
-
-    let result = dispatch(&mut bench, &command, stock_bin);
-    let (code, error) = match &result {
-        Ok(code) => (*code, None),
-        Err(error) => (1, Some(error.to_string())),
-    };
-    bench.status.finish(code, error);
-    Ok(result?)
+    served?;
+    Ok(0)
 }
 
-/// `status`'s first line: who holds the bench. With `--break-lease`, a lease
-/// whose holder is gone is removed first; anything else refuses. Printed
-/// before the relay board opens, so it shows even while a run holds the
-/// board's port.
+/// The operator's Ctrl+C, or a SIGTERM.
+async fn shutdown() {
+    let Ok(mut terminate) =
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+    else {
+        let _ = tokio::signal::ctrl_c().await;
+        return;
+    };
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {}
+        _ = terminate.recv() => {}
+    }
+}
+
+/// `status`: the lease first, then the server's view, or with no server the
+/// relay board read directly.
+fn status(root: &Path, break_lease: bool, runtime: &tokio::runtime::Runtime) -> anyhow::Result<u8> {
+    report_lease(root, break_lease)?;
+
+    match runtime.block_on(Client::new(root).state()) {
+        Ok(state) => {
+            report_state(&state);
+            report_ports(root);
+            Ok(0)
+        }
+        Err(ClientError::NoServer { .. }) => {
+            wellfed_rig::say!("Server: none (`wellfed-bench serve` starts one)");
+            Ok(direct_status(root)?)
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
+/// Who holds the bench. With `--break-lease`, a lease whose holder is gone
+/// is removed first; anything else refuses. Printed before the relay board
+/// opens, so it shows even while a holder keeps the board's port.
 fn report_lease(root: &Path, break_lease: bool) -> anyhow::Result<()> {
     if break_lease {
         let holder = lease::break_stale(root)?;
@@ -348,138 +315,96 @@ fn report_lease(root: &Path, break_lease: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Bind the progress page, so a busy port refuses before any bench command.
-#[cfg(feature = "ui")]
-fn start_page(
-    root: &Path,
-    flash_bin: &Path,
-    listen: &str,
-    port: u16,
-    cancel: &Cancel,
-) -> anyhow::Result<std::thread::JoinHandle<()>> {
-    let listen = wellfed_dashboard::Listen::new(listen, port)?;
-    let handle = wellfed_dashboard::start(
-        root.to_path_buf(),
-        flash_bin.to_path_buf(),
-        &listen,
-        cancel.clone(),
-    )?;
-    wellfed_rig::say!("Bench page on {} (Ctrl+C to stop)", listen.url());
-    Ok(handle)
-}
-
-/// Without the web app built in, `--ui` refuses before any bench command.
-#[cfg(not(feature = "ui"))]
-fn start_page(
-    _root: &Path,
-    _flash_bin: &Path,
-    _listen: &str,
-    _port: u16,
-    _cancel: &Cancel,
-) -> anyhow::Result<std::thread::JoinHandle<()>> {
-    anyhow::bail!(
-        "wellfed-bench was built without the web page; run `make ui`, then build it with \
-         `cargo build --locked --release -p wellfed-bench --features ui`"
-    )
-}
-
-/// The bench a command runs on: its config, the relay board when the
-/// command may switch it, and the real tools.
-fn open_bench(
-    root: PathBuf,
-    tools: Processes,
-    command: &Command,
-    cancel: Cancel,
-    off_time: Duration,
-    uart_when_off: UartWhenOff,
-) -> wellfed_rig::Result<Bench> {
-    let config: Config = wellfed_rig::load(&root, Path::new(CONFIG))?;
-    // The over-the-air loop only captures, so it leaves the relay board free;
-    // the integration suite holds it only for --power's cold boots.
-    let relay = match command {
-        Command::Ota(_) => Relay::detached(),
-        Command::Itest(args) if !args.power => Relay::detached(),
-        Command::StockOta(args) if !args.power => Relay::detached(),
-        _ => Relay::open(&config.relay_port)?,
+fn report_state(state: &BenchState) {
+    let phase = match state.server.phase {
+        Phase::Serving => "serving",
+        Phase::Stopping => "stopping",
     };
+    wellfed_rig::say!("Server: pid {}, {phase}", state.server.pid);
 
-    Ok(Bench {
-        root,
+    match &state.job {
+        None => wellfed_rig::say!("Job: none yet"),
+        Some(job) => {
+            let how = match &job.end {
+                None => "running".to_string(),
+                Some(end) => format!("ended with code {}", end.code),
+            };
+            wellfed_rig::say!("Job {}: {} ({how})", job.id, job.label);
+            if job.end.is_none() && !job.upcoming.is_empty() {
+                wellfed_rig::say!("  next: {}", job.upcoming.join(", "));
+            }
+        }
+    }
+    for child in &state.activity {
+        wellfed_rig::say!("  child {}: {:?} {}", child.pid, child.kind, child.label);
+    }
+
+    match &state.uart {
+        Uart::Idle => wellfed_rig::say!("UART: idle"),
+        Uart::Capturing { path } => wellfed_rig::say!(
+            "UART: capturing{}",
+            path.as_deref()
+                .map(|p| format!(" into {p}"))
+                .unwrap_or_default()
+        ),
+        Uart::Loader => wellfed_rig::say!("UART: in a flash client's loader session"),
+        Uart::Writing { done, total } => wellfed_rig::say!(
+            "UART: WRITING FLASH ({done}/{total} sectors verified); do not touch the bench"
+        ),
+    }
+    for (channel, relay) in &state.relays {
+        wellfed_rig::say!("Relay {channel}: {}", on_off(relay.on));
+    }
+}
+
+fn on_off(on: bool) -> &'static str {
+    if on { "on" } else { "off" }
+}
+
+/// Whether the configured ports exist, as the server's own status cannot
+/// show them for a config it may have read long ago.
+fn report_ports(root: &Path) {
+    let Ok(config) = wellfed_formats::load::<Config>(&root.join(CONFIG)) else {
+        return;
+    };
+    for (key, port) in [
+        ("relay_port", &config.relay_port),
+        ("uart_port", &config.uart_port),
+    ] {
+        let present = Path::new(port).exists();
+        wellfed_rig::say!("{key}: {}", if present { "present" } else { "missing" });
+    }
+}
+
+/// With no server: read the relays and ports as the bench always could, so
+/// a killed server's bench can be looked at before it is freed.
+fn direct_status(root: &Path) -> wellfed_rig::Result<u8> {
+    let config: Config = wellfed_rig::load(root, Path::new(CONFIG))?;
+    let relay = Relay::open(&config.relay_port)?;
+    let children = Children::new();
+    let cancel = Cancel::new();
+    let tools = Processes::new(
+        root.to_path_buf(),
+        default_flash_bin(),
+        default_stock_bin(),
+        default_build_bin(),
+        cancel.clone(),
+        children.clone(),
+    );
+
+    let mut bench = Bench {
+        root: root.to_path_buf(),
         config,
         relay,
-        status: Status::disabled(),
+        status: wellfed_formats::bench::progress::Status::disabled(),
         tools: Box::new(tools),
+        children,
         cancel,
         sleep: wellfed_rig::sleep,
-        off_time,
-        uart_when_off,
-    })
-}
-
-/// Start the command's progress record for the page: its steps and the
-/// flash client it runs.
-fn record_start(
-    bench: &mut Bench,
-    command: &Command,
-    status_dir: PathBuf,
-) -> wellfed_itest::Result<()> {
-    let label = command.label();
-    let steps: Vec<&str> = match command {
-        Command::Capture { .. } => vec!["capture"],
-        Command::Ota(args) if args.cancel => vec![commands::ota::CANCEL_STEP],
-        Command::Ota(args) => commands::ota::steps(args.source()),
-        Command::Itest(args) => wellfed_itest::itest_steps(args)?,
-        Command::StockOta(args) => wellfed_itest::stock_ota_steps(args),
-        Command::StockPrepare(args) if args.fallback.is_some() => {
-            commands::steps(BenchCommand::GiveWayPrepare).to_vec()
-        }
-        Command::StockExecute(args) if args.stock.fallback.is_some() => {
-            commands::steps(BenchCommand::GiveWayExecute).to_vec()
-        }
-        _ => commands::steps(label).to_vec(),
+        off_time: std::time::Duration::ZERO,
+        uart_when_off: UartWhenOff::Isolated,
     };
-
-    bench.status = Status::new(&bench.root, status_dir);
-    bench.status.begin(label, command.name(), &steps)?;
-    if command.suite() {
-        bench.status.fix_steps();
-    }
-    if let Some(tool) = bench.tools.flash_tool() {
-        bench.status.flash_tool(tool);
-    }
-    Ok(())
-}
-
-/// Run the command: the suite's on `wellfed-itest`, the rest on the rig.
-fn dispatch(bench: &mut Bench, command: &Command, stock_bin: PathBuf) -> wellfed_itest::Result<u8> {
-    let captures = bench.root.join(wellfed_formats::bench::CAPTURES);
-    let ran = match command {
-        Command::Status { .. } => bench.status_report(),
-        Command::Off => bench.off(),
-        Command::On => bench.on(),
-        Command::Capture { name, seconds } => {
-            seconds_arg("--seconds", *seconds).and_then(|length| {
-                bench.status.step("capture");
-                bench.capture(name, length)
-            })
-        }
-        Command::Boot { name, seconds } => seconds_arg("--seconds", *seconds)
-            .and_then(|length| bench.boot(&captures.join(name), length))
-            .map(|_| 0),
-        Command::Loader { name } => bench.loader(&captures.join(name)).map(|_| 0),
-        Command::Transients(args) => bench.transients(args),
-        Command::Dump { name } => bench.dump(name),
-        Command::FlashPrepare(args) => bench.flash_prepare(args),
-        Command::FlashExecute(args) => bench.flash_execute(args),
-        Command::GiveWayPrepare(args) => bench.give_way_prepare(args),
-        Command::GiveWayExecute(args) => bench.give_way_execute(args),
-        Command::StockPrepare(args) => bench.stock_prepare(args),
-        Command::StockExecute(args) => bench.stock_execute(args),
-        Command::Ota(args) => bench.ota(args),
-        Command::Itest(args) => return wellfed_itest::itest(bench, args, stock_bin),
-        Command::StockOta(args) => return wellfed_itest::stock_ota(bench, args, stock_bin),
-    };
-    Ok(ran?)
+    bench.status_report()
 }
 
 #[cfg(test)]

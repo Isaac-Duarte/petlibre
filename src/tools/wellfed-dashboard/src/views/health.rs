@@ -8,8 +8,8 @@ use std::path::Path;
 use serde::Serialize;
 use wellfed_core::record::{Event, Record, Tag};
 
-use super::{Sources, captures_by_age, modified, printable, read};
-use wellfed_formats::bench::progress::{self, BenchCommand, RELAYS, RelayState};
+use super::{Sources, captures_by_age, modified, printable};
+use wellfed_formats::bench::progress::{BenchCommand, RelayState};
 use wellfed_formats::bench::relative;
 use wellfed_formats::bench::{CONFIG, Config};
 use wellfed_formats::canonical::sha256;
@@ -101,10 +101,11 @@ pub(crate) fn health(sources: &Sources, flash: &mut FlashCache) -> HealthView {
         config: CONFIG,
         config_ok: config.is_ok(),
         ports,
-        relays: read(&sources.status().join(RELAYS)),
+        relays: sources.live.relays(),
         flash_tool: flash.get(sources),
         installed: installed(root),
-        busy: progress::current(&sources.status())
+        busy: sources
+            .current()
             .filter(crate::live)
             .map(|current| current.command),
     }
@@ -207,9 +208,9 @@ mod tests {
     use wellfed_formats::canonical::sha256;
 
     use super::*;
-    use crate::views::tests::{json, sources};
+    use crate::views::tests::{json, live_sources, sources};
     use wellfed_formats::bench::CAPTURES;
-    use wellfed_formats::bench::progress::{BenchCommand, Status};
+    use wellfed_formats::bench::progress::BenchCommand;
 
     #[test]
     fn health_reads_the_last_banner() {
@@ -246,7 +247,7 @@ mod tests {
 
     #[test]
     fn health_reports_present_ports_relays_and_the_flash_hash() {
-        let (_tmp, sources) = sources();
+        let (_tmp, sources, live) = live_sources();
         fs::create_dir_all(sources.root.join("private")).unwrap();
         fs::write(sources.root.join("baseline.bin"), b"").unwrap();
         fs::write(
@@ -255,10 +256,18 @@ mod tests {
         )
         .unwrap();
         fs::write(&sources.flash_bin, b"tool").unwrap();
-        let mut status = Status::new(&sources.root, sources.status());
+        let relays = [("1".to_string(), RelayState { on: true, at: 1.0 })];
+        *live.relays.lock().unwrap() = Some(relays.into_iter().collect());
+        let mut status = live.status(&sources);
         status.begin(BenchCommand::On, None, &[]).unwrap();
-        status.relay(1, true);
+        // A finished command is not what keeps the bench busy.
         status.finish(0, None);
+        assert!(json(health(&sources, &mut FlashCache::default()))["busy"].is_null());
+        status.begin(BenchCommand::On, None, &[]).unwrap();
+        assert_eq!(
+            json(health(&sources, &mut FlashCache::default()))["busy"],
+            "on"
+        );
 
         let mut cache = FlashCache::default();
         let view = json(health(&sources, &mut cache));

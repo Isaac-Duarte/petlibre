@@ -44,8 +44,12 @@ pub trait Live: Send + Sync {
 
 /// One job's output lines, as the server keeps them.
 pub trait JobOutput: Send + Sync {
-    /// The kept lines from line `cursor` on, and the cursor after them.
-    fn read_from(&self, cursor: usize) -> (Vec<String>, usize);
+    /// At most `most` kept lines from line `cursor` on, and the cursor
+    /// after them: a page catching up copies a bounded batch at a time
+    /// under the job's lock, never the whole log.
+    fn read_from(&self, cursor: usize, most: usize) -> (Vec<String>, usize);
+    /// The cursor after the last line, read without copying any.
+    fn end(&self) -> usize;
     /// Woken on every line and at the job's end.
     fn subscribe(&self) -> watch::Receiver<u64>;
 }

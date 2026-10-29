@@ -34,6 +34,7 @@
   const word = $derived.by(() => {
     if (!job) return "";
     if (job.end) return job.end.code === 0 ? "pass" : "stopped";
+    if (!app.connected) return "last known";
     if (job.cancel === "requested") return "cancelling";
     return "running";
   });
@@ -78,6 +79,12 @@
         <span class="count">{finishedSteps} of {record.steps.length} steps</span>
       {/if}
     </p>
+
+    {#if running && !app.connected}
+      <p class="stale" role="status">
+        Disconnected from the bench server: this is the last known state of the job, which may have moved on or ended.
+      </p>
+    {/if}
 
     {#if running && step}
       <p class="step">
@@ -199,6 +206,14 @@
   }
   .count {
     margin-left: var(--space-3);
+  }
+  .stale {
+    margin: var(--space-3) 0 0;
+    padding: var(--space-2) var(--space-3);
+    background: var(--color-warning-soft);
+    color: var(--color-warning);
+    border-radius: var(--radius-control);
+    font-size: var(--text-sm);
   }
   .step {
     margin: var(--space-3) 0 0;

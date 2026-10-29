@@ -21,7 +21,10 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::UNIX_EPOCH;
 
+use tokio::sync::watch;
+
 use crate::Live;
+use wellfed_formats::bench::live::{BenchState, Uart};
 use wellfed_formats::bench::progress::{Current, HISTORY, HistoryEntry};
 use wellfed_formats::bench::{CAPTURES, STATUS_DIR};
 
@@ -31,17 +34,53 @@ use wellfed_formats::bench::{CAPTURES, STATUS_DIR};
 pub(crate) struct Sources {
     pub root: PathBuf,
     pub flash_bin: PathBuf,
+    #[cfg_attr(
+        not(feature = "ui"),
+        expect(
+            dead_code,
+            reason = "only the page's event stream follows a job's output"
+        )
+    )]
     pub live: Arc<dyn Live>,
+    /// The server's state, read without waiting on it.
+    state: watch::Receiver<BenchState>,
 }
 
 impl Sources {
+    pub(crate) fn new(root: PathBuf, flash_bin: PathBuf, live: Arc<dyn Live>) -> Self {
+        Self {
+            state: live.subscribe(),
+            root,
+            flash_bin,
+            live,
+        }
+    }
+
     fn status(&self) -> PathBuf {
         self.root.join(STATUS_DIR)
     }
 
+    /// The state as of its last change.
+    pub(crate) fn state(&self) -> BenchState {
+        self.state.borrow().clone()
+    }
+
+    /// The flash client holds the UART: writing flash, or in a loader
+    /// session that may be about to. Nothing reads an evidence file then,
+    /// so the page adds no load to a write and never reads a capture the
+    /// writer is recording.
+    pub(crate) fn uart_busy(&self) -> bool {
+        Self::holds_uart(&self.state.borrow())
+    }
+
+    /// Whether `state` has the flash client holding the UART.
+    pub(crate) fn holds_uart(state: &BenchState) -> bool {
+        matches!(state.uart, Uart::Writing { .. } | Uart::Loader)
+    }
+
     /// The running job's record, from its first step until it ends.
     fn running(&self) -> Option<Current> {
-        let job = self.live.subscribe().borrow().job.clone()?;
+        let job = self.state.borrow().job.clone()?;
         job.end.is_none().then_some(job.record).flatten()
     }
 }
@@ -140,10 +179,7 @@ pub(crate) mod tests {
     use super::evidence::evidence;
     use super::sessions::sessions;
     use super::*;
-    use tokio::sync::watch;
-    use wellfed_formats::bench::live::{
-        BenchState, CancelState, JobEnd, JobId, JobView, Phase, ServerView, Uart,
-    };
+    use wellfed_formats::bench::live::{CancelState, JobEnd, JobId, JobView, Phase, ServerView};
     use wellfed_formats::bench::progress::{Outcome, ProgressSink, Status};
 
     /// What a bench server would hand the page, set by the test.
@@ -167,6 +203,7 @@ pub(crate) mod tests {
                 pid: 1,
                 started: 0.0,
                 phase: Phase::Serving,
+                uart_port: false,
             },
             job: None,
             activity: Vec::new(),
@@ -231,11 +268,11 @@ pub(crate) mod tests {
     pub(crate) fn live_sources() -> (tempfile::TempDir, Sources, Arc<Recorded>) {
         let tmp = tempfile::tempdir().unwrap();
         let live = Arc::new(Recorded::default());
-        let sources = Sources {
-            root: tmp.path().to_path_buf(),
-            flash_bin: tmp.path().join("wellfed-flash"),
-            live: Arc::clone(&live) as Arc<dyn Live>,
-        };
+        let sources = Sources::new(
+            tmp.path().to_path_buf(),
+            tmp.path().join("wellfed-flash"),
+            Arc::clone(&live) as Arc<dyn Live>,
+        );
         (tmp, sources, live)
     }
 
@@ -254,6 +291,24 @@ pub(crate) mod tests {
         assert!(view["script"].is_null());
         assert!(view["qa"].is_null());
         assert_eq!(json(sessions(&sources))["sessions"], json!([]));
+    }
+
+    #[test]
+    fn the_uart_is_held_while_the_flash_client_writes_or_has_the_loader() {
+        let (_tmp, sources, live) = live_sources();
+        assert!(!sources.uart_busy());
+
+        for (uart, held) in [
+            (Uart::Writing { done: 0, total: 0 }, true),
+            (Uart::Loader, true),
+            (Uart::Capturing { path: None }, false),
+            (Uart::Idle, false),
+        ] {
+            live.state.send_modify(|state| state.uart = uart.clone());
+
+            assert_eq!(sources.uart_busy(), held, "{uart:?}");
+            assert_eq!(sources.state().uart, uart);
+        }
     }
 
     #[test]

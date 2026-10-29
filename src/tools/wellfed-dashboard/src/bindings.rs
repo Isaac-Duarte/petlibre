@@ -14,7 +14,7 @@ use wellfed_formats::bench::catalog::{CatalogEntry, Requirement, Tier};
 use wellfed_formats::bench::live::{
     Activity, ActivityKind, BenchState, CancelState, JobEnd, JobView, Phase, ServerView, Uart,
 };
-use wellfed_formats::bench::notes::{self, Operator, Timer, Verdict};
+use wellfed_formats::bench::notes::{CardEvidence, Operator, Timer, Verdict};
 use wellfed_formats::bench::progress::{
     BenchCommand, Capture, Current, FlashTool, HistoryEntry, Outcome, Progress, RelayState, Step,
     StepState, Transfer, Unit,
@@ -72,7 +72,7 @@ fn generated() -> String {
         decl::<Witness>(&cfg),
         decl::<Operator>(&cfg),
         decl::<Timer>(&cfg),
-        decl::<notes::Evidence>(&cfg),
+        decl::<CardEvidence>(&cfg),
         decl::<Verdict>(&cfg),
     ];
     decls.extend(super::views::bindings(&cfg));

@@ -36,7 +36,7 @@ export interface StreamHandlers {
   state(state: BenchState): void;
   /** The history and the latest capture, sent when they change. */
   evidence(view: EvidenceView): void;
-  /** Another job's output follows: drop what was shown. */
+  /** Another job's output follows (its number as the data, since a browser drops an empty event): drop what was shown. */
   logReset(): void;
   /** Whole new lines of the job's output. */
   log(text: string): void;

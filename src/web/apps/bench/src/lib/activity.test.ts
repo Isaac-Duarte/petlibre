@@ -5,7 +5,7 @@ import { FADE_SECONDS, activityRows, fade, track } from "./activity";
 function state(activity: Activity[], end: number | null = null): BenchState {
   return {
     now: 100,
-    server: { pid: 9, started: 0, phase: "serving" },
+    server: { pid: 9, started: 0, phase: "serving", uart_port: true },
     job: {
       id: 3,
       label: "flash-execute u1",

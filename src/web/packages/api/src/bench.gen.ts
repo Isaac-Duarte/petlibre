@@ -143,7 +143,13 @@ operator: Operator, };
 /**
  * The server process.
  */
-export type ServerView = { pid: number, started: number, phase: Phase, };
+export type ServerView = { pid: number, started: number, phase: Phase, 
+/**
+ * Whether the configured UART adapter's port exists, as the server
+ * last looked: at its start, after every job and with every idle
+ * relay read. The relay board's port is the server's own.
+ */
+uart_port: boolean, };
 
 /**
  * Whether the server takes jobs.
@@ -245,7 +251,7 @@ export type Operator = { step: string | null, next: Array<string>, timers: Array
 /**
  * By card, in the order each card was first noted.
  */
-evidence: Array<[string, Array<NoteEvidence>]>, };
+evidence: Array<[string, Array<CardEvidence>]>, };
 
 /**
  * A timer still running or run out, as the notes leave it.
@@ -255,7 +261,7 @@ export type Timer = { label: string, started: number, seconds: number, expect: s
 /**
  * One card's evidence, in the order it was noted.
  */
-export type NoteEvidence = { at: number, verdict: Verdict, text: string, path: string | null, };
+export type CardEvidence = { at: number, verdict: Verdict, text: string, path: string | null, };
 
 export type Verdict = "pass" | "fail";
 

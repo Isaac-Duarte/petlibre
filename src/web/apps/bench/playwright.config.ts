@@ -1,25 +1,46 @@
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { defineConfig, devices } from "@playwright/test";
 
-// End to end against the real binary: `e2e/serve.mjs` writes a synthetic
-// private/ tree (three finished integration runs, a capture, notes and a
-// bank ledger), runs `wellfed-bench serve --ui` on it with a scripted relay
-// board and a stand-in flash client, and starts a UART write that lasts
-// the whole run. Nothing touches hardware.
+// End to end against the real binary: `e2e/serve.mjs` runs
+// `wellfed-bench serve --ui` with a scripted relay board and a stand-in
+// flash client, three times over:
+// - fixtures: three finished integration runs, a capture, sessions, notes
+//   and a bank ledger, with no job, so the evidence views read them;
+// - writing: a UART write that lasts the whole run;
+// - idle: nothing, for the tests that run jobs of their own.
+// Nothing touches hardware.
+// The site and the docs take 8798 and 8799, and run alongside.
 const PORT = Number(process.env.E2E_PORT ?? 8797);
+const WRITING = Number(process.env.E2E_WRITING_PORT ?? 8795);
+const IDLE = Number(process.env.E2E_IDLE_PORT ?? 8796);
+
+// The tests run clients against the same binary and the idle checkout;
+// the config is read again in every worker, so these reach the tests.
+process.env.BENCH_BIN ??= resolve(import.meta.dirname, "../../../../target/debug/wellfed-bench");
+process.env.E2E_WRITING_URL = `http://127.0.0.1:${String(WRITING)}`;
+process.env.E2E_IDLE_URL = `http://127.0.0.1:${String(IDLE)}`;
+process.env.E2E_IDLE_ROOT = join(tmpdir(), `wellfed-e2e-idle-${String(IDLE)}`);
+
+// SIGINT, so each server cancels its job, waits for the cleanup and
+// removes its checkout; Playwright's default is SIGKILL, which leaves
+// them all behind.
+const serve = (port: number, mode: string, ...rest: string[]) => ({
+  command: ["node", "e2e/serve.mjs", String(port), mode, ...rest].join(" "),
+  url: `http://127.0.0.1:${String(port)}/api/state`,
+  reuseExistingServer: false,
+  timeout: 20_000,
+  gracefulShutdown: { signal: "SIGINT" as const, timeout: 15_000 },
+});
 
 export default defineConfig({
   testDir: "e2e",
   fullyParallel: true,
   reporter: process.env.CI ? "line" : "list",
-  use: { baseURL: `http://127.0.0.1:${PORT}` },
+  use: { baseURL: `http://127.0.0.1:${String(PORT)}` },
   projects: [
     { name: "desktop", use: { ...devices["Desktop Chrome"] } },
     { name: "phone", use: { ...devices["Pixel 7"] } },
   ],
-  webServer: {
-    command: `node e2e/serve.mjs ${PORT}`,
-    url: `http://127.0.0.1:${PORT}/api/state`,
-    reuseExistingServer: false,
-    timeout: 20_000,
-  },
+  webServer: [serve(PORT, "fixtures"), serve(WRITING, "writing"), serve(IDLE, "idle", process.env.E2E_IDLE_ROOT)],
 });

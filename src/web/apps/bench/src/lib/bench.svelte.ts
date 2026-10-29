@@ -1,16 +1,19 @@
 // Everything the page shows, in one reactive store: the server's live
 // state, the job's output, the evidence and the feeder arrive over the
 // event stream; health, tests and sessions are polled, and re-read at once
-// when a job ends.
+// when a job ends or the flash client lets go of the UART.
 
 import { bench, stream } from "@wellfed/api";
 import type { BenchState, EvidenceView, FeederView, HealthView, Sessions, TestsView } from "@wellfed/api";
 import { activityRows, track, type ActivityRow } from "./activity";
+import { holdsUart } from "./uart";
 
 /** The page keeps this many log lines for scrolling, filtering and copying. */
 const LOG_LINES = 20_000;
 
-class Bench {
+export type Polled = "health" | "sessions" | "tests";
+
+export class Bench {
   state = $state.raw<BenchState | null>(null);
   evidence = $state.raw<EvidenceView | null>(null);
   feeder = $state.raw<FeederView | null>(null);
@@ -25,20 +28,14 @@ class Bench {
 
   // Server clock minus ours, so timers agree with the bench host.
   #skew = 0;
-  #ended: string | null = null;
+  // What last called for a refresh: the job and whether it ended, and
+  // whether the flash client held the UART.
+  #moment: string | null = null;
 
   start(): () => void {
     const close = stream({
       state: (state) => {
-        this.#skew = state.now - Date.now() / 1000;
-        this.state = state;
-        this.activity = track(this.activity, activityRows(state), state.now);
-        const job = state.job;
-        const ended = job ? `${String(job.id)}:${job.end ? "end" : "run"}` : null;
-        if (ended !== this.#ended) {
-          this.#ended = ended;
-          void this.refresh();
-        }
+        this.take(state);
       },
       evidence: (view) => (this.evidence = view),
       logReset: () => (this.lines = []),
@@ -51,7 +48,8 @@ class Bench {
       connected: (open) => (this.connected = open),
     });
 
-    void this.refresh();
+    // The polled views wait for the first state: until then the page does
+    // not know whether the flash client holds the UART.
     const timers = [
       setInterval(() => (this.now = Date.now() / 1000 + this.#skew), 1000),
       setInterval(() => void this.poll("health"), 5_000),
@@ -64,6 +62,20 @@ class Bench {
     };
   }
 
+  /** A new state from the server. */
+  take(state: BenchState): void {
+    this.#skew = state.now - Date.now() / 1000;
+    this.state = state;
+    this.activity = track(this.activity, activityRows(state), state.now);
+
+    const job = state.job;
+    const moment = `${job ? `${String(job.id)}:${job.end ? "end" : "run"}` : "none"}:${String(holdsUart(state.uart))}`;
+    if (moment !== this.#moment) {
+      this.#moment = moment;
+      void this.refresh();
+    }
+  }
+
   /** The running job: one that has not ended. */
   get running(): boolean {
     return !!this.state?.job && !this.state.job.end;
@@ -73,9 +85,13 @@ class Bench {
     await Promise.all([this.poll("health"), this.poll("sessions"), this.poll("tests")]);
   }
 
-  async poll(view: "health" | "sessions" | "tests"): Promise<void> {
-    // A UART write is left alone: these views read evidence files.
-    if (this.state?.uart.state === "writing" && this.health && this.sessions && this.tests) return;
+  /**
+   * Re-read one polled view, unless the state is unknown yet or the flash
+   * client holds the UART: those views read files, and the page keeps what
+   * it showed until the write ends.
+   */
+  async poll(view: Polled): Promise<void> {
+    if (!this.state || holdsUart(this.state.uart)) return;
     try {
       if (view === "health") this.health = await bench.health();
       else if (view === "sessions") this.sessions = await bench.sessions();

@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use tokio::sync::Notify;
-use wellfed_formats::bench::banks::BANKS;
+use wellfed_formats::bench::banks::{BANKS, Ledger};
 use wellfed_formats::bench::lease::{self, Lease};
 use wellfed_formats::bench::live::{
     BenchState, CancelState, JOBS, JobEnd, JobId, JobView, Phase, ServerView, Uart,
@@ -58,6 +58,14 @@ pub enum ServeError {
     },
     #[error("The output pipe: {0}")]
     Output(std::io::Error),
+    /// A ledger that does not read is never taken for an empty one: the
+    /// page would show the banks as unknown and the next job's entry would
+    /// overwrite what the bench knew.
+    #[error("{}: {error}; fix it or delete it, then start the server again", path.display())]
+    Banks {
+        path: PathBuf,
+        error: wellfed_formats::Error,
+    },
 }
 
 /// Where the server runs and the tools its jobs run.
@@ -93,6 +101,7 @@ impl Server {
         let lease = Lease::acquire(&options.root)?;
         let config: Config =
             wellfed_formats::load(&options.root.join(CONFIG)).map_err(ServeError::Config)?;
+        let banks = banks(&options.root)?;
         let board = open_board(&config)?;
 
         let store = Store::new(BenchState {
@@ -101,12 +110,13 @@ impl Server {
                 pid: std::process::id(),
                 started: now(),
                 phase: Phase::Serving,
+                uart_port: Path::new(&config.uart_port).exists(),
             },
             job: None,
             activity: Vec::new(),
             uart: Uart::Idle,
             relays: Default::default(),
-            banks: wellfed_formats::load(&options.root.join(BANKS)).unwrap_or_default(),
+            banks,
             operator: operator(&options.root),
         });
         let board = SharedBoard::new(board, store.clone());
@@ -255,6 +265,15 @@ fn bind(socket: &Path) -> std::io::Result<std::os::unix::net::UnixListener> {
     let listener = std::os::unix::net::UnixListener::bind(socket)?;
     std::fs::set_permissions(socket, std::fs::Permissions::from_mode(0o600))?;
     Ok(listener)
+}
+
+/// The bank ledger, or an empty one where there is none yet.
+fn banks(root: &Path) -> Result<Ledger, ServeError> {
+    let path = root.join(BANKS);
+    if !path.exists() {
+        return Ok(Ledger::default());
+    }
+    wellfed_formats::load(&path).map_err(|error| ServeError::Banks { path, error })
 }
 
 /// What the operator's notes say, replayed from the start; a line that
@@ -457,9 +476,7 @@ impl Shared {
         self.output.sync();
         self.output.route(None);
         // The board's front buttons may have moved a relay meanwhile.
-        if let Err(error) = self.bed.board.query() {
-            self.output.say(format!("Relay board: {error}"));
-        }
+        self.look_at_bench();
         self.finish(id, Some(log), code, error);
     }
 
@@ -577,10 +594,19 @@ impl Shared {
                 return false;
             }
         }
+        self.look_at_bench();
+        true
+    }
+
+    /// Read the relays and look for the UART adapter's port: the board's
+    /// front buttons may have moved a relay, and a replugged adapter may
+    /// have come or gone.
+    fn look_at_bench(&self) {
         if let Err(error) = self.bed.board.query() {
             self.output.say(format!("Relay board: {error}"));
         }
-        true
+        let present = Path::new(&self.bed.config.uart_port).exists();
+        self.store.update(|state| state.server.uart_port = present);
     }
 
     /// The output of job `id`, running or among the last few.

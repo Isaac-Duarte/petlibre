@@ -305,14 +305,19 @@ fn serve(root: &Path, args: &ServeArgs, runtime: &tokio::runtime::Runtime) -> an
 
 /// The configured relay board, or with `--fake-board` a scripted one that
 /// starts with every relay off.
+#[cfg_attr(
+    not(feature = "fake-board"),
+    expect(
+        unused_variables,
+        reason = "only a binary built with `fake-board` reads its flag"
+    )
+)]
 fn open_board(args: &ServeArgs, config: &Config) -> wellfed_relay::Result<Box<dyn Board>> {
     #[cfg(feature = "fake-board")]
     if args.fake_board {
         let fake = wellfed_relay::FakeBoard::default();
         return Ok(Box::new(AtBoard::new(Box::new(fake))));
     }
-    #[cfg(not(feature = "fake-board"))]
-    let _ = args;
     Ok(Box::new(AtBoard::open(&config.relay_port)?))
 }
 

@@ -66,9 +66,7 @@ pub struct Timer {
 /// One card's evidence, in the order it was noted.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-// The page's types already have a run record's `Evidence`.
-#[cfg_attr(feature = "ts", ts(rename = "NoteEvidence"))]
-pub struct Evidence {
+pub struct CardEvidence {
     pub at: f64,
     pub verdict: Verdict,
     pub text: String,
@@ -83,7 +81,7 @@ pub struct Operator {
     pub next: Vec<String>,
     pub timers: Vec<Timer>,
     /// By card, in the order each card was first noted.
-    pub evidence: Vec<(String, Vec<Evidence>)>,
+    pub evidence: Vec<(String, Vec<CardEvidence>)>,
 }
 
 impl Operator {
@@ -123,7 +121,7 @@ impl Operator {
                 text,
                 path,
             } => {
-                let evidence = Evidence {
+                let evidence = CardEvidence {
                     at: note.at,
                     verdict: *verdict,
                     text: text.clone(),

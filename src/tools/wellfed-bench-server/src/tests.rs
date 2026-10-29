@@ -586,3 +586,22 @@ async fn with_no_server_a_client_says_how_to_start_one() {
     );
     assert!(refused.to_string().contains("wellfed-bench serve"));
 }
+
+#[test]
+fn a_bank_ledger_that_does_not_read_refuses_the_start_before_the_board_opens() {
+    let checkout = Checkout::new(0.1);
+    fs::create_dir_all(checkout.root().join("private/bench-status")).unwrap();
+    fs::write(checkout.root().join("private/bench-status/banks.json"), "{").unwrap();
+    let opened = AtomicBool::new(false);
+
+    let refused = Server::open(checkout.options(), |_| {
+        opened.store(true, Ordering::SeqCst);
+        Ok(Box::new(AtBoard::new(Box::new(checkout.board.clone()))))
+    });
+
+    let Err(ServeError::Banks { path, .. }) = refused else {
+        panic!("a corrupt ledger was taken for an empty one");
+    };
+    assert!(path.ends_with("private/bench-status/banks.json"));
+    assert!(!opened.load(Ordering::SeqCst));
+}

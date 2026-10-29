@@ -46,8 +46,12 @@ mod built {
     struct Output(JobOutput);
 
     impl wellfed_dashboard::JobOutput for Output {
-        fn read_from(&self, cursor: usize) -> (Vec<String>, usize) {
-            self.0.read_from(cursor)
+        fn read_from(&self, cursor: usize, most: usize) -> (Vec<String>, usize) {
+            self.0.read_from(cursor, most)
+        }
+
+        fn end(&self) -> usize {
+            self.0.end()
         }
 
         fn subscribe(&self) -> watch::Receiver<u64> {

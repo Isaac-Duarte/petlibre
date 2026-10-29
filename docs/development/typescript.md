@@ -55,4 +55,4 @@ From `src/web/`, with Node 22.18 or later (it runs the TypeScript scripts direct
 | `pnpm check` | ESLint, Prettier, licenses, `tsc` for the scripts, then each package's `svelte-check` or `tsc` |
 | `pnpm test` | Vitest in each package (the contrast and drift tests included) |
 | `pnpm format` | Rewrite formatting |
-| `make check-web` (repository root) | All of the above, the bench build, and Playwright against the real `wellfed-bench serve --ui` on a fake relay board (built with `--features ui,wellfed-bench/fake-board`) |
+| `make check-web` (repository root) | All of the above, the bench build, and Playwright against the real `wellfed-bench serve --ui` on a fake relay board (built with `--features ui,wellfed-bench/fake-board` into `target/e2e`, never over the operator's binary) |

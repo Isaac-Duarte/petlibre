@@ -78,17 +78,19 @@ ui:
 # and a stand-in flash client; they never read this checkout's evidence or
 # open a port to hardware. The page's crate and the bench, which serves it
 # with `--ui`, are linted and tested with it built in, the production lints
-# included.
+# included. The binary with the fake board is built into a target directory
+# of its own, so it never replaces the operator's `wellfed-bench`.
 PAGE_CRATES = -p wellfed-dashboard -p wellfed-bench
 PAGE_FEATURES = ui,wellfed-bench/fake-board
+E2E_TARGET = $(CURDIR)/target/e2e
 check-web: ui
 	pnpm -C src/web check
 	pnpm -C src/web test
 	cargo clippy --locked $(PAGE_CRATES) --all-targets --features $(PAGE_FEATURES) -- -D warnings
 	cargo clippy --locked $(PAGE_CRATES) --lib --bins --features $(PAGE_FEATURES) -- -D warnings $(PRODUCTION_LINTS)
-	cargo test --locked $(PAGE_CRATES) --features $(PAGE_FEATURES)
-	cargo build --locked -p wellfed-bench --features $(PAGE_FEATURES)
-	pnpm -C src/web e2e
+	cargo test --locked $(PAGE_CRATES) --features ui
+	CARGO_TARGET_DIR=$(E2E_TARGET) cargo build --locked -p wellfed-bench --features $(PAGE_FEATURES)
+	BENCH_BIN=$(E2E_TARGET)/debug/wellfed-bench pnpm -C src/web e2e
 
 # The server store's queries are checked at build time against committed
 # metadata, so no build needs a database. After changing a query or a

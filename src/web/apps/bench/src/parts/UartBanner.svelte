@@ -4,6 +4,7 @@
   // starving the host now can leave a half-written bank.
   import { Meter, duration, percent } from "@wellfed/ui";
   import { app } from "../lib/bench.svelte";
+  import { uncountedText } from "../lib/uart";
 
   const uart = $derived(app.state?.uart ?? null);
   const writing = $derived(uart?.state === "writing" ? uart : null);
@@ -28,21 +29,26 @@
       <div class="text">
         <h2>UART write in progress: don't touch the bench</h2>
         <p>No cables, relays, builds or other jobs until it ends. A stop now can leave a bank half written.</p>
+        {#if !app.connected}
+          <p class="stale" role="status">
+            Disconnected from the bench server: this is the last known state, and the write may have ended.
+          </p>
+        {/if}
       </div>
-      {#if since !== null}
+      {#if since !== null && app.connected}
         <div class="elapsed" title="Writing for">{duration(app.now - since)}</div>
       {/if}
     </div>
     {#if writing.total > 0}
       <Meter
-        label="{writing.done} of {writing.total} sectors verified"
+        label="{writing.done} of {writing.total} sectors verified{app.connected ? '' : ', last known'}"
         value={percent(writing.done, writing.total)}
         done={writing.done}
         total={writing.total}
         tone="fail"
       />
     {:else}
-      <p class="count">Waiting for the first sector count</p>
+      <p class="count">{uncountedText(app.state?.activity ?? [])}</p>
     {/if}
   </section>
 {/if}
@@ -94,6 +100,9 @@
   }
   .count {
     color: var(--color-text-muted);
+  }
+  .stale {
+    font-weight: 600;
   }
   @media (max-width: 600px) {
     .banner {

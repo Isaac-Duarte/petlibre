@@ -55,6 +55,10 @@ pub struct ServerView {
     pub pid: u32,
     pub started: f64,
     pub phase: Phase,
+    /// Whether the configured UART adapter's port exists, as the server
+    /// last looked: at its start, after every job and with every idle
+    /// relay read. The relay board's port is the server's own.
+    pub uart_port: bool,
 }
 
 /// Whether the server takes jobs.

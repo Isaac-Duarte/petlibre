@@ -417,6 +417,7 @@ mod tests {
                 pid: 1,
                 started: 0.0,
                 phase: Phase::Serving,
+                uart_port: false,
             },
             job: None,
             activity: Vec::new(),

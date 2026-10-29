@@ -20,9 +20,7 @@ pub struct WifiCredential {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct OtaKeyFile {
     pub version: u32,
-    /// What the key may sign. A key file without the field predates it and
-    /// is the bench key.
-    #[serde(default)]
+    /// What the key may sign.
     pub scope: KeyScope,
     /// Ed25519 seed, hex.
     pub seed: String,
@@ -34,12 +32,11 @@ pub struct OtaKeyFile {
 ///
 /// Neither is a release key: a public release needs an offline release
 /// key first, which never becomes a file here.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum KeyScope {
     /// Development images on the bench's own units. It lives in a
     /// checkout's `private/`, and the firmware builds embed its public half.
-    #[default]
     Bench,
     /// An owner's own builds, for the feeders that enrolled it as their
     /// update signer (a Dispense press at each feeder confirms it). No

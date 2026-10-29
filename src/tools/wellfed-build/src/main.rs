@@ -333,7 +333,7 @@ fn run(command: Command) -> Result<()> {
                 flag: "key-id",
                 characters: 16,
             })?;
-            let statement = Key::load(&repo.root.join(key))?.revoke(&id);
+            let statement = Key::load(&repo.root.join(key))?.revoke(&id)?;
             let output = repo.root.join(output);
             wellfed_formats::private::write_new(&output, &statement)?;
             println!("Signed the retirement of {key_id} in {}", output.display());
@@ -347,7 +347,7 @@ fn run(command: Command) -> Result<()> {
                 flag: "public",
                 characters: 64,
             })?;
-            let statement = Key::load(&repo.root.join(key))?.add_key(&added);
+            let statement = Key::load(&repo.root.join(key))?.add_key(&added)?;
             let output = repo.root.join(output);
             wellfed_formats::private::write_new(&output, &statement)?;
             println!(

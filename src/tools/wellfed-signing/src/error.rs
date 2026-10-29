@@ -37,6 +37,12 @@ pub enum KeyError {
     Seed,
     #[error("Key file's public key does not match its seed")]
     PublicKey,
+    /// Only a built-in key signs key statements; a feeder refuses an
+    /// owner's, so none is written.
+    #[error("An owner's update key signs no key retirement (PLREV1)")]
+    OwnerRevoke,
+    #[error("An owner's update key signs no release-slot key (PLKEY1)")]
+    OwnerAddKey,
 }
 
 /// A frozen review the image checks accept but the signer does not: what

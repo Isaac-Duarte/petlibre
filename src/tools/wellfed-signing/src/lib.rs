@@ -86,8 +86,11 @@ pub fn keygen(output: &Path, scope: KeyScope) -> Result<String> {
     Ok(public_key)
 }
 
-/// A loaded signing key.
-pub struct Key(SigningKey);
+/// A loaded signing key, and what its file says it is for.
+pub struct Key {
+    key: SigningKey,
+    scope: KeyScope,
+}
 
 impl Key {
     /// Load a key file, refusing one whose public key is not its seed's.
@@ -96,12 +99,6 @@ impl Key {
         require(file.version == 1, || KeyError::Version {
             version: file.version,
         })?;
-        // Every scope a key file can name must be decided here: a release
-        // key is never one this signer loads from a file. Both scopes sign
-        // alike; each feeder decides whether it trusts the key.
-        match file.scope {
-            KeyScope::Bench | KeyScope::Owner => {}
-        }
         let seed = hex::decode::<32>(&file.seed).ok_or(KeyError::Seed)?;
 
         let key = SigningKey::from_bytes(&seed);
@@ -109,12 +106,20 @@ impl Key {
             hex::encode(&key.verifying_key().to_bytes()) == file.public_key,
             || KeyError::PublicKey,
         )?;
-        Ok(Self(key))
+        Ok(Self {
+            key,
+            scope: file.scope,
+        })
     }
 
     /// The public half, as the firmware embeds it or an owner enrolls it.
     pub fn public(&self) -> [u8; 32] {
-        self.0.verifying_key().to_bytes()
+        self.key.verifying_key().to_bytes()
+    }
+
+    /// What the key file says the key is for.
+    pub fn scope(&self) -> KeyScope {
+        self.scope
     }
 
     /// The id a version 2 manifest names this key by.
@@ -124,26 +129,33 @@ impl Key {
 
     fn signed<const N: usize>(&self, body: &[u8; N]) -> Vec<u8> {
         let mut out = body.to_vec();
-        out.extend_from_slice(&self.0.sign(body).to_bytes());
+        out.extend_from_slice(&self.key.sign(body).to_bytes());
         out
     }
 
     /// A downgrade statement: the feeder whose identity key is `device` may
-    /// install `manifest` while its floor is `floor`.
+    /// install `manifest` while its floor is `floor`. Any trusted key signs
+    /// one, an owner's enrolled key included: the firmware checks a
+    /// downgrade's signer as it checks a manifest's, and the statement is
+    /// bound to one feeder, one manifest and one floor.
     pub fn downgrade(&self, manifest: &[u8], device: &[u8; 32], floor: u32) -> Result<Vec<u8>> {
         offer::parse_manifest(manifest).map_err(Error::NotManifest)?;
         let digest = offer::manifest_digest(manifest);
         Ok(self.signed(&offer::downgrade_body(&self.id(), device, &digest, floor)))
     }
 
-    /// A key statement retiring `id` for good.
-    pub fn revoke(&self, id: &KeyId) -> Vec<u8> {
-        self.signed(&offer::revoke_body(&self.id(), id))
+    /// A key statement retiring `id` for good. Only the bench key signs
+    /// one: a feeder refuses an owner's, so one is never written.
+    pub fn revoke(&self, id: &KeyId) -> Result<Vec<u8>> {
+        require(self.scope == KeyScope::Bench, || KeyError::OwnerRevoke)?;
+        Ok(self.signed(&offer::revoke_body(&self.id(), id)))
     }
 
-    /// A key statement filling the release slot with `public`.
-    pub fn add_key(&self, public: &[u8; 32]) -> Vec<u8> {
-        self.signed(&offer::key_add_body(&self.id(), public))
+    /// A key statement filling the release slot with `public`. Only the
+    /// bench key signs one, as for [`Self::revoke`].
+    pub fn add_key(&self, public: &[u8; 32]) -> Result<Vec<u8>> {
+        require(self.scope == KeyScope::Bench, || KeyError::OwnerAddKey)?;
+        Ok(self.signed(&offer::key_add_body(&self.id(), public)))
     }
 }
 
@@ -265,7 +277,7 @@ impl Frozen {
         let body = offer::manifest_body(&signed);
         let mut out = [0u8; offer::MANIFEST_LEN];
         out[..body.len()].copy_from_slice(&body);
-        out[body.len()..].copy_from_slice(&key.0.sign(&body).to_bytes());
+        out[body.len()..].copy_from_slice(&key.key.sign(&body).to_bytes());
         Ok(out)
     }
 
@@ -413,7 +425,7 @@ mod tests {
             Context, KeyRing, KeyStatement, OfferError, Trust, admit_offer, admit_statement,
         };
 
-        let key = Key(SigningKey::from_bytes(&[5; 32]));
+        let key = bench_key(5);
         let (checkout, review) = freeze(&build_image(), None);
         let frozen = Frozen::open(checkout.path(), &review).unwrap();
         let signed = frozen.offer(&key, 9, Motion::Refused).unwrap();
@@ -450,35 +462,43 @@ mod tests {
 
         let ring = context(0).ring;
         assert_eq!(
-            admit_statement(&key.revoke(&[7; 8]), &ring),
+            admit_statement(&key.revoke(&[7; 8]).unwrap(), &ring),
             Ok(KeyStatement::Revoke([7; 8]))
         );
         assert_eq!(
-            admit_statement(&key.add_key(&[8; 32]), &ring),
+            admit_statement(&key.add_key(&[8; 32]).unwrap(), &ring),
             Ok(KeyStatement::Add([8; 32]))
         );
     }
 
+    fn bench_key(seed: u8) -> Key {
+        Key {
+            key: SigningKey::from_bytes(&[seed; 32]),
+            scope: KeyScope::Bench,
+        }
+    }
+
+    /// A key file names its scope: one without it, or whose public key is
+    /// not its seed's, is no key.
     #[test]
-    fn a_key_file_without_a_scope_is_the_bench_key() {
+    fn a_key_file_names_its_scope_and_its_seed_s_public_key() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("k.json");
         keygen(&path, KeyScope::Bench).unwrap();
         let mut file: serde_json::Value =
             serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-        file.as_object_mut().unwrap().remove("scope");
-        let old = dir.path().join("old.json");
-        fs::write(&old, file.to_string()).unwrap();
-        assert_eq!(
-            wellfed_formats::load::<OtaKeyFile>(&old).unwrap().scope,
-            KeyScope::Bench
-        );
-        assert!(Key::load(&old).is_ok());
+        assert_eq!(file["scope"], json!("bench"));
+
+        let mut unscoped = file.clone();
+        unscoped.as_object_mut().unwrap().remove("scope");
+        let edited = dir.path().join("edited.json");
+        fs::write(&edited, unscoped.to_string()).unwrap();
+        assert!(matches!(Key::load(&edited), Err(Error::Formats(_))));
 
         file["public_key"] = json!("00".repeat(32));
-        fs::write(&old, file.to_string()).unwrap();
+        fs::write(&edited, file.to_string()).unwrap();
         assert!(matches!(
-            Key::load(&old),
+            Key::load(&edited),
             Err(Error::Key(KeyError::PublicKey))
         ));
     }
@@ -524,6 +544,32 @@ mod tests {
             offer::admit_offer(&signed, None, &context(&[])),
             Err(OfferError::Key(RingError::Unknown))
         );
+
+        // The firmware takes an enrolled key's downgrade as it takes its
+        // manifest, so the owner's key signs one.
+        let enrolled = [key.public()];
+        let at_floor = Context {
+            floor: 9,
+            ..context(&enrolled)
+        };
+        assert_eq!(
+            offer::admit_offer(&signed, None, &at_floor),
+            Err(OfferError::Downgrade)
+        );
+        let statement = key.downgrade(&signed, &[0x42; 32], 9).unwrap();
+        let allowed = offer::admit_offer(&signed, Some(&statement), &at_floor).unwrap();
+        assert_eq!(allowed.downgrade.map(|s| s.trust), Some(Trust::Enrolled));
+
+        // Key statements are the built-in keys' alone: an owner's key
+        // writes none.
+        assert!(matches!(
+            key.revoke(&[7; 8]),
+            Err(Error::Key(KeyError::OwnerRevoke))
+        ));
+        assert!(matches!(
+            key.add_key(&[8; 32]),
+            Err(Error::Key(KeyError::OwnerAddKey))
+        ));
 
         // A scope the format does not name is no key at all.
         let mut text: serde_json::Value =
@@ -623,7 +669,7 @@ mod tests {
 
     #[test]
     fn a_motion_image_needs_its_exact_policy_attended() {
-        let key = Key(SigningKey::from_bytes(&[2; 32]));
+        let key = bench_key(2);
         let (checkout, review) = freeze(&build_image(), Some("fw16-pulse-v1"));
         let frozen = Frozen::open(checkout.path(), &review).unwrap();
         assert_eq!(frozen.motion_policy(), Some("fw16-pulse-v1"));

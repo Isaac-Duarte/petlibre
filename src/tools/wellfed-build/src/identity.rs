@@ -10,7 +10,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use wellfed_formats::credentials::OtaKeyFile;
+use wellfed_formats::credentials::{KeyScope, OtaKeyFile};
 use wellfed_formats::hex::is_lower_hex;
 use wellfed_formats::manifest::IdentitySnapshot;
 use wellfed_formats::require;
@@ -27,6 +27,11 @@ pub enum IdentityError {
     NoSources,
     #[error("Update key file needs a 64-character lowercase hex public key")]
     PublicKey,
+    /// An image embeds only the bench key: an owner's key is trusted by
+    /// the feeders that enrolled it, and built in it would also sign key
+    /// statements.
+    #[error("{} is an owner's update key; images embed only the bench key", path.display())]
+    OwnerKey { path: PathBuf },
 }
 
 /// Crates linked into, or testing, every firmware build: the whole SDK and the
@@ -144,6 +149,9 @@ pub(crate) fn ota_public_key(repo: &Repo, profile: Profile) -> Result<Option<Str
     }
 
     let key: OtaKeyFile = wellfed_formats::load(&path)?;
+    require(key.scope == KeyScope::Bench, || IdentityError::OwnerKey {
+        path: path.clone(),
+    })?;
     require(is_lower_hex(&key.public_key, 64), || {
         IdentityError::PublicKey
     })?;
@@ -216,5 +224,37 @@ pub fn source_id(
             subject.variant = None;
             source_identity(&subject, &inputs, None)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::Error;
+
+    /// Only the bench key is built in: an owner's key file under the
+    /// bench key's path is refused before anything is embedded.
+    #[test]
+    fn an_image_embeds_the_bench_key_and_never_an_owner_s() {
+        let checkout = tempfile::tempdir().unwrap();
+        let repo = Repo {
+            root: checkout.path().to_path_buf(),
+        };
+        let path = repo.path(wellfed_signing::KEY_PATH);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+
+        let public = wellfed_signing::keygen(&path, KeyScope::Bench).unwrap();
+        assert_eq!(
+            ota_public_key(&repo, Profile::Firstboot).unwrap(),
+            Some(public)
+        );
+
+        std::fs::remove_file(&path).unwrap();
+        wellfed_signing::keygen(&path, KeyScope::Owner).unwrap();
+        let refused = ota_public_key(&repo, Profile::Firstboot).unwrap_err();
+        assert!(
+            matches!(&refused, Error::Identity(IdentityError::OwnerKey { path: named }) if *named == path),
+            "{refused:?}"
+        );
     }
 }

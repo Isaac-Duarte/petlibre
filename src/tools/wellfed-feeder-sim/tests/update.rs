@@ -17,7 +17,7 @@ use ed25519_dalek::{Signer, SigningKey};
 use sha2::{Digest, Sha256};
 use tokio::task::LocalSet;
 use wellfed_client::update::{Image, InstallError, Installer, Next, Sent};
-use wellfed_client::update_key::{Enroll, EnrollError, Listed};
+use wellfed_client::update_key::{self, Enroll, EnrollError, Enrolled};
 use wellfed_connect::Connection;
 use wellfed_core::ota::install::IDLE_MS;
 use wellfed_core::ota::offer::{self, ImageKind, Signed, key_id};
@@ -532,8 +532,8 @@ fn signer() -> SigningKey {
     SigningKey::from_bytes(&SIGNER)
 }
 
-fn enrolling() -> Enroll {
-    Enroll::new(signer().verifying_key().to_bytes(), "laptop").unwrap()
+fn signer_public() -> [u8; 32] {
+    signer().verifying_key().to_bytes()
 }
 
 /// The feeder's client list, read by the owner.
@@ -546,29 +546,66 @@ async fn clients(rig: &mut Rig) -> Vec<Client> {
     clients
 }
 
-/// Ask the feeder to enroll [`SIGNER`] over `connection`, typing `hands`
-/// at the panel meanwhile, as the CLI does once its checks pass.
+/// How the feeder lists [`SIGNER`], if at all.
+async fn signer_role(rig: &mut Rig) -> Option<ClientRole> {
+    let listed = clients(rig).await;
+    listed
+        .iter()
+        .find(|c| c.key.0 == signer_public())
+        .map(|c| c.role)
+}
+
+/// Enroll [`SIGNER`] over `connection` as the CLI does, typing `hands` at
+/// the panel 3 s after the enrollment goes out. With `cut`, the relay
+/// `connection` runs through holds the feeder's answers back from then
+/// on, and cuts the connection after the hands.
 async fn enroll(
     rig: &mut Rig,
     connection: &mut Connection,
     hands: Option<&str>,
-) -> Result<(), EnrollError> {
-    let enroll = enrolling();
-    let request = enroll.request();
-    let id = rig.id();
-    let sim = &rig.sim;
-    let (answer, ()) = tokio::join!(connection.ask(id, &request), async {
-        tokio::time::sleep(Duration::from_secs(3)).await;
-        if let Some(line) = hands {
-            sim.type_line(line).unwrap();
+    cut: Option<&harness::Relay>,
+) -> Result<Enrolled, EnrollError> {
+    let mut enroll = Enroll::new(
+        signer_public(),
+        "laptop",
+        connection.role(),
+        connection.capabilities(),
+    )?;
+    loop {
+        let op = match enroll.poll() {
+            update_key::Next::Send(op) | update_key::Next::Press(op) => op,
+            update_key::Next::Done(enrolled) => return Ok(enrolled),
+            update_key::Next::Failed(error) => return Err(error),
+        };
+        let pressed = matches!(op, Op::EnrollUpdateKey { .. });
+        if pressed && let Some(relay) = cut {
+            relay.hold_answers();
         }
-    });
-    enroll.answer(&answer.expect("the feeder answers within the press window"))
+        let id = rig.id();
+        let sim = &rig.sim;
+        let (answer, ()) = tokio::join!(connection.ask(id, &op), async {
+            if !pressed {
+                return;
+            }
+            tokio::time::sleep(Duration::from_secs(3)).await;
+            if let Some(line) = hands {
+                sim.type_line(line).unwrap();
+            }
+            if let Some(relay) = cut {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                relay.cut();
+            }
+        });
+        match answer {
+            Ok(answer) => enroll.answer(&answer),
+            Err(_) => enroll.unanswered(),
+        }
+    }
 }
 
 /// A Dispense press at the feeder enrolls the key, and the feeder then
 /// takes updates it signed, here on an image that embeds no key at all;
-/// a key nobody enrolled is refused.
+/// a key nobody enrolled is refused. Enrolling it again sends nothing.
 #[test]
 fn an_enrolled_owner_key_signs_updates_a_feeder_without_a_built_in_key_takes() {
     paused(async {
@@ -580,27 +617,19 @@ fn an_enrolled_owner_key_signs_updates_a_feeder_without_a_built_in_key_takes() {
             Err(InstallError::Refused(Refusal::Update(UpdateRefusal::Key)))
         );
 
-        let mut connection = rig.open().await;
-        Enroll::session(connection.role(), connection.capabilities()).unwrap();
-        assert_eq!(
-            enrolling().listed(&clients(&mut rig).await),
-            Ok(Listed::Absent)
-        );
         // The panel boots locked: unlock it, then press.
+        let mut connection = rig.open().await;
         rig.sim.type_line("hold lock").unwrap();
-        let enrolled = enroll(&mut rig, &mut connection, Some("press dispense")).await;
-        assert_eq!(enrolled, Ok(()));
-
+        let enrolled = enroll(&mut rig, &mut connection, Some("press dispense"), None).await;
+        assert_eq!(enrolled, Ok(Enrolled::Now));
         let listed = clients(&mut rig).await;
-        assert_eq!(enrolling().listed(&listed), Ok(Listed::Enrolled));
-        let entry = listed
-            .iter()
-            .find(|c| c.key.0 == enrolling().key())
-            .unwrap();
+        let entry = listed.iter().find(|c| c.key.0 == signer_public()).unwrap();
         assert_eq!(
             (entry.role, entry.label.as_str()),
             (ClientRole::UpdateSigner, "laptop")
         );
+        let again = enroll(&mut rig, &mut connection, None, None).await;
+        assert_eq!(again, Ok(Enrolled::Already));
         drop(connection);
 
         let stranger = SigningKey::from_bytes(&[0x77; 32]);
@@ -627,20 +656,41 @@ fn without_a_press_the_key_is_unconfirmed_and_not_enrolled() {
         let mut rig = Rig::trusting(None).await;
         let mut connection = rig.open().await;
         rig.sim.type_line("hold lock").unwrap();
-        let unpressed = enroll(&mut rig, &mut connection, None).await;
+        let unpressed = enroll(&mut rig, &mut connection, None, None).await;
         assert_eq!(unpressed, Err(EnrollError::Unconfirmed));
-        assert_eq!(
-            enrolling().listed(&clients(&mut rig).await),
-            Ok(Listed::Absent)
-        );
+        assert_eq!(signer_role(&mut rig).await, None);
 
         // A press after the window closed enrolls nothing either.
         rig.sim.type_line("press dispense").unwrap();
         tokio::time::sleep(Duration::from_secs(1)).await;
-        assert_eq!(
-            enrolling().listed(&clients(&mut rig).await),
-            Ok(Listed::Absent)
-        );
+        assert_eq!(signer_role(&mut rig).await, None);
+        rig.sim.stop().await;
+    });
+}
+
+/// A press admitted before the session ends still enrolls the key: the
+/// client, which heard no answer, reports the outcome uncertain rather
+/// than a failure, and sends nothing again.
+#[test]
+fn a_session_lost_after_the_press_leaves_the_key_enrolled_and_the_client_uncertain() {
+    paused(async {
+        let mut rig = Rig::trusting(None).await;
+        let relay = harness::Relay::start(rig.sim.address).await;
+        let keys = Keypair::from_secret(OWNER);
+        let mut connection = Connection::open(&keys, rig.sim.identity, relay.address, [0x3d; 32])
+            .await
+            .unwrap();
+        rig.sim.type_line("hold lock").unwrap();
+
+        let lost = enroll(
+            &mut rig,
+            &mut connection,
+            Some("press dispense"),
+            Some(&relay),
+        )
+        .await;
+        assert_eq!(lost, Err(EnrollError::Uncertain));
+        assert_eq!(signer_role(&mut rig).await, Some(ClientRole::UpdateSigner));
         rig.sim.stop().await;
     });
 }
@@ -680,22 +730,27 @@ fn only_an_owner_enrolls_an_update_key() {
             Connection::open(&member, rig.sim.identity, rig.sim.address, [0x3c; 32])
                 .await
                 .unwrap();
+        let refused = enroll(&mut rig, &mut connection, None, None).await;
         assert_eq!(
-            Enroll::session(connection.role(), connection.capabilities()),
+            refused,
             Err(EnrollError::NotOwner {
                 role: ClientRole::Member
             })
         );
-        let asked = enroll(&mut rig, &mut connection, None).await;
-        assert_eq!(asked, Err(EnrollError::Forbidden));
-        assert_eq!(
-            enrolling().listed(&clients(&mut rig).await),
-            Ok(Listed::Absent)
-        );
+        let asked = Op::EnrollUpdateKey {
+            key: signer_public(),
+            label: "laptop".into(),
+        };
+        let answer = connection.ask(rig.id(), &asked).await.unwrap();
+        assert_eq!(answer, Answer::Refused(Refusal::Forbidden));
+        assert_eq!(signer_role(&mut rig).await, None);
 
-        let own = Enroll::new(*Keypair::from_secret(OWNER).public(), "mine").unwrap();
+        // The owner's own session key is listed as an owner, so it is
+        // refused before anything is sent.
+        let own = *Keypair::from_secret(OWNER).public();
+        let owner_session = Enroll::new(own, "mine", owner.role(), owner.capabilities()).unwrap();
         assert_eq!(
-            own.listed(&clients(&mut rig).await),
+            owner_session.listed(&clients(&mut rig).await),
             Err(EnrollError::SessionKey {
                 role: ClientRole::Owner
             })

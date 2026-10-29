@@ -11,9 +11,12 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Gauge, Paragraph, Wrap};
 use wellfed_formats::bench::banks::Bank;
-use wellfed_formats::bench::live::{BenchState, CancelState, JournalSource, Phase, Session, Uart};
+use wellfed_formats::bench::live::{
+    BenchState, CancelState, JournalSource, PendingPrompt, Phase, Session, Uart,
+};
 use wellfed_formats::bench::notes::{Expect, Timer, TimerState, Verdict};
 use wellfed_formats::bench::progress::StepState;
+use wellfed_formats::bench::prompt::Expects;
 
 use crate::cli::{bank_number, entry_text};
 use crate::note::clock;
@@ -39,6 +42,8 @@ const ROLES: [(&str, &str); 4] = [
 const UNKNOWN: &str = "not known yet";
 /// Device log lines the feeder panel keeps on screen.
 const DEVICE_TAIL: usize = 4;
+/// The rows a job's question takes, with its borders: its words wrap.
+const PROMPT_ROWS: u16 = 7;
 
 pub(crate) fn draw(frame: &mut Frame<'_>, screen: &Screen<'_>) {
     let state = screen.state;
@@ -47,10 +52,16 @@ pub(crate) fn draw(frame: &mut Frame<'_>, screen: &Screen<'_>) {
         Uart::Loader => 1,
         Uart::Idle | Uart::Capturing { .. } => 0,
     };
-    let [header, banner_area, middle, log, footer] = Layout::vertical([
+    let asked = if state.prompt.is_some() {
+        PROMPT_ROWS
+    } else {
+        0
+    };
+    let [header, banner_area, middle, prompt, log, footer] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(banner),
         Constraint::Fill(2),
+        Constraint::Length(asked),
         Constraint::Fill(1),
         Constraint::Length(1),
     ])
@@ -75,6 +86,9 @@ pub(crate) fn draw(frame: &mut Frame<'_>, screen: &Screen<'_>) {
     panel(frame, operator, "Operator", operator_lines(state));
     panel(frame, relays, "Relays and lease", relay_lines(state));
     panel(frame, feeder, "Feeder", feeder_lines(state));
+    if let Some(pending) = &state.prompt {
+        draw_prompt(frame, prompt, pending);
+    }
     draw_log(frame, log, screen);
 
     let keys =
@@ -169,6 +183,29 @@ fn draw_banner(frame: &mut Frame<'_>, area: Rect, uart: &Uart) {
         ),
         Uart::Idle | Uart::Capturing { .. } => {}
     }
+}
+
+/// The question a job waits on, right above its output (where the
+/// installer prints what goes with it, such as a recovery code), with the
+/// keys that answer it.
+fn draw_prompt(frame: &mut Frame<'_>, area: Rect, pending: &PendingPrompt) {
+    let keys = match pending.expects {
+        Expects::Done => "d: done",
+        Expects::YesNo => "y: yes · n: no",
+    };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::new().fg(Color::Yellow))
+        .title(format!(
+            " Job {} asks (question {}) · {keys} ",
+            pending.job, pending.seq
+        ));
+    frame.render_widget(
+        Paragraph::new(pending.text.clone())
+            .block(block)
+            .wrap(Wrap { trim: false }),
+        area,
+    );
 }
 
 fn ratio(done: u64, total: u64) -> f64 {

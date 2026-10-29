@@ -1059,3 +1059,76 @@ async fn an_enrollment_answered_by_a_late_press_comes_back_through_the_server() 
     );
     server.quit().await;
 }
+
+/// `wellfed install` opens sessions of its own only once the server shows
+/// its session paused for the job, so the pause holds from the job's start
+/// to its end: through the restart's relay off and on, and while a
+/// question waits.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_install_job_keeps_the_session_paused_for_its_whole_run() {
+    if crate::tests::run_alone() {
+        return;
+    }
+    let _one = ONE_SERVER.lock().await;
+    let feeder = simulator();
+    let checkout = checkout();
+    checkout.enroll(&feeder);
+    let script = r#"#!/bin/sh
+echo '{"kind":"restart-feeder"}'
+read a
+echo '{"kind":"open-recovery-window"}'
+read a
+"#;
+    let wellfed = checkout.root().join("wellfed");
+    fs::write(&wellfed, script).unwrap();
+    fs::set_permissions(&wellfed, fs::Permissions::from_mode(0o755)).unwrap();
+    let server = Running::start(checkout.open_at(Some(&feeder)));
+    state_until(&server, "the session", open).await;
+
+    let words = [
+        "install",
+        "--review",
+        "r",
+        "--manifest",
+        "m",
+        "--stock-config",
+        "c",
+        "--broker-name",
+        "b.example",
+        "--restart-seconds",
+        "0.3",
+    ];
+    let id = server.submit(&words).await.unwrap();
+    let paused = Session::Paused {
+        pause: Pause::StockInstall { job: id },
+    };
+
+    let state = state_until(&server, "the question", |state| {
+        let running = state
+            .job
+            .as_ref()
+            .is_some_and(|job| job.id == id && job.end.is_none());
+        // Once the job runs, nothing opens the session beside it.
+        if running {
+            assert!(
+                !matches!(state.feeder.session, Session::Open { .. }),
+                "{:?}",
+                state.feeder.session
+            );
+        }
+        state.prompt.is_some()
+    })
+    .await;
+    assert_eq!(state.feeder.session, paused);
+    assert_eq!(state.own_sessions_job(), Some(id));
+    assert!(checkout.board.log().contains(&(POWER, false)));
+
+    server
+        .client
+        .answer(id, 1, wellfed_formats::bench::prompt::Answer::Done)
+        .await
+        .unwrap();
+    assert_eq!(follow(&server.client, id).await.0.code, 0);
+    state_until(&server, "the session again", open).await;
+    server.quit().await;
+}

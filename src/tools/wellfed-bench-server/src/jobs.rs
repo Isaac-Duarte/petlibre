@@ -27,6 +27,7 @@ use wellfed_rig::tools::{Children, Processes};
 use crate::api::Refusal;
 use crate::board::SharedBoard;
 use crate::feeder::Feeder;
+use crate::tool_jobs::{self, Asking, InstallArgs, StockServeArgs, ToolJobError};
 
 /// A bench command that touches the hardware, as a job.
 #[derive(Debug, Clone, Subcommand)]
@@ -92,6 +93,14 @@ pub enum JobCommand {
     /// UART and never changes routing (`wellfed-stock network apply` is the
     /// operator's).
     StockOta(StockOtaArgs),
+    /// Stock to a replacement with `wellfed install` (DNS route or
+    /// `--from-bank0`), its questions put to whoever answers at the bench
+    /// (`wellfed-bench answer`, the page, the console). Restarts the
+    /// feeder itself with relay 1 when the installer asks for it.
+    Install(InstallArgs),
+    /// `wellfed-stock serve` until it exits or is cancelled: an
+    /// enrollment or broker window beside the bench. No UART, no relays.
+    StockServe(StockServeArgs),
 }
 
 impl JobCommand {
@@ -113,12 +122,14 @@ impl JobCommand {
             Self::Ota(_) => BenchCommand::Ota,
             Self::Itest(_) => BenchCommand::Itest,
             Self::StockOta(_) => BenchCommand::StockOta,
+            Self::Install(_) => BenchCommand::Install,
+            Self::StockServe(_) => BenchCommand::StockServe,
         }
     }
 
     pub fn name(&self) -> Option<&str> {
         match self {
-            Self::Off | Self::On => None,
+            Self::Off | Self::On | Self::Install(_) | Self::StockServe(_) => None,
             Self::Capture { name, .. }
             | Self::Boot { name, .. }
             | Self::Loader { name }
@@ -162,16 +173,25 @@ impl JobCommand {
             | Self::GiveWayExecute(_)
             | Self::StockPrepare(_)
             | Self::StockExecute(_) => true,
-            Self::Off | Self::On | Self::Ota(_) | Self::Itest(_) | Self::StockOta(_) => false,
+            Self::Off
+            | Self::On
+            | Self::Ota(_)
+            | Self::Itest(_)
+            | Self::StockOta(_)
+            | Self::Install(_)
+            | Self::StockServe(_) => false,
         }
     }
 
     /// Whether the job runs device API sessions of its own throughout:
     /// `stock-ota` meets stock, which serves no device API, then the build
     /// it installs on bank 0. The server's session closes for it rather
-    /// than search for a feeder that cannot answer.
+    /// than search for a feeder that cannot answer. `install` meets stock
+    /// too, then pairs with the replacement under its own key; `wellfed`
+    /// opens no session beside the server's unless the server shows it
+    /// paused for the job.
     pub(crate) fn own_sessions(&self) -> bool {
-        matches!(self, Self::StockOta(_))
+        matches!(self, Self::StockOta(_) | Self::Install(_))
     }
 
     /// One of the integration suite's commands.
@@ -188,6 +208,7 @@ impl JobCommand {
             Self::Ota(_) => false,
             Self::Itest(args) => args.power,
             Self::StockOta(args) => args.power,
+            Self::StockServe(_) => false,
             _ => true,
         }
     }
@@ -260,6 +281,8 @@ pub struct ToolPaths {
     pub flash_bin: PathBuf,
     pub stock_bin: PathBuf,
     pub build_bin: PathBuf,
+    /// `wellfed`, which `install` runs.
+    pub wellfed_bin: PathBuf,
 }
 
 /// What a job runs on: the server's checkout, config, board, tools and
@@ -280,6 +303,8 @@ pub(crate) enum JobError {
     Rig(#[from] wellfed_rig::Error),
     #[error(transparent)]
     Suite(#[from] wellfed_itest::Error),
+    #[error(transparent)]
+    Tool(#[from] ToolJobError),
     /// A bug: the server catches it, so the bench stays served.
     #[error("The job panicked")]
     Panicked,
@@ -293,6 +318,8 @@ pub(crate) struct Run {
     pub(crate) cancel: Cancel,
     pub(crate) children: Children,
     pub(crate) sink: Box<dyn ProgressSink>,
+    /// The job's questions and the answers the server takes for them.
+    pub(crate) asking: Asking,
 }
 
 /// How a job ended: its exit code, the error it stopped on, and what its
@@ -320,7 +347,7 @@ pub(crate) fn run(bed: &Bed, spec: &JobSpec, run: Run) -> Ran {
         return stopped(error);
     }
 
-    let result = dispatch(&mut bench, &spec.command, bed.tools.stock_bin.clone());
+    let result = dispatch(&mut bench, &spec.command, &bed.tools, &run.asking);
     let (code, error) = match result {
         Ok(code) => (code, None),
         Err(error) => (1, Some(error)),
@@ -418,7 +445,13 @@ fn record_start(
 }
 
 /// Run the command: the suite's on `wellfed-itest`, the rest on the rig.
-fn dispatch(bench: &mut Bench, command: &JobCommand, stock_bin: PathBuf) -> Result<u8, JobError> {
+fn dispatch(
+    bench: &mut Bench,
+    command: &JobCommand,
+    tools: &ToolPaths,
+    asking: &Asking,
+) -> Result<u8, JobError> {
+    let stock_bin = tools.stock_bin.clone();
     let captures = bench.root.join(CAPTURES);
     let ran = match command {
         JobCommand::Off => bench.off(),
@@ -445,6 +478,10 @@ fn dispatch(bench: &mut Bench, command: &JobCommand, stock_bin: PathBuf) -> Resu
         JobCommand::Itest(args) => return Ok(wellfed_itest::itest(bench, args, stock_bin)?),
         JobCommand::StockOta(args) => {
             return Ok(wellfed_itest::stock_ota(bench, args, stock_bin)?);
+        }
+        JobCommand::Install(args) => return tool_jobs::install(bench, args, tools, asking),
+        JobCommand::StockServe(args) => {
+            return tool_jobs::stock_serve(bench, args, tools, asking);
         }
     };
     Ok(ran?)
@@ -488,11 +525,15 @@ mod tests {
                 r#"{"relay_port": "r", "uart_port": "u", "baseline": "b", "rom_report": "r"}"#,
             )
             .unwrap(),
-            board: SharedBoard::new(Box::new(AtBoard::new(Box::new(board.clone()))), store),
+            board: SharedBoard::new(
+                Box::new(AtBoard::new(Box::new(board.clone()))),
+                store.clone(),
+            ),
             tools: ToolPaths {
                 flash_bin: PathBuf::from("absent"),
                 stock_bin: PathBuf::from("absent"),
                 build_bin: PathBuf::from("absent"),
+                wellfed_bin: PathBuf::from("absent"),
             },
             feeder,
         };
@@ -500,6 +541,7 @@ mod tests {
             cancel: Cancel::new(),
             children: Children::new(),
             sink: Box::new(Discard),
+            asking: crate::tool_jobs::asking(1, store.clone()).0,
         };
 
         for argv in [&["ota", "o1", "--build"][..], &["itest", "i1"]] {

@@ -8,6 +8,10 @@
 //!   reading;
 //! - `POST /jobs/{id}/cancel`: stop the running job, a UART write only
 //!   when `{"during_write": "cancel"}` says to;
+//! - `POST /jobs/{id}/answer`: `{"seq": N, "answer": "done"}` for the
+//!   question the running job asks (202), or a refusal (409) when it is
+//!   not running, asks nothing, asks another question or takes another
+//!   kind of answer;
 //! - `GET /jobs/{id}/output?after=N`: a page of the job's kept output
 //!   after line `N`, with its end once that is all;
 //! - `GET /wait?for=...`: hold until a condition holds or the timeout
@@ -31,7 +35,9 @@ use axum::routing::{get, post};
 use bytes::Bytes;
 use futures_util::stream::{self, Stream};
 use tokio::sync::watch;
-use wellfed_formats::bench::live::{BenchState, JobEvent, JobId, Phase};
+use wellfed_formats::bench::live::{
+    AnswerError, AnswerRequest, BenchState, JobEvent, JobId, Phase,
+};
 use wellfed_formats::bench::notes::Body as NoteBody;
 use wellfed_formats::bench::now;
 
@@ -47,6 +53,7 @@ pub(crate) fn router(shared: Arc<Shared>) -> Router {
         .route("/jobs", post(submit))
         .route("/jobs/{id}/stream", get(follow))
         .route("/jobs/{id}/cancel", post(cancel))
+        .route("/jobs/{id}/answer", post(answer))
         .route("/jobs/{id}/output", get(output))
         .route("/notes", post(note))
         .route("/wait", get(crate::wait::wait))
@@ -62,6 +69,12 @@ impl IntoResponse for Refusal {
             }
             Self::Stopping | Self::StoppingAfterWrite { .. } => StatusCode::SERVICE_UNAVAILABLE,
             Self::NoSuchJob { .. } => StatusCode::NOT_FOUND,
+            Self::Answer { error } => match error {
+                AnswerError::NotRunning { .. }
+                | AnswerError::NoPrompt { .. }
+                | AnswerError::WrongSeq { .. } => StatusCode::CONFLICT,
+                AnswerError::Mismatched { .. } => StatusCode::BAD_REQUEST,
+            },
             Self::Unparsed { .. }
             | Self::NotAJob { .. }
             | Self::OtherCheckout { .. }
@@ -128,6 +141,17 @@ async fn cancel(
     match shared.cancel(id, request.during_write) {
         Ok(()) => (StatusCode::ACCEPTED, Json(Accepted { id })).into_response(),
         Err(refusal) => refusal.into_response(),
+    }
+}
+
+async fn answer(
+    State(shared): State<Arc<Shared>>,
+    Path(id): Path<JobId>,
+    Json(request): Json<AnswerRequest>,
+) -> Response {
+    match shared.answer(id, request.seq, request.answer) {
+        Ok(()) => (StatusCode::ACCEPTED, Json(Accepted { id })).into_response(),
+        Err(error) => Refusal::Answer { error }.into_response(),
     }
 }
 

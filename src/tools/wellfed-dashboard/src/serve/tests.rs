@@ -6,15 +6,18 @@ use tower::ServiceExt;
 use crate::Live;
 use crate::views::tests::idle;
 use wellfed_formats::bench::CAPTURES;
-use wellfed_formats::bench::live::{CancelState, JobView, Uart};
+use wellfed_formats::bench::live::{AnswerError, CancelState, JobView, Uart};
+use wellfed_formats::bench::prompt::Answer;
 
 /// The address the test page answers as.
 const HOST: &str = "127.0.0.1:8780";
 
-/// A server's state and one job's output, set by the test.
+/// A server's state and one job's output, set by the test, and the
+/// answers it took.
 struct Fake {
     state: watch::Sender<BenchState>,
     output: Arc<Lines>,
+    answers: Mutex<Vec<(JobId, u32, Answer)>>,
 }
 
 struct Lines {
@@ -54,6 +57,22 @@ impl Live for Fake {
     fn output(&self, id: JobId) -> Option<Arc<dyn JobOutput>> {
         (id == 7).then(|| Arc::clone(&self.output) as Arc<dyn JobOutput>)
     }
+
+    /// Job 7 asks question 1, which takes done.
+    fn answer(&self, id: JobId, seq: u32, answer: Answer) -> Result<(), AnswerError> {
+        if id != 7 {
+            return Err(AnswerError::NotRunning { job: id });
+        }
+        if answer != Answer::Done {
+            return Err(AnswerError::Mismatched {
+                name: "open-recovery-window".into(),
+                expects: wellfed_formats::bench::prompt::Expects::Done,
+                answer,
+            });
+        }
+        self.answers.lock().unwrap().push((id, seq, answer));
+        Ok(())
+    }
 }
 
 fn ui() -> (tempfile::TempDir, Arc<Fake>, Router) {
@@ -64,6 +83,7 @@ fn ui() -> (tempfile::TempDir, Arc<Fake>, Router) {
             lines: Mutex::new(Vec::new()),
             changed: watch::Sender::new(0),
         }),
+        answers: Mutex::new(Vec::new()),
     });
     let ui = Ui {
         sources: Sources::new(
@@ -91,6 +111,67 @@ async fn get_as(router: &Router, uri: &str, host: &str) -> Response {
 
 async fn get(router: &Router, uri: &str) -> Response {
     get_as(router, uri, HOST).await
+}
+
+async fn post_answer(router: &Router, uri: &str, body: &str, content_type: &str) -> Response {
+    let request = Request::post(uri)
+        .header(header::HOST, HOST)
+        .header(header::CONTENT_TYPE, content_type)
+        .body(Body::from(body.to_string()))
+        .unwrap();
+    router.clone().oneshot(request).await.unwrap()
+}
+
+#[tokio::test]
+async fn an_answer_reaches_the_server_and_a_refusal_comes_back_by_kind() {
+    let (_tmp, fake, router) = ui();
+    let json = "application/json";
+
+    let taken = post_answer(
+        &router,
+        "/api/jobs/7/answer",
+        r#"{"seq":1,"answer":"done"}"#,
+        json,
+    )
+    .await;
+    assert_eq!(taken.status(), StatusCode::NO_CONTENT);
+    assert_eq!(*fake.answers.lock().unwrap(), [(7, 1, Answer::Done)]);
+
+    let other = post_answer(
+        &router,
+        "/api/jobs/8/answer",
+        r#"{"seq":1,"answer":"done"}"#,
+        json,
+    )
+    .await;
+    assert_eq!(other.status(), StatusCode::CONFLICT);
+    let body = axum::body::to_bytes(other.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::from_slice::<AnswerError>(&body).unwrap(),
+        AnswerError::NotRunning { job: 8 }
+    );
+    let kind = post_answer(
+        &router,
+        "/api/jobs/7/answer",
+        r#"{"seq":1,"answer":"yes"}"#,
+        json,
+    )
+    .await;
+    assert_eq!(kind.status(), StatusCode::BAD_REQUEST);
+
+    // A form post, as a page elsewhere could send without asking first,
+    // is no answer.
+    let form = post_answer(
+        &router,
+        "/api/jobs/7/answer",
+        "seq=1&answer=done",
+        "text/plain",
+    )
+    .await;
+    assert_eq!(form.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    assert_eq!(fake.answers.lock().unwrap().len(), 1);
 }
 
 /// Every view that reads a file or asks the stock server.

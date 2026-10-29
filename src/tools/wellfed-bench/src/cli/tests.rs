@@ -63,6 +63,64 @@ fn stock_ota_takes_a_name_its_firmware_and_no_promote() {
 }
 
 #[test]
+fn install_takes_the_bench_route_s_flags_and_answer_its_three_words() {
+    let cli = Cli::try_parse_from([
+        "wellfed-bench",
+        "install",
+        "--review",
+        "private/verification/r",
+        "--manifest",
+        "private/m.json",
+        "--stock-config",
+        "private/installer.json",
+        "--broker-name",
+        "broker.example.net",
+    ])
+    .unwrap();
+    let JobCommand::Install(args) = job(&cli) else {
+        panic!("not install")
+    };
+    assert_eq!(args.broker_name.as_deref(), Some("broker.example.net"));
+    assert_eq!(args.restart_seconds, 10.0);
+    assert_eq!(job(&cli).describe(), "install");
+    // The frame route reads a passphrase at a terminal: no job takes it.
+    assert!(
+        Cli::try_parse_from([
+            "wellfed-bench",
+            "install",
+            "--review",
+            "r",
+            "--manifest",
+            "m",
+            "--stock-config",
+            "c",
+            "--ssid",
+            "home",
+        ])
+        .is_err()
+    );
+
+    let cli = Cli::try_parse_from(["wellfed-bench", "answer", "7", "2", "yes"]).unwrap();
+    assert!(matches!(
+        cli.command,
+        Command::Answer {
+            job: 7,
+            seq: 2,
+            answer: Reply::Yes
+        }
+    ));
+    assert!(Cli::try_parse_from(["wellfed-bench", "answer", "7", "2", "y"]).is_err());
+
+    let cli =
+        Cli::try_parse_from(["wellfed-bench", "stock-serve", "--enroll-minutes", "5"]).unwrap();
+    let JobCommand::StockServe(args) = job(&cli) else {
+        panic!("not stock-serve")
+    };
+    assert_eq!(args.config, PathBuf::from("private/server.json"));
+    assert_eq!(job(&cli).label(), BenchCommand::StockServe);
+}
+
+#[test]
 fn itest_lists_without_a_name_and_takes_its_scenarios() {
     let cli = Cli::try_parse_from(["wellfed-bench", "itest", "--list"]).unwrap();
     let JobCommand::Itest(args) = job(&cli) else {

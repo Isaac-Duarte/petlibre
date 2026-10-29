@@ -100,6 +100,7 @@ fn writing() -> BenchState {
             stopping: None,
         },
         job: Some(job),
+        prompt: None,
         activity: vec![Activity {
             kind: ActivityKind::Flash,
             pid: 4300,
@@ -326,4 +327,27 @@ fn a_stop_held_for_a_write_shows_in_the_header() {
         screen.contains("stopping once job 12 ends: no new jobs"),
         "{screen}"
     );
+}
+
+#[test]
+fn a_job_s_question_shows_above_its_output_with_the_keys_that_answer_it() {
+    use wellfed_formats::bench::live::PendingPrompt;
+    use wellfed_formats::bench::prompt::Prompt;
+
+    let mut state = writing();
+    state.uart = Uart::Idle;
+    state.prompt = Some(PendingPrompt::new(12, 2, Prompt::OpenRecoveryWindow));
+
+    let screen = render(&state, &log(3), 0);
+
+    for text in [
+        "Job 12 asks (question 2) · d: done",
+        "hold Lock, then Dispense",
+        "job line 3",
+    ] {
+        assert!(screen.contains(text), "{text:?} missing from\n{screen}");
+    }
+    let asked = screen.find("Job 12 asks").unwrap();
+    assert!(asked < screen.find("job line 3").unwrap(), "{screen}");
+    assert!(!render(&writing(), &log(3), 0).contains("asks (question"));
 }

@@ -12,15 +12,16 @@ use ts_rs::{Config, TS};
 use wellfed_formats::bench::banks::{Bank, Check, Content, Entry, Ledger, Source, Witness};
 use wellfed_formats::bench::catalog::{CatalogEntry, Requirement, Tier};
 use wellfed_formats::bench::live::{
-    Activity, ActivityKind, BenchState, CancelState, CaptureView, ClockView, DeferredStop,
-    FeederStatus, FeederView, JobEnd, JobView, Journal, JournalSource, Pause, Phase, ServerView,
-    Session, StartRecord, Uart, UartRecord,
+    Activity, ActivityKind, AnswerError, AnswerRequest, BenchState, CancelState, CaptureView,
+    ClockView, DeferredStop, FeederStatus, FeederView, JobEnd, JobView, Journal, JournalSource,
+    Pause, PendingPrompt, Phase, ServerView, Session, StartRecord, Uart, UartRecord,
 };
 use wellfed_formats::bench::notes::{CardEvidence, Expect, Operator, Timer, TimerState, Verdict};
 use wellfed_formats::bench::progress::{
     BenchCommand, Capture, Current, FlashTool, HistoryEntry, Outcome, Progress, RelayState, Step,
     StepState, Transfer, Unit,
 };
+use wellfed_formats::bench::prompt::{Answer, Expects, Prompt};
 use wellfed_formats::bench::run::{Evidence, RunRecord, ScenarioRecord, ScenarioVerdict};
 
 /// One exported declaration, with its doc comment.
@@ -61,6 +62,12 @@ fn generated() -> String {
         decl::<Phase>(&cfg),
         decl::<DeferredStop>(&cfg),
         decl::<JobView>(&cfg),
+        decl::<PendingPrompt>(&cfg),
+        decl::<Prompt>(&cfg),
+        decl::<Expects>(&cfg),
+        decl::<Answer>(&cfg),
+        decl::<AnswerRequest>(&cfg),
+        decl::<AnswerError>(&cfg),
         decl::<CancelState>(&cfg),
         decl::<JobEnd>(&cfg),
         decl::<Activity>(&cfg),

@@ -2,13 +2,14 @@
 //! (`wellfed_formats::bench::live`) and the device routes
 //! (`wellfed_formats::bench::feeder`): a new job's command line, the
 //! answer to it, a ledger seed, and the refusals, which a client matches
-//! by variant.
+//! by variant. An answer to a job's question is
+//! `wellfed_formats::bench::live::AnswerRequest`, which the page posts too.
 
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use wellfed_formats::bench::banks::Ledger;
-use wellfed_formats::bench::live::{JobEnd, JobId};
+use wellfed_formats::bench::live::{AnswerError, JobEnd, JobId};
 
 /// `POST /banks/seed`: the ledger's starting point for one bank, from a
 /// dump session's inspection when it names one, else the operator's own.
@@ -140,6 +141,8 @@ pub enum Refusal {
     Note { error: NoteError },
     #[error("{error}")]
     Wait { error: WaitError },
+    #[error("{error}")]
+    Answer { error: AnswerError },
 }
 
 /// What a deferred stop waits for, in words.
@@ -224,6 +227,8 @@ pub enum WaitFor {
     Timer,
     /// No job runs and the flash client holds no UART.
     Idle,
+    /// A job asks a question (`BenchState::prompt`).
+    Prompt,
 }
 
 /// What came of a wait.

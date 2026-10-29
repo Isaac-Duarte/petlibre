@@ -1,11 +1,12 @@
-//! `serve --ui`: the read-only progress page beside the server, fed by its
-//! live state. The page is optional: a binary built without the `ui`
-//! feature refuses `--ui` before the server opens anything.
+//! `serve --ui`: the progress page beside the server, fed by its live
+//! state, which answers a job's questions through the server's own check.
+//! The page is optional: a binary built without the `ui` feature refuses
+//! `--ui` before the server opens anything.
 
 use std::path::Path;
 use std::thread::JoinHandle;
 
-use wellfed_bench_server::{Outputs, Store};
+use wellfed_bench_server::{Answers, Outputs, Store};
 use wellfed_rig::Cancel;
 
 /// Where the page serves and what it reports.
@@ -21,15 +22,18 @@ pub(crate) struct Page<'a> {
 mod built {
     use std::sync::Arc;
 
-    use super::{Cancel, JoinHandle, Outputs, Page, Store};
+    use super::{Answers, Cancel, JoinHandle, Outputs, Page, Store};
     use tokio::sync::watch;
     use wellfed_bench_server::JobOutput;
-    use wellfed_formats::bench::live::{BenchState, JobId};
+    use wellfed_formats::bench::live::{AnswerError, BenchState, JobId};
+    use wellfed_formats::bench::prompt::Answer;
 
-    /// The server's live state and its jobs' output, in this process.
+    /// The server's live state, its jobs' output and their questions' answers,
+    /// in this process.
     struct ServerLive {
         store: Store,
         outputs: Outputs,
+        answers: Answers,
     }
 
     impl wellfed_dashboard::Live for ServerLive {
@@ -40,6 +44,10 @@ mod built {
         fn output(&self, id: JobId) -> Option<Arc<dyn wellfed_dashboard::JobOutput>> {
             let output = self.outputs.get(id)?;
             Some(Arc::new(Output(output)))
+        }
+
+        fn answer(&self, id: JobId, seq: u32, answer: Answer) -> Result<(), AnswerError> {
+            self.answers.answer(id, seq, answer)
         }
     }
 
@@ -70,6 +78,7 @@ mod built {
             stop: &Cancel,
             store: Store,
             outputs: Outputs,
+            answers: Answers,
         ) -> anyhow::Result<JoinHandle<()>> {
             let listen = wellfed_dashboard::Listen::new(self.address, self.port)?;
             let handle = wellfed_dashboard::start(
@@ -77,7 +86,11 @@ mod built {
                 self.flash_bin.to_path_buf(),
                 &listen,
                 stop.clone(),
-                Arc::new(ServerLive { store, outputs }),
+                Arc::new(ServerLive {
+                    store,
+                    outputs,
+                    answers,
+                }),
             )?;
             wellfed_rig::say!("Bench page on {}", listen.url());
             Ok(handle)
@@ -87,7 +100,7 @@ mod built {
 
 #[cfg(not(feature = "ui"))]
 mod built {
-    use super::{Cancel, JoinHandle, Outputs, Page, Store};
+    use super::{Answers, Cancel, JoinHandle, Outputs, Page, Store};
 
     pub(crate) fn available() -> anyhow::Result<()> {
         anyhow::bail!(
@@ -102,6 +115,7 @@ mod built {
             _stop: &Cancel,
             _store: Store,
             _outputs: Outputs,
+            _answers: Answers,
         ) -> anyhow::Result<JoinHandle<()>> {
             available()?;
             anyhow::bail!(

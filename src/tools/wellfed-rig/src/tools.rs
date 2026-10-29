@@ -27,7 +27,7 @@ use wellfed_formats::session::Status as SessionStatus;
 use wellfed_signing::CONTAINER_HEADER;
 
 mod children;
-pub use children::{Children, Tracked, own_group};
+pub use children::{Children, Tracked, own_group, own_group_with_input};
 
 /// How long a receive-only capture may take to hold the UART port.
 const OBSERVER_START: Duration = Duration::from_secs(10);
@@ -454,6 +454,11 @@ pub fn default_flash_bin() -> PathBuf {
 /// `wellfed-stock` beside this executable.
 pub fn default_stock_bin() -> PathBuf {
     beside_this("wellfed-stock")
+}
+
+/// `wellfed` beside this executable, which the bench's `install` job runs.
+pub fn default_wellfed_bin() -> PathBuf {
+    beside_this("wellfed")
 }
 
 /// `wellfed-build` beside this executable.

@@ -45,14 +45,16 @@ mod routes;
 mod server;
 mod state;
 pub mod stopping;
+mod tool_jobs;
 mod wait;
 
 pub use client::{Client, ClientError, Followed, Interrupt};
 pub use feeder::{ClockSync, DeviceOptions};
 pub use jobs::{JobCommand, JobOptions, ToolPaths};
 pub use output::{CONSOLE_QUEUE, Console};
-pub use server::{Options, Outputs, ServeError, Server, restore_output};
+pub use server::{Answers, Options, Outputs, ServeError, Server, restore_output};
 pub use state::{JobOutput, Store};
+pub use tool_jobs::{InstallArgs, StockServeArgs};
 
 #[cfg(test)]
 mod tests;

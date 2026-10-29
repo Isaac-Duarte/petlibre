@@ -207,6 +207,7 @@ pub(crate) mod tests {
                 stopping: None,
             },
             job: None,
+            prompt: None,
             activity: Vec::new(),
             uart: Uart::Idle,
             relays: Default::default(),
@@ -224,6 +225,15 @@ pub(crate) mod tests {
 
         fn output(&self, _: JobId) -> Option<Arc<dyn crate::JobOutput>> {
             None
+        }
+
+        fn answer(
+            &self,
+            id: JobId,
+            _: u32,
+            _: wellfed_formats::bench::prompt::Answer,
+        ) -> Result<(), wellfed_formats::bench::live::AnswerError> {
+            Err(wellfed_formats::bench::live::AnswerError::NotRunning { job: id })
         }
     }
 

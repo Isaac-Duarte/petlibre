@@ -19,10 +19,12 @@ use tokio::sync::Notify;
 use wellfed_formats::bench::banks::BANKS;
 use wellfed_formats::bench::lease::{self, Holder, Lease};
 use wellfed_formats::bench::live::{
-    BenchState, CancelState, JOBS, JobEnd, JobId, JobView, Pause, Phase, ServerView, Uart,
+    AnswerError, BenchState, CancelState, JOBS, JobEnd, JobId, JobView, Pause, Phase, ServerView,
+    Uart,
 };
 use wellfed_formats::bench::notes::Seen;
 use wellfed_formats::bench::progress::{Current, ProgressSink};
+use wellfed_formats::bench::prompt::Answer;
 use wellfed_formats::bench::rendezvous::{self, Rendezvous};
 use wellfed_formats::bench::{CONFIG, Config, now, relative};
 use wellfed_relay::{Board, POWER};
@@ -40,6 +42,7 @@ use crate::output::{self, Console, Output};
 use crate::routes;
 use crate::state::{JobLog, JobOutput, Logs, Store};
 use crate::stopping::Stopper;
+use crate::tool_jobs::{self, Answering};
 
 /// How long a quitting server lets its clients' connections finish once
 /// the job has ended.
@@ -148,6 +151,7 @@ impl Server {
                 stopping: None,
             },
             job: None,
+            prompt: None,
             activity: Vec::new(),
             uart: Uart::Idle,
             relays: Default::default(),
@@ -243,6 +247,12 @@ impl Server {
     /// The jobs' output, for a reader in this process (the page).
     pub fn outputs(&self) -> Outputs {
         Outputs(Arc::clone(&self.shared))
+    }
+
+    /// Where an answer to a job's question goes, for a reader in this
+    /// process (the page, the console).
+    pub fn answers(&self) -> Answers {
+        Answers(Arc::clone(&self.shared))
     }
 
     pub fn socket(&self) -> &Path {
@@ -479,6 +489,16 @@ impl Outputs {
     }
 }
 
+/// The answer to a running job's question, as the socket takes it.
+#[derive(Clone)]
+pub struct Answers(Arc<Shared>);
+
+impl Answers {
+    pub fn answer(&self, job: JobId, seq: u32, answer: Answer) -> Result<(), AnswerError> {
+        self.0.answer(job, seq, answer)
+    }
+}
+
 /// What the socket's handlers and the job thread share.
 pub(crate) struct Shared {
     bed: Bed,
@@ -504,6 +524,7 @@ struct Running {
     label: String,
     cancel: Cancel,
     children: Children,
+    answering: Answering,
     thread: Option<std::thread::JoinHandle<()>>,
 }
 
@@ -626,6 +647,7 @@ impl Shared {
         self.output.say(format!("Job {id}: {label}"));
         self.output.route(Some(Arc::clone(&log)));
 
+        let (asking, answering) = tool_jobs::asking(id, self.store.clone());
         let run = Run {
             cancel: cancel.clone(),
             children: children.clone(),
@@ -633,6 +655,7 @@ impl Shared {
                 id,
                 store: self.store.clone(),
             }),
+            asking,
         };
         let shared = Arc::clone(self);
         let thread = std::thread::Builder::new()
@@ -653,6 +676,7 @@ impl Shared {
             label,
             cancel,
             children,
+            answering,
             thread: Some(thread),
         });
         Ok(id)
@@ -667,7 +691,11 @@ impl Shared {
                 label: spec.command.describe(),
             }));
         } else if spec.command.own_sessions() {
-            self.bed.feeder.hold(Some(Pause::StockOta { job: id }));
+            let pause = match spec.command {
+                jobs::JobCommand::Install(_) => Pause::StockInstall { job: id },
+                _ => Pause::StockOta { job: id },
+            };
+            self.bed.feeder.hold(Some(pause));
         }
         self.capture.stop();
 
@@ -780,11 +808,35 @@ impl Shared {
                 state.activity.clear();
                 state.uart = Uart::Idle;
             }
+            // An ended job asks nothing, however it ended.
+            if state.prompt.as_ref().is_some_and(|prompt| prompt.job == id) {
+                state.prompt = None;
+            }
         });
         if let Some(log) = log {
             log.finish(end);
         }
         self.output.say(ended);
+    }
+
+    /// Pass `answer` to the running job `id`, if it fits the question the
+    /// job asks now (`seq`, and its kind). The question leaves the state as
+    /// the answer is taken, under the jobs lock, so one `seq` is answered
+    /// once and nothing is ever held for a question not yet asked.
+    pub(crate) fn answer(&self, id: JobId, seq: u32, answer: Answer) -> Result<(), AnswerError> {
+        let jobs = self.jobs();
+        let Some(running) = jobs.running.as_ref().filter(|running| running.id == id) else {
+            return Err(AnswerError::NotRunning { job: id });
+        };
+        self.store
+            .try_update(|state| tool_jobs::take(&mut state.prompt, id, seq, answer))?;
+        running.answering.send(answer);
+        drop(jobs);
+
+        if let Some(log) = self.log(id) {
+            log.push(format!("Answer {answer} taken for question {seq}"));
+        }
+        Ok(())
     }
 
     /// Ask the running job `id` to stop: its sequence sees the cancel at

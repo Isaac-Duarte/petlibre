@@ -31,6 +31,13 @@ pub fn own_group(command: &mut Command) -> &mut Command {
     command.process_group(0).stdin(std::process::Stdio::null())
 }
 
+/// [`own_group`], but with standard input a pipe its owner writes: only
+/// for a child that takes answers there (`wellfed install --prompts
+/// lines`). The pipe is no terminal, so no read of it can stop the child.
+pub fn own_group_with_input(command: &mut Command) -> &mut Command {
+    command.process_group(0).stdin(std::process::Stdio::piped())
+}
+
 /// Shared by every clone: a job's tools and its suite register into the
 /// same one.
 #[derive(Clone, Default)]
@@ -97,7 +104,10 @@ impl Children {
                 ActivityKind::Flash => {
                     let _ = kill_process(pid, Signal::INT);
                 }
-                ActivityKind::Build | ActivityKind::Stock | ActivityKind::Analyzer => {
+                ActivityKind::Build
+                | ActivityKind::Stock
+                | ActivityKind::Install
+                | ActivityKind::Analyzer => {
                     // The child leads its own group; the pid alone if it
                     // somehow does not.
                     if kill_process_group(pid, Signal::TERM).is_err() {

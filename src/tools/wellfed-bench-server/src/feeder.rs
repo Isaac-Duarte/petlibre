@@ -595,6 +595,16 @@ impl Task {
             error: error.clone(),
         });
         loop {
+            // No session is open to close, but a job that runs sessions of
+            // its own (an install that creates the key) is shown its hold,
+            // as it would be beside an open one.
+            let held = self.hold.borrow().clone();
+            self.set_session(match held {
+                Some(pause) => Session::Paused { pause },
+                None => Session::Unconfigured {
+                    error: error.clone(),
+                },
+            });
             tokio::select! {
                 request = self.requests.recv() => {
                     let Some(request) = request else { return };

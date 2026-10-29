@@ -9,6 +9,9 @@
 //! host spends no more than that on it during a write. `q` and Ctrl+C
 //! (which raw mode delivers as a key, not a signal) ask for the same stop
 //! as SIGINT: cancel the job, wait for its cleanup, then release the bench.
+//! While a job asks a question, `d` answers done, and `y` or `n` yes or no;
+//! a key of the other kind does nothing, and a refused answer says why in
+//! the log.
 //! While the flash client holds the UART, the first press only shows the
 //! confirmation in the footer, and a second within 5 s stops.
 //!
@@ -31,9 +34,10 @@ use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use tokio::sync::mpsc::UnboundedSender;
-use wellfed_bench_server::Store;
 use wellfed_bench_server::stopping::{Ask, CONFIRM_PROMPT, Confirm, Held, Press};
-use wellfed_formats::bench::live::Uart;
+use wellfed_bench_server::{Answers, Store};
+use wellfed_formats::bench::live::{PendingPrompt, Uart};
+use wellfed_formats::bench::prompt::Answer;
 
 use view::Screen;
 
@@ -70,6 +74,7 @@ impl Tui {
     /// console that ends on its own [`Ask::ConsoleEnded`].
     pub(crate) fn start(
         store: Store,
+        answers: Answers,
         lines: Receiver<String>,
         asks: UnboundedSender<Ask>,
     ) -> io::Result<Self> {
@@ -84,7 +89,7 @@ impl Tui {
                     asks: asks.clone(),
                     done: Arc::clone(&finished),
                 };
-                run(tty, &store, &lines, &asks, &finished)
+                run(tty, &store, &answers, &lines, &asks, &finished)
             })?;
         Ok(Self {
             done,
@@ -175,6 +180,7 @@ impl Drop for Screenful {
 fn run(
     tty: File,
     store: &Store,
+    answers: &Answers,
     lines: &Receiver<String>,
     asks: &UnboundedSender<Ask>,
     done: &AtomicBool,
@@ -254,6 +260,15 @@ fn run(
                 }
                 KeyCode::End => scroll = 0,
                 KeyCode::Home => scroll = log.len(),
+                KeyCode::Char(key) => {
+                    let asked = store.read().prompt;
+                    if let Some((pending, answer)) = asked.and_then(|p| answering(p, key)) {
+                        if let Err(error) = answers.answer(pending.job, pending.seq, answer) {
+                            push(&mut log, format!("Answer refused: {error}"));
+                        }
+                        drawn = None;
+                    }
+                }
                 _ => {}
             },
             // Redrawn at once at the new size.
@@ -275,6 +290,18 @@ fn run(
 fn quits(code: KeyCode, modifiers: KeyModifiers) -> bool {
     code == KeyCode::Char('q')
         || (code == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL))
+}
+
+/// The answer `key` gives the question `pending` asks, if it is one of its
+/// kind: `d` for an instruction, `y` or `n` for a question.
+fn answering(pending: PendingPrompt, key: char) -> Option<(PendingPrompt, Answer)> {
+    let answer = match key {
+        'd' => Answer::Done,
+        'y' => Answer::Yes,
+        'n' => Answer::No,
+        _ => return None,
+    };
+    pending.prompt.accepts(answer).then_some((pending, answer))
 }
 
 fn push(log: &mut VecDeque<String>, line: String) {
@@ -318,6 +345,33 @@ mod tests {
         // With the UART free, one press quits.
         let mut idle = Quitting::default();
         assert_eq!(idle.press(&Uart::Idle, start), Some(Ask::Quit));
+    }
+
+    #[test]
+    fn a_key_answers_only_a_question_of_its_kind() {
+        use wellfed_formats::bench::prompt::Prompt;
+
+        let window = PendingPrompt::new(3, 1, Prompt::OpenRecoveryWindow);
+        let recognize = PendingPrompt::new(
+            3,
+            2,
+            Prompt::RecognizeFeeder {
+                device: "AF".into(),
+                address: "192.168.1.31".into(),
+            },
+        );
+
+        assert_eq!(
+            answering(window.clone(), 'd').map(|(_, answer)| answer),
+            Some(Answer::Done)
+        );
+        assert_eq!(answering(window, 'y'), None);
+        assert_eq!(
+            answering(recognize.clone(), 'n').map(|(_, answer)| answer),
+            Some(Answer::No)
+        );
+        assert_eq!(answering(recognize.clone(), 'd'), None);
+        assert_eq!(answering(recognize, 'x'), None);
     }
 
     #[test]

@@ -10,6 +10,8 @@
 //!   during a UART write only a second Ctrl+C within 5 s does. Once the
 //!   cancel is taken, another Ctrl+C detaches, and `attach ID` follows the
 //!   job again.
+//! - `answer JOB SEQ done|yes|no` answers the question a job (`install`)
+//!   asks, once; the page and the console answer it too.
 //! - With no server running, only `status` (and `status --break-lease`)
 //!   runs: it reports the lease and reads the relay board itself, which is
 //!   the way back after a killed server. Every other command refuses and
@@ -31,6 +33,7 @@ use wellfed_formats::bench::banks::{Bank, Check, Content, Entry};
 use wellfed_formats::bench::catalog;
 use wellfed_formats::bench::lease::{self, Liveness};
 use wellfed_formats::bench::live::{BenchState, JobId, Phase, Session, Uart};
+use wellfed_formats::bench::prompt::Answer;
 use wellfed_formats::bench::rendezvous;
 use wellfed_formats::bench::{CONFIG, Config};
 use wellfed_relay::{AtBoard, Board, Relay};
@@ -38,6 +41,7 @@ use wellfed_rig::Cancel;
 use wellfed_rig::commands::{Bench, UartWhenOff, check_name, seconds_arg};
 use wellfed_rig::tools::{
     Children, Processes, default_build_bin, default_flash_bin, default_stock_bin,
+    default_wellfed_bin,
 };
 
 /// A client that detached from a job it left running exits with this, as
@@ -88,6 +92,16 @@ enum Command {
         /// The job's number, as its command printed it.
         id: JobId,
     },
+    /// Answer the question a running job asks (`install`), as the page
+    /// and the console show it with its number.
+    Answer {
+        /// The job's number.
+        job: JobId,
+        /// The question's number, as the job printed it.
+        seq: u32,
+        #[arg(value_enum)]
+        answer: Reply,
+    },
     /// The bank ledger: which build the server believes each flash bank
     /// holds, and whether the feeder's own reports agree.
     Banks(BanksArgs),
@@ -103,6 +117,25 @@ enum Command {
     Job(JobCommand),
 }
 
+/// An answer, as the command line spells it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum Reply {
+    /// The instruction is done.
+    Done,
+    Yes,
+    No,
+}
+
+impl From<Reply> for Answer {
+    fn from(reply: Reply) -> Self {
+        match reply {
+            Reply::Done => Self::Done,
+            Reply::Yes => Self::Yes,
+            Reply::No => Self::No,
+        }
+    }
+}
+
 #[derive(Debug, Args)]
 struct ServeArgs {
     /// The wellfed-flash binary every job runs (default: beside this one).
@@ -114,6 +147,9 @@ struct ServeArgs {
     /// The wellfed-build binary for `--build` (default: beside this one).
     #[arg(long)]
     build_bin: Option<PathBuf>,
+    /// The wellfed binary for `install` (default: beside this one).
+    #[arg(long)]
+    wellfed_bin: Option<PathBuf>,
 
     /// Serve the read-only progress page beside the server.
     #[arg(long)]
@@ -204,6 +240,12 @@ fn run(cli: Cli, argv: &[String]) -> anyhow::Result<u8> {
         Command::Status { break_lease } => status(&root, break_lease, &runtime),
         Command::Serve(args) => serve(&root, &args, &runtime),
         Command::Banks(args) => runtime.block_on(banks(&Client::new(&root), args)),
+        Command::Answer { job, seq, answer } => runtime.block_on(async {
+            let answer = Answer::from(answer);
+            Client::new(&root).answer(job, seq, answer).await?;
+            wellfed_rig::say!("Job {job}: answered {answer} to question {seq}");
+            Ok(0)
+        }),
         Command::Note(args) => runtime.block_on(note::note(&Client::new(&root), &root, args)),
         Command::Mcp => runtime.block_on(mcp::serve(&root)),
         Command::Attach { id } => runtime.block_on(async {
@@ -302,6 +344,7 @@ fn serve(root: &Path, args: &ServeArgs, runtime: &tokio::runtime::Runtime) -> an
         flash_bin: args.flash_bin.clone().unwrap_or_else(default_flash_bin),
         stock_bin: args.stock_bin.clone().unwrap_or_else(default_stock_bin),
         build_bin: args.build_bin.clone().unwrap_or_else(default_build_bin),
+        wellfed_bin: args.wellfed_bin.clone().unwrap_or_else(default_wellfed_bin),
     };
     if args.ui {
         page::available()?;
@@ -348,7 +391,12 @@ fn serve(root: &Path, args: &ServeArgs, runtime: &tokio::runtime::Runtime) -> an
             address: &args.listen,
             port: args.ui_port,
         };
-        Some(page.start(&stop_page, server.store(), server.outputs())?)
+        Some(page.start(
+            &stop_page,
+            server.store(),
+            server.outputs(),
+            server.answers(),
+        )?)
     } else {
         None
     };
@@ -368,7 +416,12 @@ fn serve(root: &Path, args: &ServeArgs, runtime: &tokio::runtime::Runtime) -> an
     ));
     let (asks, asked) = tokio::sync::mpsc::unbounded_channel();
     let console = match lines {
-        Some(lines) => Some(tui::Tui::start(server.store(), lines, asks.clone())?),
+        Some(lines) => Some(tui::Tui::start(
+            server.store(),
+            server.answers(),
+            lines,
+            asks.clone(),
+        )?),
         None => None,
     };
     let stopper = server.stopper();
@@ -529,6 +582,17 @@ fn report_state(state: &BenchState) {
     }
     for child in &state.activity {
         wellfed_rig::say!("  child {}: {:?} {}", child.pid, child.kind, child.label);
+    }
+    if let Some(prompt) = &state.prompt {
+        wellfed_rig::say!(
+            "Job {} asks ({}): {}\n  `wellfed-bench answer {} {} {}` answers it",
+            prompt.job,
+            prompt.seq,
+            prompt.text,
+            prompt.job,
+            prompt.seq,
+            prompt.answer_words()
+        );
     }
 
     match &state.uart {

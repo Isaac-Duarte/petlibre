@@ -21,6 +21,7 @@ use crate::api::{DuringWrite, Wait, WaitFor};
 use crate::stopping::Ask;
 
 mod feeder;
+mod install;
 
 /// The output pipe is process-wide, so tests that run a server take turns
 /// when they share a process.
@@ -38,6 +39,7 @@ pub(crate) fn idle_state() -> BenchState {
             stopping: None,
         },
         job: None,
+        prompt: None,
         activity: Vec::new(),
         uart: Uart::Idle,
         relays: Default::default(),
@@ -159,8 +161,9 @@ esac
         Options {
             tools: ToolPaths {
                 flash_bin: root.join("wellfed-flash"),
-                stock_bin: root.join("absent"),
+                stock_bin: root.join("wellfed-stock"),
                 build_bin: root.join("absent"),
+                wellfed_bin: root.join("wellfed"),
             },
             root,
             console: crate::Console::Terminal,

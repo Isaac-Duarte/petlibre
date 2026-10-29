@@ -6,7 +6,10 @@
 //! What a tool cannot express is refused here, before any words exist:
 //! motion that needs a person at the bench (`--attended-motion`, the
 //! suite's `--feeds`), breaking the lease, and a destructive suite run
-//! without its explicit confirmation. No string a hardware tool takes may
+//! without its explicit confirmation, and an answer to an install's
+//! question that only a person at the feeder may give: whether it is the
+//! owner's feeder, and that its recovery window is open. No string a
+//! hardware tool takes may
 //! start with `-`, so none reads as a flag, and the session name comes
 //! after `--`. The note tools build their notes directly: their text is
 //! free, dashes included, and goes through no command line.
@@ -21,6 +24,7 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use wellfed_bench_server::api::DuringWrite;
+use wellfed_formats::bench::prompt::{Answer, Prompt};
 
 use crate::note::{self, NoteArgs, What};
 
@@ -50,6 +54,13 @@ pub(crate) enum ToolError {
         "{tool}: destructive is refused over MCP without confirm_destructive: power cuts mid-update may leave a feeder only a UART flash recovers; set confirm_destructive to true to mean it"
     )]
     UnconfirmedDestructive { tool: String },
+    /// The owner's identity check, and a step at the feeder's panel: an
+    /// agent saying yes or done would stand in for a person who may not
+    /// be there.
+    #[error(
+        "job_answer: the {name} question is the owner's to answer, at the feeder: answer it on the bench page, the server's console, or with `wellfed-bench answer`"
+    )]
+    PersonAnswers { name: &'static str },
     /// It would read as a flag on the command line the tool builds.
     #[error("{tool}: {field} {value:?} starts with '-', which no hardware tool takes")]
     LeadingDash {
@@ -72,6 +83,12 @@ pub(crate) enum Call {
         during_write: DuringWrite,
     },
     WaitFor(WaitArgs),
+    /// An answer to a job's question: the running job's unless `id`.
+    JobAnswer {
+        id: Option<u64>,
+        seq: u32,
+        answer: Answer,
+    },
     LogsTail {
         source: LogSource,
         lines: usize,
@@ -139,6 +156,8 @@ pub(crate) enum Until {
     Timer,
     /// No job runs and the flash client holds no UART.
     Idle,
+    /// A job asks a question (install), already or once it does.
+    Prompt,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, JsonSchema)]
@@ -154,6 +173,68 @@ pub(crate) struct WaitArgs {
     pub(crate) label: Option<String>,
     /// Seconds to wait, at most 600.
     pub(crate) timeout: f64,
+}
+
+/// An answer, as `job_answer` takes it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+enum Reply {
+    /// The instruction is done.
+    Done,
+    Yes,
+    No,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct AnswerArgs {
+    /// The job; the running one if left out.
+    id: Option<u64>,
+    /// The question's number, as bench_status's prompt gives it.
+    seq: u32,
+    answer: Reply,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct InstallArgs {
+    /// The replacement's frozen review, root-relative.
+    review: String,
+    /// The signed update manifest for the same build.
+    manifest: String,
+    /// The installer's wellfed-stock config (init-installer).
+    stock_config: String,
+    /// Stock's broker name, which the owner's resolver points here.
+    broker_name: Option<String>,
+    /// The replacement is already on bank 0: start at pairing.
+    #[serde(default)]
+    from_bank0: bool,
+    /// A copy of stock 1.1.15's OTA image matching the pinned digest.
+    stock_backup: Option<String>,
+    enroll_minutes: Option<u64>,
+    #[serde(default)]
+    calibrate_clock: bool,
+    #[serde(default)]
+    without_stock_plans: bool,
+    /// The owner key file; the installer's default otherwise.
+    keys: Option<String>,
+    /// The replacement's address.
+    address: Option<String>,
+    /// How long relay 1 stays off for the restart (default 10).
+    restart_seconds: Option<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct StockServeArgs {
+    /// The wellfed-stock config (default private/server.json).
+    config: Option<String>,
+    enroll_minutes: Option<u64>,
+    #[serde(default)]
+    calibrate_clock: bool,
+    /// Allow the stock-to-replacement install trial.
+    #[serde(default)]
+    enable_ota_trial: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
@@ -442,8 +523,13 @@ const SPECS: &[Spec] = &[
     },
     Spec {
         name: "wait_for",
-        description: "Hold until a condition holds or the timeout passes: a job's end, a UART/device log/job line containing text, a device event kind, the feeder's status naming a build or bank, an operator timer falling due, or an idle bench. Reads only.",
+        description: "Hold until a condition holds or the timeout passes: a job's end, a UART/device log/job line containing text, a device event kind, the feeder's status naming a build or bank, an operator timer falling due, an idle bench, or a job's question (prompt). Reads only.",
         schema: schema::<WaitArgs>,
+    },
+    Spec {
+        name: "job_answer",
+        description: "Answer the question the running install asks (bench_status's prompt, by its seq): done for an instruction such as setting the DNS override, yes or no for a question. Sent once, never ahead of a question. Refused for the owner's own questions (is this your feeder, the recovery window at the panel), which a person answers on the page, the console or the CLI.",
+        schema: schema::<AnswerArgs>,
     },
     Spec {
         name: "logs_tail",
@@ -555,6 +641,16 @@ const SPECS: &[Spec] = &[
         description: "Logic-analyzer captures (sigrok) of repeated relay power-ons or loader entries; each cycle powers the feeder on and ends powered off. No UART, no flash.",
         schema: schema::<TransientArgs>,
     },
+    Spec {
+        name: "install",
+        description: "Stock to Wellfed with `wellfed install` as a job: its own stock server and sessions (the server's session pauses), stock installs the review into bank 0 over its own updater, then promotion writes bank 1. Restarts the feeder itself with relay 1 (off about 10 s, then on). Its other questions wait in bench_status's prompt for job_answer or a person; no UART write.",
+        schema: schema::<InstallArgs>,
+    },
+    Spec {
+        name: "stock_serve",
+        description: "Run `wellfed-stock serve` as a job until it exits or job_cancel: the stock broker and API for an enrollment window. No UART, no relays; with enable_ota_trial it may dispatch stock's own install when asked.",
+        schema: schema::<StockServeArgs>,
+    },
 ];
 
 /// Every tool, as `tools/list` answers.
@@ -603,6 +699,18 @@ pub(crate) fn call(name: &str, args: JsonObject) -> Result<Call, ToolError> {
             }
         }
         "wait_for" => Call::WaitFor(parse(name, args)?),
+        "job_answer" => {
+            let args: AnswerArgs = parse(name, args)?;
+            Call::JobAnswer {
+                id: args.id,
+                seq: args.seq,
+                answer: match args.answer {
+                    Reply::Done => Answer::Done,
+                    Reply::Yes => Answer::Yes,
+                    Reply::No => Answer::No,
+                },
+            }
+        }
         "logs_tail" => {
             let args: LogsArgs = parse(name, args)?;
             Call::LogsTail {
@@ -671,6 +779,22 @@ fn timer(tool: &str, args: TimerArgs) -> Result<note::TimerArgs, ToolError> {
         expect_event: args.expect_event,
         window: args.window,
     })
+}
+
+/// Refused for a question only the owner may answer, at the feeder.
+pub(crate) fn agent_may_answer(prompt: &Prompt) -> Result<(), ToolError> {
+    match prompt {
+        Prompt::RecognizeFeeder { .. } | Prompt::OpenRecoveryWindow => {
+            Err(ToolError::PersonAnswers {
+                name: prompt.name(),
+            })
+        }
+        Prompt::SetOverride { .. }
+        | Prompt::RestartFeeder
+        | Prompt::EraseStockPlans
+        | Prompt::SetupMode
+        | Prompt::JoinBack => Ok(()),
+    }
 }
 
 /// A command line under construction: the subcommand and its flags, then
@@ -849,6 +973,30 @@ fn job_words(name: &str, args: JsonObject) -> Result<Vec<String>, ToolError> {
                 .value("--seconds", args.seconds)
                 .value("--samplerate", args.samplerate)
         }
+        "install" => {
+            let args: InstallArgs = parse(name, args)?;
+            Line::new(&["install"])
+                .value("--review", Some(args.review))
+                .value("--manifest", Some(args.manifest))
+                .value("--stock-config", Some(args.stock_config))
+                .value("--broker-name", args.broker_name)
+                .switch("--from-bank0", args.from_bank0)
+                .value("--stock-backup", args.stock_backup)
+                .value("--enroll-minutes", args.enroll_minutes)
+                .switch("--calibrate-clock", args.calibrate_clock)
+                .switch("--without-stock-plans", args.without_stock_plans)
+                .value("--keys", args.keys)
+                .value("--address", args.address)
+                .value("--restart-seconds", args.restart_seconds)
+        }
+        "stock_serve" => {
+            let args: StockServeArgs = parse(name, args)?;
+            Line::new(&["stock-serve"])
+                .value("--config", args.config)
+                .value("--enroll-minutes", args.enroll_minutes)
+                .switch("--calibrate-clock", args.calibrate_clock)
+                .switch("--enable-ota-trial", args.enable_ota_trial)
+        }
         _ => return Err(ToolError::Unknown { name: name.into() }),
     };
     Ok(line.finish())
@@ -898,6 +1046,9 @@ mod tests {
             "ota",
             "itest",
             "transients",
+            "install",
+            "stock_serve",
+            "job_answer",
         ] {
             assert!(tools.iter().any(|tool| tool.name == name), "{name}");
         }
@@ -938,6 +1089,104 @@ mod tests {
             call("power", args(serde_json::json!({"state": "on"}))).unwrap(),
             Call::Job(vec!["on".into()])
         );
+    }
+
+    #[test]
+    fn install_and_stock_serve_build_their_command_lines() {
+        let install = call(
+            "install",
+            args(serde_json::json!({
+                "review": "private/verification/r",
+                "manifest": "private/m.json",
+                "stock_config": "private/installer.json",
+                "broker_name": "broker.example.net",
+                "calibrate_clock": true,
+            })),
+        )
+        .unwrap();
+        assert_eq!(
+            install,
+            Call::Job(
+                [
+                    "install",
+                    "--review",
+                    "private/verification/r",
+                    "--manifest",
+                    "private/m.json",
+                    "--stock-config",
+                    "private/installer.json",
+                    "--broker-name",
+                    "broker.example.net",
+                    "--calibrate-clock",
+                ]
+                .map(String::from)
+                .to_vec()
+            )
+        );
+        assert_eq!(
+            call(
+                "stock_serve",
+                args(serde_json::json!({"config": "private/installer.json", "enroll_minutes": 5}))
+            )
+            .unwrap(),
+            Call::Job(
+                [
+                    "stock-serve",
+                    "--config",
+                    "private/installer.json",
+                    "--enroll-minutes",
+                    "5"
+                ]
+                .map(String::from)
+                .to_vec()
+            )
+        );
+        assert!(matches!(
+            call(
+                "install",
+                args(serde_json::json!({"review": "-r", "manifest": "m", "stock_config": "c"}))
+            ),
+            Err(ToolError::LeadingDash { .. })
+        ));
+        assert_eq!(
+            call(
+                "job_answer",
+                args(serde_json::json!({"seq": 2, "answer": "done"}))
+            )
+            .unwrap(),
+            Call::JobAnswer {
+                id: None,
+                seq: 2,
+                answer: Answer::Done
+            }
+        );
+    }
+
+    /// The owner's identity check and the panel's recovery window need a
+    /// person; the instructions an agent can carry out do not.
+    #[test]
+    fn an_agent_may_not_answer_the_owner_s_own_questions() {
+        for prompt in [
+            Prompt::RecognizeFeeder {
+                device: "AF".into(),
+                address: "192.168.1.31".into(),
+            },
+            Prompt::OpenRecoveryWindow,
+        ] {
+            assert!(
+                matches!(agent_may_answer(&prompt), Err(ToolError::PersonAnswers { name }) if name == prompt.name()),
+                "{prompt:?}"
+            );
+        }
+        for prompt in [
+            Prompt::SetOverride {
+                name: "broker.example.net".into(),
+                broker: "192.168.1.20".parse().unwrap(),
+            },
+            Prompt::JoinBack,
+        ] {
+            assert!(agent_may_answer(&prompt).is_ok(), "{prompt:?}");
+        }
     }
 
     #[test]

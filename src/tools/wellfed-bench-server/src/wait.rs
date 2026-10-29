@@ -10,7 +10,8 @@
 //!   both); a status from before it never counts, so a wait begun before a
 //!   reboot hears the feeder after it. The answer names the boot count;
 //! - `for=timer&label=L`: the operator's timer `L` is due, seen or missed;
-//! - `for=idle`: no job runs and the flash client holds no UART.
+//! - `for=idle`: no job runs and the flash client holds no UART;
+//! - `for=prompt`: a job asks a question, already or once it does.
 //!
 //! 200 with `met` and how, or `timed-out`; 400 for a condition missing
 //! what it needs, or one that could never be met: a timer nobody set, or a
@@ -46,6 +47,7 @@ pub(crate) enum Condition {
     },
     Timer(String),
     Idle,
+    Prompt,
 }
 
 impl TryFrom<&Wait> for Condition {
@@ -84,6 +86,7 @@ impl TryFrom<&Wait> for Condition {
             }
             WaitFor::Timer => Self::Timer(wait.label.clone().ok_or_else(|| missing("label"))?),
             WaitFor::Idle => Self::Idle,
+            WaitFor::Prompt => Self::Prompt,
         })
     }
 }
@@ -107,7 +110,9 @@ impl Condition {
                     label: label.clone(),
                 },
             ),
-            Self::Line(_) | Self::Event(_) | Self::Status { .. } | Self::Idle => Ok(()),
+            Self::Line(_) | Self::Event(_) | Self::Status { .. } | Self::Idle | Self::Prompt => {
+                Ok(())
+            }
         }
     }
 
@@ -162,6 +167,15 @@ impl Condition {
                 let uart = matches!(state.uart, Uart::Writing { .. } | Uart::Loader);
                 (!running && !uart).then(|| "the bench is idle".to_string())
             }
+            Self::Prompt => state.prompt.as_ref().map(|prompt| {
+                format!(
+                    "job {} asks question {} ({}): {}",
+                    prompt.job,
+                    prompt.seq,
+                    prompt.prompt.name(),
+                    prompt.text
+                )
+            }),
             Self::Line(_) | Self::Event(_) => None,
         }
     }

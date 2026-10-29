@@ -1,11 +1,14 @@
-//! The bench's read-only page: the bench server's live state, the feeder,
-//! the integration suite's runs and the evidence sessions.
+//! The bench's page: the bench server's live state, the feeder, the
+//! integration suite's runs and the evidence sessions, and the one thing it
+//! sends back, the answer to a question a job asks (`install`'s prompts).
 //!
 //! `wellfed-bench serve --ui` serves it beside the bench server, which
-//! hands it the live state and the jobs' output through [`Live`]. The crate
-//! links no relay driver, no flash client and not the server itself, so
-//! nothing here can switch a relay, open a serial port or start a job: it
-//! cannot disturb an update, a dump or a capture, and nothing writes. The
+//! hands it the live state, the jobs' output and the answer path through
+//! [`Live`]. The crate links no relay driver, no flash client and not the
+//! server itself, so nothing here can switch a relay, open a serial port
+//! or start a job: it cannot disturb an update, a dump or a capture, and
+//! the only thing it changes is a pending question, which the server
+//! checks against its number and kind as it does any client's. The
 //! views always build, so their tests and TypeScript bindings run in the
 //! contributor gate; the server and its embedded web app need the `ui`
 //! feature and a built `src/web/apps/bench/dist` (`make ui`).
@@ -15,7 +18,8 @@
 use std::sync::Arc;
 
 use tokio::sync::watch;
-use wellfed_formats::bench::live::{BenchState, JobId};
+use wellfed_formats::bench::live::{AnswerError, BenchState, JobId};
+use wellfed_formats::bench::prompt::Answer;
 
 #[cfg(any(feature = "ui", test))]
 mod runs;
@@ -40,6 +44,9 @@ pub trait Live: Send + Sync {
     fn subscribe(&self) -> watch::Receiver<BenchState>;
     /// Job `id`'s output, while the server keeps it.
     fn output(&self, id: JobId) -> Option<Arc<dyn JobOutput>>;
+    /// Answer job `id`'s question `seq`, as `POST /jobs/{id}/answer` on
+    /// the server's socket does.
+    fn answer(&self, id: JobId, seq: u32, answer: Answer) -> Result<(), AnswerError>;
 }
 
 /// One job's output lines, as the server keeps them.

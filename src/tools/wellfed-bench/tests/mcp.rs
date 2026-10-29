@@ -90,6 +90,7 @@ fn an_agent_lists_reads_posts_a_job_waits_and_is_refused_motion_and_feeds() {
             flash_bin: root.join("absent"),
             stock_bin: root.join("absent"),
             build_bin: root.join("absent"),
+            wellfed_bin: root.join("absent"),
         },
         console: Console::Terminal,
     };

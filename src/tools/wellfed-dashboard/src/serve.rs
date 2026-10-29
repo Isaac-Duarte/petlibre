@@ -9,6 +9,11 @@
 //! interface such as the Tailscale address, or a wildcard for every
 //! interface when the owner chooses to.
 //!
+//! One route writes: `POST /api/jobs/{id}/answer`, the answer to the
+//! question a job asks, which the server takes only for that question and
+//! of its kind. It takes JSON alone, so a page elsewhere cannot send it
+//! without a CORS preflight this server never grants.
+//!
 //! While the flash client holds the UART (writing, or in a loader session),
 //! nothing here reads a file: the views answer [`Deferred`] and the stream
 //! sends only the live state and the job's output, which are in memory.
@@ -26,7 +31,7 @@ use axum::http::{HeaderValue, StatusCode, Uri, header};
 use axum::middleware::{self, Next};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Json, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use futures_util::stream::{self, Stream};
 use rust_embed::Embed;
 use serde::Serialize;
@@ -38,7 +43,7 @@ use super::views::evidence::{self, EvidenceView};
 use super::views::health::{self, FlashCache};
 use super::views::{Sources, sessions};
 
-use wellfed_formats::bench::live::{BenchState, JobId};
+use wellfed_formats::bench::live::{AnswerError, AnswerRequest, BenchState, JobId};
 use wellfed_formats::bench::{Cancel, now};
 
 use crate::{Error, JobOutput, Result};
@@ -174,6 +179,7 @@ fn router(ui: Ui) -> Router {
         .route("/api/tests", get(tests))
         .route("/api/tests/{name}", get(test_run))
         .route("/api/stock", get(stock_status))
+        .route("/api/jobs/{id}/answer", post(answer))
         .fallback(asset)
         .layer(middleware::from_fn(no_store))
         .layer(middleware::from_fn_with_state(ui.hosts, addressed))
@@ -221,6 +227,27 @@ async fn state(State(ui): State<Ui>) -> Json<BenchState> {
     let mut state = ui.sources.state();
     state.now = now();
     Json(state)
+}
+
+/// 204 once the server took the answer; otherwise the refusal, 409 for a
+/// question that is no longer (or not yet) the one asked.
+async fn answer(
+    State(ui): State<Ui>,
+    UrlPath(id): UrlPath<JobId>,
+    Json(request): Json<AnswerRequest>,
+) -> Response {
+    match ui.sources.live.answer(id, request.seq, request.answer) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(error) => {
+            let status = match error {
+                AnswerError::Mismatched { .. } => StatusCode::BAD_REQUEST,
+                AnswerError::NotRunning { .. }
+                | AnswerError::NoPrompt { .. }
+                | AnswerError::WrongSeq { .. } => StatusCode::CONFLICT,
+            };
+            (status, Json(error)).into_response()
+        }
+    }
 }
 
 async fn evidence_view(State(ui): State<Ui>) -> Response {

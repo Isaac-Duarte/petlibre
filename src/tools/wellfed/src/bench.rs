@@ -911,6 +911,7 @@ mod tests {
                     finished: 1.0,
                 }),
             }),
+            prompt: None,
             activity: Vec::new(),
             uart: Uart::Idle,
             relays: std::collections::BTreeMap::new(),

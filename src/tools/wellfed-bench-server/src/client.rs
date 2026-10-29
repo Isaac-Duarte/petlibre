@@ -16,7 +16,8 @@ use hyper_util::rt::TokioIo;
 use serde::de::DeserializeOwned;
 use tokio::net::UnixStream;
 use tokio::sync::mpsc;
-use wellfed_formats::bench::live::{BenchState, JobEnd, JobEvent, JobId};
+use wellfed_formats::bench::live::{AnswerRequest, BenchState, JobEnd, JobEvent, JobId};
+use wellfed_formats::bench::prompt::Answer;
 
 use std::time::{Duration, Instant};
 
@@ -195,6 +196,16 @@ impl Client {
     pub async fn cancel(&self, id: JobId, during_write: DuringWrite) -> Result<(), ClientError> {
         let path = format!("/jobs/{id}/cancel");
         let body = serde_json::to_vec(&CancelRequest { during_write })?;
+        let response = self.send(Method::POST, &path, Some(body)).await?;
+        let _: Accepted = answer(response, StatusCode::ACCEPTED).await?;
+        Ok(())
+    }
+
+    /// Answer job `id`'s question `seq`. Sent once: a refusal says why it
+    /// was not taken, and nothing is held for later.
+    pub async fn answer(&self, id: JobId, seq: u32, reply: Answer) -> Result<(), ClientError> {
+        let path = format!("/jobs/{id}/answer");
+        let body = serde_json::to_vec(&AnswerRequest { seq, answer: reply })?;
         let response = self.send(Method::POST, &path, Some(body)).await?;
         let _: Accepted = answer(response, StatusCode::ACCEPTED).await?;
         Ok(())

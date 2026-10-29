@@ -38,7 +38,7 @@ export type FlashTool = { path: string, sha256: string, };
  * history line naming a command this bench no longer has does not read,
  * and the page skips it.
  */
-export type BenchCommand = "status" | "off" | "on" | "capture" | "boot" | "loader" | "transients" | "dump" | "flash-prepare" | "flash-execute" | "give-way-prepare" | "give-way-execute" | "stock-prepare" | "stock-execute" | "ota" | "itest" | "stock-ota";
+export type BenchCommand = "status" | "off" | "on" | "capture" | "boot" | "loader" | "transients" | "dump" | "flash-prepare" | "flash-execute" | "give-way-prepare" | "give-way-execute" | "stock-prepare" | "stock-execute" | "ota" | "itest" | "stock-ota" | "install" | "stock-serve";
 
 export type HistoryEntry = { command: BenchCommand, name: string | null, started: number, finished: number | null, outcome: Outcome, error: string | null, next?: string | null, };
 
@@ -121,6 +121,11 @@ now: number, server: ServerView,
  * The running job, or else the last one to finish.
  */
 job: JobView | null, 
+/**
+ * What the running job asks the person at the bench, until it is
+ * answered, cancelled or the job ends.
+ */
+prompt: PendingPrompt | null, 
 /**
  * Every child process a job has running, as it starts and exits.
  */
@@ -206,6 +211,46 @@ record: Current | null,
 upcoming: Array<string>, cancel: CancelState, end: JobEnd | null, };
 
 /**
+ * A question a job waits on: `wellfed install` asks it, and whoever
+ * answers (the page, the console, `wellfed-bench answer`, an agent) names
+ * its `seq`. The number is the job's own count of its questions, from 1,
+ * so an answer meant for one question never lands on the next.
+ */
+export type PendingPrompt = { job: number, seq: number, prompt: Prompt, 
+/**
+ * The prompt's words, as the installer's terminal shows them.
+ */
+text: string, expects: Expects, };
+
+/**
+ * One question the installer stops at until it is answered.
+ */
+export type Prompt = { "kind": "set-override", name: string, broker: string, } | { "kind": "restart-feeder" } | { "kind": "recognize-feeder", device: string, address: string, } | { "kind": "erase-stock-plans" } | { "kind": "setup-mode" } | { "kind": "join-back" } | { "kind": "open-recovery-window" };
+
+/**
+ * The kind of answer a prompt takes.
+ */
+export type Expects = "done" | "yes-no";
+
+/**
+ * The person's answer to one prompt.
+ */
+export type Answer = "done" | "yes" | "no";
+
+/**
+ * `POST /jobs/{id}/answer`: the answer to the job's question `seq`.
+ */
+export type AnswerRequest = { seq: number, answer: Answer, };
+
+/**
+ * Why an answer was not passed to the job. Each is refused before
+ * anything reaches it, and a refused answer is never held for later: the
+ * installer reads answers in order, with no number of their own, so one
+ * sent ahead of its question would answer that question unseen.
+ */
+export type AnswerError = { "refused": "not-running", job: number, } | { "refused": "no-prompt", job: number, } | { "refused": "wrong-seq", job: number, seq: number, pending: number, } | { "refused": "mismatched", name: string, expects: Expects, answer: Answer, };
+
+/**
  * Whether anyone asked the job to stop.
  */
 export type CancelState = "none" | "requested";
@@ -228,7 +273,7 @@ label: string, started: number, };
 /**
  * What a child is, which decides how a cancel stops it.
  */
-export type ActivityKind = "flash" | "build" | "stock" | "analyzer";
+export type ActivityKind = "flash" | "build" | "stock" | "install" | "analyzer";
 
 /**
  * What the feeder's UART is doing, for the banner that says not to touch
@@ -278,7 +323,7 @@ export type Session = { "state": "idle" } | { "state": "unconfigured", error: st
 /**
  * Why the server closed its session.
  */
-export type Pause = { "kind": "uart-job", job: number, label: string, } | { "kind": "install" } | { "kind": "stock-ota", job: number, } | { "kind": "power-off" } | { "kind": "stopping" };
+export type Pause = { "kind": "uart-job", job: number, label: string, } | { "kind": "install" } | { "kind": "stock-ota", job: number, } | { "kind": "stock-install", job: number, } | { "kind": "power-off" } | { "kind": "stopping" };
 
 /**
  * The parts of the feeder's status the page shows.

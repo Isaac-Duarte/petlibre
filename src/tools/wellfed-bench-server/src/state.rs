@@ -61,6 +61,23 @@ impl Store {
             state.now = now();
         });
     }
+
+    /// [`Self::update`] for a change that may be refused: readers wake
+    /// only for one made. The same lock rule holds.
+    pub(crate) fn try_update<E>(
+        &self,
+        change: impl FnOnce(&mut BenchState) -> Result<(), E>,
+    ) -> Result<(), E> {
+        let mut outcome = Ok(());
+        self.sender.send_if_modified(|state| {
+            outcome = change(state);
+            if outcome.is_ok() {
+                state.now = now();
+            }
+            outcome.is_ok()
+        });
+        outcome
+    }
 }
 
 /// The most lines one job's stream keeps; older ones are dropped, so a

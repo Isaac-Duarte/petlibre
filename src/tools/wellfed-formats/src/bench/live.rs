@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use super::banks::Ledger;
 use super::notes::Operator;
 use super::progress::{Current, RelayState, StepState, Unit};
+use super::prompt::{Answer, Expects, Prompt};
 
 /// A job's number, counting up across servers (see [`JOBS`]).
 pub type JobId = u64;
@@ -35,6 +36,9 @@ pub struct BenchState {
     pub server: ServerView,
     /// The running job, or else the last one to finish.
     pub job: Option<JobView>,
+    /// What the running job asks the person at the bench, until it is
+    /// answered, cancelled or the job ends.
+    pub prompt: Option<PendingPrompt>,
     /// Every child process a job has running, as it starts and exits.
     pub activity: Vec<Activity>,
     pub uart: Uart,
@@ -123,6 +127,74 @@ impl JobView {
     }
 }
 
+/// A question a job waits on: `wellfed install` asks it, and whoever
+/// answers (the page, the console, `wellfed-bench answer`, an agent) names
+/// its `seq`. The number is the job's own count of its questions, from 1,
+/// so an answer meant for one question never lands on the next.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct PendingPrompt {
+    pub job: JobId,
+    pub seq: u32,
+    pub prompt: Prompt,
+    /// The prompt's words, as the installer's terminal shows them.
+    pub text: String,
+    pub expects: Expects,
+}
+
+impl PendingPrompt {
+    /// The answers it takes, as `wellfed-bench answer` spells them.
+    pub fn answer_words(&self) -> &'static str {
+        match self.expects {
+            Expects::Done => "done",
+            Expects::YesNo => "yes|no",
+        }
+    }
+
+    pub fn new(job: JobId, seq: u32, prompt: Prompt) -> Self {
+        Self {
+            job,
+            seq,
+            text: prompt.text(),
+            expects: prompt.expects(),
+            prompt,
+        }
+    }
+}
+
+/// `POST /jobs/{id}/answer`: the answer to the job's question `seq`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct AnswerRequest {
+    pub seq: u32,
+    pub answer: Answer,
+}
+
+/// Why an answer was not passed to the job. Each is refused before
+/// anything reaches it, and a refused answer is never held for later: the
+/// installer reads answers in order, with no number of their own, so one
+/// sent ahead of its question would answer that question unseen.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[serde(tag = "refused", rename_all = "kebab-case")]
+pub enum AnswerError {
+    /// No such job, or it has ended.
+    #[error("Job {job} is not running")]
+    NotRunning { job: JobId },
+    /// Nothing is asked now: answered already, or not yet asked.
+    #[error("Job {job} asks nothing now")]
+    NoPrompt { job: JobId },
+    #[error("Job {job} asks question {pending}, not {seq}")]
+    WrongSeq { job: JobId, seq: u32, pending: u32 },
+    /// A yes to an instruction, or done to a question.
+    #[error("The {name} prompt takes {expects}, not {answer}")]
+    Mismatched {
+        name: String,
+        expects: Expects,
+        answer: Answer,
+    },
+}
+
 /// Whether anyone asked the job to stop.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -167,6 +239,8 @@ pub enum ActivityKind {
     Build,
     /// `wellfed-stock`: a server, an image server or a request.
     Stock,
+    /// `wellfed install`, which stops its own stock server on SIGTERM.
+    Install,
     /// `sigrok-cli`.
     Analyzer,
 }
@@ -316,6 +390,9 @@ pub enum Pause {
     /// `stock-ota` runs, with sessions of its own: the feeder runs stock,
     /// which serves no device API, until the build it installs answers.
     StockOta { job: JobId },
+    /// `wellfed install` runs as job `job`, with sessions of its own: the
+    /// feeder runs stock, and then the replacement it pairs with.
+    StockInstall { job: JobId },
     /// Relay 1 is off: there is no feeder to talk to.
     PowerOff,
     /// The server is quitting.
@@ -329,7 +406,7 @@ impl Pause {
     /// own install push leaves no room for one.
     pub const fn own_sessions_job(&self) -> Option<JobId> {
         match self {
-            Self::StockOta { job } => Some(*job),
+            Self::StockOta { job } | Self::StockInstall { job } => Some(*job),
             Self::UartJob { .. } | Self::Install | Self::PowerOff | Self::Stopping => None,
         }
     }
@@ -354,6 +431,7 @@ impl std::fmt::Display for Pause {
             Self::UartJob { job, label } => write!(f, "job {job} ({label}) holds the UART"),
             Self::Install => f.write_str("an install push holds the feeder's session"),
             Self::StockOta { job } => write!(f, "job {job} (stock-ota) holds its own sessions"),
+            Self::StockInstall { job } => write!(f, "job {job} (install) holds its own sessions"),
             Self::PowerOff => f.write_str("relay 1 is off"),
             Self::Stopping => f.write_str("the bench server is stopping"),
         }

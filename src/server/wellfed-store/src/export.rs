@@ -63,7 +63,7 @@ impl Snapshot {
                 sqlx::query_as!(
                     FeederState,
                     r#"SELECT feeder_id AS "feeder_id: Uuid", status, status_ms, settings,
-                              settings_ms
+                              settings_ms, plans, plans_ms
                        FROM feeder_state ORDER BY feeder_id"#
                 )
                 .fetch(tx),

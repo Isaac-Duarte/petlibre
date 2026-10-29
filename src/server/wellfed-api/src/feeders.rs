@@ -1,11 +1,11 @@
-//! Adopted feeders, their status, settings and lock.
+//! Adopted feeders, their status, settings, plans and lock.
 
 use std::fmt;
 
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
-use wellfed_model::{ClientRole, Hex, Status};
+use wellfed_model::{ClientRole, Hex, NextMeal, PLANS, Plan, Status};
 
 use crate::FeederId;
 
@@ -71,6 +71,19 @@ pub struct FeederDetail {
     pub feeder: Feeder,
     /// `None` until the server has read it once.
     pub status: Option<StatusSnapshot>,
+    /// The plans' next meal in the household's zone, from the plans the
+    /// server last read; `None` with no enabled plan, no plans read yet,
+    /// or no household.
+    pub next_meal: Option<NextMeal>,
+}
+
+/// The feeding plans to replace every slot with, as one table: a slot left
+/// `null` is emptied.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct PlansChange {
+    /// All ten slots.
+    #[schema(min_items = 10, max_items = 10)]
+    pub plans: [Option<Plan>; PLANS],
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]

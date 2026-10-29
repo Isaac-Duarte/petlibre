@@ -42,11 +42,8 @@ pub enum NoRoute {
     /// The portion calibration is measured at the feeder with a scale and
     /// the owner's CLI.
     Calibration,
-    /// The feeding plans' route is still to come; until then the owner's
-    /// CLI edits them on the feeder.
-    PlansToCome,
     /// The meal call's clip, converted on the owner's computer and
-    /// uploaded with the CLI; its route comes with the plans'.
+    /// uploaded with the CLI; its route is still to come.
     CallToCome,
 }
 
@@ -82,7 +79,8 @@ pub const fn parity(op: &Op) -> Parity {
             Without(NoRoute::Diagnostics)
         }
         Op::GetCalibration | Op::PutCalibration { .. } => Without(NoRoute::Calibration),
-        Op::GetPlans | Op::PutPlans { .. } => Without(NoRoute::PlansToCome),
+        Op::GetPlans => Route(Get, "/feeders/{id}/plans"),
+        Op::PutPlans { .. } => Route(Put, "/feeders/{id}/plans"),
         Op::GetCall | Op::StartCall { .. } | Op::CallChunk { .. } | Op::DeleteCall => {
             Without(NoRoute::CallToCome)
         }

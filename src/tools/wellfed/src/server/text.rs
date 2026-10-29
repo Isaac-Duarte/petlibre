@@ -32,20 +32,29 @@ pub(super) fn feeder(feeder: &Feeder) -> String {
 
 pub(super) fn status(detail: &FeederDetail) -> String {
     let mut text = feeder(&detail.feeder);
-    let Some(snapshot) = &detail.status else {
-        text.push_str("\nNo status read yet.");
-        return text;
-    };
-
-    let read = if snapshot.live { "live" } else { "last read" };
     let zone = TimeZone::system();
-    // Writing to a String cannot fail.
-    let _ = write!(
-        text,
-        "\nStatus ({read} {}):\n{}",
-        crate::text::time(Some(snapshot.at), &zone),
-        crate::text::status(&snapshot.status, &zone),
-    );
+    match &detail.status {
+        Some(snapshot) => {
+            let read = if snapshot.live { "live" } else { "last read" };
+            // Writing to a String cannot fail.
+            let _ = write!(
+                text,
+                "\nStatus ({read} {}):\n{}",
+                crate::text::time(Some(snapshot.at), &zone),
+                crate::text::status(&snapshot.status, &zone),
+            );
+        }
+        None => text.push_str("\nNo status read yet."),
+    }
+    if let Some(meal) = detail.next_meal {
+        let _ = write!(
+            text,
+            "\nNext meal: {}, {} portions (plan {})",
+            crate::text::time(Some(meal.at), &zone),
+            meal.portions,
+            meal.slot,
+        );
+    }
     text
 }
 
@@ -105,6 +114,7 @@ pub(super) fn outcome(outcome: &CommandOutcome) -> String {
     match outcome {
         CommandOutcome::Done => "done".to_owned(),
         CommandOutcome::Settings { settings: s } => format!("settings: {}", settings(s)),
+        CommandOutcome::Plans { plans } => format!("plans: generation {}", plans.generation),
         CommandOutcome::Refused { refusal } => format!("refused: {}", word(refusal)),
         CommandOutcome::Feeding { feed } => format!("feed {feed} running"),
         CommandOutcome::Invited { invite, seconds } => {

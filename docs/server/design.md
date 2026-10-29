@@ -40,10 +40,10 @@ src/server/wellfed-server    the binary: config, axum routers per resource, the 
                               supervisor, the embedded web UI
 src/server/wellfed-server-testkit  a temp store, a fixed clock and random, the simulator harness, signed test releases, the server in process
 src/app/                      Flutter app, plus a thin flutter_rust_bridge crate (wellfed-app-bridge) over wellfed-client,
-                              wellfed-model and wellfed-api
+                              wellfed-connect and wellfed-model, and wellfed-api once it has server screens
 ```
 
-The map is the target. Today the server is `wellfed-api`, `wellfed-store`, `wellfed-mirror`, `wellfed-releases`, `wellfed-service` and `wellfed-server`, with `wellfed-server-client` and `wellfed-server-testkit` beside them. The app and the embedded web UI aren't built yet.
+The map is the target. Today the server is `wellfed-api`, `wellfed-store`, `wellfed-mirror`, `wellfed-releases`, `wellfed-service` and `wellfed-server`, with `wellfed-server-client` and `wellfed-server-testkit` beside them. The embedded web UI isn't built yet, and the app talks to feeders only, not yet to a server.
 
 The server's crates follow one rule: **a crate per runtime or dependency boundary, a module per domain inside it.** A new domain, such as pets or alerts, is a module and some tables, not a crate. It gets a crate only if it brings its own runtime (tasks), a heavy dependency (`reqwest`) or a consumer outside the server. That's why the mirror (the feeder tasks), the releases (`reqwest` and the verifier) and the HTTP client (the CLI) are crates, and accounts and alerts are not.
 
@@ -251,7 +251,7 @@ The server keeps each feeder's own stock firmware, the copy promotion would othe
 
 ### Export and import
 
-- **The archive** (`wellfed_formats::export`, format version 1) is a POSIX tar: `manifest.json` first, in canonical JSON with each table's row count, size and SHA-256, then a file per table. `GET /export` writes `<table>.jsonl`. `?format=csv` writes `<table>.csv` for a spreadsheet. A quiet server exports the same bytes each time.
+- **The archive** (`wellfed_formats::export`, format version 2) is a POSIX tar: `manifest.json` first, in canonical JSON with each table's row count, size and SHA-256, then a file per table. `GET /export` writes `<table>.jsonl`. `?format=csv` writes `<table>.csv` for a spreadsheet. A quiet server exports the same bytes each time.
 - **No secrets.** Accounts go without their password hashes and feeders without the server's sealed key. Sessions and tokens aren't exported.
 - **Streaming.** The export reads one snapshot twice: once to count and hash each table, then to write it. Memory stays flat however large the tables. One export runs at a time (`409 export_running`).
 - **`POST /import`** takes a JSON archive onto a fresh server, in one transaction. Like `/setup`, it needs no login and works only while no account exists (`409 import_closed`). Anything wrong rolls it all back (`422 archive_invalid`).

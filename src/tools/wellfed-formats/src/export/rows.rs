@@ -146,8 +146,8 @@ pub struct Feeder {
     pub created_ms: i64,
 }
 
-/// A feeder's last status and settings read, as the JSON the server
-/// cached.
+/// A feeder's last status, settings and plans read, as the JSON the
+/// server cached.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FeederState {
@@ -156,6 +156,8 @@ pub struct FeederState {
     pub status_ms: Option<i64>,
     pub settings: Option<String>,
     pub settings_ms: Option<i64>,
+    pub plans: Option<String>,
+    pub plans_ms: Option<i64>,
 }
 
 /// A phone key the server made an invite for: who it is for, and its

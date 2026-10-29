@@ -54,7 +54,9 @@ pub use diagnostics::{FeedTrace, FeederStats, LogEvent, StatsRead, TraceQuery, T
 pub use error::{ErrorCode, FeederRefusal, Problem};
 pub use events::{EventPage, EventQuery, FeederEvent, Gap};
 pub use export::{ExportFormat, ExportQuery, Imported, ImportedTable};
-pub use feeders::{AdoptFeeder, Connection, Feeder, FeederDetail, LockRequest, StatusSnapshot};
+pub use feeders::{
+    AdoptFeeder, Connection, Feeder, FeederDetail, LockRequest, PlansChange, StatusSnapshot,
+};
 pub use foods::{
     FeederFood, Food, FoodChoice, FoodHistoryPage, FoodPatch, FoodPeriod, GRAMS_PER_CUP, NewFood,
     NewRefill, Refill, RefillPage,
@@ -82,9 +84,10 @@ pub use tokens::{BEARER, CreatedToken, NewToken, Token, TokenId};
 pub use users::{NewUser, UserPatch};
 pub use wellfed_model::{
     Blocked, ClientRole, CurrentUnit, Desiccant, EnrollPath, EventBody, EventKind, FeedOutcome,
-    FeedReason, Food as FoodStats, FoodLevel, Generation, Hex, MealReminder, MetricKind, Power,
-    Readiness, SampleValue, Settings, SettingsPatch, Source, Stats, StatsSection,
-    Status as FeederStatus, Trace, TraceEntry, TraceSummary, WifiSource, Window,
+    FeedReason, Food as FoodStats, FoodLevel, Generation, Hex, MealReminder, MetricKind, NextMeal,
+    PLANS, Plan, Plans, Power, Readiness, SampleValue, Settings, SettingsPatch, Source, Stats,
+    StatsSection, Status as FeederStatus, Trace, TraceEntry, TraceSummary, Weekday, Weekdays,
+    WifiSource, Window,
 };
 
 /// The prefix every resource lives under.

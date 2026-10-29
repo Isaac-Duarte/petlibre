@@ -42,16 +42,34 @@ FEEDER_WIDTH = 0.82 * 36.0 / 50.0
 
 BRAND_OBJECTS = ("Logo", "PCB_ChipLabel")
 
-# The ring icons the model lights blue. Only the red fault light is recorded on
-# hardware, so every indicator renders unlit (the smoked look of an indicator
-# icon with its LED off) and the UI draws light through the hotspots.
-LIT_ICONS = ("Icon_Lock", "Icon_WiFi")
-UNLIT_ICON = "PL_Icon__Icon_Bowl"
+# Only the red fault light is recorded on hardware, so every indicator renders
+# unlit and the UI draws light through the hotspots. Unlit, an indicator is a
+# smoked window over a dark LED: a near-black satin glyph on the gloss ring,
+# seen by its duller sheen rather than its color. The model lights two of them
+# blue and gives the other two a grey print, which both read as light.
+INDICATOR_ICONS = ("Icon_Bowl", "Icon_Lock", "Icon_WiFi", "Icon_Warn")
+UNLIT_INDICATOR = {
+    "Base Color": (0.02, 0.02, 0.022, 1.0),
+    "Roughness": 0.45,
+    "Specular IOR Level": 0.08,
+    "Emission Strength": 0.0,
+}
 
 # The window's food is the KibbleWin* pieces behind WindowGlass, in front of the
 # bulk HopperFill. The glass spans these heights (world Z).
 WINDOW_BOTTOM = 0.186
 WINDOW_TOP = 0.303
+
+# Surface finishes matched to owner photographs, applied at render time so the
+# model's materials stay as modeled. The body is near-black satin plastic with
+# a soft sheen (the model's grey reads as mid grey once lit), the ring is gloss
+# black that mirrors the room, and the bowl is mirror-polished steel.
+FINISHES = {
+    "PL_DarkGreyPlastic": {"Base Color": (0.012, 0.013, 0.014, 1.0), "Roughness": 0.3},
+    "PL_MatteBlack": {"Base Color": (0.008, 0.008, 0.009, 1.0), "Roughness": 0.27},
+    "PL_GlossBlack": {"Roughness": 0.06, "Coat Roughness": 0.02},
+    "PL_Steel": {"Roughness": 0.05},
+}
 
 
 @dataclass(frozen=True)
@@ -269,18 +287,22 @@ def truthful():
         if obj.hide_render:
             hide(obj)
 
-    # Unlit, a lit icon looks like every other print on the ring: its blue base
-    # color alone would still read as light.
-    printed = bpy.data.materials[UNLIT_ICON].node_tree.nodes["Principled BSDF"].inputs
-    for name in LIT_ICONS:
+    # Each indicator has a material of its own, so this leaves the buttons'
+    # printed icons as modeled.
+    for name in INDICATOR_ICONS:
         for slot in bpy.data.objects[name].material_slots:
             inputs = slot.material.node_tree.nodes["Principled BSDF"].inputs
-            for socket in ("Base Color", "Emission Color", "Emission Strength"):
-                inputs[socket].default_value = printed[socket].default_value
+            for socket, value in UNLIT_INDICATOR.items():
+                inputs[socket].default_value = value
 
     # The model leaves the hopper's bulk food without a material, and it shows
     # through the window above partial fills and with the lid off.
     bpy.data.objects["HopperFill"].data.materials.append(bpy.data.materials["PL_Kibble"])
+
+    for material, finish in FINISHES.items():
+        inputs = next(n for n in bpy.data.materials[material].node_tree.nodes if n.type == "BSDF_PRINCIPLED").inputs
+        for socket, value in finish.items():
+            inputs[socket].default_value = value
 
 
 def aim(obj, target):
@@ -306,23 +328,27 @@ def stage(camera, look):
     scene.collection.objects.link(cam)
     scene.camera = cam
 
-    # Soft studio light, laid out for the card's front-left camera and turned
-    # with each view so every side gets the same look: a large key from the
-    # camera's side, a fill opposite, a rim from behind to separate the dark
-    # body from any background, and a top light. Views from below mirror it.
+    # Showroom light, laid out for the card's front-left camera and turned
+    # with each view so every side gets the same look. A black product is
+    # shaped by what it reflects, so the key, fill and rim are tall strip
+    # softboxes: each lays a clean vertical highlight down the cylinder, with
+    # dark body between them. A wide top box lights the lid and the bowl.
+    # Views from below mirror the rig. Sizes are (width, height) in meters.
     turn = math.radians(camera.azimuth - CAMERAS["card"].azimuth)
     centre = Vector((0.0, 0.0, 0.15))
     rig = [
-        ("Key", 260.0, 1.2, (-1.2, -1.4, 1.6)),
-        ("Fill", 90.0, 1.6, (1.5, -0.8, 0.8)),
-        ("Rim", 180.0, 0.8, (0.4, 1.4, 1.2)),
-        ("Top", 60.0, 1.0, (0.0, 0.0, 2.0)),
+        ("Key", 300.0, (0.35, 1.8), (-1.2, -1.4, 1.2)),
+        ("Fill", 110.0, (0.25, 1.8), (1.5, -0.8, 0.6)),
+        ("Rim", 260.0, (0.2, 1.6), (0.5, 1.4, 1.0)),
+        ("Top", 90.0, (1.2, 1.2), (0.0, 0.0, 2.0)),
     ]
-    rig += [(f"Rim{i}", *extra) for i, extra in enumerate(look.extra, start=2)]
-    for name, energy, size, (x, y, z) in rig:
+    rig += [(f"Rim{i}", energy, (size, size), location) for i, (energy, size, location) in enumerate(look.extra, start=2)]
+    for name, energy, (width, height), (x, y, z) in rig:
         light_data = bpy.data.lights.new(name, "AREA")
         light_data.energy = energy * look.energy.get(name, 1.0)
-        light_data.size = size
+        light_data.shape = "RECTANGLE"
+        light_data.size = width
+        light_data.size_y = height
         light = bpy.data.objects.new(name, light_data)
         light.location = (
             x * math.cos(turn) + y * math.sin(turn),
@@ -342,10 +368,27 @@ def stage(camera, look):
         catcher.visible_diffuse = False
         catcher.visible_glossy = False
 
+    # A studio sweep the camera never sees (the film is transparent) but every
+    # gloss surface reflects: dark all round, bright only overhead. A flat
+    # grey world gives the ring and bowl nothing to mirror and greys them out.
     world = bpy.data.worlds.new("RenderWorld")
     world.use_nodes = True
-    world.node_tree.nodes["Background"].inputs["Color"].default_value = (0.8, 0.8, 0.82, 1.0)
-    world.node_tree.nodes["Background"].inputs["Strength"].default_value = 0.35
+    nodes, links = world.node_tree.nodes, world.node_tree.links
+    background = next(n for n in nodes if n.type == "BACKGROUND")
+    coords = nodes.new("ShaderNodeTexCoord")
+    split = nodes.new("ShaderNodeSeparateXYZ")
+    ramp = nodes.new("ShaderNodeValToRGB")
+    ramp.color_ramp.elements[0].position = 0.6
+    ramp.color_ramp.elements[0].color = (0.015, 0.015, 0.017, 1.0)
+    ramp.color_ramp.elements[1].position = 0.97
+    ramp.color_ramp.elements[1].color = (0.9, 0.9, 0.92, 1.0)
+    remap = nodes.new("ShaderNodeMapRange")
+    links.new(coords.outputs["Generated"], split.inputs[0])
+    links.new(split.outputs["Z"], remap.inputs["Value"])
+    remap.inputs["From Min"].default_value = -1.0
+    links.new(remap.outputs["Result"], ramp.inputs["Fac"])
+    links.new(ramp.outputs["Color"], background.inputs["Color"])
+    background.inputs["Strength"].default_value = 0.4
     scene.world = world
 
 
@@ -363,6 +406,9 @@ def configure(size, samples):
     scene.render.image_settings.color_mode = "RGBA"
     scene.render.image_settings.color_depth = "8"
     scene.view_settings.view_transform = "AgX"
+    # AgX's base look flattens a dark product to grey; this keeps the blacks
+    # deep and the highlights crisp without clipping the steel.
+    scene.view_settings.look = "AgX - Medium High Contrast"
 
     # Use a GPU when one exists; the render is identical in content either way.
     prefs = bpy.context.preferences.addons["cycles"].preferences
@@ -567,4 +613,7 @@ def main():
         render_one(args)
 
 
-main()
+# Blender runs a -P script as __main__; lineart.py imports this one for its
+# cameras, unbranding and hotspot projection.
+if __name__ == "__main__":
+    main()

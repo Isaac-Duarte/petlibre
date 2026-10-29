@@ -26,7 +26,7 @@ function P(kx, ky) = [kx - 100, 155 - ky];
 
 // ---- shell ------------------------------------------------------------
 gap    = 0.5;  // board edge to inner wall
-wall   = 2.7;          // keeps the lip and lid skirt >= 1.2 mm
+wall   = 3.3;          // lip + clearance + lid skirt: 1.5 + 0.3 + 1.5
 floor_t = 2.0;
 top_t  = 2.0;
 standoff_h = 4.0;              // clears THT pins on the bottom
@@ -36,10 +36,11 @@ z_ceil = 16.0;                 // inside of the lid (USB-A ~7 mm + margin)
 height = z_ceil + top_t;
 z_split = z_top_pcb;           // base/lid parting line
 lip_h  = 1.5;
-lip_w  = 1.2;
+lip_w  = 1.5;                  // JLC SLA: positioning features > 1.5 mm
 lip_clr = 0.3;                 // SLA tolerance; 0.15 is enough for tuned FDM
 nut_af = 5.7; nut_h = 2.6;     // M3 nut (5.5 AF x 2.4) pocket
-eng = 0.6;                     // engraving depth
+eng = 0.8;                     // engraving depth (JLC SLA minimum)
+min_feature = 0.8;             // JLC SLA: engraved detail >= 0.8 mm wide
 
 out_off = gap + wall;
 W = pcb_w + 2 * out_off;
@@ -128,8 +129,11 @@ module base() {
                 slab(out_off, 0.6, 0.61);
             }
         }
+        // closing the glyphs fills ridges narrower than min_feature (the
+        // notches inside W and N), which SLA checks flag as thin walls
         translate([pcb_w / 2, pcb_h / 2, -0.01]) mirror([1, 0, 0])
-            linear_extrude(eng) label("WELLFED BENCH", 4);
+            linear_extrude(eng + 0.01) offset(r = -min_feature / 2) offset(r = min_feature / 2)
+                label("WELLFED BENCH", 6);
     }
 }
 

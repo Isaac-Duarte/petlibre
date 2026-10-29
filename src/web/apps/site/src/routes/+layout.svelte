@@ -4,14 +4,14 @@
   import { resolve } from "$app/paths";
   import type { Snippet } from "svelte";
   import { favicon, lockup, lockupOnLight, themeColor } from "#lib/brand.ts";
-  import { DOCS, MAINTAINER, REPO, SITE } from "#lib/links.ts";
+  import { DOCS, REPO, SITE } from "#lib/links.ts";
   import { GitHubMark as GitHub } from "@wellfed/ui";
 
   let { children }: { children: Snippet } = $props();
 
   const title = "Wellfed: open firmware for your pet feeder";
   const description =
-    "Open replacement firmware, an Android app and an optional self-hosted server for the PETLIBRO Granary PLAF103 feeder. No cloud, no account.";
+    "Open firmware that runs the PETLIBRO Granary PLAF103 pet feeder on your own Wi-Fi. No cloud, no account.";
 </script>
 
 <svelte:head>
@@ -44,9 +44,6 @@
       </picture>
     </a>
     <nav aria-label="Primary">
-      <a href="#how">How it works</a>
-      <a href="#compare">Compare</a>
-      <a href="#hardware">Hardware</a>
       <a href={REPO} rel="external" class="github"><GitHub /><span>GitHub</span></a>
     </nav>
   </div>
@@ -72,7 +69,6 @@
         Code under the <a href={DOCS.license} rel="external">MIT license</a>; the logo and brand under
         <a href={DOCS.assets} rel="external">CC BY 4.0</a>.
       </p>
-      <p>Built by <a href={MAINTAINER} rel="external">Isaac Duarte</a> and Wellfed contributors.</p>
     </div>
   </div>
 </footer>
@@ -128,11 +124,6 @@
     align-items: center;
     gap: var(--space-2);
     color: var(--color-text);
-  }
-  @media (max-width: 640px) {
-    nav a:not(.github) {
-      display: none;
-    }
   }
 
   footer {

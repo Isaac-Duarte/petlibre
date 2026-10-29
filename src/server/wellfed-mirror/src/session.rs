@@ -8,10 +8,11 @@
 //! 2. set the feeder's clock, in the household's zone;
 //! 3. give the feeder the zone's POSIX rule, if its time settings hold
 //!    another, so it follows DST on its own;
-//! 4. read its status and settings into the store's cache.
+//! 4. read its status, settings and plans into the store's cache.
 //!
 //! Then it serves commands on their lanes ([`crate::lanes`]), events and
-//! samples until the session ends, and sets the clock and checks the rule
+//! samples until the session ends, reads the plans again after an event
+//! that may have changed them, and sets the clock and checks the rule
 //! again every [`Timing::time_sync`] and whenever the household's zone
 //! changes. A feeder offline at the change
 //! gets the new zone in its next connect sequence. The feeder shows online
@@ -137,11 +138,16 @@ impl Task {
             if let Err(end) = step {
                 return end;
             }
+            if self.plans_stale
+                && let Err(end) = self.read_plans(connection, lanes).await
+            {
+                return end;
+            }
         }
     }
 
     /// The connect sequence: history first, then the clock, then the
-    /// cached status and settings.
+    /// cached status, settings and plans.
     async fn start(&mut self, connection: &mut Connection, lanes: &mut Lanes) -> Result<(), End> {
         let Some(row) = self.shared.store.feeder(self.id).await? else {
             return Err(End::Cancelled);
@@ -183,7 +189,7 @@ impl Task {
                 .record_settings(self.id, &settings, now)
                 .await?;
         }
-        Ok(())
+        self.read_plans(connection, lanes).await
     }
 
     /// Set the feeder's clock and its zone's rule.
@@ -302,7 +308,7 @@ impl Task {
     /// may wait behind a slow write on a lane; running out of time then does
     /// not end the session, which would make the lanes' writes in flight
     /// unknown. Its late answer is dropped.
-    async fn ask(
+    pub(crate) async fn ask(
         &mut self,
         connection: &mut Connection,
         lanes: &mut Lanes,

@@ -16,7 +16,7 @@ import { createCssVariablesTheme, createHighlighter, type ShikiTransformer } fro
 import { unified, type Plugin } from "unified";
 import { SKIP, visit } from "unist-util-visit";
 import type { Doc, Heading } from "#lib/doc.ts";
-import { blob, edit } from "#lib/links.ts";
+import { SITE, blob, edit } from "#lib/links.ts";
 
 const sources = import.meta.glob<string>("../../../../../../../docs/**/*.md", {
   query: "?raw",
@@ -313,6 +313,42 @@ function render(file: string, markdown: string): Doc {
     hasDetails: out.hasDetails,
     editUrl: edit(`docs/${file}`),
   };
+}
+
+/**
+ * A doc's Markdown as it reads away from the repository, for "Copy as
+ * Markdown" and the `.md` file beside each page: every link made absolute
+ * (a doc to its page on this site, anything else to GitHub) and the overview
+ * marker dropped. Links are found with remark, so a `](` inside code is left
+ * alone.
+ */
+export function portableMarkdown(file: string): string | undefined {
+  const markdown = files.get(file);
+  if (markdown === undefined) return undefined;
+
+  const edits: { start: number; end: number; url: string }[] = [];
+  visit(unified().use(remarkParse).use(remarkGfm).parse(markdown), (node) => {
+    if (node.type !== "link" && node.type !== "definition") return;
+    const start = node.position?.start.offset;
+    const end = node.position?.end.offset;
+    if (start === undefined || end === undefined) return;
+
+    // The URL is the last occurrence in the node's source: after the text of
+    // an inline link, after the label of a definition.
+    const at = markdown.lastIndexOf(node.url, end);
+    if (at < start) return;
+    const resolved = resolveLink(node.url, file);
+    edits.push({
+      start: at,
+      end: at + node.url.length,
+      url: resolved.startsWith("/") ? `${SITE}${resolved}` : resolved,
+    });
+  });
+
+  let out = markdown;
+  for (const { start, end, url } of edits.sort((a, b) => b.start - a.start))
+    out = `${out.slice(0, start)}${url}${out.slice(end)}`;
+  return out.replace(/^<!-- details -->\n\n?/m, "");
 }
 
 /** Every doc, keyed by its path under docs/. */

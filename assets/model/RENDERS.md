@@ -4,12 +4,12 @@ The images the app, the web UI and the docs need from `plaf103.blend`, and the r
 
 ## Ground rules
 
-- **Every image comes from `render.py`.** Extend it with views, states and stages. Don't hand-edit outputs or render from a saved scene. One command regenerates everything: `blender -b assets/model/plaf103.blend -P assets/model/render.py -- --all`. A single image also works with `--view` and `--state`.
+- **Every image comes from `render.py`.** The one exception is the site's line art, which `lineart.py` traces from the same cameras (see [line art](#line-art)). Extend `render.py` with views, states and stages. Don't hand-edit outputs or render from a saved scene. One command regenerates everything: `blender -b assets/model/plaf103.blend -P assets/model/render.py -- --all`. A single image also works with `--view` and `--state`.
 - **Don't edit the product model.** Cameras, lights, backgrounds and state changes (visibility, transforms, emission strength) are applied in the script at render time. If an image needs geometry the model doesn't have (the power jack, the battery door, an inner part), list it in the report rather than inventing it; the owner models it.
 - **Unbranded, always.** Keep the `Logo` and `PCB_ChipLabel` objects hidden; `render.py`'s `unbrand()` already does this. No vendor marks, no vendor app UI, no device identifiers, and nothing fictional printed on the hardware.
 - **Locked cameras within a set.** Every state of a view uses the same camera, framing and lights, so the app can swap images (food levels, lid open) without the feeder jumping. Name cameras per view in code, not per state.
 - **Truthful states.** Show only what the hardware does. The only recorded indicator color is the **red fault light**; the others are unknown, so render them **unlit** and let the UI draw light through [hotspots](#hotspots). Buttons don't move or glow.
-- **Color management:** AgX, Cycles, denoised, with the GPU when available. The look matches `renders/card.png`: soft studio key, fill and rim, matte charcoal body, chrome ring.
+- **Color management:** AgX with the Medium High Contrast look, Cycles, denoised, with the GPU when available. The look matches `renders/card.png` and the owner's photographs: tall strip softboxes for key, fill and rim over a world that is dark except overhead, so the near-black satin body carries clean vertical highlights, the ring reads as gloss black and the bowl as mirror-polished steel. Those finishes are applied in `render.py` (`FINISHES`), not saved in the model.
 
 ## Outputs
 
@@ -49,6 +49,10 @@ Lettering is never rendered. Layouts add the lockup from `assets/brand/` afterwa
 | --- | --- |
 | `exploded` | Hardware docs: hopper, ring, PCB and base pulled apart on one axis, the PCB facing camera. Transparent |
 | `pcb` | The board alone, top-down. The texture is synthetic; label nothing |
+
+## Line art
+
+`lineart.py` traces the `card` view into `renders/card-lines.json` for the website's hero: the visible silhouettes, creases and open edges as 2D paths grouped by part (body, bowl, window, ring icons, food), and the visible hotspots in the same units. It imports `render.py` for the camera, unbranding and hotspot projection, so the lines and the `card` render agree. It traces with the model's bevel modifiers off, so a crease is the designed sharp edge rather than a strip of shallow bevel facets that would draw as dashes. Edges are chained into lines that run straight on, and visibility is a ray cast per sample along each whole line; a hidden run of 20 or fewer samples between visible ones is treated as noise and drawn. The output is deterministic, so a retrace without a model change leaves no diff.
 
 ## Hotspots
 
@@ -102,7 +106,7 @@ For `panel`, `front` and `card`, write `<view>.json` beside the image: each name
 Open items for the owner:
 
 - **Model gaps.** The power port is a USB-C receptacle (`PowerPort`) low on the back, placed from photographs. `PCB_USBC` still sits inside the front of the band. There is no battery door (the underside is a flat disc), so `bottom` can't yet show one. `HopperFill` has no material; `render.py` gives it `PL_Kibble`.
-- **Lit icons.** The model lights `Icon_Lock` and `Icon_WiFi` blue. That color isn't recorded, so `render.py` gives them the other icons' print material.
+- **Lit icons.** The model lights `Icon_Lock` and `Icon_WiFi` blue and prints `Icon_Bowl` and `Icon_Warn` grey. Neither matches the device, whose unlit indicators are dark, so `render.py` gives all four a near-black satin finish (`UNLIT_INDICATOR`). The buttons' icons keep the model's white print.
 - **Icon order.** Seen from the front, the buttons run Lock, Dispense, Mic, Reset, and the indicators low food, lock, Wi-Fi, error/warning, each from left to right. The model's ring matches: `Icon_LockButton` and `Icon_Portion` at the left, the four indicators grouped in the middle, `Icon_Mic` and `Icon_Reset` at the right.
 - **Uncertain mapping.** `led_food` is `Icon_Bowl` by elimination.
 - **Panel legibility.** The icons span 0.17 m of ring, so even at the tightest square frame each is about 10 px wide at 390 px.

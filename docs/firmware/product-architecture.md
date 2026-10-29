@@ -97,18 +97,18 @@ Some detail on each:
 - **`wellfed-feeder`** is a `no_std` library. Its stores keep the product's records: settings, Wi-Fi credentials, client keys and events. Its loop, `Feeder<P: Platform>::pass`, is the panel's owner, BLE setup mode, the device API's driver and the event recorder, over a `Platform` trait. It is host-tested, and the simulator runs the same pass on its own platform.
 - **`wellfed-feeder-runtime`** is linked by every PLAF103 firmware, so a firmware swap keeps the owner's data.
 - **The firmware** supplies the `Platform` (pins, drivers, sockets, mailboxes) and steps the feeding owner in one loop task, before the product's pass. Another model gets its own thin firmware.
-- **`wellfed-client`** turns bytes in into bytes out: the Noise handshake, pairing, invites, requests, event-cursor sync and the installer's steps. It never opens a socket or a radio. The server drives it with tokio, the Android app with Dart IO, and WASM can run it later.
+- **`wellfed-client`** turns bytes in into bytes out: the Noise handshake, pairing, invites, requests, event-cursor sync and the installer's steps. It never opens a socket or a radio. `wellfed-connect` drives its device API sessions over tokio TCP for the server, the CLI and the Android app alike. The app carries its BLE setup bytes in Dart, and WASM can run it later.
 - **`wellfed-server`** links single-purpose libraries for its shared pieces: the Noise client and request types in `wellfed-client` and `wellfed-model`, the stock protocol in `wellfed-stock`, and signing in `wellfed-signing`. The bench's old catch-all server is deleted ([tools](../../src/tools/README.md)).
 
 ## Frontends
 
-- **The Android app** owns all IO through mature plugins: BLE (`flutter_blue_plus`), mDNS/NSD, sockets, and joining a Wi-Fi network for the installer. All protocol logic goes through `wellfed-client` over `flutter_rust_bridge`, which also generates the Dart types.
+- **The Android app** (`src/app/`) does its platform IO in Dart through maintained, permissively licensed plugins: BLE (`flutter_reactive_ble`), NSD, and joining a Wi-Fi network for the installer. Its Rust half, `wellfed-app-bridge`, runs every protocol step through `wellfed-client` and its LAN sessions through `wellfed-connect`, over `flutter_rust_bridge`, which also generates the Dart types.
   - With a server, it talks to the server over HTTP first, and to the feeder directly only when the server is down. Without one, it talks to feeders on the LAN.
   - Setup, pairing and the installer always go to the feeder.
   - It can run the stock installer: it joins stock's setup access point, sends the `DL` frame, and serves the image in the foreground for about 3 minutes ([consumer installation](consumer-installation.md)).
 - **The server web UI** is a SvelteKit single-page app embedded in `wellfed-server`. It shares the bench's tokens and components, and its types are generated from the server's `openapi.json` ([web UI design](../web/README.md)). Browsers reach the feeder only through the server.
 - **Two UIs** means two codebases. That cost is accepted for a native-feeling mobile app; Rust-generated types keep their data models identical.
-- **Spike first.** Before building screens, a throwaway Android app proves the risky parts against a host-simulated feeder: BLE scanning and writes, NSD discovery on a real network, and a Noise session through `wellfed-client`.
+- **Setup first.** The app's first milestone covers the risky parts in the real app rather than a throwaway spike: BLE setup on a real phone, NSD discovery on a real network, and a session with feeds. Its Rust half is tested against the simulated feeder.
 
 ## Setup and pairing
 

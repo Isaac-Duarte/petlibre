@@ -21,22 +21,19 @@ test("renders the landing page from its own origin only", async ({ page, baseURL
     "href",
     "https://github.com/Isaac-Duarte/wellfed",
   );
-  await expect(page.getByText("it isn't ready to look after a real pet yet", { exact: false })).toBeVisible();
+  await expect(page.getByText("In heavy development.")).toBeVisible();
   await expect(page.getByText("Not affiliated with or endorsed by PETLIBRO", { exact: false })).toBeVisible();
 
-  // Every step and every Wellfed entry carries its stage in words.
-  const steps = page.locator("#how ol > li");
-  await expect(steps).toHaveCount(3);
-  for (const stage of ["Works on the bench", "In progress", "Planned"]) {
-    await expect(steps.getByText(stage)).toBeVisible();
-  }
-  const rows = page.locator("#compare tbody tr");
-  await expect(rows).toHaveCount(7);
-  for (const row of await rows.all()) {
-    await expect(row.locator(".ours > span").last()).toHaveText(
-      /^(Available now|Works on the bench|In progress|Planned)$/,
-    );
-  }
+  // The hero's drawing is traced lines with its claims beside them, drawn by CSS alone.
+  const drawing = page.getByRole("img", { name: /^Line drawing of the PLAF103 feeder/ });
+  await expect(drawing).toBeVisible();
+  expect(await drawing.locator(".lines path").count()).toBeGreaterThan(100);
+  await expect(drawing.locator(".callout text")).toHaveText([
+    "Open source",
+    "No account",
+    "No vendor cloud",
+    "Free (MIT)",
+  ]);
 
   await page.waitForLoadState("networkidle");
   expect(offsite).toEqual([]);

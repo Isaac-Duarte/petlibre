@@ -6,6 +6,7 @@ This folder holds the brand and product imagery for the app, the web UI and the 
 | --- | --- |
 | `model/plaf103.blend` | The owner's Blender 5.2 model of the PETLIBRO Granary PLAF103 (meters, Z up, the bowl toward −Y). It holds the product only, with no cameras, lights or stage. Its PCB texture is synthetic and shows no device identifiers |
 | `model/render.py` | Builds the stage and renders every image under `renders/` |
+| `model/lineart.py` | Traces the `card` view into line art for the website (`renders/card-lines.json`) |
 | `model/RENDERS.md` | The spec for every render the app, web and docs need |
 | `model/checks/` | Hotspot overlays for checking the hotspot JSON by eye; not for use in the app |
 | `renders/` | Generated, committed images, so the app and web build without Blender |
@@ -13,7 +14,7 @@ This folder holds the brand and product imagery for the app, the web UI and the 
 
 ## License
 
-The visual assets here (the model, renders, logos and other brand artwork) are licensed under [Creative Commons Attribution 4.0](https://creativecommons.org/licenses/by/4.0/) (CC BY 4.0). Credit "Wellfed contributors". Code, including `model/render.py`, stays under the repository's MIT license.
+The visual assets here (the model, renders, logos and other brand artwork) are licensed under [Creative Commons Attribution 4.0](https://creativecommons.org/licenses/by/4.0/) (CC BY 4.0). Credit "Wellfed contributors". Code, including `model/render.py` and `model/lineart.py`, stays under the repository's MIT license.
 
 PETLIBRO and Granary are the vendor's names, used here only to say which hardware the firmware runs on. The license covers our artwork, not their marks or industrial design.
 
@@ -37,6 +38,7 @@ Each image is a 1024 px transparent PNG with a contact shadow, plus a `-cutout` 
 | `bowl-out` | Washing or replacing the bowl (the card's camera) |
 | `outlet` | Jam and blocked-outlet help |
 | `back`, `bottom` | Rear three-quarter, showing the USB-C power port, and underside. The model has no battery door yet |
+| `card-lines.json` | The website hero's line drawing: the `card` view traced by `lineart.py` into 2D paths and hotspots, not an image. Retrace with `blender -b assets/model/plaf103.blend -P assets/model/lineart.py` |
 
 `card.json`, `front.json` and `panel.json` hold the hotspots: each button's, indicator's, window's, outlet's and bowl's projected center and radius (normalized, origin top left), and whether it is visible. The app uses them to draw highlights and indicator light over the image ([hotspots](model/RENDERS.md#hotspots)). Every state of a view, and every cutout, shares its JSON. Every indicator is rendered unlit.
 

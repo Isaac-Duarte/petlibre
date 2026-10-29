@@ -1,12 +1,12 @@
-//! Adopted feeders: the list, adoption, status, settings, the panel lock,
-//! the history and the samples.
+//! Adopted feeders: the list, adoption, status, settings, plans, the panel
+//! lock, the history and the samples.
 
 use reqwest::header;
 use reqwest::{Method, StatusCode};
 use uuid::Uuid;
 use wellfed_api::{
     AdoptFeeder, EventPage, EventQuery, Feeder, FeederDetail, FeederId, Generation, LockRequest,
-    SamplePage, SampleQuery, Settings, SettingsPatch,
+    Plans, PlansChange, SamplePage, SampleQuery, Settings, SettingsPatch,
 };
 
 use crate::{Client, Error, decode, expect_status, is_problem};
@@ -79,6 +79,42 @@ impl Client {
         if response.status() == StatusCode::PRECONDITION_FAILED && !is_problem(&response) {
             let current = decode(response, StatusCode::PRECONDITION_FAILED).await?;
             return Err(Error::Stale(Box::new(current)));
+        }
+        decode(response, StatusCode::OK).await
+    }
+
+    /// The feeder's plans, read from it. Their `generation` is the base a
+    /// change names.
+    pub async fn plans(&self, id: FeederId) -> Result<Plans, Error> {
+        let response = self
+            .api(Method::GET, &format!("/feeders/{id}/plans"))
+            .send()
+            .await?;
+        decode(response, StatusCode::OK).await
+    }
+
+    /// Replace every plan slot, if the plans are still at `base`. A retry
+    /// carries the same `key`; plans that moved on come back as
+    /// [`Error::StalePlans`].
+    pub async fn put_plans(
+        &self,
+        id: FeederId,
+        base: Generation,
+        change: &PlansChange,
+        key: Uuid,
+    ) -> Result<Plans, Error> {
+        let response = self
+            .api(Method::PUT, &format!("/feeders/{id}/plans"))
+            .header(header::IF_MATCH, format!("\"{base}\""))
+            .header(IDEMPOTENCY_KEY, key.to_string())
+            .json(change)
+            .send()
+            .await?;
+
+        // A stale change is answered with the current plans, not a problem.
+        if response.status() == StatusCode::PRECONDITION_FAILED && !is_problem(&response) {
+            let current = decode(response, StatusCode::PRECONDITION_FAILED).await?;
+            return Err(Error::StalePlans(Box::new(current)));
         }
         decode(response, StatusCode::OK).await
     }

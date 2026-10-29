@@ -4,7 +4,9 @@
 //! erase that makes room.
 
 use wellfed_core::store::slot::crc32;
-use wellfed_feeder::store::events::{BODY_BYTES, EventError, EventLog, RECORD_BYTES, Read};
+use wellfed_feeder::store::events::{
+    BODY_BYTES, Batch, EMPTY, EventError, EventLog, RECORD_BYTES, Read,
+};
 use wellfed_testkit::journal_flash::{FakeJournalFlash, FlashIo};
 
 /// Small units keep the wrap tests fast: 4 records each.
@@ -48,11 +50,51 @@ fn read_all(log: &EventLog<FlashIo>, mut after: Option<u64>) -> Vec<(u64, u64)> 
     }
 }
 
+/// As [`read_all`], through batches of `size`: each batch must hold what
+/// that many one-record reads would.
+fn read_batched(log: &EventLog<FlashIo>, mut after: Option<u64>, size: usize) -> Vec<(u64, u64)> {
+    let mut out = Vec::new();
+    let mut batch = vec![EMPTY; size];
+    loop {
+        match log.read_batch(after, &mut batch) {
+            Batch::Records(len) => {
+                assert!((1..=size).contains(&len), "a batch of {len}");
+                for record in &batch[..len] {
+                    out.push((record.seq, u64::from(record.body[0])));
+                    after = Some(record.seq);
+                }
+            }
+            Batch::Gap { from, to } => {
+                out.push((from, to + 1000));
+                after = Some(to);
+            }
+            Batch::End => return out,
+        }
+    }
+}
+
+/// Batches of every size read the ring as single reads do, from every
+/// cursor.
+fn batches_match(log: &EventLog<FlashIo>) {
+    let last = log.last_seq().unwrap_or(0);
+    for after in std::iter::once(None).chain((0..=last + 1).map(Some)) {
+        let single = read_all(log, after);
+        for size in [1, 2, 3, 5, 16] {
+            assert_eq!(
+                read_batched(log, after, size),
+                single,
+                "after {after:?}, size {size}"
+            );
+        }
+    }
+}
+
 #[test]
 fn records_keep_their_order_and_numbers_across_reopens() {
     let mut f = FakeJournalFlash::with_units(UNIT, UNITS);
     let mut log = open(&mut f);
     assert_eq!((log.last_seq(), log.read_after(None)), (None, Read::End));
+    assert_eq!(log.read_batch(None, &mut [EMPTY; 4]), Batch::End);
 
     for n in 1..=5 {
         assert_eq!(log.append(Some(1_700_000_000), &body(n)), Ok(u64::from(n)));
@@ -93,6 +135,7 @@ fn a_full_ring_drops_its_oldest_unit_and_reports_the_gap() {
     assert_eq!(read[1], (5, 5));
     assert_eq!(read.last(), Some(&(20, 20)));
     assert_eq!(read_all(&log, None).len(), 16);
+    batches_match(&log);
 }
 
 #[test]
@@ -139,6 +182,7 @@ fn a_power_cut_at_every_mutation_loses_at_most_the_record_being_written() {
             let next = log.append(None, &body(100)).unwrap();
             assert_eq!(next, log.last_seq().unwrap());
             assert_eq!(read_all(&log, Some(next - 1)), [(next, 100)]);
+            batches_match(&log);
         }
     }
 }

@@ -16,7 +16,7 @@ use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
-use wellfed_model::Settings;
+use wellfed_model::{Plans, Settings};
 
 use crate::{FeedOutcome, FeedReason, FeederId, FeederRefusal, TokenId, UserId};
 
@@ -48,6 +48,8 @@ pub enum CommandKind {
     Remove,
     /// Recording a desiccant replacement made today.
     Desiccant,
+    /// Replacing the feeding plans.
+    Plans,
 }
 
 impl CommandKind {
@@ -65,11 +67,12 @@ impl CommandKind {
             Self::Play => "play",
             Self::Remove => "remove",
             Self::Desiccant => "desiccant",
+            Self::Plans => "plans",
         }
     }
 
     /// Every kind, in the order they were added.
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 12] = [
         Self::Settings,
         Self::Lock,
         Self::Feed,
@@ -81,6 +84,7 @@ impl CommandKind {
         Self::Play,
         Self::Remove,
         Self::Desiccant,
+        Self::Plans,
     ];
 
     pub fn from_code(code: &str) -> Option<Self> {
@@ -137,6 +141,9 @@ pub enum CommandOutcome {
     /// A settings change took effect, and these are the settings the
     /// server read back after it.
     Settings { settings: Settings },
+    /// A plans change took effect, and these are the plans the server
+    /// read back after it.
+    Plans { plans: Plans },
     /// The feeder refused it; nothing ran.
     Refused { refusal: FeederRefusal },
     /// The feeder made the invite under this number, for this many
@@ -169,6 +176,7 @@ impl CommandOutcome {
             Self::Feeding { feed } | Self::Fed { feed, .. } => Some(*feed),
             Self::Done
             | Self::Settings { .. }
+            | Self::Plans { .. }
             | Self::Refused { .. }
             | Self::Invited { .. }
             | Self::Unrecorded => None,

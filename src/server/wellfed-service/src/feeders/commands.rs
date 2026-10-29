@@ -44,7 +44,8 @@ struct SettingsChange {
 
 impl Service {
     /// The feeder and its status: read now when it is online, otherwise the
-    /// last copy the server holds.
+    /// last copy the server holds. Its next meal comes from the plans the
+    /// server holds.
     pub async fn feeder(&self, id: FeederId) -> Result<FeederDetail> {
         let row = self.row(id).await?;
         let live = match self.ask(id, self.request_id()?, Op::Status).await {
@@ -56,31 +57,30 @@ impl Service {
             Err(error) => return Err(error),
         };
 
+        let at = self.shared.clock.now();
+        if let Some(status) = &live {
+            self.shared.store.record_status(id, status, at).await?;
+        }
+        // One read serves the status's last copy and the plans' alike.
+        let state = self.shared.store.state(id).await?;
+
         let status = match live {
-            Some(status) => {
-                let at = self.shared.clock.now();
-                self.shared.store.record_status(id, &status, at).await?;
-                Some(StatusSnapshot {
-                    at,
-                    live: true,
-                    status,
-                })
-            }
-            None => self
-                .shared
-                .store
-                .state(id)
-                .await?
-                .status
-                .map(|(status, at)| StatusSnapshot {
-                    at,
-                    live: false,
-                    status,
-                }),
+            Some(status) => Some(StatusSnapshot {
+                at,
+                live: true,
+                status,
+            }),
+            None => state.status.map(|(status, at)| StatusSnapshot {
+                at,
+                live: false,
+                status,
+            }),
         };
+        let next_meal = self.next_meal(state.plans.as_ref().map(|(plans, _)| plans));
         Ok(FeederDetail {
             feeder: self.view(row),
             status,
+            next_meal,
         })
     }
 
@@ -169,7 +169,8 @@ impl Service {
                 refusal: FeederRefusal::Stale,
             } => Err(Error::Stale(self.read_settings(id).await?)),
             CommandOutcome::Refused { refusal } => Err(Error::Refused(refusal)),
-            CommandOutcome::Feeding { .. }
+            CommandOutcome::Plans { .. }
+            | CommandOutcome::Feeding { .. }
             | CommandOutcome::Fed { .. }
             | CommandOutcome::Invited { .. }
             | CommandOutcome::Unrecorded => Err(InternalError::Unexpected.into()),
@@ -248,6 +249,7 @@ pub(crate) fn done(outcome: &CommandOutcome) -> Result<()> {
         CommandOutcome::Done => Ok(()),
         CommandOutcome::Refused { refusal } => Err(Error::Refused(*refusal)),
         CommandOutcome::Settings { .. }
+        | CommandOutcome::Plans { .. }
         | CommandOutcome::Feeding { .. }
         | CommandOutcome::Fed { .. }
         | CommandOutcome::Invited { .. }

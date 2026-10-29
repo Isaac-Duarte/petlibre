@@ -6,7 +6,9 @@
 //!   mDNS. On every connect it first subscribes after the newest event the
 //!   store holds, so its own outages lose nothing, then sets the feeder's
 //!   clock in the household's [`Zone`] and gives it the zone's POSIX rule,
-//!   so it follows DST with the server down. It records every event and
+//!   so it follows DST with the server down, and reads its plans. It
+//!   reads them again after an event that may have changed them, and is
+//!   the only writer of that cache. It records every event and
 //!   sample as the feeder sent it: one store transaction per event, with
 //!   its projections and the cursor, and samples in small batches, each
 //!   with its number.
@@ -49,6 +51,7 @@ mod ingest;
 mod install;
 mod lanes;
 mod log;
+mod plans;
 mod session;
 mod task;
 mod time;

@@ -65,6 +65,7 @@ impl Service {
             CommandOutcome::Refused { refusal } => Err(Error::Refused(refusal)),
             CommandOutcome::Done
             | CommandOutcome::Settings { .. }
+            | CommandOutcome::Plans { .. }
             | CommandOutcome::Invited { .. } => Err(InternalError::Unexpected.into()),
         }
     }

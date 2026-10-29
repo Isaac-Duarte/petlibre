@@ -13,7 +13,7 @@ use tokio_util::task::TaskTracker;
 use tracing::{Instrument, debug, info, info_span, warn};
 use wellfed_api::{Connection as Link, FeederId};
 use wellfed_connect::Connection;
-use wellfed_model::Capabilities;
+use wellfed_model::{Capabilities, Plans};
 use wellfed_session::noise::Keypair;
 
 use crate::collect::Collector;
@@ -149,6 +149,8 @@ pub(crate) fn spawn(
         updates: updates.clone(),
         cancel: cancel.clone(),
         batch: Batch::default(),
+        plans_stale: false,
+        plans: None,
     };
     // Every line the task logs, its session's and its commands' included,
     // is written under the feeder's span, so it names the feeder. The span
@@ -197,6 +199,11 @@ pub(crate) struct Task {
     pub(crate) cancel: CancellationToken,
     /// Samples received and not yet written.
     pub(crate) batch: Batch,
+    /// An event that may have changed the plans came since they were
+    /// last read.
+    pub(crate) plans_stale: bool,
+    /// The plans as last read, this task's copy of the store's cache.
+    pub(crate) plans: Option<Plans>,
 }
 
 impl Task {

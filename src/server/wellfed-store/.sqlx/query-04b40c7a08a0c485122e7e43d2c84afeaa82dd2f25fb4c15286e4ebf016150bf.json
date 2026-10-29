@@ -1,0 +1,98 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT feeder_id AS \"feeder_id: Uuid\", status, status_ms, settings,\n                              settings_ms, plans, plans_ms\n                       FROM feeder_state ORDER BY feeder_id",
+  "describe": {
+    "columns": [
+      {
+        "name": "feeder_id: Uuid",
+        "ordinal": 0,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "feeder_state",
+            "name": "feeder_id"
+          }
+        }
+      },
+      {
+        "name": "status",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "feeder_state",
+            "name": "status"
+          }
+        }
+      },
+      {
+        "name": "status_ms",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "feeder_state",
+            "name": "status_ms"
+          }
+        }
+      },
+      {
+        "name": "settings",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "feeder_state",
+            "name": "settings"
+          }
+        }
+      },
+      {
+        "name": "settings_ms",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "feeder_state",
+            "name": "settings_ms"
+          }
+        }
+      },
+      {
+        "name": "plans",
+        "ordinal": 5,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "feeder_state",
+            "name": "plans"
+          }
+        }
+      },
+      {
+        "name": "plans_ms",
+        "ordinal": 6,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "feeder_state",
+            "name": "plans_ms"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "04b40c7a08a0c485122e7e43d2c84afeaa82dd2f25fb4c15286e4ebf016150bf"
+}

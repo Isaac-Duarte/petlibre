@@ -8,7 +8,7 @@
 
 use std::fmt;
 
-use wellfed_api::{ErrorCode, FeederRefusal, Settings};
+use wellfed_api::{ErrorCode, FeederRefusal, Plans, Settings};
 use wellfed_mirror::{AskError, ConnectError, RandomFailed, ZoneError};
 
 use crate::{
@@ -30,6 +30,10 @@ pub enum Error {
     /// carries the current settings, which the server answers with.
     #[error("the settings moved on to generation {}", .0.generation)]
     Stale(Settings),
+    /// A plans change named a generation the feeder has moved past; it
+    /// carries the current plans, which the server answers with.
+    #[error("the plans moved on to generation {}", .0.generation)]
+    StalePlans(Plans),
     #[error(transparent)]
     Zone(#[from] ZoneError),
     #[error(transparent)]
@@ -177,9 +181,9 @@ impl Error {
             Self::Install(install) => install.code(),
             Self::Release(release) => return crate::operations::releases::reply(release),
             Self::Export(export) => return export.reply(),
-            // The server answers a stale edit with the current settings,
-            // not a problem.
-            Self::Stale(_) | Self::Internal(_) => return Reply::Internal,
+            // The server answers a stale edit with the current settings or
+            // plans, not a problem.
+            Self::Stale(_) | Self::StalePlans(_) | Self::Internal(_) => return Reply::Internal,
         };
         Reply::Code(code)
     }
@@ -218,6 +222,13 @@ pub enum Invalid {
     DesiccantDays,
     #[error("a meal reminder is off or 1-60 minutes")]
     MealReminder,
+    #[error(
+        "the plan in slot {slot} is out of range: its minute is 0-1439, its portions 1-{} \
+         and its meal call 0-{} plays",
+        wellfed_model::PORTIONS_MAX,
+        wellfed_model::CALL_PLAYS_MAX
+    )]
+    Plan { slot: u8 },
     #[error("a page holds 1-500 events")]
     Limit,
     #[error("the server's label is 1-16 bytes with no NUL")]

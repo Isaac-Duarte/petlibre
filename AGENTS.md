@@ -34,7 +34,7 @@ Everything first-party is under `src/`. The Rust workspace is `src/sdk/` (the SD
 
 The Android app in `src/app/` is the only Dart in the repository. Its protocol logic lives in Rust, so the app, the server and the CLI cannot disagree about what goes over the wire.
 
-- **Dart is the UI and platform IO.** Screens, state, Android permissions, BLE, NSD discovery, sockets and joining a Wi-Fi network belong in Dart, through maintained plugins.
+- **Dart is the UI and platform IO.** Screens, state, Android permissions, BLE, NSD discovery and joining a Wi-Fi network belong in Dart, through maintained plugins under a permissive license. Device API sessions over TCP run in Rust through `wellfed-connect`, the driver the CLI and the server use.
 - **Rust is everything the feeder checks.** Noise handshakes, pairing, invites, request building, event-cursor sync, validation and the installer's steps live in the sans-IO `wellfed-client` crate, which takes bytes in and returns bytes out. Dart moves those bytes and never reimplements them: no Dart crypto, signing or wire codec.
 - **Generated types.** Dart types for requests, events and settings are generated from Rust through `flutter_rust_bridge`, as the web's TypeScript types are. Never hand-write a Dart copy of a Rust type, and commit regenerated bindings with the Rust change that caused them.
 - **Feeding safety.** Every feed and state change goes through the device API like any other client. The app holds no schedule or feeding logic of its own, and a retry never resends a request the core marked uncertain.
@@ -71,7 +71,7 @@ This covers what this repository builds. Interop with things it does not build, 
 | `Cargo.lock` or `deny.toml` | `make check` includes `check-deps` (cargo-deny); its first run downloads the RustSec database |
 | `src/app/`, or a `wellfed-client` type the app uses | Also `make check-app` (needs the Flutter SDK): bindings regenerated with no diff, `dart format`, `flutter analyze`, `flutter test`, and a debug APK build |
 
-A skipped or missing fixture is not a passing check. `make check-app` arrives with the first app code (FP19); until then no change touches `src/app/`.
+A skipped or missing fixture is not a passing check.
 
 ## Owner authorization (October 22, 2026)
 

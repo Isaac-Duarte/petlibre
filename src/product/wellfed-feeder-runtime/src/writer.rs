@@ -73,7 +73,7 @@ use wellfed_feeder::stats::{SAVE_MS, TOTAL_SECTORS, Totals, reset_cause};
 use wellfed_feeder::store::calibration::CalibrationStore;
 use wellfed_feeder::store::call::CallStore;
 use wellfed_feeder::store::clients::{ClientError, ClientStatus, ClientStore};
-use wellfed_feeder::store::events::EventLog;
+use wellfed_feeder::store::events::{self as ring, EMPTY, EventLog};
 use wellfed_feeder::store::net::{NetStatus, NetStore};
 use wellfed_feeder::store::plans::PlansStore;
 use wellfed_feeder::store::reset as reset_marker;
@@ -112,6 +112,11 @@ pub const POLL_MS: u32 = 200;
 pub const RESET_POLL_MS: u32 = 1;
 /// While events wait to be written or read.
 pub const EVENTS_POLL_MS: u32 = 5;
+/// Polls at [`EVENTS_POLL_MS`] after the last answered read: about 1 s.
+/// A subscriber takes a batch one loop pass a record, and a pass that
+/// sends a frame runs about 16 ms (measured), so a batch of 16 outlasts
+/// a shorter linger and its next read would wait out the idle poll.
+pub const READ_LINGER_POLLS: u32 = 200;
 /// While a write waits for a feed to end: within the poll a claim allows a
 /// waiting writer before passing it.
 pub const WRITE_WAIT_POLL_MS: u32 = POLL_MS;
@@ -573,6 +578,11 @@ pub struct Writer<F> {
     keys_opened: bool,
     events: EventLog<Region<F, EVENTS_BASE, EVENTS_UNITS>>,
     events_opened: bool,
+    /// A read's records, before they are copied to the loop: static, as
+    /// the writer is, since the service task's stack has no room for it.
+    read_batch: [ring::Record; events::READ_BATCH],
+    /// Polls left at the read pace after the last answered read.
+    reading: u32,
     traces: TraceRing<Region<F, TRACES_BASE, TRACES_UNITS>>,
     stats: StatsStore<Slots<F, STATS_BASE>>,
     stats_opened: bool,
@@ -620,6 +630,8 @@ impl<F> Default for Writer<F> {
             keys_opened: false,
             events: EventLog::default(),
             events_opened: false,
+            read_batch: [EMPTY; events::READ_BATCH],
+            reading: 0,
             traces: TraceRing::default(),
             stats: StatsStore::default(),
             stats_opened: false,
@@ -826,7 +838,7 @@ impl<F: FlashOps> Writer<F> {
 
     /// The step while a write waits for its turn: the event ring's readers
     /// are still answered, since a read takes no lease.
-    fn waiting(&self) -> Step {
+    fn waiting(&mut self) -> Step {
         let delay = if self.answer_read() {
             EVENTS_POLL_MS
         } else {
@@ -835,12 +847,18 @@ impl<F: FlashOps> Writer<F> {
         next(delay, None)
     }
 
-    /// Answer the read the device API asked for, if any.
-    fn answer_read(&self) -> bool {
+    /// Answer the read the device API asked for, if any; true while a
+    /// reader is about, so the next poll comes at the read pace. A reader
+    /// catching up asks again within a few loop passes of its last batch,
+    /// and the idle poll would make it wait [`POLL_MS`] for each.
+    fn answer_read(&mut self) -> bool {
         let Some(after) = events::read_request() else {
-            return false;
+            self.reading = self.reading.saturating_sub(1);
+            return self.reading > 0;
         };
-        events::finish_read(after, self.events.read_after(after));
+        let batch = self.events.read_batch(after, &mut self.read_batch);
+        events::finish_read(after, batch, &self.read_batch);
+        self.reading = READ_LINGER_POLLS;
         true
     }
 

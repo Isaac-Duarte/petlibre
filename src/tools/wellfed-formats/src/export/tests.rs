@@ -186,14 +186,16 @@ fn bytes_past_the_declared_length_are_refused() {
 
 #[test]
 fn another_format_version_is_refused_before_its_tables() {
-    let manifest = b"{\"format\":2,\"something\":\"new\"}\n";
+    let next = FORMAT_VERSION + 1;
+    let manifest = format!("{{\"format\":{next},\"something\":\"new\"}}\n");
+    let manifest = manifest.as_bytes();
     let mut bytes = header(MANIFEST, manifest.len() as u64).unwrap().to_vec();
     bytes.extend_from_slice(manifest);
     bytes.extend_from_slice(padding(manifest.len() as u64));
 
     assert!(matches!(
         read(&bytes, 512),
-        Err(ArchiveError::Version { found: 2 })
+        Err(ArchiveError::Version { found }) if found == next
     ));
 }
 

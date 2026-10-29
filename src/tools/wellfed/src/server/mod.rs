@@ -3,7 +3,8 @@
 //!
 //! `login` keeps a bearer token beside the device API's key file, and every
 //! other verb sends it. The device verbs (`feeders`, `status`, `settings`,
-//! `lock`, `desiccant`, `feed`, `cancel-feed`, `events`, `clients`, `revoke`, `reboot`)
+//! `plans`, `lock`, `desiccant`, `feed`, `cancel-feed`, `events`, `clients`,
+//! `revoke`, `reboot`)
 //! reach the feeders the server holds, through its command journal; the
 //! rest (`command`, `commands`, `users`, `tokens`, `releases`, `install`,
 //! `stock`, `export`) only the server has.
@@ -27,6 +28,7 @@ mod export;
 mod feeders;
 mod install;
 mod login;
+mod plans;
 mod releases;
 mod stock;
 mod text;
@@ -71,6 +73,9 @@ enum Verb {
     /// Read the feeder's settings, or change them against the generation
     /// just read.
     Settings(feeders::SettingsArgs),
+    /// The feeding plans: list them, or add, edit, enable, disable or
+    /// delete one (against the generation just read).
+    Plans(plans::PlansArgs),
     /// Lock or unlock the feeder's panel.
     Lock(feeders::LockArgs),
     /// The desiccant reminder, and with --reset record that it was
@@ -138,6 +143,7 @@ async fn verb(verb: Verb, token_file: &Path, out: Output) -> Result<Settled> {
         Verb::Feeders => feeders::list(&client()?, out).await,
         Verb::Status(which) => feeders::status(&client()?, &which, out).await,
         Verb::Settings(args) => feeders::settings(&client()?, args, out).await,
+        Verb::Plans(args) => plans::plans(&client()?, args, out).await,
         Verb::Lock(args) => feeders::lock(&client()?, args, out).await,
         Verb::Desiccant(args) => feeders::desiccant(&client()?, args, out).await,
         Verb::Feed(args) => feeders::feed(&client()?, args, out).await,
@@ -228,7 +234,8 @@ impl Output {
     }
 
     /// The command's error, its body printed first under `--json`: a
-    /// problem, or the current settings a stale edit is answered with.
+    /// problem, or the current settings or plans a stale edit is answered
+    /// with.
     fn failed(self, error: anyhow::Error) -> anyhow::Error {
         let Some(client) = error.downcast_ref::<Error>() else {
             return error;
@@ -237,6 +244,7 @@ impl Output {
         let printed = match client {
             Error::Problem { problem, .. } => self.body(problem),
             Error::Stale(settings) => self.body(settings),
+            Error::StalePlans(plans) => self.body(plans),
             _ => Ok(()),
         };
         if let Err(print) = printed {
@@ -302,7 +310,11 @@ fn uncertain(error: &Error) -> bool {
         }
         Error::Http(error) => !error.is_connect() && !error.is_builder(),
         Error::Unexpected { .. } | Error::Decode(_) => true,
-        Error::Base(_) | Error::Build(_) | Error::Stale(_) | Error::NoSession => false,
+        Error::Base(_)
+        | Error::Build(_)
+        | Error::Stale(_)
+        | Error::StalePlans(_)
+        | Error::NoSession => false,
     }
 }
 

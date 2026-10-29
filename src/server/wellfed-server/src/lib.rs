@@ -63,7 +63,7 @@ pub(crate) struct AppState {
         (name = routes::TAG_USERS, description = "The household's accounts, managed by owners"),
         (name = routes::TAG_TOKENS, description = "Bearer tokens for phones and the CLI, each user's own"),
         (name = routes::TAG_HOUSEHOLD, description = "The household's name, units, time format and zone"),
-        (name = routes::TAG_FEEDERS, description = "Adopted feeders, their settings, lock, feeds and history"),
+        (name = routes::TAG_FEEDERS, description = "Adopted feeders, their settings, plans, lock, feeds and history"),
         (name = routes::TAG_HEALTH, description = "Liveness for anyone, readiness for an owner"),
         (name = routes::TAG_COMMANDS, description = "The command journal: every write sent through the server"),
         (name = routes::TAG_AUDIT, description = "Who did what through the server: the journal and account changes"),
@@ -99,6 +99,7 @@ fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(feeders::feeders, feeders::adopt))
         .routes(routes!(feeders::feeder, admin::remove))
         .routes(routes!(feeders::settings, feeders::put_settings))
+        .routes(routes!(feeders::plans, feeders::put_plans))
         .routes(routes!(feeders::lock))
         .routes(routes!(feeders::reset_desiccant))
         .routes(routes!(clients::clients))

@@ -14,11 +14,16 @@
 //! Ramadan changes run to 2087), so a rule is offered only once it agrees
 //! with the full zone at every transition of the next ten years; such a
 //! zone stays on the syncs' offsets.
+//!
+//! A plan's next meal ([`next_meal`]) is the feeder's own reckoning
+//! (`wellfed_core::schedule`) run on the host's zone, so a skipped or
+//! repeated minute lands where the feeder will feed.
 
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
 use wellfed_core::clock::zone::{Rule, Zone};
-use wellfed_model::TimeSync;
+use wellfed_core::schedule;
+use wellfed_model::{NextMeal, Plan, Plans, TimeSync};
 
 /// How far ahead a rule must agree with its zone.
 const AGREE_S: i64 = 10 * 366 * 86_400;
@@ -40,6 +45,53 @@ pub fn sync(now: Timestamp, zone: &TimeZone) -> TimeSync {
         offset_s,
         next_change_s,
         next_offset_s,
+    }
+}
+
+/// The earliest occurrence after `now` of any enabled plan in `plans`, in
+/// `zone`; `None` when no plan is enabled. A tie goes to the lower slot,
+/// which the feeder runs first.
+pub fn next_meal(plans: &Plans, now: Timestamp, zone: &TimeZone) -> Option<NextMeal> {
+    let now_ms = u64::try_from(now.as_millisecond()).ok()?;
+    let offset_at = |ms: u64| {
+        let at = Timestamp::from_millisecond(i64::try_from(ms).ok()?).ok()?;
+        Some(zone.to_offset(at).seconds())
+    };
+
+    let mut next: Option<NextMeal> = None;
+    for (slot, plan) in plans.plans.iter().enumerate() {
+        let Some(plan) = plan.filter(|plan| plan.enabled) else {
+            continue;
+        };
+        let Some(due) = schedule::next_due(&core_plan(&plan), now_ms, offset_at) else {
+            continue;
+        };
+        let Some(at) = i64::try_from(due)
+            .ok()
+            .and_then(|ms| Timestamp::from_millisecond(ms).ok())
+        else {
+            continue;
+        };
+        if next.is_none_or(|next| at < next.at) {
+            next = Some(NextMeal {
+                at,
+                slot: u8::try_from(slot).ok()?,
+                portions: plan.portions,
+            });
+        }
+    }
+    next
+}
+
+/// The model's plan as the feeder's schedule holds it: the same fields,
+/// and the same weekday bits.
+const fn core_plan(plan: &Plan) -> schedule::Plan {
+    schedule::Plan {
+        minute: plan.minute,
+        portions: plan.portions,
+        days: schedule::Weekdays(plan.days.bits()),
+        enabled: plan.enabled,
+        call: plan.call,
     }
 }
 
@@ -128,9 +180,124 @@ fn footer(tzif: &[u8]) -> Option<&[u8]> {
 mod tests {
     use super::*;
     use wellfed_core::clock::zone::TEXT_MAX;
+    use wellfed_model::{Generation, PLANS, Weekdays};
 
     // 2026-10-26T00:00:00Z.
     const NOW: i64 = 1_793_059_200;
+    /// Denver: 2026-03-08 02:00 MST jumps to 03:00 MDT at 09:00Z.
+    const SPRING: i64 = 1_772_960_400;
+    /// Denver: 2026-11-01 02:00 MDT falls back to 01:00 MST at 08:00Z.
+    const FALL: i64 = 1_793_520_000;
+    const HOUR: i64 = 3600;
+
+    fn at(second: i64) -> Timestamp {
+        Timestamp::from_second(second).unwrap()
+    }
+
+    fn daily(minute: u16, portions: u8) -> Plan {
+        Plan {
+            minute,
+            portions,
+            days: Weekdays::DAILY,
+            enabled: true,
+            call: 0,
+        }
+    }
+
+    fn table(plans: &[(usize, Plan)]) -> Plans {
+        let mut table = [None; PLANS];
+        for &(slot, plan) in plans {
+            table[slot] = Some(plan);
+        }
+        Plans {
+            generation: Generation(1),
+            writable: true,
+            plans: table,
+        }
+    }
+
+    fn meal(plans: &Plans, now: i64) -> Option<(i64, u8)> {
+        let denver = TimeZone::get("America/Denver").unwrap();
+        next_meal(plans, at(now), &denver).map(|meal| (meal.at.as_second(), meal.slot))
+    }
+
+    /// The minute the spring change skips runs as far past the change; the
+    /// one the fall change repeats runs on its first pass, so after it the
+    /// next is the day after's. The feeder's own schedule tests pin the
+    /// same instants.
+    #[test]
+    fn the_next_meal_follows_the_daylight_rules() {
+        let skipped = table(&[(0, daily(2 * 60 + 30, 1))]);
+        assert_eq!(meal(&skipped, SPRING - HOUR), Some((SPRING + 30 * 60, 0)));
+
+        let repeated = table(&[(3, daily(90, 1))]);
+        let first = FALL - 30 * 60;
+        assert_eq!(meal(&repeated, first - 1), Some((first, 3)));
+        assert_eq!(
+            meal(&repeated, first),
+            Some((FALL + 30 * 60 + 24 * HOUR, 3)),
+            "01:30 MST on November 2"
+        );
+    }
+
+    #[test]
+    fn the_earliest_enabled_plan_is_next() {
+        let disabled = Plan {
+            enabled: false,
+            ..daily(6 * 60, 4)
+        };
+        let plans = table(&[(0, daily(18 * 60, 2)), (1, disabled), (2, daily(7 * 60, 1))]);
+        // Midnight MDT; 07:00 MDT is 13:00Z.
+        let midnight = NOW + 6 * HOUR;
+        let next = next_meal(
+            &plans,
+            at(midnight),
+            &TimeZone::get("America/Denver").unwrap(),
+        );
+        assert_eq!(
+            next,
+            Some(NextMeal {
+                at: at(midnight + 7 * HOUR),
+                slot: 2,
+                portions: 1,
+            })
+        );
+
+        assert_eq!(meal(&table(&[(1, disabled)]), NOW), None);
+        assert_eq!(meal(&table(&[]), NOW), None);
+    }
+
+    /// Plans due at the same instant run lowest slot first, so that one
+    /// is named.
+    #[test]
+    fn a_tie_goes_to_the_lower_slot() {
+        let plans = table(&[(5, daily(7 * 60, 3)), (2, daily(7 * 60, 1))]);
+        let midnight = NOW + 6 * HOUR;
+        assert_eq!(meal(&plans, midnight), Some((midnight + 7 * HOUR, 2)));
+    }
+
+    /// An enabled plan that runs once occurs at its next minute, as the
+    /// feeder runs it; once it ran, the feeder disables it.
+    #[test]
+    fn a_plan_that_runs_once_is_next_at_its_minute() {
+        let once = Plan {
+            days: Weekdays::ONCE,
+            ..daily(7 * 60, 1)
+        };
+        let midnight = NOW + 6 * HOUR;
+        let plans = table(&[(0, once)]);
+        assert_eq!(meal(&plans, midnight), Some((midnight + 7 * HOUR, 0)));
+        assert_eq!(
+            meal(&plans, midnight + 8 * HOUR),
+            Some((midnight + 31 * HOUR, 0)),
+            "past its minute today, tomorrow's"
+        );
+        let ran = Plan {
+            enabled: false,
+            ..once
+        };
+        assert_eq!(meal(&table(&[(0, ran)]), midnight), None);
+    }
 
     /// The case the server's former time request pinned.
     #[test]

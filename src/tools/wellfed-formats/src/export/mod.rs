@@ -46,7 +46,7 @@ pub use tar::{BLOCK, END, header, padding};
 
 /// The archive layout this build writes and reads. A change to a row's
 /// columns or to the layout is a new version.
-pub const FORMAT_VERSION: u32 = 1;
+pub const FORMAT_VERSION: u32 = 2;
 
 /// The manifest's path in the archive.
 pub const MANIFEST: &str = "manifest.json";

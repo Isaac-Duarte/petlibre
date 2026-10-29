@@ -72,6 +72,24 @@ pub enum Read {
     End,
 }
 
+/// What [`EventLog::read_batch`] found.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Batch {
+    /// This many records, written to the front of the buffer.
+    Records(usize),
+    /// Records `from..=to` are gone.
+    Gap { from: u64, to: u64 },
+    /// Nothing after the cursor yet.
+    End,
+}
+
+/// A record slot not yet filled.
+pub const EMPTY: Record = Record {
+    seq: 0,
+    at: None,
+    body: [0; BODY_BYTES],
+};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EventError {
     /// Not opened, or opened on unusable I/O.
@@ -290,21 +308,36 @@ impl<I: SlotIo> EventLog<I> {
 
     /// The first record after `after` (`None`: from the oldest kept).
     pub fn read_after(&self, after: Option<u64>) -> Read {
+        let mut record = [EMPTY; 1];
+        match self.read_batch(after, &mut record) {
+            Batch::Records(_) => Read::Record(record[0]),
+            Batch::Gap { from, to } => Read::Gap { from, to },
+            Batch::End => Read::End,
+        }
+    }
+
+    /// As [`Self::read_after`], but up to `out.len()` records at once: the
+    /// first after `after`, then those after it in its unit, in order, from
+    /// one pass over the unit. A reader catching up takes a batch rather
+    /// than scanning the unit again for each record.
+    pub fn read_batch(&self, after: Option<u64>, out: &mut [Record]) -> Batch {
         let Some(oldest) = self.oldest_seq() else {
-            return Read::End;
+            return Batch::End;
         };
         let want = after.map_or(oldest, |after| after + 1);
         if want < oldest {
-            return Read::Gap {
+            return Batch::Gap {
                 from: want,
                 to: oldest - 1,
             };
         }
-        if want >= self.next_seq {
-            return Read::End;
+        if want >= self.next_seq || out.is_empty() {
+            return Batch::End;
         }
 
-        // The unit whose span holds `want`, then its records in order.
+        // The unit whose span holds `want`: its records from `want` to its
+        // span's end, smallest first. A later record is in another unit,
+        // which the next batch finds.
         for index in 0..self.units {
             let Some((first, last)) = self.table[index].span else {
                 continue;
@@ -312,29 +345,43 @@ impl<I: SlotIo> EventLog<I> {
             if !(first..=last).contains(&want) {
                 continue;
             }
-            let mut best: Option<Record> = None;
+            let mut len = 0;
             for slot in 0..self.table[index].free {
                 let Some(record) = self
                     .read_slot(index, slot)
                     .and_then(|b| decode(&b))
                     .filter(|&(epoch, _)| epoch == self.epoch)
                     .map(|(_, record)| record)
+                    .filter(|record| (want..=last).contains(&record.seq))
                 else {
                     continue;
                 };
-                if record.seq == want {
-                    return Read::Record(record);
-                }
-                if record.seq > want && best.is_none_or(|b| record.seq < b.seq) {
-                    best = Some(record);
-                }
+                insert(&mut out[..], &mut len, record);
             }
-            if let Some(record) = best {
-                return Read::Record(record);
+            if len > 0 {
+                return Batch::Records(len);
             }
         }
-        Read::End
+        Batch::End
     }
+}
+
+/// Keep the `out.len()` smallest sequence numbers seen, in order; `len`
+/// counts those held. A number already held keeps its first record, as a
+/// scan in slot order finds it.
+fn insert(out: &mut [Record], len: &mut usize, record: Record) {
+    let at = out[..*len].partition_point(|held| held.seq < record.seq);
+    if out[..*len]
+        .get(at)
+        .is_some_and(|held| held.seq == record.seq)
+        || at == out.len()
+    {
+        return;
+    }
+    let end = (*len + 1).min(out.len());
+    out.copy_within(at..end - 1, at + 1);
+    out[at] = record;
+    *len = end;
 }
 
 fn unit_id(index: usize) -> c_uint {

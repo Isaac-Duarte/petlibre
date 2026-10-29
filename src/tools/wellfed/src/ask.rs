@@ -38,10 +38,12 @@ pub(crate) enum AskError {
         source: serde_json::Error,
     },
     /// A yes to an instruction, or done to a question.
-    #[error("the {} prompt takes {:?}, not {answer}", prompt.name(), prompt.expects())]
+    #[error("the {} prompt takes {}, not {answer}", prompt.name(), prompt.expects())]
     Mismatched { prompt: Prompt, answer: Answer },
     #[error("read standard input")]
     Read(#[source] io::Error),
+    #[error("encode the prompt as JSON")]
+    Encode(#[source] serde_json::Error),
     #[error("write the prompt")]
     Write(#[source] io::Error),
 }
@@ -111,9 +113,8 @@ impl<W: Write> Asker<W> {
                 writeln!(self.output, "{} {how}", prompt.text()).map_err(AskError::Write)?;
             }
             Prompts::Lines => {
-                let line = serde_json::to_string(&prompt).map_err(io::Error::from);
-                writeln!(self.output, "{}", line.map_err(AskError::Write)?)
-                    .map_err(AskError::Write)?;
+                let line = serde_json::to_string(&prompt).map_err(AskError::Encode)?;
+                writeln!(self.output, "{line}").map_err(AskError::Write)?;
             }
         }
         // A job's reader sees the line only once it is flushed.
@@ -222,6 +223,10 @@ mod tests {
                 }
             ),
             "{error}"
+        );
+        assert_eq!(
+            error.to_string(),
+            "the restart-feeder prompt takes done, not yes"
         );
         let error = asker.yes(Prompt::EraseStockPlans).await.unwrap_err();
         assert!(

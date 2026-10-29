@@ -7,6 +7,13 @@
 //! question to whoever answers. The words live here, with the type, so the
 //! installer's terminal and every reader of the bench show the same ones.
 //!
+//! An answer line carries no sequence number and does not name its prompt:
+//! the installer reads exactly one answer after each prompt it writes, and
+//! that strict alternation is the only thing that pairs them. So a reader
+//! (the bench server) writes an answer only to the prompt it has read and
+//! not yet answered, never one queued ahead for a prompt still to come,
+//! and never a second one: an extra line would answer the next prompt.
+//!
 //! A prompt expects one kind of answer ([`Expects`]). An answer of the
 //! other kind is refused, never read as "no" or as "go on": a confirmation
 //! that the feeder restarted and a yes to "is this your feeder?" mean
@@ -147,6 +154,15 @@ impl Prompt {
 impl fmt::Display for Prompt {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.text())
+    }
+}
+
+impl fmt::Display for Expects {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Done => "done",
+            Self::YesNo => "yes or no",
+        })
     }
 }
 

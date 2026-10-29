@@ -4,7 +4,7 @@ The images the app, the web UI and the docs need from `plaf103.blend`, and the r
 
 ## Ground rules
 
-- **Every image comes from `render.py`.** Extend it with views, states and stages. Don't hand-edit outputs or render from a saved scene. One command regenerates everything: `blender -b assets/model/plaf103.blend -P assets/model/render.py -- --all`. A single image also works with `--view` and `--state`.
+- **Every image comes from `render.py`.** The one exception is the site's line art, which `lineart.py` traces from the same cameras (see [line art](#line-art)). Extend `render.py` with views, states and stages. Don't hand-edit outputs or render from a saved scene. One command regenerates everything: `blender -b assets/model/plaf103.blend -P assets/model/render.py -- --all`. A single image also works with `--view` and `--state`.
 - **Don't edit the product model.** Cameras, lights, backgrounds and state changes (visibility, transforms, emission strength) are applied in the script at render time. If an image needs geometry the model doesn't have (the power jack, the battery door, an inner part), list it in the report rather than inventing it; the owner models it.
 - **Unbranded, always.** Keep the `Logo` and `PCB_ChipLabel` objects hidden; `render.py`'s `unbrand()` already does this. No vendor marks, no vendor app UI, no device identifiers, and nothing fictional printed on the hardware.
 - **Locked cameras within a set.** Every state of a view uses the same camera, framing and lights, so the app can swap images (food levels, lid open) without the feeder jumping. Name cameras per view in code, not per state.
@@ -49,6 +49,10 @@ Lettering is never rendered. Layouts add the lockup from `assets/brand/` afterwa
 | --- | --- |
 | `exploded` | Hardware docs: hopper, ring, PCB and base pulled apart on one axis, the PCB facing camera. Transparent |
 | `pcb` | The board alone, top-down. The texture is synthetic; label nothing |
+
+## Line art
+
+`lineart.py` traces the `card` view into `renders/card-lines.json` for the website's hero: the visible silhouettes, creases and open edges as 2D paths grouped by part (body, bowl, window, ring icons, food), and the visible hotspots in the same units. It imports `render.py` for the camera, unbranding and hotspot projection, so the lines and the `card` render agree. Visibility is a ray cast per sample along each edge; a run of 10 or fewer hidden samples between visible ones is treated as noise and drawn. The output is deterministic, so a retrace without a model change leaves no diff.
 
 ## Hotspots
 

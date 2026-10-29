@@ -607,4 +607,7 @@ def main():
         render_one(args)
 
 
-main()
+# Blender runs a -P script as __main__; lineart.py imports this one for its
+# cameras, unbranding and hotspot projection.
+if __name__ == "__main__":
+    main()

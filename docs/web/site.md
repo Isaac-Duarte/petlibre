@@ -9,8 +9,8 @@ It speaks to two readers: owners who want cloud-free feeding later, and tinkerer
 | Area | Choice |
 | --- | --- |
 | Build | SvelteKit 3 with `adapter-static`; every route prerendered, `csr = false`, so the page ships no JavaScript |
-| Style | The [tokens](../../assets/brand/tokens.json) and `@wellfed/ui`'s base, following the system's light or dark. Typography and hairlines do the work: no product renders, gradients, cards or badges |
-| Picture | The hero's route diagram (where one feed command travels, stock against Wellfed), drawn in HTML so it reflows on a phone |
+| Style | The [tokens](../../assets/brand/tokens.json) and `@wellfed/ui`'s base, following the system's light or dark. Typography and hairlines do the work: no product renders, fills, gradients, cards or badges |
+| Pictures | The hero's line drawing of the feeder and its route diagram (where one feed command travels, stock against Wellfed), drawn in HTML so it reflows on a phone |
 | Brand | The favicon, lockups and theme colors are imported from `assets/brand/`, never copied |
 | Requests | None off its own origin: no analytics, CDN or web fonts. `static/_headers` sets a CSP that allows only `'self'` |
 | Tests | `svelte-check`, ESLint and Prettier with the workspace, and a Playwright smoke test against `vite preview` at desktop and phone width |
@@ -23,6 +23,16 @@ The claims live in `src/lib/status.ts`:
 - the stock and Wellfed comparison. Its stock column comes from the [stock firmware notes](../devices/plaf103/stock/README.md), and each Wellfed entry carries a stage.
 
 Update it by hand when a status changes on the [roadmap](../roadmap.md). Set `UPDATED` to the day. Never claim more than the roadmap and the stock notes do. Outbound links are in `src/lib/links.ts`.
+
+## The drawing
+
+The hero's feeder is line art traced from the 3D model, not a render: `assets/model/lineart.py` writes the visible lines and the part hotspots to `assets/renders/card-lines.json`, and the hero draws them as SVG paths in the theme's line colors. The paths draw themselves in with CSS, and leaders run from parts of the feeder to the claims beside it. Those claims are ones the page already makes: open source, MIT licensed, no account, no vendor cloud. With reduced motion the drawing is simply there.
+
+Because the CSP refuses inline styles, positions are SVG attributes and the animation's timing lives in the component's stylesheet. Retrace after the model changes:
+
+```sh
+blender -b assets/model/plaf103.blend -P assets/model/lineart.py
+```
 
 ## Social card
 

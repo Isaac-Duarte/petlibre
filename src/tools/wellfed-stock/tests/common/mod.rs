@@ -80,11 +80,33 @@ impl Drop for Service {
     }
 }
 
-pub fn address() -> std::net::SocketAddr {
-    TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
+/// `N` distinct free loopback addresses, for the ports a spawned server
+/// binds once it has started.
+///
+/// A port is free when chosen but taken only later, by the server's own
+/// bind. One from the kernel's ephemeral range could meanwhile go to any
+/// process's port-0 bind or outgoing connection (the server's broker then
+/// fails `address in use`), so these are drawn at random from below it,
+/// where nothing is handed out unasked. Every listener is held until all
+/// are chosen, so the `N` differ.
+pub fn addresses<const N: usize>() -> [std::net::SocketAddr; N] {
+    let ephemeral = std::fs::read_to_string("/proc/sys/net/ipv4/ip_local_port_range")
+        .ok()
+        .and_then(|range| range.split_whitespace().next()?.parse::<u16>().ok())
+        .unwrap_or(32_768);
+    let low = 10_000;
+    assert!(ephemeral > low, "room below the ephemeral range");
+
+    let held: [TcpListener; N] = std::array::from_fn(|_| {
+        loop {
+            let draw = uuid::Uuid::new_v4().as_u128() % u128::from(ephemeral - low);
+            let port = low + u16::try_from(draw).unwrap();
+            if let Ok(listener) = TcpListener::bind(("127.0.0.1", port)) {
+                break listener;
+            }
+        }
+    });
+    held.map(|listener| listener.local_addr().unwrap())
 }
 
 pub fn start(path: &std::path::Path) -> Service {

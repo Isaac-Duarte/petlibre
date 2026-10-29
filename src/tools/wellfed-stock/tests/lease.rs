@@ -18,8 +18,7 @@ fn configured() -> (
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("server.json");
     let mut config = common::config();
-    config.mqtt_listen = common::address();
-    config.http_listen = common::address();
+    [config.mqtt_listen, config.http_listen] = common::addresses();
     wellfed_stock::storage::write_json(&path, &config).unwrap();
     (dir, path, config)
 }

@@ -13,7 +13,7 @@ use std::{
     time::Duration,
 };
 
-use common::{address, ready, start, status};
+use common::{addresses, ready, start, status};
 use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS};
 use serde_json::{Value, json};
 use wellfed_stock::storage;
@@ -23,8 +23,7 @@ async fn real_broker_api_and_simulated_stock_session_without_commands() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("server.json");
     let mut config = common::config();
-    config.mqtt_listen = address();
-    config.http_listen = address();
+    [config.mqtt_listen, config.http_listen] = addresses();
     storage::write_json(&path, &config).unwrap();
 
     let service = start(&path);

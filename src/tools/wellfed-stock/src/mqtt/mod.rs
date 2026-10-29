@@ -16,7 +16,7 @@ use std::{sync::Arc, time::Duration};
 
 use anyhow::{Result, ensure};
 use chrono::Utc;
-use rumqttc::{AsyncClient, Event, MqttOptions, Packet, Publish, QoS};
+use rumqttc::{AsyncClient, ConnectionError, Event, MqttOptions, Packet, Publish, QoS};
 use tokio::sync::{mpsc, oneshot, watch};
 use tracing::{info, warn};
 
@@ -217,19 +217,37 @@ impl Actor {
         let (client, mut eventloop) = AsyncClient::new(options, 32);
         let mut tick = tokio::time::interval(Duration::from_secs(1));
 
+        // The connect is not cancel-safe: a poll that another branch drops
+        // after its CONNECT went out leaves that connection behind, the next
+        // poll opens a second under the same client ID, and the broker's
+        // takeover ends both. So one poll runs to the end of the connect,
+        // with requests served meanwhile as between sessions.
+        let connected = {
+            let connecting = eventloop.poll();
+            tokio::pin!(connecting);
+            loop {
+                tokio::select! {
+                    event = &mut connecting => break event,
+
+                    request = requests.recv() => match request {
+                        Some(request) => self.request_without_device(request),
+                        None => return Ok(Session::Closed),
+                    },
+
+                    _ = tick.tick() => self.controller.expire(Utc::now())?,
+                }
+                self.publish_status();
+            }
+        };
+        if let Some(ended) = self.event(&client, connected).await? {
+            return Ok(ended);
+        }
+        self.publish_status();
+
         loop {
             tokio::select! {
-                event = eventloop.poll() => match event {
-                    Ok(Event::Incoming(Packet::ConnAck(_))) => self.subscribe(&client).await?,
-                    Ok(Event::Incoming(Packet::SubAck(ack))) => self.session_started(&client, &ack)?,
-                    Ok(Event::Incoming(Packet::Publish(message))) => self.incoming(&client, &message)?,
-                    Ok(_) => {}
-                    Err(_) => {
-                        warn!("MQTT disconnected; discarding pending outgoing messages");
-                        self.controller.disconnected(Utc::now())?;
-                        self.publish_status();
-                        return Ok(Session::Dropped);
-                    }
+                event = eventloop.poll() => if let Some(ended) = self.event(&client, event).await? {
+                    return Ok(ended);
                 },
 
                 request = requests.recv() => match request {
@@ -241,6 +259,28 @@ impl Actor {
             }
             self.publish_status();
         }
+    }
+
+    /// Act on one event of the connection; the session's end when it
+    /// dropped.
+    async fn event(
+        &mut self,
+        client: &AsyncClient,
+        event: std::result::Result<Event, ConnectionError>,
+    ) -> Result<Option<Session>> {
+        match event {
+            Ok(Event::Incoming(Packet::ConnAck(_))) => self.subscribe(client).await?,
+            Ok(Event::Incoming(Packet::SubAck(ack))) => self.session_started(client, &ack)?,
+            Ok(Event::Incoming(Packet::Publish(message))) => self.incoming(client, &message)?,
+            Ok(_) => {}
+            Err(_) => {
+                warn!("MQTT disconnected; discarding pending outgoing messages");
+                self.controller.disconnected(Utc::now())?;
+                self.publish_status();
+                return Ok(Some(Session::Dropped));
+            }
+        }
+        Ok(None)
     }
 
     /// Serve API requests between connections without accumulating commands

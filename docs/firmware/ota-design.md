@@ -132,6 +132,15 @@ Version 1 (`PLOTA1`) is deleted. An offer carrying its magic is refused as the w
 - The release slot, empty in the build and filled once by a `PLKEY1` statement a built-in key signed (`UpdateKeyStatement`). So a release key arrives without reinstalling bank 0.
 - Owners' update keys, enrolled over the device API (`EnrollUpdateKey`) only once someone presses Dispense at the feeder, and removed like any client.
 
+**Enrolling an owner's key.** `wellfed update-key new --output FILE` writes an owner's key. It is the bench key's file format, marked `"scope": "owner"`, and it refuses to replace a file. `wellfed update-key enroll --key FILE` enrolls a key on the feeder:
+- Only an owner's session that claimed updates may enroll one. The CLI refuses a member before anyone is asked to press.
+- If the feeder already lists the key as an update signer, nothing is sent.
+- If the feeder holds the key as a client that opens sessions, the CLI refuses it. An update key is a key of its own.
+- Otherwise the CLI sends `EnrollUpdateKey` and asks you to press Dispense within 60 s. Unlock the panel first if it is locked. No press in time is refused `Unconfirmed`, and nothing is enrolled.
+- `wellfed update-key show` lists the enrolled keys with their key ids. They also appear in `wellfed clients`.
+
+The bench key enrolls the same way. A feeder whose image embeds no key then still takes the updates `wellfed-bench ota` signs. The client side is `wellfed_client::update_key`, which the installer will reuse right after it pairs.
+
 A `PLREV1` statement retires any key id for good. Built-in keys and the release slot's key sign key statements, so retiring the bench key leaves rotation to the release key. An owner's key never signs one, and a retired key signs nothing.
 
 The bench key stays in `private/ota-key.json`, for the bench only. An offline release key is required before any public release.
@@ -148,7 +157,7 @@ The bench key stays in `private/ota-key.json`, for the bench only. An offline re
 - It is not the confirmation sector, which is erased before each write.
 - The factory reset leaves it alone.
 
-**Signing** uses `wellfed-build sign` (version 2), `downgrade`, `revoke` and `add-key`, all with the bench key. `wellfed-build` signs only a frozen review.
+**Signing** uses `wellfed-build sign` (version 2), `downgrade`, `revoke` and `add-key`, with the bench key. `sign --key` also takes an owner's key, for the feeders that enrolled it. `wellfed-build` signs only a frozen review.
 
 ## Storage-format rule
 
@@ -323,7 +332,8 @@ The builder sets KM0's `Flash_Speed` to 50 MHz. The read mode stays Dual IO, sin
 - **Observed** (October 24), earlier bank-0 faults: 3 crashes and 1 silent watchdog hang in 157 bank-0 boots that started Wi-Fi, and none in 199 bank-1 boots, including the same build. The crashes were in `cmd_thread` (`fw47-itest-05`), and twice in `rtw_recv` (a backpower run, then `warm-20261024-05`). The last, symbolized with its ELF, was in the SDK's `report_survey_event` under `OnProbeRsp`, 11 s after boot, before any download. Static analysis: two of the faulting PCs hold valid instructions, so the CPU fetched wrong bytes from flash. Ruled out then: a power cut, UART back power (relays 3 and 4 now isolate it), the old `qa` image, and our flash leases, which held IRQs masked for 41–44 ms at most (`masked_max_ms`), none past 100 ms. The Wi-Fi driver takes no leases (17 per written sector, exactly), and both cores hold `PMU_OS`, so nothing sleeps.
 - **Observed** (October 26–27), what confirmation proves: an `owner-fail` build stopped each of three trial boots with `owner=0`, and KM0 gave way to bank 0. An `owner-stall` build confirmed, then reset about 190 s into every boot (`hang kind=stopped`); after `storm resets=1…4`, KM0 logged `storm=5 limit=5 give_way=1` and bank 0 started.
 - **Observed** (October 27), a held boot: the `owner-stall` build written to bank 0 and given way to reset five boots in a row (`PLTRL1 bank=0 resets=1…4`). The sixth booted `PLTRL1 storm=5 held=1`, readiness `blocked reason=fault`, and the device API answered from bank 0. The held boot ran its stalls without a reset, and 10 minutes in logged `PLSUP1 storm released=1 level=0`, opened the owner on its journal and went `ready`.
-- **Not yet run on hardware:** the halted state, which needs a variant that resets while held; a real brownout setting the forgiveness bit.
+- **Not yet run on hardware:** the halted state, which needs a variant that resets while held; a real brownout setting the forgiveness bit; enrolling an owner's update key (`wellfed update-key enroll`) and installing an update it signed.
+- **Simulated** (October 29, 2026), enrolling an owner's key: in `wellfed-feeder-sim`'s update tests, a Dispense press enrolled the key and a feeder that embeds no key then installed an update it signed. A key nobody enrolled was refused `Key`, no press was refused `Unconfirmed` with nothing enrolled, and a member was refused `Forbidden`.
 - **Modeled:** the update stage, the device-API flow, the breaker and the decided-reset rule are host-tested and simulated, as listed under [How it's tested](#how-its-tested).
 - **Observed** (October 22), the trial: the `stall` test variant (`wellfed-build build --profile firstboot --firmware bringup --variant stall`) was counted 1, 2, 3, then gave way and booted bank 0. Over the air, each of these was counted 1, 2, 3 and then gave way: a failed-start variant (`--variant fail`), stopped 253 ms into each boot; the hang variant (`--variant stall`); and a normal build whose server was stopped after activation, which reset at `ms=600192` on each boot. A fixed build then confirmed after 30 s healthy (`PLCNF1 confirmed=1 healthy_ms=30000`), and the next cold boot reported `PLTRL1 confirmed=1`. Reinstalling a confirmed build skipped its trial, as designed.
 - **Observed** (October 22): the `FLASH_Write_Lock` hang after a watchdog reset, then its fix.

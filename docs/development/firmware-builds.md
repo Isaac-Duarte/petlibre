@@ -175,7 +175,7 @@ The build ID comes from the verified manifest (for the stock image, the review's
 
 ### The bench key
 
-The key `keygen` makes is the bench key. It lives in a checkout's `private/` and signs development images for the bench's own units only. A key file without a `scope` field predates the field and is read as the bench key. The signer loads no other scope.
+The key `keygen` makes is the bench key. It lives in a checkout's `private/` and signs development images for the bench's own units only. A key file without a `scope` field predates the field and is read as the bench key. The signer also loads an owner's key (`"scope": "owner"`), which `wellfed update-key new` writes. A feeder trusts that key only once the owner enrolls it there ([OTA design](../firmware/ota-design.md#keys-and-anti-rollback)), and it signs no key statement. No other scope loads.
 
 A public release needs an offline release key first. That key never sits in a checkout, and this tool does not create it.
 

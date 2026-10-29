@@ -17,6 +17,7 @@ use ed25519_dalek::{Signer, SigningKey};
 use sha2::{Digest, Sha256};
 use tokio::task::LocalSet;
 use wellfed_client::update::{Image, InstallError, Installer, Next, Sent};
+use wellfed_client::update_key::{Enroll, EnrollError, Listed};
 use wellfed_connect::Connection;
 use wellfed_core::ota::install::IDLE_MS;
 use wellfed_core::ota::offer::{self, ImageKind, Signed, key_id};
@@ -26,7 +27,10 @@ use wellfed_feeder_sim::banks::{Banks, Trial};
 use wellfed_feeder_sim::flash::Flash;
 use wellfed_feeder_sim::harness;
 use wellfed_feeder_sim::serve::Control;
-use wellfed_model::{Answer, Op, Refusal, UpdatePhase, UpdateRefusal, UpdateStop, UpdateView};
+use wellfed_model::{
+    Answer, Client, ClientRole, Joined, Op, Refusal, UpdatePhase, UpdateRefusal, UpdateStop,
+    UpdateView,
+};
 use wellfed_proto::api::RequestId;
 use wellfed_session::noise::Keypair;
 
@@ -56,6 +60,10 @@ struct Offer {
 
 impl Offer {
     fn new(version: u32, build: u8, len: usize) -> Self {
+        Self::signed_by(&bench(), version, build, len)
+    }
+
+    fn signed_by(key: &SigningKey, version: u32, build: u8, len: usize) -> Self {
         let mut payload: Vec<u8> = (0..len).map(|i| (i % 249) as u8 ^ build).collect();
         payload[..8].copy_from_slice(&MARKER);
         let signed = Signed {
@@ -67,11 +75,11 @@ impl Offer {
                 build_id: [build; 32],
             },
             kind: ImageKind::Replacement,
-            key_id: key_id(&bench().verifying_key().to_bytes()),
+            key_id: key_id(&key.verifying_key().to_bytes()),
         };
         let body = offer::manifest_body(&signed);
         let mut manifest = body.to_vec();
-        manifest.extend_from_slice(&bench().sign(&body).to_bytes());
+        manifest.extend_from_slice(&key.sign(&body).to_bytes());
         Self { payload, manifest }
     }
 
@@ -93,11 +101,16 @@ struct Rig {
 
 impl Rig {
     async fn start() -> Self {
+        Self::trusting(Some(bench().verifying_key().to_bytes())).await
+    }
+
+    /// A feeder whose image embeds `built_in` as its update key, or none.
+    async fn trusting(built_in: Option<[u8; 32]>) -> Self {
         let banks = Banks::new();
         let sim = harness::Running::start_with(
             &Flash::memory(),
             &banks,
-            Some(bench().verifying_key().to_bytes()),
+            built_in,
             Some(*Keypair::from_secret(OWNER).public()),
             SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
         )
@@ -507,6 +520,186 @@ fn a_build_that_never_confirms_gives_way_to_a_bank_0_that_answers() {
             .await
             .unwrap();
         assert_eq!(rig.bank().await, 1);
+        rig.sim.stop().await;
+    });
+}
+
+/// The owner's own update key, which no image embeds.
+const SIGNER: [u8; 32] = [0x5e; 32];
+const MEMBER: [u8; 32] = [0x33; 32];
+
+fn signer() -> SigningKey {
+    SigningKey::from_bytes(&SIGNER)
+}
+
+fn enrolling() -> Enroll {
+    Enroll::new(signer().verifying_key().to_bytes(), "laptop").unwrap()
+}
+
+/// The feeder's client list, read by the owner.
+async fn clients(rig: &mut Rig) -> Vec<Client> {
+    let mut connection = rig.open().await;
+    let answer = connection.ask(rig.id(), &Op::ListClients).await.unwrap();
+    let Answer::Clients(clients) = answer else {
+        panic!("{answer:?}");
+    };
+    clients
+}
+
+/// Ask the feeder to enroll [`SIGNER`] over `connection`, typing `hands`
+/// at the panel meanwhile, as the CLI does once its checks pass.
+async fn enroll(
+    rig: &mut Rig,
+    connection: &mut Connection,
+    hands: Option<&str>,
+) -> Result<(), EnrollError> {
+    let enroll = enrolling();
+    let request = enroll.request();
+    let id = rig.id();
+    let sim = &rig.sim;
+    let (answer, ()) = tokio::join!(connection.ask(id, &request), async {
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        if let Some(line) = hands {
+            sim.type_line(line).unwrap();
+        }
+    });
+    enroll.answer(&answer.expect("the feeder answers within the press window"))
+}
+
+/// A Dispense press at the feeder enrolls the key, and the feeder then
+/// takes updates it signed, here on an image that embeds no key at all;
+/// a key nobody enrolled is refused.
+#[test]
+fn an_enrolled_owner_key_signs_updates_a_feeder_without_a_built_in_key_takes() {
+    paused(async {
+        let mut rig = Rig::trusting(None).await;
+        let owned = Offer::signed_by(&signer(), 7, 0x77, 2 * SECTOR);
+        let refused = update(&mut rig, owned.image(), &mut Faults::default()).await;
+        assert_eq!(
+            refused,
+            Err(InstallError::Refused(Refusal::Update(UpdateRefusal::Key)))
+        );
+
+        let mut connection = rig.open().await;
+        Enroll::session(connection.role(), connection.capabilities()).unwrap();
+        assert_eq!(
+            enrolling().listed(&clients(&mut rig).await),
+            Ok(Listed::Absent)
+        );
+        // The panel boots locked: unlock it, then press.
+        rig.sim.type_line("hold lock").unwrap();
+        let enrolled = enroll(&mut rig, &mut connection, Some("press dispense")).await;
+        assert_eq!(enrolled, Ok(()));
+
+        let listed = clients(&mut rig).await;
+        assert_eq!(enrolling().listed(&listed), Ok(Listed::Enrolled));
+        let entry = listed
+            .iter()
+            .find(|c| c.key.0 == enrolling().key())
+            .unwrap();
+        assert_eq!(
+            (entry.role, entry.label.as_str()),
+            (ClientRole::UpdateSigner, "laptop")
+        );
+        drop(connection);
+
+        let stranger = SigningKey::from_bytes(&[0x77; 32]);
+        let other = Offer::signed_by(&stranger, 7, 0x77, 2 * SECTOR);
+        let refused = update(&mut rig, other.image(), &mut Faults::default()).await;
+        assert_eq!(
+            refused,
+            Err(InstallError::Refused(Refusal::Update(UpdateRefusal::Key)))
+        );
+
+        update(&mut rig, owned.image(), &mut Faults::default())
+            .await
+            .unwrap();
+        assert_eq!(rig.bank().await, 1);
+        let connection = rig.open().await;
+        assert_eq!(connection.build(), "77".repeat(32));
+        rig.sim.stop().await;
+    });
+}
+
+#[test]
+fn without_a_press_the_key_is_unconfirmed_and_not_enrolled() {
+    paused(async {
+        let mut rig = Rig::trusting(None).await;
+        let mut connection = rig.open().await;
+        rig.sim.type_line("hold lock").unwrap();
+        let unpressed = enroll(&mut rig, &mut connection, None).await;
+        assert_eq!(unpressed, Err(EnrollError::Unconfirmed));
+        assert_eq!(
+            enrolling().listed(&clients(&mut rig).await),
+            Ok(Listed::Absent)
+        );
+
+        // A press after the window closed enrolls nothing either.
+        rig.sim.type_line("press dispense").unwrap();
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        assert_eq!(
+            enrolling().listed(&clients(&mut rig).await),
+            Ok(Listed::Absent)
+        );
+        rig.sim.stop().await;
+    });
+}
+
+/// A member is refused before anyone is asked to press, and the feeder
+/// refuses one that asks anyway; an owner's own session key is never an
+/// update key.
+#[test]
+fn only_an_owner_enrolls_an_update_key() {
+    paused(async {
+        let mut rig = Rig::trusting(None).await;
+        let mut owner = rig.open().await;
+        let create = Op::CreateInvite {
+            role: ClientRole::Member,
+        };
+        let answer = owner.ask(rig.id(), &create).await.unwrap();
+        let Answer::Invite(invite) = answer else {
+            panic!("{answer:?}");
+        };
+        let invite = wellfed_client::api::Invite {
+            feeder: rig.sim.identity,
+            id: invite.id,
+            secret: invite.secret.0,
+        };
+        let member = Keypair::from_secret(MEMBER);
+        let joined = wellfed_connect::join(&member, invite, "member", rig.sim.address, [9; 32])
+            .await
+            .unwrap();
+        assert_eq!(
+            joined,
+            Joined::Enrolled {
+                role: ClientRole::Member
+            }
+        );
+
+        let mut connection =
+            Connection::open(&member, rig.sim.identity, rig.sim.address, [0x3c; 32])
+                .await
+                .unwrap();
+        assert_eq!(
+            Enroll::session(connection.role(), connection.capabilities()),
+            Err(EnrollError::NotOwner {
+                role: ClientRole::Member
+            })
+        );
+        let asked = enroll(&mut rig, &mut connection, None).await;
+        assert_eq!(asked, Err(EnrollError::Forbidden));
+        assert_eq!(
+            enrolling().listed(&clients(&mut rig).await),
+            Ok(Listed::Absent)
+        );
+
+        let own = Enroll::new(*Keypair::from_secret(OWNER).public(), "mine").unwrap();
+        assert_eq!(
+            own.listed(&clients(&mut rig).await),
+            Err(EnrollError::SessionKey {
+                role: ClientRole::Owner
+            })
+        );
         rig.sim.stop().await;
     });
 }

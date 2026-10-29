@@ -273,7 +273,7 @@ Every flash lease checks that the outputs are stopped, and fails closed when the
   - The loop never verifies a signature. It copies the request into the update mailbox and answers from what the service task's update stage publishes ([OTA design](ota-design.md#updates-over-the-device-api)).
   - An offer is refused `Busy` while a feed is queued or driven, and a feed while an install holds the flash.
   - A chunk is idempotent by its offset, so it is not a remembered write and is not logged one by one.
-  - An update key is enrolled only once someone at the feeder presses Dispense. The session's answer waits for it (the client's answer time is longer for this op), and a session that leaves cancels the offer.
+  - An update key is enrolled only once someone at the feeder presses Dispense within 60 s. The session's answer waits for it (`wellfed-client` waits 75 s for this op, not its usual 10 s), and a session that leaves cancels the offer. `wellfed update-key enroll` sends it ([OTA design](ota-design.md#keys-and-anti-rollback)); that path has run only in simulation, not yet on a feeder.
 - **Debug log** (`Capabilities::LOG`, owner sessions only): `TailLog { after }` streams the firmware's record lines from a RAM tail ([below](#debug-log)).
 - **Feed traces** (`Capabilities::TRACES` with `STATS`): `FeedTrace { feed, offset }` reads what a feed's drive measured, a page at a time, from RAM or storage sectors 29–31 ([below](#feed-traces)).
 - **Stock backup** (`Capabilities::BACKUP`, bit 512, owner sessions only): `ReadBank1 { offset }` reads bank 1 a page at a time, and `ReadStockPlans` stock's plan sectors, both served only from bank 0 ([below](#stock-backup)).

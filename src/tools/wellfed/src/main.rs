@@ -12,7 +12,7 @@
 //!   `wellfed-client`'s, the same the Android app runs. The other device
 //!   commands open a session on the device API, Noise over TCP to the feeder
 //!   found over mDNS, as a key it enrolled: `configure`, `plans`,
-//!   `history`, `feeding` and `access`. What a person reads prints as text
+//!   `history`, `feeding`, `access` and `update_key`. What a person reads prints as text
 //!   (`text`), with `--json` for scripts; the rest prints the feeder's
 //!   answers as JSON.
 //! - **The owner's server.** `wellfed server …` (the `server` module)
@@ -45,6 +45,7 @@ mod push;
 mod server;
 mod text;
 mod trace;
+mod update_key;
 
 use std::io::BufRead;
 use std::path::PathBuf;
@@ -110,6 +111,9 @@ enum Command {
     Clients(Target),
     /// Revoke a client; its open sessions close.
     Revoke(access::RevokeArgs),
+    /// An owner's update-signing key: create one, enroll it on the feeder
+    /// (confirmed by a Dispense press there), or list the enrolled ones.
+    UpdateKey(update_key::UpdateKeyArgs),
     /// Dispense portions, and wait for the feed's result.
     Feed(feeding::FeedArgs),
     /// Stop a running feed.
@@ -185,6 +189,7 @@ fn main() -> Result<ExitCode> {
         Command::Join(args) => runtime.block_on(access::join_command(args)),
         Command::Clients(target) => runtime.block_on(access::clients_command(target)),
         Command::Revoke(args) => runtime.block_on(access::revoke_command(args)),
+        Command::UpdateKey(args) => runtime.block_on(update_key::command(args)),
         Command::Feed(args) => runtime.block_on(feeding::feed_command(args)),
         Command::CancelFeed(args) => runtime.block_on(feeding::cancel_feed_command(args)),
         Command::Reboot(target) => runtime.block_on(ask_and_print(&target, &Op::Reboot)),
@@ -427,6 +432,14 @@ mod tests {
         ] {
             assert!(Cli::try_parse_from(read).is_ok(), "{read:?}");
         }
+
+        // An update key's label fits the feeder's 16 bytes.
+        let enroll = ["wellfed", "update-key", "enroll", "--key", "k.json"];
+        assert!(Cli::try_parse_from(enroll).is_ok());
+        let long = [&enroll[..], &["--label", "seventeen-letters"]].concat();
+        assert!(Cli::try_parse_from(long).is_err());
+        let new = ["wellfed", "update-key", "new", "--output", "k.json"];
+        assert!(Cli::try_parse_from(new).is_ok());
 
         // A server command parses whole, its flags after the verb.
         let feed = ["wellfed", "server", "feed", "--portions", "2", "--json"];

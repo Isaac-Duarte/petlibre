@@ -1,6 +1,8 @@
-//! The private credential and key files the firmware build embeds: the
-//! hotspot's Wi-Fi credentials and the update key `wellfed-build keygen`
-//! writes; `wellfed-build` turns them into headers.
+//! The private credential and key files: the hotspot's Wi-Fi credentials
+//! and the bench update key `wellfed-build keygen` writes, which
+//! `wellfed-build` turns into headers the firmware embeds, and an owner's
+//! update key `wellfed update-key new` writes, which a feeder trusts only
+//! once the owner enrolls it.
 
 use serde::{Deserialize, Serialize};
 
@@ -11,7 +13,10 @@ pub struct WifiCredential {
     pub password: String,
 }
 
-/// The update-signing key; `seed` never leaves private/.
+/// An update-signing key; `seed` never leaves the file. The bench key and
+/// an owner's key share the format: both are an Ed25519 seed that signs
+/// the same version 2 manifests, and differ only in how a feeder comes to
+/// trust them, which `scope` names.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct OtaKeyFile {
     pub version: u32,
@@ -27,14 +32,18 @@ pub struct OtaKeyFile {
 
 /// What an update-signing key is for.
 ///
-/// Only the bench key exists. It lives in a checkout's `private/`, so it
-/// signs development images for the research unit and nothing else; a
-/// public release needs an offline release key first, which never becomes
-/// a file here.
+/// Neither is a release key: a public release needs an offline release
+/// key first, which never becomes a file here.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum KeyScope {
-    /// Development images on the bench's own units.
+    /// Development images on the bench's own units. It lives in a
+    /// checkout's `private/`, and the firmware builds embed its public half.
     #[default]
     Bench,
+    /// An owner's own builds, for the feeders that enrolled it as their
+    /// update signer (a Dispense press at each feeder confirms it). No
+    /// image embeds it, and a feeder that did not enroll it refuses what it
+    /// signs.
+    Owner,
 }

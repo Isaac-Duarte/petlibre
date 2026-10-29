@@ -73,7 +73,7 @@ fn stock_is_frozen_by_hash_and_accepted_by_the_flash_client() {
         (ImageKind::Stock, review.payload_sha256)
     );
     let key_path = scratch.path().join("ota-key.json");
-    wellfed_signing::keygen(&key_path).unwrap();
+    wellfed_signing::keygen(&key_path, wellfed_formats::credentials::KeyScope::Bench).unwrap();
     let key = Key::load(&key_path).unwrap();
     assert!(frozen.offer(&key, 1, Motion::Refused).is_ok());
 }

@@ -17,6 +17,7 @@ use wellfed_build::identity::{SourceId, current_inputs, source_id};
 use wellfed_build::image::{Request, audit_build, build};
 use wellfed_build::review::freeze;
 use wellfed_build::{Device, Firmware, Profile, Repo, Variant};
+use wellfed_formats::credentials::KeyScope;
 use wellfed_formats::review::ImageKind;
 use wellfed_signing::{self as signing, Frozen, Key, Motion};
 
@@ -273,7 +274,7 @@ fn run(command: Command) -> Result<()> {
             // Paths are the checkout's, like every other command's, so the
             // default key lands where builds read it from any directory.
             let output = repo.root.join(output);
-            let public = signing::keygen(&output)?;
+            let public = signing::keygen(&output, KeyScope::Bench)?;
             let id = Key::load(&output)?.id();
             println!(
                 "Wrote bench key {}; public key {public}, key id {}",

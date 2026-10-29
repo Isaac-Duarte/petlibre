@@ -18,9 +18,12 @@
 //! refuses a motion image unless the caller names the exact policy it is
 //! attending.
 //!
-//! The key is the bench key in `private/ota-key.json` ([`KeyScope::Bench`]).
-//! A public release needs an offline release key that never sits in a
-//! checkout; this tool does not create or hold one.
+//! A key is the bench key in `private/ota-key.json` ([`KeyScope::Bench`]),
+//! whose public half the firmware builds embed, or an owner's own key
+//! ([`KeyScope::Owner`]), which a feeder trusts only once the owner has
+//! enrolled it there with a Dispense press. Both are the same file and sign
+//! the same manifests. A public release needs an offline release key that
+//! never sits in a checkout; this tool does not create or hold one.
 //!
 //! The manifest bytes are `wellfed_core::ota::offer`'s version 2 format,
 //! which the firmware verifies and the device API takes: it names its key
@@ -29,7 +32,8 @@
 //! A statement binds what it allows: a downgrade names the feeder's identity
 //! key, the exact manifest and the floor it was made at; a key statement
 //! names the key it retires or adds. Only a key built into the firmware may
-//! sign a key statement, and the bench key is the only one built in.
+//! sign a key statement, and the bench key is the only one built in: an
+//! owner's key signs manifests and nothing else a feeder accepts.
 
 #![forbid(unsafe_code)]
 
@@ -62,15 +66,16 @@ pub const KEY_PATH: &str = "private/ota-key.json";
 /// The OTA container's header precedes the bank contents.
 pub const CONTAINER_HEADER: usize = 32;
 
-/// Create a new bench signing key at `output`; refuses to replace one.
-/// Returns the public key (hex), which firmware builds embed.
-pub fn keygen(output: &Path) -> Result<String> {
+/// Create a new signing key for `scope` at `output`; refuses to replace
+/// one. Returns the public key (hex): firmware builds embed a bench key's,
+/// and an owner enrolls theirs on each feeder.
+pub fn keygen(output: &Path, scope: KeyScope) -> Result<String> {
     let seed: [u8; 32] = random(Path::new(SYSTEM_RANDOM))?;
     let public_key = hex::encode(&SigningKey::from_bytes(&seed).verifying_key().to_bytes());
 
     let file = OtaKeyFile {
         version: 1,
-        scope: KeyScope::Bench,
+        scope,
         seed: hex::encode(&seed),
         public_key: public_key.clone(),
     };
@@ -92,9 +97,10 @@ impl Key {
             version: file.version,
         })?;
         // Every scope a key file can name must be decided here: a release
-        // key is never one this signer loads from a checkout.
+        // key is never one this signer loads from a file. Both scopes sign
+        // alike; each feeder decides whether it trusts the key.
         match file.scope {
-            KeyScope::Bench => {}
+            KeyScope::Bench | KeyScope::Owner => {}
         }
         let seed = hex::decode::<32>(&file.seed).ok_or(KeyError::Seed)?;
 
@@ -106,7 +112,7 @@ impl Key {
         Ok(Self(key))
     }
 
-    /// The public half, as the firmware embeds it.
+    /// The public half, as the firmware embeds it or an owner enrolls it.
     pub fn public(&self) -> [u8; 32] {
         self.0.verifying_key().to_bytes()
     }
@@ -357,8 +363,11 @@ mod tests {
     fn keygen_and_a_frozen_review_sign_what_the_firmware_verifies() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("ota-key.json");
-        let public = keygen(&path).unwrap();
-        assert!(keygen(&path).is_err(), "keygen must not replace a key");
+        let public = keygen(&path, KeyScope::Bench).unwrap();
+        assert!(
+            keygen(&path, KeyScope::Owner).is_err(),
+            "keygen must not replace a key"
+        );
         let file: OtaKeyFile = wellfed_formats::load(&path).unwrap();
         assert_eq!(file.scope, KeyScope::Bench);
         let key = Key::load(&path).unwrap();
@@ -454,7 +463,7 @@ mod tests {
     fn a_key_file_without_a_scope_is_the_bench_key() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("k.json");
-        keygen(&path).unwrap();
+        keygen(&path, KeyScope::Bench).unwrap();
         let mut file: serde_json::Value =
             serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         file.as_object_mut().unwrap().remove("scope");
@@ -472,6 +481,57 @@ mod tests {
             Key::load(&old),
             Err(Error::Key(KeyError::PublicKey))
         ));
+    }
+
+    /// An owner's key is the same file under its own scope, and signs what
+    /// a feeder that enrolled it admits; one that did not refuses it.
+    #[test]
+    fn an_owner_key_loads_and_signs_for_the_feeders_that_enrolled_it() {
+        use wellfed_core::ota::offer::{
+            Context, KeyError as RingError, KeyRing, OfferError, Trust,
+        };
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("owner-key.json");
+        let public = keygen(&path, KeyScope::Owner).unwrap();
+        let file: OtaKeyFile = wellfed_formats::load(&path).unwrap();
+        assert_eq!(file.scope, KeyScope::Owner);
+        let key = Key::load(&path).unwrap();
+        assert_eq!(hex::encode(&key.public()), public);
+
+        let (checkout, review) = freeze(&build_image(), None);
+        let signed = Frozen::open(checkout.path(), &review)
+            .unwrap()
+            .offer(&key, 9, Motion::Refused)
+            .unwrap();
+        const BENCH: [[u8; 32]; 1] = [[0x0b; 32]];
+        fn context(enrolled: &[[u8; 32]]) -> Context<'_> {
+            Context {
+                ring: KeyRing {
+                    built_in: &BENCH,
+                    added: None,
+                    enrolled,
+                    revoked: &[],
+                },
+                floor: 0,
+                device: [0x42; 32],
+                running: None,
+            }
+        }
+        let admitted = offer::admit_offer(&signed, None, &context(&[key.public()])).unwrap();
+        assert_eq!(admitted.trust, Trust::Enrolled);
+        assert_eq!(
+            offer::admit_offer(&signed, None, &context(&[])),
+            Err(OfferError::Key(RingError::Unknown))
+        );
+
+        // A scope the format does not name is no key at all.
+        let mut text: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        text["scope"] = json!("release");
+        let other = dir.path().join("release.json");
+        fs::write(&other, text.to_string()).unwrap();
+        assert!(matches!(Key::load(&other), Err(Error::Formats(_))));
     }
 
     #[test]

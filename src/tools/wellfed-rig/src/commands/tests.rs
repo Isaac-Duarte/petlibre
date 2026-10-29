@@ -368,7 +368,11 @@ struct Rig {
 fn rig() -> Rig {
     let tmp = tempfile::tempdir().unwrap();
     fs::create_dir(tmp.path().join("private")).unwrap();
-    wellfed_signing::keygen(&tmp.path().join(wellfed_signing::KEY_PATH)).unwrap();
+    wellfed_signing::keygen(
+        &tmp.path().join(wellfed_signing::KEY_PATH),
+        wellfed_formats::credentials::KeyScope::Bench,
+    )
+    .unwrap();
     let board = FakeBoard::default();
     let tools = FakeTools::default();
     {

@@ -20,7 +20,8 @@
 //!   feeder that lost power sends no reset, and the kernel would keep the
 //!   socket open for many minutes.
 //! - **Request–answer matching.** Each [`Connection::request`] ends in
-//!   exactly one [`Event::Answer`] or, after [`Timing::answer`] or when the
+//!   exactly one [`Event::Answer`] or, after [`Timing::answer`] (or
+//!   [`Timing::press`] for one a press at the feeder answers) or when the
 //!   session ends first, [`Event::Unanswered`]. An unanswered request may have run: a write is
 //!   retried only under the same id, which the feeder answers from memory
 //!   without running it twice, and a feed is never retried automatically.
@@ -56,6 +57,11 @@ pub struct Timing {
     /// A request is answered at once, or after its store write; the
     /// welcome comes within this too.
     pub answer: Duration,
+    /// A request a press at the feeder confirms (an update key's Dispense
+    /// press) is answered when the press comes, or refused once the
+    /// feeder's 60 s window closes: past that window, with room for the
+    /// store write that follows a press.
+    pub press: Duration,
     /// Well inside the feeder's 90 s idle limit, with room for a lost
     /// segment.
     pub keepalive: Duration,
@@ -66,6 +72,7 @@ pub struct Timing {
 impl Timing {
     pub const DEFAULT: Self = Self {
         answer: Duration::from_secs(10),
+        press: Duration::from_secs(75),
         keepalive: Duration::from_secs(45),
         silence: Duration::from_secs(90),
     };
@@ -339,23 +346,17 @@ impl Connection {
 
     /// Send one request under `id`; its answer, or its absence, comes from
     /// [`Self::poll_event`]. `id` may not be [`KEEPALIVE_ID`].
+    ///
+    /// The wait follows from the op, so every client (the CLI, the server,
+    /// the bench, the app) gives a press at the feeder the same time.
     pub fn request(&mut self, now: Instant, id: RequestId, op: &Op) -> Result<(), Error> {
-        self.request_within(now, id, op, self.timing.answer)
-    }
-
-    /// As [`Self::request`], for a request whose answer waits on someone
-    /// at the feeder (an update key's Dispense press): unanswered only
-    /// after `answer`.
-    pub fn request_within(
-        &mut self,
-        now: Instant,
-        id: RequestId,
-        op: &Op,
-        answer: Duration,
-    ) -> Result<(), Error> {
         if id == KEEPALIVE_ID {
             return Err(Error::ReservedId);
         }
+        let answer = match op {
+            Op::EnrollUpdateKey { .. } => self.timing.press,
+            _ => self.timing.answer,
+        };
         self.send_request(now, id, op)?;
         if !self.pending.iter().any(|(sent, _)| *sent == id) {
             self.pending.push((id, now + answer));

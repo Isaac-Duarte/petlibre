@@ -21,7 +21,7 @@ test("renders the landing page from its own origin only", async ({ page, baseURL
     "href",
     "https://github.com/Isaac-Duarte/wellfed",
   );
-  await expect(page.getByText("it isn't ready to look after a real pet yet", { exact: false })).toBeVisible();
+  await expect(page.getByText("In heavy development.")).toBeVisible();
   await expect(page.getByText("Not affiliated with or endorsed by PETLIBRO", { exact: false })).toBeVisible();
 
   // The hero's drawing is traced lines with its claims beside them, drawn by CSS alone.

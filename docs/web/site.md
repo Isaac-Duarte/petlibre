@@ -17,7 +17,7 @@ It is one screen: a headline over the feeder, a short honest line about where We
 
 ## Keeping it true
 
-The page makes only claims the README already makes: open source, MIT licensed, no account, no vendor cloud, and that Wellfed isn't ready to look after a real pet yet. If the README's status changes, check the lede in `src/lib/sections/Hero.svelte` still matches it. Outbound links are in `src/lib/links.ts`.
+The page makes only claims the README already makes: open source, MIT licensed, no account, no vendor cloud, and that Wellfed is in heavy development. The footer keeps the caution to keep another way to feed your pet. If the README's status changes, check the status line in `src/lib/sections/Hero.svelte` still matches it. Outbound links are in `src/lib/links.ts`.
 
 ## The drawing
 

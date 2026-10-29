@@ -31,7 +31,7 @@
     <h1 id="hero-title">Your pet's dinner shouldn't need the internet.</h1>
     <p class="lede">Wellfed runs your feeder on your own Wi-Fi, with no cloud and no account.</p>
     <p class="status">
-      <span><strong>In heavy development.</strong> It isn't ready to look after a real pet yet.</span>
+      <span><strong>In heavy development.</strong></span>
     </p>
 
     <figure class="drawing">

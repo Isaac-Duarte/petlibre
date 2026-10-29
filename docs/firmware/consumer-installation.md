@@ -184,7 +184,7 @@ One run, `wellfed install`, goes from stock to a confirmed replacement. Its step
 - a broker address on the home network that the feeder can reach on TCP 1883 and 8088. The DNS route needs port 1883 exactly, since stock keeps its stored port;
 - for the DNS route, stock's broker name and a DNS override you can set.
 
-It holds the bench lease beside the stock config for its whole length.
+It holds the bench lease beside the stock config for its whole length. On the bench it runs as the server's `install` job instead, on the server's lease, so `wellfed-bench serve` never stops for it ([install as a job](../devices/plaf103/bench.md#install-as-a-job)).
 
 **How it asks.** The run stops at each step that needs you: the override, the restart, the feeder check, the recovery hold, and on the fallback route the Reset warning, setup mode and rejoining your network. By default it asks at the terminal: press Enter once you have done what it says, or answer `y` to a question (anything else is no). With `--prompts lines` it writes each question as one JSON line on standard output and reads one JSON answer line from standard input, for a program that runs it, such as the bench server. Everything else it prints goes to standard error. The fallback route reads the network's passphrase at the terminal, so `--ssid` is refused with `--prompts lines`.
 
@@ -205,7 +205,7 @@ That write may have run, and it is not sent again: read what the feeder runs bef
 
 ### Running an install on the bench
 
-This needs the owner at the panel.
+This needs the owner at the panel. The frame route reads the passphrase at a terminal, so it is no bench job: `wellfed install` refuses to run beside `wellfed-bench serve`, and the owner stops the server for it and starts it again afterwards.
 
 1. **Return the unit to stock** over the air. `wellfed-bench itest --only stock-roundtrip` runs both ways; for an install run, only its first half is wanted: `wellfed-bench ota --review <stock review>`. You should see stock 1.1.15 on bank 1 and the replacement in bank 0. If the stock review's `image.bin` has the pinned SHA-256 `05147476…`, it is the backup the run needs.
 2. **Write the installer config:** `wellfed-stock init-installer --mqtt-listen 10.42.103.1:1883 --output private/installer.json`. On the bench the hotspot is the home network, since the build joins it.
@@ -218,7 +218,7 @@ This needs the owner at the panel.
 
 ### Running the DNS route on the bench
 
-This proves the consumer's first route end to end, with a stock that holds plans. It runs unattended once the owner has changed the hotspot's DNS and the firewall. The feeder's WAN stays blocked throughout, so a failed override fails closed: stock cannot reach the vendor's cloud through its public resolver. It starts from a confirmed `feeder` on bank 1, the hotspot up as a bounded foreground process, the bench lease free, and a fresh `feeder` review with its signed manifest ([proving rollback](#proving-rollback-on-the-bench), step 1). `wellfed-stock` must be built from a clean commit. No motion: the seeded plans never run.
+This proves the consumer's first route end to end, with a stock that holds plans. It runs unattended once the owner has changed the hotspot's DNS and the firewall, but for the feeder check, which is the owner's to answer. The feeder's WAN stays blocked throughout, so a failed override fails closed: stock cannot reach the vendor's cloud through its public resolver. It starts from a confirmed `feeder` on bank 1, the hotspot up as a bounded foreground process, `wellfed-bench serve` running, and a fresh `feeder` review with its signed manifest ([proving rollback](#proving-rollback-on-the-bench), step 1). `wellfed-stock` must be built from a clean commit. No motion: the seeded plans never run.
 
 1. **Read the name:** `NAME=$(target/release/wellfed-stock broker-name <a full flash read of the feeder>)`. Any full read works, since our firmware never writes stock's settings. It prints the name alone; never write it into a tracked file.
 2. **The owner points the name at the bench host:** add `address=/<the name>/10.42.103.1` to a dnsmasq drop-in the hotspot reads (NetworkManager's shared mode reads `/etc/NetworkManager/dnsmasq-shared.d/`), and restart the hotspot. This changes the host's network configuration, so it is the owner's. Check it: `dig +short @10.42.103.1 "$NAME"` should print `10.42.103.1` and nothing else.
@@ -229,12 +229,16 @@ This proves the consumer's first route end to end, with a stock that holds plans
 5. **Go to stock:** `target/release/wellfed-bench ota <name>-stock --review <stock review>`. You should see stock 1.1.15 on bank 1, and in `wellfed-stock status --config private/seed.json`, stock online with version 1.1.15. With the redirect off, that shows DNS alone moved it. Give stock a minute to ask for its plans.
 6. **Check the seed:** `target/release/wellfed-bench dump <name>-seed`, then `target/release/wellfed-stock plans private/flash-backups/<name>-seed-full/flash-read.bin`. You should see both plans, each disabled with a note that its skip is still ahead. **Stop here** if the report does not list both: the install would prove nothing about a nonempty import. Boot stock again with `target/release/wellfed-bench boot <name>-seed-boot`.
 7. **Leave the plans alone:** stop the seeding `serve` and delete `private/seed.json`. Resolve any trial left open in `private/stock-ledger.json`. Then write the installer's config, removing any `installer.device.json` and `installer.contested.json` a past run left: `target/release/wellfed-stock init-installer --mqtt-listen 10.42.103.1:1883 --output private/installer.json`.
-8. **Restart stock,** as the owner would: `target/release/wellfed-bench off`, then `target/release/wellfed-bench on`. Stock retries its broker until the installer's is up.
-9. **Install:** `printf '\n\ny\n' | target/release/wellfed install --stock-config private/installer.json --broker-name "$NAME" --review <feeder review> --manifest <its signed manifest> --calibrate-clock`. The flag sets stock's clock, which on the bench is days behind; the seeded plans are skipped until 2100, so none comes due in the jump. The stock server's log line for `NTP` records the `ts` stock sent and the skew. The three lines answer the override prompt, the restart prompt (stock already restarted in step 8, and keeps retrying) and the feeder check. Any further prompt finds standard input closed and ends the run: the bench key is already enrolled, so no recovery hold is asked for. The bench host does not ask the hotspot's resolver, so its lookup line may say the name points elsewhere; the run waits for stock regardless.
+8. **Install,** as the server's job: `target/release/wellfed-bench install --stock-config private/installer.json --broker-name "$NAME" --review <feeder review> --manifest <its signed manifest> --calibrate-clock`. The flag sets stock's clock, which on the bench is days behind; the seeded plans are skipped until 2100, so none comes due in the jump. The stock server's log line for `NTP` records the `ts` stock sent and the skew. The run asks three things:
+   - the override, set in step 2: answer done (`wellfed-bench answer JOB 1 done`, the page or the console, or an agent's `job_answer`);
+   - the restart, which the job does itself with relay 1, off for 10 s and on again, with the installer's broker already listening;
+   - the feeder check: the owner compares the enrolled device ID and address with the feeder and answers yes or no on the page, the console or with `wellfed-bench answer`. An agent may not answer it.
+
+   The bench key is already enrolled, so no recovery hold is asked for. The bench host does not ask the hotspot's resolver, so its lookup line may say the name points elsewhere; the run waits for stock regardless.
 
    You should see stock enroll from its hotspot address and report 1.1.15, one install request, the replacement on bank 0 paired with the known key, and the stock backup kept or reused. The plan import should list both seeded plans, disabled, with the skip note (and the meal-call note on the second). Then the promotion, the confirmation on bank 1, and the plans set.
-10. **Check:** `target/release/wellfed plans list` shows the two plans, disabled, at their seeded times and portions, and `stock-plans.applied.bin` sits beside the kept backup.
-11. **Restore:** `wellfed plans delete` both plans. Remove `private/installer.json` and the files named for it. The owner removes the DNS drop-in and restarts the hotspot, then, with a `serve` listening, puts the redirect back (`sudo wellfed-stock network remove`, then `sudo wellfed-stock network apply`). Stop the hotspot as before and record the run: versions, digests, the import report and what the owner changed.
+9. **Check:** `target/release/wellfed plans list` shows the two plans, disabled, at their seeded times and portions, and `stock-plans.applied.bin` sits beside the kept backup.
+10. **Restore:** `wellfed plans delete` both plans. Remove `private/installer.json` and the files named for it. The owner removes the DNS drop-in and restarts the hotspot, then, with a `serve` listening, puts the redirect back (`sudo wellfed-stock network remove`, then `sudo wellfed-stock network apply`). Stop the hotspot as before and record the run: versions, digests, the import report and what the owner changed.
 
 ## Rollback
 

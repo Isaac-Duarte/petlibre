@@ -17,7 +17,10 @@ use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
 use serde_json::{Map, Value};
 use uuid::Uuid;
 
-use crate::{clock::Clock, config::Config};
+use crate::{
+    clock::{self, Policy},
+    config::Config,
+};
 
 /// The topic channels the stock firmware posts on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -205,15 +208,15 @@ fn link_id() -> String {
     Uuid::new_v4().simple().to_string()
 }
 
-/// The reply to `msg`, if it gets one. `clock` holds stock's latest clock
-/// reading (with `msg`'s own already observed) and the owner's policy, which
-/// decide whether an `NTP` reply sets stock's clock ([`crate::clock`]).
+/// The reply to `msg`, if it gets one. `clock` is the owner's policy, which
+/// with an `NTP` request's own `ts` decides whether the reply sets stock's
+/// clock ([`crate::clock`]).
 pub fn reply(
     config: &Config,
     channel: Channel,
     msg: &Message,
     now: DateTime<Utc>,
-    clock: &Clock,
+    clock: Policy,
 ) -> Option<Reply> {
     let mut ack = Ack {
         cmd: &msg.cmd,
@@ -228,7 +231,7 @@ pub fn reply(
 
     match (channel, msg.cmd.as_str()) {
         (Channel::Ntp, "NTP") => {
-            let calibration = clock.calibration(config.plans.as_deref(), now);
+            let calibration = clock::calibration(config.plans.as_deref(), msg.ts, now, clock);
             let ntp = ntp_response(config.timezone, now, calibration.tag());
             return Some(Reply::new(topic, &ntp));
         }

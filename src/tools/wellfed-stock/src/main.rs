@@ -93,8 +93,10 @@ enum Action {
         #[arg(long)]
         enroll_minutes: Option<u64>,
         /// Set stock's clock in every `NTP` reply, even when its own reading
-        /// is unknown or more than 10 minutes off. Stock may then run meals
-        /// that came due in the jump; without it, a stock clock left unset
+        /// is unknown or more than 10 minutes off, and even with a captured
+        /// nonempty plan table (a seeding config), whose plans are then live.
+        /// Stock may then run meals that came due in the jump, from its own
+        /// plans or the captured ones; without it, a stock clock left unset
         /// may refuse an install (error 1214).
         #[arg(long)]
         calibrate_clock: bool,

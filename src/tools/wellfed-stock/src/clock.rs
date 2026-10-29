@@ -11,10 +11,11 @@
 //! larger than its vendor cloud's sync would make, or when the owner asked
 //! for it whatever it reads ([`Policy::Always`], `--calibrate-clock`).
 //!
-//! Stock dates each post with its own clock in `ts`, milliseconds since the
-//! epoch, rounded to the second; its `NTP` request carries one too
-//! (physical, UART captures of 1.1.15), so the request is its own evidence.
-//! It asks once per MQTT connection.
+//! Stock's `NTP` request carries its own clock in `ts`, milliseconds since
+//! the epoch, rounded to the second (physical, UART captures of 1.1.15). It
+//! asks once per MQTT connection. Only the request's own `ts` decides: stock's
+//! poster adds a `ts` only to a payload that lacks one, and a reading from an
+//! earlier message may predate a restart that reloaded an older time.
 
 use std::fmt;
 
@@ -25,11 +26,6 @@ use tracing::{info, warn};
 /// How far stock's clock may stand from ours, either way, for the reply to
 /// set it without the owner asking.
 pub const BOUND: TimeDelta = TimeDelta::minutes(10);
-
-/// A reading older than this may predate a restart of stock, which can
-/// load an older time. Stock heartbeats about every 61 s, and its `NTP`
-/// request dates itself, so a connected stock always has a fresher one.
-const READING_AGE: TimeDelta = TimeDelta::seconds(90);
 
 /// Readings outside 2020 to 2100 are an unset or corrupt clock, not a time.
 const EARLIEST_MS: i64 = 1_577_836_800_000;
@@ -46,10 +42,10 @@ pub enum Policy {
     Always,
 }
 
-/// Stock's clock as its latest dated message read it.
+/// Stock's clock as its `NTP` request read it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StockClock {
-    /// No message with a plausible `ts`, or none recent enough.
+    /// The request's `ts` is absent, zero or implausible.
     Unknown,
     /// Its `ts`, and how far it stood ahead of ours (negative: behind).
     Reads { ts: i64, skew: TimeDelta },
@@ -121,78 +117,49 @@ pub fn decide(plans: Option<&[Value]>, clock: StockClock, policy: Policy) -> Cal
     }
 }
 
-/// A dated message's reading.
-#[derive(Clone, Copy, Debug)]
-struct Reading {
-    ts: i64,
-    skew: TimeDelta,
-    seen: DateTime<Utc>,
-}
-
-/// The owner's policy and stock's latest reading on the server's current
-/// broker session.
-#[derive(Clone, Debug, Default)]
-pub struct Clock {
-    policy: Policy,
-    latest: Option<Reading>,
-}
-
-impl Clock {
-    pub fn new(policy: Policy) -> Self {
-        Self {
-            policy,
-            latest: None,
-        }
-    }
-
-    /// Note a stock message's `ts`, received `now`. Zero, absent or
-    /// implausible values leave the last reading as it was.
-    pub fn observe(&mut self, ts: Option<i64>, now: DateTime<Utc>) {
-        let Some(ts) = ts.filter(|ts| (EARLIEST_MS..LATEST_MS).contains(ts)) else {
-            return;
-        };
-        let skew = TimeDelta::milliseconds(ts - now.timestamp_millis());
-        self.latest = Some(Reading {
-            ts,
-            skew,
-            seen: now,
-        });
-    }
-
-    /// The broker session ended: what stock read then says nothing of a
-    /// later connection.
-    pub fn forget(&mut self) {
-        self.latest = None;
-    }
-
-    pub fn stock(&self, now: DateTime<Utc>) -> StockClock {
-        match self.latest {
-            Some(reading) if now - reading.seen <= READING_AGE => StockClock::Reads {
-                ts: reading.ts,
-                skew: reading.skew,
+impl StockClock {
+    /// Stock's clock from an `NTP` request's `ts`, received `now`.
+    pub fn read(ts: Option<i64>, now: DateTime<Utc>) -> Self {
+        match ts.filter(|ts| (EARLIEST_MS..LATEST_MS).contains(ts)) {
+            Some(ts) => Self::Reads {
+                ts,
+                skew: TimeDelta::milliseconds(ts - now.timestamp_millis()),
             },
-            _ => StockClock::Unknown,
+            None => Self::Unknown,
         }
     }
+}
 
-    /// The decision for an `NTP` request answered `now`, logged so a bench
-    /// run records what stock's clock read.
-    pub fn calibration(&self, plans: Option<&[Value]>, now: DateTime<Utc>) -> Calibration {
-        let stock = self.stock(now);
-        let calibration = decide(plans, stock, self.policy);
+/// The decision for an `NTP` request dated `ts` and answered `now`, logged
+/// so a bench run records what stock's clock read.
+pub fn calibration(
+    plans: Option<&[Value]>,
+    ts: Option<i64>,
+    now: DateTime<Utc>,
+    policy: Policy,
+) -> Calibration {
+    let stock = StockClock::read(ts, now);
+    let calibration = decide(plans, stock, policy);
 
-        let (ts, skew) = match stock {
-            StockClock::Reads { ts, skew } => (ts.to_string(), format!("{} s", skew.num_seconds())),
-            StockClock::Unknown => ("unknown".into(), "unknown".into()),
-        };
-        info!(stock_ts = %ts, skew = %skew, %calibration, "NTP request");
-        if let Calibration::Held(_) = calibration {
-            warn!(
-                "stock's clock is left as it reads ({calibration}); stock may refuse an install (error 1214) until it is set: restart serve with --calibrate-clock to set it, accepting that stock may run meals that came due in the jump"
-            );
-        }
-        calibration
+    let (ts, skew) = match stock {
+        StockClock::Reads { ts, skew } => (ts.to_string(), format!("{} s", skew.num_seconds())),
+        StockClock::Unknown => ("unknown".into(), "unknown".into()),
+    };
+    info!(stock_ts = %ts, skew = %skew, %calibration, "NTP request");
+    // 1214 is wellfed_client's `install::STOCK_CLOCK_UNSET`, the code the
+    // installer turns into its own error; this crate does not depend on it.
+    match calibration {
+        Calibration::Sent(_) => {}
+        // Those plans are meant to run, so setting the clock is the risky
+        // choice here, not the remedy.
+        Calibration::Held(Held::CapturedPlans) => warn!(
+            "stock's clock is left as it reads ({calibration}); stock may refuse an install (error 1214) until it is set, and --calibrate-clock would set it, letting the captured plans run any meals that came due in the jump"
+        ),
+        Calibration::Held(Held::Unknown | Held::OutsideBound) => warn!(
+            "stock's clock is left as it reads ({calibration}); stock may refuse an install (error 1214) until it is set: restart serve with --calibrate-clock to set it, accepting that stock may run meals that came due in the jump"
+        ),
     }
+    calibration
 }
 
 #[cfg(test)]
@@ -268,36 +235,24 @@ mod tests {
     }
 
     #[test]
-    fn the_latest_plausible_ts_is_the_reading_until_it_ages_or_the_session_ends() {
+    fn only_a_plausible_ts_is_a_reading() {
         let now = Utc.with_ymd_and_hms(2026, 10, 28, 21, 0, 0).unwrap();
-        let mut clock = Clock::new(Policy::Bounded);
-        assert_eq!(clock.stock(now), StockClock::Unknown);
-
         let behind = now.timestamp_millis() - 120_000;
-        clock.observe(Some(behind), now);
-        for ignored in [None, Some(0), Some(-5), Some(1_000), Some(i64::MAX)] {
-            clock.observe(ignored, now);
-        }
-        let expected = StockClock::Reads {
-            ts: behind,
-            skew: TimeDelta::minutes(-2),
-        };
-        assert_eq!(clock.stock(now), expected);
-        assert_eq!(clock.stock(now + READING_AGE), expected);
         assert_eq!(
-            clock.stock(now + READING_AGE + TimeDelta::seconds(1)),
-            StockClock::Unknown
+            StockClock::read(Some(behind), now),
+            StockClock::Reads {
+                ts: behind,
+                skew: TimeDelta::minutes(-2),
+            }
         );
+        for unknown in [None, Some(0), Some(-5), Some(1_000), Some(i64::MAX)] {
+            assert_eq!(StockClock::read(unknown, now), StockClock::Unknown);
+        }
 
-        let later = now + TimeDelta::seconds(30);
-        let days_behind = (later - TimeDelta::days(2)).timestamp_millis();
-        clock.observe(Some(days_behind), later);
+        let days_behind = (now - TimeDelta::days(2)).timestamp_millis();
         assert_eq!(
-            clock.calibration(None, later),
+            calibration(None, Some(days_behind), now, Policy::Bounded),
             Calibration::Held(Held::OutsideBound)
         );
-
-        clock.forget();
-        assert_eq!(clock.stock(later), StockClock::Unknown);
     }
 }

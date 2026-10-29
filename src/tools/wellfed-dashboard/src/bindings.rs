@@ -16,7 +16,7 @@ use wellfed_formats::bench::live::{
     FeederView, JobEnd, JobView, Journal, JournalSource, Pause, Phase, ServerView, Session,
     StartRecord, Uart, UartRecord,
 };
-use wellfed_formats::bench::notes::{CardEvidence, Operator, Timer, Verdict};
+use wellfed_formats::bench::notes::{CardEvidence, Expect, Operator, Timer, TimerState, Verdict};
 use wellfed_formats::bench::progress::{
     BenchCommand, Capture, Current, FlashTool, HistoryEntry, Outcome, Progress, RelayState, Step,
     StepState, Transfer, Unit,
@@ -84,6 +84,8 @@ fn generated() -> String {
         decl::<Witness>(&cfg),
         decl::<Operator>(&cfg),
         decl::<Timer>(&cfg),
+        decl::<Expect>(&cfg),
+        decl::<TimerState>(&cfg),
         decl::<CardEvidence>(&cfg),
         decl::<Verdict>(&cfg),
     ];

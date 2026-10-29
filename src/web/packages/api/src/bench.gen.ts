@@ -377,7 +377,21 @@ evidence: Array<[string, Array<CardEvidence>]>, };
 /**
  * A timer still running or run out, as the notes leave it.
  */
-export type Timer = { label: string, started: number, seconds: number, expect: string | null, };
+export type Timer = { label: string, started: number, due: number, 
+/**
+ * The end of the window an expectation may be seen in.
+ */
+until: number, expect: Expect | null, state: TimerState, };
+
+/**
+ * What a timer waits for.
+ */
+export type Expect = { "on": "line", text: string, } | { "on": "event", kind: string, };
+
+/**
+ * Whether a timer's expectation has been settled.
+ */
+export type TimerState = { "state": "waiting" } | { "state": "seen", at: number, line: string, } | { "state": "missed", at: number, };
 
 /**
  * One card's evidence, in the order it was noted.

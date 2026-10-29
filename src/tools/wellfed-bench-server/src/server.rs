@@ -21,7 +21,7 @@ use wellfed_formats::bench::lease::{self, Holder, Lease};
 use wellfed_formats::bench::live::{
     BenchState, CancelState, JOBS, JobEnd, JobId, JobView, Pause, Phase, ServerView, Uart,
 };
-use wellfed_formats::bench::notes::{NOTES, Note, Operator};
+use wellfed_formats::bench::notes::Seen;
 use wellfed_formats::bench::progress::{Current, ProgressSink};
 use wellfed_formats::bench::rendezvous::{self, Rendezvous};
 use wellfed_formats::bench::{CONFIG, Config, now, relative};
@@ -35,7 +35,8 @@ use crate::board::SharedBoard;
 use crate::capture::CaptureService;
 use crate::feeder::{DeviceOptions, Feeder, Task};
 use crate::jobs::{self, Bed, JobError, Ran, Run, ToolPaths};
-use crate::output::{self, Output};
+use crate::notes::Notes;
+use crate::output::{self, Console, Output};
 use crate::routes;
 use crate::state::{JobLog, JobOutput, Logs, Store};
 
@@ -45,6 +46,8 @@ const CLOSE_WAIT: Duration = Duration::from_secs(3);
 /// How often the relays are read while no job runs, for the board's front
 /// buttons. Never while a job runs: the job owns the board then.
 const RELAY_POLL: Duration = Duration::from_secs(30);
+/// How often a timer whose window has passed is marked missed.
+const TIMER_TICK: Duration = Duration::from_secs(1);
 /// How often the hotspot's connection is looked at.
 const HOTSPOT_POLL: Duration = Duration::from_secs(30);
 /// How long a quitting server lets the feeder session close and write out
@@ -93,6 +96,7 @@ pub struct Options {
     /// evidence and the socket.
     pub root: PathBuf,
     pub tools: ToolPaths,
+    pub console: Console,
 }
 
 /// An opened server: lease taken, board open and queried, socket bound.
@@ -148,22 +152,30 @@ impl Server {
             feeder: Default::default(),
             capture: Default::default(),
             banks: Default::default(),
-            operator: operator(&options.root),
+            operator: Default::default(),
         });
         let banks =
             Banks::open(&options.root, store.clone()).map_err(|error| ServeError::Banks {
                 path: options.root.join(BANKS),
                 error,
             })?;
+        let notes = Notes::open(&options.root, store.clone());
         let board = SharedBoard::new(open_board(&config)?, store.clone());
         board.query()?;
-        let (feeder, session) = Feeder::new(&options.root, device, store.clone(), banks.clone());
+        let (feeder, session) = Feeder::new(
+            &options.root,
+            device,
+            store.clone(),
+            banks.clone(),
+            notes.clone(),
+        );
         let capture = CaptureService::new(
             options.root.clone(),
             config.uart_port.clone(),
             options.tools.clone(),
             store.clone(),
             banks.clone(),
+            notes.clone(),
         );
 
         if let Some(other) = rendezvous::live_in(&device.rendezvous)
@@ -184,7 +196,13 @@ impl Server {
         } else {
             Some(publish(&device.rendezvous, &options.root, &socket)?)
         };
-        let output = output::install().map_err(ServeError::Output)?;
+        let output = output::install(options.console.clone()).map_err(ServeError::Output)?;
+        // A job's own output may carry what a timer waits for: during a
+        // UART job the capture and the session are both stopped.
+        let tapped = notes.clone();
+        output.tap(Some(Box::new(move |line: &str| {
+            tapped.seen(&Seen::Line(line));
+        })));
 
         let jobs = Jobs {
             last: last_job(&options.root.join(JOBS)),
@@ -204,6 +222,7 @@ impl Server {
                 output,
                 jobs: Mutex::new(jobs),
                 banks,
+                notes,
                 capture,
             }),
             listener,
@@ -266,6 +285,16 @@ impl Server {
         let idle = Arc::clone(&self.shared);
         let _ = tokio::task::spawn_blocking(move || idle.resume_capture()).await;
 
+        let timed = self.shared.notes.clone();
+        let timers = tokio::spawn(async move {
+            let mut ticks = tokio::time::interval(TIMER_TICK);
+            loop {
+                ticks.tick().await;
+                let notes = timed.clone();
+                let _ = tokio::task::spawn_blocking(move || notes.tick()).await;
+            }
+        });
+
         let polled = Arc::clone(&self.shared);
         let polling = tokio::spawn(async move {
             let mut ticks = tokio::time::interval(RELAY_POLL);
@@ -286,6 +315,7 @@ impl Server {
 
         polling.abort();
         hotspot.abort();
+        timers.abort();
         self.shared
             .output
             .say("Stopping: cancelling the running job, then releasing the bench".into());
@@ -317,6 +347,7 @@ impl Server {
                 }
             }
         };
+        self.shared.notes.flush();
         let _ = std::fs::remove_file(&self.socket);
         if let Some((directories, holder)) = &self.rendezvous {
             for directory in directories {
@@ -407,17 +438,6 @@ async fn hotspot(root: PathBuf, store: Store) {
     }
 }
 
-/// What the operator's notes say, replayed from the start; a line that
-/// does not read is skipped, as the page skips one.
-fn operator(root: &Path) -> Operator {
-    let text = std::fs::read_to_string(root.join(NOTES)).unwrap_or_default();
-    let notes: Vec<Note> = text
-        .lines()
-        .filter_map(|line| serde_json::from_str(line).ok())
-        .collect();
-    Operator::fold(&notes)
-}
-
 /// The highest job number among the logs in `directory`, so a new server
 /// carries on from it rather than overwrite an earlier job's log.
 fn last_job(directory: &Path) -> JobId {
@@ -451,6 +471,7 @@ pub(crate) struct Shared {
     output: Arc<Output>,
     jobs: Mutex<Jobs>,
     pub(crate) banks: Banks,
+    pub(crate) notes: Notes,
     capture: CaptureService,
 }
 
@@ -819,6 +840,7 @@ impl Shared {
         }
         let present = Path::new(&self.bed.config.uart_port).exists();
         self.store.update(|state| state.server.uart_port = present);
+        self.notes.flush();
     }
 
     /// The output of job `id`, running or among the last few.

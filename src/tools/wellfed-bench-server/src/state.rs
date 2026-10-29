@@ -34,6 +34,12 @@ impl Store {
         state
     }
 
+    /// `look` at the state as it is, without copying it: for a check made
+    /// often, such as on every output line.
+    pub(crate) fn with<T>(&self, look: impl FnOnce(&BenchState) -> T) -> T {
+        look(&self.sender.borrow())
+    }
+
     /// A receiver that wakes on every change. Its value's `now` is when it
     /// last changed; a reader that sends it on stamps its own, so the
     /// page's clock follows the host's even while nothing changes.

@@ -18,6 +18,9 @@
 //!   (`feeder`), which the jobs and the `wellfed` CLI ask through, and a
 //!   receive-only UART capture while no job runs (`capture`); both feed
 //!   the bank ledger (`banks`) what the feeder reports.
+//! - **Notes:** the operator's step, next steps, timers and evidence
+//!   (`notes`), kept beside the evidence; a timer is settled by the line or
+//!   event it expects, from the capture, the session or the job's output.
 //!
 //! `wellfed-flash` stays a child process, never linked: its pinned checks,
 //! plan hashes and no-retry rule are its own.
@@ -33,6 +36,7 @@ mod device_routes;
 mod feeder;
 mod files;
 pub mod jobs;
+mod notes;
 mod output;
 mod routes;
 mod server;
@@ -41,6 +45,7 @@ mod state;
 pub use client::{Client, ClientError, Followed, Interrupt};
 pub use feeder::{ClockSync, DeviceOptions};
 pub use jobs::{JobCommand, JobOptions, ToolPaths};
+pub use output::{CONSOLE_QUEUE, Console};
 pub use server::{Options, Outputs, ServeError, Server, restore_output};
 pub use state::{JobOutput, Store};
 

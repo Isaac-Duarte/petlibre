@@ -26,7 +26,7 @@ use std::time::{Duration, Instant};
 use crate::state::JobLog;
 
 /// Lines the console may fall behind by before it loses some.
-const CONSOLE_QUEUE: usize = 4096;
+pub const CONSOLE_QUEUE: usize = 4096;
 /// The longest [`Output::sync`] waits for the pump to catch up.
 const SYNC_WAIT: Duration = Duration::from_secs(2);
 /// What the pump consumes rather than forwards: [`Output::sync`]'s mark,
@@ -43,6 +43,8 @@ pub(crate) struct Output {
     terminal: OwnedFd,
     /// The job whose stream the lines join, while one runs.
     route: Mutex<Option<Arc<JobLog>>>,
+    /// Shown every job line, after its stream has it.
+    tap: Mutex<Option<Tap>>,
     /// The pipe's own write end, for marks.
     writer: Mutex<PipeWriter>,
     next_mark: AtomicU64,
@@ -53,12 +55,27 @@ pub(crate) struct Output {
     closed: AtomicBool,
 }
 
+/// What [`Output::tap`] calls with each job line.
+pub(crate) type Tap = Box<dyn Fn(&str) + Send + Sync>;
+
+/// Where the server's console lines go: its own messages and every job's
+/// output.
+#[derive(Debug, Clone)]
+pub enum Console {
+    /// The terminal `serve` started on, a line at a time.
+    Terminal,
+    /// A channel the caller draws from, such as a full-screen console. A
+    /// full channel loses lines, as a terminal that falls behind does: the
+    /// job's stream still has them.
+    Lines(SyncSender<String>),
+}
+
 /// Installed once per process: descriptors 1 and 2 are process-wide.
 static INSTALLED: Mutex<Option<Arc<Output>>> = Mutex::new(None);
 
 /// Point descriptors 1 and 2 at the pump, once; later calls get the same
 /// pipe.
-pub(crate) fn install() -> io::Result<Arc<Output>> {
+pub(crate) fn install(console: Console) -> io::Result<Arc<Output>> {
     let mut installed = lock(&INSTALLED);
     if let Some(output) = &*installed
         && !output.closed.load(Ordering::SeqCst)
@@ -66,30 +83,37 @@ pub(crate) fn install() -> io::Result<Arc<Output>> {
         return Ok(Arc::clone(output));
     }
 
-    let output = attach()?;
+    let output = attach(console)?;
     *installed = Some(Arc::clone(&output));
     Ok(output)
 }
 
 /// Point descriptors 1 and 2 at a new pipe and start its pump.
-fn attach() -> io::Result<Arc<Output>> {
+fn attach(console: Console) -> io::Result<Arc<Output>> {
     // Duplicates are close-on-exec, so no child holds the terminal.
     let terminal = io::stdout().as_fd().try_clone_to_owned()?;
-    let console = File::from(terminal.try_clone()?);
+    let (send, console_thread) = match console {
+        Console::Terminal => {
+            let console = File::from(terminal.try_clone()?);
+            let (send, queue) = mpsc::sync_channel(CONSOLE_QUEUE);
+            let thread = std::thread::Builder::new()
+                .name("console".into())
+                .spawn(move || write_console(console, &queue))?;
+            (send, Some(thread))
+        }
+        Console::Lines(send) => (send, None),
+    };
     let (reader, writer) = io::pipe()?;
     io::stdout().flush()?;
     rustix::stdio::dup2_stdout(&writer)?;
     rustix::stdio::dup2_stderr(&writer)?;
 
-    let (send, queue) = mpsc::sync_channel(CONSOLE_QUEUE);
-    let console_thread = std::thread::Builder::new()
-        .name("console".into())
-        .spawn(move || write_console(console, &queue))?;
     let output = Arc::new(Output {
         console: Mutex::new(Some(send)),
-        console_thread: Mutex::new(Some(console_thread)),
+        console_thread: Mutex::new(console_thread),
         terminal,
         route: Mutex::new(None),
+        tap: Mutex::new(None),
         writer: Mutex::new(writer),
         next_mark: AtomicU64::new(0),
         seen: Mutex::new(0),
@@ -143,6 +167,12 @@ impl Output {
     /// Send every line from here on to `log`, or to the console alone.
     pub(crate) fn route(&self, log: Option<Arc<JobLog>>) {
         *lock(&self.route) = log;
+    }
+
+    /// Show `tap` every job line from here on. It runs on the pump's
+    /// thread, so it must return at once.
+    pub(crate) fn tap(&self, tap: Option<Tap>) {
+        *lock(&self.tap) = tap;
     }
 
     /// Wait until the pump has read everything written to descriptors 1 and
@@ -215,6 +245,9 @@ impl Output {
     fn forward(&self, line: String) {
         if let Some(log) = &*lock(&self.route) {
             log.push(line.clone());
+            if let Some(tap) = &*lock(&self.tap) {
+                tap(&line);
+            }
         }
         self.to_console(line);
     }
@@ -302,7 +335,7 @@ mod tests {
             return;
         }
         let written = on_a_terminal(|| {
-            let output = attach().unwrap();
+            let output = attach(Console::Terminal).unwrap();
             print("a job's last line");
             output.say("the server's last line".into());
 
@@ -327,7 +360,7 @@ mod tests {
             return;
         }
         let written = on_a_terminal(|| {
-            let output = attach().unwrap();
+            let output = attach(Console::Terminal).unwrap();
 
             output.pump_stopped();
             print("straight to the terminal");
@@ -345,7 +378,7 @@ mod tests {
             return;
         }
         let written = on_a_terminal(|| {
-            let output = attach().unwrap();
+            let output = attach(Console::Terminal).unwrap();
             let started = Instant::now();
 
             write!(io::stdout(), "half a line").unwrap();

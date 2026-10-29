@@ -24,6 +24,7 @@ use wellfed_formats::bench::banks::Ledger;
 use wellfed_formats::bench::feeder::{
     Ask, Asked, DeviceUnavailable, PushedPage, SessionInfo, Stream,
 };
+use wellfed_formats::bench::notes::{Body, Note};
 use wellfed_model::Op;
 
 use crate::api::{Accepted, JobRequest, Refusal, SOCKET, Seed, Seeded};
@@ -154,6 +155,13 @@ impl Client {
     pub async fn seed(&self, seed: &Seed) -> Result<Seeded, ClientError> {
         let body = serde_json::to_vec(seed)?;
         let response = self.send(Method::POST, "/banks/seed", Some(body)).await?;
+        answer(response, StatusCode::CREATED).await
+    }
+
+    /// One operator's note, as the server kept it.
+    pub async fn note(&self, body: &Body) -> Result<Note, ClientError> {
+        let body = serde_json::to_vec(body)?;
+        let response = self.send(Method::POST, "/notes", Some(body)).await?;
         answer(response, StatusCode::CREATED).await
     }
 

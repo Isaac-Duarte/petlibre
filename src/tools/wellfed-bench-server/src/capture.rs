@@ -22,12 +22,14 @@ use std::time::Duration;
 use wellfed_core::record::{Event, Record, Tag};
 use wellfed_formats::bench::banks::Witness;
 use wellfed_formats::bench::live::{StartRecord, Uart, UartRecord, trim_tail};
+use wellfed_formats::bench::notes::Seen;
 use wellfed_formats::bench::{CAPTURES, now, relative};
 use wellfed_rig::Cancel;
 use wellfed_rig::tools::{Children, Processes, Tools};
 
 use crate::banks::Banks;
 use crate::jobs::ToolPaths;
+use crate::notes::Notes;
 use crate::state::Store;
 
 /// Each observe's length; the flash client caps one at 180 s.
@@ -49,6 +51,7 @@ struct Inner {
     tools: ToolPaths,
     store: Store,
     banks: Banks,
+    notes: Notes,
     running: Mutex<Option<Running>>,
 }
 
@@ -64,6 +67,7 @@ impl CaptureService {
         tools: ToolPaths,
         store: Store,
         banks: Banks,
+        notes: Notes,
     ) -> Self {
         Self {
             inner: Arc::new(Inner {
@@ -72,6 +76,7 @@ impl CaptureService {
                 tools,
                 store,
                 banks,
+                notes,
                 running: Mutex::new(None),
             }),
         }
@@ -184,6 +189,7 @@ impl Inner {
         let mut start = None;
         let mut update = None;
         for line in &lines {
+            self.notes.seen(&Seen::Line(line));
             for record in Record::all(line) {
                 match record.event() {
                     Some(Event::Start { build, bank }) => {

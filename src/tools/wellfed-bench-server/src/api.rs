@@ -107,4 +107,29 @@ pub enum Refusal {
     BadLength { value: f64 },
     #[error("{error}")]
     Seed { error: SeedError },
+    #[error("{error}")]
+    Note { error: NoteError },
+}
+
+/// Why a note was refused.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
+#[serde(tag = "refused", rename_all = "kebab-case")]
+pub enum NoteError {
+    /// The bench keeps its evidence in `private/`, which no tracked file
+    /// may name.
+    #[error("Evidence path {path:?} is not inside private/")]
+    OutsidePrivate { path: String },
+    #[error("A timer needs a label")]
+    NoLabel,
+    #[error("Timer {label:?}: its window must end at or after its due time")]
+    Window { label: String },
+    #[error("Timer {label:?}: an empty expectation would match every line")]
+    EmptyExpect { label: String },
+    #[error("{kind:?} is no device event kind; the device API has {known}")]
+    UnknownEvent { kind: String, known: String },
+    /// Only the server settles a timer, as it sees the match or the miss.
+    #[error("A `{kind}` note is the bench server's own")]
+    ServerOnly { kind: String },
+    #[error("{path}: {error}")]
+    Write { path: String, error: String },
 }

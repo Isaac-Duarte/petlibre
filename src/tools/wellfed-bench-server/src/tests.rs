@@ -24,6 +24,27 @@ mod feeder;
 /// when they share a process.
 pub(crate) static ONE_SERVER: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+/// A server's state with nothing running and nothing read yet.
+pub(crate) fn idle_state() -> BenchState {
+    BenchState {
+        now: 0.0,
+        server: wellfed_formats::bench::live::ServerView {
+            pid: 1,
+            started: 0.0,
+            phase: Phase::Serving,
+            uart_port: false,
+        },
+        job: None,
+        activity: Vec::new(),
+        uart: Uart::Idle,
+        relays: Default::default(),
+        feeder: Default::default(),
+        capture: Default::default(),
+        banks: Default::default(),
+        operator: Default::default(),
+    }
+}
+
 /// Set in the process [`run_alone`] starts, which runs the test itself.
 const ALONE: &str = "WELLFED_BENCH_SERVER_ALONE";
 
@@ -126,6 +147,7 @@ esac
                 build_bin: root.join("absent"),
             },
             root,
+            console: crate::Console::Terminal,
         }
     }
 

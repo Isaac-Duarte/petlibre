@@ -178,8 +178,22 @@ function writeFixtures() {
     "private/bench-status/notes.jsonl",
     note(now - 600, { kind: "step", text: "Install the candidate over UART" }) +
       note(now - 600, { kind: "next", steps: ["Boot and watch the banner", "Run the smoke tier"] }) +
-      note(now - 60, { kind: "timer", label: "boot", seconds: 900, expect: "PLFW1 start" }) +
-      note(now - 3600, { kind: "timer", label: "soak", seconds: 600, expect: null }) +
+      note(now - 60, {
+        kind: "timer",
+        label: "boot",
+        due: now + 840,
+        until: now + 960,
+        expect: { on: "line", text: "PLFW1 start" },
+      }) +
+      note(now - 3600, { kind: "timer", label: "soak", due: now - 3000, until: now - 2880, expect: null }) +
+      note(now - 120, {
+        kind: "timer",
+        label: "fire",
+        due: now - 90,
+        until: now - 30,
+        expect: { on: "event", kind: "fed" },
+      }) +
+      note(now - 40, { kind: "seen", label: "fire", line: "fed event" }) +
       note(now - 500, { kind: "evidence", card: "QA9", verdict: "pass", text: "banner seen", path: null }) +
       note(now - 400, {
         kind: "evidence",

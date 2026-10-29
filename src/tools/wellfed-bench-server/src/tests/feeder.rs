@@ -7,7 +7,7 @@ use wellfed_feeder_sim::serve::Control;
 use wellfed_formats::bench::banks::{Bank, Check, Content, Source, Witness};
 use wellfed_formats::bench::feeder::{Asked, Stream};
 use wellfed_formats::bench::live::{DEVICE_CURSOR, DeviceCursor, Pause, Session, Unavailable};
-use wellfed_formats::bench::rendezvous;
+use wellfed_formats::bench::{notes, rendezvous};
 use wellfed_model::{Answer, Op, Pushed};
 use wellfed_rig::device::{Ask as RigAsk, DeviceLink};
 
@@ -725,23 +725,7 @@ async fn the_server_points_the_user_s_clients_at_itself_and_withdraws_when_it_qu
 
 #[test]
 fn the_hotspot_is_read_only_while_no_job_and_no_loader_or_write_runs() {
-    let mut state = BenchState {
-        now: 0.0,
-        server: wellfed_formats::bench::live::ServerView {
-            pid: 1,
-            started: 0.0,
-            phase: Phase::Serving,
-            uart_port: false,
-        },
-        job: None,
-        activity: Vec::new(),
-        uart: Uart::Idle,
-        relays: Default::default(),
-        feeder: Default::default(),
-        capture: Default::default(),
-        banks: Default::default(),
-        operator: Default::default(),
-    };
+    let mut state = crate::tests::idle_state();
     assert!(crate::server::hotspot_due(&state));
 
     state.uart = Uart::Writing {
@@ -852,5 +836,167 @@ async fn after_an_epoch_change_the_history_is_the_new_epoch_s_and_a_feed_reports
         last.is_none_or(|last| fed.seq > last),
         "{fed:?} after {last:?}"
     );
+    server.quit().await;
+}
+
+/// A timer for `label`, due in a minute, expecting `expect`.
+fn timer(label: &str, expect: notes::Expect) -> notes::Body {
+    let due = wellfed_formats::bench::now() + 60.0;
+    notes::Body::Timer {
+        label: label.into(),
+        due,
+        until: due + notes::WINDOW,
+        expect: Some(expect),
+    }
+}
+
+fn timer_state(state: &BenchState, label: &str) -> Option<notes::TimerState> {
+    state
+        .operator
+        .timers
+        .iter()
+        .find(|timer| timer.label == label)
+        .map(|timer| timer.state.clone())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn notes_fold_into_the_state_and_a_uart_line_or_a_lapsed_window_settles_a_timer() {
+    if crate::tests::run_alone() {
+        return;
+    }
+    let _one = ONE_SERVER.lock().await;
+    let checkout = checkout();
+    checkout.banner("PLFW1 start build=00 bank=0 reset=0\r\n");
+    let root = checkout.root();
+    let server = Running::start(checkout.open_at(None));
+    let segment = state_until(&server, "the capture", |state| {
+        state.capture.start.is_some()
+    })
+    .await
+    .capture
+    .segment
+    .unwrap();
+
+    server
+        .client
+        .note(&notes::Body::Next {
+            steps: vec!["boot".into(), "feed".into()],
+        })
+        .await
+        .unwrap();
+    let refused = server
+        .client
+        .note(&notes::Body::Evidence {
+            card: "schedule".into(),
+            verdict: notes::Verdict::Pass,
+            text: String::new(),
+            path: Some("src/main.rs".into()),
+        })
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            refused,
+            ClientError::Refused(api::Refusal::Note {
+                error: api::NoteError::OutsidePrivate { .. }
+            })
+        ),
+        "{refused:?}"
+    );
+    server
+        .client
+        .note(&timer(
+            "fire",
+            notes::Expect::Line {
+                text: "PLSCH1 fire".into(),
+            },
+        ))
+        .await
+        .unwrap();
+    let now = wellfed_formats::bench::now();
+    server
+        .client
+        .note(&notes::Body::Timer {
+            label: "late".into(),
+            due: now,
+            until: now + 0.5,
+            expect: Some(notes::Expect::Line {
+                text: "never printed".into(),
+            }),
+        })
+        .await
+        .unwrap();
+
+    // The feeder prints the record the timer waits for.
+    let mut rx = fs::OpenOptions::new()
+        .append(true)
+        .open(root.join(&segment).join("serial-rx.bin"))
+        .unwrap();
+    std::io::Write::write_all(&mut rx, b"PLSCH1 fire slot=0 portions=2\r\n").unwrap();
+
+    let state = state_until(&server, "the timers settled", |state| {
+        matches!(
+            timer_state(state, "fire"),
+            Some(notes::TimerState::Seen { .. })
+        ) && matches!(
+            timer_state(state, "late"),
+            Some(notes::TimerState::Missed { .. })
+        )
+    })
+    .await;
+    assert_eq!(state.operator.next, ["boot", "feed"]);
+    let Some(notes::TimerState::Seen { line, .. }) = timer_state(&state, "fire") else {
+        unreachable!("settled above")
+    };
+    assert_eq!(line, "PLSCH1 fire slot=0 portions=2");
+    server.quit().await;
+
+    // The settlements are notes too: a new server folds the same timers.
+    let kept = fs::read_to_string(root.join(notes::NOTES)).unwrap();
+    assert!(kept.contains(r#""kind":"seen""#), "{kept}");
+    assert!(kept.contains(r#""kind":"missed""#), "{kept}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_device_event_settles_the_timer_that_expects_its_kind() {
+    if crate::tests::run_alone() {
+        return;
+    }
+    let _one = ONE_SERVER.lock().await;
+    let feeder = simulator();
+    let checkout = checkout();
+    checkout.enroll(&feeder);
+    let server = Running::start(checkout.open_at(Some(&feeder)));
+    state_until(&server, "the first boot taken", |state| {
+        state
+            .feeder
+            .journal
+            .is_some_and(|journal| journal.epoch.is_some())
+    })
+    .await;
+
+    server
+        .client
+        .note(&timer(
+            "reboot",
+            notes::Expect::Event {
+                kind: "boot".into(),
+            },
+        ))
+        .await
+        .unwrap();
+    feeder.control(Control::Reboot);
+
+    let state = state_until(&server, "the boot event's timer", |state| {
+        matches!(
+            timer_state(state, "reboot"),
+            Some(notes::TimerState::Seen { .. })
+        )
+    })
+    .await;
+    assert!(matches!(
+        timer_state(&state, "reboot"),
+        Some(notes::TimerState::Seen { line, .. }) if line == "boot event"
+    ));
     server.quit().await;
 }

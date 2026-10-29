@@ -10,6 +10,11 @@ publish.workspace = true
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+# The operator's timers: local clock times and lengths such as `5m`.
+jiff = "0.2.38"
+# `serve`'s full-screen console on /dev/tty, and its keys.
+ratatui = { version = "0.30.2", default-features = false, features = ["crossterm_0_29", "layout-cache"] }
+crossterm = "0.29.0"
 wellfed-bench-server = { path = "../wellfed-bench-server" }
 wellfed-dashboard = { path = "../wellfed-dashboard", optional = true }
 wellfed-formats.workspace = true

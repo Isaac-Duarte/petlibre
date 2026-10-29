@@ -10,8 +10,10 @@
 use std::process::ExitCode;
 
 mod cli;
+mod note;
 mod orphans;
 mod page;
+mod tui;
 
 fn main() -> ExitCode {
     cli::main()

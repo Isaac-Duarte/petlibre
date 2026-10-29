@@ -37,6 +37,7 @@ use wellfed_formats::bench::live::{
     BenchState, ClockView, DEVICE_CURSOR, DEVICE_LOG, DeviceCursor, FeederStatus, Journal,
     JournalSource, Pause, Session, Unavailable, trim_tail,
 };
+use wellfed_formats::bench::notes::Seen;
 use wellfed_formats::bench::now;
 use wellfed_formats::hex;
 use wellfed_formats::private::{self, SYSTEM_RANDOM};
@@ -45,6 +46,7 @@ use wellfed_rig::device::{self, DeviceError, DeviceLink, Owner};
 
 use crate::banks::Banks;
 use crate::files;
+use crate::notes::{Notes, event_name};
 use crate::state::Store;
 
 /// How often the status is read while the session is open.
@@ -148,6 +150,7 @@ pub(crate) struct Task {
     root: PathBuf,
     store: Store,
     banks: Banks,
+    notes: Notes,
     requests: mpsc::UnboundedReceiver<Request>,
     hold: watch::Receiver<Option<Pause>>,
     events: Arc<Pushes>,
@@ -164,6 +167,7 @@ impl Feeder {
         options: &DeviceOptions,
         store: Store,
         banks: Banks,
+        notes: Notes,
     ) -> (Self, Task) {
         let owner = Owner::open(root, &options.keys, &options.config);
         let keys = root.join(&options.keys);
@@ -196,6 +200,7 @@ impl Feeder {
             root: root.to_path_buf(),
             store,
             banks,
+            notes,
             requests: receiver,
             hold: held,
             events,
@@ -518,6 +523,7 @@ impl Task {
                 clock: self.clock,
                 store: self.store.clone(),
                 banks: self.banks.clone(),
+                notes: self.notes.clone(),
                 root: self.root.clone(),
                 events: Arc::clone(&self.events),
                 logs: Arc::clone(&self.logs),
@@ -743,6 +749,7 @@ struct Open<'a> {
     clock: ClockSync,
     store: Store,
     banks: Banks,
+    notes: Notes,
     root: PathBuf,
     events: Arc<Pushes>,
     logs: Arc<Pushes>,
@@ -955,6 +962,8 @@ impl Open<'_> {
                     });
                 });
                 self.keep_cursor();
+                self.notes
+                    .seen(&Seen::Event(&event_name(event.body.kind())));
                 self.events.push(message);
             }
             Pushed::Gap(_) => {
@@ -967,6 +976,9 @@ impl Open<'_> {
                     *seq = batch.seq;
                 }
                 self.log.write(&batch.lines);
+                for line in &batch.lines {
+                    self.notes.seen(&Seen::Line(line));
+                }
                 let lines = batch.lines.clone();
                 self.store.update(|state| {
                     state.feeder.log.extend(lines);

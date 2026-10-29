@@ -16,13 +16,13 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use crate::{orphans, page};
+use crate::{note, orphans, page, tui};
 use clap::{Args, Parser, Subcommand};
 use tokio::sync::mpsc;
 use wellfed_bench_server::api::{Seed, SeededFrom};
 use wellfed_bench_server::{
-    Client, ClientError, ClockSync, DeviceOptions, Followed, Interrupt, JobCommand, JobOptions,
-    Options, Server, ToolPaths,
+    CONSOLE_QUEUE, Client, ClientError, ClockSync, Console, DeviceOptions, Followed, Interrupt,
+    JobCommand, JobOptions, Options, Server, ToolPaths,
 };
 use wellfed_formats::bench::banks::{Bank, Check, Content, Entry};
 use wellfed_formats::bench::catalog;
@@ -88,6 +88,9 @@ enum Command {
     /// The bank ledger: which build the server believes each flash bank
     /// holds, and whether the feeder's own reports agree.
     Banks(BanksArgs),
+    /// Record the operator's step, next steps, timers and evidence on the
+    /// running server, for the page and the console.
+    Note(note::NoteArgs),
     #[command(flatten)]
     Job(JobCommand),
 }
@@ -120,6 +123,10 @@ struct ServeArgs {
     /// invalid or off by more than 2 s.
     #[arg(long)]
     no_clock_sync: bool,
+    /// Print the console as plain lines rather than the full-screen view,
+    /// which is also what happens without a terminal.
+    #[arg(long)]
+    plain: bool,
 
     /// A scripted relay board in place of `relay_port`, for the page's
     /// end-to-end tests; only a binary built with `fake-board` has it.
@@ -189,6 +196,7 @@ fn run(cli: Cli, argv: &[String]) -> anyhow::Result<u8> {
         Command::Status { break_lease } => status(&root, break_lease, &runtime),
         Command::Serve(args) => serve(&root, &args, &runtime),
         Command::Banks(args) => runtime.block_on(banks(&Client::new(&root), args)),
+        Command::Note(args) => runtime.block_on(note::note(&Client::new(&root), &root, args)),
         Command::Attach { id } => runtime.block_on(async {
             let mut interrupts = interrupts()?;
             follow(&Client::new(&root), id, &mut interrupts).await
@@ -288,9 +296,19 @@ fn serve(root: &Path, args: &ServeArgs, runtime: &tokio::runtime::Runtime) -> an
     if args.ui {
         page::available()?;
     }
+    // The full-screen console takes the console's lines from a channel;
+    // without a terminal, they go to stdout as they come.
+    let screen = tui::available(args.plain);
+    let (console, lines) = if screen {
+        let (send, lines) = std::sync::mpsc::sync_channel(CONSOLE_QUEUE);
+        (Console::Lines(send), Some(lines))
+    } else {
+        (Console::Terminal, None)
+    };
     let options = Options {
         root: root.to_path_buf(),
         tools: tools.clone(),
+        console,
     };
     // The `wellfed` CLI finds the server through this, from any checkout or
     // key file; without it, it could open a session beside the server's.
@@ -333,15 +351,30 @@ fn serve(root: &Path, args: &ServeArgs, runtime: &tokio::runtime::Runtime) -> an
         .map(|(channel, relay)| format!("{channel} {}", on_off(relay.on)))
         .collect();
     server.say(format!(
-        "Bench server on {}, holding the bench lease; relays {} (Ctrl+C stops it)",
+        "Bench server on {}, holding the bench lease; relays {} ({} stops it)",
         server.socket().display(),
-        relays.join(", ")
+        relays.join(", "),
+        if screen { "q or Ctrl+C" } else { "Ctrl+C" }
     ));
+    let (quit, mut quitting) = tokio::sync::mpsc::unbounded_channel();
+    let console = match lines {
+        Some(lines) => Some(tui::Tui::start(server.store(), lines, quit)?),
+        None => None,
+    };
     let served = runtime.block_on(async {
-        let shutdown = shutdown()?;
-        server.run(shutdown).await.map_err(anyhow::Error::from)
+        let signals = shutdown()?;
+        let stop = async move {
+            tokio::select! {
+                () = signals => {}
+                _ = quitting.recv() => {}
+            }
+        };
+        server.run(stop).await.map_err(anyhow::Error::from)
     });
 
+    if let Some(console) = console {
+        console.finish()?;
+    }
     stop_page.cancel();
     if let Some(page) = page {
         let _ = page.join();
@@ -557,7 +590,7 @@ fn short(build: &str) -> &str {
     build.get(..12).unwrap_or(build)
 }
 
-fn bank_number(bank: Bank) -> u8 {
+pub(crate) fn bank_number(bank: Bank) -> u8 {
     match bank {
         Bank::Zero => 0,
         Bank::One => 1,
@@ -575,7 +608,7 @@ fn content_text(content: &Content) -> String {
 }
 
 /// One ledger entry as a line: what, from which job, and the feeder's word.
-fn entry_text(entry: &Entry) -> String {
+pub(crate) fn entry_text(entry: &Entry) -> String {
     let check = match &entry.check {
         Check::Unchecked => "unchecked".to_string(),
         Check::Confirmed { by, .. } => format!("confirmed by the {by:?}").to_lowercase(),

@@ -7,6 +7,8 @@
 //!   end, as newline-delimited JSON; a client that disconnects only stops
 //!   reading;
 //! - `POST /jobs/{id}/cancel`: stop the running job;
+//! - `POST /notes`: an operator's note, folded into the live state (201
+//!   with the note as kept, 400 for one refused);
 //! - `/device/ask`, `/device/pushed`, `/device/session`, `/banks` and
 //!   `/banks/seed`: the feeder session and the bank ledger, merged in from
 //!   `device_routes`, which documents them.
@@ -25,6 +27,7 @@ use bytes::Bytes;
 use futures_util::stream::{self, Stream};
 use tokio::sync::watch;
 use wellfed_formats::bench::live::{BenchState, JobEvent, JobId, Phase};
+use wellfed_formats::bench::notes::Body as NoteBody;
 use wellfed_formats::bench::now;
 
 use crate::api::{Accepted, JobRequest, Refusal};
@@ -39,6 +42,7 @@ pub(crate) fn router(shared: Arc<Shared>) -> Router {
         .route("/jobs", post(submit))
         .route("/jobs/{id}/stream", get(follow))
         .route("/jobs/{id}/cancel", post(cancel))
+        .route("/notes", post(note))
         .merge(crate::device_routes::routes())
         .with_state(shared)
 }
@@ -54,7 +58,8 @@ impl IntoResponse for Refusal {
             | Self::OtherCheckout { .. }
             | Self::BadName { .. }
             | Self::BadLength { .. }
-            | Self::Seed { .. } => StatusCode::BAD_REQUEST,
+            | Self::Seed { .. }
+            | Self::Note { .. } => StatusCode::BAD_REQUEST,
         };
         (status, Json(self)).into_response()
     }
@@ -68,6 +73,15 @@ async fn submit(State(shared): State<Arc<Shared>>, Json(request): Json<JobReques
     match shared.start(&request) {
         Ok(id) => (StatusCode::CREATED, Json(Accepted { id })).into_response(),
         Err(refusal) => refusal.into_response(),
+    }
+}
+
+async fn note(State(shared): State<Arc<Shared>>, Json(body): Json<NoteBody>) -> Response {
+    let notes = shared.notes.clone();
+    match tokio::task::spawn_blocking(move || notes.note(body)).await {
+        Ok(Ok(note)) => (StatusCode::CREATED, Json(note)).into_response(),
+        Ok(Err(error)) => Refusal::Note { error }.into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
 

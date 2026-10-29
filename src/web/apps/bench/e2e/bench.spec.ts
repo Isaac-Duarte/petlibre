@@ -78,10 +78,11 @@ test("the operator's notes and the feeder's banks read the live state", async ({
   await expect(operator).toContainText("Install the candidate over UART");
   await expect(operator.getByRole("list", { name: "Operator's next steps" })).toContainText("Run the smoke tier");
   const timers = operator.getByRole("list", { name: "Timers" });
-  await expect(timers).toContainText("expects PLFW1 start");
-  // 900 s from a minute before the server started, and 600 s from an hour before.
-  await expect(timers.getByRole("listitem").filter({ hasText: "boot" })).toContainText(/1[34]m \d\ds/);
-  await expect(timers.getByRole("listitem").filter({ hasText: "soak" })).toContainText(/out (49|50)m \d\ds ago/);
+  await expect(timers).toContainText("expects a line with PLFW1 start");
+  // Due 14 minutes after the server started, and 50 minutes before.
+  await expect(timers.getByRole("listitem").filter({ hasText: "boot" })).toContainText(/in 1[34]m \d\ds/);
+  await expect(timers.getByRole("listitem").filter({ hasText: "soak" })).toContainText(/due (49|50)m \d\ds ago/);
+  await expect(timers.getByRole("listitem").filter({ hasText: "fire" })).toContainText(/seen at .*: fed event/);
   await expect(operator.getByRole("region", { name: "Evidence for QA9" })).toContainText("1 pass, 1 fail");
 
   const feeder = page.getByRole("region", { name: "Feeder", exact: true });

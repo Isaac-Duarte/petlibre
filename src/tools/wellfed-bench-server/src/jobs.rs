@@ -452,7 +452,7 @@ fn dispatch(bench: &mut Bench, command: &JobCommand, stock_bin: PathBuf) -> Resu
 
 #[cfg(test)]
 mod tests {
-    use wellfed_formats::bench::live::{BenchState, Phase, ServerView, Uart};
+
     use wellfed_relay::{AtBoard, FakeBoard, Switch};
 
     use super::*;
@@ -471,30 +471,16 @@ mod tests {
     #[test]
     fn an_over_the_air_job_gets_a_board_that_refuses_every_switch() {
         let board = FakeBoard::default();
-        let store = Store::new(BenchState {
-            now: 0.0,
-            server: ServerView {
-                pid: 1,
-                started: 0.0,
-                phase: Phase::Serving,
-                uart_port: false,
-            },
-            job: None,
-            activity: Vec::new(),
-            uart: Uart::Idle,
-            relays: Default::default(),
-            feeder: Default::default(),
-            capture: Default::default(),
-            banks: Default::default(),
-            operator: Default::default(),
-        });
+        let store = Store::new(crate::tests::idle_state());
         let root = PathBuf::from("/nonexistent");
         let banks = crate::banks::Banks::open(&root, store.clone()).unwrap();
+        let notes = crate::notes::Notes::open(&root, store.clone());
         let (feeder, _) = Feeder::new(
             &root,
             &crate::feeder::DeviceOptions::default(),
             store.clone(),
             banks,
+            notes,
         );
         let bed = Bed {
             root,

@@ -1,9 +1,11 @@
 <script lang="ts">
   // What the operator noted: the step under way, the steps after it, the
-  // timers running (each counting down to its end, and the device event it
-  // expects), and the evidence by card with its verdict.
-  import { Badge, Empty, Panel, clockTime, duration, fullTime } from "@wellfed/ui";
+  // timers (each counting down to its due time, with what it expects and
+  // whether the server saw it or marked it missed), and the evidence by
+  // card with its verdict.
+  import { Badge, Empty, Panel, clockTime, fullTime } from "@wellfed/ui";
   import { app } from "../lib/bench.svelte";
+  import { dueText, expectText, settledText, timerTone } from "../lib/timers";
 
   const operator = $derived(app.state?.operator ?? null);
   const empty = $derived(
@@ -27,11 +29,15 @@
     {#if operator.timers.length}
       <ul class="timers" aria-label="Timers">
         {#each operator.timers as timer (timer.label)}
-          {@const left = timer.started + timer.seconds - app.now}
-          <li class:out={left <= 0}>
+          {@const settled = settledText(timer)}
+          <li class:out={timer.due <= app.now && !settled}>
             <span class="label">{timer.label}</span>
-            <span class="left">{left > 0 ? duration(left) : `out ${duration(-left)} ago`}</span>
-            {#if timer.expect}<span class="expect">expects <code>{timer.expect}</code></span>{/if}
+            {#if timer.expect}<Badge tone={timerTone(timer)} label={timer.state.state} />{/if}
+            <span class="left">{dueText(timer, app.now)}</span>
+            {#if timer.expect}
+              <span class="expect">expects {expectText(timer.expect)} until {clockTime(timer.until, false)}</span>
+            {/if}
+            {#if settled}<span class="expect {timer.state.state}">{settled}</span>{/if}
           </li>
         {/each}
       </ul>
@@ -100,6 +106,13 @@
     flex-basis: 100%;
     color: var(--color-text-muted);
     font-size: var(--text-xs);
+    overflow-wrap: anywhere;
+  }
+  .expect.seen {
+    color: var(--color-ok);
+  }
+  .expect.missed {
+    color: var(--color-fault);
   }
   .card {
     margin-top: var(--space-4);

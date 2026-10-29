@@ -98,10 +98,11 @@ The files and shapes they share (the bench config, a command's progress record, 
 
 | Command | Effect |
 | --- | --- |
-| `serve` | The bench server, in the foreground until Ctrl+C, SIGTERM or a hangup ([below](#the-bench-server)). `--ui` serves the [progress page](#progress-page) beside it. |
+| `serve` | The bench server, in the foreground until `q`, Ctrl+C, SIGTERM or a hangup ([below](#the-bench-server)), drawn as a [full-screen console](#the-console). `--ui` serves the [progress page](#progress-page) beside it. |
 | `status` | The [bench lease](#bench-lease), then the server's job, its children, the UART, the feeder session, the bank ledger and the relays. With no server, it reads the relay board itself. A server that does not answer within 5 s is reported as such, after the lease. `--break-lease` first frees a lease a killed server left. |
 | `attach ID` | Follow job `ID` of the running server again, from its first kept line |
 | `banks` | The [bank ledger](#the-bank-ledger). `--seed DUMP_SESSION` starts it, from that dump's inspection or, when the inspection names no build, from `--bank N --build HASH`. |
+| `note` | The [operator's notes](#the-operators-notes): the step under way, the next steps, timers and evidence by card |
 | `on`, `off` | Power the feeder with the strap released, or release the strap and cut power |
 | `capture NAME` | Receive-only recording of the running feeder. Power is untouched. |
 | `boot NAME` | Power off, start a receive-only capture, confirm it holds the port, then power on |
@@ -133,7 +134,7 @@ Every command from `on` down is a job: it needs the server running, and refuses 
 - the control socket `private/bench.sock`, mode 0600 whatever the umask, which only the checkout's owner can reach;
 - the owner's one device API session with the feeder ([below](#the-feeder-session));
 - a receive-only UART capture while no job runs and relay 1 is on ([below](#the-uart-capture));
-- its console: every job's output, as it comes, and one line as each job starts and ends.
+- its [console](#the-console): every job's output, as it comes, and one line as each job starts and ends.
 
 It runs one job at a time. A job is the command line a client posts (`POST /jobs` with its words), parsed by the server with the same checks as the command line, so a bad flag or name is refused before anything runs. The client sends its checkout beside the words, and the server refuses another checkout's: a worktree whose `private/` links to this one's reaches this server, and must not run this checkout's sources under its session names. A job runs the same sequence the command always ran, in the server's process. A second job while one runs is refused with the running job named:
 
@@ -160,6 +161,7 @@ The socket's routes:
 | `GET /device/pushed?stream=events\|logs&from=N&wait=MS` | The history (events and gaps) or the log lines the session was pushed, from number `N` on, waiting up to `MS` (at most 30 s) for the first; with the event the held history starts after |
 | `GET /device/session` | Whom the session speaks as and with: the checkout, the key file and its public key, the feeder, and once open its build, role and capabilities; 503 while paused or unconfigured |
 | `GET /banks`, `POST /banks/seed` | The bank ledger, and `banks --seed` |
+| `POST /notes` | One [operator's note](#the-operators-notes), the body of a line of `notes.jsonl`: 201 with the note as kept, 400 `{"note": {"error": ...}}` for one refused |
 
 #### The feeder session
 
@@ -217,7 +219,30 @@ Before every job it stops the capture, killing its observe (which only receives)
 
 Each entry is then checked against what the feeder says it runs: the `PLFW1 start build= bank=` banner on the capture, and the build and bank in the session's status. A report that names another build marks the entry disputed rather than replacing it, since either side may be wrong; the operator decides. `banks --seed DUMP_SESSION` starts the ledger. Today's flash inspections pin region hashes and name no build, so the seed takes `--bank` and `--build`, and says so. A seed is refused while a job runs. Like every file the server keeps, it is replaced whole and never synced, and nothing writes it while a job holds the UART. A `banks.json` that does not read refuses `serve` before the relay board opens, and is left for the operator to repair or remove.
 
-### Flash over UART
+#### The console
+
+On a terminal, `serve` draws its console full screen on `/dev/tty` with the same panels as the page: the UART-write banner with the sectors verified, the job with its step and next steps, Activity, the relays and the lease, the feeder (banks, session, status, clock, journal high water, hotspot, capture and the device log's last lines), the operator's step, timers and evidence by card, and a scrolling log of every job's output. PgUp and PgDn scroll the log (Up and Down a line), and End follows it again.
+
+`q` or Ctrl+C stops the server the same way SIGINT does: cancel the job, wait for its cleanup, then release the bench. While the flash client writes, the screen redraws at most twice a second; otherwise four times. It draws from the live state and a channel only, so a slow terminal never holds the output pump: it loses console lines instead, which the job's stream and log file keep. When the server stops, the screen closes and the log's last 30 lines are printed on the terminal.
+
+Without a terminal (a service, a pipe), or with `--plain`, the console is plain lines on stdout, as before.
+
+#### The operator's notes
+
+`wellfed-bench note` posts to the server, which appends each note to `private/bench-status/notes.jsonl` (through a buffer, never synced, and not flushed while the flash client holds the UART) and shows it on the console and the page:
+
+```
+wellfed-bench note step "Install the candidate over UART"
+wellfed-bench note next "Boot and watch the banner" "Run the smoke tier"     # replaces the list
+wellfed-bench note timer fire --in 5m --expect "PLSCH1 fire"                 # or --at 18:00
+wellfed-bench note timer reboot --in 2m --expect-event boot --window 5m
+wellfed-bench note timer fire --clear
+wellfed-bench note evidence --card schedule private/captures/boot-01 --pass --text "banner seen"
+```
+
+A card is the operator's own name for the work, free text. Evidence must name a file or directory inside `private/`, given from the working directory; the server keeps it root-relative and refuses anything else.
+
+**Timers.** `--at HH:MM` is the next time the bench host's clock reads it; `--in` takes lengths such as `90s`, `5m` or `1h30m`. A timer with `--expect TEXT` is marked seen by the first UART line, device log line or job output line containing `TEXT` from its start until its window ends; `--expect-event KIND` does the same for a device event of that kind (`boot`, `fed`, `clock_sync`, as the device API names them). The window ends 2 minutes after the due time unless `--window` says otherwise. A timer still unseen then is marked missed. Both are notes the server appends, so a restarted server shows the same. Lines reach the timers from the capture while no job runs, the session's device log, and the running job's output, so a `boot` job's own banner counts.
 
 1. With the server running, prepare the update:
 
@@ -643,10 +668,10 @@ The page has four views (keys `g o`, `g t`, `g s`, `g l`; `/` filters the log). 
 - **Overview**
   - **Guided QA** (when the latest capture holds `PLQA1` records) coaches the newest [QA](../../firmware/qa.md) run from its records. It shows what to do now in plain words ("Look at the Wi-Fi light. Lit: press Dispense. Dark: press Lock."), the time left on a button prompt, each check's state with the answers so far, and the result. **Enable sound** beeps at each new prompt. It follows the records only; `wellfed-audit qa` still grades the run. The records are parsed by `wellfed_formats::qa`, which the audit shares.
   - **Now:** the server's job, its outcome and elapsed time, the step it is on and the next few. Steps show their own durations. While the job runs, bars show straight-line ETAs for the tool's own counts and the active capture's time. The next command to run after review is shown with a copy button.
-  - **Operator:** the step, the next steps, timers counting down (with the device event each expects) and evidence by card with pass or fail, from `private/bench-status/notes.jsonl` as the server read it at its start.
+  - **Operator:** the step, the next steps, timers counting down to their due time (with what each expects, and whether the server saw it or marked it missed) and evidence by card with pass or fail, from the server's [notes](#the-operators-notes).
   - **Activity:** the job and each child it runs (flash client, build, stock, analyzer), with when it started. One that clears stays a minute, fading.
   - **Relays:** channels 1 to 4 as the server last read or set them, and when, and the server holding the lease.
-  - **Feeder:** the build the bank ledger (`private/bench-status/banks.json`) puts in each bank, how it got there, and whether the feeder's banner or status confirmed or disputed it. The clock, journal high water, hotspot and device log read "not known yet" until the server holds a feeder session.
+  - **Feeder:** the build the bank ledger (`private/bench-status/banks.json`) puts in each bank, how it got there, and whether the feeder's banner or status confirmed or disputed it. Then the server's [feeder session](#the-feeder-session) (open, paused and why, or connecting), the last status, the clock's skew and last sync, the journal high water, the hotspot, the capture's segment, last start banner and update record, and the device log and UART tails. What the server has not read yet says "not known yet".
   - **Stock server:** stock as `wellfed-stock` last heard it: online or not, its reported version, and whether the server holds its broker session. The replacement firmware speaks no MQTT, so it shows nowhere here.
   - **Recent commands.**
 - **Tests**

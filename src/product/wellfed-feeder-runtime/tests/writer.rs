@@ -566,8 +566,7 @@ fn queued_events_are_appended_and_read_back_after_a_reboot() {
         (first.seq, first.at, first.body),
         (1, Some(1_700_000_000), [1; 16])
     );
-    assert_eq!(events::read_result(Some(1)), None);
-    step(&mut writer, &mut provider);
+    // One answer is a batch: the next record needs no other read.
     assert!(matches!(
         events::read_result(Some(1)),
         Some(Read::Record(r)) if r.seq == 2
@@ -600,6 +599,74 @@ fn queued_events_are_appended_and_read_back_after_a_reboot() {
         events::read_result(None),
         Some(Read::Record(r)) if r.seq == 1
     ));
+}
+
+/// A reader catching up gets a batch a read: it walks through it without
+/// asking again, a second reader inside it shares it, and the writer keeps
+/// the read pace between batches rather than falling back to its idle poll.
+#[test]
+fn a_reader_catching_up_takes_a_batch_a_read() {
+    let (_guard, mut writer, mut provider) = start();
+    for _ in 0..7 {
+        step(&mut writer, &mut provider); // open, net open, time open, keys, events, stats, its save
+    }
+    let total = events::READ_BATCH + 4;
+    for n in 0..total {
+        assert!(events::record(None, [u8::try_from(n).unwrap(); 16]));
+        step(&mut writer, &mut provider);
+    }
+    assert_eq!(events::last_seq(), Some(total as u64));
+
+    assert_eq!(events::read_result(None), None, "asked");
+    // SAFETY: the provider outlives the run.
+    let answered = unsafe { writer.step::<NoMmio, Armed>(&mut provider) };
+    assert_eq!(
+        answered.delay_ms,
+        writer::EVENTS_POLL_MS,
+        "a reader is about"
+    );
+
+    // The whole batch, one record a call, with no read between.
+    let mut after = None;
+    for seq in 1..=events::READ_BATCH as u64 {
+        let Some(Read::Record(record)) = events::read_result(after) else {
+            panic!("record {seq} from the batch");
+        };
+        assert_eq!(record.seq, seq);
+        after = Some(seq);
+    }
+    // A second reader inside the batch shares it.
+    assert!(matches!(
+        events::read_result(Some(3)),
+        Some(Read::Record(r)) if r.seq == 4
+    ));
+
+    // Past the batch the reader asks again; the writer, still at the read
+    // pace, answers on its next poll.
+    // SAFETY: as above.
+    let idle = unsafe { writer.step::<NoMmio, Armed>(&mut provider) };
+    assert_eq!(
+        idle.delay_ms,
+        writer::EVENTS_POLL_MS,
+        "lingers after a read"
+    );
+    assert_eq!(events::read_result(after), None, "asked");
+    step(&mut writer, &mut provider);
+    for seq in events::READ_BATCH as u64 + 1..=total as u64 {
+        let Some(Read::Record(record)) = events::read_result(after) else {
+            panic!("record {seq} from the next batch");
+        };
+        assert_eq!(record.seq, seq);
+        after = Some(seq);
+    }
+    assert_eq!(events::read_result(after), Some(Read::End));
+
+    // With no reader the writer goes back to its idle poll.
+    let delay = (0..=writer::READ_LINGER_POLLS)
+        // SAFETY: as above.
+        .map(|_| unsafe { writer.step::<NoMmio, Armed>(&mut provider) }.delay_ms)
+        .last();
+    assert_eq!(delay, Some(writer::POLL_MS));
 }
 
 /// Every store the writer keeps defers its write while a feed holds the

@@ -11,10 +11,12 @@
 //!   up here, and the feed's own result must not be the one lost.
 //! - **Reads:** the device API asks for the record after a cursor with
 //!   [`request_read`]; the writer answers with [`finish_read`], and the loop
-//!   collects it with [`read_result`]. One read is outstanding at a time,
-//!   and an answer stays until the next request, so several subscribers at
-//!   the same cursor share it. A subscriber at the newest record is told
-//!   so without a read, which leaves the slot to those still catching up.
+//!   collects it with [`read_result`]. One read is outstanding at a time.
+//!   An answer is a batch of up to [`READ_BATCH`] records and stays until
+//!   the next request, so a subscriber catching up walks through it a pass
+//!   a record, and several subscribers within it share it. A subscriber at
+//!   the newest record is told so without a read, which leaves the slot to
+//!   those still catching up.
 //!
 //! - **Epoch:** the writer publishes the ring's epoch once it has opened
 //!   it ([`publish_open`]); the device API welcomes no session before then,
@@ -23,13 +25,18 @@
 //! Every access copies a few dozen bytes with the scheduler paused; both
 //! sides are tasks, never interrupt handlers.
 
-use wellfed_feeder::store::events::{BODY_BYTES, Read};
+use wellfed_feeder::store::events::{BODY_BYTES, Batch, EMPTY, Read, Record};
 
 use wellfed_hal::cell::TaskCell;
 use wellfed_hal::sdk;
 
 /// Records the loop may queue before the writer takes them.
 pub const QUEUE: usize = 16;
+
+/// Records one read answers at most. A subscriber catching up takes one
+/// record a loop pass; a batch spares it a round trip through the writer,
+/// which polls every few milliseconds, for each of them.
+pub const READ_BATCH: usize = 16;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Queued {
@@ -41,11 +48,11 @@ pub struct Queued {
 enum ReadSlot {
     Idle,
     Requested(Option<u64>),
-    /// The answer for a cursor, valid while the ring's newest record is
-    /// still `last`.
+    /// The answer for a cursor. Records stay valid; `End` only while the
+    /// ring's newest record is still `last`.
     Ready {
         after: Option<u64>,
-        read: Read,
+        batch: Batch,
         last: Option<u64>,
     },
 }
@@ -58,6 +65,8 @@ struct Shared {
     last: Option<u64>,
     epoch: Option<u32>,
     read: ReadSlot,
+    /// The records of a `Ready` batch, at the front.
+    records: [Record; READ_BATCH],
 }
 
 static SHARED: TaskCell<Shared> = TaskCell::new(Shared {
@@ -68,6 +77,7 @@ static SHARED: TaskCell<Shared> = TaskCell::new(Shared {
     last: None,
     epoch: None,
     read: ReadSlot::Idle,
+    records: [EMPTY; READ_BATCH],
 });
 
 fn with<R>(f: impl FnOnce(&mut Shared) -> R) -> R {
@@ -157,22 +167,56 @@ pub fn last_seq() -> Option<u64> {
 /// still current. Otherwise this asks for it (when no other read waits)
 /// and returns `None`.
 pub fn read_result(after: Option<u64>) -> Option<Read> {
-    with(|shared| match shared.read {
+    with(|shared| {
         // A subscriber at the newest record needs no read. Asking would
         // replace the answer another subscriber waits on, and one caught
         // up asks on every pass, so the other would never collect it.
-        _ if after.is_some() && after == shared.last => Some(Read::End),
-        ReadSlot::Ready {
-            after: answered,
-            read,
-            last,
-        } if answered == after && (last == shared.last || read != Read::End) => Some(read),
-        ReadSlot::Requested(_) => None,
-        _ => {
-            shared.read = ReadSlot::Requested(after);
-            None
+        if after.is_some() && after == shared.last {
+            return Some(Read::End);
         }
+        match shared.read {
+            ReadSlot::Ready {
+                after: answered,
+                batch,
+                last,
+            } => {
+                if let Some(read) =
+                    answer(answered, batch, last, &shared.records, shared.last, after)
+                {
+                    return Some(read);
+                }
+            }
+            ReadSlot::Requested(_) => return None,
+            ReadSlot::Idle => {}
+        }
+        shared.read = ReadSlot::Requested(after);
+        None
     })
+}
+
+/// What a `Ready` batch answers for `after`: the asked cursor's answer, or
+/// the record after any of its records but the last (which needs the next
+/// batch); `None` when it holds no answer for it.
+fn answer(
+    answered: Option<u64>,
+    batch: Batch,
+    last: Option<u64>,
+    records: &[Record],
+    newest: Option<u64>,
+    after: Option<u64>,
+) -> Option<Read> {
+    match batch {
+        Batch::Records(len) => {
+            let records = records.get(..len)?;
+            if answered == after {
+                return records.first().copied().map(Read::Record);
+            }
+            let held = records.iter().position(|r| Some(r.seq) == after)?;
+            records.get(held + 1).copied().map(Read::Record)
+        }
+        Batch::Gap { from, to } => (answered == after).then_some(Read::Gap { from, to }),
+        Batch::End => (answered == after && last == newest).then_some(Read::End),
+    }
 }
 
 /// The writer's half: the cursor a read waits on.
@@ -183,12 +227,22 @@ pub fn read_request() -> Option<Option<u64>> {
     })
 }
 
-/// The writer's half: the answer to [`read_request`].
-pub fn finish_read(after: Option<u64>, read: Read) {
+/// The writer's half: the answer to [`read_request`], as
+/// [`EventLog::read_batch`](wellfed_feeder::store::events::EventLog::read_batch)
+/// gave it, with its records at the front of `records`.
+pub fn finish_read(after: Option<u64>, batch: Batch, records: &[Record]) {
     with(|shared| {
+        let batch = match batch {
+            Batch::Records(len) => {
+                let len = len.min(records.len()).min(READ_BATCH);
+                shared.records[..len].copy_from_slice(&records[..len]);
+                Batch::Records(len)
+            }
+            other => other,
+        };
         shared.read = ReadSlot::Ready {
             after,
-            read,
+            batch,
             last: shared.last,
         };
     });

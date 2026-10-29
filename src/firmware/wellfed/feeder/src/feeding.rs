@@ -279,6 +279,36 @@ pub fn may_release(in_flight: InFlight, status: &OwnerStatus) -> bool {
 /// off.
 pub const PROOF_MS: u32 = 2_000;
 
+/// When the loop next steps the owner: once the wait the owner asked for
+/// has passed, timed from the start of its last step.
+///
+/// Every step at rest is a full sensor capture (two ADC channels, 12
+/// polled conversions each, about 11 ms on hardware), and the loop passes
+/// every millisecond while the device API has work. Stepping the owner on
+/// each of those passes captured more often than its period asks, and made
+/// each pass, so each event a subscriber reads, cost the capture. Its
+/// configuration bounds the period below every lease and age limit
+/// (`OwnerConfig`), so stepping at the period is the supervision it was
+/// designed for; an idle loop steps it at this cadence too.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Cadence {
+    due: Option<u32>,
+}
+
+impl Cadence {
+    /// The wait left at `now` before the owner is due; `None` once it is.
+    pub fn wait(&self, now_ms: u32) -> Option<u32> {
+        let due = self.due?;
+        (!wellfed_core::deadline_passed(now_ms, due)).then(|| wellfed_core::until(now_ms, due))
+    }
+
+    /// The owner was stepped from `now` and asked to wait `delay`; with
+    /// none (stopped or refused) the next pass steps it again.
+    pub fn stepped(&mut self, now_ms: u32, delay: Option<u32>) {
+        self.due = delay.map(|delay| now_ms.wrapping_add(delay));
+    }
+}
+
 /// What the owner has shown this boot, for the runtime: a trial build
 /// confirms only on [`supervise::Feeding::Proven`], and one whose owner cannot open
 /// ([`supervise::Feeding::Failed`]) is reset at once and counted.
@@ -670,7 +700,9 @@ mod target {
     };
     use wellfed_sdk::{JournalSlots, Slot};
 
-    use super::{CONFIG, JOURNAL, Opened, PowerCycle, Proof, Record, Recovery, drive_figures};
+    use super::{
+        CONFIG, Cadence, JOURNAL, Opened, PowerCycle, Proof, Record, Recovery, drive_figures,
+    };
 
     type Journal = FeedJournal<JournalSlots>;
 
@@ -702,6 +734,8 @@ mod target {
         journal_failed: bool,
         /// When the owner was last stepped.
         stepped_ms: Option<u32>,
+        /// When the owner is next due a step.
+        cadence: Cadence,
         /// The journal was created this boot (by an attempt the owner may
         /// have refused).
         created: bool,
@@ -736,6 +770,9 @@ mod target {
             mut outcome: impl FnMut(EventBody, Option<&TraceSummary>),
         ) -> Option<u32> {
             let now = wellfed_sdk::hal::sdk::uptime_ms();
+            if let Some(wait) = self.cadence.wait(now) {
+                return Some(wait);
+            }
             // While a reset storm holds the feeder the owner stays closed,
             // the outputs as startup left them, stopped. It opens once the
             // hold ends.
@@ -779,6 +816,7 @@ mod target {
                 Step::Wait(ms) => Some(ms),
                 Step::Stopped | Step::Refused => None,
             };
+            self.cadence.stepped(now, delay);
             // After the step, so the trace never delays a stop or a
             // motor decision.
             if let Some(seen) = owner.take_observation() {

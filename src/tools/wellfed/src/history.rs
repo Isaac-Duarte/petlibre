@@ -11,6 +11,7 @@ use wellfed_client::history::Entry;
 use wellfed_client::trace::Pages;
 use wellfed_model::{self as model, Answer, Gap, Op, Pushed, StatsSection};
 
+use crate::device::Connection;
 use crate::text::{self, time};
 use crate::{Target, connect, print_answer, print_json, trace};
 
@@ -174,11 +175,20 @@ pub(crate) async fn trace_command(args: TraceArgs) -> Result<()> {
 
 pub(crate) async fn events_command(args: EventsArgs) -> Result<()> {
     let (_, _, mut connection) = connect(&args.target).await?;
+    let backlog = if args.follow {
+        None
+    } else {
+        Some(Backlog::ask(&mut connection).await?)
+    };
+    if backlog.is_some_and(|backlog| backlog.read(args.after)) {
+        return Ok(());
+    }
     connection
         .subscribe(args.after, args.samples && args.follow)
         .await?;
     let zone = TimeZone::system();
-    // Without --follow, stop once the backlog has been quiet for a moment.
+    // Without --follow, stop at the backlog's end, or once it has been
+    // quiet a moment: its newest event may be one this session skips.
     let wait = if args.follow {
         Duration::from_secs(3600)
     } else {
@@ -196,6 +206,9 @@ pub(crate) async fn events_command(args: EventsArgs) -> Result<()> {
             println!("{}", serde_json::to_string(&pushed)?);
         } else {
             println!("{}", text::pushed(&pushed, &zone));
+        }
+        if backlog.is_some_and(|backlog| backlog.ends_at(&pushed)) {
+            return Ok(());
         }
     }
 }
@@ -217,21 +230,64 @@ pub(crate) async fn status_command(args: StatusArgs) -> Result<()> {
 /// this computer's time zone.
 pub(crate) async fn feeds_command(args: FeedsArgs) -> Result<()> {
     let (_, _, mut connection) = connect(&args.target).await?;
+    let backlog = Backlog::ask(&mut connection).await?;
+    if backlog.read(args.after) {
+        return Ok(());
+    }
     connection.subscribe(args.after, false).await?;
 
     let zone = TimeZone::system();
-    // The backlog is sent at once: stop once it has been quiet a moment.
+    // Stop at the backlog's end, or once it has been quiet a moment: its
+    // newest event may be one this session skips.
     while let Some(pushed) = connection.next(Duration::from_secs(2)).await? {
-        let Some(entry) = Entry::from_pushed(&pushed) else {
-            continue;
-        };
-        if args.json {
-            println!("{}", serde_json::to_string(&entry)?);
-        } else {
-            println!("{}", line(&entry, &zone));
+        if let Some(entry) = Entry::from_pushed(&pushed) {
+            if args.json {
+                println!("{}", serde_json::to_string(&entry)?);
+            } else {
+                println!("{}", line(&entry, &zone));
+            }
+        }
+        if backlog.ends_at(&pushed) {
+            break;
         }
     }
     Ok(())
+}
+
+/// Where the history a subscription sends first ends: the newest event the
+/// feeder had when asked. Later events may follow at once; a command that
+/// reads the history once stops here rather than waiting for a quiet
+/// moment after it.
+#[derive(Clone, Copy)]
+struct Backlog {
+    newest: Option<u64>,
+}
+
+impl Backlog {
+    async fn ask(connection: &mut Connection) -> Result<Self> {
+        match connection.ask(&Op::Status).await? {
+            Answer::Status(status) => Ok(Self {
+                newest: status.last_event,
+            }),
+            other => bail!("unexpected answer {other:?}"),
+        }
+    }
+
+    /// Whether a reader at `after` has it all already.
+    fn read(self, after: Option<u64>) -> bool {
+        self.newest
+            .is_none_or(|newest| after.is_some_and(|after| after >= newest))
+    }
+
+    /// Whether `pushed` is the backlog's newest event, or past it.
+    fn ends_at(self, pushed: &Pushed) -> bool {
+        let seq = match pushed {
+            Pushed::Event(event) => event.seq,
+            Pushed::Gap(gap) => gap.to,
+            Pushed::Sample(_) | Pushed::Log(_) => return false,
+        };
+        self.read(Some(seq))
+    }
 }
 
 /// One history entry as a line: a feed's event number, time, number,
@@ -350,6 +406,35 @@ mod tests {
         assert!(
             line(&unset, &TimeZone::UTC).contains("(clock not set)  feed 128  by client abcd0102")
         );
+    }
+
+    #[test]
+    fn the_backlog_ends_at_the_newest_event_the_feeder_had() {
+        let backlog = Backlog { newest: Some(10) };
+        assert!(!backlog.read(None));
+        assert!(!backlog.read(Some(9)));
+        assert!(backlog.read(Some(10)));
+        assert!(Backlog { newest: None }.read(None), "an empty history");
+
+        let event = |seq| {
+            Pushed::Event(Event {
+                epoch: 1,
+                seq,
+                at: None,
+                body: EventBody::Boot {
+                    bank: 1,
+                    reset_flags: 0,
+                },
+            })
+        };
+        assert!(!backlog.ends_at(&event(9)));
+        assert!(backlog.ends_at(&event(10)));
+        let gap = Pushed::Gap(Gap {
+            epoch: 1,
+            from: 8,
+            to: 10,
+        });
+        assert!(backlog.ends_at(&gap), "a gap through the newest");
     }
 
     #[test]

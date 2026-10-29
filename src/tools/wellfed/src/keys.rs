@@ -22,7 +22,8 @@ impl OwnerKey {
     /// The key at `path`, or a new one written there. `label` replaces the
     /// stored label when given.
     pub(crate) fn open(path: &Path, label: Option<&str>, random: &Path) -> Result<Self> {
-        let mut file = if path.exists() {
+        let created = !path.exists();
+        let mut file = if !created {
             let file: OwnerKeyFile = wellfed_formats::load(path)
                 .with_context(|| format!("read the key file {}", path.display()))?;
             ensure!(
@@ -42,6 +43,7 @@ impl OwnerKey {
                 feeders: Vec::new(),
             }
         };
+        let relabelled = label.is_some_and(|label| label != file.label);
         if let Some(label) = label {
             file.label = label.into();
         }
@@ -53,7 +55,10 @@ impl OwnerKey {
             keypair: Keypair::from_secret(secret),
             file,
         };
-        key.save()?;
+        // Every command opens the key: rewrite it only when it changed.
+        if created || relabelled {
+            key.save()?;
+        }
         Ok(key)
     }
 
@@ -92,9 +97,10 @@ impl OwnerKey {
     /// Note a feeder that enrolled this key.
     pub(crate) fn remember(&mut self, identity: &[u8; 32]) -> Result<()> {
         let identity = hex::encode(identity);
-        if !self.file.feeders.iter().any(|f| f.identity == identity) {
-            self.file.feeders.push(EnrolledFeeder { identity });
+        if self.file.feeders.iter().any(|f| f.identity == identity) {
+            return Ok(());
         }
+        self.file.feeders.push(EnrolledFeeder { identity });
         self.save()
     }
 
@@ -132,6 +138,13 @@ mod tests {
         assert_eq!(again.label(), "laptop");
         assert_eq!(again.file.feeders.len(), 1);
         assert_eq!(fingerprint(&[0xab; 32]), "abababababababab");
+
+        // Opening a key that does not change leaves its file alone.
+        let modified = || std::fs::metadata(&path).unwrap().modified().unwrap();
+        let before = modified();
+        let mut same = OwnerKey::open(&path, Some("laptop"), &random).unwrap();
+        same.remember(&[5; 32]).unwrap();
+        assert_eq!(modified(), before);
     }
 
     #[test]

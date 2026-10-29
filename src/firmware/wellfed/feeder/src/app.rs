@@ -154,8 +154,9 @@ fn loop_task() -> u32 {
     feeder.pass_took(ticks_us(sdk::systimer_ticks().wrapping_sub(began)));
     wellfed_sdk::hal::clock::keep();
     // A handshake operation is the pass's costly part (one or two X25519s,
-    // 25-28 ms each): during a feed the owner is stepped again at once, so
-    // the gap between its steps is the pass, not the pass and the delay.
+    // 25-28 ms each): during a feed the owner is stepped again at once (it
+    // is due by then, its period being shorter than the operation), so the
+    // gap between its steps is the pass, not the pass and the delay.
     if feeding.feeding() && feeder.handshook() {
         feeding.handshook();
         feed_delay = feeding.step(

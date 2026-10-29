@@ -1,0 +1,33 @@
+[package]
+license.workspace = true
+name = "wellfed-app-bridge"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "The Android app's Rust half over flutter_rust_bridge: the client key, BLE setup and LAN recovery, and device API sessions through wellfed-connect"
+publish.workspace = true
+
+[lib]
+# cdylib for Android; lib for the crate's own tests.
+crate-type = ["cdylib", "staticlib", "lib"]
+
+[dependencies]
+flutter_rust_bridge = "=2.13.0"
+serde.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["macros", "sync", "time"] }
+wellfed-client.workspace = true
+wellfed-connect.workspace = true
+wellfed-formats.workspace = true
+wellfed-model.workspace = true
+wellfed-session.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt"] }
+wellfed-feeder-sim = { workspace = true, features = ["harness"] }
+
+[lints]
+workspace = true
+

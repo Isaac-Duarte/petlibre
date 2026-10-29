@@ -1,4 +1,4 @@
-.PHONY: help check check-rust check-deps check-cross check-bench-board check-virtual-feeder check-docs check-fixtures ui check-web sqlx-prepare server-dist server-image check-server-release
+.PHONY: help check check-rust check-deps check-cross check-bench-board check-virtual-feeder check-docs check-fixtures ui check-web check-app sqlx-prepare server-dist server-image check-server-release
 
 help:
 	@echo "check: formatting, Clippy, Rust tests, cross-builds, simulator, repository checks"
@@ -7,6 +7,7 @@ help:
 	@echo "check-fixtures: optional reference-binary/SDK evidence; fails if unavailable"
 	@echo "ui: build the web page (pnpm in src/web/) that wellfed-dashboard embeds with --features ui"
 	@echo "check-web: web types, unit tests, build, then the page end to end against wellfed-bench --ui"
+	@echo "check-app: the Android app's bindings and tokens unchanged, format, analysis, widget tests and a debug APK (needs Flutter)"
 	@echo "sqlx-prepare: regenerate the server store's query metadata (.sqlx/) after changing a query or migration"
 	@echo "server-dist / server-image: the server's static release binaries in dist/server/ and its container image (docker or podman)"
 	@echo "check-server-release: the release check against dist/server/ and the image"
@@ -86,6 +87,22 @@ check-web: ui
 	cargo test --locked $(PAGE_CRATES) --features ui
 	cargo build --locked $(PAGE_CRATES) --features ui
 	pnpm -C src/web e2e
+
+# The Android app (src/app/). Its Dart bindings and theme tokens are
+# generated from Rust and committed, so a regeneration must leave them
+# unchanged. The bridge crate's own tests run in `check-rust`. The APK is
+# built for arm64 phones and x86_64 emulators only.
+APP = src/app
+APP_GENERATED = $(APP)/lib/src/rust $(APP)/rust/src/frb_generated.rs $(APP)/lib/theme/tokens.g.dart
+check-app:
+	cd $(APP) && flutter_rust_bridge_codegen generate
+	cargo test --locked -p wellfed-app-bridge --test tokens
+	@test -z "$$(git status --porcelain -- $(APP_GENERATED))" || \
+		{ git status --short -- $(APP_GENERATED); echo "generated app files are stale: commit the regenerated ones"; exit 1; }
+	cd $(APP) && dart format --set-exit-if-changed lib test
+	cd $(APP) && flutter analyze
+	cd $(APP) && flutter test
+	cd $(APP) && flutter build apk --debug --target-platform android-arm64,android-x64
 
 # The server store's queries are checked at build time against committed
 # metadata, so no build needs a database. After changing a query or a

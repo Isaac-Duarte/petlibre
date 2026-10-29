@@ -1,0 +1,8 @@
+# Cargokit builds the bridge for Android with rustup's `stable` unless told
+# otherwise; this pins the repository's toolchain instead. It must match
+# rust-toolchain.toml (a bridge test checks).
+cargo:
+  debug:
+    toolchain: 1.99.1
+  release:
+    toolchain: 1.99.1

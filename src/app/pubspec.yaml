@@ -1,0 +1,49 @@
+name: wellfed
+description: "Wellfed: set up, watch and feed from your own feeders, with no cloud."
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.13.7
+
+dependencies:
+  device_info_plus: 13.3.0
+  flutter:
+    sdk: flutter
+  flutter_reactive_ble: 5.6.0
+  flutter_rust_bridge: 2.13.0
+  flutter_secure_storage: 11.2.0
+  flutter_svg: 2.3.0
+  freezed_annotation: 3.1.0
+  go_router: 18.1.1
+  network_info_plus: 8.2.2
+  nsd: 5.0.1
+  path_provider: 2.1.6
+  permission_handler: 13.0.2
+  wellfed_app_bridge:
+    path: rust_builder
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: 6.0.0
+  freezed: 4.0.3
+  build_runner: 2.17.1
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/renders/
+  fonts:
+    - family: Inter
+      fonts:
+        - asset: assets/fonts/Inter-Regular.ttf
+        - asset: assets/fonts/Inter-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/Inter-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/Inter-ExtraBold.ttf
+          weight: 800
+    - family: JetBrains Mono
+      fonts:
+        - asset: assets/fonts/JetBrainsMono-Regular.ttf

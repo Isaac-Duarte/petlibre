@@ -15,6 +15,8 @@ We develop on Linux. You need:
 
 Full firmware images need more: the pinned vendor SDK and its compiler. See [firmware builds](firmware-builds.md).
 
+The Android app needs more too. See [the app](../../src/app/README.md#toolchain).
+
 ## Set up
 
 1. Clone the repository and open its root.
@@ -71,7 +73,8 @@ The repository is self-contained. SDK and toolchain copies and fixtures resolve 
 | `check-docs` | Local Markdown links, portability checks, no Python under `src/`, and the source rules (raw output writers, card ids) |
 | `check-fixtures` | The optional binary and SDK evidence suite. Missing inputs or skips fail ([fixtures](fixtures.md)) |
 | `check-web` | The web frontends: ESLint, Prettier, licenses, types, unit tests, the build and Playwright. Needs Node and pnpm ([TypeScript standard](typescript.md)) |
-| `check` | Every contributor check except `check-fixtures` and `check-web` |
+| `check-app` | The Android app: its generated bindings and theme tokens unchanged, `dart format`, `flutter analyze`, widget tests and a debug APK. Needs Flutter and the Android SDK ([the app](../../src/app/README.md)) |
+| `check` | Every contributor check except `check-fixtures`, `check-web` and `check-app` |
 
 Notes:
 

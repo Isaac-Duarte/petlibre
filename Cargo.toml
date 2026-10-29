@@ -9,6 +9,7 @@ members = [
     "src/tools/xtask",
     "src/firmware/wellfed/*", "src/client/wellfed-client",
     "src/firmware/bench/wellfed-bench-at",
+    "src/app/rust",
 ]
 # The cargo-fuzz targets build on nightly-only sanitizer flags, so they keep
 # their own workspace and lockfile (`cargo xtask fuzz`). The bench board's

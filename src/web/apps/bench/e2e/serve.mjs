@@ -77,7 +77,11 @@ chmodSync(join(root, "wellfed-flash"), 0o755);
 
 if (mode === "fixtures") writeFixtures();
 else if (mode === "writing") write("private/verification/flash-e2e-05-plan.json", "{}");
-else write("private/verification/flash-e2e-short-plan.json", "{}");
+else {
+  // The fixtures as well, so a run's drawer can be open when a write starts.
+  writeFixtures();
+  write("private/verification/flash-e2e-short-plan.json", "{}");
+}
 
 // The server points the user's `wellfed` CLI at itself through
 // $XDG_RUNTIME_DIR and ~/.local/state, and refuses to start beside another

@@ -242,6 +242,38 @@ test.describe("a write's life on the idle bench", () => {
     await expect(old).toContainText("cleared");
     expect(Number(await old.evaluate((row) => getComputedStyle(row).opacity))).toBeLessThan(1);
   });
+
+  test("a run's drawer keeps the record it read when a write starts", async ({ page }) => {
+    test.setTimeout(60_000);
+    await page.goto(`${IDLE}/#/tests/itest-e2e-03`);
+    const drawer = page.getByRole("dialog", { name: "Run itest-e2e-03" });
+    await expect(drawer).toContainText("The feeder went silent");
+
+    expect(await ended(client(["on"]))).toBe(0);
+    const write = client([
+      "flash-execute",
+      "flash-e2e-short",
+      "--source",
+      "s",
+      "--target",
+      "t",
+      "--expected-plan-sha256",
+      "00",
+    ]);
+    const banner = page.getByRole("alert", { name: "UART write in progress" });
+    await expect(banner).toContainText("3 of 19 sectors verified");
+    // Past the drawer's own reaction to the state, while the 3 s write runs.
+    await page.waitForTimeout(1_000);
+    await expect(banner).toBeVisible();
+    // Read once, not retried: a retry would wait out the write and pass on
+    // the record read again after it.
+    const during = await drawer.innerText();
+    expect(during).toContain("The feeder went silent");
+    expect(during).not.toContain("Deferred until the write ends");
+    await expect(banner).toHaveCount(0, { timeout: 20_000 });
+    await ended(write);
+    await expect(drawer).toContainText("The feeder went silent");
+  });
 });
 
 test.describe("at phone width", () => {

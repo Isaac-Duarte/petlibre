@@ -115,6 +115,9 @@ fn cursor(root: &std::path::Path) -> Option<DeviceCursor> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_session_reads_status_sets_the_clock_and_resumes_after_its_cursor() {
+    if crate::tests::run_alone() {
+        return;
+    }
     let _one = ONE_SERVER.lock().await;
     let feeder = simulator();
     let checkout = checkout();
@@ -215,6 +218,9 @@ async fn the_session_reads_status_sets_the_clock_and_resumes_after_its_cursor() 
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_uart_job_pauses_the_session_and_it_opens_again_after() {
+    if crate::tests::run_alone() {
+        return;
+    }
     let _one = ONE_SERVER.lock().await;
     let feeder = simulator();
     let checkout = checkout();
@@ -265,6 +271,9 @@ async fn a_uart_job_pauses_the_session_and_it_opens_again_after() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_capture_yields_the_port_to_a_job_and_comes_back() {
+    if crate::tests::run_alone() {
+        return;
+    }
     let _one = ONE_SERVER.lock().await;
     let checkout = checkout();
     checkout.banner(&format!(
@@ -326,6 +335,9 @@ async fn the_capture_yields_the_port_to_a_job_and_comes_back() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn job_results_write_the_ledger_and_the_banner_disputes_them() {
+    if crate::tests::run_alone() {
+        return;
+    }
     let _one = ONE_SERVER.lock().await;
     let checkout = checkout();
     let root = checkout.root();
@@ -410,6 +422,9 @@ async fn job_results_write_the_ledger_and_the_banner_disputes_them() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_seed_takes_the_operator_s_word_when_the_inspection_names_no_build() {
+    if crate::tests::run_alone() {
+        return;
+    }
     let _one = ONE_SERVER.lock().await;
     let checkout = checkout();
     let server = Running::start(checkout.open_at(None));
@@ -458,6 +473,9 @@ async fn a_seed_takes_the_operator_s_word_when_the_inspection_names_no_build() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_read_lost_with_its_session_goes_once_more_and_a_write_comes_back_uncertain() {
+    if crate::tests::run_alone() {
+        return;
+    }
     let _one = ONE_SERVER.lock().await;
     let feeder = simulator();
     let relay = Relay::start(feeder.address).await;
@@ -516,6 +534,9 @@ async fn a_read_lost_with_its_session_goes_once_more_and_a_write_comes_back_unce
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_install_push_closes_the_session_until_it_ends_and_no_clock_sync_leaves_the_clock() {
+    if crate::tests::run_alone() {
+        return;
+    }
     let _one = ONE_SERVER.lock().await;
     let feeder = simulator();
     let checkout = checkout();
@@ -566,6 +587,9 @@ async fn an_install_push_closes_the_session_until_it_ends_and_no_clock_sync_leav
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_capture_never_starts_under_a_job_however_the_starts_interleave() {
+    if crate::tests::run_alone() {
+        return;
+    }
     let _one = ONE_SERVER.lock().await;
     let checkout = checkout();
     let server = Running::start(checkout.open_at(None));
@@ -614,6 +638,9 @@ async fn the_capture_never_starts_under_a_job_however_the_starts_interleave() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_write_that_stops_leaves_its_bank_unknown_and_a_seed_waits_for_no_job() {
+    if crate::tests::run_alone() {
+        return;
+    }
     let _one = ONE_SERVER.lock().await;
     let checkout = checkout();
     let root = checkout.root();
@@ -662,6 +689,9 @@ async fn a_write_that_stops_leaves_its_bank_unknown_and_a_seed_waits_for_no_job(
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_server_points_the_user_s_clients_at_itself_and_withdraws_when_it_quits() {
+    if crate::tests::run_alone() {
+        return;
+    }
     let _one = ONE_SERVER.lock().await;
     let pointers = tempfile::tempdir().unwrap();
     let (runtime, state) = (pointers.path().join("run"), pointers.path().join("state"));
@@ -746,6 +776,9 @@ impl Running {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn after_an_epoch_change_the_history_is_the_new_epoch_s_and_a_feed_reports_its_own_events() {
+    if crate::tests::run_alone() {
+        return;
+    }
     let _one = ONE_SERVER.lock().await;
     let feeder = simulator();
     let checkout = checkout();

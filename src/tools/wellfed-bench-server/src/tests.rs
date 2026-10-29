@@ -24,6 +24,38 @@ mod feeder;
 /// when they share a process.
 pub(crate) static ONE_SERVER: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+/// Set in the process [`run_alone`] starts, which runs the test itself.
+const ALONE: &str = "WELLFED_BENCH_SERVER_ALONE";
+
+/// Whether the calling test is done, having run in a process of its own.
+///
+/// A test that points descriptors 1 and 2 at a pipe or a file takes them
+/// from the whole process, and under plain `cargo test` the harness itself
+/// writes there from other threads: its progress lands in the job streams
+/// and terminals the tests read. No lock keeps the harness out, so each such
+/// test runs again as the only test of a fresh process of this binary, and
+/// the first one just waits for it. Under cargo-nextest, or one test thread,
+/// every test already has the descriptors to itself.
+pub(crate) fn run_alone() -> bool {
+    if std::env::var_os(ALONE).is_some() || std::env::var_os("NEXTEST").is_some() {
+        return false;
+    }
+    // The harness names a test's thread after it, unless it runs the tests
+    // one at a time on its main thread.
+    let current = std::thread::current();
+    let Some(name) = current.name().filter(|name| *name != "main") else {
+        return false;
+    };
+
+    let status = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([name, "--exact", "--test-threads=1", "--nocapture"])
+        .env(ALONE, "1")
+        .status()
+        .unwrap();
+    assert!(status.success(), "{name} failed in a process of its own");
+    true
+}
+
 /// A checkout with a bench config and a stand-in flash client:
 /// - `read observe` holds the port for `hold` seconds; a capture named
 ///   `burst` first prints 3000 lines on stderr;
@@ -202,6 +234,9 @@ async fn state_until(
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_job_streams_its_output_and_ends_with_its_code() {
+    if crate::tests::run_alone() {
+        return;
+    }
     let _one = ONE_SERVER.lock().await;
     let checkout = Checkout::new(0.5);
     // A job number an earlier server used is never used again.
@@ -234,6 +269,9 @@ async fn a_job_streams_its_output_and_ends_with_its_code() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_second_job_is_refused_while_one_runs() {
+    if crate::tests::run_alone() {
+        return;
+    }
     let _one = ONE_SERVER.lock().await;
     let checkout = Checkout::new(3.0);
     let server = Running::start(checkout.open());
@@ -262,6 +300,9 @@ async fn a_second_job_is_refused_while_one_runs() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_server_parses_every_job_and_refuses_what_clap_refuses() {
+    if crate::tests::run_alone() {
+        return;
+    }
     let _one = ONE_SERVER.lock().await;
     let checkout = Checkout::new(0.1);
     let server = Running::start(checkout.open());
@@ -324,6 +365,9 @@ async fn the_server_parses_every_job_and_refuses_what_clap_refuses() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_cancel_interrupts_the_flash_client_and_the_cleanup_cuts_power() {
+    if crate::tests::run_alone() {
+        return;
+    }
     let _one = ONE_SERVER.lock().await;
     let checkout = Checkout::new(30.0);
     let server = Running::start(checkout.open());
@@ -363,6 +407,9 @@ async fn a_cancel_interrupts_the_flash_client_and_the_cleanup_cuts_power() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_cancel_mid_write_only_interrupts_the_flash_client_and_waits_for_it() {
+    if crate::tests::run_alone() {
+        return;
+    }
     let _one = ONE_SERVER.lock().await;
     let checkout = Checkout::new(0.1);
     let root = checkout.root();
@@ -408,6 +455,9 @@ async fn a_cancel_mid_write_only_interrupts_the_flash_client_and_waits_for_it() 
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_burst_of_output_streams_without_blocking() {
+    if crate::tests::run_alone() {
+        return;
+    }
     let _one = ONE_SERVER.lock().await;
     let checkout = Checkout::new(0.1);
     let server = Running::start(checkout.open());
@@ -451,6 +501,9 @@ impl Board for PanicsOnce {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_panicking_job_ends_and_the_next_one_runs() {
+    if crate::tests::run_alone() {
+        return;
+    }
     let _one = ONE_SERVER.lock().await;
     let checkout = Checkout::new(0.1);
     let fake = checkout.board.clone();
@@ -478,6 +531,9 @@ async fn a_panicking_job_ends_and_the_next_one_runs() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_relay_poll_skips_while_a_job_runs() {
+    if crate::tests::run_alone() {
+        return;
+    }
     let _one = ONE_SERVER.lock().await;
     let checkout = Checkout::new(2.0);
     let server = Running::start(checkout.open());
@@ -501,6 +557,9 @@ async fn the_relay_poll_skips_while_a_job_runs() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_job_posted_as_the_last_one_ends_is_never_busy() {
+    if crate::tests::run_alone() {
+        return;
+    }
     let _one = ONE_SERVER.lock().await;
     let checkout = Checkout::new(0.1);
     let server = Running::start(checkout.open());
@@ -514,6 +573,9 @@ async fn a_job_posted_as_the_last_one_ends_is_never_busy() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_client_detaches_and_another_attaches_from_the_first_line() {
+    if crate::tests::run_alone() {
+        return;
+    }
     let _one = ONE_SERVER.lock().await;
     let checkout = Checkout::new(1.0);
     let server = Running::start(checkout.open());
@@ -551,6 +613,9 @@ async fn a_client_detaches_and_another_attaches_from_the_first_line() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn quitting_cancels_the_job_waits_for_its_cleanup_then_frees_the_lease() {
+    if crate::tests::run_alone() {
+        return;
+    }
     let _one = ONE_SERVER.lock().await;
     let checkout = Checkout::new(30.0);
     let root = checkout.root();

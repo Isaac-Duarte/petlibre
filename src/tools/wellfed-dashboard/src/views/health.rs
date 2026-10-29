@@ -203,11 +203,12 @@ pub(super) fn bindings(cfg: &ts_rs::Config) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use serde_json::json;
+    use wellfed_formats::bench::CAPTURES;
+    use wellfed_formats::bench::live::Uart;
     use wellfed_formats::canonical::sha256;
 
     use super::*;
     use crate::views::tests::{json, live_sources, sources};
-    use wellfed_formats::bench::live::Uart;
 
     #[test]
     fn the_banner_scan_stops_while_the_flash_client_holds_the_uart() {
@@ -226,7 +227,6 @@ mod tests {
         live.state.send_modify(|state| state.uart = Uart::Idle);
         assert!(installed(&sources).is_some());
     }
-    use wellfed_formats::bench::CAPTURES;
 
     #[test]
     fn health_reads_the_last_banner() {

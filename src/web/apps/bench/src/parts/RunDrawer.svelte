@@ -1,6 +1,7 @@
 <script lang="ts">
   // One run's record and the evidence beside it. Opened from the matrix by
   // its route, so a run's link can be shared; closing it goes back.
+  import { untrack } from "svelte";
   import { Deferred, bench, type RunView } from "@wellfed/api";
   import { Badge, Command, Dialog, Empty, bytes, duration, fullTime } from "@wellfed/ui";
   import { app } from "../lib/bench.svelte";
@@ -12,17 +13,26 @@
 
   /** `undefined` while reading, `null` when there is no record. */
   let run = $state<RunView | null | "deferred" | undefined>(undefined);
+  /** The run `run` holds a record of, so a write that starts later keeps it. */
+  let loaded = $state<string | null>(null);
   // Read again when the flash client lets go of the UART.
   const held = $derived(holdsUart(app.state?.uart));
 
   $effect(() => {
     const wanted = name;
-    run = held ? "deferred" : undefined;
-    if (held) return;
+    if (held) {
+      // A record already read stays: the write only stops new reads.
+      const kept = untrack(() => loaded === wanted && run !== null && run !== undefined && run !== "deferred");
+      if (!kept) run = "deferred";
+      return;
+    }
+    run = untrack(() => (loaded === wanted ? run : undefined));
     bench
       .run(wanted)
       .then((view) => {
-        if (wanted === name) run = view;
+        if (wanted !== name) return;
+        run = view;
+        loaded = view ? wanted : null;
       })
       .catch((error: unknown) => {
         if (wanted === name) run = error instanceof Deferred ? "deferred" : null;

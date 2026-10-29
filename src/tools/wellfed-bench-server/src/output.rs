@@ -298,6 +298,9 @@ mod tests {
 
     #[test]
     fn closing_writes_out_every_line_then_prints_straight_to_the_terminal() {
+        if crate::tests::run_alone() {
+            return;
+        }
         let written = on_a_terminal(|| {
             let output = attach().unwrap();
             print("a job's last line");
@@ -320,6 +323,9 @@ mod tests {
 
     #[test]
     fn a_stopped_pump_puts_the_terminal_back_and_waits_on_nothing() {
+        if crate::tests::run_alone() {
+            return;
+        }
         let written = on_a_terminal(|| {
             let output = attach().unwrap();
 
@@ -335,6 +341,9 @@ mod tests {
 
     #[test]
     fn a_mark_after_a_partial_line_still_counts() {
+        if crate::tests::run_alone() {
+            return;
+        }
         let written = on_a_terminal(|| {
             let output = attach().unwrap();
             let started = Instant::now();

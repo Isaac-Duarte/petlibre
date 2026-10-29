@@ -23,6 +23,7 @@ Installing on a stock feeder, invites, schedules, history, settings and servers 
 - **The Rust half checks what the feeder checks.** Dart moves bytes and shows what the session says. A feed goes out once; a feed whose answer never came is shown as "may have run" and never sent again.
 - **Images** are links to the committed renders in `assets/renders/`, and the launcher icon links to `assets/brand/android/`.
 - **The client secret never leaves the phone.** Android backup is off, so a new phone pairs again.
+- **Every socket follows the Wi-Fi network.** Android keeps mobile data as the default network while the Wi-Fi has no internet, so `MainActivity` binds the app to Wi-Fi. A VPN that apps cannot bypass (Tailscale, for one) refuses that: exclude Wellfed from it.
 
 ## Toolchain
 

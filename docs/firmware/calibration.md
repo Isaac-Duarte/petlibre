@@ -95,7 +95,7 @@ Record per run the hopper level, each feed's `completed`, `outlet_breaks` and `d
 ## Still to check
 
 1. After an install, `wellfed calibrate` answers with `"portion_mg": null`, `"bowl": "single"` and a phase.
-2. The weighing session's low-hopper and phase-effect runs (step 3 and 4).
+2. A ten-portion low-hopper run, if the owner wants one: the run-down below already shows portions near 7 g until the last few.
 3. The stored weight survives an install, and bank 0's role install leaves sectors 34–35 alone.
 
 ## Evidence
@@ -106,4 +106,6 @@ Record per run the hopper level, each feed's `completed`, `outlet_breaks` and `d
 - **Phase across a power cut.** Observed (same session): feed 57 was cut by relay 1 mid-drive and never resent. The next boot logged an uncertain `Fed` (outcome 5) and phase `unknown`. Feed 58 homed at 3,301 ms, completed 1 and ended `at_mark`, and the Portions statistics read `homed 1`.
 - **A feed after a mid-drive cut.** Observed (October 27, the sustained bench run): the first feed after a cut saw two mark edges for one credited portion, its first edge at 3.1 s against the usual 7.9 s. That is likely the rotor finishing the cut portion; the weighing session should measure it.
 - **Weighing.** Observed (October 29, one dry food, hopper refilled between runs): two 5-portion feeds, 5 of 5 each with drives of 48.0 and 48.6 s, dropped 71.1 g, 7.11 g a portion; an earlier 3-portion feed dropped 21.3 g, 7.10 g a portion. Their outlet beam broke 11 and 6 times, and 2 times for the 3 portions, so beam breaks do not count portions. `wellfed calibrate --weighed 71.1 --portions 10` stored 7,110 mg, which read the same after a reboot.
+- **Phase effect.** Observed (October 29, hopper below the food beam): a 3-portion feed cancelled at 5.0 s credited nothing and left the phase `unknown`; its drop was discarded. The next 1-portion feed homed at 4.6 s, credited its portion at 12.8 s (a 14.1 s drive) and dropped 6.6 g, 93 % of a portion. So the part-turned compartment added nothing to the homed portion.
+- **Low hopper.** Observed (October 29): eight 1-portion feeds from a hand-emptied hopper dropped 1.7, 11.4, 6.5, 7.0, 6.0, 3.0, 1.9 and 0 g while the food beam read empty ([optical inputs](optical-inputs.md#evidence)).
 - **Host and simulation.** Modeled (October 26): phase from the journal, the homing window and deadline, the compile-time bound (8.0 s of forward drive against the 9.1 s empty mark period), the bowl refusal, the store, the wire messages and the Portions statistics.

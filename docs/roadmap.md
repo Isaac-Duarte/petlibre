@@ -28,7 +28,7 @@ This page tracks what works today and what comes next. It covers the replacement
 | Dispense button | Works | Respects the child lock. |
 | Feed from the CLI | Works | |
 | Portion calibration | Experimental | |
-| Jam and sensor fault handling | Partial | A jam, a blocked outlet or a sensor fault ends the feed by name, never retried, and shows in the status and history. Simulated jams on the feeder end as `jammed` and `mark_stuck`; real jams with food wait for a bench check. |
+| Jam and sensor fault handling | Works | A jam, a blocked outlet or a sensor fault ends the feed by name, never retried, and shows in the status and history. Simulated jams on the feeder end as `jammed` and `mark_stuck`, and a blocked outlet stops the motor within about a second; kibble pressed into the rotor by hand did not jam it. |
 | Schedules | Works | Up to ten plans, run on the feeder with no server. |
 | Feeding history | Partial | `wellfed feeds` lists each feed the feeder keeps, across reboots; a long history needs the server. |
 | Food level | Works | The status shows the hopper as the last feed read it. A feed on an empty hopper still runs, as stock's does, and its history entry says the hopper read empty. Checked on the feeder with and without food. The food beam is a low warning, reading empty while about five portions are still left. |

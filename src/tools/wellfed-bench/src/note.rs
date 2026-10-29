@@ -3,6 +3,10 @@
 //! page and the console. A timer that expects a UART or device log line,
 //! or a device event, is settled by the server as it arrives, or marked
 //! missed once its window passes.
+//!
+//! Text that starts with `-`, such as a step "- flash bank 1", goes after
+//! `--`: `wellfed-bench note step -- "- flash bank 1"`. The MCP tools build
+//! the same arguments directly, with no command line to parse.
 
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -13,14 +17,14 @@ use jiff::{SignedDuration, Timestamp, Zoned, civil};
 use wellfed_bench_server::Client;
 use wellfed_formats::bench::notes::{Body, Expect, Note, Verdict, WINDOW};
 
-#[derive(Debug, Args)]
+#[derive(Debug, Clone, PartialEq, Args)]
 pub(crate) struct NoteArgs {
     #[command(subcommand)]
-    what: What,
+    pub(crate) what: What,
 }
 
-#[derive(Debug, Subcommand)]
-enum What {
+#[derive(Debug, Clone, PartialEq, Subcommand)]
+pub(crate) enum What {
     /// The step under way, replacing the last.
     Step { text: String },
     /// The steps after it, replacing the list.
@@ -33,46 +37,46 @@ enum What {
     Evidence(EvidenceArgs),
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Clone, PartialEq, Args)]
 #[command(group(ArgGroup::new("when").args(["at", "after", "clear"]).required(true)))]
 pub(crate) struct TimerArgs {
-    name: String,
+    pub(crate) name: String,
     /// Due at this local time, the next time it comes.
     #[arg(long, value_name = "HH:MM")]
-    at: Option<String>,
+    pub(crate) at: Option<String>,
     /// Due this long from now, such as `90s`, `5m` or `1h30m`.
     #[arg(long = "in", value_name = "DURATION")]
-    after: Option<String>,
+    pub(crate) after: Option<String>,
     /// Drop the timer.
     #[arg(long)]
-    clear: bool,
+    pub(crate) clear: bool,
     /// A UART or device log line containing this text, such as `PLSCH1 fire`.
-    #[arg(long, conflicts_with_all = ["expect_event", "clear"])]
-    expect: Option<String>,
+    #[arg(long, allow_hyphen_values = true, conflicts_with_all = ["expect_event", "clear"])]
+    pub(crate) expect: Option<String>,
     /// A device event of this kind, such as `boot` or `fed`.
     #[arg(long, value_name = "KIND", conflicts_with = "clear")]
-    expect_event: Option<String>,
+    pub(crate) expect_event: Option<String>,
     /// How long after the due time the expectation may still arrive
     /// (default 2m); it counts from the timer's start.
     #[arg(long, value_name = "DURATION", conflicts_with = "clear")]
-    window: Option<String>,
+    pub(crate) window: Option<String>,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Clone, PartialEq, Args)]
 #[command(group(ArgGroup::new("verdict").args(["pass", "fail"]).required(true)))]
 pub(crate) struct EvidenceArgs {
     /// The work the evidence is for, in the operator's own words.
-    #[arg(long)]
-    card: String,
+    #[arg(long, allow_hyphen_values = true)]
+    pub(crate) card: String,
     /// A file or directory inside private/.
-    path: PathBuf,
+    pub(crate) path: PathBuf,
     #[arg(long)]
-    pass: bool,
+    pub(crate) pass: bool,
     #[arg(long)]
-    fail: bool,
+    pub(crate) fail: bool,
     /// What it shows.
-    #[arg(long, default_value = "")]
-    text: String,
+    #[arg(long, default_value = "", allow_hyphen_values = true)]
+    pub(crate) text: String,
 }
 
 /// `note`: post it, and say what the server kept.
@@ -83,22 +87,6 @@ pub(crate) async fn note(client: &Client, root: &Path, args: NoteArgs) -> anyhow
     let note = client.note(&body).await?;
     wellfed_rig::say!("Noted: {}", describe(&note));
     Ok(0)
-}
-
-/// A note's words after `note`, as the MCP tools build them, parsed as the
-/// command line is.
-pub(crate) fn from_words(words: &[String]) -> anyhow::Result<NoteArgs> {
-    #[derive(clap::Parser)]
-    #[command(name = "note", no_binary_name = true)]
-    struct Words {
-        #[command(flatten)]
-        note: NoteArgs,
-    }
-
-    let rest = words.strip_prefix(&["note".to_string()]).unwrap_or(words);
-    let parsed = <Words as clap::Parser>::try_parse_from(rest)
-        .map_err(|error| anyhow::anyhow!("{}", error.render()))?;
-    Ok(parsed.note)
 }
 
 /// The note `args` asks for, as of `now`, with a path taken from `cwd`.
@@ -322,6 +310,39 @@ mod tests {
         };
         assert_eq!(due, at + 23.5 * 3600.0);
         assert_eq!(until, due + 600.0);
+    }
+
+    #[test]
+    fn text_that_starts_with_a_dash_goes_after_a_double_dash() {
+        let (_dir, root) = checkout();
+
+        let step = body(
+            parse(&["step", "--", "- flash bank 1"]),
+            &root,
+            &root,
+            &noon(),
+        )
+        .unwrap();
+        let next = body(
+            parse(&["next", "--", "- boot", "- smoke tier"]),
+            &root,
+            &root,
+            &noon(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            step,
+            Body::Step {
+                text: "- flash bank 1".into()
+            }
+        );
+        assert_eq!(
+            next,
+            Body::Next {
+                steps: vec!["- boot".into(), "- smoke tier".into()]
+            }
+        );
     }
 
     #[test]

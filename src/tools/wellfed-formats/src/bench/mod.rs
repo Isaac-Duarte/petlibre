@@ -76,12 +76,14 @@ impl Paths {
 }
 
 /// A session name is one plain path component, so its evidence stays
-/// inside the directory it is named under.
+/// inside the directory it is named under. It never starts with `-`, so no
+/// command line reads it as a flag.
 pub fn plain_name(name: &str) -> bool {
     let mut components = Path::new(name).components();
     matches!(components.next(), Some(Component::Normal(_)))
         && components.next().is_none()
         && !name.contains(['/', '\\'])
+        && !name.starts_with('-')
 }
 
 /// `path` under `root`, as the progress document and the page record it.

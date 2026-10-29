@@ -17,6 +17,7 @@ use wellfed_formats::bench::live::{
 use wellfed_relay::{AtBoard, Board, FakeBoard, POWER, STRAP, Switch};
 
 use super::*;
+use crate::stopping::Ask;
 
 mod feeder;
 
@@ -68,12 +69,25 @@ pub(crate) fn run_alone() -> bool {
         return false;
     };
 
-    let status = std::process::Command::new(std::env::current_exe().unwrap())
+    let ran = std::process::Command::new(std::env::current_exe().unwrap())
         .args([name, "--exact", "--test-threads=1", "--nocapture"])
         .env(ALONE, "1")
-        .status()
+        .output()
         .unwrap();
-    assert!(status.success(), "{name} failed in a process of its own");
+    let stdout = String::from_utf8_lossy(&ran.stdout);
+    let stderr = String::from_utf8_lossy(&ran.stderr);
+    assert!(
+        ran.status.success(),
+        "{name} failed in a process of its own:\n{stdout}\n{stderr}"
+    );
+    // A name that matched nothing would pass having run nothing. The
+    // harness's closing summary may go to the test's pipe, never to this
+    // output, so the count it starts with and the test's own line say it.
+    let started = format!("test {name} ... ");
+    assert!(
+        stdout.contains("\nrunning 1 test\n") && stdout.contains(&started),
+        "{name} did not run exactly once in its own process:\n{stdout}\n{stderr}"
+    );
     true
 }
 
@@ -176,12 +190,26 @@ struct Running {
 
 impl Running {
     fn start(server: Server) -> Self {
+        Self::start_asked(server, None)
+    }
+
+    /// A server that also stops as its stopper decides, from `asked`.
+    fn start_asked(server: Server, asked: Option<mpsc::UnboundedReceiver<Ask>>) -> Self {
         let client = Client::at(server.socket().to_path_buf());
         let root = server.socket().ancestors().nth(2).unwrap().to_path_buf();
         let shared = server.shared();
         let (stop, stopped) = oneshot::channel();
-        let done = tokio::spawn(server.run(async {
-            let _ = stopped.await;
+        let stopper = server.stopper();
+        let done = tokio::spawn(server.run(async move {
+            match asked {
+                Some(asked) => tokio::select! {
+                    () = stopper.until_stop(asked) => {}
+                    _ = stopped => {}
+                },
+                None => {
+                    let _ = stopped.await;
+                }
+            }
         }));
         Self {
             stop: Some(stop),
@@ -473,6 +501,85 @@ async fn a_cancel_mid_write_only_interrupts_the_flash_client_and_waits_for_it() 
     // A stopped update is never followed by a boot: the feeder stays on.
     assert!(checkout.board.state()[0]);
     server.quit().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn with_every_asker_gone_the_server_keeps_serving() {
+    if crate::tests::run_alone() {
+        return;
+    }
+    let _one = ONE_SERVER.lock().await;
+    let checkout = Checkout::new(0.1);
+    let (asks, asked) = mpsc::unbounded_channel();
+    let server = Running::start_asked(checkout.open(), Some(asked));
+
+    // As when the full-screen console's thread ends and its sender drops.
+    drop(asks);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    assert!(!server.done.is_finished());
+    assert_eq!(server.state().await.server.phase, Phase::Serving);
+    let id = server.submit(&["capture", "c1"]).await.unwrap();
+    assert_eq!(follow(&server.client, id).await.0.code, 0);
+    server.quit().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sigterm_during_a_write_lets_the_job_end_then_stops() {
+    if crate::tests::run_alone() {
+        return;
+    }
+    let _one = ONE_SERVER.lock().await;
+    let checkout = Checkout::new(0.1);
+    let root = checkout.root();
+    fs::write(root.join("private/verification/u1-plan.json"), "{}").unwrap();
+    checkout.board.lock().on[1] = true;
+    let (asks, asked) = mpsc::unbounded_channel();
+    let mut server = Running::start_asked(checkout.open(), Some(asked));
+
+    let id = server
+        .submit(&[
+            "flash-execute",
+            "u1",
+            "--source",
+            "s",
+            "--target",
+            "t",
+            "--expected-plan-sha256",
+            "00",
+        ])
+        .await
+        .unwrap();
+    state_until(&server, "the write", |state| {
+        matches!(state.uart, Uart::Writing { .. })
+    })
+    .await;
+    asks.send(Ask::Terminate).unwrap();
+    asks.send(Ask::Terminate).unwrap();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // The writer was never signalled, and the server still serves.
+    assert!(!root.join("update-signal").exists());
+    assert!(!server.done.is_finished());
+    let state = server.state().await;
+    assert!(
+        matches!(state.uart, Uart::Writing { .. }),
+        "{:?}",
+        state.uart
+    );
+
+    // The stand-in writes until a signal: the operator cancels it, as a
+    // real write would end on its own, and once the job ends the server
+    // stops by itself.
+    server.client.cancel(id).await.unwrap();
+    let (end, _) = follow(&server.client, id).await;
+    assert_eq!(end.code, 1);
+    tokio::time::timeout(Duration::from_secs(20), &mut server.done)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    server.stop.take();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

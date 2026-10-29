@@ -9,6 +9,11 @@
 //! host spends no more than that on it during a write. `q` and Ctrl+C
 //! (which raw mode delivers as a key, not a signal) ask for the same stop
 //! as SIGINT: cancel the job, wait for its cleanup, then release the bench.
+//! While the flash client holds the UART, the first press only shows the
+//! confirmation in the footer, and a second within 5 s stops.
+//!
+//! Should the console end on its own (a terminal error, a panic), it tells
+//! the server, which puts its lines back on the terminal and keeps serving.
 
 mod view;
 
@@ -27,6 +32,7 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use tokio::sync::mpsc::UnboundedSender;
 use wellfed_bench_server::Store;
+use wellfed_bench_server::stopping::{Ask, CONFIRM_PROMPT, Confirm, Held, Press};
 use wellfed_formats::bench::live::Uart;
 
 use view::Screen;
@@ -50,36 +56,98 @@ fn tty() -> io::Result<File> {
     File::options().read(true).write(true).open("/dev/tty")
 }
 
-/// The running console.
+/// The running console. Dropped without [`Self::finish`], as when the
+/// main thread panics, it still closes the screen and gives the terminal
+/// back out of raw mode.
 pub(crate) struct Tui {
     done: Arc<AtomicBool>,
-    thread: JoinHandle<io::Result<()>>,
+    thread: Option<JoinHandle<io::Result<()>>>,
 }
 
 impl Tui {
     /// Take over the terminal and draw `store` until [`Self::finish`];
-    /// `q` or Ctrl+C sends on `quit`.
+    /// a confirmed `q` or Ctrl+C sends [`Ask::Quit`] on `asks`, and a
+    /// console that ends on its own [`Ask::ConsoleEnded`].
     pub(crate) fn start(
         store: Store,
         lines: Receiver<String>,
-        quit: UnboundedSender<()>,
+        asks: UnboundedSender<Ask>,
     ) -> io::Result<Self> {
         let tty = tty()?;
         let done = Arc::new(AtomicBool::new(false));
         let finished = Arc::clone(&done);
         let thread = std::thread::Builder::new()
             .name("console".into())
-            .spawn(move || run(tty, &store, &lines, &quit, &finished))?;
-        Ok(Self { done, thread })
+            .spawn(move || {
+                // Dropped last, after the screen is closed, a panic included.
+                let _ended = Ended {
+                    asks: asks.clone(),
+                    done: Arc::clone(&finished),
+                };
+                run(tty, &store, &lines, &asks, &finished)
+            })?;
+        Ok(Self {
+            done,
+            thread: Some(thread),
+        })
     }
 
     /// Close the screen, after the server has stopped, and give the
     /// terminal back with the log's last lines on it.
-    pub(crate) fn finish(self) -> io::Result<()> {
+    pub(crate) fn finish(mut self) -> io::Result<()> {
+        self.close()
+    }
+
+    fn close(&mut self) -> io::Result<()> {
         self.done.store(true, Ordering::SeqCst);
-        self.thread
-            .join()
-            .unwrap_or_else(|_| Err(io::Error::other("the console thread panicked")))
+        match self.thread.take() {
+            Some(thread) => thread
+                .join()
+                .unwrap_or_else(|_| Err(io::Error::other("the console thread panicked"))),
+            None => Ok(()),
+        }
+    }
+}
+
+impl Drop for Tui {
+    fn drop(&mut self) {
+        let _ = self.close();
+    }
+}
+
+/// Tells the server when the console thread ends without being asked to.
+struct Ended {
+    asks: UnboundedSender<Ask>,
+    done: Arc<AtomicBool>,
+}
+
+impl Drop for Ended {
+    fn drop(&mut self) {
+        if !self.done.load(Ordering::SeqCst) {
+            let _ = self.asks.send(Ask::ConsoleEnded);
+        }
+    }
+}
+
+/// What a press of `q` or Ctrl+C does, and the confirmation to show.
+#[derive(Default)]
+struct Quitting {
+    confirm: Confirm,
+}
+
+impl Quitting {
+    /// A press, with the UART as the state has it: [`Ask::Quit`] to send,
+    /// or nothing while it waits for the second.
+    fn press(&mut self, uart: &Uart, at: Instant) -> Option<Ask> {
+        match self.confirm.press(Held::of(uart), at) {
+            Press::Stop => Some(Ask::Quit),
+            Press::Confirm => None,
+        }
+    }
+
+    /// The footer's confirmation, while a first press waits.
+    fn notice(&self, at: Instant) -> Option<&'static str> {
+        self.confirm.pending(at).then_some(CONFIRM_PROMPT)
     }
 }
 
@@ -108,7 +176,7 @@ fn run(
     tty: File,
     store: &Store,
     lines: &Receiver<String>,
-    quit: &UnboundedSender<()>,
+    asks: &UnboundedSender<Ask>,
     done: &AtomicBool,
 ) -> io::Result<()> {
     let mut after = tty.try_clone()?;
@@ -117,6 +185,8 @@ fn run(
     let mut log = VecDeque::new();
     let mut scroll = 0;
     let mut drawn: Option<Instant> = None;
+    let mut quitting = Quitting::default();
+    let mut noticed = false;
 
     loop {
         while let Ok(line) = lines.try_recv() {
@@ -132,6 +202,12 @@ fn run(
         } else {
             FRAME
         };
+        let notice = quitting.notice(Instant::now());
+        // The confirmation shows, and goes, at once.
+        if notice.is_some() != noticed {
+            drawn = None;
+            noticed = notice.is_some();
+        }
         if drawn.is_none_or(|at| at.elapsed() >= frame) {
             terminal.draw(|frame| {
                 view::draw(
@@ -140,6 +216,7 @@ fn run(
                         state: &state,
                         log: &log,
                         scroll,
+                        notice,
                     },
                 );
             })?;
@@ -155,13 +232,18 @@ fn run(
         }
         let page = usize::from(terminal.size()?.height / 2).max(1);
         match event::read()? {
+            Event::Key(key)
+                if key.kind == KeyEventKind::Press && quits(key.code, key.modifiers) =>
+            {
+                let uart = store.read().uart;
+                match quitting.press(&uart, Instant::now()) {
+                    Some(ask) => {
+                        let _ = asks.send(ask);
+                    }
+                    None => drawn = None,
+                }
+            }
             Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
-                KeyCode::Char('q') => {
-                    let _ = quit.send(());
-                }
-                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    let _ = quit.send(());
-                }
                 KeyCode::PageUp | KeyCode::Up => {
                     let step = if key.code == KeyCode::Up { 1 } else { page };
                     scroll = (scroll + step).min(log.len());
@@ -189,9 +271,68 @@ fn run(
     Ok(())
 }
 
+/// `q`, or Ctrl+C, which raw mode delivers as a key.
+fn quits(code: KeyCode, modifiers: KeyModifiers) -> bool {
+    code == KeyCode::Char('q')
+        || (code == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL))
+}
+
 fn push(log: &mut VecDeque<String>, line: String) {
     if log.len() == KEPT {
         log.pop_front();
     }
     log.push_back(line);
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    const WRITING: Uart = Uart::Writing {
+        done: 3,
+        total: 19,
+        counted: true,
+    };
+
+    #[test]
+    fn q_during_a_write_shows_the_confirmation_and_only_a_second_press_quits() {
+        let start = Instant::now();
+        let mut quitting = Quitting::default();
+
+        assert_eq!(quitting.press(&WRITING, start), None);
+        assert_eq!(quitting.notice(start), Some(CONFIRM_PROMPT));
+        assert_eq!(
+            quitting.press(&WRITING, start + Duration::from_secs(2)),
+            Some(Ask::Quit)
+        );
+        assert_eq!(quitting.notice(start + Duration::from_secs(2)), None);
+
+        // In the loader too; a second press after 5 s only asks again.
+        assert_eq!(quitting.press(&Uart::Loader, start), None);
+        let late = start + Duration::from_secs(6);
+        assert_eq!(quitting.notice(late), None);
+        assert_eq!(quitting.press(&Uart::Loader, late), None);
+
+        // With the UART free, one press quits.
+        let mut idle = Quitting::default();
+        assert_eq!(idle.press(&Uart::Idle, start), Some(Ask::Quit));
+    }
+
+    #[test]
+    fn a_console_that_ends_unasked_tells_the_server_and_a_finished_one_does_not() {
+        let (asks, mut asked) = tokio::sync::mpsc::unbounded_channel();
+        let done = Arc::new(AtomicBool::new(false));
+
+        drop(Ended {
+            asks: asks.clone(),
+            done: Arc::clone(&done),
+        });
+        assert_eq!(asked.try_recv().ok(), Some(Ask::ConsoleEnded));
+
+        done.store(true, Ordering::SeqCst);
+        drop(Ended { asks, done });
+        assert!(asked.try_recv().is_err());
+    }
 }

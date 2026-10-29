@@ -25,6 +25,9 @@ pub(crate) struct Screen<'a> {
     pub(crate) log: &'a VecDeque<String>,
     /// Lines up from the newest; 0 follows the log.
     pub(crate) scroll: usize,
+    /// What the footer shows instead of the keys, such as the
+    /// confirmation a first `q` during a write asks for.
+    pub(crate) notice: Option<&'a str>,
 }
 
 const ROLES: [(&str, &str); 4] = [
@@ -76,10 +79,16 @@ pub(crate) fn draw(frame: &mut Frame<'_>, screen: &Screen<'_>) {
 
     let keys =
         "q or Ctrl+C stops the server (cancel, cleanup, release) · PgUp/PgDn scroll · End follows";
-    frame.render_widget(
-        Paragraph::new(keys).style(Style::new().fg(Color::DarkGray)),
-        footer,
-    );
+    let footer_line = match screen.notice {
+        Some(notice) => Paragraph::new(notice).style(
+            Style::new()
+                .fg(Color::Black)
+                .bg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        None => Paragraph::new(keys).style(Style::new().fg(Color::DarkGray)),
+    };
+    frame.render_widget(footer_line, footer);
 }
 
 fn header_line(state: &BenchState) -> Line<'static> {

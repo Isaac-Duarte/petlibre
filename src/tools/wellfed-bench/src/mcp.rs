@@ -27,10 +27,10 @@ use rmcp::{ErrorData, RoleServer, ServerHandler, ServiceExt};
 use serde_json::Value;
 use wellfed_bench_server::Client;
 use wellfed_bench_server::api::{ReadOnly, WAIT_MAX_MS, Wait, WaitFor};
-use wellfed_formats::bench::live::BenchState;
+use wellfed_formats::bench::live::{BenchState, Uart};
 use wellfed_formats::private::{SYSTEM_RANDOM, random};
 
-use tools::{Call, LogSource, Until, WaitArgs};
+use tools::{Call, LogSource, ToolError, Until, WaitArgs};
 
 /// What an agent reads first.
 const INSTRUCTIONS: &str = "The PLAF103 research bench, through its running `wellfed-bench serve`. \
@@ -111,17 +111,21 @@ impl Bench {
         Ok(match call {
             Call::Status => serde_json::to_value(trim(client.state().await?))?,
             Call::JobOutput { id, after } => serde_json::to_value(client.output(id, after).await?)?,
-            Call::JobCancel { id } => {
+            Call::JobCancel { id, during_write } => {
+                let state = client.state().await?;
+                let running = state
+                    .job
+                    .as_ref()
+                    .filter(|job| job.end.is_none())
+                    .map(|job| job.id);
                 let id = match id {
                     Some(id) => id,
-                    None => client
-                        .state()
-                        .await?
-                        .job
-                        .filter(|job| job.end.is_none())
-                        .map(|job| job.id)
-                        .context("No job is running")?,
+                    None => running.context("No job is running")?,
                 };
+                let writing = matches!(state.uart, Uart::Writing { .. });
+                if writing && running == Some(id) && !during_write {
+                    return Err(ToolError::CancelDuringWrite { id }.into());
+                }
                 client.cancel(id).await?;
                 serde_json::json!({ "cancelled": id, "next": "wait_for {for: job, id} for its cleanup" })
             }
@@ -129,8 +133,7 @@ impl Bench {
             Call::LogsTail { source, lines } => self.tail(source, lines).await?,
             Call::Banks => serde_json::to_value(client.banks().await?)?,
 
-            Call::Note(words) => {
-                let args = crate::note::from_words(&words)?;
+            Call::Note(args) => {
                 let body = crate::note::body(args, &self.root, &self.root, &jiff::Zoned::now())?;
                 let note = client.note(&body).await?;
                 serde_json::json!({ "noted": crate::note::describe(&note) })

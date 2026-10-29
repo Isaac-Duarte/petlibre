@@ -188,13 +188,42 @@ fn writing() -> BenchState {
 
 /// The screen as text, a row per line.
 fn render(state: &BenchState, log: &VecDeque<String>, scroll: usize) -> String {
+    render_with(state, log, scroll, None)
+}
+
+fn render_with(
+    state: &BenchState,
+    log: &VecDeque<String>,
+    scroll: usize,
+    notice: Option<&str>,
+) -> String {
     let mut terminal = Terminal::new(TestBackend::new(130, 46)).unwrap();
     terminal
         .draw(|frame| {
-            draw(frame, &Screen { state, log, scroll });
+            draw(
+                frame,
+                &Screen {
+                    state,
+                    log,
+                    scroll,
+                    notice,
+                },
+            );
         })
         .unwrap();
     terminal.backend().to_string()
+}
+
+#[test]
+fn a_first_q_during_a_write_puts_the_confirmation_in_the_footer() {
+    let prompt = wellfed_bench_server::stopping::CONFIRM_PROMPT;
+
+    let asked = render_with(&writing(), &log(1), 0, Some(prompt));
+    let plain = render(&writing(), &log(1), 0);
+
+    assert!(asked.contains(prompt), "{asked}");
+    assert!(!asked.contains("q or Ctrl+C stops the server"), "{asked}");
+    assert!(plain.contains("q or Ctrl+C stops the server"), "{plain}");
 }
 
 fn log(lines: usize) -> VecDeque<String> {

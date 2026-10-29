@@ -220,6 +220,29 @@ impl Output {
         }
     }
 
+    /// The console's lines on the terminal `serve` started on, a line at a
+    /// time, from here on: for a full-screen console that ended on its own.
+    /// Nothing changes once the output is closed or already on the
+    /// terminal.
+    pub(crate) fn console_to_terminal(&self) {
+        let mut thread = lock(&self.console_thread);
+        if thread.is_some() || self.closed.load(Ordering::SeqCst) {
+            return;
+        }
+        let Ok(terminal) = self.terminal.try_clone() else {
+            return;
+        };
+        let console = File::from(terminal);
+        let (send, queue) = mpsc::sync_channel(CONSOLE_QUEUE);
+        let spawned = std::thread::Builder::new()
+            .name("console".into())
+            .spawn(move || write_console(console, &queue));
+        if let Ok(spawned) = spawned {
+            *thread = Some(spawned);
+            *lock(&self.console) = Some(send);
+        }
+    }
+
     fn to_console(&self, line: String) {
         // A full queue drops the line: the job's stream still has it.
         if let Some(console) = &*lock(&self.console) {

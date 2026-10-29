@@ -132,6 +132,9 @@ pub enum NoteError {
     /// Only the server settles a timer, as it sees the match or the miss.
     #[error("A `{kind}` note is the bench server's own")]
     ServerOnly { kind: String },
+    /// The disk refused the note. The error is its text, not the
+    /// `io::Error`: a refusal crosses the socket as JSON, which an
+    /// `io::Error` has no form in.
     #[error("{path}: {error}")]
     Write { path: String, error: String },
 }
@@ -177,7 +180,8 @@ pub enum WaitFor {
     Line,
     /// A device event of `kind` arrived after the wait began.
     Event,
-    /// The feeder's status names `build` (a prefix) and `bank`.
+    /// A status read after the wait began names `build` (a prefix) and
+    /// `bank`.
     Status,
     /// The operator's timer is due, seen or missed.
     Timer,
@@ -210,6 +214,11 @@ pub enum WaitError {
     EmptyText,
     #[error("{kind:?} is no device event kind")]
     UnknownEvent { kind: String },
+    /// A wait for it would only ever time out.
+    #[error("No timer {label:?} is set; `note timer` sets one")]
+    UnknownTimer { label: String },
+    #[error("No job {id} yet: the next job is {next}")]
+    NoSuchJob { id: JobId, next: JobId },
 }
 
 /// `GET /jobs/{id}/output?after=N`: a page of a job's kept output.

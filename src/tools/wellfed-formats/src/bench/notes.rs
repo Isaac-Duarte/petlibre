@@ -240,6 +240,9 @@ impl Operator {
     /// The notes that `seen`, at `at`, adds: one `seen` for every waiting
     /// timer it settles.
     pub fn seen(&self, seen: &Seen<'_>, at: f64) -> Vec<Body> {
+        if !self.expecting() {
+            return Vec::new();
+        }
         let line = match seen {
             Seen::Line(line) => (*line).to_string(),
             Seen::Event(kind) => format!("{kind} event"),
@@ -252,6 +255,14 @@ impl Operator {
                 line: line.clone(),
             })
             .collect()
+    }
+
+    /// Whether any timer still waits for a line or an event: while none
+    /// does, nothing seen can settle one.
+    pub fn expecting(&self) -> bool {
+        self.timers
+            .iter()
+            .any(|timer| timer.expect.is_some() && timer.state == TimerState::Waiting)
     }
 
     /// The notes for every timer whose window has passed unseen by `now`.

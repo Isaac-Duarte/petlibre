@@ -20,6 +20,7 @@ use crate::{mcp, note, orphans, page, tui};
 use clap::{Args, Parser, Subcommand};
 use tokio::sync::mpsc;
 use wellfed_bench_server::api::{Seed, SeededFrom};
+use wellfed_bench_server::stopping::Ask;
 use wellfed_bench_server::{
     CONSOLE_QUEUE, Client, ClientError, ClockSync, Console, DeviceOptions, Followed, Interrupt,
     JobCommand, JobOptions, Options, Server, ToolPaths,
@@ -292,7 +293,8 @@ async fn follow(
     }
 }
 
-/// Run the server until Ctrl+C or SIGTERM.
+/// Run the server until Ctrl+C or SIGTERM, held back during a UART write
+/// as `wellfed_bench_server::stopping` says.
 fn serve(root: &Path, args: &ServeArgs, runtime: &tokio::runtime::Runtime) -> anyhow::Result<u8> {
     let tools = ToolPaths {
         flash_bin: args.flash_bin.clone().unwrap_or_else(default_flash_bin),
@@ -362,20 +364,18 @@ fn serve(root: &Path, args: &ServeArgs, runtime: &tokio::runtime::Runtime) -> an
         relays.join(", "),
         if screen { "q or Ctrl+C" } else { "Ctrl+C" }
     ));
-    let (quit, mut quitting) = tokio::sync::mpsc::unbounded_channel();
+    let (asks, asked) = tokio::sync::mpsc::unbounded_channel();
     let console = match lines {
-        Some(lines) => Some(tui::Tui::start(server.store(), lines, quit)?),
+        Some(lines) => Some(tui::Tui::start(server.store(), lines, asks.clone())?),
         None => None,
     };
+    let stopper = server.stopper();
     let served = runtime.block_on(async {
-        let signals = shutdown()?;
-        let stop = async move {
-            tokio::select! {
-                () = signals => {}
-                _ = quitting.recv() => {}
-            }
-        };
-        server.run(stop).await.map_err(anyhow::Error::from)
+        signals(asks)?;
+        server
+            .run(stopper.until_stop(asked))
+            .await
+            .map_err(anyhow::Error::from)
     });
 
     if let Some(console) = console {
@@ -407,23 +407,30 @@ fn open_board(args: &ServeArgs, config: &Config) -> wellfed_relay::Result<Box<dy
     Ok(Box::new(AtBoard::open(&config.relay_port)?))
 }
 
-/// The operator's Ctrl+C, a SIGTERM, or the terminal hanging up: each stops
-/// the server the same way, through the job's cleanup. The job's children
-/// run in groups of their own, so a hangup reaches the server only, never
-/// a `wellfed-flash` mid-write.
-fn shutdown() -> std::io::Result<impl std::future::Future<Output = ()>> {
+/// The operator's Ctrl+C, a SIGTERM, or the terminal hanging up, each as
+/// an ask of the server's stopper, which stops through the job's cleanup
+/// or, during a write, waits. The job's children run in groups of their
+/// own, so a hangup reaches the server only, never a `wellfed-flash`
+/// mid-write. The task keeps `asks` open for the server's life.
+fn signals(asks: tokio::sync::mpsc::UnboundedSender<Ask>) -> std::io::Result<()> {
     use tokio::signal::unix::{SignalKind, signal};
 
     let mut interrupt = signal(SignalKind::interrupt())?;
     let mut terminate = signal(SignalKind::terminate())?;
     let mut hangup = signal(SignalKind::hangup())?;
-    Ok(async move {
-        tokio::select! {
-            _ = interrupt.recv() => {}
-            _ = terminate.recv() => {}
-            _ = hangup.recv() => {}
+    tokio::spawn(async move {
+        loop {
+            let ask = tokio::select! {
+                _ = interrupt.recv() => Ask::Interrupt,
+                _ = terminate.recv() => Ask::Terminate,
+                _ = hangup.recv() => Ask::Terminate,
+            };
+            if asks.send(ask).is_err() {
+                return;
+            }
         }
-    })
+    });
+    Ok(())
 }
 
 /// How long `status` waits for a server that may be stuck.

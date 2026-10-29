@@ -6,8 +6,12 @@
 //! What a tool cannot express is refused here, before any words exist:
 //! motion that needs a person at the bench (`--attended-motion`, the
 //! suite's `--feeds`), breaking the lease, and a destructive suite run
-//! without its explicit confirmation.
+//! without its explicit confirmation. No string a hardware tool takes may
+//! start with `-`, so none reads as a flag, and the session name comes
+//! after `--`. The note tools build their notes directly: their text is
+//! free, dashes included, and goes through no command line.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use rmcp::model::{JsonObject, Tool};
@@ -15,6 +19,8 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
+
+use crate::note::{self, NoteArgs, What};
 
 /// Why a tool call was refused before it reached the bench.
 #[derive(Debug, thiserror::Error)]
@@ -26,13 +32,35 @@ pub(crate) enum ToolError {
         tool: String,
         error: serde_json::Error,
     },
-    /// Something a person must be present for, or decide, at the bench.
-    #[error("{tool}: {what} is refused over MCP: {why}")]
-    Refused {
+    #[error(
+        "{tool}: attended_motion is refused over MCP: a target or review with a motion policy moves the motor, which needs a person at the bench; run it from a terminal there"
+    )]
+    AttendedMotion { tool: String },
+    #[error(
+        "{tool}: feeds is refused over MCP: the suite's feeds move the motor unattended; run them from a terminal with a person at the bench"
+    )]
+    Feeds { tool: String },
+    #[error(
+        "{tool}: break_lease is refused over MCP: only a person who has looked at the bench may free its lease (`wellfed-bench status --break-lease`)"
+    )]
+    BreakLease { tool: String },
+    #[error(
+        "{tool}: destructive is refused over MCP without confirm_destructive: power cuts mid-update may leave a feeder only a UART flash recovers; set confirm_destructive to true to mean it"
+    )]
+    UnconfirmedDestructive { tool: String },
+    /// It would read as a flag on the command line the tool builds.
+    #[error("{tool}: {field} {value:?} starts with '-', which no hardware tool takes")]
+    LeadingDash {
         tool: String,
-        what: &'static str,
-        why: &'static str,
+        field: String,
+        value: String,
     },
+    /// A cancelled write stops terminally: the bank stays half-written
+    /// until another UART write.
+    #[error(
+        "job_cancel: job {id} is writing flash over UART; a cancel stops the write terminally and leaves the bank half-written until another UART write. Set during_write to true to mean it"
+    )]
+    CancelDuringWrite { id: u64 },
 }
 
 /// What a call asks the bench for.
@@ -45,6 +73,7 @@ pub(crate) enum Call {
     },
     JobCancel {
         id: Option<u64>,
+        during_write: bool,
     },
     WaitFor(WaitArgs),
     LogsTail {
@@ -52,8 +81,8 @@ pub(crate) enum Call {
         lines: usize,
     },
     Banks,
-    /// The words of a `wellfed-bench note` command line.
-    Note(Vec<String>),
+    /// A note, as `wellfed-bench note` takes it.
+    Note(NoteArgs),
     /// A device API read, or the clock sync, as JSON for the server's
     /// read-only request type.
     Device(Value),
@@ -61,21 +90,16 @@ pub(crate) enum Call {
     Job(Vec<String>),
 }
 
-/// Keys no tool takes, whatever its schema says, each with its reason.
-const REFUSED_KEYS: [(&str, &str); 3] = [
-    (
-        "attended_motion",
-        "a target or review with a motion policy moves the motor, which needs a person at the bench; run it from a terminal there",
-    ),
-    (
-        "break_lease",
-        "only a person who has looked at the bench may free its lease (`wellfed-bench status --break-lease`)",
-    ),
-    (
-        "feeds",
-        "the suite's feeds move the motor unattended; run them from a terminal with a person at the bench",
-    ),
-];
+/// The refusal for a key no tool takes, whatever its schema says.
+fn refused_key(tool: &str, key: &str) -> Option<ToolError> {
+    let tool = tool.to_string();
+    match key {
+        "attended_motion" => Some(ToolError::AttendedMotion { tool }),
+        "break_lease" => Some(ToolError::BreakLease { tool }),
+        "feeds" => Some(ToolError::Feeds { tool }),
+        _ => None,
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -97,6 +121,10 @@ struct JobOutputArgs {
 struct CancelArgs {
     /// The job to cancel; the running one if left out.
     id: Option<u64>,
+    /// Set true to cancel a UART write, which then stops terminally and
+    /// leaves the bank half-written until another write.
+    #[serde(default)]
+    during_write: bool,
 }
 
 /// What `wait_for` waits for.
@@ -413,7 +441,7 @@ const SPECS: &[Spec] = &[
     },
     Spec {
         name: "job_cancel",
-        description: "Cancel the running job: the server sends SIGINT to wellfed-flash (which stops itself terminally and records it) and SIGTERM to other children, then the job runs its usual cleanup, which may power the feeder off.",
+        description: "Cancel the running job: the server sends SIGINT to wellfed-flash (which stops itself terminally and records it) and SIGTERM to other children, then the job runs its usual cleanup, which may power the feeder off. Refused during a UART write unless during_write is true: the write then stops for good and the bank stays half-written.",
         schema: schema::<CancelArgs>,
     },
     Spec {
@@ -550,15 +578,11 @@ fn parse<T: DeserializeOwned>(tool: &str, args: JsonObject) -> Result<T, ToolErr
 
 /// What `name` with `args` asks of the bench.
 pub(crate) fn call(name: &str, args: JsonObject) -> Result<Call, ToolError> {
-    if let Some((key, why)) = REFUSED_KEYS.iter().find(|(key, _)| args.contains_key(*key)) {
-        return Err(ToolError::Refused {
-            tool: name.into(),
-            what: key,
-            why,
-        });
+    if let Some(refused) = args.keys().find_map(|key| refused_key(name, key)) {
+        return Err(refused);
     }
 
-    let words = |list: &[&str]| list.iter().map(|word| (*word).to_string()).collect();
+    let note = |what| Call::Note(NoteArgs { what });
     Ok(match name {
         "bench_status" => {
             parse::<NoArgs>(name, args)?;
@@ -571,9 +595,13 @@ pub(crate) fn call(name: &str, args: JsonObject) -> Result<Call, ToolError> {
                 after: args.after,
             }
         }
-        "job_cancel" => Call::JobCancel {
-            id: parse::<CancelArgs>(name, args)?.id,
-        },
+        "job_cancel" => {
+            let args: CancelArgs = parse(name, args)?;
+            Call::JobCancel {
+                id: args.id,
+                during_write: args.during_write,
+            }
+        }
         "wait_for" => Call::WaitFor(parse(name, args)?),
         "logs_tail" => {
             let args: LogsArgs = parse(name, args)?;
@@ -587,34 +615,22 @@ pub(crate) fn call(name: &str, args: JsonObject) -> Result<Call, ToolError> {
             Call::Banks
         }
 
-        "note_step" => {
-            let args: StepArgs = parse(name, args)?;
-            Call::Note(vec!["note".into(), "step".into(), args.text])
-        }
-        "note_next" => {
-            let args: NextArgs = parse(name, args)?;
-            Call::Note([words(&["note", "next"]), args.steps].concat())
-        }
-        "note_timer" => Call::Note(timer_words(parse(name, args)?)),
+        "note_step" => note(What::Step {
+            text: parse::<StepArgs>(name, args)?.text,
+        }),
+        "note_next" => note(What::Next {
+            steps: parse::<NextArgs>(name, args)?.steps,
+        }),
+        "note_timer" => note(What::Timer(timer(name, parse(name, args)?)?)),
         "note_evidence" => {
             let args: EvidenceArgs = parse(name, args)?;
-            let verdict = match args.verdict {
-                Verdict::Pass => "--pass",
-                Verdict::Fail => "--fail",
-            };
-            Call::Note(
-                [
-                    words(&["note", "evidence", "--card"]),
-                    vec![
-                        args.card,
-                        args.path,
-                        verdict.into(),
-                        "--text".into(),
-                        args.text,
-                    ],
-                ]
-                .concat(),
-            )
+            note(What::Evidence(note::EvidenceArgs {
+                card: args.card,
+                path: PathBuf::from(args.path),
+                pass: args.verdict == Verdict::Pass,
+                fail: args.verdict == Verdict::Fail,
+                text: args.text,
+            }))
         }
 
         "device_read" => Call::Device(Value::Object(args)),
@@ -627,51 +643,78 @@ pub(crate) fn call(name: &str, args: JsonObject) -> Result<Call, ToolError> {
     })
 }
 
-fn timer_words(args: TimerArgs) -> Vec<String> {
-    let mut words = vec!["note".into(), "timer".into(), args.name];
-    let mut flag = |flag: &str, value: Option<String>| {
-        if let Some(value) = value {
-            words.push(flag.into());
-            words.push(value);
-        }
+/// The timer the tool asks for, with the command line's rules: a time or
+/// a clear, and one expectation, none beside a clear.
+fn timer(tool: &str, args: TimerArgs) -> Result<note::TimerArgs, ToolError> {
+    let when = [args.at.is_some(), args.after.is_some(), args.clear];
+    let expectations = [args.expect.is_some(), args.expect_event.is_some()];
+    let expects = expectations.iter().filter(|set| **set).count();
+    let invalid = |why: &str| ToolError::Arguments {
+        tool: tool.into(),
+        error: serde::de::Error::custom(why),
     };
-    flag("--at", args.at);
-    flag("--in", args.after);
-    flag("--expect", args.expect);
-    flag("--expect-event", args.expect_event);
-    flag("--window", args.window);
-    if args.clear {
-        words.push("--clear".into());
+    if when.iter().filter(|set| **set).count() != 1 {
+        return Err(invalid("exactly one of at, in or clear says when"));
     }
-    words
+    if expects > 1 {
+        return Err(invalid("expect and expect_event: one expectation at most"));
+    }
+    if args.clear && (expects > 0 || args.window.is_some()) {
+        return Err(invalid("a clear takes no expectation or window"));
+    }
+    Ok(note::TimerArgs {
+        name: args.name,
+        at: args.at,
+        after: args.after,
+        clear: args.clear,
+        expect: args.expect,
+        expect_event: args.expect_event,
+        window: args.window,
+    })
 }
 
-/// A command line under construction: the subcommand, then its flags.
-struct Line(Vec<String>);
+/// A command line under construction: the subcommand and its flags, then
+/// `--` and the session name, so nothing after the flags reads as one.
+struct Line {
+    words: Vec<String>,
+    name: Option<String>,
+}
 
 impl Line {
     fn new(words: &[&str]) -> Self {
-        Self(words.iter().map(|word| (*word).to_string()).collect())
+        Self {
+            words: words.iter().map(|word| (*word).to_string()).collect(),
+            name: None,
+        }
     }
 
     fn word(mut self, word: impl Into<String>) -> Self {
-        self.0.push(word.into());
+        self.name = Some(word.into());
         self
     }
 
     fn value(mut self, flag: &str, value: Option<impl ToString>) -> Self {
         if let Some(value) = value {
-            self.0.push(flag.into());
-            self.0.push(value.to_string());
+            self.words.push(flag.into());
+            self.words.push(value.to_string());
         }
         self
     }
 
     fn switch(mut self, flag: &str, on: bool) -> Self {
         if on {
-            self.0.push(flag.into());
+            self.words.push(flag.into());
         }
         self
+    }
+
+    fn finish(self) -> Vec<String> {
+        let mut words = self.words;
+        if let Some(name) = self.name {
+            words.push("--".into());
+            words.push(name);
+        }
+        words
     }
 
     fn update(self, args: UpdateArgs) -> Self {
@@ -685,7 +728,27 @@ impl Line {
     }
 }
 
+/// Refused if any string `args` holds, in a list too, starts with `-`.
+fn no_leading_dash(tool: &str, args: &JsonObject) -> Result<(), ToolError> {
+    for (field, value) in args {
+        let strings: Vec<&str> = match value {
+            Value::String(text) => vec![text.as_str()],
+            Value::Array(items) => items.iter().filter_map(Value::as_str).collect(),
+            _ => Vec::new(),
+        };
+        if let Some(text) = strings.into_iter().find(|text| text.starts_with('-')) {
+            return Err(ToolError::LeadingDash {
+                tool: tool.into(),
+                field: field.clone(),
+                value: text.into(),
+            });
+        }
+    }
+    Ok(())
+}
+
 fn job_words(name: &str, args: JsonObject) -> Result<Vec<String>, ToolError> {
+    no_leading_dash(name, &args)?;
     let line = match name {
         "power" => match parse::<PowerArgs>(name, args)?.state {
             Power::On => Line::new(&["on"]),
@@ -761,11 +824,7 @@ fn job_words(name: &str, args: JsonObject) -> Result<Vec<String>, ToolError> {
         "itest" => {
             let args: ItestArgs = parse(name, args)?;
             if args.destructive && !args.confirm_destructive {
-                return Err(ToolError::Refused {
-                    tool: name.into(),
-                    what: "destructive",
-                    why: "power cuts mid-update may leave a feeder only a UART flash recovers; set confirm_destructive to true to mean it",
-                });
+                return Err(ToolError::UnconfirmedDestructive { tool: name.into() });
             }
             Line::new(&["itest"])
                 .word(args.name)
@@ -792,7 +851,7 @@ fn job_words(name: &str, args: JsonObject) -> Result<Vec<String>, ToolError> {
         }
         _ => return Err(ToolError::Unknown { name: name.into() }),
     };
-    Ok(line.0)
+    Ok(line.finish())
 }
 
 #[cfg(test)]
@@ -862,13 +921,14 @@ mod tests {
             Call::Job(
                 [
                     "flash-execute",
-                    "unit-07",
                     "--target",
                     "private/verification/r-review",
                     "--source",
                     "private/verification/q-review",
                     "--expected-plan-sha256",
-                    "ab12"
+                    "ab12",
+                    "--",
+                    "unit-07"
                 ]
                 .map(String::from)
                 .to_vec()
@@ -882,30 +942,37 @@ mod tests {
 
     #[test]
     fn motion_the_lease_and_an_unconfirmed_destructive_run_are_refused() {
-        for (tool, value) in [
-            (
+        let refused = |tool: &str, value: Value| call(tool, args(value)).unwrap_err();
+
+        assert!(matches!(
+            refused(
                 "flash_execute",
-                serde_json::json!({"name": "u", "target": "t", "plan_sha256": "00", "attended_motion": true}),
+                serde_json::json!({"name": "u", "target": "t", "plan_sha256": "00", "attended_motion": true})
             ),
-            (
+            ToolError::AttendedMotion { tool } if tool == "flash_execute"
+        ));
+        assert!(matches!(
+            refused(
                 "ota",
-                serde_json::json!({"name": "o", "build": true, "attended_motion": false}),
+                serde_json::json!({"name": "o", "build": true, "attended_motion": false})
             ),
-            ("itest", serde_json::json!({"name": "i", "feeds": true})),
-            ("bench_status", serde_json::json!({"break_lease": true})),
-            (
+            ToolError::AttendedMotion { .. }
+        ));
+        assert!(matches!(
+            refused("itest", serde_json::json!({"name": "i", "feeds": true})),
+            ToolError::Feeds { .. }
+        ));
+        assert!(matches!(
+            refused("bench_status", serde_json::json!({"break_lease": true})),
+            ToolError::BreakLease { .. }
+        ));
+        assert!(matches!(
+            refused(
                 "itest",
-                serde_json::json!({"name": "i", "power": true, "destructive": true}),
+                serde_json::json!({"name": "i", "power": true, "destructive": true})
             ),
-        ] {
-            assert!(
-                matches!(
-                    call(tool, args(value.clone())),
-                    Err(ToolError::Refused { .. })
-                ),
-                "{tool} {value}"
-            );
-        }
+            ToolError::UnconfirmedDestructive { .. }
+        ));
 
         // A plan hash is not optional, and nothing unknown slips through.
         assert!(matches!(
@@ -929,26 +996,99 @@ mod tests {
     }
 
     #[test]
-    fn a_timer_note_is_the_note_command_s_words() {
+    fn a_flag_passed_as_a_value_is_refused_before_any_words_exist() {
+        for (tool, value, field) in [
+            (
+                "flash_prepare",
+                serde_json::json!({"name": "--attended-motion", "target": "t"}),
+                "name",
+            ),
+            (
+                "itest",
+                serde_json::json!({"name": "--feeds", "tier": "smoke"}),
+                "name",
+            ),
+            (
+                "itest",
+                serde_json::json!({"name": "i", "only": ["boot", "--feeds"]}),
+                "only",
+            ),
+            (
+                "ota",
+                serde_json::json!({"name": "o", "review": "-r"}),
+                "review",
+            ),
+        ] {
+            assert!(
+                matches!(
+                    call(tool, args(value.clone())),
+                    Err(ToolError::LeadingDash { field: refused, .. }) if refused == field
+                ),
+                "{tool} {value}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_note_is_built_from_its_arguments_dashes_and_all() {
         assert_eq!(
             call(
-                "note_timer",
-                args(serde_json::json!({"name": "fire", "in": "5m", "expect": "PLSCH1 fire"}))
+                "note_step",
+                args(serde_json::json!({"text": "- flash bank 1"}))
             )
             .unwrap(),
-            Call::Note(
-                [
-                    "note",
-                    "timer",
-                    "fire",
-                    "--in",
-                    "5m",
-                    "--expect",
-                    "PLSCH1 fire"
-                ]
-                .map(String::from)
-                .to_vec()
-            )
+            Call::Note(NoteArgs {
+                what: What::Step {
+                    text: "- flash bank 1".into()
+                }
+            })
         );
+        assert_eq!(
+            call(
+                "note_next",
+                args(serde_json::json!({"steps": ["- boot", "--smoke"]}))
+            )
+            .unwrap(),
+            Call::Note(NoteArgs {
+                what: What::Next {
+                    steps: vec!["- boot".into(), "--smoke".into()]
+                }
+            })
+        );
+
+        let Call::Note(NoteArgs {
+            what: What::Timer(timer),
+        }) = call(
+            "note_timer",
+            args(serde_json::json!({"name": "fire", "in": "5m", "expect": "-- PLSCH1 fire"})),
+        )
+        .unwrap()
+        else {
+            panic!("not a timer");
+        };
+        assert_eq!(
+            (
+                timer.name.as_str(),
+                timer.after.as_deref(),
+                timer.expect.as_deref()
+            ),
+            ("fire", Some("5m"), Some("-- PLSCH1 fire"))
+        );
+
+        // The command line's rules still hold.
+        for value in [
+            serde_json::json!({"name": "t"}),
+            serde_json::json!({"name": "t", "in": "1m", "clear": true}),
+            serde_json::json!({"name": "t", "in": "1m", "expect": "a", "expect_event": "boot"}),
+            serde_json::json!({"name": "t", "clear": true, "expect": "a"}),
+        ] {
+            assert!(
+                matches!(
+                    call("note_timer", args(value.clone())),
+                    Err(ToolError::Arguments { .. })
+                ),
+                "{value}"
+            );
+        }
     }
 }

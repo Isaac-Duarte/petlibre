@@ -5,13 +5,20 @@
 //! Lines settle a timer from the capture, the device log and the running
 //! job's output; device events from the feeder session. Each match or
 //! miss is a note of its own, so a restarted server folds the same state.
-//! The file is append-only, written through a buffer and never synced; it
-//! is not flushed while the flash client holds the UART, so a note during
-//! a write costs the write no disk activity.
+//! The file is append-only, opened once when the server starts and written
+//! through an 8 KiB buffer that is never synced. The buffer is not flushed
+//! while the flash client holds the UART, so a write's notes reach the disk
+//! only if they fill it (8 KiB of notes, which a write's steps and timers
+//! come nowhere near) or once the write ends.
+//!
+//! The output pump offers every job line here. While no timer expects
+//! anything, which is most of the time, that costs one atomic load and
+//! never takes the lock.
 
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use tokio::sync::broadcast;
@@ -32,6 +39,9 @@ pub(crate) struct Notes {
     store: Store,
     /// Every line and event, for `GET /wait`; sent only while one listens.
     heard: broadcast::Sender<Heard>,
+    /// Whether a timer waits for a line or an event, kept beside the lock
+    /// so the pump's lines skip it while none does.
+    expecting: Arc<AtomicBool>,
 }
 
 /// A line or a device event's kind, as [`Notes::seen`] got it.
@@ -48,8 +58,8 @@ struct Inner {
     path: PathBuf,
     /// The source of truth; the live state holds a copy.
     operator: Operator,
-    /// Opened at the first note, so a server that takes none creates no
-    /// file.
+    /// Opened with the notes, so no note opens a file while the pump waits
+    /// on the lock; opened again at the next note if that failed.
     file: Option<BufWriter<File>>,
 }
 
@@ -64,13 +74,15 @@ impl Notes {
             .filter_map(|line| serde_json::from_str(line).ok())
             .collect();
         let operator = Operator::fold(&notes);
+        let file = open_file(&path).ok().map(BufWriter::new);
 
         store.update(|state| state.operator = operator.clone());
         Self {
+            expecting: Arc::new(AtomicBool::new(operator.expecting())),
             inner: Arc::new(Mutex::new(Inner {
                 path,
                 operator,
-                file: None,
+                file,
             })),
             store,
             heard: broadcast::channel(HEARD).0,
@@ -108,6 +120,9 @@ impl Notes {
             };
             let _ = self.heard.send(heard);
         }
+        if !self.expecting.load(Ordering::SeqCst) {
+            return;
+        }
 
         let at = now();
         let mut inner = self.lock();
@@ -135,6 +150,8 @@ impl Notes {
 
     fn append(&self, inner: &mut Inner, note: &Note) -> Result<(), NoteError> {
         inner.operator.apply(note);
+        self.expecting
+            .store(inner.operator.expecting(), Ordering::SeqCst);
         let operator = inner.operator.clone();
         self.store.update(|state| state.operator = operator);
 
@@ -154,14 +171,7 @@ impl Notes {
 
     fn write(inner: &mut Inner, note: &Note) -> std::io::Result<()> {
         if inner.file.is_none() {
-            if let Some(parent) = inner.path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            let file = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&inner.path)?;
-            inner.file = Some(BufWriter::new(file));
+            inner.file = Some(BufWriter::new(open_file(&inner.path)?));
         }
         let Some(file) = inner.file.as_mut() else {
             return Ok(());
@@ -169,6 +179,14 @@ impl Notes {
         let line = serde_json::to_string(note).map_err(std::io::Error::other)?;
         writeln!(file, "{line}")
     }
+}
+
+/// The notes file, for appending, with its directory.
+fn open_file(path: &Path) -> std::io::Result<File> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    OpenOptions::new().create(true).append(true).open(path)
 }
 
 /// What a client may note: never a server's own settlement, a timer whose
@@ -302,7 +320,11 @@ mod tests {
         );
         let again = Store::new(crate::tests::idle_state());
         Notes::open(dir.path(), again.clone());
-        assert_eq!(operator(&again), operator(&store));
+        // serde_json may read a time back an ulp off what it wrote, so the
+        // state compared has been through the same text.
+        let written = serde_json::to_string(&operator(&store)).unwrap();
+        let expected: Operator = serde_json::from_str(&written).unwrap();
+        assert_eq!(operator(&again), expected);
     }
 
     #[test]

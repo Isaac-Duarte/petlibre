@@ -5,13 +5,17 @@
 //! - `for=line&text=T`: a UART, device log or job output line containing
 //!   `T` arrived after the wait began;
 //! - `for=event&kind=K`: a device event of kind `K` arrived after it began;
-//! - `for=status&build=B&bank=N`: the feeder's last status names a build
-//!   starting with `B`, from bank `N` (either may be left out, not both);
+//! - `for=status&build=B&bank=N`: a status read after the wait began names
+//!   a build starting with `B`, from bank `N` (either may be left out, not
+//!   both); a status from before it never counts, so a wait begun before a
+//!   reboot hears the feeder after it. The answer names the boot count;
 //! - `for=timer&label=L`: the operator's timer `L` is due, seen or missed;
 //! - `for=idle`: no job runs and the flash client holds no UART.
 //!
 //! 200 with `met` and how, or `timed-out`; 400 for a condition missing
-//! what it needs. A wait only reads: it changes nothing on the bench.
+//! what it needs, or one that could never be met: a timer nobody set, or a
+//! job past the next one to be given. A wait only reads: it changes
+//! nothing on the bench.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -85,8 +89,31 @@ impl TryFrom<&Wait> for Condition {
 }
 
 impl Condition {
-    /// Whether the state already says so, and how.
-    fn held(&self, state: &BenchState) -> Option<String> {
+    /// Refused if nothing could ever meet it: a timer the notes do not
+    /// have, or a job no later than the next to be given (`last` + 1).
+    fn possible(&self, state: &BenchState, last: JobId) -> Result<(), WaitError> {
+        match self {
+            Self::Job(id) => wellfed_formats::require(*id <= last + 1, || WaitError::NoSuchJob {
+                id: *id,
+                next: last + 1,
+            }),
+            Self::Timer(label) => wellfed_formats::require(
+                state
+                    .operator
+                    .timers
+                    .iter()
+                    .any(|timer| timer.label == *label),
+                || WaitError::UnknownTimer {
+                    label: label.clone(),
+                },
+            ),
+            Self::Line(_) | Self::Event(_) | Self::Status { .. } | Self::Idle => Ok(()),
+        }
+    }
+
+    /// Whether the state already says so, and how; a status only once read
+    /// after `since`.
+    fn held(&self, state: &BenchState, since: f64) -> Option<String> {
         match self {
             Self::Job(id) => {
                 let job = state.job.as_ref()?;
@@ -100,13 +127,21 @@ impl Condition {
                 })
             }
             Self::Status { build, bank } => {
-                let status = state.feeder.status.as_ref()?;
+                let fresh = state.feeder.status_at.is_some_and(|at| at > since);
+                let status = state.feeder.status.as_ref().filter(|_| fresh)?;
                 let build_ok = build
                     .as_ref()
                     .is_none_or(|build| status.build.starts_with(build.as_str()));
                 let bank_ok = bank.is_none_or(|bank| status.bank == bank);
-                (build_ok && bank_ok)
-                    .then(|| format!("the feeder runs {} from bank {}", status.build, status.bank))
+                (build_ok && bank_ok).then(|| {
+                    format!(
+                        "the feeder runs {} from bank {} (boot {}, up {} s)",
+                        status.build,
+                        status.bank,
+                        status.boot_count,
+                        status.uptime_ms / 1000
+                    )
+                })
             }
             Self::Timer(label) => {
                 let timer = state
@@ -146,7 +181,13 @@ impl Condition {
 }
 
 pub(crate) async fn wait(State(shared): State<Arc<Shared>>, Query(wait): Query<Wait>) -> Response {
-    let condition = match Condition::try_from(&wait) {
+    let condition = Condition::try_from(&wait).and_then(|condition| {
+        let possible = shared
+            .store
+            .with(|state| condition.possible(state, shared.last_job()));
+        possible.map(|()| condition)
+    });
+    let condition = match condition {
         Ok(condition) => condition,
         Err(error) => return Refusal::Wait { error }.into_response(),
     };
@@ -159,12 +200,13 @@ async fn until(shared: &Shared, condition: &Condition, timeout: Duration) -> Wai
     let mut states = shared.store.subscribe();
     let mut heard = shared.notes.listen();
     let started = Instant::now();
+    let since = now();
     let deadline = tokio::time::sleep(timeout);
     tokio::pin!(deadline);
     let mut ticks = tokio::time::interval(TICK);
 
     loop {
-        let held = condition.held(&states.borrow_and_update());
+        let held = condition.held(&states.borrow_and_update(), since);
         if let Some(detail) = held {
             return Waited::Met { detail };
         }
@@ -255,6 +297,62 @@ mod tests {
 
         assert!(query.starts_with("for=line&text=PLFW1+start"), "{query}");
         assert_eq!(serde_urlencoded::from_str::<Wait>(&query).unwrap(), wait);
+    }
+
+    #[test]
+    fn a_status_counts_only_once_read_after_the_wait_began() {
+        let status = Condition::Status {
+            build: Some("4d37".into()),
+            bank: Some(1),
+        };
+        let mut state = crate::tests::idle_state();
+        state.feeder.status = Some(wellfed_formats::bench::live::FeederStatus {
+            build: "4d37c21a00ff".into(),
+            bank: 1,
+            uptime_ms: 4000,
+            boot_count: 9,
+            rssi: -50,
+            clock_ms: None,
+            locked: None,
+            last_event: None,
+            sessions: 1,
+        });
+        state.feeder.status_at = Some(100.0);
+
+        assert_eq!(status.held(&state, 100.0), None);
+        assert_eq!(
+            status.held(&state, 99.0).as_deref(),
+            Some("the feeder runs 4d37c21a00ff from bank 1 (boot 9, up 4 s)")
+        );
+    }
+
+    #[test]
+    fn a_timer_nobody_set_or_a_job_past_the_next_is_refused() {
+        let mut state = crate::tests::idle_state();
+        state
+            .operator
+            .timers
+            .push(wellfed_formats::bench::notes::Timer {
+                label: "fire".into(),
+                started: 0.0,
+                due: 1.0,
+                until: 2.0,
+                expect: None,
+                state: TimerState::Waiting,
+            });
+
+        assert_eq!(
+            Condition::Timer("soak".into()).possible(&state, 4),
+            Err(WaitError::UnknownTimer {
+                label: "soak".into()
+            })
+        );
+        assert_eq!(Condition::Timer("fire".into()).possible(&state, 4), Ok(()));
+        assert_eq!(Condition::Job(5).possible(&state, 4), Ok(()));
+        assert_eq!(
+            Condition::Job(6).possible(&state, 4),
+            Err(WaitError::NoSuchJob { id: 6, next: 5 })
+        );
     }
 
     #[test]

@@ -39,6 +39,7 @@ use crate::notes::Notes;
 use crate::output::{self, Console, Output};
 use crate::routes;
 use crate::state::{JobLog, JobOutput, Logs, Store};
+use crate::stopping::Stopper;
 
 /// How long a quitting server lets its clients' connections finish once
 /// the job has ended.
@@ -256,6 +257,19 @@ impl Server {
     /// A line on the server's console, which is no job's output.
     pub fn say(&self, line: String) {
         self.shared.output.say(line);
+    }
+
+    /// What decides when [`Self::run`] stops, from the asks it is given:
+    /// signals and the full-screen console's keys, held back during a
+    /// write (`stopping`).
+    pub fn stopper(&self) -> Stopper {
+        let said = Arc::clone(&self.shared.output);
+        let ended = Arc::clone(&self.shared.output);
+        Stopper::new(
+            self.shared.store.clone(),
+            Arc::new(move |line| said.say(line)),
+            Arc::new(move || ended.console_to_terminal()),
+        )
     }
 
     /// Serve until `shutdown` completes, then cancel the running job, wait
@@ -517,6 +531,12 @@ impl Shared {
         self.jobs
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// The last job id given, on this server or an earlier one in the
+    /// checkout.
+    pub(crate) fn last_job(&self) -> JobId {
+        self.jobs().last
     }
 
     /// Parse the request's words as a job and start it on a thread of its

@@ -140,6 +140,8 @@ pub(crate) struct Feeder {
     info: Arc<Mutex<Option<SessionInfo>>>,
     /// Root-relative, as the jobs name it.
     keys: PathBuf,
+    /// The live state, where the session says whether it is open.
+    store: Store,
 }
 
 /// What [`Feeder::new`] leaves for [`Task::run`] to start.
@@ -192,6 +194,7 @@ impl Feeder {
             logs: Arc::clone(&logs),
             info: Arc::clone(&info),
             keys: options.keys.clone(),
+            store: store.clone(),
         };
         let task = Task {
             owner,
@@ -246,6 +249,7 @@ impl Feeder {
         let link = SessionLink {
             requests: self.requests.clone(),
             hold: Arc::clone(&self.hold),
+            store: self.store.clone(),
         };
         (self.keys.clone(), link)
     }
@@ -266,6 +270,8 @@ fn random<const N: usize>() -> Option<[u8; N]> {
 pub(crate) struct SessionLink {
     requests: mpsc::UnboundedSender<Request>,
     hold: Arc<watch::Sender<Option<Pause>>>,
+    /// Where the session says it has closed.
+    store: Store,
 }
 
 impl DeviceLink for SessionLink {
@@ -292,7 +298,10 @@ impl DeviceLink for SessionLink {
     }
 
     /// The push's sessions are the feeder's owner sessions until it ends;
-    /// the server's own closes meanwhile and resumes after its cursor.
+    /// the server's own closes meanwhile and resumes after its cursor. It
+    /// returns once the server's session has closed, or after
+    /// [`PUSH_CLOSE_WAIT`] (a session mid-request takes a moment), so the
+    /// push never opens beside it.
     fn hold_for_push(&mut self) -> Option<Box<dyn FnOnce() + Send>> {
         self.hold.send_if_modified(|hold| {
             let free = hold.is_none();
@@ -301,6 +310,13 @@ impl DeviceLink for SessionLink {
             }
             free
         });
+        // The job's own thread, outside the runtime: the standard clock.
+        let deadline = std::time::Instant::now() + PUSH_CLOSE_WAIT;
+        while !self.store.with(|state| closed(&state.feeder.session))
+            && std::time::Instant::now() < deadline
+        {
+            std::thread::sleep(Duration::from_millis(10));
+        }
         let hold = Arc::clone(&self.hold);
         Some(Box::new(move || {
             // A stop that came meanwhile stays.
@@ -313,6 +329,17 @@ impl DeviceLink for SessionLink {
             });
         }))
     }
+}
+
+/// The longest a push waits for the server's session to close.
+const PUSH_CLOSE_WAIT: Duration = Duration::from_secs(2);
+
+/// Whether no session is open or opening.
+fn closed(session: &Session) -> bool {
+    matches!(
+        session,
+        Session::Paused { .. } | Session::Unconfigured { .. } | Session::Idle
+    )
 }
 
 /// A stream of pushed messages, numbered from the server's start, the
@@ -347,12 +374,18 @@ impl Pushes {
     /// Start again, empty, holding `epoch`'s history after event `floor`
     /// (`None`: from the feeder's oldest). Numbering carries on, so a
     /// reader's place never points into the new history by mistake.
+    /// Every reader waiting on the old history wakes, to read the new
+    /// epoch and floor rather than wait out its time on a number that did
+    /// not move.
     fn reset(&self, epoch: Option<u32>, floor: Option<u64>) {
-        let mut ring = lock(&self.inner);
-        ring.first += ring.messages.len() as u64;
-        ring.messages.clear();
-        ring.floor = floor;
-        ring.epoch = epoch;
+        {
+            let mut ring = lock(&self.inner);
+            ring.first += ring.messages.len() as u64;
+            ring.messages.clear();
+            ring.floor = floor;
+            ring.epoch = epoch;
+        }
+        self.next.send_modify(|_| {});
     }
 
     fn epoch(&self) -> Option<u32> {
@@ -381,17 +414,13 @@ impl Pushes {
         self.next.send_replace(next);
     }
 
-    /// The messages from `from` on, waiting up to `wait` for the first.
+    /// The messages from `from` on, waiting up to `wait` for the first, or
+    /// for a reset, which answers at once with the new history's epoch.
     pub(crate) async fn page(&self, from: u64, wait: Duration) -> PushedPage {
         let mut next = self.next.subscribe();
         let deadline = Instant::now() + wait.min(PUSHED_WAIT_MAX);
-        while *next.borrow_and_update() <= from {
-            if tokio::time::timeout_at(deadline, next.changed())
-                .await
-                .is_err()
-            {
-                break;
-            }
+        if *next.borrow_and_update() <= from {
+            let _ = tokio::time::timeout_at(deadline, next.changed()).await;
         }
 
         let ring = lock(&self.inner);

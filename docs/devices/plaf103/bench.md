@@ -75,7 +75,7 @@ A DSD TECH SH-UR04A USB relay board (CP2102 serial, 9600 8N1) adds four switches
    target/release/wellfed-bench serve
    ```
 
-   You should see the socket, the lease and the four relays. It runs until Ctrl+C. Run every other command from a second terminal.
+   You should see the socket, the lease and the four relays. It runs until `q` or Ctrl+C in its [console](#the-console). Run every other command from a second terminal.
 
 Run the bench from the repository root, or pass `--root`. A job reads the paths you give it, such as `--target`, from the server's directory, so start the server at the repository root and give paths relative to it. Because the bench never links the flash client in, rebuilding the bench alone does not affect a plan.
 
@@ -149,13 +149,19 @@ A client that disconnects, a closed terminal say, only stops reading. The job ru
 
 Ctrl+C, SIGTERM or a hangup of the server's terminal stops the server. It refuses new jobs, cancels the running one as a client's Ctrl+C does, waits for its cleanup, then removes the socket and releases the lease. Every child of a job runs in a process group of its own, so the terminal's Ctrl+C or hangup reaches only the server, never a `wellfed-flash` that is writing; the server forwards the cancel itself.
 
+A cancelled write stops terminally and leaves its bank half-written until another UART write, so while the flash client holds the UART nothing stops the server by accident:
+
+- **Ctrl+C or `q`** during a write or a loader session only says "A UART write is under way; press again within 5 s to cancel it". A second press within 5 s stops the server, cancelling the write.
+- **SIGTERM or a hangup** during a write is deferred, however many arrive. The server says it is stopping once the write ends, lets the job finish, then stops as usual. A signal outside a write stops it at once. SIGKILL remains the last resort: the [lease](#bench-lease) and the orphan checks handle a killed server.
+- **The full-screen console ending on its own** (a terminal error, a panic) stops nothing. The server prints its lines on the terminal again, says the console ended, and Ctrl+C or SIGTERM stops it from then on.
+
 The socket's routes:
 
 | Route | Answer |
 | --- | --- |
 | `GET /state` | The live state: the job and its next steps, every child it runs, the UART (idle, capturing, a loader session, or writing with sectors verified), the relays, the feeder session, the capture's tail and records, and the bank ledger |
 | `GET /events` | The live state again on every change, as server-sent events |
-| `POST /jobs` | `{"argv": [...]}`, the command's words: 201 with the job's number, 400 for words that are no job, 409 while a job runs |
+| `POST /jobs` | `{"root": ..., "argv": [...]}`, the client's checkout and the command's words: 201 with the job's number, 400 for words that are no job, 409 while a job runs |
 | `GET /jobs/{id}/stream` | The job's output lines, then its end, as newline-delimited JSON |
 | `GET /jobs/{id}/output?after=N` | A page of at most 500 of the job's kept lines after line `N`, the next line number, and the job's end once that is all |
 | `POST /jobs/{id}/cancel` | 202, or 409 for a job that already ended |
@@ -163,8 +169,8 @@ The socket's routes:
 | `GET /device/pushed?stream=events\|logs&from=N&wait=MS` | The history (events and gaps) or the log lines the session was pushed, from number `N` on, waiting up to `MS` (at most 30 s) for the first; with the event the held history starts after |
 | `GET /device/session` | Whom the session speaks as and with: the checkout, the key file and its public key, the feeder, and once open its build, role and capabilities; 503 while paused or unconfigured |
 | `GET /banks`, `POST /banks/seed` | The bank ledger, and `banks --seed` |
-| `GET /wait?for=...&timeout_ms=MS` | Holds until a condition holds, at most 10 minutes: `for=job&id=N` (it ended), `for=line&text=T` (a UART, device log or job output line containing `T` after the wait began), `for=event&kind=K`, `for=status&build=B&bank=N`, `for=timer&label=L` (due, seen or missed) or `for=idle` (no job, no loader or write). 200 with `met` and how, or `timed-out`; 400 for a condition missing a field. It only reads. |
-| `POST /notes` | One [operator's note](#the-operators-notes), the body of a line of `notes.jsonl`: 201 with the note as kept, 400 `{"note": {"error": ...}}` for one refused |
+| `GET /wait?for=...&timeout_ms=MS` | Holds until a condition holds, at most 10 minutes: `for=job&id=N` (it ended), `for=line&text=T` (a UART, device log or job output line containing `T` after the wait began), `for=event&kind=K`, `for=status&build=B&bank=N` (a status read after the wait began, so one from before a reboot never counts; the answer names the boot count), `for=timer&label=L` (due, seen or missed) or `for=idle` (no job, no loader or write). 200 with `met` and how, or `timed-out`; 400 `{"wait": {"error": {"refused": ..., ...}}}` for a condition missing a field, or one nothing could meet: a timer nobody set, or a job past the next one to be given. It only reads. |
+| `POST /notes` | One [operator's note](#the-operators-notes), the body of a line of `notes.jsonl`: 201 with the note as kept, 400 `{"note": {"error": {"refused": ..., ...}}}` for one refused, such as `{"refused": "outside-private", "path": "src"}` |
 
 #### The feeder session
 
@@ -226,7 +232,7 @@ Each entry is then checked against what the feeder says it runs: the `PLFW1 star
 
 On a terminal, `serve` draws its console full screen on `/dev/tty` with the same panels as the page: the UART-write banner with the sectors verified, the job with its step and next steps, Activity, the relays and the lease, the feeder (banks, session, status, clock, journal high water, hotspot, capture and the device log's last lines), the operator's step, timers and evidence by card, and a scrolling log of every job's output. PgUp and PgDn scroll the log (Up and Down a line), and End follows it again.
 
-`q` or Ctrl+C stops the server the same way SIGINT does: cancel the job, wait for its cleanup, then release the bench. While the flash client writes, the screen redraws at most twice a second; otherwise four times. It draws from the live state and a channel only, so a slow terminal never holds the output pump: it loses console lines instead, which the job's stream and log file keep. When the server stops, the screen closes and the log's last 30 lines are printed on the terminal.
+`q` or Ctrl+C stops the server the same way SIGINT does: cancel the job, wait for its cleanup, then release the bench. During a UART write or a loader session the first press only shows the confirmation in the footer, and a second within 5 s stops ([above](#the-bench-server)). While the flash client writes, the screen redraws at most twice a second; otherwise four times. It draws from the live state and a channel only, so a slow terminal never holds the output pump: it loses console lines instead, which the job's stream and log file keep. When the server stops, the screen closes and the log's last 30 lines are printed on the terminal.
 
 Without a terminal (a service, a pipe), or with `--plain`, the console is plain lines on stdout, as before.
 
@@ -265,11 +271,13 @@ A card is the operator's own name for the work, free text. Evidence must name a 
 Every tool's description says what it does physically.
 
 - **Reads:** `bench_status` (the live state, with its tails cut to 20 lines), `job_output {id, after}`, `logs_tail {source: device|uart|job, lines}`, `banks`, and `wait_for {for, …, timeout}` over `GET /wait`, with the timeout in seconds.
-- **Notes:** `note_step`, `note_next`, `note_timer` and `note_evidence`, the same as `wellfed-bench note`.
+- **Notes:** `note_step`, `note_next`, `note_timer` and `note_evidence`, the same notes as `wellfed-bench note`, built straight from the arguments, so text may start with `-`. On the command line such text goes after `--`: `wellfed-bench note step -- "- flash bank 1"`.
 - **The feeder:** `device_read {op}` asks the server's session for one read: status, settings, time, plans, clients, update state, calibration, the meal call or a stats section. `clock_sync` sets the clock from this host. Nothing else goes to the feeder from here: never a feed, a cancel, a plan, a setting or an update. A read that comes back uncertain is reported as such.
-- **Hardware:** `job_cancel`, and one tool a command: `power {state: on|off}`, `boot`, `capture`, `loader`, `dump`, `flash_prepare`, `flash_execute` (`plan_sha256` required), `give_way_prepare`, `give_way_execute`, `stock_prepare`, `stock_execute`, `ota`, `itest` and `transients`. Each builds the command's words and posts them as a job, so the server's parse and every check apply as they do to a person's command line; it answers with the job's number, to follow with `wait_for {for: job, id}` and `job_output`.
+- **Hardware:** `job_cancel`, refused during a UART write unless `during_write: true` (the write then stops for good), and one tool a command: `power {state: on|off}`, `boot`, `capture`, `loader`, `dump`, `flash_prepare`, `flash_execute` (`plan_sha256` required), `give_way_prepare`, `give_way_execute`, `stock_prepare`, `stock_execute`, `ota`, `itest` and `transients`. Each builds the command's words, with the session name after `--`, and posts them as a job, so the server's parse and every check apply as they do to a person's command line; it answers with the job's number, to follow with `wait_for {for: job, id}` and `job_output`.
 
-Refused over MCP, before anything is posted, as they need a person at the bench: `attended_motion`, the suite's `feeds`, `break_lease`, and a `destructive` suite run without `confirm_destructive: true`. Arguments a tool does not name are refused too. Stdout carries the protocol alone; nothing else prints there.
+Refused over MCP, before anything is posted, as they need a person at the bench: `attended_motion`, the suite's `feeds`, `break_lease`, and a `destructive` suite run without `confirm_destructive: true`. Arguments a tool does not name are refused too, and so is any string a hardware tool is given that starts with `-`, so none reads as a flag. A session name never starts with `-` anywhere. Stdout carries the protocol alone; nothing else prints there.
+
+### Flash over UART
 
 1. With the server running, prepare the update:
 

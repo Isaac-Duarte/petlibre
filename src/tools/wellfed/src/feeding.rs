@@ -9,6 +9,7 @@ use clap::Args;
 use wellfed_client::history::Feed;
 use wellfed_model::{Answer, Event, Op, PORTIONS_MAX, Pushed, Refusal};
 
+use crate::device::Connection;
 use crate::{Target, ask_and_print, connect, print_json, text};
 
 #[derive(Args)]
@@ -36,17 +37,18 @@ const FEED_WAIT: Duration = Duration::from_secs(120);
 /// line on standard error saying what it asked for and what it delivered.
 pub(crate) async fn feed_command(args: FeedArgs) -> Result<()> {
     let (_, _, mut connection) = connect(&args.target).await?;
+    feed(&mut connection, args.portions).await
+}
+
+/// The feed on an open session: its answer, then its `Fed` event.
+pub(crate) async fn feed(connection: &mut Connection, portions: u8) -> Result<()> {
     let Answer::Status(status) = connection.ask(&Op::Status).await? else {
         bail!("the feeder did not answer with its status");
     };
     // Only events after this one can be the feed's.
     connection.subscribe(status.last_event, false).await?;
 
-    let answer = connection
-        .ask(&Op::Feed {
-            portions: args.portions,
-        })
-        .await?;
+    let answer = connection.ask(&Op::Feed { portions }).await?;
     print_json(&answer)?;
     let feed = started(&answer)?;
 

@@ -189,7 +189,9 @@ When the session opens and the feeder counts more sessions than the server's own
 
 `events` and `feeds` read the history the server's session kept, and `logs` its log lines, so neither moves the server's own subscription or tail; `--samples` is refused. The server keeps the newest 4096 events and gaps, and 1024 log batches, apart. The held history is one epoch's: after a store reset (a new epoch) it starts again, empty, and numbers from two epochs are never compared.
 
-History, or log lines, older than the server holds are refused when the command subscribes or asks for the tail, before it sends anything else: `feed` subscribes first, so a feed never runs ahead of a refusal of its own events. The refusal names the event or line the server's copy starts after: pass `--after` that number, or stop the server to read further back. A follower the ring outruns (it dropped messages the command had not read yet) stops with an error rather than skip them.
+History older than the server holds is refused when the command subscribes, before it sends anything else: `feed` subscribes first, so a feed never runs ahead of a refusal of its own events. The refusal names the event the server's copy starts after: pass `--after` that number, or stop the server to read further back. `logs --after` below what the server holds is refused the same way; plain `logs` shows what it holds, with a line saying older lines were dropped.
+
+A command takes what it wants of the server's ring when it starts and reads on from the ring's end, so the messages it waits for (a feed's own `Fed` among them) never overrun its place, however full the ring. Only a follower that more than a whole ring of new messages outruns while it waits stops with an error, rather than skip them.
 
 #### The UART capture
 

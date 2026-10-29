@@ -243,6 +243,11 @@ pub(crate) struct Lent {
 }
 
 /// One stream of the server's pushed messages, as this command reads it.
+///
+/// It takes what it wants of the page it starts from at once and reads on
+/// from that page's end: the ring evicts its oldest messages as new ones
+/// come (a feed's own events among them), so a place at the ring's start
+/// would be overrun by the very messages a command waits for.
 #[derive(Default)]
 struct Reading {
     /// Wanted, after this number (an event's sequence, a log line's), once
@@ -253,6 +258,24 @@ struct Reading {
     /// The next message to read from the server's ring.
     cursor: u64,
     queued: VecDeque<Pushed>,
+}
+
+impl Reading {
+    /// Reading after `after`, starting from `page`: its wanted messages
+    /// queued, and the next page from its end.
+    fn of(page: PushedPage, after: Option<u64>) -> Self {
+        let queued = page
+            .messages
+            .into_iter()
+            .filter(|message| wants(message, after, page.epoch))
+            .collect();
+        Self {
+            after: Some(after),
+            epoch: page.epoch,
+            cursor: page.next,
+            queued,
+        }
+    }
 }
 
 /// The server's session for `keys`, refusing whatever it cannot lend.
@@ -342,12 +365,7 @@ impl Lent {
             }
             .into());
         }
-        self.events = Reading {
-            after: Some(after),
-            epoch: page.epoch,
-            cursor: page.first,
-            queued: VecDeque::new(),
-        };
+        self.events = Reading::of(page, after);
         Ok(())
     }
 
@@ -412,21 +430,23 @@ impl Lent {
         if let Op::TailLog { after } = op {
             let after = after.map(u64::from);
             let page = self.bench.pushed(Stream::Logs, 0, Duration::ZERO).await?;
-            if let Some(floor) = page.floor
-                && after.is_none_or(|after| after < floor)
-            {
-                return Err(BenchRefusal::LogStarts {
-                    root: self.bench.root.clone(),
-                    floor,
+            // Only an --after the server cannot reach back to is refused;
+            // the plain tail is whatever the server holds, which says so.
+            match (page.floor, after) {
+                (Some(floor), Some(after)) if after < floor => {
+                    return Err(BenchRefusal::LogStarts {
+                        root: self.bench.root.clone(),
+                        floor,
+                    }
+                    .into());
                 }
-                .into());
+                (Some(floor), None) => eprintln!(
+                    "(the bench server holds the feeder's log after line {floor}; older lines \
+                     were dropped)"
+                ),
+                _ => {}
             }
-            self.logs = Reading {
-                after: Some(after),
-                epoch: None,
-                cursor: page.first,
-                queued: VecDeque::new(),
-            };
+            self.logs = Reading::of(page, after);
             return Ok(Answer::Done { generation: None });
         }
 
@@ -497,11 +517,24 @@ mod tests {
         messages: Vec<Pushed>,
     }
 
+    impl Ring {
+        /// Push onto a full ring, as the server's does: the oldest goes.
+        fn push_full(&mut self, message: Pushed) {
+            self.messages.push(message);
+            if !self.messages.is_empty() {
+                self.messages.remove(0);
+                self.first += 1;
+            }
+        }
+    }
+
     struct Stand {
         connection: Mutex<wellfed_connect::Connection>,
         info: SessionInfo,
         paused: bool,
         ring: std::sync::Mutex<Ring>,
+        /// The feeder's newest event, which a `Fed` follows.
+        newest: std::sync::Mutex<u64>,
     }
 
     async fn session(State(stand): State<Arc<Stand>>) -> Response {
@@ -518,8 +551,16 @@ mod tests {
         Json(stand.info.clone()).into_response()
     }
 
+    /// The feeder's answer; a feed it started also ends at once, its `Fed`
+    /// event pushed onto the stand-in's full ring.
     async fn ask(State(stand): State<Arc<Stand>>, Json(ask): Json<Ask>) -> Json<Asked> {
         let answer = stand.connection.lock().await.ask(ask.id, &ask.op).await;
+        if let Ok(Answer::Feeding { feed }) = &answer {
+            let mut ring = stand.ring.lock().unwrap();
+            let seq = *stand.newest.lock().unwrap() + 1;
+            let epoch = ring.epoch.unwrap_or(0);
+            ring.push_full(fed(epoch, seq, *feed));
+        }
         Json(match answer {
             Ok(answer) => Asked::Answered { answer },
             Err(_) => Asked::Uncertain,
@@ -596,6 +637,7 @@ mod tests {
             info,
             paused,
             ring: std::sync::Mutex::new(ring),
+            newest: std::sync::Mutex::new(0),
         });
         let router = axum::Router::new()
             .route("/device/session", get(session))
@@ -649,6 +691,41 @@ mod tests {
                 reset_flags: 0,
             },
         })
+    }
+
+    fn fed(epoch: u32, seq: u64, feed: u32) -> Pushed {
+        Pushed::Event(Event {
+            epoch,
+            seq,
+            at: None,
+            body: EventBody::Fed {
+                feed,
+                requested: 1,
+                completed: 1,
+                outcome: wellfed_model::FeedOutcome::Done,
+                reason: wellfed_model::FeedReason::Done,
+                hopper: wellfed_model::FoodLevel::Present,
+                by: wellfed_model::Source::Feeder,
+            },
+        })
+    }
+
+    fn log(seq: u32) -> Pushed {
+        Pushed::Log(wellfed_model::LogLines {
+            seq,
+            dropped: 0,
+            lines: vec![format!("line {seq}")],
+        })
+    }
+
+    /// A full ring: four events, 50 to 53, after floor 49.
+    fn full() -> Ring {
+        Ring {
+            first: 100,
+            floor: Some(49),
+            epoch: Some(1),
+            messages: (50..=53).map(|seq| event(1, seq)).collect(),
+        }
     }
 
     fn seqs(messages: &[Pushed]) -> Vec<(u32, u64)> {
@@ -803,12 +880,6 @@ mod tests {
             ),
             "{refused}"
         );
-        let refused = connection
-            .ask(&Op::TailLog { after: None })
-            .await
-            .map(|_| ());
-        assert!(refused.is_err(), "the log shares the ring's floor here");
-
         // From the floor on, the server's history is whole.
         connection.subscribe(Some(40), false).await.unwrap();
         assert!(connection.next(Duration::ZERO).await.unwrap().is_none());
@@ -882,5 +953,96 @@ mod tests {
             ),
             "{refused}"
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_full_ring_s_next_event_reaches_a_command_that_subscribed_to_the_newest() {
+        let feeder = simulator();
+        let standing = stand_in(&feeder, false, full()).await;
+        let (_, _, mut connection) = connect_via(&target(&standing.keys), &standing.pointers)
+            .await
+            .unwrap();
+        connection.subscribe(Some(53), false).await.unwrap();
+
+        // The new event evicts the ring's oldest, which the command never
+        // had to read.
+        standing.stand.ring.lock().unwrap().push_full(event(1, 54));
+
+        let next = connection.next(Duration::ZERO).await.unwrap().unwrap();
+        assert_eq!(seqs(&[next]), [(1, 54)]);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_feed_against_a_full_ring_reports_its_own_fed() {
+        let feeder = simulator();
+        let standing = stand_in(&feeder, false, Ring::default()).await;
+        let (_, _, mut connection) = connect_via(&target(&standing.keys), &standing.pointers)
+            .await
+            .unwrap();
+        // The ring is full of the feeder's history up to its newest event,
+        // in the feeder's own epoch.
+        let Answer::Status(status) = connection.ask(&Op::Status).await.unwrap() else {
+            panic!("no status");
+        };
+        let newest = status.last_event.unwrap_or(0);
+        *standing.stand.newest.lock().unwrap() = newest;
+        *standing.stand.ring.lock().unwrap() = Ring {
+            first: 100,
+            floor: newest.checked_sub(4),
+            epoch: Some(7),
+            messages: (newest.saturating_sub(3)..=newest)
+                .map(|seq| event(7, seq))
+                .collect(),
+        };
+
+        // Its `Fed` evicts the oldest event as it arrives.
+        crate::feeding::feed(&mut connection, 1).await.unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_log_tail_shows_what_the_server_holds_and_reads_on_past_a_full_ring() {
+        let feeder = simulator();
+        let ring = Ring {
+            first: 10,
+            floor: Some(19),
+            epoch: None,
+            messages: (20..=23).map(log).collect(),
+        };
+        let standing = stand_in(&feeder, false, ring).await;
+        let (_, _, mut connection) = connect_via(&target(&standing.keys), &standing.pointers)
+            .await
+            .unwrap();
+
+        // An --after below what the server holds is refused.
+        let refused = connection
+            .ask(&Op::TailLog { after: Some(5) })
+            .await
+            .err()
+            .unwrap();
+        assert!(
+            matches!(
+                refused.downcast_ref::<BenchRefusal>(),
+                Some(BenchRefusal::LogStarts { floor: 19, .. })
+            ),
+            "{refused}"
+        );
+
+        // The plain tail is everything held, then each new batch, past the
+        // eviction its arrival makes.
+        connection.ask(&Op::TailLog { after: None }).await.unwrap();
+        let mut seen = Vec::new();
+        for _ in 0..4 {
+            seen.push(connection.next(Duration::ZERO).await.unwrap().unwrap());
+        }
+        standing.stand.ring.lock().unwrap().push_full(log(24));
+        seen.push(connection.next(Duration::ZERO).await.unwrap().unwrap());
+        let lines: Vec<u32> = seen
+            .iter()
+            .filter_map(|message| match message {
+                Pushed::Log(batch) => Some(batch.seq),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(lines, [20, 21, 22, 23, 24]);
     }
 }

@@ -32,7 +32,7 @@ async fn an_explicit_api_install_publishes_once_and_never_again() {
     let mqtt = std::net::TcpListener::bind((host, 0)).unwrap();
     config.mqtt_listen = mqtt.local_addr().unwrap();
     drop(mqtt);
-    config.http_listen = common::address();
+    [config.http_listen] = common::addresses();
     storage::write_json(&path, &config).unwrap();
 
     let token = Uuid::new_v4();
@@ -295,8 +295,7 @@ async fn ordinary_server_refuses_trial_publication_by_default() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("server.json");
     let mut config = common::config();
-    config.mqtt_listen = common::address();
-    config.http_listen = common::address();
+    [config.mqtt_listen, config.http_listen] = common::addresses();
     storage::write_json(&path, &config).unwrap();
 
     let service = common::start(&path);

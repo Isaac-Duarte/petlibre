@@ -80,11 +80,13 @@ impl Drop for Service {
     }
 }
 
-pub fn address() -> std::net::SocketAddr {
-    TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
+/// `N` distinct free loopback addresses, for the ports a spawned server
+/// binds. Every listener is held until all are chosen: a port released at
+/// once can be handed out again by the next bind, and a server given one
+/// port for both its broker and its API fails to start.
+pub fn addresses<const N: usize>() -> [std::net::SocketAddr; N] {
+    let held: [TcpListener; N] = std::array::from_fn(|_| TcpListener::bind("127.0.0.1:0").unwrap());
+    held.map(|listener| listener.local_addr().unwrap())
 }
 
 pub fn start(path: &std::path::Path) -> Service {

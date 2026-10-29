@@ -57,7 +57,7 @@ fn start(path: &Path, minutes: Option<u64>) -> common::Service {
 async fn the_first_stock_feeder_enrolls_and_is_then_the_only_one() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("server.json");
-    let listen = common::address();
+    let [listen, http] = common::addresses();
     let init = std::process::Command::new(env!("CARGO_BIN_EXE_wellfed-stock"))
         .args([
             "init-installer",
@@ -74,7 +74,6 @@ async fn the_first_stock_feeder_enrolls_and_is_then_the_only_one() {
     // The installer's config names its HTTP API on the default port; move it.
     let mut file: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    let http = common::address();
     file["http_listen"] = json!(http.to_string());
     wellfed_stock::storage::write_json(&path, &file).unwrap();
 

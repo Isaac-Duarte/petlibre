@@ -7,7 +7,9 @@ use super::recovery::Rescue;
 use super::request::{Action, proto_role};
 use super::{Phase, Server, proto_encode, slot_id};
 use crate::pairing::Pairing;
-use crate::{Device, EventRead, HANDSHAKE_MS, IDLE_MS, KeyChange, KeyOutcome, Reason, Record};
+use crate::{
+    Device, EventRead, HANDSHAKE_MS, IDLE_MS, KeyChange, KeyOutcome, Reader, Reason, Record,
+};
 use wellfed_core::deadline_passed;
 use wellfed_proto::api::{
     self as proto, ClientMessage, Clients, EventBatchWriter, EventBody, FeederMessage, Joined,
@@ -34,8 +36,10 @@ enum Push {
 enum Stop {
     /// The pass read its bound.
     Bound,
-    /// The next event might not fit, or a gap ends the batch.
+    /// The next event might not fit.
     Full,
+    /// A gap is next, which goes in a message of its own.
+    Gap,
     /// The device is reading the next ones.
     Wait,
     /// No newer event.
@@ -332,12 +336,17 @@ impl Server {
                 stop = Stop::Full;
                 break;
             }
-            match device.event_after(after) {
+            match device.event_after(Reader::slot(index), after) {
                 EventRead::Event(event) => {
                     // A body the session's hello did not claim would not
                     // decode there: skip it, as an old client would want.
-                    if capabilities.contains(event.body.capability()) {
-                        writer.push(&event).map_err(|_| Reason::Malformed)?;
+                    // An event that does not fit stays for the next batch;
+                    // `has_room` leaves room for the largest, so none does.
+                    if capabilities.contains(event.body.capability())
+                        && writer.push(&event).is_err()
+                    {
+                        stop = Stop::Full;
+                        break;
                     }
                     after = Some(event.seq);
                     *events = Some(after);
@@ -347,7 +356,7 @@ impl Server {
                 // first.
                 EventRead::Gap { from, to } => {
                     if !writer.is_empty() {
-                        stop = Stop::Full;
+                        stop = Stop::Gap;
                         break;
                     }
                     *events = Some(Some(to));
@@ -372,7 +381,7 @@ impl Server {
             // events, carries on next pass.
             return Ok(match stop {
                 Stop::End => Push::Nothing,
-                Stop::Bound | Stop::Full | Stop::Wait => Push::Busy,
+                Stop::Bound | Stop::Full | Stop::Gap | Stop::Wait => Push::Busy,
             });
         }
         let len = proto_encode(&FeederMessage::Events(writer.batch()), &mut self.plain)?;

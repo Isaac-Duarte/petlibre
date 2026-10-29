@@ -23,7 +23,7 @@ use crate::clients::{CLIENTS, Client, Label, Role};
 use crate::mailbox::CallChange;
 use crate::pairing::{self, Pairing, Path};
 use crate::setup::Responder;
-use crate::{BUFFER, Device, Reason, Record, SESSIONS};
+use crate::{BUFFER, Device, Reader, Reason, Record, SESSIONS};
 use wellfed_core::deadline_passed;
 use wellfed_proto::api::{
     Capabilities, FRAME_MAX, FeederMessage, Open, OpenRefusal, RequestId, Sample,
@@ -182,6 +182,9 @@ pub struct Server {
     signer: Option<pairing::Event>,
     /// A session waiting for an update key's press ended: cancel the offer.
     cancel_signer: bool,
+    /// Subscribers that ended since the last pass, by slot: the device
+    /// hears of each on the next.
+    readers_left: [bool; SESSIONS],
     /// A feed is prepared or driven this pass.
     feeding: bool,
     /// The last step ran a handshake operation.
@@ -225,6 +228,7 @@ impl Server {
             cancel_rescue: false,
             signer: None,
             cancel_signer: false,
+            readers_left: [false; SESSIONS],
             feeding: false,
             handshook: false,
             struck: false,
@@ -399,6 +403,11 @@ impl Server {
             pairing.cancel(Path::Signer);
             self.signer = None;
         }
+        for (index, left) in self.readers_left.iter_mut().enumerate() {
+            if core::mem::take(left) {
+                device.reader_left(Reader::slot(index));
+            }
+        }
 
         // A feed queued before the deadline (a Dispense press: the server
         // refuses its own) holds the restart until it has ended, so the
@@ -447,6 +456,13 @@ impl Server {
         let slot = &mut self.slots[index];
         if matches!(slot.phase, Phase::Free | Phase::Closing) {
             return;
+        }
+        if let Phase::Open {
+            events: Some(_), ..
+        } = slot.phase
+            && let Some(left) = self.readers_left.get_mut(index)
+        {
+            *left = true;
         }
         slot.phase = Phase::Closing;
         record(Record::Ended {

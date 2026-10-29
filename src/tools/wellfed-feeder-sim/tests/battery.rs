@@ -14,6 +14,7 @@ use wellfed_connect::Connection;
 use wellfed_core::clock::wall::{Origin, Sync};
 use wellfed_core::liveness::Radio;
 use wellfed_core::schedule::{PLANS, Plan, Table, Weekdays};
+use wellfed_device_api::Reader;
 use wellfed_device_api::mailbox::{PlansChange, PlansResult};
 use wellfed_feeder::feeder::Platform;
 use wellfed_feeder::feeder::supply::{RADIO_OFF_MS, RELEASE_MS, Released};
@@ -134,7 +135,9 @@ impl Feeder {
     fn events(&mut self) -> Vec<EventBody> {
         let mut bodies = Vec::new();
         let mut after = None;
-        while let Some(Read::Record(record)) = self.sim.platform().event_after(after) {
+        while let Some(Read::Record(record)) =
+            self.sim.platform().event_after(Reader::slot(0), after)
+        {
             after = Some(record.seq);
             bodies.extend(wellfed_proto::decode_padded::<EventBody>(&record.body));
         }

@@ -30,7 +30,7 @@ use wellfed_device_api::mailbox::{
 use wellfed_device_api::pairing::{Config, Pairing};
 use wellfed_device_api::wifi::Credentials;
 use wellfed_device_api::{
-    Device, EventRead, KeyChange, KeyOutcome, Pass, Server, UpdateAnswer, UpdateRequest,
+    Device, EventRead, KeyChange, KeyOutcome, Pass, Reader, Server, UpdateAnswer, UpdateRequest,
 };
 use wellfed_feeder::update as wire;
 use wellfed_model::{self as model, Answer, Op};
@@ -464,7 +464,7 @@ impl Device for Feeder {
 
     fn record(&mut self, _now_ms: u32, _body: EventBody) {}
 
-    fn event_after(&mut self, _after: Option<u64>) -> EventRead {
+    fn event_after(&mut self, _reader: Reader, _after: Option<u64>) -> EventRead {
         EventRead::None
     }
 

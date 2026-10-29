@@ -19,6 +19,7 @@ use wellfed_core::ota::install::{Answer, Progress, Refused};
 use wellfed_core::store::slot::SlotIo;
 use wellfed_core::supply::Reading;
 use wellfed_core::tone::Tune;
+use wellfed_device_api::Reader;
 use wellfed_device_api::clients::{CLIENTS, Client};
 use wellfed_device_api::mailbox::{
     Calibration, CalibrationResult, CallChange, CallResult, ClientChange, KeyResult, PlansChange,
@@ -343,8 +344,12 @@ impl Platform for Plaf103 {
         events::take_lost()
     }
 
-    fn event_after(&mut self, after: Option<u64>) -> Option<Read> {
-        events::read_result(after)
+    fn event_after(&mut self, reader: Reader, after: Option<u64>) -> Option<Read> {
+        events::read_result(reader, after)
+    }
+
+    fn reader_left(&mut self, reader: Reader) {
+        events::reader_left(reader);
     }
 
     fn epoch(&self) -> Option<u32> {

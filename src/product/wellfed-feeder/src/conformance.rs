@@ -32,7 +32,7 @@ use wellfed_device_api::mailbox::{
 };
 use wellfed_device_api::mailbox::{KeyResult, Requested};
 use wellfed_device_api::wifi::Credentials;
-use wellfed_device_api::{Device, EventRead, KeyChange, KeyOutcome, UpdateRequest};
+use wellfed_device_api::{Device, EventRead, KeyChange, KeyOutcome, Reader, UpdateRequest};
 
 /// Writer turns a check waits for one result, at most.
 const TURNS: usize = 64;
@@ -623,7 +623,7 @@ pub fn a_recorded_event_reads_back(rig: &mut impl Rig) {
     let mut after = None;
     let mut found = None;
     for _ in 0..TURNS {
-        match device(rig, 0, |device| device.event_after(after)) {
+        match device(rig, 0, |device| device.event_after(Reader::slot(0), after)) {
             EventRead::Event(Event {
                 seq, body: read, ..
             }) if read == body => {
@@ -857,7 +857,7 @@ pub fn a_lasting_reason_not_to_feed_is_recorded_once(rig: &mut impl Rig) {
     let mut after = None;
     let mut seen = 0;
     for _ in 0..TURNS {
-        match device(rig, 0, |device| device.event_after(after)) {
+        match device(rig, 0, |device| device.event_after(Reader::slot(0), after)) {
             EventRead::Event(Event { seq, body, .. }) => {
                 seen += usize::from(body == blocked);
                 after = Some(seq);

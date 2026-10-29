@@ -23,7 +23,7 @@ use wellfed_device_api::pairing::{Config, Pairing};
 use wellfed_device_api::setup::{Received, Responder};
 use wellfed_device_api::wifi::Credentials;
 use wellfed_device_api::{
-    Device, EventRead, KeyChange, KeyOutcome, Pass, Record, SESSIONS, Server,
+    Device, EventRead, KeyChange, KeyOutcome, Pass, Reader, Record, SESSIONS, Server,
 };
 use wellfed_proto::api::{
     self as proto, Capabilities, EventBody, FRAME_MAX, FeederMessage, FoodLevel, Hello,
@@ -349,7 +349,7 @@ impl Device for Fake {
         });
     }
 
-    fn event_after(&mut self, after: Option<u64>) -> EventRead {
+    fn event_after(&mut self, _reader: Reader, after: Option<u64>) -> EventRead {
         let after = after.unwrap_or(0);
         self.events
             .iter()

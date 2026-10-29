@@ -68,8 +68,13 @@ pub trait Device {
     fn cancel_feed(&mut self, feed: u32) -> bool;
     /// Record one durable event.
     fn record(&mut self, now_ms: u32, body: EventBody);
-    /// The first durable event after `after` (`None`: from the oldest).
-    fn event_after(&mut self, after: Option<u64>) -> EventRead;
+    /// The first durable event after `after` (`None`: from the oldest),
+    /// for the subscriber in session slot `reader`. A device that reads
+    /// in turns serves each reader its turn by the slot.
+    fn event_after(&mut self, reader: Reader, after: Option<u64>) -> EventRead;
+    /// The subscriber in slot `reader` ended: a read it waits on, or one
+    /// fetched for it, is nobody's now.
+    fn reader_left(&mut self, _reader: Reader) {}
     /// The event ring's epoch, `None` until the ring is open. A session is
     /// welcomed only once it is known.
     fn epoch(&self) -> Option<u32>;
@@ -240,6 +245,22 @@ pub enum KeyOutcome {
     Duplicate,
     NotFound,
     NotWritable,
+}
+
+/// The session slot a subscriber reads events from, below
+/// [`SESSIONS`](crate::SESSIONS).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Reader(usize);
+
+impl Reader {
+    /// The subscriber in slot `index`.
+    pub const fn slot(index: usize) -> Self {
+        Self(index)
+    }
+
+    pub const fn index(self) -> usize {
+        self.0
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

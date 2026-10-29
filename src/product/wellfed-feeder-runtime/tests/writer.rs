@@ -6,6 +6,7 @@ use std::sync::{Mutex, MutexGuard};
 
 use wellfed_core::record::{self, Event, Record as Line, Tag};
 use wellfed_core::store::seed::SeedStatus;
+use wellfed_device_api::Reader;
 use wellfed_device_api::clients::{Label, Role};
 use wellfed_device_api::mailbox::{SettingsFields, SettingsResult};
 use wellfed_feeder::stats::{EARLY_SAVES, RESTART_SETTLED_MS, SAVE_MS, Totals};
@@ -111,6 +112,11 @@ impl FlashOps for Armed {
 
 /// The settings and network views are process-wide; the fake hardware is per thread.
 static SERIAL: Mutex<()> = Mutex::new(());
+
+/// The subscriber most tests read for.
+const A: Reader = Reader::slot(0);
+/// A second subscriber, in another slot.
+const B: Reader = Reader::slot(1);
 
 fn start() -> (MutexGuard<'static, ()>, Writer<Armed>, Provider) {
     let guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
@@ -557,9 +563,9 @@ fn queued_events_are_appended_and_read_back_after_a_reboot() {
     );
     step(&mut writer, &mut provider); // stats
     step(&mut writer, &mut provider); // the boot's stats save
-    assert_eq!(events::read_result(None), None, "asked");
+    assert_eq!(events::read_result(A, None), None, "asked");
     step(&mut writer, &mut provider);
-    let Some(Read::Record(first)) = events::read_result(None) else {
+    let Some(Read::Record(first)) = events::read_result(A, None) else {
         panic!("the first event");
     };
     assert_eq!(
@@ -568,35 +574,35 @@ fn queued_events_are_appended_and_read_back_after_a_reboot() {
     );
     // One answer is a batch: the next record needs no other read.
     assert!(matches!(
-        events::read_result(Some(1)),
+        events::read_result(A, Some(1)),
         Some(Read::Record(r)) if r.seq == 2
     ));
 
     // At the newest record there is nothing to read, until the next append.
-    assert_eq!(events::read_result(Some(2)), Some(Read::End));
+    assert_eq!(events::read_result(A, Some(2)), Some(Read::End));
     assert!(events::record(None, [3; 16]));
     step(&mut writer, &mut provider);
     assert_eq!(
-        events::read_result(Some(2)),
+        events::read_result(A, Some(2)),
         None,
         "stale once a record lands"
     );
     step(&mut writer, &mut provider);
     assert!(matches!(
-        events::read_result(Some(2)),
+        events::read_result(A, Some(2)),
         Some(Read::Record(r)) if r.seq == 3
     ));
 
     // A subscriber caught up does not take the slot from one catching up:
     // the answer for the first waits however often the second polls.
-    assert_eq!(events::read_result(Some(3)), Some(Read::End));
-    assert_eq!(events::read_result(None), None, "asked");
+    assert_eq!(events::read_result(A, Some(3)), Some(Read::End));
+    assert_eq!(events::read_result(B, None), None, "asked");
     step(&mut writer, &mut provider);
     for _ in 0..3 {
-        assert_eq!(events::read_result(Some(3)), Some(Read::End));
+        assert_eq!(events::read_result(A, Some(3)), Some(Read::End));
     }
     assert!(matches!(
-        events::read_result(None),
+        events::read_result(B, None),
         Some(Read::Record(r)) if r.seq == 1
     ));
 }
@@ -617,7 +623,7 @@ fn a_reader_catching_up_takes_a_batch_a_read() {
     }
     assert_eq!(events::last_seq(), Some(total as u64));
 
-    assert_eq!(events::read_result(None), None, "asked");
+    assert_eq!(events::read_result(A, None), None, "asked");
     // SAFETY: the provider outlives the run.
     let answered = unsafe { writer.step::<NoMmio, Armed>(&mut provider) };
     assert_eq!(
@@ -629,7 +635,7 @@ fn a_reader_catching_up_takes_a_batch_a_read() {
     // The whole batch, one record a call, with no read between.
     let mut after = None;
     for seq in 1..=events::READ_BATCH as u64 {
-        let Some(Read::Record(record)) = events::read_result(after) else {
+        let Some(Read::Record(record)) = events::read_result(A, after) else {
             panic!("record {seq} from the batch");
         };
         assert_eq!(record.seq, seq);
@@ -637,7 +643,7 @@ fn a_reader_catching_up_takes_a_batch_a_read() {
     }
     // A second reader inside the batch shares it.
     assert!(matches!(
-        events::read_result(Some(3)),
+        events::read_result(B, Some(3)),
         Some(Read::Record(r)) if r.seq == 4
     ));
 
@@ -650,16 +656,16 @@ fn a_reader_catching_up_takes_a_batch_a_read() {
         writer::EVENTS_POLL_MS,
         "lingers after a read"
     );
-    assert_eq!(events::read_result(after), None, "asked");
+    assert_eq!(events::read_result(A, after), None, "asked");
     step(&mut writer, &mut provider);
     for seq in events::READ_BATCH as u64 + 1..=total as u64 {
-        let Some(Read::Record(record)) = events::read_result(after) else {
+        let Some(Read::Record(record)) = events::read_result(A, after) else {
             panic!("record {seq} from the next batch");
         };
         assert_eq!(record.seq, seq);
         after = Some(seq);
     }
-    assert_eq!(events::read_result(after), Some(Read::End));
+    assert_eq!(events::read_result(A, after), Some(Read::End));
 
     // With no reader the writer goes back to its idle poll.
     let delay = (0..=writer::READ_LINGER_POLLS)
@@ -669,11 +675,12 @@ fn a_reader_catching_up_takes_a_batch_a_read() {
     assert_eq!(delay, Some(writer::POLL_MS));
 }
 
-/// One loop pass's reads for a subscriber at `after`: everything the slot
-/// answers it now; true once it is at the newest record.
-fn drain(after: &mut Option<u64>, got: &mut Vec<u64>) -> bool {
+/// One loop pass's reads for the subscriber in `reader`'s slot at `after`:
+/// everything the slot answers it now; true once it is at the newest
+/// record.
+fn drain(reader: usize, after: &mut Option<u64>, got: &mut Vec<u64>) -> bool {
     loop {
-        match events::read_result(*after) {
+        match events::read_result(Reader::slot(reader), *after) {
             Some(Read::Record(record)) => {
                 got.push(record.seq);
                 *after = Some(record.seq);
@@ -699,60 +706,161 @@ fn with_records(total: u8) -> (MutexGuard<'static, ()>, Writer<Armed>, Provider)
     (guard, writer, provider)
 }
 
-/// Two subscribers catching up from different units, whichever the loop
-/// visits first, take turns: each gets a batch every other writer round
-/// trip, and neither evicts the other's answer before it is read.
-#[test]
-fn two_readers_in_different_units_take_turns() {
-    for first in [0, 1] {
-        let (_guard, mut writer, mut provider) = with_records(200);
-        // One from the oldest record, one from the second unit.
-        let mut cursors = [None, Some(150)];
-        let mut got = [Vec::new(), Vec::new()];
-        let mut done = [false; 2];
-        let mut idle = [0; 2];
-        let order = [first, 1 - first];
+/// Subscribers in slots 0.. at `start`, visited in `order` each pass with
+/// a writer round trip between passes, until each has every record after
+/// its cursor: the most passes in a row each went without a record.
+fn catch_up(total: u8, start: &[Option<u64>], order: &[usize]) -> Vec<usize> {
+    let (_guard, mut writer, mut provider) = with_records(total);
+    let n = start.len();
+    let mut cursors = start.to_vec();
+    let mut got = vec![Vec::new(); n];
+    let mut done = vec![false; n];
+    let mut idle = vec![0; n];
+    let mut worst = vec![0; n];
 
-        let mut trips = 0;
-        while done != [true; 2] {
-            for reader in order {
-                let before = got[reader].len();
-                done[reader] = drain(&mut cursors[reader], &mut got[reader]);
-                idle[reader] = if done[reader] || got[reader].len() > before {
-                    0
-                } else {
-                    idle[reader] + 1
-                };
-                assert!(idle[reader] <= 2, "reader {reader} starves (first {first})");
-            }
-            step(&mut writer, &mut provider);
-            trips += 1;
-            assert!(trips < 40, "no progress (first {first})");
+    let mut passes = 0;
+    while done.contains(&false) {
+        for &reader in order {
+            let before = got[reader].len();
+            done[reader] = drain(reader, &mut cursors[reader], &mut got[reader]);
+            idle[reader] = if done[reader] || got[reader].len() > before {
+                0
+            } else {
+                idle[reader] + 1
+            };
+            worst[reader] = worst[reader].max(idle[reader]);
         }
+        step(&mut writer, &mut provider);
+        passes += 1;
+        assert!(passes < 200, "no progress: {start:?} in {order:?}");
+    }
 
-        assert_eq!(got[0], (1..=200).collect::<Vec<_>>());
-        assert_eq!(got[1], (151..=200).collect::<Vec<_>>());
+    for (reader, cursor) in start.iter().enumerate() {
+        let from = cursor.map_or(1, |c| c + 1);
+        assert_eq!(got[reader], (from..=u64::from(total)).collect::<Vec<_>>());
+    }
+    worst
+}
+
+/// Each subscriber goes at most one pass per subscriber without a record:
+/// one round of the others' batches, and the pass that fetches its own.
+fn assert_turns(total: u8, start: &[Option<u64>]) {
+    let forward: Vec<usize> = (0..start.len()).collect();
+    let backward: Vec<usize> = forward.iter().rev().copied().collect();
+    for order in [forward, backward] {
+        let worst = catch_up(total, start, &order);
+        let bound = start.len();
+        assert!(
+            worst.iter().all(|&w| w <= bound),
+            "{start:?} in {order:?}: idle {worst:?}, bound {bound}"
+        );
     }
 }
 
-/// A batch its asker never collects (its session closed) holds the slot
-/// only for a bounded number of asks; then another reader's request
-/// replaces it.
+/// Two subscribers catching up from different units take turns, whichever
+/// the loop visits first.
 #[test]
-fn an_abandoned_batch_gives_way_after_its_bound() {
-    let (_guard, mut writer, mut provider) = with_records(200);
-    assert_eq!(events::read_result(None), None, "asked");
-    step(&mut writer, &mut provider);
+fn two_readers_in_different_units_take_turns() {
+    assert_turns(200, &[None, Some(150)]);
+}
 
-    // The asker has gone. Another reader waits its bound out.
-    for _ in 0..events::MISSES_MAX {
-        assert_eq!(events::read_result(Some(150)), None, "held for its asker");
+/// Two subscribers inside one unit, near each other or a batch apart,
+/// share what they can and take turns for the rest, across the unit's
+/// end, in either order.
+#[test]
+fn overlapping_readers_in_one_unit_take_turns() {
+    for second in [5, 10, 20, 31, 40] {
+        assert_turns(255, &[None, Some(second)]);
+    }
+    assert_turns(255, &[Some(100), Some(120)]);
+    assert_turns(120, &[Some(10), None]);
+}
+
+/// Three and four subscribers at spread cursors each get a turn a round.
+#[test]
+fn three_and_four_readers_each_get_a_turn() {
+    assert_turns(200, &[None, Some(150), Some(60)]);
+    assert_turns(200, &[None, Some(150), Some(60), Some(100)]);
+    assert_turns(255, &[Some(200), Some(10), Some(130), None]);
+}
+
+/// Once caught up, each new record reaches every subscriber within a few
+/// passes.
+#[test]
+fn caught_up_readers_each_get_a_new_record() {
+    let (_guard, mut writer, mut provider) = with_records(120);
+    let mut cursors = [None, Some(10), Some(60)];
+    let mut got = [Vec::new(), Vec::new(), Vec::new()];
+    for _ in 0..100 {
+        for reader in 0..3 {
+            drain(reader, &mut cursors[reader], &mut got[reader]);
+        }
         step(&mut writer, &mut provider);
     }
-    assert_eq!(events::read_result(Some(150)), None, "asked");
+    assert_eq!(cursors, [Some(120); 3]);
+
+    for round in 0..3 {
+        assert!(events::record(None, [round; 16]));
+        step(&mut writer, &mut provider);
+        let want = Some(121 + u64::from(round));
+        let mut passes = 0;
+        while cursors != [want; 3] {
+            for reader in 0..3 {
+                drain(reader, &mut cursors[reader], &mut got[reader]);
+            }
+            step(&mut writer, &mut provider);
+            passes += 1;
+            assert!(passes <= 4, "round {round}: {cursors:?}");
+        }
+    }
+}
+
+/// A batch fetched for a subscriber that ended is nobody's: the next ask
+/// replaces it at once.
+#[test]
+fn a_departed_reader_s_batch_gives_way_at_once() {
+    let (_guard, mut writer, mut provider) = with_records(200);
+    assert_eq!(events::read_result(Reader::slot(0), None), None, "asked");
+    step(&mut writer, &mut provider);
+
+    events::reader_left(Reader::slot(0));
+    assert_eq!(
+        events::read_result(Reader::slot(1), Some(150)),
+        None,
+        "asked"
+    );
     step(&mut writer, &mut provider);
     assert!(matches!(
-        events::read_result(Some(150)),
+        events::read_result(Reader::slot(1), Some(150)),
+        Some(Read::Record(r)) if r.seq == 151
+    ));
+}
+
+/// A batch whose subscriber stopped asking without ending (its last frame
+/// still going out) holds the slot for a bounded number of other asks;
+/// then another subscriber's read replaces it.
+#[test]
+fn a_stalled_reader_s_batch_gives_way_after_its_bound() {
+    let (_guard, mut writer, mut provider) = with_records(200);
+    assert_eq!(events::read_result(Reader::slot(0), None), None, "asked");
+    step(&mut writer, &mut provider);
+
+    for _ in 0..events::MISSES_MAX {
+        assert_eq!(
+            events::read_result(Reader::slot(1), Some(150)),
+            None,
+            "held for its subscriber"
+        );
+        step(&mut writer, &mut provider);
+    }
+    assert_eq!(
+        events::read_result(Reader::slot(1), Some(150)),
+        None,
+        "asked"
+    );
+    step(&mut writer, &mut provider);
+    assert!(matches!(
+        events::read_result(Reader::slot(1), Some(150)),
         Some(Read::Record(r)) if r.seq == 151
     ));
 }
@@ -824,9 +932,9 @@ fn every_store_write_waits_for_a_feed_and_completes_after_it() {
     assert_eq!(storage(), before, "no write while the outputs are claimed");
     assert_eq!(events::last_seq(), None);
     // Reads take no lease: answered during the feed.
-    assert_eq!(events::read_result(None), None, "asked");
+    assert_eq!(events::read_result(A, None), None, "asked");
     step(&mut writer, &mut provider);
-    assert_eq!(events::read_result(None), Some(Read::End));
+    assert_eq!(events::read_result(A, None), Some(Read::End));
 
     // At rest: each write in turn, the first right after the release.
     INTERLOCK.release_feed();
@@ -853,9 +961,9 @@ fn every_store_write_waits_for_a_feed_and_completes_after_it() {
     // The appends kept their order.
     let mut after = None;
     for body in [[1; 16], [2; 16], [3; 16]] {
-        events::read_result(after);
+        events::read_result(A, after);
         step(&mut writer, &mut provider);
-        let Some(Read::Record(record)) = events::read_result(after) else {
+        let Some(Read::Record(record)) = events::read_result(A, after) else {
             panic!("event after {after:?}");
         };
         assert_eq!(record.body, body);
@@ -892,9 +1000,13 @@ fn a_feeds_outcome_has_a_slot_however_many_events_pile_up() {
         step(&mut writer, &mut provider);
     }
     assert_eq!(events::last_seq(), Some(u64::from(queued) + 1));
-    assert_eq!(events::read_result(Some(u64::from(queued))), None, "asked");
+    assert_eq!(
+        events::read_result(A, Some(u64::from(queued))),
+        None,
+        "asked"
+    );
     step(&mut writer, &mut provider);
-    let Some(Read::Record(last)) = events::read_result(Some(u64::from(queued))) else {
+    let Some(Read::Record(last)) = events::read_result(A, Some(u64::from(queued))) else {
         panic!("the outcome");
     };
     assert_eq!(last.body, [0xfe; 16]);

@@ -57,8 +57,8 @@ use wellfed_device_api::mailbox::{
 use wellfed_device_api::pairing::{self, Pairing};
 use wellfed_device_api::wifi::Credentials;
 use wellfed_device_api::{
-    self as server, Device, EventRead, KeyChange, KeyOutcome, Pass, SESSIONS, Server, UpdateAnswer,
-    UpdateKeyChange, UpdateRequest,
+    self as server, Device, EventRead, KeyChange, KeyOutcome, Pass, Reader, SESSIONS, Server,
+    UpdateAnswer, UpdateKeyChange, UpdateRequest,
 };
 
 /// The answer page buffer: a trace's page or a bank-1 page, whichever is
@@ -934,8 +934,8 @@ impl<P: Platform, F: Feeds> Device for FeederDevice<'_, P, F> {
         events::record(self.platform, now_ms, body);
     }
 
-    fn event_after(&mut self, after: Option<u64>) -> EventRead {
-        match self.platform.event_after(after) {
+    fn event_after(&mut self, reader: Reader, after: Option<u64>) -> EventRead {
+        match self.platform.event_after(reader, after) {
             None => EventRead::Wait,
             Some(Read::End) => EventRead::None,
             Some(Read::Gap { from, to }) => EventRead::Gap { from, to },
@@ -955,6 +955,10 @@ impl<P: Platform, F: Feeds> Device for FeederDevice<'_, P, F> {
                 }
             }
         }
+    }
+
+    fn reader_left(&mut self, reader: Reader) {
+        self.platform.reader_left(reader);
     }
 
     fn epoch(&self) -> Option<u32> {

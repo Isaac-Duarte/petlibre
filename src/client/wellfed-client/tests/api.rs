@@ -25,8 +25,8 @@ use wellfed_device_api::mailbox::{
 use wellfed_device_api::pairing::{Config, Event as PairingEvent, Pairing};
 use wellfed_device_api::wifi::Credentials;
 use wellfed_device_api::{
-    Device, EventRead, KeyChange, KeyOutcome, Pass, Reason, Record, SESSIONS, Server, UpdateAnswer,
-    UpdateKeyChange, UpdateRequest,
+    Device, EventRead, KeyChange, KeyOutcome, Pass, Reader, Reason, Record, SESSIONS, Server,
+    UpdateAnswer, UpdateKeyChange, UpdateRequest,
 };
 use wellfed_model as model;
 use wellfed_model::{Answer, Generation, Hello, Joined, Op, OpenRefusal, SettingsPatch};
@@ -619,7 +619,7 @@ impl Device for Fake {
         });
     }
 
-    fn event_after(&mut self, after: Option<u64>) -> EventRead {
+    fn event_after(&mut self, _reader: Reader, after: Option<u64>) -> EventRead {
         let after = after.unwrap_or(0);
         if after + 1 < self.oldest {
             return EventRead::Gap {
@@ -1710,6 +1710,43 @@ fn a_catch_up_arrives_in_frames_of_many_events() {
     // two hundred.
     assert!(frames.len() <= 4, "{} frames", frames.len());
     assert!(frames.iter().all(|frame| frame.len() >= 8), "{frames:?}");
+}
+
+/// Events as large as any encodes fill a frame and stop there: each frame
+/// holds as many as fit beside the room the largest needs, and the rest
+/// follow, in order.
+#[test]
+fn the_largest_events_fill_a_frame_and_the_rest_follow() {
+    let mut rig = Rig::new();
+    let first = u64::MAX - 100;
+    for seq in first..first + 70 {
+        rig.device.events.push(proto::Event {
+            seq,
+            at: Some(u32::MAX),
+            body: EventBody::Fed {
+                feed: u32::MAX,
+                requested: u8::MAX,
+                completed: u8::MAX,
+                outcome: proto::FeedOutcome::Uncertain,
+                reason: proto::FeedReason::Output,
+                hopper: FoodLevel::Unread,
+                by: proto::Source::Client([0xff; 4]),
+            },
+        });
+    }
+
+    let mut owner = open(&mut rig, OWNER);
+    let bytes = owner.session.subscribe(None, false).unwrap();
+    owner.outbox.extend(bytes);
+    let frames = frames(&mut rig, &mut owner, 70);
+
+    // 32 bytes each: 31 fill all but 13 of the batch's 1,005.
+    let per_frame = (proto::EVENTS_BYTES_MAX - proto::EVENT_BYTES_MAX) / proto::EVENT_BYTES_MAX + 1;
+    assert_eq!(per_frame, 31);
+    let sizes: Vec<usize> = frames.iter().map(Vec::len).collect();
+    assert_eq!(sizes, [per_frame, per_frame, 70 - 2 * per_frame]);
+    let seqs: Vec<u64> = frames.iter().flatten().map(|&(seq, _)| seq).collect();
+    assert_eq!(seqs, (first..first + 70).collect::<Vec<_>>());
 }
 
 #[test]

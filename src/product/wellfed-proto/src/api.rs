@@ -890,6 +890,12 @@ impl Iterator for EventBatchIter<'_> {
     }
 }
 
+/// [`EventBatchWriter::push`]'s refusal: the event does not fit the room
+/// left. Encoding an [`Event`] fails for no other reason.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("the event does not fit the batch")]
+pub struct BatchFull;
+
 /// Fills an [`EventBatch`] in a borrowed buffer, at most
 /// [`EVENTS_BYTES_MAX`] of it.
 #[derive(Debug)]
@@ -918,12 +924,9 @@ impl<'b> EventBatchWriter<'b> {
 
     /// Append `event`; an event that does not fit leaves the batch as it
     /// was.
-    pub fn push(&mut self, event: &Event) -> Result<(), crate::Error> {
-        let rest = self
-            .buf
-            .get_mut(self.len..)
-            .ok_or(crate::Error::BufferTooSmall)?;
-        self.len += crate::encode(event, rest)?;
+    pub fn push(&mut self, event: &Event) -> Result<(), BatchFull> {
+        let rest = self.buf.get_mut(self.len..).ok_or(BatchFull)?;
+        self.len += crate::encode(event, rest).map_err(|_| BatchFull)?;
         Ok(())
     }
 

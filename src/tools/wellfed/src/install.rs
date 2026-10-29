@@ -47,7 +47,7 @@ use serde::de::IgnoredAny;
 use tokio::process::{Child, Command};
 use tokio::signal::unix::{SignalKind, signal};
 use wellfed_client::install::{
-    CONTAINER_HEADER, DnsCheck, DnsOverride, FeederTrust, Install, InstallError, PlansPut,
+    CONTAINER_HEADER, DnsCheck, DnsOverride, FeederTrust, Install, InstallError, Phase, PlansPut,
     Provision, Replacement, Requested, SETUP_ADDRESS, STOCK_BROKER_PORT, SetupFrame, Step,
     StockBackup, StockPower, StockView, manifest_version, plans,
 };
@@ -224,72 +224,6 @@ struct Run {
     track: Track,
 }
 
-/// The step the run is in, in the order the steps come.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum Stage {
-    Provision,
-    AwaitStock,
-    ConfirmFeeder,
-    Request,
-    AwaitInstall,
-    Pair,
-    ReadStatus,
-    CloseTrial,
-    Backup,
-    ReadStockPlans,
-    Promote,
-    AwaitConfirm,
-    ReadPlans,
-    PutPlans,
-    Done,
-}
-
-impl Stage {
-    fn of(step: &Step) -> Self {
-        match step {
-            Step::PointDns(_) | Step::ConfirmReset | Step::SendFrame(_) => Self::Provision,
-            Step::AwaitStock => Self::AwaitStock,
-            Step::ConfirmFeeder(_) => Self::ConfirmFeeder,
-            Step::RequestInstall => Self::Request,
-            Step::AwaitInstall => Self::AwaitInstall,
-            Step::Pair => Self::Pair,
-            Step::ReadStatus => Self::ReadStatus,
-            Step::CloseTrial => Self::CloseTrial,
-            Step::Backup => Self::Backup,
-            Step::ReadStockPlans => Self::ReadStockPlans,
-            Step::Promote => Self::Promote,
-            Step::AwaitConfirm => Self::AwaitConfirm,
-            Step::ReadPlans => Self::ReadPlans,
-            Step::PutPlans { .. } | Step::AwaitPut => Self::PutPlans,
-            Step::Done | Step::Failed(_) => Self::Done,
-        }
-    }
-}
-
-impl std::fmt::Display for Stage {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            Self::Provision => "pointing stock at this computer, before anything was sent to it",
-            Self::AwaitStock => "waiting for stock to report, before anything was sent to it",
-            Self::ConfirmFeeder => "the feeder check, before anything was sent to stock",
-            Self::Request => "the install request",
-            Self::AwaitInstall => "stock's install of the replacement",
-            Self::Pair => {
-                "pairing through the recovery window (an owner enrollment, safe to run again)"
-            }
-            Self::ReadStatus => "reading the replacement's status",
-            Self::CloseTrial => "closing the stock server's record",
-            Self::Backup => "reading the stock backup",
-            Self::ReadStockPlans => "reading stock's plans",
-            Self::Promote => "the promotion",
-            Self::AwaitConfirm => "waiting for bank 1 to confirm the promotion",
-            Self::ReadPlans => "reading the replacement's plans",
-            Self::PutPlans => "putting stock's plans on the replacement",
-            Self::Done => "the end of the run",
-        })
-    }
-}
-
 /// A write the run sent whose outcome is not settled yet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Unsettled {
@@ -305,13 +239,33 @@ enum Unsettled {
 }
 
 impl Unsettled {
-    /// Whether the run reaching `stage` settles this write.
-    fn settled_at(self, stage: Stage) -> bool {
+    /// Whether the run reaching `phase` settles this write.
+    fn settled_at(self, phase: Phase) -> bool {
         match self {
-            Self::Request(_) => stage > Stage::ReadStatus,
-            Self::Promotion => stage > Stage::AwaitConfirm,
-            Self::Plans => stage == Stage::Done,
+            Self::Request(_) => phase > Phase::ReadStatus,
+            Self::Promotion => phase > Phase::AwaitConfirm,
+            Self::Plans => phase == Phase::Done,
         }
+    }
+}
+
+/// The steps' phase, as the report of a stopped run names it.
+const fn phase_text(phase: Phase) -> &'static str {
+    match phase {
+        Phase::Provision => "pointing stock at this computer, before anything was sent to it",
+        Phase::AwaitStock => "waiting for stock to report, before anything was sent to it",
+        Phase::ConfirmFeeder => "the feeder check, before anything was sent to stock",
+        Phase::Request => "the install request",
+        Phase::AwaitInstall => "stock's install of the replacement",
+        Phase::Pair => "pairing through the recovery window",
+        Phase::ReadStatus => "reading the replacement's status",
+        Phase::CloseTrial => "closing the stock server's record",
+        Phase::Backup => "reading the stock backup",
+        Phase::StockPlans => "reading stock's plans",
+        Phase::Promote => "the promotion",
+        Phase::AwaitConfirm => "waiting for bank 1 to confirm the promotion",
+        Phase::ApplyPlans => "applying stock's plans to the replacement",
+        Phase::Done => "the end of the run",
     }
 }
 
@@ -325,26 +279,26 @@ impl std::fmt::Display for Unsettled {
     }
 }
 
-/// The stage the run is in and the write it has not seen settle.
+/// The phase the run is in and the write it has not seen settle.
 #[derive(Debug, Clone, Copy)]
 struct Track {
-    stage: Stage,
+    phase: Phase,
     unsettled: Option<Unsettled>,
 }
 
 impl Track {
     const fn new() -> Self {
         Self {
-            stage: Stage::Provision,
+            phase: Phase::Provision,
             unsettled: None,
         }
     }
 
-    /// The run moved on to `stage`; a write that stage settles is no
+    /// The run moved on to `phase`; a write that phase settles is no
     /// longer out.
-    fn enter(&mut self, stage: Stage) {
-        self.stage = stage;
-        if self.unsettled.is_some_and(|write| write.settled_at(stage)) {
+    fn enter(&mut self, phase: Phase) {
+        self.phase = phase;
+        if self.unsettled.is_some_and(|write| write.settled_at(phase)) {
             self.unsettled = None;
         }
     }
@@ -358,7 +312,7 @@ impl Track {
     fn stopped(self, signal: Signal) -> Stopped {
         Stopped {
             signal,
-            stage: self.stage,
+            phase: self.phase,
             unsettled: self.unsettled,
         }
     }
@@ -384,21 +338,40 @@ impl std::fmt::Display for Signal {
 /// A run a signal ended, after it stopped the stock server: the step it
 /// was in, and the write whose outcome had not settled, if any.
 #[derive(Debug, thiserror::Error)]
-#[error("stopped by {signal} during {stage}{}", unsettled_note(*.unsettled))]
+#[error(
+    "stopped by {signal} during {}{}",
+    phase_text(*.phase),
+    unsettled_note(*.phase, *.unsettled)
+)]
 struct Stopped {
     signal: Signal,
-    stage: Stage,
+    phase: Phase,
     unsettled: Option<Unsettled>,
 }
 
-fn unsettled_note(unsettled: Option<Unsettled>) -> String {
+/// What the report adds after the phase. Pairing is only an owner
+/// enrollment, safe to repeat, but a write still unsettled beside it is not,
+/// so the two are told apart.
+fn unsettled_note(phase: Phase, unsettled: Option<Unsettled>) -> String {
+    let pairing = phase == Phase::Pair;
     match unsettled {
+        None if pairing => {
+            " (an owner enrollment, safe to run again); no write was waiting on its outcome"
+                .to_string()
+        }
         None => "; no write was waiting on its outcome".to_string(),
-        Some(write) => format!(
-            ", with {write} sent and its outcome not yet settled: it may have run, and it is \
-             not sent again. Read what the feeder runs (wellfed status, or stock's own report) \
-             before running again"
-        ),
+        Some(write) => {
+            let enrollment = if pairing {
+                " The enrollment is safe to repeat; that write is not."
+            } else {
+                ""
+            };
+            format!(
+                ", with {write} sent and its outcome not yet settled: it may have run, and it is \
+                 not sent again.{enrollment} Read what the feeder runs (wellfed status, or \
+                 stock's own report) before running again"
+            )
+        }
     }
 }
 
@@ -638,7 +611,7 @@ impl Run {
     async fn drive(&mut self, install: &mut Install) -> Result<()> {
         loop {
             let step = install.step();
-            self.track.enter(Stage::of(&step));
+            self.track.enter(install.phase());
             match step {
                 Step::PointDns(dns) => {
                     point_dns(&mut self.asker, &dns).await?;
@@ -1480,19 +1453,19 @@ mod tests {
     fn a_request_stays_unsettled_until_the_replacement_answers() {
         let id = uuid::Uuid::from_u128(7);
         let mut track = Track::new();
-        track.enter(Stage::Request);
+        track.enter(Phase::Request);
         track.sent(Unsettled::Request(id));
-        for stage in [Stage::AwaitInstall, Stage::Pair, Stage::ReadStatus] {
-            track.enter(stage);
-            assert_eq!(track.unsettled, Some(Unsettled::Request(id)), "{stage:?}");
+        for phase in [Phase::AwaitInstall, Phase::Pair, Phase::ReadStatus] {
+            track.enter(phase);
+            assert_eq!(track.unsettled, Some(Unsettled::Request(id)), "{phase:?}");
         }
-        track.enter(Stage::AwaitInstall);
+        track.enter(Phase::AwaitInstall);
         let stopped = track.stopped(Signal::Terminate).to_string();
         assert!(stopped.starts_with("stopped by SIGTERM during stock's install"));
         assert!(stopped.contains(&format!("stock's install request {id} sent")));
         assert!(stopped.contains("not sent again"));
 
-        track.enter(Stage::CloseTrial);
+        track.enter(Phase::CloseTrial);
         assert_eq!(track.unsettled, None);
         let stopped = track.stopped(Signal::Interrupt).to_string();
         assert!(
@@ -1506,9 +1479,9 @@ mod tests {
     #[test]
     fn a_promotion_stays_unsettled_until_bank_1_confirms() {
         let mut track = Track::new();
-        track.enter(Stage::Promote);
+        track.enter(Phase::Promote);
         track.sent(Unsettled::Promotion);
-        track.enter(Stage::AwaitConfirm);
+        track.enter(Phase::AwaitConfirm);
         let stopped = track.stopped(Signal::Terminate);
         assert_eq!(stopped.unsettled, Some(Unsettled::Promotion));
         assert!(
@@ -1517,14 +1490,14 @@ mod tests {
                 .contains("waiting for bank 1 to confirm the promotion, with the promotion's push")
         );
 
-        track.enter(Stage::ReadPlans);
+        track.enter(Phase::ApplyPlans);
         assert_eq!(track.unsettled, None);
-        track.enter(Stage::PutPlans);
+        track.enter(Phase::ApplyPlans);
         track.sent(Unsettled::Plans);
         // A put that went unanswered is judged by reading the plans back.
-        track.enter(Stage::ReadPlans);
+        track.enter(Phase::ApplyPlans);
         assert_eq!(track.unsettled, Some(Unsettled::Plans));
-        track.enter(Stage::Done);
+        track.enter(Phase::Done);
         assert_eq!(track.unsettled, None);
     }
 
@@ -1532,10 +1505,20 @@ mod tests {
     #[test]
     fn a_stop_while_pairing_says_it_is_safe_to_run_again() {
         let mut track = Track::new();
-        track.enter(Stage::Pair);
+        track.enter(Phase::Pair);
         let stopped = track.stopped(Signal::Interrupt).to_string();
         assert!(stopped.contains("safe to run again"), "{stopped}");
         assert!(stopped.ends_with("no write was waiting on its outcome"));
+
+        // Paired before the replacement's status settled the request: the
+        // enrollment may be repeated, the request may not.
+        track.sent(Unsettled::Request(uuid::Uuid::from_u128(7)));
+        let stopped = track.stopped(Signal::Interrupt).to_string();
+        assert!(!stopped.contains("safe to run again"), "{stopped}");
+        assert!(
+            stopped.contains("The enrollment is safe to repeat; that write is not."),
+            "{stopped}"
+        );
     }
 
     #[test]

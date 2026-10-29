@@ -196,7 +196,7 @@ In either mode, a standard input that closes before an answer ends the run. It i
 - the promotion's push, until bank 1 confirms it;
 - the plans' put, until the run ends.
 
-That write may have run, and it is not sent again: read what the feeder runs before you start another run. Stopped while pairing, the run has only started an owner enrollment, which is safe to run again.
+That write may have run, and it is not sent again: read what the feeder runs before you start another run. Pairing is only an owner enrollment, which is safe to repeat. If the install request is still unsettled while the run pairs, the report says so: the enrollment may be repeated, the request may not.
 
 **Not done yet:**
 - Installing a consumer image. The builder makes one (`PROVISION=consumer`: no build Wi-Fi, the release key built in). With nothing stored it starts BLE setup mode at its first boot, so the app or `wellfed setup` can pair and send the home Wi-Fi ([product architecture](product-architecture.md#setup-and-pairing)); that is host-tested and simulated only. It is not yet tried on a feeder, and the owner's update key is not yet enrolled at install. The release key itself is not generated yet. Until then installs use bench images, which join with their build's Wi-Fi, so on the bench the home network is the hotspot.

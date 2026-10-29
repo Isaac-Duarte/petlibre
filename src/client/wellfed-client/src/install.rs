@@ -198,8 +198,9 @@ pub struct Replacement<'a> {
     pub bank: u8,
 }
 
-/// Which step a wait was given up on.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Which step a wait was given up on, or the run is in. The variants come
+/// in the order a run reaches them, so a later phase compares greater.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Phase {
     Provision,
     AwaitStock,

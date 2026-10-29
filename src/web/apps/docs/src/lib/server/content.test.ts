@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { docs } from "#lib/server/content.ts";
+import { docs, portableMarkdown } from "#lib/server/content.ts";
 
 function doc(file: string) {
   const found = docs.get(file);
@@ -48,5 +48,25 @@ describe("diagrams", () => {
 
     expect(html).toContain("%% svg: boot-flow.svg");
     expect(html).not.toContain('class="diagram"');
+  });
+});
+
+describe("portable markdown", () => {
+  const markdown = portableMarkdown("devices/plaf103/README.md") ?? "";
+
+  test("links point at the site or GitHub, not the repository's files", () => {
+    expect(markdown).toContain("[RTL8721DM](https://docs.well-fed.dev/chips/rtl8721dm)");
+    expect(markdown).toContain("(https://github.com/Isaac-Duarte/wellfed/blob/master/src/firmware/devices/plaf103)");
+    expect(markdown).not.toMatch(/\]\((?!https?:|#)/);
+  });
+
+  test("the overview marker is dropped and code is left alone", () => {
+    expect(markdown).not.toContain("<!-- details -->");
+    expect(markdown).toContain("%% svg: food-path.svg");
+    expect(portableMarkdown("development/writing.md")).toContain("%% svg: boot-flow.svg");
+  });
+
+  test("a file that isn't a doc has none", () => {
+    expect(portableMarkdown("nope.md")).toBeUndefined();
   });
 });

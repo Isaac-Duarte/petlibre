@@ -87,6 +87,27 @@ test("without JavaScript a page shows in full", async ({ browser }) => {
   await context.close();
 });
 
+test("copies a page as Markdown with absolute links", async ({ page, context, baseURL }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: new URL(baseURL ?? "").origin });
+  await page.goto("/chips/rtl8721dm");
+
+  await page.getByRole("button", { name: "Copy as Markdown" }).click();
+  await expect(page.getByRole("button", { name: "Copied" })).toBeVisible();
+
+  const copied = await page.evaluate(() => navigator.clipboard.readText());
+  expect(copied).toMatch(/^# Realtek RTL8721DM/);
+  expect(copied).toContain("](https://docs.well-fed.dev/devices)");
+});
+
+test("serves each page's Markdown beside it", async ({ request }) => {
+  const page = await request.get("/firmware/bank-policy.md");
+  expect(page.status()).toBe(200);
+  expect(page.headers()["content-type"]).toContain("text/markdown");
+  expect(await page.text()).toMatch(/^# Bank policy/);
+
+  expect((await request.get("/index.md")).status()).toBe(200);
+});
+
 test("never scrolls sideways", async ({ page }) => {
   for (const path of ["/", "/development/rust", "/firmware/product-architecture", "/devices/plaf103"]) {
     await page.goto(path);

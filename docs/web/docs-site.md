@@ -13,6 +13,7 @@ The Markdown stays plain GitHub-flavored Markdown that reads the same on GitHub.
 | Links | A link to another doc becomes its route; a link anywhere else in the repository becomes that file on GitHub. The prerender crawl fails the build on any link or `#anchor` that doesn't resolve |
 | Code | Shiki at build time, one theme whose colors are the token roles, so code follows light and dark |
 | Diagrams | A ```` ```mermaid ```` block naming an SVG (`%% svg: name.svg`) becomes that SVG, inlined so `docs.css` colors its `.d-` classes from the tokens. GitHub draws the Mermaid. `cargo xtask check-repository` holds each pair to its hashes in `docs/diagrams.lock` ([writing guide](../development/writing.md#diagrams)) |
+| Markdown | Each page's source is prerendered beside it as `<page>.md` (the root as `/index.md`), with every link made absolute and the overview marker dropped. The "Copy as Markdown" button copies that file |
 | Overview \| Details | A page whose overview ends with `<!-- details -->` gets a switch that hides the rest. The choice holds on every page, is kept in `localStorage`, and is set before first paint by one inline script, whose hash `vite.config.ts` adds to the CSP. Without JavaScript every page shows in full |
 | Search | Pagefind indexes `build/` after the prerender and serves its index from `/pagefind/`, so a query never leaves the site |
 | Style | The [tokens](../../assets/brand/tokens.json) and `@wellfed/ui`'s base, as on [well-fed.dev](site.md): type and hairlines, no cards or gradients. Light or dark follows the system |

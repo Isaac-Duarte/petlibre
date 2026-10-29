@@ -17,10 +17,8 @@ fn an_imported_feeder_restarts_archived_and_is_adopted_again_with_its_history() 
         first.service().setup(ada_setup()).await.unwrap();
         let id = first.adopt(&sim).await;
         first.link(id, Connection::Online).await;
-        until("the first server holds some history", || async {
-            !first.bodies(id).await.is_empty()
-        })
-        .await;
+        // All of it, so nothing still arriving is exported but not held.
+        first.caught_up(id).await;
         let held = first.bodies(id).await;
         let synced = first.service().feeder(id).await.unwrap().feeder.synced;
 

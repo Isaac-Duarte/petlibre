@@ -202,6 +202,7 @@ fn a_removed_feeder_is_archived_its_key_revoked_and_adopted_again_under_its_id()
             .unwrap()
             .key
             .0;
+        server.caught_up(id).await;
 
         let removal = service.remove_feeder(&owner(), id).await.unwrap();
 

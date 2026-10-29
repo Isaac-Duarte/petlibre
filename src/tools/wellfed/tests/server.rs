@@ -75,11 +75,15 @@ impl Home {
             .spawn()
             .expect("the CLI starts");
 
+        // A run that refuses before it reads (a second `login`, say) may
+        // exit before the input is written: its closed pipe is its answer,
+        // and what it printed and how it exited are what the test reads.
         let mut input = child.stdin.take().expect("a piped standard input");
-        input
-            .write_all(stdin.as_bytes())
-            .await
-            .expect("write stdin");
+        match input.write_all(stdin.as_bytes()).await {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => {}
+            Err(error) => panic!("write stdin: {error}"),
+        }
         drop(input);
 
         let output = child.wait_with_output().await.expect("the CLI ends");

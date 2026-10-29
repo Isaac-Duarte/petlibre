@@ -142,10 +142,15 @@ fn the_desiccant_reminder_resets_through_the_journal() {
             .await
             .unwrap()
             .id;
+        // Read live, so the session is open: the connect sequence records
+        // a status with the clock set before the feeder shows online, and
+        // that copy answers while the server is still connecting.
         until("the server sets the feeder's clock", || async {
-            http.feeder(kitchen)
-                .await
-                .is_ok_and(|detail| detail.status.is_some_and(|s| s.status.clock.is_some()))
+            http.feeder(kitchen).await.is_ok_and(|detail| {
+                detail
+                    .status
+                    .is_some_and(|s| s.live && s.status.clock.is_some())
+            })
         })
         .await;
 

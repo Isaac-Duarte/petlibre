@@ -1,5 +1,5 @@
-//! Adopted feeders: the list, adoption, one feeder's status, its settings
-//! and its panel lock.
+//! Adopted feeders: the list, adoption, one feeder's status, its settings,
+//! its plans and its panel lock.
 
 use axum::Json;
 use axum::extract::{Path, State};
@@ -7,8 +7,8 @@ use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum_extra::extract::WithRejection;
 use wellfed_api::{
-    AdoptFeeder, Feeder, FeederDetail, FeederId, Generation, LockRequest, Problem, Settings,
-    SettingsPatch,
+    AdoptFeeder, Feeder, FeederDetail, FeederId, Generation, LockRequest, Plans, PlansChange,
+    Problem, Settings, SettingsPatch,
 };
 
 use super::{ApiResult, IdPath, JsonBody, TAG_FEEDERS, insert};
@@ -55,7 +55,7 @@ pub(crate) async fn adopt(
 }
 
 /// One feeder and its status: live when it is online, otherwise the last
-/// copy, marked.
+/// copy, marked; and its plans' next meal in the household's zone.
 #[utoipa::path(
     get,
     path = "/feeders/{id}",
@@ -125,6 +125,62 @@ pub(crate) async fn put_settings(
     Ok(tagged(settings))
 }
 
+/// The feeder's feeding plans, read from it. The `ETag` is the generation
+/// a change sends back in `If-Match`.
+#[utoipa::path(
+    get,
+    path = "/feeders/{id}/plans",
+    tag = TAG_FEEDERS,
+    params(("id" = FeederId, Path)),
+    responses(
+        (status = 200, body = Plans, headers(("ETag" = String))),
+        (status = 409, body = Problem, description = "feeder_refused"),
+        (status = 503, body = Problem, description = "feeder_offline"),
+    ),
+)]
+pub(crate) async fn plans(
+    State(state): State<AppState>,
+    _: Allowed<need::Read>,
+    WithRejection(Path(id), _): IdPath,
+) -> ApiResult<Response> {
+    let plans = state.service.plans(id).await?;
+    Ok(tagged_plans(plans))
+}
+
+/// Replace every plan slot, if the plans are still at the generation in
+/// `If-Match`. A plan that is new, or whose time or days changed, runs
+/// from its next occurrence after the change.
+#[utoipa::path(
+    put,
+    path = "/feeders/{id}/plans",
+    tag = TAG_FEEDERS,
+    params(("id" = FeederId, Path), IfMatch, OptionalIdempotencyKey),
+    request_body = PlansChange,
+    responses(
+        (status = 200, body = Plans, headers(("ETag" = String))),
+        (status = 400, body = Problem, description = "invalid: a malformed body, If-Match or Idempotency-Key, or a plan out of range"),
+        (status = 412, body = Plans, description = "Stale: the current plans"),
+        (status = 428, body = Problem, description = "precondition_required"),
+        (status = 409, body = Problem, description = "feeder_refused: final for this key; a later attempt needs a new key"),
+        (status = 503, body = Problem, description = "feeder_offline"),
+        (status = 504, body = Problem, description = "outcome_unknown: retry with the same key"),
+    ),
+)]
+pub(crate) async fn put_plans(
+    State(state): State<AppState>,
+    Allowed(caller, _): Allowed<need::Control>,
+    WithRejection(Path(id), _): IdPath,
+    IfMatch(base): IfMatch,
+    OptionalIdempotencyKey(key): OptionalIdempotencyKey,
+    WithRejection(Json(change), _): JsonBody<PlansChange>,
+) -> ApiResult<Response> {
+    let plans = state
+        .service
+        .put_plans(&caller, id, base, change, key)
+        .await?;
+    Ok(tagged_plans(plans))
+}
+
 /// Lock or unlock the feeder's panel.
 #[utoipa::path(
     post,
@@ -187,5 +243,11 @@ pub(crate) fn etag(generation: Generation) -> String {
 fn tagged(settings: Settings) -> Response {
     let mut response = Json(settings).into_response();
     insert(&mut response, header::ETAG, &etag(settings.generation));
+    response
+}
+
+fn tagged_plans(plans: Plans) -> Response {
+    let mut response = Json(plans).into_response();
+    insert(&mut response, header::ETAG, &etag(plans.generation));
     response
 }

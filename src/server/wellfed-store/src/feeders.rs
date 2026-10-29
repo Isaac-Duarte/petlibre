@@ -1,9 +1,9 @@
-//! Adopted feeders, their sealed keys and cursors, and the last status and
-//! settings read from each.
+//! Adopted feeders, their sealed keys and cursors, and the last status,
+//! settings and plans read from each.
 
 use jiff::Timestamp;
 use uuid::Uuid;
-use wellfed_api::{ClientRole, FeederId, FeederStatus, Settings};
+use wellfed_api::{ClientRole, FeederId, FeederStatus, Plans, Settings};
 
 use crate::convert::{cached, from_i64, millis, timestamp};
 use crate::{Error, Result, Store};
@@ -52,11 +52,12 @@ pub struct Synced {
     pub seq: u64,
 }
 
-/// The last status and settings read, and when.
+/// The last status, settings and plans read, and when.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FeederState {
     pub status: Option<(FeederStatus, Timestamp)>,
     pub settings: Option<(Settings, Timestamp)>,
+    pub plans: Option<(Plans, Timestamp)>,
 }
 
 impl Store {
@@ -237,9 +238,25 @@ impl Store {
         Ok(())
     }
 
+    pub async fn record_plans(&self, id: FeederId, plans: &Plans, at: Timestamp) -> Result<()> {
+        let json = serde_json::to_string(plans).map_err(|e| Error::Json("plans", e))?;
+        let at = millis(at);
+        sqlx::query!(
+            "INSERT INTO feeder_state (feeder_id, plans, plans_ms) VALUES (?, ?, ?)
+             ON CONFLICT (feeder_id) DO UPDATE SET plans = excluded.plans, plans_ms = excluded.plans_ms",
+            id.0,
+            json,
+            at,
+        )
+        .execute(&self.writer)
+        .await?;
+        Ok(())
+    }
+
     pub async fn state(&self, id: FeederId) -> Result<FeederState> {
         let row = sqlx::query!(
-            "SELECT status, status_ms, settings, settings_ms FROM feeder_state WHERE feeder_id = ?",
+            "SELECT status, status_ms, settings, settings_ms, plans, plans_ms
+             FROM feeder_state WHERE feeder_id = ?",
             id.0
         )
         .fetch_optional(&self.reader)
@@ -251,6 +268,7 @@ impl Store {
         Ok(FeederState {
             status: cached(row.status, row.status_ms, "status")?,
             settings: cached(row.settings, row.settings_ms, "settings")?,
+            plans: cached(row.plans, row.plans_ms, "plans")?,
         })
     }
 }

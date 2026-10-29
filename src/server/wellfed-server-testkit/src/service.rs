@@ -159,6 +159,11 @@ impl TestService {
         Self::open(store, config()).await
     }
 
+    /// As [`Self::reopen`], reading `clock`.
+    pub async fn reopen_with_clock(store: TempStore, clock: Arc<dyn Clock>) -> Self {
+        Self::open_with_clock(store, config(), clock).await
+    }
+
     pub fn service(&self) -> &Service {
         &self.service
     }

@@ -2,12 +2,18 @@
 //! rule in its time settings, set on connect and whenever the zone changes,
 //! so its clock and plans follow DST with the server down.
 
+use std::sync::Arc;
 use std::time::Duration;
-use wellfed_api::{ClientRole, Connection as Link, FeederId, HouseholdPatch, TimeFormat, Units};
-use wellfed_model::{Answer, Op};
-use wellfed_server_testkit::feeder::{self, Flash, Running, open_owner};
 
-use wellfed_server_testkit::{TestService, ZONE, ada_setup, config, local, until};
+use jiff::Timestamp;
+use wellfed_api::{
+    ClientRole, Connection as Link, EventBody, FeederId, HouseholdPatch, NextMeal, PLANS, Plan,
+    PlansChange, Source, TimeFormat, Units, Weekdays,
+};
+use wellfed_model::{Answer, Op, Pushed, TimeSync};
+use wellfed_server_testkit::feeder::{self, Connection, Flash, Running, open_owner};
+use wellfed_server_testkit::fixed::ManualClock;
+use wellfed_server_testkit::{TestService, WAIT, ZONE, ada_setup, config, local, until};
 use wellfed_service::{Caller, Error, Invalid, Resource, ZoneError};
 
 const BERLIN: &str = "CET-1CEST,M3.5.0,M10.5.0/3";
@@ -283,5 +289,114 @@ fn a_server_key_without_the_owner_role_keeps_the_feeder_online() {
 
         server.shutdown().await;
         sim.stop().await;
+    });
+}
+
+/// Breakfast at 07:30 Denver time, on each side of the fall change
+/// (2026-11-01, 02:00 MDT back to 01:00 MST): 13:30Z on October 31 at
+/// -6 h, 14:30Z on November 2 at -7 h.
+const BEFORE_FALL: i64 = 1_793_453_400;
+const AFTER_FALL: i64 = 1_793_629_800;
+const DAY: i64 = 86_400;
+
+/// Set the feeder's clock, as an owner's client does, to `unix_s` less two
+/// seconds, at UTC offsets: the zone rule the feeder keeps overrides them.
+async fn set_clock(owner: &mut Connection, unix_s: i64) {
+    let sync = TimeSync {
+        unix_ms: u64::try_from(unix_s * 1000 - 2000).unwrap(),
+        offset_s: 0,
+        next_change_s: 0,
+        next_offset_s: 0,
+    };
+    let answer = owner.ask(rand_id(), &Op::TimeSync(sync)).await.unwrap();
+    assert!(matches!(answer, Answer::Done { .. }), "{answer:?}");
+}
+
+/// When the next scheduled feed from plan 0 at or after `from` ended.
+async fn fed_from(owner: &mut Connection, from: i64) -> Timestamp {
+    tokio::time::timeout(WAIT, async {
+        loop {
+            let Pushed::Event(event) = owner.next(WAIT).await.unwrap() else {
+                continue;
+            };
+            if let (EventBody::Fed { by, .. }, Some(at)) = (event.body, event.at)
+                && by == (Source::Schedule { plan: 0 })
+                && at.as_second() >= from
+            {
+                return at;
+            }
+        }
+    })
+    .await
+    .expect("the meal runs")
+}
+
+/// The feeder serves each meal at its local time across a DST change with
+/// the server stopped, from the zone rule the server gave it; the server
+/// back afterwards reckons the next meal at the same local time.
+#[test]
+fn meals_keep_their_local_time_across_a_dst_change_with_the_server_down() {
+    local(async {
+        let sim = feeder::start().await;
+        let server = TestService::start().await;
+        let id = adopted(&server, &sim).await;
+        let denver = HouseholdPatch {
+            zone: Some("America/Denver".into()),
+            ..HouseholdPatch::default()
+        };
+        let service = server.service();
+        service.update_household(&owner(), denver).await.unwrap();
+        holds(&sim, DENVER).await;
+
+        let breakfast = Plan {
+            minute: 7 * 60 + 30,
+            portions: 1,
+            days: Weekdays::DAILY,
+            enabled: true,
+            call: 0,
+        };
+        let mut plans = [None; PLANS];
+        plans[0] = Some(breakfast);
+        let read = service.plans(id).await.unwrap();
+        service
+            .put_plans(&owner(), id, read.generation, PlansChange { plans }, None)
+            .await
+            .unwrap();
+        until("the server holds the plans", || async {
+            service.feeder(id).await.unwrap().next_meal.is_some()
+        })
+        .await;
+        let store = server.stop().await;
+
+        // The owner's client moves the clock, at UTC; nothing else speaks
+        // to the feeder.
+        let mut owner = open_owner(&sim).await;
+        owner.subscribe(None, false).await.unwrap();
+        set_clock(&mut owner, BEFORE_FALL).await;
+        let fed = fed_from(&mut owner, BEFORE_FALL - 2).await;
+        assert_eq!(fed.as_second() / 60, BEFORE_FALL / 60, "07:30 MDT");
+
+        set_clock(&mut owner, AFTER_FALL).await;
+        let fed = fed_from(&mut owner, AFTER_FALL - 2).await;
+        assert_eq!(fed.as_second() / 60, AFTER_FALL / 60, "07:30 MST");
+        drop(owner);
+        sim.stop().await;
+
+        // The server back on October 31, half an hour after the 07:30 MDT
+        // meal, with the feeder offline: from its copy, the next is 07:30
+        // MST on November 1, past the change.
+        let clock = ManualClock::new();
+        clock.advance_to(Timestamp::from_second(BEFORE_FALL + 1800).unwrap());
+        let server = TestService::reopen_with_clock(store, Arc::new(clock)).await;
+        let detail = server.service().feeder(id).await.unwrap();
+        assert_eq!(
+            detail.next_meal,
+            Some(NextMeal {
+                at: Timestamp::from_second(AFTER_FALL - DAY).unwrap(),
+                slot: 0,
+                portions: 1,
+            })
+        );
+        server.shutdown().await;
     });
 }

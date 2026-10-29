@@ -10,6 +10,7 @@
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
 pub use wellfed_client::time::RuleError as ZoneError;
+use wellfed_model::{NextMeal, Plans};
 
 /// A zone the feeders can be given.
 #[derive(Clone, Debug)]
@@ -65,6 +66,12 @@ impl Zone {
 
     pub fn tz(&self) -> &TimeZone {
         &self.tz
+    }
+
+    /// The plans' next meal after `now`, reckoned as the feeder reckons
+    /// it, in this zone.
+    pub fn next_meal(&self, plans: &Plans, now: Timestamp) -> Option<NextMeal> {
+        wellfed_client::time::next_meal(plans, now, &self.tz)
     }
 }
 

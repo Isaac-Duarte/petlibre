@@ -93,13 +93,16 @@ impl Import {
             }
             Row::FeederState(state) => {
                 sqlx::query!(
-                    "INSERT INTO feeder_state (feeder_id, status, status_ms, settings, settings_ms)
-                     VALUES (?, ?, ?, ?, ?)",
+                    "INSERT INTO feeder_state (feeder_id, status, status_ms, settings, settings_ms,
+                                               plans, plans_ms)
+                     VALUES (?, ?, ?, ?, ?, ?, ?)",
                     state.feeder_id,
                     state.status,
                     state.status_ms,
                     state.settings,
                     state.settings_ms,
+                    state.plans,
+                    state.plans_ms,
                 )
                 .execute(tx)
                 .await?;

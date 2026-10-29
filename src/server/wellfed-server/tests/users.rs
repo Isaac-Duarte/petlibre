@@ -6,8 +6,8 @@ use std::time::Duration;
 
 use uuid::Uuid;
 use wellfed_api::{
-    AdoptFeeder, Credentials, ErrorCode, FeederId, Generation, HouseholdPatch, NewUser,
-    PasswordChange, Role, SettingsPatch, Units, User, UserPatch,
+    AdoptFeeder, Credentials, ErrorCode, FeederId, Generation, HouseholdPatch, NewUser, PLANS,
+    PasswordChange, PlansChange, Role, SettingsPatch, Units, User, UserPatch,
 };
 use wellfed_server_client::{Auth, Client, Lock, StatusCode};
 use wellfed_server_testkit::fixed::ManualClock;
@@ -82,6 +82,23 @@ async fn a_viewer_reads_but_every_write_is_refused() {
         viewer.set_lock(NOBODY, Lock::Locked, key()).await,
         forbidden,
         code,
+    );
+    let empty = PlansChange {
+        plans: [None; PLANS],
+    };
+    refused_for(
+        "plans",
+        viewer.put_plans(NOBODY, Generation(1), &empty, key()).await,
+        forbidden,
+        code,
+    );
+    // Reading is allowed through to the feeder, which this server does not
+    // have.
+    refused_for(
+        "read plans",
+        viewer.plans(NOBODY).await,
+        StatusCode::NOT_FOUND,
+        ErrorCode::NotFound,
     );
     let adopt = AdoptFeeder {
         invite: "wellfed-invite:1:x".into(),

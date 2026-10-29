@@ -58,7 +58,7 @@ This page tracks what works today and what comes next. It covers the replacement
 | Capability | Status | Notes |
 | --- | --- | --- |
 | Command-line client (`wellfed`) | Partial | Every owner setting and action: pairing, status, settings, plans, the meal call, feeds, history, the desiccant reminder, lock, Wi-Fi, time, invites and the installer, with text for people and `--json` for scripts. The meal call, the desiccant reminder and the newer status fields are tested in simulation only. See [the command overview](../src/tools/README.md#the-wellfed-command-line). |
-| Self-hosted server | Partial | Adopts a real feeder and keeps its history whole across a server restart, a power cut and a Wi-Fi drop. A phone talking to the feeder directly gets no events while the server is connected. Feeds, accounts, releases and installs are tested in simulation only. |
+| Self-hosted server | Partial | Adopts a real feeder and keeps its history whole across a server restart, a power cut and a Wi-Fi drop. A phone talking to the feeder directly gets no events while the server is connected. Feeds, plans with the next meal, accounts, releases and installs are tested in simulation only. |
 | Server web UI | Not started | |
 | Android app | Experimental | Sets up a feeder over Bluetooth or takes it back over the LAN, then shows its status and feeds. Tested against the simulated feeder only; not yet run on a phone. See [the app](../src/app/README.md). |
 | Home Assistant | Not started | Paused. |

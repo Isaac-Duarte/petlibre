@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT feeder_id AS \"feeder_id: Uuid\", status, status_ms, settings,\n                              settings_ms\n                       FROM feeder_state ORDER BY feeder_id",
+  "query": "SELECT feeder_id AS \"feeder_id: Uuid\", status, status_ms, settings,\n                              settings_ms, plans, plans_ms\n                       FROM feeder_state ORDER BY feeder_id",
   "describe": {
     "columns": [
       {
@@ -57,6 +57,28 @@
             "name": "settings_ms"
           }
         }
+      },
+      {
+        "name": "plans",
+        "ordinal": 5,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "feeder_state",
+            "name": "plans"
+          }
+        }
+      },
+      {
+        "name": "plans_ms",
+        "ordinal": 6,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "feeder_state",
+            "name": "plans_ms"
+          }
+        }
       }
     ],
     "parameters": {
@@ -67,8 +89,10 @@
       true,
       true,
       true,
+      true,
+      true,
       true
     ]
   },
-  "hash": "33fbab6fc35ec4f4e8aeb8416e149ed02498e5ec83ef1fd97b26bed210e36a78"
+  "hash": "04b40c7a08a0c485122e7e43d2c84afeaa82dd2f25fb4c15286e4ebf016150bf"
 }

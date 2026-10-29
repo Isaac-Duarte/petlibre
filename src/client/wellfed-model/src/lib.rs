@@ -37,7 +37,9 @@ pub use event::{
     ClientRole, EnrollPath, Event, EventBody, EventKind, FeedOutcome, FeedReason, FoodLevel, Gap,
     LogLines, MetricKind, MissedReason, Pushed, Sample, SampleValue, Source,
 };
-pub use plan::{PLANS, PORTIONS_MAX, Plan, Plans, TimeOfDay, Weekday, Weekdays, WeekdaysError};
+pub use plan::{
+    NextMeal, PLANS, PORTIONS_MAX, Plan, Plans, TimeOfDay, Weekday, Weekdays, WeekdaysError,
+};
 pub use request::{
     Answer, Bowl, Calibration, CalibrationView, Client, Invite, NtpResult, NtpServer, Op, Phase,
     Refusal, TimeChanges, TimeSource, TimeSync, TimeView, Tune, Wifi,

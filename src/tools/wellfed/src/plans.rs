@@ -3,6 +3,10 @@
 //! writes it back against the generation it read, so a change made
 //! meanwhile (another client's, or a plan that ran once disabling itself)
 //! is refused rather than overwritten; it is never retried.
+//!
+//! `wellfed server plans` makes the same changes through the server, from
+//! the same arguments ([`NewPlan`], [`PlanChange`], [`Slot`]) and with the
+//! same edit ([`edited`]).
 
 use anyhow::{Result, bail};
 use clap::{Args, Subcommand};
@@ -32,59 +36,119 @@ enum Action {
     Add {
         #[command(flatten)]
         target: Target,
-        /// The feeder's local time to feed at, HH:MM.
-        #[arg(long, value_name = "HH:MM")]
-        at: TimeOfDay,
-        #[arg(long, value_parser = portions())]
-        portions: u8,
-        /// `daily`, `weekdays`, `weekends`, `once` (runs at its next
-        /// occurrence, then disables itself) or a list like `mon,thu`.
-        #[arg(long, default_value = "daily")]
-        days: Weekdays,
-        /// Store it disabled.
-        #[arg(long)]
-        disabled: bool,
-        /// Play the meal call this many times before the meal (0 to 5;
-        /// `wellfed call upload` stores the clip).
-        #[arg(long, default_value_t = 0, value_parser = plays())]
-        call: u8,
+        #[command(flatten)]
+        plan: NewPlan,
     },
     /// Change a plan's time, portions, days or meal call. A new time or
     /// days runs only from the next occurrence after the change.
     Edit {
         #[command(flatten)]
         target: Target,
-        #[arg(value_parser = slot())]
-        slot: u8,
-        #[arg(long, value_name = "HH:MM")]
-        at: Option<TimeOfDay>,
-        #[arg(long, value_parser = portions())]
-        portions: Option<u8>,
-        #[arg(long)]
-        days: Option<Weekdays>,
-        /// The meal call's plays before the meal, 0 for none.
-        #[arg(long, value_parser = plays())]
-        call: Option<u8>,
+        #[command(flatten)]
+        change: PlanChange,
     },
+    /// Enable a plan: it runs from its next occurrence.
     Enable {
         #[command(flatten)]
         target: Target,
-        #[arg(value_parser = slot())]
-        slot: u8,
+        #[command(flatten)]
+        slot: Slot,
     },
+    /// Disable a plan; it keeps its slot.
     Disable {
         #[command(flatten)]
         target: Target,
-        #[arg(value_parser = slot())]
-        slot: u8,
+        #[command(flatten)]
+        slot: Slot,
     },
     /// Empty a plan's slot.
     Delete {
         #[command(flatten)]
         target: Target,
-        #[arg(value_parser = slot())]
-        slot: u8,
+        #[command(flatten)]
+        slot: Slot,
     },
+}
+
+/// A plan to add.
+#[derive(Args)]
+pub(crate) struct NewPlan {
+    /// The feeder's local time to feed at, HH:MM.
+    #[arg(long, value_name = "HH:MM")]
+    at: TimeOfDay,
+    #[arg(long, value_parser = portions())]
+    portions: u8,
+    /// `daily`, `weekdays`, `weekends`, `once` (runs at its next
+    /// occurrence, then disables itself) or a list like `mon,thu`.
+    #[arg(long, default_value = "daily")]
+    days: Weekdays,
+    /// Store it disabled.
+    #[arg(long)]
+    disabled: bool,
+    /// Play the meal call this many times before the meal (0 to 5;
+    /// `wellfed call upload` stores the clip).
+    #[arg(long, default_value_t = 0, value_parser = plays())]
+    call: u8,
+}
+
+impl NewPlan {
+    pub(crate) const fn edit(&self) -> Edit {
+        Edit::Add(Plan {
+            minute: self.at.0,
+            portions: self.portions,
+            days: self.days,
+            enabled: !self.disabled,
+            call: self.call,
+        })
+    }
+}
+
+/// What to change in one plan; what it does not name stays.
+#[derive(Args)]
+pub(crate) struct PlanChange {
+    #[arg(value_parser = slot())]
+    slot: u8,
+    #[arg(long, value_name = "HH:MM")]
+    at: Option<TimeOfDay>,
+    #[arg(long, value_parser = portions())]
+    portions: Option<u8>,
+    #[arg(long)]
+    days: Option<Weekdays>,
+    /// The meal call's plays before the meal, 0 for none.
+    #[arg(long, value_parser = plays())]
+    call: Option<u8>,
+}
+
+impl PlanChange {
+    pub(crate) const fn edit(&self) -> Edit {
+        Edit::Change {
+            slot: self.slot,
+            at: self.at,
+            portions: self.portions,
+            days: self.days,
+            call: self.call,
+        }
+    }
+}
+
+/// A plan's slot, 0-9.
+#[derive(Args)]
+pub(crate) struct Slot {
+    #[arg(value_parser = slot())]
+    slot: u8,
+}
+
+impl Slot {
+    pub(crate) const fn enabled(&self, enabled: bool) -> Edit {
+        Edit::Enabled {
+            slot: self.slot,
+            enabled,
+        }
+    }
+
+    pub(crate) const fn delete(&self) -> Edit {
+        Edit::Delete { slot: self.slot }
+    }
 }
 
 fn slot() -> clap::builder::RangedI64ValueParser<u8> {
@@ -104,7 +168,7 @@ fn plays() -> clap::builder::RangedI64ValueParser<u8> {
 
 /// What a change does to the table.
 #[derive(Clone, Copy)]
-enum Edit {
+pub(crate) enum Edit {
     Add(Plan),
     Change {
         slot: u8,
@@ -125,55 +189,11 @@ enum Edit {
 pub(crate) async fn command(args: PlansArgs) -> Result<()> {
     let (target, edit) = match args.action {
         Action::List { target, json } => return list(&target, json).await,
-        Action::Add {
-            target,
-            at,
-            portions,
-            days,
-            disabled,
-            call,
-        } => {
-            let plan = Plan {
-                minute: at.0,
-                portions,
-                days,
-                enabled: !disabled,
-                call,
-            };
-            (target, Edit::Add(plan))
-        }
-        Action::Edit {
-            target,
-            slot,
-            at,
-            portions,
-            days,
-            call,
-        } => {
-            let change = Edit::Change {
-                slot,
-                at,
-                portions,
-                days,
-                call,
-            };
-            (target, change)
-        }
-        Action::Enable { target, slot } => (
-            target,
-            Edit::Enabled {
-                slot,
-                enabled: true,
-            },
-        ),
-        Action::Disable { target, slot } => (
-            target,
-            Edit::Enabled {
-                slot,
-                enabled: false,
-            },
-        ),
-        Action::Delete { target, slot } => (target, Edit::Delete { slot }),
+        Action::Add { target, plan } => (target, plan.edit()),
+        Action::Edit { target, change } => (target, change.edit()),
+        Action::Enable { target, slot } => (target, slot.enabled(true)),
+        Action::Disable { target, slot } => (target, slot.enabled(false)),
+        Action::Delete { target, slot } => (target, slot.delete()),
     };
 
     let (_, _, mut connection) = connect(&target).await?;
@@ -211,7 +231,7 @@ async fn list(target: &Target, json: bool) -> Result<()> {
 }
 
 /// The table `plans` holds with `edit` applied.
-fn edited(plans: &Plans, edit: Edit) -> Result<[Option<Plan>; PLANS]> {
+pub(crate) fn edited(plans: &Plans, edit: Edit) -> Result<[Option<Plan>; PLANS]> {
     let mut table = plans.plans;
     let filled = |table: &[Option<Plan>; PLANS], slot: u8| -> Result<Plan> {
         match table.get(usize::from(slot)).copied().flatten() {

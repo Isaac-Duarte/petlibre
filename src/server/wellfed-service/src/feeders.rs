@@ -1,5 +1,5 @@
 //! The adopted feeders and everything sent to them: adoption, the commands
-//! and the journal every write goes through, feeds, the feeders' clients
+//! and the journal every write goes through, the plans, feeds, the feeders' clients
 //! and the phones' own keys, what an owner administers, debug logs, and
 //! each feeder's updates forwarded from the mirror into the hub.
 
@@ -13,6 +13,7 @@ pub(crate) mod journal;
 mod keys;
 mod parity;
 pub(crate) mod phones;
+mod plans;
 mod updates;
 
 use std::collections::HashMap;

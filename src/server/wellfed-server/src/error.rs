@@ -6,7 +6,8 @@ use axum::Json;
 use axum::extract::rejection::{BytesRejection, JsonRejection, PathRejection, QueryRejection};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use wellfed_api::{ErrorCode, FeederRefusal, Problem, Settings};
+use serde::Serialize;
+use wellfed_api::{ErrorCode, FeederRefusal, Generation, Problem};
 use wellfed_service::{AccountError, Error, Reply};
 
 /// A request's failure.
@@ -66,7 +67,8 @@ impl IntoResponse for ApiError {
         };
         let (code, detail, refusal) = match self {
             Self::Code(code, detail) => (code, detail, None),
-            Self::Service(Error::Stale(settings)) => return stale(settings),
+            Self::Service(Error::Stale(settings)) => return stale(&settings, settings.generation),
+            Self::Service(Error::StalePlans(plans)) => return stale(&plans, plans.generation),
             Self::Service(error) => service(&error),
         };
         let status = status(code);
@@ -92,11 +94,11 @@ impl IntoResponse for ApiError {
     }
 }
 
-/// A stale edit gets `412` with the current resource, so the client can
-/// show it and decide again.
-fn stale(settings: Settings) -> Response {
-    let mut response = (StatusCode::PRECONDITION_FAILED, Json(settings)).into_response();
-    if let Ok(tag) = HeaderValue::from_str(&crate::routes::feeders::etag(settings.generation)) {
+/// A stale edit gets `412` with the current resource (the settings or the
+/// plans), so the client can show it and decide again.
+fn stale(current: &impl Serialize, generation: Generation) -> Response {
+    let mut response = (StatusCode::PRECONDITION_FAILED, Json(current)).into_response();
+    if let Ok(tag) = HeaderValue::from_str(&crate::routes::feeders::etag(generation)) {
         response.headers_mut().insert(header::ETAG, tag);
     }
     response

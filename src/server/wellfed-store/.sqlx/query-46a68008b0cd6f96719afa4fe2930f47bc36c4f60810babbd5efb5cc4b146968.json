@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO feeder_state (feeder_id, status, status_ms, settings, settings_ms,\n                                               plans, plans_ms)\n                     VALUES (?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": []
+  },
+  "hash": "46a68008b0cd6f96719afa4fe2930f47bc36c4f60810babbd5efb5cc4b146968"
+}

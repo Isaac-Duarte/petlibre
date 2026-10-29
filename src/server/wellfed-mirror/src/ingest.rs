@@ -145,6 +145,12 @@ impl Task {
                 if !new {
                     return Ok(());
                 }
+                // The session loop reads them again after this step: an
+                // event may arrive inside another request's wait, where a
+                // request of the task's own cannot go out.
+                if self.changes_plans(&event.body) {
+                    self.plans_stale = true;
+                }
                 MirrorEvent::Event(FeederEvent::new(event, received))
             }
             Pushed::Gap(gap) => {

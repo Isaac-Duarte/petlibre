@@ -1,7 +1,7 @@
 //! Every way a call to the server fails.
 
 use std::time::Duration;
-use wellfed_api::{ErrorCode, Problem, Settings};
+use wellfed_api::{ErrorCode, Plans, Problem, Settings};
 
 use reqwest::{StatusCode, Url};
 
@@ -27,6 +27,10 @@ pub enum Error {
     /// the current settings.
     #[error("the settings moved on to generation {}", .0.generation)]
     Stale(Box<Settings>),
+    /// A plans change named a generation the plans have moved past; these
+    /// are the current plans.
+    #[error("the plans moved on to generation {}", .0.generation)]
+    StalePlans(Box<Plans>),
     #[error("the server answered {status} where {expected} was expected")]
     Unexpected {
         status: StatusCode,

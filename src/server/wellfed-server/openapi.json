@@ -432,7 +432,7 @@
         "tags": [
           "feeders"
         ],
-        "summary": "One feeder and its status: live when it is online, otherwise the last\ncopy, marked.",
+        "summary": "One feeder and its status: live when it is online, otherwise the last\ncopy, marked; and its plans' next meal in the household's zone.",
         "operationId": "feeder",
         "parameters": [
           {
@@ -1735,6 +1735,191 @@
             }
           },
           "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/feeders/{id}/plans": {
+      "get": {
+        "tags": [
+          "feeders"
+        ],
+        "summary": "The feeder's feeding plans, read from it. The `ETag` is the generation\na change sends back in `If-Match`.",
+        "operationId": "plans",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/FeederId"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Plans"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "feeder_refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "feeder_offline",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "feeders"
+        ],
+        "summary": "Replace every plan slot, if the plans are still at the generation in\n`If-Match`. A plan that is new, or whose time or days changed, runs\nfrom its next occurrence after the change.",
+        "operationId": "put_plans",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/FeederId"
+            }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "The generation the change is based on",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "examples": [
+                "\"7\""
+              ],
+              "pattern": "^\"?[0-9]+\"?$"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "A UUID; a retry with the same key is answered once",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlansChange"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Plans"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid: a malformed body, If-Match or Idempotency-Key, or a plan out of range",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "feeder_refused: final for this key; a later attempt needs a new key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Stale: the current plans",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Plans"
+                }
+              }
+            }
+          },
+          "428": {
+            "description": "precondition_required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "feeder_offline",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "outcome_unknown: retry with the same key",
             "content": {
               "application/json": {
                 "schema": {
@@ -5576,7 +5761,8 @@
           "reboot",
           "play",
           "remove",
-          "desiccant"
+          "desiccant",
+          "plans"
         ]
       },
       "CommandOutcome": {
@@ -5612,6 +5798,25 @@
               },
               "settings": {
                 "$ref": "#/components/schemas/Settings"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A plans change took effect, and these are the plans the server\nread back after it.",
+            "required": [
+              "plans",
+              "result"
+            ],
+            "properties": {
+              "plans": {
+                "$ref": "#/components/schemas/Plans"
+              },
+              "result": {
+                "type": "string",
+                "enum": [
+                  "plans"
+                ]
               }
             }
           },
@@ -6765,6 +6970,17 @@
         "properties": {
           "feeder": {
             "$ref": "#/components/schemas/Feeder"
+          },
+          "next_meal": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NextMeal",
+                "description": "The plans' next meal in the household's zone, from the plans the\nserver last read; `None` with no enabled plan, no plans read yet,\nor no household."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "status": {
             "oneOf": [
@@ -8282,6 +8498,32 @@
           }
         }
       },
+      "NextMeal": {
+        "type": "object",
+        "description": "The plans' next meal: the earliest occurrence of any enabled plan, in\nthe feeder's zone. Plans due at the same instant run one after another,\nthe lowest slot first, which is the one named.",
+        "required": [
+          "at",
+          "slot",
+          "portions"
+        ],
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "portions": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "slot": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The plan's slot.",
+            "minimum": 0
+          }
+        }
+      },
       "PasswordChange": {
         "type": "object",
         "description": "A user changing their own password: `PATCH /session`.",
@@ -8471,6 +8713,109 @@
           },
           "user": {
             "$ref": "#/components/schemas/UserId"
+          }
+        }
+      },
+      "Plan": {
+        "type": "object",
+        "description": "One feeding plan: `portions` at minute `minute` of the feeder's local\nday, on the weekdays `days` lists, or once at its next occurrence when\nit lists none. A plan that ran once stays in its slot, disabled.\n\nWith no valid clock, plans hold; an occurrence more than 15 minutes\nlate (the feeder off, without the time, or busy) never runs, and the\nhistory records it missed.",
+        "required": [
+          "minute",
+          "portions",
+          "days",
+          "enabled",
+          "call"
+        ],
+        "properties": {
+          "call": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How many times the meal call plays before the feed, 0 to\n[`CALL_PLAYS_MAX`](crate::CALL_PLAYS_MAX); 0 plays none. It plays\nonly with a clip stored and sound allowed, ending as the meal is\ndue, and never delays it.",
+            "maximum": 5,
+            "minimum": 0
+          },
+          "days": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Weekday"
+            },
+            "description": "The weekdays it runs on; none runs it once."
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "minute": {
+            "type": "integer",
+            "format": "int32",
+            "description": "0-1439.",
+            "maximum": 1439,
+            "minimum": 0
+          },
+          "portions": {
+            "type": "integer",
+            "format": "int32",
+            "description": "1 to [`PORTIONS_MAX`].",
+            "maximum": 48,
+            "minimum": 1
+          }
+        }
+      },
+      "Plans": {
+        "type": "object",
+        "description": "The plans as the feeder holds them. Its `generation` goes back as the\n`base` of a change.",
+        "required": [
+          "generation",
+          "writable",
+          "plans"
+        ],
+        "properties": {
+          "generation": {
+            "$ref": "#/components/schemas/Generation"
+          },
+          "plans": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/Plan"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": "The plan in each slot, all ten; `null` is an empty one.",
+            "maxItems": 10,
+            "minItems": 10
+          },
+          "writable": {
+            "type": "boolean",
+            "description": "Whether the plans store can take a write now."
+          }
+        }
+      },
+      "PlansChange": {
+        "type": "object",
+        "description": "The feeding plans to replace every slot with, as one table: a slot left\n`null` is emptied.",
+        "required": [
+          "plans"
+        ],
+        "properties": {
+          "plans": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/Plan"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": "All ten slots.",
+            "maxItems": 10,
+            "minItems": 10
           }
         }
       },
@@ -10898,6 +11243,19 @@
           }
         }
       },
+      "Weekday": {
+        "type": "string",
+        "description": "A day of the week.",
+        "enum": [
+          "mon",
+          "tue",
+          "wed",
+          "thu",
+          "fri",
+          "sat",
+          "sun"
+        ]
+      },
       "Weight": {
         "type": "object",
         "description": "One entry of a pet's weight log.",
@@ -11060,7 +11418,7 @@
     },
     {
       "name": "feeders",
-      "description": "Adopted feeders, their settings, lock, feeds and history"
+      "description": "Adopted feeders, their settings, plans, lock, feeds and history"
     },
     {
       "name": "health",

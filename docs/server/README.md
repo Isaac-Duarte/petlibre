@@ -43,7 +43,7 @@ The API lives under `/api/v1`, as JSON. The complete reference is [`openapi.json
 | Group | Routes | What they do |
 | --- | --- | --- |
 | Setup and accounts | `/setup`, `/session`, `/users`, `/tokens`, `/household` | The first owner, logins, people and their roles, phone tokens, the household's name, units and zone |
-| Feeders | `/feeders`, `/feeders/{id}`, `/feeders/{id}/settings`, `/lock`, `/desiccant/reset`, `/wifi`, `/reboot`, `/play`, `/clients`, `/invites`, `/phones` | Adopt and remove feeders, live status, settings and administration |
+| Feeders | `/feeders`, `/feeders/{id}`, `/feeders/{id}/settings`, `/plans`, `/lock`, `/desiccant/reset`, `/wifi`, `/reboot`, `/play`, `/clients`, `/invites`, `/phones` | Adopt and remove feeders, live status and the next meal, settings, feeding plans and administration |
 | Feeding | `/feeders/{id}/feed`, `/feeds/{feed}/cancel`, `/commands`, `/commands/{key}` | Feed, cancel, and the journal of every write |
 | History | `/feeders/{id}/events`, `/samples`, `/feeds/{feed}/trace`, `/stats`, `/log`, `/audit` | Events, samples, feed traces, statistics, the live debug log and the audit log |
 | Owner data | `/pets`, `/foods`, `/pets/{id}/weights`, `/pets/{id}/feeders/{feeder}`, `/feeders/{id}/food`, `/refills` | Pets, foods, weights, which feeder serves which pet, refills |
@@ -57,7 +57,7 @@ Some conventions hold across the API:
 
 - **Errors** are RFC 9457 `application/problem+json`, with a typed `code` from a closed set. There is no free-text error.
 - **Writes** carry an `Idempotency-Key` header (a UUID). A feed requires one.
-- **Edits** carry `If-Match` with the settings' generation. A stale one gets `412` with the current settings.
+- **Edits** carry `If-Match` with the generation of the settings or plans they change. A stale one gets `412` with the current settings or plans.
 - **The stream** resumes from `Last-Event-ID`. When that id is too old, the server sends `resync` and the client fetches again.
 
 ## Read next

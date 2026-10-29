@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT status, status_ms, settings, settings_ms FROM feeder_state WHERE feeder_id = ?",
+  "query": "SELECT status, status_ms, settings, settings_ms, plans, plans_ms\n             FROM feeder_state WHERE feeder_id = ?",
   "describe": {
     "columns": [
       {
@@ -46,6 +46,28 @@
             "name": "settings_ms"
           }
         }
+      },
+      {
+        "name": "plans",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "feeder_state",
+            "name": "plans"
+          }
+        }
+      },
+      {
+        "name": "plans_ms",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "feeder_state",
+            "name": "plans_ms"
+          }
+        }
       }
     ],
     "parameters": {
@@ -55,8 +77,10 @@
       true,
       true,
       true,
+      true,
+      true,
       true
     ]
   },
-  "hash": "c3b649ac275f3969d7cb721ac94fb696fe79b33914ae691cebfe176519159a7b"
+  "hash": "dab186333901855779078f6bb6bb0a0ad9f1d242b866d77e6d1e34606265816c"
 }

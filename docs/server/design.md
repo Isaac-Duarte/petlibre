@@ -251,7 +251,7 @@ The server keeps each feeder's own stock firmware, the copy promotion would othe
 
 ### Export and import
 
-- **The archive** (`wellfed_formats::export`, format version 1) is a POSIX tar: `manifest.json` first, in canonical JSON with each table's row count, size and SHA-256, then a file per table. `GET /export` writes `<table>.jsonl`. `?format=csv` writes `<table>.csv` for a spreadsheet. A quiet server exports the same bytes each time.
+- **The archive** (`wellfed_formats::export`, format version 2) is a POSIX tar: `manifest.json` first, in canonical JSON with each table's row count, size and SHA-256, then a file per table. `GET /export` writes `<table>.jsonl`. `?format=csv` writes `<table>.csv` for a spreadsheet. A quiet server exports the same bytes each time.
 - **No secrets.** Accounts go without their password hashes and feeders without the server's sealed key. Sessions and tokens aren't exported.
 - **Streaming.** The export reads one snapshot twice: once to count and hash each table, then to write it. Memory stays flat however large the tables. One export runs at a time (`409 export_running`).
 - **`POST /import`** takes a JSON archive onto a fresh server, in one transaction. Like `/setup`, it needs no login and works only while no account exists (`409 import_closed`). Anything wrong rolls it all back (`422 archive_invalid`).

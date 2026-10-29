@@ -1222,7 +1222,7 @@ impl Bench {
 /// What the frozen review at `review` installs, as the bank ledger names
 /// it: a build by its startup identity, the stock image, or else a build
 /// by its OTA image's hash. `None` when neither file reads.
-fn installed(root: &Path, review: &Path) -> Option<Content> {
+pub fn installed(root: &Path, review: &Path) -> Option<Content> {
     let review = root.join(review);
     let manifest: Option<BuildManifest> =
         wellfed_formats::load(&review.join("build-manifest.json")).ok();
@@ -1359,8 +1359,7 @@ pub fn steps(command: BenchCommand) -> &'static [&'static str] {
         | BenchCommand::Transients
         | BenchCommand::Itest
         | BenchCommand::StockOta
-        | BenchCommand::Install
-        | BenchCommand::StockServe => &[],
+        | BenchCommand::Install => &[],
     }
 }
 

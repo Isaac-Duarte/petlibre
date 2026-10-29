@@ -60,7 +60,6 @@ pub enum BenchCommand {
     Itest,
     StockOta,
     Install,
-    StockServe,
 }
 
 impl BenchCommand {
@@ -85,7 +84,6 @@ impl BenchCommand {
             Self::Itest => "itest",
             Self::StockOta => "stock-ota",
             Self::Install => "install",
-            Self::StockServe => "stock-serve",
         }
     }
 }

@@ -330,7 +330,7 @@ fn a_stop_held_for_a_write_shows_in_the_header() {
 }
 
 #[test]
-fn a_job_s_question_shows_above_its_output_with_the_keys_that_answer_it() {
+fn a_job_s_question_shows_above_its_output_with_the_command_that_answers_it() {
     use wellfed_formats::bench::live::PendingPrompt;
     use wellfed_formats::bench::prompt::Prompt;
 
@@ -341,7 +341,7 @@ fn a_job_s_question_shows_above_its_output_with_the_keys_that_answer_it() {
     let screen = render(&state, &log(3), 0);
 
     for text in [
-        "Job 12 asks (question 2) · d: done",
+        "Job 12 asks (question 2) · wellfed-bench answer 12 2 done",
         "hold Lock, then Dispense",
         "job line 3",
     ] {

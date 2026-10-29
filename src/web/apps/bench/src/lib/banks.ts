@@ -23,6 +23,7 @@ const SOURCE: Record<Source, string> = {
   "stock-ota": "stock's own over-the-air install",
   "stock-execute": "pinned stock written over UART",
   itest: "seen by the integration suite",
+  install: "installed from stock by wellfed install",
 };
 
 export function sourceText(source: Source): string {

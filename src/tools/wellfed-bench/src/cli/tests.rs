@@ -81,7 +81,6 @@ fn install_takes_the_bench_route_s_flags_and_answer_its_three_words() {
         panic!("not install")
     };
     assert_eq!(args.broker_name.as_deref(), Some("broker.example.net"));
-    assert_eq!(args.restart_seconds, 10.0);
     assert_eq!(job(&cli).describe(), "install");
     // The frame route reads a passphrase at a terminal: no job takes it.
     assert!(
@@ -110,14 +109,8 @@ fn install_takes_the_bench_route_s_flags_and_answer_its_three_words() {
         }
     ));
     assert!(Cli::try_parse_from(["wellfed-bench", "answer", "7", "2", "y"]).is_err());
-
-    let cli =
-        Cli::try_parse_from(["wellfed-bench", "stock-serve", "--enroll-minutes", "5"]).unwrap();
-    let JobCommand::StockServe(args) = job(&cli) else {
-        panic!("not stock-serve")
-    };
-    assert_eq!(args.config, PathBuf::from("private/server.json"));
-    assert_eq!(job(&cli).label(), BenchCommand::StockServe);
+    // A user flag no more: the restart is 10 s.
+    assert!(Cli::try_parse_from(["wellfed-bench", "install", "--restart-seconds", "1"]).is_err());
 }
 
 #[test]

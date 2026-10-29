@@ -230,9 +230,9 @@ This proves the consumer's first route end to end, with a stock that holds plans
 6. **Check the seed:** `target/release/wellfed-bench dump <name>-seed`, then `target/release/wellfed-stock plans private/flash-backups/<name>-seed-full/flash-read.bin`. You should see both plans, each disabled with a note that its skip is still ahead. **Stop here** if the report does not list both: the install would prove nothing about a nonempty import. Boot stock again with `target/release/wellfed-bench boot <name>-seed-boot`.
 7. **Leave the plans alone:** stop the seeding `serve` and delete `private/seed.json`. Resolve any trial left open in `private/stock-ledger.json`. Then write the installer's config, removing any `installer.device.json` and `installer.contested.json` a past run left: `target/release/wellfed-stock init-installer --mqtt-listen 10.42.103.1:1883 --output private/installer.json`.
 8. **Install,** as the server's job: `target/release/wellfed-bench install --stock-config private/installer.json --broker-name "$NAME" --review <feeder review> --manifest <its signed manifest> --calibrate-clock`. The flag sets stock's clock, which on the bench is days behind; the seeded plans are skipped until 2100, so none comes due in the jump. The stock server's log line for `NTP` records the `ts` stock sent and the skew. The run asks three things:
-   - the override, set in step 2: answer done (`wellfed-bench answer JOB 1 done`, the page or the console, or an agent's `job_answer`);
+   - the override, set in step 2: answer done (`wellfed-bench answer JOB 1 done`, the page, or an agent's `job_answer`);
    - the restart, which the job does itself with relay 1, off for 10 s and on again, with the installer's broker already listening;
-   - the feeder check: the owner compares the enrolled device ID and address with the feeder and answers yes or no on the page, the console or with `wellfed-bench answer`. An agent may not answer it.
+   - the feeder check: the owner compares the enrolled device ID and address with the feeder and answers yes or no on the page or with `wellfed-bench answer`. An agent may not answer it.
 
    The bench key is already enrolled, so no recovery hold is asked for. The bench host does not ask the hotspot's resolver, so its lookup line may say the name points elsewhere; the run waits for stock regardless.
 

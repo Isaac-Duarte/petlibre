@@ -58,7 +58,7 @@ pub(crate) enum ToolError {
     /// agent saying yes or done would stand in for a person who may not
     /// be there.
     #[error(
-        "job_answer: the {name} question is the owner's to answer, at the feeder: answer it on the bench page, the server's console, or with `wellfed-bench answer`"
+        "job_answer: the {name} question is the owner's to answer, at the feeder: answer it on the bench page or with `wellfed-bench answer`"
     )]
     PersonAnswers { name: &'static str },
     /// It would read as a flag on the command line the tool builds.
@@ -209,8 +209,6 @@ struct InstallArgs {
     /// The replacement is already on bank 0: start at pairing.
     #[serde(default)]
     from_bank0: bool,
-    /// A copy of stock 1.1.15's OTA image matching the pinned digest.
-    stock_backup: Option<String>,
     enroll_minutes: Option<u64>,
     #[serde(default)]
     calibrate_clock: bool,
@@ -220,21 +218,6 @@ struct InstallArgs {
     keys: Option<String>,
     /// The replacement's address.
     address: Option<String>,
-    /// How long relay 1 stays off for the restart (default 10).
-    restart_seconds: Option<f64>,
-}
-
-#[derive(Debug, Clone, PartialEq, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-struct StockServeArgs {
-    /// The wellfed-stock config (default private/server.json).
-    config: Option<String>,
-    enroll_minutes: Option<u64>,
-    #[serde(default)]
-    calibrate_clock: bool,
-    /// Allow the stock-to-replacement install trial.
-    #[serde(default)]
-    enable_ota_trial: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
@@ -528,7 +511,7 @@ const SPECS: &[Spec] = &[
     },
     Spec {
         name: "job_answer",
-        description: "Answer the question the running install asks (bench_status's prompt, by its seq): done for an instruction such as setting the DNS override, yes or no for a question. Sent once, never ahead of a question. Refused for the owner's own questions (is this your feeder, the recovery window at the panel), which a person answers on the page, the console or the CLI.",
+        description: "Answer the question the running install asks (bench_status's prompt, by its seq): done for an instruction such as setting the DNS override, yes or no for a question. Sent once, never ahead of a question. Refused for the owner's own questions (is this your feeder, the recovery window at the panel), which a person answers on the page or with the CLI.",
         schema: schema::<AnswerArgs>,
     },
     Spec {
@@ -645,11 +628,6 @@ const SPECS: &[Spec] = &[
         name: "install",
         description: "Stock to Wellfed with `wellfed install` as a job: its own stock server and sessions (the server's session pauses), stock installs the review into bank 0 over its own updater, then promotion writes bank 1. Restarts the feeder itself with relay 1 (off about 10 s, then on). Its other questions wait in bench_status's prompt for job_answer or a person; no UART write.",
         schema: schema::<InstallArgs>,
-    },
-    Spec {
-        name: "stock_serve",
-        description: "Run `wellfed-stock serve` as a job until it exits or job_cancel: the stock broker and API for an enrollment window. No UART, no relays; with enable_ota_trial it may dispatch stock's own install when asked.",
-        schema: schema::<StockServeArgs>,
     },
 ];
 
@@ -981,21 +959,11 @@ fn job_words(name: &str, args: JsonObject) -> Result<Vec<String>, ToolError> {
                 .value("--stock-config", Some(args.stock_config))
                 .value("--broker-name", args.broker_name)
                 .switch("--from-bank0", args.from_bank0)
-                .value("--stock-backup", args.stock_backup)
                 .value("--enroll-minutes", args.enroll_minutes)
                 .switch("--calibrate-clock", args.calibrate_clock)
                 .switch("--without-stock-plans", args.without_stock_plans)
                 .value("--keys", args.keys)
                 .value("--address", args.address)
-                .value("--restart-seconds", args.restart_seconds)
-        }
-        "stock_serve" => {
-            let args: StockServeArgs = parse(name, args)?;
-            Line::new(&["stock-serve"])
-                .value("--config", args.config)
-                .value("--enroll-minutes", args.enroll_minutes)
-                .switch("--calibrate-clock", args.calibrate_clock)
-                .switch("--enable-ota-trial", args.enable_ota_trial)
         }
         _ => return Err(ToolError::Unknown { name: name.into() }),
     };
@@ -1047,7 +1015,6 @@ mod tests {
             "itest",
             "transients",
             "install",
-            "stock_serve",
             "job_answer",
         ] {
             assert!(tools.iter().any(|tool| tool.name == name), "{name}");
@@ -1092,7 +1059,7 @@ mod tests {
     }
 
     #[test]
-    fn install_and_stock_serve_build_their_command_lines() {
+    fn install_builds_its_command_line() {
         let install = call(
             "install",
             args(serde_json::json!({
@@ -1118,24 +1085,6 @@ mod tests {
                     "--broker-name",
                     "broker.example.net",
                     "--calibrate-clock",
-                ]
-                .map(String::from)
-                .to_vec()
-            )
-        );
-        assert_eq!(
-            call(
-                "stock_serve",
-                args(serde_json::json!({"config": "private/installer.json", "enroll_minutes": 5}))
-            )
-            .unwrap(),
-            Call::Job(
-                [
-                    "stock-serve",
-                    "--config",
-                    "private/installer.json",
-                    "--enroll-minutes",
-                    "5"
                 ]
                 .map(String::from)
                 .to_vec()

@@ -128,7 +128,7 @@ impl JobView {
 }
 
 /// A question a job waits on: `wellfed install` asks it, and whoever
-/// answers (the page, the console, `wellfed-bench answer`, an agent) names
+/// answers (the page, `wellfed-bench answer`, an agent) names
 /// its `seq`. The number is the job's own count of its questions, from 1,
 /// so an answer meant for one question never lands on the next.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

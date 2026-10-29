@@ -591,20 +591,17 @@ impl Task {
 
     /// No session can open: answer every request so, until the server quits.
     async fn unconfigured(mut self, error: String) {
-        self.set_session(Session::Unconfigured {
-            error: error.clone(),
-        });
+        // No session is open to close, but a job that runs sessions of its
+        // own (an install that creates the key) is shown its hold, as it
+        // would be beside an open one.
+        let shown = |held: Option<Pause>| match held {
+            Some(pause) => Session::Paused { pause },
+            None => Session::Unconfigured {
+                error: error.clone(),
+            },
+        };
+        self.set_session(shown(self.hold.borrow().clone()));
         loop {
-            // No session is open to close, but a job that runs sessions of
-            // its own (an install that creates the key) is shown its hold,
-            // as it would be beside an open one.
-            let held = self.hold.borrow().clone();
-            self.set_session(match held {
-                Some(pause) => Session::Paused { pause },
-                None => Session::Unconfigured {
-                    error: error.clone(),
-                },
-            });
             tokio::select! {
                 request = self.requests.recv() => {
                     let Some(request) = request else { return };
@@ -613,10 +610,11 @@ impl Task {
                     }));
                 }
                 changed = self.hold.changed() => {
-                    let stopping = *self.hold.borrow() == Some(Pause::Stopping);
-                    if changed.is_err() || stopping {
+                    let held = self.hold.borrow().clone();
+                    if changed.is_err() || held == Some(Pause::Stopping) {
                         return;
                     }
+                    self.set_session(shown(held));
                 }
             }
         }

@@ -164,7 +164,7 @@ Install trials are recorded in `stock-ledger.json` beside the configuration, und
 - An uncertain or failed trial blocks the next until `ota-trial-resolve` closes it from fresh evidence. Resolving sends no command.
 - A replacement install closes instead on `ota-trial-answered`, once the operator's client saw the served build answer its device API from bank 0 and stock has gone quiet ([below](#install-the-replacement)).
 
-`serve --enable-ota-trial` holds the [bench lease](../devices/plaf103/bench.md#bench-lease) beside its configuration for as long as it runs, since an install it dispatches runs for minutes. On the bench, run it as the server's `stock-serve` job (`wellfed-bench stock-serve --config CONFIG --enable-ota-trial`, or the agent's `stock_serve`), which takes the server's lease, so `wellfed-bench serve` never stops for it; a job holds the bench's one job slot until it is cancelled. `ota-trial` only asks that server, so it takes no lease of its own. `setup-send` takes the lease for its one frame. A plain `serve`, `broker` and `ota-images` take none: they only answer, beside the command that drives the feeder.
+`serve --enable-ota-trial` holds the [bench lease](../devices/plaf103/bench.md#bench-lease) beside its configuration for as long as it runs, since an install it dispatches runs for minutes. `ota-trial` only asks that server, so it takes no lease of its own. `setup-send` takes the lease for its one frame. A plain `serve`, `broker` and `ota-images` take none: they only answer, beside the command that drives the feeder.
 
 An older ledger, `feed-ledger.json`, also held feeds and probe queries. `serve` refuses to start while it is present. Check that no trial in it is submitted, uncertain or failed, then rename it.
 

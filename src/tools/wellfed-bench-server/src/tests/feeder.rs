@@ -1095,21 +1095,18 @@ read a
         "c",
         "--broker-name",
         "b.example",
-        "--restart-seconds",
-        "0.3",
     ];
     let id = server.submit(&words).await.unwrap();
     let paused = Session::Paused {
         pause: Pause::StockInstall { job: id },
     };
 
+    // The job shows in the state a moment before it takes its hold; from
+    // the hold on, nothing opens the session beside it.
+    let mut held = false;
     let state = state_until(&server, "the question", |state| {
-        let running = state
-            .job
-            .as_ref()
-            .is_some_and(|job| job.id == id && job.end.is_none());
-        // Once the job runs, nothing opens the session beside it.
-        if running {
+        held |= state.feeder.session == paused;
+        if held {
             assert!(
                 !matches!(state.feeder.session, Session::Open { .. }),
                 "{:?}",
@@ -1119,6 +1116,7 @@ read a
         state.prompt.is_some()
     })
     .await;
+    assert!(held);
     assert_eq!(state.feeder.session, paused);
     assert_eq!(state.own_sessions_job(), Some(id));
     assert!(checkout.board.log().contains(&(POWER, false)));

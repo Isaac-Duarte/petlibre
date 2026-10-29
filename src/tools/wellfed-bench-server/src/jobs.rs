@@ -27,7 +27,7 @@ use wellfed_rig::tools::{Children, Processes};
 use crate::api::Refusal;
 use crate::board::SharedBoard;
 use crate::feeder::Feeder;
-use crate::tool_jobs::{self, Asking, InstallArgs, StockServeArgs, ToolJobError};
+use crate::tool_jobs::{self, Asking, InstallArgs, ToolJobError};
 
 /// A bench command that touches the hardware, as a job.
 #[derive(Debug, Clone, Subcommand)]
@@ -98,9 +98,6 @@ pub enum JobCommand {
     /// (`wellfed-bench answer`, the page, the console). Restarts the
     /// feeder itself with relay 1 when the installer asks for it.
     Install(InstallArgs),
-    /// `wellfed-stock serve` until it exits or is cancelled: an
-    /// enrollment or broker window beside the bench. No UART, no relays.
-    StockServe(StockServeArgs),
 }
 
 impl JobCommand {
@@ -123,13 +120,12 @@ impl JobCommand {
             Self::Itest(_) => BenchCommand::Itest,
             Self::StockOta(_) => BenchCommand::StockOta,
             Self::Install(_) => BenchCommand::Install,
-            Self::StockServe(_) => BenchCommand::StockServe,
         }
     }
 
     pub fn name(&self) -> Option<&str> {
         match self {
-            Self::Off | Self::On | Self::Install(_) | Self::StockServe(_) => None,
+            Self::Off | Self::On | Self::Install(_) => None,
             Self::Capture { name, .. }
             | Self::Boot { name, .. }
             | Self::Loader { name }
@@ -178,8 +174,7 @@ impl JobCommand {
             | Self::Ota(_)
             | Self::Itest(_)
             | Self::StockOta(_)
-            | Self::Install(_)
-            | Self::StockServe(_) => false,
+            | Self::Install(_) => false,
         }
     }
 
@@ -208,7 +203,6 @@ impl JobCommand {
             Self::Ota(_) => false,
             Self::Itest(args) => args.power,
             Self::StockOta(args) => args.power,
-            Self::StockServe(_) => false,
             _ => true,
         }
     }
@@ -480,9 +474,6 @@ fn dispatch(
             return Ok(wellfed_itest::stock_ota(bench, args, stock_bin)?);
         }
         JobCommand::Install(args) => return tool_jobs::install(bench, args, tools, asking),
-        JobCommand::StockServe(args) => {
-            return tool_jobs::stock_serve(bench, args, tools, asking);
-        }
     };
     Ok(ran?)
 }

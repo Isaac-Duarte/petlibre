@@ -48,7 +48,7 @@ A DSD TECH SH-UR04A USB relay board (CP2102 serial, 9600 8N1) adds four switches
    cargo build --locked --release -p wellfed-bench -p wellfed-flash -p wellfed-stock -p wellfed
    ```
 
-   The server runs the `wellfed-flash` beside itself unless `serve --flash-bin` names another. `itest`, `stock-ota`, `install` and `stock-serve` run the `wellfed-stock` beside it unless `serve --stock-bin` names another ([stock server](../../development/stock-server.md)), and `install` runs the `wellfed` beside it unless `serve --wellfed-bin` names another.
+   The server runs the `wellfed-flash` beside itself unless `serve --flash-bin` names another. `itest`, `stock-ota` and `install` run the `wellfed-stock` beside it unless `serve --stock-bin` names another ([stock server](../../development/stock-server.md)), and `install` runs the `wellfed` beside it unless `serve --wellfed-bin` names another.
 
 2. Write the ignored `private/bench.json`. The relay board also enumerates as a USB serial port and can take the name the UART adapter used to have, so use `/dev/serial/by-id/` paths:
 
@@ -117,8 +117,7 @@ The files and shapes they share (the bench config, a command's progress record, 
 | `stock-prepare NAME`, `stock-execute NAME` | UART return to stock ([below](#to-stock-over-uart)) |
 | `ota NAME` | One over-the-air update of the running feeder ([below](#over-the-air-updates)). Never touches power or opens the relay board. |
 | `stock-ota NAME` | Stock installs a Wellfed build through its own updater ([below](#stock-to-a-replacement-stock-ota)) |
-| `install` | `wellfed install` as a job: its questions go to the page, the console, `answer` and the agent, and it restarts the feeder itself with relay 1 ([below](#install-as-a-job)) |
-| `stock-serve` | `wellfed-stock serve --config CONFIG` until it exits or is cancelled: an enrollment or broker window beside the bench. No UART, no relays. `--enroll-minutes`, `--calibrate-clock` and `--enable-ota-trial` pass through. |
+| `install` | `wellfed install` as a job: its questions show on the page and the console, and the page, `answer` and the agent answer them, and it restarts the feeder itself with relay 1 ([below](#install-as-a-job)) |
 | `itest NAME` | The real-device [integration suite](#integration-suite). Runs its own hotspot, `serve` and receive-only UART capture, installs over the air, and restores the bench at the end. Opens the relay board only with `--power`, for cold boots. |
 
 `wellfed-bench <command> --help` lists the flags. `flash-prepare` and `flash-execute` take the updater's `--bank`, `--source`, `--original-read`, `--target`, `--interrupted` and `--restore-marker`, and `--attended-motion` for a target whose manifest names a motion policy.
@@ -148,7 +147,7 @@ Stopped: The bench is busy with job 3 (dump fw-01); wait for it, or cancel it fi
 
 A client that disconnects, a closed terminal say, only stops reading. The job runs on, and `attach ID` prints its output again from the start. The server keeps the output of its last 8 jobs in memory, and every job's in `private/bench-status/jobs/ID-NAME.log`. That file is written through a buffer and never synced, so a UART write never waits on the disk; it is complete once the job ends. Job numbers carry on from the highest file there, so a new server never reuses one.
 
-`ota`, `stock-serve`, and `itest` or `stock-ota` without `--power`, get a board that refuses every switch, as when they ran without opening it.
+`ota`, and `itest` or `stock-ota` without `--power`, get a board that refuses every switch, as when they ran without opening it.
 
 Ctrl+C, SIGTERM or a hangup of the server's terminal stops the server. It refuses new jobs, cancels the running one as a client's Ctrl+C does, waits for its cleanup, then removes the socket and releases the lease. Every child of a job runs in a process group of its own, so the terminal's Ctrl+C or hangup reaches only the server, never a `wellfed-flash` that is writing; the server forwards the cancel itself.
 
@@ -231,6 +230,7 @@ Before every job it stops the capture, killing its observe (which only receives)
 | `ota` | Confirmed: bank 1 holds the offered build (or stock). Fell back: bank 1 holds no valid image. `--fault give-way-only`: bank 1 gave way |
 | `stock-ota` | Stock's install: bank 0 holds the build and bank 1 no valid image. The promotion: bank 1 holds the build |
 | `itest` | Each install the suite watched: confirmed, bank 1 holds the build; fell back, no valid image |
+| `install` | Once the installer started, by its exit alone. Exit 0: bank 1 holds the review's build, and bank 0 too unless `--from-bank0`. Any other end, a cancel included: those banks are unknown |
 
 Each entry is then checked against what the feeder says it runs: the `PLFW1 start build= bank=` banner on the capture, and the build and bank in the session's status. A report that names another build marks the entry disputed rather than replacing it, since either side may be wrong; the operator decides. `banks --seed DUMP_SESSION` starts the ledger. Today's flash inspections pin region hashes and name no build, so the seed takes `--bank` and `--build`, and says so. A seed is refused while a job runs. Like every file the server keeps, it is replaced whole and never synced, and nothing writes it while a job holds the UART. A `banks.json` that does not read refuses `serve` before the relay board opens, and is left for the operator to repair or remove.
 
@@ -238,7 +238,7 @@ Each entry is then checked against what the feeder says it runs: the `PLFW1 star
 
 On a terminal, `serve` draws its console full screen on `/dev/tty` with the same panels as the page: the UART-write banner with the sectors verified, the job with its step and next steps, Activity, the relays and the lease, the feeder (banks, session, status, clock, journal high water, hotspot, capture and the device log's last lines), the operator's step, timers and evidence by card, and a scrolling log of every job's output. PgUp and PgDn scroll the log (Up and Down a line), and End follows it again.
 
-While a job asks a question, it shows in a panel above the log, with its number and the keys that answer it: `d` answers done, and `y` or `n` yes or no. A key of the other kind does nothing; a refused answer says why in the log.
+While a job asks a question, it shows in a panel above the log, with its number and the `wellfed-bench answer` line that answers it. The console only shows it: answer on the page, with that line, or through the agent.
 
 `q` or Ctrl+C stops the server the same way SIGINT does: cancel the job, wait for its cleanup, then release the bench. During a UART write or a loader session the first press only shows the confirmation in the footer, and a second within 5 s stops ([above](#the-bench-server)). While the flash client writes, the screen redraws at most twice a second; otherwise four times. It draws from the live state and a channel only, so a slow terminal never holds the output pump: it loses console lines instead, which the job's stream and log file keep. When the server stops, the screen closes and the log's last 30 lines are printed on the terminal.
 
@@ -281,9 +281,9 @@ Every tool's description says what it does physically.
 - **Reads:** `bench_status` (the live state, with its tails cut to 20 lines), `job_output {id, after}`, `logs_tail {source: device|uart|job, lines}`, `banks`, and `wait_for {for, …, timeout}` over `GET /wait`, with the timeout in seconds; `for: prompt` waits for a job's question.
 - **Notes:** `note_step`, `note_next`, `note_timer` and `note_evidence`, the same notes as `wellfed-bench note`, built straight from the arguments, so text may start with `-`. On the command line such text goes after `--`: `wellfed-bench note step -- "- flash bank 1"`.
 - **The feeder:** `device_read {op}` asks the server's session for one read: status, settings, time, plans, clients, update state, calibration, the meal call or a stats section. `clock_sync` sets the clock from this host. Nothing else goes to the feeder from here: never a feed, a cancel, a plan, a setting or an update. A read that comes back uncertain is reported as such.
-- **Hardware:** `job_cancel`, which the server refuses during a UART write unless `during_write: true` (the write then stops for good), and one tool a command: `power {state: on|off}`, `boot`, `capture`, `loader`, `dump`, `flash_prepare`, `flash_execute` (`plan_sha256` required), `give_way_prepare`, `give_way_execute`, `stock_prepare`, `stock_execute`, `ota`, `itest`, `transients`, `install` and `stock_serve`. Each builds the command's words, with the session name after `--`, and posts them as a job, so the server's parse and every check apply as they do to a person's command line; it answers with the job's number, to follow with `wait_for {for: job, id}` and `job_output`.
+- **Hardware:** `job_cancel`, which the server refuses during a UART write unless `during_write: true` (the write then stops for good), and one tool a command: `power {state: on|off}`, `boot`, `capture`, `loader`, `dump`, `flash_prepare`, `flash_execute` (`plan_sha256` required), `give_way_prepare`, `give_way_execute`, `stock_prepare`, `stock_execute`, `ota`, `itest`, `transients` and `install`. Each builds the command's words, with the session name after `--`, and posts them as a job, so the server's parse and every check apply as they do to a person's command line; it answers with the job's number, to follow with `wait_for {for: job, id}` and `job_output`.
 
-- **Questions:** `job_answer {seq, answer, id}` answers the question `bench_status` shows (`prompt`), once. It reads the question first and refuses two that only the owner may answer, at the feeder: whether this is their feeder (`recognize-feeder`) and the recovery window at the panel (`open-recovery-window`). Those are answered on the page, the console or with `wellfed-bench answer`.
+- **Questions:** `job_answer {seq, answer, id}` answers the question `bench_status` shows (`prompt`), once. It reads the question first and refuses two that only the owner may answer, at the feeder: whether this is their feeder (`recognize-feeder`) and the recovery window at the panel (`open-recovery-window`). Those are answered on the page or with `wellfed-bench answer`.
 
 Refused over MCP, before anything is posted, as they need a person at the bench: `attended_motion`, the suite's `feeds`, `break_lease`, and a `destructive` suite run without `confirm_destructive: true`. Arguments a tool does not name are refused too, and so is any string a hardware tool is given that starts with `-`, so none reads as a flag. A session name never starts with `-` anywhere. Stdout carries the protocol alone; nothing else prints there.
 
@@ -320,7 +320,7 @@ One tool drives the bench at a time. Before they touch anything, these take the 
 - `wellfed-stock serve --enable-ota-trial`, for as long as it runs;
 - `wellfed install`, for as long as it runs.
 
-The server never stops for the last three: `install` and `stock-serve` run them as its jobs, on its lease. Run from another terminal while a server holds the bench, each is refused with the server named.
+The server never stops for an install: its `install` job runs `wellfed install` on its lease. Run from another terminal while a server holds the bench, `wellfed install` is refused with the server named.
 
 The lease names its holder: its pid, its start time and boot (so a reused pid is not mistaken for it), its host, its command line and when it started. A second tool is refused with that holder named, before it opens a port or switches a relay:
 
@@ -328,13 +328,13 @@ The lease names its holder: its pid, its start time and boot (so a reused pid is
 Stopped: The bench is held by pid 81234 (`wellfed-bench serve`, since 2026-10-26 12:00:00 UTC on bench); wait for it to finish or stop it
 ```
 
-**Chained tools.** A process descended from the holder runs on the holder's lease and leaves it in place. So the children the server's jobs start (`wellfed-flash` captures, reads and updates; the `serve --enable-ota-trial` of `itest`, `stock-ota` and `stock-serve`; `wellfed install` and its stock server) never wait on their own parent. That is checked once, when the child starts, and a job waits for or stops its children before it ends, as the server waits for its job before it releases. Run by hand, `wellfed-flash` takes the lease itself, so a hand-run read cannot open the UART under a running server.
+**Chained tools.** A process descended from the holder runs on the holder's lease and leaves it in place. So the children the server's jobs start (`wellfed-flash` captures, reads and updates; the `serve --enable-ota-trial` of `itest` and `stock-ota`; `wellfed install` and its stock server) never wait on their own parent. That is checked once, when the child starts, and a job waits for or stops its children before it ends, as the server waits for its job before it releases. Run by hand, `wellfed-flash` takes the lease itself, so a hand-run read cannot open the UART under a running server.
 
 **Tools that take no lease.** The progress page, alone or as `serve --ui`, only reads; under the server, the server holds the lease. A client only asks the server. The offline `wellfed-flash` commands (`plan-stock-recovery`, `decode-status`, `inspect-journal`) and an emulated helper (`WELLFED_FLASH_EMULATOR`, the host tests) take none.
 
 **The stock server.** `wellfed-stock` keeps the lease beside its `--config`, which on the bench is `private/`.
 
-- A trial-enabled `serve` holds the bench for its whole life, because the install it dispatches runs for minutes after the request. Run as the `stock-serve` job (`--enable-ota-trial`), it inherits the server's lease; run by hand, a `wellfed-bench serve` from another terminal is refused until it stops.
+- A trial-enabled `serve` holds the bench for its whole life, because the install it dispatches runs for minutes after the request. A `wellfed-bench serve` from another terminal is refused until it stops.
 - `ota-trial` takes no lease of its own. It only asks that server, which already holds the bench, so it works from any shell.
 - A plain `serve`, `broker` and `ota-images` take none. They only answer the feeder, beside the bench command that drives it (`ota` beside an operator's `serve`).
 - `network apply` and `network remove` take none either. They change the host's routing, not the bench, and they run under sudo, where a lease would leave a root-owned `private/bench.lease.lock` that later runs as the operator could not open. If one ever does (`Permission denied` on that file), remove it with sudo; it holds nothing.
@@ -668,7 +668,7 @@ Unknown on hardware: whether stock posts its `softwareVersion` between taking th
 
 ### Install as a job
 
-`install` runs `wellfed install` ([consumer installation](../../firmware/consumer-installation.md)) as the server's job, so the server never stops for it. It takes the installer's bench flags, `--review`, `--manifest`, `--stock-config`, and `--broker-name` (the DNS route) or `--from-bank0`, with `--stock-backup`, `--enroll-minutes`, `--calibrate-clock`, `--without-stock-plans`, `--keys` and `--address` passed through. The setup-frame route (`--ssid`) reads a passphrase at a terminal and is no job; the bench uses the DNS route.
+`install` runs `wellfed install` ([consumer installation](../../firmware/consumer-installation.md)) as the server's job, so the server never stops for it. It takes the installer's bench flags, `--review`, `--manifest`, `--stock-config`, and `--broker-name` (the DNS route) or `--from-bank0`, with `--enroll-minutes`, `--calibrate-clock`, `--without-stock-plans`, `--keys` and `--address` passed through. The setup-frame route (`--ssid`) reads a passphrase at a terminal and is no job; the bench uses the DNS route.
 
 ```sh
 target/release/wellfed-bench install --review private/verification/<review> --manifest private/<manifest>.json \
@@ -676,9 +676,9 @@ target/release/wellfed-bench install --review private/verification/<review> --ma
 ```
 
 - The server closes its feeder session for the whole job (`install`'s pause) and starts the installer once its state shows that, since the installer opens sessions of its own only then.
-- The installer writes each question as one line on its standard output (`--prompts lines`) and waits for its answer. When it asks for the feeder to restart, the job does it with relay 1: off for `--restart-seconds` (10 s), then on. Every other question goes into the live state (`prompt`: the job, its number, its words and the answers it takes) and waits for an answer from the page, the console, `wellfed-bench answer JOB SEQ done|yes|no` or `job_answer`.
-- An answer is taken only for the question asked now, by its number, and only of its kind (done for an instruction, yes or no for a question). Anything else is refused and never held for later: the installer reads its answers in order, with no number of their own.
-- Its standard error is the job's output, so what goes with a question (the recovery code beside the recovery window) shows right below it. A line on its standard output that is no question stops the installer. When the installer stops on its own, its last error is the job's.
+- The installer writes each question as one line on its standard output (`--prompts lines`) and waits for its answer. When it asks for the feeder to restart, the job does it with relay 1: off for 10 s, then on, whatever came of the cut. That shows as the job's step (`restart feeder`) and a line in its output, not as an operator's note. Every other question goes into the live state (`prompt`: the job, its number, its words and the answers it takes) and waits for an answer from the page, `wellfed-bench answer JOB SEQ done|yes|no` or `job_answer`; the console shows it too.
+- An answer is taken only for the question asked now, by its number, and only of its kind (done for an instruction, yes or no for a question). Anything else is refused and never held for later: the installer reads its answers in order, with no number of their own. The job takes the question away before it stops the installer, so an answer the server took (202) is written to the installer unless it has already exited.
+- Its standard error is the job's output, so what goes with a question (the recovery code beside the recovery window) shows right below it. A line on its standard output that is no question stops the installer. When the installer exits with an error, the error it printed last is the job's.
 - A cancel stops the installer through its own SIGTERM handler, which stops its stock server, and takes the question away. The job's end takes it away too, however it ended.
 
 ### `itest` scenario `stock-roundtrip`
@@ -709,7 +709,7 @@ Lines in `history.jsonl` from before the bench server may not parse, and the pag
 
 ### Serve it
 
-`serve --ui` serves the page on `http://127.0.0.1:8780/`, beside the server. It only reads, but for one thing: the answer to a job's question, a card above the job's output with the buttons the question takes (`POST /api/jobs/{id}/answer`, checked by the server as any client's answer is). One event stream (`/api/events`) carries the server's live state on every change, the running job's output from the server's memory, and the history and latest capture when they change. `/api/state` answers the state once. The page has no server of its own: with no `wellfed-bench serve`, there is no page.
+`serve --ui` serves the page on `http://127.0.0.1:8780/`, beside the server. It only reads, but for one thing: the answer to a job's question, a card above the job's output with the buttons the question takes (`POST /api/jobs/{id}/answer`, checked by the server as any client's answer is). Answering needs the page's link as the console prints it at start, `Bench page on http://127.0.0.1:8780/#token=…`; opened any other way, or after a reload, the card shows the question with a line saying to open that link. One event stream (`/api/events`) carries the server's live state on every change, the running job's output from the server's memory, and the history and latest capture when they change. `/api/state` answers the state once. The page has no server of its own: with no `wellfed-bench serve`, there is no page.
 
 The page is optional. It is a Svelte app in `src/web/apps/bench`, which the binary embeds only when built with the `ui` feature:
 
@@ -722,7 +722,7 @@ A binary built without the feature refuses `--ui` before the server takes the be
 
 **What it reads.** Only the bench server's live state and job output, the history, the evidence directories and the stock server's status. It links no relay or flash code and never opens a serial port, so it can run beside any job, and nothing it does writes but a question's answer. While the flash client holds the UART (writing flash, or in a loader session) the page reads no file and asks the stock server nothing, for any browser, including one that opens or reconnects then: the history, capture tail, health, sessions, tests and stock server views answer 503 with `Retry-After`, the event stream sends only the live state and the job's output, and the page keeps what it showed until the flash client lets go. The stock server panel asks `wellfed-stock serve` for `GET /api/status` on the address and token in `private/server.json`, every 5 seconds. That read changes nothing on the server or the feeder. When the server is down or not configured, the panel says so.
 
-**Network.** The page binds to loopback by default because it shows private UART output and job output. It answers only requests whose `Host` is `localhost` or an IP address of its own (any address under a wildcard bind) with its port, and refuses others with 421, so a site that points its own name at this host cannot read it from a browser. Names are refused too, a Tailscale MagicDNS name among them, so open the page by its IP address (`http://100.x.y.z:8780/`). `--listen ADDRESS` serves another interface, for example the Tailscale address to reach it from a phone. There is no access token: anyone who can reach that address can read the page and answer a job's question, so prefer a private interface such as Tailscale. The answer takes JSON only, so a page elsewhere cannot send one from a browser without a CORS preflight, which this server never grants. `--listen 0.0.0.0` (or `::`) serves every interface, including the feeder hotspot and any container bridges; the owner chose to allow it. Allowing that port through the host firewall is the owner's change. `--ui-port` changes the port.
+**Network.** The page binds to loopback by default because it shows private UART output and job output. It answers only requests whose `Host` is `localhost` or an IP address of its own (any address under a wildcard bind) with its port, and refuses others with 421, so a site that points its own name at this host cannot read it from a browser. Names are refused too, a Tailscale MagicDNS name among them, so open the page by its IP address (`http://100.x.y.z:8780/`). `--listen ADDRESS` serves another interface, for example the Tailscale address to reach it from a phone. Reads need no token: anyone who can reach that address can read the page, so prefer a private interface such as Tailscale. An answer needs the token the server makes at every start (16 random bytes), which only the console prints, after `#` in the page's link, so it never reaches a request line, a proxy's log or the browser's history: the page keeps it in memory and takes it out of the address. It goes back in an `x-bench-token` header, compared in constant time; an answer without it, or with an old server's, is refused with 403. The header and the JSON body each need a CORS preflight, which this server never grants. `--listen 0.0.0.0` (or `::`) serves every interface, including the feeder hotspot and any container bridges; the owner chose to allow it. Allowing that port through the host firewall is the owner's change. `--ui-port` changes the port.
 
 ### Views
 

@@ -38,7 +38,7 @@ export type FlashTool = { path: string, sha256: string, };
  * history line naming a command this bench no longer has does not read,
  * and the page skips it.
  */
-export type BenchCommand = "status" | "off" | "on" | "capture" | "boot" | "loader" | "transients" | "dump" | "flash-prepare" | "flash-execute" | "give-way-prepare" | "give-way-execute" | "stock-prepare" | "stock-execute" | "ota" | "itest" | "stock-ota" | "install" | "stock-serve";
+export type BenchCommand = "status" | "off" | "on" | "capture" | "boot" | "loader" | "transients" | "dump" | "flash-prepare" | "flash-execute" | "give-way-prepare" | "give-way-execute" | "stock-prepare" | "stock-execute" | "ota" | "itest" | "stock-ota" | "install";
 
 export type HistoryEntry = { command: BenchCommand, name: string | null, started: number, finished: number | null, outcome: Outcome, error: string | null, next?: string | null, };
 
@@ -212,7 +212,7 @@ upcoming: Array<string>, cancel: CancelState, end: JobEnd | null, };
 
 /**
  * A question a job waits on: `wellfed install` asks it, and whoever
- * answers (the page, the console, `wellfed-bench answer`, an agent) names
+ * answers (the page, `wellfed-bench answer`, an agent) names
  * its `seq`. The number is the job's own count of its questions, from 1,
  * so an answer meant for one question never lands on the next.
  */
@@ -417,7 +417,7 @@ export type Content = { "kind": "build", id: string, } | { "kind": "stock" } | {
 /**
  * The job result an entry came from.
  */
-export type Source = "seed" | "flash-execute" | "give-way" | "ota-confirmed" | "ota-fell-back" | "stock-ota" | "stock-execute" | "itest";
+export type Source = "seed" | "flash-execute" | "give-way" | "ota-confirmed" | "ota-fell-back" | "stock-ota" | "stock-execute" | "itest" | "install";
 
 /**
  * Whether the feeder's own report agrees with the entry.

@@ -11,7 +11,7 @@
 //!   cancel is taken, another Ctrl+C detaches, and `attach ID` follows the
 //!   job again.
 //! - `answer JOB SEQ done|yes|no` answers the question a job (`install`)
-//!   asks, once; the page and the console answer it too.
+//!   asks, once; the page answers it too.
 //! - With no server running, only `status` (and `status --break-lease`)
 //!   runs: it reports the lease and reads the relay board itself, which is
 //!   the way back after a killed server. Every other command refuses and
@@ -416,12 +416,7 @@ fn serve(root: &Path, args: &ServeArgs, runtime: &tokio::runtime::Runtime) -> an
     ));
     let (asks, asked) = tokio::sync::mpsc::unbounded_channel();
     let console = match lines {
-        Some(lines) => Some(tui::Tui::start(
-            server.store(),
-            server.answers(),
-            lines,
-            asks.clone(),
-        )?),
+        Some(lines) => Some(tui::Tui::start(server.store(), lines, asks.clone())?),
         None => None,
     };
     let stopper = server.stopper();

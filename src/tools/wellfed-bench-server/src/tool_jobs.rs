@@ -1,14 +1,14 @@
-//! The jobs that run one tool to its end rather than a rig sequence:
-//! `install` (`wellfed install --prompts lines`) and `stock-serve`
-//! (`wellfed-stock serve`). Each is a child of the server, so the bench
-//! lease it takes comes back inherited, and the server never stops for it.
+//! The `install` job, which runs one tool to its end rather than a rig
+//! sequence: `wellfed install --prompts lines`, as a child of the server,
+//! so the bench lease it takes comes back inherited and the server never
+//! stops for it.
 //!
 //! The installer asks the person at the feeder as it goes. Each question is
 //! one [`Prompt`] line on its standard output, and it waits for one
 //! [`Answer`] line on its standard input. The job answers the restart
 //! itself with the power relay. Every other question goes into the live
 //! state as the [`PendingPrompt`] the page, the console, the CLI and an
-//! agent show, until the server takes an answer for it (`Shared::answer`)
+//! agent show (the page, the CLI and an agent answer), until the server takes an answer for it (`Shared::answer`)
 //! or the job ends. The installer's answers carry no number and are read
 //! in order, so an answer reaches it only for the question it is waiting
 //! on, never ahead of one.
@@ -26,10 +26,11 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use clap::Args;
+use wellfed_formats::bench::banks::{Bank, Content, Source};
 use wellfed_formats::bench::live::{ActivityKind, AnswerError, JobId, PendingPrompt};
 use wellfed_formats::bench::prompt::{Answer, Prompt};
-use wellfed_rig::commands::{Bench, seconds_arg};
-use wellfed_rig::tools::{own_group, own_group_with_input};
+use wellfed_rig::commands::{Bench, installed};
+use wellfed_rig::tools::own_group_with_input;
 
 use crate::jobs::{JobError, ToolPaths};
 use crate::state::Store;
@@ -40,6 +41,14 @@ const TICK: Duration = Duration::from_millis(100);
 /// for the job: a session still opening sees the hold once its attempt
 /// ends.
 const PAUSE_WAIT: Duration = Duration::from_secs(60);
+/// How long relay 1 stays off when the installer asks for the feeder to
+/// restart: about 10 s unplugged, as stock's own instruction says. The
+/// server's tests run the restart with a short one.
+const RESTART_OFF: Duration = if cfg!(test) {
+    Duration::from_millis(100)
+} else {
+    Duration::from_secs(10)
+};
 
 /// `install`: the flags of `wellfed install` the bench uses. The job adds
 /// `--prompts lines` and the server's own `wellfed-stock`; the frame route
@@ -62,9 +71,6 @@ pub struct InstallArgs {
     /// The replacement is already on bank 0: start at pairing.
     #[arg(long)]
     pub from_bank0: bool,
-    /// A copy of stock 1.1.15's OTA image that matches the pinned digest.
-    #[arg(long)]
-    pub stock_backup: Option<PathBuf>,
     /// How long the broker trusts the first stock feeder that connects.
     #[arg(long)]
     pub enroll_minutes: Option<u64>,
@@ -80,10 +86,6 @@ pub struct InstallArgs {
     /// The replacement's address; where stock connected from otherwise.
     #[arg(long)]
     pub address: Option<String>,
-    /// How long relay 1 stays off when the installer asks for the feeder
-    /// to restart: about 10 s unplugged, as stock's own instruction says.
-    #[arg(long, default_value_t = 10.0)]
-    pub restart_seconds: f64,
 }
 
 impl InstallArgs {
@@ -102,9 +104,6 @@ impl InstallArgs {
         value("stock-config", &self.stock_config);
         if let Some(name) = &self.broker_name {
             value("broker-name", name);
-        }
-        if let Some(backup) = &self.stock_backup {
-            value("stock-backup", backup);
         }
         if let Some(minutes) = self.enroll_minutes {
             value("enroll-minutes", &minutes.to_string());
@@ -129,47 +128,6 @@ impl InstallArgs {
     }
 }
 
-/// `stock-serve`: `wellfed-stock serve` until it exits or the job is
-/// cancelled, as the enrollment or broker window an install or a test
-/// needs beside the bench.
-#[derive(Debug, Clone, Args)]
-pub struct StockServeArgs {
-    /// The `wellfed-stock` config, root-relative.
-    #[arg(long, default_value = "private/server.json")]
-    pub config: PathBuf,
-    /// With an installer's config and no feeder enrolled yet: trust the
-    /// first stock feeder that connects within this many minutes.
-    #[arg(long)]
-    pub enroll_minutes: Option<u64>,
-    /// Set stock's clock in every reply, even when it is far off.
-    #[arg(long)]
-    pub calibrate_clock: bool,
-    /// Allow the stock-to-replacement install trial, which a request to
-    /// the server's loopback API then starts.
-    #[arg(long)]
-    pub enable_ota_trial: bool,
-}
-
-impl StockServeArgs {
-    fn arguments(&self) -> Vec<OsString> {
-        let mut config = OsString::from("--config=");
-        config.push(&self.config);
-        let mut arguments: Vec<OsString> = vec!["serve".into(), config];
-        if let Some(minutes) = self.enroll_minutes {
-            arguments.push(format!("--enroll-minutes={minutes}").into());
-        }
-        for (flag, on) in [
-            ("--calibrate-clock", self.calibrate_clock),
-            ("--enable-ota-trial", self.enable_ota_trial),
-        ] {
-            if on {
-                arguments.push(flag.into());
-            }
-        }
-        arguments
-    }
-}
-
 /// Why a tool job stopped.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum ToolJobError {
@@ -178,11 +136,6 @@ pub(crate) enum ToolJobError {
         path.display()
     )]
     WellfedMissing { path: PathBuf },
-    #[error(
-        "{} not found; build it with cargo build --release -p wellfed-stock or pass serve --stock-bin",
-        path.display()
-    )]
-    StockMissing { path: PathBuf },
     /// The installer wrote a line on its standard output that is no
     /// prompt; it was stopped.
     #[error("wellfed install wrote {line:?} where a prompt goes; it was stopped")]
@@ -190,8 +143,6 @@ pub(crate) enum ToolJobError {
     /// The installer stopped: its own last words, as it printed them.
     #[error("{}", message.as_deref().unwrap_or("wellfed install stopped without saying why"))]
     InstallStopped { code: i32, message: Option<String> },
-    #[error("wellfed-stock serve exited with code {code}")]
-    ServeExited { code: i32 },
     /// The installer opens its own sessions only beside a server session
     /// shown paused for its job, and it did not show that in time.
     #[error(
@@ -345,8 +296,11 @@ fn prompt_line(line: String) -> Event {
     }
 }
 
-/// The installer's message once it stops: what follows its last
-/// `Error:` line, as a program that returns its error prints it.
+/// The installer's own error once it stops. Its `main` returns every
+/// failure, so the error is the last block on its standard error: an
+/// `Error: ` line and anyhow's `Caused by:` list. Its stock server shares
+/// that pipe and may print an `Error: ` of its own; any line after a block
+/// that is not part of anyhow's shape means it was not the last word.
 #[derive(Default)]
 struct LastWords {
     lines: Vec<String>,
@@ -354,11 +308,14 @@ struct LastWords {
 
 impl LastWords {
     fn hear(&mut self, line: &str) {
-        if line.starts_with("Error: ") {
+        if let Some(message) = line.strip_prefix("Error: ") {
+            self.lines = vec![message.to_string()];
+        } else if line.is_empty() || line == "Caused by:" || line.starts_with(' ') {
+            if !self.lines.is_empty() {
+                self.lines.push(line.to_string());
+            }
+        } else {
             self.lines.clear();
-        }
-        if !self.lines.is_empty() || line.starts_with("Error: ") {
-            self.lines.push(line.to_string());
         }
     }
 
@@ -377,7 +334,6 @@ pub(crate) fn install(
     tools: &ToolPaths,
     asking: &Asking,
 ) -> Result<u8, JobError> {
-    let off = seconds_arg("--restart-seconds", args.restart_seconds)?;
     let path = &tools.wellfed_bin;
     wellfed_formats::require(path.is_file(), || ToolJobError::WellfedMissing {
         path: path.clone(),
@@ -403,9 +359,7 @@ pub(crate) fn install(
     }
     let mut talk = Conversation {
         input: child.stdin.take(),
-        off,
         seq: 0,
-        asked: None,
         stopping: None,
         cancelled: false,
         last_words: LastWords::default(),
@@ -416,6 +370,8 @@ pub(crate) fn install(
     let waited = child.wait();
     drop(tracked);
     asking.withdraw();
+    let succeeded = waited.as_ref().is_ok_and(|status| status.success());
+    record_install(bench, args, succeeded);
     let status = waited.map_err(wellfed_rig::Error::from)?;
 
     if let Some(error) = talk.stopping {
@@ -426,23 +382,41 @@ pub(crate) fn install(
     }
     match status.code() {
         Some(0) => Ok(0),
-        code => Err(ToolJobError::InstallStopped {
-            code: code.unwrap_or(1),
+        Some(code) => Err(ToolJobError::InstallStopped {
+            code,
             message: talk.last_words.message(),
+        }
+        .into()),
+        // A signal: whatever it printed last was not its own error.
+        None => Err(ToolJobError::InstallStopped {
+            code: 1,
+            message: None,
         }
         .into()),
     }
 }
 
+/// What an installer that ran left in the banks, decided by its exit
+/// alone. A success leaves the review's build in bank 1, and in bank 0
+/// unless it started there. Anything else may have stopped part-way
+/// through either write, so those banks are unknown until a read.
+fn record_install(bench: &mut Bench, args: &InstallArgs, succeeded: bool) {
+    let content = if succeeded {
+        installed(&bench.root, &args.review).unwrap_or(Content::Unknown)
+    } else {
+        Content::Unknown
+    };
+    if !args.from_bank0 {
+        bench.wrote(Bank::Zero, content.clone(), Source::Install);
+    }
+    bench.wrote(Bank::One, content, Source::Install);
+}
+
 /// One install's questions and answers, until its pipes close.
 struct Conversation {
     input: Option<ChildStdin>,
-    /// How long a restart keeps the feeder off.
-    off: Duration,
     /// The number of the last question passed on.
     seq: u32,
-    /// The question an answer is awaited for.
-    asked: Option<u32>,
     /// Why the job stopped the installer, once it has.
     stopping: Option<JobError>,
     cancelled: bool,
@@ -457,7 +431,6 @@ impl Conversation {
             // which stops its stock server and exits; its question goes.
             if !self.cancelled && bench.cancel.is_cancelled() {
                 self.cancelled = true;
-                self.asked = None;
                 asking.withdraw();
             }
             let event = match asking.events.recv_timeout(TICK) {
@@ -476,22 +449,21 @@ impl Conversation {
                 Event::Closed => open -= 1,
                 Event::Garbled(line) => {
                     eprintln!("{line}");
-                    self.stop(bench, ToolJobError::Garbled { line }.into());
+                    self.stop(bench, asking, ToolJobError::Garbled { line }.into());
                 }
                 // The installer is being stopped: nothing it asks now is
                 // put to anyone.
                 Event::Prompt(_) if self.cancelled || self.stopping.is_some() => {}
-                Event::Prompt(Prompt::RestartFeeder) => match restart(bench, self.off) {
+                Event::Prompt(Prompt::RestartFeeder) => match restart(bench, RESTART_OFF) {
                     Ok(()) => self.reply(Answer::Done),
-                    Err(error) => self.stop(bench, error.into()),
+                    Err(error) => self.stop(bench, asking, error.into()),
                 },
                 Event::Prompt(prompt) => {
                     self.seq += 1;
-                    self.asked = Some(self.seq);
                     let pending = PendingPrompt::new(asking.job, self.seq, prompt);
                     wellfed_rig::say!("Job {} asks ({}): {}", asking.job, self.seq, pending.text);
                     wellfed_rig::say!(
-                        "Answer on the page or the console, or: wellfed-bench answer {} {} {}",
+                        "Answer on the page, or: wellfed-bench answer {} {} {}",
                         asking.job,
                         self.seq,
                         pending.answer_words()
@@ -499,12 +471,13 @@ impl Conversation {
                     asking.ask(pending);
                 }
                 // The server passes an answer only for the question in the
-                // state; one that crossed a cancel goes nowhere.
+                // state, and this loop withdraws that before it stops the
+                // installer, so every answer here was taken while the
+                // installer waited for it: it goes to the installer, even
+                // one stopping by now.
                 Event::Answer(answer) => {
-                    if self.asked.take().is_some() {
-                        wellfed_rig::say!("Answered {answer}");
-                        self.reply(answer);
-                    }
+                    wellfed_rig::say!("Answered {answer}");
+                    self.reply(answer);
                 }
             }
         }
@@ -527,10 +500,10 @@ impl Conversation {
 
     /// Stop the installer as a cancel does, on its own SIGTERM handler,
     /// and keep reading until it has gone.
-    fn stop(&mut self, bench: &Bench, error: JobError) {
+    fn stop(&mut self, bench: &Bench, asking: &Asking, error: JobError) {
         if self.stopping.is_none() {
             self.stopping = Some(error);
-            self.asked = None;
+            asking.withdraw();
             bench.children.interrupt();
         }
     }
@@ -545,76 +518,19 @@ fn restart(bench: &mut Bench, off: Duration) -> Result<(), wellfed_rig::Error> {
         "Restarting the feeder for the installer: relay 1 off for {} s, then on",
         off.as_secs_f64()
     );
-    bench.cut_power()?;
-    let waited = bench.pause(off);
+    // A cut that failed part-way may have left relay 1 off all the same,
+    // so the feeder is powered again whatever came of the cut or the wait.
+    let cut = bench.cut_power();
+    let waited = if cut.is_ok() {
+        bench.pause(off)
+    } else {
+        Ok(())
+    };
     bench.on()?;
+    cut?;
     waited?;
     wellfed_rig::say!("Feeder powered again; stock looks its broker name up as it starts");
     Ok(())
-}
-
-/// Run `wellfed-stock serve` until it exits or the job is cancelled, its
-/// output as the job's.
-pub(crate) fn stock_serve(
-    bench: &mut Bench,
-    args: &StockServeArgs,
-    tools: &ToolPaths,
-    asking: &Asking,
-) -> Result<u8, JobError> {
-    let path = &tools.stock_bin;
-    wellfed_formats::require(path.is_file(), || ToolJobError::StockMissing {
-        path: path.clone(),
-    })?;
-    let mut command = Command::new(path);
-    own_group(&mut command)
-        .current_dir(&bench.root)
-        .args(args.arguments())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let mut child = command.spawn().map_err(wellfed_rig::Error::from)?;
-    let tracked = bench.children.track(&child, ActivityKind::Stock, "serve");
-
-    let pipes: [Option<Box<dyn Read + Send>>; 2] = [
-        child
-            .stdout
-            .take()
-            .map(|pipe| Box::new(pipe) as Box<dyn Read + Send>),
-        child
-            .stderr
-            .take()
-            .map(|pipe| Box::new(pipe) as Box<dyn Read + Send>),
-    ];
-    let mut open = 0;
-    for pipe in pipes.into_iter().flatten() {
-        read_lines(pipe, asking.sender.clone(), Event::Output);
-        open += 1;
-    }
-    // A cancel signals the server itself; its pipes close as it exits.
-    while open > 0 {
-        match asking.events.recv_timeout(TICK) {
-            Ok(Event::Output(line)) => {
-                eprintln!("{line}");
-                bench.status.line(&line);
-            }
-            Ok(Event::Closed) => open -= 1,
-            Ok(_) | Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => break,
-        }
-    }
-
-    let waited = child.wait();
-    drop(tracked);
-    let status = waited.map_err(wellfed_rig::Error::from)?;
-    if bench.cancel.is_cancelled() {
-        return Err(wellfed_rig::Error::Interrupted.into());
-    }
-    match status.code() {
-        Some(0) => Ok(0),
-        code => Err(ToolJobError::ServeExited {
-            code: code.unwrap_or(1),
-        }
-        .into()),
-    }
 }
 
 #[cfg(test)]
@@ -631,13 +547,11 @@ mod tests {
             stock_config: "private/installer.json".into(),
             broker_name: Some("-x.example".into()),
             from_bank0: false,
-            stock_backup: None,
             enroll_minutes: Some(5),
             calibrate_clock: true,
             without_stock_plans: false,
             keys: None,
             address: None,
-            restart_seconds: 10.0,
         };
 
         let words: Vec<String> = args
@@ -713,8 +627,15 @@ mod tests {
 
         assert_eq!(
             words.message().as_deref(),
-            Some("Error: Stopped at pairing\n\nCaused by:\n    no answer")
+            Some("Stopped at pairing\n\nCaused by:\n    no answer")
         );
         assert_eq!(LastWords::default().message(), None);
+
+        // The stock server's error, followed by more of the run, is not it.
+        let mut words = LastWords::default();
+        for line in ["Error: broker refused", "Started the stock server."] {
+            words.hear(line);
+        }
+        assert_eq!(words.message(), None);
     }
 }

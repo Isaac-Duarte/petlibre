@@ -83,6 +83,8 @@ pub enum Source {
     StockExecute,
     /// An install the integration suite saw confirm, or fall back.
     Itest,
+    /// `wellfed install` as the bench's job.
+    Install,
 }
 
 /// What a job's sequence says it left in a bank, for the server to record.

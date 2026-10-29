@@ -16,7 +16,6 @@ use wellfed_formats::bench::live::{
 };
 use wellfed_formats::bench::notes::{Expect, Timer, TimerState, Verdict};
 use wellfed_formats::bench::progress::StepState;
-use wellfed_formats::bench::prompt::Expects;
 
 use crate::cli::{bank_number, entry_text};
 use crate::note::clock;
@@ -187,18 +186,16 @@ fn draw_banner(frame: &mut Frame<'_>, area: Rect, uart: &Uart) {
 
 /// The question a job waits on, right above its output (where the
 /// installer prints what goes with it, such as a recovery code), with the
-/// keys that answer it.
+/// command that answers it; the console itself only shows it.
 fn draw_prompt(frame: &mut Frame<'_>, area: Rect, pending: &PendingPrompt) {
-    let keys = match pending.expects {
-        Expects::Done => "d: done",
-        Expects::YesNo => "y: yes · n: no",
-    };
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::new().fg(Color::Yellow))
         .title(format!(
-            " Job {} asks (question {}) · {keys} ",
-            pending.job, pending.seq
+            " Job {job} asks (question {seq}) · wellfed-bench answer {job} {seq} {} ",
+            pending.answer_words(),
+            job = pending.job,
+            seq = pending.seq,
         ));
     frame.render_widget(
         Paragraph::new(pending.text.clone())

@@ -110,7 +110,7 @@ Settings, audio and log areas outside the declared application footprint are not
 > [!WARNING]
 > Give-way programs flash. Check that bank 0 holds the reviewed image you expect before you execute.
 
-It clears bank 1's first marker byte with one 1 KiB program frame. The frame rewrites the other 1023 bytes unchanged, because NOR programming only clears bits. This is what stock's own activation does.
+It clears bank 1's first marker byte with one 1 KiB program frame. The frame rewrites the other 1023 bytes unchanged, because NOR programming only clears bits. Stock's own activation does much the same, but over the marker's whole first word (physical observation, October 29, 2026).
 
 To bring bank 1 back, run a development update with `--restore-marker`. It accepts only the source with its first marker byte cleared. It rewrites that one sector with the marker withheld, then commits the marker last.
 

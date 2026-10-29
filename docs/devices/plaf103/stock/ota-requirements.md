@@ -108,7 +108,7 @@ The [layout auditor](../../../../src/tools/wellfed-build/src/platform/amebad/aud
 
 **Download and check (U04, U05).** Stock picks the opposite application bank; the mapped bases are `0x08006000` and `0x08186000`. It does not write the outer OTA header into the bank. While downloading, `0x0e02af04` holds back the payload's first eight bytes and writes the rest. Then `0x0e02a580` reads the staged body back, adds the withheld bytes, and compares the result with the descriptor's checksum. The orchestrator then calls activation, `0x0e02a648`.
 
-**Activation.** It writes the new bank's eight-byte marker, then programs the old bank's marker with a first byte of zero. The old application's bytes may still be there, but the loader won't select it. A reported download progress of 100 is therefore no evidence of activation or a successful boot.
+**Activation.** It writes the new bank's eight-byte marker, then programs one word over the start of the old bank's marker. Static analysis read it as a first byte of zero; on the research unit the word read back `00 00 21 01` over `38 31 39 35` (physical observation, October 29, 2026), so the other three bytes lose bits too. The old application's bytes may still be there, but the loader won't select it. A reported download progress of 100 is therefore no evidence of activation or a successful boot.
 
 **Bank selection (U05).** The [bank policy](../../../firmware/bank-policy.md) documents the factory loader's fixed preference for a valid bank 1, and the give-way mechanism we tested. A failure after selecting an apparently valid bank does not trigger a retry from the other bank. The loader accepting known headers is separate from the candidate actually running its network and recovery code.
 

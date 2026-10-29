@@ -17,8 +17,8 @@
 //!
 //! The copy comes from the feeder itself: the build on bank 0 streams bank
 //! 1 over the device API ([`Bank1Reader`], a page per `ReadBank1`), and
-//! [`StockBackup::from_bank`] restores the marker byte stock's activation
-//! zeroed, checks the payload against the pin and rebuilds the vendor's
+//! [`StockBackup::from_bank`] restores the marker word stock's activation
+//! programmed over, checks the payload against the pin and rebuilds the vendor's
 //! container around it. The transport carries no trust: the pin is what
 //! shows the copy is intact. A copy the owner already holds passes the
 //! same check ([`StockBackup::open`]).
@@ -63,6 +63,10 @@ pub const CONTAINER_HEADER: usize = 32;
 /// carries.
 pub const DOWNGRADE_LEN: usize = offer::DOWNGRADE_BODY + offer::SIGNATURE_LEN;
 
+/// The bytes at the start of bank 1's marker that stock's activation of
+/// bank 0 programs: one flash word.
+const MARKER_WORD: usize = 4;
+
 /// Why a backup does not count.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum BackupError {
@@ -70,8 +74,8 @@ pub enum BackupError {
     /// damaged, partial, or another release.
     #[error("the backup is not stock {STOCK_VERSION}'s pinned image")]
     NotPinned { sha256: [u8; 32] },
-    /// Bank 1 does not start with the loader's marker, with or without its
-    /// first byte zeroed: it holds no application stock wrote.
+    /// Bank 1 does not start with the loader's marker, whole or with bits
+    /// cleared from its first word: it holds no application stock wrote.
     #[error("bank 1 does not start with an application marker")]
     NoMarker,
 }
@@ -206,7 +210,7 @@ impl core::fmt::Debug for StockBackup {
 }
 
 impl StockBackup {
-    /// Bank 1 as the bank-0 role streamed it: the marker's first byte is
+    /// Bank 1 as the bank-0 role streamed it: the marker's first word is
     /// restored, the payload checked against its pin, and the vendor's
     /// container rebuilt around it and checked against its own pin.
     pub fn from_bank(bank: Vec<u8>) -> Result<Self, BackupError> {
@@ -321,15 +325,24 @@ fn from_bank_against(
     container_pin: &[u8; 32],
     payload_pin: &[u8; 32],
 ) -> Result<Vec<u8>, BackupError> {
-    // Stock's activation of bank 0 programs bank 1's first marker byte to
-    // zero and leaves every other byte as it was.
+    // Stock's activation of bank 0 programs one word over the start of bank
+    // 1's marker and leaves every other byte as it was. Programming only
+    // clears bits, so that word reads as the marker's with some bits gone
+    // (October 29, 2026: `00 00 21 01` over `38 31 39 35`). Putting the
+    // marker back cannot pass a bank that is not stock's: the whole bank,
+    // marker included, must still hash to the pin.
     let Some(marker) = bank.get_mut(..MARKER.len()) else {
         return Err(BackupError::NoMarker);
     };
-    if marker[1..] != MARKER[1..] || !(marker[0] == 0 || marker[0] == MARKER[0]) {
+    let (word, rest) = marker.split_at_mut(MARKER_WORD);
+    let only_cleared = word
+        .iter()
+        .zip(&MARKER[..MARKER_WORD])
+        .all(|(&read, &written)| read & !written == 0);
+    if rest != &MARKER[MARKER_WORD..] || !only_cleared {
         return Err(BackupError::NoMarker);
     }
-    marker[0] = MARKER[0];
+    word.copy_from_slice(&MARKER[..MARKER_WORD]);
 
     let payload_sha256: [u8; 32] = Sha256::digest(&bank).into();
     if payload_sha256 != *payload_pin {
@@ -446,11 +459,12 @@ mod tests {
     /// Synthetic pins over a synthetic bank: the real payload is the
     /// vendor's and stays out of the repository.
     #[test]
-    fn a_bank_with_its_marker_byte_zeroed_rebuilds_the_pinned_container() {
+    fn a_bank_with_its_marker_word_programmed_rebuilds_the_pinned_container() {
         let original = synthetic_bank();
         let (container_pin, payload_pin) = pins(&original);
+        // What stock's activation left on the research unit.
         let mut bank = original.clone();
-        bank[0] = 0;
+        bank[..MARKER_WORD].copy_from_slice(&[0x00, 0x00, 0x21, 0x01]);
 
         let backup =
             StockBackup::from_bank_pinned(bank, &StockPins::of_payload(&original)).unwrap();
@@ -473,7 +487,11 @@ mod tests {
             .fold(0u32, |sum, &b| sum.wrapping_add(u32::from(b)));
         assert_eq!(word(16), sum);
 
-        // A marker left intact is the same bank.
+        // A marker left intact, or with only its first byte zeroed, is the
+        // same bank.
+        let mut first_byte = original.clone();
+        first_byte[0] = 0;
+        assert!(from_bank_against(first_byte, &container_pin, &payload_pin).is_ok());
         assert!(from_bank_against(original, &container_pin, &payload_pin).is_ok());
     }
 
@@ -490,9 +508,10 @@ mod tests {
             Err(BackupError::NotPinned { .. })
         ));
 
-        // Another byte of the marker cleared, or a first byte that is
-        // neither the marker's nor zero: not what stock's activation leaves.
-        for (at, value) in [(1, 0), (0, 0x01)] {
+        // A byte past the first word cleared, or a first-word byte with a
+        // bit the marker lacks (which programming cannot set): not what
+        // stock's activation leaves.
+        for (at, value) in [(MARKER_WORD, 0), (7, 0x30), (0, 0x01), (3, 0xff)] {
             let mut bank = original.clone();
             bank[at] = value;
             assert_eq!(

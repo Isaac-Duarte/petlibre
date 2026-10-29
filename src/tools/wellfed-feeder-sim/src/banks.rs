@@ -34,6 +34,11 @@ use wellfed_hal::trial::{self, Decision, Storm};
 pub const TRIAL_LIMIT: u32 = trial::LIMIT;
 const BANK0_BYTES: usize = (BANK1_OFFSET - BANK0_OFFSET) as usize;
 
+/// The word stock's activation of bank 0 programs over bank 1's marker, as
+/// the research unit's bank 1 read back over `38 31 39 35` (October 29,
+/// 2026, physical observation).
+const STOCK_MARKER_WORD: [u8; 4] = [0x00, 0x00, 0x21, 0x01];
+
 /// The builds each bank starts with.
 pub const BANK0_BUILD: [u8; 32] = [0xb0; 32];
 pub const BANK1_BUILD: [u8; 32] = [0xb1; 32];
@@ -193,10 +198,13 @@ impl Banks {
     }
 
     /// Bank 1 as stock leaves it once it has installed a build into bank
-    /// 0: every byte kept but its marker's first, which is zeroed, so the
-    /// loader boots bank 0.
+    /// 0: every byte kept but the marker's first word, which stock programs
+    /// over (only clearing bits), so the loader boots bank 0. These are the
+    /// bytes the research unit's bank 1 read back.
     pub fn stock_gave_way(&mut self) {
-        self.bank1[0] = 0;
+        for (byte, programmed) in self.bank1.iter_mut().zip(STOCK_MARKER_WORD) {
+            *byte &= programmed;
+        }
     }
 
     /// Bank 0's image as bank 0 records it at boot: the simulator starts as

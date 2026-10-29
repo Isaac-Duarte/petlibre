@@ -62,7 +62,7 @@ A bank counts as valid when its image starts with the 8-byte marker `81958711` (
 
 The instructions explain the priority. With the force-bank GPIO disabled, the loader checks bank index 1 first (`0x08000456`) and returns it if its signatures pass. Only on failure does it check bank 0 (`0x0800043a`). The both-valid row held for stock in both banks, for our image in both, and for each mix. The build's audit requires it.
 
-**How stock moves between banks.** Stock 1.1.15's activation (`0x0e02a648`) writes the new image's marker last, then clears the first byte of the opposite bank's marker. Given bank 1's priority, that clearing is what lets stock move from bank 1 to bank 0.
+**How stock moves between banks.** Stock 1.1.15's activation (`0x0e02a648`) writes the new image's marker last, then programs one word over the start of the opposite bank's marker, clearing bits in its first four bytes (physical observation, October 29, 2026: bytes 0–3 changed and 4–7 kept; the one-word program is inferred from that and the static read). Given bank 1's priority, that clearing is what lets stock move from bank 1 to bank 0.
 
 ## Capacities
 

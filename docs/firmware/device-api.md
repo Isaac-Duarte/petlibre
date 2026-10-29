@@ -424,7 +424,7 @@ Current is in stock's scaled unit (`CurrentUnit::Scaled`) until its scaling to m
 
 ## Stock backup
 
-After stock installs the replacement into bank 0, bank 1 still holds stock, with only its marker's first byte zeroed. Promotion would overwrite it. So the installer reads it first and keeps the owner's own copy ([rollback](consumer-installation.md#rollback)).
+After stock installs the replacement into bank 0, bank 1 still holds stock, with only its marker's first word overwritten. Promotion would overwrite it. So the installer reads it first and keeps the owner's own copy ([rollback](consumer-installation.md#rollback)).
 
 - **`ReadBank1 { offset }`** (op `0x1a`) answers `Outcome::Bank1` (`0x0d`): `Bank1Page { offset, total, bytes }`, with at most `BANK1_PAGE_MAX` (768) bytes. The bank's 1,376,256 bytes (`BANK1_BYTES`, stock's payload size) are 1,792 pages. It sits behind `Capabilities::BACKUP` (bit 512): a feeder that predates the op cannot decode it, and an undecodable request ends the session.
 - **Who and when.**
@@ -432,7 +432,7 @@ After stock installs the replacement into bank 0, bank 1 still holds stock, with
   - Read-only and not a remembered write, so any page may be asked again.
   - Served only from bank 0 (`Unavailable` from bank 1, whose own image is the running build). The SDK's read also refuses unless the flash MMU maps bank 0.
   - `Busy` while an install holds the flash, since it rewrites the bank under the read. `Invalid` at or past the bank's end.
-- **How.** The loop copies the page through the mapped flash window (`sdk::bank1_read`, a sector at a time; a read takes no lease) into the 768-byte page buffer, which the trace answers also borrow. Nothing vouches for the bytes: `wellfed_client::install::StockBackup::from_bank` restores the marker byte, checks the payload against the pinned 1.1.15 hash, and rebuilds the vendor's container, whose hash must match its own pin. Page answers are not logged one by one, like update chunks.
+- **How.** The loop copies the page through the mapped flash window (`sdk::bank1_read`, a sector at a time; a read takes no lease) into the 768-byte page buffer, which the trace answers also borrow. Nothing vouches for the bytes: `wellfed_client::install::StockBackup::from_bank` restores the marker's first word, checks the payload against the pinned 1.1.15 hash, and rebuilds the vendor's container, whose hash must match its own pin. Page answers are not logged one by one, like update chunks.
 - **Stock's plans.** `ReadStockPlans` (op `0x1e`) answers `Outcome::StockPlans` (`0x0f`): `StockPlanSectors { count, entries }`, stock's count byte at flash `0x7d0000` and the first 440 bytes (`STOCK_PLAN_ENTRIES_LEN`, ten 44-byte entries) at `0x7d1000`, everything stock's boot reads ([plan records](../devices/plaf103/stock/README.md#plan-records)). The same bit, roles and refusals as `ReadBank1`: owners only, bank 0 only, `Busy` during an install. The SDK reads the two fixed spans through the flash window (`sdk::stock_plans_read`) into the page buffer; nothing in Wellfed writes those sectors, so a rollback finds stock's plans as it left them. The feeder judges none of the bytes: `wellfed_client::install::plans` decodes and converts them.
 
 ## Resources

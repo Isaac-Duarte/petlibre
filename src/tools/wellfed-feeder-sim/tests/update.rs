@@ -284,7 +284,7 @@ fn an_update_gives_way_installs_from_bank_0_and_confirms() {
 
 /// The stock backup's source: once bank 1 is left as stock leaves it after
 /// installing a build into bank 0, the bank-0 role streams it whole, byte
-/// for byte, the zeroed marker byte included. Bank 1 never serves its own
+/// for byte, the marker word stock programmed included. Bank 1 never serves its own
 /// image, and after a promotion there is nothing left to read.
 #[test]
 fn bank_0_streams_bank_1_whole_and_bank_1_serves_none() {
@@ -314,7 +314,11 @@ fn bank_0_streams_bank_1_whole_and_bank_1_serves_none() {
                 break bank;
             }
         };
-        assert_eq!(bank[0], 0, "the marker byte as stock left it");
+        assert_eq!(
+            bank[..4],
+            [0x00, 0x00, 0x21, 0x01],
+            "the marker word as stock left it"
+        );
         assert_eq!(bank, rig.banks.borrow().bank1());
         rig.sim.stop().await;
     });

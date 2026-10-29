@@ -244,13 +244,12 @@ impl Toggle {
 }
 
 /// Refuse `command`, which opens device sessions of its own, while a bench
-/// server holds the feeder's (its pointer in `rendezvous`). The server's
-/// own jobs pass: only the server starts one, and it pauses its session
-/// for a job that opens its own.
+/// server holds the feeder's (its pointer in `rendezvous`), unless this
+/// process is the server's job and the server paused its session for it
+/// (`bench::Bench::admit`).
 async fn refuse_beside_bench(command: &'static str, rendezvous: &[PathBuf]) -> Result<()> {
     match bench::Bench::find(rendezvous).await? {
-        Some(bench) if bench.runs_this_process()? => Ok(()),
-        Some(bench) => Err(bench.refuse(command).into()),
+        Some(bench) => bench.admit(command).await,
         None => Ok(()),
     }
 }

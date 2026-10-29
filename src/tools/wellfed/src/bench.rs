@@ -9,8 +9,8 @@
 //! - anything else is refused with [`BenchRefusal`], naming the server:
 //!   another key, `--address`, and the commands that open sessions of their
 //!   own (`setup`, `install`, `recover`, `join`, `restore-stock`), unless
-//!   this process is one of the server's jobs, which the server runs with
-//!   its own session paused;
+//!   this process is one of the server's jobs and the server's state shows
+//!   its session paused for that job's own sessions;
 //! - a direct session is never opened beside it, nor used as a fallback: a
 //!   write that got no answer through the server must not go again another
 //!   way.
@@ -41,6 +41,7 @@ use wellfed_formats::bench::feeder::{
     Ask, Asked, DeviceUnavailable, Opened, PushedPage, SessionInfo, Stream,
 };
 use wellfed_formats::bench::lease::{self, Holder};
+use wellfed_formats::bench::live::{BenchState, Session};
 use wellfed_formats::bench::rendezvous;
 use wellfed_formats::owner::OwnerKeyFile;
 use wellfed_model::{Answer, Capabilities, ClientRole, Op, Pushed};
@@ -80,6 +81,21 @@ pub(crate) enum BenchRefusal {
     OwnSessions {
         command: &'static str,
         root: PathBuf,
+    },
+    /// This process is one of the server's jobs, but the server has not
+    /// paused its feeder session for that job's own sessions: the two
+    /// would share the feeder.
+    #[error(
+        "`wellfed {command}` runs as a job of the bench server for {}, but that server's \
+         feeder session is not paused for the job's own sessions ({session:?}); only a job \
+         the server runs with its own sessions may open them",
+        root.display()
+    )]
+    SessionNotPaused {
+        command: &'static str,
+        root: PathBuf,
+        /// The server's session, as its `/state` showed it.
+        session: Box<Session>,
     },
     #[error(
         "the bench server for {} holds a session with feeder {served}, not {asked}",
@@ -161,20 +177,31 @@ impl Bench {
         }
     }
 
-    /// Whether this process is one of the server's jobs: it descends from
-    /// the process the pointer names. A job that opens sessions of its own
-    /// runs while the server holds its feeder session paused for it, so
-    /// the server's session and the job's never share the feeder.
-    pub(crate) fn runs_this_process(&self) -> Result<bool> {
-        Ok(lease::descends_from(std::process::id(), &self.holder)?)
-    }
+    /// Let `command`, which opens sessions of its own, run beside this
+    /// server only as the server's own job (this process descends from the
+    /// one the pointer names) while the server's feeder session is paused
+    /// for that job, so the server's session and the job's never share the
+    /// feeder. Any other process is refused, and so is a job the server
+    /// runs with its session open.
+    pub(crate) async fn admit(self, command: &'static str) -> Result<()> {
+        if !lease::descends_from(std::process::id(), &self.holder)? {
+            return Err(BenchRefusal::OwnSessions {
+                command,
+                root: self.root,
+            }
+            .into());
+        }
 
-    /// Refuse `command`, which opens sessions of its own.
-    pub(crate) fn refuse(self, command: &'static str) -> BenchRefusal {
-        BenchRefusal::OwnSessions {
+        let state: BenchState = self.call(Method::GET, "/state", Vec::new()).await?;
+        if state.own_sessions_job().is_some() {
+            return Ok(());
+        }
+        Err(BenchRefusal::SessionNotPaused {
             command,
             root: self.root,
+            session: Box::new(state.feeder.session),
         }
+        .into())
     }
 
     async fn send(&self, method: Method, path: &str, body: Vec<u8>) -> Result<(StatusCode, Bytes)> {
@@ -830,14 +857,149 @@ mod tests {
         );
         server.kill().unwrap();
         server.wait().unwrap();
+    }
 
-        // The server's own job passes: this process descends from the one
-        // the pointer names (the test runner, standing in for the server).
+    /// A server whose `/state` is `state`, its socket under `dir`, and a
+    /// pointer naming this test's parent process: this process descends
+    /// from the "server", as its job would.
+    async fn state_server(dir: &Path, state: BenchState) -> Vec<PathBuf> {
+        let socket = dir.join("bench.sock");
+        let router = axum::Router::new().route("/state", get(move || async move { Json(state) }));
+        let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+        tokio::spawn(async move { axum::serve(listener, router).await });
+
         let parent = std::os::unix::process::parent_id();
-        point_at(Holder::of(parent, vec!["wellfed-bench".into()]).unwrap());
-        crate::refuse_beside_bench("install", pointers)
+        let pointer = Rendezvous {
+            socket,
+            root: dir.to_path_buf(),
+            holder: Holder::of(parent, vec!["wellfed-bench".into()]).unwrap(),
+        };
+        rendezvous::publish(dir, &pointer).unwrap();
+        vec![dir.to_path_buf()]
+    }
+
+    /// The server's state with job 7 running (or ended) and its session as
+    /// given.
+    fn bench_state(session: wellfed_formats::bench::live::Session, ended: bool) -> BenchState {
+        use wellfed_formats::bench::live::{CancelState, FeederView, JobEnd, JobView, Phase};
+        use wellfed_formats::bench::live::{ServerView, Uart};
+
+        BenchState {
+            now: 0.0,
+            server: ServerView {
+                pid: 1,
+                started: 0.0,
+                phase: Phase::Serving,
+                uart_port: true,
+                stopping: None,
+            },
+            job: Some(JobView {
+                id: 7,
+                label: "install".into(),
+                log: "private/bench-status/jobs/7-install.log".into(),
+                accepted: 0.0,
+                record: None,
+                upcoming: Vec::new(),
+                cancel: CancelState::None,
+                end: ended.then_some(JobEnd {
+                    code: 0,
+                    error: None,
+                    finished: 1.0,
+                }),
+            }),
+            activity: Vec::new(),
+            uart: Uart::Idle,
+            relays: std::collections::BTreeMap::new(),
+            feeder: FeederView {
+                session,
+                ..FeederView::default()
+            },
+            capture: Default::default(),
+            banks: Default::default(),
+            operator: Default::default(),
+        }
+    }
+
+    /// The server's job passes only while the server's session is paused
+    /// for that job's own sessions; open, or paused for anything else, it
+    /// is refused.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_job_of_the_server_passes_only_while_its_session_is_paused_for_it() {
+        use wellfed_formats::bench::live::Session;
+
+        let paused_for = |job| Session::Paused {
+            pause: Pause::StockOta { job },
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let pointers = state_server(dir.path(), bench_state(paused_for(7), false)).await;
+        crate::refuse_beside_bench("install", &pointers)
             .await
             .unwrap();
+
+        let refusals = [
+            bench_state(Session::Idle, false),
+            bench_state(paused_for(6), false),
+            bench_state(paused_for(7), true),
+            bench_state(
+                Session::Paused {
+                    pause: Pause::UartJob {
+                        job: 7,
+                        label: "dump".into(),
+                    },
+                },
+                false,
+            ),
+            bench_state(
+                Session::Paused {
+                    pause: Pause::PowerOff,
+                },
+                false,
+            ),
+        ];
+        for state in refusals {
+            let dir = tempfile::tempdir().unwrap();
+            let pointers = state_server(dir.path(), state).await;
+            let refused = crate::refuse_beside_bench("install", &pointers)
+                .await
+                .err()
+                .unwrap();
+            assert!(
+                matches!(
+                    refused.downcast_ref::<BenchRefusal>(),
+                    Some(BenchRefusal::SessionNotPaused {
+                        command: "install",
+                        ..
+                    })
+                ),
+                "{refused}"
+            );
+        }
+    }
+
+    /// A server that does not answer refuses even its own job: nothing
+    /// shows its session paused.
+    #[tokio::test]
+    async fn a_job_of_a_server_that_does_not_answer_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let parent = std::os::unix::process::parent_id();
+        let pointer = Rendezvous {
+            socket: dir.path().join("bench.sock"),
+            root: dir.path().to_path_buf(),
+            holder: Holder::of(parent, vec!["wellfed-bench".into()]).unwrap(),
+        };
+        rendezvous::publish(dir.path(), &pointer).unwrap();
+
+        let refused = crate::refuse_beside_bench("install", &[dir.path().to_path_buf()])
+            .await
+            .err()
+            .unwrap();
+        assert!(
+            matches!(
+                refused.downcast_ref::<BenchRefusal>(),
+                Some(BenchRefusal::NotAnswering { .. })
+            ),
+            "{refused}"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -322,6 +322,32 @@ pub enum Pause {
     Stopping,
 }
 
+impl Pause {
+    /// The job this pause is for when that job opens feeder sessions of
+    /// its own. Only such a job may run a command that opens its own
+    /// sessions beside the server; a UART job, a power-off or the server's
+    /// own install push leaves no room for one.
+    pub const fn own_sessions_job(&self) -> Option<JobId> {
+        match self {
+            Self::StockOta { job } => Some(*job),
+            Self::UartJob { .. } | Self::Install | Self::PowerOff | Self::Stopping => None,
+        }
+    }
+}
+
+impl BenchState {
+    /// The running job the feeder session is paused for, while that job
+    /// opens sessions of its own.
+    pub fn own_sessions_job(&self) -> Option<JobId> {
+        let Session::Paused { pause } = &self.feeder.session else {
+            return None;
+        };
+        let paused_for = pause.own_sessions_job()?;
+        let running = self.job.as_ref().filter(|job| job.end.is_none())?;
+        (running.id == paused_for).then_some(paused_for)
+    }
+}
+
 impl std::fmt::Display for Pause {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

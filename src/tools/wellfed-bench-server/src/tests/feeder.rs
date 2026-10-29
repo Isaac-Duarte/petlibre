@@ -16,6 +16,8 @@ use crate::api::{Seed, SeedError, SeededFrom};
 use crate::feeder::{ClockSync, DeviceOptions};
 
 const OWNER: [u8; 32] = [0x22; 32];
+/// An update key, as `wellfed update-key enroll` sends it.
+const KEY: [u8; 32] = [0x5a; 32];
 const BUILT: &str = "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1";
 const OTHER: &str = "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2";
 
@@ -998,5 +1000,62 @@ async fn a_device_event_settles_the_timer_that_expects_its_kind() {
         timer_state(&state, "reboot"),
         Some(notes::TimerState::Seen { line, .. }) if line == "boot event"
     ));
+    server.quit().await;
+}
+
+/// An update key's enrollment waits for a Dispense press at the feeder,
+/// and the owner may take most of the feeder's 60 s window to press it:
+/// the server holds the request through its session that long, past the
+/// 10 s every other request gets, and answers it once.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_enrollment_answered_by_a_late_press_comes_back_through_the_server() {
+    if crate::tests::run_alone() {
+        return;
+    }
+    let _one = ONE_SERVER.lock().await;
+    let feeder = simulator();
+    let checkout = checkout();
+    checkout.enroll(&feeder);
+    let server = Running::start(checkout.open_at(Some(&feeder)));
+    state_until(&server, "the session", open).await;
+    for control in wellfed_feeder_sim::console::parse("hold lock").unwrap() {
+        feeder.control(control);
+    }
+
+    let enroll = Op::EnrollUpdateKey {
+        key: KEY,
+        label: "bench".into(),
+    };
+    let hands = async {
+        tokio::time::sleep(wellfed_connect::ANSWER + Duration::from_secs(3)).await;
+        for control in wellfed_feeder_sim::console::parse("press dispense").unwrap() {
+            feeder.control(control);
+        }
+    };
+    let (asked, ()) = tokio::join!(server.client.ask([9; 16], enroll), hands);
+    assert!(
+        matches!(
+            asked,
+            Ok(Asked::Answered {
+                answer: Answer::Done { .. }
+            })
+        ),
+        "{asked:?}"
+    );
+
+    let listed = server.client.ask([10; 16], Op::ListClients).await.unwrap();
+    let Asked::Answered {
+        answer: Answer::Clients(clients),
+    } = &listed
+    else {
+        panic!("{listed:?}");
+    };
+    assert!(
+        clients
+            .iter()
+            .any(|client| client.key.0 == KEY
+                && client.role == wellfed_model::ClientRole::UpdateSigner),
+        "{clients:?}"
+    );
     server.quit().await;
 }

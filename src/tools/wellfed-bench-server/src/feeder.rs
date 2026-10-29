@@ -11,7 +11,9 @@
 //! - carries the requests of the `wellfed` CLI (`POST /device/ask`) and of
 //!   the jobs ([`SessionLink`]). A read that got no answer goes once more,
 //!   under the same id; anything else is sent once, and one that got no
-//!   answer is reported uncertain.
+//!   answer is reported uncertain. Each waits as long as the session gives
+//!   its op (`wellfed_client::connection::Timing`: 75 s for an update key's
+//!   Dispense press), and nothing on the socket gives up sooner.
 //!
 //! It closes while a job holds the UART, while an install push or
 //! `stock-ota` holds sessions of their own, while relay 1 is off and while

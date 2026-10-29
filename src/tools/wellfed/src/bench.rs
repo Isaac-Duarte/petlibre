@@ -192,6 +192,10 @@ impl Bench {
             .into());
         }
 
+        // This checks only that an own-sessions job is running, not that
+        // this process is that job. It holds because the server runs one
+        // job at a time and only its jobs descend from it: server code must
+        // never spawn a child outside a job that could run `wellfed`.
         let state: BenchState = self.call(Method::GET, "/state", Vec::new()).await?;
         if state.own_sessions_job().is_some() {
             return Ok(());

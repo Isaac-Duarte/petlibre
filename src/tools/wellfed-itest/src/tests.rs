@@ -562,8 +562,8 @@ impl Feeder {
             self.line(
                 0.3,
                 &format!(
-                    "PLOWN1 interlock refused=0 deferred=0 forced=0 waited_max_ms=0 long_joins=0 \
-                     writes_deferred={deferred} writes_forced=0 write_waited_max_ms=0 feeds_delayed=0"
+                    "PLOWN1 interlock writes_deferred={deferred} writes_forced=0 \
+                     write_waited_max_ms=0 feeds_delayed=0"
                 ),
             );
         }

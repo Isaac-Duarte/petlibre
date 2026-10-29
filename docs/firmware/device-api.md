@@ -118,7 +118,7 @@ A client that may want to cancel keeps its session open across the feed, as `wel
 - A feed is refused `Busy` while a Wi-Fi join attempt runs (from its scan through association to DHCP) or waits for the outputs. An association holds every task for up to 0.72 s ([resource budget](resource-budget.md#scheduling-gaps-across-wi-fi-rejoins)), so feeds and joins take turns (`wellfed_hal::interlock`).
 - The loop logs `PLOWN1 feed portions=… held=…`: 1 a join runs, 2 one waits, 3 a storage write ran past the claim's wait.
 
-**A join during a feed** waits in the Wi-Fi task until the owner is at rest with its outputs stopped. It waits at most `FEED_BOUND_MS`: the owner's own cap on a feed's emitters-on time plus 2 s, about 9 min 40 s for 48 portions. `PLOWN1 interlock …` counts waits, and joins forced past that bound.
+**A join during a feed** waits in the Wi-Fi task until the owner is at rest with its outputs stopped. It waits at most `FEED_BOUND_MS`: the owner's own cap on a feed's emitters-on time plus 2 s, about 9 min 40 s for 48 portions. `PLOWN1 joins …` counts waits, and joins forced past that bound.
 
 **A storage write running** when a feed comes makes the feed wait in the loop, at most `WRITE_WAIT_MS`. That is 3 s: one record's erase and two programs at their whole lease budget, after the writer's 200 ms poll. A write still running then, or a client's change still queued for the writer, refuses the feed `Busy` (`held=3`).
 

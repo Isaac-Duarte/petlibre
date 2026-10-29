@@ -476,8 +476,13 @@ pub enum Record {
     /// A feed was refused before the owner saw it: a Wi-Fi join runs or
     /// waits, or a storage write ran past the claim's wait.
     Held { portions: u8, held: Held },
-    /// Joins waited for the outputs, or went ahead past a feed's bound.
+    /// Joins waited for the outputs, or went ahead past a feed's bound: the
+    /// interlock's join counters.
     Joins(interlock::Status),
+    /// Storage writes waited for the outputs, or a feed for a write: the
+    /// interlock's write counters, which the bench reads. A line apart from
+    /// the joins', so neither outgrows a record.
+    Writes(interlock::Status),
     /// What the feed's marks and the outlet beam showed: how far into the
     /// drive a homing mark came, the beam's breaks, and the phase after.
     Marks {
@@ -639,13 +644,17 @@ impl core::fmt::Display for Record {
             }
             Record::Joins(status) => write!(
                 f,
-                "interlock refused={} deferred={} forced={} waited_max_ms={} long_joins={} \
-             writes_deferred={} writes_forced={} write_waited_max_ms={} feeds_delayed={}",
+                "joins refused={} deferred={} forced={} waited_max_ms={} long_joins={}",
                 status.refused,
                 status.deferred,
                 status.forced,
                 status.waited_max_ms,
                 status.long_joins,
+            ),
+            Record::Writes(status) => write!(
+                f,
+                "interlock writes_deferred={} writes_forced={} write_waited_max_ms={} \
+                 feeds_delayed={}",
                 status.writes_deferred,
                 status.writes_forced,
                 status.write_waited_max_ms,
@@ -711,6 +720,27 @@ mod target {
     };
 
     type Journal = FeedJournal<JournalSlots>;
+
+    /// What the `joins` record logs.
+    fn join_counters(status: &interlock::Status) -> [u32; 5] {
+        [
+            status.refused,
+            status.deferred,
+            status.forced,
+            status.waited_max_ms,
+            status.long_joins,
+        ]
+    }
+
+    /// What the `interlock` record logs.
+    fn write_counters(status: &interlock::Status) -> [u32; 4] {
+        [
+            status.writes_deferred,
+            status.writes_forced,
+            status.write_waited_max_ms,
+            status.feeds_delayed,
+        ]
+    }
 
     /// The owner. Reached only through `&`: the supervision interrupts reach
     /// its board and supervisor while the loop runs, so no `&mut` may cover
@@ -902,13 +932,17 @@ mod target {
             }
             INTERLOCK.watch_join(wellfed_sdk::hal::sdk::uptime_ms());
 
-            // Logged whenever a counter moves: a refused feed, a join that
-            // starts waiting, waits longer than any before, is forced, or
-            // holds its turn past the long-join limit.
-            let joins = INTERLOCK.status();
-            if joins != self.joins {
-                self.joins = joins;
-                record(Record::Joins(joins));
+            // Each half is logged whenever one of its counters moves: a
+            // refused feed, a join that starts waiting, waits longer than
+            // any before, is forced, or holds its turn past the long-join
+            // limit; a write that waits or is forced, or a feed delayed.
+            let now = INTERLOCK.status();
+            let before = core::mem::replace(&mut self.joins, now);
+            if join_counters(&now) != join_counters(&before) {
+                record(Record::Joins(now));
+            }
+            if write_counters(&now) != write_counters(&before) {
+                record(Record::Writes(now));
             }
         }
 

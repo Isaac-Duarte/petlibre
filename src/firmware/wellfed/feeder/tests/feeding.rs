@@ -304,15 +304,18 @@ fn owner_records_decode_for_the_bench() {
             reason: Some(FeedReason::Cancelled),
         })),
     );
+    let counters = interlock::Status {
+        deferred: 2,
+        writes_deferred: 3,
+        ..interlock::Status::default()
+    };
     decodes(
-        Record::Joins(interlock::Status {
-            writes_deferred: 3,
-            ..interlock::Status::default()
-        }),
+        Record::Writes(counters),
         Some(Event::Owner(Owner::Interlock {
             writes_deferred: Some(3),
         })),
     );
+    decodes(Record::Joins(counters), None);
     decodes(Record::Refused, None);
     decodes(
         Record::Marks {
@@ -396,16 +399,16 @@ fn a_feeds_result_and_its_current_are_logged() {
     );
 }
 
-/// Every record a feed logs fits the log's line, whatever its figures: a
-/// line that does not is dropped whole.
+/// Every record the owner's loop logs fits the log's line, whatever its
+/// figures: a line that does not is dropped whole.
 #[test]
 fn a_feeds_records_fit_a_log_line_at_their_widest() {
     use wellfed_core::feed::controller::FeedReason;
     use wellfed_core::feed::storage::{OwnerOutcome, OwnerResult, RotorPhase};
     use wellfed_core::record::Tag;
     use wellfed_feeder::feed::Durability;
-    use wellfed_fw_feeder::feeding::{FEED_BOUND_MS, Record};
-    use wellfed_sdk::hal::interlock::{self, WRITE_WAIT_MS};
+    use wellfed_fw_feeder::feeding::Record;
+    use wellfed_sdk::hal::interlock;
     use wellfed_sdk::hal::owner::{FeedTrace, OwnerFault, OwnerState, SubmitResult};
     use wellfed_sdk::hal::supervision::events::{EDGE_LOG, EventsFault, PinWatch};
 
@@ -440,6 +443,17 @@ fn a_feeds_records_fit_a_log_line_at_their_widest() {
         motion_possible: true,
     };
     let feed = u64::MAX;
+    let interlock = interlock::Status {
+        refused: u32::MAX,
+        deferred: u32::MAX,
+        forced: u32::MAX,
+        waited_max_ms: u32::MAX,
+        long_joins: u32::MAX,
+        writes_deferred: u32::MAX,
+        writes_forced: u32::MAX,
+        write_waited_max_ms: u32::MAX,
+        feeds_delayed: u32::MAX,
+    };
 
     let widest = [
         Record::Status {
@@ -482,21 +496,8 @@ fn a_feeds_records_fit_a_log_line_at_their_widest() {
         },
         Record::Pins { feed, pins },
         Record::Recover { held_ms: u32::MAX },
-        // The interlock's waits are bounded by the claim and the write
-        // wait; its counters are not, but at ten thousand times each (five
-        // digits) the line still fits. At every counter's maximum it would
-        // not.
-        Record::Joins(interlock::Status {
-            refused: 99_999,
-            deferred: 99_999,
-            forced: 99_999,
-            waited_max_ms: FEED_BOUND_MS,
-            long_joins: 99_999,
-            writes_deferred: 99_999,
-            writes_forced: 99_999,
-            write_waited_max_ms: WRITE_WAIT_MS,
-            feeds_delayed: 99_999,
-        }),
+        Record::Joins(interlock),
+        Record::Writes(interlock),
     ];
     for record in widest {
         let line = line(record);

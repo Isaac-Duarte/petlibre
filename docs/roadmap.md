@@ -41,7 +41,7 @@ This page tracks what works today and what comes next. It covers the replacement
 | Bluetooth setup and pairing | Works | |
 | Encrypted local API | Works | See [device API](firmware/device-api.md). |
 | Child lock | Works | |
-| Reset button | Partial | Clears clients, Wi-Fi, settings, plans, history and statistics, and keeps the calibration, the feed journal and the flash wear counts. Tested in simulation; not yet on hardware. |
+| Reset button | Works | Clears clients, Wi-Fi, settings, plans, history and statistics, and keeps the calibration, the feed journal and the flash wear counts. Checked on the feeder: a hold on an unlocked panel wipes it, and the owner pairs again over Bluetooth. |
 | Buttons | Works | |
 | Indicator lights | Works | Which states show is not settled. |
 | Speaker | Works | Plays sounds; which sounds play when is not settled. |

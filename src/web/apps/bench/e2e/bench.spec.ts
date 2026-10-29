@@ -1,12 +1,50 @@
 import { expect, test, type Locator } from "@playwright/test";
 
-test("the overview shows the live run, its log, the feeder and the bench", async ({ page }) => {
+test("the overview shows the server's job, its log, the stock server and the bench", async ({ page }) => {
   await page.goto("/");
 
-  await expect(page.getByRole("heading", { name: "itest", level: 1 })).toBeVisible();
+  const job = page.getByRole("region", { name: "Current job" });
+  await expect(job.getByRole("heading", { name: "flash-execute", level: 1 })).toBeVisible();
+  await expect(job).toContainText("flash-e2e-05");
+  await expect(job).toContainText("3 of 19 sectors");
   await expect(page.getByRole("log", { name: "Live log" })).toBeVisible();
   await expect(page.getByText("No local server configured")).toBeVisible();
   await expect(page.getByLabel("Bench hardware and tools")).toContainText("Power");
+});
+
+test("a UART write puts its banner, with the sectors verified, on every view", async ({ page }) => {
+  for (const view of ["overview", "tests", "sessions"]) {
+    await page.goto(`/#/${view}`);
+    const banner = page.getByRole("alert", { name: "UART write in progress" });
+    await expect(banner).toContainText("don't touch the bench");
+    await expect(banner).toContainText("3 of 19 sectors verified");
+  }
+  await expect(page).toHaveTitle(/^WRITING/);
+});
+
+test("activity, relays, the operator's notes and the feeder read the live state", async ({ page }) => {
+  await page.goto("/");
+
+  const activity = page.getByRole("region", { name: "Activity" });
+  await expect(activity).toContainText("update execute");
+  await expect(activity).toContainText("flash-execute flash-e2e-05");
+
+  const relays = page.getByRole("region", { name: "Relays" });
+  await expect(relays.getByRole("listitem").first()).toContainText("Feeder power");
+  await expect(relays.getByRole("listitem").first()).toContainText("on");
+  await expect(relays).toContainText("holding the bench since");
+
+  const operator = page.getByRole("region", { name: "Operator" });
+  await expect(operator).toContainText("Install the candidate over UART");
+  await expect(operator.getByRole("list", { name: "Operator's next steps" })).toContainText("Run the smoke tier");
+  await expect(operator.getByRole("list", { name: "Timers" })).toContainText("expects PLFW1 start");
+  await expect(operator.getByRole("region", { name: "Evidence for QA9" })).toContainText("1 pass, 1 fail");
+
+  const feeder = page.getByRole("region", { name: "Feeder", exact: true });
+  await expect(feeder.getByRole("list", { name: "Banks" })).toContainText("build 4d37c21a00ff");
+  await expect(feeder).toContainText("confirmed by the start banner");
+  await expect(feeder).toContainText("Journal high water");
+  await expect(feeder).toContainText("not known yet");
 });
 
 test("the overview coaches a guided QA run from the latest capture", async ({ page }) => {
@@ -18,12 +56,8 @@ test("the overview coaches a guided QA run from the latest capture", async ({ pa
   await expect(qa).toContainText("Indicators");
 });
 
-test("the tests view follows the live run and charts every recorded one", async ({ page }) => {
+test("the tests view charts every recorded run", async ({ page }) => {
   await page.goto("/#/tests");
-
-  const live = page.getByRole("region", { name: "Run in progress" });
-  await expect(live).toContainText("itest-e2e-04");
-  await expect(live).toContainText("Waiting for fresh health: health is 80 s old");
 
   const history = page.getByRole("region", { name: "Run history" });
   await expect(history).toContainText("3 recorded runs");
@@ -53,22 +87,22 @@ test("the run builder writes the command and warns about skips", async ({ page }
   const builder = page.getByRole("region", { name: "Start a run" });
 
   await builder.getByRole("textbox", { name: "Name" }).fill("itest-e2e-05");
-  await expect(builder.locator("pre")).toHaveText("wellfed-bench --ui itest itest-e2e-05");
+  await expect(builder.locator("pre")).toHaveText("wellfed-bench itest itest-e2e-05");
   await expect(builder).toContainText("will be skipped");
 
   await builder.getByRole("radio", { name: "Smoke" }).click();
   await builder.getByLabel(/--power/).check();
-  await expect(builder.locator("pre")).toHaveText("wellfed-bench --ui itest itest-e2e-05 --tier smoke --power");
+  await expect(builder.locator("pre")).toHaveText("wellfed-bench itest itest-e2e-05 --tier smoke --power");
 });
 
-test("the overview log shows the run's notes, filterable", async ({ page }) => {
+test("the overview log shows the job's output from the server, filterable", async ({ page }) => {
   await page.goto("/");
 
   const log = page.getByRole("log", { name: "Live log" });
-  await expect(log).toContainText("- requests: ping, health");
-  await page.getByRole("searchbox", { name: "Filter log lines" }).fill("waiting");
-  await expect(log).toContainText("Waiting for fresh health");
-  await expect(log).not.toContainText("ota-update: pass");
+  await expect(log).toContainText("Verified changed sectors: 3/19");
+  await page.getByRole("searchbox", { name: "Filter log lines" }).fill("loader");
+  await expect(log).toContainText("Loader answered");
+  await expect(log).not.toContainText("Verified changed sectors");
 });
 
 test("both themes render without horizontal page scroll", async ({ page }) => {
@@ -115,7 +149,7 @@ test.describe("at phone width", () => {
     await page.goto("/");
 
     const log = page.getByRole("log", { name: "Live log" });
-    await expect(log).toContainText("- requests: ping, health");
+    await expect(log).toContainText("Erasing bank 1 sector");
     const box = await log.boundingBox();
     expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(page.viewportSize()?.width ?? 0);
     expect(await log.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true);
@@ -157,6 +191,12 @@ test.describe("at phone width", () => {
 
     await page.goto("/");
     // The start time stacks under the command rather than being dropped.
-    await expect(page.getByRole("region", { name: "Recent commands" }).getByText(/^\d{1,2}:\d{2}/)).toBeVisible();
+    // The page's own `on` job sits above the fixture's entry.
+    await expect(
+      page
+        .getByRole("region", { name: "Recent commands" })
+        .getByText(/^\d{1,2}:\d{2}/)
+        .first(),
+    ).toBeVisible();
   });
 });

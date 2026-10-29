@@ -5,7 +5,7 @@
 use std::path::Path;
 use std::thread::JoinHandle;
 
-use wellfed_bench_server::Store;
+use wellfed_bench_server::{Outputs, Store};
 use wellfed_rig::Cancel;
 
 /// Where the page serves and what it reports.
@@ -19,26 +19,39 @@ pub(crate) struct Page<'a> {
 
 #[cfg(feature = "ui")]
 mod built {
-    use std::collections::BTreeMap;
     use std::sync::Arc;
 
-    use super::{Cancel, JoinHandle, Page, Store};
-    use wellfed_formats::bench::progress::{Current, RelayState};
+    use super::{Cancel, JoinHandle, Outputs, Page, Store};
+    use tokio::sync::watch;
+    use wellfed_bench_server::JobOutput;
+    use wellfed_formats::bench::live::{BenchState, JobId};
 
-    /// The running job's record and the board's relays, from the server.
-    struct ServerLive(Store);
+    /// The server's live state and its jobs' output, in this process.
+    struct ServerLive {
+        store: Store,
+        outputs: Outputs,
+    }
 
     impl wellfed_dashboard::Live for ServerLive {
-        fn current(&self) -> Option<Current> {
-            self.0.read().job.and_then(|job| job.record)
+        fn subscribe(&self) -> watch::Receiver<BenchState> {
+            self.store.subscribe()
         }
 
-        fn relays(&self) -> Option<BTreeMap<String, RelayState>> {
-            Some(self.0.read().relays)
+        fn output(&self, id: JobId) -> Option<Arc<dyn wellfed_dashboard::JobOutput>> {
+            let output = self.outputs.get(id)?;
+            Some(Arc::new(Output(output)))
+        }
+    }
+
+    struct Output(JobOutput);
+
+    impl wellfed_dashboard::JobOutput for Output {
+        fn read_from(&self, cursor: usize) -> (Vec<String>, usize) {
+            self.0.read_from(cursor)
         }
 
-        fn log(&self) -> Option<String> {
-            self.0.read().job.map(|job| job.log)
+        fn subscribe(&self) -> watch::Receiver<u64> {
+            self.0.subscribe()
         }
     }
 
@@ -48,14 +61,19 @@ mod built {
 
     impl Page<'_> {
         /// Bind the page and serve it until `stop`.
-        pub(crate) fn start(&self, stop: &Cancel, store: Store) -> anyhow::Result<JoinHandle<()>> {
+        pub(crate) fn start(
+            &self,
+            stop: &Cancel,
+            store: Store,
+            outputs: Outputs,
+        ) -> anyhow::Result<JoinHandle<()>> {
             let listen = wellfed_dashboard::Listen::new(self.address, self.port)?;
             let handle = wellfed_dashboard::start(
                 self.root.to_path_buf(),
                 self.flash_bin.to_path_buf(),
                 &listen,
                 stop.clone(),
-                Arc::new(ServerLive(store)),
+                Arc::new(ServerLive { store, outputs }),
             )?;
             wellfed_rig::say!("Bench page on {}", listen.url());
             Ok(handle)
@@ -65,7 +83,7 @@ mod built {
 
 #[cfg(not(feature = "ui"))]
 mod built {
-    use super::{Cancel, JoinHandle, Page, Store};
+    use super::{Cancel, JoinHandle, Outputs, Page, Store};
 
     pub(crate) fn available() -> anyhow::Result<()> {
         anyhow::bail!(
@@ -79,6 +97,7 @@ mod built {
             &self,
             _stop: &Cancel,
             _store: Store,
+            _outputs: Outputs,
         ) -> anyhow::Result<JoinHandle<()>> {
             available()?;
             anyhow::bail!(

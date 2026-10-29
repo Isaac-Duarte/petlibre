@@ -1,7 +1,7 @@
-//! `/api/health`: whether the bench is ready, from its config, the last relay
-//! states, the flash client and the image the feeder last booted.
+//! `/api/health`: whether the bench is ready, from its config, the flash
+//! client and the image the feeder last booted. The relays and the running
+//! job are the server's live state.
 
-use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
@@ -9,7 +9,6 @@ use serde::Serialize;
 use wellfed_core::record::{Event, Record, Tag};
 
 use super::{Sources, captures_by_age, modified, printable};
-use wellfed_formats::bench::progress::{BenchCommand, RelayState};
 use wellfed_formats::bench::relative;
 use wellfed_formats::bench::{CONFIG, Config};
 use wellfed_formats::canonical::sha256;
@@ -18,8 +17,8 @@ use wellfed_formats::canonical::sha256;
 const BANNER_SCAN_BYTES: u64 = 4 << 20;
 const BANNER_SCAN_CAPTURES: usize = 25;
 
-/// `/api/health`: ports, last relay states, flash client and the image the
-/// feeder last booted.
+/// `/api/health`: ports, the flash client and the image the feeder last
+/// booted.
 #[derive(Debug, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 pub(crate) struct HealthView {
@@ -27,11 +26,8 @@ pub(crate) struct HealthView {
     config: &'static str,
     config_ok: bool,
     ports: Ports,
-    relays: Option<BTreeMap<String, RelayState>>,
     flash_tool: FlashToolView,
     installed: Option<Installed>,
-    /// The command a live bench process is running.
-    busy: Option<BenchCommand>,
 }
 
 /// Whether each configured path exists, or why the config does not read.
@@ -101,13 +97,8 @@ pub(crate) fn health(sources: &Sources, flash: &mut FlashCache) -> HealthView {
         config: CONFIG,
         config_ok: config.is_ok(),
         ports,
-        relays: sources.live.relays(),
         flash_tool: flash.get(sources),
         installed: installed(root),
-        busy: sources
-            .current()
-            .filter(crate::live)
-            .map(|current| current.command),
     }
 }
 
@@ -208,9 +199,8 @@ mod tests {
     use wellfed_formats::canonical::sha256;
 
     use super::*;
-    use crate::views::tests::{json, live_sources, sources};
+    use crate::views::tests::{json, sources};
     use wellfed_formats::bench::CAPTURES;
-    use wellfed_formats::bench::progress::BenchCommand;
 
     #[test]
     fn health_reads_the_last_banner() {
@@ -239,15 +229,13 @@ mod tests {
         assert_eq!(view["config"], CONFIG);
         assert_eq!(view["config_ok"], false);
         assert!(view["ports"]["error"].as_str().unwrap().contains(CONFIG));
-        assert!(view["relays"].is_null());
-        assert!(view["busy"].is_null());
         assert_eq!(view["flash_tool"]["present"], false);
         assert!(view["flash_tool"].get("sha256").is_none());
     }
 
     #[test]
-    fn health_reports_present_ports_relays_and_the_flash_hash() {
-        let (_tmp, sources, live) = live_sources();
+    fn health_reports_present_ports_and_the_flash_hash() {
+        let (_tmp, sources) = sources();
         fs::create_dir_all(sources.root.join("private")).unwrap();
         fs::write(sources.root.join("baseline.bin"), b"").unwrap();
         fs::write(
@@ -256,18 +244,6 @@ mod tests {
         )
         .unwrap();
         fs::write(&sources.flash_bin, b"tool").unwrap();
-        let relays = [("1".to_string(), RelayState { on: true, at: 1.0 })];
-        *live.relays.lock().unwrap() = Some(relays.into_iter().collect());
-        let mut status = live.status(&sources);
-        status.begin(BenchCommand::On, None, &[]).unwrap();
-        // A finished command is not what keeps the bench busy.
-        status.finish(0, None);
-        assert!(json(health(&sources, &mut FlashCache::default()))["busy"].is_null());
-        status.begin(BenchCommand::On, None, &[]).unwrap();
-        assert_eq!(
-            json(health(&sources, &mut FlashCache::default()))["busy"],
-            "on"
-        );
 
         let mut cache = FlashCache::default();
         let view = json(health(&sources, &mut cache));
@@ -276,7 +252,6 @@ mod tests {
             view["ports"],
             json!({"relay_port": false, "uart_port": true, "baseline": true, "rom_report": false})
         );
-        assert_eq!(view["relays"]["1"]["on"], true);
         assert_eq!(
             view["flash_tool"],
             json!({"path": "wellfed-flash", "sha256": sha256(b"tool"), "present": true})

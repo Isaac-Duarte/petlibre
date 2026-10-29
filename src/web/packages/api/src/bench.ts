@@ -2,7 +2,16 @@
 // read-only. Paths are relative so the page works under any host and port
 // the bench serves it on (loopback, or a tailnet address).
 
-import type { FeederView, HealthView, RunView, SessionView, Sessions, Snapshot, TestsView } from "./bench.gen";
+import type {
+  BenchState,
+  EvidenceView,
+  FeederView,
+  HealthView,
+  RunView,
+  SessionView,
+  Sessions,
+  TestsView,
+} from "./bench.gen";
 
 async function get<T>(path: string): Promise<T | null> {
   const response = await fetch(path, { cache: "no-store" });
@@ -12,7 +21,8 @@ async function get<T>(path: string): Promise<T | null> {
 }
 
 export const bench = {
-  status: () => get<Snapshot>("api/status"),
+  state: () => get<BenchState>("api/state"),
+  evidence: () => get<EvidenceView>("api/evidence"),
   health: () => get<HealthView>("api/health"),
   sessions: () => get<Sessions>("api/sessions"),
   session: (name: string) => get<SessionView>(`api/sessions/${encodeURIComponent(name)}`),
@@ -22,13 +32,15 @@ export const bench = {
 };
 
 export interface StreamHandlers {
-  /** The status snapshot, sent whenever it changes. */
-  status(snapshot: Snapshot): void;
-  /** A new command started, or the log shrank: drop what was shown. */
+  /** The bench server's live state, on connecting and on every change. */
+  state(state: BenchState): void;
+  /** The history and the latest capture, sent when they change. */
+  evidence(view: EvidenceView): void;
+  /** Another job's output follows: drop what was shown. */
   logReset(): void;
-  /** Whole new lines of the current command's log. */
+  /** Whole new lines of the job's output. */
   log(text: string): void;
-  /** The local server's view of the feeder, sent when it changes. */
+  /** The local stock server's view of the feeder, sent when it changes. */
   feeder(view: FeederView): void;
   /** Whether the stream is connected; the browser reconnects on its own. */
   connected(open: boolean): void;
@@ -46,8 +58,11 @@ export function stream(handlers: StreamHandlers): () => void {
   source.addEventListener("error", () => {
     handlers.connected(false);
   });
-  source.addEventListener("status", (e) => {
-    handlers.status(JSON.parse(data(e)) as Snapshot);
+  source.addEventListener("state", (e) => {
+    handlers.state(JSON.parse(data(e)) as BenchState);
+  });
+  source.addEventListener("evidence", (e) => {
+    handlers.evidence(JSON.parse(data(e)) as EvidenceView);
   });
   source.addEventListener("log-reset", () => {
     handlers.logReset();

@@ -8,7 +8,7 @@ Every rule marked with a tool runs in `make check-web`.
 
 ```text
 src/web/
-  apps/bench/          the bench page (Svelte 5, embedded in wellfed-dashboard with --features ui)
+  apps/bench/          the bench page (Svelte 5, which wellfed-bench serve --ui embeds with --features ui)
   apps/site/           the project's landing page, prerendered to static files (see docs/web/site.md)
   packages/tokens/     CSS generated from assets/brand/tokens.json, and the contrast check
   packages/ui/         the page base and components over the tokens and bits-ui
@@ -55,4 +55,4 @@ From `src/web/`, with Node 22.18 or later (it runs the TypeScript scripts direct
 | `pnpm check` | ESLint, Prettier, licenses, `tsc` for the scripts, then each package's `svelte-check` or `tsc` |
 | `pnpm test` | Vitest in each package (the contrast and drift tests included) |
 | `pnpm format` | Rewrite formatting |
-| `make check-web` (repository root) | All of the above, the bench build, and Playwright against the real `wellfed-bench --ui` (built with `--features ui`) |
+| `make check-web` (repository root) | All of the above, the bench build, and Playwright against the real `wellfed-bench serve --ui` on a fake relay board (built with `--features ui,wellfed-bench/fake-board`) |

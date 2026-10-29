@@ -1,10 +1,24 @@
-// Serve a synthetic bench for the end-to-end tests. The live run's status
-// names this process as its owner, so the page reads it as running for as
-// long as the server is up.
+// Serve a synthetic bench for the end-to-end tests: the real
+// `wellfed-bench serve --ui` on a temporary checkout, with a scripted relay
+// board (`--fake-board`) and a stand-in wellfed-flash. Once the server
+// answers, its own client powers the feeder and starts a flash-execute,
+// whose stand-in reports 3 of 19 sectors and then writes until the server
+// stops it, so the page shows a UART write for the whole run. Nothing
+// touches hardware.
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
 const port = process.argv[2] ?? "8797";
@@ -12,7 +26,8 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repo = resolve(here, "../../../../..");
 const binary = process.env.BENCH_BIN ?? join(repo, "target/debug/wellfed-bench");
 
-const root = mkdtempSync(join(tmpdir(), "wellfed-e2e-"));
+// Canonical, as the server compares a client's checkout with its own.
+const root = realpathSync(mkdtempSync(join(tmpdir(), "wellfed-e2e-")));
 const write = (path, data) => {
   const full = join(root, path);
   mkdirSync(dirname(full), { recursive: true });
@@ -20,36 +35,57 @@ const write = (path, data) => {
 };
 const now = Date.now() / 1000;
 
-write("private/bench-status/current.json", {
-  pid: process.pid,
-  command: "itest",
-  name: "itest-e2e-04",
-  started: now - 300,
-  finished: null,
-  outcome: "running",
-  error: null,
-  steps: [
-    { label: "ota-update", state: "done", started: now - 300, finished: now - 120 },
-    { label: "requests", state: "running", started: now - 120 },
-    { label: "request-auth", state: "pending" },
-  ],
-  relay: { 1: true, 2: false },
-  lines: [],
-});
+write("private/bench.json", { relay_port: "relay", uart_port: "uart", baseline: "b", rom_report: "r" });
+
+// Arguments: --root R SUBCOMMAND ACTION ...; only an update is ever run.
 write(
-  "private/bench-status/current.log",
-  [
-    "- ota-update: install the build under test over the air and see it confirm",
-    "  ota-update: pass",
-    "- requests: ping, health, clock sync, and a settings change read back and restored",
-    "  Waiting for fresh health: health is 80 s old",
-    "",
-  ].join("\n"),
+  "wellfed-flash",
+  `#!/bin/sh
+case "$3 $4" in
+"update execute")
+  trap 'exit 1' INT TERM
+  echo "Loader answered; writing the reviewed plan" >&2
+  echo "Erasing bank 1 sector 0x08006000 and every changed sector after it, in the plan's order, then verifying each one against the target image before the marker is written last" >&2
+  echo "Verified changed sectors: 3/19" >&2
+  while :; do sleep 1; done
+  ;;
+esac
+`,
 );
+chmodSync(join(root, "wellfed-flash"), 0o755);
+write("private/verification/flash-e2e-05-plan.json", "{}");
+
 write(
   "private/bench-status/history.jsonl",
   JSON.stringify({ command: "on", name: null, started: now - 400, finished: now - 399, outcome: "pass", error: null }) +
     "\n",
+);
+write("private/bench-status/banks.json", {
+  banks: {
+    0: { content: { kind: "stock" }, source: "seed", session: null, at: now - 7200, check: { state: "unchecked" } },
+    1: {
+      content: { kind: "build", id: "4d37c21a00ff" },
+      source: "flash-execute",
+      session: "flash-e2e-04",
+      at: now - 3600,
+      check: { state: "confirmed", by: "banner", at: now - 3500 },
+    },
+  },
+});
+const note = (at, body) => JSON.stringify({ at, body }) + "\n";
+write(
+  "private/bench-status/notes.jsonl",
+  note(now - 600, { kind: "step", text: "Install the candidate over UART" }) +
+    note(now - 600, { kind: "next", steps: ["Boot and watch the banner", "Run the smoke tier"] }) +
+    note(now - 60, { kind: "timer", label: "boot", seconds: 900, expect: "PLFW1 start" }) +
+    note(now - 500, { kind: "evidence", card: "QA9", verdict: "pass", text: "banner seen", path: null }) +
+    note(now - 400, {
+      kind: "evidence",
+      card: "QA9",
+      verdict: "fail",
+      text: "no status after boot",
+      path: "private/captures/itest-e2e-03-uart-01",
+    }),
 );
 
 const verdict = (scenario, v, seconds, reason = null) => ({ scenario, verdict: v, reason, seconds });
@@ -108,15 +144,49 @@ write("private/verification/flash-e2e-01-plan.json", {
   operation_plan: { bank: 1, erase_sectors: 2, ordered_sectors: [{}, {}] },
 });
 
-const server = spawn(binary, ["--root", root, "--ui", "--ui-port", port], { stdio: "inherit" });
-const stop = () => {
-  server.kill("SIGINT");
+const server = spawn(
+  binary,
+  ["--root", root, "serve", "--fake-board", "--flash-bin", join(root, "wellfed-flash"), "--ui", "--ui-port", port],
+  { stdio: "inherit" },
+);
+let stopping = false;
+const clean = (code) => {
   rmSync(root, { recursive: true, force: true });
-  process.exit(0);
+  process.exit(code);
+};
+// The server cancels its job, waits for its cleanup, then exits.
+const stop = () => {
+  stopping = true;
+  server.kill("SIGINT");
 };
 process.on("SIGINT", stop);
 process.on("SIGTERM", stop);
 server.on("exit", (code) => {
-  rmSync(root, { recursive: true, force: true });
-  process.exit(code ?? 1);
+  clean(stopping ? 0 : (code ?? 1));
 });
+
+/** Run a client command to its end; its code. */
+const client = (words) =>
+  new Promise((done) => {
+    spawn(binary, ["--root", root, ...words], { stdio: "inherit" }).on("exit", (code) => {
+      done(code ?? 1);
+    });
+  });
+
+for (let tries = 0; !existsSync(join(root, "private/bench.sock")); tries++) {
+  if (tries > 200) {
+    console.error("serve.mjs: the server never bound its socket");
+    stop();
+  }
+  await sleep(50);
+}
+if ((await client(["on"])) !== 0) {
+  console.error("serve.mjs: `on` failed");
+  stop();
+}
+// Left following its job; the server's stop ends both.
+spawn(
+  binary,
+  ["--root", root, "flash-execute", "flash-e2e-05", "--source", "s", "--target", "t", "--expected-plan-sha256", "00"],
+  { stdio: "ignore" },
+);

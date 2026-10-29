@@ -1,7 +1,7 @@
 // The integration suite as the Tests view needs it: the live run joined to
 // the catalog, and the command a developer would type next.
 
-import type { CatalogEntry, ScenarioStats, Snapshot, Step, Tier } from "@wellfed/api";
+import type { CatalogEntry, JobView, ScenarioStats, Step, Tier } from "@wellfed/api";
 
 export interface LiveScenario {
   name: string;
@@ -22,11 +22,11 @@ export interface LiveRun {
 }
 
 /**
- * The current bench command while it is an integration run in progress. A
- * finished one is shown from its record instead, in the run history.
+ * The server's job while it is an integration run in progress. A finished
+ * one is shown from its record instead, in the run history.
  */
-export function liveRun(snapshot: Snapshot | null, catalog: CatalogEntry[], now: number): LiveRun | null {
-  const current = snapshot?.current;
+export function liveRun(job: JobView | null, catalog: CatalogEntry[], now: number): LiveRun | null {
+  const current = job?.end ? null : job?.record;
   if (current?.command !== "itest" || current.outcome !== "running") return null;
 
   const scenarios = current.steps.map((step) => ({
@@ -63,11 +63,12 @@ export interface RunOptions {
 }
 
 /**
- * The `wellfed-bench itest` invocation for these options. The page only
- * writes it out: running it is a physical bench operation for the operator.
+ * The `wellfed-bench itest` invocation for these options, which the running
+ * `wellfed-bench serve` takes as a job. The page only writes it out: running
+ * it is a physical bench operation for the operator.
  */
 export function itestCommand(options: RunOptions): string {
-  const parts = ["wellfed-bench", "--ui", "itest", options.name || "NAME"];
+  const parts = ["wellfed-bench", "itest", options.name || "NAME"];
   if (options.only.length) parts.push("--only", options.only.join(","));
   else if (options.tier !== "standard") parts.push("--tier", options.tier);
   if (options.build) parts.push("--build");

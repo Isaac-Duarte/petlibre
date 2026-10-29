@@ -34,8 +34,9 @@ impl Store {
         state
     }
 
-    /// A receiver that wakes on every change.
-    pub(crate) fn subscribe(&self) -> watch::Receiver<BenchState> {
+    /// A receiver that wakes on every change. Its value's `now` is when
+    /// the state last changed; a reader stamps its own.
+    pub fn subscribe(&self) -> watch::Receiver<BenchState> {
         self.sender.subscribe()
     }
 
@@ -135,6 +136,24 @@ impl JobLog {
         self.inner
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+/// One job's output for a reader in this process (the page), which follows
+/// it as the socket's stream does.
+#[derive(Clone)]
+pub struct JobOutput(pub(crate) Arc<JobLog>);
+
+impl JobOutput {
+    /// The kept lines from line `cursor` on, and the cursor after them.
+    pub fn read_from(&self, cursor: usize) -> (Vec<String>, usize) {
+        let unread = self.0.read_from(cursor);
+        (unread.lines, unread.cursor)
+    }
+
+    /// A receiver that wakes on every line and at the end.
+    pub fn subscribe(&self) -> watch::Receiver<u64> {
+        self.0.subscribe()
     }
 }
 

@@ -31,8 +31,8 @@ mod state;
 
 pub use client::{Client, ClientError, Followed, Interrupt};
 pub use jobs::{JobCommand, JobOptions, ToolPaths};
-pub use server::{Options, ServeError, Server, restore_output};
-pub use state::Store;
+pub use server::{Options, Outputs, ServeError, Server, restore_output};
+pub use state::{JobOutput, Store};
 
 #[cfg(test)]
 mod tests;

@@ -2,7 +2,7 @@
   import { LogView, Panel, bytes, clockTime } from "@wellfed/ui";
   import { app } from "../lib/bench.svelte";
 
-  const rx = $derived(app.snapshot?.rx ?? null);
+  const rx = $derived(app.evidence?.rx ?? null);
 </script>
 
 <Panel title="Latest capture">

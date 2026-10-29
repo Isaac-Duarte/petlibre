@@ -422,6 +422,8 @@ mod tests {
             activity: Vec::new(),
             uart: Uart::Idle,
             relays: Default::default(),
+            banks: Default::default(),
+            operator: Default::default(),
         });
         let bed = Bed {
             root: PathBuf::from("/nonexistent"),

@@ -11,6 +11,8 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use super::banks::Ledger;
+use super::notes::Operator;
 use super::progress::{Current, RelayState, StepState, Unit};
 
 /// A job's number, counting up across servers (see [`JOBS`]).
@@ -40,6 +42,10 @@ pub struct BenchState {
     /// acknowledged. The server holds the board, so nothing else switches
     /// a relay between reads, except the board's own front buttons.
     pub relays: BTreeMap<String, RelayState>,
+    /// Which build the bench believes each bank holds.
+    pub banks: Ledger,
+    /// What the operator's notes say now.
+    pub operator: Operator,
 }
 
 /// The server process.

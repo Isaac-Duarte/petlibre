@@ -1,19 +1,23 @@
 <script lang="ts">
   import { app } from "../lib/bench.svelte";
+  import ActivityPanel from "../parts/ActivityPanel.svelte";
   import CapturePanel from "../parts/CapturePanel.svelte";
   import FeederPanel from "../parts/FeederPanel.svelte";
   import HistoryPanel from "../parts/HistoryPanel.svelte";
   import LogPanel from "../parts/LogPanel.svelte";
   import NowPanel from "../parts/NowPanel.svelte";
+  import OperatorPanel from "../parts/OperatorPanel.svelte";
   import QaPanel from "../parts/QaPanel.svelte";
+  import RelaysPanel from "../parts/RelaysPanel.svelte";
   import ScriptPanel from "../parts/ScriptPanel.svelte";
+  import StockPanel from "../parts/StockPanel.svelte";
 </script>
 
-{#if app.snapshot?.script}
-  <ScriptPanel script={app.snapshot.script} now={app.now} />
+{#if app.evidence?.script}
+  <ScriptPanel script={app.evidence.script} now={app.now} />
 {/if}
-{#if app.snapshot?.qa}
-  <QaPanel qa={app.snapshot.qa} now={app.now} />
+{#if app.evidence?.qa}
+  <QaPanel qa={app.evidence.qa} now={app.now} />
 {/if}
 
 <div class="grid">
@@ -23,7 +27,11 @@
     <CapturePanel />
   </div>
   <div class="side">
+    <OperatorPanel />
+    <ActivityPanel />
+    <RelaysPanel />
     <FeederPanel />
+    <StockPanel />
     <HistoryPanel />
   </div>
 </div>

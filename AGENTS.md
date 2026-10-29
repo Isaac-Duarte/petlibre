@@ -67,7 +67,7 @@ This covers what this repository builds. Interop with things it does not build, 
 | Any Rust edit | `cargo fmt --all`, then `make check` (the contributor gate) |
 | Builder, audits, formats or flash review | Also `make check-fixtures` against fresh builds (`make -C src/firmware/vendor device firstboot`) |
 | Firmware crates | Also a fresh image build, so its link, RAM-park and stack audits run |
-| `src/web/`, or the views `wellfed-bench --ui` serves | Also `make check-web` (needs Node and pnpm): ESLint, Prettier, licenses, web types, unit tests, the build, and Playwright against the real binary |
+| `src/web/`, or the views `wellfed-bench serve --ui` serves | Also `make check-web` (needs Node and pnpm): ESLint, Prettier, licenses, web types, unit tests, the build, and Playwright against the real `wellfed-bench serve --ui` on a fake relay board |
 | `Cargo.lock` or `deny.toml` | `make check` includes `check-deps` (cargo-deny); its first run downloads the RustSec database |
 | `src/app/`, or a `wellfed-client` type the app uses | Also `make check-app` (needs the Flutter SDK): bindings regenerated with no diff, `dart format`, `flutter analyze`, `flutter test`, and a debug APK build |
 

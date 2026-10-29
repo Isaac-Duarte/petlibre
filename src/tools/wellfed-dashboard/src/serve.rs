@@ -1,19 +1,19 @@
 //! The page's HTTP server: the built web app from `src/web/apps/bench/dist`,
-//! embedded at compile time, and the JSON views it reads.
+//! embedded at compile time, the JSON views it reads, and one event stream
+//! of the server's live state, the running job's output and the views that
+//! change with it.
 //!
 //! The page shows private UART output, so it binds loopback by default.
 //! `--listen` serves another address: a named interface such as the
 //! Tailscale address, or a wildcard for every interface when the owner
 //! chooses to.
 
+use std::collections::VecDeque;
 use std::convert::Infallible;
-use std::fs;
-use std::io::{Read, Seek, SeekFrom};
 use std::net::{IpAddr, SocketAddr, TcpListener};
 use std::path::PathBuf;
-
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::Router;
 use axum::extract::{Path as UrlPath, Request, State};
@@ -25,28 +25,33 @@ use axum::routing::get;
 use futures_util::stream::{self, Stream};
 use rust_embed::Embed;
 use serde::Serialize;
+use tokio::sync::watch;
 
 use super::feeder::{self, FeederView};
 use super::runs;
+use super::views::evidence::{self, EvidenceView};
 use super::views::health::{self, FlashCache};
-use super::views::snapshot::{self, Snapshot};
-use super::views::{Sources, inside, sessions};
+use super::views::{Sources, sessions};
 
-use wellfed_formats::bench::{Cancel, STATUS_DIR};
+use wellfed_formats::bench::live::{BenchState, JobId, Uart};
+use wellfed_formats::bench::{Cancel, now};
 
-use crate::{Error, Result};
+use crate::{Error, JobOutput, Result};
 
 #[derive(Embed)]
 // Relative to this crate; `make ui` builds it.
 #[folder = "../../../src/web/apps/bench/dist/"]
 struct Assets;
 
-/// Live log text is sent in chunks of at most this much.
-const LOG_CHUNK: u64 = 256 << 10;
-/// A newly connected page starts this far from the end of the log.
-const LOG_BACKLOG: u64 = 512 << 10;
-/// How often the event stream asks the local server about the feeder.
-const FEEDER_SECONDS: f64 = 5.0;
+/// A newly connected page gets at most this many of the job's lines, the
+/// most the page keeps.
+const LOG_BACKLOG: usize = 20_000;
+/// How often the evidence files are read again for a connected page.
+const EVIDENCE_EVERY: Duration = Duration::from_secs(1);
+/// How often the event stream asks the local stock server about the feeder.
+const FEEDER_EVERY: Duration = Duration::from_secs(5);
+/// How often a quiet stream looks at the clocks above and the stop flag.
+const TICK: Duration = Duration::from_millis(250);
 
 #[derive(Clone)]
 struct Ui {
@@ -84,8 +89,9 @@ impl Listen {
 fn router(ui: Ui) -> Router {
     Router::new()
         .route("/", get(index))
-        .route("/api/status", get(status))
+        .route("/api/state", get(state))
         .route("/api/events", get(events))
+        .route("/api/evidence", get(evidence_view))
         .route("/api/sessions", get(sessions))
         .route("/api/sessions/{name}", get(session))
         .route("/api/health", get(health))
@@ -118,8 +124,19 @@ async fn view<T: Serialize + Send + 'static>(
     }
 }
 
-async fn status(State(ui): State<Ui>) -> Response {
-    view(&ui, |ui| Some(snapshot::snapshot(&ui.sources))).await
+/// The server's state as of now.
+fn current(ui: &Ui) -> BenchState {
+    let mut state = ui.sources.live.subscribe().borrow().clone();
+    state.now = now();
+    state
+}
+
+async fn state(State(ui): State<Ui>) -> Json<BenchState> {
+    Json(current(&ui))
+}
+
+async fn evidence_view(State(ui): State<Ui>) -> Response {
+    view(&ui, |ui| Some(evidence::evidence(&ui.sources))).await
 }
 
 async fn sessions(State(ui): State<Ui>) -> Response {
@@ -177,126 +194,194 @@ fn serve_asset(path: &str) -> Response {
     ([(header::CONTENT_TYPE, kind)], file.data).into_response()
 }
 
+/// The job output one event stream follows.
+struct Following {
+    output: Arc<dyn JobOutput>,
+    changed: watch::Receiver<u64>,
+    at: usize,
+}
+
 /// What one event stream has sent so far.
 struct Cursor {
     ui: Ui,
-    /// The last status sent; `None` before the first.
-    snapshot: Option<Snapshot>,
-    /// The job log being followed.
-    log: Option<std::path::PathBuf>,
-    offset: u64,
-    /// The last feeder view sent, and when the server was last asked.
+    state: watch::Receiver<BenchState>,
+    first: bool,
+    /// The state changed since it was last sent.
+    stale: bool,
+    /// The last state sent was in a UART write: the stream reads no file
+    /// then, so nothing the page does adds to the write's load.
+    writing: bool,
+    /// The job last seen in the state, and its output if the server keeps it.
+    job: Option<JobId>,
+    following: Option<Following>,
+    evidence: Option<EvidenceView>,
+    evidence_at: Option<Instant>,
     feeder: Option<FeederView>,
-    feeder_at: f64,
+    feeder_at: Option<Instant>,
+    pending: VecDeque<Event>,
 }
 
 impl Cursor {
-    /// The events due now: a status change, a log reset, new log text.
-    fn poll(&mut self) -> Vec<Event> {
-        let first = self.snapshot.is_none();
-        let mut out = Vec::new();
-
-        let snapshot = snapshot::snapshot(&self.ui.sources);
-        let changed = self
-            .snapshot
-            .as_ref()
-            .is_none_or(|sent| !snapshot.same_as(sent));
-        if changed && let Ok(text) = serde_json::to_string(&snapshot) {
-            out.push(Event::default().event("status").data(text));
-            self.snapshot = Some(snapshot);
+    fn new(ui: Ui) -> Self {
+        Self {
+            state: ui.sources.live.subscribe(),
+            ui,
+            first: true,
+            stale: true,
+            writing: false,
+            job: None,
+            following: None,
+            evidence: None,
+            evidence_at: None,
+            feeder: None,
+            feeder_at: None,
+            pending: VecDeque::new(),
         }
+    }
 
-        // A new job, or a log that shrank, restarts the page's log view
-        // near the end of the current file.
-        let log = self
-            .ui
-            .sources
-            .live
-            .log()
-            .and_then(|path| inside(&self.ui.sources.root, STATUS_DIR, &path));
-        let size = log
-            .as_ref()
-            .and_then(|log| fs::metadata(log).ok())
-            .map_or(0, |m| m.len());
-        if first || log != self.log || size < self.offset {
-            self.log.clone_from(&log);
-            self.offset = size.saturating_sub(LOG_BACKLOG);
-            out.push(Event::default().event("log-reset").data(""));
+    /// Wait for a change in the state or the job's output, or the next
+    /// tick; `false` once the server's state is gone.
+    async fn wait(&mut self) -> bool {
+        let Self {
+            state,
+            stale,
+            following,
+            ..
+        } = self;
+        let output = async {
+            let woke = match following {
+                Some(following) => following.changed.changed().await.is_ok(),
+                None => false,
+            };
+            // An output whose job is gone never wakes again; the state
+            // names the next job.
+            if !woke {
+                std::future::pending::<()>().await;
+            }
+        };
+        tokio::select! {
+            // Waking marks the state seen, so the next poll is told.
+            changed = state.changed() => {
+                *stale = true;
+                changed.is_ok()
+            }
+            () = output => true,
+            () = tokio::time::sleep(TICK) => true,
         }
+    }
 
-        if size > self.offset {
-            let mut chunk = Vec::new();
-            if let Some(log) = &log
-                && let Ok(mut file) = fs::File::open(log)
-                && file.seek(SeekFrom::Start(self.offset)).is_ok()
+    /// Queue the events due now: a state change, a new job's reset and
+    /// its new lines, and the evidence and feeder views when they change.
+    async fn poll(&mut self) {
+        let first = std::mem::take(&mut self.first);
+
+        if std::mem::take(&mut self.stale) || self.state.has_changed().unwrap_or(false) {
+            let mut state = self.state.borrow_and_update().clone();
+            state.now = now();
+            self.writing = matches!(state.uart, Uart::Writing { .. });
+            self.send("state", &state);
+
+            let job = state.job.as_ref().map(|job| job.id);
+            if first || job != self.job {
+                self.job = job;
+                self.follow(job);
+            }
+        }
+        self.read_output();
+
+        // The files are read on their own slower clocks, and not at all
+        // during a UART write once the page has its first view.
+        let due = |at: Option<Instant>, every: Duration| at.is_none_or(|at| at.elapsed() >= every);
+        if first || (!self.writing && due(self.evidence_at, EVIDENCE_EVERY)) {
+            self.evidence_at = Some(Instant::now());
+            let ui = self.ui.clone();
+            let read = tokio::task::spawn_blocking(move || evidence::evidence(&ui.sources));
+            if let Ok(view) = read.await
+                && self.evidence.as_ref() != Some(&view)
             {
-                let _ = file.take(LOG_CHUNK).read_to_end(&mut chunk);
-            }
-            // Send whole lines; a partial one waits for its newline.
-            let whole = chunk.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1);
-            if whole > 0 {
-                self.offset += whole as u64;
-                let text = String::from_utf8_lossy(&chunk[..whole]).into_owned();
-                out.push(Event::default().event("log").data(text));
+                self.send("evidence", &view);
+                self.evidence = Some(view);
             }
         }
-
-        // The server is asked on its own slower clock; a change is sent.
-        let now = wellfed_formats::bench::now();
-        if now - self.feeder_at >= FEEDER_SECONDS {
-            self.feeder_at = now;
-            let feeder = feeder::feeder(&self.ui.sources.root);
-            if self.feeder.as_ref() != Some(&feeder)
-                && let Ok(text) = serde_json::to_string(&feeder)
+        if first || (!self.writing && due(self.feeder_at, FEEDER_EVERY)) {
+            self.feeder_at = Some(Instant::now());
+            let root = self.ui.sources.root.clone();
+            let read = tokio::task::spawn_blocking(move || feeder::feeder(&root));
+            if let Ok(view) = read.await
+                && self.feeder.as_ref() != Some(&view)
             {
-                out.push(Event::default().event("feeder").data(text));
-                self.feeder = Some(feeder);
+                self.send("feeder", &view);
+                self.feeder = Some(view);
             }
         }
+    }
 
-        out
+    fn send(&mut self, name: &str, data: &impl Serialize) {
+        // Every view is plain data and always encodes.
+        if let Ok(event) = Event::default().event(name).json_data(data) {
+            self.pending.push_back(event);
+        }
+    }
+
+    /// Start on job `id`'s output: the page drops what it showed, then
+    /// gets the newest of what the server kept.
+    fn follow(&mut self, id: Option<JobId>) {
+        self.pending
+            .push_back(Event::default().event("log-reset").data(""));
+        self.following = id.and_then(|id| {
+            let output = self.ui.sources.live.output(id)?;
+            let changed = output.subscribe();
+            let (kept, end) = output.read_from(0);
+            Some(Following {
+                output,
+                changed,
+                at: end - kept.len().min(LOG_BACKLOG),
+            })
+        });
+    }
+
+    fn read_output(&mut self) {
+        let Some(following) = &mut self.following else {
+            return;
+        };
+        // Marked seen before reading, so a line pushed after the read
+        // wakes the next wait.
+        following.changed.borrow_and_update();
+        let (lines, at) = following.output.read_from(following.at);
+        following.at = at;
+        if !lines.is_empty() {
+            let mut text = lines.join("\n");
+            text.push('\n');
+            self.pending
+                .push_back(Event::default().event("log").data(text));
+        }
     }
 }
 
 async fn events(
     State(ui): State<Ui>,
 ) -> Sse<impl Stream<Item = std::result::Result<Event, Infallible>>> {
-    let cursor = Cursor {
-        ui,
-        snapshot: None,
-        log: None,
-        offset: 0,
-        feeder: None,
-        feeder_at: 0.0,
-    };
-
-    let ticks = stream::unfold(Some(cursor), |cursor| async move {
-        let mut cursor = cursor?;
+    let events = stream::unfold(Cursor::new(ui), |mut cursor| async move {
         loop {
             if cursor.ui.stopping() {
                 return None;
             }
-            let (back, events) = tokio::task::spawn_blocking(move || {
-                let events = cursor.poll();
-                (cursor, events)
-            })
-            .await
-            .ok()?;
-            cursor = back;
-            if !events.is_empty() {
-                return Some((stream::iter(events.into_iter().map(Ok)), Some(cursor)));
+            if let Some(event) = cursor.pending.pop_front() {
+                return Some((Ok(event), cursor));
             }
-            tokio::time::sleep(Duration::from_millis(250)).await;
+            if !cursor.first && !cursor.wait().await {
+                return None;
+            }
+            cursor.poll().await;
         }
     });
-    use futures_util::StreamExt;
-    Sse::new(ticks.flatten()).keep_alive(KeepAlive::default())
+    Sse::new(events).keep_alive(KeepAlive::default())
 }
 
-/// Bind now (so a busy port fails before any bench command), then serve on a
-/// background thread until `stop` is cancelled (the operator's interrupt).
-/// `flash_bin` is the flash client the page reports by hash; it is never run.
-/// `live` is the bench server's state, or [`crate::NoLive`] for the page alone.
+/// Bind now (so a busy port fails before the server takes jobs), then serve
+/// on a background thread until `stop` is cancelled. `flash_bin` is the
+/// flash client the page reports by hash; it is never run. `live` is the
+/// bench server's state and its jobs' output.
 pub fn start(
     root: PathBuf,
     flash_bin: PathBuf,
@@ -347,20 +432,71 @@ pub fn start(
 mod tests {
     use super::*;
     use axum::body::Body;
+    use futures_util::StreamExt;
     use tower::ServiceExt;
 
-    fn ui() -> (tempfile::TempDir, Router) {
+    use crate::Live;
+    use crate::views::tests::idle;
+    use wellfed_formats::bench::live::{CancelState, JobView};
+
+    /// A server's state and one job's output, set by the test.
+    struct Fake {
+        state: watch::Sender<BenchState>,
+        output: Arc<Lines>,
+    }
+
+    struct Lines {
+        lines: Mutex<Vec<String>>,
+        changed: watch::Sender<u64>,
+    }
+
+    impl Lines {
+        fn push(&self, line: &str) {
+            self.lines.lock().unwrap().push(line.into());
+            self.changed.send_modify(|n| *n += 1);
+        }
+    }
+
+    impl JobOutput for Lines {
+        fn read_from(&self, cursor: usize) -> (Vec<String>, usize) {
+            let lines = self.lines.lock().unwrap();
+            (lines[cursor.min(lines.len())..].to_vec(), lines.len())
+        }
+
+        fn subscribe(&self) -> watch::Receiver<u64> {
+            self.changed.subscribe()
+        }
+    }
+
+    impl Live for Fake {
+        fn subscribe(&self) -> watch::Receiver<BenchState> {
+            self.state.subscribe()
+        }
+
+        fn output(&self, id: JobId) -> Option<Arc<dyn JobOutput>> {
+            (id == 7).then(|| Arc::clone(&self.output) as Arc<dyn JobOutput>)
+        }
+    }
+
+    fn ui() -> (tempfile::TempDir, Arc<Fake>, Router) {
         let tmp = tempfile::tempdir().unwrap();
+        let fake = Arc::new(Fake {
+            state: watch::Sender::new(idle()),
+            output: Arc::new(Lines {
+                lines: Mutex::new(Vec::new()),
+                changed: watch::Sender::new(0),
+            }),
+        });
         let ui = Ui {
             sources: Sources {
                 root: tmp.path().into(),
                 flash_bin: tmp.path().join("wellfed-flash"),
-                live: Arc::new(crate::NoLive),
+                live: Arc::clone(&fake) as Arc<dyn Live>,
             },
             flash: Arc::default(),
             stop: Cancel::new(),
         };
-        (tmp, router(ui))
+        (tmp, fake, router(ui))
     }
 
     async fn get(router: &Router, uri: &str) -> Response {
@@ -373,7 +509,7 @@ mod tests {
 
     #[tokio::test]
     async fn loopback_serves_the_page_and_api() {
-        let (_tmp, router) = ui();
+        let (_tmp, _fake, router) = ui();
         let index = get(&router, "/").await;
         assert_eq!(index.status(), StatusCode::OK);
         assert_eq!(
@@ -396,7 +532,8 @@ mod tests {
         }
 
         for uri in [
-            "/api/status",
+            "/api/state",
+            "/api/evidence",
             "/api/sessions",
             "/api/health",
             "/api/tests",
@@ -412,6 +549,54 @@ mod tests {
         for uri in ["/api/sessions/absent", "/api/tests/absent"] {
             assert_eq!(get(&router, uri).await.status(), StatusCode::NOT_FOUND);
         }
+    }
+
+    /// Read the stream until `want` is in what arrived, or fail after 5 s.
+    async fn read_until(
+        body: &mut (impl Stream<Item = std::result::Result<axum::body::Bytes, axum::Error>> + Unpin),
+        seen: &mut String,
+        want: &str,
+    ) {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        while !seen.contains(want) {
+            let chunk = tokio::time::timeout_at(deadline, body.next())
+                .await
+                .unwrap_or_else(|_| panic!("no {want:?} in {seen}"))
+                .unwrap()
+                .unwrap();
+            seen.push_str(&String::from_utf8_lossy(&chunk));
+        }
+    }
+
+    #[tokio::test]
+    async fn the_stream_sends_the_state_then_the_jobs_output_as_it_comes() {
+        let (_tmp, fake, router) = ui();
+        fake.output.push("before the page connected");
+        let response = get(&router, "/api/events").await;
+        let mut body = response.into_body().into_data_stream();
+        let mut seen = String::new();
+
+        read_until(&mut body, &mut seen, "event: evidence").await;
+        assert!(seen.starts_with("event: state\n"), "{seen}");
+        assert!(seen.contains("event: log-reset"), "{seen}");
+
+        fake.state.send_modify(|state| {
+            state.job = Some(JobView {
+                id: 7,
+                label: "capture c1".into(),
+                log: "private/bench-status/jobs/7-c1.log".into(),
+                accepted: 1.0,
+                record: None,
+                upcoming: Vec::new(),
+                cancel: CancelState::None,
+                end: None,
+            });
+        });
+        read_until(&mut body, &mut seen, "before the page connected").await;
+        assert!(seen.contains(r#""label":"capture c1""#), "{seen}");
+
+        fake.output.push("a new line");
+        read_until(&mut body, &mut seen, "data: a new line").await;
     }
 
     #[test]

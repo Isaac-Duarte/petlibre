@@ -1,63 +1,93 @@
 <script lang="ts">
-  // Stock as the local server last heard it. The page never asks the feeder
-  // itself; the replacement firmware speaks no MQTT, so the server hears
-  // only stock, while it installs a replacement or after a rollback.
-  import { Command, Empty, Kv, LiveDot, Panel } from "@wellfed/ui";
+  // The feeder as the bench server knows it: the build it believes each
+  // bank holds and which the feeder confirmed. The server's feeder session
+  // (clock, journal, hotspot, device log) reports the rest; until it does,
+  // those read as not known.
+  import { Kv, LiveDot, Panel, clockTime } from "@wellfed/ui";
   import { app } from "../lib/bench.svelte";
+  import { BANKS, checkText, confirmed, contentText, sourceText } from "../lib/banks";
 
-  const feeder = $derived(app.feeder);
+  const UNKNOWN = "not known yet";
+  const ledger = $derived(app.state?.banks ?? null);
+  const running = $derived(ledger ? confirmed(ledger) : null);
 </script>
 
 <Panel title="Feeder">
-  {#snippet meta()}
-    {#if feeder?.server === "up"}from wellfed-stock on <code>{feeder.address}</code>{/if}
-  {/snippet}
-
-  {#if !feeder}
-    <Empty title="Asking the local server" />
-  {:else if feeder.server === "unconfigured"}
-    <Empty title="No local server configured">
-      The page reads stock through <code>wellfed-stock serve</code>, configured in
-      <code>{feeder.config}</code>.
-    </Empty>
-  {:else if feeder.server === "down"}
-    <div class="state">
-      <LiveDot tone="muted" />
-      <span class="headline">Server not running</span>
-    </div>
-    <p class="hint">
-      Nothing answers on <code>{feeder.address}</code>. An integration run starts its own server; to watch stock outside
-      one:
-    </p>
-    <Command command="wellfed-stock serve --config private/server.json" />
-  {:else}
-    <div class="state">
-      <LiveDot tone={feeder.stock_online ? "pass" : "muted"} pulse={feeder.stock_online} />
-      <span class="headline">{feeder.stock_online ? "Stock online" : "No stock telemetry"}</span>
-    </div>
-    <p class="hint">The replacement firmware answers its device API, not this server.</p>
-    <Kv
-      entries={[
-        ["Stock version", feeder.stock_version ?? "not reported"],
-        ["Broker", feeder.broker_connected ? "connected" : "not connected"],
-      ]}
-    />
-  {/if}
+  {#snippet meta()}as the bench server knows it{/snippet}
+  <ul class="banks" aria-label="Banks">
+    {#each BANKS as bank (bank)}
+      {@const entry = ledger?.banks[bank]}
+      <li>
+        <span class="bank">Bank {bank}</span>
+        {#if entry}
+          <span class="content">
+            <LiveDot
+              tone={entry.check.state === "confirmed" ? "pass" : entry.check.state === "disputed" ? "fail" : "muted"}
+            />
+            {contentText(entry.content)}
+          </span>
+          <span class="how">
+            {sourceText(entry.source)}{entry.session ? ` (${entry.session})` : ""} at {clockTime(entry.at, false)};
+            <span class={entry.check.state}>{checkText(entry.check)}</span>
+          </span>
+        {:else}
+          <span class="content muted">{UNKNOWN}</span>
+        {/if}
+      </li>
+    {/each}
+  </ul>
+  <Kv
+    entries={[
+      ["Confirmed build", running ? `${contentText(running[1].content)}, bank ${running[0]}` : UNKNOWN],
+      ["Clock synced", UNKNOWN],
+      ["Journal high water", UNKNOWN],
+      ["Hotspot", UNKNOWN],
+    ]}
+  />
+  <p class="log">Device log: {UNKNOWN}</p>
 </Panel>
 
 <style>
-  .state {
-    display: flex;
+  .banks {
+    list-style: none;
+    margin: 0 0 var(--space-4);
+    padding: 0;
+  }
+  li {
+    display: grid;
+    grid-template-columns: 4.5em minmax(0, 1fr);
+    gap: 2px var(--space-3);
+    padding: 4px 0;
+    font-size: var(--text-sm);
+  }
+  .bank {
+    color: var(--color-text-muted);
+  }
+  .content {
+    display: inline-flex;
     align-items: center;
-    gap: var(--space-2);
+    gap: 6px;
+    font-family: var(--mono);
+    font-size: var(--text-xs);
   }
-  .headline {
-    font-size: var(--text-md);
-    font-weight: 600;
+  .how {
+    grid-column: 2;
+    color: var(--color-text-muted);
+    font-size: var(--text-xs);
+    overflow-wrap: anywhere;
   }
-  .hint {
+  .disputed {
+    color: var(--color-fault);
+  }
+  .confirmed {
+    color: var(--color-ok);
+  }
+  .muted {
+    color: var(--color-text-muted);
+  }
+  .log {
+    margin: var(--space-3) 0 0;
     color: var(--color-text-muted);
     font-size: var(--text-sm);
-    margin: var(--space-2) 0 var(--space-3);
   }
 </style>

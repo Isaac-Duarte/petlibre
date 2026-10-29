@@ -88,7 +88,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::views::snapshot::snapshot;
+    use crate::views::evidence::evidence;
     use crate::views::tests::{json, sources};
 
     #[test]
@@ -112,7 +112,7 @@ mod tests {
         )
         .unwrap();
 
-        let script = json(snapshot(&sources))["script"].clone();
+        let script = json(evidence(&sources))["script"].clone();
         let expected = chrono::DateTime::parse_from_rfc3339("2026-10-22T10:00:01.5+00:00").unwrap();
         assert_eq!(
             script["started"].as_f64(),

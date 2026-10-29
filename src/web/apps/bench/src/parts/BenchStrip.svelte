@@ -34,8 +34,8 @@
       out.push({ label: "UART", value: found(health.ports.uart_port), tone: health.ports.uart_port ? "pass" : "fail" });
     }
 
-    // The live command's relay states are newer than the last recorded ones.
-    const relay = (channel: string) => app.snapshot?.current?.relay[channel] ?? health.relays?.[channel]?.on;
+    // The server holds the board, so its last answers are the relays.
+    const relay = (channel: string) => app.state?.relays[channel]?.on;
     for (const [channel, label] of [
       ["1", "Power"],
       ["2", "Loader strap"],
@@ -62,7 +62,8 @@
         mono: true,
       });
     }
-    if (health.busy) out.push({ label: "Running", value: health.busy, tone: "live" });
+    const job = app.state?.job;
+    if (job && !job.end) out.push({ label: `Job ${String(job.id)}`, value: job.label, tone: "live" });
     return out;
   });
 </script>

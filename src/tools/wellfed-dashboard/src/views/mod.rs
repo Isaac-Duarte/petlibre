@@ -1,19 +1,19 @@
-//! Read-only views of the status files and evidence directories, as the
-//! documents `assets/app.js` reads.
+//! Read-only views of the evidence directories and the command history, as
+//! the page reads them.
 //!
-//! Each public view backs one of the `--ui` page's API routes in the parent
+//! Each public view backs one of the page's API routes in the parent
 //! module, which runs it on the blocking pool; each route's view has its own
 //! submodule, and this module holds what they share. Field names and shapes
-//! are the page's contract: change one only with the script.
+//! are the page's contract, through the generated TypeScript types.
 //!
 //! Nothing here opens a serial port or writes a file. Every evidence path
-//! from a status file must stay inside its private/ folder; others are ignored.
+//! from a record must stay inside its private/ folder; others are ignored.
 
+pub(super) mod evidence;
 pub(super) mod health;
 mod qa;
 mod script;
 pub(super) mod sessions;
-pub(super) mod snapshot;
 pub(super) mod tail;
 
 use std::fs;
@@ -39,9 +39,10 @@ impl Sources {
         self.root.join(STATUS_DIR)
     }
 
-    /// The running command's record, if a server runs one.
-    fn current(&self) -> Option<Current> {
-        self.live.current()
+    /// The running job's record, from its first step until it ends.
+    fn running(&self) -> Option<Current> {
+        let job = self.live.subscribe().borrow().job.clone()?;
+        job.end.is_none().then_some(job.record).flatten()
     }
 }
 
@@ -123,7 +124,7 @@ fn latest_capture(root: &Path) -> Option<PathBuf> {
 #[cfg(test)]
 pub(super) fn bindings(cfg: &ts_rs::Config) -> Vec<String> {
     let mut decls = tail::bindings(cfg);
-    decls.extend(snapshot::bindings(cfg));
+    decls.extend(evidence::bindings(cfg));
     decls.extend(script::bindings(cfg));
     decls.extend(qa::bindings(cfg));
     decls.extend(sessions::bindings(cfg));
@@ -132,44 +133,84 @@ pub(super) fn bindings(cfg: &ts_rs::Config) -> Vec<String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use serde::Serialize;
     use serde_json::{Value, json};
 
+    use super::evidence::evidence;
     use super::sessions::sessions;
-    use super::snapshot::snapshot;
     use super::*;
-    use std::collections::BTreeMap;
-    use std::sync::Mutex;
-    use wellfed_formats::bench::progress::{ProgressSink, RelayState, Status};
+    use tokio::sync::watch;
+    use wellfed_formats::bench::live::{
+        BenchState, CancelState, JobEnd, JobId, JobView, Phase, ServerView, Uart,
+    };
+    use wellfed_formats::bench::progress::{Outcome, ProgressSink, Status};
 
     /// What a bench server would hand the page, set by the test.
-    #[derive(Default)]
     pub(crate) struct Recorded {
-        pub current: Mutex<Option<Current>>,
-        pub relays: Mutex<Option<BTreeMap<String, RelayState>>>,
+        pub state: watch::Sender<BenchState>,
+    }
+
+    impl Default for Recorded {
+        fn default() -> Self {
+            Self {
+                state: watch::Sender::new(idle()),
+            }
+        }
+    }
+
+    /// A server with no job yet.
+    pub(crate) fn idle() -> BenchState {
+        BenchState {
+            now: 0.0,
+            server: ServerView {
+                pid: 1,
+                started: 0.0,
+                phase: Phase::Serving,
+            },
+            job: None,
+            activity: Vec::new(),
+            uart: Uart::Idle,
+            relays: Default::default(),
+            banks: Default::default(),
+            operator: Default::default(),
+        }
     }
 
     impl Live for Recorded {
-        fn current(&self) -> Option<Current> {
-            self.current.lock().unwrap().clone()
+        fn subscribe(&self) -> watch::Receiver<BenchState> {
+            self.state.subscribe()
         }
 
-        fn relays(&self) -> Option<BTreeMap<String, RelayState>> {
-            self.relays.lock().unwrap().clone()
-        }
-
-        fn log(&self) -> Option<String> {
+        fn output(&self, _: JobId) -> Option<Arc<dyn crate::JobOutput>> {
             None
         }
     }
 
-    /// The record of a command, as the server's sink publishes it.
+    /// The record of a job, as the server's sink publishes it: its end
+    /// with its outcome.
     struct Publish(Arc<Recorded>);
 
     impl ProgressSink for Publish {
         fn publish(&mut self, current: &Current) {
-            *self.0.current.lock().unwrap() = Some(current.clone());
+            self.0.state.send_modify(|state| {
+                let job = state.job.get_or_insert_with(|| JobView {
+                    id: 1,
+                    label: current.command.word().into(),
+                    log: String::new(),
+                    accepted: current.started,
+                    record: None,
+                    upcoming: Vec::new(),
+                    cancel: CancelState::None,
+                    end: None,
+                });
+                job.update(current);
+                job.end = (current.outcome != Outcome::Running).then(|| JobEnd {
+                    code: 0,
+                    error: None,
+                    finished: current.finished.unwrap_or(current.started),
+                });
+            });
         }
     }
 
@@ -207,8 +248,7 @@ mod tests {
     fn empty() {
         let (_tmp, sources) = sources();
 
-        let view = json(snapshot(&sources));
-        assert!(view["current"].is_null());
+        let view = json(evidence(&sources));
         assert_eq!(view["history"], json!([]));
         assert!(view["rx"].is_null());
         assert!(view["script"].is_null());

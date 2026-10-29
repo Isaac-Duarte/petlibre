@@ -4361,14 +4361,10 @@ dependencies = [
 name = "wellfed-dashboard"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "axum",
  "chrono",
- "clap",
- "ctrlc",
  "futures-util",
  "rust-embed",
- "rustix",
  "serde",
  "serde_json",
  "tempfile",

@@ -9,7 +9,7 @@
   import RunMatrix from "../parts/RunMatrix.svelte";
 
   const tests = $derived(app.tests);
-  const live = $derived(liveRun(app.snapshot, tests?.catalog ?? [], app.now));
+  const live = $derived(liveRun(app.state?.job ?? null, tests?.catalog ?? [], app.now));
 </script>
 
 {#if !tests}

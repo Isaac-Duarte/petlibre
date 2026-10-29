@@ -558,37 +558,40 @@ Lines in `history.jsonl` from before the bench server may not parse, and the pag
 
 ### Serve it
 
-`serve --ui` serves a read-only page on `http://127.0.0.1:8780/`, beside the server and fed by its live state. `wellfed-dashboard` (what `src/scripts/bench-dashboard` builds and runs, with the same `--listen` and `--ui-port`) serves it alone. Alone it has no live state, so it shows the evidence and the history but no running job and no relays.
+`serve --ui` serves a read-only page on `http://127.0.0.1:8780/`, beside the server. One event stream (`/api/events`) carries the server's live state on every change, the running job's output from the server's memory, and the history and latest capture when they change. `/api/state` answers the state once. The page has no server of its own: with no `wellfed-bench serve`, there is no page.
 
 The page is optional. It is a Svelte app in `src/web/apps/bench`, which the binary embeds only when built with the `ui` feature:
 
 ```
 make ui                                   # pnpm in src/web/: builds src/web/apps/bench/dist
-cargo build --locked --release -p wellfed-bench -p wellfed-dashboard --features ui
+cargo build --locked --release -p wellfed-bench --features ui
 ```
 
 A binary built without the feature refuses `--ui` before the server takes the bench. Node and pnpm are needed only for `make ui` and `make check-web`, never for `make check`. The page's TypeScript types (`src/web/packages/api/src/bench.gen.ts`) are generated from the Rust views, and a test in `make check` fails when they are stale (`UPDATE_BINDINGS=1 cargo test -p wellfed-dashboard bindings` rewrites them).
 
-**What it reads.** Only the bench server's live state, the history, the evidence directories and the stock server's status. It links no relay or flash code and never opens a serial port, so it can run beside any job, and nothing it does writes. The feeder panel asks `wellfed-stock serve` for `GET /api/status` on the address and token in `private/server.json`, every 5 seconds. That read changes nothing on the server or the feeder. When the server is down or not configured, the panel says so.
+**What it reads.** Only the bench server's live state and job output, the history, the evidence directories and the stock server's status. It links no relay or flash code and never opens a serial port, so it can run beside any job, and nothing it does writes. While the UART is writing flash it reads no file at all once a browser has its first view: the history, the capture tail, health, sessions and tests wait for the write to end. The stock server panel asks `wellfed-stock serve` for `GET /api/status` on the address and token in `private/server.json`, every 5 seconds. That read changes nothing on the server or the feeder. When the server is down or not configured, the panel says so.
 
 **Network.** The page binds to loopback by default because it shows private UART output. `--listen ADDRESS` serves another interface, for example the Tailscale address to reach it from a phone. There is no access token: anyone who can reach that address can read the page, so prefer a private interface such as Tailscale. `--listen 0.0.0.0` (or `::`) serves every interface, including the feeder hotspot and any container bridges; the owner chose to allow it. Allowing that port through the host firewall is the owner's change. `--ui-port` changes the port.
 
 ### Views
 
-The page has four views (keys `g o`, `g t`, `g s`, `g l`; `/` filters the log). A strip on every view shows relay and UART port presence, the relay states as the server last read or set them, the `wellfed-flash` hash, the build and bank from the newest replacement-firmware start banner in a capture, and the running command.
+The page has four views (keys `g o`, `g t`, `g s`, `g l`; `/` filters the log). A strip on every view shows relay and UART port presence, the relay states as the server last read or set them, the `wellfed-flash` hash, the build and bank from the newest replacement-firmware start banner in a capture, and the running job. While a flash client writes over the UART, a red banner on every view says not to touch the bench, with the sectors verified so far and how long the write has run; the tab title starts with `WRITING`.
 
 - **Overview**
   - **Guided QA** (when the latest capture holds `PLQA1` records) coaches the newest [QA](../../firmware/qa.md) run from its records. It shows what to do now in plain words ("Look at the Wi-Fi light. Lit: press Dispense. Dark: press Lock."), the time left on a button prompt, each check's state with the answers so far, and the result. **Enable sound** beeps at each new prompt. It follows the records only; `wellfed-audit qa` still grades the run. The records are parsed by `wellfed_formats::qa`, which the audit shares.
-  - **Now:** the command, its outcome and elapsed time. Steps show their own durations. While the command runs, bars show straight-line ETAs for the tool's own counts, an update's estimated transfer and the active capture. The next command to run after review is shown with a copy button. The tab title carries the state.
-  - **Feeder:** stock as `wellfed-stock` last heard it: online or not, its reported version, and whether the server holds its broker session. The replacement firmware speaks no MQTT, so it shows nowhere here.
-  - **Latest integration run:** each scenario's verdict, or the live run's progress.
+  - **Now:** the server's job, its outcome and elapsed time, the step it is on and the next few. Steps show their own durations. While the job runs, bars show straight-line ETAs for the tool's own counts and the active capture's time. The next command to run after review is shown with a copy button.
+  - **Operator:** the step, the next steps, timers counting down (with the device event each expects) and evidence by card with pass or fail, from `private/bench-status/notes.jsonl` as the server read it at its start.
+  - **Activity:** the job and each child it runs (flash client, build, stock, analyzer), with when it started. One that clears stays a minute, fading.
+  - **Relays:** channels 1 to 4 as the server last read or set them, and when, and the server holding the lease.
+  - **Feeder:** the build the bank ledger (`private/bench-status/banks.json`) puts in each bank, how it got there, and whether the feeder's banner or status confirmed or disputed it. The clock, journal high water, hotspot and device log read "not known yet" until the server holds a feeder session.
+  - **Stock server:** stock as `wellfed-stock` last heard it: online or not, its reported version, and whether the server holds its broker session. The replacement firmware speaks no MQTT, so it shows nowhere here.
   - **Recent commands.**
 - **Tests**
   - **Run in progress:** each scenario with what it checks and its time. The running one shows its current wait and its notes from the log.
   - **Run history:** every `NAME-itest.json` against every scenario, newest on the left. A live run fills the first column. Each row has the pass rate over runs that reached a verdict, the median passing time and the last failure. **Flaky** marks two or more pass/fail changes in the last 20 runs. Selecting a run opens its record: verdicts and reasons, the UART recovery commands if the feeder went silent, and the tails of its captures and `NAME-servers.log`. A run's link (`#/tests/NAME`) can be shared.
   - **Start a run:** composes a `wellfed-bench itest` command from a tier or chosen scenarios and the allowed flags, and warns which scenarios would be skipped. The page only writes the command out; running it is a physical bench operation.
 - **Sessions:** session names with evidence parts, report state and age. Selecting one shows each part's report or plan (bank, sectors, erases, image hashes, plan SHA-256) and a copyable execute line. A report still marked `running` whose command is no longer live reads as `ended`: the process stopped without recording an outcome.
-- **Log:** the job's log file, kept to the newest 20,000 lines. The file is buffered, so it can lag the job by a few kilobytes until the job ends. It can be filtered, followed and copied, and only the visible lines are drawn. Stops, refusals, faults and NAKs are highlighted, and scenario starts mark sections. The flash client's JSON summaries are coloured by their `error` and `status` fields. Healthy health lines (`outputs stopped, faults none`) and file names such as `-fault-v52.manifest` are not taken for failures. The latest capture's tail sits beside the log.
+- **Log:** the job's output as the server holds it, line by line as it comes, kept to the newest 20,000 lines. It can be filtered, followed and copied, and only the visible lines are drawn. Stops, refusals, faults and NAKs are highlighted, and scenario starts mark sections. The flash client's JSON summaries are coloured by their `error` and `status` fields. Healthy health lines (`outputs stopped, faults none`) and file names such as `-fault-v52.manifest` are not taken for failures. The latest capture's tail sits beside the log.
 
 Light and dark follow the system; the button in the header cycles auto, light and dark for this browser.
 

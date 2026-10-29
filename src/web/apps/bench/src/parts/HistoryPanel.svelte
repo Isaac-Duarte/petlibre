@@ -5,7 +5,7 @@
   let all = $state(false);
   const SHORT = 8;
 
-  const history = $derived(app.snapshot?.history ?? []);
+  const history = $derived(app.evidence?.history ?? []);
   const shown = $derived(all ? history : history.slice(0, SHORT));
 </script>
 

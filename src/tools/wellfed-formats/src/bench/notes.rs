@@ -66,6 +66,8 @@ pub struct Timer {
 /// One card's evidence, in the order it was noted.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+// The page's types already have a run record's `Evidence`.
+#[cfg_attr(feature = "ts", ts(rename = "NoteEvidence"))]
 pub struct Evidence {
     pub at: f64,
     pub verdict: Verdict,

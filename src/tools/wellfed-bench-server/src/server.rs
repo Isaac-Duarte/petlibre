@@ -16,10 +16,12 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use tokio::sync::Notify;
+use wellfed_formats::bench::banks::BANKS;
 use wellfed_formats::bench::lease::{self, Lease};
 use wellfed_formats::bench::live::{
     BenchState, CancelState, JOBS, JobEnd, JobId, JobView, Phase, ServerView, Uart,
 };
+use wellfed_formats::bench::notes::{NOTES, Note, Operator};
 use wellfed_formats::bench::progress::{Current, ProgressSink};
 use wellfed_formats::bench::{CONFIG, Config, now, relative};
 use wellfed_relay::Board;
@@ -31,7 +33,7 @@ use crate::board::SharedBoard;
 use crate::jobs::{self, Bed, JobError, Run, ToolPaths};
 use crate::output::{self, Output};
 use crate::routes;
-use crate::state::{JobLog, Logs, Store};
+use crate::state::{JobLog, JobOutput, Logs, Store};
 
 /// How long a quitting server lets its clients' connections finish once
 /// the job has ended.
@@ -104,6 +106,8 @@ impl Server {
             activity: Vec::new(),
             uart: Uart::Idle,
             relays: Default::default(),
+            banks: wellfed_formats::load(&options.root.join(BANKS)).unwrap_or_default(),
+            operator: operator(&options.root),
         });
         let board = SharedBoard::new(board, store.clone());
         board.query()?;
@@ -141,6 +145,11 @@ impl Server {
     /// The live state, for a reader in this process (the page).
     pub fn store(&self) -> Store {
         self.shared.store.clone()
+    }
+
+    /// The jobs' output, for a reader in this process (the page).
+    pub fn outputs(&self) -> Outputs {
+        Outputs(Arc::clone(&self.shared))
     }
 
     pub fn socket(&self) -> &Path {
@@ -248,6 +257,17 @@ fn bind(socket: &Path) -> std::io::Result<std::os::unix::net::UnixListener> {
     Ok(listener)
 }
 
+/// What the operator's notes say, replayed from the start; a line that
+/// does not read is skipped, as the page skips one.
+fn operator(root: &Path) -> Operator {
+    let text = std::fs::read_to_string(root.join(NOTES)).unwrap_or_default();
+    let notes: Vec<Note> = text
+        .lines()
+        .filter_map(|line| serde_json::from_str(line).ok())
+        .collect();
+    Operator::fold(&notes)
+}
+
 /// The highest job number among the logs in `directory`, so a new server
 /// carries on from it rather than overwrite an earlier job's log.
 fn last_job(directory: &Path) -> JobId {
@@ -262,6 +282,16 @@ fn last_job(directory: &Path) -> JobId {
         })
         .max()
         .unwrap_or(0)
+}
+
+/// The output of the running job and of the last few, by id.
+#[derive(Clone)]
+pub struct Outputs(Arc<Shared>);
+
+impl Outputs {
+    pub fn get(&self, id: JobId) -> Option<JobOutput> {
+        self.0.log(id).map(JobOutput)
+    }
 }
 
 /// What the socket's handlers and the job thread share.

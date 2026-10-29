@@ -118,10 +118,7 @@ pub(crate) fn sessions(sources: &Sources) -> Sessions {
     list.truncate(SESSIONS_SHOWN);
 
     // A report left "running" by a process that exited without finishing it.
-    let live = sources
-        .current()
-        .filter(crate::live)
-        .and_then(|current| current.name);
+    let live = sources.running().and_then(|current| current.name);
     let sessions = list
         .into_iter()
         .map(|(name, (modified, parts))| {

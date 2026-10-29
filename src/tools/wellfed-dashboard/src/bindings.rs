@@ -9,9 +9,15 @@ use std::path::PathBuf;
 
 use ts_rs::{Config, TS};
 
+use wellfed_formats::bench::banks::{Bank, Check, Content, Entry, Ledger, Source, Witness};
 use wellfed_formats::bench::catalog::{CatalogEntry, Requirement, Tier};
+use wellfed_formats::bench::live::{
+    Activity, ActivityKind, BenchState, CancelState, JobEnd, JobView, Phase, ServerView, Uart,
+};
+use wellfed_formats::bench::notes::{self, Operator, Timer, Verdict};
 use wellfed_formats::bench::progress::{
-    BenchCommand, FlashTool, HistoryEntry, Outcome, Progress, RelayState, Step, StepState, Unit,
+    BenchCommand, Capture, Current, FlashTool, HistoryEntry, Outcome, Progress, RelayState, Step,
+    StepState, Transfer, Unit,
 };
 use wellfed_formats::bench::run::{Evidence, RunRecord, ScenarioRecord, ScenarioVerdict};
 
@@ -44,6 +50,30 @@ fn generated() -> String {
         decl::<ScenarioVerdict>(&cfg),
         decl::<ScenarioRecord>(&cfg),
         decl::<RunRecord>(&cfg),
+        // The bench server's live state.
+        decl::<Capture>(&cfg),
+        decl::<Transfer>(&cfg),
+        decl::<Current>(&cfg),
+        decl::<BenchState>(&cfg),
+        decl::<ServerView>(&cfg),
+        decl::<Phase>(&cfg),
+        decl::<JobView>(&cfg),
+        decl::<CancelState>(&cfg),
+        decl::<JobEnd>(&cfg),
+        decl::<Activity>(&cfg),
+        decl::<ActivityKind>(&cfg),
+        decl::<Uart>(&cfg),
+        decl::<Ledger>(&cfg),
+        decl::<Bank>(&cfg),
+        decl::<Entry>(&cfg),
+        decl::<Content>(&cfg),
+        decl::<Source>(&cfg),
+        decl::<Check>(&cfg),
+        decl::<Witness>(&cfg),
+        decl::<Operator>(&cfg),
+        decl::<Timer>(&cfg),
+        decl::<notes::Evidence>(&cfg),
+        decl::<Verdict>(&cfg),
     ];
     decls.extend(super::views::bindings(&cfg));
     decls.extend(super::runs::bindings(&cfg));

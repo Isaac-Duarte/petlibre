@@ -26,7 +26,7 @@ use wellfed_formats::bench::catalog;
 use wellfed_formats::bench::lease::{self, Liveness};
 use wellfed_formats::bench::live::{BenchState, JobId, Phase, Uart};
 use wellfed_formats::bench::{CONFIG, Config};
-use wellfed_relay::{AtBoard, Relay};
+use wellfed_relay::{AtBoard, Board, Relay};
 use wellfed_rig::Cancel;
 use wellfed_rig::commands::{Bench, UartWhenOff, check_name, seconds_arg};
 use wellfed_rig::tools::{
@@ -105,6 +105,12 @@ struct ServeArgs {
     listen: String,
     #[arg(long, default_value_t = 8780, requires = "ui")]
     ui_port: u16,
+
+    /// A scripted relay board in place of `relay_port`, for the page's
+    /// end-to-end tests; only a binary built with `fake-board` has it.
+    #[cfg(feature = "fake-board")]
+    #[arg(long, hide = true)]
+    fake_board: bool,
 }
 
 /// Parse the command line and run it.
@@ -153,7 +159,7 @@ fn run(cli: Cli, argv: &[String]) -> anyhow::Result<u8> {
             Ok(0)
         }
         Command::Status { break_lease } => status(&root, break_lease, &runtime),
-        Command::Serve(args) => serve(&root, args, &runtime),
+        Command::Serve(args) => serve(&root, &args, &runtime),
         Command::Attach { id } => runtime.block_on(async {
             let mut interrupts = interrupts()?;
             follow(&Client::new(&root), id, &mut interrupts).await
@@ -244,11 +250,11 @@ async fn follow(
 }
 
 /// Run the server until Ctrl+C or SIGTERM.
-fn serve(root: &Path, args: ServeArgs, runtime: &tokio::runtime::Runtime) -> anyhow::Result<u8> {
+fn serve(root: &Path, args: &ServeArgs, runtime: &tokio::runtime::Runtime) -> anyhow::Result<u8> {
     let tools = ToolPaths {
-        flash_bin: args.flash_bin.unwrap_or_else(default_flash_bin),
-        stock_bin: args.stock_bin.unwrap_or_else(default_stock_bin),
-        build_bin: args.build_bin.unwrap_or_else(default_build_bin),
+        flash_bin: args.flash_bin.clone().unwrap_or_else(default_flash_bin),
+        stock_bin: args.stock_bin.clone().unwrap_or_else(default_stock_bin),
+        build_bin: args.build_bin.clone().unwrap_or_else(default_build_bin),
     };
     if args.ui {
         page::available()?;
@@ -257,9 +263,7 @@ fn serve(root: &Path, args: ServeArgs, runtime: &tokio::runtime::Runtime) -> any
         root: root.to_path_buf(),
         tools: tools.clone(),
     };
-    let server = Server::open(options, |config| {
-        Ok(Box::new(AtBoard::open(&config.relay_port)?))
-    })?;
+    let server = Server::open(options, |config| open_board(args, config))?;
 
     let stop_page = Cancel::new();
     let page = if args.ui {
@@ -269,7 +273,7 @@ fn serve(root: &Path, args: ServeArgs, runtime: &tokio::runtime::Runtime) -> any
             address: &args.listen,
             port: args.ui_port,
         };
-        Some(page.start(&stop_page, server.store())?)
+        Some(page.start(&stop_page, server.store(), server.outputs())?)
     } else {
         None
     };
@@ -297,6 +301,19 @@ fn serve(root: &Path, args: ServeArgs, runtime: &tokio::runtime::Runtime) -> any
     }
     served?;
     Ok(0)
+}
+
+/// The configured relay board, or with `--fake-board` a scripted one that
+/// starts with every relay off.
+fn open_board(args: &ServeArgs, config: &Config) -> wellfed_relay::Result<Box<dyn Board>> {
+    #[cfg(feature = "fake-board")]
+    if args.fake_board {
+        let fake = wellfed_relay::FakeBoard::default();
+        return Ok(Box::new(AtBoard::new(Box::new(fake))));
+    }
+    #[cfg(not(feature = "fake-board"))]
+    let _ = args;
+    Ok(Box::new(AtBoard::open(&config.relay_port)?))
 }
 
 /// The operator's Ctrl+C, a SIGTERM, or the terminal hanging up: each stops

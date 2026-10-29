@@ -2,7 +2,7 @@
 
 The feeder counts portions, not grams. A portion is one compartment of the rotor, and the feeder knows one has dropped when the rotor's mark sensor sees it pass. What a portion weighs comes from your kitchen scale, entered once with `wellfed calibrate`. This page explains what a portion is, how the feeder copes when the rotor stopped between marks, and how to weigh a portion.
 
-Status: **Experimental**. Phase handling is observed on our unit, and one portion of the owner's dry food weighs 7.11 g on it.
+Status: **Works**. Phase handling is observed on our unit, and one portion of the owner's dry food weighs 7.11 g on it.
 
 ## What a portion is
 

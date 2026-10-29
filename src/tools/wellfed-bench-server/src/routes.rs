@@ -1,7 +1,8 @@
 //! The socket's routes:
 //! - `GET /state`: the live state;
 //! - `GET /events`: the live state again on every change (SSE `state`);
-//! - `POST /jobs`: start a job (201), or refuse it (409 while one runs);
+//! - `POST /jobs`: parse a command line and start it as a job (201), or
+//!   refuse it (400 for no job, 409 while one runs);
 //! - `GET /jobs/{id}/stream`: the job's output from its first line, then its
 //!   end, as newline-delimited JSON; a client that disconnects only stops
 //!   reading;
@@ -23,8 +24,8 @@ use tokio::sync::watch;
 use wellfed_formats::bench::live::{BenchState, JobEvent, JobId, Phase};
 use wellfed_formats::bench::now;
 
-use crate::api::{Accepted, Refusal};
-use crate::jobs::JobSpec;
+use crate::api::{Accepted, JobRequest, Refusal};
+
 use crate::server::Shared;
 use crate::state::JobLog;
 
@@ -44,7 +45,10 @@ impl IntoResponse for Refusal {
             Self::Busy { .. } | Self::Finished { .. } => StatusCode::CONFLICT,
             Self::Stopping => StatusCode::SERVICE_UNAVAILABLE,
             Self::NoSuchJob { .. } => StatusCode::NOT_FOUND,
-            Self::BadName { .. } => StatusCode::BAD_REQUEST,
+            Self::Unparsed { .. }
+            | Self::NotAJob { .. }
+            | Self::BadName { .. }
+            | Self::BadLength { .. } => StatusCode::BAD_REQUEST,
         };
         (status, Json(self)).into_response()
     }
@@ -54,8 +58,8 @@ async fn state(State(shared): State<Arc<Shared>>) -> Json<BenchState> {
     Json(shared.store.read())
 }
 
-async fn submit(State(shared): State<Arc<Shared>>, Json(spec): Json<JobSpec>) -> Response {
-    match shared.start(spec) {
+async fn submit(State(shared): State<Arc<Shared>>, Json(request): Json<JobRequest>) -> Response {
+    match shared.start(&request.argv) {
         Ok(id) => (StatusCode::CREATED, Json(Accepted { id })).into_response(),
         Err(refusal) => refusal.into_response(),
     }

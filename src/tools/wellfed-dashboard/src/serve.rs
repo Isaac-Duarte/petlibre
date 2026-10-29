@@ -30,8 +30,8 @@ use super::feeder::{self, FeederView};
 use super::runs;
 use super::views::health::{self, FlashCache};
 use super::views::snapshot::{self, Snapshot};
-use super::views::{Sources, sessions};
-use wellfed_formats::bench::progress::LOG;
+use super::views::{Sources, inside, sessions};
+
 use wellfed_formats::bench::{Cancel, STATUS_DIR};
 
 use crate::{Error, Result};
@@ -182,7 +182,8 @@ struct Cursor {
     ui: Ui,
     /// The last status sent; `None` before the first.
     snapshot: Option<Snapshot>,
-    started: Option<f64>,
+    /// The job log being followed.
+    log: Option<std::path::PathBuf>,
     offset: u64,
     /// The last feeder view sent, and when the server was last asked.
     feeder: Option<FeederView>,
@@ -192,7 +193,6 @@ struct Cursor {
 impl Cursor {
     /// The events due now: a status change, a log reset, new log text.
     fn poll(&mut self) -> Vec<Event> {
-        let directory = self.ui.sources.root.join(STATUS_DIR);
         let first = self.snapshot.is_none();
         let mut out = Vec::new();
 
@@ -206,20 +206,28 @@ impl Cursor {
             self.snapshot = Some(snapshot);
         }
 
-        // A new command, or a log that shrank, restarts the page's log view
+        // A new job, or a log that shrank, restarts the page's log view
         // near the end of the current file.
-        let started = self.ui.sources.live.current().map(|c| c.started);
-        let log = directory.join(LOG);
-        let size = fs::metadata(&log).map_or(0, |m| m.len());
-        if first || started != self.started || size < self.offset {
-            self.started = started;
+        let log = self
+            .ui
+            .sources
+            .live
+            .log()
+            .and_then(|path| inside(&self.ui.sources.root, STATUS_DIR, &path));
+        let size = log
+            .as_ref()
+            .and_then(|log| fs::metadata(log).ok())
+            .map_or(0, |m| m.len());
+        if first || log != self.log || size < self.offset {
+            self.log.clone_from(&log);
             self.offset = size.saturating_sub(LOG_BACKLOG);
             out.push(Event::default().event("log-reset").data(""));
         }
 
         if size > self.offset {
             let mut chunk = Vec::new();
-            if let Ok(mut file) = fs::File::open(&log)
+            if let Some(log) = &log
+                && let Ok(mut file) = fs::File::open(log)
                 && file.seek(SeekFrom::Start(self.offset)).is_ok()
             {
                 let _ = file.take(LOG_CHUNK).read_to_end(&mut chunk);
@@ -256,7 +264,7 @@ async fn events(
     let cursor = Cursor {
         ui,
         snapshot: None,
-        started: None,
+        log: None,
         offset: 0,
         feeder: None,
         feeder_at: 0.0,

@@ -39,7 +39,9 @@ use wellfed_rig::commands::Bench;
 use wellfed_rig::commands::ota::{self, OtaArgs, Staged, Target, Timing};
 use wellfed_rig::device::{Answer, Ask, Device, Intruder, Rebuffed};
 use wellfed_rig::server::{StockStatus, TrialAnswer, TrialRequest, TrialResolve};
-use wellfed_rig::tools::{Capture, CaptureFailure, InstallJob, Installing, PushError, Tracked};
+use wellfed_rig::tools::{
+    Capture, CaptureFailure, InstallJob, Installing, PushError, Tracked, own_group,
+};
 use wellfed_rig::{Waited, say, wait_child};
 use wellfed_stock_api::{Auth, StockApi};
 
@@ -270,7 +272,7 @@ impl<'b> LiveRig<'b> {
             .create(true)
             .append(true)
             .open(&self.server_log)?;
-        let child = Command::new(program)
+        let child = own_group(&mut Command::new(program))
             .current_dir(&self.bench.root)
             .args(args)
             .stdin(Stdio::null())
@@ -334,7 +336,7 @@ impl<'b> LiveRig<'b> {
     /// SIGTERM, which `serve` handles by stopping its broker child too; a
     /// kill if it is still running after [`STOP_WAIT`].
     fn stop(running: Option<Running>) {
-        let Some((mut child, _tracked)) = running else {
+        let Some((mut child, tracked)) = running else {
             return;
         };
         let pid = rustix::process::Pid::from_child(&child);
@@ -352,6 +354,7 @@ impl<'b> LiveRig<'b> {
             let _ = child.kill();
             let _ = child.wait();
         }
+        drop(tracked);
     }
 
     fn stop_servers(&mut self) {

@@ -5,10 +5,10 @@
 //! and the page lists it beside the run records, so the three cannot drift
 //! apart. The page links no suite code, which is why the table lives here.
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 /// How much of the suite a run takes on; each tier includes the cheaper ones.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "lowercase")]

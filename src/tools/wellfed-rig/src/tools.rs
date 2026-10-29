@@ -27,7 +27,7 @@ use wellfed_formats::session::Status as SessionStatus;
 use wellfed_signing::CONTAINER_HEADER;
 
 mod children;
-pub use children::{Children, Tracked};
+pub use children::{Children, Tracked, own_group};
 
 /// How long a receive-only capture may take to hold the UART port.
 const OBSERVER_START: Duration = Duration::from_secs(10);
@@ -425,7 +425,7 @@ impl Processes {
             path: self.flash_bin.clone(),
         })?;
         let mut command = Command::new(&self.flash_bin);
-        command
+        own_group(&mut command)
             .current_dir(&self.root)
             .arg("--root")
             .arg(&self.root);
@@ -452,24 +452,31 @@ fn stream(mut command: Command, status: &mut Status, spawn: &Spawn<'_>) -> Resul
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
-    let _tracked = spawn.children.track(&child, spawn.kind, &spawn.label);
+    let tracked = spawn.children.track(&child, spawn.kind, &spawn.label);
 
     // Drain stdout on its own thread so neither pipe fills and blocks the
     // child while stderr streams here.
     let mut stdout = child.stdout.take().expect("piped stdout");
     let summary = std::thread::spawn(move || {
-        let mut text = String::new();
-        let _ = stdout.read_to_string(&mut text);
-        text
+        let mut bytes = Vec::new();
+        let _ = stdout.read_to_end(&mut bytes);
+        String::from_utf8_lossy(&bytes).into_owned()
     });
 
-    for line in BufReader::new(child.stderr.take().expect("piped stderr")).lines() {
-        let line = line?;
+    // Read as bytes and shown lossily, so no output ends the reading early
+    // and the child is always waited for.
+    let mut stderr = BufReader::new(child.stderr.take().expect("piped stderr"));
+    let mut bytes = Vec::new();
+    while matches!(stderr.read_until(b'\n', &mut bytes), Ok(n) if n > 0) {
+        let line = String::from_utf8_lossy(&bytes).trim_end().to_string();
         eprintln!("{line}");
         status.line(&line);
+        bytes.clear();
     }
 
-    let code = exit_code(child.wait()?);
+    let waited = child.wait();
+    drop(tracked);
+    let code = exit_code(waited?);
     for line in summary.join().unwrap_or_default().lines() {
         say!("{line}");
         status.line(line);
@@ -486,7 +493,7 @@ fn stream_both(mut command: Command, status: &mut Status, spawn: &Spawn<'_>) -> 
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
-    let _tracked = spawn.children.track(&child, spawn.kind, &spawn.label);
+    let tracked = spawn.children.track(&child, spawn.kind, &spawn.label);
 
     let (sender, lines) = mpsc::channel();
     let pipes: [(Box<dyn Read + Send>, bool); 2] = [
@@ -524,7 +531,9 @@ fn stream_both(mut command: Command, status: &mut Status, spawn: &Spawn<'_>) -> 
     for reader in readers {
         let _ = reader.join();
     }
-    Ok(exit_code(child.wait()?))
+    let waited = child.wait();
+    drop(tracked);
+    Ok(exit_code(waited?))
 }
 
 impl Processes {
@@ -533,7 +542,7 @@ impl Processes {
             path: self.build_bin.clone(),
         })?;
         let mut command = Command::new(&self.build_bin);
-        command.current_dir(&self.root);
+        own_group(&mut command).current_dir(&self.root);
         Ok(command)
     }
 }
@@ -558,7 +567,7 @@ impl Tools for Processes {
         let mut observer = Observing {
             child,
             output: output.to_path_buf(),
-            _tracked: tracked,
+            tracked: Some(tracked),
         };
 
         let waited = wait_child(
@@ -677,7 +686,10 @@ impl Tools for Processes {
                     return chain.fail(CaptureFailure::NameTaken { segment: output });
                 }
                 let mut command = Command::new(&flash);
-                command.current_dir(&root).arg("--root").arg(&root);
+                own_group(&mut command)
+                    .current_dir(&root)
+                    .arg("--root")
+                    .arg(&root);
                 let child = command
                     .args(["read", "observe", "--port", &port, "--output"])
                     .arg(&output)
@@ -689,7 +701,7 @@ impl Tools for Processes {
                     Ok(child) => child,
                     Err(error) => return chain.fail(CaptureFailure::Spawn(error)),
                 };
-                let _tracked = children.track(&child, ActivityKind::Flash, OBSERVE_LABEL);
+                let tracked = children.track(&child, ActivityKind::Flash, OBSERVE_LABEL);
                 chain.started(output);
 
                 let waited = wait_child(
@@ -699,15 +711,21 @@ impl Tools for Processes {
                     CHILD_POLL,
                     || false,
                 );
+                // With no deadline and nothing to be ready for, only a stop
+                // or the interrupt ends the wait early. The capture only
+                // receives, so it is killed.
+                let stopped = matches!(
+                    waited,
+                    Ok(Waited::Cancelled | Waited::Ready | Waited::TimedOut)
+                );
+                if stopped {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                }
+                drop(tracked);
                 let status = match waited {
                     Ok(Waited::Exited(status)) => status,
-                    // With no deadline and nothing to be ready for, only a
-                    // stop or the interrupt ends the wait early.
-                    Ok(Waited::Cancelled | Waited::Ready | Waited::TimedOut) => {
-                        let _ = child.kill();
-                        let _ = child.wait();
-                        return;
-                    }
+                    Ok(Waited::Cancelled | Waited::Ready | Waited::TimedOut) => return,
                     Err(error) => return chain.fail(CaptureFailure::Wait(error)),
                 };
                 if !status.success() {
@@ -728,7 +746,7 @@ impl Tools for Processes {
         samplerate: u64,
     ) -> Result<Box<dyn Analyzer>> {
         let channels: Vec<String> = (0..8).map(|i| format!("D{i}")).collect();
-        let child = Command::new("sigrok-cli")
+        let child = own_group(&mut Command::new("sigrok-cli"))
             .current_dir(&self.root)
             .args(["--driver", "fx2lafw", "--config"])
             .arg(format!("samplerate={samplerate}"))
@@ -747,7 +765,7 @@ impl Tools for Processes {
         Ok(Box::new(Sigrok {
             child,
             cancel: self.cancel.clone(),
-            _tracked: tracked,
+            tracked: Some(tracked),
         }))
     }
 
@@ -822,12 +840,15 @@ impl Drop for Chain {
 struct Observing {
     child: Child,
     output: PathBuf,
-    _tracked: Tracked,
+    /// Dropped as soon as the child is reaped.
+    tracked: Option<Tracked>,
 }
 
 impl Observer for Observing {
     fn finish(&mut self) -> Result<Observation> {
-        let code = exit_code(self.child.wait()?);
+        let waited = self.child.wait();
+        self.tracked = None;
+        let code = exit_code(waited?);
         require(code == 0, || ToolsError::ObserverFailed {
             output: self.output.clone(),
         })?;
@@ -839,18 +860,24 @@ impl Observer for Observing {
     fn kill(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+        self.tracked = None;
     }
 }
 
 struct Sigrok {
     child: Child,
     cancel: Cancel,
-    _tracked: Tracked,
+    /// Dropped as soon as the child is reaped.
+    tracked: Option<Tracked>,
 }
 
 impl Analyzer for Sigrok {
     fn running(&mut self) -> bool {
-        matches!(self.child.try_wait(), Ok(None))
+        let running = matches!(self.child.try_wait(), Ok(None));
+        if !running {
+            self.tracked = None;
+        }
+        running
     }
 
     fn wait(&mut self, timeout: Duration) -> Result<Option<i32>> {
@@ -863,12 +890,14 @@ impl Analyzer for Sigrok {
             || false,
         )?;
         if let Waited::Exited(status) = waited {
+            self.tracked = None;
             return Ok(Some(exit_code(status)));
         }
 
         // A capture that ended as the interrupt or the deadline came still
         // counts: its exit is looked at before either, as it always was.
         if let Some(status) = self.child.try_wait()? {
+            self.tracked = None;
             return Ok(Some(exit_code(status)));
         }
         if self.cancel.is_cancelled() {
@@ -880,6 +909,7 @@ impl Analyzer for Sigrok {
     fn kill(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+        self.tracked = None;
     }
 
     fn stderr(&mut self) -> String {
@@ -921,7 +951,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let flash_bin = fake_flash(
             tmp.path(),
-            r#"echo "Read 4096/8192 bytes" >&2; echo '{"status":"failed"}'; exit 1"#,
+            r#"echo "Read 4096/8192 bytes" >&2; printf 'bad \377\n' >&2; echo '{"status":"failed"}'; exit 1"#,
         );
         let mut tools = Processes {
             root: tmp.path().into(),
@@ -943,6 +973,11 @@ mod tests {
         let state = status.state().unwrap();
         assert_eq!(state.progress.as_ref().unwrap().done, 4096);
         assert_eq!(state.lines.last().unwrap(), r#"{"status":"failed"}"#);
+        assert!(
+            state.lines.contains(&"bad \u{fffd}".to_string()),
+            "{:?}",
+            state.lines
+        );
     }
 
     #[test]
@@ -1140,6 +1175,54 @@ echo '{"status":"complete","result":{"bytes":7}}' > "$8/report.json""#,
             matches!(&error, Error::Tool(ToolsError::BuildMissing { path }) if *path == tools.build_bin),
             "{error:?}"
         );
+    }
+
+    /// Whether a process `pid` still exists.
+    fn exists(pid: i32) -> bool {
+        rustix::process::Pid::from_raw(pid)
+            .is_some_and(|pid| rustix::process::test_kill_process(pid).is_ok())
+    }
+
+    #[test]
+    fn a_cancelled_build_takes_the_processes_it_started_with_it() {
+        let _serial = serial();
+        let tmp = tempfile::tempdir().unwrap();
+        // Stands in for wellfed-build running cargo: it does not handle
+        // SIGTERM itself, and its grandchild would otherwise run on.
+        let builder = tmp.path().join("wellfed-build");
+        fs::write(
+            &builder,
+            format!(
+                "#!/bin/sh\nsleep 60 &\necho $! > {0}/grandchild.tmp\nmv {0}/grandchild.tmp {0}/grandchild\nwait\n",
+                tmp.path().display()
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&builder, fs::Permissions::from_mode(0o755)).unwrap();
+        let children = Children::new();
+        let mut tools = Processes {
+            root: tmp.path().into(),
+            flash_bin: tmp.path().join("absent"),
+            stock_bin: tmp.path().join("absent"),
+            build_bin: builder,
+            cancel: Cancel::new(),
+            children: children.clone(),
+            device: None,
+        };
+
+        let build = std::thread::spawn(move || {
+            tools
+                .build(&["build".into()], &mut Status::disabled())
+                .unwrap()
+        });
+        let file = tmp.path().join("grandchild");
+        until(|| file.exists());
+        let grandchild: i32 = fs::read_to_string(&file).unwrap().trim().parse().unwrap();
+        assert!(exists(grandchild));
+        children.interrupt();
+
+        assert_ne!(build.join().unwrap(), 0);
+        until(|| !exists(grandchild));
     }
 
     #[test]

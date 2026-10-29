@@ -1,11 +1,13 @@
 //! The server's memory: the live state every reader follows, and each
-//! job's output for its stream.
+//! job's output for its stream and its file.
 //!
 //! Both are written from plain threads (a job, the output pump, the relay
 //! board) and read from the socket's tasks, through tokio `watch` channels,
 //! whose senders never wait on a reader.
 
 use std::collections::VecDeque;
+use std::fs::File;
+use std::io::{BufWriter, Write};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use tokio::sync::watch;
@@ -33,7 +35,7 @@ impl Store {
     }
 
     /// A receiver that wakes on every change.
-    pub fn subscribe(&self) -> watch::Receiver<BenchState> {
+    pub(crate) fn subscribe(&self) -> watch::Receiver<BenchState> {
         self.sender.subscribe()
     }
 
@@ -46,19 +48,21 @@ impl Store {
 /// reattaching client sees the newest.
 const KEPT_LINES: usize = 50_000;
 
-/// One job's output, in order, and how it ended.
+/// One job's output, in order, and how it ended. Each line also goes to the
+/// job's file through a buffer that is never synced or flushed early, so a
+/// UART write never waits on the disk; the end flushes what is left.
 pub(crate) struct JobLog {
     inner: Mutex<Lines>,
     /// Bumped on every line and at the end.
     changed: watch::Sender<u64>,
 }
 
-#[derive(Default)]
 struct Lines {
     /// The index of `lines[0]` since the job began.
     first: usize,
     lines: VecDeque<String>,
     end: Option<JobEnd>,
+    file: Option<BufWriter<File>>,
 }
 
 /// What a reader at `cursor` has not seen yet.
@@ -71,9 +75,15 @@ pub(crate) struct Unread {
 }
 
 impl JobLog {
-    pub(crate) fn new() -> Self {
+    /// A log kept in memory and, when given one, in `file`.
+    pub(crate) fn new(file: Option<File>) -> Self {
         Self {
-            inner: Mutex::new(Lines::default()),
+            inner: Mutex::new(Lines {
+                first: 0,
+                lines: VecDeque::new(),
+                end: None,
+                file: file.map(BufWriter::new),
+            }),
             changed: watch::Sender::new(0),
         }
     }
@@ -81,6 +91,10 @@ impl JobLog {
     pub(crate) fn push(&self, line: String) {
         {
             let mut inner = self.lock();
+            if let Some(file) = &mut inner.file {
+                // A full disk loses the file's copy, never the stream's.
+                let _ = writeln!(file, "{line}");
+            }
             inner.lines.push_back(line);
             if inner.lines.len() > KEPT_LINES {
                 inner.lines.pop_front();
@@ -91,7 +105,13 @@ impl JobLog {
     }
 
     pub(crate) fn finish(&self, end: JobEnd) {
-        self.lock().end = Some(end);
+        {
+            let mut inner = self.lock();
+            if let Some(mut file) = inner.file.take() {
+                let _ = file.flush();
+            }
+            inner.end = Some(end);
+        }
         self.changed.send_modify(|n| *n += 1);
     }
 
@@ -128,8 +148,8 @@ pub(crate) struct Logs {
 }
 
 impl Logs {
-    pub(crate) fn add(&mut self, id: JobId) -> Arc<JobLog> {
-        let log = Arc::new(JobLog::new());
+    pub(crate) fn add(&mut self, id: JobId, file: Option<File>) -> Arc<JobLog> {
+        let log = Arc::new(JobLog::new(file));
         self.jobs.push_back((id, Arc::clone(&log)));
         while self.jobs.len() > KEPT_JOBS {
             self.jobs.pop_front();
@@ -151,7 +171,7 @@ mod tests {
 
     #[test]
     fn a_reader_gets_each_line_once_then_the_end() {
-        let log = JobLog::new();
+        let log = JobLog::new(None);
         log.push("one".into());
         log.push("two".into());
 
@@ -172,7 +192,7 @@ mod tests {
 
     #[test]
     fn a_reader_that_fell_behind_resumes_at_the_oldest_kept_line() {
-        let log = JobLog::new();
+        let log = JobLog::new(None);
         for n in 0..KEPT_LINES + 2 {
             log.push(n.to_string());
         }
@@ -187,7 +207,7 @@ mod tests {
     fn only_the_newest_jobs_keep_their_output() {
         let mut logs = Logs::default();
         for id in 1..=10 {
-            logs.add(id);
+            logs.add(id, None);
         }
 
         assert!(logs.get(2).is_none());

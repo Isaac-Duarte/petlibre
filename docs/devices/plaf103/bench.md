@@ -98,8 +98,8 @@ The files and shapes they share (the bench config, a command's progress record, 
 
 | Command | Effect |
 | --- | --- |
-| `serve` | The bench server, in the foreground until Ctrl+C or SIGTERM ([below](#the-bench-server)). `--ui` serves the [progress page](#progress-page) beside it. |
-| `status` | The [bench lease](#bench-lease), then the server's job, its children, the UART and the relays. With no server, it reads the relay board itself. `--break-lease` first frees a lease a killed server left. |
+| `serve` | The bench server, in the foreground until Ctrl+C, SIGTERM or a hangup ([below](#the-bench-server)). `--ui` serves the [progress page](#progress-page) beside it. |
+| `status` | The [bench lease](#bench-lease), then the server's job, its children, the UART and the relays. With no server, it reads the relay board itself. A server that does not answer within 5 s is reported as such, after the lease. `--break-lease` first frees a lease a killed server left. |
 | `attach ID` | Follow job `ID` of the running server again, from its first kept line |
 | `on`, `off` | Power the feeder with the strap released, or release the strap and cut power |
 | `capture NAME` | Receive-only recording of the running feeder. Power is untouched. |
@@ -121,28 +121,28 @@ Every command from `on` down is a job: it needs the server running, and refuses 
 
 **Names and evidence.** Session evidence goes to new directories under `private/captures/`, `private/flash-backups/` and `private/verification/`, named after `NAME`. It must be a single plain name. An existing path is refused before any relay changes.
 
-**Stopping.** Ctrl+C in the client's terminal asks the server to cancel the job, and the client keeps printing its cleanup. The server sends SIGINT to the `wellfed-flash` child, which stops itself terminally and records it, and SIGTERM to the job's other children. It never kills the flash client. The sequence then runs the same cleanup as for any stop: the loader and transient sequences power off, and the demo turns the spares off. A second Ctrl+C leaves the job running and exits; `attach ID` follows it again.
+**Stopping.** Ctrl+C in the client's terminal asks the server to cancel the job, and the client keeps printing its cleanup. The server sends SIGINT to the `wellfed-flash` child, which stops itself terminally and records it, and SIGTERM to the job's other children with everything they started (a build's `cargo` and `make`). A flash session that writes is only ever sent SIGINT. A receive-only capture is killed after it, as it always was when a wait was interrupted or ran out. The sequence then runs the same cleanup as for any stop: the loader and transient sequences power off, and the demo turns the spares off. A second Ctrl+C leaves the job running and exits; `attach ID` follows it again.
 
 ### The bench server
 
 `serve` holds four things for its whole life:
 
 - the [bench lease](#bench-lease), which the jobs' children run on;
-- the relay board, opened and read once at the start and read again after every job;
-- the control socket `private/bench.sock`, mode 0600, which only the checkout's owner can reach;
+- the relay board, opened and read at the start, after every job, and every 30 s while no job runs (never during one), so its front buttons show;
+- the control socket `private/bench.sock`, mode 0600 whatever the umask, which only the checkout's owner can reach;
 - its console: every job's output, as it comes, and one line as each job starts and ends.
 
-It runs one job at a time. A job is the same sequence the command always ran, in the server's process. A second job while one runs is refused with the running job named:
+It runs one job at a time. A job is the command line a client posts (`POST /jobs` with its words), parsed by the server with the same checks as the command line, so a bad flag or name is refused before anything runs. It runs the same sequence the command always ran, in the server's process. A second job while one runs is refused with the running job named:
 
 ```
 Stopped: The bench is busy with job 3 (dump fw-01); wait for it, or cancel it first
 ```
 
-A client that disconnects, a closed terminal say, only stops reading. The job runs on, and `attach ID` prints its output again from the start. The server keeps the output of its last 8 jobs.
+A client that disconnects, a closed terminal say, only stops reading. The job runs on, and `attach ID` prints its output again from the start. The server keeps the output of its last 8 jobs in memory, and every job's in `private/bench-status/jobs/ID-NAME.log`. That file is written through a buffer and never synced, so a UART write never waits on the disk; it is complete once the job ends. Job numbers carry on from the highest file there, so a new server never reuses one.
 
 `ota`, and `itest` or `stock-ota` without `--power`, get a board that refuses every switch, as when they ran without opening it.
 
-Ctrl+C or SIGTERM in the server's terminal stops the server. It refuses new jobs, cancels the running one as a client's Ctrl+C does, waits for its cleanup, then removes the socket and releases the lease.
+Ctrl+C, SIGTERM or a hangup of the server's terminal stops the server. It refuses new jobs, cancels the running one as a client's Ctrl+C does, waits for its cleanup, then removes the socket and releases the lease. Every child of a job runs in a process group of its own, so the terminal's Ctrl+C or hangup reaches only the server, never a `wellfed-flash` that is writing; the server forwards the cancel itself.
 
 The socket's routes:
 
@@ -150,7 +150,7 @@ The socket's routes:
 | --- | --- |
 | `GET /state` | The live state: the job and its next steps, every child it runs, the UART (idle, capturing, a loader session, or writing with sectors verified), and the relays |
 | `GET /events` | The live state again on every change, as server-sent events |
-| `POST /jobs` | 201 with the job's number, 409 while a job runs |
+| `POST /jobs` | `{"argv": [...]}`, the command's words: 201 with the job's number, 400 for words that are no job, 409 while a job runs |
 | `GET /jobs/{id}/stream` | The job's output lines, then its end, as newline-delimited JSON |
 | `POST /jobs/{id}/cancel` | 202, or 409 for a job that already ended |
 
@@ -545,14 +545,12 @@ From the confirmed baseline:
 
 ## Progress page
 
-Each job records its steps, the flash client's progress lines (bytes read, sectors verified), relay changes and the active capture. The record lives in the server's memory, as its live state (`GET /state`). Two files in `private/bench-status/` outlive the server:
+Each job records its steps, the flash client's progress lines (bytes read, sectors verified), relay changes and the active capture. The record lives in the server's memory, as its live state (`GET /state`). Files in `private/bench-status/` outlive the server:
 
 | File | Contents |
 | --- | --- |
-| `current.log` | The running job's tool output |
+| `jobs/ID-NAME.log` | Each job's output, complete once it ends |
 | `history.jsonl` | One line per job, including the reviewed next command after a prepare |
-
-The history's fields match what the former Python bench wrote, so older history still shows.
 
 ### Serve it
 
@@ -586,7 +584,7 @@ The page has four views (keys `g o`, `g t`, `g s`, `g l`; `/` filters the log). 
   - **Run history:** every `NAME-itest.json` against every scenario, newest on the left. A live run fills the first column. Each row has the pass rate over runs that reached a verdict, the median passing time and the last failure. **Flaky** marks two or more pass/fail changes in the last 20 runs. Selecting a run opens its record: verdicts and reasons, the UART recovery commands if the feeder went silent, and the tails of its captures and `NAME-servers.log`. A run's link (`#/tests/NAME`) can be shared.
   - **Start a run:** composes a `wellfed-bench itest` command from a tier or chosen scenarios and the allowed flags, and warns which scenarios would be skipped. The page only writes the command out; running it is a physical bench operation.
 - **Sessions:** session names with evidence parts, report state and age. Selecting one shows each part's report or plan (bank, sectors, erases, image hashes, plan SHA-256) and a copyable execute line. A report still marked `running` whose command is no longer live reads as `ended`: the process stopped without recording an outcome.
-- **Log:** the command's full output, kept to the newest 20,000 lines. It can be filtered, followed and copied, and only the visible lines are drawn. Stops, refusals, faults and NAKs are highlighted, and scenario starts mark sections. The flash client's JSON summaries are coloured by their `error` and `status` fields. Healthy health lines (`outputs stopped, faults none`) and file names such as `-fault-v52.manifest` are not taken for failures. The latest capture's tail sits beside the log.
+- **Log:** the job's log file, kept to the newest 20,000 lines. The file is buffered, so it can lag the job by a few kilobytes until the job ends. It can be filtered, followed and copied, and only the visible lines are drawn. Stops, refusals, faults and NAKs are highlighted, and scenario starts mark sections. The flash client's JSON summaries are coloured by their `error` and `status` fields. Healthy health lines (`outputs stopped, faults none`) and file names such as `-fault-v52.manifest` are not taken for failures. The latest capture's tail sits beside the log.
 
 Light and dark follow the system; the button in the header cycles auto, light and dark for this browser.
 
@@ -614,5 +612,5 @@ Light and dark follow the system; the button in the header cycles auto, light an
 - **Observed, October 23, 2026:** the progress page's feeder panel followed a live stock server, and its run record matched the suite's.
 - **Observed, October 26, 2026:** the bench lease refused a second command and a hand-run read while a capture held it; after the holder was killed, `status` reported the stale lease until `--break-lease`. While a capture holds the relay port, `status` shows the lease but not the relays.
 - **Observed, October 27, 2026:** the sustained run's first hardware attempts. Cycles 1–5 passed in one run. Halts in other runs came from two checks that were wrong (since fixed) and an intermittent bank-0 download fault, which stopped at a 50 MHz flash clock ([flash layout](flash-layout.md#flash-clock)). A full 16-cycle run has not yet passed.
-- **Modeled, October 28, 2026:** the bench server over a socket in a temporary checkout, with a fake relay board and a stand-in flash client: a job streams its output and ends with its code; a second job is refused while one runs; a cancel sends the flash client SIGINT, and the loader's cleanup cuts power and isolates the UART; a client detaches and another follows the job from its first line; quitting cancels the job, waits for its cleanup and frees the lease; with no server, every hardware command refuses. No hardware ran.
+- **Modeled, October 28, 2026:** the bench server over a socket in a temporary checkout, with a fake relay board and a stand-in flash client: a job streams its output and ends with its code; a second job is refused while one runs; a cancel sends the flash client SIGINT, and the loader's cleanup cuts power and isolates the UART; a client detaches and another follows the job from its first line; quitting cancels the job, waits for its cleanup and frees the lease; with no server, every hardware command refuses. Also: a cancel mid-write (`update execute`) sends only SIGINT and the job ends after the writer exits, with the UART shown as writing; a cancelled build takes its grandchildren with it; the server refuses what the command line refuses (`itest --list`, a missing name, out-of-range values); a 100 KiB burst of output never blocks; a panicking job leaves the server serving. No hardware ran.
 - **Modeled:** the bench with a fake relay board and flash client, the page's handlers in process, and the real binary against synthetic status files. The web page with unit tests and Playwright against the real binary serving a synthetic `private/` tree, on desktop and phone sizes in both themes. The suite's scenarios, including `sustained`, against a scripted feeder that emits the firmware's record formats.

@@ -10,13 +10,17 @@
 //! or child wrote next, which during an install is the flash client. So the
 //! console is written from a thread of its own through a bounded queue, and
 //! a console that cannot keep up loses lines rather than holding the pipe.
+//! Should the pump itself stop, the terminal (or else `/dev/null`) goes back
+//! on descriptors 1 and 2, so no writer is left on a pipe nobody reads.
 
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, PipeReader, PipeWriter, Write};
-use std::os::fd::AsFd;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::os::fd::{AsFd, OwnedFd};
+use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, SyncSender};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use crate::state::JobLog;
@@ -25,13 +29,18 @@ use crate::state::JobLog;
 const CONSOLE_QUEUE: usize = 4096;
 /// The longest [`Output::sync`] waits for the pump to catch up.
 const SYNC_WAIT: Duration = Duration::from_secs(2);
-/// A line the pump consumes rather than forwards: [`Output::sync`]'s mark.
-/// It starts with a control character no tool prints.
+/// What the pump consumes rather than forwards: [`Output::sync`]'s mark,
+/// found anywhere in a line, so one written after a partial line still
+/// counts. It starts with a control character no tool prints.
 const MARK: &str = "\u{1}wellfed-bench-server sync ";
 
 /// The installed pipe, for the process's life.
 pub(crate) struct Output {
-    console: SyncSender<String>,
+    /// Taken by [`Output::close`], which ends the console thread.
+    console: Mutex<Option<SyncSender<String>>>,
+    console_thread: Mutex<Option<JoinHandle<()>>>,
+    /// The terminal the server started on, to put back on 1 and 2.
+    terminal: OwnedFd,
     /// The job whose stream the lines join, while one runs.
     route: Mutex<Option<Arc<JobLog>>>,
     /// The pipe's own write end, for marks.
@@ -39,6 +48,9 @@ pub(crate) struct Output {
     next_mark: AtomicU64,
     seen: Mutex<u64>,
     caught_up: Condvar,
+    /// Cleared if the pump stops, so nothing waits on it.
+    pumping: AtomicBool,
+    closed: AtomicBool,
 }
 
 /// Installed once per process: descriptors 1 and 2 are process-wide.
@@ -48,37 +60,70 @@ static INSTALLED: Mutex<Option<Arc<Output>>> = Mutex::new(None);
 /// pipe.
 pub(crate) fn install() -> io::Result<Arc<Output>> {
     let mut installed = lock(&INSTALLED);
-    if let Some(output) = &*installed {
+    if let Some(output) = &*installed
+        && !output.closed.load(Ordering::SeqCst)
+    {
         return Ok(Arc::clone(output));
     }
 
-    // The console keeps the terminal the server was started on; the
-    // duplicate is close-on-exec, so no child holds it.
-    let console = File::from(io::stdout().as_fd().try_clone_to_owned()?);
+    // Duplicates are close-on-exec, so no child holds the terminal.
+    let terminal = io::stdout().as_fd().try_clone_to_owned()?;
+    let console = File::from(terminal.try_clone()?);
     let (reader, writer) = io::pipe()?;
     io::stdout().flush()?;
     rustix::stdio::dup2_stdout(&writer)?;
     rustix::stdio::dup2_stderr(&writer)?;
 
     let (send, queue) = mpsc::sync_channel(CONSOLE_QUEUE);
-    std::thread::Builder::new()
+    let console_thread = std::thread::Builder::new()
         .name("console".into())
         .spawn(move || write_console(console, &queue))?;
     let output = Arc::new(Output {
-        console: send,
+        console: Mutex::new(Some(send)),
+        console_thread: Mutex::new(Some(console_thread)),
+        terminal,
         route: Mutex::new(None),
         writer: Mutex::new(writer),
         next_mark: AtomicU64::new(0),
         seen: Mutex::new(0),
         caught_up: Condvar::new(),
+        pumping: AtomicBool::new(true),
+        closed: AtomicBool::new(false),
     });
     let pumped = Arc::clone(&output);
     std::thread::Builder::new()
         .name("output pump".into())
-        .spawn(move || pump(reader, &pumped))?;
+        .spawn(move || {
+            let _ = catch_unwind(AssertUnwindSafe(|| pump(reader, &pumped)));
+            pumped.pumping.store(false, Ordering::SeqCst);
+            pumped.marked(u64::MAX);
+            restore(&pumped.terminal);
+        })?;
 
     *installed = Some(Arc::clone(&output));
     Ok(output)
+}
+
+/// Put the terminal back on descriptors 1 and 2, and let the console write
+/// out what it holds, if the pipe was installed. Safe to repeat.
+pub(crate) fn close_installed() {
+    let installed = lock(&INSTALLED).clone();
+    if let Some(output) = installed {
+        output.close();
+    }
+}
+
+/// The terminal back on 1 and 2, or `/dev/null` if that fails: either way
+/// no writer waits on the pipe.
+fn restore(terminal: &OwnedFd) {
+    let put =
+        rustix::stdio::dup2_stdout(terminal).and_then(|()| rustix::stdio::dup2_stderr(terminal));
+    if put.is_err()
+        && let Ok(null) = File::options().write(true).open("/dev/null")
+    {
+        let _ = rustix::stdio::dup2_stdout(&null);
+        let _ = rustix::stdio::dup2_stderr(&null);
+    }
 }
 
 impl Output {
@@ -98,6 +143,9 @@ impl Output {
     /// before the stream ends.
     pub(crate) fn sync(&self) {
         let _ = io::stdout().flush();
+        if !self.pumping.load(Ordering::SeqCst) {
+            return;
+        }
         let mark = self.next_mark.fetch_add(1, Ordering::SeqCst) + 1;
         if writeln!(lock(&self.writer), "{MARK}{mark}").is_err() {
             return;
@@ -117,15 +165,42 @@ impl Output {
         }
     }
 
+    /// Put the terminal back on 1 and 2, pump through what the pipe still
+    /// holds, then let the console thread write out its queue and end. A
+    /// line the server prints after this, such as the error it stopped on,
+    /// goes straight to the terminal.
+    pub(crate) fn close(&self) {
+        if self.closed.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let _ = io::stdout().flush();
+        restore(&self.terminal);
+        self.sync();
+
+        drop(lock(&self.console).take());
+        if let Some(thread) = lock(&self.console_thread).take() {
+            let _ = thread.join();
+        }
+    }
+
     fn to_console(&self, line: String) {
         // A full queue drops the line: the job's stream still has it.
-        let _ = self.console.try_send(line);
+        if let Some(console) = &*lock(&self.console) {
+            let _ = console.try_send(line);
+        }
     }
 
     fn marked(&self, mark: u64) {
         let mut seen = lock(&self.seen);
         *seen = (*seen).max(mark);
         self.caught_up.notify_all();
+    }
+
+    fn forward(&self, line: String) {
+        if let Some(log) = &*lock(&self.route) {
+            log.push(line.clone());
+        }
+        self.to_console(line);
     }
 }
 
@@ -146,14 +221,18 @@ fn pump(reader: PipeReader, output: &Output) {
         let line = String::from_utf8_lossy(&bytes)
             .trim_end_matches(['\n', '\r'])
             .to_string();
-        if let Some(mark) = line.strip_prefix(MARK).and_then(|n| n.parse().ok()) {
-            output.marked(mark);
-            continue;
+        match line.find(MARK) {
+            Some(at) => {
+                let head = &line[..at];
+                if !head.is_empty() {
+                    output.forward(head.to_string());
+                }
+                if let Ok(mark) = line[at + MARK.len()..].parse() {
+                    output.marked(mark);
+                }
+            }
+            None => output.forward(line),
         }
-        if let Some(log) = &*lock(&output.route) {
-            log.push(line.clone());
-        }
-        output.to_console(line);
     }
 }
 

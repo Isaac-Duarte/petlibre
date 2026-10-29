@@ -3,16 +3,12 @@
 //!
 //! [`Status`] keeps the running command's record ([`Current`]) in memory and
 //! hands each change to a [`ProgressSink`]. The bench server's sink
-//! publishes it as live state, which the page and the clients follow. Two
-//! files in `private/bench-status/` outlive the process:
-//! - `current.log`: the full output of the running command
-//! - `history.jsonl`: one line per command
-//!
-//! The history's fields are the ones `bench.py` wrote, so older history
-//! still reads.
+//! publishes it as live state, which the page and the clients follow, and
+//! keeps each job's output in a file of its own. `private/bench-status/`
+//! keeps the history, `history.jsonl`, one line per command.
 
 use std::collections::BTreeMap;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -22,7 +18,6 @@ use serde::{Deserialize, Serialize};
 use super::{now, relative};
 use crate::Result;
 
-pub const LOG: &str = "current.log";
 pub const HISTORY: &str = "history.jsonl";
 const KEPT_LINES: usize = 40;
 
@@ -121,30 +116,20 @@ impl StepState {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct Current {
-    #[serde(default)]
     pub pid: u32,
     pub command: BenchCommand,
-    #[serde(default)]
     pub name: Option<String>,
     pub started: f64,
-    #[serde(default)]
     pub finished: Option<f64>,
     pub outcome: Outcome,
-    #[serde(default)]
     pub error: Option<String>,
 
-    #[serde(default)]
     pub steps: Vec<Step>,
-    #[serde(default)]
     pub progress: Option<Progress>,
-    #[serde(default)]
     pub capture: Option<Capture>,
-    #[serde(default)]
     pub transfer: Option<Transfer>,
 
-    #[serde(default)]
     pub relay: BTreeMap<String, bool>,
-    #[serde(default)]
     pub lines: Vec<String>,
 
     /// The command to run after review, such as a prepared plan's execute.
@@ -218,7 +203,6 @@ pub struct Transfer {
     pub path: String,
     pub tx: u64,
     pub rx: u64,
-    #[serde(default)]
     pub started: Option<f64>,
 }
 
@@ -233,13 +217,10 @@ pub struct FlashTool {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct HistoryEntry {
     pub command: BenchCommand,
-    #[serde(default)]
     pub name: Option<String>,
     pub started: f64,
-    #[serde(default)]
     pub finished: Option<f64>,
     pub outcome: Outcome,
-    #[serde(default)]
     pub error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next: Option<String>,
@@ -275,7 +256,6 @@ pub struct Status {
     root: PathBuf,
     state: Option<Current>,
     written: Option<Instant>,
-    log: Option<File>,
     sink: Option<Box<dyn ProgressSink>>,
     /// The steps are the command's own (the suite's scenarios); a child's
     /// step, such as a build inside one, does not add to them.
@@ -289,13 +269,12 @@ impl Status {
             root: PathBuf::new(),
             state: None,
             written: None,
-            log: None,
             sink: None,
             fixed: false,
         }
     }
 
-    /// Keeps the log and the history in `directory`. The record itself goes
+    /// Keeps the history in `directory`. The record itself goes
     /// only to a sink given with [`Self::with_sink`].
     pub fn new(root: &Path, directory: PathBuf) -> Self {
         Self {
@@ -336,7 +315,6 @@ impl Status {
 
         if let Some(directory) = &self.directory {
             fs::create_dir_all(directory)?;
-            self.log = Some(File::create(directory.join(LOG))?);
         }
         self.write(Flush::Now)
     }
@@ -392,16 +370,13 @@ impl Status {
         self.write_quietly(Flush::Now);
     }
 
-    /// One line of tool output: kept, logged, and scanned for progress counts.
+    /// One line of tool output: kept and scanned for progress counts.
     pub fn line(&mut self, text: &str) {
         let Some(state) = &mut self.state else { return };
         let text = text.trim_end();
         state.lines.push(text.into());
         let excess = state.lines.len().saturating_sub(KEPT_LINES);
         state.lines.drain(..excess);
-        if let Some(log) = &mut self.log {
-            let _ = writeln!(log, "{text}");
-        }
 
         if let Some((done, total, unit)) = progress_count(text) {
             let at = now();
@@ -652,9 +627,6 @@ mod tests {
             (BenchCommand::Dump, Outcome::Stopped)
         );
         assert_eq!(entry.error.as_deref(), Some("Observer failed"));
-
-        let log = fs::read_to_string(tmp.path().join(LOG)).unwrap();
-        assert_eq!(log, "Read 4096/8388608 bytes\nRead 8192/8388608 bytes\n");
     }
 
     #[test]
@@ -732,12 +704,5 @@ mod tests {
             let named = serde_json::to_value(command).unwrap();
             assert_eq!(named, command.word(), "{command:?}");
         }
-    }
-
-    #[test]
-    fn python_written_history_still_reads() {
-        let line = r#"{"command": "dump", "name": "x", "started": 1.0, "finished": 2.0, "outcome": "pass", "error": null}"#;
-        let entry: HistoryEntry = serde_json::from_str(line).unwrap();
-        assert_eq!(entry.outcome, Outcome::Pass);
     }
 }

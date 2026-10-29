@@ -38,6 +38,8 @@ pub trait Live: Send + Sync {
     fn relays(
         &self,
     ) -> Option<std::collections::BTreeMap<String, wellfed_formats::bench::progress::RelayState>>;
+    /// Root-relative: the running or last job's output file.
+    fn log(&self) -> Option<String>;
 }
 
 /// No bench server: the page shows the evidence and the history only.
@@ -52,6 +54,10 @@ impl Live for NoLive {
         &self,
     ) -> Option<std::collections::BTreeMap<String, wellfed_formats::bench::progress::RelayState>>
     {
+        None
+    }
+
+    fn log(&self) -> Option<String> {
         None
     }
 }

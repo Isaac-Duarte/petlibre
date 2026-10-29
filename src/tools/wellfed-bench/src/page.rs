@@ -36,6 +36,10 @@ mod built {
         fn relays(&self) -> Option<BTreeMap<String, RelayState>> {
             Some(self.0.read().relays)
         }
+
+        fn log(&self) -> Option<String> {
+            self.0.read().job.map(|job| job.log)
+        }
     }
 
     pub(crate) fn available() -> anyhow::Result<()> {

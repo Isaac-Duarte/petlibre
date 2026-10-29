@@ -18,8 +18,7 @@ use tokio::net::UnixStream;
 use tokio::sync::mpsc;
 use wellfed_formats::bench::live::{BenchState, JobEnd, JobEvent, JobId};
 
-use crate::api::{Accepted, Refusal, SOCKET};
-use crate::jobs::JobSpec;
+use crate::api::{Accepted, JobRequest, Refusal, SOCKET};
 
 /// Why a client request did not get its answer.
 #[derive(Debug, thiserror::Error)]
@@ -88,8 +87,12 @@ impl Client {
         answer(response, StatusCode::OK).await
     }
 
-    pub async fn submit(&self, spec: &JobSpec) -> Result<JobId, ClientError> {
-        let body = serde_json::to_vec(spec)?;
+    /// Post a command line, such as `["dump", "unit-01"]`, as a job; the
+    /// server parses it.
+    pub async fn submit(&self, argv: &[String]) -> Result<JobId, ClientError> {
+        let body = serde_json::to_vec(&JobRequest {
+            argv: argv.to_vec(),
+        })?;
         let response = self.send(Method::POST, "/jobs", Some(body)).await?;
         let accepted: Accepted = answer(response, StatusCode::CREATED).await?;
         Ok(accepted.id)

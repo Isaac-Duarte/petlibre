@@ -20,7 +20,7 @@ use crate::page;
 use clap::{Args, Parser, Subcommand};
 use tokio::sync::mpsc;
 use wellfed_bench_server::{
-    Client, ClientError, Followed, Interrupt, JobCommand, JobSpec, Options, Server, ToolPaths,
+    Client, ClientError, Followed, Interrupt, JobCommand, JobOptions, Options, Server, ToolPaths,
 };
 use wellfed_formats::bench::catalog;
 use wellfed_formats::bench::lease::{self, Liveness};
@@ -55,12 +55,9 @@ struct Cli {
     /// Repository checkout whose ignored private/ holds all evidence.
     #[arg(long, global = true, default_value = ".")]
     root: PathBuf,
-    /// Power-off time before a cold boot, in seconds.
-    #[arg(long, global = true, default_value_t = 2.0)]
-    off_seconds: f64,
-    /// What the UART lines (relays 3 and 4) do while the feeder is off.
-    #[arg(long, global = true, value_enum, default_value_t = UartWhenOff::Isolated)]
-    uart_when_off: UartWhenOff,
+    /// The server parses these again from the words a job posts.
+    #[command(flatten)]
+    options: JobOptions,
 
     #[command(subcommand)]
     command: Command,
@@ -112,11 +109,23 @@ struct ServeArgs {
 
 /// Parse the command line and run it.
 pub(crate) fn main() -> ExitCode {
-    let cli = Cli::parse();
-    // Evidence, status and the socket are private.
+    // The words after the program's name are what a job posts.
+    let argv: Result<Vec<String>, _> = std::env::args_os()
+        .skip(1)
+        .map(std::ffi::OsString::into_string)
+        .collect();
+    let Ok(argv) = argv else {
+        eprintln!("Stopped: an argument is not UTF-8");
+        return ExitCode::from(2);
+    };
+    let cli = Cli::parse_from(std::iter::once("wellfed-bench".to_string()).chain(argv.clone()));
+    // Evidence and status are private.
     rustix::process::umask(rustix::fs::Mode::from_raw_mode(0o077));
 
-    match run(cli) {
+    let ran = run(cli, &argv);
+    // A server's console goes back to the terminal before its last line.
+    wellfed_bench_server::restore_output();
+    match ran {
         Ok(code) => ExitCode::from(code),
         Err(error) => {
             eprintln!("Stopped: {error}");
@@ -125,7 +134,7 @@ pub(crate) fn main() -> ExitCode {
     }
 }
 
-fn run(cli: Cli) -> anyhow::Result<u8> {
+fn run(cli: Cli, argv: &[String]) -> anyhow::Result<u8> {
     let root = cli
         .root
         .canonicalize()
@@ -145,48 +154,58 @@ fn run(cli: Cli) -> anyhow::Result<u8> {
         }
         Command::Status { break_lease } => status(&root, break_lease, &runtime),
         Command::Serve(args) => serve(&root, args, &runtime),
-        Command::Attach { id } => runtime.block_on(follow(&Client::new(&root), id)),
+        Command::Attach { id } => runtime.block_on(async {
+            let mut interrupts = interrupts()?;
+            follow(&Client::new(&root), id, &mut interrupts).await
+        }),
         Command::Job(command) => {
             // Refused here as the server would, before anything is sent.
             if let Some(name) = command.name() {
                 check_name(name)?;
             }
-            seconds_arg("--off-seconds", cli.off_seconds)?;
-            let spec = JobSpec {
-                command,
-                off_seconds: cli.off_seconds,
-                uart_when_off: cli.uart_when_off,
-            };
-            runtime.block_on(submit(&Client::new(&root), &spec))
+            seconds_arg("--off-seconds", cli.options.off_seconds)?;
+            runtime.block_on(submit(&Client::new(&root), argv, &command))
         }
     }
 }
 
-/// Post the job and follow it to its end.
-async fn submit(client: &Client, spec: &JobSpec) -> anyhow::Result<u8> {
-    let id = client.submit(spec).await?;
-    wellfed_rig::say!(
-        "Job {id}: {} (Ctrl+C cancels it; a second Ctrl+C leaves it running)",
-        spec.command.describe()
-    );
-    follow(client, id).await
-}
-
-/// Print job `id`'s output until it ends: its code, or [`DETACHED`].
-async fn follow(client: &Client, id: JobId) -> anyhow::Result<u8> {
-    let (interrupts, mut received) = mpsc::unbounded_channel();
+/// The operator's interrupts from now on: the first asks for a cancel, the
+/// rest to detach. Taken before a job is posted, so a Ctrl+C that comes
+/// while the server answers cancels the job once its number arrives.
+fn interrupts() -> anyhow::Result<mpsc::UnboundedReceiver<Interrupt>> {
+    let mut signal = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
+    let (interrupts, received) = mpsc::unbounded_channel();
     tokio::spawn(async move {
         let mut asked = Interrupt::Cancel;
-        while tokio::signal::ctrl_c().await.is_ok() {
+        while signal.recv().await.is_some() {
             if interrupts.send(asked).is_err() {
                 return;
             }
             asked = Interrupt::Detach;
         }
     });
+    Ok(received)
+}
 
+/// Post the job's words and follow it to its end.
+async fn submit(client: &Client, argv: &[String], command: &JobCommand) -> anyhow::Result<u8> {
+    let mut interrupts = interrupts()?;
+    let id = client.submit(argv).await?;
+    wellfed_rig::say!(
+        "Job {id}: {} (Ctrl+C cancels it; a second Ctrl+C leaves it running)",
+        command.describe()
+    );
+    follow(client, id, &mut interrupts).await
+}
+
+/// Print job `id`'s output until it ends: its code, or [`DETACHED`].
+async fn follow(
+    client: &Client,
+    id: JobId,
+    received: &mut mpsc::UnboundedReceiver<Interrupt>,
+) -> anyhow::Result<u8> {
     match client
-        .follow(id, |line| wellfed_rig::say!("{line}"), &mut received)
+        .follow(id, |line| wellfed_rig::say!("{line}"), received)
         .await?
     {
         Followed::Ended(end) => {
@@ -247,7 +266,10 @@ fn serve(root: &Path, args: ServeArgs, runtime: &tokio::runtime::Runtime) -> any
         server.socket().display(),
         relays.join(", ")
     ));
-    let served = runtime.block_on(server.run(shutdown()));
+    let served = runtime.block_on(async {
+        let shutdown = shutdown()?;
+        server.run(shutdown).await.map_err(anyhow::Error::from)
+    });
 
     stop_page.cancel();
     if let Some(page) = page {
@@ -257,36 +279,54 @@ fn serve(root: &Path, args: ServeArgs, runtime: &tokio::runtime::Runtime) -> any
     Ok(0)
 }
 
-/// The operator's Ctrl+C, or a SIGTERM.
-async fn shutdown() {
-    let Ok(mut terminate) =
-        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-    else {
-        let _ = tokio::signal::ctrl_c().await;
-        return;
-    };
-    tokio::select! {
-        _ = tokio::signal::ctrl_c() => {}
-        _ = terminate.recv() => {}
-    }
+/// The operator's Ctrl+C, a SIGTERM, or the terminal hanging up: each stops
+/// the server the same way, through the job's cleanup. The job's children
+/// run in groups of their own, so a hangup reaches the server only, never
+/// a `wellfed-flash` mid-write.
+fn shutdown() -> std::io::Result<impl std::future::Future<Output = ()>> {
+    use tokio::signal::unix::{SignalKind, signal};
+
+    let mut interrupt = signal(SignalKind::interrupt())?;
+    let mut terminate = signal(SignalKind::terminate())?;
+    let mut hangup = signal(SignalKind::hangup())?;
+    Ok(async move {
+        tokio::select! {
+            _ = interrupt.recv() => {}
+            _ = terminate.recv() => {}
+            _ = hangup.recv() => {}
+        }
+    })
 }
+
+/// How long `status` waits for a server that may be stuck.
+const STATUS_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// `status`: the lease first, then the server's view, or with no server the
 /// relay board read directly.
 fn status(root: &Path, break_lease: bool, runtime: &tokio::runtime::Runtime) -> anyhow::Result<u8> {
     report_lease(root, break_lease)?;
 
-    match runtime.block_on(Client::new(root).state()) {
-        Ok(state) => {
+    let client = Client::new(root);
+    let asked = runtime.block_on(async { tokio::time::timeout(STATUS_WAIT, client.state()).await });
+    match asked {
+        Ok(Ok(state)) => {
             report_state(&state);
             report_ports(root);
             Ok(0)
         }
-        Err(ClientError::NoServer { .. }) => {
+        Ok(Err(ClientError::NoServer { .. })) => {
             wellfed_rig::say!("Server: none (`wellfed-bench serve` starts one)");
             Ok(direct_status(root)?)
         }
-        Err(error) => Err(error.into()),
+        Ok(Err(error)) => Err(error.into()),
+        Err(_) => {
+            wellfed_rig::say!(
+                "Server: not answering on {} within {} s; the lease above says who holds the bench",
+                root.join(wellfed_bench_server::api::SOCKET).display(),
+                STATUS_WAIT.as_secs()
+            );
+            Ok(1)
+        }
     }
 }
 

@@ -136,27 +136,6 @@ fn ota_refuses_motion_and_mixed_sources() {
     }
 }
 
-#[test]
-fn a_parsed_job_crosses_the_socket_unchanged() {
-    let cli = ota(&[
-        "--build",
-        "--firmware",
-        "feeder",
-        "--variant",
-        "owner-stall",
-    ])
-    .unwrap();
-
-    let text = serde_json::to_string(job(&cli)).unwrap();
-    let back: JobCommand = serde_json::from_str(&text).unwrap();
-
-    let JobCommand::Ota(args) = back else {
-        panic!("not ota: {text}")
-    };
-    assert_eq!(args.variant, Some(commands::Variant::OwnerStall));
-    assert_eq!(args.name, "fw12-x");
-}
-
 /// Another tool's process, killed when the test ends, passed or not.
 struct Other(std::process::Child);
 
@@ -185,7 +164,15 @@ fn hold(root: &Path) -> Other {
 fn run_in(root: &Path, argv: &[&str]) -> anyhow::Result<u8> {
     let root = root.display().to_string();
     let head = ["wellfed-bench", "--root", &root];
-    run(Cli::try_parse_from(head.iter().chain(argv)).unwrap())
+    let words: Vec<String> = head[1..]
+        .iter()
+        .chain(argv)
+        .map(|word| (*word).to_string())
+        .collect();
+    run(
+        Cli::try_parse_from(head.iter().chain(argv)).unwrap(),
+        &words,
+    )
 }
 
 /// The lease's refusal, from `serve` or from `status`.

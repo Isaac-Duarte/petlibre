@@ -158,6 +158,10 @@ mod tests {
         fn relays(&self) -> Option<BTreeMap<String, RelayState>> {
             self.relays.lock().unwrap().clone()
         }
+
+        fn log(&self) -> Option<String> {
+            None
+        }
     }
 
     /// The record of a command, as the server's sink publishes it.

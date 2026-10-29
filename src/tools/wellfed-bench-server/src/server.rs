@@ -7,6 +7,7 @@
 //! running job and waits for its cleanup before the lease is released, so
 //! no sequence is left half done by the server going away.
 
+use std::fs::File;
 use std::future::Future;
 use std::os::unix::fs::PermissionsExt;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -17,18 +18,17 @@ use std::time::Duration;
 use tokio::sync::Notify;
 use wellfed_formats::bench::lease::{self, Lease};
 use wellfed_formats::bench::live::{
-    BenchState, CancelState, JobEnd, JobId, JobView, Phase, ServerView, Uart,
+    BenchState, CancelState, JOBS, JobEnd, JobId, JobView, Phase, ServerView, Uart,
 };
-use wellfed_formats::bench::progress::{Current, FlashTool, ProgressSink};
-use wellfed_formats::bench::{CONFIG, Config, now, plain_name};
-use wellfed_formats::canonical::sha256;
+use wellfed_formats::bench::progress::{Current, ProgressSink};
+use wellfed_formats::bench::{CONFIG, Config, now, relative};
 use wellfed_relay::Board;
 use wellfed_rig::Cancel;
 use wellfed_rig::tools::Children;
 
 use crate::api::{Refusal, SOCKET};
 use crate::board::SharedBoard;
-use crate::jobs::{self, Bed, JobSpec, Run, ToolPaths};
+use crate::jobs::{self, Bed, JobError, Run, ToolPaths};
 use crate::output::{self, Output};
 use crate::routes;
 use crate::state::{JobLog, Logs, Store};
@@ -36,6 +36,9 @@ use crate::state::{JobLog, Logs, Store};
 /// How long a quitting server lets its clients' connections finish once
 /// the job has ended.
 const CLOSE_WAIT: Duration = Duration::from_secs(3);
+/// How often the relays are read while no job runs, for the board's front
+/// buttons. Never while a job runs: the job owns the board then.
+const RELAY_POLL: Duration = Duration::from_secs(30);
 
 /// Why the server did not start, or stopped serving.
 #[derive(Debug, thiserror::Error)]
@@ -81,6 +84,10 @@ impl Server {
         options: Options,
         open_board: impl FnOnce(&Config) -> wellfed_relay::Result<Box<dyn Board>>,
     ) -> Result<Self, ServeError> {
+        // The socket, the evidence and the job logs are the owner's alone,
+        // whatever umask the server was started with.
+        rustix::process::umask(rustix::fs::Mode::from_raw_mode(0o077));
+
         let lease = Lease::acquire(&options.root)?;
         let config: Config =
             wellfed_formats::load(&options.root.join(CONFIG)).map_err(ServeError::Config)?;
@@ -92,7 +99,6 @@ impl Server {
                 pid: std::process::id(),
                 started: now(),
                 phase: Phase::Serving,
-                flash_tool: flash_tool(&options.root, &options.tools.flash_bin),
             },
             job: None,
             activity: Vec::new(),
@@ -109,6 +115,10 @@ impl Server {
         })?;
         let output = output::install().map_err(ServeError::Output)?;
 
+        let jobs = Jobs {
+            last: last_job(&options.root.join(JOBS)),
+            ..Jobs::default()
+        };
         let bed = Bed {
             root: options.root,
             config,
@@ -120,7 +130,7 @@ impl Server {
                 bed,
                 store,
                 output,
-                jobs: Mutex::new(Jobs::default()),
+                jobs: Mutex::new(jobs),
             }),
             listener,
             socket,
@@ -161,6 +171,16 @@ impl Server {
                 .with_graceful_shutdown(async move { closed.notified().await })
                 .await
         });
+        let polled = Arc::clone(&self.shared);
+        let polling = tokio::spawn(async move {
+            let mut ticks = tokio::time::interval(RELAY_POLL);
+            ticks.tick().await;
+            loop {
+                ticks.tick().await;
+                let shared = Arc::clone(&polled);
+                let _ = tokio::task::spawn_blocking(move || shared.poll_relays()).await;
+            }
+        });
 
         // A socket that fails ends the serving early; the job is still
         // stopped before the lease goes.
@@ -169,6 +189,7 @@ impl Server {
             served = &mut serving => Some(served),
         };
 
+        polling.abort();
         self.shared
             .output
             .say("Stopping: cancelling the running job, then releasing the bench".into());
@@ -200,6 +221,14 @@ impl Server {
     }
 }
 
+/// Put the terminal back on the process's stdout and stderr and let the
+/// console write out what it holds, after a server opened in this process.
+/// `serve` calls it on every way out, so its last lines, an error among
+/// them, are never lost. Safe to repeat.
+pub fn restore_output() {
+    output::close_installed();
+}
+
 /// Bind the socket, replacing one a killed server left (the lease, already
 /// held, says no live server owns it), and make it the owner's alone.
 fn bind(socket: &Path) -> std::io::Result<std::os::unix::net::UnixListener> {
@@ -213,12 +242,20 @@ fn bind(socket: &Path) -> std::io::Result<std::os::unix::net::UnixListener> {
     Ok(listener)
 }
 
-fn flash_tool(root: &Path, path: &Path) -> Option<FlashTool> {
-    let data = std::fs::read(path).ok()?;
-    Some(FlashTool {
-        path: wellfed_formats::bench::relative(root, path),
-        sha256: sha256(&data),
-    })
+/// The highest job number among the logs in `directory`, so a new server
+/// carries on from it rather than overwrite an earlier job's log.
+fn last_job(directory: &Path) -> JobId {
+    std::fs::read_dir(directory)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name();
+            let (id, _) = name.to_str()?.split_once('-')?;
+            id.parse::<JobId>().ok()
+        })
+        .max()
+        .unwrap_or(0)
 }
 
 /// What the socket's handlers and the job thread share.
@@ -273,14 +310,10 @@ impl Shared {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    /// Start `spec` on a thread of its own, unless a job is running or the
-    /// server is stopping.
-    pub(crate) fn start(self: &Arc<Self>, spec: JobSpec) -> Result<JobId, Refusal> {
-        if let Some(name) = spec.command.name()
-            && !plain_name(name)
-        {
-            return Err(Refusal::BadName { name: name.into() });
-        }
+    /// Parse `argv` as a job and start it on a thread of its own, unless a
+    /// job is running or the server is stopping.
+    pub(crate) fn start(self: &Arc<Self>, argv: &[String]) -> Result<JobId, Refusal> {
+        let spec = jobs::parse(argv)?;
 
         let mut jobs = self.jobs();
         if jobs.stopping {
@@ -296,7 +329,27 @@ impl Shared {
         jobs.last += 1;
         let id = jobs.last;
         let label = spec.command.describe();
-        let log = jobs.logs.add(id);
+        let file_name = format!(
+            "{id}-{}.log",
+            spec.command
+                .name()
+                .unwrap_or_else(|| spec.command.label().word())
+        );
+        let path = self.bed.root.join(JOBS).join(file_name);
+        let file = std::fs::create_dir_all(self.bed.root.join(JOBS))
+            .and_then(|()| File::create_new(&path));
+        let file = match file {
+            Ok(file) => Some(file),
+            Err(error) => {
+                self.output.say(format!(
+                    "Job {id}: no log file ({}: {error})",
+                    path.display()
+                ));
+                None
+            }
+        };
+        let log = jobs.logs.add(id, file);
+
         let (cancel, children) = (Cancel::new(), Children::new());
         let store = self.store.clone();
         children.watch(move |list| {
@@ -310,6 +363,7 @@ impl Shared {
             state.job = Some(JobView {
                 id,
                 label: label.clone(),
+                log: relative(&self.bed.root, &path),
                 accepted: now(),
                 record: None,
                 upcoming: Vec::new(),
@@ -337,12 +391,7 @@ impl Shared {
             Err(error) => {
                 drop(jobs);
                 self.output.route(None);
-                self.finish(
-                    id,
-                    None,
-                    1,
-                    Some(format!("Could not start the job: {error}")),
-                );
+                self.finish(id, None, 1, Some(JobError::Spawn(error)));
                 return Ok(id);
             }
         };
@@ -357,9 +406,9 @@ impl Shared {
         Ok(id)
     }
 
-    fn run_job(&self, id: JobId, spec: &JobSpec, run: Run, log: &Arc<JobLog>) {
+    fn run_job(&self, id: JobId, spec: &jobs::JobSpec, run: Run, log: &Arc<JobLog>) {
         let ran = catch_unwind(AssertUnwindSafe(|| jobs::run(&self.bed, spec, run)));
-        let (code, error) = ran.unwrap_or_else(|_| (1, Some("The job panicked".into())));
+        let (code, error) = ran.unwrap_or((1, Some(JobError::Panicked)));
 
         // Every line the job wrote reaches its stream before the end does.
         self.output.sync();
@@ -371,9 +420,23 @@ impl Shared {
         self.finish(id, Some(log), code, error);
     }
 
-    /// Record the end everywhere: the state, the stream, the console.
-    fn finish(&self, id: JobId, log: Option<&Arc<JobLog>>, code: u8, error: Option<String>) {
-        // The client prints the error as the command line always did.
+    /// Free the bench, then record the end everywhere: the state, the
+    /// stream, the console. A client that sees the end can start the next
+    /// job at once.
+    fn finish(&self, id: JobId, log: Option<&Arc<JobLog>>, code: u8, error: Option<JobError>) {
+        let log = {
+            let mut jobs = self.jobs();
+            if jobs
+                .running
+                .as_ref()
+                .is_some_and(|running| running.id == id)
+            {
+                jobs.running = None;
+            }
+            log.cloned().or_else(|| jobs.logs.get(id))
+        };
+
+        let error = error.map(|error| error.to_string());
         let ended = match &error {
             Some(error) => format!("Job {id} stopped: {error}"),
             None => format!("Job {id} ended with code {code}"),
@@ -384,30 +447,17 @@ impl Shared {
             finished: now(),
         };
         self.store.update(|state| {
+            // The next job may already be the state's.
             if let Some(job) = state.job.as_mut().filter(|job| job.id == id) {
                 job.end = Some(end.clone());
+                state.activity.clear();
+                state.uart = Uart::Idle;
             }
-            state.activity.clear();
-            state.uart = Uart::Idle;
         });
-        match log {
-            Some(log) => log.finish(end),
-            None => {
-                if let Some(log) = self.jobs().logs.get(id) {
-                    log.finish(end);
-                }
-            }
+        if let Some(log) = log {
+            log.finish(end);
         }
         self.output.say(ended);
-
-        let mut jobs = self.jobs();
-        if jobs
-            .running
-            .as_ref()
-            .is_some_and(|running| running.id == id)
-        {
-            jobs.running = None;
-        }
     }
 
     /// Ask the running job `id` to stop: its sequence sees the cancel at
@@ -437,7 +487,11 @@ impl Shared {
 
         let id = stopping.id;
         self.store.update(|state| {
-            if let Some(job) = state.job.as_mut().filter(|job| job.id == id) {
+            if let Some(job) = state
+                .job
+                .as_mut()
+                .filter(|job| job.id == id && job.end.is_none())
+            {
                 job.cancel = CancelState::Requested;
             }
         });
@@ -464,6 +518,19 @@ impl Shared {
 
         self.interrupt(&stopping);
         thread
+    }
+
+    /// Read the relays unless a job runs; the jobs lock is held throughout,
+    /// so none starts meanwhile.
+    fn poll_relays(&self) {
+        let jobs = self.jobs();
+        if jobs.running.is_some() || jobs.stopping {
+            return;
+        }
+        if let Err(error) = self.bed.board.query() {
+            self.output.say(format!("Relay board: {error}"));
+        }
+        drop(jobs);
     }
 
     /// The output of job `id`, running or among the last few.

@@ -1,20 +1,19 @@
-//! A job: one bench command, as the client's command line parsed it, run on
-//! the server's bench with the rig's sequences and the suite unchanged.
+//! A job: one bench command line, parsed by the server and run on its bench
+//! with the rig's sequences and the suite unchanged.
 //!
-//! The command line and the socket share [`JobCommand`]: the CLI parses it
-//! with clap and posts it as JSON, and the server runs it on a thread of its
-//! own. Clap's checks between flags (`--build` against `--review`,
-//! `--destructive` needing `--power`) run in the client; the server trusts
-//! the socket's owner, whom its mode limits to the checkout's.
+//! A client posts the command line's words, never a parsed command, and the
+//! server parses them here with the same clap definitions the CLI uses
+//! ([`JobCommand`], [`JobOptions`]). So every check clap makes (between
+//! flags, of ranges, of required names) holds for whatever reaches the
+//! socket, and there is one parser for every client.
 
 use std::path::PathBuf;
 use std::time::Duration;
 
-use clap::Subcommand;
-use serde::{Deserialize, Serialize};
+use clap::{Args, Parser, Subcommand};
 use wellfed_formats::bench::Config;
 use wellfed_formats::bench::progress::{BenchCommand, ProgressSink, Status};
-use wellfed_formats::bench::{CAPTURES, STATUS_DIR};
+use wellfed_formats::bench::{CAPTURES, STATUS_DIR, plain_name};
 use wellfed_itest::{ItestArgs, StockOtaArgs};
 use wellfed_relay::Relay;
 use wellfed_rig::Cancel;
@@ -24,11 +23,11 @@ use wellfed_rig::commands::{
 };
 use wellfed_rig::tools::{Children, Processes};
 
+use crate::api::Refusal;
 use crate::board::SharedBoard;
 
 /// A bench command that touches the hardware, as a job.
-#[derive(Debug, Clone, Subcommand, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
+#[derive(Debug, Clone, Subcommand)]
 pub enum JobCommand {
     /// Release the strap and cut feeder power.
     Off,
@@ -163,14 +162,71 @@ impl JobCommand {
     }
 }
 
-/// A job as a client posts it: the command and the options that were the
-/// command line's global flags.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct JobSpec {
-    pub command: JobCommand,
+/// The options every job takes, global on the command line.
+#[derive(Debug, Clone, Args)]
+pub struct JobOptions {
     /// Power-off time before a cold boot, in seconds.
+    #[arg(long, global = true, default_value_t = 2.0)]
     pub off_seconds: f64,
+    /// What the UART lines (relays 3 and 4) do while the feeder is off.
+    #[arg(long, global = true, value_enum, default_value_t = UartWhenOff::Isolated)]
     pub uart_when_off: UartWhenOff,
+}
+
+/// A job's command line, as the server parses what a client posts.
+#[derive(Debug, Parser)]
+#[command(name = "wellfed-bench", no_binary_name = true)]
+struct JobLine {
+    /// The client's checkout. It named this server's socket, so it is this
+    /// server's root and is not read again.
+    #[expect(
+        dead_code,
+        reason = "taken so a client's `--root` parses; the server has its own"
+    )]
+    #[arg(long, global = true)]
+    root: Option<PathBuf>,
+    #[command(flatten)]
+    options: JobOptions,
+    #[command(subcommand)]
+    command: JobCommand,
+}
+
+/// A parsed job: the command and its options.
+#[derive(Debug, Clone)]
+pub(crate) struct JobSpec {
+    pub(crate) command: JobCommand,
+    pub(crate) options: JobOptions,
+}
+
+/// Parse a client's words as the CLI does, refusing what is no job.
+pub(crate) fn parse(argv: &[String]) -> Result<JobSpec, Refusal> {
+    let line = JobLine::try_parse_from(argv).map_err(|error| Refusal::Unparsed {
+        message: error.render().to_string(),
+    })?;
+
+    // The catalog is the client's to print; as a job it would run the suite.
+    if let JobCommand::Itest(args) = &line.command
+        && args.list
+    {
+        return Err(Refusal::NotAJob {
+            what: "itest --list".into(),
+        });
+    }
+    if let Some(name) = line.command.name()
+        && !plain_name(name)
+    {
+        return Err(Refusal::BadName { name: name.into() });
+    }
+    if seconds_arg("--off-seconds", line.options.off_seconds).is_err() {
+        return Err(Refusal::BadLength {
+            value: line.options.off_seconds,
+        });
+    }
+
+    Ok(JobSpec {
+        command: line.command,
+        options: line.options,
+    })
 }
 
 /// The tool binaries every job runs.
@@ -197,6 +253,11 @@ pub(crate) enum JobError {
     Rig(#[from] wellfed_rig::Error),
     #[error(transparent)]
     Suite(#[from] wellfed_itest::Error),
+    /// A bug: the server catches it, so the bench stays served.
+    #[error("The job panicked")]
+    Panicked,
+    #[error("Could not start the job's thread: {0}")]
+    Spawn(std::io::Error),
 }
 
 /// What one run needs besides its spec: its cancel, its children's
@@ -210,21 +271,23 @@ pub(crate) struct Run {
 /// Run `spec` to its end on this thread: open the bench, record the steps,
 /// run the command and record how it finished. Returns the exit code and
 /// the error it stopped on.
-pub(crate) fn run(bed: &Bed, spec: &JobSpec, run: Run) -> (u8, Option<String>) {
+pub(crate) fn run(bed: &Bed, spec: &JobSpec, run: Run) -> (u8, Option<JobError>) {
     let mut bench = match open(bed, spec, &run) {
         Ok(bench) => bench,
-        Err(error) => return (1, Some(error.to_string())),
+        Err(error) => return (1, Some(error)),
     };
     if let Err(error) = record_start(&mut bench, &spec.command, run.sink) {
-        return (1, Some(error.to_string()));
+        return (1, Some(error));
     }
 
     let result = dispatch(&mut bench, &spec.command, bed.tools.stock_bin.clone());
     let (code, error) = match result {
         Ok(code) => (code, None),
-        Err(error) => (1, Some(error.to_string())),
+        Err(error) => (1, Some(error)),
     };
-    bench.status.finish(code, error.clone());
+    bench
+        .status
+        .finish(code, error.as_ref().map(ToString::to_string));
     (code, error)
 }
 
@@ -232,7 +295,7 @@ fn open(bed: &Bed, spec: &JobSpec, run: &Run) -> Result<Bench, JobError> {
     if let Some(name) = spec.command.name() {
         commands::check_name(name)?;
     }
-    let off_time: Duration = seconds_arg("--off-seconds", spec.off_seconds)?;
+    let off_time: Duration = seconds_arg("--off-seconds", spec.options.off_seconds)?;
 
     let relay = if spec.command.switches_relays() {
         Relay::of(Box::new(bed.board.clone()))
@@ -258,7 +321,7 @@ fn open(bed: &Bed, spec: &JobSpec, run: &Run) -> Result<Bench, JobError> {
         cancel: run.cancel.clone(),
         sleep: wellfed_rig::sleep,
         off_time,
-        uart_when_off: spec.uart_when_off,
+        uart_when_off: spec.options.uart_when_off,
     })
 }
 
@@ -331,4 +394,71 @@ fn dispatch(bench: &mut Bench, command: &JobCommand, stock_bin: PathBuf) -> Resu
         }
     };
     Ok(ran?)
+}
+
+#[cfg(test)]
+mod tests {
+    use wellfed_formats::bench::live::{BenchState, Phase, ServerView, Uart};
+    use wellfed_relay::{AtBoard, FakeBoard, Switch};
+
+    use super::*;
+    use crate::state::Store;
+
+    fn words(words: &[&str]) -> Vec<String> {
+        words.iter().map(|word| (*word).to_string()).collect()
+    }
+
+    struct Discard;
+
+    impl ProgressSink for Discard {
+        fn publish(&mut self, _: &wellfed_formats::bench::progress::Current) {}
+    }
+
+    #[test]
+    fn an_over_the_air_job_gets_a_board_that_refuses_every_switch() {
+        let board = FakeBoard::default();
+        let store = Store::new(BenchState {
+            now: 0.0,
+            server: ServerView {
+                pid: 1,
+                started: 0.0,
+                phase: Phase::Serving,
+            },
+            job: None,
+            activity: Vec::new(),
+            uart: Uart::Idle,
+            relays: Default::default(),
+        });
+        let bed = Bed {
+            root: PathBuf::from("/nonexistent"),
+            config: serde_json::from_str(
+                r#"{"relay_port": "r", "uart_port": "u", "baseline": "b", "rom_report": "r"}"#,
+            )
+            .unwrap(),
+            board: SharedBoard::new(Box::new(AtBoard::new(Box::new(board.clone()))), store),
+            tools: ToolPaths {
+                flash_bin: PathBuf::from("absent"),
+                stock_bin: PathBuf::from("absent"),
+                build_bin: PathBuf::from("absent"),
+            },
+        };
+        let run = || Run {
+            cancel: Cancel::new(),
+            children: Children::new(),
+            sink: Box::new(Discard),
+        };
+
+        for argv in [&["ota", "o1", "--build"][..], &["itest", "i1"]] {
+            let spec = parse(&words(argv)).unwrap();
+            let mut bench = open(&bed, &spec, &run()).unwrap();
+            assert!(bench.relay.set(1, Switch::On).is_err(), "{argv:?}");
+        }
+        assert!(board.log().is_empty());
+
+        // With --power the suite may cold boot, so it holds the real board.
+        let spec = parse(&words(&["itest", "i1", "--power"])).unwrap();
+        let mut bench = open(&bed, &spec, &run()).unwrap();
+        bench.relay.set(1, Switch::On).unwrap();
+        assert_eq!(board.log(), [(1, true)]);
+    }
 }

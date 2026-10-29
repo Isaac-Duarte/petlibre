@@ -11,11 +11,14 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use super::progress::{Current, FlashTool, RelayState, StepState, Unit};
+use super::progress::{Current, RelayState, StepState, Unit};
 
-/// A job's number: 1 for the first job a server runs, counting up for its
-/// life.
+/// A job's number, counting up across servers (see [`JOBS`]).
 pub type JobId = u64;
+
+/// Root-relative: each job's output, as `<id>-<name>.log`. Job numbers
+/// carry on from the highest file here, so a new server never reuses one.
+pub const JOBS: &str = "private/bench-status/jobs";
 
 /// How many of a job's pending steps the state lists as coming next.
 const UPCOMING: usize = 3;
@@ -46,8 +49,6 @@ pub struct ServerView {
     pub pid: u32,
     pub started: f64,
     pub phase: Phase,
-    /// The flash client every job runs, by hash: a plan binds it.
-    pub flash_tool: Option<FlashTool>,
 }
 
 /// Whether the server takes jobs.
@@ -68,6 +69,8 @@ pub struct JobView {
     pub id: JobId,
     /// The command as the client asked for it, such as `dump unit-01`.
     pub label: String,
+    /// Root-relative: the file its output is kept in.
+    pub log: String,
     pub accepted: f64,
     /// The command's own record, from its first step on.
     pub record: Option<Current>,
@@ -300,6 +303,7 @@ mod tests {
         let mut job = JobView {
             id: 1,
             label: "flash-execute unit".into(),
+            log: "private/bench-status/jobs/1-unit.log".into(),
             accepted: 0.0,
             record: None,
             upcoming: Vec::new(),

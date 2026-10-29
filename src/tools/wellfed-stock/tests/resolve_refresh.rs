@@ -23,7 +23,7 @@ async fn a_refused_resolution_asks_stock_for_its_attributes_and_nothing_else() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("server.json");
     let mut config = common::config();
-    [config.mqtt_listen, config.http_listen] = common::addresses();
+    [config.mqtt_listen, config.http_listen] = common::addresses().unwrap();
     wellfed_stock::storage::write_json(&path, &config).unwrap();
 
     // An earlier request that stock reported failing, long enough ago.

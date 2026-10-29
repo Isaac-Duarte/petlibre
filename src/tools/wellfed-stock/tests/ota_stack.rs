@@ -29,10 +29,8 @@ async fn an_explicit_api_install_publishes_once_and_never_again() {
     // A distinct loopback host lets this test own the fixed image-server port.
     let host = Ipv4Addr::new(127, 0, 0, 2 + (std::process::id() % 100) as u8);
 
-    let mqtt = std::net::TcpListener::bind((host, 0)).unwrap();
-    config.mqtt_listen = mqtt.local_addr().unwrap();
-    drop(mqtt);
-    [config.http_listen] = common::addresses();
+    [config.mqtt_listen] = common::addresses_on(host).unwrap();
+    [config.http_listen] = common::addresses().unwrap();
     storage::write_json(&path, &config).unwrap();
 
     let token = Uuid::new_v4();
@@ -295,7 +293,7 @@ async fn ordinary_server_refuses_trial_publication_by_default() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("server.json");
     let mut config = common::config();
-    [config.mqtt_listen, config.http_listen] = common::addresses();
+    [config.mqtt_listen, config.http_listen] = common::addresses().unwrap();
     storage::write_json(&path, &config).unwrap();
 
     let service = common::start(&path);

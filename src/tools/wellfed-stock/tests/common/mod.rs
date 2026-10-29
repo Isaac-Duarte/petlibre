@@ -4,7 +4,7 @@
 
 #![allow(dead_code)]
 use std::{
-    net::TcpListener,
+    net::{Ipv4Addr, SocketAddr, TcpListener},
     path::PathBuf,
     process::{Child, Command, Stdio},
     time::Duration,
@@ -60,6 +60,24 @@ impl Service {
                 .unwrap(),
         )
     }
+
+    /// Wait until the server accepts connections at `at`. A server that
+    /// exits first fails the test with its exit status (its errors are on
+    /// the test's standard error); one that never listens fails after a
+    /// minute, far past a loaded start, rather than at nextest's timeout.
+    pub async fn listening(&mut self, at: std::net::SocketAddr) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(60);
+        while std::net::TcpStream::connect(at).is_err() {
+            if let Some(status) = self.0.try_wait().unwrap() {
+                panic!("the server exited before it listened on {at}: {status}");
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the server never listened on {at}"
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
 }
 
 impl Drop for Service {
@@ -89,24 +107,50 @@ impl Drop for Service {
 /// fails `address in use`), so these are drawn at random from below it,
 /// where nothing is handed out unasked. Every listener is held until all
 /// are chosen, so the `N` differ.
-pub fn addresses<const N: usize>() -> [std::net::SocketAddr; N] {
+pub fn addresses<const N: usize>() -> std::io::Result<[SocketAddr; N]> {
+    addresses_on(Ipv4Addr::LOCALHOST)
+}
+
+/// As [`addresses`], on another loopback `host`.
+pub fn addresses_on<const N: usize>(host: Ipv4Addr) -> std::io::Result<[SocketAddr; N]> {
+    const LOW: u16 = 10_000;
     let ephemeral = std::fs::read_to_string("/proc/sys/net/ipv4/ip_local_port_range")
         .ok()
         .and_then(|range| range.split_whitespace().next()?.parse::<u16>().ok())
         .unwrap_or(32_768);
-    let low = 10_000;
-    assert!(ephemeral > low, "room below the ephemeral range");
+    let span = ephemeral
+        .checked_sub(LOW)
+        .filter(|span| *span > 0)
+        .ok_or_else(|| {
+            std::io::Error::other(format!(
+                "the ephemeral range starts at {ephemeral}: no room below it above {LOW}"
+            ))
+        })?;
 
-    let held: [TcpListener; N] = std::array::from_fn(|_| {
-        loop {
-            let draw = uuid::Uuid::new_v4().as_u128() % u128::from(ephemeral - low);
-            let port = low + u16::try_from(draw).unwrap();
-            if let Ok(listener) = TcpListener::bind(("127.0.0.1", port)) {
-                break listener;
-            }
+    // std's hasher keys come from the operating system's random source.
+    use std::hash::BuildHasher as _;
+    let random = std::hash::RandomState::new();
+    let mut held = Vec::with_capacity(N);
+    let mut draw = 0u64;
+    while held.len() < N {
+        if draw == 10_000 {
+            return Err(std::io::Error::other(format!(
+                "no {N} free ports below {ephemeral} on {host}"
+            )));
         }
-    });
-    held.map(|listener| listener.local_addr().unwrap())
+        let offset = u16::try_from(random.hash_one(draw) % u64::from(span)).unwrap();
+        if let Ok(listener) = TcpListener::bind((host, LOW + offset)) {
+            held.push(listener);
+        }
+        draw += 1;
+    }
+    let addresses = held
+        .iter()
+        .map(TcpListener::local_addr)
+        .collect::<std::io::Result<Vec<_>>>()?;
+    Ok(addresses
+        .try_into()
+        .expect("one address for each of the N listeners"))
 }
 
 pub fn start(path: &std::path::Path) -> Service {

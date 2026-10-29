@@ -37,7 +37,7 @@
 
 #![forbid(unsafe_code)]
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use ed25519_dalek::{Signer, SigningKey};
 use sha2::{Digest, Sha256};
@@ -62,6 +62,20 @@ pub use error::{Error, FrozenError, ImageError, KeyError, Result};
 
 /// The bench key's root-relative path. Firmware builds embed its public half.
 pub const KEY_PATH: &str = "private/ota-key.json";
+
+/// The highest version among the signed manifests (`*.manifest`) in
+/// `directory`, with its file; `None` when it holds none. Only the header
+/// is read, unverified: a feeder checks the signature. Signers pick the
+/// next version above it, so no two manifests they made share a version.
+pub fn highest_signed(directory: &Path) -> Option<(u32, PathBuf)> {
+    std::fs::read_dir(directory)
+        .ok()?
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "manifest"))
+        .filter_map(|path| Some((ota::claimed_version(&std::fs::read(&path).ok()?)?, path)))
+        .max_by_key(|(version, _)| *version)
+}
 
 /// The OTA container's header precedes the bank contents.
 pub const CONTAINER_HEADER: usize = 32;
@@ -725,5 +739,29 @@ mod tests {
             ),
             "{error:?}"
         );
+    }
+
+    /// The next version is picked above every manifest kept in a
+    /// directory; anything that is not a manifest is passed over.
+    #[test]
+    fn the_highest_signed_version_is_read_from_the_headers() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(highest_signed(dir.path()), None);
+        assert_eq!(highest_signed(&dir.path().join("missing")), None);
+
+        let manifest = |version: u32| {
+            let mut bytes = vec![0u8; offer::MANIFEST_LEN];
+            bytes[..8].copy_from_slice(&offer::MAGIC);
+            bytes[8..12].copy_from_slice(&version.to_le_bytes());
+            bytes
+        };
+        fs::write(dir.path().join("a-v3.manifest"), manifest(3)).unwrap();
+        fs::write(dir.path().join("b-v12.manifest"), manifest(12)).unwrap();
+        fs::write(dir.path().join("c.bin"), manifest(40)).unwrap();
+        fs::write(dir.path().join("d.manifest"), b"not a manifest").unwrap();
+
+        let (version, path) = highest_signed(dir.path()).unwrap();
+        assert_eq!(version, 12);
+        assert!(path.ends_with("b-v12.manifest"));
     }
 }

@@ -45,6 +45,25 @@ pub(crate) async fn setup(args: SetupArgs) -> Result<()> {
         None => None,
     };
     let mut key = OwnerKey::open(&args.keys, args.label.as_deref(), OwnerKey::system())?;
+    let link = Link::open(args.address).await?;
+    let (identity, enrolled) = over_ble(&mut key, wifi, link).await?;
+    println!(
+        "Paired with feeder {} ({}); it reboots now without BLE.",
+        fingerprint(&identity),
+        enrolled
+    );
+    Ok(())
+}
+
+/// Enroll `key` as an owner over `link` to a feeder in setup mode, giving
+/// it `wifi` when set, the owner keying in the code shown; the feeder's
+/// identity, remembered in the key file, and what the feeder said. The
+/// link is closed either way.
+pub(crate) async fn over_ble(
+    key: &mut OwnerKey,
+    wifi: Option<Credentials>,
+    mut link: Link,
+) -> Result<([u8; 32], String)> {
     let ask = Ask {
         label: key.label().to_string(),
         wifi,
@@ -56,7 +75,6 @@ pub(crate) async fn setup(args: SetupArgs) -> Result<()> {
     let code = Code::from_bits(u16::from_le_bytes(bits));
     let mut session = Session::new(key.keypair(), ephemeral, ask, code, seed)?;
 
-    let mut link = Link::open(args.address).await?;
     let result = exchange(&mut session, &mut link).await;
     link.close().await;
     let enrolled = result?;
@@ -65,12 +83,7 @@ pub(crate) async fn setup(args: SetupArgs) -> Result<()> {
         bail!("the feeder never proved the code");
     };
     key.remember(&identity)?;
-    println!(
-        "Paired with feeder {} ({}); it reboots now without BLE.",
-        fingerprint(&identity),
-        enrolled
-    );
-    Ok(())
+    Ok((identity, enrolled))
 }
 
 /// Run the session to its end; the outcome as text.

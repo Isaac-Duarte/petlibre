@@ -15,14 +15,25 @@
 //!   this computer to the feeder's setup access point (joining Wi-Fi is the
 //!   platform's job, so the run waits for the owner to say it is done);
 //! - the replacement is reached over the device API, with this computer's
-//!   key, enrolled through the recovery window when the build does not know
-//!   it yet.
+//!   key. A key the build already knows opens a session at once. Otherwise
+//!   the review's provisioning picks the route: a consumer image starts
+//!   Bluetooth setup by itself, so the run runs `wellfed setup`'s exchange
+//!   (giving it the home Wi-Fi), waits for the reboot and finds the feeder
+//!   over mDNS or where stock connected from; a bench image is paired
+//!   through the LAN recovery window;
+//! - the promotion is signed by a key the replacement trusts: a manifest
+//!   given with `--manifest`, or the build signed here with the update key
+//!   at a version above the feeder's floor, the key enrolled first (a
+//!   Dispense press) when the image does not build it in. The signed
+//!   manifest is kept beside the stock backup, so a resumed run knows the
+//!   version it waits for.
 //!
 //! The run holds the bench lease beside the stock config for its whole
 //! length; `serve` runs on it as a descendant. Nothing is retried that the
 //! steps say must not be: the install request goes once, and a refusal or
 //! an uncertain outcome ends the run; so does the put of stock's plans,
-//! which an unanswered put judges by reading the plans back.
+//! which an unanswered put judges by reading the plans back, and the update
+//! key's enrollment, which an unanswered one judges by the signer list.
 //!
 //! What the run asks the owner goes through one `Asker`, at a terminal or,
 //! with `--prompts lines`, as JSON lines for the bench server that runs it
@@ -47,19 +58,25 @@ use serde::de::IgnoredAny;
 use tokio::process::{Child, Command};
 use tokio::signal::unix::{SignalKind, signal};
 use wellfed_client::install::{
-    CONTAINER_HEADER, DnsCheck, DnsOverride, FeederTrust, Install, InstallError, Phase, PlansPut,
-    Provision, Replacement, Requested, SETUP_ADDRESS, STOCK_BROKER_PORT, SetupFrame, Step,
-    StockBackup, StockPower, StockView, manifest_version, plans,
+    CONTAINER_HEADER, DnsCheck, DnsOverride, FeederTrust, Install, InstallError, Options,
+    PairRoute, Phase, PlansPut, Promotion, Provision, Replacement, Requested, SETUP_ADDRESS,
+    STOCK_BROKER_PORT, SetupFrame, Step, StockBackup, StockPower, StockView, UpdateKey,
+    manifest_version, plans,
 };
+use wellfed_client::setup::Credentials;
 use wellfed_client::update::{Image, InstallError as UpdateError};
+use wellfed_client::update_key::{EnrollError, Enrolled};
+use wellfed_formats::bench::VERIFICATION;
 use wellfed_formats::bench::lease::Lease;
 use wellfed_formats::bench::prompt::Prompt;
-use wellfed_formats::manifest::BuildManifest;
+use wellfed_formats::credentials::KeyScope;
+use wellfed_formats::manifest::{BuildManifest, Provisioning};
 use wellfed_formats::stock::{
     ImageLease, OtaReport, ServerConfig, StockStatus, TrialAnswer, TrialPhase, TrialRequest,
 };
 use wellfed_model::{Answer, Generation, Op, PLANS, Plan, Plans};
 use wellfed_proto::api::PORT;
+use wellfed_signing::{Frozen, Key, Motion, highest_signed};
 use wellfed_stock_api::{ApiError, Auth, StockApi};
 
 use crate::ask::{Asker, Prompts};
@@ -88,6 +105,11 @@ const IMAGES_WAIT: Duration = Duration::from_secs(30);
 const STOP_WAIT: Duration = Duration::from_secs(5);
 /// Reading the plans back may wait for a session to open again.
 const PLANS_WAIT: Duration = Duration::from_secs(60);
+/// From the end of Bluetooth setup until the feeder, rebooted onto the
+/// owner's Wi-Fi, answers the device API.
+const JOIN_WAIT: Duration = Duration::from_secs(5 * 60);
+/// How the feeder lists the installer's update key.
+const UPDATE_KEY_LABEL: &str = "installer";
 
 #[derive(Args)]
 pub(crate) struct InstallArgs {
@@ -95,10 +117,28 @@ pub(crate) struct InstallArgs {
     /// `build-manifest.json`): what stock installs into bank 0.
     #[arg(long)]
     review: PathBuf,
-    /// The signed update manifest for the same build, which bank 0 installs
-    /// into bank 1 at promotion.
+    /// A signed update manifest for the same build, which bank 0 installs
+    /// into bank 1 at promotion; its version must be above the feeder's
+    /// floor. Without it the run signs the build itself with --update-key,
+    /// at a version above the floor and above any it signed before, and
+    /// keeps the manifest under --backups.
     #[arg(long)]
-    manifest: PathBuf,
+    manifest: Option<PathBuf>,
+    /// The owner's update-signing key file, created here if missing (as
+    /// `wellfed update-key new` does). When the image does not build it in,
+    /// the run enrolls it after pairing, confirmed by a Dispense press.
+    /// Without it, a bench review signs with the bench key
+    /// (private/ota-key.json), and a consumer review needs --manifest.
+    #[arg(long)]
+    update_key: Option<PathBuf>,
+    /// The network a consumer image is given over Bluetooth setup
+    /// (passphrase from standard input); with --ssid, that network.
+    #[arg(long, conflicts_with = "ssid")]
+    home_ssid: Option<String>,
+    /// The feeder's Bluetooth address for setup; otherwise the first in
+    /// setup mode.
+    #[arg(long)]
+    ble_address: Option<bluer::Address>,
     /// A copy of stock 1.1.15's OTA image that matches the pinned digest.
     /// Without one, the run reads bank 1 from the replacement on bank 0
     /// and keeps it under --backups; promotion overwrites the feeder's
@@ -182,6 +222,11 @@ enum PromptsRefused {
          --prompts lines; nothing was started. Use --broker-name on the bench"
     )]
     Frame,
+    #[error(
+        "--home-ssid reads the network's passphrase at a terminal, so it does not run with \
+         --prompts lines; nothing was started. Run it at a terminal"
+    )]
+    HomeNetwork,
 }
 
 /// A stock config the install will not run on.
@@ -204,9 +249,16 @@ struct Run {
     api: StockApi,
     stock_bin: PathBuf,
     key: OwnerKey,
-    /// The replacement's image (an OTA container) and its update manifest.
+    /// The replacement's image (an OTA container) and its update manifest:
+    /// given, or once the run signed it.
     container: Vec<u8>,
-    manifest: Vec<u8>,
+    manifest: Option<Vec<u8>>,
+    /// The verified review, when the run signs the promotion itself.
+    frozen: Option<Frozen>,
+    /// The update key the run signs with and enrolls when needed.
+    update_key: Option<Key>,
+    /// The owner's Wi-Fi, which Bluetooth setup gives a consumer image.
+    home: Option<Credentials>,
     /// `serve` and `ota-images`, killed when the run ends.
     serve: Option<Child>,
     images: Option<Child>,
@@ -214,6 +266,8 @@ struct Run {
     request: Option<uuid::Uuid>,
     /// Where the feeder connected from (the image lease's peer).
     peer: Option<IpAddr>,
+    /// Where the feeder answered after joining the owner's Wi-Fi.
+    found: Option<SocketAddr>,
     /// The feeder's identity, once its key is known.
     identity: Option<[u8; 32]>,
     /// The `--stock-backup` copy, kept under `--backups` before promotion
@@ -230,6 +284,9 @@ enum Unsettled {
     /// Stock's install request, under this id: settled once the
     /// replacement answers its status.
     Request(uuid::Uuid),
+    /// The update key's enrollment, which a press may have admitted after
+    /// its answer was lost: settled once the run moves past it.
+    UpdateKey,
     /// The signed update, pushed from bank 0 into bank 1: settled once
     /// bank 1 confirms it.
     Promotion,
@@ -243,6 +300,7 @@ impl Unsettled {
     fn settled_at(self, phase: Phase) -> bool {
         match self {
             Self::Request(_) => phase > Phase::ReadStatus,
+            Self::UpdateKey => phase > Phase::UpdateKey,
             Self::Promotion => phase > Phase::AwaitConfirm,
             Self::Plans => phase == Phase::Done,
         }
@@ -257,11 +315,14 @@ const fn phase_text(phase: Phase) -> &'static str {
         Phase::ConfirmFeeder => "the feeder check, before anything was sent to stock",
         Phase::Request => "the install request",
         Phase::AwaitInstall => "stock's install of the replacement",
-        Phase::Pair => "pairing through the recovery window",
+        Phase::Pair => "pairing (Bluetooth setup or the recovery window)",
+        Phase::Join => "waiting for the replacement to join the network after Bluetooth setup",
         Phase::ReadStatus => "reading the replacement's status",
         Phase::CloseTrial => "closing the stock server's record",
+        Phase::UpdateKey => "enrolling the update key",
         Phase::Backup => "reading the stock backup",
         Phase::StockPlans => "reading stock's plans",
+        Phase::Sign => "reading the feeder's floor and signing the promotion",
         Phase::Promote => "the promotion",
         Phase::AwaitConfirm => "waiting for bank 1 to confirm the promotion",
         Phase::ApplyPlans => "applying stock's plans to the replacement",
@@ -273,6 +334,7 @@ impl std::fmt::Display for Unsettled {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Request(id) => write!(f, "stock's install request {id}"),
+            Self::UpdateKey => f.write_str("the update key's enrollment"),
             Self::Promotion => f.write_str("the promotion's push"),
             Self::Plans => f.write_str("the put of stock's plans"),
         }
@@ -379,6 +441,9 @@ pub(crate) async fn run(args: InstallArgs) -> Result<()> {
     if args.prompts == Prompts::Lines && args.ssid.is_some() {
         return Err(PromptsRefused::Frame.into());
     }
+    if args.prompts == Prompts::Lines && args.home_ssid.is_some() {
+        return Err(PromptsRefused::HomeNetwork.into());
+    }
     let config_path = std::path::absolute(&args.stock_config).context("--stock-config")?;
     let config: ServerConfig = wellfed_formats::load(&config_path)
         .with_context(|| format!("read {}", config_path.display()))?;
@@ -389,10 +454,10 @@ pub(crate) async fn run(args: InstallArgs) -> Result<()> {
     let _lease = Lease::acquire_in(directory).context("bench lease")?;
 
     // Everything the run needs is read and checked before the feeder is
-    // touched: a bad backup or a missing manifest stops it here.
-    let build = review_build(&args.review)?;
+    // touched: a bad backup, a missing manifest or key, or a consumer run
+    // with no network to give stops it here.
+    let (build, review) = review_build(&args.review)?;
     let container = std::fs::read(args.review.join("image.bin")).context("read image.bin")?;
-    let manifest = std::fs::read(&args.manifest).context("read --manifest")?;
     let backup = match &args.stock_backup {
         Some(path) => {
             let image = std::fs::read(path).with_context(|| format!("read {}", path.display()))?;
@@ -407,11 +472,51 @@ pub(crate) async fn run(args: InstallArgs) -> Result<()> {
         }
     };
 
-    let version = manifest_version(&manifest).context("--manifest is not a signed manifest")?;
+    let route = match review.provisioning {
+        Provisioning::Consumer => PairRoute::Setup,
+        Provisioning::Bench => PairRoute::Recovery,
+    };
+    let update_key = update_key(&args, review.provisioning)?;
+    let enroll = match &update_key {
+        Some(key) if !builds_in(&review, key) => UpdateKey::Enroll(key.public()),
+        _ => UpdateKey::BuiltIn,
+    };
+    let (manifest, promotion, frozen) = match &args.manifest {
+        Some(path) => {
+            let manifest = std::fs::read(path).context("read --manifest")?;
+            let version =
+                manifest_version(&manifest).context("--manifest is not a signed manifest")?;
+            (Some(manifest), Promotion::Signed(version), None)
+        }
+        None => {
+            let frozen = frozen_review(&args.review, &build)?;
+            let above = signed_before(&args.backups);
+            if let Some(key) = &update_key {
+                eprintln!(
+                    "The run signs build {} with update key {} once it has read the feeder's \
+                     floor, above version {above}.",
+                    short(&build),
+                    wellfed_formats::hex::encode(&key.id())
+                );
+            }
+            (None, Promotion::Sign { above }, Some(frozen))
+        }
+    };
+    let options = Options {
+        route,
+        update_key: enroll,
+        promotion,
+    };
+
+    let passphrase = match (&args.ssid, &args.home_ssid) {
+        (None, None) => None,
+        _ => Some(crate::passphrase()?),
+    };
+    let home = home_wifi(&args, route, passphrase.as_deref())?;
     let mut install = if args.from_bank0 {
-        Install::from_bank0(&build, version)
+        Install::from_bank0(&build, options)
     } else {
-        Install::new(provision(&args, &config)?, &build, version)?
+        Install::new(provision(&args, &config, passphrase)?, &build, options)?
     };
     if args.without_stock_plans {
         install.without_stock_plans();
@@ -438,10 +543,14 @@ pub(crate) async fn run(args: InstallArgs) -> Result<()> {
         config_path,
         container,
         manifest,
+        frozen,
+        update_key,
+        home,
         serve: None,
         images: None,
         request: None,
         peer: None,
+        found: None,
         identity: None,
         given: backup,
         track: Track::new(),
@@ -463,22 +572,172 @@ pub(crate) async fn run(args: InstallArgs) -> Result<()> {
     }
 }
 
-/// The startup identity the review's build manifest records; the image
-/// server checks it against the review's digests before serving.
-fn review_build(review: &Path) -> Result<String> {
+/// Where the run looks for a feeder by its identity.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Look {
+    /// Only where this run knows its feeder is: `--address`, or where stock
+    /// connected from.
+    Known,
+    /// Over mDNS too: for an identity this run learned from the feeder
+    /// itself, which no other feeder answers to.
+    Mdns,
+}
+
+/// What a run refuses before anything starts, beyond a file it cannot read.
+#[derive(Debug, thiserror::Error)]
+enum Refused {
+    #[error(
+        "a consumer image trusts the release key, which this tool never holds: pass --update-key (created if missing) for the run to sign with and enroll, or --manifest"
+    )]
+    NoSigner,
+    #[error(
+        "a consumer image joins no network until Bluetooth setup gives it one: pass --home-ssid <network> (or --ssid)"
+    )]
+    NoHomeNetwork,
+    #[error("a bench image joins its build network; --home-ssid is for a consumer image")]
+    HomeForBench,
+    #[error(
+        "the build moves the motor at startup ({policy}): sign it attended (wellfed-build sign --attended-motion) and pass --manifest"
+    )]
+    Motion { policy: String },
+    #[error("the review's image is build {signed}, not {served}")]
+    OtherBuild { signed: String, served: String },
+    #[error("{} is not under a checkout's private/ directory, where reviews are signed", review.display())]
+    NotPrivate { review: PathBuf },
+}
+
+/// The update key the run uses: `--update-key` (created if missing), or
+/// the bench key, never created here, for a bench review that signs here.
+/// `None` when a given manifest needs no key of the run's own.
+fn update_key(args: &InstallArgs, provisioning: Provisioning) -> Result<Option<Key>> {
+    match (&args.update_key, &args.manifest, provisioning) {
+        (Some(path), _, _) => open_update_key(path).map(Some),
+        (None, Some(_), _) => Ok(None),
+        (None, None, Provisioning::Bench) => {
+            let path = Path::new(wellfed_signing::KEY_PATH);
+            let key = Key::load(path).with_context(|| format!("load {}", path.display()))?;
+            Ok(Some(key))
+        }
+        (None, None, Provisioning::Consumer) => Err(Refused::NoSigner.into()),
+    }
+}
+
+/// Load the owner's update key at `path`, creating one there first if
+/// there is none, as `wellfed update-key new` would.
+fn open_update_key(path: &Path) -> Result<Key> {
+    if !path.exists() {
+        let public = wellfed_signing::keygen(path, KeyScope::Owner)
+            .with_context(|| format!("write {}", path.display()))?;
+        eprintln!(
+            "Created update key {} (public key {public}); it holds the private key: keep it \
+             private.",
+            path.display()
+        );
+    }
+    Key::load(path).with_context(|| format!("load {}", path.display()))
+}
+
+/// Whether the image builds `key` in, so the feeder trusts it without an
+/// enrollment.
+fn builds_in(review: &BuildManifest, key: &Key) -> bool {
+    let public = wellfed_formats::hex::encode(&key.public());
+    review
+        .ota_public_key
+        .as_deref()
+        .is_some_and(|built| built.eq_ignore_ascii_case(&public))
+}
+
+/// The review, verified as the signer verifies it; refused when it is not
+/// the served build, or when it moves the motor at startup (signed only
+/// attended).
+fn frozen_review(review: &Path, build: &str) -> Result<Frozen> {
+    let absolute = std::path::absolute(review).context("--review")?;
+    let root = absolute
+        .ancestors()
+        .find(|dir| dir.file_name().is_some_and(|name| name == "private"))
+        .and_then(Path::parent)
+        .ok_or_else(|| Refused::NotPrivate {
+            review: review.to_path_buf(),
+        })?;
+    let frozen = Frozen::open(root, &absolute).context("verify the review to sign it")?;
+    if frozen.build_id() != build {
+        return Err(Refused::OtherBuild {
+            signed: frozen.build_id(),
+            served: build.to_string(),
+        }
+        .into());
+    }
+    if let Some(policy) = frozen.motion_policy() {
+        return Err(Refused::Motion {
+            policy: policy.to_string(),
+        }
+        .into());
+    }
+    Ok(frozen)
+}
+
+/// The highest version this checkout signed before: the bench's manifests
+/// (`wellfed-bench ota` signs one above them) and the promotions earlier
+/// runs kept beside each feeder's backup. The run signs above it, so no
+/// two manifests share a version.
+fn signed_before(backups: &Path) -> u32 {
+    let mut directories = vec![PathBuf::from(VERIFICATION)];
+    if let Ok(entries) = std::fs::read_dir(backups) {
+        directories.extend(entries.flatten().map(|entry| entry.path()));
+    }
+    directories
+        .iter()
+        .filter_map(|directory| highest_signed(directory))
+        .map(|(version, _)| version)
+        .max()
+        .unwrap_or(0)
+}
+
+/// The Wi-Fi Bluetooth setup gives a consumer image: `--home-ssid`, or the
+/// frame's `--ssid`, with the passphrase read once.
+fn home_wifi(
+    args: &InstallArgs,
+    route: PairRoute,
+    passphrase: Option<&str>,
+) -> Result<Option<Credentials>> {
+    let ssid = args.home_ssid.as_ref().or(args.ssid.as_ref());
+    match (route, ssid, passphrase) {
+        (PairRoute::Setup, Some(ssid), Some(passphrase)) => Ok(Some(
+            Credentials::new(ssid.clone().into_bytes(), passphrase.to_string())
+                .context("the home network")?,
+        )),
+        // A resumed run may find the feeder on the network already.
+        (PairRoute::Setup, None, _) if args.from_bank0 => Ok(None),
+        (PairRoute::Setup, _, _) => Err(Refused::NoHomeNetwork.into()),
+        (PairRoute::Recovery, _, _) if args.home_ssid.is_some() => {
+            Err(Refused::HomeForBench.into())
+        }
+        (PairRoute::Recovery, _, _) => Ok(None),
+    }
+}
+
+/// The startup identity the review's build manifest records, and the
+/// manifest; the image server checks the identity against the review's
+/// digests before serving.
+fn review_build(review: &Path) -> Result<(String, BuildManifest)> {
     let manifest: BuildManifest = wellfed_formats::load(&review.join("build-manifest.json"))
         .context("read the review's build-manifest.json")?;
-    let id = manifest.startup_identity.unwrap_or_default();
+    let id = manifest.startup_identity.as_deref().unwrap_or_default();
     if id.len() != 64 || !id.bytes().all(|b| b.is_ascii_hexdigit()) {
         bail!("the review's build-manifest.json has no 64-hex startup identity");
     }
-    Ok(id.to_ascii_lowercase())
+    let id = id.to_ascii_lowercase();
+    Ok((id, manifest))
 }
 
 /// How stock reaches the installer's broker: a DNS override of its
 /// broker name (`--broker-name`), the setup frame after the Reset hold
 /// (`--ssid`: the owner's network and the installer's broker), or already.
-fn provision(args: &InstallArgs, config: &ServerConfig) -> Result<Provision> {
+fn provision(
+    args: &InstallArgs,
+    config: &ServerConfig,
+    passphrase: Option<String>,
+) -> Result<Provision> {
     if let Some(name) = &args.broker_name {
         return Ok(Provision::Dns(
             DnsOverride::new(name, config.mqtt_listen).context("--broker-name")?,
@@ -490,7 +749,7 @@ fn provision(args: &InstallArgs, config: &ServerConfig) -> Result<Provision> {
     let broker = args.broker.unwrap_or(config.mqtt_listen);
     Ok(Provision::Frame(SetupFrame {
         ssid: ssid.clone(),
-        password: crate::passphrase()?,
+        password: passphrase.context("the frame's passphrase was not read")?,
         host: broker.ip().to_string(),
         port: broker.port(),
         id: args.account.clone(),
@@ -651,10 +910,10 @@ impl Run {
                     install.requested(outcome);
                 }
                 Step::AwaitInstall => self.await_install(install).await?,
-                Step::Pair => {
-                    self.pair(install).await?;
-                }
+                Step::Pair(route) => self.pair(install, route).await?,
+                Step::AwaitJoin => self.await_join(install).await?,
                 Step::ReadStatus => {
+                    self.kept_promotion(install);
                     let (build, bank) = self.status().await?;
                     eprintln!(
                         "The replacement answers: build {} on bank {bank}",
@@ -669,6 +928,12 @@ impl Run {
                     self.close_trial(install.build()).await;
                     install.trial_closed();
                 }
+                Step::EnrollKey(_) => {
+                    let outcome = self.enroll_key().await?;
+                    install.key_enrolled(outcome);
+                }
+                Step::AwaitEnroll => bail!("the enrollment ended before this step"),
+                Step::CheckSigners => self.check_signers(install).await,
                 Step::Backup => {
                     let backup = self.backup().await.context(
                         "Promotion refused: no verified stock backup. The feeder runs the \
@@ -683,6 +948,11 @@ impl Run {
                     );
                 }
                 Step::ReadStockPlans => self.stock_plans(install).await?,
+                Step::ReadFloor => self.read_floor(install).await?,
+                Step::Sign { version } => {
+                    self.sign(version)?;
+                    install.signed();
+                }
                 Step::Promote => {
                     self.keep_given()?;
                     let outcome = self.promote(install.build()).await?;
@@ -741,6 +1011,18 @@ impl Run {
                         "If the stock server's log above shows its NTP reply held stock's \
                          clock, run again with --calibrate-clock to have it set, accepting that \
                          stock may run meals that came due while its clock jumps",
+                    ));
+                }
+                Step::Failed(
+                    error @ (InstallError::UpdateKey(_)
+                    | InstallError::UpdateKeyUncertain
+                    | InstallError::NotAboveFloor { .. }
+                    | InstallError::NoVersionAbove { .. }),
+                ) => {
+                    return Err(anyhow::Error::from(error).context(
+                        "Promotion refused: the feeder runs the replacement from bank 0 and \
+                         still holds stock in bank 1. Run again with --from-bank0 once the cause \
+                         is fixed",
                     ));
                 }
                 Step::Failed(error) => return Err(error.into()),
@@ -931,10 +1213,14 @@ impl Run {
         Ok(())
     }
 
-    /// The replacement's address: given, or where stock connected from.
+    /// The replacement's address: given, where it answered once it joined
+    /// the owner's Wi-Fi, or where stock connected from.
     fn address(&self) -> Result<SocketAddr> {
         if let Some(address) = &self.args.address {
             return Ok(wellfed_connect::parse_address(address)?);
+        }
+        if let Some(found) = self.found {
+            return Ok(found);
         }
         let peer = self.peer.or_else(|| {
             let lease: ImageLease =
@@ -948,10 +1234,18 @@ impl Run {
     }
 
     /// Become the replacement's owner: a key it already knows answers at
-    /// once; otherwise the owner opens the recovery window and keys in the
-    /// code. The replacement may still be starting, so a session is tried
-    /// until it answers.
-    async fn pair(&mut self, install: &mut Install) -> Result<()> {
+    /// once; otherwise, by `route`, Bluetooth setup or the recovery window.
+    async fn pair(&mut self, install: &mut Install, route: PairRoute) -> Result<()> {
+        match route {
+            PairRoute::Recovery => self.recover(install).await,
+            PairRoute::Setup => self.set_up(install).await,
+        }
+    }
+
+    /// The owner opens the recovery window and keys in the code, unless the
+    /// replacement knows this computer's key. It may still be starting, so
+    /// a session is tried until it answers.
+    async fn recover(&mut self, install: &mut Install) -> Result<()> {
         let address = self.address()?;
         if let Ok(identity) = self.key.feeder(self.args.feeder.as_deref()) {
             let deadline = Instant::now() + REPLACEMENT_WAIT;
@@ -997,6 +1291,241 @@ impl Run {
         self.identity = Some(identity);
         install.paired();
         Ok(())
+    }
+
+    /// Bluetooth setup, unless the replacement already answers this
+    /// computer's key (a resumed run, the feeder on the owner's Wi-Fi). A
+    /// consumer image with no network starts setup by itself, so the run
+    /// looks for it advertising until it does; the exchange then goes once,
+    /// with the code the owner keys in.
+    async fn set_up(&mut self, install: &mut Install) -> Result<()> {
+        // Only where this feeder is known to be: the key file may know
+        // another feeder of the owner's, which mDNS would find.
+        if let Ok(identity) = self.key.feeder(self.args.feeder.as_deref())
+            && let Some(address) = self.answering(identity, Look::Known).await
+        {
+            eprintln!("The replacement knows this computer's key already, at {address}.");
+            self.identity = Some(identity);
+            self.found = Some(address);
+            install.paired();
+            return Ok(());
+        }
+
+        let Some(wifi) = self.home.clone() else {
+            return Err(Refused::NoHomeNetwork.into());
+        };
+        eprintln!(
+            "The replacement has no network yet, so it starts Bluetooth setup by itself. Keep \
+             this computer within Bluetooth range of the feeder."
+        );
+        let deadline = Instant::now() + REPLACEMENT_WAIT;
+        let link = loop {
+            match crate::ble::Link::open(self.args.ble_address).await {
+                Ok(link) => break link,
+                Err(error) if Instant::now() >= deadline => {
+                    eprintln!("No feeder in Bluetooth setup mode ({error:#}).");
+                    install.gave_up();
+                    return Ok(());
+                }
+                Err(_) => tokio::time::sleep(POLL).await,
+            }
+        };
+        let (identity, text) = crate::pairing::over_ble(&mut self.key, Some(wifi), link)
+            .await
+            .context(
+                "Bluetooth setup failed: the feeder runs the replacement from bank 0 and still \
+                 holds stock in bank 1. Run again with --from-bank0; with no Wi-Fi stored, the \
+                 replacement starts setup again at its next boot",
+            )?;
+        eprintln!(
+            "Paired with feeder {} ({text}); it reboots to join the network.",
+            fingerprint(&identity)
+        );
+        self.identity = Some(identity);
+        install.set_up();
+        Ok(())
+    }
+
+    /// Until the feeder, rebooted after setup, answers on the owner's
+    /// network: found over mDNS by its identity, or where stock connected
+    /// from (the same feeder on the same network).
+    async fn await_join(&mut self, install: &mut Install) -> Result<()> {
+        let identity = self
+            .identity
+            .context("the feeder's identity is not known yet")?;
+        let deadline = Instant::now() + JOIN_WAIT;
+        while Instant::now() < deadline {
+            if let Some(address) = self.answering(identity, Look::Mdns).await {
+                eprintln!("The replacement joined the network and answers at {address}.");
+                self.found = Some(address);
+                install.joined();
+                return Ok(());
+            }
+            tokio::time::sleep(POLL).await;
+        }
+        install.gave_up();
+        Ok(())
+    }
+
+    /// Where the feeder with `identity` opens a session with this
+    /// computer's key now, if anywhere: `--address`, else (by `look`) over
+    /// mDNS, else where it answered or stock connected from. Opening a
+    /// session sends nothing.
+    async fn answering(&self, identity: [u8; 32], look: Look) -> Option<SocketAddr> {
+        let mut candidates = Vec::new();
+        if self.args.address.is_none() && look == Look::Mdns {
+            // mDNS browsing blocks its thread for the discovery window.
+            let located =
+                tokio::task::spawn_blocking(move || crate::device::locate(&identity, None))
+                    .await
+                    .ok()
+                    .and_then(Result::ok);
+            candidates.extend(located);
+        }
+        candidates.extend(self.address().ok());
+        for address in candidates {
+            let opened = wellfed_connect::Connection::open(
+                self.key.keypair(),
+                identity,
+                address,
+                crate::device::random().ok()?,
+            )
+            .await;
+            if opened.is_ok() {
+                return Some(address);
+            }
+        }
+        None
+    }
+
+    /// Enroll the installer's update key once, the owner pressing Dispense.
+    async fn enroll_key(&mut self) -> Result<Result<Enrolled, EnrollError>> {
+        let key = self
+            .update_key
+            .as_ref()
+            .context("no update key to enroll")?;
+        let id = wellfed_formats::hex::encode(&key.id());
+        let mut connection = crate::device::Connection::from(self.session(PLANS_WAIT).await?);
+        self.track.sent(Unsettled::UpdateKey);
+        let outcome = crate::update_key::enrolled(&mut connection, key, UPDATE_KEY_LABEL).await?;
+        match &outcome {
+            Ok(Enrolled::Now) => eprintln!("Enrolled update key {id}."),
+            Ok(Enrolled::Already) => {
+                eprintln!("The replacement already trusts update key {id}; nothing sent.");
+            }
+            Err(EnrollError::Uncertain) => eprintln!(
+                "No answer came to the enrollment of update key {id}; it is not sent again. \
+                 Reading the feeder's signers instead."
+            ),
+            Err(_) => {}
+        }
+        Ok(outcome)
+    }
+
+    /// The feeder's clients after an unanswered enrollment; a read changes
+    /// nothing, so a session is opened again until [`PLANS_WAIT`] runs out.
+    async fn check_signers(&self, install: &mut Install) {
+        let deadline = Instant::now() + PLANS_WAIT;
+        loop {
+            let read = async {
+                let mut connection = crate::device::Connection::from(self.connect().await?);
+                crate::update_key::clients(&mut connection).await
+            };
+            match read.await {
+                Ok(clients) => return install.signers(&clients),
+                Err(error) if Instant::now() >= deadline => {
+                    eprintln!("The feeder's clients could not be read ({error:#}).");
+                    return install.signers_unread();
+                }
+                Err(_) => tokio::time::sleep(POLL).await,
+            }
+        }
+    }
+
+    /// The feeder's floor, its highest confirmed version.
+    async fn read_floor(&self, install: &mut Install) -> Result<()> {
+        let deadline = Instant::now() + PLANS_WAIT;
+        loop {
+            let read = async {
+                let mut connection = self.connect().await?;
+                match connection
+                    .ask(crate::device::random()?, &Op::UpdateState)
+                    .await?
+                {
+                    Answer::Update(view) => Ok(view.min_version),
+                    other => bail!("the feeder answered {other:?} to an update state request"),
+                }
+            };
+            match read.await {
+                Ok(floor) => {
+                    eprintln!("The feeder's floor is version {floor}.");
+                    install.floor(floor);
+                    return Ok(());
+                }
+                Err(error) if Instant::now() >= deadline => {
+                    eprintln!("The feeder's floor could not be read ({error:#}).");
+                    install.gave_up();
+                    return Ok(());
+                }
+                Err(_) => tokio::time::sleep(POLL).await,
+            }
+        }
+    }
+
+    /// Sign the reviewed build at `version` with the update key, and keep
+    /// the manifest beside the feeder's backup before it is offered: a run
+    /// resumed after the activation reads its version there.
+    fn sign(&mut self, version: u32) -> Result<()> {
+        let identity = self
+            .identity
+            .context("the feeder's identity is not known yet")?;
+        let (Some(frozen), Some(key)) = (&self.frozen, &self.update_key) else {
+            bail!("no review and key to sign the promotion with");
+        };
+        let manifest = frozen.offer(key, version, Motion::Refused)?;
+
+        let path = crate::backup::promotion_path(&self.args.backups, &identity, version);
+        let directory = path.parent().context("a promotion path has a directory")?;
+        std::fs::create_dir_all(directory)
+            .with_context(|| format!("create {}", directory.display()))?;
+        wellfed_formats::private::write_new_whole(&path, &manifest)
+            .with_context(|| format!("write {}", path.display()))?;
+        eprintln!(
+            "Signed build {} as version {version} with update key {}; kept at {}.",
+            short(frozen.build_id().as_str()),
+            wellfed_formats::hex::encode(&key.id()),
+            path.display()
+        );
+        self.manifest = Some(manifest.to_vec());
+        Ok(())
+    }
+
+    /// The version an earlier run promoted for this feeder, from the
+    /// manifests kept beside its backup, for a run that signs for itself
+    /// and finds bank 1 already activated.
+    fn kept_promotion(&self, install: &mut Install) {
+        let Some(identity) = self.identity else {
+            return;
+        };
+        let directory = crate::backup::feeder_directory(&self.args.backups, &identity);
+        if let Some((version, _)) = highest_signed(&directory) {
+            install.promoted_before(version);
+        }
+    }
+
+    /// A session with the paired feeder; opening one sends nothing, so it
+    /// is tried again until `wait` runs out.
+    async fn session(&self, wait: Duration) -> Result<wellfed_connect::Connection> {
+        let deadline = Instant::now() + wait;
+        loop {
+            match self.connect().await {
+                Ok(connection) => return Ok(connection),
+                Err(error) if Instant::now() >= deadline => {
+                    return Err(error.context("no session with the replacement"));
+                }
+                Err(_) => tokio::time::sleep(POLL).await,
+            }
+        }
     }
 
     /// Keep the `--stock-backup` copy as a backup read from the feeder is
@@ -1155,17 +1684,10 @@ impl Run {
         eprintln!("Setting stock's converted plans on the replacement.");
         // Opening a session sends nothing, so it may be tried again; the
         // put itself goes once.
-        let deadline = Instant::now() + PLANS_WAIT;
-        let mut connection = loop {
-            match self.connect().await {
-                Ok(connection) => break connection,
-                Err(error) if Instant::now() >= deadline => {
-                    return Err(error
-                        .context("stock's plans were not sent: no session with the replacement"));
-                }
-                Err(_) => tokio::time::sleep(POLL).await,
-            }
-        };
+        let mut connection = self
+            .session(PLANS_WAIT)
+            .await
+            .context("stock's plans were not sent")?;
         let op = Op::PutPlans { base, plans };
         let id = crate::device::random()?;
         self.track.sent(Unsettled::Plans);
@@ -1247,8 +1769,12 @@ impl Run {
             .container
             .get(CONTAINER_HEADER..)
             .context("image.bin is shorter than its header")?;
+        let manifest = self
+            .manifest
+            .as_deref()
+            .context("no signed manifest to promote with")?;
         let image = Image {
-            manifest: &self.manifest,
+            manifest,
             downgrade: None,
             payload,
         };
@@ -1654,6 +2180,90 @@ mod tests {
         assert!(second.ends_with("stock-plans.applied-7.bin"));
         assert_eq!(std::fs::read(first).unwrap(), [1]);
         assert_eq!(std::fs::read(second).unwrap(), [2]);
+    }
+
+    fn args(line: &[&str]) -> InstallArgs {
+        use clap::Parser;
+
+        let base = [
+            "install",
+            "--review",
+            "private/review",
+            "--stock-config",
+            "private/installer.json",
+        ];
+        Line::parse_from([&base[..], line].concat()).args
+    }
+
+    /// A consumer image trusts only the release key and has no network:
+    /// the run needs a key of its own (or a manifest) and the network to
+    /// give it, before anything starts.
+    #[test]
+    fn a_consumer_run_without_a_signer_or_a_network_is_refused() {
+        fn refused<T>(result: Result<T>) -> Option<Refused> {
+            result
+                .err()
+                .and_then(|error| error.downcast::<Refused>().ok())
+        }
+
+        let bare = args(&[]);
+        assert!(matches!(
+            refused(update_key(&bare, Provisioning::Consumer)),
+            Some(Refused::NoSigner)
+        ));
+        let given = args(&["--manifest", "private/v9.manifest"]);
+        assert!(
+            update_key(&given, Provisioning::Consumer)
+                .unwrap()
+                .is_none()
+        );
+
+        assert!(matches!(
+            refused(home_wifi(&bare, PairRoute::Setup, None)),
+            Some(Refused::NoHomeNetwork)
+        ));
+        let resumed = args(&["--from-bank0"]);
+        assert_eq!(home_wifi(&resumed, PairRoute::Setup, None).unwrap(), None);
+        let home = args(&["--home-ssid", "Home"]);
+        assert!(
+            home_wifi(&home, PairRoute::Setup, Some("pass word!"))
+                .unwrap()
+                .is_some()
+        );
+        // The frame's network is the home network too.
+        let frame = args(&["--ssid", "Home"]);
+        assert!(
+            home_wifi(&frame, PairRoute::Setup, Some("pass word!"))
+                .unwrap()
+                .is_some()
+        );
+        assert!(matches!(
+            refused(home_wifi(&home, PairRoute::Recovery, Some("pass word!"))),
+            Some(Refused::HomeForBench)
+        ));
+        assert_eq!(
+            home_wifi(&frame, PairRoute::Recovery, Some("x")).unwrap(),
+            None
+        );
+    }
+
+    /// `--update-key` names a file the run creates once and reuses; a key
+    /// the image builds in needs no enrollment.
+    #[test]
+    fn the_update_key_is_created_once_and_enrolled_unless_built_in() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("update-key.json");
+        let created = open_update_key(&path).unwrap();
+        assert_eq!(created.scope(), KeyScope::Owner);
+        assert_eq!(open_update_key(&path).unwrap().public(), created.public());
+
+        let mut review = BuildManifest::default();
+        assert!(!builds_in(&review, &created));
+        review.ota_public_key =
+            Some(wellfed_formats::hex::encode(&created.public()).to_uppercase());
+        assert!(builds_in(&review, &created));
+        review.ota_public_key = Some("ab".repeat(32));
+        assert!(!builds_in(&review, &created));
     }
 
     #[test]

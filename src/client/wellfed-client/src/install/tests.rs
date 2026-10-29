@@ -33,8 +33,21 @@ fn ready() -> StockView {
     }
 }
 
+/// The feeder's floor when the runs below read it: below [`VERSION`].
+const FLOOR: u32 = 3;
+
+/// A bench review's run: the LAN recovery window, the bench key built in,
+/// and a manifest signed before the run.
+fn bench() -> Options {
+    Options {
+        route: PairRoute::Recovery,
+        update_key: UpdateKey::BuiltIn,
+        promotion: Promotion::Signed(VERSION),
+    }
+}
+
 fn fresh() -> Install {
-    Install::new(Provision::Done, BUILD, VERSION).unwrap()
+    Install::new(Provision::Done, BUILD, bench()).unwrap()
 }
 
 /// A run carried to `phase`, with each earlier step answered as it should be.
@@ -49,6 +62,7 @@ fn run_to(phase: Phase) -> Install {
         Phase::CloseTrial,
         Phase::Backup,
         Phase::StockPlans,
+        Phase::Sign,
         Phase::Promote,
         Phase::AwaitConfirm,
     ];
@@ -77,9 +91,13 @@ fn run_to(phase: Phase) -> Install {
                 install.backup(VerifiedBackup::for_tests());
                 assert_eq!(install.step(), Step::ReadStockPlans);
             }
-            Phase::Promote => {
+            Phase::Sign => {
                 let (count, entries) = stock_sectors(&[Some(breakfast())]);
                 install.stock_plans(count, &entries, NOW);
+                assert_eq!(install.step(), Step::ReadFloor);
+            }
+            Phase::Promote => {
+                install.floor(FLOOR);
                 assert_eq!(install.step(), Step::Promote);
             }
             _ => install.promoted(Ok(())),
@@ -193,7 +211,7 @@ fn values_stock_would_misread_are_refused() {
     let mut bad = frame();
     bad.id = "0".into();
     assert_eq!(
-        Install::new(Provision::Frame(bad), BUILD, VERSION).err(),
+        Install::new(Provision::Frame(bad), BUILD, bench()).err(),
         Some(FrameError::Id)
     );
 }
@@ -204,7 +222,7 @@ fn the_passphrase_never_reaches_a_debug_line() {
     f.password = "hunter2-secret".into();
     assert!(!format!("{f:?}").contains("hunter2"));
 
-    let mut install = Install::new(Provision::Frame(f), BUILD, VERSION).unwrap();
+    let mut install = Install::new(Provision::Frame(f), BUILD, bench()).unwrap();
     assert!(!format!("{install:?}").contains("hunter2"));
     assert_eq!(install.step(), Step::ConfirmReset);
     assert!(!format!("{install:?}").contains("104, 117, 110"));
@@ -221,7 +239,7 @@ fn the_passphrase_never_reaches_a_debug_line() {
 
 #[test]
 fn a_whole_run_goes_from_the_frame_to_a_confirmed_replacement() {
-    let mut install = Install::new(Provision::Frame(frame()), BUILD, VERSION).unwrap();
+    let mut install = Install::new(Provision::Frame(frame()), BUILD, bench()).unwrap();
 
     // The Reset hold erases stock's plans: the owner accepts that first.
     assert_eq!(install.step(), Step::ConfirmReset);
@@ -245,7 +263,7 @@ fn a_whole_run_goes_from_the_frame_to_a_confirmed_replacement() {
     assert_eq!(install.progress(), Some(40));
     install.stock_gone();
 
-    assert_eq!(install.step(), Step::Pair);
+    assert_eq!(install.step(), Step::Pair(PairRoute::Recovery));
     install.paired();
     assert_eq!(install.step(), Step::ReadStatus);
     install.replacement(Replacement {
@@ -262,6 +280,8 @@ fn a_whole_run_goes_from_the_frame_to_a_confirmed_replacement() {
     install.stock_plans(count, &entries, NOW);
     let import = install.import().expect("stock's plans were read");
     assert_eq!(import.plans.iter().flatten().count(), 1);
+    assert_eq!(install.step(), Step::ReadFloor);
+    install.floor(FLOOR);
     assert_eq!(install.step(), Step::Promote);
     install.promoted(Ok(()));
     assert_eq!(install.step(), Step::AwaitConfirm);
@@ -299,7 +319,7 @@ fn dns() -> DnsOverride {
 /// for stock at the broker like any other.
 #[test]
 fn the_dns_route_sends_no_frame_and_waits_for_stock() {
-    let mut install = Install::new(Provision::Dns(dns()), BUILD, VERSION).unwrap();
+    let mut install = Install::new(Provision::Dns(dns()), BUILD, bench()).unwrap();
     assert_eq!(install.phase(), Phase::Provision);
     assert_eq!(install.step(), Step::PointDns(dns()));
 
@@ -327,7 +347,7 @@ fn the_dns_route_sends_no_frame_and_waits_for_stock() {
 /// sent to stock.
 #[test]
 fn stock_that_never_arrives_ends_the_run_with_nothing_sent() {
-    let mut install = Install::new(Provision::Dns(dns()), BUILD, VERSION).unwrap();
+    let mut install = Install::new(Provision::Dns(dns()), BUILD, bench()).unwrap();
     install.dns_pointed();
     install.gave_up();
     assert_eq!(
@@ -338,7 +358,7 @@ fn stock_that_never_arrives_ends_the_run_with_nothing_sent() {
 
 #[test]
 fn declining_the_reset_hold_ends_the_run_before_anything_is_sent() {
-    let mut install = Install::new(Provision::Frame(frame()), BUILD, VERSION).unwrap();
+    let mut install = Install::new(Provision::Frame(frame()), BUILD, bench()).unwrap();
     assert_eq!(install.step(), Step::ConfirmReset);
     install.reset_declined();
     assert_eq!(install.step(), Step::Failed(InstallError::ResetDeclined));
@@ -481,8 +501,8 @@ fn only_the_served_build_moves_on() {
 
 #[test]
 fn a_run_resumed_on_bank_0_asks_stock_nothing_and_still_needs_the_backup() {
-    let mut install = Install::from_bank0(&BUILD.to_ascii_uppercase(), VERSION);
-    assert_eq!(install.step(), Step::Pair);
+    let mut install = Install::from_bank0(&BUILD.to_ascii_uppercase(), bench());
+    assert_eq!(install.step(), Step::Pair(PairRoute::Recovery));
     install.paired();
     install.replacement(Replacement {
         build: BUILD,
@@ -496,7 +516,7 @@ fn a_run_resumed_on_bank_0_asks_stock_nothing_and_still_needs_the_backup() {
 
 #[test]
 fn a_run_resumed_after_activation_only_waits_for_the_confirmation() {
-    let mut install = Install::from_bank0(BUILD, VERSION);
+    let mut install = Install::from_bank0(BUILD, bench());
     install.paired();
     let running = Replacement {
         build: BUILD,
@@ -655,6 +675,8 @@ fn unreadable_stock_plans_stop_before_promotion() {
     without.backup(VerifiedBackup::for_tests());
     assert_eq!(without.step(), Step::ReadStockPlans);
     without.stock_plans(0xff, &entries, NOW);
+    assert_eq!(without.step(), Step::ReadFloor);
+    without.floor(FLOOR);
     assert_eq!(without.step(), Step::Promote);
     assert_eq!(
         without.plans_skipped(),
@@ -780,6 +802,8 @@ fn nothing_converted_leaves_nothing_to_apply() {
             plans.len(),
             "a refused plan is named, not dropped"
         );
+        assert_eq!(install.step(), Step::ReadFloor);
+        install.floor(FLOOR);
         assert_eq!(install.step(), Step::Promote);
         install.promoted(Ok(()));
         install.confirmed(
@@ -799,7 +823,7 @@ fn nothing_converted_leaves_nothing_to_apply() {
 #[test]
 fn a_resumed_run_applies_the_kept_copy() {
     let resumed = || {
-        let mut install = Install::from_bank0(BUILD, VERSION);
+        let mut install = Install::from_bank0(BUILD, bench());
         install.paired();
         install.replacement(Replacement {
             build: BUILD,
@@ -853,4 +877,328 @@ fn a_resumed_run_applies_the_kept_copy() {
     );
     torn.confirmed(running, VERSION);
     assert_eq!(torn.step(), Step::Done);
+}
+
+/// The installer's update key, which a consumer image does not build in.
+const UPDATE_KEY: [u8; 32] = [0x5e; 32];
+
+/// A consumer review's run: Bluetooth setup, the installer's key enrolled,
+/// and the build signed by the run above `above`.
+fn consumer(above: u32) -> Options {
+    Options {
+        route: PairRoute::Setup,
+        update_key: UpdateKey::Enroll(UPDATE_KEY),
+        promotion: Promotion::Sign { above },
+    }
+}
+
+/// A consumer run from stock to the replacement answering on bank 0 with
+/// its stock record closed: the enrollment comes next.
+fn consumer_on_bank0(above: u32) -> Install {
+    let mut install = Install::new(Provision::Done, BUILD, consumer(above)).unwrap();
+    install.stock(&ready()).unwrap();
+    install.feeder_confirmed();
+    assert_eq!(install.step(), Step::RequestInstall);
+    install.requested(Requested::Sent);
+    install.stock_gone();
+
+    assert_eq!(install.step(), Step::Pair(PairRoute::Setup));
+    install.set_up();
+    assert_eq!(install.step(), Step::AwaitJoin);
+    install.joined();
+    install.replacement(Replacement {
+        build: BUILD,
+        bank: 0,
+    });
+    assert_eq!(install.step(), Step::CloseTrial);
+    install.trial_closed();
+    install
+}
+
+/// A run resumed on bank 0 carried to its floor read, its update key
+/// built in and stock's plans read.
+fn resumed_to_floor(options: Options) -> Install {
+    let mut install = Install::from_bank0(BUILD, options);
+    install.paired();
+    install.replacement(Replacement {
+        build: BUILD,
+        bank: 0,
+    });
+    install.backup(VerifiedBackup::for_tests());
+    assert_eq!(install.step(), Step::ReadStockPlans);
+    let (count, entries) = stock_sectors(&[Some(breakfast())]);
+    install.stock_plans(count, &entries, NOW);
+    assert_eq!(install.step(), Step::ReadFloor);
+    install
+}
+
+fn client(key: [u8; 32], role: ClientRole) -> Client {
+    Client {
+        key: wellfed_model::Hex(key),
+        label: "installer".into(),
+        role,
+        you: false,
+    }
+}
+
+/// The review's provisioning picks the route: a consumer image is paired
+/// over Bluetooth setup and then found on the LAN once it joined; a bench
+/// image through the recovery window, with no join to wait for.
+#[test]
+fn the_pair_route_follows_the_provisioning() {
+    let mut install = Install::from_bank0(BUILD, consumer(0));
+    assert_eq!(install.step(), Step::Pair(PairRoute::Setup));
+    install.set_up();
+    assert_eq!(install.step(), Step::AwaitJoin);
+    assert_eq!(install.phase(), Phase::Join);
+    // Pairing is done; only the join moves the run on.
+    install.paired();
+    assert_eq!(install.step(), Step::AwaitJoin);
+    install.joined();
+    assert_eq!(install.step(), Step::ReadStatus);
+
+    // A key the build already knows opens a session at once on either.
+    let mut known = Install::from_bank0(BUILD, consumer(0));
+    known.paired();
+    assert_eq!(known.step(), Step::ReadStatus);
+
+    let mut bench = Install::from_bank0(BUILD, bench());
+    assert_eq!(bench.step(), Step::Pair(PairRoute::Recovery));
+    bench.set_up();
+    assert_eq!(bench.step(), Step::Pair(PairRoute::Recovery));
+    bench.paired();
+    assert_eq!(bench.step(), Step::ReadStatus);
+
+    // A feeder that never joins ends the run at the join.
+    let mut lost = Install::from_bank0(BUILD, consumer(0));
+    lost.set_up();
+    lost.gave_up();
+    assert_eq!(
+        lost.step(),
+        Step::Failed(InstallError::TimedOut(Phase::Join))
+    );
+}
+
+#[test]
+fn the_update_key_is_enrolled_once_before_the_backup() {
+    let mut install = consumer_on_bank0(0);
+    assert_eq!(install.step(), Step::EnrollKey(UPDATE_KEY));
+    assert_eq!(install.phase(), Phase::UpdateKey);
+    // Sent once: until its end comes, there is only waiting.
+    assert_eq!(install.step(), Step::AwaitEnroll);
+    install.backup(VerifiedBackup::for_tests());
+    assert_eq!(install.step(), Step::AwaitEnroll);
+    install.key_enrolled(Ok(Enrolled::Now));
+    assert_eq!(install.step(), Step::ReadStockPlans);
+
+    // A bench image builds its key in: nothing is enrolled.
+    let mut bench = run_to(Phase::Backup);
+    assert_eq!(bench.step(), Step::Backup);
+}
+
+/// A refused or unconfirmed enrollment ends the run before the backup, the
+/// floor or the promotion.
+#[test]
+fn a_refused_enrollment_ends_the_run_before_any_promotion() {
+    for error in [
+        EnrollError::Unconfirmed,
+        EnrollError::Forbidden,
+        EnrollError::Busy,
+        EnrollError::Full,
+        EnrollError::SessionKey {
+            role: ClientRole::Owner,
+        },
+        EnrollError::ListUnanswered,
+    ] {
+        let mut install = consumer_on_bank0(0);
+        install.step();
+        install.key_enrolled(Err(error));
+        let failed = Step::Failed(InstallError::UpdateKey(error));
+        assert_eq!(install.step(), failed);
+
+        install.backup(VerifiedBackup::for_tests());
+        install.floor(0);
+        install.signed();
+        install.promoted(Ok(()));
+        assert_eq!(install.step(), failed, "{error:?}");
+    }
+}
+
+/// A key the feeder already lists as a signer sends nothing: the shared
+/// enrollment reads the list first and ends there.
+#[test]
+fn an_already_enrolled_key_is_skipped() {
+    use crate::update_key::{Enroll, Next};
+    use wellfed_model::{Answer, Capabilities, Op};
+
+    let mut install = consumer_on_bank0(0);
+    let Step::EnrollKey(key) = install.step() else {
+        panic!("the enrollment comes after the bank-0 status");
+    };
+    let owner = Capabilities {
+        update: true,
+        ..Capabilities::default()
+    };
+    let mut enroll = Enroll::new(key, "installer", ClientRole::Owner, owner).unwrap();
+    assert_eq!(enroll.poll(), Next::Send(Op::ListClients));
+    enroll.answer(&Answer::Clients(vec![client(
+        key,
+        ClientRole::UpdateSigner,
+    )]));
+    let Next::Done(enrolled) = enroll.poll() else {
+        panic!("a listed key ends the enrollment");
+    };
+    assert_eq!(enrolled, Enrolled::Already);
+
+    install.key_enrolled(Ok(enrolled));
+    assert_eq!(install.step(), Step::Backup);
+}
+
+/// An unanswered enrollment may have enrolled the key: the signer list
+/// decides, and the enrollment is never sent again.
+#[test]
+fn an_unanswered_enrollment_is_uncertain_and_never_resent() {
+    let unanswered = || {
+        let mut install = consumer_on_bank0(0);
+        install.step();
+        install.key_enrolled(Err(EnrollError::Uncertain));
+        assert_eq!(install.step(), Step::CheckSigners);
+        assert_eq!(install.step(), Step::CheckSigners);
+        install
+    };
+
+    let mut landed = unanswered();
+    landed.signers(&[
+        client([1; 32], ClientRole::Owner),
+        client(UPDATE_KEY, ClientRole::UpdateSigner),
+    ]);
+    assert_eq!(landed.step(), Step::Backup);
+
+    let uncertain = Step::Failed(InstallError::UpdateKeyUncertain);
+    for listed in [vec![], vec![client(UPDATE_KEY, ClientRole::Member)]] {
+        let mut missing = unanswered();
+        missing.signers(&listed);
+        assert_eq!(missing.step(), uncertain);
+    }
+    let mut unread = unanswered();
+    unread.signers_unread();
+    assert_eq!(unread.step(), uncertain);
+    let mut given_up = unanswered();
+    given_up.gave_up();
+    assert_eq!(given_up.step(), uncertain);
+
+    // Nothing after it offers the key again or moves the run on.
+    for mut ended in [unread, given_up] {
+        ended.key_enrolled(Ok(Enrolled::Now));
+        ended.signers(&[client(UPDATE_KEY, ClientRole::UpdateSigner)]);
+        assert_eq!(ended.step(), uncertain);
+    }
+}
+
+/// A consumer run resumed on bank 0: paired by the known key, nothing asked
+/// of stock and no record to close; the key enrolled, the backup, then the
+/// version signed above both the floor and what the installer signed
+/// before.
+#[test]
+fn a_resumed_consumer_run_enrolls_signs_and_promotes() {
+    let mut install = Install::from_bank0(BUILD, consumer(11));
+    assert_eq!(install.version(), None);
+    install.paired();
+    install.replacement(Replacement {
+        build: BUILD,
+        bank: 0,
+    });
+    assert_eq!(install.step(), Step::EnrollKey(UPDATE_KEY));
+    install.key_enrolled(Ok(Enrolled::Now));
+    install.backup(VerifiedBackup::for_tests());
+    assert_eq!(install.step(), Step::ReadStockPlans);
+    let (count, entries) = stock_sectors(&[Some(breakfast())]);
+    install.stock_plans(count, &entries, NOW);
+
+    assert_eq!(install.step(), Step::ReadFloor);
+    install.floor(FLOOR);
+    assert_eq!(install.step(), Step::Sign { version: 12 });
+    assert_eq!(install.version(), Some(12));
+    assert_eq!(install.phase(), Phase::Sign);
+    install.promoted(Ok(()));
+    assert_eq!(install.step(), Step::Sign { version: 12 });
+    install.signed();
+    assert_eq!(install.step(), Step::Promote);
+    install.promoted(Ok(()));
+
+    let running = Replacement {
+        build: BUILD,
+        bank: 1,
+    };
+    install.confirmed(running, 11);
+    assert_eq!(install.step(), Step::AwaitConfirm);
+    install.confirmed(running, 12);
+    assert_eq!(install.step(), Step::ReadPlans);
+}
+
+/// Resumed after the activation, a run that signs for itself waits for the
+/// version an earlier run kept; without one it cannot tell a trial from a
+/// confirmation, and stops.
+#[test]
+fn a_resumed_run_on_bank_1_needs_the_promoted_version() {
+    let running = Replacement {
+        build: BUILD,
+        bank: 1,
+    };
+
+    let mut unknown = Install::from_bank0(BUILD, consumer(0));
+    unknown.paired();
+    unknown.replacement(running);
+    assert_eq!(unknown.step(), Step::Failed(InstallError::PromotionUnknown));
+
+    let mut kept = Install::from_bank0(BUILD, consumer(0));
+    kept.paired();
+    kept.promoted_before(12);
+    kept.replacement(running);
+    assert_eq!(kept.step(), Step::AwaitConfirm);
+    kept.confirmed(running, 11);
+    assert_eq!(kept.step(), Step::AwaitConfirm);
+    kept.confirmed(running, 12);
+    assert_eq!(kept.step(), Step::Done);
+
+    // A manifest given to the run names its own version.
+    let mut given = Install::from_bank0(BUILD, bench());
+    given.promoted_before(99);
+    assert_eq!(given.version(), Some(VERSION));
+}
+
+/// A manifest at or below the feeder's floor would need a downgrade
+/// statement, which the installer never makes: refused before promotion.
+/// A run that signs for itself goes above the floor.
+#[test]
+fn a_version_at_or_below_the_floor_is_refused() {
+    for floor in [VERSION, VERSION + 1] {
+        let mut install = run_to(Phase::Sign);
+        install.floor(floor);
+        let refused = Step::Failed(InstallError::NotAboveFloor {
+            version: VERSION,
+            floor,
+        });
+        assert_eq!(install.step(), refused);
+        install.promoted(Ok(()));
+        assert_eq!(install.step(), refused);
+    }
+
+    let signing = |above| Options {
+        update_key: UpdateKey::BuiltIn,
+        ..consumer(above)
+    };
+    let mut above_floor = resumed_to_floor(signing(2));
+    above_floor.floor(7);
+    assert_eq!(above_floor.step(), Step::Sign { version: 8 });
+    let mut above_signed = resumed_to_floor(signing(9));
+    above_signed.floor(7);
+    assert_eq!(above_signed.step(), Step::Sign { version: 10 });
+
+    let mut full = resumed_to_floor(signing(u32::MAX));
+    full.floor(7);
+    assert_eq!(
+        full.step(),
+        Step::Failed(InstallError::NoVersionAbove { floor: 7 })
+    );
 }

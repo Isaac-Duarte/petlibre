@@ -373,6 +373,32 @@ mod tests {
         // The frame's broker means nothing without the frame.
         let broker = [&install[..8], &["--broker", "10.42.103.1:1883"]].concat();
         assert!(Cli::try_parse_from(broker).is_err());
+        // A consumer run signs for itself, and names the network Bluetooth
+        // setup gives the feeder; the frame's network is that one already.
+        let consumer = [
+            "wellfed",
+            "install",
+            "--review",
+            "private/review",
+            "--stock-config",
+            "private/installer.json",
+            "--broker-name",
+            "broker.example.net",
+            "--update-key",
+            "private/update-key.json",
+            "--home-ssid",
+            "Home",
+            "--ble-address",
+            "00:11:22:33:44:55",
+        ];
+        assert!(matches!(
+            Cli::try_parse_from(consumer).map(|cli| cli.command),
+            Ok(Command::Install(_))
+        ));
+        let both = [&install[..], &["--home-ssid", "Home"]].concat();
+        assert!(Cli::try_parse_from(both).is_err());
+        let resumed = [&install[..8], &["--from-bank0", "--home-ssid", "Home"]].concat();
+        assert!(Cli::try_parse_from(resumed).is_ok());
 
         // A plan's flags follow its verb, the slot first.
         let edit = [

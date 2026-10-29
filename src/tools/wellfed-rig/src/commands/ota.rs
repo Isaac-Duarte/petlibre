@@ -38,7 +38,7 @@ use wellfed_formats::review::ImageKind;
 /// The bench's signing key file, which also signs stock's downgrade
 /// statements; re-exported so the suite need not link `wellfed-signing`.
 pub use wellfed_signing::KEY_PATH;
-use wellfed_signing::{Frozen, Key, Motion};
+use wellfed_signing::{Frozen, Key, Motion, highest_signed};
 
 use super::{Attendance, Bench};
 use crate::device::{DeviceStatus, Fault};
@@ -549,18 +549,6 @@ impl OtaArgs {
     fn watch_for(&self) -> Result<Duration> {
         super::minutes_arg("--minutes", self.minutes)
     }
-}
-
-/// The highest version among `*.manifest` files in `directory`, with its
-/// file. Only the header is read, unverified: a feeder checks the signature.
-fn highest_signed(directory: &Path) -> Option<(u32, PathBuf)> {
-    fs::read_dir(directory)
-        .ok()?
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().is_some_and(|ext| ext == "manifest"))
-        .filter_map(|path| Some((ota::claimed_version(&fs::read(&path).ok()?)?, path)))
-        .max_by_key(|(version, _)| *version)
 }
 
 /// One thing the feeder reported, in the order it came.

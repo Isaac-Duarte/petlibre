@@ -87,12 +87,39 @@ pub(crate) async fn command(args: UpdateKeyArgs) -> Result<()> {
 async fn enroll(connection: &mut Connection, file: &Path, label: &str) -> Result<()> {
     let key = Key::load(file).with_context(|| format!("load {}", file.display()))?;
     let id = hex::encode(&key.id());
-    let mut enroll = Enroll::new(
+    match enrolled(connection, &key, label).await? {
+        Ok(Enrolled::Now) => println!("Enrolled update key {id} as {label:?}."),
+        Ok(Enrolled::Already) => {
+            println!("The feeder already trusts update key {id}; nothing sent.")
+        }
+        Err(EnrollError::Uncertain) => bail!(
+            "no answer came to the enrollment of update key {id}: a press may have enrolled \
+             it all the same. Check with `wellfed update-key show`; the request is not sent \
+             again"
+        ),
+        Err(error) => return Err(error.into()),
+    }
+    Ok(())
+}
+
+/// Run one enrollment of `key` over `connection` to its end: the outer
+/// error is a session refused before anything was asked, the inner one how
+/// the feeder ended it. The enrollment goes at most once.
+pub(crate) async fn enrolled(
+    connection: &mut Connection,
+    key: &Key,
+    label: &str,
+) -> Result<Result<Enrolled, EnrollError>> {
+    let id = hex::encode(&key.id());
+    let mut enroll = match Enroll::new(
         key.public(),
         label,
         connection.role(),
         connection.capabilities(),
-    )?;
+    ) {
+        Ok(enroll) => enroll,
+        Err(error) => return Ok(Err(error)),
+    };
 
     loop {
         let op = match enroll.poll() {
@@ -104,20 +131,8 @@ async fn enroll(connection: &mut Connection, file: &Path, label: &str) -> Result
                 );
                 op
             }
-            Next::Done(Enrolled::Now) => {
-                println!("Enrolled update key {id} as {label:?}.");
-                return Ok(());
-            }
-            Next::Done(Enrolled::Already) => {
-                println!("The feeder already trusts update key {id}; nothing sent.");
-                return Ok(());
-            }
-            Next::Failed(EnrollError::Uncertain) => bail!(
-                "no answer came to the enrollment of update key {id}: a press may have enrolled \
-                 it all the same. Check with `wellfed update-key show`; the request is not sent \
-                 again"
-            ),
-            Next::Failed(error) => return Err(error.into()),
+            Next::Done(enrolled) => return Ok(Ok(enrolled)),
+            Next::Failed(error) => return Ok(Err(error)),
         };
         match connection.ask(&op).await {
             Ok(answer) => enroll.answer(&answer),
@@ -150,7 +165,7 @@ async fn show(connection: &mut Connection) -> Result<()> {
     Ok(())
 }
 
-async fn clients(connection: &mut Connection) -> Result<Vec<Client>> {
+pub(crate) async fn clients(connection: &mut Connection) -> Result<Vec<Client>> {
     match connection.ask(&Op::ListClients).await? {
         Answer::Clients(clients) => Ok(clients),
         Answer::Refused(refusal) => bail!("the feeder refused to list its clients: {refusal:?}"),

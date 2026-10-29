@@ -145,9 +145,21 @@ impl Stored {
 
 /// Where the feeder `identity`'s backup is kept under `backups`.
 pub(crate) fn path(backups: &Path, identity: &[u8; 32]) -> PathBuf {
-    backups
-        .join(hex::encode(identity))
-        .join(format!("stock-{STOCK_VERSION}.bin"))
+    feeder_directory(backups, identity).join(format!("stock-{STOCK_VERSION}.bin"))
+}
+
+/// The directory under `backups` that holds what is kept for the feeder
+/// `identity`.
+pub(crate) fn feeder_directory(backups: &Path, identity: &[u8; 32]) -> PathBuf {
+    backups.join(hex::encode(identity))
+}
+
+/// Where the install keeps the update manifest it signed for the feeder
+/// `identity` at `version`, beside its backup: a run resumed after the
+/// activation reads the version it waits for there, and a later run signs
+/// above it.
+pub(crate) fn promotion_path(backups: &Path, identity: &[u8; 32], version: u32) -> PathBuf {
+    feeder_directory(backups, identity).join(format!("promotion-v{version}.manifest"))
 }
 
 /// Where the install keeps stock's plan sectors, beside the feeder's
@@ -155,7 +167,7 @@ pub(crate) fn path(backups: &Path, identity: &[u8; 32]) -> PathBuf {
 /// (`wellfed_client::install::plans::kept`), which `wellfed-stock plans`
 /// reads again.
 pub(crate) fn plans_path(backups: &Path, identity: &[u8; 32]) -> PathBuf {
-    backups.join(hex::encode(identity)).join("stock-plans.bin")
+    feeder_directory(backups, identity).join("stock-plans.bin")
 }
 
 /// Keep stock's plan bytes at `path`. As with the backup, a copy already

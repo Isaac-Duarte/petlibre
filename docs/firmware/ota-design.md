@@ -158,7 +158,7 @@ The bench key stays in `private/ota-key.json`, for the bench only. An offline re
 - It is not the confirmation sector, which is erased before each write.
 - The factory reset leaves it alone.
 
-**Signing** uses `wellfed-build sign` (version 2), `downgrade`, `revoke` and `add-key`, with the bench key. `sign --key` also takes an owner's key, for the feeders that enrolled it. `wellfed-build` signs only a frozen review.
+**Signing** uses `wellfed-build sign` (version 2), `downgrade`, `revoke` and `add-key`, with the bench key. `sign --key` and `downgrade --key` also take an owner's key, for the feeders that enrolled it; `revoke` and `add-key` refuse one. `wellfed-build` signs only a frozen review.
 
 ## Storage-format rule
 

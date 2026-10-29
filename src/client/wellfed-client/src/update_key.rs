@@ -85,6 +85,10 @@ pub enum EnrollError {
     /// all the same. Read the client list to know; never send it again.
     #[error("no answer came to the enrollment; the key may be enrolled all the same")]
     Uncertain,
+    /// No answer came to the client list: nothing was enrolled, and asking
+    /// again is safe.
+    #[error("no answer came to the client list; nothing was enrolled")]
+    ListUnanswered,
     #[error("the feeder refused the key: {0:?}")]
     Refused(Refusal),
     #[error("the feeder answered with something other than the enrollment's outcome")]
@@ -195,7 +199,8 @@ impl Enroll {
     pub fn unanswered(&mut self) {
         self.stage = Stage::Ended(Err(match self.stage {
             Stage::Enrolling => EnrollError::Uncertain,
-            _ => EnrollError::Unexpected,
+            Stage::Listing => EnrollError::ListUnanswered,
+            Stage::Start | Stage::Absent | Stage::Ended(_) => EnrollError::Unexpected,
         }));
     }
 
@@ -359,7 +364,7 @@ mod tests {
     }
 
     /// An unanswered enrollment may have enrolled the key, and is never
-    /// sent again; an unanswered list is just a failure.
+    /// sent again; an unanswered list enrolled nothing.
     #[test]
     fn an_unanswered_enrollment_is_uncertain_and_not_resent() {
         let (mut enroll, _) = enrolling();
@@ -370,7 +375,7 @@ mod tests {
         let mut listing = self::enroll();
         listing.poll();
         listing.unanswered();
-        assert_eq!(listing.poll(), Next::Failed(EnrollError::Unexpected));
+        assert_eq!(listing.poll(), Next::Failed(EnrollError::ListUnanswered));
 
         let mut refused = self::enroll();
         refused.poll();

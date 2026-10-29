@@ -27,8 +27,10 @@
 //! What the run asks the owner goes through one `Asker`, at a terminal or,
 //! with `--prompts lines`, as JSON lines for the bench server that runs it
 //! as a job. SIGTERM (a job's cancel) and SIGINT end the run through the
-//! same stop as its end, and a write still without its answer is reported
-//! as uncertain, not sent again.
+//! same stop as its end. The report names the step it stopped in and any
+//! write whose outcome had not settled (the request until the replacement
+//! answers, the promotion until bank 1 confirms it, the plans' put until
+//! the end); that write is uncertain, and never sent again.
 //!
 //! [consumer installation]: ../../../../docs/firmware/consumer-installation.md
 
@@ -218,28 +220,146 @@ struct Run {
     /// once the feeder's identity is known.
     given: Option<StockBackup>,
     asker: Asker<Box<dyn Write>>,
-    /// A write sent whose answer the run has not read yet. A signal that
-    /// ends the run then reports it as uncertain; it is never sent again.
-    out: Option<Out>,
+    /// Where the run is, for the report of a signal that ends it.
+    track: Track,
 }
 
-/// A write the run has sent, still without its answer.
-#[derive(Debug, Clone, Copy)]
-enum Out {
-    /// Stock's install request, under this id.
+/// The step the run is in, in the order the steps come.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Stage {
+    Provision,
+    AwaitStock,
+    ConfirmFeeder,
+    Request,
+    AwaitInstall,
+    Pair,
+    ReadStatus,
+    CloseTrial,
+    Backup,
+    ReadStockPlans,
+    Promote,
+    AwaitConfirm,
+    ReadPlans,
+    PutPlans,
+    Done,
+}
+
+impl Stage {
+    fn of(step: &Step) -> Self {
+        match step {
+            Step::PointDns(_) | Step::ConfirmReset | Step::SendFrame(_) => Self::Provision,
+            Step::AwaitStock => Self::AwaitStock,
+            Step::ConfirmFeeder(_) => Self::ConfirmFeeder,
+            Step::RequestInstall => Self::Request,
+            Step::AwaitInstall => Self::AwaitInstall,
+            Step::Pair => Self::Pair,
+            Step::ReadStatus => Self::ReadStatus,
+            Step::CloseTrial => Self::CloseTrial,
+            Step::Backup => Self::Backup,
+            Step::ReadStockPlans => Self::ReadStockPlans,
+            Step::Promote => Self::Promote,
+            Step::AwaitConfirm => Self::AwaitConfirm,
+            Step::ReadPlans => Self::ReadPlans,
+            Step::PutPlans { .. } | Step::AwaitPut => Self::PutPlans,
+            Step::Done | Step::Failed(_) => Self::Done,
+        }
+    }
+}
+
+impl std::fmt::Display for Stage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Provision => "pointing stock at this computer, before anything was sent to it",
+            Self::AwaitStock => "waiting for stock to report, before anything was sent to it",
+            Self::ConfirmFeeder => "the feeder check, before anything was sent to stock",
+            Self::Request => "the install request",
+            Self::AwaitInstall => "stock's install of the replacement",
+            Self::Pair => {
+                "pairing through the recovery window (an owner enrollment, safe to run again)"
+            }
+            Self::ReadStatus => "reading the replacement's status",
+            Self::CloseTrial => "closing the stock server's record",
+            Self::Backup => "reading the stock backup",
+            Self::ReadStockPlans => "reading stock's plans",
+            Self::Promote => "the promotion",
+            Self::AwaitConfirm => "waiting for bank 1 to confirm the promotion",
+            Self::ReadPlans => "reading the replacement's plans",
+            Self::PutPlans => "putting stock's plans on the replacement",
+            Self::Done => "the end of the run",
+        })
+    }
+}
+
+/// A write the run sent whose outcome is not settled yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Unsettled {
+    /// Stock's install request, under this id: settled once the
+    /// replacement answers its status.
     Request(uuid::Uuid),
-    /// The signed update, pushed from bank 0 into bank 1.
+    /// The signed update, pushed from bank 0 into bank 1: settled once
+    /// bank 1 confirms it.
     Promotion,
-    /// Stock's converted plans, put on the replacement.
+    /// Stock's converted plans, put on the replacement: settled once the
+    /// run ends, a put that went unanswered being judged by a read back.
     Plans,
 }
 
-impl std::fmt::Display for Out {
+impl Unsettled {
+    /// Whether the run reaching `stage` settles this write.
+    fn settled_at(self, stage: Stage) -> bool {
+        match self {
+            Self::Request(_) => stage > Stage::ReadStatus,
+            Self::Promotion => stage > Stage::AwaitConfirm,
+            Self::Plans => stage == Stage::Done,
+        }
+    }
+}
+
+impl std::fmt::Display for Unsettled {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Request(id) => write!(f, "stock's install request {id}"),
             Self::Promotion => f.write_str("the promotion's push"),
             Self::Plans => f.write_str("the put of stock's plans"),
+        }
+    }
+}
+
+/// The stage the run is in and the write it has not seen settle.
+#[derive(Debug, Clone, Copy)]
+struct Track {
+    stage: Stage,
+    unsettled: Option<Unsettled>,
+}
+
+impl Track {
+    const fn new() -> Self {
+        Self {
+            stage: Stage::Provision,
+            unsettled: None,
+        }
+    }
+
+    /// The run moved on to `stage`; a write that stage settles is no
+    /// longer out.
+    fn enter(&mut self, stage: Stage) {
+        self.stage = stage;
+        if self.unsettled.is_some_and(|write| write.settled_at(stage)) {
+            self.unsettled = None;
+        }
+    }
+
+    /// `write` is about to go out. It stays unsettled from here on, even
+    /// before its answer, since a signal may come at any later await.
+    fn sent(&mut self, write: Unsettled) {
+        self.unsettled = Some(write);
+    }
+
+    fn stopped(self, signal: Signal) -> Stopped {
+        Stopped {
+            signal,
+            stage: self.stage,
+            unsettled: self.unsettled,
         }
     }
 }
@@ -261,17 +381,25 @@ impl std::fmt::Display for Signal {
     }
 }
 
-/// A run a signal ended, after it stopped the stock server.
+/// A run a signal ended, after it stopped the stock server: the step it
+/// was in, and the write whose outcome had not settled, if any.
 #[derive(Debug, thiserror::Error)]
-enum Stopped {
-    #[error("stopped by {signal}; no write was waiting for its answer")]
-    Settled { signal: Signal },
-    #[error(
-        "stopped by {signal} with {out} sent and its answer unread: its outcome is unknown, and \
-         it is not sent again. Read what the feeder runs (wellfed status, or stock's own \
-         report) before running again"
-    )]
-    Uncertain { signal: Signal, out: Out },
+#[error("stopped by {signal} during {stage}{}", unsettled_note(*.unsettled))]
+struct Stopped {
+    signal: Signal,
+    stage: Stage,
+    unsettled: Option<Unsettled>,
+}
+
+fn unsettled_note(unsettled: Option<Unsettled>) -> String {
+    match unsettled {
+        None => "; no write was waiting on its outcome".to_string(),
+        Some(write) => format!(
+            ", with {write} sent and its outcome not yet settled: it may have run, and it is \
+             not sent again. Read what the feeder runs (wellfed status, or stock's own report) \
+             before running again"
+        ),
+    }
 }
 
 pub(crate) async fn run(args: InstallArgs) -> Result<()> {
@@ -343,8 +471,12 @@ pub(crate) async fn run(args: InstallArgs) -> Result<()> {
         peer: None,
         identity: None,
         given: backup,
-        out: None,
+        track: Track::new(),
     };
+    // A signal is seen at the run's next await: one that lands during a
+    // blocking call (a stock API request, the frame's socket) waits for it.
+    // Once seen, the handlers stay installed but nothing listens, so a
+    // second Ctrl-C does not cut `stop` short; `stop` is itself bounded.
     let ended = tokio::select! {
         result = run.drive(&mut install) => Ok(result),
         _ = terminate.recv() => Err(Signal::Terminate),
@@ -354,11 +486,7 @@ pub(crate) async fn run(args: InstallArgs) -> Result<()> {
 
     match ended {
         Ok(result) => result,
-        Err(signal) => Err(match run.out {
-            Some(out) => Stopped::Uncertain { signal, out },
-            None => Stopped::Settled { signal },
-        }
-        .into()),
+        Err(signal) => Err(run.track.stopped(signal).into()),
     }
 }
 
@@ -509,7 +637,9 @@ async fn restart_feeder(asker: &mut Asker<Box<dyn Write>>) -> Result<()> {
 impl Run {
     async fn drive(&mut self, install: &mut Install) -> Result<()> {
         loop {
-            match install.step() {
+            let step = install.step();
+            self.track.enter(Stage::of(&step));
+            match step {
                 Step::PointDns(dns) => {
                     point_dns(&mut self.asker, &dns).await?;
                     // The enrollment window opens only now, just before
@@ -750,7 +880,7 @@ impl Run {
             request_id: id.to_string(),
             server_token: lease.token.to_string(),
         };
-        self.out = Some(Out::Request(id));
+        self.track.sent(Unsettled::Request(id));
         let answered = self.api.post::<IgnoredAny>("/api/ota/trial", &body);
 
         // Refused only on the server's word and a ledger read that shows no
@@ -759,7 +889,6 @@ impl Run {
             Ok(status) => Ok(status.trial(&id.to_string()).map(|trial| trial.phase)),
             Err(error) => Err(error),
         };
-        self.out = None;
         Ok(match (answered, recorded) {
             (Ok(_), _) | (_, Ok(Some(TrialPhase::Submitted))) => Requested::Sent,
             (Err(ApiError::Refused { .. }), Ok(None)) => Requested::Refused,
@@ -1066,10 +1195,8 @@ impl Run {
         };
         let op = Op::PutPlans { base, plans };
         let id = crate::device::random()?;
-        self.out = Some(Out::Plans);
-        let answered = connection.ask(id, &op).await;
-        self.out = None;
-        Ok(match answered {
+        self.track.sent(Unsettled::Plans);
+        Ok(match connection.ask(id, &op).await {
             Ok(Answer::Done { .. }) => PlansPut::Done,
             Ok(Answer::Refused(refusal)) => PlansPut::Refused(refusal),
             Ok(_) | Err(_) => PlansPut::Unanswered,
@@ -1154,14 +1281,13 @@ impl Run {
         };
 
         eprintln!("Promoting: bank 0 writes the replacement into bank 1.");
-        self.out = Some(Out::Promotion);
+        self.track.sent(Unsettled::Promotion);
         let pushed = push(
             image,
             async || self.connect().await,
             |bank, build| activated(bank, build, served),
         )
         .await?;
-        self.out = None;
         Ok(match pushed {
             Pushed::Activated | Pushed::AlreadyRunning => Ok(()),
             Pushed::Failed(error) => Err(error),
@@ -1346,6 +1472,70 @@ mod tests {
             Some(PromptsRefused::Frame)
         ));
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    /// Stopped while stock downloads: the request is out and unsettled,
+    /// through pairing, until the replacement answers its status.
+    #[test]
+    fn a_request_stays_unsettled_until_the_replacement_answers() {
+        let id = uuid::Uuid::from_u128(7);
+        let mut track = Track::new();
+        track.enter(Stage::Request);
+        track.sent(Unsettled::Request(id));
+        for stage in [Stage::AwaitInstall, Stage::Pair, Stage::ReadStatus] {
+            track.enter(stage);
+            assert_eq!(track.unsettled, Some(Unsettled::Request(id)), "{stage:?}");
+        }
+        track.enter(Stage::AwaitInstall);
+        let stopped = track.stopped(Signal::Terminate).to_string();
+        assert!(stopped.starts_with("stopped by SIGTERM during stock's install"));
+        assert!(stopped.contains(&format!("stock's install request {id} sent")));
+        assert!(stopped.contains("not sent again"));
+
+        track.enter(Stage::CloseTrial);
+        assert_eq!(track.unsettled, None);
+        let stopped = track.stopped(Signal::Interrupt).to_string();
+        assert!(
+            stopped.ends_with("no write was waiting on its outcome"),
+            "{stopped}"
+        );
+    }
+
+    /// Stopped after the push came back activated but before bank 1
+    /// confirmed: the promotion is still unsettled.
+    #[test]
+    fn a_promotion_stays_unsettled_until_bank_1_confirms() {
+        let mut track = Track::new();
+        track.enter(Stage::Promote);
+        track.sent(Unsettled::Promotion);
+        track.enter(Stage::AwaitConfirm);
+        let stopped = track.stopped(Signal::Terminate);
+        assert_eq!(stopped.unsettled, Some(Unsettled::Promotion));
+        assert!(
+            stopped
+                .to_string()
+                .contains("waiting for bank 1 to confirm the promotion, with the promotion's push")
+        );
+
+        track.enter(Stage::ReadPlans);
+        assert_eq!(track.unsettled, None);
+        track.enter(Stage::PutPlans);
+        track.sent(Unsettled::Plans);
+        // A put that went unanswered is judged by reading the plans back.
+        track.enter(Stage::ReadPlans);
+        assert_eq!(track.unsettled, Some(Unsettled::Plans));
+        track.enter(Stage::Done);
+        assert_eq!(track.unsettled, None);
+    }
+
+    /// Pairing sends no write that matters twice: the report says so.
+    #[test]
+    fn a_stop_while_pairing_says_it_is_safe_to_run_again() {
+        let mut track = Track::new();
+        track.enter(Stage::Pair);
+        let stopped = track.stopped(Signal::Interrupt).to_string();
+        assert!(stopped.contains("safe to run again"), "{stopped}");
+        assert!(stopped.ends_with("no write was waiting on its outcome"));
     }
 
     #[test]

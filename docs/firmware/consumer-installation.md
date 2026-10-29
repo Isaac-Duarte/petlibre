@@ -190,7 +190,13 @@ It holds the bench lease beside the stock config for its whole length.
 
 In either mode, a standard input that closes before an answer ends the run. It is never read as no, nor as done. In `lines` mode an answer of the wrong kind, such as `"yes"` to the restart, ends it too.
 
-**Stopping it.** SIGTERM or Ctrl-C ends the run the way its end does: it stops the stock server and the image server, then exits with an error. If a write was out without its answer (the install request, the promotion's push or the plans' put), the run says its outcome is unknown. It is not sent again: read what the feeder runs before you start another run.
+**Stopping it.** SIGTERM or Ctrl-C ends the run the way its end does: it stops the stock server and the image server, then exits with an error that names the step it stopped in. It also names a write whose outcome had not settled:
+
+- the install request, from when it is sent until the replacement answers;
+- the promotion's push, until bank 1 confirms it;
+- the plans' put, until the run ends.
+
+That write may have run, and it is not sent again: read what the feeder runs before you start another run. Stopped while pairing, the run has only started an owner enrollment, which is safe to run again.
 
 **Not done yet:**
 - Installing a consumer image. The builder makes one (`PROVISION=consumer`: no build Wi-Fi, the release key built in). With nothing stored it starts BLE setup mode at its first boot, so the app or `wellfed setup` can pair and send the home Wi-Fi ([product architecture](product-architecture.md#setup-and-pairing)); that is host-tested and simulated only. It is not yet tried on a feeder, and the owner's update key is not yet enrolled at install. The release key itself is not generated yet. Until then installs use bench images, which join with their build's Wi-Fi, so on the bench the home network is the hotspot.

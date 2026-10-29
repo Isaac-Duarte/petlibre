@@ -16,19 +16,6 @@
 - Build and test commands must not flash hardware, operate motors, alter routing or start persistent services. Those need an explicit user task and a reviewed device-specific procedure (or the authorization below).
 - Do not infer authorization to commit, push, publish or resume bench operations from historical notes. Respect the contributor's Git identity.
 
-## Changes
-
-- **The smallest complete change.** Build what the task needs and nothing for later: no option, abstraction, wrapper or config nobody asked for. Deletion beats addition, and the code keeps its existing layers and interfaces. Name what you left out in one line. When part of a request asks for more than the need seems to justify, build it, and say in one line what the smaller version would be.
-- **Reuse before writing.** Take a helper the workspace already has, then the standard library, then a crate already in `Cargo.lock`. Never add a dependency for a few lines.
-- **Finish what you break.** Find every caller before changing a function. Fix a bug once, at its root in the shared code, not in one caller. Update every test, fixture and doc the change breaks. Code you move or merge keeps its validation and error handling.
-- **Mark a deliberate shortcut.** A known limit gets one comment, `// shortcut: <the limit>, <when to revisit>`, so `rg 'shortcut:'` finds every one.
-
-## Reports and reviews
-
-- End every report with one or two lines: what you skipped or did not check, and any risk the owner must know. Findings keep their label (physical observation, static analysis or simulation).
-- A review starts with what the change does, in two or three sentences. Then come numbered findings under **Must fix** (a bug, a safety or security hole, data loss), **Should fix** and **Nice to have**. Each names the file and line, the problem, the input or situation that goes wrong, the smallest fix, and what skipping it costs. It ends with a verdict.
-- A finding needs a concrete case that goes wrong. No style preferences, no "consider", no vague worries.
-
 ## Rust conventions
 
 Everything first-party is under `src/`. The Rust workspace is `src/sdk/` (the SDK every firmware builds on), `src/product/` (product policy shared by the firmware and the server, starting with `wellfed-feeder`), `src/client/` (the owned device API values of `wellfed-model`, the sans-IO `wellfed-client` and the tokio `wellfed-connect` every host client shares), `src/server/` (the owner's server, layered as the [server design](docs/server/design.md#crates) lays out), `src/tools/wellfed-*` and `src/tools/xtask` (host tools) and `src/firmware/wellfed/` (one crate per firmware); `src/firmware/vendor/` holds the AmebaD C ports, pins and image build, `src/web/` the web frontends and `src/app/` the Flutter Android app. The [Rust standard](docs/development/rust.md) is the full rule set, with what enforces each rule; in short, the compiler enforces most of them. Every crate inherits `[workspace.lints]`, and `make check-rust` runs a second Clippy pass over libraries and binaries with `PRODUCTION_LINTS` (no `unwrap`, no narrowing `as`, no needless by-value parameters, no unreachable `pub`). `make check-deps` runs cargo-deny over licenses, advisories and sources (`deny.toml`), and tests run under cargo-nextest. A deliberate exception is an `#[expect(lint, reason = "…")]` at the narrowest scope. Keep existing crate names, public protocols and the C interface the AmebaD ports call (the `wellfed_*` exports `src/firmware/vendor` uses, and the KM0 park and hook symbols) unless the task requires a compatibility change; there is no general-purpose C ABI over the SDK. Every host tool is Rust; the Python tools were ported or retired by October 23, 2026, and `cargo xtask check-repository` refuses Python under `src/`.

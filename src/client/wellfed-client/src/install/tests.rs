@@ -457,6 +457,13 @@ fn stock_s_refusal_ends_the_run_even_before_the_request_s_outcome() {
 }
 
 #[test]
+fn stock_s_unset_clock_refusal_is_its_own_error() {
+    let mut install = run_to(Phase::AwaitInstall);
+    install.stock_refused(Some(STOCK_CLOCK_UNSET));
+    assert_eq!(install.step(), Step::Failed(InstallError::StockClockUnset));
+}
+
+#[test]
 fn only_the_served_build_moves_on() {
     let mut install = run_to(Phase::ReadStatus);
     install.replacement(Replacement {

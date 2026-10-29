@@ -21,6 +21,7 @@ use tokio::sync::{mpsc, oneshot, watch};
 use tracing::{info, warn};
 
 use crate::{
+    clock::{self, Clock},
     config::Config,
     controller::{Controller, Rejection, Status},
     ota,
@@ -59,6 +60,9 @@ struct Actor {
     config: Arc<Config>,
     controller: Controller,
     status: watch::Sender<Status>,
+    /// Stock's latest clock reading on this session, and the owner's policy
+    /// for setting it.
+    clock: Clock,
 }
 
 impl Actor {
@@ -112,9 +116,11 @@ impl Actor {
             return Ok(());
         };
 
+        let now = Utc::now();
         let first_seen = self.controller.status.last_seen.is_none();
-        self.controller.observe(channel, &message, Utc::now())?;
-        if let Some(reply) = protocol::reply(&self.config, channel, &message, Utc::now()) {
+        self.controller.observe(channel, &message, now)?;
+        self.clock.observe(message.ts, now);
+        if let Some(reply) = protocol::reply(&self.config, channel, &message, now, &self.clock) {
             publish(client, reply)?;
         }
         if first_seen || message.cmd == "DEVICE_START_EVENT" {
@@ -223,6 +229,7 @@ impl Actor {
                     Err(_) => {
                         warn!("MQTT disconnected; discarding pending outgoing messages");
                         self.controller.disconnected(Utc::now())?;
+                        self.clock.forget();
                         self.publish_status();
                         return Ok(Session::Dropped);
                     }
@@ -268,11 +275,13 @@ pub async fn run(
     controller: Controller,
     mut requests: mpsc::Receiver<Request>,
     status: watch::Sender<Status>,
+    clock: clock::Policy,
 ) -> Result<()> {
     let mut actor = Actor {
         config,
         controller,
         status,
+        clock: Clock::new(clock),
     };
 
     loop {

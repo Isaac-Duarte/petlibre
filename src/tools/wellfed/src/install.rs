@@ -146,6 +146,12 @@ pub(crate) struct InstallArgs {
     /// promotion, with stock intact in bank 1.
     #[arg(long)]
     without_stock_plans: bool,
+    /// Have the stock server set stock's clock even when its own reading is
+    /// unknown or more than 10 minutes off. Stock may refuse the install
+    /// with its clock unset, but once set it may run meals that came due in
+    /// the jump.
+    #[arg(long)]
+    calibrate_clock: bool,
 }
 
 /// A stock config the install will not run on.
@@ -547,6 +553,15 @@ impl Run {
                          --from-bank0 --without-stock-plans to install without stock's plans",
                     ));
                 }
+                Step::Failed(error @ InstallError::StockClockUnset)
+                    if !self.args.calibrate_clock =>
+                {
+                    return Err(anyhow::Error::from(error).context(
+                        "If the stock server's log above shows its NTP reply held stock's \
+                         clock, run again with --calibrate-clock to have it set, accepting that \
+                         stock may run meals that came due while its clock jumps",
+                    ));
+                }
                 Step::Failed(error) => return Err(error.into()),
             }
         }
@@ -567,6 +582,9 @@ impl Run {
             .arg("--enroll-minutes")
             .arg(self.args.enroll_minutes.to_string())
             .kill_on_drop(true);
+        if self.args.calibrate_clock {
+            command.arg("--calibrate-clock");
+        }
         self.serve = Some(command.spawn().context("start wellfed-stock serve")?);
         eprintln!("Started the stock server (its broker trusts the first feeder that connects).");
         Ok(())

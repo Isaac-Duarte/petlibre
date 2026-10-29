@@ -88,6 +88,12 @@ pub fn manifest_version(manifest: &[u8]) -> Option<u32> {
         .map(|signed| signed.manifest.version)
 }
 
+/// Stock 1.1.15's error for an `OTA_UPGRADE` it refused at once, with no
+/// download, while its clock stood days behind and unset by the server
+/// (physical, one run; the link to its time-valid precheck is likely, not
+/// confirmed statically).
+pub const STOCK_CLOCK_UNSET: u32 = 1214;
+
 /// How stock is pointed at the installer's broker.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Provision {
@@ -237,6 +243,12 @@ pub enum InstallError {
     RequestUncertain,
     #[error("stock refused or failed the install (error {code:?}); it keeps running stock")]
     StockRefused { code: Option<u32> },
+    /// Stock's [`STOCK_CLOCK_UNSET`]: it refused before downloading, most
+    /// likely because its clock was never set.
+    #[error(
+        "stock refused the install before downloading (error {STOCK_CLOCK_UNSET}), most likely because its clock is not set: the stock server sets it only when it is within 10 minutes or the owner asks; it keeps running stock"
+    )]
+    StockClockUnset,
     #[error("build {reported} answers on bank {bank}, not the served build")]
     WrongReplacement { reported: String, bank: u8 },
     #[error(
@@ -660,7 +672,10 @@ impl Install {
     /// server's record of one), even before the request's outcome came.
     pub fn stock_refused(&mut self, code: Option<u32>) {
         if matches!(self.stage, Stage::AwaitInstall | Stage::Requesting) {
-            self.stage = Stage::Failed(InstallError::StockRefused { code });
+            self.stage = Stage::Failed(match code {
+                Some(STOCK_CLOCK_UNSET) => InstallError::StockClockUnset,
+                code => InstallError::StockRefused { code },
+            });
         }
     }
 

@@ -69,7 +69,8 @@ fn ota_reports_keep_distinct_phases_with_shared_ids_and_bound_history() {
             &c.config,
             Channel::System,
             &serde_json::from_value(json!({"cmd":"OTA_INFORM","state":5})).unwrap(),
-            Utc::now()
+            Utc::now(),
+            &wellfed_stock::clock::Clock::default()
         )
         .is_none()
     );

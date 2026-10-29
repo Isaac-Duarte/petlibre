@@ -27,6 +27,7 @@ use wellfed_stock::{
     api::{self, ApiState},
     broker_name,
     build_info::{self, BUILD},
+    clock,
     config::{self, State},
     controller::{self, Controller},
     enroll::Enrollment,
@@ -91,6 +92,12 @@ enum Action {
         /// first stock feeder that connects within this many minutes.
         #[arg(long)]
         enroll_minutes: Option<u64>,
+        /// Set stock's clock in every `NTP` reply, even when its own reading
+        /// is unknown or more than 10 minutes off. Stock may then run meals
+        /// that came due in the jump; without it, a stock clock left unset
+        /// may refuse an install (error 1214).
+        #[arg(long)]
+        calibrate_clock: bool,
     },
 
     /// Run just the authenticated Rust MQTT broker (normally managed by serve).
@@ -291,13 +298,19 @@ async fn main() -> Result<()> {
             config,
             enable_ota_trial,
             enroll_minutes,
+            calibrate_clock,
         } => {
             let trial = if enable_ota_trial {
                 OtaTrial::Enabled
             } else {
                 OtaTrial::Disabled
             };
-            serve(config, trial, enroll_minutes).await?
+            let clock = if calibrate_clock {
+                clock::Policy::Always
+            } else {
+                clock::Policy::Bounded
+            };
+            serve(config, trial, enroll_minutes, clock).await?
         }
         Action::Status { config } => {
             api_request(config, Method::GET, "/api/status", None::<&()>).await?
@@ -553,7 +566,12 @@ async fn enrolled(
     }
 }
 
-async fn serve(path: PathBuf, trial: OtaTrial, enroll_minutes: Option<u64>) -> Result<()> {
+async fn serve(
+    path: PathBuf,
+    trial: OtaTrial,
+    enroll_minutes: Option<u64>,
+    clock: clock::Policy,
+) -> Result<()> {
     // Trial dispatch must run a binary whose source can be reviewed: a clean
     // commit of every build input. Status and /health report the commit.
     if trial == OtaTrial::Enabled
@@ -621,7 +639,13 @@ async fn serve(path: PathBuf, trial: OtaTrial, enroll_minutes: Option<u64>) -> R
     let (requests, receiver) = mpsc::channel(16);
     let (status, status_rx) = watch::channel(controller.status.clone());
     let (shutdown, mut shutdown_rx) = watch::channel(false);
-    let mut worker = tokio::spawn(mqtt::run(config.clone(), controller, receiver, status));
+    let mut worker = tokio::spawn(mqtt::run(
+        config.clone(),
+        controller,
+        receiver,
+        status,
+        clock,
+    ));
 
     let app = api::router(ApiState {
         token: Arc::from(config.api_token.as_str()),
@@ -727,6 +751,17 @@ mod tests {
             Cli::try_parse_from(trial).unwrap().command,
             Action::Serve {
                 enable_ota_trial: true,
+                calibrate_clock: false,
+                ..
+            }
+        ));
+
+        // `wellfed install --calibrate-clock` passes the flag through.
+        let install = [&serve[..], &["--enable-ota-trial", "--calibrate-clock"]].concat();
+        assert!(matches!(
+            Cli::try_parse_from(install).unwrap().command,
+            Action::Serve {
+                calibrate_clock: true,
                 ..
             }
         ));

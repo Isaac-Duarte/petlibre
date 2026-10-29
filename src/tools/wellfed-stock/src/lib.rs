@@ -18,6 +18,7 @@
 pub mod api;
 pub mod broker_name;
 pub mod build_info;
+pub mod clock;
 pub mod config;
 pub mod controller;
 pub mod enroll;

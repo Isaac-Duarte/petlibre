@@ -19,12 +19,12 @@ cargo build --locked
 make check</code
         ></pre>
       <p>
-        Got a PLAF103 and a USB serial adapter? Then you can go further: full flash backups, recovery to stock and the
-        Wellfed firmware itself all run on real hardware today.
+        Have a PLAF103 and don't mind opening it up? Then you can go further and run Wellfed on a real feeder, with a
+        full backup and a way back to stock.
       </p>
       <ul>
         <li><a class="quiet-link" href={DOCS.development} rel="external">Development guide</a></li>
-        <li><a class="quiet-link" href={DOCS.uart} rel="external">UART wiring and recovery</a></li>
+        <li><a class="quiet-link" href={DOCS.uart} rel="external">Working with a real feeder</a></li>
         <li><a class="quiet-link" href={DOCS.contributing} rel="external">Contributing</a></li>
       </ul>
     </div>

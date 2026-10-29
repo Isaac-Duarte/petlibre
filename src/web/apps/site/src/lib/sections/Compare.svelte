@@ -9,8 +9,8 @@
   <div class="wrap">
     <h2 id="compare-title">What changes when you switch.</h2>
     <p class="lede">
-      We learned how stock works by studying firmware 1.1.15. The Wellfed column is where we're going, with how far
-      along each part is as of <time datetime={UPDATED}>{updated}</time>.
+      We studied the feeder's original firmware to learn how it works. The Wellfed column is where we're going, with how
+      far along each part is as of <time datetime={UPDATED}>{updated}</time>.
     </p>
 
     <!-- A real table: on phones each row restacks, and the column names come back as labels. -->
@@ -18,7 +18,7 @@
       <thead>
         <tr>
           <th scope="col"><span class="visually-hidden">Topic</span></th>
-          <th scope="col">Stock 1.1.15</th>
+          <th scope="col">Original firmware</th>
           <th scope="col">Wellfed</th>
         </tr>
       </thead>
@@ -26,7 +26,7 @@
         {#each COMPARISON as row (row.topic)}
           <tr>
             <th scope="row">{row.topic}</th>
-            <td data-label="Stock 1.1.15">{row.stock}</td>
+            <td data-label="Original firmware">{row.stock}</td>
             <td data-label="Wellfed" class="ours">
               <span>{row.wellfed}</span>
               <Stage stage={row.stage} />

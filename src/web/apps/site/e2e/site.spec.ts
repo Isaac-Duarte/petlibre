@@ -38,14 +38,14 @@ test("renders the landing page from its own origin only", async ({ page, baseURL
   // Every step and every Wellfed entry carries its stage in words.
   const steps = page.locator("#how ol > li");
   await expect(steps).toHaveCount(3);
-  for (const stage of ["Works on the bench", "In progress", "Planned"]) {
+  for (const stage of ["Works in testing", "In progress", "Planned"]) {
     await expect(steps.getByText(stage)).toBeVisible();
   }
   const rows = page.locator("#compare tbody tr");
   await expect(rows).toHaveCount(7);
   for (const row of await rows.all()) {
     await expect(row.locator(".ours > span").last()).toHaveText(
-      /^(Available now|Works on the bench|In progress|Planned)$/,
+      /^(Available now|Works in testing|In progress|Planned)$/,
     );
   }
 

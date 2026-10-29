@@ -19,7 +19,7 @@ It speaks to two readers: owners who want cloud-free feeding later, and tinkerer
 
 The claims live in `src/lib/status.ts`:
 
-- the three setup steps, each with its stage (available now, works on the bench, in progress, planned);
+- the three setup steps, each with its stage (available now, works in testing, in progress, planned);
 - the stock and Wellfed comparison. Its stock column comes from the [stock firmware notes](../devices/plaf103/stock/README.md), and each Wellfed entry carries a stage.
 
 Update it by hand when a status changes on the [roadmap](../roadmap.md). Set `UPDATED` to the day. Never claim more than the roadmap and the stock notes do. Outbound links are in `src/lib/links.ts`.

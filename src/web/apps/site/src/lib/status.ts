@@ -9,7 +9,7 @@ export type Stage = "available" | "bench" | "progress" | "planned";
 
 export const STAGE_LABELS: Record<Stage, string> = {
   available: "Available now",
-  bench: "Works on the bench",
+  bench: "Works in testing",
   progress: "In progress",
   planned: "Planned",
 };
@@ -31,7 +31,7 @@ export const STEPS: Step[] = [
   },
   {
     title: "Pair it with your phone",
-    body: "On first boot the feeder offers Bluetooth setup. You give it your Wi-Fi and pair while standing next to it, so nobody else can. It works from the command line today; the Android app is next.",
+    body: "On first boot the feeder offers Bluetooth setup. You give it your Wi-Fi and pair while standing next to it, so nobody else can. It works from the command line today, and the phone app is next.",
     stage: "progress",
   },
   {
@@ -64,8 +64,8 @@ export const COMPARISON: Comparison[] = [
   },
   {
     topic: "On your network",
-    stock: "Plain, unencrypted MQTT to the vendor's servers.",
-    wellfed: "Encrypted end to end with the Noise protocol.",
+    stock: "Talks to the vendor's servers without encryption.",
+    wellfed: "Encrypted end to end, between the feeder and the devices you pair.",
     stage: "bench",
   },
   {

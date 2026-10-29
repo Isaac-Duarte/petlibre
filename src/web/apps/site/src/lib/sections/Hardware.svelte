@@ -2,10 +2,9 @@
   import { DOCS } from "#lib/links.ts";
 
   const facts: [string, string][] = [
-    ["Model", "PETLIBRO Granary PLAF103, 5 L"],
+    ["Model", "PETLIBRO Granary PLAF103"],
+    ["Capacity", "5 L"],
     ["FCC ID", "2A3DEPLAF103S"],
-    ["Stock firmware", "1.1.15"],
-    ["Chip", "Realtek RTL8721DM with 8 MiB of flash"],
   ];
 </script>
 
@@ -28,8 +27,8 @@
         {/each}
       </dl>
       <p class="not">
-        Other models aren't supported, even ones with the same chip. Their boards, pins and flash layouts differ, and a
-        guess could brick them. That includes the PLAF108, PLAF203 and AF301.
+        Other models aren't supported, even ones that look alike. They're built differently inside, and the wrong
+        firmware could leave a feeder unable to start. That includes the PLAF108, PLAF203 and AF301.
       </p>
       <a class="quiet-link" href={DOCS.plaf103} rel="external">Read the PLAF103 notes</a>
     </div>

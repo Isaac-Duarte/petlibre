@@ -11,7 +11,7 @@
 
   const title = "Wellfed: open firmware for your pet feeder";
   const description =
-    "Open replacement firmware, an Android app and an optional self-hosted server for the PETLIBRO Granary PLAF103 feeder. No cloud, no account.";
+    "Open firmware that runs the PETLIBRO Granary PLAF103 pet feeder on your own Wi-Fi. No cloud, no account.";
 </script>
 
 <svelte:head>

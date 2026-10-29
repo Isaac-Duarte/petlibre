@@ -41,7 +41,7 @@ describe("the polled views", () => {
   it("are never asked for while the flash client holds the UART", async () => {
     const page = new Bench();
 
-    for (const uart of [{ state: "writing", done: 3, total: 19 }, { state: "loader" }] as const) {
+    for (const uart of [{ state: "writing", done: 3, total: 19, counted: true }, { state: "loader" }] as const) {
       page.take(state(uart));
       await page.refresh();
       await page.poll("health");

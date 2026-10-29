@@ -445,7 +445,7 @@ fn report_state(state: &BenchState) {
                 .unwrap_or_default()
         ),
         Uart::Loader => wellfed_rig::say!("UART: in a flash client's loader session"),
-        Uart::Writing { done, total } => wellfed_rig::say!(
+        Uart::Writing { done, total, .. } => wellfed_rig::say!(
             "UART: WRITING FLASH ({done}/{total} sectors verified); do not touch the bench"
         ),
     }

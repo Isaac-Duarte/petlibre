@@ -13,9 +13,21 @@ import type {
   TestsView,
 } from "./bench.gen";
 
+/**
+ * The bench refused a view that reads files because the flash client holds
+ * the UART (503): it is deferred until the write ends, not missing.
+ */
+export class Deferred extends Error {
+  constructor(path: string) {
+    super(`GET ${path}: deferred until the UART write ends`);
+    this.name = "Deferred";
+  }
+}
+
 async function get<T>(path: string): Promise<T | null> {
   const response = await fetch(path, { cache: "no-store" });
   if (response.status === 404) return null;
+  if (response.status === 503) throw new Deferred(path);
   if (!response.ok) throw new Error(`GET ${path}: ${response.status}`);
   return (await response.json()) as T;
 }

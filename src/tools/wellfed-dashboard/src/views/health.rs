@@ -98,16 +98,23 @@ pub(crate) fn health(sources: &Sources, flash: &mut FlashCache) -> HealthView {
         config_ok: config.is_ok(),
         ports,
         flash_tool: flash.get(sources),
-        installed: installed(root),
+        installed: installed(sources),
     }
 }
 
 /// The newest capture that shows a replacement-firmware start banner.
-fn installed(root: &Path) -> Option<Installed> {
+/// The scan reads up to 25 captures of up to 4 MiB each, so a write that
+/// starts during it stops it at the next capture: the scan never runs
+/// beside a write.
+fn installed(sources: &Sources) -> Option<Installed> {
+    let root = &sources.root;
     let start = format!("{} start build=", Tag::Start);
     let start = start.as_bytes();
 
     for (at, dir) in captures_by_age(root).into_iter().take(BANNER_SCAN_CAPTURES) {
+        if sources.uart_busy() {
+            return None;
+        }
         let rx = dir.join("serial-rx.bin");
         if fs::metadata(&rx).map_or(true, |m| m.len() > BANNER_SCAN_BYTES) {
             continue;
@@ -199,7 +206,26 @@ mod tests {
     use wellfed_formats::canonical::sha256;
 
     use super::*;
-    use crate::views::tests::{json, sources};
+    use crate::views::tests::{json, live_sources, sources};
+    use wellfed_formats::bench::live::Uart;
+
+    #[test]
+    fn the_banner_scan_stops_while_the_flash_client_holds_the_uart() {
+        let (_tmp, sources, live) = live_sources();
+        let dir = sources.root.join(CAPTURES).join("x-boot");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("serial-rx.bin"),
+            b"PLFW1 start build=abc123 bank=1\r\n",
+        )
+        .unwrap();
+
+        live.state.send_modify(|state| state.uart = Uart::Loader);
+
+        assert!(installed(&sources).is_none());
+        live.state.send_modify(|state| state.uart = Uart::Idle);
+        assert!(installed(&sources).is_some());
+    }
     use wellfed_formats::bench::CAPTURES;
 
     #[test]

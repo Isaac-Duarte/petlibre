@@ -170,14 +170,18 @@ pub enum Uart {
     Writing {
         done: u64,
         total: u64,
+        /// Whether this write reports a sector count at all: a give-way
+        /// and a stock recovery print none, so theirs stays 0 of 0.
+        counted: bool,
     },
 }
 
-/// The flash client's subcommands that write flash.
-const WRITES: [&str; 3] = [
-    "update execute",
-    "give-way execute",
-    "stock-recovery execute",
+/// The flash client's subcommands that write flash, and whether each
+/// prints a sector count as it verifies.
+const WRITES: [(&str, bool); 3] = [
+    ("update execute", true),
+    ("give-way execute", false),
+    ("stock-recovery execute", false),
 ];
 const OBSERVE: &str = "read observe";
 
@@ -192,12 +196,17 @@ impl Uart {
             .map(|child| child.label.as_str())
             .collect();
 
-        if flash.iter().any(|label| WRITES.contains(label)) {
+        let write = WRITES.iter().find(|(write, _)| flash.contains(write));
+        if let Some(&(_, counted)) = write {
             let (done, total) = record
                 .and_then(|record| record.progress.as_ref())
                 .filter(|progress| progress.unit == Unit::Sectors)
                 .map_or((0, 0), |progress| (progress.done, progress.total));
-            return Self::Writing { done, total };
+            return Self::Writing {
+                done,
+                total,
+                counted,
+            };
         }
         if flash.contains(&OBSERVE) {
             let path = record
@@ -283,11 +292,19 @@ mod tests {
 
         assert_eq!(
             Uart::of(Some(&record), &[flash("update execute")]),
-            Uart::Writing { done: 3, total: 19 }
+            Uart::Writing {
+                done: 3,
+                total: 19,
+                counted: true
+            }
         );
         assert_eq!(
             Uart::of(None, &[flash("read observe"), flash("give-way execute")]),
-            Uart::Writing { done: 0, total: 0 }
+            Uart::Writing {
+                done: 0,
+                total: 0,
+                counted: false
+            }
         );
     }
 

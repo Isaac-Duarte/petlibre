@@ -18,16 +18,7 @@
 // its cleanup and exits, then the checkout is removed. Should the server
 // be killed instead, the stand-in exits once its parent is gone.
 import { spawn } from "node:child_process";
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  realpathSync,
-  rmSync,
-  utimesSync,
-  writeFileSync,
-} from "node:fs";
+import { chmodSync, existsSync, mkdirSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -38,15 +29,12 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repo = resolve(here, "../../../../..");
 const binary = process.env.BENCH_BIN ?? join(repo, "target/debug/wellfed-bench");
 
-let root;
-if (mode === "idle") {
-  if (!given) throw new Error("serve.mjs: idle needs the checkout's path");
-  rmSync(given, { recursive: true, force: true });
-  mkdirSync(given, { recursive: true });
-  root = given;
-} else {
-  root = mkdtempSync(join(tmpdir(), "wellfed-e2e-"));
-}
+// Named after the port, and cleared first: a run killed outright leaves its
+// checkout behind, and the next run on that port removes it.
+if (mode === "idle" && !given) throw new Error("serve.mjs: idle needs the checkout's path");
+let root = given ?? join(tmpdir(), `wellfed-e2e-${port}`);
+rmSync(root, { recursive: true, force: true });
+mkdirSync(root, { recursive: true });
 // Canonical, as the server compares a client's checkout with its own.
 root = realpathSync(root);
 

@@ -299,7 +299,14 @@ pub(crate) mod tests {
         assert!(!sources.uart_busy());
 
         for (uart, held) in [
-            (Uart::Writing { done: 0, total: 0 }, true),
+            (
+                Uart::Writing {
+                    done: 0,
+                    total: 0,
+                    counted: true,
+                },
+                true,
+            ),
             (Uart::Loader, true),
             (Uart::Capturing { path: None }, false),
             (Uart::Idle, false),

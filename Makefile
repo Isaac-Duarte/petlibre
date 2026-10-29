@@ -79,7 +79,9 @@ ui:
 # open a port to hardware. The page's crate and the bench, which serves it
 # with `--ui`, are linted and tested with it built in, the production lints
 # included. The binary with the fake board is built into a target directory
-# of its own, so it never replaces the operator's `wellfed-bench`.
+# of its own, so it never replaces the operator's `wellfed-bench`. That is a
+# second debug build of the bench and its dependencies, about 1.5 GB of
+# disk beside target/debug; `rm -rf target/e2e` reclaims it.
 PAGE_CRATES = -p wellfed-dashboard -p wellfed-bench
 PAGE_FEATURES = ui,wellfed-bench/fake-board
 E2E_TARGET = $(CURDIR)/target/e2e

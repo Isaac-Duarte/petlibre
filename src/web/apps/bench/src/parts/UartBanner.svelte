@@ -48,7 +48,7 @@
         tone="fail"
       />
     {:else}
-      <p class="count">{uncountedText(app.state?.activity ?? [])}</p>
+      <p class="count">{uncountedText(writing)}</p>
     {/if}
   </section>
 {/if}

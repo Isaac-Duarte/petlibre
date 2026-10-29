@@ -47,8 +47,15 @@ test("a page opened during a write asks for no view that reads files", async ({ 
   // Past the first round of every poll.
   await page.waitForTimeout(6_000);
 
+  // What it has not read shows as deferred, never as missing.
+  await expect(page.getByRole("region", { name: "Latest capture" })).toContainText("Deferred until the write ends");
+  await expect(page.getByRole("region", { name: "Recent commands" })).toContainText("Deferred until the write ends");
+  await page.goto(`${WRITING}/#/tests/itest-e2e-03`);
+  await expect(page.getByRole("dialog", { name: "Run itest-e2e-03" })).toContainText("Deferred until the write ends");
+  await page.goto(`${WRITING}/#/sessions/flash-e2e-01`);
+  await expect(page.getByRole("region", { name: "Sessions" })).toContainText("Deferred until the write ends");
+  await expect(page.getByRole("region", { name: "flash-e2e-01" })).toContainText("Deferred until the write ends");
   expect(asked).toEqual([]);
-  await expect(page.getByRole("region", { name: "Latest capture" })).toContainText("No capture yet");
 });
 
 test("activity and relays read the live state", async ({ page }) => {

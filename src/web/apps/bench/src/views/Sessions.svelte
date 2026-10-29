@@ -5,9 +5,12 @@
   import { Badge, Command, Empty, Kv, LiveDot, Panel, ago, bytes, fullTime, toneOf } from "@wellfed/ui";
   import { app } from "../lib/bench.svelte";
   import { route } from "../lib/route.svelte";
+  import { holdsUart } from "../lib/uart";
 
   const sessions = $derived(app.sessions?.sessions ?? null);
   const selected = $derived(route.tab === "sessions" ? route.detail : null);
+  // The bench reads no evidence while the flash client holds the UART.
+  const held = $derived(holdsUart(app.state?.uart));
 
   let detail = $state<SessionView | null>(null);
   // The detail only once it is the selected session's, not the last one's.
@@ -20,6 +23,8 @@
       detail = null;
       return;
     }
+    // Asked again when the flash client lets go of the UART.
+    if (held) return;
     bench
       .session(name)
       .then((view) => {
@@ -54,7 +59,9 @@
 <div class="layout" class:open={!!selected}>
   <Panel title="Sessions" flush>
     {#snippet meta()}{sessions ? `${sessions.length} newest` : ""}{/snippet}
-    {#if !sessions}
+    {#if !sessions && held}
+      <Empty title="Deferred until the write ends" />
+    {:else if !sessions}
       <Empty title="Reading evidence" />
     {:else if !sessions.length}
       <Empty title="No session evidence under private/ yet" />
@@ -84,7 +91,9 @@
       {#snippet actions()}
         <a class="close" href={route.href("sessions")}>Close</a>
       {/snippet}
-      {#if !shown}
+      {#if !shown && held}
+        <Empty title="Deferred until the write ends" />
+      {:else if !shown}
         <Empty title="Reading the session" />
       {:else}
         {#each shown.parts as part (part.kind)}

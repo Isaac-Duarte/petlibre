@@ -383,7 +383,12 @@ async fn a_cancel_mid_write_only_interrupts_the_flash_client_and_waits_for_it() 
         .await
         .unwrap();
     let state = state_until(&server, "the write's first count", |state| {
-        state.uart == Uart::Writing { done: 3, total: 19 }
+        state.uart
+            == Uart::Writing {
+                done: 3,
+                total: 19,
+                counted: true,
+            }
     })
     .await;
     assert_eq!(state.activity[0].label, "update execute");

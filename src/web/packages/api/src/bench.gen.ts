@@ -206,7 +206,12 @@ export type ActivityKind = "flash" | "build" | "stock" | "analyzer";
  * What the feeder's UART is doing, for the banner that says not to touch
  * the bench during a write.
  */
-export type Uart = { "state": "idle" } | { "state": "capturing", path: string | null, } | { "state": "loader" } | { "state": "writing", done: number, total: number, };
+export type Uart = { "state": "idle" } | { "state": "capturing", path: string | null, } | { "state": "loader" } | { "state": "writing", done: number, total: number, 
+/**
+ * Whether this write reports a sector count at all: a give-way
+ * and a stock recovery print none, so theirs stays 0 of 0.
+ */
+counted: boolean, };
 
 /**
  * The ledger: an entry per bank the bench has evidence for.

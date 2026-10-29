@@ -3,6 +3,7 @@
   import { app } from "../lib/bench.svelte";
   import { route } from "../lib/route.svelte";
   import { liveRun } from "../lib/tests";
+  import { holdsUart } from "../lib/uart";
   import LiveRunPanel from "../parts/LiveRunPanel.svelte";
   import RunBuilder from "../parts/RunBuilder.svelte";
   import RunDrawer from "../parts/RunDrawer.svelte";
@@ -12,7 +13,9 @@
   const live = $derived(liveRun(app.state?.job ?? null, tests?.catalog ?? [], app.now));
 </script>
 
-{#if !tests}
+{#if !tests && holdsUart(app.state?.uart)}
+  <Empty title="Deferred until the write ends" />
+{:else if !tests}
   <Empty title="Reading the integration runs" />
 {:else}
   <div class="stack">

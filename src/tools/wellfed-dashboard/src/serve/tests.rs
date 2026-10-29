@@ -155,7 +155,14 @@ async fn while_the_flash_client_holds_the_uart_every_file_view_is_deferred() {
     std::fs::create_dir_all(&capture).unwrap();
     std::fs::write(capture.join("serial-rx.bin"), b"hello\r\n").unwrap();
 
-    for uart in [Uart::Writing { done: 3, total: 19 }, Uart::Loader] {
+    for uart in [
+        Uart::Writing {
+            done: 3,
+            total: 19,
+            counted: true,
+        },
+        Uart::Loader,
+    ] {
         fake.state.send_modify(|state| state.uart = uart.clone());
 
         for uri in FILE_VIEWS {
@@ -240,7 +247,11 @@ async fn the_stream_sends_the_state_then_the_jobs_output_as_it_comes() {
 async fn a_page_that_connects_during_a_write_gets_the_state_and_output_but_reads_no_file() {
     let (_tmp, fake, router) = ui();
     fake.state.send_modify(|state| {
-        state.uart = Uart::Writing { done: 3, total: 19 };
+        state.uart = Uart::Writing {
+            done: 3,
+            total: 19,
+            counted: true,
+        };
         state.job = Some(JobView {
             id: 7,
             label: "flash-execute u1".into(),

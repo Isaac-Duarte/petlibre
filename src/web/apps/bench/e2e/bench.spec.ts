@@ -279,6 +279,9 @@ test.describe("a write's life on the idle bench", () => {
     const asks = page.getByRole("region", { name: /^Job \d+ asks$/ });
     await expect(asks.getByRole("button", { name: "Yes" })).toBeVisible();
     expect(page.url()).not.toContain("token");
+    // A reload keeps the tab's token, and its buttons.
+    await page.reload();
+    await expect(asks.getByRole("button", { name: "Yes" })).toBeVisible();
     await expect(asks.getByRole("button", { name: "Done" })).toHaveCount(0);
     await asks.getByRole("button", { name: "Yes" }).click();
 

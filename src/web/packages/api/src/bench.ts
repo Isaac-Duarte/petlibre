@@ -58,17 +58,34 @@ export class AnswerRefused extends Error {
   }
 }
 
+const TOKEN_KEY = "wellfed-bench-answer-token";
+
 /**
  * The answer token, from the link the bench console prints
- * (`#token=...`). Read once as the page loads and kept in memory only;
- * the link is put back without it, so it stays out of history and the
- * routes. Without it the page shows questions but cannot answer them.
+ * (`#token=...`), or else from this tab's `sessionStorage`, where a token
+ * from the link is kept so a reload or a discarded phone tab still
+ * answers. The link is put back without it, out of the address bar and
+ * the routes. Storage may be refused (a private window); the token then
+ * lasts as long as the page. Without one the page shows questions but
+ * cannot answer them.
  */
 const token: string | null = (() => {
   if (typeof window === "undefined") return null;
   const found = /^#token=([0-9a-f]+)$/.exec(window.location.hash)?.[1] ?? null;
-  if (found) window.history.replaceState(null, "", window.location.pathname + window.location.search);
-  return found;
+  if (found) {
+    window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    try {
+      window.sessionStorage.setItem(TOKEN_KEY, found);
+    } catch {
+      // Kept in memory only.
+    }
+    return found;
+  }
+  try {
+    return window.sessionStorage.getItem(TOKEN_KEY);
+  } catch {
+    return null;
+  }
 })();
 
 /** Whether this page was opened with the console's link, so it may answer. */

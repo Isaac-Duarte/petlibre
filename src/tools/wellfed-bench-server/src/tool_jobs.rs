@@ -7,9 +7,9 @@
 //! one [`Prompt`] line on its standard output, and it waits for one
 //! [`Answer`] line on its standard input. The job answers the restart
 //! itself with the power relay. Every other question goes into the live
-//! state as the [`PendingPrompt`] the page, the console, the CLI and an
-//! agent show (the page, the CLI and an agent answer), until the server takes an answer for it (`Shared::answer`)
-//! or the job ends. The installer's answers carry no number and are read
+//! state as a [`PendingPrompt`], which the console shows and the page, the
+//! CLI and an agent answer, until the server takes an answer for it
+//! (`Shared::answer`) or the job ends. The installer's answers carry no number and are read
 //! in order, so an answer reaches it only for the question it is waiting
 //! on, never ahead of one.
 //!

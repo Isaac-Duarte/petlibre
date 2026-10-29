@@ -96,7 +96,7 @@ Record per run the hopper level, each feed's `completed`, `outlet_breaks` and `d
 
 1. After an install, `wellfed calibrate` answers with `"portion_mg": null`, `"bowl": "single"` and a phase.
 2. A ten-portion low-hopper run, if the owner wants one: the run-down below already shows portions near 7 g until the last few.
-3. The stored weight survives an install, and bank 0's role install leaves sectors 34–35 alone.
+3. Bank 0's role install leaves sectors 34–35 alone (a give-way and an install over the air kept the weight, October 29).
 
 ## Evidence
 

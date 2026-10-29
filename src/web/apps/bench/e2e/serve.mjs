@@ -1,7 +1,7 @@
 // Serve a synthetic bench for the end-to-end tests: the real
 // `wellfed-bench serve --ui` on a temporary checkout, with a scripted relay
-// board (`--fake-board`) and a stand-in wellfed-flash. Nothing touches
-// hardware.
+// board (`--fake-board`), a stand-in wellfed-flash and a stand-in
+// `wellfed` for the install job's questions. Nothing touches hardware.
 //
 //   node e2e/serve.mjs PORT fixtures ROOT   evidence, notes and banks; no job
 //   node e2e/serve.mjs PORT writing ROOT    a UART write for the whole run
@@ -75,6 +75,23 @@ esac
 );
 chmodSync(join(root, "wellfed-flash"), 0o755);
 
+// `wellfed install --prompts lines`, as the install job runs it: two
+// questions on stdout, each answer read back and kept in `answers`, and
+// the recovery code on stderr, which the page shows beside the question.
+write(
+  "wellfed",
+  `#!/bin/sh
+echo "Starting the stock server" >&2
+echo '{"kind":"recognize-feeder","device":"AF_E2E","address":"192.168.1.31"}'
+read a; echo "$a" >> answers
+echo "Recovery code 4711" >&2
+echo '{"kind":"open-recovery-window"}'
+read a; echo "$a" >> answers
+echo "Installed" >&2
+`,
+);
+chmodSync(join(root, "wellfed"), 0o755);
+
 if (mode === "fixtures") writeFixtures();
 else if (mode === "writing") write("private/verification/flash-e2e-05-plan.json", "{}");
 else {
@@ -91,7 +108,19 @@ const home = join(root, "home");
 mkdirSync(join(home, "run"), { recursive: true });
 const server = spawn(
   binary,
-  ["--root", root, "serve", "--fake-board", "--flash-bin", join(root, "wellfed-flash"), "--ui", "--ui-port", port],
+  [
+    "--root",
+    root,
+    "serve",
+    "--fake-board",
+    "--flash-bin",
+    join(root, "wellfed-flash"),
+    "--wellfed-bin",
+    join(root, "wellfed"),
+    "--ui",
+    "--ui-port",
+    port,
+  ],
   { stdio: "inherit", env: { ...process.env, HOME: home, XDG_RUNTIME_DIR: join(home, "run") } },
 );
 const clients = new Set();

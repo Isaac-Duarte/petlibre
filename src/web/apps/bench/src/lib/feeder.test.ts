@@ -52,6 +52,9 @@ describe("feeder", () => {
   });
 
   it("names why a session is paused or failing", () => {
+    expect(sessionText({ state: "paused", pause: { kind: "stock-install", job: 9 } })).toBe(
+      "paused: job 9 (install) holds its own sessions",
+    );
     expect(sessionText({ state: "paused", pause: { kind: "uart-job", job: 7, label: "flash-execute" } })).toBe(
       "paused: job 7 (flash-execute) holds the UART",
     );

@@ -33,6 +33,8 @@ function pauseText(session: Extract<Session, { state: "paused" }>): string {
       return "an install push holds the feeder's session";
     case "stock-ota":
       return `job ${pause.job} (stock-ota) holds its own sessions`;
+    case "stock-install":
+      return `job ${pause.job} (install) holds its own sessions`;
     case "power-off":
       return "relay 1 is off";
     case "stopping":

@@ -7,6 +7,7 @@
   import LogPanel from "../parts/LogPanel.svelte";
   import NowPanel from "../parts/NowPanel.svelte";
   import OperatorPanel from "../parts/OperatorPanel.svelte";
+  import PromptPanel from "../parts/PromptPanel.svelte";
   import QaPanel from "../parts/QaPanel.svelte";
   import RelaysPanel from "../parts/RelaysPanel.svelte";
   import ScriptPanel from "../parts/ScriptPanel.svelte";
@@ -23,6 +24,7 @@
 <div class="grid">
   <div class="main">
     <NowPanel />
+    <PromptPanel />
     <LogPanel />
     <CapturePanel />
   </div>

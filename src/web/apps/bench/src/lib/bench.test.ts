@@ -16,6 +16,7 @@ function state(uart: Uart): BenchState {
     now: 100,
     server: { pid: 9, started: 0, phase: "serving", uart_port: true, stopping: null },
     job: null,
+    prompt: null,
     activity: [],
     uart,
     relays: {},

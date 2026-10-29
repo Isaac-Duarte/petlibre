@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 import { expect, test, type Locator } from "@playwright/test";
 
@@ -242,6 +244,38 @@ test.describe("a write's life on the idle bench", () => {
     const old = activity.getByRole("listitem").filter({ hasText: "flash-execute flash-e2e-short" });
     await expect(old).toContainText("cleared");
     expect(Number(await old.evaluate((row) => getComputedStyle(row).opacity))).toBeLessThan(1);
+  });
+
+  test("an install's questions are answered from the page, beside its output", async ({ page }) => {
+    test.setTimeout(60_000);
+    await page.goto(`${IDLE}/`);
+    const install = client([
+      "install",
+      "--review",
+      "r",
+      "--manifest",
+      "m",
+      "--stock-config",
+      "c",
+      "--broker-name",
+      "broker.example.net",
+    ]);
+    // Taken now: the client may exit before the page has seen the end.
+    const finished = ended(install);
+
+    const asks = page.getByRole("region", { name: /^Job \d+ asks$/ });
+    await expect(asks).toContainText("connecting from 192.168.1.31. Is this your feeder?");
+    await expect(asks.getByRole("button", { name: "Done" })).toHaveCount(0);
+    await asks.getByRole("button", { name: "Yes" }).click();
+
+    await expect(asks).toContainText("hold Lock, then Dispense");
+    const log = page.getByRole("log", { name: "Live log" });
+    await expect(log).toContainText("Recovery code 4711");
+    await asks.getByRole("button", { name: "Done" }).click();
+
+    await expect(asks).toHaveCount(0);
+    expect(await finished).toBe(0);
+    expect(readFileSync(join(IDLE_ROOT, "answers"), "utf8")).toBe('"yes"\n"done"\n');
   });
 
   test("a run's drawer keeps the record it read when a write starts", async ({ page }) => {

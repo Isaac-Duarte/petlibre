@@ -1,8 +1,12 @@
-// The wellfed-bench page's API: JSON views and one event stream, all
-// read-only. Paths are relative so the page works under any host and port
-// the bench serves it on (loopback, or a tailnet address).
+// The wellfed-bench page's API: JSON views and one event stream, read-only,
+// and the answer to a job's question, the one thing the page sends. Paths
+// are relative so the page works under any host and port the bench serves
+// it on (loopback, or a tailnet address).
 
 import type {
+  Answer,
+  AnswerError,
+  AnswerRequest,
   BenchState,
   EvidenceView,
   StockView,
@@ -42,6 +46,35 @@ export const bench = {
   run: (name: string) => get<RunView>(`api/tests/${encodeURIComponent(name)}`),
   stock: () => get<StockView>("api/stock"),
 };
+
+/** The bench server did not take an answer; `refusal` says why, when it could be read. */
+export class AnswerRefused extends Error {
+  constructor(
+    readonly refusal: AnswerError | null,
+    status: number,
+  ) {
+    super(`POST answer: ${String(status)}`);
+    this.name = "AnswerRefused";
+  }
+}
+
+/**
+ * Answer job `job`'s question `seq`. Sent once and never retried: the
+ * installer reads answers in order, so a resent one could answer the next
+ * question unseen. A refusal throws {@link AnswerRefused}.
+ */
+export async function answer(job: number, seq: number, reply: Answer): Promise<void> {
+  const body: AnswerRequest = { seq, answer: reply };
+  const response = await fetch(`api/jobs/${String(job)}/answer`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+    cache: "no-store",
+  });
+  if (response.ok) return;
+  const refusal = (await response.json().catch(() => null)) as AnswerError | null;
+  throw new AnswerRefused(refusal, response.status);
+}
 
 export interface StreamHandlers {
   /** The bench server's live state, on connecting and on every change. */

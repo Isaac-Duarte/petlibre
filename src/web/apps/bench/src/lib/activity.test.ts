@@ -17,6 +17,7 @@ function state(activity: Activity[], end: number | null = null): BenchState {
       cancel: "none",
       end: end === null ? null : { code: 0, error: null, finished: end },
     },
+    prompt: null,
     activity,
     uart: { state: "idle" },
     relays: {},

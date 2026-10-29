@@ -10,6 +10,7 @@
     flash: "wellfed-flash",
     build: "wellfed-build",
     stock: "wellfed-stock",
+    install: "wellfed install",
     analyzer: "sigrok-cli",
   };
 

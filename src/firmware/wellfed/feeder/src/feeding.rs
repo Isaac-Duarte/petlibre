@@ -721,6 +721,10 @@ mod target {
 
     type Journal = FeedJournal<JournalSlots>;
 
+    // These two split `interlock::Status` as the `joins` and `interlock`
+    // records print it: a counter added to the status goes in one of them
+    // and in that record's `Display` arm, or its moves are never logged.
+
     /// What the `joins` record logs.
     fn join_counters(status: &interlock::Status) -> [u32; 5] {
         [
@@ -781,8 +785,9 @@ mod target {
         /// Why the last feed ended before its reservation, for the API's
         /// poll: its id and the refusal.
         unreserved: Option<(u64, Refusal)>,
-        /// The interlock's counters as last logged.
-        joins: interlock::Status,
+        /// The interlock's counters as last logged, for its `joins` and
+        /// `interlock` records.
+        interlock: interlock::Status,
         /// The reservation a reset interrupted, which the owner resolves as
         /// it opens: its id, until its `Fed` event is recorded.
         interrupted: Option<u64>,
@@ -937,7 +942,7 @@ mod target {
             // any before, is forced, or holds its turn past the long-join
             // limit; a write that waits or is forced, or a feed delayed.
             let now = INTERLOCK.status();
-            let before = core::mem::replace(&mut self.joins, now);
+            let before = core::mem::replace(&mut self.interlock, now);
             if join_counters(&now) != join_counters(&before) {
                 record(Record::Joins(now));
             }

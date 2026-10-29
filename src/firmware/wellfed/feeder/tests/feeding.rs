@@ -406,9 +406,10 @@ fn a_feeds_records_fit_a_log_line_at_their_widest() {
     use wellfed_core::feed::controller::FeedReason;
     use wellfed_core::feed::storage::{OwnerOutcome, OwnerResult, RotorPhase};
     use wellfed_core::record::Tag;
+    use wellfed_core::store::feed_journal::JournalError;
     use wellfed_feeder::feed::Durability;
     use wellfed_fw_feeder::feeding::Record;
-    use wellfed_sdk::hal::interlock;
+    use wellfed_sdk::hal::interlock::{self, Held};
     use wellfed_sdk::hal::owner::{FeedTrace, OwnerFault, OwnerState, SubmitResult};
     use wellfed_sdk::hal::supervision::events::{EDGE_LOG, EventsFault, PinWatch};
 
@@ -420,6 +421,8 @@ fn a_feeds_records_fit_a_log_line_at_their_widest() {
     pins.start = Some([u32::MAX; 2]);
     pins.changed = [u32::MAX; 2];
     pins.toggles = [[u8::MAX; 32]; 2];
+    // The widest listing: ten two-digit pads, then more.
+    pins.toggles[0][..10].fill(0);
     let trace = FeedTrace {
         drive_ms: u32::MAX,
         rising: u16::MAX,
@@ -456,6 +459,19 @@ fn a_feeds_records_fit_a_log_line_at_their_widest() {
     };
 
     let widest = [
+        Record::Journal {
+            error: JournalError::Worn,
+            created: true,
+        },
+        Record::Refused,
+        Record::Opened {
+            created: true,
+            high_water: u64::MAX,
+        },
+        Record::Held {
+            portions: u8::MAX,
+            held: Held::Writing,
+        },
         Record::Status {
             state: OwnerState::Fault,
             fault: OwnerFault::Ok,

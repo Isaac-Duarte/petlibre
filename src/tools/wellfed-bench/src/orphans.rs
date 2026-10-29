@@ -1,14 +1,20 @@
-//! The tools a killed server may have left running in this checkout.
+//! The tools a killed server may have left running on this bench.
 //!
 //! A server killed outright cannot stop its job's children, and they no
 //! longer count as the bench's, so `status` looks for them itself: every
-//! process named as one of the bench's tools whose working directory is
-//! this checkout (every job's child runs from it). Matching the directory
-//! rather than the lease leaves another checkout's tools alone and needs no
-//! record the killed server would have had to keep.
+//! process named as one of the bench's tools whose working directory has
+//! the same `private/` as this checkout. Every job's child runs from its
+//! server's checkout, and the lease lives in that `private/`, so a worktree
+//! whose `private/` is a link to the main checkout's (and shares its lease)
+//! finds the main server's tools too. A checkout with a `private/` of its
+//! own has a bench of its own, and its tools are left alone. Nothing needs
+//! recording by the server that was killed.
 
 use std::fs;
 use std::path::Path;
+
+/// The directory a bench's lease, and so the bench, is identified by.
+const PRIVATE: &str = "private";
 
 /// The tools a job runs, by their process names.
 const TOOLS: [&str; 4] = [
@@ -33,15 +39,16 @@ pub(crate) enum OrphanError {
     /// It may be mid-write; breaking the lease would let a new server open
     /// the UART under it.
     #[error(
-        "wellfed-flash pid {pid} (`{command}`) still runs in this checkout; let it finish, or \
+        "wellfed-flash pid {pid} (`{command}`) still runs on this bench; let it finish, or \
          stop it with SIGINT (`kill -INT {pid}`) so it records its stop, then break the lease"
     )]
     FlashAlive { pid: u32, command: String },
 }
 
-/// The bench's tools running from `root`, by pid.
+/// The bench's tools running from any checkout that shares `root`'s
+/// `private/`, by pid.
 pub(crate) fn running(root: &Path) -> Vec<Orphan> {
-    let Ok(root) = root.canonicalize() else {
+    let Ok(private) = root.join(PRIVATE).canonicalize() else {
         return Vec::new();
     };
     let mut found: Vec<Orphan> = fs::read_dir("/proc")
@@ -56,12 +63,8 @@ pub(crate) fn running(root: &Path) -> Vec<Orphan> {
             if !TOOLS.contains(&name) {
                 return None;
             }
-            if fs::read_link(process.join("cwd"))
-                .ok()?
-                .canonicalize()
-                .ok()?
-                != root
-            {
+            let cwd = fs::read_link(process.join("cwd")).ok()?;
+            if cwd.join(PRIVATE).canonicalize().ok()? != private {
                 return None;
             }
             let command = fs::read(process.join("cmdline")).ok()?;
@@ -82,7 +85,7 @@ pub(crate) fn running(root: &Path) -> Vec<Orphan> {
     found
 }
 
-/// Refuse while a flash client runs from `root`.
+/// Refuse while a flash client runs on `root`'s bench.
 pub(crate) fn no_flash(root: &Path) -> Result<(), OrphanError> {
     match running(root)
         .into_iter()

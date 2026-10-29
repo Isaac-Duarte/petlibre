@@ -356,8 +356,11 @@ fn status(root: &Path, break_lease: bool, runtime: &tokio::runtime::Runtime) -> 
 fn report_lease(root: &Path, break_lease: bool) -> anyhow::Result<()> {
     if break_lease {
         // A killed server's flash client may still be writing: a new server
-        // on a freed lease could open the UART under it.
-        orphans::no_flash(root)?;
+        // on a freed lease could open the UART under it. A live holder's
+        // children are its own, and the break refuses that lease anyway.
+        if let Ok(Some((_, Liveness::Gone))) = lease::inspect(root) {
+            orphans::no_flash(root)?;
+        }
         let holder = lease::break_stale(root)?;
         wellfed_rig::say!("Lease: broke the stale lease of {holder}");
     }

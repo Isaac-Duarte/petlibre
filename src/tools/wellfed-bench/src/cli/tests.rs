@@ -235,6 +235,18 @@ fn a_held_bench_refuses_a_server_before_it_opens_anything() {
     let refused = lease_error(run_in(root.path(), &["serve"]));
     assert!(matches!(refused, lease::LeaseError::Held(_)), "{refused:?}");
 
+    // A live holder's flash client is its own: the break is refused for
+    // the live lease, not for the child.
+    let tools = tempfile::tempdir().unwrap();
+    let flash = tools.path().join("wellfed-flash");
+    std::os::unix::fs::symlink(which("sleep"), &flash).unwrap();
+    let _child = Other(
+        std::process::Command::new(&flash)
+            .arg("60")
+            .current_dir(root.path())
+            .spawn()
+            .unwrap(),
+    );
     let kept = lease_error(run_in(root.path(), &["status", "--break-lease"]));
     assert!(matches!(kept, lease::LeaseError::Live(_)), "{kept:?}");
     assert!(lease::inspect(root.path()).unwrap().is_some());
@@ -280,7 +292,19 @@ fn a_flash_client_a_killed_server_left_keeps_the_lease_from_breaking() {
         "{refused:?}"
     );
     assert!(lease::inspect(root.path()).unwrap().is_some());
-    // A flash client of another checkout is not this bench's.
+
+    // A worktree whose private/ links here shares the lease, and so the
+    // bench: its --break-lease sees the main checkout's flash client.
+    let worktree = tempfile::tempdir().unwrap();
+    std::os::unix::fs::symlink(root.path().join("private"), worktree.path().join("private"))
+        .unwrap();
+    let error = run_in(worktree.path(), &["status", "--break-lease"]).unwrap_err();
+    assert!(
+        matches!(error.downcast(), Ok(orphans::OrphanError::FlashAlive { pid, .. }) if pid == left.0.id())
+    );
+    assert!(lease::inspect(root.path()).unwrap().is_some());
+    // A checkout with a private/ of its own is another bench.
+    std::fs::create_dir(tools.path().join("private")).unwrap();
     assert!(orphans::running(tools.path()).is_empty());
 
     drop(left);

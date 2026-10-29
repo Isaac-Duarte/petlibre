@@ -214,11 +214,11 @@ Stopped: The bench lease of pid 81234 (…) outlived its process: that run was k
 With no server, only `status` runs, and that is the way back:
 
 1. Run `target/release/wellfed-bench status`. It shows the lease first (free, held, or left by a process that is gone), finds no server, and reads the relays itself, without taking the lease.
-2. Stop what the killed server's job left running. Under a lease whose holder is gone, `status` lists every `wellfed-flash`, `wellfed-stock`, `wellfed-build` and `sigrok-cli` running from this checkout, with its pid and command line. They no longer count as the bench's. Let a `wellfed-flash` finish, or stop it with SIGINT (`kill -INT PID`) so it records its stop. Stop the others by hand.
-3. Run `target/release/wellfed-bench status --break-lease`. It refuses while a `wellfed-flash` still runs from this checkout, naming it, since it may be writing. Otherwise it removes the lease, only when its holder is gone, then shows the relays.
+2. Stop what the killed server's job left running. Under a lease whose holder is gone, `status` lists every `wellfed-flash`, `wellfed-stock`, `wellfed-build` and `sigrok-cli` running on this bench, with its pid and command line. They no longer count as the bench's. Let a `wellfed-flash` finish, or stop it with SIGINT (`kill -INT PID`) so it records its stop. Stop the others by hand.
+3. Run `target/release/wellfed-bench status --break-lease`. It refuses while a `wellfed-flash` still runs on this bench, naming it, since it may be writing. Otherwise it removes the lease, only when its holder is gone, then shows the relays.
 4. Start the server again.
 
-The tools are found by process name and working directory, since every job's child runs from the checkout. So another checkout's tools are never counted, and the killed server needed to record nothing.
+The tools are found by process name and by the `private/` of their working directory: every job's child runs from its server's checkout, and the lease lives in that `private/`. So a worktree whose `private/` links to the main checkout's shares its lease and finds the main server's tools, a checkout with a `private/` of its own never counts them, and the killed server needed to record nothing. Against a live holder, `--break-lease` refuses for the live lease, whatever its children.
 
 `--break-lease` never breaks a live holder's lease, one written on another host, or a file that is not a lease. Remove the last two by hand once the bench is idle. Against a file that is not a lease, `--break-lease` stops before the relays; plain `status` still shows them.
 

@@ -201,7 +201,8 @@ enum Stage {
 }
 
 pub struct Setup {
-    on: bool,
+    /// What started setup mode; `None` while it is off.
+    cause: Option<Cause>,
     stage: Stage,
     responder: Responder,
     offer: Option<Offer>,
@@ -228,7 +229,7 @@ impl Setup {
     /// copies on the loop's stack.
     pub const fn off() -> Self {
         Self {
-            on: false,
+            cause: None,
             stage: Stage::None,
             responder: Responder::idle(),
             offer: None,
@@ -243,16 +244,16 @@ impl Setup {
         }
     }
 
-    /// Setup mode, started at `now_ms` (host tests).
+    /// Setup mode, started by a hold at `now_ms` (host tests).
     pub fn new(platform: &mut impl Platform, now_ms: u32) -> Self {
         let mut setup = Self::off();
-        setup.start(platform, now_ms);
+        setup.start(platform, now_ms, Cause::Hold);
         setup
     }
 
     /// Start setup mode in place; it runs until the reboot that ends it.
-    pub fn start(&mut self, platform: &mut impl Platform, now_ms: u32) {
-        self.on = true;
+    pub fn start(&mut self, platform: &mut impl Platform, now_ms: u32, cause: Cause) {
+        self.cause = Some(cause);
         platform.ble_restart();
         self.stage = Stage::None;
         self.responder.stop();
@@ -268,7 +269,20 @@ impl Setup {
     }
 
     pub const fn is_on(&self) -> bool {
-        self.on
+        self.cause.is_some()
+    }
+
+    /// Whether setup mode refuses feeds now. One the owner asked for with
+    /// the hold always does. One a boot with no network started may run
+    /// for every boot of a feeder that never gets Wi-Fi, so it lets the
+    /// panel's Dispense feed while no session runs; a session's code is
+    /// keyed in on the same buttons, and a feed must not hold its reboot.
+    pub fn holds_feeds(&self) -> bool {
+        match self.cause {
+            None => false,
+            Some(Cause::Hold) => true,
+            Some(Cause::Unprovisioned) => self.stage != Stage::None || self.reboot_at.is_some(),
+        }
     }
 
     /// A press counted towards the code: tick for it.
@@ -283,7 +297,7 @@ impl Setup {
     /// session for [`IDLE_MS`] it reboots the same way; an unprovisioned
     /// feeder then enters setup again on the next boot.
     pub fn reboot_due(&self, now: u32) -> bool {
-        self.on
+        self.is_on()
             && self
                 .reboot_at
                 .is_some_and(|at| wellfed_core::deadline_passed(now, at))

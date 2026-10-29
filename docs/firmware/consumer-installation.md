@@ -129,7 +129,7 @@ For a consumer it must also accept a device whose credentials it has never seen.
 4. **Pre-flight:** model PLAF103, version 1.1.15 on an allow-list, mains power, idle. These are stock's own precheck conditions; the bench's `stock-ready` stage checks them.
 5. **Install:** the installer serves the image and sends one `OTA_UPGRADE`. Stock's progress reports drive a progress bar, for about 40 s.
 6. **First boot:** the build boots from bank 0 and answers the device API while it waits for an update. A consumer image has no network yet, so it starts BLE setup mode: `wellfed setup` or the app pairs and sends your home Wi-Fi, and the build reboots and joins it.
-7. **Pair:** a build fresh from stock knows no client key, and the next two steps go over the device API, so the installer pairs first.
+7. **Pair:** the next two steps go over the device API, which needs a client key. With a consumer image, the Bluetooth setup in step 6 is that pairing: its client becomes the first owner. A bench image joins its build network instead, knows no client key, and the CLI pairs through the LAN recovery window.
 8. **Backup:** the build streams bank 1, which still holds stock, to the installer, which verifies it ([rollback](#rollback)).
 9. **Stock's plans:** the build serves stock's two plan sectors, and the installer converts each plan or refuses it by name ([importing them](../devices/plaf103/stock/README.md#importing-them)).
 10. **Promote:** only once a verified backup is stored, the installer offers the same build, signed, over the device API. Bank 0 installs it into bank 1, and its trial boot confirms.
@@ -188,7 +188,7 @@ It holds the bench lease beside the stock config for its whole length.
 
 **Not done yet:**
 - Installing a consumer image. The builder makes one (`PROVISION=consumer`: no build Wi-Fi, the release key built in). With nothing stored it starts BLE setup mode at its first boot, so the app or `wellfed setup` can pair and send the home Wi-Fi ([product architecture](product-architecture.md#setup-and-pairing)); that is host-tested and simulated only. It is not yet tried on a feeder, and the owner's update key is not yet enrolled at install. The release key itself is not generated yet. Until then installs use bench images, which join with their build's Wi-Fi, so on the bench the home network is the hotspot.
-- Bluetooth setup as the pairing step; the CLI uses the LAN recovery window.
+- `wellfed install` running the Bluetooth setup as its pairing step. Today the owner runs `wellfed setup` (or the app) at step 6, and the installer's own pairing still uses the LAN recovery window.
 - Deleting `init` and `network` from `wellfed-stock`, which waits for the frame to work on hardware.
 
 ### Running an install on the bench

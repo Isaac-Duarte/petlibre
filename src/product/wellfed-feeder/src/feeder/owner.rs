@@ -236,6 +236,12 @@ impl Owner {
         self.setup.is_on()
     }
 
+    /// Whether setup mode refuses the panel's and the schedule's feeds now
+    /// ([`Setup::holds_feeds`]).
+    pub fn setup_holds_feeds(&self) -> bool {
+        self.setup.holds_feeds()
+    }
+
     /// One step at `now`: `refusal` is why a Reset hold would be refused
     /// now (a feed queued or running, an install), `remote` is a queued
     /// remote change (true to
@@ -263,8 +269,8 @@ impl Owner {
         {
             self.boot_decided = true;
             if start && !self.setup.is_on() {
-                self.setup.start(platform, now);
                 let cause = Cause::Unprovisioned;
+                self.setup.start(platform, now, cause);
                 record(Record::Setup(setup::Record::Start { cause }));
             }
         }
@@ -289,8 +295,8 @@ impl Owner {
                     self.setup.pressed();
                 }
                 if event == pairing::Event::SetupOpened && !self.setup.is_on() {
-                    self.setup.start(platform, now);
                     let cause = Cause::Hold;
+                    self.setup.start(platform, now, cause);
                     record(Record::Setup(setup::Record::Start { cause }));
                 }
                 decided = decided.or(setup_decision(event));
@@ -380,29 +386,41 @@ fn reset_hold<P: Platform>(
 /// trigger: every KM0 backup register is taken, so no earlier boot can
 /// leave a request behind.
 ///
-/// It waits for the writer to publish the Wi-Fi store writable (a store
-/// still loading, or not yet armed, would refuse setup's save) and the
-/// plans. A feeder with an enabled plan starts nothing: setup mode refuses
-/// every feed, and the clock's time survives a warm reset, so a meal can
-/// still fall due without a network. Nor does a boot a reset storm holds, until its hold ends: the
-/// restart that ends setup is a deliberate one, which would cut the
-/// storm's backoff short. Kept out of line, so the plans' copy is not on
-/// the step's stack while setup mode runs.
+/// Kept out of line, so the plans' copy is not on the step's stack while
+/// setup mode runs.
 #[inline(never)]
 fn unprovisioned<P: Platform>(platform: &mut P) -> Option<bool> {
     if platform.build_wifi() == BuildWifi::Present {
         return Some(false);
     }
-    if platform.held() {
+    let held = platform.held();
+    boot_setup(held, platform.wifi(), || platform.plans())
+}
+
+/// [`unprovisioned`] for an image with no build Wi-Fi, from what the
+/// platform reports: whether a reset storm holds the boot, the Wi-Fi store
+/// and the plans.
+///
+/// It waits for the writer to publish the Wi-Fi store writable (a store
+/// still loading, or not yet armed, would refuse setup's save) and the
+/// plans. A store the writer cannot read (`ReadOnly`, `Invalid`) starts
+/// nothing: setup could not save to it, and the owner gets in with Lock
+/// and Mic or a factory reset. A feeder with an enabled plan starts
+/// nothing: a session refuses every feed, and the clock's time survives a
+/// warm reset, so a meal can still fall due without a network. Nor does a
+/// boot a reset storm holds, until its hold ends: the restart that ends
+/// setup is a deliberate one, which would cut the storm's backoff short.
+fn boot_setup(held: bool, wifi: WifiResult, plans: impl FnOnce() -> PlansResult) -> Option<bool> {
+    if held {
         return None;
     }
 
-    let stored = match platform.wifi() {
+    let stored = match wifi {
         WifiResult::Current { view, .. } if view.writable => view.stored_ssid_crc.is_some(),
         WifiResult::Current { .. } | WifiResult::Busy => return None,
         WifiResult::ReadOnly | WifiResult::Invalid => return Some(false),
     };
-    let meals = match platform.plans() {
+    let meals = match plans() {
         PlansResult::Current { view, .. } => view.table.iter().flatten().any(|plan| plan.enabled),
         PlansResult::Busy => return None,
         PlansResult::ReadOnly | PlansResult::Unserved => false,
@@ -464,5 +482,64 @@ fn decision(event: pairing::Event, path: Path) -> Option<pairing::Event> {
             refusal: Refusal::Unconfirmed,
         } if p == path => Some(event),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wellfed_device_api::mailbox::{PlansView, WifiView};
+
+    /// The Wi-Fi store as the writer publishes it, armed, with nothing
+    /// stored.
+    fn empty() -> WifiResult {
+        let view = WifiView {
+            writable: true,
+            ..WifiView::default()
+        };
+        WifiResult::Current {
+            view,
+            pending: false,
+        }
+    }
+
+    fn no_plans() -> PlansResult {
+        PlansResult::Current {
+            view: PlansView::default(),
+            pending: false,
+        }
+    }
+
+    /// A held boot waits, and decides once its hold is released.
+    #[test]
+    fn a_held_boot_starts_setup_only_once_released() {
+        let mut held = true;
+        assert_eq!(boot_setup(held, empty(), no_plans), None);
+
+        held = false;
+        assert_eq!(boot_setup(held, empty(), no_plans), Some(true));
+    }
+
+    /// A store the writer cannot read never starts setup, which could not
+    /// save to it.
+    #[test]
+    fn an_unreadable_wifi_store_never_starts_setup() {
+        for wifi in [WifiResult::ReadOnly, WifiResult::Invalid] {
+            assert_eq!(boot_setup(false, wifi, no_plans), Some(false), "{wifi:?}");
+        }
+    }
+
+    /// With the Wi-Fi ready, loading plans wait; a firmware that keeps no
+    /// plans, or cannot read them, has none to run.
+    #[test]
+    fn the_plans_decide_once_they_answer() {
+        assert_eq!(boot_setup(false, empty(), || PlansResult::Busy), None);
+        for plans in [PlansResult::Unserved, PlansResult::ReadOnly] {
+            assert_eq!(
+                boot_setup(false, empty(), || plans),
+                Some(true),
+                "{plans:?}"
+            );
+        }
     }
 }

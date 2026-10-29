@@ -282,12 +282,14 @@ impl<P: Platform> Feeder<P> {
     }
 
     /// As [`Self::readiness`], without the schedule's own hold: what the
-    /// schedule's feed is asked under.
+    /// schedule's feed is asked under. A setup the boot started for want
+    /// of a network lets the panel feed between sessions; the device API's
+    /// clients, who need a network, still see setup mode block.
     fn ready<F: Feeds>(&self, feeds: &F) -> Readiness {
         feeding::readiness(
             feeds,
             self.platform.restarting(),
-            self.owner.setup_on(),
+            self.owner.setup_holds_feeds(),
             self.platform.installing(),
             self.supply.holds(),
         )

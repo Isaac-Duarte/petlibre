@@ -97,6 +97,7 @@ fn writing() -> BenchState {
             started: NOW - 7200.0,
             phase: Phase::Serving,
             uart_port: true,
+            stopping: None,
         },
         job: Some(job),
         activity: vec![Activity {
@@ -309,4 +310,20 @@ fn a_seen_timer_and_a_write_with_no_count_say_so() {
     assert!(screen.contains("SEEN"), "{screen}");
     assert!(screen.contains("PLSCH1 fire slot=0"), "{screen}");
     assert!(screen.contains("stopping: cancelling the job"), "{screen}");
+}
+
+#[test]
+fn a_stop_held_for_a_write_shows_in_the_header() {
+    let mut state = writing();
+    state.server.stopping = Some(wellfed_formats::bench::live::DeferredStop {
+        job: Some(12),
+        since: NOW,
+    });
+
+    let screen = render(&state, &log(1), 0);
+
+    assert!(
+        screen.contains("stopping once job 12 ends: no new jobs"),
+        "{screen}"
+    );
 }

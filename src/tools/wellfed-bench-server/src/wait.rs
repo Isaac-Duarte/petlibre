@@ -36,7 +36,7 @@ const TICK: Duration = Duration::from_millis(500);
 
 /// A checked wait.
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum Condition {
+pub(crate) enum Condition {
     Job(JobId),
     Line(String),
     Event(String),
@@ -180,14 +180,19 @@ impl Condition {
     }
 }
 
+/// The wait `wait` asks for, refused if it lacks a field or nothing could
+/// meet it.
+pub(crate) fn checked(shared: &Shared, wait: &Wait) -> Result<Condition, WaitError> {
+    let condition = Condition::try_from(wait)?;
+    // The jobs lock before the state's, never inside it: a job that starts
+    // holds the jobs lock while it updates the state.
+    let last = shared.last_job();
+    shared.store.with(|state| condition.possible(state, last))?;
+    Ok(condition)
+}
+
 pub(crate) async fn wait(State(shared): State<Arc<Shared>>, Query(wait): Query<Wait>) -> Response {
-    let condition = Condition::try_from(&wait).and_then(|condition| {
-        let possible = shared
-            .store
-            .with(|state| condition.possible(state, shared.last_job()));
-        possible.map(|()| condition)
-    });
-    let condition = match condition {
+    let condition = match checked(&shared, &wait) {
         Ok(condition) => condition,
         Err(error) => return Refusal::Wait { error }.into_response(),
     };

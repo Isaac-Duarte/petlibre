@@ -20,6 +20,8 @@ use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
+use wellfed_bench_server::api::DuringWrite;
+
 use crate::note::{self, NoteArgs, What};
 
 /// Why a tool call was refused before it reached the bench.
@@ -55,12 +57,6 @@ pub(crate) enum ToolError {
         field: String,
         value: String,
     },
-    /// A cancelled write stops terminally: the bank stays half-written
-    /// until another UART write.
-    #[error(
-        "job_cancel: job {id} is writing flash over UART; a cancel stops the write terminally and leaves the bank half-written until another UART write. Set during_write to true to mean it"
-    )]
-    CancelDuringWrite { id: u64 },
 }
 
 /// What a call asks the bench for.
@@ -73,7 +69,7 @@ pub(crate) enum Call {
     },
     JobCancel {
         id: Option<u64>,
-        during_write: bool,
+        during_write: DuringWrite,
     },
     WaitFor(WaitArgs),
     LogsTail {
@@ -599,7 +595,11 @@ pub(crate) fn call(name: &str, args: JsonObject) -> Result<Call, ToolError> {
             let args: CancelArgs = parse(name, args)?;
             Call::JobCancel {
                 id: args.id,
-                during_write: args.during_write,
+                during_write: if args.during_write {
+                    DuringWrite::Cancel
+                } else {
+                    DuringWrite::Refuse
+                },
             }
         }
         "wait_for" => Call::WaitFor(parse(name, args)?),

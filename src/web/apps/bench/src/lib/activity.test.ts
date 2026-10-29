@@ -6,7 +6,7 @@ import { IDLE_CAPTURE, IDLE_FEEDER } from "./testing";
 function state(activity: Activity[], end: number | null = null): BenchState {
   return {
     now: 100,
-    server: { pid: 9, started: 0, phase: "serving", uart_port: true },
+    server: { pid: 9, started: 0, phase: "serving", uart_port: true, stopping: null },
     job: {
       id: 3,
       label: "flash-execute u1",

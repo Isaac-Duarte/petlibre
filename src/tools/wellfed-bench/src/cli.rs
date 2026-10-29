@@ -6,8 +6,10 @@
 //!   the read-only progress page beside it.
 //! - A hardware command (`boot`, `flash-execute`, `ota`, `itest`, …) posts
 //!   its job, prints its output as it comes, and exits with its code. Ctrl+C
-//!   asks the server to cancel the job and keeps printing its cleanup; a
-//!   second Ctrl+C detaches, and `attach ID` follows the job again.
+//!   asks the server to cancel the job and keeps printing its cleanup;
+//!   during a UART write only a second Ctrl+C within 5 s does. Once the
+//!   cancel is taken, another Ctrl+C detaches, and `attach ID` follows the
+//!   job again.
 //! - With no server running, only `status` (and `status --break-lease`)
 //!   runs: it reports the lease and reads the relay board itself, which is
 //!   the way back after a killed server. Every other command refuses and
@@ -219,19 +221,19 @@ fn run(cli: Cli, argv: &[String]) -> anyhow::Result<u8> {
     }
 }
 
-/// The operator's interrupts from now on: the first asks for a cancel, the
-/// rest to detach. Taken before a job is posted, so a Ctrl+C that comes
-/// while the server answers cancels the job once its number arrives.
+/// The operator's interrupts from now on, each a Ctrl+C: the client asks
+/// for a cancel (twice within 5 s during a UART write) and, once it is
+/// accepted, detaches on the next. Taken before a job is posted, so a
+/// Ctrl+C that comes while the server answers cancels the job once its
+/// number arrives.
 fn interrupts() -> anyhow::Result<mpsc::UnboundedReceiver<Interrupt>> {
     let mut signal = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
     let (interrupts, received) = mpsc::unbounded_channel();
     tokio::spawn(async move {
-        let mut asked = Interrupt::Cancel;
         while signal.recv().await.is_some() {
-            if interrupts.send(asked).is_err() {
+            if interrupts.send(Interrupt::Cancel).is_err() {
                 return;
             }
-            asked = Interrupt::Detach;
         }
     });
     Ok(received)
@@ -262,7 +264,7 @@ async fn submit(
     let mut interrupts = interrupts()?;
     let id = client.submit(root, &job_words(argv)).await?;
     wellfed_rig::say!(
-        "Job {id}: {} (Ctrl+C cancels it; a second Ctrl+C leaves it running)",
+        "Job {id}: {} (Ctrl+C cancels it, twice within 5 s during a UART write; once cancelled, another Ctrl+C leaves it running)",
         command.describe()
     );
     follow(client, id, &mut interrupts).await

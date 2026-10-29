@@ -204,6 +204,7 @@ pub(crate) mod tests {
                 started: 0.0,
                 phase: Phase::Serving,
                 uart_port: false,
+                stopping: None,
             },
             job: None,
             activity: Vec::new(),

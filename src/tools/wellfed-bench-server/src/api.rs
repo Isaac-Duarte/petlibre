@@ -71,6 +71,25 @@ pub struct JobRequest {
     pub argv: Vec<String>,
 }
 
+/// `POST /jobs/{id}/cancel`: whether a cancel may stop a UART write.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct CancelRequest {
+    pub during_write: DuringWrite,
+}
+
+/// What a cancel does to a job that is writing flash over UART. A
+/// cancelled write stops terminally and leaves its bank half-written until
+/// another write, so it is asked for on purpose.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DuringWrite {
+    /// Refused while the job writes; any other job is cancelled.
+    #[default]
+    Refuse,
+    /// Cancelled, write and all.
+    Cancel,
+}
+
 /// `POST /jobs` took the job.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Accepted {
@@ -87,6 +106,16 @@ pub enum Refusal {
     Busy { id: JobId, label: String },
     #[error("The bench server is stopping")]
     Stopping,
+    /// A stop came during a UART write and waits for its job: nothing new
+    /// starts on a bench about to be released.
+    #[error("The bench server stops once {}; it takes no new job", ended(*.job))]
+    StoppingAfterWrite { job: Option<JobId> },
+    /// A cancel would stop the write terminally; [`DuringWrite::Cancel`]
+    /// asks for that.
+    #[error(
+        "Job {id} is writing flash over UART: a cancel stops the write for good and leaves the bank half-written until another UART write; ask again to mean it"
+    )]
+    CancelDuringWrite { id: JobId },
     /// The server serves another checkout, whose `private/` this one's
     /// links to.
     #[error("The bench server runs for {server}, not {client}; run the command from that checkout")]
@@ -111,6 +140,14 @@ pub enum Refusal {
     Note { error: NoteError },
     #[error("{error}")]
     Wait { error: WaitError },
+}
+
+/// What a deferred stop waits for, in words.
+fn ended(job: Option<JobId>) -> String {
+    match job {
+        Some(job) => format!("job {job} has ended"),
+        None => "the UART write has ended".into(),
+    }
 }
 
 /// Why a note was refused.

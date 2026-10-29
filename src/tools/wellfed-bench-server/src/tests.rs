@@ -17,6 +17,7 @@ use wellfed_formats::bench::live::{
 use wellfed_relay::{AtBoard, Board, FakeBoard, POWER, STRAP, Switch};
 
 use super::*;
+use crate::api::{DuringWrite, Wait, WaitFor};
 use crate::stopping::Ask;
 
 mod feeder;
@@ -34,6 +35,7 @@ pub(crate) fn idle_state() -> BenchState {
             started: 0.0,
             phase: Phase::Serving,
             uart_port: false,
+            stopping: None,
         },
         job: None,
         activity: Vec::new(),
@@ -431,7 +433,7 @@ async fn a_cancel_interrupts_the_flash_client_and_the_cleanup_cuts_power() {
         log.ends_with(&[(STRAP, false)]) && log.contains(&(POWER, true))
     })
     .await;
-    server.client.cancel(id).await.unwrap();
+    server.client.cancel(id, DuringWrite::Refuse).await.unwrap();
 
     let (end, lines) = follow(&server.client, id).await;
     assert_eq!(end.code, 1);
@@ -447,7 +449,11 @@ async fn a_cancel_interrupts_the_flash_client_and_the_cleanup_cuts_power() {
     assert_eq!(job.cancel, CancelState::Requested);
 
     // A cancel after the end changes nothing.
-    let again = server.client.cancel(id).await.unwrap_err();
+    let again = server
+        .client
+        .cancel(id, DuringWrite::Refuse)
+        .await
+        .unwrap_err();
     assert!(
         matches!(again, ClientError::Refused(api::Refusal::Finished { .. })),
         "{again:?}"
@@ -491,7 +497,22 @@ async fn a_cancel_mid_write_only_interrupts_the_flash_client_and_waits_for_it() 
     })
     .await;
     assert_eq!(state.activity[0].label, "update execute");
-    server.client.cancel(id).await.unwrap();
+    // A cancel that does not say it means the write is refused, and the
+    // writer is never signalled.
+    let refused = server
+        .client
+        .cancel(id, DuringWrite::Refuse)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            refused,
+            ClientError::Refused(api::Refusal::CancelDuringWrite { id: refused }) if refused == id
+        ),
+        "{refused:?}"
+    );
+    assert!(!root.join("update-signal").exists());
+    server.client.cancel(id, DuringWrite::Cancel).await.unwrap();
 
     let (end, _) = follow(&server.client, id).await;
     assert_eq!(end.code, 1);
@@ -558,7 +579,8 @@ async fn sigterm_during_a_write_lets_the_job_end_then_stops() {
     asks.send(Ask::Terminate).unwrap();
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    // The writer was never signalled, and the server still serves.
+    // The writer was never signalled, and the server still serves, shows
+    // the stop it holds, and takes no new job.
     assert!(!root.join("update-signal").exists());
     assert!(!server.done.is_finished());
     let state = server.state().await;
@@ -567,11 +589,23 @@ async fn sigterm_during_a_write_lets_the_job_end_then_stops() {
         "{:?}",
         state.uart
     );
+    assert_eq!(
+        state.server.stopping.map(|deferred| deferred.job),
+        Some(Some(id))
+    );
+    let refused = server.submit(&["capture", "c2"]).await.unwrap_err();
+    assert!(
+        matches!(
+            refused,
+            ClientError::Refused(api::Refusal::StoppingAfterWrite { job: Some(job) }) if job == id
+        ),
+        "{refused:?}"
+    );
 
     // The stand-in writes until a signal: the operator cancels it, as a
     // real write would end on its own, and once the job ends the server
     // stops by itself.
-    server.client.cancel(id).await.unwrap();
+    server.client.cancel(id, DuringWrite::Cancel).await.unwrap();
     let (end, _) = follow(&server.client, id).await;
     assert_eq!(end.code, 1);
     tokio::time::timeout(Duration::from_secs(20), &mut server.done)
@@ -580,6 +614,83 @@ async fn sigterm_during_a_write_lets_the_job_end_then_stops() {
         .unwrap()
         .unwrap();
     server.stop.take();
+}
+
+/// A wait that checks its job number reads the jobs and the state; a job
+/// that starts holds the jobs lock while it writes the state. Taken in
+/// opposite orders the two deadlock, which this shows as a timeout: the
+/// wait's own check against the locks a start takes, in tight loops on
+/// threads of their own, then real waits over the socket beside real jobs.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn waits_and_job_starts_side_by_side_never_deadlock() {
+    if crate::tests::run_alone() {
+        return;
+    }
+    let _one = ONE_SERVER.lock().await;
+    let checkout = Checkout::new(0.0);
+    let server = Running::start(checkout.open());
+    let wait = Wait {
+        what: WaitFor::Job,
+        id: Some(1),
+        text: None,
+        kind: None,
+        build: None,
+        bank: None,
+        label: None,
+        timeout_ms: 0,
+    };
+
+    let done = Arc::new(AtomicBool::new(false));
+    let (finished, finishing) = std::sync::mpsc::channel();
+    for _ in 0..3 {
+        let (shared, done, wait) = (Arc::clone(&server.shared), Arc::clone(&done), wait.clone());
+        std::thread::spawn(move || {
+            while !done.load(Ordering::SeqCst) {
+                let _ = crate::wait::checked(&shared, &wait);
+            }
+        });
+    }
+    let shared = Arc::clone(&server.shared);
+    std::thread::spawn(move || {
+        for _ in 0..200_000 {
+            shared.lock_as_a_start_does();
+        }
+        let _ = finished.send(());
+    });
+    let locked =
+        tokio::task::spawn_blocking(move || finishing.recv_timeout(Duration::from_secs(60)))
+            .await
+            .unwrap();
+    done.store(true, Ordering::SeqCst);
+    assert!(locked.is_ok(), "a wait's check and a job start deadlocked");
+
+    let client = Arc::new(Client::at(server.root.join(api::SOCKET)));
+    let waiting = Arc::new(AtomicBool::new(true));
+    let mut waiters = Vec::new();
+    for _ in 0..3 {
+        let (client, waiting, wait) = (Arc::clone(&client), Arc::clone(&waiting), wait.clone());
+        waiters.push(tokio::spawn(async move {
+            while waiting.load(Ordering::SeqCst) {
+                let _ = client.wait(&wait).await;
+            }
+        }));
+    }
+    let started = tokio::time::timeout(Duration::from_secs(60), async {
+        for _ in 0..10 {
+            let id = server.submit(&["on"]).await.unwrap();
+            follow(&server.client, id).await;
+        }
+    })
+    .await;
+    waiting.store(false, Ordering::SeqCst);
+    assert!(started.is_ok(), "a wait and a job start deadlocked");
+    for waiter in waiters {
+        tokio::time::timeout(Duration::from_secs(10), waiter)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+    server.quit().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

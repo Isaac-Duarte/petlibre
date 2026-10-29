@@ -19,7 +19,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc::UnboundedReceiver;
-use wellfed_formats::bench::live::{BenchState, JobId, Uart};
+use wellfed_formats::bench::live::{BenchState, DeferredStop, JobId, Uart};
+use wellfed_formats::bench::now;
 
 use crate::state::Store;
 
@@ -164,9 +165,17 @@ impl Stopper {
                             let running = running(&state);
                             if deferred.is_none() {
                                 deferred = Some(running);
+                                // The page, the console and MCP show it, and
+                                // the server takes no new job meanwhile.
+                                self.store.update(|state| {
+                                    state.server.stopping = Some(DeferredStop {
+                                        job: running,
+                                        since: now(),
+                                    });
+                                });
                             }
                             (self.say)(
-                                "A UART write is under way: stopping once the write ends (SIGKILL is the last resort)"
+                                "A UART write is under way: stopping once the write ends. Two Ctrl+C (or SIGINT) within 5 s cancel the write; SIGKILL is the last resort"
                                     .into(),
                             );
                         }
@@ -322,6 +331,10 @@ mod tests {
         assert!(
             said.lock().unwrap()[0].contains("stopping once the write ends"),
             "{said:?}"
+        );
+        assert_eq!(
+            store.read().server.stopping.map(|deferred| deferred.job),
+            Some(Some(7))
         );
 
         // The write ends, its job runs on: still waiting, and a SIGTERM

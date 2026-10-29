@@ -6,7 +6,8 @@
 //! - `GET /jobs/{id}/stream`: the job's output from its first line, then its
 //!   end, as newline-delimited JSON; a client that disconnects only stops
 //!   reading;
-//! - `POST /jobs/{id}/cancel`: stop the running job;
+//! - `POST /jobs/{id}/cancel`: stop the running job, a UART write only
+//!   when `{"during_write": "cancel"}` says to;
 //! - `GET /jobs/{id}/output?after=N`: a page of the job's kept output
 //!   after line `N`, with its end once that is all;
 //! - `GET /wait?for=...`: hold until a condition holds or the timeout
@@ -34,7 +35,7 @@ use wellfed_formats::bench::live::{BenchState, JobEvent, JobId, Phase};
 use wellfed_formats::bench::notes::Body as NoteBody;
 use wellfed_formats::bench::now;
 
-use crate::api::{Accepted, JobRequest, OUTPUT_PAGE, OutputPage, Refusal};
+use crate::api::{Accepted, CancelRequest, JobRequest, OUTPUT_PAGE, OutputPage, Refusal};
 
 use crate::server::Shared;
 use crate::state::JobLog;
@@ -56,8 +57,10 @@ pub(crate) fn router(shared: Arc<Shared>) -> Router {
 impl IntoResponse for Refusal {
     fn into_response(self) -> Response {
         let status = match &self {
-            Self::Busy { .. } | Self::Finished { .. } => StatusCode::CONFLICT,
-            Self::Stopping => StatusCode::SERVICE_UNAVAILABLE,
+            Self::Busy { .. } | Self::Finished { .. } | Self::CancelDuringWrite { .. } => {
+                StatusCode::CONFLICT
+            }
+            Self::Stopping | Self::StoppingAfterWrite { .. } => StatusCode::SERVICE_UNAVAILABLE,
             Self::NoSuchJob { .. } => StatusCode::NOT_FOUND,
             Self::Unparsed { .. }
             | Self::NotAJob { .. }
@@ -117,8 +120,12 @@ async fn output(
     .into_response()
 }
 
-async fn cancel(State(shared): State<Arc<Shared>>, Path(id): Path<JobId>) -> Response {
-    match shared.cancel(id) {
+async fn cancel(
+    State(shared): State<Arc<Shared>>,
+    Path(id): Path<JobId>,
+    Json(request): Json<CancelRequest>,
+) -> Response {
+    match shared.cancel(id, request.during_write) {
         Ok(()) => (StatusCode::ACCEPTED, Json(Accepted { id })).into_response(),
         Err(refusal) => refusal.into_response(),
     }

@@ -66,7 +66,7 @@ pub(crate) struct TimerArgs {
 #[command(group(ArgGroup::new("verdict").args(["pass", "fail"]).required(true)))]
 pub(crate) struct EvidenceArgs {
     /// The work the evidence is for, in the operator's own words.
-    #[arg(long, allow_hyphen_values = true)]
+    #[arg(long)]
     pub(crate) card: String,
     /// A file or directory inside private/.
     pub(crate) path: PathBuf,

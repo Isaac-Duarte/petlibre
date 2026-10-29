@@ -14,7 +14,7 @@ const { Bench } = await import("./bench.svelte");
 function state(uart: Uart): BenchState {
   return {
     now: 100,
-    server: { pid: 9, started: 0, phase: "serving", uart_port: true },
+    server: { pid: 9, started: 0, phase: "serving", uart_port: true, stopping: null },
     job: null,
     activity: [],
     uart,

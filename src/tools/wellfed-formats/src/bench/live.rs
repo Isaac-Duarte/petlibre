@@ -64,6 +64,20 @@ pub struct ServerView {
     /// last looked: at its start, after every job and with every idle
     /// relay read. The relay board's port is the server's own.
     pub uart_port: bool,
+    /// A stop asked for during a UART write, held until the write's job
+    /// ends; meanwhile the server takes no new job.
+    pub stopping: Option<DeferredStop>,
+}
+
+/// A SIGTERM or hangup that came during a UART write: the server stops
+/// once `job` has ended.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct DeferredStop {
+    /// The job that was writing.
+    pub job: Option<JobId>,
+    /// When the stop was asked for.
+    pub since: f64,
 }
 
 /// Whether the server takes jobs.

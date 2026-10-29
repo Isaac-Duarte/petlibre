@@ -92,9 +92,16 @@ pub(crate) fn draw(frame: &mut Frame<'_>, screen: &Screen<'_>) {
 }
 
 fn header_line(state: &BenchState) -> Line<'static> {
-    let phase = match state.server.phase {
-        Phase::Serving => Span::styled("serving", Style::new().fg(Color::Green)),
-        Phase::Stopping => Span::styled(
+    let phase = match (state.server.phase, state.server.stopping) {
+        (Phase::Serving, Some(deferred)) => Span::styled(
+            match deferred.job {
+                Some(job) => format!("stopping once job {job} ends: no new jobs"),
+                None => "stopping once the write ends: no new jobs".to_string(),
+            },
+            Style::new().fg(Color::Yellow),
+        ),
+        (Phase::Serving, None) => Span::styled("serving", Style::new().fg(Color::Green)),
+        (Phase::Stopping, _) => Span::styled(
             "stopping: cancelling the job, then releasing the bench",
             Style::new().fg(Color::Yellow),
         ),

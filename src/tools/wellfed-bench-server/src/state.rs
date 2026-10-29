@@ -36,6 +36,11 @@ impl Store {
 
     /// `look` at the state as it is, without copying it: for a check made
     /// often, such as on every output line.
+    ///
+    /// `look` runs under the state's read lock, so it takes no other lock
+    /// (the jobs, the notes, a log): a holder of one of those may be
+    /// waiting on [`Self::update`], and the two would wait on each other.
+    /// Read what else it needs before, and pass it in.
     pub(crate) fn with<T>(&self, look: impl FnOnce(&BenchState) -> T) -> T {
         look(&self.sender.borrow())
     }
@@ -47,6 +52,9 @@ impl Store {
         self.sender.subscribe()
     }
 
+    /// `change` the state and wake every reader. It runs under the state's
+    /// write lock, so, as for [`Self::with`], it takes no other lock: the
+    /// state's lock is always the last one taken.
     pub(crate) fn update(&self, change: impl FnOnce(&mut BenchState)) {
         self.sender.send_modify(|state| {
             change(state);

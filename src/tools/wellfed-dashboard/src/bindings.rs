@@ -12,9 +12,9 @@ use ts_rs::{Config, TS};
 use wellfed_formats::bench::banks::{Bank, Check, Content, Entry, Ledger, Source, Witness};
 use wellfed_formats::bench::catalog::{CatalogEntry, Requirement, Tier};
 use wellfed_formats::bench::live::{
-    Activity, ActivityKind, BenchState, CancelState, CaptureView, ClockView, FeederStatus,
-    FeederView, JobEnd, JobView, Journal, JournalSource, Pause, Phase, ServerView, Session,
-    StartRecord, Uart, UartRecord,
+    Activity, ActivityKind, BenchState, CancelState, CaptureView, ClockView, DeferredStop,
+    FeederStatus, FeederView, JobEnd, JobView, Journal, JournalSource, Pause, Phase, ServerView,
+    Session, StartRecord, Uart, UartRecord,
 };
 use wellfed_formats::bench::notes::{CardEvidence, Expect, Operator, Timer, TimerState, Verdict};
 use wellfed_formats::bench::progress::{
@@ -59,6 +59,7 @@ fn generated() -> String {
         decl::<BenchState>(&cfg),
         decl::<ServerView>(&cfg),
         decl::<Phase>(&cfg),
+        decl::<DeferredStop>(&cfg),
         decl::<JobView>(&cfg),
         decl::<CancelState>(&cfg),
         decl::<JobEnd>(&cfg),

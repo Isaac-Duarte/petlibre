@@ -29,7 +29,7 @@ use wellfed_relay::{Board, POWER};
 use wellfed_rig::Cancel;
 use wellfed_rig::tools::Children;
 
-use crate::api::{JobRequest, Refusal, SOCKET};
+use crate::api::{DuringWrite, JobRequest, Refusal, SOCKET};
 use crate::banks::Banks;
 use crate::board::SharedBoard;
 use crate::capture::CaptureService;
@@ -145,6 +145,7 @@ impl Server {
                 started: now(),
                 phase: Phase::Serving,
                 uart_port: Path::new(&config.uart_port).exists(),
+                stopping: None,
             },
             job: None,
             activity: Vec::new(),
@@ -539,6 +540,16 @@ impl Shared {
         self.jobs().last
     }
 
+    /// The locks [`Self::start`] takes for a job that starts, in its
+    /// order: the jobs lock, then the state's write lock under it. For a
+    /// test to run many times a second, where a real start runs a job.
+    #[cfg(test)]
+    pub(crate) fn lock_as_a_start_does(&self) {
+        let jobs = self.jobs();
+        self.store.update(|state| state.now = now());
+        drop(jobs);
+    }
+
     /// Parse the request's words as a job and start it on a thread of its
     /// own, unless it comes from another checkout, a job is running or the
     /// server is stopping.
@@ -554,6 +565,11 @@ impl Shared {
         let mut jobs = self.jobs();
         if jobs.stopping {
             return Err(Refusal::Stopping);
+        }
+        // Under the jobs lock, the store's read lock after it: the order
+        // every holder of both takes them in.
+        if let Some(deferred) = self.store.with(|state| state.server.stopping) {
+            return Err(Refusal::StoppingAfterWrite { job: deferred.job });
         }
         if let Some(running) = &jobs.running {
             return Err(Refusal::Busy {
@@ -774,7 +790,10 @@ impl Shared {
     /// Ask the running job `id` to stop: its sequence sees the cancel at
     /// its next wait, and its children are signalled as a terminal's Ctrl+C
     /// would have.
-    pub(crate) fn cancel(&self, id: JobId) -> Result<(), Refusal> {
+    /// A job that writes flash over UART is cancelled only with
+    /// [`DuringWrite::Cancel`]; the check and the cancel both happen under
+    /// the jobs lock, so the job cannot start writing between them.
+    pub(crate) fn cancel(&self, id: JobId, during_write: DuringWrite) -> Result<(), Refusal> {
         let jobs = self.jobs();
         let Some(running) = jobs.running.as_ref().filter(|running| running.id == id) else {
             return match jobs.logs.get(id) {
@@ -782,6 +801,12 @@ impl Shared {
                 None => Err(Refusal::NoSuchJob { id }),
             };
         };
+        let writing = self
+            .store
+            .with(|state| matches!(state.uart, Uart::Writing { .. }));
+        if writing && during_write == DuringWrite::Refuse {
+            return Err(Refusal::CancelDuringWrite { id });
+        }
         let stopping = Stopping::of(running, jobs.logs.get(id));
         drop(jobs);
 

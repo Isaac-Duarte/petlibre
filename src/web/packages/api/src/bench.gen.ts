@@ -158,12 +158,31 @@ export type ServerView = { pid: number, started: number, phase: Phase,
  * last looked: at its start, after every job and with every idle
  * relay read. The relay board's port is the server's own.
  */
-uart_port: boolean, };
+uart_port: boolean, 
+/**
+ * A stop asked for during a UART write, held until the write's job
+ * ends; meanwhile the server takes no new job.
+ */
+stopping: DeferredStop | null, };
 
 /**
  * Whether the server takes jobs.
  */
 export type Phase = "serving" | "stopping";
+
+/**
+ * A SIGTERM or hangup that came during a UART write: the server stops
+ * once `job` has ended.
+ */
+export type DeferredStop = { 
+/**
+ * The job that was writing.
+ */
+job: number | null, 
+/**
+ * When the stop was asked for.
+ */
+since: number, };
 
 /**
  * One job: what was asked, how far it is, and how it ended.

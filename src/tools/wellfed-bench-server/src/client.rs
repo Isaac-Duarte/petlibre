@@ -18,7 +18,7 @@ use tokio::net::UnixStream;
 use tokio::sync::mpsc;
 use wellfed_formats::bench::live::{BenchState, JobEnd, JobEvent, JobId};
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use wellfed_formats::bench::banks::Ledger;
 use wellfed_formats::bench::feeder::{
@@ -27,7 +27,11 @@ use wellfed_formats::bench::feeder::{
 use wellfed_formats::bench::notes::{Body, Note};
 use wellfed_model::Op;
 
-use crate::api::{Accepted, JobRequest, OutputPage, Refusal, SOCKET, Seed, Seeded, Wait, Waited};
+use crate::api::{
+    Accepted, CancelRequest, DuringWrite, JobRequest, OutputPage, Refusal, SOCKET, Seed, Seeded,
+    Wait, Waited,
+};
+use crate::stopping::{CONFIRM_WINDOW, Confirm, Held};
 
 /// Why a client request did not get its answer.
 #[derive(Debug, thiserror::Error)]
@@ -77,7 +81,9 @@ pub enum Followed {
 /// What a client does on the operator's interrupt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Interrupt {
-    /// Ask the server to cancel the job, and keep following its cleanup.
+    /// The operator's Ctrl+C: ask the server to cancel the job and keep
+    /// following its cleanup; during a UART write, only the second within
+    /// 5 s cancels. Once the cancel is accepted, another detaches.
     Cancel,
     /// Stop following; the job runs on.
     Detach,
@@ -184,9 +190,12 @@ impl Client {
         answer(response, StatusCode::CREATED).await
     }
 
-    pub async fn cancel(&self, id: JobId) -> Result<(), ClientError> {
+    /// Cancel job `id`; a job writing flash over UART only with
+    /// [`DuringWrite::Cancel`].
+    pub async fn cancel(&self, id: JobId, during_write: DuringWrite) -> Result<(), ClientError> {
         let path = format!("/jobs/{id}/cancel");
-        let response = self.send(Method::POST, &path, None).await?;
+        let body = serde_json::to_vec(&CancelRequest { during_write })?;
+        let response = self.send(Method::POST, &path, Some(body)).await?;
         let _: Accepted = answer(response, StatusCode::ACCEPTED).await?;
         Ok(())
     }
@@ -209,15 +218,33 @@ impl Client {
 
         let mut body = response.into_body();
         let mut pending = Vec::new();
+        let mut cancelled = false;
+        let mut confirm = Confirm::default();
         loop {
             let frame = tokio::select! {
                 frame = body.frame() => frame,
                 interrupt = interrupts.recv() => match interrupt {
+                    Some(Interrupt::Cancel) if cancelled => return Ok(Followed::Detached),
                     Some(Interrupt::Cancel) => {
+                        let at = Instant::now();
+                        let during_write = if confirm.pending(at) {
+                            DuringWrite::Cancel
+                        } else {
+                            DuringWrite::Refuse
+                        };
                         // A job that ended as the cancel went out still
                         // sends its end on this stream.
-                        match self.cancel(id).await {
-                            Ok(()) | Err(ClientError::Refused(Refusal::Finished { .. })) => {}
+                        match self.cancel(id, during_write).await {
+                            Ok(()) | Err(ClientError::Refused(Refusal::Finished { .. })) => {
+                                cancelled = true;
+                            }
+                            Err(ClientError::Refused(Refusal::CancelDuringWrite { .. })) => {
+                                let _ = confirm.press(Held::Writing, at);
+                                line(&format!(
+                                    "A UART write is under way; press Ctrl+C again within {} s to cancel it",
+                                    CONFIRM_WINDOW.as_secs()
+                                ));
+                            }
                             Err(error) => return Err(error),
                         }
                         continue;

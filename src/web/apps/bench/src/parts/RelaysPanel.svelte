@@ -19,7 +19,11 @@
   const holder = $derived(
     state
       ? `Server pid ${String(state.server.pid)}, holding the bench since ${clockTime(state.server.started, false)}${
-          state.server.phase === "stopping" ? "; stopping" : ""
+          state.server.phase === "stopping"
+            ? "; stopping"
+            : state.server.stopping
+              ? `; stopping once ${state.server.stopping.job === null ? "the write" : `job ${String(state.server.stopping.job)}`} ends, taking no new jobs`
+              : ""
         }`
       : "",
   );

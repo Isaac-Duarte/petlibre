@@ -791,8 +791,9 @@ impl Shared {
     /// its next wait, and its children are signalled as a terminal's Ctrl+C
     /// would have.
     /// A job that writes flash over UART is cancelled only with
-    /// [`DuringWrite::Cancel`]; the check and the cancel both happen under
-    /// the jobs lock, so the job cannot start writing between them.
+    /// [`DuringWrite::Cancel`]. The check covers a write already under way:
+    /// a writer the job spawns between the check and the signals still gets
+    /// SIGINT, at its very start.
     pub(crate) fn cancel(&self, id: JobId, during_write: DuringWrite) -> Result<(), Refusal> {
         let jobs = self.jobs();
         let Some(running) = jobs.running.as_ref().filter(|running| running.id == id) else {

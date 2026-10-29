@@ -25,8 +25,8 @@ use rmcp::model::{
 use rmcp::service::RequestContext;
 use rmcp::{ErrorData, RoleServer, ServerHandler, ServiceExt};
 use serde_json::Value;
-use wellfed_bench_server::Client;
-use wellfed_bench_server::api::{ReadOnly, WAIT_MAX_MS, Wait, WaitFor};
+use wellfed_bench_server::api::{ReadOnly, Refusal, WAIT_MAX_MS, Wait, WaitFor};
+use wellfed_bench_server::{Client, ClientError};
 use wellfed_formats::bench::live::BenchState;
 use wellfed_formats::private::{SYSTEM_RANDOM, random};
 
@@ -124,7 +124,13 @@ impl Bench {
                 };
                 // The server refuses a write's cancel without it, under
                 // the same lock as the cancel itself.
-                client.cancel(id, during_write).await?;
+                match client.cancel(id, during_write).await {
+                    Ok(()) => {}
+                    Err(ClientError::Refused(Refusal::CancelDuringWrite { id })) => anyhow::bail!(
+                        "job_cancel: job {id} is writing flash over UART; a cancel stops the write for good and leaves the bank half-written until another UART write. Set during_write: true to cancel the write"
+                    ),
+                    Err(error) => return Err(error.into()),
+                }
                 serde_json::json!({ "cancelled": id, "next": "wait_for {for: job, id} for its cleanup" })
             }
             Call::WaitFor(args) => serde_json::to_value(client.wait(&wait(&args)?).await?)?,

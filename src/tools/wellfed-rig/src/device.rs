@@ -176,6 +176,8 @@ pub enum Ask {
     Stats {
         section: StatsSection,
     },
+    /// The enrolled clients, with their roles (the update signers among them).
+    Clients,
 }
 
 impl Ask {
@@ -194,6 +196,7 @@ impl Ask {
             Self::Reboot => "reboot",
             Self::GetTime => "get-time",
             Self::Stats { .. } => "stats",
+            Self::Clients => "clients",
         }
     }
 
@@ -240,6 +243,7 @@ impl Ask {
             Self::Reboot => Op::Reboot,
             Self::GetTime => Op::GetTime,
             Self::Stats { section } => Op::Stats { section: *section },
+            Self::Clients => Op::ListClients,
         }
     }
 }
@@ -274,7 +278,8 @@ pub enum Answer {
     Update(UpdateView),
     Time(Box<TimeView>),
     Stats(Box<Stats>),
-    /// An answer no [`Ask`] expects (clients, an invite, a trace).
+    Clients(Vec<wellfed_model::Client>),
+    /// An answer no [`Ask`] expects (an invite, a trace).
     Unexpected,
 }
 
@@ -293,8 +298,8 @@ impl Answer {
             Model::Update(view) => Self::Update(view),
             Model::Time(view) => Self::Time(Box::new(view)),
             Model::Stats(stats) => Self::Stats(Box::new(stats)),
-            Model::Clients(_)
-            | Model::Invite(_)
+            Model::Clients(clients) => Self::Clients(clients),
+            Model::Invite(_)
             | Model::FeedTrace(_)
             | Model::Calibration(_)
             | Model::Bank1(_)

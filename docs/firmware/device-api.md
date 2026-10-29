@@ -217,6 +217,7 @@ Every flash lease checks that the outputs are stopped, and fails closed when the
 - **Join:** before each attempt the C shim takes the build's credentials, and Rust substitutes the stored ones. After 5 failed attempts in a row with no success, the build's credentials take over until the next boot or the next save.
 - **Saving while offline:** the save is read at the next attempt, with a fresh count of 5. BLE setup relies on this. While the feeder is online, nothing rejoins.
 - The connect event names the source: `build`, `stored` or `fallback`. Nothing ever reports the SSID or passphrase themselves.
+- **Without build Wi-Fi** (a consumer image, [firmware builds](../development/firmware-builds.md#bench-and-consumer-images)): stored credentials never fall back, and with none stored the feeder joins nothing and retries every 30 s without scanning. Its status then still reads `build`, since no source value stands for "nothing to join".
 
 **The child lock.** The device API reaches the lock only through a one-slot box the loop's panel owner reads (`wellfed_feeder::feeder::lock`). An unlock from the network relocks after the same 30 s idle time as a button unlock.
 

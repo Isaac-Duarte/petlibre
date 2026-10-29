@@ -22,7 +22,7 @@ The update-signing tests of `wellfed-build` and `wellfed-bench` freeze the pinne
 | --- | --- |
 | `private/firmware/PLAF103_OTA_010115.bin` | The stock 1.1.15 OTA you obtained yourself. The layout file records its exact hash |
 | `private/upstream/ameba-rtos-d/` | The SDK checkout from an explicit bootstrap. It supplies candidate ROM and helper inputs |
-| `private/toolchains/`, `private/firmware-build/` | SDK build artifacts and audited tools. A build whose manifest inputs differ from the current sources is stale, and its tests fail until you rebuild |
+| `private/toolchains/`, `private/firmware-build/` | SDK build artifacts and audited tools. A build whose manifest inputs differ from the current sources is stale, and its tests fail until you rebuild. Both `firstboot` and `firstboot-consumer` are needed: the consumer test scans the consumer OTA for the hotspot's SSID and passphrase and the bench key, and the bench OTA for them as a control. It never prints them |
 | `private/fixtures/baseline.bin` | The exact historical 8 MiB research baseline the pinned recovery checks require |
 | `private/fixtures/current-read/flash-read.bin` | A recorded current full snapshot. The first-boot mapping test places the build into it |
 | `private/fixtures/rom-inspection/report.json` | A finalized ROM report. Its linked serial evidence must stay beside it |

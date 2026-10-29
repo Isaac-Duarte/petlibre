@@ -55,11 +55,24 @@ pub enum BuildWifi {
 
 /// This image's build Wi-Fi. `wellfed-build` sets `WELLFED_BUILD_WIFI`
 /// exactly when the generated header the C entry prefills from names a
-/// network, so the two always agree; only its presence counts, never a value.
-pub const BUILD_WIFI: BuildWifi = match option_env!("WELLFED_BUILD_WIFI") {
-    Some(_) => BuildWifi::Present,
-    None => BuildWifi::Absent,
+/// network; the build script turns its presence into `cfg(build_wifi)`.
+pub const BUILD_WIFI: BuildWifi = if cfg!(build_wifi) {
+    BuildWifi::Present
+} else {
+    BuildWifi::Absent
 };
+
+/// The link-time check that the C entry and this crate agree: the entry
+/// reads the one of these two symbols its header's `WELLFED_BUILD_WIFI`
+/// picks, and only the matching build defines it, so a header and a
+/// runtime that disagree about a build network fail the link.
+#[cfg(build_wifi)]
+#[unsafe(no_mangle)]
+pub static WELLFED_RUNTIME_BUILD_WIFI: u8 = 1;
+/// See [`BUILD_WIFI`]: the image has no build network.
+#[cfg(not(build_wifi))]
+#[unsafe(no_mangle)]
+pub static WELLFED_RUNTIME_NO_BUILD_WIFI: u8 = 0;
 
 /// Which credentials to use for the next join; `None` when there is
 /// nothing to join (no build network and none stored).

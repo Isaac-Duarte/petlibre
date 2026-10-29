@@ -243,6 +243,9 @@ pub enum LockResult {
 /// Which credentials the Wi-Fi join uses this boot.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum WifiSource {
+    /// The build's credentials. An image without build Wi-Fi (a consumer
+    /// image) also reports `Build` while nothing is stored, when it joins
+    /// nothing at all.
     #[default]
     Build,
     Stored,

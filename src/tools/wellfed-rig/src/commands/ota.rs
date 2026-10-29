@@ -32,7 +32,7 @@ use wellfed_core::ota;
 use wellfed_core::ota::install::{RefusedReason, StopStage};
 use wellfed_core::record::{self, Confirm, Record, Trial, Update, Watch as Watching};
 use wellfed_formats::capture::arrival;
-use wellfed_formats::manifest::BuildManifest;
+use wellfed_formats::manifest::{BuildManifest, Provisioning};
 use wellfed_formats::private::write_new;
 use wellfed_formats::review::ImageKind;
 /// The bench's signing key file, which also signs stock's downgrade
@@ -123,6 +123,13 @@ pub enum OtaError {
     /// `review` root-relative.
     #[error("{review} is a build review without a manifest")]
     NoManifest { review: String },
+    /// A consumer image trusts the release key, not the bench key, so
+    /// once installed the bench could offer it nothing more unless the
+    /// feeder enrolled the bench key as an update signer first.
+    #[error(
+        "{review} is a consumer image, and the feeder has not enrolled the bench key (id {key_id}) as an update signer; run `wellfed update-key enroll` with the bench key first"
+    )]
+    ConsumerUnenrolled { review: String, key_id: String },
     /// The confirmed review's manifest, read to decide whether a status
     /// check applies; `manifest` root-relative.
     #[error("{manifest} is unreadable: {error}")]
@@ -1246,6 +1253,9 @@ impl Bench {
             }
             (ImageKind::Build, Some(manifest)) => {
                 self.attended_motion(manifest, Attendance::from_flag(args.attended_motion))?;
+                if manifest.provisioning == Provisioning::Consumer {
+                    self.bench_key_enrolled(args, &review)?;
+                }
                 if let Some(variant) = &manifest.variant {
                     say!("Variant {variant}");
                 }
@@ -1260,6 +1270,26 @@ impl Bench {
 
         self.ota_sign(plan, &frozen, motion, target, timing)
             .map(Some)
+    }
+
+    /// A consumer image goes on the bench only when the feeder already lists
+    /// the bench key as an enrolled update signer: the image builds in the
+    /// release key instead, so without the enrollment no later bench update
+    /// would be admitted. Asked over the session the status check uses.
+    fn bench_key_enrolled(&mut self, args: &OtaArgs, review: &Path) -> Result<()> {
+        let bench = Key::load(&self.root.join(KEY_PATH))
+            .map_err(|error| Error::Signing {
+                review: self.rel(review).into(),
+                error,
+            })?
+            .public();
+        let signers = self.tools.update_signers(&args.keys, &args.config)?;
+        require(signers.contains(&bench), || OtaError::ConsumerUnenrolled {
+            review: self.rel(review),
+            key_id: wellfed_formats::hex::encode(&ota::offer::key_id(&bench)),
+        })?;
+        say!("Consumer image; the feeder lists the bench key as an update signer");
+        Ok(())
     }
 
     /// Every refusal `ota_stage` can make, before anything is built: the

@@ -1311,6 +1311,9 @@ impl Desiccant {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WifiSource {
+    /// The build's credentials. An image without build Wi-Fi (a consumer
+    /// image) also reports `Build` while nothing is stored, when it joins
+    /// nothing at all.
     Build,
     Stored,
     Fallback,

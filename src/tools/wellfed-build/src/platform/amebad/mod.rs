@@ -76,8 +76,22 @@ pub(crate) const TOOL_LOCK: &str = "src/firmware/vendor/probe/toolchain.lock.jso
 /// private file; only its hash reaches the manifest.
 const WIFI_CREDENTIALS: &str = "private/hotspot.json";
 /// Set, with no meaningful value, exactly when the image has build Wi-Fi;
-/// the feeder runtime reads its presence (`network::BUILD_WIFI`).
-const BUILD_WIFI_VARIABLE: &str = "WELLFED_BUILD_WIFI";
+/// the feeder runtime reads its presence (`network::BUILD_WIFI`). The
+/// header's presence macro has the same name.
+const BUILD_WIFI_VARIABLE: &str = credentials::PRESENCE;
+
+/// The generated credentials header for `provisioning`, and the private
+/// file it was generated from, if any.
+pub(crate) fn credentials_header(
+    repo: &Repo,
+    provisioning: Provisioning,
+) -> Result<(String, Option<PathBuf>)> {
+    let Some(path) = wifi_credentials(provisioning).map(|path| repo.path(path)) else {
+        return Ok((credentials::no_wifi_header(), None));
+    };
+    let header = credentials::wifi_header(&fs::read(&path)?)?;
+    Ok((header, Some(path)))
+}
 
 /// The private Wi-Fi file a provisioning builds in: the bench hotspot, or
 /// none for a consumer image. The identity input, the generated header and
@@ -753,5 +767,52 @@ impl Amebad {
             required_symbols,
             audits,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The Rust build is told of build Wi-Fi exactly when the header the
+    /// entry includes names a network, for every provisioning.
+    #[test]
+    fn the_build_wifi_variable_follows_the_header() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join("private")).unwrap();
+        let repo = Repo {
+            root: root.path().to_path_buf(),
+        };
+        // Synthetic credentials: no real network.
+        let hotspot = br#"{"ssid": "bench-test", "password": "not-a-real-one"}"#;
+        fs::write(repo.path(WIFI_CREDENTIALS), hotspot).unwrap();
+        let networked = credentials::wifi_header(hotspot).unwrap();
+        let presence = format!("#define {BUILD_WIFI_VARIABLE} 1\n");
+        // A variable the builder's own environment happens to carry never
+        // leaks into the Rust build.
+        let inherited =
+            Environment::from([(BUILD_WIFI_VARIABLE.to_string(), "inherited".to_string())]);
+
+        for provisioning in [Provisioning::Bench, Provisioning::Consumer] {
+            let (header, source) = credentials_header(&repo, provisioning).unwrap();
+            let environment = cargo_environment(
+                &inherited,
+                Path::new("sdk"),
+                Path::new("toolchain"),
+                &"00".repeat(32),
+                None,
+                provisioning,
+            );
+            let told = environment.contains_key(BUILD_WIFI_VARIABLE);
+
+            assert_eq!(header == networked, told, "{provisioning:?}");
+            assert_eq!(
+                header == credentials::no_wifi_header(),
+                !told,
+                "{provisioning:?}"
+            );
+            assert_eq!(header.contains(&presence), told, "{provisioning:?}");
+            assert_eq!(source.is_some(), told, "{provisioning:?}");
+        }
     }
 }

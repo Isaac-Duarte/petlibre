@@ -18,8 +18,8 @@ use wellfed_formats::lock::SdkLock;
 use wellfed_formats::require;
 
 use super::audit::{TRAIL_BYTES, hooks, pinmap};
-use super::credentials::{no_wifi_header, wifi_header};
-use super::{Amebad, Core, PROJECT, source, toolchains, wifi_credentials};
+
+use super::{Amebad, Core, PROJECT, credentials_header, source, toolchains};
 use crate::device::StockPaths;
 use crate::platform::Job;
 use crate::{Profile, Provisioning, Repo, Result, Stage, digest, git, revision, run};
@@ -649,14 +649,11 @@ fn rust_overlays(
 
     // The entry always includes the header; a consumer image's names no
     // network.
-    let Some(wifi) = wifi_credentials(provisioning).map(|path| repo.path(path)) else {
-        return write_if_changed(&sdk.join(WIFI_HEADER), no_wifi_header().as_bytes());
-    };
-    write_if_changed(
-        &sdk.join(WIFI_HEADER),
-        wifi_header(&fs::read(&wifi)?)?.as_bytes(),
-    )?;
-    staged(&wifi, &wifi, StagedFile::WifiCredentials)?;
+    let (header, source) = credentials_header(repo, provisioning)?;
+    write_if_changed(&sdk.join(WIFI_HEADER), header.as_bytes())?;
+    if let Some(wifi) = source {
+        staged(&wifi, &wifi, StagedFile::WifiCredentials)?;
+    }
     Ok(())
 }
 

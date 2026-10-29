@@ -697,7 +697,7 @@ impl Feeder {
                 }
                 _ => Answer::Refused(Refusal::NotFound),
             },
-            Ask::UpdateState | Ask::CancelUpdate => Answer::Unexpected,
+            Ask::UpdateState | Ask::CancelUpdate | Ask::Clients => Answer::Unexpected,
         })
     }
 

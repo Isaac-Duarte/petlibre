@@ -143,6 +143,8 @@ struct Calls {
     install_refused: bool,
     /// What a cancel over the device API answers.
     cancel_answer: Option<Answer>,
+    /// The keys the feeder lists as update signers.
+    signers: Vec<[u8; 32]>,
 }
 
 /// A push that ends at once, as scripted.
@@ -270,6 +272,12 @@ impl Tools for FakeTools {
 
     fn device(&mut self, _: &Path, _: &Path) -> Result<&mut dyn crate::device::DeviceLink> {
         unreachable!("the bench commands ask through device_status and cancel_update")
+    }
+
+    fn update_signers(&mut self, keys: &Path, _config: &Path) -> Result<Vec<[u8; 32]>> {
+        let mut calls = self.0.borrow_mut();
+        calls.ran.push(format!("signers {}", keys.display()));
+        Ok(calls.signers.clone())
     }
 
     fn cancel_update(&mut self, keys: &Path, _config: &Path) -> Result<Answer> {
@@ -1479,6 +1487,51 @@ fn ota_refuses_a_motion_review_without_the_attended_flag() {
     args.attended_motion = true;
     rig.tools.0.borrow_mut().install_refused = true;
     assert_eq!(rig.bench.ota(&args).unwrap(), 1);
+}
+
+/// A consumer image trusts the release key, so it goes on the bench only
+/// once the feeder lists the bench key as an update signer.
+#[test]
+fn a_consumer_review_needs_the_bench_key_enrolled() {
+    let mut rig = rig();
+    let args = ota_review(
+        &rig,
+        json!({"startup_identity": BUILD, "startup_motion_policy": null, "provisioning": "consumer"}),
+    );
+    rig.tools.0.borrow_mut().signers = vec![[7; 32]];
+
+    let error = rig.bench.ota(&args).unwrap_err();
+    assert!(
+        matches!(&error, Error::Ota(OtaError::ConsumerUnenrolled { .. })),
+        "{error:?}"
+    );
+    assert!(error.to_string().contains("wellfed update-key enroll"));
+    assert!(rig.tools.0.borrow().installs.is_empty());
+
+    let bench = wellfed_signing::Key::load(&rig.bench.root.join(wellfed_signing::KEY_PATH))
+        .unwrap()
+        .public();
+    rig.tools.0.borrow_mut().signers.push(bench);
+    rig.tools.0.borrow_mut().rx.push_back(
+        format!("PLFW1 start build={BUILD} bank=1\r\nPLCNF1 confirmed=1 healthy_ms=30000\r\n")
+            .into_bytes(),
+    );
+    assert_eq!(rig.bench.ota(&args).unwrap(), 0);
+    assert_eq!(rig.tools.0.borrow().installs.len(), 1);
+}
+
+/// A bench image never asks for the signers.
+#[test]
+fn a_bench_review_does_not_ask_for_update_signers() {
+    let mut rig = rig();
+    let args = plain_review(&rig);
+    rig.tools.0.borrow_mut().rx.push_back(
+        format!("PLFW1 start build={BUILD} bank=1\r\nPLCNF1 confirmed=1 healthy_ms=30000\r\n")
+            .into_bytes(),
+    );
+    assert_eq!(rig.bench.ota(&args).unwrap(), 0);
+    let calls = rig.tools.0.borrow();
+    assert!(!calls.ran.iter().any(|run| run.starts_with("signers")));
 }
 
 #[test]

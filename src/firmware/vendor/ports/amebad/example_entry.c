@@ -610,6 +610,24 @@ static int wellfed_dhcp_bound(void)
 /* wellfed_join's result when Rust selected no credentials. */
 #define WELLFED_JOIN_NOTHING (-1)
 
+/* The header's WELLFED_BUILD_WIFI says whether the image has a build
+ * network; Rust learns the same from the builder (wellfed-feeder-runtime
+ * network.rs) and defines only the matching symbol below. Reading it makes a
+ * header and a runtime that disagree fail the link. */
+#ifdef WELLFED_BUILD_WIFI
+#if !defined(WELLFED_WIFI_SSID) || !defined(WELLFED_WIFI_PASSWORD)
+#error "WELLFED_BUILD_WIFI without build credentials"
+#endif
+extern const unsigned char WELLFED_RUNTIME_BUILD_WIFI;
+#define WELLFED_RUNTIME_WIFI WELLFED_RUNTIME_BUILD_WIFI
+#else
+#if defined(WELLFED_WIFI_SSID) || defined(WELLFED_WIFI_PASSWORD)
+#error "Build credentials without WELLFED_BUILD_WIFI"
+#endif
+extern const unsigned char WELLFED_RUNTIME_NO_BUILD_WIFI;
+#define WELLFED_RUNTIME_WIFI WELLFED_RUNTIME_NO_BUILD_WIFI
+#endif
+
 /* One attempt with the credentials Rust selects, reporting the outcome: 1
  * joined, 0 failed, WELLFED_JOIN_NOTHING with nothing to join. A consumer
  * image has no build network (the generated header defines nothing), so
@@ -618,7 +636,8 @@ static int wellfed_dhcp_bound(void)
  * ends the join's turn. */
 static int wellfed_join(unsigned int attempt)
 {
-#ifdef WELLFED_WIFI_SSID
+    (void)*(volatile const unsigned char *)&WELLFED_RUNTIME_WIFI;
+#ifdef WELLFED_BUILD_WIFI
     wellfed_creds.ssid = (const unsigned char *)WELLFED_WIFI_SSID;
     wellfed_creds.ssid_len = sizeof(WELLFED_WIFI_SSID) - 1;
     wellfed_creds.psk = (const unsigned char *)WELLFED_WIFI_PASSWORD;

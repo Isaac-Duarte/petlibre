@@ -52,6 +52,9 @@ pub trait Tools {
     /// Cancel any update and forget its recorded candidate over the device
     /// API, as [`Self::device_status`] reaches the feeder; the answer.
     fn cancel_update(&mut self, keys: &Path, config: &Path) -> Result<Answer>;
+    /// The public keys the feeder lists as enrolled update signers, as
+    /// [`Self::device_status`] reaches it.
+    fn update_signers(&mut self, keys: &Path, config: &Path) -> Result<Vec<[u8; 32]>>;
     /// The device API session requests go through, as [`Self::device_status`]
     /// reaches the feeder: one that never resends, when the bench server
     /// lends its own.
@@ -133,6 +136,8 @@ pub enum ToolsError {
     },
     #[error("Status answered {0:?}")]
     StatusAnswer(Answer),
+    #[error("The client list answered {0:?}")]
+    ClientsAnswer(Answer),
     /// `held` is the key the bench server's session speaks as.
     #[error(
         "The bench server's feeder session speaks as {}, not {}; drop --keys or run with the server's key",
@@ -669,6 +674,17 @@ impl Tools for Processes {
 
     fn cancel_update(&mut self, keys: &Path, config: &Path) -> Result<Answer> {
         Ok(self.device(keys, config)?.ask(&Ask::CancelUpdate)?)
+    }
+
+    fn update_signers(&mut self, keys: &Path, config: &Path) -> Result<Vec<[u8; 32]>> {
+        match self.device(keys, config)?.ask(&Ask::Clients)? {
+            Answer::Clients(clients) => Ok(clients
+                .into_iter()
+                .filter(|client| client.role == wellfed_model::ClientRole::UpdateSigner)
+                .map(|client| client.key.0)
+                .collect()),
+            other => Err(ToolsError::ClientsAnswer(other).into()),
+        }
     }
 
     fn device(&mut self, keys: &Path, config: &Path) -> Result<&mut dyn DeviceLink> {

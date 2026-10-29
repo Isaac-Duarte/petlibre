@@ -57,14 +57,20 @@ pub(crate) fn wifi_header(raw: &[u8]) -> Result<String> {
     )?;
 
     Ok(format!(
-        "{BANNER}#define WELLFED_WIFI_SSID {}\n#define WELLFED_WIFI_PASSWORD {}\n",
+        "{BANNER}#define {PRESENCE} 1\n#define WELLFED_WIFI_SSID {}\n#define WELLFED_WIFI_PASSWORD {}\n",
         c_string(ssid.as_bytes()),
         c_string(password.as_bytes())
     ))
 }
 
+/// The header's build-Wi-Fi presence macro. It has the name of the
+/// variable the Rust build gets (`super::BUILD_WIFI_VARIABLE`), and the
+/// entry links a runtime symbol only the matching Rust build defines, so a
+/// header and a runtime that disagree fail the link.
+pub(crate) const PRESENCE: &str = "WELLFED_BUILD_WIFI";
+
 /// The header of an image without a build network: no macros, so the
-/// entry's `#ifdef WELLFED_WIFI_SSID` prefill is compiled out.
+/// entry's `#ifdef WELLFED_BUILD_WIFI` prefill is compiled out.
 pub(crate) fn no_wifi_header() -> String {
     format!("{BANNER}/* No build Wi-Fi: the image joins only stored credentials. */\n")
 }
@@ -84,6 +90,7 @@ mod tests {
     #[test]
     fn wifi_values_are_escaped_and_sized() {
         let text = wifi_header(br#"{"ssid": "lab\"?", "password": "pass\\word"}"#).unwrap();
+        assert!(text.contains("#define WELLFED_BUILD_WIFI 1\n"));
         assert!(text.contains("#define WELLFED_WIFI_SSID \"lab\\042\\077\"\n"));
         assert!(text.contains("#define WELLFED_WIFI_PASSWORD \"pass\\134word\"\n"));
 

@@ -28,11 +28,10 @@ This page tracks what works today and what comes next. It covers the replacement
 | Dispense button | Works | Respects the child lock. |
 | Feed from the CLI | Works | |
 | Portion calibration | Experimental | |
-| Jam and sensor fault handling | Experimental | A jam, a blocked outlet or a sensor fault ends the feed by name, never retried, and shows in the status and history. Real jams with food wait for a bench check. |
+| Jam and sensor fault handling | Partial | A jam, a blocked outlet or a sensor fault ends the feed by name, never retried, and shows in the status and history. Simulated jams on the feeder end as `jammed` and `mark_stuck`; real jams with food wait for a bench check. |
 | Schedules | Works | Up to ten plans, run on the feeder with no server. |
 | Feeding history | Partial | `wellfed feeds` lists each feed the feeder keeps, across reboots; a long history needs the server. |
-| Food level | Experimental | The status shows the hopper as the last feed read it. A feed on an empty hopper still runs, as stock's does, and its history entry says the hopper read empty. |
-| Importing your stock schedule | Experimental | The installer reaches stock through a DNS override of its broker name, which keeps its plans, reads them before promotion and sets them on the replacement once it confirms. |
+| Food level | Partial | The status shows the hopper as the last feed read it. A feed on an empty hopper still runs, as stock's does, and its history entry says the hopper read empty. Checked on the feeder with the hopper empty; not yet with food. |
 
 ## The feeder itself
 
@@ -47,12 +46,12 @@ This page tracks what works today and what comes next. It covers the replacement
 | Indicator lights | Works | Which states show is not settled. |
 | Speaker | Works | Plays sounds; which sounds play when is not settled. |
 | Clock and time zones | Partial | Needs a time source after each power-up. Offline time is experimental. |
-| Battery and brownout | Experimental | Stock's battery mode (Wi-Fi off 5 s after the adapter goes, meals and buttons on, updates refused), the charge on stock's curve, a floor and a brownout hold, all in simulation. |
+| Battery and brownout | Partial | Stock's battery mode works on the feeder: Wi-Fi off 5 s after the adapter goes, the Dispense button still feeds, and Wi-Fi back on when it returns, 20 times in a row. The charge on stock's curve, the floor and the brownout hold are tested only in simulation. |
 | Statistics and per-feed traces | Experimental | |
 | Lights and sound settings | Works | Lights and sound windows, volume-0 mute and a beep on every button press, checked on the bench. |
-| Desiccant reminder | Experimental | Counted on the feeder from the last replacement; tested in simulation. |
-| Meal reminder | Experimental | An event on the event stream before each scheduled meal; tested in simulation. |
-| Meal call | Experimental | Your own clip, uploaded from the CLI, played before each meal whose plan asks for it, ending as the meal is due; tested on the host and in simulation. |
+| Desiccant reminder | Works | Counted on the feeder from the last replacement; the period and the date survive a reboot. |
+| Meal reminder | Works | An event on the event stream before each scheduled meal, repeated once after a reboot inside the lead. |
+| Meal call | Partial | Your own clip, uploaded from the CLI, played before each meal whose plan asks for it, ending as the meal is due, and muted with the sound off. Played on the feeder; how it sounds at each volume is not yet checked. |
 
 ## Apps and server
 

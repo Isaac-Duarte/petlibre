@@ -915,13 +915,13 @@ impl Bench {
         );
         match self.run(&command) {
             Ok(0) => {}
-            Ok(code) => {
+            Ok(_) => {
                 say!("Update stopped; the feeder stays powered and is not booted. No retry.");
-                self.stopped_write(code, args.update.bank, Source::FlashExecute);
+                self.stopped_write(args.update.bank, Source::FlashExecute);
                 return Ok(1);
             }
             Err(Error::Interrupted) => {
-                self.stopped_write(1, args.update.bank, Source::FlashExecute);
+                self.stopped_write(args.update.bank, Source::FlashExecute);
                 return Err(Error::Interrupted);
             }
             Err(error) => return Err(error),
@@ -1030,14 +1030,14 @@ impl Bench {
         );
         match self.run(&command) {
             Ok(0) => {}
-            Ok(code) => {
+            Ok(_) => {
                 say!("Give-way stopped; the feeder stays powered and is not booted. No retry.");
-                self.stopped_write(code, 1, Source::GiveWay);
+                self.stopped_write(1, Source::GiveWay);
                 return Ok(1);
             }
             // The flash client ran and stopped on the cancel.
             Err(Error::Interrupted) => {
-                self.stopped_write(1, 1, Source::GiveWay);
+                self.stopped_write(1, Source::GiveWay);
                 return Err(Error::Interrupted);
             }
             Err(error) => return Err(error),
@@ -1196,18 +1196,15 @@ impl Bench {
     }
 }
 
-/// `wellfed-flash`'s exit code for a refusal before any serial access: a
-/// write that never began.
-const FLASH_REFUSED: i32 = 2;
-
 impl Bench {
-    /// A write that exited `code` short of complete: unless the flash
-    /// client refused before touching the port, the bank may hold part of
-    /// it.
-    fn stopped_write(&mut self, code: i32, bank: u8, source: Source) {
-        if code != FLASH_REFUSED
-            && let Some(bank) = Bank::of(bank)
-        {
+    /// A write that exited short of complete: the bank may hold part of it.
+    ///
+    /// Every non-zero exit counts, 2 as well: `wellfed-flash` exits 2 for
+    /// any error its command returns, and nothing pins that only errors
+    /// before serial access come back that way. A refusal that touched no
+    /// flash is then recorded unknown too, which only asks for a read.
+    fn stopped_write(&mut self, bank: u8, source: Source) {
+        if let Some(bank) = Bank::of(bank) {
             self.wrote(bank, Content::Unknown, source);
         }
     }

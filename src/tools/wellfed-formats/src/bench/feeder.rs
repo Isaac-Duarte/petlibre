@@ -84,7 +84,12 @@ pub struct PushedPage {
     pub next: u64,
     /// For the events: every event after this sequence number is here (or
     /// was pushed since), and none before it is. `None` when the ring holds
-    /// the feeder's history from its oldest event.
+    /// the feeder's history from its oldest event. For the log, the same
+    /// of its lines.
     pub floor: Option<u64>,
+    /// The history's epoch: every event and gap here counts in it. The
+    /// ring starts again empty whenever the feeder's epoch changes, so
+    /// numbers from two epochs never meet. `None` for the log.
+    pub epoch: Option<u32>,
     pub messages: Vec<Pushed>,
 }

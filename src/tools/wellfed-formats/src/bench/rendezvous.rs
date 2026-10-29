@@ -1,9 +1,12 @@
 //! Where a running bench server can be found, whatever the caller's
-//! working directory or key file: one pointer per user,
-//! `$XDG_RUNTIME_DIR/wellfed-bench.json`, or
-//! `~/.local/state/wellfed/wellfed-bench.json` without XDG.
+//! working directory or key file: one pointer per user, in
+//! `$XDG_RUNTIME_DIR/wellfed-bench.json` when XDG is set and always in
+//! `~/.local/state/wellfed/wellfed-bench.json`.
 //!
-//! The server writes it once it listens and removes its own when it quits.
+//! The server writes it in both once it listens and removes its own when
+//! it quits; a client looks in both. A client whose environment differs
+//! from the server's (no XDG in a cron job or an ssh session, say) still
+//! finds it in the second.
 //! A client reads it before opening any device session of its own: while
 //! the server it names answers, the feeder's session is the server's. A
 //! pointer whose holder is gone (a killed server) names no server.
@@ -25,25 +28,29 @@ pub struct Rendezvous {
     pub holder: Holder,
 }
 
-/// The per-user directory the pointer lives in, from the environment:
-/// `XDG_RUNTIME_DIR` when it is an absolute path, else
-/// `HOME/.local/state/wellfed`. `None` with neither.
-pub fn directory() -> Option<PathBuf> {
-    let runtime = std::env::var_os("XDG_RUNTIME_DIR")
-        .map(PathBuf::from)
-        .filter(|path| path.is_absolute());
-    runtime.or_else(|| {
-        std::env::var_os("HOME")
+/// The per-user directories the pointer lives in, from the environment:
+/// `XDG_RUNTIME_DIR` when it is an absolute path, and
+/// `HOME/.local/state/wellfed` when `HOME` is. Empty with neither.
+pub fn directories() -> Vec<PathBuf> {
+    let absolute = |name: &str| {
+        std::env::var_os(name)
             .map(PathBuf::from)
             .filter(|path| path.is_absolute())
-            .map(|home| home.join(".local/state/wellfed"))
-    })
+    };
+    let runtime = absolute("XDG_RUNTIME_DIR");
+    let state = absolute("HOME").map(|home| home.join(".local/state/wellfed"));
+    runtime.into_iter().chain(state).collect()
 }
 
 /// The pointer in `directory` whose holder still runs.
 pub fn live(directory: &Path) -> Option<Rendezvous> {
     let pointer: Rendezvous = crate::load(&directory.join(FILE)).ok()?;
     matches!(pointer.holder.liveness(), Ok(Liveness::Alive)).then_some(pointer)
+}
+
+/// The first live pointer among `directories`.
+pub fn live_in(directories: &[PathBuf]) -> Option<Rendezvous> {
+    directories.iter().find_map(|directory| live(directory))
 }
 
 /// Point `directory`'s file at `pointer`, replacing whatever was there.

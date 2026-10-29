@@ -167,7 +167,7 @@ The server opens one session with the feeder, as the owner key the bench already
 
 - subscribes after the newest event it took, which it keeps in `private/bench-status/device-cursor.json`, so a new server does not replay the history;
 - follows the feeder's debug log into the state and into `private/bench-status/device-log/YYYY-MM-DD.log`, one file a UTC day, each line stamped with the host's time, through a buffer that is never synced;
-- reads the status every 10 s, and sets the clock as `wellfed time` does (this host's clock and zone) when it is invalid or more than 2 s off. After the feeder refuses a sync it waits 5 min before the next. `serve --no-clock-sync` leaves the clock alone, for a check that needs it invalid;
+- reads the status every 10 s, and sets the clock as `wellfed time` does (this host's clock and zone) when it is invalid or more than 2 s off. After the feeder refuses a sync, for any reason, it waits 5 min before the next. A job's clock sync through the session uses this host's zone too, so the two never disagree. `serve --no-clock-sync` leaves the clock alone, for a check that needs it invalid;
 - reads whether the hotspot's connection is up every 30 s, with `nmcli` listing the active connections only, and never while a job runs or the UART is in a loader session or a write.
 
 It closes:
@@ -181,11 +181,15 @@ Otherwise it reopens after a loss, after 1 s and then twice as long each time up
 
 A read (status, settings, plans, statistics and the like) that got no answer, or whose session dropped under it, goes once more under the same id. Nothing else is sent again: a write that got no answer is reported uncertain, since it may have run, and it is not sent again on any path. A request while the session is paused or unconfigured is refused with the reason, and nothing is sent; one while it is opening waits for it up to 20 s. A second request under an id still out is refused (409).
 
-**Finding the server.** Once it listens, the server writes a per-user pointer to itself, `$XDG_RUNTIME_DIR/wellfed-bench.json` (or `~/.local/state/wellfed/wellfed-bench.json` without XDG), naming its socket, checkout and process; it removes its own when it quits. A pointer whose process is gone, or whose socket refuses, names no server. While another checkout's server answers, `serve` refuses to start: one server holds the bench.
+**Finding the server.** Once it listens, the server writes a per-user pointer to itself, naming its socket, checkout and process, in both `$XDG_RUNTIME_DIR/wellfed-bench.json` (when XDG is set) and `~/.local/state/wellfed/wellfed-bench.json`, so a client whose environment lacks XDG (cron, an ssh session) still finds it. It removes its own when it quits. A pointer whose process is gone, or whose pid now belongs to another process, names no server. One whose process lives but whose socket is missing or refuses fails closed: every device command is refused with that server's pid. While another checkout's server answers, `serve` refuses to start: one server holds the bench.
+
+When the session opens and the feeder counts more sessions than the server's own, the state warns of them (`status` prints it): something reached the feeder without the server.
 
 **The `wellfed` CLI.** Every device command reads that pointer first, whatever its working directory or key file. While the server it names answers, a command whose key file holds the server's key (a copy counts) goes through it, and a direct session is never opened beside it or used as a fallback. Everything else is refused, naming the server: another key, `--address`, and `setup`, `install`, `recover`, `join` and `restore-stock`, which open sessions of their own.
 
-`events` and `feeds` read the history the server's session kept, and `logs` its log lines, so neither moves the server's own subscription or tail; `--samples` is refused. The server keeps the newest 4096 events and gaps, and 1024 log batches, apart. History older than it holds is refused with the event it starts after: pass `--after` that number, or stop the server to read further back.
+`events` and `feeds` read the history the server's session kept, and `logs` its log lines, so neither moves the server's own subscription or tail; `--samples` is refused. The server keeps the newest 4096 events and gaps, and 1024 log batches, apart. The held history is one epoch's: after a store reset (a new epoch) it starts again, empty, and numbers from two epochs are never compared.
+
+History, or log lines, older than the server holds are refused when the command subscribes or asks for the tail, before it sends anything else: `feed` subscribes first, so a feed never runs ahead of a refusal of its own events. The refusal names the event or line the server's copy starts after: pass `--after` that number, or stop the server to read further back. A follower the ring outruns (it dropped messages the command had not read yet) stops with an error rather than skip them.
 
 #### The UART capture
 
@@ -203,7 +207,7 @@ Before every job it stops the capture, killing its observe (which only receives)
 | --- | --- |
 | `flash-execute` | The plan's bank: its target review's startup identity, or the stock image, or else the review's OTA image hash, which no report names and so is never checked |
 | `give-way-execute` | Bank 1 holds no valid image |
-| `flash-execute` or `give-way-execute` that stops or is cancelled once the flash client ran | That bank is unknown, until a write or a seed settles it. A refusal before any serial access (exit 2) records nothing. |
+| `flash-execute` or `give-way-execute` that stops or is cancelled once the flash client ran | That bank is unknown, until a write or a seed settles it. Any non-zero exit counts, 2 as well: `wellfed-flash` exits 2 for any error its command returns, not only one before serial access. |
 | `stock-execute` | Bank 1 holds stock |
 | `ota` | Confirmed: bank 1 holds the offered build (or stock). Fell back: bank 1 holds no valid image. `--fault give-way-only`: bank 1 gave way |
 | `stock-ota` | Stock's install: bank 0 holds the build and bank 1 no valid image. The promotion: bank 1 holds the build |

@@ -288,11 +288,12 @@ fn serve(root: &Path, args: ServeArgs, runtime: &tokio::runtime::Runtime) -> any
     };
     // The `wellfed` CLI finds the server through this, from any checkout or
     // key file; without it, it could open a session beside the server's.
-    let Some(rendezvous) = rendezvous::directory() else {
+    let rendezvous = rendezvous::directories();
+    if rendezvous.is_empty() {
         anyhow::bail!(
             "Neither XDG_RUNTIME_DIR nor HOME is an absolute path: the `wellfed` CLI could not find this server"
         );
-    };
+    }
     let device = DeviceOptions {
         address: args.feeder_address,
         clock: if args.no_clock_sync {
@@ -300,7 +301,7 @@ fn serve(root: &Path, args: ServeArgs, runtime: &tokio::runtime::Runtime) -> any
         } else {
             ClockSync::On
         },
-        rendezvous: Some(rendezvous),
+        rendezvous,
         ..DeviceOptions::default()
     };
     let server = Server::open_with(options, &device, |config| {
@@ -497,6 +498,12 @@ fn report_feeder(state: &BenchState) {
         }
     };
     wellfed_rig::say!("Feeder session: {session}");
+    if state.feeder.other_sessions > 0 {
+        wellfed_rig::say!(
+            "  WARNING: {} other device API session(s) open with the feeder, besides the server's",
+            state.feeder.other_sessions
+        );
+    }
     if let Some(status) = &state.feeder.status {
         let clock = match state.feeder.clock.skew_ms {
             Some(skew) => format!("clock {skew:+} ms"),

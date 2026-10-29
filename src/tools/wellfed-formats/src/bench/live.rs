@@ -239,6 +239,10 @@ pub struct FeederView {
     pub hotspot: Option<bool>,
     /// The feeder's newest debug log lines.
     pub log: Vec<String>,
+    /// Device API sessions open on the feeder besides the server's, at the
+    /// last status: anything above 0 is a session the bench did not open
+    /// through the server, which the page and the console warn of.
+    pub other_sessions: u8,
 }
 
 /// Where the session stands.

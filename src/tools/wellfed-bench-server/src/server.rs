@@ -98,7 +98,7 @@ pub struct Server {
     /// The feeder session's task, started by [`Self::run`].
     session: Task,
     /// The pointer this server published, to withdraw when it quits.
-    rendezvous: Option<(PathBuf, Holder)>,
+    rendezvous: Option<(Vec<PathBuf>, Holder)>,
     /// Held until the server is dropped, after its last job.
     _lease: Lease,
 }
@@ -156,8 +156,7 @@ impl Server {
             banks.clone(),
         );
 
-        if let Some(directory) = &device.rendezvous
-            && let Some(other) = rendezvous::live(directory)
+        if let Some(other) = rendezvous::live_in(&device.rendezvous)
             && other.root != options.root
         {
             return Err(ServeError::OtherServer {
@@ -170,9 +169,10 @@ impl Server {
             socket: socket.clone(),
             error,
         })?;
-        let rendezvous = match &device.rendezvous {
-            Some(directory) => Some(publish(directory, &options.root, &socket)?),
-            None => None,
+        let rendezvous = if device.rendezvous.is_empty() {
+            None
+        } else {
+            Some(publish(&device.rendezvous, &options.root, &socket)?)
         };
         let output = output::install().map_err(ServeError::Output)?;
 
@@ -303,8 +303,10 @@ impl Server {
             }
         };
         let _ = std::fs::remove_file(&self.socket);
-        if let Some((directory, holder)) = &self.rendezvous {
-            rendezvous::withdraw(directory, holder);
+        if let Some((directories, holder)) = &self.rendezvous {
+            for directory in directories {
+                rendezvous::withdraw(directory, holder);
+            }
         }
 
         match served {
@@ -336,20 +338,26 @@ fn bind(socket: &Path) -> std::io::Result<std::os::unix::net::UnixListener> {
     Ok(listener)
 }
 
-/// Point `directory`'s rendezvous at this server.
-fn publish(directory: &Path, root: &Path, socket: &Path) -> Result<(PathBuf, Holder), ServeError> {
-    let failed = |error| ServeError::Rendezvous {
-        directory: directory.to_path_buf(),
-        error,
-    };
+/// Point every one of `directories`' rendezvous at this server, so a
+/// client finds it whichever of them its own environment names.
+fn publish(
+    directories: &[PathBuf],
+    root: &Path,
+    socket: &Path,
+) -> Result<(Vec<PathBuf>, Holder), ServeError> {
     let holder = Holder::current()?;
     let pointer = Rendezvous {
         socket: socket.to_path_buf(),
         root: root.to_path_buf(),
         holder: holder.clone(),
     };
-    rendezvous::publish(directory, &pointer).map_err(failed)?;
-    Ok((directory.to_path_buf(), holder))
+    for directory in directories {
+        rendezvous::publish(directory, &pointer).map_err(|error| ServeError::Rendezvous {
+            directory: directory.clone(),
+            error,
+        })?;
+    }
+    Ok((directories.to_vec(), holder))
 }
 
 /// Whether the hotspot may be read now: never while a job runs or the UART

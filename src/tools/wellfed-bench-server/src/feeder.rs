@@ -40,7 +40,7 @@ use wellfed_formats::bench::live::{
 use wellfed_formats::bench::now;
 use wellfed_formats::hex;
 use wellfed_formats::private::{self, SYSTEM_RANDOM};
-use wellfed_model::{Answer, Op, Pushed, Refusal, Status};
+use wellfed_model::{Answer, Op, Pushed, Status};
 use wellfed_rig::device::{self, DeviceError, DeviceLink, Owner};
 
 use crate::banks::Banks;
@@ -85,10 +85,10 @@ pub struct DeviceOptions {
     /// The feeder's address, given rather than found (the simulator).
     pub address: Option<SocketAddr>,
     pub clock: ClockSync,
-    /// The directory the server's pointer goes in, for the `wellfed` CLI
+    /// The directories the server's pointer goes in, for the `wellfed` CLI
     /// to find it from anywhere (`wellfed_formats::bench::rendezvous`).
-    /// `None` publishes none: tests, which must not reach the user's.
-    pub rendezvous: Option<PathBuf>,
+    /// None publishes none: tests, which must not reach the user's.
+    pub rendezvous: Vec<PathBuf>,
 }
 
 impl Default for DeviceOptions {
@@ -98,7 +98,7 @@ impl Default for DeviceOptions {
             config: wellfed_formats::stock::SERVER_CONFIG.into(),
             address: None,
             clock: ClockSync::On,
-            rendezvous: None,
+            rendezvous: Vec::new(),
         }
     }
 }
@@ -138,9 +138,6 @@ pub(crate) struct Feeder {
     info: Arc<Mutex<Option<SessionInfo>>>,
     /// Root-relative, as the jobs name it.
     keys: PathBuf,
-    /// The server config's time zone, for a job's clock sync, as the rig's
-    /// own session would send it; UTC when unconfigured.
-    zone: jiff::tz::TimeZone,
 }
 
 /// What [`Feeder::new`] leaves for [`Task::run`] to start.
@@ -169,9 +166,6 @@ impl Feeder {
         banks: Banks,
     ) -> (Self, Task) {
         let owner = Owner::open(root, &options.keys, &options.config);
-        let zone = owner
-            .as_ref()
-            .map_or(jiff::tz::TimeZone::UTC, |owner| owner.zone().clone());
         let keys = root.join(&options.keys);
         let keys = keys.canonicalize().unwrap_or(keys);
         let info = owner.as_ref().ok().map(|owner| SessionInfo {
@@ -194,7 +188,6 @@ impl Feeder {
             logs: Arc::clone(&logs),
             info: Arc::clone(&info),
             keys: options.keys.clone(),
-            zone,
         };
         let task = Task {
             owner,
@@ -248,7 +241,6 @@ impl Feeder {
         let link = SessionLink {
             requests: self.requests.clone(),
             hold: Arc::clone(&self.hold),
-            zone: self.zone.clone(),
         };
         (self.keys.clone(), link)
     }
@@ -269,7 +261,6 @@ fn random<const N: usize>() -> Option<[u8; N]> {
 pub(crate) struct SessionLink {
     requests: mpsc::UnboundedSender<Request>,
     hold: Arc<watch::Sender<Option<Pause>>>,
-    zone: jiff::tz::TimeZone,
 }
 
 impl DeviceLink for SessionLink {
@@ -278,7 +269,9 @@ impl DeviceLink for SessionLink {
         let (reply, answer) = oneshot::channel();
         let request = Request {
             id,
-            op: ask.op(&self.zone),
+            // This host's zone, as the server's own sync and `wellfed time`
+            // send it, so no two syncs on the bench disagree.
+            op: ask.op(&jiff::tz::TimeZone::system()),
             reply,
             resent: false,
         };
@@ -330,8 +323,11 @@ pub(crate) struct Pushes {
 struct Ring {
     first: u64,
     messages: VecDeque<Pushed>,
-    /// Every event after this one is in the ring, or was pushed since.
+    /// Every event (or log line) after this one is in the ring, or was
+    /// pushed since.
     floor: Option<u64>,
+    /// The epoch every event and gap here counts in.
+    epoch: Option<u32>,
 }
 
 impl Pushes {
@@ -343,10 +339,19 @@ impl Pushes {
         }
     }
 
-    /// The history held starts after event `floor` (`None`: from the
-    /// feeder's oldest), as the session's first subscription asked.
-    fn start_after(&self, floor: Option<u64>) {
-        lock(&self.inner).floor = floor;
+    /// Start again, empty, holding `epoch`'s history after event `floor`
+    /// (`None`: from the feeder's oldest). Numbering carries on, so a
+    /// reader's place never points into the new history by mistake.
+    fn reset(&self, epoch: Option<u32>, floor: Option<u64>) {
+        let mut ring = lock(&self.inner);
+        ring.first += ring.messages.len() as u64;
+        ring.messages.clear();
+        ring.floor = floor;
+        ring.epoch = epoch;
+    }
+
+    fn epoch(&self) -> Option<u32> {
+        lock(&self.inner).epoch
     }
 
     fn push(&self, message: Pushed) {
@@ -359,7 +364,8 @@ impl Pushes {
                 let gone = match dropped {
                     Some(Pushed::Event(event)) => Some(event.seq),
                     Some(Pushed::Gap(gap)) => Some(gap.to),
-                    _ => None,
+                    Some(Pushed::Log(batch)) => Some(u64::from(batch.seq)),
+                    Some(Pushed::Sample(_)) | None => None,
                 };
                 if let Some(gone) = gone {
                     ring.floor = Some(ring.floor.map_or(gone, |floor| floor.max(gone)));
@@ -390,6 +396,7 @@ impl Pushes {
             first,
             next: ring.first + ring.messages.len() as u64,
             floor: ring.floor,
+            epoch: ring.epoch,
             messages: ring.messages.iter().skip(skip).cloned().collect(),
         }
     }
@@ -453,7 +460,6 @@ impl Task {
         let mut waiting: Vec<(Request, Instant)> = Vec::new();
         let mut attempt = 0u32;
         let mut log_after: Option<(u32, u32)> = None;
-        let mut subscribed = false;
         let mut sync_refused: Option<Instant> = None;
 
         loop {
@@ -473,7 +479,7 @@ impl Task {
                 continue;
             }
 
-            let opened = self.open(&owner, &mut cursor, &mut subscribed).await;
+            let opened = self.open(&owner, &mut cursor).await;
             let (mut connection, address) = match opened {
                 Ok(opened) => opened,
                 Err(error) => {
@@ -578,7 +584,6 @@ impl Task {
         &self,
         owner: &Owner,
         cursor: &mut Option<Cursor>,
-        subscribed: &mut bool,
     ) -> Result<(Connection, SocketAddr), SessionError> {
         let address = match self.address {
             Some(address) => address,
@@ -590,20 +595,21 @@ impl Task {
         let ephemeral = random().ok_or(SessionError::Random)?;
         let mut connection =
             Connection::open(owner.keys(), owner.identity(), address, ephemeral).await?;
-        if cursor.is_some_and(|cursor| cursor.epoch != connection.epoch()) {
+        let epoch = connection.epoch();
+        if cursor.is_some_and(|cursor| cursor.epoch != epoch) {
             *cursor = None;
         }
         let resume = connection.subscribe(*cursor, false).await?;
 
-        // What this server holds of the history starts where its first
-        // subscription did; a later one carries on from the same cursor.
-        if !*subscribed || resume == Resume::Restarted {
-            *subscribed = true;
+        // The held history is one epoch's. A new epoch (a store reset)
+        // starts it again, empty, as does the first subscription; a
+        // reconnect in the same epoch carries on from the same cursor.
+        if self.events.epoch() != Some(epoch) || resume == Resume::Restarted {
             let floor = match resume {
                 Resume::Continued => cursor.map(|cursor| cursor.seq),
                 Resume::Restarted => None,
             };
-            self.events.start_after(floor);
+            self.events.reset(Some(epoch), floor);
         }
         if let Some(info) = lock(&self.info).as_mut() {
             info.opened = Some(Opened {
@@ -859,7 +865,7 @@ impl Open<'_> {
                 // Read the clock back at once rather than at the next tick.
                 self.request(Purpose::Status, &Op::Status);
             }
-            (Purpose::Sync, Some(Answer::Refused(Refusal::Time | Refusal::Forbidden))) => {
+            (Purpose::Sync, Some(Answer::Refused(_))) => {
                 *self.sync_refused = Some(Instant::now());
             }
             // A build without a log, a lost status, a sync that went
@@ -888,6 +894,8 @@ impl Open<'_> {
                 sessions: status.sessions,
             });
             feeder.status_at = Some(now());
+            // Its count includes this session.
+            feeder.other_sessions = status.sessions.saturating_sub(1);
             feeder.clock = ClockView {
                 skew_ms,
                 synced_at: feeder.clock.synced_at,
@@ -926,6 +934,11 @@ impl Open<'_> {
                 _ => None,
             };
             *self.log_after = Some((status.boot_count, after.unwrap_or(0)));
+            // A tail from the oldest line is another boot's numbering:
+            // the held log starts again with it.
+            if after.is_none() {
+                self.logs.reset(None, None);
+            }
             self.request(Purpose::Tail, &Op::TailLog { after });
         }
     }
@@ -1047,7 +1060,7 @@ mod tests {
     #[tokio::test]
     async fn a_ring_that_drops_events_says_where_its_history_starts() {
         let ring = Pushes::new(4);
-        ring.start_after(Some(10));
+        ring.reset(Some(1), Some(10));
         for seq in 11..=13 {
             ring.push(event(seq));
         }
@@ -1072,5 +1085,21 @@ mod tests {
         assert!(!read_only(&Op::SetLock { locked: true }));
         assert!(!read_only(&Op::Feed { portions: 1 }));
         assert!(!read_only(&Op::TailLog { after: None }));
+    }
+
+    #[tokio::test]
+    async fn a_new_epoch_starts_the_history_again_and_numbering_carries_on() {
+        let ring = Pushes::new(8);
+        ring.reset(Some(1), Some(10));
+        for seq in 11..=13 {
+            ring.push(event(seq));
+        }
+
+        ring.reset(Some(2), None);
+        let page = ring.page(0, Duration::ZERO).await;
+
+        assert_eq!((page.first, page.next), (3, 3));
+        assert_eq!((page.epoch, page.floor), (Some(2), None));
+        assert!(page.messages.is_empty());
     }
 }

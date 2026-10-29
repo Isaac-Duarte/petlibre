@@ -681,16 +681,22 @@ async fn a_ledger_that_does_not_read_refuses_the_server_and_stays() {
 async fn the_server_points_the_user_s_clients_at_itself_and_withdraws_when_it_quits() {
     let _one = ONE_SERVER.lock().await;
     let pointers = tempfile::tempdir().unwrap();
+    let (runtime, state) = (pointers.path().join("run"), pointers.path().join("state"));
     let checkout = checkout();
     let device = || DeviceOptions {
-        rendezvous: Some(pointers.path().to_path_buf()),
+        rendezvous: vec![runtime.clone(), state.clone()],
         ..DeviceOptions::default()
     };
     let server = Running::start(checkout.open_device(device()).unwrap());
 
-    let pointer = rendezvous::live(pointers.path()).unwrap();
-    assert_eq!(pointer.root, checkout.root());
-    assert_eq!(pointer.socket, checkout.root().join(api::SOCKET));
+    // In both: a client with no XDG in its environment looks only in the
+    // second.
+    for directory in [&runtime, &state] {
+        let pointer = rendezvous::live(directory).unwrap();
+        assert_eq!(pointer.root, checkout.root());
+        assert_eq!(pointer.socket, checkout.root().join(api::SOCKET));
+    }
+    assert!(rendezvous::live_in(std::slice::from_ref(&state)).is_some());
 
     // Another checkout's server is refused while this one answers.
     let other = self::checkout();
@@ -701,7 +707,7 @@ async fn the_server_points_the_user_s_clients_at_itself_and_withdraws_when_it_qu
     );
 
     server.quit().await;
-    assert!(rendezvous::live(pointers.path()).is_none());
+    assert!(rendezvous::live_in(&[runtime, state]).is_none());
 }
 
 #[test]
@@ -747,4 +753,82 @@ impl Running {
     fn client_socket(&self) -> PathBuf {
         self.root.join(api::SOCKET)
     }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn after_an_epoch_change_the_history_is_the_new_epoch_s_and_a_feed_reports_its_own_events() {
+    let _one = ONE_SERVER.lock().await;
+    let feeder = simulator();
+    let checkout = checkout();
+    checkout.enroll(&feeder);
+    // The cursor a server before a store reset kept: another epoch, and a
+    // sequence far past anything the new one holds.
+    let root = checkout.root();
+    fs::create_dir_all(root.join("private/bench-status")).unwrap();
+    fs::write(root.join(DEVICE_CURSOR), r#"{"epoch": 4242, "seq": 900}"#).unwrap();
+    let server = Running::start(checkout.open_at(Some(&feeder)));
+    let state = state_until(&server, "the clock set", |state| {
+        open(state) && state.feeder.clock.synced_at.is_some()
+    })
+    .await;
+    let last = state.feeder.status.unwrap().last_event;
+
+    // The held history is the new epoch's alone, from its oldest event.
+    let page = server
+        .client
+        .pushed(Stream::Events, 0, Duration::from_millis(100))
+        .await
+        .unwrap();
+    let epoch = page.epoch.unwrap();
+    assert_ne!(epoch, 4242);
+    assert_eq!(page.floor, None);
+    assert!(
+        page.messages.iter().all(|message| match message {
+            Pushed::Event(event) => event.epoch == epoch,
+            Pushed::Gap(gap) => gap.epoch == epoch,
+            _ => true,
+        }),
+        "{:?}",
+        page.messages
+    );
+
+    // A feed asks once and its result arrives, after the status's newest
+    // event, in the same epoch.
+    let asked = server
+        .client
+        .ask([5; 16], Op::Feed { portions: 1 })
+        .await
+        .unwrap();
+    let Asked::Answered {
+        answer: Answer::Feeding { feed },
+    } = asked
+    else {
+        panic!("{asked:?}");
+    };
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let fed = loop {
+        let page = server
+            .client
+            .pushed(Stream::Events, 0, Duration::from_millis(500))
+            .await
+            .unwrap();
+        let fed = page.messages.iter().find_map(|message| match message {
+            Pushed::Event(event)
+                if matches!(event.body, wellfed_model::EventBody::Fed { feed: f, .. } if f == feed) =>
+            {
+                Some(*event)
+            }
+            _ => None,
+        });
+        if let Some(fed) = fed {
+            break fed;
+        }
+        assert!(Instant::now() < deadline, "no Fed event for feed {feed}");
+    };
+    assert_eq!(fed.epoch, epoch);
+    assert!(
+        last.is_none_or(|last| fed.seq > last),
+        "{fed:?} after {last:?}"
+    );
+    server.quit().await;
 }

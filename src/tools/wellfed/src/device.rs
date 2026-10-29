@@ -78,7 +78,7 @@ impl Connection {
                 connection.subscribe(from, samples).await?;
                 Ok(())
             }
-            Self::Bench(lent) => lent.subscribe(after, samples),
+            Self::Bench(lent) => lent.subscribe(after, samples).await,
         }
     }
 

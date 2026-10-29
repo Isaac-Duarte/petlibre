@@ -47,7 +47,7 @@ mod text;
 mod trace;
 
 use std::io::BufRead;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use anyhow::{Context, Result, bail};
@@ -164,10 +164,7 @@ fn main() -> Result<ExitCode> {
         _ => None,
     };
     if let Some(command) = own_sessions {
-        runtime.block_on(refuse_beside_bench(
-            command,
-            rendezvous::directory().as_deref(),
-        ))?;
+        runtime.block_on(refuse_beside_bench(command, &rendezvous::directories()))?;
     }
 
     let device = match cli.command {
@@ -242,7 +239,7 @@ impl Toggle {
 
 /// Refuse `command`, which opens device sessions of its own, while a bench
 /// server holds the feeder's (its pointer in `rendezvous`).
-async fn refuse_beside_bench(command: &'static str, rendezvous: Option<&Path>) -> Result<()> {
+async fn refuse_beside_bench(command: &'static str, rendezvous: &[PathBuf]) -> Result<()> {
     match bench::Bench::find(rendezvous).await? {
         Some(bench) => Err(bench.refuse(command).into()),
         None => Ok(()),
@@ -252,13 +249,13 @@ async fn refuse_beside_bench(command: &'static str, rendezvous: Option<&Path>) -
 /// A session with the feeder: the bench server's whenever one answers for
 /// this user, and otherwise this computer's own.
 async fn connect(target: &Target) -> Result<(OwnerKey, [u8; 32], Connection)> {
-    connect_via(target, rendezvous::directory().as_deref()).await
+    connect_via(target, &rendezvous::directories()).await
 }
 
 /// [`connect`], finding the bench server by its pointer in `rendezvous`.
 async fn connect_via(
     target: &Target,
-    rendezvous: Option<&Path>,
+    rendezvous: &[PathBuf],
 ) -> Result<(OwnerKey, [u8; 32], Connection)> {
     if let Some(bench) = bench::Bench::find(rendezvous).await? {
         let lent = bench::lend(

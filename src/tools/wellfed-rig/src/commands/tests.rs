@@ -745,6 +745,40 @@ fn give_way_prepare_then_execute() {
     assert!(last.contains(&"--fallback".to_string()));
 }
 
+/// `wellfed-flash` exits 2 for any error its command returns, not only for
+/// one before serial access, so a 2 from a write is no proof nothing was
+/// written: every non-zero exit leaves the bank unknown.
+#[test]
+fn a_write_that_exits_short_of_complete_leaves_its_bank_unknown_whatever_its_code() {
+    for code in [1, 2] {
+        let mut rig = rig();
+        fs::create_dir_all(rig.bench.root.join(VERIFICATION)).unwrap();
+        let args = GiveWayArgs {
+            name: "gw".into(),
+            fallback: "f".into(),
+        };
+        assert_eq!(rig.bench.give_way_prepare(&args).unwrap(), 0);
+        rig.tools.0.borrow_mut().flash_codes.push_back(code);
+
+        let execute = GiveWayExecuteArgs {
+            give_way: args,
+            expected_plan_sha256: sha256(plan("give-way").as_bytes()),
+            boot_seconds: 10.0,
+        };
+        assert_eq!(rig.bench.give_way_execute(&execute).unwrap(), 1);
+
+        assert_eq!(
+            rig.bench.written,
+            [Written {
+                bank: Bank::One,
+                content: Content::Unknown,
+                source: wellfed_formats::bench::banks::Source::GiveWay,
+            }],
+            "exit {code}"
+        );
+    }
+}
+
 fn stock(name: &str, fallback: Option<&str>) -> StockArgs {
     StockArgs {
         name: name.into(),

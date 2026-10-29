@@ -174,11 +174,12 @@ impl Service {
         let span = info_span!(parent: None, "install", feeder = %install.feeder);
         self.tasks.spawn(
             async move {
-                // On shutdown the row stays `running`, and the next start
-                // marks it interrupted, as after a crash. Cancellation is
-                // looked at first: shutting down also ends the mirror's
-                // session, and an install polled after that would end
-                // `unreachable` and store it, though the server stopped it.
+                // On shutdown the push stops and the row stays `running`
+                // until the next start marks it interrupted, as after a
+                // crash. Cancellation is looked at first: shutting down also
+                // ends the mirror's session, and a push polled after that
+                // would end `unreachable` and store it, though the server
+                // stopped it.
                 tokio::select! {
                     biased;
                     () = cancel.cancelled() => {}

@@ -15,7 +15,7 @@ use wellfed_store::Store;
 
 use crate::feeder::{self, Running};
 use crate::fixed::{FixedClock, SeededRandom};
-use crate::{WAIT, until};
+use crate::until;
 
 /// The config every test server starts with: no discovery, reconnects
 /// fast enough for a test to watch, no trusted release key and no release
@@ -225,18 +225,16 @@ impl TestService {
     /// subscribed during the connect sequence, but its backlog is stored
     /// one event at a time after the feeder shows online.
     pub async fn caught_up(&self, id: FeederId) {
-        let newest = tokio::time::timeout(WAIT, async {
-            loop {
-                let detail = self.service.feeder(id).await.expect("read the feeder");
-                if let Some(snapshot) = detail.status.filter(|snapshot| snapshot.live) {
-                    return snapshot.status.last_event;
-                }
-                tokio::time::sleep(Duration::from_millis(20)).await;
-            }
+        let newest = std::cell::Cell::new(None);
+        until("the feeder's status is read live", || async {
+            let detail = self.service.feeder(id).await.expect("read the feeder");
+            let live = detail.status.filter(|snapshot| snapshot.live);
+            let read = live.is_some();
+            newest.set(live.map(|snapshot| snapshot.status.last_event));
+            read
         })
-        .await
-        .expect("the feeder's status is read live");
-        if let Some(seq) = newest {
+        .await;
+        if let Some(Some(seq)) = newest.get() {
             self.synced(id, seq).await;
         }
     }

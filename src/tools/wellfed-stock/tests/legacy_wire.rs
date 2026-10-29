@@ -69,7 +69,7 @@ async fn captured_legacy_connect_and_both_subscriptions_reach_local_clock_servic
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("server.json");
     let mut config = common::config();
-    [config.mqtt_listen, config.http_listen] = common::addresses();
+    [config.mqtt_listen, config.http_listen] = common::addresses().unwrap();
     storage::write_json(&path, &config).unwrap();
 
     let _service = common::start(&path);

@@ -8,6 +8,7 @@ use std::future::Future;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
@@ -52,6 +53,53 @@ pub struct Running {
     pub events: mpsc::UnboundedReceiver<Event>,
     control: mpsc::UnboundedSender<Control>,
     done: JoinHandle<()>,
+    _alone: Alone,
+}
+
+/// The update stage's mailbox and the interlock are process-wide statics,
+/// as on the feeder, so simulators on two threads of one process (`cargo
+/// test` runs tests on threads) would take each other's requests. A thread
+/// starting a simulator holds the process until its last one stops; the
+/// simulators of one thread share the hold, so a test may run two.
+static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
+
+thread_local! {
+    /// This thread's hold on the process, and how many of its simulators
+    /// share it.
+    static HOLD: RefCell<Option<(MutexGuard<'static, ()>, usize)>> = const { RefCell::new(None) };
+}
+
+/// One simulator's share of its thread's hold on the process.
+#[derive(Debug)]
+struct Alone;
+
+impl Alone {
+    fn take() -> Self {
+        HOLD.with_borrow_mut(|hold| match hold {
+            Some((_, simulators)) => *simulators += 1,
+            None => {
+                // A test that failed while holding it stopped its simulator.
+                let guard = ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner);
+                *hold = Some((guard, 1));
+            }
+        });
+        Self
+    }
+}
+
+impl Drop for Alone {
+    fn drop(&mut self) {
+        // At thread exit the hold is already gone with the thread's locals.
+        let _ = HOLD.try_with(|hold| {
+            let mut hold = hold.borrow_mut();
+            if let Some((_, simulators)) = hold.as_mut() {
+                *simulators -= 1;
+                if *simulators == 0 {
+                    *hold = None;
+                }
+            }
+        });
+    }
 }
 
 impl Running {
@@ -76,6 +124,7 @@ impl Running {
         owner: Option<[u8; 32]>,
         address: SocketAddr,
     ) -> Self {
+        let alone = Alone::take();
         let listener = TcpListener::bind(address)
             .await
             .expect("bind the simulator's port");
@@ -122,6 +171,7 @@ impl Running {
             events,
             control,
             done,
+            _alone: alone,
         }
     }
 
@@ -146,29 +196,20 @@ impl Running {
 }
 
 /// A simulator on a thread of its own, in real time, for a test whose
-/// client runs on a multi-threaded runtime or a blocking thread. It holds
-/// the process to itself until dropped, which stops it: the update stage's
-/// mailbox and the interlock are process-wide statics, as on the feeder,
-/// so two simulators in one process would take each other's requests.
+/// client runs on a multi-threaded runtime or a blocking thread. Its
+/// thread holds the process, as any simulator's does, until it is dropped,
+/// which stops it.
 #[derive(Debug)]
 pub struct Threaded {
     pub address: SocketAddr,
     pub identity: [u8; 32],
     control: std::sync::mpsc::Sender<Control>,
     thread: Option<std::thread::JoinHandle<()>>,
-    _alone: std::sync::MutexGuard<'static, ()>,
 }
-
-static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 impl Threaded {
     /// A fresh simulator with `owner`'s public key enrolled as an owner.
     pub fn start(owner: [u8; 32]) -> Self {
-        // A test that failed while holding it stopped its simulator first.
-        let alone = ONE_AT_A_TIME
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-
         let (started, starting) = std::sync::mpsc::channel();
         let (control, controls) = std::sync::mpsc::channel::<Control>();
         let thread = std::thread::spawn(move || {
@@ -202,7 +243,6 @@ impl Threaded {
             identity,
             control,
             thread: Some(thread),
-            _alone: alone,
         }
     }
 
@@ -213,8 +253,8 @@ impl Threaded {
 
 impl Drop for Threaded {
     fn drop(&mut self) {
-        // Stopped and joined before the lock goes, so the next test's
-        // simulator is alone with the statics.
+        // Stopped and joined, so its thread's hold is gone before the next
+        // test's simulator starts.
         let _ = self.control.send(Control::Quit);
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
@@ -231,8 +271,35 @@ impl Drop for Threaded {
 pub struct Relay {
     pub address: SocketAddr,
     to_feeder: watch::Sender<bool>,
-    to_client: watch::Sender<bool>,
+    to_client: Arc<watch::Sender<bool>>,
     cut: watch::Sender<u64>,
+    hold: Hold,
+}
+
+/// How much more of what clients send passes before the feeder's answers
+/// are held back, once [`Relay::hold_answers_after`] set it.
+#[derive(Clone, Debug)]
+struct Hold {
+    left: Arc<Mutex<Option<usize>>>,
+    answers: Arc<watch::Sender<bool>>,
+}
+
+impl Hold {
+    /// Count `n` bytes about to go to the feeder; when they reach the
+    /// budget, hold the answers back before they are sent. A client that
+    /// waits for each answer before its next request (an install's steps)
+    /// had every earlier one answered, so none slips through after.
+    fn sending(&self, n: usize) {
+        let mut left = self.left.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(budget) = left.as_mut() {
+            if n >= *budget {
+                *left = None;
+                self.answers.send_replace(true);
+            } else {
+                *budget -= n;
+            }
+        }
+    }
 }
 
 impl Relay {
@@ -245,7 +312,13 @@ impl Relay {
             .expect("a bound listener has an address");
         let (to_feeder, feeder_paused) = watch::channel(false);
         let (to_client, client_paused) = watch::channel(false);
+        let to_client = Arc::new(to_client);
         let (cut, cuts) = watch::channel(0);
+        let hold = Hold {
+            left: Arc::new(Mutex::new(None)),
+            answers: Arc::clone(&to_client),
+        };
+        let holding = hold.clone();
         tokio::spawn(async move {
             while let Ok((client, _)) = listener.accept().await {
                 let Ok(feeder) = TcpStream::connect(target).await else {
@@ -253,8 +326,13 @@ impl Relay {
                 };
                 let (client_in, client_out) = client.into_split();
                 let (feeder_in, feeder_out) = feeder.into_split();
-                let forward = relay(client_in, feeder_out, feeder_paused.clone());
-                let back = relay(feeder_in, client_out, client_paused.clone());
+                let forward = relay(
+                    client_in,
+                    feeder_out,
+                    feeder_paused.clone(),
+                    Some(holding.clone()),
+                );
+                let back = relay(feeder_in, client_out, client_paused.clone(), None);
                 // Cuts from now on end this connection.
                 let mut this = cuts.clone();
                 this.mark_unchanged();
@@ -267,6 +345,7 @@ impl Relay {
             to_feeder,
             to_client,
             cut,
+            hold,
         }
     }
 
@@ -286,6 +365,25 @@ impl Relay {
         self.to_client.send_replace(true);
     }
 
+    /// Deliver `bytes` more of what clients send, then hold back what the
+    /// feeder sends until [`Self::resume`]: the request that crosses the
+    /// budget reaches the feeder, its answer does not. The relay decides as
+    /// the bytes pass, so a test holds a transfer part-way through without
+    /// racing it.
+    pub fn hold_answers_after(&self, bytes: usize) {
+        let mut left = self
+            .hold
+            .left
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        *left = Some(bytes);
+    }
+
+    /// Whether the feeder's answers are held back now.
+    pub fn holding_answers(&self) -> bool {
+        *self.to_client.borrow()
+    }
+
     /// Close every connection the relay carries now, dropping what it held
     /// back; later connections pass as before.
     pub fn cut(&self) {
@@ -303,8 +401,14 @@ async fn until_cut(copy: impl Future<Output = ()>, mut cuts: watch::Receiver<u64
     }
 }
 
-/// Copy `from` to `to`, holding off while paused.
-async fn relay(mut from: OwnedReadHalf, mut to: OwnedWriteHalf, mut paused: watch::Receiver<bool>) {
+/// Copy `from` to `to`, holding off while paused, and counting what goes
+/// to the feeder against `hold`'s budget.
+async fn relay(
+    mut from: OwnedReadHalf,
+    mut to: OwnedWriteHalf,
+    mut paused: watch::Receiver<bool>,
+    hold: Option<Hold>,
+) {
     let mut buffer = [0u8; 2048];
     loop {
         if paused.wait_for(|paused| !paused).await.is_err() {
@@ -318,9 +422,13 @@ async fn relay(mut from: OwnedReadHalf, mut to: OwnedWriteHalf, mut paused: watc
             _ = paused.wait_for(|paused| *paused) => continue,
         };
         // A pause that lands now still holds this chunk back.
-        if paused.wait_for(|paused| !paused).await.is_err()
-            || to.write_all(&buffer[..n]).await.is_err()
-        {
+        if paused.wait_for(|paused| !paused).await.is_err() {
+            return;
+        }
+        if let Some(hold) = &hold {
+            hold.sending(n);
+        }
+        if to.write_all(&buffer[..n]).await.is_err() {
             return;
         }
     }

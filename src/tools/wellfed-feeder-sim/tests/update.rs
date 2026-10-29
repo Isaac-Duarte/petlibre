@@ -11,7 +11,6 @@ use std::cell::RefCell;
 use std::future::Future;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::rc::Rc;
-use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
 use ed25519_dalek::{Signer, SigningKey};
@@ -44,15 +43,7 @@ fn bench() -> SigningKey {
     SigningKey::from_bytes(&BENCH)
 }
 
-/// Held for each test's whole run. The update stage's mailbox and the
-/// interlock are process-wide statics, as on the feeder, so two simulators
-/// installing at once in one process (`cargo test` runs tests on threads)
-/// would take each other's requests.
-static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
-
 fn paused(test: impl Future<Output = ()>) {
-    // A test that failed while holding it has stopped its simulator.
-    let _alone = ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner);
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .start_paused(true)

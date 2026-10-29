@@ -217,11 +217,13 @@ impl Actor {
         let (client, mut eventloop) = AsyncClient::new(options, 32);
         let mut tick = tokio::time::interval(Duration::from_secs(1));
 
-        // The connect is not cancel-safe: a poll that another branch drops
-        // after its CONNECT went out leaves that connection behind, the next
-        // poll opens a second under the same client ID, and the broker's
-        // takeover ends both. So one poll runs to the end of the connect,
-        // with requests served meanwhile as between sessions.
+        // The connect is not cancel-safe: a poll that another branch (the
+        // tick, a request) drops mid-connect closes its socket, and the next
+        // poll starts the connect over. One whose CONNECT had already reached
+        // the broker leaves it registering that client while the new one
+        // arrives under the same ID, and the broker's takeover ends both. So
+        // one poll runs to the end of the connect, with requests served
+        // meanwhile as between sessions.
         let connected = {
             let connecting = eventloop.poll();
             tokio::pin!(connecting);

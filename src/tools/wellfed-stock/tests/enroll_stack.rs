@@ -57,7 +57,7 @@ fn start(path: &Path, minutes: Option<u64>) -> common::Service {
 async fn the_first_stock_feeder_enrolls_and_is_then_the_only_one() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("server.json");
-    let [listen, http] = common::addresses();
+    let [listen, http] = common::addresses().unwrap();
     let init = std::process::Command::new(env!("CARGO_BIN_EXE_wellfed-stock"))
         .args([
             "init-installer",
@@ -85,14 +85,10 @@ async fn the_first_stock_feeder_enrolls_and_is_then_the_only_one() {
         .unwrap();
     assert!(!refused.status.success());
 
-    let service = start(&path, Some(1));
-    // The broker comes up first; retry until it listens.
-    let (client, mut events) = loop {
-        if std::net::TcpStream::connect(listen).is_ok() {
-            break stock(listen, DEVICE, "its-own-password");
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    };
+    let mut service = start(&path, Some(1));
+    // The broker comes up first.
+    service.listening(listen).await;
+    let (client, mut events) = stock(listen, DEVICE, "its-own-password");
     assert!(admitted(&mut events).await, "the first feeder is trusted");
 
     let record = Enrollment::load(&Enrollment::path(&path)).unwrap().unwrap();
@@ -180,13 +176,9 @@ async fn the_first_stock_feeder_enrolls_and_is_then_the_only_one() {
     drop(service);
 
     // Restarted with no window, the enrolled feeder is still the device.
-    let _service = start(&path, None);
-    let (_again, mut again_events) = loop {
-        if std::net::TcpStream::connect(listen).is_ok() {
-            break stock(listen, DEVICE, "its-own-password");
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    };
+    let mut restarted = start(&path, None);
+    restarted.listening(listen).await;
+    let (_again, mut again_events) = stock(listen, DEVICE, "its-own-password");
     assert!(admitted(&mut again_events).await);
     let (_late, mut late_events) = stock(listen, "AF_LATE_FEEDER", "x");
     assert!(!admitted(&mut late_events).await);

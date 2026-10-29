@@ -23,7 +23,7 @@ async fn real_broker_api_and_simulated_stock_session_without_commands() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("server.json");
     let mut config = common::config();
-    [config.mqtt_listen, config.http_listen] = addresses();
+    [config.mqtt_listen, config.http_listen] = addresses().unwrap();
     storage::write_json(&path, &config).unwrap();
 
     let service = start(&path);

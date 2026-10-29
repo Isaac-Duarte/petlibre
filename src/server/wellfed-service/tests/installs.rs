@@ -6,7 +6,7 @@
 use std::time::Duration;
 
 use wellfed_api::{ClientRole, Connection as Link, InstallFailure, InstallRequest, InstallState};
-use wellfed_server_testkit::feeder::{self, Banks};
+use wellfed_server_testkit::feeder::{self, Banks, Relay};
 use wellfed_server_testkit::release::{self, SECTOR, project, signed};
 use wellfed_server_testkit::{TestService, WAIT, ada, config, local, until};
 use wellfed_service::{ReleaseAdded, Service};
@@ -33,7 +33,8 @@ fn a_restart_mid_install_fails_it_frees_the_slot_and_the_next_activates() {
         let banks = Banks::new();
         let sim = feeder::start_updatable(&banks).await;
         let server = TestService::start_with(release::trusting(config())).await;
-        let address = sim.address.to_string();
+        let relay = Relay::start(sim.address).await;
+        let address = relay.address.to_string();
         let id = server.adopt_as(&sim, &address, ClientRole::Owner).await;
         server.link(id, Link::Online).await;
         let file = signed(&project(), 7, BUILD, LEN);
@@ -43,16 +44,21 @@ fn a_restart_mid_install_fails_it_frees_the_slot_and_the_next_activates() {
             release: release.id,
         };
 
+        // Half the image reaches the feeder, then its answers are held: the
+        // transfer stands part-way however fast the host is.
+        relay.hold_answers_after(LEN / 2);
         let first = server
             .service()
             .install(&ada().into(), id, request)
             .await
             .unwrap();
-        until("the transfer is under way", || async {
-            server.service().install_state(id).await.unwrap().written > 0
+        until("the transfer is held half-way", || async {
+            relay.holding_answers()
         })
         .await;
+        assert!(server.service().install_state(id).await.unwrap().written > 0);
         let store = server.stop().await;
+        relay.resume();
 
         let server = TestService::open(store, release::trusting(config())).await;
         let interrupted = server.service().install_state(id).await.unwrap();

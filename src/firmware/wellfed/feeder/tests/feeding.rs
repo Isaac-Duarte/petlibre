@@ -304,15 +304,18 @@ fn owner_records_decode_for_the_bench() {
             reason: Some(FeedReason::Cancelled),
         })),
     );
+    let counters = interlock::Status {
+        deferred: 2,
+        writes_deferred: 3,
+        ..interlock::Status::default()
+    };
     decodes(
-        Record::Joins(interlock::Status {
-            writes_deferred: 3,
-            ..interlock::Status::default()
-        }),
+        Record::Writes(counters),
         Some(Event::Owner(Owner::Interlock {
             writes_deferred: Some(3),
         })),
     );
+    decodes(Record::Joins(counters), None);
     decodes(Record::Refused, None);
     decodes(
         Record::Marks {
@@ -323,6 +326,199 @@ fn owner_records_decode_for_the_bench() {
         },
         None,
     );
+    decodes(
+        Record::Current {
+            feed: 12,
+            trace: FeedTrace {
+                current_max: 168,
+                current_sum: 600,
+                current_samples: 10,
+                ..FeedTrace::default()
+            },
+        },
+        None,
+    );
+}
+
+/// A finished feed's result and its drive's figures, as the loop logs them
+/// one after the other.
+#[test]
+fn a_feeds_result_and_its_current_are_logged() {
+    use wellfed_core::feed::controller::FeedReason;
+    use wellfed_core::feed::storage::{OwnerOutcome, OwnerResult};
+    use wellfed_feeder::feed::Durability;
+    use wellfed_fw_feeder::feeding::Record;
+    use wellfed_sdk::hal::owner::FeedTrace;
+
+    let trace = FeedTrace {
+        drive_ms: 9_000,
+        rising: 3,
+        falling: 3,
+        first_edge_ms: Some(7_840),
+        current_max: 168,
+        current_sum: 17_700,
+        current_samples: 300,
+        reversals: 1,
+        hopper: Some(true),
+        ..FeedTrace::default()
+    };
+    let fed = Record::Fed {
+        result: OwnerResult {
+            id: 7,
+            requested: 3,
+            completed: 3,
+            outcome: OwnerOutcome::Done,
+            reason: FeedReason::Done,
+            motion_possible: false,
+        },
+        durability: Durability::Durable,
+        trace,
+    };
+    assert_eq!(
+        fed.to_string(),
+        "fed id=7 requested=3 completed=3 outcome=1 reason=1 durable=1 drive_ms=9000 \
+         rising=3 falling=3"
+    );
+
+    let current = Record::Current { feed: 7, trace };
+    assert_eq!(
+        current.to_string(),
+        "current id=7 first_edge_ms=7840 current_max=168 current_mean=59 samples=300 \
+         reversals=1 hopper=present"
+    );
+
+    // A drive that never ran measured nothing.
+    let none = Record::Current {
+        feed: 8,
+        trace: FeedTrace::default(),
+    };
+    assert_eq!(
+        none.to_string(),
+        "current id=8 first_edge_ms=none current_max=0 current_mean=none samples=0 \
+         reversals=0 hopper=unread"
+    );
+}
+
+/// Every record the owner's loop logs fits the log's line, whatever its
+/// figures: a line that does not is dropped whole.
+#[test]
+fn a_feeds_records_fit_a_log_line_at_their_widest() {
+    use wellfed_core::feed::controller::FeedReason;
+    use wellfed_core::feed::storage::{OwnerOutcome, OwnerResult, RotorPhase};
+    use wellfed_core::record::Tag;
+    use wellfed_core::store::feed_journal::JournalError;
+    use wellfed_feeder::feed::Durability;
+    use wellfed_fw_feeder::feeding::Record;
+    use wellfed_sdk::hal::interlock::{self, Held};
+    use wellfed_sdk::hal::owner::{FeedTrace, OwnerFault, OwnerState, SubmitResult};
+    use wellfed_sdk::hal::supervision::events::{EDGE_LOG, EventsFault, PinWatch};
+
+    // The log's buffer, which holds the line, its CRLF and a NUL.
+    const LINE: usize = 192;
+    let line = |record: Record| format!("{} {record}\r\n", Tag::Owner);
+
+    let mut pins = PinWatch::default();
+    pins.start = Some([u32::MAX; 2]);
+    pins.changed = [u32::MAX; 2];
+    pins.toggles = [[u8::MAX; 32]; 2];
+    // The widest listing: ten two-digit pads, then more.
+    pins.toggles[0][..10].fill(0);
+    let trace = FeedTrace {
+        drive_ms: u32::MAX,
+        rising: u16::MAX,
+        falling: u16::MAX,
+        first_edge_ms: Some(u32::MAX),
+        current_max: u32::MAX,
+        current_sum: u32::MAX,
+        current_samples: 1,
+        reversals: u8::MAX,
+        hopper: Some(true),
+        edge_ms: [Some((u32::MAX, true)); EDGE_LOG],
+        pins,
+        homed_ms: Some(u32::MAX),
+    };
+    let result = OwnerResult {
+        id: u64::MAX,
+        requested: u16::MAX,
+        completed: u16::MAX,
+        outcome: OwnerOutcome::Uncertain,
+        reason: FeedReason::MarkStuck,
+        motion_possible: true,
+    };
+    let feed = u64::MAX;
+    let interlock = interlock::Status {
+        refused: u32::MAX,
+        deferred: u32::MAX,
+        forced: u32::MAX,
+        waited_max_ms: u32::MAX,
+        long_joins: u32::MAX,
+        writes_deferred: u32::MAX,
+        writes_forced: u32::MAX,
+        write_waited_max_ms: u32::MAX,
+        feeds_delayed: u32::MAX,
+    };
+
+    let widest = [
+        Record::Journal {
+            error: JournalError::Worn,
+            created: true,
+        },
+        Record::Refused,
+        Record::Opened {
+            created: true,
+            high_water: u64::MAX,
+        },
+        Record::Held {
+            portions: u8::MAX,
+            held: Held::Writing,
+        },
+        Record::Status {
+            state: OwnerState::Fault,
+            fault: OwnerFault::Ok,
+            supervisor: EventsFault::Ok,
+            stopped: true,
+            optics_off: true,
+        },
+        Record::Submitted {
+            feed,
+            portions: u8::MAX,
+            result: SubmitResult::RejectStopped,
+        },
+        Record::Fed {
+            result,
+            durability: Durability::Durable,
+            trace,
+        },
+        // The widest mean, over one sample, and the most samples.
+        Record::Current { feed, trace },
+        Record::Current {
+            feed,
+            trace: FeedTrace {
+                current_samples: u16::MAX,
+                ..trace
+            },
+        },
+        Record::Edges { feed, trace },
+        Record::Steps {
+            feed,
+            max_gap_ms: u32::MAX,
+            handshakes: u32::MAX,
+        },
+        Record::Marks {
+            feed,
+            homed_ms: Some(u32::MAX),
+            outlet_breaks: u32::MAX,
+            phase: RotorPhase::Unknown,
+        },
+        Record::Pins { feed, pins },
+        Record::Recover { held_ms: u32::MAX },
+        Record::Joins(interlock),
+        Record::Writes(interlock),
+    ];
+    for record in widest {
+        let line = line(record);
+        assert!(line.len() < LINE, "{} bytes: {line}", line.len());
+    }
 }
 
 /// The marks record says what a feed's marks and outlet beam showed, for

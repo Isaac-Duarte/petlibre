@@ -458,12 +458,17 @@ pub enum Record {
         portions: u8,
         result: SubmitResult,
     },
-    /// A feed ended: its result and what its drive measured.
+    /// A feed ended: its result, and how long its drive ran and the edges
+    /// it counted.
     Fed {
         result: OwnerResult,
         durability: Durability,
         trace: FeedTrace,
     },
+    /// The rest of what that feed's drive measured: its first edge, its
+    /// current, its reversals and the food beam. A line of its own, so
+    /// neither this nor `fed` outgrows a record.
+    Current { feed: u64, trace: FeedTrace },
     /// Which pads changed during that feed, to find the feedback input.
     Pins { feed: u64, pins: PinWatch },
     /// When each feedback edge came, from the drive's start.
@@ -471,8 +476,13 @@ pub enum Record {
     /// A feed was refused before the owner saw it: a Wi-Fi join runs or
     /// waits, or a storage write ran past the claim's wait.
     Held { portions: u8, held: Held },
-    /// Joins waited for the outputs, or went ahead past a feed's bound.
+    /// Joins waited for the outputs, or went ahead past a feed's bound: the
+    /// interlock's join counters.
     Joins(interlock::Status),
+    /// Storage writes waited for the outputs, or a feed for a write: the
+    /// interlock's write counters, which the bench reads. A line apart from
+    /// the joins', so neither outgrows a record.
+    Writes(interlock::Status),
     /// What the feed's marks and the outlet beam showed: how far into the
     /// drive a homing mark came, the beam's breaks, and the phase after.
     Marks {
@@ -553,20 +563,21 @@ impl core::fmt::Display for Record {
                 result,
                 durability,
                 trace,
-            } => {
-                write!(
-                    f,
-                    "fed id={} requested={} completed={} outcome={} reason={} durable={} drive_ms={} rising={} falling={} first_edge_ms=",
-                    result.id,
-                    result.requested,
-                    result.completed,
-                    result.outcome.code(),
-                    result.reason.code(),
-                    u8::from(durability == Durability::Durable),
-                    trace.drive_ms,
-                    trace.rising,
-                    trace.falling,
-                )?;
+            } => write!(
+                f,
+                "fed id={} requested={} completed={} outcome={} reason={} durable={} drive_ms={} rising={} falling={}",
+                result.id,
+                result.requested,
+                result.completed,
+                result.outcome.code(),
+                result.reason.code(),
+                u8::from(durability == Durability::Durable),
+                trace.drive_ms,
+                trace.rising,
+                trace.falling,
+            ),
+            Record::Current { feed, trace } => {
+                write!(f, "current id={feed} first_edge_ms=")?;
                 match trace.first_edge_ms {
                     Some(ms) => write!(f, "{ms}")?,
                     None => f.write_str("none")?,
@@ -633,13 +644,17 @@ impl core::fmt::Display for Record {
             }
             Record::Joins(status) => write!(
                 f,
-                "interlock refused={} deferred={} forced={} waited_max_ms={} long_joins={} \
-             writes_deferred={} writes_forced={} write_waited_max_ms={} feeds_delayed={}",
+                "joins refused={} deferred={} forced={} waited_max_ms={} long_joins={}",
                 status.refused,
                 status.deferred,
                 status.forced,
                 status.waited_max_ms,
                 status.long_joins,
+            ),
+            Record::Writes(status) => write!(
+                f,
+                "interlock writes_deferred={} writes_forced={} write_waited_max_ms={} \
+                 feeds_delayed={}",
                 status.writes_deferred,
                 status.writes_forced,
                 status.write_waited_max_ms,
@@ -706,6 +721,31 @@ mod target {
 
     type Journal = FeedJournal<JournalSlots>;
 
+    // These two split `interlock::Status` as the `joins` and `interlock`
+    // records print it: a counter added to the status goes in one of them
+    // and in that record's `Display` arm, or its moves are never logged.
+
+    /// What the `joins` record logs.
+    fn join_counters(status: &interlock::Status) -> [u32; 5] {
+        [
+            status.refused,
+            status.deferred,
+            status.forced,
+            status.waited_max_ms,
+            status.long_joins,
+        ]
+    }
+
+    /// What the `interlock` record logs.
+    fn write_counters(status: &interlock::Status) -> [u32; 4] {
+        [
+            status.writes_deferred,
+            status.writes_forced,
+            status.write_waited_max_ms,
+            status.feeds_delayed,
+        ]
+    }
+
     /// The owner. Reached only through `&`: the supervision interrupts reach
     /// its board and supervisor while the loop runs, so no `&mut` may cover
     /// it once it is open. Filled once, before it opens.
@@ -745,8 +785,9 @@ mod target {
         /// Why the last feed ended before its reservation, for the API's
         /// poll: its id and the refusal.
         unreserved: Option<(u64, Refusal)>,
-        /// The interlock's counters as last logged.
-        joins: interlock::Status,
+        /// The interlock's counters as last logged, for its `joins` and
+        /// `interlock` records.
+        interlock: interlock::Status,
         /// The reservation a reset interrupted, which the owner resolves as
         /// it opens: its id, until its `Fed` event is recorded.
         interrupted: Option<u64>,
@@ -896,13 +937,17 @@ mod target {
             }
             INTERLOCK.watch_join(wellfed_sdk::hal::sdk::uptime_ms());
 
-            // Logged whenever a counter moves: a refused feed, a join that
-            // starts waiting, waits longer than any before, is forced, or
-            // holds its turn past the long-join limit.
-            let joins = INTERLOCK.status();
-            if joins != self.joins {
-                self.joins = joins;
-                record(Record::Joins(joins));
+            // Each half is logged whenever one of its counters moves: a
+            // refused feed, a join that starts waiting, waits longer than
+            // any before, is forced, or holds its turn past the long-join
+            // limit; a write that waits or is forced, or a feed delayed.
+            let now = INTERLOCK.status();
+            let before = core::mem::replace(&mut self.interlock, now);
+            if join_counters(&now) != join_counters(&before) {
+                record(Record::Joins(now));
+            }
+            if write_counters(&now) != write_counters(&before) {
+                record(Record::Writes(now));
             }
         }
 
@@ -949,6 +994,10 @@ mod target {
             record(Record::Fed {
                 result,
                 durability,
+                trace: status.trace,
+            });
+            record(Record::Current {
+                feed: result.id,
                 trace: status.trace,
             });
             record(Record::Edges {
@@ -1016,6 +1065,10 @@ mod target {
             record(Record::Fed {
                 result: status.result,
                 durability: Durability::Durable,
+                trace: status.trace,
+            });
+            record(Record::Current {
+                feed,
                 trace: status.trace,
             });
             // The journal holds the id under the high water `submit` checks.

@@ -11,7 +11,7 @@
 //! motor changes are always kept until the body has room for nothing but
 //! them, when it ends there (`truncated`). The summary's figures never
 //! depend on the body: the peak, mean, drive time and edge counts are the
-//! owner's own, the same that `PLOWN1 fed` logs.
+//! owner's own, the same that `PLOWN1 fed` and `PLOWN1 current` log.
 //!
 //! Nothing is written to flash here: a sealed trace waits in RAM until the
 //! settings writer copies it into the storage ring ([`crate::store::traces`])

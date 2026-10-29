@@ -128,14 +128,18 @@ fn a_server_restart_mid_feed_feeds_once() {
             let service = server.service().clone();
             tokio::spawn(async move { service.feed(&ada().into(), id, 2, key).await })
         };
-        until("the feed is journalled", || async {
-            server
-                .service()
-                .command(&ada(), key)
-                .await
-                .is_ok_and(|entry| entry.state == CommandState::Sent)
+        // On its way means out of the server: the journal records the feed
+        // before the feeder's task takes it and writes it, and a stop
+        // before then is a feed never sent, answered offline or left
+        // unknown with nothing in the history to settle it. With the
+        // session set up, and its keepalive and clock sync far off, the
+        // feed is all the server sends.
+        until("the feed waits in the relay", || async {
+            relay.holding_requests()
         })
         .await;
+        let entry = server.service().command(&ada(), key).await.unwrap();
+        assert_eq!(entry.state, CommandState::Sent);
         let store = server.stop().await;
         let cut = sending.await.unwrap();
         assert!(unknown(&cut), "{cut:?}");

@@ -7,7 +7,7 @@ use std::cell::{Cell, RefCell};
 use std::future::Future;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::rc::Rc;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -264,9 +264,11 @@ impl Drop for Threaded {
 
 /// A relay in front of a simulator that can stall: while paused it stops
 /// moving bytes either way but keeps both sockets open, as a feeder that
-/// lost power does (no reset reaches the client). Resuming delivers what
-/// waited, in order. It can also hold back only what the feeder sends (an
-/// answer lost on its way back), and cut every connection it carries.
+/// lost power does (no reset reaches the client). It still takes in what
+/// arrives, so a test sees a request waiting ([`Relay::holding_requests`]),
+/// and resuming delivers what waited, in order. It can also hold back only
+/// what the feeder sends (an answer lost on its way back), and cut every
+/// connection it carries.
 #[derive(Debug)]
 pub struct Relay {
     pub address: SocketAddr,
@@ -276,12 +278,15 @@ pub struct Relay {
     hold: Hold,
 }
 
-/// How much more of what clients send passes before the feeder's answers
-/// are held back, once [`Relay::hold_answers_after`] set it.
+/// What clients send on its way to the feeder: how much more passes
+/// before the feeder's answers are held back, once
+/// [`Relay::hold_answers_after`] set it, and how much the relay has taken
+/// in but not yet delivered.
 #[derive(Clone, Debug)]
 struct Hold {
     left: Arc<Mutex<Option<usize>>>,
     answers: Arc<watch::Sender<bool>>,
+    waiting: Arc<AtomicUsize>,
 }
 
 impl Hold {
@@ -317,6 +322,7 @@ impl Relay {
         let hold = Hold {
             left: Arc::new(Mutex::new(None)),
             answers: Arc::clone(&to_client),
+            waiting: Arc::new(AtomicUsize::new(0)),
         };
         let holding = hold.clone();
         tokio::spawn(async move {
@@ -384,6 +390,13 @@ impl Relay {
         *self.to_client.borrow()
     }
 
+    /// Whether bytes a client sent wait in the relay for the feeder. While
+    /// paused, that is a request the client has sent and the feeder has
+    /// not seen: it has left the client, so the client cannot take it back.
+    pub fn holding_requests(&self) -> bool {
+        self.hold.waiting.load(Ordering::SeqCst) > 0
+    }
+
     /// Close every connection the relay carries now, dropping what it held
     /// back; later connections pass as before.
     pub fn cut(&self) {
@@ -401,8 +414,8 @@ async fn until_cut(copy: impl Future<Output = ()>, mut cuts: watch::Receiver<u64
     }
 }
 
-/// Copy `from` to `to`, holding off while paused, and counting what goes
-/// to the feeder against `hold`'s budget.
+/// Copy `from` to `to`, holding what it read while paused, and counting
+/// what goes to the feeder against `hold`'s budget.
 async fn relay(
     mut from: OwnedReadHalf,
     mut to: OwnedWriteHalf,
@@ -411,18 +424,12 @@ async fn relay(
 ) {
     let mut buffer = [0u8; 2048];
     loop {
-        if paused.wait_for(|paused| !paused).await.is_err() {
-            return;
-        }
-        let n = tokio::select! {
-            read = from.read(&mut buffer) => match read {
-                Ok(0) | Err(_) => return,
-                Ok(n) => n,
-            },
-            _ = paused.wait_for(|paused| *paused) => continue,
-        };
-        // A pause that lands now still holds this chunk back.
-        if paused.wait_for(|paused| !paused).await.is_err() {
+        // A read error ends the copy as the end of the stream does.
+        let n = from.read(&mut buffer).await.unwrap_or(0);
+        let _waiting = hold.as_ref().map(|hold| Waiting::new(&hold.waiting, n));
+
+        // An end waits too, so a pause hides a closing client as well.
+        if paused.wait_for(|paused| !paused).await.is_err() || n == 0 {
             return;
         }
         if let Some(hold) = &hold {
@@ -431,6 +438,26 @@ async fn relay(
         if to.write_all(&buffer[..n]).await.is_err() {
             return;
         }
+    }
+}
+
+/// Bytes the relay has read and not yet delivered, counted until they are
+/// written or dropped: a cut ends the copy part-way.
+struct Waiting<'a> {
+    count: &'a AtomicUsize,
+    n: usize,
+}
+
+impl<'a> Waiting<'a> {
+    fn new(count: &'a AtomicUsize, n: usize) -> Self {
+        count.fetch_add(n, Ordering::SeqCst);
+        Self { count, n }
+    }
+}
+
+impl Drop for Waiting<'_> {
+    fn drop(&mut self) {
+        self.count.fetch_sub(self.n, Ordering::SeqCst);
     }
 }
 

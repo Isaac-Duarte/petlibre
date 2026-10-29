@@ -353,6 +353,18 @@ impl Server {
         }
     }
 
+    /// Tell the device of each subscriber that ended since the last pass.
+    /// Out of line so its loop does not grow `step`'s frame, which every
+    /// session's deepest path sits under.
+    #[inline(never)]
+    fn tell_readers_left<D: Device>(&mut self, device: &mut D) {
+        for (index, left) in self.readers_left.iter_mut().enumerate() {
+            if core::mem::take(left) {
+                device.reader_left(Reader::slot(index));
+            }
+        }
+    }
+
     /// A live sample for subscribers whose hello claimed its bit; one not
     /// sent before the next of its kind is replaced by it.
     pub fn sample(&mut self, sample: Sample) {
@@ -403,11 +415,7 @@ impl Server {
             pairing.cancel(Path::Signer);
             self.signer = None;
         }
-        for (index, left) in self.readers_left.iter_mut().enumerate() {
-            if core::mem::take(left) {
-                device.reader_left(Reader::slot(index));
-            }
-        }
+        self.tell_readers_left(device);
 
         // A feed queued before the deadline (a Dispense press: the server
         // refuses its own) holds the restart until it has ended, so the

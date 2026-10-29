@@ -742,14 +742,15 @@ fn catch_up(total: u8, start: &[Option<u64>], order: &[usize]) -> Vec<usize> {
     worst
 }
 
-/// Each subscriber goes at most one pass per subscriber without a record:
-/// one round of the others' batches, and the pass that fetches its own.
+/// Each subscriber goes at most one pass more than there are subscribers
+/// without a record: a round of the others' batches, the pass that fetches
+/// its own, and one more when its turn came round just before it asked.
 fn assert_turns(total: u8, start: &[Option<u64>]) {
     let forward: Vec<usize> = (0..start.len()).collect();
     let backward: Vec<usize> = forward.iter().rev().copied().collect();
     for order in [forward, backward] {
         let worst = catch_up(total, start, &order);
-        let bound = start.len();
+        let bound = start.len() + 1;
         assert!(
             worst.iter().all(|&w| w <= bound),
             "{start:?} in {order:?}: idle {worst:?}, bound {bound}"
@@ -779,6 +780,21 @@ fn overlapping_readers_in_one_unit_take_turns() {
 /// Three and four subscribers at spread cursors each get a turn a round.
 #[test]
 fn three_and_four_readers_each_get_a_turn() {
+    // Orders a random search found at the bound.
+    for (start, order) in [
+        (
+            vec![Some(250), None, Some(127), Some(128)],
+            vec![2, 1, 3, 0],
+        ),
+        (vec![Some(93), Some(229), Some(42)], vec![0, 2, 1]),
+    ] {
+        let worst = catch_up(255, &start, &order);
+        assert!(
+            worst.iter().all(|&w| w <= start.len() + 1),
+            "{start:?} in {order:?}: idle {worst:?}"
+        );
+    }
+
     assert_turns(200, &[None, Some(150), Some(60)]);
     assert_turns(200, &[None, Some(150), Some(60), Some(100)]);
     assert_turns(255, &[Some(200), Some(10), Some(130), None]);

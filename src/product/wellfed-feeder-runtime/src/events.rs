@@ -23,12 +23,13 @@
 //!   cursor falls inside it read from it meanwhile; one it cannot answer
 //!   waits its turn, kept by its slot with the cursor it last asked for.
 //!   Once the batch's subscriber has taken from it, the next read goes to
-//!   the next waiting slot after the last one served, round robin. So
-//!   every subscriber catching up gets a batch within one round of the
-//!   others, whatever order the loop visits them in. A subscriber that
-//!   ends gives its turn and its batch up at once ([`reader_left`]); one
-//!   that stops asking without ending (its last frame still going out)
-//!   keeps its batch for at most [`MISSES_MAX`] asks it turns away.
+//!   the next waiting slot after the last one served, round robin. So a
+//!   subscriber catching up goes without a record for at most one pass
+//!   more than there are subscribers, whatever order the loop visits them
+//!   in. A subscriber that ends gives its turn and its batch up at once
+//!   ([`reader_left`]); one that stops asking without ending (its last
+//!   frame still going out) keeps its batch for at most [`MISSES_MAX`]
+//!   asks it turns away.
 //! - **Epoch:** the writer publishes the ring's epoch once it has opened
 //!   it ([`publish_open`]); the device API welcomes no session before then,
 //!   since a welcome names the epoch its event numbers count in.
@@ -64,23 +65,22 @@ const UNQUEUED: Queued = Queued {
     body: [0; BODY_BYTES],
 };
 
-/// The owner of a read whose subscriber ended: nobody collects it.
-const NOBODY: usize = SESSIONS;
-
 // `repr(u8)` puts `Idle` at tag 0, so the initial state is all zeros.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 enum ReadSlot {
     Idle,
-    /// A read for the subscriber in slot `reader`.
+    /// A read for the subscriber in slot `reader`; `None` once it ended
+    /// (or for a reader outside the slots), so nobody waits to collect it.
     Requested {
-        reader: usize,
+        reader: Option<usize>,
         after: Option<u64>,
     },
-    /// The answer for slot `reader`'s cursor. Records stay valid; `End`
-    /// only while the ring's newest record is still `last`.
+    /// The answer for slot `reader`'s cursor, `reader` as for `Requested`.
+    /// Records stay valid; `End` only while the ring's newest record is
+    /// still `last`.
     Ready {
-        reader: usize,
+        reader: Option<usize>,
         after: Option<u64>,
         batch: Batch,
         last: Option<u64>,
@@ -252,14 +252,14 @@ pub fn read_result(reader: Reader, after: Option<u64>) -> Option<Read> {
                     shared.last,
                     after,
                 ) {
-                    *taken |= *owner == me;
+                    *taken |= *owner == Some(me);
                     set_turn(shared, me, Turn::Idle);
                     return Some(found);
                 }
                 // Its own subscriber has moved past it, and an end the
                 // ring has since moved past answers nobody.
                 let stale = *batch == Batch::End && *last != shared.last;
-                let held = !*taken && !stale && *owner != me && *owner != NOBODY;
+                let held = !*taken && !stale && owner.is_some_and(|owner| owner != me);
                 if held && *misses < MISSES_MAX {
                     *misses += 1;
                     set_turn(shared, me, Turn::Waiting(after));
@@ -267,7 +267,7 @@ pub fn read_result(reader: Reader, after: Option<u64>) -> Option<Read> {
                 }
             }
             ReadSlot::Requested { reader: owner, .. } => {
-                if *owner != me {
+                if *owner != Some(me) {
                     set_turn(shared, me, Turn::Waiting(after));
                 }
                 return None;
@@ -284,12 +284,18 @@ pub fn read_result(reader: Reader, after: Option<u64>) -> Option<Read> {
                 Turn::Waiting(cursor) => Some((slot, cursor)),
                 Turn::Idle => None,
             });
-        // A reader outside the slots has no turn: it is served at once.
-        let (slot, cursor) = next.unwrap_or((NOBODY, after));
-        set_turn(shared, slot, Turn::Idle);
-        shared.turn = (slot + 1) % SESSIONS;
+        // A reader outside the slots has no turn: it is served at once,
+        // for nobody to hold.
+        let (owner, cursor) = match next {
+            Some((slot, cursor)) => {
+                set_turn(shared, slot, Turn::Idle);
+                shared.turn = (slot + 1) % SESSIONS;
+                (Some(slot), cursor)
+            }
+            None => (None, after),
+        };
         shared.read = ReadSlot::Requested {
-            reader: slot,
+            reader: owner,
             after: cursor,
         };
         None
@@ -305,9 +311,9 @@ pub fn reader_left(reader: Reader) {
         set_turn(shared, me, Turn::Idle);
         match &mut shared.read {
             ReadSlot::Requested { reader: owner, .. } | ReadSlot::Ready { reader: owner, .. }
-                if *owner == me =>
+                if *owner == Some(me) =>
             {
-                *owner = NOBODY;
+                *owner = None;
             }
             _ => {}
         }
@@ -368,7 +374,7 @@ pub fn finish_read(after: Option<u64>, batch: Batch, records: &[Record]) {
         };
         let reader = match shared.read {
             ReadSlot::Requested { reader, .. } => reader,
-            _ => NOBODY,
+            _ => None,
         };
         shared.read = ReadSlot::Ready {
             reader,

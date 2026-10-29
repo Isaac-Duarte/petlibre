@@ -340,8 +340,10 @@ impl Server {
                 EventRead::Event(event) => {
                     // A body the session's hello did not claim would not
                     // decode there: skip it, as an old client would want.
-                    // An event that does not fit stays for the next batch;
-                    // `has_room` leaves room for the largest, so none does.
+                    // An event that does not fit stays for the next batch.
+                    // `has_room` leaves room for the largest event, so a
+                    // push never fails, and above all never on an empty
+                    // batch, which would leave the event for ever.
                     if capabilities.contains(event.body.capability())
                         && writer.push(&event).is_err()
                     {

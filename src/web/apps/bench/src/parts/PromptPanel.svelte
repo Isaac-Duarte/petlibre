@@ -3,8 +3,9 @@
   // that answer it. It sits right above the job's output, where the
   // installer prints what goes with a question, such as a recovery code.
   // An answer is sent once: a refused one says why, and the buttons stay
-  // off for that question until the server moves on.
-  import { AnswerRefused, answer } from "@wellfed/api";
+  // off for that question until the server moves on. A page opened
+  // without the console's link shows the question but cannot answer.
+  import { AnswerRefused, answer, canAnswer } from "@wellfed/api";
   import type { Answer, PendingPrompt } from "@wellfed/api";
   import { Panel } from "@wellfed/ui";
   import { app } from "../lib/bench.svelte";
@@ -23,7 +24,7 @@
     try {
       await answer(asked.job, asked.seq, reply);
     } catch (error) {
-      refused = error instanceof AnswerRefused ? refusalText(error.refusal) : String(error);
+      refused = error instanceof AnswerRefused ? refusalText(error.refusal, error.status) : String(error);
     }
   }
 </script>
@@ -34,17 +35,21 @@
     {#snippet meta()}question {asked.seq}, {asked.prompt.kind}{/snippet}
     <div class="prompt" role="alert">
       <p>{asked.text}</p>
-      <div class="buttons">
-        {#each choices(asked.expects) as choice (choice.answer)}
-          <button
-            type="button"
-            disabled={sent === key(asked) || !app.connected}
-            onclick={() => void send(asked, choice.answer)}
-          >
-            {choice.label}
-          </button>
-        {/each}
-      </div>
+      {#if !canAnswer()}
+        <p class="readonly">To answer here, open the link the bench console printed.</p>
+      {:else}
+        <div class="buttons">
+          {#each choices(asked.expects) as choice (choice.answer)}
+            <button
+              type="button"
+              disabled={sent === key(asked) || !app.connected}
+              onclick={() => void send(asked, choice.answer)}
+            >
+              {choice.label}
+            </button>
+          {/each}
+        </div>
+      {/if}
       {#if refused && sent === key(asked)}
         <p class="refused" role="status">Not taken: {refused}</p>
       {/if}
@@ -79,6 +84,11 @@
   button:disabled {
     color: var(--color-text-muted);
     cursor: default;
+  }
+  .readonly {
+    margin-top: var(--space-3);
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
   }
   .refused {
     margin-top: var(--space-3);

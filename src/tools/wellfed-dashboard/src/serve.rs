@@ -11,8 +11,11 @@
 //!
 //! One route writes: `POST /api/jobs/{id}/answer`, the answer to the
 //! question a job asks, which the server takes only for that question and
-//! of its kind. It takes JSON alone, so a page elsewhere cannot send it
-//! without a CORS preflight this server never grants.
+//! of its kind. Reads are open to whoever reaches the address, but an
+//! answer needs the token made at start, which only the console prints
+//! (in the page's link, after `#token=`, so it never reaches a request
+//! line or a log), sent back as [`TOKEN_HEADER`]. That header and the JSON
+//! body each need a CORS preflight this server never grants.
 //!
 //! While the flash client holds the UART (writing, or in a loader session),
 //! nothing here reads a file: the views answer [`Deferred`] and the stream
@@ -48,6 +51,9 @@ use wellfed_formats::bench::{Cancel, now};
 
 use crate::{Error, JobOutput, Result};
 
+/// The header that carries the answer token.
+const TOKEN_HEADER: &str = "x-bench-token";
+
 #[derive(Embed)]
 // Relative to this crate; `make ui` builds it.
 #[folder = "../../../src/web/apps/bench/dist/"]
@@ -72,6 +78,8 @@ struct Ui {
     sources: Sources,
     flash: Arc<Mutex<FlashCache>>,
     hosts: Hosts,
+    /// What an answer must carry.
+    token: Arc<str>,
     /// Cancelled when the process is stopping: event streams end, then the
     /// server.
     stop: Cancel,
@@ -83,21 +91,27 @@ impl Ui {
     }
 }
 
-/// Where the page listens.
+/// Where the page listens, and the token its answers need, new at every
+/// start.
 pub struct Listen {
     address: SocketAddr,
+    token: String,
 }
 
 impl Listen {
     pub fn new(listen: &str, port: u16) -> Result<Self> {
         let ip: IpAddr = listen.parse().map_err(|_| Error::Listen)?;
+        let mut token = [0; 16];
+        getrandom::fill(&mut token).map_err(|_| Error::Random)?;
         Ok(Self {
             address: SocketAddr::new(ip, port),
+            token: wellfed_formats::hex::encode(&token),
         })
     }
 
+    /// The page's link for the console, with which it may answer.
     pub fn url(&self) -> String {
-        format!("http://{}/", self.address)
+        format!("http://{}/#token={}", self.address, self.token)
     }
 }
 
@@ -229,13 +243,21 @@ async fn state(State(ui): State<Ui>) -> Json<BenchState> {
     Json(state)
 }
 
-/// 204 once the server took the answer; otherwise the refusal, 409 for a
-/// question that is no longer (or not yet) the one asked.
+/// 204 once the server took the answer; 403 without the page's token;
+/// otherwise the refusal, 409 for a question that is no longer (or not
+/// yet) the one asked.
 async fn answer(
     State(ui): State<Ui>,
     UrlPath(id): UrlPath<JobId>,
+    headers: axum::http::HeaderMap,
     Json(request): Json<AnswerRequest>,
 ) -> Response {
+    let given = headers
+        .get(TOKEN_HEADER)
+        .map_or(&[][..], HeaderValue::as_bytes);
+    if !bool::from(subtle::ConstantTimeEq::ct_eq(given, ui.token.as_bytes())) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
     match ui.sources.live.answer(id, request.seq, request.answer) {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(error) => {
@@ -525,6 +547,7 @@ pub fn start(
             ip: listen.address.ip(),
             port: listen.address.port(),
         },
+        token: listen.token.as_str().into(),
         stop: stop.clone(),
     };
     let runtime = tokio::runtime::Builder::new_multi_thread()

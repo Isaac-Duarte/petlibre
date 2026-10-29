@@ -121,8 +121,23 @@ const server = spawn(
     "--ui-port",
     port,
   ],
-  { stdio: "inherit", env: { ...process.env, HOME: home, XDG_RUNTIME_DIR: join(home, "run") } },
+  { stdio: ["inherit", "pipe", "inherit"], env: { ...process.env, HOME: home, XDG_RUNTIME_DIR: join(home, "run") } },
 );
+
+// The page's link carries the token an answer needs, made new at every
+// start and printed only on the console: kept as `page-url` for the tests
+// that answer.
+let printed = "";
+server.stdout.on("data", (chunk) => {
+  process.stdout.write(chunk);
+  printed += chunk.toString();
+  const link = /Bench page on (\S+)/.exec(printed)?.[1];
+  if (link) {
+    write("page-url", link);
+    printed = "";
+  }
+  printed = printed.slice(-4096);
+});
 const clients = new Set();
 let stopping = false;
 let failed = false;

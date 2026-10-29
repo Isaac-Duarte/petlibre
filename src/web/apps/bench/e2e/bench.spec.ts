@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 import { expect, test, type Locator } from "@playwright/test";
@@ -246,9 +246,11 @@ test.describe("a write's life on the idle bench", () => {
     expect(Number(await old.evaluate((row) => getComputedStyle(row).opacity))).toBeLessThan(1);
   });
 
-  test("an install's questions are answered from the page, beside its output", async ({ page }) => {
+  test("an install's questions are answered from the page, beside its output", async ({ context, page: plain }) => {
     test.setTimeout(60_000);
-    await page.goto(`${IDLE}/`);
+    // Opened without the console's link first: the question shows, but no
+    // buttons do.
+    await plain.goto(`${IDLE}/`);
     const install = client([
       "install",
       "--review",
@@ -263,8 +265,20 @@ test.describe("a write's life on the idle bench", () => {
     // Taken now: the client may exit before the page has seen the end.
     const finished = ended(install);
 
+    const shown = plain.getByRole("region", { name: /^Job \d+ asks$/ });
+    await expect(shown).toContainText("connecting from 192.168.1.31. Is this your feeder?");
+    await expect(shown).toContainText("open the link the bench console printed");
+    await expect(shown.getByRole("button")).toHaveCount(0);
+
+    // The console's link answers, and leaves no token in the address.
+    await expect.poll(() => existsSync(join(IDLE_ROOT, "page-url"))).toBe(true);
+    const link = readFileSync(join(IDLE_ROOT, "page-url"), "utf8").trim();
+    expect(link).toMatch(/#token=[0-9a-f]{32}$/);
+    const page = await context.newPage();
+    await page.goto(link);
     const asks = page.getByRole("region", { name: /^Job \d+ asks$/ });
-    await expect(asks).toContainText("connecting from 192.168.1.31. Is this your feeder?");
+    await expect(asks.getByRole("button", { name: "Yes" })).toBeVisible();
+    expect(page.url()).not.toContain("token");
     await expect(asks.getByRole("button", { name: "Done" })).toHaveCount(0);
     await asks.getByRole("button", { name: "Yes" }).click();
 

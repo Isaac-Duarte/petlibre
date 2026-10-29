@@ -51,11 +51,29 @@ export const bench = {
 export class AnswerRefused extends Error {
   constructor(
     readonly refusal: AnswerError | null,
-    status: number,
+    readonly status: number,
   ) {
     super(`POST answer: ${String(status)}`);
     this.name = "AnswerRefused";
   }
+}
+
+/**
+ * The answer token, from the link the bench console prints
+ * (`#token=...`). Read once as the page loads and kept in memory only;
+ * the link is put back without it, so it stays out of history and the
+ * routes. Without it the page shows questions but cannot answer them.
+ */
+const token: string | null = (() => {
+  if (typeof window === "undefined") return null;
+  const found = /^#token=([0-9a-f]+)$/.exec(window.location.hash)?.[1] ?? null;
+  if (found) window.history.replaceState(null, "", window.location.pathname + window.location.search);
+  return found;
+})();
+
+/** Whether this page was opened with the console's link, so it may answer. */
+export function canAnswer(): boolean {
+  return token !== null;
 }
 
 /**
@@ -67,7 +85,7 @@ export async function answer(job: number, seq: number, reply: Answer): Promise<v
   const body: AnswerRequest = { seq, answer: reply };
   const response = await fetch(`api/jobs/${String(job)}/answer`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", "x-bench-token": token ?? "" },
     body: JSON.stringify(body),
     cache: "no-store",
   });

@@ -14,5 +14,6 @@ describe("prompt", () => {
     );
     expect(refusalText({ refused: "not-running", job: 3 })).toBe("job 3 is not running");
     expect(refusalText(null)).toBe("the bench server did not take the answer");
+    expect(refusalText(null, 403)).toContain("open the link the console printed");
   });
 });

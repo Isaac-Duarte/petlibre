@@ -75,6 +75,9 @@ impl Live for Fake {
     }
 }
 
+/// The test page's answer token.
+const TOKEN: &str = "0123456789abcdef0123456789abcdef";
+
 fn ui() -> (tempfile::TempDir, Arc<Fake>, Router) {
     let tmp = tempfile::tempdir().unwrap();
     let fake = Arc::new(Fake {
@@ -96,6 +99,7 @@ fn ui() -> (tempfile::TempDir, Arc<Fake>, Router) {
             ip: "127.0.0.1".parse().unwrap(),
             port: 8780,
         },
+        token: TOKEN.into(),
         stop: Cancel::new(),
     };
     (tmp, fake, router(ui))
@@ -114,12 +118,44 @@ async fn get(router: &Router, uri: &str) -> Response {
 }
 
 async fn post_answer(router: &Router, uri: &str, body: &str, content_type: &str) -> Response {
-    let request = Request::post(uri)
+    post_answer_with(router, uri, body, content_type, Some(TOKEN)).await
+}
+
+async fn post_answer_with(
+    router: &Router,
+    uri: &str,
+    body: &str,
+    content_type: &str,
+    token: Option<&str>,
+) -> Response {
+    let mut request = Request::post(uri)
         .header(header::HOST, HOST)
-        .header(header::CONTENT_TYPE, content_type)
-        .body(Body::from(body.to_string()))
-        .unwrap();
+        .header(header::CONTENT_TYPE, content_type);
+    if let Some(token) = token {
+        request = request.header("x-bench-token", token);
+    }
+    let request = request.body(Body::from(body.to_string())).unwrap();
     router.clone().oneshot(request).await.unwrap()
+}
+
+#[tokio::test]
+async fn an_answer_needs_the_page_s_token() {
+    let (_tmp, fake, router) = ui();
+    let body = r#"{"seq":1,"answer":"done"}"#;
+    let json = "application/json";
+
+    for token in [None, Some(""), Some("0123456789abcdef0123456789abcdee")] {
+        let refused = post_answer_with(&router, "/api/jobs/7/answer", body, json, token).await;
+        assert_eq!(refused.status(), StatusCode::FORBIDDEN, "{token:?}");
+    }
+    assert!(fake.answers.lock().unwrap().is_empty());
+
+    let taken = post_answer_with(&router, "/api/jobs/7/answer", body, json, Some(TOKEN)).await;
+    assert_eq!(taken.status(), StatusCode::NO_CONTENT);
+    assert_eq!(*fake.answers.lock().unwrap(), [(7, 1, Answer::Done)]);
+
+    // Reads need none.
+    assert_eq!(get(&router, "/api/state").await.status(), StatusCode::OK);
 }
 
 #[tokio::test]
@@ -448,15 +484,19 @@ async fn a_request_addressed_to_another_name_is_refused() {
 }
 
 #[test]
-fn listen_takes_literal_addresses() {
-    assert_eq!(
-        Listen::new("0.0.0.0", 8780).unwrap().url(),
-        "http://0.0.0.0:8780/"
-    );
+fn listen_takes_literal_addresses_and_makes_a_new_token_each_time() {
+    let url = Listen::new("0.0.0.0", 8780).unwrap().url();
+    let token = url.strip_prefix("http://0.0.0.0:8780/#token=").unwrap();
+    assert_eq!(token.len(), 32);
+    assert!(token.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    assert_ne!(Listen::new("0.0.0.0", 8780).unwrap().url(), url);
+
     assert!(Listen::new("localhost", 8780).is_err());
-    assert_eq!(
-        Listen::new("100.64.0.1", 8780).unwrap().url(),
-        "http://100.64.0.1:8780/"
+    assert!(
+        Listen::new("100.64.0.1", 8780)
+            .unwrap()
+            .url()
+            .starts_with("http://100.64.0.1:8780/#token=")
     );
 
     assert!(

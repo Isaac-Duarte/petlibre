@@ -13,6 +13,9 @@ publish.workspace = true
 [dependencies]
 axum = { workspace = true, optional = true }
 futures-util = { version = "0.3", default-features = false, optional = true }
+# The answer route's token: made at start, compared in constant time.
+getrandom = { workspace = true, optional = true }
+subtle = { workspace = true, optional = true }
 wellfed-core.workspace = true
 wellfed-formats.workspace = true
 wellfed-stock-api = { path = "../wellfed-stock-api" }
@@ -34,7 +37,7 @@ ts-rs = { version = "12", features = ["serde-json-impl"] }
 [features]
 # The server and its embedded web app. Build src/web/apps/bench/dist first
 # (`make ui`); the server embeds it at compile time.
-ui = ["dep:axum", "dep:futures-util", "dep:rust-embed", "tokio/rt-multi-thread", "tokio/net", "tokio/time", "tokio/macros"]
+ui = ["dep:axum", "dep:futures-util", "dep:getrandom", "dep:subtle", "dep:rust-embed", "tokio/rt-multi-thread", "tokio/net", "tokio/time", "tokio/macros"]
 
 [lints]
 workspace = true

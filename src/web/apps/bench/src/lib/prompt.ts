@@ -20,7 +20,8 @@ export function choices(expects: Expects): Choice[] {
 }
 
 /** Why the server did not take an answer; `null` when it said nothing readable. */
-export function refusalText(refusal: AnswerError | null): string {
+export function refusalText(refusal: AnswerError | null, status?: number): string {
+  if (status === 403) return "this link's token is not the running server's; open the link the console printed";
   if (!refusal) return "the bench server did not take the answer";
   switch (refusal.refused) {
     case "not-running":

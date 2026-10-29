@@ -65,6 +65,8 @@ pub trait JobOutput: Send + Sync {
 pub enum Error {
     #[error("--listen needs a literal IP address")]
     Listen,
+    #[error("The system gave no randomness for the page's answer token")]
+    Random,
     #[error(transparent)]
     Io(#[from] std::io::Error),
 }

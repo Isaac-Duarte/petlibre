@@ -120,8 +120,8 @@ Some detail on each:
 - **Consumer first boot.** A consumer image (`PROVISION=consumer`, [firmware builds](../development/firmware-builds.md#bench-and-consumer-images)) has no build credentials and trusts the project release key instead of the bench key. With nothing stored it neither scans nor associates: it keeps the radio on for BLE and looks again every 30 s, so credentials stored over BLE are joined within one interval. Stored credentials never fall back to a build network, since there is none.
   - It boots into setup mode (`PLSET1 start cause=unprovisioned`), so the app or `wellfed setup` can pair and send the home Wi-Fi. That boot then reboots and joins.
   - With no session for 15 minutes it reboots, and the next boot, still unprovisioned, enters setup mode again: a feeder that never gets Wi-Fi is in setup mode at every boot. Both restarts are deliberate, so neither counts toward a reset storm.
-  - The panel still feeds: Dispense works while no phone runs a session, and the idle reboot waits for a feed in flight. During a session the buttons key the code in, and nothing feeds. Setup mode started with Lock and Mic refuses every feed.
-  - A Wi-Fi store the writer cannot read does not start it; Lock and Mic, or a factory reset, does.
+  - The panel still feeds: Dispense works while no phone runs a session, and the idle reboot waits for a feed in flight. During a session the buttons key the code in, and nothing feeds. Setup mode started with Lock and Mic refuses every feed; the hold does not change an unprovisioned setup already running.
+  - A Wi-Fi store the writer cannot read does not start it. Setup could not save Wi-Fi to that store anyway, so a factory reset is the way back.
   - Nothing in setup mode depends on the bank, so this works from bank 0, where stock installs the image.
   - Host-tested and simulated only; no consumer image has run on a feeder. Setup mode's heap has been measured from bank 1 only.
 - **Cost.** A running feeder pays only BLE's flash cost: the linked stack and an 11.5 KB controller patch. Heap, the C tasks (outside our stack audit) and shared radio time are spent only in setup mode.

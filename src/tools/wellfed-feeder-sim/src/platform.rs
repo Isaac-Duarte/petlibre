@@ -14,8 +14,10 @@
 //! The listener belongs to the serve loop, which awaits its connections and
 //! hands each one over ([`SimPlatform::accepted`]); the loop's driver then
 //! takes it as it takes one from lwIP. What the board provides and the
-//! simulator does not have (the indicator, BLE, the speaker, a feeding
-//! owner) answers as an idle board would.
+//! simulator does not have (the indicator, the speaker, a feeding owner)
+//! answers as an idle board would. Setup mode's BLE link is a pair of
+//! message queues a test plays the phone on ([`SimPlatform::ble_connect`]):
+//! whole messages each way, with no framing or radio.
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -49,8 +51,8 @@ use wellfed_device_api::mailbox::{
 use wellfed_device_api::wifi::Credentials;
 use wellfed_feeder::feeder::Platform;
 use wellfed_feeder::feeder::platform::{
-    Accepted, BleDrop, BleStep, Boot, Check, Datagram, DriverStep, EventSlot, EventsFill, Link,
-    Received, TaskCount, TaskStack, TraceRead, TracesFill,
+    Accepted, BleDrop, BleLink, BleStep, Boot, BuildWifi, Check, Datagram, DriverStep, EventSlot,
+    EventsFill, Link, Received, TaskCount, TaskStack, TraceRead, TracesFill,
 };
 use wellfed_feeder::feeder::supply::Radio;
 use wellfed_feeder::stats::{SAVE_MS, TOTAL_SECTORS, Totals, reset_cause};
@@ -231,6 +233,27 @@ pub struct SimPlatform {
     /// The radio the loop last asked for: while off, no connection is
     /// taken and those open are dropped, as the network leaves.
     radio: Radio,
+    /// A bench image's build network, unless a test boots it as a
+    /// consumer image ([`Self::set_build_wifi`]).
+    build_wifi: BuildWifi,
+    /// Setup mode's BLE link.
+    ble: SimBle,
+}
+
+/// Setup mode's BLE link: the phone's side is the test's, the feeder's the
+/// loop's, as the firmware's driver hands it whole messages.
+#[derive(Debug, Default)]
+struct SimBle {
+    advertising: bool,
+    connected: bool,
+    /// What the loop has not been told yet: a host connected or left.
+    link: Option<BleLink>,
+    /// The phone's messages, not yet taken by the loop.
+    from_host: VecDeque<Vec<u8>>,
+    /// The message the loop holds until it consumes it.
+    held: Option<Vec<u8>>,
+    /// The feeder's notifications, not yet read by the phone.
+    to_host: VecDeque<Vec<u8>>,
 }
 
 impl std::fmt::Debug for SimPlatform {
@@ -358,6 +381,8 @@ impl SimPlatform {
             supply: SimSupply::MAINS,
             reset_flags: 0,
             radio: Radio::On,
+            build_wifi: BuildWifi::Present,
+            ble: SimBle::default(),
         };
         platform.publish_signers();
         // The boot's own early save, so its reset counts however short it is.
@@ -381,6 +406,40 @@ impl SimPlatform {
     /// the first pass on.
     pub fn set_reset_flags(&mut self, flags: u32) {
         self.reset_flags = flags;
+    }
+
+    /// Boot as an image with or without build Wi-Fi, from the first pass
+    /// on: without, and with nothing stored, the boot starts setup mode.
+    pub fn set_build_wifi(&mut self, build_wifi: BuildWifi) {
+        self.build_wifi = build_wifi;
+    }
+
+    /// Whether setup mode advertises, so a phone can connect.
+    pub fn ble_advertising(&self) -> bool {
+        self.ble.advertising
+    }
+
+    /// A phone connects and subscribes, as the firmware's driver reports
+    /// both; false while nothing advertises or a phone is connected.
+    pub fn ble_connect(&mut self) -> bool {
+        if !self.ble.advertising || self.ble.connected {
+            return false;
+        }
+        self.ble.connected = true;
+        self.ble.link = Some(BleLink::Opened);
+        true
+    }
+
+    /// The connected phone writes one whole message.
+    pub fn ble_write(&mut self, message: &[u8]) {
+        if self.ble.connected {
+            self.ble.from_host.push_back(message.to_vec());
+        }
+    }
+
+    /// What the feeder notified since the last call, one message each.
+    pub fn ble_notified(&mut self) -> Vec<Vec<u8>> {
+        self.ble.to_host.drain(..).collect()
     }
 
     /// What the supply reads.
@@ -701,6 +760,16 @@ impl Platform for SimPlatform {
             .union(Capabilities::PLANS)
             .union(Capabilities::CALL)
             .union(Capabilities::DESICCANT)
+    }
+
+    fn build_wifi(&self) -> BuildWifi {
+        self.build_wifi
+    }
+
+    /// The simulator reports a storm (`Banks::boot`) but never holds its
+    /// feeding owner closed for one.
+    fn held(&self) -> bool {
+        false
     }
 
     fn reset(&mut self) {
@@ -1270,27 +1339,50 @@ impl Platform for SimPlatform {
         self.counts = counts;
     }
 
-    fn ble_restart(&mut self) {}
+    fn ble_restart(&mut self) {
+        self.ble = SimBle::default();
+    }
 
-    fn ble_step(&mut self, _advertise: bool) -> BleStep<Infallible> {
+    /// A connection or a leave first, then the phone's next message once
+    /// the loop has consumed the one it holds, as the driver reports them.
+    fn ble_step(&mut self, advertise: bool) -> BleStep<Infallible> {
+        self.ble.advertising = advertise && !self.ble.connected;
+        let link = self.ble.link.take().or_else(|| {
+            if self.ble.held.is_some() {
+                return None;
+            }
+            self.ble.held = Some(self.ble.from_host.pop_front()?);
+            Some(BleLink::Message)
+        });
         BleStep {
             delay_ms: NO_RADIO_MS,
             record: None,
-            link: None,
+            link,
         }
     }
 
     fn ble_message(&self) -> Option<&[u8]> {
-        None
+        self.ble.held.as_deref()
     }
 
-    fn ble_consume(&mut self) {}
+    fn ble_consume(&mut self) {
+        self.ble.held = None;
+    }
 
-    fn ble_send(&mut self, _body: &[u8]) -> bool {
-        false
+    fn ble_send(&mut self, body: &[u8]) -> bool {
+        if self.ble.connected {
+            self.ble.to_host.push_back(body.to_vec());
+        }
+        self.ble.connected
     }
 
     fn ble_close(&mut self, _reason: BleDrop) -> Option<Infallible> {
+        if self.ble.connected {
+            self.ble.connected = false;
+            self.ble.from_host.clear();
+            self.ble.held = None;
+            self.ble.link = Some(BleLink::Closed);
+        }
         None
     }
 

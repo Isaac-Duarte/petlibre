@@ -1,12 +1,12 @@
 # Bluetooth LE and setup mode
 
-This page explains how the feeder uses Bluetooth LE: only to set itself up, only when you ask, and never as an audio device. It is for owners setting up a feeder and for contributors working on the setup path. How keys and pairing work in general is in [pairing](pairing.md).
+This page explains how the feeder uses Bluetooth LE: only to set itself up, only when you ask or it has no network, and never as an audio device. It is for owners setting up a feeder and for contributors working on the setup path. How keys and pairing work in general is in [pairing](pairing.md).
 
 ## The one idea
 
-Bluetooth is off unless you turn it on with the buttons. Stock 1.1.15 uses Bluetooth LE to give an offline feeder its Wi-Fi and MQTT settings from the vendor app ([stock behavior](../devices/plaf103/stock/README.md#bluetooth-le)). The `feeder` firmware keeps that job in **setup mode**:
+Bluetooth is off unless you turn it on with the buttons, or the feeder has no network to join. Stock 1.1.15 uses Bluetooth LE to give an offline feeder its Wi-Fi and MQTT settings from the vendor app ([stock behavior](../devices/plaf103/stock/README.md#bluetooth-le)). The `feeder` firmware keeps that job in **setup mode**:
 
-- **When:** you hold Lock, then Mic, for 5 s on an unlocked panel. A normal boot never starts the Bluetooth stack.
+- **When:** you hold Lock, then Mic, for 5 s on an unlocked panel. A feeder with no build Wi-Fi and none stored (a consumer image, fresh from stock or after a factory reset) also starts setup mode at boot, unless it has an enabled meal plan. A boot with a network to join never starts the Bluetooth stack.
 - **What:** your phone (or `wellfed setup`) runs a Noise XX handshake with the feeder and shows a one-time code of 6 button presses. You key it in on the feeder, which ticks for each press. Both sides prove the code to each other, and only then does the phone send its Wi-Fi, and its key becomes an owner key.
 - **Then:** the feeder saves the Wi-Fi for its next join, and reboots without Bluetooth.
 
@@ -81,12 +81,13 @@ XX alone trusts whichever device answers. With only a Dispense press as the chec
 
 The Rust side is the `feeder` firmware's loop task. Its setup mode (`wellfed_feeder::feeder::setup`) steps `wellfed_hal::ble::BleSetup`, the link, through the firmware's `Platform`:
 
-- **Started** only once setup mode begins, so the stack's heap and C tasks cost nothing on a normal boot.
+- **Started** only once setup mode begins, so the stack's heap and C tasks cost nothing on a boot with a network.
+- **At boot:** the loop decides once per boot. It waits until the settings writer has loaded the Wi-Fi store and can write it, and has loaded the plans. Then it starts setup mode if the image has no build Wi-Fi (`Platform::build_wifi`, from the runtime's `BUILD_WIFI`), nothing is stored and no plan is enabled. A boot a reset storm holds waits for its hold to end. Credentials cleared later in the boot start nothing until the next boot.
 - **Advertising** only while the power monitor reports the adapter (mains, as stock does), and never while connected or after setup has finished.
 - **Messages:** the link reassembles a host's framed writes into one held message and frames each reply. What the messages say is the loop's business.
 - **Idle hosts:** a connection that has not finished within 150 s is dropped (the handshake, then up to a minute for the code).
-- **The end:** about 3 s after `Done`, or after 15 minutes with no session, the loop reboots through the watchdog. KM0 counts that reset only for an unconfirmed build. The closing restart waits for a feed in flight.
-- **Records:** `PLBLE1` lines `ready heap_free=…`, `advertising on=…`, `connect`, `mtu`, `drop reason=…`, `disconnect` and `failed stage=…`; `PLSET1` lines `start`, `session`, `asked wifi=…`, `enroll result=…`, `wifi saved=…`, `reply …`, `fault stage=…` and `reboot ended=…`. None carries a key, a label or a credential.
+- **The end:** about 3 s after `Done`, or after 15 minutes with no session, the loop reboots through the watchdog. The restart is deliberate, so it ends KM0's reset-storm count, however soon after the boot it comes; only an unconfirmed build's trial counts it. An unprovisioned feeder that idles out enters setup mode again on the next boot. The closing restart waits for a feed in flight.
+- **Records:** `PLBLE1` lines `ready heap_free=…`, `advertising on=…`, `connect`, `mtu`, `drop reason=…`, `disconnect` and `failed stage=…`; `PLSET1` lines `start cause=hold|unprovisioned`, `session`, `asked wifi=…`, `enroll result=…`, `wifi saved=…`, `reply …`, `fault stage=…` and `reboot ended=…`. None carries a key, a label or a credential.
 
 **The speaker in setup mode.** The feeder's two firmware tasks are taken, so setup mode's loop steps the speaker itself. Linking the speaker into the feeder costs about 9 KB of flash and 4.8 KB of static RAM, mostly the codec's DMA ring. Setup mode's state lives in the owner's static, built at compile time: built on the loop's stack, it pushed the stack bound to 8,228 of 6,144 bytes. With it static, the loop's bound was 4,396 bytes, under the audit's limit of 4,608.
 
@@ -115,9 +116,11 @@ The link audit is unchanged and passes: `ftl_init` and every flash erase and pro
 - **Heap:** `ready heap_free` read 45–70 KB with an earlier speaker build.
 - **Task stacks:** the C-created BT tasks (`bte_task`, `trace_task`, the HCI send task and `wellfed_ble`) are outside the stack audit. They rest on the SDK's sizes and the setup-mode heap figure in the [resource budget](resource-budget.md#ram).
 - **Starting the stack beside a joined Wi-Fi:** the resource budget started it at boot; setup mode starts it later, with Wi-Fi already up.
+- **Setup at an unprovisioned boot:** host-tested and simulated only. No consumer image has started it on a feeder, and its heap has been measured from bank 1 only, never from bank 0, where stock installs the image. The stack needs `wifi_on` first, which a consumer image's Wi-Fi task still calls with nothing to join.
 
 ## Evidence
 
+- **Modeled** (October 29, 2026), setup at an unprovisioned boot: the firmware's platform on the SDK fake starts it once the stores load, and not with stored or build credentials or an enabled plan (`wellfed-fw-feeder/tests/setup.rs`). The simulator, on an image with no build Wi-Fi, starts it, pairs `wellfed-client`'s setup session over a simulated link, saves the Wi-Fi, and starts nothing on the next boot (`wellfed-feeder-sim/tests/setup.rs`).
 - **Observed** (October 24, 2026), the setup code (owner pressing, no motion, a bounded `serve` stopped afterwards):
   - `ota fw45-code-02` installed `feeder` v111 (`e5650894`), which confirmed with clean health.
   - `capture fw45-code-05`: the CLI's code keyed in: six `pair setup keyed=` records, each with a `key` tick logged; `pair setup state=entered`, `PLSET1 proving`, `proven wifi=1`. The CLI's key was already enrolled (`result=duplicate`), and the Wi-Fi saved (generation 21): `reply done enrolled=already wifi=saved`, `coin`, the reboot without Bluetooth, the identity unchanged (`8019237d8eba8b9d`, as the CLI recorded), and the rejoin with `source: stored`.

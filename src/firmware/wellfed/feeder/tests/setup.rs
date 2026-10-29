@@ -4,6 +4,11 @@
 //! the client's key and saves its Wi-Fi before `Done` and the reboot; an
 //! unanswered, abandoned or wrongly keyed ask enrolls nothing. The speaker
 //! ticks for each press and plays the outcome, unless `sound` is off.
+//!
+//! A boot with no network to join (no build Wi-Fi, none stored) starts
+//! setup mode itself, once, after the writer has loaded and armed the
+//! Wi-Fi store and loaded the plans; stored or build credentials, or an
+//! enabled plan, start nothing, and Lock and Mic still do.
 
 use std::sync::{Mutex, MutexGuard};
 
@@ -12,21 +17,25 @@ use wellfed_client::setup::{
 };
 use wellfed_core::ble_setup::{PREFIX, parse_prefix};
 use wellfed_core::buttons::{Button, Buttons, Gesture};
+use wellfed_core::schedule::{Plan, Weekdays};
 use wellfed_core::tone::Tune;
 use wellfed_device_api::clients::Role;
 use wellfed_device_api::mailbox::Lock;
 use wellfed_device_api::mailbox::SettingsView;
 use wellfed_device_api::pairing::{Config, Event, Pairing, Path, Refusal as PairRefusal};
-use wellfed_feeder::feeder::setup::{self, Ended, PROVE_MS, Setup};
+use wellfed_feeder::feeder::owner::{Owner, POLL_MS, Record as OwnerRecord};
+use wellfed_feeder::feeder::platform::BuildWifi;
+use wellfed_feeder::feeder::setup::{self, Cause, Ended, PROVE_MS, Setup};
 use wellfed_feeder::store::net::NetStore;
+use wellfed_feeder::store::plans::PlansStore;
 use wellfed_feeder_runtime::keys::{self, Change, KeyResult};
-use wellfed_feeder_runtime::network;
+use wellfed_feeder_runtime::{network, plans};
 use wellfed_fw_feeder::platform::{Driver, Plaf103};
 use wellfed_proto::setup::{Enrolled, Refusal, Reply, WifiSaved};
 use wellfed_sdk::hal::power::{self, Monitor};
 use wellfed_sdk::hal::sdk::fake::{self, ble_record};
 use wellfed_sdk::hal::sdk::{Advertising, BleEvent};
-use wellfed_sdk::hal::{audio, ble, settings};
+use wellfed_sdk::hal::{audio, ble, buttons, settings};
 use wellfed_session::noise::Keypair;
 use wellfed_session::setup_code::{Code, PRESSES};
 
@@ -228,37 +237,44 @@ impl Bench {
     }
 }
 
+/// The credential sectors of the fake storage, read-only as the join half
+/// reads them.
+struct FakeNet;
+
+impl wellfed_core::store::slot::SlotIo for FakeNet {
+    fn unit_bytes(&self) -> u32 {
+        wellfed_sdk::hal::sdk::SECTOR_BYTES
+    }
+    fn read(&self, slot: u32, offset: u32, bytes: &mut [u8]) -> bool {
+        wellfed_sdk::hal::sdk::storage_read(network::NET_BASE + slot, offset, bytes)
+    }
+    fn program(&self, _: u32, _: u32, _: &[u8]) -> bool {
+        false
+    }
+    fn erase(&self, _: u32) -> bool {
+        false
+    }
+    fn writable(&self) -> bool {
+        false
+    }
+}
+
 /// What the settings writer would publish after opening or saving.
 fn publish(generation: u64, credentials: Option<wellfed_device_api::wifi::Credentials>) {
-    use wellfed_core::store::slot::SlotIo;
+    publish_net(generation, credentials, true);
+}
 
-    /// The credential sectors of the fake storage, read-only as the join
-    /// half reads them.
-    struct FakeNet;
-
-    impl SlotIo for FakeNet {
-        fn unit_bytes(&self) -> u32 {
-            wellfed_sdk::hal::sdk::SECTOR_BYTES
-        }
-        fn read(&self, slot: u32, offset: u32, bytes: &mut [u8]) -> bool {
-            wellfed_sdk::hal::sdk::storage_read(network::NET_BASE + slot, offset, bytes)
-        }
-        fn program(&self, _: u32, _: u32, _: &[u8]) -> bool {
-            false
-        }
-        fn erase(&self, _: u32) -> bool {
-            false
-        }
-        fn writable(&self) -> bool {
-            false
-        }
-    }
-
+/// As [`publish`], before (`armed` false) or after the writer armed.
+fn publish_net(
+    generation: u64,
+    credentials: Option<wellfed_device_api::wifi::Credentials>,
+    armed: bool,
+) {
     let mut store = NetStore::default();
     store.open(FakeNet);
     store.generation = generation;
     store.credentials = credentials;
-    network::publish(&store, true);
+    network::publish(&store, armed);
 }
 
 fn write(message: &[u8]) {
@@ -524,4 +540,224 @@ fn a_new_client_replaces_an_ask_whose_link_vanished() {
     bench.records.clear();
     let mut session = bench.ask(&Keypair::from_secret([3; 32]));
     bench.confirm(&mut session);
+}
+
+/// A boot's panel owner, for setup mode started by the boot itself: on an
+/// image with or without build Wi-Fi, with the writer's stores published
+/// by the test.
+struct Boot {
+    serial: MutexGuard<'static, ()>,
+    owner: Owner,
+    platform: Plaf103,
+    now: u32,
+    records: Vec<OwnerRecord<Driver>>,
+}
+
+impl Boot {
+    /// A fresh boot, nothing published yet: the writer is still loading.
+    fn start(build_wifi: BuildWifi) -> Self {
+        let serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        fake::reset_hardware();
+        buttons::reset();
+        keys::reset();
+        // SAFETY: the test holds `SERIAL` and runs no Wi-Fi task.
+        unsafe { network::reset() };
+        plans::reset();
+        power::reset();
+        settings::reset();
+        audio::reset();
+        Self::next(serial, build_wifi)
+    }
+
+    /// The next boot, on what the stores hold now.
+    fn reboot(self, build_wifi: BuildWifi) -> Self {
+        Self::next(self.serial, build_wifi)
+    }
+
+    fn next(serial: MutexGuard<'static, ()>, build_wifi: BuildWifi) -> Self {
+        Self {
+            serial,
+            owner: Owner::new(),
+            platform: Plaf103::with_build_wifi(build_wifi),
+            now: 0,
+            records: Vec::new(),
+        }
+    }
+
+    /// One step `delay_ms` after the last.
+    fn step(&mut self, delay_ms: u32) {
+        self.now += delay_ms;
+        let records = &mut self.records;
+        self.owner
+            .step(&mut self.platform, self.now, None, None, None, |r| {
+                records.push(r);
+            });
+    }
+
+    fn steps(&mut self, n: usize) {
+        for _ in 0..n {
+            self.step(POLL_MS);
+        }
+    }
+
+    /// The setup starts this boot recorded, by cause.
+    fn starts(&self) -> Vec<Cause> {
+        self.records
+            .iter()
+            .filter_map(|r| match r {
+                OwnerRecord::Setup(Record::Start { cause }) => Some(*cause),
+                _ => None,
+            })
+            .collect()
+    }
+}
+
+/// The writer's plans: one enabled daily plan, or none.
+fn publish_plans(meal: bool) {
+    let mut store = PlansStore::<FakeNet>::default();
+    if meal {
+        store.plans.table[0] = Some(Plan {
+            minute: 8 * 60,
+            portions: 1,
+            days: Weekdays::EVERY_DAY,
+            enabled: true,
+            call: 0,
+        });
+    }
+    plans::publish(&store, true);
+}
+
+fn home() -> wellfed_device_api::wifi::Credentials {
+    wellfed_device_api::wifi::Credentials::new(b"home-net", b"pass word!").unwrap()
+}
+
+#[test]
+fn an_unprovisioned_boot_starts_setup_once_the_stores_load() {
+    let mut boot = Boot::start(BuildWifi::Absent);
+    boot.steps(3);
+    assert_eq!(boot.starts(), [], "the stores are still loading");
+
+    // Opened but not yet armed: setup's save would be refused.
+    publish_net(0, None, false);
+    publish_plans(false);
+    boot.steps(3);
+    assert_eq!(boot.starts(), []);
+    assert!(!boot.owner.setup_on());
+
+    publish(0, None);
+    boot.steps(3);
+    assert_eq!(boot.starts(), [Cause::Unprovisioned]);
+    assert!(boot.owner.setup_on());
+    assert!(fake::with(|h| h.ble_started.is_some()), "the stack starts");
+
+    boot.steps(50);
+    assert_eq!(boot.starts(), [Cause::Unprovisioned], "once a boot");
+}
+
+#[test]
+fn an_unprovisioned_boot_waits_for_the_plans() {
+    let mut boot = Boot::start(BuildWifi::Absent);
+    publish(0, None);
+    boot.steps(3);
+    assert_eq!(boot.starts(), [], "the plans are still loading");
+
+    publish_plans(false);
+    boot.step(POLL_MS);
+    assert_eq!(boot.starts(), [Cause::Unprovisioned]);
+}
+
+#[test]
+fn stored_or_build_wifi_or_an_enabled_plan_starts_nothing() {
+    for (build_wifi, stored, meal) in [
+        (BuildWifi::Absent, Some(home()), false),
+        (BuildWifi::Present, None, false),
+        (BuildWifi::Present, Some(home()), false),
+        (BuildWifi::Absent, None, true),
+    ] {
+        let mut boot = Boot::start(build_wifi);
+        publish(1, stored);
+        publish_plans(meal);
+        boot.steps(50);
+        assert_eq!(boot.starts(), [], "{build_wifi:?}, meal {meal}");
+        assert!(!boot.owner.setup_on());
+        assert!(fake::with(|h| h.ble_started.is_none()));
+    }
+}
+
+#[test]
+fn a_boot_decides_once_so_credentials_cleared_later_start_nothing() {
+    let mut boot = Boot::start(BuildWifi::Absent);
+    publish(1, Some(home()));
+    publish_plans(false);
+    boot.steps(3);
+
+    // A client clears the Wi-Fi: the boot has decided already.
+    publish(2, None);
+    boot.steps(50);
+    assert_eq!(boot.starts(), []);
+
+    // The next boot finds nothing to join.
+    let mut boot = boot.reboot(BuildWifi::Absent);
+    boot.step(POLL_MS);
+    assert_eq!(boot.starts(), [Cause::Unprovisioned]);
+}
+
+#[test]
+fn an_idle_setup_reboots_and_the_next_boot_starts_it_again() {
+    let mut boot = Boot::start(BuildWifi::Absent);
+    publish(0, None);
+    publish_plans(false);
+    boot.step(POLL_MS);
+    assert_eq!(boot.starts(), [Cause::Unprovisioned]);
+    assert!(!boot.owner.reboot_due(boot.now));
+
+    boot.step(setup::IDLE_MS);
+    assert!(
+        boot.records
+            .contains(&OwnerRecord::Setup(Record::Reboot { ended: Ended::Idle }))
+    );
+    assert!(boot.owner.reboot_due(boot.now));
+
+    // Nothing was stored, so the next boot is as unprovisioned.
+    let mut boot = boot.reboot(BuildWifi::Absent);
+    boot.step(POLL_MS);
+    assert_eq!(boot.starts(), [Cause::Unprovisioned]);
+}
+
+#[test]
+fn lock_and_mic_start_setup_as_before_and_nothing_more_once_the_boot_has() {
+    let unlock = Gesture::Hold {
+        chord: Buttons::of(Button::Lock),
+        level: 1,
+    };
+    let lock_mic = Gesture::Hold {
+        chord: Buttons::of(Button::Lock).with(Button::Mic),
+        level: 1,
+    };
+
+    // A provisioned boot: only the hold starts it.
+    let mut boot = Boot::start(BuildWifi::Absent);
+    publish(1, Some(home()));
+    publish_plans(false);
+    boot.steps(3);
+    buttons::inject(unlock);
+    boot.step(POLL_MS);
+    buttons::inject(lock_mic);
+    boot.step(POLL_MS);
+    assert_eq!(boot.starts(), [Cause::Hold]);
+
+    // An unprovisioned one is in setup mode already: the hold is pairing's
+    // and starts nothing more.
+    let mut boot = boot.reboot(BuildWifi::Absent);
+    publish(2, None);
+    boot.step(POLL_MS);
+    buttons::inject(unlock);
+    boot.step(POLL_MS);
+    buttons::inject(lock_mic);
+    boot.step(POLL_MS);
+    assert!(
+        boot.records
+            .contains(&OwnerRecord::Pairing(Event::SetupOpened))
+    );
+    assert_eq!(boot.starts(), [Cause::Unprovisioned]);
 }

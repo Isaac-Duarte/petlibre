@@ -11,7 +11,9 @@
 //! writer has marked it, the loop restarts the feeder (waiting for any feed
 //! in flight) and the next boot finishes it. An allowed Lock and Mic hold
 //! starts BLE setup mode ([`setup`](super::setup)), which runs in this loop
-//! until it reboots. A
+//! until it reboots. So does a boot with no network to join
+//! (`unprovisioned`): a consumer image with no Wi-Fi stored, which has no
+//! other way to reach its owner. A
 //! lock change made here (a button, the idle relock) goes to the event
 //! history; a client's is recorded by the device API, with who made it.
 
@@ -22,12 +24,12 @@ use wellfed_proto::api::{EventBody, Source as EventSource};
 use wellfed_session::noise::Keypair;
 
 use super::events;
-use super::platform::Platform;
-use super::setup::{self, Setup};
+use super::platform::{BuildWifi, Platform};
+use super::setup::{self, Cause, Setup};
 use crate::panel::{Action, Config, Event, Panel, Source};
 use wellfed_core::named_enum;
 use wellfed_device_api::mailbox::Lock;
-use wellfed_device_api::mailbox::{ClientChange, KeyResult, Requested};
+use wellfed_device_api::mailbox::{ClientChange, KeyResult, PlansResult, Requested, WifiResult};
 use wellfed_device_api::pairing::{self, Pairing, Path, Refusal};
 
 named_enum! {
@@ -115,9 +117,12 @@ pub fn pair(event: pairing::Event, f: &mut impl fmt::Write) -> fmt::Result {
 pub struct Owner {
     panel: Option<Panel>,
     pairing: Pairing,
-    /// BLE setup mode, from the gesture that starts it until the reboot
-    /// that ends it.
+    /// BLE setup mode, from the gesture or the boot that starts it until
+    /// the reboot that ends it.
     setup: Setup,
+    /// This boot has decided whether it starts setup mode on its own
+    /// (`unprovisioned`); it decides once.
+    boot_decided: bool,
     /// The recovery offer's decision, until the device API takes it.
     recovery: Option<pairing::Event>,
     /// An update key's decision (its Dispense press, or the timeout), until
@@ -160,6 +165,7 @@ impl Owner {
             panel: None,
             pairing: Pairing::new(pairing::Config::DEFAULT),
             setup: Setup::off(),
+            boot_decided: false,
             recovery: None,
             signer: None,
             presses: 0,
@@ -250,6 +256,19 @@ impl Owner {
             panel
         });
 
+        // Before this step's gestures, so a code's presses already find
+        // setup mode on.
+        if !self.boot_decided
+            && let Some(start) = unprovisioned(platform)
+        {
+            self.boot_decided = true;
+            if start && !self.setup.is_on() {
+                self.setup.start(platform, now);
+                let cause = Cause::Unprovisioned;
+                record(Record::Setup(setup::Record::Start { cause }));
+            }
+        }
+
         // A setup offer's decision, for setup mode's session.
         let mut decided = None;
         while let Some(gesture) = platform.gesture() {
@@ -271,7 +290,8 @@ impl Owner {
                 }
                 if event == pairing::Event::SetupOpened && !self.setup.is_on() {
                     self.setup.start(platform, now);
-                    record(Record::Setup(setup::Record::Start));
+                    let cause = Cause::Hold;
+                    record(Record::Setup(setup::Record::Start { cause }));
                 }
                 decided = decided.or(setup_decision(event));
                 self.recovery = self.recovery.or(recovery_decision(event));
@@ -352,6 +372,42 @@ fn reset_hold<P: Platform>(
         *ticket = Some(platform.keys_ticket());
     }
     record(Record::Reset { requested });
+}
+
+/// Whether this boot starts setup mode on its own; `None` until it can
+/// tell. A boot that has no network to join (no build Wi-Fi, none stored)
+/// can reach its owner only over BLE, and the boot itself is the only
+/// trigger: every KM0 backup register is taken, so no earlier boot can
+/// leave a request behind.
+///
+/// It waits for the writer to publish the Wi-Fi store writable (a store
+/// still loading, or not yet armed, would refuse setup's save) and the
+/// plans. A feeder with an enabled plan starts nothing: setup mode refuses
+/// every feed, and the clock's time survives a warm reset, so a meal can
+/// still fall due without a network. Nor does a boot a reset storm holds, until its hold ends: the
+/// restart that ends setup is a deliberate one, which would cut the
+/// storm's backoff short. Kept out of line, so the plans' copy is not on
+/// the step's stack while setup mode runs.
+#[inline(never)]
+fn unprovisioned<P: Platform>(platform: &mut P) -> Option<bool> {
+    if platform.build_wifi() == BuildWifi::Present {
+        return Some(false);
+    }
+    if platform.held() {
+        return None;
+    }
+
+    let stored = match platform.wifi() {
+        WifiResult::Current { view, .. } if view.writable => view.stored_ssid_crc.is_some(),
+        WifiResult::Current { .. } | WifiResult::Busy => return None,
+        WifiResult::ReadOnly | WifiResult::Invalid => return Some(false),
+    };
+    let meals = match platform.plans() {
+        PlansResult::Current { view, .. } => view.table.iter().flatten().any(|plan| plan.enabled),
+        PlansResult::Busy => return None,
+        PlansResult::ReadOnly | PlansResult::Unserved => false,
+    };
+    Some(!stored && !meals)
 }
 
 /// A panel event: a lock change made here goes to the history (a client's

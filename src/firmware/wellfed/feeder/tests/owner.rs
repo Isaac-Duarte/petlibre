@@ -448,7 +448,9 @@ fn lock_and_mic_held_start_setup_mode_only_when_unlocked() {
         records[..2],
         [
             Record::Pairing(pairing::Event::SetupOpened),
-            Record::Setup(setup::Record::Start),
+            Record::Setup(setup::Record::Start {
+                cause: setup::Cause::Hold
+            }),
         ]
     );
     assert!(

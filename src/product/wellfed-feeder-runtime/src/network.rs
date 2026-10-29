@@ -44,18 +44,13 @@ const RESET_BASE: u32 = wellfed_hal::plaf103::storage::RESET.first;
 /// Consecutive failed joins before the build's credentials take over.
 pub const FALLBACK_AFTER: u32 = 5;
 
-/// Whether the image was built with Wi-Fi credentials of its own.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BuildWifi {
-    /// A bench image: the C entry prefills the bench hotspot.
-    Present,
-    /// A consumer image: the only network is the one the owner stores.
-    Absent,
-}
+pub use wellfed_feeder::feeder::platform::BuildWifi;
 
 /// This image's build Wi-Fi. `wellfed-build` sets `WELLFED_BUILD_WIFI`
 /// exactly when the generated header the C entry prefills from names a
 /// network; the build script turns its presence into `cfg(build_wifi)`.
+/// The loop reads it too (the firmware's `Platform::build_wifi`): an image
+/// without one and nothing stored starts BLE setup mode at boot.
 pub const BUILD_WIFI: BuildWifi = if cfg!(build_wifi) {
     BuildWifi::Present
 } else {

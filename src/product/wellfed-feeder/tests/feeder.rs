@@ -92,10 +92,16 @@ fn records_carry_the_tags_of_their_lines() {
         line(Record::Owner(owner::Record::Start { lock: Lock::Locked })),
         "PLPANEL1 start lock=locked"
     );
-    assert_eq!(
-        line(Record::Owner(owner::Record::Setup(setup::Record::Start))),
-        "PLSET1 start"
-    );
+    for (cause, text) in [
+        (setup::Cause::Hold, "PLSET1 start cause=hold"),
+        (
+            setup::Cause::Unprovisioned,
+            "PLSET1 start cause=unprovisioned",
+        ),
+    ] {
+        let start = setup::Record::Start { cause };
+        assert_eq!(line(Record::Owner(owner::Record::Setup(start))), text);
+    }
     assert_eq!(
         line(Record::Owner(owner::Record::Setup(setup::Record::Driver(
             Link

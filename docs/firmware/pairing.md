@@ -174,9 +174,9 @@ The exchange and its refusals are in [Bluetooth](bluetooth.md#setup-exchange). I
 | `wellfed-client::setup::Session` | The client's side, with the BLE framing. The owner's `wellfed setup` and the Android app share it |
 | `wellfed_feeder::feeder::setup` | The loop's setup mode, over the firmware's `Platform` |
 
-The loop starts the stack on the gesture and offers the key to pairing (`Pairing::setup`), which collects the code from the buttons and runs the proof. Once the client has proven it, the loop queues the enrollment in the keys mailbox and waits for its result (`keys::ticket` and `keys::outcome`). Then it queues the Wi-Fi (`network::save`) and waits for the writer. A client that leaves before the proof cancels its offer (`Pairing::cancel`), so the next press feeds again.
+The loop starts the stack on the gesture, or at a boot with no network to join, and offers the key to pairing (`Pairing::setup`), which collects the code from the buttons and runs the proof. Once the client has proven it, the loop queues the enrollment in the keys mailbox and waits for its result (`keys::ticket` and `keys::outcome`). Then it queues the Wi-Fi (`network::save`) and waits for the writer. A client that leaves before the proof cancels its offer (`Pairing::cancel`), so the next press feeds again.
 
-Setup starts on a gesture rather than at boot because every free KM0 backup register is taken, so a "set up on the next boot" flag has nowhere to live. A reboot still ends it.
+Every free KM0 backup register is taken, so no boot can ask the next one to start setup. A boot starts it on its own only when it can see for itself that it has no network: no build credentials and none stored ([product architecture](product-architecture.md#setup-and-pairing)). A reboot still ends it.
 
 ## What's left
 

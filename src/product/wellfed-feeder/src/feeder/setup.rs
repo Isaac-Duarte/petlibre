@@ -1,9 +1,11 @@
 //! BLE setup mode: a new owner's phone (or the `wellfed` CLI) gives
 //! the feeder Wi-Fi and its key, and learns the feeder's.
 //!
-//! Lock and Mic held on an unlocked panel start it (`pairing`). The loop
-//! then brings up the BLE stack, which a normal boot never starts, and
-//! advertises while the feeder is on mains, as stock does. Each connection
+//! Lock and Mic held on an unlocked panel start it (`pairing`), and so does
+//! a boot that has no network to join: no build Wi-Fi and none stored
+//! ([`Cause::Unprovisioned`], the owner's step). The loop then brings up
+//! the BLE stack, which a provisioned boot never starts, and advertises
+//! while the feeder is on mains, as stock does. Each connection
 //! runs [`wellfed_device_api::setup`]'s responder under the feeder's identity:
 //! 1. The client's ask arrives in the handshake's third message; pairing
 //!    turns it into a pending offer, and the client is told to have the
@@ -54,6 +56,17 @@ pub const IDLE_MS: u32 = 15 * 60_000;
 pub const LINGER_MS: u32 = 2_000;
 
 named_enum! {
+    /// What started setup mode.
+    pub enum Cause {
+        /// Lock and Mic held on an unlocked panel.
+        Hold = "hold",
+        /// The boot found no network to join: no build Wi-Fi and none
+        /// stored.
+        Unprovisioned = "unprovisioned",
+    }
+}
+
+named_enum! {
     pub enum Ended {
         Done = "done",
         Idle = "idle",
@@ -80,7 +93,9 @@ named_enum! {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Record<D> {
-    Start,
+    Start {
+        cause: Cause,
+    },
     /// The link's or the speaker's own record, under its own tag.
     Driver(D),
     Session,
@@ -113,7 +128,7 @@ pub enum Record<D> {
 /// its records.
 pub fn describe<D: fmt::Display>(record: Record<D>, f: &mut impl fmt::Write) -> fmt::Result {
     match record {
-        Record::Start => f.write_str("start"),
+        Record::Start { cause } => write!(f, "start cause={cause}"),
         Record::Driver(record) => write!(f, "{record}"),
         Record::Session => f.write_str("session"),
         Record::Asked => f.write_str("asked"),
@@ -262,9 +277,11 @@ impl Setup {
     }
 
     /// Setup has ended and its reply has had time to go out: the loop
-    /// should reboot now (`Platform::reset`). KM0 counts the watchdog reset
-    /// only for an unconfirmed build, and setup starts from a gesture long
-    /// after confirmation.
+    /// should reboot now (`Platform::reset`). The restart is a deliberate
+    /// one, which ends KM0's reset-storm count, so a setup that finishes
+    /// within minutes of its boot is never counted as a fault. With no
+    /// session for [`IDLE_MS`] it reboots the same way; an unprovisioned
+    /// feeder then enters setup again on the next boot.
     pub fn reboot_due(&self, now: u32) -> bool {
         self.on
             && self

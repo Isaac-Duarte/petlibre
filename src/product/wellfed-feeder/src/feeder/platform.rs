@@ -42,6 +42,16 @@ pub struct Boot {
     pub boot_count: u32,
 }
 
+/// Whether the image was built with Wi-Fi credentials of its own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BuildWifi {
+    /// A bench image: the C entry prefills the bench hotspot.
+    Present,
+    /// A consumer image: the only network is the one the owner stores, so
+    /// a boot with none stored starts BLE setup mode on its own.
+    Absent,
+}
+
 /// The Wi-Fi link as status and the statistics report it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Link {
@@ -245,6 +255,11 @@ pub trait Platform {
     fn boot(&self) -> Boot;
     /// What this firmware serves beyond the protocol's first ops.
     fn capabilities(&self) -> Capabilities;
+    /// Whether the image has build Wi-Fi to join with nothing stored.
+    fn build_wifi(&self) -> BuildWifi;
+    /// A reset storm holds this boot: the feeding owner stays closed until
+    /// the hold's time has run. Held boots step the loop all the same.
+    fn held(&self) -> bool;
     /// Restart the feeder (a watchdog reset on hardware).
     fn reset(&mut self);
     /// A restart was asked for ([`Self::reset`]) and has not come yet: no

@@ -29,8 +29,8 @@ use wellfed_device_api::mailbox::{
 use wellfed_device_api::wifi::Credentials;
 use wellfed_feeder::feeder::Platform;
 use wellfed_feeder::feeder::platform::{
-    Accepted, BleDrop, BleLink, BleStep, Boot, Check, Datagram, DriverRecord, DriverStep,
-    EventSlot, EventsFill, Link, Received, TaskCount, TaskStack, TraceRead, TracesFill,
+    Accepted, BleDrop, BleLink, BleStep, Boot, BuildWifi, Check, Datagram, DriverRecord,
+    DriverStep, EventSlot, EventsFill, Link, Received, TaskCount, TaskStack, TraceRead, TracesFill,
 };
 use wellfed_feeder::feeder::supply::Radio;
 use wellfed_feeder::stats::Totals;
@@ -79,18 +79,27 @@ impl fmt::Display for Driver {
 }
 
 /// The loop's drivers that hold state: setup mode's BLE link and speaker,
-/// which run only in setup mode. The rest of the board is the SDK's.
+/// which run only in setup mode, and whether the image has build Wi-Fi.
+/// The rest of the board is the SDK's.
 pub struct Plaf103 {
     ble: BleSetup,
     speaker: Speaker,
+    build_wifi: BuildWifi,
 }
 
 impl Plaf103 {
     /// Const, so the firmware builds it in its static.
     pub const fn new() -> Self {
+        Self::with_build_wifi(network::BUILD_WIFI)
+    }
+
+    /// As [`Self::new`], as an image with or without build Wi-Fi (host
+    /// tests, whose runtime is built with none).
+    pub const fn with_build_wifi(build_wifi: BuildWifi) -> Self {
         Self {
             ble: BleSetup::new(),
             speaker: Speaker::quiet(),
+            build_wifi,
         }
     }
 }
@@ -175,6 +184,20 @@ impl Platform for Plaf103 {
             .union(Capabilities::PLANS)
             .union(Capabilities::DESICCANT)
             .union(Capabilities::CALL)
+    }
+
+    fn build_wifi(&self) -> BuildWifi {
+        self.build_wifi
+    }
+
+    /// The runtime's storm breaker runs on the target only; a host build
+    /// is never held.
+    fn held(&self) -> bool {
+        #[cfg(target_os = "none")]
+        let held = wellfed_sdk::held();
+        #[cfg(not(target_os = "none"))]
+        let held = false;
+        held
     }
 
     fn reset(&mut self) {

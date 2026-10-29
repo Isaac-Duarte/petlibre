@@ -573,9 +573,7 @@ fn queued_events_are_appended_and_read_back_after_a_reboot() {
         Some(Read::Record(r)) if r.seq == 2
     ));
 
-    // The end of the ring is current only until the next append.
-    assert_eq!(events::read_result(Some(2)), None);
-    step(&mut writer, &mut provider);
+    // At the newest record there is nothing to read, until the next append.
     assert_eq!(events::read_result(Some(2)), Some(Read::End));
     assert!(events::record(None, [3; 16]));
     step(&mut writer, &mut provider);
@@ -584,6 +582,24 @@ fn queued_events_are_appended_and_read_back_after_a_reboot() {
         None,
         "stale once a record lands"
     );
+    step(&mut writer, &mut provider);
+    assert!(matches!(
+        events::read_result(Some(2)),
+        Some(Read::Record(r)) if r.seq == 3
+    ));
+
+    // A subscriber caught up does not take the slot from one catching up:
+    // the answer for the first waits however often the second polls.
+    assert_eq!(events::read_result(Some(3)), Some(Read::End));
+    assert_eq!(events::read_result(None), None, "asked");
+    step(&mut writer, &mut provider);
+    for _ in 0..3 {
+        assert_eq!(events::read_result(Some(3)), Some(Read::End));
+    }
+    assert!(matches!(
+        events::read_result(None),
+        Some(Read::Record(r)) if r.seq == 1
+    ));
 }
 
 /// Every store the writer keeps defers its write while a feed holds the

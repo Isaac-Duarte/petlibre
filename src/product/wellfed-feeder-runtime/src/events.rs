@@ -13,7 +13,8 @@
 //!   [`request_read`]; the writer answers with [`finish_read`], and the loop
 //!   collects it with [`read_result`]. One read is outstanding at a time,
 //!   and an answer stays until the next request, so several subscribers at
-//!   the same cursor share it.
+//!   the same cursor share it. A subscriber at the newest record is told
+//!   so without a read, which leaves the slot to those still catching up.
 //!
 //! - **Epoch:** the writer publishes the ring's epoch once it has opened
 //!   it ([`publish_open`]); the device API welcomes no session before then,
@@ -157,6 +158,10 @@ pub fn last_seq() -> Option<u64> {
 /// and returns `None`.
 pub fn read_result(after: Option<u64>) -> Option<Read> {
     with(|shared| match shared.read {
+        // A subscriber at the newest record needs no read. Asking would
+        // replace the answer another subscriber waits on, and one caught
+        // up asks on every pass, so the other would never collect it.
+        _ if after.is_some() && after == shared.last => Some(Read::End),
         ReadSlot::Ready {
             after: answered,
             read,

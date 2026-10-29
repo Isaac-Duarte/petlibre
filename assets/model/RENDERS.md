@@ -106,7 +106,7 @@ For `panel`, `front` and `card`, write `<view>.json` beside the image: each name
 Open items for the owner:
 
 - **Model gaps.** The power port is a USB-C receptacle (`PowerPort`) low on the back, placed from photographs. `PCB_USBC` still sits inside the front of the band. There is no battery door (the underside is a flat disc), so `bottom` can't yet show one. `HopperFill` has no material; `render.py` gives it `PL_Kibble`.
-- **Lit icons.** The model lights `Icon_Lock` and `Icon_WiFi` blue. That color isn't recorded, so `render.py` gives them the other icons' print material.
+- **Lit icons.** The model lights `Icon_Lock` and `Icon_WiFi` blue and prints `Icon_Bowl` and `Icon_Warn` grey. Neither matches the device, whose unlit indicators are dark, so `render.py` gives all four a near-black satin finish (`UNLIT_INDICATOR`). The buttons' icons keep the model's white print.
 - **Icon order.** Seen from the front, the buttons run Lock, Dispense, Mic, Reset, and the indicators low food, lock, Wi-Fi, error/warning, each from left to right. The model's ring matches: `Icon_LockButton` and `Icon_Portion` at the left, the four indicators grouped in the middle, `Icon_Mic` and `Icon_Reset` at the right.
 - **Uncertain mapping.** `led_food` is `Icon_Bowl` by elimination.
 - **Panel legibility.** The icons span 0.17 m of ring, so even at the tightest square frame each is about 10 px wide at 390 px.

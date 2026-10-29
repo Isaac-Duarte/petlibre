@@ -42,11 +42,18 @@ FEEDER_WIDTH = 0.82 * 36.0 / 50.0
 
 BRAND_OBJECTS = ("Logo", "PCB_ChipLabel")
 
-# The ring icons the model lights blue. Only the red fault light is recorded on
-# hardware, so every indicator renders unlit (the smoked look of an indicator
-# icon with its LED off) and the UI draws light through the hotspots.
-LIT_ICONS = ("Icon_Lock", "Icon_WiFi")
-UNLIT_ICON = "PL_Icon__Icon_Bowl"
+# Only the red fault light is recorded on hardware, so every indicator renders
+# unlit and the UI draws light through the hotspots. Unlit, an indicator is a
+# smoked window over a dark LED: a near-black satin glyph on the gloss ring,
+# seen by its duller sheen rather than its color. The model lights two of them
+# blue and gives the other two a grey print, which both read as light.
+INDICATOR_ICONS = ("Icon_Bowl", "Icon_Lock", "Icon_WiFi", "Icon_Warn")
+UNLIT_INDICATOR = {
+    "Base Color": (0.02, 0.02, 0.022, 1.0),
+    "Roughness": 0.45,
+    "Specular IOR Level": 0.08,
+    "Emission Strength": 0.0,
+}
 
 # The window's food is the KibbleWin* pieces behind WindowGlass, in front of the
 # bulk HopperFill. The glass spans these heights (world Z).
@@ -280,14 +287,13 @@ def truthful():
         if obj.hide_render:
             hide(obj)
 
-    # Unlit, a lit icon looks like every other print on the ring: its blue base
-    # color alone would still read as light.
-    printed = bpy.data.materials[UNLIT_ICON].node_tree.nodes["Principled BSDF"].inputs
-    for name in LIT_ICONS:
+    # Each indicator has a material of its own, so this leaves the buttons'
+    # printed icons as modeled.
+    for name in INDICATOR_ICONS:
         for slot in bpy.data.objects[name].material_slots:
             inputs = slot.material.node_tree.nodes["Principled BSDF"].inputs
-            for socket in ("Base Color", "Emission Color", "Emission Strength"):
-                inputs[socket].default_value = printed[socket].default_value
+            for socket, value in UNLIT_INDICATOR.items():
+                inputs[socket].default_value = value
 
     # The model leaves the hopper's bulk food without a material, and it shows
     # through the window above partial fills and with the lid off.

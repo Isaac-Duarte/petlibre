@@ -24,16 +24,26 @@
 //! an uncertain outcome ends the run; so does the put of stock's plans,
 //! which an unanswered put judges by reading the plans back.
 //!
+//! What the run asks the owner goes through one `Asker`, at a terminal or,
+//! with `--prompts lines`, as JSON lines for the bench server that runs it
+//! as a job. SIGTERM (a job's cancel) and SIGINT end the run through the
+//! same stop as its end, and a write still without its answer is reported
+//! as uncertain, not sent again.
+//!
 //! [consumer installation]: ../../../../docs/firmware/consumer-installation.md
 
+use std::io::Write;
 use std::net::{IpAddr, SocketAddr, UdpSocket};
+use std::os::fd::AsFd;
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use clap::Args;
 use serde::de::IgnoredAny;
 use tokio::process::{Child, Command};
+use tokio::signal::unix::{SignalKind, signal};
 use wellfed_client::install::{
     CONTAINER_HEADER, DnsCheck, DnsOverride, FeederTrust, Install, InstallError, PlansPut,
     Provision, Replacement, Requested, SETUP_ADDRESS, STOCK_BROKER_PORT, SetupFrame, Step,
@@ -41,6 +51,7 @@ use wellfed_client::install::{
 };
 use wellfed_client::update::{Image, InstallError as UpdateError};
 use wellfed_formats::bench::lease::Lease;
+use wellfed_formats::bench::prompt::Prompt;
 use wellfed_formats::manifest::BuildManifest;
 use wellfed_formats::stock::{
     ImageLease, OtaReport, ServerConfig, StockStatus, TrialAnswer, TrialPhase, TrialRequest,
@@ -49,6 +60,7 @@ use wellfed_model::{Answer, Generation, Op, PLANS, Plan, Plans};
 use wellfed_proto::api::PORT;
 use wellfed_stock_api::{ApiError, Auth, StockApi};
 
+use crate::ask::{Asker, Prompts};
 use crate::keys::{OwnerKey, fingerprint};
 use crate::push::{Pushed, push};
 
@@ -152,6 +164,22 @@ pub(crate) struct InstallArgs {
     /// the jump.
     #[arg(long)]
     calibrate_clock: bool,
+    /// How the run asks the person at the feeder: at this terminal, or as
+    /// JSON lines on standard output and input for the bench server, which
+    /// runs it as a job. The frame route (--ssid) asks at a terminal only,
+    /// since it reads the passphrase there.
+    #[arg(long, value_enum, default_value_t)]
+    prompts: Prompts,
+}
+
+/// A run that cannot ask the way it was told to.
+#[derive(Debug, thiserror::Error)]
+enum PromptsRefused {
+    #[error(
+        "--ssid reads the network's passphrase at a terminal, so it does not run with \
+         --prompts lines; nothing was started. Use --broker-name on the bench"
+    )]
+    Frame,
 }
 
 /// A stock config the install will not run on.
@@ -189,9 +217,67 @@ struct Run {
     /// The `--stock-backup` copy, kept under `--backups` before promotion
     /// once the feeder's identity is known.
     given: Option<StockBackup>,
+    asker: Asker<Box<dyn Write>>,
+    /// A write sent whose answer the run has not read yet. A signal that
+    /// ends the run then reports it as uncertain; it is never sent again.
+    out: Option<Out>,
+}
+
+/// A write the run has sent, still without its answer.
+#[derive(Debug, Clone, Copy)]
+enum Out {
+    /// Stock's install request, under this id.
+    Request(uuid::Uuid),
+    /// The signed update, pushed from bank 0 into bank 1.
+    Promotion,
+    /// Stock's converted plans, put on the replacement.
+    Plans,
+}
+
+impl std::fmt::Display for Out {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Request(id) => write!(f, "stock's install request {id}"),
+            Self::Promotion => f.write_str("the promotion's push"),
+            Self::Plans => f.write_str("the put of stock's plans"),
+        }
+    }
+}
+
+/// The signals that end a run through its cleanup: a job's cancel sends
+/// SIGTERM, a terminal's Ctrl-C SIGINT.
+#[derive(Debug, Clone, Copy)]
+enum Signal {
+    Terminate,
+    Interrupt,
+}
+
+impl std::fmt::Display for Signal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Terminate => "SIGTERM",
+            Self::Interrupt => "SIGINT",
+        })
+    }
+}
+
+/// A run a signal ended, after it stopped the stock server.
+#[derive(Debug, thiserror::Error)]
+enum Stopped {
+    #[error("stopped by {signal}; no write was waiting for its answer")]
+    Settled { signal: Signal },
+    #[error(
+        "stopped by {signal} with {out} sent and its answer unread: its outcome is unknown, and \
+         it is not sent again. Read what the feeder runs (wellfed status, or stock's own \
+         report) before running again"
+    )]
+    Uncertain { signal: Signal, out: Out },
 }
 
 pub(crate) async fn run(args: InstallArgs) -> Result<()> {
+    if args.prompts == Prompts::Lines && args.ssid.is_some() {
+        return Err(PromptsRefused::Frame.into());
+    }
     let config_path = std::path::absolute(&args.stock_config).context("--stock-config")?;
     let config: ServerConfig = wellfed_formats::load(&config_path)
         .with_context(|| format!("read {}", config_path.display()))?;
@@ -237,10 +323,16 @@ pub(crate) async fn run(args: InstallArgs) -> Result<()> {
         );
     }
 
+    // From here on a signal ends the run through `stop`, so the stock
+    // server's broker child is never left on the MQTT port.
+    let mut terminate = signal(SignalKind::terminate()).context("handle SIGTERM")?;
+    let mut interrupt = signal(SignalKind::interrupt()).context("handle SIGINT")?;
     let mut run = Run {
         stock_bin: stock_bin(args.stock_server.as_deref())?,
         api: StockApi::new(&config, API_TIMEOUT),
         key: OwnerKey::open(&args.keys, None, OwnerKey::system())?,
+        // After the passphrase, which `provision` read from standard input.
+        asker: Asker::standard(args.prompts),
         args,
         config_path,
         container,
@@ -251,10 +343,23 @@ pub(crate) async fn run(args: InstallArgs) -> Result<()> {
         peer: None,
         identity: None,
         given: backup,
+        out: None,
     };
-    let result = run.drive(&mut install).await;
+    let ended = tokio::select! {
+        result = run.drive(&mut install) => Ok(result),
+        _ = terminate.recv() => Err(Signal::Terminate),
+        _ = interrupt.recv() => Err(Signal::Interrupt),
+    };
     run.stop().await;
-    result
+
+    match ended {
+        Ok(result) => result,
+        Err(signal) => Err(match run.out {
+            Some(out) => Stopped::Uncertain { signal, out },
+            None => Stopped::Settled { signal },
+        }
+        .into()),
+    }
 }
 
 /// The startup identity the review's build manifest records; the image
@@ -314,6 +419,17 @@ fn activated(bank: u8, build: &str, served: &str) -> bool {
     bank == 1 && build.eq_ignore_ascii_case(served)
 }
 
+/// A child's standard output, sent to this process's standard error: with
+/// `--prompts lines` this process's standard output carries prompts only,
+/// and in a terminal both show alike.
+fn onto_stderr() -> Result<Stdio> {
+    let stderr = std::io::stderr()
+        .as_fd()
+        .try_clone_to_owned()
+        .context("duplicate standard error for a child")?;
+    Ok(Stdio::from(stderr))
+}
+
 /// SIGTERM, up to [`STOP_WAIT`] to exit, then SIGKILL.
 async fn stop_child(mut child: Child) {
     let pid = child
@@ -335,67 +451,30 @@ async fn stop_child(mut child: Child) {
 /// the whole install, so the owner checks the device ID (on the feeder's
 /// label or in the vendor app) and the address (the router's client list)
 /// before anything is sent.
-fn recognized(trust: &FeederTrust) -> Result<bool> {
+async fn recognized(asker: &mut Asker<Box<dyn Write>>, trust: FeederTrust) -> Result<bool> {
     let (device, address) = match trust {
         FeederTrust::Enrolled { device, address } => (device, address),
         // The bench: its credentials came from a capture of this feeder.
         FeederTrust::Captured => return Ok(true),
         FeederTrust::Contested => return Ok(false),
     };
-    yes(&format!(
-        "The broker trusted feeder {device}, connecting from {address}. Is this your feeder? [y/N]"
-    ))
-}
-
-/// Whether the owner, warned up front, accepts that the Reset hold erases
-/// stock's plans before the installer can read them.
-fn reset_accepted() -> Result<bool> {
-    eprintln!(
-        "The fallback route starts with stock's Reset hold, which runs its factory restore: \
-         it erases stock's feeding plans, Wi-Fi and settings before the installer can read \
-         them, so no plans are imported. Note your plans in the vendor app now, to set them \
-         again on the replacement. Where your router (or a resolver you run) can override a \
-         DNS name, stop here and run with --broker-name instead: that keeps the plans."
-    );
-    yes("Erase stock's plans with the Reset hold and go on? [y/N]")
-}
-
-/// The owner's answer to a `[y/N]` question.
-fn yes(question: &str) -> Result<bool> {
-    eprintln!("{question}");
-    let mut line = String::new();
-    std::io::stdin()
-        .read_line(&mut line)
-        .context("read standard input")?;
-    Ok(matches!(line.trim(), "y" | "Y" | "yes"))
-}
-
-/// Wait for the owner to press Enter after `prompt`.
-fn confirm(prompt: &str) -> Result<()> {
-    eprintln!("{prompt} Then press Enter.");
-    let mut line = String::new();
-    std::io::stdin()
-        .read_line(&mut line)
-        .context("read standard input")?;
-    Ok(())
+    Ok(asker
+        .yes(Prompt::RecognizeFeeder { device, address })
+        .await?)
 }
 
 /// Guide the owner through the DNS override, then look the name up from
 /// this computer and show what it found, before the feeder restarts. The
 /// lookup is advice only: this computer may ask another resolver than the
 /// feeder does, so the run waits for stock at the broker whatever it shows.
-async fn point_dns(dns: &DnsOverride) -> Result<()> {
+async fn point_dns(asker: &mut Asker<Box<dyn Write>>, dns: &DnsOverride) -> Result<()> {
     let (name, broker) = (dns.name(), dns.broker());
-    eprintln!(
-        "Point stock's broker name at this computer. In your router's DNS settings (or a \
-         resolver you run, if your router hands that one out), make {name} resolve to \
-         {broker}. Only that name changes; stock keeps its Wi-Fi, its credentials and its \
-         plans, and nothing is written to it. Remove the override once the install is done: \
-         a feeder rolled back to stock would otherwise keep looking for this computer. \
-         While it stands, any other device that uses the same name reaches this computer \
-         too, and loses its connection to the vendor."
-    );
-    confirm("Set the override.")?;
+    asker
+        .done(Prompt::SetOverride {
+            name: name.to_string(),
+            broker,
+        })
+        .await?;
 
     let resolved: Vec<IpAddr> = tokio::net::lookup_host((name, STOCK_BROKER_PORT))
         .await
@@ -417,11 +496,8 @@ async fn point_dns(dns: &DnsOverride) -> Result<()> {
 }
 
 /// Ask the owner to restart the feeder, with the broker already listening.
-fn restart_feeder() -> Result<()> {
-    confirm(
-        "Restart the feeder so stock looks the name up again: unplug its adapter for about \
-         10 s (take its batteries out too, if fitted) and plug it back in.",
-    )?;
+async fn restart_feeder(asker: &mut Asker<Box<dyn Write>>) -> Result<()> {
+    asker.done(Prompt::RestartFeeder).await?;
     eprintln!(
         "Waiting for stock to connect here. If it does not within a few minutes, check the \
          override in the resolver your router hands out and restart the feeder again; \
@@ -435,15 +511,17 @@ impl Run {
         loop {
             match install.step() {
                 Step::PointDns(dns) => {
-                    point_dns(&dns).await?;
+                    point_dns(&mut self.asker, &dns).await?;
                     // The enrollment window opens only now, just before
                     // stock restarts into it.
                     self.serve().await?;
-                    restart_feeder()?;
+                    restart_feeder(&mut self.asker).await?;
                     install.dns_pointed();
                 }
                 Step::ConfirmReset => {
-                    if reset_accepted()? {
+                    // Warned up front: the Reset hold erases stock's plans
+                    // before the installer can read them.
+                    if self.asker.yes(Prompt::EraseStockPlans).await? {
                         install.reset_accepted();
                     } else {
                         install.reset_declined();
@@ -451,7 +529,7 @@ impl Run {
                 }
                 Step::SendFrame(frame) => {
                     self.serve().await?;
-                    self.send_frame(frame.bytes())?;
+                    self.send_frame(frame.bytes()).await?;
                     install.frame_sent();
                 }
                 Step::AwaitStock => {
@@ -459,7 +537,7 @@ impl Run {
                     self.await_stock(install).await?;
                 }
                 Step::ConfirmFeeder(trust) => {
-                    if recognized(&trust)? {
+                    if recognized(&mut self.asker, trust).await? {
                         install.feeder_confirmed();
                     } else {
                         install.feeder_rejected();
@@ -581,6 +659,7 @@ impl Run {
             .arg("--enable-ota-trial")
             .arg("--enroll-minutes")
             .arg(self.args.enroll_minutes.to_string())
+            .stdout(onto_stderr()?)
             .kill_on_drop(true);
         if self.args.calibrate_clock {
             command.arg("--calibrate-clock");
@@ -603,16 +682,12 @@ impl Run {
         }
     }
 
-    fn send_frame(&self, frame: &[u8]) -> Result<()> {
+    async fn send_frame(&mut self, frame: &[u8]) -> Result<()> {
         // Static analysis: Reset held about 5 s on an unlocked stock panel
         // starts its factory restore, which is how the vendor app's "add
         // device" begins; that it leaves stock in setup mode is still to be
         // seen on hardware.
-        confirm(
-            "Put stock into setup mode: unlock its panel (hold Lock about 5 s if the lock \
-             light is on), then hold Reset (the rightmost button) about 5 s. Join this \
-             computer to the access point the feeder then opens.",
-        )?;
+        self.asker.done(Prompt::SetupMode).await?;
         let socket = UdpSocket::bind("0.0.0.0:0").context("open a UDP socket")?;
         socket.set_read_timeout(Some(Duration::from_secs(5)))?;
         socket
@@ -626,7 +701,7 @@ impl Run {
             ),
             Err(_) => eprintln!("Sent the setup frame once; no answer within 5 s (not resent)"),
         }
-        confirm("Join this computer back to your own network.")
+        Ok(self.asker.done(Prompt::JoinBack).await?)
     }
 
     fn stock_status(&self) -> Result<StockStatus, ApiError> {
@@ -675,6 +750,7 @@ impl Run {
             request_id: id.to_string(),
             server_token: lease.token.to_string(),
         };
+        self.out = Some(Out::Request(id));
         let answered = self.api.post::<IgnoredAny>("/api/ota/trial", &body);
 
         // Refused only on the server's word and a ledger read that shows no
@@ -683,6 +759,7 @@ impl Run {
             Ok(status) => Ok(status.trial(&id.to_string()).map(|trial| trial.phase)),
             Err(error) => Err(error),
         };
+        self.out = None;
         Ok(match (answered, recorded) {
             (Ok(_), _) | (_, Ok(Some(TrialPhase::Submitted))) => Requested::Sent,
             (Err(ApiError::Refused { .. }), Ok(None)) => Requested::Refused,
@@ -701,6 +778,7 @@ impl Run {
             .arg(&self.config_path)
             .arg("--directory")
             .arg(&self.args.review)
+            .stdout(onto_stderr()?)
             .kill_on_drop(true);
         self.images = Some(command.spawn().context("start wellfed-stock ota-images")?);
 
@@ -811,10 +889,7 @@ impl Run {
             }
             tokio::time::sleep(POLL).await;
         }
-        confirm(
-            "Pair with the replacement: on its panel (unlocked), hold Lock, then Dispense, \
-             to open the recovery window.",
-        )?;
+        self.asker.done(Prompt::OpenRecoveryWindow).await?;
         let (identity, text) = crate::pairing::recover(&mut self.key, address).await?;
         eprintln!("Paired with feeder {} ({text}).", fingerprint(&identity));
         self.identity = Some(identity);
@@ -970,7 +1045,11 @@ impl Run {
 
     /// Put the import once. Anything but an answer is unanswered, which
     /// the steps judge by reading the plans back; it is never sent again.
-    async fn put_plans(&self, base: Generation, plans: [Option<Plan>; PLANS]) -> Result<PlansPut> {
+    async fn put_plans(
+        &mut self,
+        base: Generation,
+        plans: [Option<Plan>; PLANS],
+    ) -> Result<PlansPut> {
         eprintln!("Setting stock's converted plans on the replacement.");
         // Opening a session sends nothing, so it may be tried again; the
         // put itself goes once.
@@ -986,7 +1065,11 @@ impl Run {
             }
         };
         let op = Op::PutPlans { base, plans };
-        Ok(match connection.ask(crate::device::random()?, &op).await {
+        let id = crate::device::random()?;
+        self.out = Some(Out::Plans);
+        let answered = connection.ask(id, &op).await;
+        self.out = None;
+        Ok(match answered {
             Ok(Answer::Done { .. }) => PlansPut::Done,
             Ok(Answer::Refused(refusal)) => PlansPut::Refused(refusal),
             Ok(_) | Err(_) => PlansPut::Unanswered,
@@ -1059,7 +1142,7 @@ impl Run {
     /// feeder already restarted into its trial boot: offering the manifest
     /// there would interrupt the trial, so the promotion counts as
     /// activated instead.
-    async fn promote(&self, served: &str) -> Result<Result<(), UpdateError>> {
+    async fn promote(&mut self, served: &str) -> Result<Result<(), UpdateError>> {
         let payload = self
             .container
             .get(CONTAINER_HEADER..)
@@ -1071,12 +1154,14 @@ impl Run {
         };
 
         eprintln!("Promoting: bank 0 writes the replacement into bank 1.");
+        self.out = Some(Out::Promotion);
         let pushed = push(
             image,
             async || self.connect().await,
             |bank, build| activated(bank, build, served),
         )
         .await?;
+        self.out = None;
         Ok(match pushed {
             Pushed::Activated | Pushed::AlreadyRunning => Ok(()),
             Pushed::Failed(error) => Err(error),
@@ -1231,6 +1316,36 @@ mod tests {
             .map(|entry| entry.unwrap().file_name())
             .collect();
         assert_eq!(beside, ["server.json"]);
+    }
+
+    /// The frame route reads its passphrase at a terminal, so a run asked
+    /// to prompt in lines is refused before it reads anything.
+    #[tokio::test]
+    async fn the_frame_route_is_refused_with_prompts_in_lines() {
+        use clap::Parser;
+
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("server.json");
+        let line = Line::parse_from([
+            "install",
+            "--review",
+            "missing-review",
+            "--manifest",
+            "missing.bin",
+            "--stock-config",
+            config.to_str().unwrap(),
+            "--ssid",
+            "Home",
+            "--prompts",
+            "lines",
+        ]);
+
+        let error = run(line.args).await.unwrap_err();
+        assert!(matches!(
+            error.downcast_ref::<PromptsRefused>(),
+            Some(PromptsRefused::Frame)
+        ));
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
     }
 
     #[test]

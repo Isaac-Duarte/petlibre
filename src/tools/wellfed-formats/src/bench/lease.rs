@@ -302,8 +302,10 @@ impl Holder {
 }
 
 /// Whether `pid`, or a process it descends from, is `holder`, alive on this
-/// host and boot. That process is part of the holder's run.
-fn descends_from(pid: u32, holder: &Holder) -> Result<bool> {
+/// host and boot. That process is part of the holder's run: a lease's
+/// child inherits it, and a bench server's job may do what the server
+/// lets its jobs do.
+pub fn descends_from(pid: u32, holder: &Holder) -> Result<bool> {
     if holder.host != host()? || holder.boot != boot_id()? {
         return Ok(false);
     }

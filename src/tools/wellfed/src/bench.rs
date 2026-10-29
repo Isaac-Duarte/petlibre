@@ -8,7 +8,9 @@
 //! - a command whose key is the server's goes through its session;
 //! - anything else is refused with [`BenchRefusal`], naming the server:
 //!   another key, `--address`, and the commands that open sessions of their
-//!   own (`setup`, `install`, `recover`, `join`, `restore-stock`);
+//!   own (`setup`, `install`, `recover`, `join`, `restore-stock`), unless
+//!   this process is one of the server's jobs, which the server runs with
+//!   its own session paused;
 //! - a direct session is never opened beside it, nor used as a fallback: a
 //!   write that got no answer through the server must not go again another
 //!   way.
@@ -38,6 +40,7 @@ use tokio::net::UnixStream;
 use wellfed_formats::bench::feeder::{
     Ask, Asked, DeviceUnavailable, Opened, PushedPage, SessionInfo, Stream,
 };
+use wellfed_formats::bench::lease::{self, Holder};
 use wellfed_formats::bench::rendezvous;
 use wellfed_formats::owner::OwnerKeyFile;
 use wellfed_model::{Answer, Capabilities, ClientRole, Op, Pushed};
@@ -133,6 +136,7 @@ pub(crate) enum BenchRefusal {
 pub(crate) struct Bench {
     socket: PathBuf,
     root: PathBuf,
+    holder: Holder,
 }
 
 impl Bench {
@@ -146,6 +150,7 @@ impl Bench {
             Ok(_) => Ok(Some(Self {
                 socket: pointer.socket,
                 root: pointer.root,
+                holder: pointer.holder,
             })),
             Err(_) => Err(BenchRefusal::NotAnswering {
                 pid: pointer.holder.pid,
@@ -154,6 +159,14 @@ impl Bench {
             }
             .into()),
         }
+    }
+
+    /// Whether this process is one of the server's jobs: it descends from
+    /// the process the pointer names. A job that opens sessions of its own
+    /// runs while the server holds its feeder session paused for it, so
+    /// the server's session and the job's never share the feeder.
+    pub(crate) fn runs_this_process(&self) -> Result<bool> {
+        Ok(lease::descends_from(std::process::id(), &self.holder)?)
     }
 
     /// Refuse `command`, which opens sessions of its own.
@@ -495,7 +508,6 @@ mod tests {
     use serde::Deserialize;
     use tokio::sync::Mutex;
     use wellfed_feeder_sim::harness::Threaded;
-    use wellfed_formats::bench::lease::Holder;
     use wellfed_formats::bench::live::{Pause, Unavailable};
     use wellfed_formats::bench::rendezvous::Rendezvous;
     use wellfed_model::{Event, EventBody};
@@ -784,7 +796,24 @@ mod tests {
             "{refused}"
         );
 
-        // So are the commands that open sessions of their own.
+        // So are the commands that open sessions of their own, from any
+        // process the server did not start: here the server is a process
+        // this one does not descend from.
+        let mut server = std::process::Command::new("sleep")
+            .arg("60")
+            .spawn()
+            .unwrap();
+        let point_at = |holder: Holder| {
+            let pointer = Rendezvous {
+                socket: standing.root.join("private/bench.sock"),
+                root: standing.root.clone(),
+                holder,
+            };
+            for directory in pointers {
+                rendezvous::publish(directory, &pointer).unwrap();
+            }
+        };
+        point_at(Holder::of(server.id(), vec!["wellfed-bench".into()]).unwrap());
         let refused = crate::refuse_beside_bench("install", pointers)
             .await
             .err()
@@ -799,6 +828,16 @@ mod tests {
             ),
             "{refused}"
         );
+        server.kill().unwrap();
+        server.wait().unwrap();
+
+        // The server's own job passes: this process descends from the one
+        // the pointer names (the test runner, standing in for the server).
+        let parent = std::os::unix::process::parent_id();
+        point_at(Holder::of(parent, vec!["wellfed-bench".into()]).unwrap());
+        crate::refuse_beside_bench("install", pointers)
+            .await
+            .unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

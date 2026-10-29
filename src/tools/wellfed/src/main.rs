@@ -29,6 +29,7 @@
 #![forbid(unsafe_code)]
 
 mod access;
+mod ask;
 mod backup;
 mod bench;
 mod ble;
@@ -243,9 +244,12 @@ impl Toggle {
 }
 
 /// Refuse `command`, which opens device sessions of its own, while a bench
-/// server holds the feeder's (its pointer in `rendezvous`).
+/// server holds the feeder's (its pointer in `rendezvous`). The server's
+/// own jobs pass: only the server starts one, and it pauses its session
+/// for a job that opens its own.
 async fn refuse_beside_bench(command: &'static str, rendezvous: &[PathBuf]) -> Result<()> {
     match bench::Bench::find(rendezvous).await? {
+        Some(bench) if bench.runs_this_process()? => Ok(()),
         Some(bench) => Err(bench.refuse(command).into()),
         None => Ok(()),
     }
@@ -361,6 +365,12 @@ mod tests {
         for other in [&["--ssid", "Home"][..], &["--from-bank0"][..]] {
             assert!(Cli::try_parse_from([&dns[..], other].concat()).is_err());
         }
+        // Prompts go to a terminal or, for the bench server, as lines.
+        for prompts in ["terminal", "lines"] {
+            let asked = [&dns[..], &["--prompts", prompts]].concat();
+            assert!(Cli::try_parse_from(asked).is_ok(), "{prompts}");
+        }
+        assert!(Cli::try_parse_from([&dns[..], &["--prompts", "json"]].concat()).is_err());
         // The frame's broker means nothing without the frame.
         let broker = [&install[..8], &["--broker", "10.42.103.1:1883"]].concat();
         assert!(Cli::try_parse_from(broker).is_err());

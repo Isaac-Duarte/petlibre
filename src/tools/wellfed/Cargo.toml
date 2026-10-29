@@ -31,7 +31,7 @@ rustix = { version = "1", features = ["process"] }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["io-util", "macros", "net", "process", "rt", "time"] }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "process", "rt", "signal", "sync", "time"] }
 uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]

@@ -10,13 +10,14 @@
 //!   wait while a feed holds the outputs, so the events of a long feed pile
 //!   up here, and the feed's own result must not be the one lost.
 //! - **Reads:** the device API asks for the record after a cursor with
-//!   [`request_read`]; the writer answers with [`finish_read`], and the loop
-//!   collects it with [`read_result`]. One read is outstanding at a time.
-//!   An answer is a batch of up to [`READ_BATCH`] records and stays until
-//!   the next request, so a subscriber catching up walks through it a pass
-//!   a record, and several subscribers within it share it. A subscriber at
-//!   the newest record is told so without a read, which leaves the slot to
-//!   those still catching up.
+//!   [`read_result`]; the writer takes the request from [`read_request`]
+//!   and answers with [`finish_read`], and the loop collects it with
+//!   [`read_result`] again. One read is outstanding at a time. An answer is
+//!   a batch of up to [`READ_BATCH`] records and stays until the next
+//!   request, so a subscriber catching up walks through all of it in one
+//!   pass, into one frame of events, and several subscribers within it
+//!   share it. A subscriber at the newest record is told so without a read,
+//!   which leaves the slot to those still catching up.
 //!
 //! - **Epoch:** the writer publishes the ring's epoch once it has opened
 //!   it ([`publish_open`]); the device API welcomes no session before then,
@@ -33,10 +34,11 @@ use wellfed_hal::sdk;
 /// Records the loop may queue before the writer takes them.
 pub const QUEUE: usize = 16;
 
-/// Records one read answers at most. A subscriber catching up takes one
-/// record a loop pass; a batch spares it a round trip through the writer,
-/// which polls every few milliseconds, for each of them.
-pub const READ_BATCH: usize = 16;
+/// Records one read answers at most. A frame holds at least 31 events (most
+/// encode to 10-25 bytes), so one round trip through the writer, which polls
+/// every few milliseconds, fills most of the frame a subscriber catching up
+/// sends a pass.
+pub const READ_BATCH: usize = 32;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Queued {

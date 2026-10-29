@@ -32,6 +32,14 @@ fn messages() -> Vec<Fixture> {
         out.truncate(len);
         out
     }
+    fn events(events: &[Event]) -> Vec<u8> {
+        let mut buf = vec![0; FRAME_MAX];
+        let mut writer = EventBatchWriter::new(&mut buf);
+        for event in events {
+            writer.push(event).unwrap();
+        }
+        entry(&FeederMessage::Events(writer.batch()))
+    }
     let client = |bytes: &[u8]| decode::<ClientMessage<'_>>(bytes).is_ok();
     let feeder = |bytes: &[u8]| decode::<FeederMessage<'_>>(bytes).is_ok();
     let request = |op| ClientMessage::Request { id: ID, op };
@@ -290,14 +298,14 @@ fn messages() -> Vec<Fixture> {
         ),
         (
             "event",
-            entry(&FeederMessage::Event(Event {
+            events(&[Event {
                 seq: 12,
                 at: Some(1_792_674_000),
                 body: EventBody::Lock {
                     locked: true,
                     by: Source::Client([1, 2, 3, 4]),
                 },
-            })),
+            }]),
             feeder,
         ),
         ("gap", entry(&FeederMessage::Gap { from: 1, to: 5 }), feeder),
@@ -321,7 +329,7 @@ fn messages() -> Vec<Fixture> {
         ),
         (
             "event-fed",
-            entry(&FeederMessage::Event(Event {
+            events(&[Event {
                 seq: 15,
                 at: Some(1_792_674_000),
                 body: EventBody::Fed {
@@ -333,7 +341,7 @@ fn messages() -> Vec<Fixture> {
                     hopper: FoodLevel::Empty,
                     by: Source::Panel,
                 },
-            })),
+            }]),
             feeder,
         ),
         (
@@ -653,22 +661,22 @@ fn messages() -> Vec<Fixture> {
         ),
         (
             "event-feeding-blocked",
-            entry(&FeederMessage::Event(Event {
+            events(&[Event {
                 seq: 16,
                 at: None,
                 body: EventBody::FeedingBlocked {
                     reason: Some(Blocked::Fault),
                 },
-            })),
+            }]),
             feeder,
         ),
         (
             "event-feeding-ready",
-            entry(&FeederMessage::Event(Event {
+            events(&[Event {
                 seq: 17,
                 at: None,
                 body: EventBody::FeedingBlocked { reason: None },
-            })),
+            }]),
             feeder,
         ),
         (
@@ -841,7 +849,7 @@ fn messages() -> Vec<Fixture> {
         ),
         (
             "event-supply-absent",
-            entry(&FeederMessage::Event(Event {
+            events(&[Event {
                 seq: 18,
                 at: None,
                 body: EventBody::Supply(Supply {
@@ -849,12 +857,12 @@ fn messages() -> Vec<Fixture> {
                     battery: Battery::Absent,
                     below_floor: Some(true),
                 }),
-            })),
+            }]),
             feeder,
         ),
         (
             "event-supply-implausible",
-            entry(&FeederMessage::Event(Event {
+            events(&[Event {
                 seq: 19,
                 at: None,
                 body: EventBody::Supply(Supply {
@@ -862,7 +870,7 @@ fn messages() -> Vec<Fixture> {
                     battery: Battery::Implausible { mv: 2475 },
                     below_floor: Some(true),
                 }),
-            })),
+            }]),
             feeder,
         ),
         (
@@ -1096,6 +1104,32 @@ fn messages() -> Vec<Fixture> {
                     received: 512,
                 },
             }))),
+            feeder,
+        ),
+        (
+            "events-batch",
+            events(&[
+                Event {
+                    seq: 300,
+                    at: None,
+                    body: EventBody::Boot {
+                        bank: 1,
+                        reset_flags: 4,
+                    },
+                },
+                Event {
+                    seq: 301,
+                    at: Some(1_792_674_000),
+                    body: EventBody::Food {
+                        level: FoodLevel::Present,
+                    },
+                },
+                Event {
+                    seq: 302,
+                    at: Some(1_792_674_060),
+                    body: EventBody::Lost { count: 3 },
+                },
+            ]),
             feeder,
         ),
     ]

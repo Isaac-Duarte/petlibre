@@ -17,7 +17,9 @@
 //! Every frame is a u16 little-endian length and that many bytes
 //! (`wellfed_session::frame`), at most [`FRAME_MAX`]. After the handshake each frame
 //! is one Noise transport message sealing one [`ClientMessage`] or
-//! [`FeederMessage`].
+//! [`FeederMessage`]. The feeder sends a session one frame per loop pass, so
+//! what a client reads in bulk fills a frame: events in an [`EventBatch`],
+//! log lines in a [`FeederMessage::Log`].
 //!
 //! Evolution ([device API](../../../../docs/firmware/device-api.md#evolution)):
 //! - [`PROLOGUE`] never changes. A new major is negotiated in
@@ -234,8 +236,9 @@ pub enum ClientMessage<'a> {
         #[serde(borrow)]
         op: Op<'a>,
     },
-    /// Push every durable event after `after` (0 for the oldest kept), then
-    /// each new one as it happens, and the live samples if `samples`.
+    /// Push every durable event after `after` (`None` for the oldest kept),
+    /// then each new one as it happens, in [`FeederMessage::Events`]
+    /// batches, and the live samples if `samples`.
     Subscribe { after: Option<u64>, samples: bool },
 }
 
@@ -786,7 +789,10 @@ pub enum FeederMessage<'a> {
         #[serde(borrow)]
         result: Outcome<'a>,
     },
-    Event(Event),
+    /// The next durable events after the session's cursor, oldest first:
+    /// as many as fit one frame, or as the feeder had to hand.
+    #[serde(borrow)]
+    Events(EventBatch<'a>),
     /// Events `from..=to` left the ring before this client read them.
     Gap {
         from: u64,
@@ -810,6 +816,124 @@ pub enum FeederMessage<'a> {
 /// The most text one [`FeederMessage::Log`] carries: a frame, less the
 /// message's tag, numbers and the text's length prefix.
 pub const LOG_TEXT_MAX: usize = MESSAGE_MAX - 16;
+
+/// The most bytes an [`EventBody`] encodes to: what the event ring keeps
+/// of one.
+pub const EVENT_BODY_MAX: usize = 16;
+/// The most bytes an [`Event`] encodes to: a `u64` varint's 10, an
+/// `Option<u32>`'s 6 and the body.
+pub const EVENT_BYTES_MAX: usize = 10 + 6 + EVENT_BODY_MAX;
+/// The most encoded events one [`FeederMessage::Events`] carries: a
+/// frame's message, less the message's tag and the bytes' two-byte length.
+pub const EVENTS_BYTES_MAX: usize = MESSAGE_MAX - 3;
+
+/// Events as [`FeederMessage::Events`] carries them: each [`Event`]
+/// encoded in turn, borrowed from the message as [`FeederMessage::Log`]'s
+/// text is. The feeder fills one with an [`EventBatchWriter`] in a buffer
+/// it already holds, so it never keeps an array of events; a client reads
+/// it with [`Self::iter`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EventBatch<'a> {
+    #[serde(borrow)]
+    encoded: &'a [u8],
+}
+
+impl<'a> EventBatch<'a> {
+    /// The events in order. A batch whose bytes do not decode as events
+    /// yields one error and then nothing.
+    pub const fn iter(&self) -> EventBatchIter<'a> {
+        EventBatchIter { rest: self.encoded }
+    }
+
+    pub const fn is_empty(&self) -> bool {
+        self.encoded.is_empty()
+    }
+
+    /// The encoded events, as the message carries them.
+    pub const fn as_bytes(&self) -> &'a [u8] {
+        self.encoded
+    }
+}
+
+impl<'a> IntoIterator for &EventBatch<'a> {
+    type Item = Result<Event, crate::Error>;
+    type IntoIter = EventBatchIter<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+/// [`EventBatch::iter`].
+#[derive(Clone, Debug)]
+pub struct EventBatchIter<'a> {
+    rest: &'a [u8],
+}
+
+impl Iterator for EventBatchIter<'_> {
+    type Item = Result<Event, crate::Error>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.rest.is_empty() {
+            return None;
+        }
+        match postcard::take_from_bytes::<Event>(self.rest) {
+            Ok((event, rest)) => {
+                self.rest = rest;
+                Some(Ok(event))
+            }
+            Err(_) => {
+                self.rest = &[];
+                Some(Err(crate::Error::Malformed))
+            }
+        }
+    }
+}
+
+/// Fills an [`EventBatch`] in a borrowed buffer, at most
+/// [`EVENTS_BYTES_MAX`] of it.
+#[derive(Debug)]
+pub struct EventBatchWriter<'b> {
+    buf: &'b mut [u8],
+    len: usize,
+}
+
+impl<'b> EventBatchWriter<'b> {
+    pub fn new(buf: &'b mut [u8]) -> Self {
+        let room = buf.len().min(EVENTS_BYTES_MAX);
+        Self {
+            buf: &mut buf[..room],
+            len: 0,
+        }
+    }
+
+    /// Whether any event still fits, however large.
+    pub const fn has_room(&self) -> bool {
+        self.buf.len() - self.len >= EVENT_BYTES_MAX
+    }
+
+    pub const fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Append `event`; an event that does not fit leaves the batch as it
+    /// was.
+    pub fn push(&mut self, event: &Event) -> Result<(), crate::Error> {
+        let rest = self
+            .buf
+            .get_mut(self.len..)
+            .ok_or(crate::Error::BufferTooSmall)?;
+        self.len += crate::encode(event, rest)?;
+        Ok(())
+    }
+
+    /// The events written so far.
+    pub fn batch(&self) -> EventBatch<'_> {
+        EventBatch {
+            encoded: self.buf.get(..self.len).unwrap_or_default(),
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Outcome<'a> {
@@ -1877,6 +2001,10 @@ pub struct Portions {
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
+
+    use std::vec::Vec;
+
     use super::*;
     use crate::{decode, encode};
 
@@ -1959,6 +2087,12 @@ mod tests {
         };
         let len = encode(&log, &mut out).unwrap();
         assert_eq!(decode::<FeederMessage<'_>>(&out[..len]), Ok(log));
+
+        // The fullest batch: whole bytes, whatever the events.
+        let bytes = [0xff; EVENTS_BYTES_MAX];
+        let events = FeederMessage::Events(EventBatch { encoded: &bytes });
+        let len = encode(&events, &mut out).unwrap();
+        assert_eq!(decode::<FeederMessage<'_>>(&out[..len]), Ok(events));
         for stats in largest_stats() {
             let message = FeederMessage::Response {
                 id: [0xff; 16],
@@ -2229,6 +2363,63 @@ mod tests {
         assert!(!Capabilities::STATS.contains(StatsSection::Feeds.capability()));
     }
 
+    /// A writer filled with the largest events until it has no room takes
+    /// every one whole, its message fits a frame, and they read back in
+    /// order.
+    #[test]
+    fn a_full_event_batch_fits_a_frame_and_reads_back() {
+        let event = |seq| Event {
+            seq,
+            at: Some(u32::MAX),
+            body: EventBody::MealSoon {
+                plan: u8::MAX,
+                due: u32::MAX,
+                minute: u16::MAX,
+                portions: u8::MAX,
+            },
+        };
+        let mut buf = [0; FRAME_MAX];
+        let mut writer = EventBatchWriter::new(&mut buf);
+        let mut seq = u64::MAX - 100;
+        while writer.has_room() {
+            writer.push(&event(seq)).unwrap();
+            seq += 1;
+        }
+        let written = seq - (u64::MAX - 100);
+        assert!(written >= 30, "{written} events");
+
+        let message = FeederMessage::Events(writer.batch());
+        let mut out = [0; MESSAGE_MAX];
+        let len = encode(&message, &mut out).unwrap();
+        let Ok(FeederMessage::Events(batch)) = decode::<FeederMessage<'_>>(&out[..len]) else {
+            panic!("not a batch");
+        };
+        let read: Vec<_> = batch.iter().map(Result::unwrap).collect();
+        let expected: Vec<_> = (u64::MAX - 100..seq).map(event).collect();
+        assert_eq!(read, expected);
+    }
+
+    /// Bytes that are not events yield one error, then nothing.
+    #[test]
+    fn a_garbled_batch_fails_once() {
+        let mut buf = [0; 64];
+        let mut writer = EventBatchWriter::new(&mut buf);
+        writer
+            .push(&Event {
+                seq: 1,
+                at: None,
+                body: EventBody::Lost { count: 1 },
+            })
+            .unwrap();
+        let mut bytes = writer.batch().as_bytes().to_vec();
+        bytes.push(0xff);
+        let batch = EventBatch { encoded: &bytes };
+        let read: Vec<_> = batch.iter().collect();
+        assert_eq!(read.len(), 2);
+        assert!(read[0].is_ok());
+        assert_eq!(read[1], Err(crate::Error::Malformed));
+    }
+
     /// The event ring stores a body in 16 bytes.
     #[test]
     fn every_event_body_fits_sixteen_bytes() {
@@ -2325,9 +2516,19 @@ mod tests {
                 level: FoodLevel::Empty,
             },
         ] {
-            let mut out = [0; 16];
+            let mut out = [0; EVENT_BODY_MAX];
             let len = encode(&body, &mut out).unwrap();
             assert_eq!(decode::<EventBody>(&out[..len]), Ok(body));
+
+            // The largest event around the largest body.
+            let event = Event {
+                seq: u64::MAX,
+                at: Some(u32::MAX),
+                body,
+            };
+            let mut out = [0; EVENT_BYTES_MAX];
+            let len = encode(&event, &mut out).unwrap();
+            assert_eq!(decode::<Event>(&out[..len]), Ok(event));
         }
     }
 }

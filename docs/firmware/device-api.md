@@ -109,7 +109,7 @@ A client that may want to cancel keeps its session open across the feed, as `wel
 
 ### Feeds
 
-**A `Feed` goes to the feeding owner** in the same loop (`feeding::Feeding`), under the next journal id. The answer waits until the owner has reserved the feed, then names it. When the owner reports the result, the loop logs `PLOWN1 fed …` with what the drive measured, records a `Fed` event and acknowledges the result, so the owner takes the next.
+**A `Feed` goes to the feeding owner** in the same loop (`feeding::Feeding`), under the next journal id. The answer waits until the owner has reserved the feed, then names it. When the owner reports the result, the loop logs `PLOWN1 fed …` and `PLOWN1 current …` with what the drive measured, records a `Fed` event and acknowledges the result, so the owner takes the next.
 
 **Refusals.** Like every refusal, these are final for that write id. Nothing moved, so trying again is a new feed the user asks for.
 - Every feed asks for 1 to 48 portions (`PORTIONS_MAX`, the vendor app's cap on this model), whoever asks: a client, a plan or Dispense. Any other number is refused `Portions { asked }` before anything else is checked, so the refusal says what to change rather than when to try again. Stock takes any byte unchecked.
@@ -386,9 +386,9 @@ At most 864 bytes. The whole recorder is under 1 KiB of RAM, a compile-time chec
 
 **Summary** (`TraceSummary`):
 - the feed's result (requested, completed, outcome, reason);
-- the owner's own figures, the same that `PLOWN1 fed` logs: drive time, polls, peak and mean current, rising and falling edges, the first edge's time;
+- the owner's own figures, the same that `PLOWN1 fed` and `PLOWN1 current` log: drive time, polls, peak and mean current, rising and falling edges, the first edge's time;
 - beam breaks: a poll that found the outlet beam blocked after finding it clear;
-- reversals: the owner's count of its reverse attempts on a jam, the same `PLOWN1 fed … reversals=` logs. A double bowl's turn between portions is none;
+- reversals: the owner's count of its reverse attempts on a jam, the same `PLOWN1 current … reversals=` logs. A double bowl's turn between portions is none;
 - the battery just before the drive, and its lowest during it;
 - the stride and `truncated`.
 

@@ -76,7 +76,7 @@ A session without the bit is refused `Unavailable` for all three, so an older cl
 - **Homing feeds** (`Portions::homed`) may each have dropped up to about half a portion more than they credited.
 - **Outlet-beam breaks** (`Portions::outlet_breaks`, and per feed in `PLOWN1 marks … outlet_breaks=`) come from the outlet beam (PA16) sampled every 10 ms during the feed's capture, two changes a break. Food falls as a stream of kibble rather than one lump per compartment, and a passage shorter than 10 ms falls between samples. So this is a lower bound and an activity check, not a count of portions. A run of credited portions with no breaks at all is the signal of an empty hopper or a jam above the rotor.
 
-Each feed ends with `PLOWN1 marks id=N homed_ms=… outlet_breaks=… phase=at_mark|unknown` after its `fed`, `edges` and `steps` lines.
+Each feed ends with `PLOWN1 marks id=N homed_ms=… outlet_breaks=… phase=at_mark|unknown` after its `fed`, `current`, `edges` and `steps` lines.
 
 ## Weighing session
 

@@ -67,7 +67,7 @@ Stock pauses a feed on a blocked outlet and resumes it if the outlet clears with
 
 **Food beam.** The owner reads the food beam only while a feed's emitters are on, and publishes its latest qualified reading (`OwnerStatus::food`), which outlasts the feed. Food shows at once, and empty only after 1 s of readings without. Stock's `surplusGrain` filter counts 20 readings; its poll rate is not recovered, so the 1 s assumes the nominal 50 ms its outlet filter implies (to confirm against stock). `Feeds::food()` returns the reading, so the status's `food`, the `Food` change event and the statistics' Food section (present, emptied, refilled, feeds since refill) follow it as feeds read it. `present` comes from the first feed after a boot. An emptied or refilled hopper shows as the reading changes between feeds, so a refill between two feeds shows at the second.
 
-Each feed's trace also keeps what the beam read during that feed (`FeedTrace::hopper`: empty once it read empty), which its `Fed` event carries as `hopper` and `PLOWN1 fed … hopper=` logs. A feed never waits on the beam and is never refused for it, as stock's: a beam stuck empty, or a hopper that really is empty, still feeds, and the history says the hopper read empty. A food beam stuck either way reads as a hopper that never changes.
+Each feed's trace also keeps what the beam read during that feed (`FeedTrace::hopper`: empty once it read empty), which its `Fed` event carries as `hopper` and `PLOWN1 current … hopper=` logs. A feed never waits on the beam and is never refused for it, as stock's: a beam stuck empty, or a hopper that really is empty, still feeds, and the history says the hopper read empty. A food beam stuck either way reads as a hopper that never changes.
 
 **Implausible beams.** A receiver that reads lit with its emitter off would mean a stuck beam. The owner does not check that yet: the fake hardware does not model receivers that follow their emitters, and ambient light on the receivers is not measured. A stuck-clear outlet beam is the risk it would catch, a blocked outlet read as clear; a jam then still ends the drive.
 
@@ -95,7 +95,7 @@ Only lost sensors are held. A lost supervisor (the timer, its clock, the owner's
 
 ## Records
 
-- `PLOWN1 fed … samples=N reversals=N`: the reversals the drive made.
+- `PLOWN1 current … samples=N reversals=N`: the reversals the drive made.
 - `PLOWN1 state=7 fault=7`: the owner holds lost sensors.
 - `PLOWN1 recover restart=1 held_ms=`: the one recovery restart, about to happen.
 

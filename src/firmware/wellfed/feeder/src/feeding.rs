@@ -458,12 +458,17 @@ pub enum Record {
         portions: u8,
         result: SubmitResult,
     },
-    /// A feed ended: its result and what its drive measured.
+    /// A feed ended: its result, and how long its drive ran and the edges
+    /// it counted.
     Fed {
         result: OwnerResult,
         durability: Durability,
         trace: FeedTrace,
     },
+    /// The rest of what that feed's drive measured: its first edge, its
+    /// current, its reversals and the food beam. A line of its own, so
+    /// neither this nor `fed` outgrows a record.
+    Current { feed: u64, trace: FeedTrace },
     /// Which pads changed during that feed, to find the feedback input.
     Pins { feed: u64, pins: PinWatch },
     /// When each feedback edge came, from the drive's start.
@@ -553,20 +558,21 @@ impl core::fmt::Display for Record {
                 result,
                 durability,
                 trace,
-            } => {
-                write!(
-                    f,
-                    "fed id={} requested={} completed={} outcome={} reason={} durable={} drive_ms={} rising={} falling={} first_edge_ms=",
-                    result.id,
-                    result.requested,
-                    result.completed,
-                    result.outcome.code(),
-                    result.reason.code(),
-                    u8::from(durability == Durability::Durable),
-                    trace.drive_ms,
-                    trace.rising,
-                    trace.falling,
-                )?;
+            } => write!(
+                f,
+                "fed id={} requested={} completed={} outcome={} reason={} durable={} drive_ms={} rising={} falling={}",
+                result.id,
+                result.requested,
+                result.completed,
+                result.outcome.code(),
+                result.reason.code(),
+                u8::from(durability == Durability::Durable),
+                trace.drive_ms,
+                trace.rising,
+                trace.falling,
+            ),
+            Record::Current { feed, trace } => {
+                write!(f, "current id={feed} first_edge_ms=")?;
                 match trace.first_edge_ms {
                     Some(ms) => write!(f, "{ms}")?,
                     None => f.write_str("none")?,
@@ -951,6 +957,10 @@ mod target {
                 durability,
                 trace: status.trace,
             });
+            record(Record::Current {
+                feed: result.id,
+                trace: status.trace,
+            });
             record(Record::Edges {
                 feed: result.id,
                 trace: status.trace,
@@ -1016,6 +1026,10 @@ mod target {
             record(Record::Fed {
                 result: status.result,
                 durability: Durability::Durable,
+                trace: status.trace,
+            });
+            record(Record::Current {
+                feed,
                 trace: status.trace,
             });
             // The journal holds the id under the high water `submit` checks.

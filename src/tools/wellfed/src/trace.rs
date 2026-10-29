@@ -1,6 +1,7 @@
 //! A feed's trace as text: the summary, then one line an entry, each at its
 //! milliseconds from the drive's start, so it lines up with the UART's
-//! `PLOWN1 fed` record and a logic analyzer's capture of the drive.
+//! `PLOWN1 fed` and `current` records and a logic analyzer's capture of
+//! the drive.
 
 use std::fmt;
 

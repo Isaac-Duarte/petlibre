@@ -422,8 +422,14 @@ impl Feeder {
                     4.01,
                     &format!(
                         "PLOWN1 fed id={id} requested={portions} completed=0 outcome=4 reason=8 \
-                         durable=1 drive_ms=2000 rising=0 falling=0 first_edge_ms=none \
-                         current_max=168 current_mean=59 samples=60"
+                         durable=1 drive_ms=2000 rising=0 falling=0"
+                    ),
+                );
+                self.line(
+                    4.015,
+                    &format!(
+                        "PLOWN1 current id={id} first_edge_ms=none current_max=168 \
+                         current_mean=59 samples=60 reversals=0 hopper=present"
                     ),
                 );
                 self.faulted = true;
@@ -502,8 +508,14 @@ impl Feeder {
             delay + 0.01,
             &format!(
                 "PLOWN1 fed id={id} requested={requested} completed={completed} outcome={outcome} \
-                 reason={reason} durable=1 drive_ms=9000 rising={completed} falling={completed} \
-                 first_edge_ms=7840 current_max=168 current_mean=59 samples=300"
+                 reason={reason} durable=1 drive_ms=9000 rising={completed} falling={completed}"
+            ),
+        );
+        self.line(
+            delay + 0.015,
+            &format!(
+                "PLOWN1 current id={id} first_edge_ms=7840 current_max=168 current_mean=59 \
+                 samples=300 reversals=0 hopper=present"
             ),
         );
         self.line(
@@ -739,8 +751,14 @@ impl Feeder {
                 6.0,
                 &format!(
                     "PLOWN1 fed id={id} requested=3 completed=0 outcome=5 reason=0 durable=1 \
-                     drive_ms=0 rising=0 falling=0 first_edge_ms=none current_max=0 \
-                     current_mean=none samples=0"
+                     drive_ms=0 rising=0 falling=0"
+                ),
+            );
+            self.line(
+                6.005,
+                &format!(
+                    "PLOWN1 current id={id} first_edge_ms=none current_max=0 \
+                     current_mean=none samples=0 reversals=0 hopper=unread"
                 ),
             );
             self.line(

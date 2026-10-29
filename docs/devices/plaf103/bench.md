@@ -88,7 +88,7 @@ The bench is six crates with one-way dependencies:
 | `wellfed-relay` | The relay board driver, behind a `Board` trait the Wellfed Bench board can implement |
 | `wellfed-rig` | The operator sequences, and the steps the suite builds on |
 | `wellfed-itest` | The integration suite, on the rig |
-| `wellfed-bench-server` | The server: the lease, the board and the socket, and the sequences and the suite as its jobs |
+| `wellfed-bench-server` | The server: the lease, the board, the socket, the feeder session and the UART capture, the sequences and the suite as its jobs, and the bank ledger |
 | `wellfed-dashboard` | The read-only progress page. It links neither the relay driver nor the flash client. |
 | `wellfed-bench` | The command line over all of them, as one binary: `serve` and its clients |
 
@@ -99,8 +99,9 @@ The files and shapes they share (the bench config, a command's progress record, 
 | Command | Effect |
 | --- | --- |
 | `serve` | The bench server, in the foreground until Ctrl+C, SIGTERM or a hangup ([below](#the-bench-server)). `--ui` serves the [progress page](#progress-page) beside it. |
-| `status` | The [bench lease](#bench-lease), then the server's job, its children, the UART and the relays. With no server, it reads the relay board itself. A server that does not answer within 5 s is reported as such, after the lease. `--break-lease` first frees a lease a killed server left. |
+| `status` | The [bench lease](#bench-lease), then the server's job, its children, the UART, the feeder session, the bank ledger and the relays. With no server, it reads the relay board itself. A server that does not answer within 5 s is reported as such, after the lease. `--break-lease` first frees a lease a killed server left. |
 | `attach ID` | Follow job `ID` of the running server again, from its first kept line |
+| `banks` | The [bank ledger](#the-bank-ledger). `--seed DUMP_SESSION` starts it, from that dump's inspection or, when the inspection names no build, from `--bank N --build HASH`. |
 | `on`, `off` | Power the feeder with the strap released, or release the strap and cut power |
 | `capture NAME` | Receive-only recording of the running feeder. Power is untouched. |
 | `boot NAME` | Power off, start a receive-only capture, confirm it holds the port, then power on |
@@ -130,6 +131,8 @@ Every command from `on` down is a job: it needs the server running, and refuses 
 - the [bench lease](#bench-lease), which the jobs' children run on;
 - the relay board, opened and read at the start, after every job, and every 30 s while no job runs (never during one), so its front buttons show;
 - the control socket `private/bench.sock`, mode 0600 whatever the umask, which only the checkout's owner can reach;
+- the owner's one device API session with the feeder ([below](#the-feeder-session));
+- a receive-only UART capture while no job runs and relay 1 is on ([below](#the-uart-capture));
 - its console: every job's output, as it comes, and one line as each job starts and ends.
 
 It runs one job at a time. A job is the command line a client posts (`POST /jobs` with its words), parsed by the server with the same checks as the command line, so a bad flag or name is refused before anything runs. The client sends its checkout beside the words, and the server refuses another checkout's: a worktree whose `private/` links to this one's reaches this server, and must not run this checkout's sources under its session names. A job runs the same sequence the command always ran, in the server's process. A second job while one runs is refused with the running job named:
@@ -148,11 +151,50 @@ The socket's routes:
 
 | Route | Answer |
 | --- | --- |
-| `GET /state` | The live state: the job and its next steps, every child it runs, the UART (idle, capturing, a loader session, or writing with sectors verified), and the relays |
+| `GET /state` | The live state: the job and its next steps, every child it runs, the UART (idle, capturing, a loader session, or writing with sectors verified), the relays, the feeder session, the capture's tail and records, and the bank ledger |
 | `GET /events` | The live state again on every change, as server-sent events |
 | `POST /jobs` | `{"argv": [...]}`, the command's words: 201 with the job's number, 400 for words that are no job, 409 while a job runs |
 | `GET /jobs/{id}/stream` | The job's output lines, then its end, as newline-delimited JSON |
 | `POST /jobs/{id}/cancel` | 202, or 409 for a job that already ended |
+| `POST /device/ask` | `{"id": [...], "op": {...}}`, one device API request on the server's session: 200 with `answered` and the answer, or `uncertain`; 503 `{"reason": ...}` when nothing was sent |
+| `GET /device/pushed?from=N&wait=MS` | The messages the session was pushed from number `N` on (events, gaps, log lines), waiting up to `MS` (at most 30 s) for the first |
+| `GET /device/session` | Whom the session is with: the key file, the feeder, its build, role and capabilities; 503 while it is closed |
+| `GET /banks`, `POST /banks/seed` | The bank ledger, and `banks --seed` |
+
+#### The feeder session
+
+The server opens one session with the feeder, as the owner key the bench already uses (`private/wellfed-owner.json`), and finds the feeder by its identity over mDNS or by its MAC in the hotspot's neighbour table, as the rig does. `serve --feeder-address` names the address instead (the simulator, say). The session:
+
+- subscribes after the newest event it took, which it keeps in `private/bench-status/device-cursor.json`, so a new server does not replay the history;
+- follows the feeder's debug log into the state and into `private/bench-status/device-log/YYYY-MM-DD.log`, one file a UTC day, each line stamped with the host's time, through a buffer that is never synced;
+- reads the status every 10 s, and sets the clock as `wellfed time` does when it is invalid or more than 2 s off;
+- reads whether the hotspot's connection is up every 30 s, with `nmcli` listing the active connections only.
+
+It closes while a job that holds the UART runs (`capture`, `boot`, `loader`, `transients`, `dump` and every prepare and execute), while relay 1 is off, and while the server stops. Otherwise it reopens after a loss, after 1 s and then twice as long each time up to 30 s. `ota`, `itest` and `stock-ota` keep it open and ask through it: their status checks, cancels and the suite's requests are the server's session's, and only `itest`'s deliberate second and intruding sessions, and the pushes of an install, open sessions of their own.
+
+It never resends a request. One that went out and got no answer is reported uncertain: it may have run, and it is not sent again on any path. A request while the session is paused or unconfigured is refused with the reason, and nothing is sent; one while it is opening waits for it up to 20 s.
+
+**The `wellfed` CLI.** Whenever a server answers on the `bench.sock` beside the key file (`private/bench.sock` for the default key), every `wellfed` device command goes through it, and a direct session is refused rather than opened beside it. So is `--address`, any key file but the server's, and `setup`, `install`, `recover`, `join` and `restore-stock`, which open sessions of their own. `events` and `feeds` read the history the server's session kept, and `logs` its log lines, so neither moves the server's own subscription or tail; `--samples` is refused.
+
+#### The UART capture
+
+While no job runs and relay 1 is on, the server holds the UART with back-to-back receive-only captures, `private/captures/bench-MILLIS-uart-NN`, through the same capture chain the suite uses. Its lines feed the state's UART tail as they arrive. `PLFW1 start` checks the bank ledger, and the last `PLOTA1` record is shown.
+
+Before every job it stops the capture, killing its observe (which only receives), and waits for it to let go of the port; it starts a fresh one after the job, and when the relays read relay 1 on again. A capture that stops on its own, a missing port say, stays stopped with its reason until then.
+
+#### The bank ledger
+
+`private/bench-status/banks.json` records which build the bench believes each bank holds, from the jobs that wrote it:
+
+| Job | Records |
+| --- | --- |
+| `flash-execute` | The plan's bank: its target review's startup identity, or the stock image, or else the review's OTA image hash |
+| `give-way-execute` | Bank 1 holds no valid image |
+| `stock-execute` | Bank 1 holds stock |
+| `ota` | Confirmed: bank 1 holds the offered build (or stock). Fell back: bank 1 holds no valid image. `--fault give-way-only`: bank 1 gave way |
+| `stock-ota` | Stock's install: bank 0 holds the build and bank 1 no valid image. The promotion: bank 1 holds the build |
+
+Each entry is then checked against what the feeder says it runs: the `PLFW1 start build= bank=` banner on the capture, and the build and bank in the session's status. A report that names another build marks the entry disputed rather than replacing it, since either side may be wrong; the operator decides. `banks --seed DUMP_SESSION` starts the ledger. Today's flash inspections pin region hashes and name no build, so the seed takes `--bank` and `--build`, and says so. Like every file the server keeps, it is replaced whole and never synced, and nothing writes it while a job holds the UART.
 
 ### Flash over UART
 

@@ -539,6 +539,17 @@ fn promote_lets_the_bank_0_build_install_itself_into_bank_1() {
         feeder.trial.as_ref().map(|(_, phase)| *phase),
         Some("replacement_healthy")
     );
+    // Stock wrote the build into bank 0 and invalidated bank 1; the
+    // promotion put it into bank 1.
+    let build = || Content::Build { id: BUILD.into() };
+    assert_eq!(
+        written(&session_reports(&reports), &staged()),
+        [
+            (Bank::Zero, build()),
+            (Bank::One, Content::Invalid),
+            (Bank::One, build())
+        ]
+    );
 }
 
 #[test]

@@ -44,6 +44,7 @@ use super::{Attendance, Bench};
 use crate::device::{DeviceStatus, Fault};
 use crate::tools::{InstallJob, Installing, PushError};
 use crate::{Error, Result};
+use wellfed_formats::bench::banks::{Bank, Content, Source as Wrote};
 use wellfed_formats::bench::{CAPTURES, VERIFICATION, since_epoch};
 use wellfed_formats::require;
 
@@ -1140,6 +1141,23 @@ impl Bench {
         for note in installing.notes() {
             self.note(&format!("  {note}"));
         }
+        // The UART's verdict is what bank 1 holds, whatever the status
+        // check after it says.
+        match &watched {
+            Ok(()) => {
+                let content = match staged.target {
+                    Target::Stock => Content::Stock,
+                    Target::Replacement => Content::Build {
+                        id: staged.build.to_ascii_lowercase(),
+                    },
+                };
+                self.wrote(Bank::One, content, Wrote::OtaConfirmed);
+            }
+            Err(Error::Ota(OtaError::FellBack { .. })) => {
+                self.wrote(Bank::One, Content::Invalid, Wrote::OtaFellBack);
+            }
+            Err(_) => {}
+        }
         watched?;
         self.ota_after(args, &staged, timing)
     }
@@ -1153,6 +1171,7 @@ impl Bench {
             match installing.finished() {
                 Some(Ok(())) => {
                     say!("Bank 1 gave way; bank 0 waits for its offer");
+                    self.wrote(Bank::One, Content::Invalid, Wrote::GiveWay);
                     return Ok(0);
                 }
                 Some(Err(push)) => return Err(OtaError::GiveWay(push).into()),

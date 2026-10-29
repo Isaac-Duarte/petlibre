@@ -25,7 +25,6 @@ use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use serde::Deserialize;
 use serde::de::IgnoredAny;
 
 use crate::args::ItestArgs;
@@ -38,6 +37,7 @@ use wellfed_relay::{POWER, STRAP, Switch};
 use wellfed_rig::commands::Bench;
 use wellfed_rig::commands::ota::{self, OtaArgs, Staged, Target, Timing};
 use wellfed_rig::device::{Answer, Ask, Device, Intruder, Rebuffed};
+use wellfed_rig::hotspot::{self, HotspotError, HotspotFile};
 use wellfed_rig::server::{StockStatus, TrialAnswer, TrialRequest, TrialResolve};
 use wellfed_rig::tools::{
     Capture, CaptureFailure, InstallJob, Installing, PushError, Tracked, own_group,
@@ -63,9 +63,8 @@ pub enum LiveError {
     ServeRunning { address: SocketAddr },
     #[error("nmcli: {0}")]
     Nmcli(std::io::Error),
-    /// `stderr` as nmcli printed it, trimmed.
-    #[error("nmcli could not list connections: {stderr}")]
-    NmcliList { stderr: String },
+    #[error(transparent)]
+    Hotspot(#[from] HotspotError),
     #[error("nmcli connection {verb} failed: {stderr}")]
     NmcliVerb { verb: &'static str, stderr: String },
     /// A server child exited before it was ready; `log` root-relative.
@@ -92,13 +91,6 @@ const SEGMENT: Duration = Duration::from_secs(180);
 const START_WAIT: Duration = Duration::from_secs(20);
 const STOP_WAIT: Duration = Duration::from_secs(10);
 const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
-
-/// `private/hotspot.json` (`--hotspot`).
-#[derive(Deserialize)]
-struct HotspotFile {
-    /// The NetworkManager connection that serves the feeder's network.
-    connection: String,
-}
 
 /// The fixed trial port stock's URL names (`wellfed_stock::ota::image::PORT`).
 const IMAGE_PORT: u16 = 8088;
@@ -254,17 +246,7 @@ impl<'b> LiveRig<'b> {
     }
 
     fn hotspot_active(&self) -> Result<bool> {
-        let output = Command::new("nmcli")
-            .args(["-t", "-f", "NAME", "connection", "show", "--active"])
-            .stdin(Stdio::null())
-            .output()
-            .map_err(LiveError::Nmcli)?;
-        require(output.status.success(), || LiveError::NmcliList {
-            stderr: String::from_utf8_lossy(&output.stderr).trim().into(),
-        })?;
-        Ok(String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .any(|line| line == self.connection))
+        Ok(hotspot::active(&self.connection).map_err(LiveError::from)?)
     }
 
     fn spawn(&self, program: &Path, args: &[&str]) -> Result<Running> {
@@ -467,8 +449,11 @@ impl Rig for LiveRig<'_> {
         finished
     }
 
+    /// Through the bench's own link, which the bench server lends its one
+    /// session as; the held and intruding sessions below stay this rig's.
     fn device(&mut self, ask: &Ask) -> Result<Answer> {
-        Ok(self.device.ask(ask)?)
+        let link = self.bench.tools.device(&self.keys, &self.config)?;
+        Ok(link.ask(ask)?)
     }
 
     fn hold(&mut self) -> Result<()> {

@@ -11,7 +11,13 @@ use crate::{
 
 /// One operation. Reads may be repeated freely; a write's request id makes
 /// a retry return the first answer instead of running again.
-#[derive(Clone, Debug, PartialEq, Eq)]
+///
+/// Its JSON is what a local client hands a process that holds the
+/// session for it (the bench server's `POST /device/ask`); the wire is
+/// `wellfed-proto`'s. A `PutWifi` carries the passphrase, so an op is never
+/// logged.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Op {
     Status,
     GetSettings,
@@ -194,7 +200,7 @@ pub struct CalibrationView {
 }
 
 /// A change to the time settings; `None` leaves a field as it is.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TimeChanges {
     /// The zone as a POSIX TZ rule (`wellfed_client::time::rule` makes one
     /// from an IANA name), or `""` to clear it.
@@ -264,7 +270,7 @@ pub struct TimeView {
 }
 
 /// Credentials for the feeder's next join.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Wifi {
     /// 1-32 bytes; an SSID need not be text.
     pub ssid: Vec<u8>,
@@ -280,7 +286,8 @@ impl fmt::Debug for Wifi {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Tune {
     Chime,
     Meal,
@@ -292,7 +299,7 @@ pub enum Tune {
 
 /// The wall clock and the zone's next change, so the feeder keeps local
 /// time across a DST change without another sync.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TimeSync {
     pub unix_ms: u64,
     pub offset_s: i32,

@@ -145,6 +145,83 @@ impl Running {
     }
 }
 
+/// A simulator on a thread of its own, in real time, for a test whose
+/// client runs on a multi-threaded runtime or a blocking thread. It holds
+/// the process to itself until dropped, which stops it: the update stage's
+/// mailbox and the interlock are process-wide statics, as on the feeder,
+/// so two simulators in one process would take each other's requests.
+#[derive(Debug)]
+pub struct Threaded {
+    pub address: SocketAddr,
+    pub identity: [u8; 32],
+    control: std::sync::mpsc::Sender<Control>,
+    thread: Option<std::thread::JoinHandle<()>>,
+    _alone: std::sync::MutexGuard<'static, ()>,
+}
+
+static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+impl Threaded {
+    /// A fresh simulator with `owner`'s public key enrolled as an owner.
+    pub fn start(owner: [u8; 32]) -> Self {
+        // A test that failed while holding it stopped its simulator first.
+        let alone = ONE_AT_A_TIME
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+
+        let (started, starting) = std::sync::mpsc::channel();
+        let (control, controls) = std::sync::mpsc::channel::<Control>();
+        let thread = std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("a current-thread runtime builds");
+            runtime.block_on(tokio::task::LocalSet::new().run_until(async move {
+                let sim = Running::start(&Flash::memory(), Some(owner)).await;
+                let _ = started.send((sim.address, sim.identity));
+                loop {
+                    match controls.try_recv() {
+                        Ok(Control::Quit) | Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                            break;
+                        }
+                        Ok(other) => sim.control(other),
+                        Err(std::sync::mpsc::TryRecvError::Empty) => {
+                            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                        }
+                    }
+                }
+                sim.stop().await;
+            }));
+        });
+        let (address, identity) = starting
+            .recv()
+            .expect("the simulator thread reports its address");
+
+        Self {
+            address,
+            identity,
+            control,
+            thread: Some(thread),
+            _alone: alone,
+        }
+    }
+
+    pub fn control(&self, control: Control) {
+        let _ = self.control.send(control);
+    }
+}
+
+impl Drop for Threaded {
+    fn drop(&mut self) {
+        // Stopped and joined before the lock goes, so the next test's
+        // simulator is alone with the statics.
+        let _ = self.control.send(Control::Quit);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
 /// A relay in front of a simulator that can stall: while paused it stops
 /// moving bytes either way but keeps both sockets open, as a feeder that
 /// lost power does (no reset reaches the client). Resuming delivers what

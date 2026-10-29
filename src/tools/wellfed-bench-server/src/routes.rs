@@ -36,6 +36,7 @@ pub(crate) fn router(shared: Arc<Shared>) -> Router {
         .route("/jobs", post(submit))
         .route("/jobs/{id}/stream", get(follow))
         .route("/jobs/{id}/cancel", post(cancel))
+        .merge(crate::device_routes::routes())
         .with_state(shared)
 }
 
@@ -49,7 +50,8 @@ impl IntoResponse for Refusal {
             | Self::NotAJob { .. }
             | Self::OtherCheckout { .. }
             | Self::BadName { .. }
-            | Self::BadLength { .. } => StatusCode::BAD_REQUEST,
+            | Self::BadLength { .. }
+            | Self::Seed { .. } => StatusCode::BAD_REQUEST,
         };
         (status, Json(self)).into_response()
     }

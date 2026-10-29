@@ -63,16 +63,37 @@ pub enum Content {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "kebab-case")]
 pub enum Source {
-    /// `banks --seed` from a full read.
+    /// `banks --seed`: a dump's inspection, or the operator's word for it.
     Seed,
     FlashExecute,
     GiveWay,
     /// An over-the-air install that confirmed.
     OtaConfirmed,
-    /// An over-the-air install whose trial fell back: bank 1 holds the
-    /// candidate, which no longer boots.
+    /// An over-the-air install whose trial fell back: KM0 gave way, so
+    /// bank 1 no longer boots.
     OtaFellBack,
     StockOta,
+    /// The pinned stock image back into bank 1 over UART.
+    StockExecute,
+}
+
+/// What a job's sequence says it left in a bank, for the server to record.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Written {
+    pub bank: Bank,
+    pub content: Content,
+    pub source: Source,
+}
+
+impl Bank {
+    /// The bank a feeder or a plan numbers `bank`.
+    pub fn of(bank: u8) -> Option<Self> {
+        match bank {
+            0 => Some(Self::Zero),
+            1 => Some(Self::One),
+            _ => None,
+        }
+    }
 }
 
 /// Whether the feeder's own report agrees with the entry.
@@ -128,15 +149,28 @@ impl Ledger {
 
     /// The feeder reported running `seen` from `bank`. A bank with no entry
     /// stays unknown: a report alone does not say how the build got there.
-    pub fn observe(&mut self, bank: Bank, seen: Content, by: Witness, at: f64) {
+    /// Whether the entry's verdict changed: a report that only repeats the
+    /// last one leaves the ledger, and its file, as they are.
+    pub fn observe(&mut self, bank: Bank, seen: Content, by: Witness, at: f64) -> bool {
         let Some(entry) = self.banks.get_mut(&bank) else {
-            return;
+            return false;
         };
+        let same = match &entry.check {
+            Check::Unchecked => false,
+            Check::Confirmed { by: was, .. } => entry.content == seen && *was == by,
+            Check::Disputed {
+                by: was, seen: had, ..
+            } => *had == seen && *was == by,
+        };
+        if same {
+            return false;
+        }
         entry.check = if entry.content == seen {
             Check::Confirmed { by, at }
         } else {
             Check::Disputed { by, at, seen }
         };
+        true
     }
 }
 

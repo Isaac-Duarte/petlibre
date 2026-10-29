@@ -24,9 +24,11 @@ use wellfed_formats::transients::{self, TransientCycle, TransientsManifest};
 
 use crate::tools::{Analyzer, Children, Observation, Observer, Tools};
 use crate::{Cancel, Error, Result};
+use wellfed_formats::bench::banks::{Bank, Content, Source, Written};
 use wellfed_formats::bench::progress::{BenchCommand, Status};
 use wellfed_formats::bench::{CAPTURES, Config, Paths, plain_name, relative};
 use wellfed_formats::require;
+use wellfed_formats::review::{ImageKind, ImageReview};
 use wellfed_relay::{POWER, Relay, STRAP, Switch, UART};
 
 pub mod ota;
@@ -266,6 +268,9 @@ pub struct Bench {
     /// How long the feeder stays off before a cold boot.
     pub off_time: Duration,
     pub uart_when_off: UartWhenOff,
+    /// What the sequence left in each bank, as it believes: the bench
+    /// server records these in its bank ledger once the job ends.
+    pub written: Vec<Written>,
 }
 
 /// Whether the owner is watching, which a build that drives the motor
@@ -913,6 +918,12 @@ impl Bench {
             return Ok(1);
         }
 
+        if let (Some(bank), Some(content)) = (
+            Bank::of(args.update.bank),
+            installed(&self.root, &args.update.target),
+        ) {
+            self.wrote(bank, content, Source::FlashExecute);
+        }
         self.status.transfer(None, 0, 0);
         self.boot(&p.boot, boot)?;
         Ok(0)
@@ -1013,6 +1024,7 @@ impl Bench {
             return Ok(1);
         }
 
+        self.wrote(Bank::One, Content::Invalid, Source::GiveWay);
         self.boot(&p.boot, boot)?;
         Ok(0)
     }
@@ -1152,6 +1164,7 @@ impl Bench {
             return Ok(1);
         }
 
+        self.wrote(Bank::One, Content::Stock, Source::StockExecute);
         let seen = self.boot(&p.boot, boot)?;
         require(seen.stock_startup_markers > 0, || {
             CommandsError::NoStockBanner
@@ -1162,6 +1175,36 @@ impl Bench {
         );
         Ok(0)
     }
+}
+
+impl Bench {
+    /// Note what this sequence left in `bank`, for the bank ledger.
+    pub fn wrote(&mut self, bank: Bank, content: Content, source: Source) {
+        self.written.push(Written {
+            bank,
+            content,
+            source,
+        });
+    }
+}
+
+/// What the frozen review at `review` installs, as the bank ledger names
+/// it: a build by its startup identity, the stock image, or else a build
+/// by its OTA image's hash. `None` when neither file reads.
+fn installed(root: &Path, review: &Path) -> Option<Content> {
+    let review = root.join(review);
+    let manifest: Option<BuildManifest> =
+        wellfed_formats::load(&review.join("build-manifest.json")).ok();
+    if let Some(id) = manifest.and_then(|manifest| ota::build_id(&manifest).ok()) {
+        return Some(Content::Build { id });
+    }
+    let frozen: ImageReview = wellfed_formats::load(&review.join("review.json")).ok()?;
+    Some(match frozen.image_kind {
+        ImageKind::Stock => Content::Stock,
+        ImageKind::Build => Content::Build {
+            id: frozen.ota_sha256.to_ascii_lowercase(),
+        },
+    })
 }
 
 /// The execute command matching a prepare: same evidence flags, plus the hash.

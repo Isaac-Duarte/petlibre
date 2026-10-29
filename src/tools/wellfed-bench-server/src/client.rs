@@ -18,7 +18,13 @@ use tokio::net::UnixStream;
 use tokio::sync::mpsc;
 use wellfed_formats::bench::live::{BenchState, JobEnd, JobEvent, JobId};
 
-use crate::api::{Accepted, JobRequest, Refusal, SOCKET};
+use std::time::Duration;
+
+use wellfed_formats::bench::banks::Ledger;
+use wellfed_formats::bench::feeder::{Ask, Asked, DeviceUnavailable, PushedPage, SessionInfo};
+use wellfed_model::Op;
+
+use crate::api::{Accepted, JobRequest, Refusal, SOCKET, Seed, Seeded};
 
 /// Why a client request did not get its answer.
 #[derive(Debug, thiserror::Error)]
@@ -42,6 +48,10 @@ pub enum ClientError {
     /// The server refused, with its reason.
     #[error(transparent)]
     Refused(#[from] Refusal),
+    /// The server's feeder session could not carry the request; nothing
+    /// was sent.
+    #[error(transparent)]
+    Unavailable(#[from] DeviceUnavailable),
     /// An answer that is neither what was asked for nor a refusal.
     #[error("The bench server answered {status}: {body}")]
     Unexpected { status: StatusCode, body: String },
@@ -97,6 +107,40 @@ impl Client {
         let response = self.send(Method::POST, "/jobs", Some(body)).await?;
         let accepted: Accepted = answer(response, StatusCode::CREATED).await?;
         Ok(accepted.id)
+    }
+
+    /// One request on the server's feeder session, sent once under `id`.
+    pub async fn ask(&self, id: [u8; 16], op: Op) -> Result<Asked, ClientError> {
+        let body = serde_json::to_vec(&Ask { id, op })?;
+        let response = self.send(Method::POST, "/device/ask", Some(body)).await?;
+        device(response).await
+    }
+
+    /// The messages the server's session was pushed from number `from`,
+    /// waiting up to `wait` for the first.
+    pub async fn pushed(&self, from: u64, wait: Duration) -> Result<PushedPage, ClientError> {
+        let path = format!("/device/pushed?from={from}&wait={}", wait.as_millis());
+        let response = self.send(Method::GET, &path, None).await?;
+        device(response).await
+    }
+
+    /// Whom the server's feeder session is with.
+    pub async fn session(&self) -> Result<SessionInfo, ClientError> {
+        let response = self.send(Method::GET, "/device/session", None).await?;
+        device(response).await
+    }
+
+    /// The bank ledger as the server holds it.
+    pub async fn banks(&self) -> Result<Ledger, ClientError> {
+        let response = self.send(Method::GET, "/banks", None).await?;
+        answer(response, StatusCode::OK).await
+    }
+
+    /// Seed one bank of the ledger (`banks --seed`).
+    pub async fn seed(&self, seed: &Seed) -> Result<Seeded, ClientError> {
+        let body = serde_json::to_vec(seed)?;
+        let response = self.send(Method::POST, "/banks/seed", Some(body)).await?;
+        answer(response, StatusCode::CREATED).await
     }
 
     pub async fn cancel(&self, id: JobId) -> Result<(), ClientError> {
@@ -203,6 +247,23 @@ async fn answer<T: DeserializeOwned>(
     }
     let body = response.into_body().collect().await?.to_bytes();
     Ok(serde_json::from_slice(&body)?)
+}
+
+/// A device route's answer, or why the session could not carry it.
+async fn device<T: DeserializeOwned>(response: Response<Incoming>) -> Result<T, ClientError> {
+    let status = response.status();
+    let body = response.into_body().collect().await?.to_bytes();
+    match status {
+        StatusCode::OK => Ok(serde_json::from_slice(&body)?),
+        StatusCode::SERVICE_UNAVAILABLE => {
+            let refused: DeviceUnavailable = serde_json::from_slice(&body)?;
+            Err(refused.into())
+        }
+        status => Err(ClientError::Unexpected {
+            status,
+            body: String::from_utf8_lossy(&body).into_owned(),
+        }),
+    }
 }
 
 async fn refusal(response: Response<Incoming>) -> ClientError {

@@ -295,7 +295,10 @@ fn status() -> proto::Status<'static> {
 /// `cancel` (a stop set before then ends the push unconnected); the result
 /// and the notes.
 fn push(feeder: &Feeder, cancel: bool) -> (Result<(), DeviceError>, Vec<String>) {
-    let mut device = Device::at(OWNER, feeder.identity, feeder.address);
+    let mut device = Device::at(
+        crate::device::Owner::of(OWNER, feeder.identity),
+        feeder.address,
+    );
     let offer = Offer::new(2, 0x22);
     let stop = AtomicBool::new(false);
     let mut notes = Vec::new();

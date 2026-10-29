@@ -19,12 +19,15 @@ use std::process::ExitCode;
 use crate::{orphans, page};
 use clap::{Args, Parser, Subcommand};
 use tokio::sync::mpsc;
+use wellfed_bench_server::api::{Seed, SeededFrom};
 use wellfed_bench_server::{
-    Client, ClientError, Followed, Interrupt, JobCommand, JobOptions, Options, Server, ToolPaths,
+    Client, ClientError, DeviceOptions, Followed, Interrupt, JobCommand, JobOptions, Options,
+    Server, ToolPaths,
 };
+use wellfed_formats::bench::banks::{Bank, Check, Content, Entry};
 use wellfed_formats::bench::catalog;
 use wellfed_formats::bench::lease::{self, Liveness};
-use wellfed_formats::bench::live::{BenchState, JobId, Phase, Uart};
+use wellfed_formats::bench::live::{BenchState, JobId, Phase, Session, Uart};
 use wellfed_formats::bench::{CONFIG, Config};
 use wellfed_relay::{AtBoard, Relay};
 use wellfed_rig::Cancel;
@@ -81,6 +84,9 @@ enum Command {
         /// The job's number, as its command printed it.
         id: JobId,
     },
+    /// The bank ledger: which build the server believes each flash bank
+    /// holds, and whether the feeder's own reports agree.
+    Banks(BanksArgs),
     #[command(flatten)]
     Job(JobCommand),
 }
@@ -105,6 +111,23 @@ struct ServeArgs {
     listen: String,
     #[arg(long, default_value_t = 8780, requires = "ui")]
     ui_port: u16,
+    /// The feeder's device API address, rather than finding it over mDNS
+    /// or the hotspot's neighbour table (a simulated feeder, say).
+    #[arg(long)]
+    feeder_address: Option<std::net::SocketAddr>,
+}
+
+#[derive(Debug, Args)]
+struct BanksArgs {
+    /// Seed the ledger from this dump session's inspection, or, when it
+    /// names no build, from --bank and --build.
+    #[arg(long, value_name = "DUMP_SESSION")]
+    seed: Option<String>,
+    #[arg(long, requires = "seed", requires = "build")]
+    bank: Option<u8>,
+    /// The build's startup identity, hex.
+    #[arg(long, requires = "seed", requires = "bank")]
+    build: Option<String>,
 }
 
 /// Parse the command line and run it.
@@ -154,6 +177,7 @@ fn run(cli: Cli, argv: &[String]) -> anyhow::Result<u8> {
         }
         Command::Status { break_lease } => status(&root, break_lease, &runtime),
         Command::Serve(args) => serve(&root, args, &runtime),
+        Command::Banks(args) => runtime.block_on(banks(&Client::new(&root), args)),
         Command::Attach { id } => runtime.block_on(async {
             let mut interrupts = interrupts()?;
             follow(&Client::new(&root), id, &mut interrupts).await
@@ -257,7 +281,11 @@ fn serve(root: &Path, args: ServeArgs, runtime: &tokio::runtime::Runtime) -> any
         root: root.to_path_buf(),
         tools: tools.clone(),
     };
-    let server = Server::open(options, |config| {
+    let device = DeviceOptions {
+        address: args.feeder_address,
+        ..DeviceOptions::default()
+    };
+    let server = Server::open_with(options, &device, |config| {
         Ok(Box::new(AtBoard::open(&config.relay_port)?))
     })?;
 
@@ -427,9 +455,132 @@ fn report_state(state: &BenchState) {
             "UART: WRITING FLASH ({done}/{total} sectors verified); do not touch the bench"
         ),
     }
+    report_feeder(state);
     for (channel, relay) in &state.relays {
         wellfed_rig::say!("Relay {channel}: {}", on_off(relay.on));
     }
+}
+
+fn report_feeder(state: &BenchState) {
+    let session = match &state.feeder.session {
+        Session::Idle => "not tried yet".to_string(),
+        Session::Unconfigured { error } => format!("unconfigured ({error})"),
+        Session::Paused { pause } => format!("paused: {pause}"),
+        Session::Connecting { attempt, error, .. } => format!(
+            "connecting, attempt {}{}",
+            attempt + 1,
+            error
+                .as_deref()
+                .map(|e| format!(" (last: {e})"))
+                .unwrap_or_default()
+        ),
+        Session::Open { address, build, .. } => {
+            format!("open at {address}, build {}", short(build))
+        }
+    };
+    wellfed_rig::say!("Feeder session: {session}");
+    if let Some(status) = &state.feeder.status {
+        let clock = match state.feeder.clock.skew_ms {
+            Some(skew) => format!("clock {skew:+} ms"),
+            None => "clock not set".into(),
+        };
+        wellfed_rig::say!(
+            "  status: build {} on bank {}, up {} s, boot {}, {clock}",
+            short(&status.build),
+            status.bank,
+            status.uptime_ms / 1000,
+            status.boot_count
+        );
+    }
+    if let Some(start) = &state.capture.start {
+        wellfed_rig::say!(
+            "  UART: last start build {} on bank {}",
+            short(&start.build),
+            start
+                .bank
+                .map_or_else(|| "?".into(), |bank| bank.to_string())
+        );
+    }
+    for (bank, entry) in &state.banks.banks {
+        wellfed_rig::say!("Bank {}: {}", bank_number(*bank), entry_text(entry));
+    }
+}
+
+fn short(build: &str) -> &str {
+    build.get(..12).unwrap_or(build)
+}
+
+fn bank_number(bank: Bank) -> u8 {
+    match bank {
+        Bank::Zero => 0,
+        Bank::One => 1,
+    }
+}
+
+fn content_text(content: &Content) -> String {
+    match content {
+        Content::Build { id } => format!("build {}", short(id)),
+        Content::Stock => "stock".into(),
+        Content::Invalid => "no valid image".into(),
+    }
+}
+
+/// One ledger entry as a line: what, from which job, and the feeder's word.
+fn entry_text(entry: &Entry) -> String {
+    let check = match &entry.check {
+        Check::Unchecked => "unchecked".to_string(),
+        Check::Confirmed { by, .. } => format!("confirmed by the {by:?}").to_lowercase(),
+        Check::Disputed { by, seen, .. } => format!(
+            "DISPUTED: the {} reports {}",
+            format!("{by:?}").to_lowercase(),
+            content_text(seen)
+        ),
+    };
+    format!(
+        "{} ({:?}{}), {check}",
+        content_text(&entry.content),
+        entry.source,
+        entry
+            .session
+            .as_deref()
+            .map(|session| format!(" {session}"))
+            .unwrap_or_default()
+    )
+}
+
+/// `banks`: the ledger, or with `--seed` its starting point first.
+async fn banks(client: &Client, args: BanksArgs) -> anyhow::Result<u8> {
+    let ledger = match args.seed {
+        Some(session) => {
+            let seeded = client
+                .seed(&Seed {
+                    session,
+                    bank: args.bank,
+                    build: args.build,
+                })
+                .await?;
+            let from = match &seeded.from {
+                SeededFrom::Inspection { inspection } => format!("from {inspection}"),
+                SeededFrom::Operator { inspection } => {
+                    format!("from --bank and --build ({inspection} names no build)")
+                }
+            };
+            wellfed_rig::say!(
+                "Seeded bank {} with build {} {from}",
+                seeded.bank,
+                short(&seeded.build)
+            );
+            seeded.ledger
+        }
+        None => client.banks().await?,
+    };
+    if ledger.banks.is_empty() {
+        wellfed_rig::say!("The ledger is empty; `banks --seed DUMP_SESSION` starts it");
+    }
+    for (bank, entry) in &ledger.banks {
+        wellfed_rig::say!("Bank {}: {}", bank_number(*bank), entry_text(entry));
+    }
+    Ok(0)
 }
 
 fn on_off(on: bool) -> &'static str {
@@ -478,6 +629,7 @@ fn direct_status(root: &Path) -> wellfed_rig::Result<u8> {
         sleep: wellfed_rig::sleep,
         off_time: std::time::Duration::ZERO,
         uart_when_off: UartWhenOff::Isolated,
+        written: Vec::new(),
     };
     bench.status_report()
 }

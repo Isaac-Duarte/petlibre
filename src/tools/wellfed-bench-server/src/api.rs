@@ -1,11 +1,58 @@
 //! What crosses the socket besides the live state and the job stream
-//! (`wellfed_formats::bench::live`): a new job's command line, the answer
-//! to it, and the refusals, which a client matches by variant.
+//! (`wellfed_formats::bench::live`) and the device routes
+//! (`wellfed_formats::bench::feeder`): a new job's command line, the
+//! answer to it, a ledger seed, and the refusals, which a client matches
+//! by variant.
 
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
+use wellfed_formats::bench::banks::Ledger;
 use wellfed_formats::bench::live::JobId;
+
+/// `POST /banks/seed`: the ledger's starting point for one bank, from a
+/// dump session's inspection when it names one, else the operator's own.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Seed {
+    pub session: String,
+    pub bank: Option<u8>,
+    pub build: Option<String>,
+}
+
+/// What a seed recorded, and from whose word.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Seeded {
+    pub bank: u8,
+    pub build: String,
+    pub from: SeededFrom,
+    pub ledger: Ledger,
+}
+
+/// Root-relative paths: the inspection report a seed looked in.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum SeededFrom {
+    Inspection {
+        inspection: String,
+    },
+    /// The inspection named no build, so `--bank` and `--build` did.
+    Operator {
+        inspection: String,
+    },
+}
+
+/// Why a seed was refused.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum SeedError {
+    /// The inspection names no build, and neither did the operator.
+    #[error("{inspection} names no bank and build; give them with --bank N --build HASH")]
+    NoBuild { inspection: String },
+    #[error("Bank {bank} is no bank; the feeder has 0 and 1")]
+    NoBank { bank: u8 },
+    #[error("Session name {name:?} must be a single plain name")]
+    BadName { name: String },
+}
 
 /// Root-relative: the control socket, mode 0600. Only the owner of the
 /// checkout can reach it, so it carries no token.
@@ -58,4 +105,6 @@ pub enum Refusal {
     BadName { name: String },
     #[error("--off-seconds {value} must be a finite, non-negative number, at most a week")]
     BadLength { value: f64 },
+    #[error("{error}")]
+    Seed { error: SeedError },
 }

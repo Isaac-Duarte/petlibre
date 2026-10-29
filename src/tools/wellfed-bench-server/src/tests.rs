@@ -18,6 +18,8 @@ use wellfed_relay::{AtBoard, Board, FakeBoard, POWER, STRAP, Switch};
 
 use super::*;
 
+mod feeder;
+
 /// The output pipe is process-wide, so tests that run a server take turns
 /// when they share a process.
 pub(crate) static ONE_SERVER: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -555,8 +557,12 @@ async fn quitting_cancels_the_job_waits_for_its_cleanup_then_frees_the_lease() {
     assert!(lease::inspect(&root).unwrap().is_some());
     server.submit(&["loader", "l1"]).await.unwrap();
     let board = checkout.board.clone();
+    // Powered with the strap held, then released: the loader now only
+    // waits on its capture. The sequence also releases the strap before
+    // anything else, so that alone is no sign its observe started.
     until("the strap's release", || {
-        board.log().ends_with(&[(STRAP, false)])
+        let log = board.log();
+        log.ends_with(&[(STRAP, false)]) && log.contains(&(POWER, true))
     })
     .await;
 

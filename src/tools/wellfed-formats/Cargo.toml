@@ -11,6 +11,7 @@ publish.workspace = true
 clap = { workspace = true, optional = true }
 chrono = { version = "0.4.45", default-features = false, features = ["std", "serde"] }
 wellfed-session.workspace = true
+wellfed-model = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.11"
@@ -23,6 +24,8 @@ uuid = { workspace = true, features = ["serde"] }
 clap = ["dep:clap"]
 # TypeScript declarations of the types the bench page reads.
 ts = ["dep:ts-rs"]
+# The bench server's /device/* routes, which carry device API values.
+device = ["dep:wellfed-model"]
 
 [dev-dependencies]
 tempfile.workspace = true

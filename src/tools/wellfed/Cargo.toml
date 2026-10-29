@@ -9,13 +9,18 @@ publish.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+# The bench server's socket, when one holds the feeder's session.
+bytes = "1"
+http-body-util.workspace = true
+hyper = { version = "1.12.0", features = ["client", "http1"] }
+hyper-util = { version = "0.1.21", features = ["tokio"] }
 bluer = { version = "0.17.4", features = ["bluetoothd"] }
 clap.workspace = true
 futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
 jiff = "0.2.38"
 wellfed-client.workspace = true
 wellfed-connect.workspace = true
-wellfed-formats.workspace = true
+wellfed-formats = { workspace = true, features = ["device"] }
 wellfed-model.workspace = true
 wellfed-proto.workspace = true
 wellfed-server-client.workspace = true
@@ -32,6 +37,10 @@ uuid = { workspace = true, features = ["v4"] }
 [dev-dependencies]
 chrono = { version = "0.4.45", default-features = false, features = ["std"] }
 wellfed-server-testkit.workspace = true
+# `wellfed status` through a stand-in for the bench server's device routes,
+# in front of a simulated feeder.
+axum.workspace = true
+wellfed-feeder-sim = { path = "../wellfed-feeder-sim", features = ["harness"] }
 tempfile.workspace = true
 
 [lints]

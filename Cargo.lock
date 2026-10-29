@@ -4178,10 +4178,15 @@ name = "wellfed"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "axum",
  "bluer",
+ "bytes",
  "chrono",
  "clap",
  "futures-util",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "jiff",
  "rustix",
  "serde",
@@ -4192,6 +4197,7 @@ dependencies = [
  "uuid",
  "wellfed-client",
  "wellfed-connect",
+ "wellfed-feeder-sim",
  "wellfed-formats",
  "wellfed-model",
  "wellfed-proto",
@@ -4275,16 +4281,23 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "jiff",
  "rustix",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror",
  "tokio",
+ "wellfed-client",
+ "wellfed-connect",
+ "wellfed-core",
+ "wellfed-feeder-sim",
  "wellfed-formats",
  "wellfed-itest",
+ "wellfed-model",
  "wellfed-relay",
  "wellfed-rig",
+ "wellfed-session",
 ]
 
 [[package]]
@@ -4485,6 +4498,7 @@ dependencies = [
  "thiserror",
  "ts-rs",
  "uuid",
+ "wellfed-model",
  "wellfed-session",
 ]
 

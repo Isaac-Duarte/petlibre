@@ -21,13 +21,21 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
-wellfed-formats.workspace = true
+jiff = "0.2.38"
+wellfed-client.workspace = true
+wellfed-connect.workspace = true
+wellfed-core.workspace = true
+wellfed-formats = { workspace = true, features = ["device"] }
+wellfed-model.workspace = true
 wellfed-itest = { path = "../wellfed-itest" }
 wellfed-relay = { path = "../wellfed-relay" }
 wellfed-rig = { path = "../wellfed-rig" }
 
 [dev-dependencies]
 tempfile.workspace = true
+# The feeder session against a simulated feeder over TCP.
+wellfed-feeder-sim = { path = "../wellfed-feeder-sim", features = ["harness"] }
+wellfed-session.workspace = true
 wellfed-relay = { path = "../wellfed-relay", features = ["fake"] }
 
 [lints]

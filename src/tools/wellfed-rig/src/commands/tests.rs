@@ -268,6 +268,10 @@ impl Tools for FakeTools {
         Ok(Box::new(FakeInstalling(result)))
     }
 
+    fn device(&mut self, _: &Path, _: &Path) -> Result<&mut dyn crate::device::DeviceLink> {
+        unreachable!("the bench commands ask through device_status and cancel_update")
+    }
+
     fn cancel_update(&mut self, keys: &Path, _config: &Path) -> Result<Answer> {
         let mut calls = self.0.borrow_mut();
         calls.ran.push(format!("cancel {}", keys.display()));
@@ -391,6 +395,7 @@ fn rig() -> Rig {
         sleep: |_, _| Ok(()),
         off_time: Duration::from_secs(2),
         uart_when_off: UartWhenOff::Isolated,
+        written: Vec::new(),
     };
 
     Rig {
@@ -1595,6 +1600,15 @@ fn ota_passes_across_segments_and_records_steps() {
         ]
     );
     assert!(state.lines.iter().any(|l| l == "Written sectors: 16/164"));
+    // The UART's confirmation is what the bank ledger records.
+    assert_eq!(
+        rig.bench.written,
+        [Written {
+            bank: Bank::One,
+            content: Content::Build { id: BUILD.into() },
+            source: wellfed_formats::bench::banks::Source::OtaConfirmed,
+        }]
+    );
 }
 
 #[test]
@@ -1623,6 +1637,15 @@ fn ota_reports_a_fallback_with_its_boot_count() {
         "Fell back: KM0 rejected the trial after boot 3; bank 0's recovery role runs. Captures unit-01…01"
     );
     assert_eq!(captured(&rig), ["unit-01"]);
+    // KM0 gave way: bank 1 holds no image that boots.
+    assert_eq!(
+        rig.bench.written,
+        [Written {
+            bank: Bank::One,
+            content: Content::Invalid,
+            source: wellfed_formats::bench::banks::Source::OtaFellBack,
+        }]
+    );
 }
 
 #[test]

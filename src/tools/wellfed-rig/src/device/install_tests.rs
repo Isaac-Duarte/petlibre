@@ -83,7 +83,7 @@ impl Simulator {
     }
 
     fn device(&self) -> Device {
-        Device::at(OWNER, self.identity, self.address)
+        Device::at(super::Owner::of(OWNER, self.identity), self.address)
     }
 }
 

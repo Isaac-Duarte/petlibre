@@ -27,6 +27,7 @@ macro_rules! say {
 
 pub mod commands;
 pub mod device;
+pub mod hotspot;
 pub mod ntp;
 pub mod server;
 pub mod tools;

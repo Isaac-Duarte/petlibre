@@ -36,6 +36,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use wellfed_client::api::{Error as SessionError, Incoming, Session};
 use wellfed_client::update::{Image, InstallError, Installer, Next, Sent};
+use wellfed_formats::bench::live::Unavailable;
 use wellfed_formats::hex;
 use wellfed_formats::owner::OwnerKeyFile;
 use wellfed_formats::private::{self, SYSTEM_RANDOM};
@@ -102,8 +103,29 @@ pub enum DeviceError {
     Stopped,
     #[error("the feeder did not answer again within {} s", .0.as_secs())]
     Gone(Duration),
+    /// The bench server's session is paused, closed or not configured; the
+    /// request was not sent.
+    #[error(transparent)]
+    Unavailable(#[from] Unavailable),
+    /// The bench server's session sent the request and got no answer: it
+    /// may have run, and it is never sent again.
+    #[error("the feeder did not answer; the {0} request may have run")]
+    Uncertain(&'static str),
     #[error(transparent)]
     Io(#[from] std::io::Error),
+}
+
+/// A device API session a sequence asks through: the rig's own
+/// [`Device`], or the bench server's one session lent to its job.
+pub trait DeviceLink {
+    /// One request and its answer.
+    fn ask(&mut self, ask: &Ask) -> Result<Answer, DeviceError>;
+}
+
+impl DeviceLink for Device {
+    fn ask(&mut self, ask: &Ask) -> Result<Answer, DeviceError> {
+        Device::ask(self, ask)
+    }
 }
 
 /// What the suite asks the feeder; borrowed into an [`Op`] when sent.
@@ -180,6 +202,39 @@ impl Ask {
             Self::Feed { .. } | Self::CancelFeed { .. } | Self::CancelUpdate | Self::Reboot
         )
     }
+
+    /// The op it sends; a clock sync reads the host's clock now, with
+    /// `zone`'s offsets.
+    pub fn op(&self, zone: &jiff::tz::TimeZone) -> Op {
+        match self {
+            Self::Status => Op::Status,
+            Self::GetSettings => Op::GetSettings,
+            Self::PutSettings { base, changes } => Op::PutSettings {
+                base: Generation(*base),
+                changes: *changes,
+            },
+            Self::PutWifi { base, wifi } => Op::PutWifi {
+                base: Generation(*base),
+                wifi: wifi.as_ref().map(|wifi| Wifi {
+                    ssid: wifi.ssid.as_bytes().to_vec(),
+                    psk: wifi.psk.clone(),
+                }),
+            },
+            Self::SyncClock => {
+                Op::TimeSync(wellfed_client::time::sync(jiff::Timestamp::now(), zone))
+            }
+            Self::SetLock { locked } => Op::SetLock { locked: *locked },
+            Self::Feed { portions } => Op::Feed {
+                portions: *portions,
+            },
+            Self::CancelFeed { feed } => Op::CancelFeed { feed: *feed },
+            Self::UpdateState => Op::UpdateState,
+            Self::CancelUpdate => Op::CancelUpdate,
+            Self::Reboot => Op::Reboot,
+            Self::GetTime => Op::GetTime,
+            Self::Stats { section } => Op::Stats { section: *section },
+        }
+    }
 }
 
 impl fmt::Debug for Ask {
@@ -217,7 +272,8 @@ pub enum Answer {
 }
 
 impl Answer {
-    fn of(answer: wellfed_model::Answer) -> Self {
+    /// The bench's view of the device API's answer.
+    pub fn of(answer: wellfed_model::Answer) -> Self {
         use wellfed_model::Answer as Model;
         match answer {
             Model::Done { generation } => Self::Done {
@@ -369,8 +425,8 @@ pub enum Rebuffed {
 }
 
 /// The parts of `wellfed-stock`'s config the device client uses.
-#[derive(Debug, Clone, Deserialize)]
-pub(crate) struct Hotspot {
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct Hotspot {
     #[serde(default)]
     pub hotspot_interface: String,
     #[serde(default)]
@@ -397,25 +453,18 @@ struct Connection {
     session: Session,
 }
 
-/// The owner's sessions with the one feeder its key file names.
-pub struct Device {
-    keys: Keypair,
-    identity: [u8; 32],
-    hotspot: Hotspot,
-    zone: jiff::tz::TimeZone,
-    address: Option<SocketAddr>,
-    /// The address was given, not found: it is never looked up again.
-    pinned: bool,
-    connection: Option<Connection>,
-    /// [`Self::hold`]'s session, apart from `connection`.
-    held: Option<Connection>,
+/// The owner key, the one feeder it names and how to find that feeder:
+/// what every session the bench opens starts from, the rig's own and the
+/// bench server's.
+#[derive(Clone)]
+pub struct Owner {
+    pub keys: Keypair,
+    pub identity: [u8; 32],
+    pub hotspot: Hotspot,
+    pub zone: jiff::tz::TimeZone,
 }
 
-fn random<const N: usize>() -> Result<[u8; N], DeviceError> {
-    private::random(Path::new(SYSTEM_RANDOM)).map_err(DeviceError::Random)
-}
-
-impl Device {
+impl Owner {
     /// The key file at `keys` and the hotspot fields of the server config
     /// at `config`, both under `root`.
     pub fn open(root: &Path, keys: &Path, config: &Path) -> crate::Result<Self> {
@@ -444,6 +493,56 @@ impl Device {
             identity,
             hotspot,
             zone,
+        })
+    }
+
+    /// The owner with `secret` and the feeder `identity`, found by nothing
+    /// but a given address (host tests, against the simulator).
+    pub fn of(secret: [u8; 32], identity: [u8; 32]) -> Self {
+        Self {
+            keys: Keypair::from_secret(secret),
+            identity,
+            hotspot: Hotspot {
+                timezone: utc(),
+                ..Hotspot::default()
+            },
+            zone: jiff::tz::TimeZone::UTC,
+        }
+    }
+
+    /// The feeder's address: over mDNS by its identity, else by its MAC in
+    /// the hotspot's neighbour table. Blocks for up to the mDNS wait.
+    pub fn locate(&self) -> Result<SocketAddr, DeviceError> {
+        let found = browse(&self.identity).or_else(|| neighbour(&self.hotspot));
+        found.ok_or_else(|| DeviceError::NotFound {
+            fingerprint: hex::encode(&self.identity[..8]),
+            interface: self.hotspot.hotspot_interface.clone(),
+            mac: self.hotspot.target_mac.clone(),
+        })
+    }
+}
+
+/// The owner's sessions with the one feeder its key file names.
+pub struct Device {
+    owner: Owner,
+    address: Option<SocketAddr>,
+    /// The address was given, not found: it is never looked up again.
+    pinned: bool,
+    connection: Option<Connection>,
+    /// [`Self::hold`]'s session, apart from `connection`.
+    held: Option<Connection>,
+}
+
+fn random<const N: usize>() -> Result<[u8; N], DeviceError> {
+    private::random(Path::new(SYSTEM_RANDOM)).map_err(DeviceError::Random)
+}
+
+impl Device {
+    /// The key file at `keys` and the hotspot fields of the server config
+    /// at `config`, both under `root`.
+    pub fn open(root: &Path, keys: &Path, config: &Path) -> crate::Result<Self> {
+        Ok(Self {
+            owner: Owner::open(root, keys, config)?,
             address: None,
             pinned: false,
             connection: None,
@@ -451,19 +550,11 @@ impl Device {
         })
     }
 
-    /// The owner with `secret` reaching the feeder `identity` at `address`
-    /// alone (host tests, against the simulator).
-    #[cfg(test)]
-    pub(crate) fn at(secret: [u8; 32], identity: [u8; 32], address: SocketAddr) -> Self {
+    /// `owner` reaching its feeder at `address` alone (host tests, against
+    /// the simulator).
+    pub fn at(owner: Owner, address: SocketAddr) -> Self {
         Self {
-            keys: Keypair::from_secret(secret),
-            identity,
-            hotspot: Hotspot {
-                hotspot_interface: String::new(),
-                target_mac: String::new(),
-                timezone: utc(),
-            },
-            zone: jiff::tz::TimeZone::UTC,
+            owner,
             address: Some(address),
             pinned: true,
             connection: None,
@@ -521,35 +612,7 @@ impl Device {
         id: RequestId,
         ask: &Ask,
     ) -> Result<Answer, DeviceError> {
-        let op = match ask {
-            Ask::Status => Op::Status,
-            Ask::GetSettings => Op::GetSettings,
-            Ask::PutSettings { base, changes } => Op::PutSettings {
-                base: Generation(*base),
-                changes: *changes,
-            },
-            Ask::PutWifi { base, wifi } => Op::PutWifi {
-                base: Generation(*base),
-                wifi: wifi.as_ref().map(|wifi| Wifi {
-                    ssid: wifi.ssid.as_bytes().to_vec(),
-                    psk: wifi.psk.clone(),
-                }),
-            },
-            Ask::SyncClock => Op::TimeSync(wellfed_client::time::sync(
-                jiff::Timestamp::now(),
-                &self.zone,
-            )),
-            Ask::SetLock { locked } => Op::SetLock { locked: *locked },
-            Ask::Feed { portions } => Op::Feed {
-                portions: *portions,
-            },
-            Ask::CancelFeed { feed } => Op::CancelFeed { feed: *feed },
-            Ask::UpdateState => Op::UpdateState,
-            Ask::CancelUpdate => Op::CancelUpdate,
-            Ask::Reboot => Op::Reboot,
-            Ask::GetTime => Op::GetTime,
-            Ask::Stats { section } => Op::Stats { section: *section },
-        };
+        let op = ask.op(&self.owner.zone);
         let bytes = connection.session.request(id, &op)?;
         connection.stream.write_all(&bytes)?;
 
@@ -587,7 +650,7 @@ impl Device {
     }
 
     fn handshake(&mut self, address: SocketAddr) -> Result<Connection, DeviceError> {
-        let (session, hello) = Session::connect(&self.keys, self.identity, random()?)?;
+        let (session, hello) = Session::connect(&self.owner.keys, self.owner.identity, random()?)?;
         let mut connection = Connection {
             stream: dial(address)?,
             session,
@@ -611,7 +674,7 @@ impl Device {
 
     /// The feeder's identity key, which a downgrade statement names.
     pub(crate) fn identity(&self) -> [u8; 32] {
-        self.identity
+        self.owner.identity
     }
 
     /// A session as soon as the feeder answers, retrying for up to `wait`.
@@ -881,9 +944,9 @@ impl Device {
                 unenrolled = Keypair::from_secret(random()?);
                 &unenrolled
             }
-            Intruder::Tampered => &self.keys,
+            Intruder::Tampered => &self.owner.keys,
         };
-        let (session, mut hello) = Session::connect(keys, self.identity, random()?)?;
+        let (session, mut hello) = Session::connect(keys, self.owner.identity, random()?)?;
         if intruder == Intruder::Tampered
             && let Some(last) = hello.last_mut()
         {
@@ -922,60 +985,56 @@ impl Device {
         }
     }
 
-    /// The feeder's address: over mDNS by its identity, else by its MAC on
-    /// the hotspot.
+    /// The feeder's address, found again and kept.
     fn locate(&mut self) -> Result<SocketAddr, DeviceError> {
-        let found = self.browse().or_else(|| self.neighbour());
-        let address = found.ok_or_else(|| DeviceError::NotFound {
-            fingerprint: hex::encode(&self.identity[..8]),
-            interface: self.hotspot.hotspot_interface.clone(),
-            mac: self.hotspot.target_mac.clone(),
-        })?;
+        let address = self.owner.locate()?;
         self.address = Some(address);
         Ok(address)
     }
+}
 
-    fn browse(&self) -> Option<SocketAddr> {
-        let daemon = mdns_sd::ServiceDaemon::new().ok()?;
-        let receiver = daemon.browse("_wellfed._tcp.local.").ok()?;
-        let want = hex::encode(&self.identity);
-        let deadline = Instant::now() + DISCOVERY;
-        let found = loop {
-            let left = deadline.saturating_duration_since(Instant::now());
-            if left.is_zero() {
-                break None;
-            }
-            let Ok(event) = receiver.recv_timeout(left) else {
-                break None;
-            };
-            let mdns_sd::ServiceEvent::ServiceResolved(info) = event else {
-                continue;
-            };
-            if info.get_property_val_str("id") != Some(want.as_str()) {
-                continue;
-            }
-            if let Some(ip) = info.get_addresses_v4().into_iter().next() {
-                break Some(SocketAddr::new(IpAddr::V4(ip), info.get_port()));
-            }
-        };
-        let _ = daemon.shutdown();
-        found
-    }
-
-    fn neighbour(&self) -> Option<SocketAddr> {
-        let interface = &self.hotspot.hotspot_interface;
-        if interface.is_empty() || self.hotspot.target_mac.is_empty() {
-            return None;
+/// The feeder with `identity` over mDNS (`_wellfed._tcp`, TXT `id=`).
+fn browse(identity: &[u8; 32]) -> Option<SocketAddr> {
+    let daemon = mdns_sd::ServiceDaemon::new().ok()?;
+    let receiver = daemon.browse("_wellfed._tcp.local.").ok()?;
+    let want = hex::encode(identity);
+    let deadline = Instant::now() + DISCOVERY;
+    let found = loop {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            break None;
         }
-        let output = Command::new("ip")
-            .args(["-j", "neigh", "show", "dev", interface])
-            .stdin(Stdio::null())
-            .output()
-            .ok()
-            .filter(|output| output.status.success())?;
-        let neighbours: Vec<Neighbour> = serde_json::from_slice(&output.stdout).ok()?;
-        neighbour_address(&neighbours, &self.hotspot.target_mac)
+        let Ok(event) = receiver.recv_timeout(left) else {
+            break None;
+        };
+        let mdns_sd::ServiceEvent::ServiceResolved(info) = event else {
+            continue;
+        };
+        if info.get_property_val_str("id") != Some(want.as_str()) {
+            continue;
+        }
+        if let Some(ip) = info.get_addresses_v4().into_iter().next() {
+            break Some(SocketAddr::new(IpAddr::V4(ip), info.get_port()));
+        }
+    };
+    let _ = daemon.shutdown();
+    found
+}
+
+/// The feeder's MAC in the hotspot's neighbour table, read with `ip`.
+fn neighbour(hotspot: &Hotspot) -> Option<SocketAddr> {
+    let interface = &hotspot.hotspot_interface;
+    if interface.is_empty() || hotspot.target_mac.is_empty() {
+        return None;
     }
+    let output = Command::new("ip")
+        .args(["-j", "neigh", "show", "dev", interface])
+        .stdin(Stdio::null())
+        .output()
+        .ok()
+        .filter(|output| output.status.success())?;
+    let neighbours: Vec<Neighbour> = serde_json::from_slice(&output.stdout).ok()?;
+    neighbour_address(&neighbours, &hotspot.target_mac)
 }
 
 /// The IPv4 address `mac` holds among `neighbours`, on the API port.

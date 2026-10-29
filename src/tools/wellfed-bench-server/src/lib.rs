@@ -14,6 +14,10 @@
 //! - **Output:** descriptors 1 and 2 go through one pipe that a thread
 //!   drains without pause, into the console, the running job's stream and
 //!   its log file.
+//! - **Feeder:** one owner device API session for the server's life
+//!   (`feeder`), which the jobs and the `wellfed` CLI ask through, and a
+//!   receive-only UART capture while no job runs (`capture`); both feed
+//!   the bank ledger (`banks`) what the feeder reports.
 //!
 //! `wellfed-flash` stays a child process, never linked: its pinned checks,
 //! plan hashes and no-retry rule are its own.
@@ -21,8 +25,13 @@
 #![forbid(unsafe_code)]
 
 pub mod api;
+mod banks;
 mod board;
+mod capture;
 pub mod client;
+mod device_routes;
+mod feeder;
+mod files;
 pub mod jobs;
 mod output;
 mod routes;
@@ -30,6 +39,7 @@ mod server;
 mod state;
 
 pub use client::{Client, ClientError, Followed, Interrupt};
+pub use feeder::DeviceOptions;
 pub use jobs::{JobCommand, JobOptions, ToolPaths};
 pub use server::{Options, ServeError, Server, restore_output};
 pub use state::Store;

@@ -11,6 +11,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use super::banks::Ledger;
 use super::progress::{Current, RelayState, StepState, Unit};
 
 /// A job's number, counting up across servers (see [`JOBS`]).
@@ -40,6 +41,13 @@ pub struct BenchState {
     /// acknowledged. The server holds the board, so nothing else switches
     /// a relay between reads, except the board's own front buttons.
     pub relays: BTreeMap<String, RelayState>,
+    /// The owner's device API session and what it last read.
+    pub feeder: FeederView,
+    /// The receive-only capture's newest lines and the records parsed
+    /// from them.
+    pub capture: CaptureView,
+    /// Which build the bench believes each bank holds.
+    pub banks: Ledger,
 }
 
 /// The server process.
@@ -200,6 +208,198 @@ impl Uart {
         } else {
             Self::Loader
         }
+    }
+}
+
+/// Root-relative: the feeder's debug log as the server's session follows
+/// it, one file a UTC day (`<YYYY-MM-DD>.log`).
+pub const DEVICE_LOG: &str = "private/bench-status/device-log";
+/// Root-relative: the newest event the server's session has taken, which
+/// a new server subscribes after.
+pub const DEVICE_CURSOR: &str = "private/bench-status/device-cursor.json";
+
+/// How many of the feeder's log lines and the capture's UART lines the
+/// state keeps.
+pub const TAIL: usize = 200;
+
+/// The owner's device API session, as the server holds it.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct FeederView {
+    pub session: Session,
+    /// The last status read, and when.
+    pub status: Option<FeederStatus>,
+    pub status_at: Option<f64>,
+    pub clock: ClockView,
+    /// The newest event the feeder has recorded, as its status or the
+    /// last pushed event said.
+    pub journal: Option<Journal>,
+    /// Whether the bench hotspot's connection is up, read with nmcli;
+    /// `None` without a `private/hotspot.json`, or when nmcli failed.
+    pub hotspot: Option<bool>,
+    /// The feeder's newest debug log lines.
+    pub log: Vec<String>,
+}
+
+/// Where the session stands.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[serde(tag = "state", rename_all = "lowercase")]
+pub enum Session {
+    /// The server has not tried yet.
+    #[default]
+    Idle,
+    /// No owner key file or server config to open one with.
+    Unconfigured { error: String },
+    /// Closed on purpose until the pause ends.
+    Paused { pause: Pause },
+    /// Opening, after `attempt` failures: the last one's error, and when
+    /// the next try is due.
+    Connecting {
+        attempt: u32,
+        error: Option<String>,
+        retry: Option<f64>,
+    },
+    Open {
+        address: String,
+        build: String,
+        since: f64,
+    },
+}
+
+/// Why the server closed its session.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum Pause {
+    /// A job that holds the UART runs: session traffic has no place beside
+    /// a loader session or a write, and the feeder is about to lose power
+    /// or its application anyway.
+    UartJob { job: JobId, label: String },
+    /// Relay 1 is off: there is no feeder to talk to.
+    PowerOff,
+    /// The server is quitting.
+    Stopping,
+}
+
+impl std::fmt::Display for Pause {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UartJob { job, label } => write!(f, "job {job} ({label}) holds the UART"),
+            Self::PowerOff => f.write_str("relay 1 is off"),
+            Self::Stopping => f.write_str("the bench server is stopping"),
+        }
+    }
+}
+
+/// Why the server's session cannot carry a request now.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum Unavailable {
+    #[error("the bench server's feeder session is paused: {pause}")]
+    Paused { pause: Pause },
+    #[error("the bench server has no feeder session: {error}")]
+    Unconfigured { error: String },
+    /// It did not open within the time a request waits for it.
+    #[error("the bench server's feeder session is not open{}", not_open(.error.as_deref()))]
+    NotOpen { error: Option<String> },
+    #[error("the bench server's feeder session has ended")]
+    Ended,
+}
+
+fn not_open(error: Option<&str>) -> String {
+    error.map(|error| format!(" ({error})")).unwrap_or_default()
+}
+
+/// The parts of the feeder's status the page shows.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct FeederStatus {
+    /// The startup identity, lowercase hex.
+    pub build: String,
+    pub bank: u8,
+    pub uptime_ms: u32,
+    pub boot_count: u32,
+    pub rssi: i32,
+    /// Unix milliseconds; `None` while the clock is invalid.
+    pub clock_ms: Option<u64>,
+    pub locked: Option<bool>,
+    pub last_event: Option<u64>,
+    pub sessions: u8,
+}
+
+/// The feeder's clock against the bench host's.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct ClockView {
+    /// The feeder's clock minus the host's at the last status, in
+    /// milliseconds; `None` while it is invalid or unread.
+    pub skew_ms: Option<i64>,
+    /// When the server last set it.
+    pub synced_at: Option<f64>,
+}
+
+/// The newest event the feeder holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct Journal {
+    pub seq: u64,
+    /// The history the number counts in, once an event has named it.
+    pub epoch: Option<u32>,
+    pub from: JournalSource,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[serde(rename_all = "lowercase")]
+pub enum JournalSource {
+    Status,
+    Event,
+}
+
+/// [`DEVICE_CURSOR`]'s contents.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeviceCursor {
+    pub epoch: u32,
+    pub seq: u64,
+}
+
+/// The receive-only capture the server holds while the feeder is idle and
+/// powered.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct CaptureView {
+    /// Root-relative: the segment being written, while one is.
+    pub segment: Option<String>,
+    /// Why the capture stopped on its own, until it starts again.
+    pub failure: Option<String>,
+    /// The newest UART lines, from this capture or an earlier one.
+    pub lines: Vec<String>,
+    /// The last `PLFW1 start` seen.
+    pub start: Option<StartRecord>,
+    /// The last `PLOTA1` record seen.
+    pub update: Option<UartRecord>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct StartRecord {
+    pub build: String,
+    pub bank: Option<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct UartRecord {
+    pub line: String,
+    pub at: f64,
+}
+
+/// Keep the newest [`TAIL`] of `lines`.
+pub fn trim_tail(lines: &mut Vec<String>) {
+    if lines.len() > TAIL {
+        lines.drain(..lines.len() - TAIL);
     }
 }
 

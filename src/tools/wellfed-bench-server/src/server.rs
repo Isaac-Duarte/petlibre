@@ -18,7 +18,7 @@ use std::time::Duration;
 use tokio::sync::Notify;
 use wellfed_formats::bench::lease::{self, Lease};
 use wellfed_formats::bench::live::{
-    BenchState, CancelState, JOBS, JobEnd, JobId, JobView, Phase, ServerView, Uart,
+    BenchState, CancelState, JOBS, JobEnd, JobId, JobView, Pause, Phase, ServerView, Uart,
 };
 use wellfed_formats::bench::progress::{Current, ProgressSink};
 use wellfed_formats::bench::{CONFIG, Config, now, relative};
@@ -27,8 +27,11 @@ use wellfed_rig::Cancel;
 use wellfed_rig::tools::Children;
 
 use crate::api::{JobRequest, Refusal, SOCKET};
+use crate::banks::Banks;
 use crate::board::SharedBoard;
-use crate::jobs::{self, Bed, JobError, Run, ToolPaths};
+use crate::capture::CaptureService;
+use crate::feeder::{DeviceOptions, Feeder, Task};
+use crate::jobs::{self, Bed, JobError, Ran, Run, ToolPaths};
 use crate::output::{self, Output};
 use crate::routes;
 use crate::state::{JobLog, Logs, Store};
@@ -39,6 +42,11 @@ const CLOSE_WAIT: Duration = Duration::from_secs(3);
 /// How often the relays are read while no job runs, for the board's front
 /// buttons. Never while a job runs: the job owns the board then.
 const RELAY_POLL: Duration = Duration::from_secs(30);
+/// How often the hotspot's connection is looked at.
+const HOTSPOT_POLL: Duration = Duration::from_secs(30);
+/// How long a quitting server lets the feeder session close and write out
+/// its log.
+const SESSION_CLOSE: Duration = Duration::from_secs(2);
 
 /// Why the server did not start, or stopped serving.
 #[derive(Debug, thiserror::Error)]
@@ -72,6 +80,8 @@ pub struct Server {
     shared: Arc<Shared>,
     listener: std::os::unix::net::UnixListener,
     socket: PathBuf,
+    /// The feeder session's task, started by [`Self::run`].
+    session: Task,
     /// Held until the server is dropped, after its last job.
     _lease: Lease,
 }
@@ -82,6 +92,15 @@ impl Server {
     /// next opens anything.
     pub fn open(
         options: Options,
+        open_board: impl FnOnce(&Config) -> wellfed_relay::Result<Box<dyn Board>>,
+    ) -> Result<Self, ServeError> {
+        Self::open_with(options, &DeviceOptions::default(), open_board)
+    }
+
+    /// [`Self::open`], with the feeder session's key, config and address.
+    pub fn open_with(
+        options: Options,
+        device: &DeviceOptions,
         open_board: impl FnOnce(&Config) -> wellfed_relay::Result<Box<dyn Board>>,
     ) -> Result<Self, ServeError> {
         // The socket, the evidence and the job logs are the owner's alone,
@@ -104,9 +123,21 @@ impl Server {
             activity: Vec::new(),
             uart: Uart::Idle,
             relays: Default::default(),
+            feeder: Default::default(),
+            capture: Default::default(),
+            banks: Default::default(),
         });
         let board = SharedBoard::new(board, store.clone());
         board.query()?;
+        let banks = Banks::open(&options.root, store.clone());
+        let (feeder, session) = Feeder::new(&options.root, device, store.clone(), banks.clone());
+        let capture = CaptureService::new(
+            options.root.clone(),
+            config.uart_port.clone(),
+            options.tools.clone(),
+            store.clone(),
+            banks.clone(),
+        );
 
         let socket = options.root.join(SOCKET);
         let listener = bind(&socket).map_err(|error| ServeError::Socket {
@@ -124,6 +155,7 @@ impl Server {
             config,
             board,
             tools: options.tools,
+            feeder,
         };
         Ok(Self {
             shared: Arc::new(Shared {
@@ -131,9 +163,12 @@ impl Server {
                 store,
                 output,
                 jobs: Mutex::new(jobs),
+                banks,
+                capture,
             }),
             listener,
             socket,
+            session,
             _lease: lease,
         })
     }
@@ -177,6 +212,14 @@ impl Server {
                 .with_graceful_shutdown(async move { closed.notified().await })
                 .await
         });
+        let session = tokio::spawn(self.session.run());
+        let hotspot = tokio::spawn(hotspot(
+            self.shared.bed.root.clone(),
+            self.shared.store.clone(),
+        ));
+        let idle = Arc::clone(&self.shared);
+        let _ = tokio::task::spawn_blocking(move || idle.resume_capture()).await;
+
         let polled = Arc::clone(&self.shared);
         let polling = tokio::spawn(async move {
             let mut ticks = tokio::time::interval(RELAY_POLL);
@@ -196,11 +239,22 @@ impl Server {
         };
 
         polling.abort();
+        hotspot.abort();
         self.shared
             .output
             .say("Stopping: cancelling the running job, then releasing the bench".into());
         if let Some(job) = self.shared.stop() {
             let _ = tokio::task::spawn_blocking(move || job.join()).await;
+        }
+        let capture = self.shared.capture.clone();
+        let _ = tokio::task::spawn_blocking(move || capture.stop()).await;
+        // The session closes on the stop's hold and writes out its log.
+        let mut session = session;
+        if tokio::time::timeout(SESSION_CLOSE, &mut session)
+            .await
+            .is_err()
+        {
+            session.abort();
         }
 
         let served = match failed {
@@ -248,6 +302,26 @@ fn bind(socket: &Path) -> std::io::Result<std::os::unix::net::UnixListener> {
     Ok(listener)
 }
 
+/// Whether the bench hotspot's connection is up, every [`HOTSPOT_POLL`],
+/// into the feeder's view. Read-only: nmcli only lists what is active.
+async fn hotspot(root: PathBuf, store: Store) {
+    use wellfed_rig::hotspot::{self, HOTSPOT, HotspotFile};
+
+    let mut ticks = tokio::time::interval(HOTSPOT_POLL);
+    loop {
+        ticks.tick().await;
+        let Ok(file) = wellfed_formats::load::<HotspotFile>(&root.join(HOTSPOT)) else {
+            store.update(|state| state.feeder.hotspot = None);
+            continue;
+        };
+        let up = tokio::task::spawn_blocking(move || hotspot::active(&file.connection).ok())
+            .await
+            .ok()
+            .flatten();
+        store.update(|state| state.feeder.hotspot = up);
+    }
+}
+
 /// The highest job number among the logs in `directory`, so a new server
 /// carries on from it rather than overwrite an earlier job's log.
 fn last_job(directory: &Path) -> JobId {
@@ -270,6 +344,8 @@ pub(crate) struct Shared {
     pub(crate) store: Store,
     output: Arc<Output>,
     jobs: Mutex<Jobs>,
+    pub(crate) banks: Banks,
+    capture: CaptureService,
 }
 
 #[derive(Default)]
@@ -420,8 +496,26 @@ impl Shared {
     }
 
     fn run_job(&self, id: JobId, spec: &jobs::JobSpec, run: Run, log: &Arc<JobLog>) {
+        // The port is the job's alone: the server's own capture lets go of
+        // it first, and the session closes for a job that holds the UART.
+        if spec.command.holds_uart() {
+            self.bed.feeder.hold(Some(Pause::UartJob {
+                job: id,
+                label: spec.command.describe(),
+            }));
+        }
+        self.capture.stop();
+
         let ran = catch_unwind(AssertUnwindSafe(|| jobs::run(&self.bed, spec, run)));
-        let (code, error) = ran.unwrap_or((1, Some(JobError::Panicked)));
+        let Ran {
+            code,
+            error,
+            written,
+        } = ran.unwrap_or(Ran {
+            code: 1,
+            error: Some(JobError::Panicked),
+            written: Vec::new(),
+        });
 
         // Every line the job wrote reaches its stream before the end does.
         self.output.sync();
@@ -430,7 +524,37 @@ impl Shared {
         if let Err(error) = self.bed.board.query() {
             self.output.say(format!("Relay board: {error}"));
         }
+        self.banks.record(&written, spec.command.name());
+        let stopping = self.jobs().stopping;
+        if !stopping {
+            self.bed.feeder.hold(None);
+        }
         self.finish(id, Some(log), code, error);
+        self.resume_capture();
+    }
+
+    /// Capture the UART while no job runs and the feeder is powered; stop
+    /// capturing once relay 1 is off.
+    pub(crate) fn resume_capture(&self) {
+        let idle = {
+            let jobs = self.jobs();
+            jobs.running.is_none() && !jobs.stopping
+        };
+        let powered = self
+            .store
+            .read()
+            .relays
+            .get("1")
+            .is_some_and(|relay| relay.on);
+        if idle && powered {
+            self.capture.start();
+        } else if !powered {
+            self.capture.stop();
+        }
+    }
+
+    pub(crate) fn feeder(&self) -> &Feeder {
+        &self.bed.feeder
     }
 
     /// Free the bench, then record the end everywhere: the state, the
@@ -518,6 +642,7 @@ impl Shared {
     fn stop(&self) -> Option<std::thread::JoinHandle<()>> {
         self.store
             .update(|state| state.server.phase = Phase::Stopping);
+        self.bed.feeder.hold(Some(Pause::Stopping));
         let mut jobs = self.jobs();
         jobs.stopping = true;
         let log = jobs
@@ -550,6 +675,7 @@ impl Shared {
         if let Err(error) = self.bed.board.query() {
             self.output.say(format!("Relay board: {error}"));
         }
+        self.resume_capture();
         true
     }
 

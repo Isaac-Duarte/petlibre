@@ -30,6 +30,7 @@
 
 mod access;
 mod backup;
+mod bench;
 mod ble;
 mod call;
 mod configure;
@@ -150,6 +151,29 @@ fn main() -> Result<ExitCode> {
         .enable_all()
         .build()?;
 
+    // These open sessions of their own, beside the one the bench server
+    // holds: setup and recovery over the pairing window, a join with
+    // another key, and the pushes of an install or a restore.
+    let own_sessions = match &cli.command {
+        Command::Setup(_) => Some("setup"),
+        Command::Install(_) => Some("install"),
+        Command::Recover(_) => Some("recover"),
+        Command::Join(_) => Some("join"),
+        Command::RestoreStock(_) => Some("restore-stock"),
+        _ => None,
+    };
+    if let Some(command) = own_sessions
+        && runtime
+            .block_on(bench::Bench::probe(std::path::Path::new(bench::SOCKET)))?
+            .is_some()
+    {
+        bail!(
+            "`wellfed {command}` opens its own sessions, and the bench server on {} holds the \
+             feeder's; stop `wellfed-bench serve` first",
+            bench::SOCKET
+        );
+    }
+
     let device = match cli.command {
         Command::Server(args) => return runtime.block_on(server::run(args)),
         Command::Setup(args) => runtime.block_on(pairing::setup(args)),
@@ -220,7 +244,35 @@ impl Toggle {
     }
 }
 
+/// A session with the feeder: the bench server's whenever one answers for
+/// this checkout, and otherwise this computer's own.
 async fn connect(target: &Target) -> Result<(OwnerKey, [u8; 32], Connection)> {
+    if let Some(bench) = bench::Bench::probe(&bench::beside(&target.keys)).await? {
+        let lent = bench::lend(
+            bench,
+            &target.keys,
+            target.feeder.as_deref(),
+            target.address.as_deref(),
+        )
+        .await?;
+        let key = OwnerKey::open(&target.keys, None, OwnerKey::system())?;
+        let identity = key.feeder(target.feeder.as_deref())?;
+        if wellfed_formats::hex::encode(&identity) != lent.identity() {
+            bail!(
+                "the bench server's session is with feeder {}, not {}",
+                &lent.identity()[..16],
+                fingerprint(&identity)
+            );
+        }
+        eprintln!(
+            "Session with feeder {} through the bench server ({:?}, build {}).",
+            fingerprint(&identity),
+            lent.role(),
+            lent.build()
+        );
+        return Ok((key, identity, Connection::Bench(Box::new(lent))));
+    }
+
     let key = OwnerKey::open(&target.keys, None, OwnerKey::system())?;
     let identity = key.feeder(target.feeder.as_deref())?;
     let address = device::locate(&identity, target.address.as_deref())?;

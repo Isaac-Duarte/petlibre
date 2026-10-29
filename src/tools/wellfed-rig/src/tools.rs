@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 use serde::Deserialize;
 use wellfed_formats::canonical::sha256;
 
-use crate::device::{Answer, Ask, Device, DeviceError, DeviceStatus, Fault};
+use crate::device::{Answer, Ask, Device, DeviceError, DeviceLink, DeviceStatus, Fault};
 use crate::{Cancel, Error, Result, Waited, wait_child};
 use wellfed_formats::bench::live::ActivityKind;
 use wellfed_formats::bench::progress::{FlashTool, Status};
@@ -52,6 +52,10 @@ pub trait Tools {
     /// Cancel any update and forget its recorded candidate over the device
     /// API, as [`Self::device_status`] reaches the feeder; the answer.
     fn cancel_update(&mut self, keys: &Path, config: &Path) -> Result<Answer>;
+    /// The device API session requests go through, as [`Self::device_status`]
+    /// reaches the feeder: one that never resends, when the bench server
+    /// lends its own.
+    fn device(&mut self, keys: &Path, config: &Path) -> Result<&mut dyn DeviceLink>;
     /// Run one `wellfed-build` command (a firmware build or review) from the
     /// checkout root, streaming both of its outputs as they come; returns its
     /// exit status.
@@ -129,6 +133,13 @@ pub enum ToolsError {
     },
     #[error("Status answered {0:?}")]
     StatusAnswer(Answer),
+    /// `held` is the key the bench server's session speaks as.
+    #[error(
+        "The bench server's feeder session speaks as {}, not {}; drop --keys or run with the server's key",
+        held.display(),
+        asked.display()
+    )]
+    OtherKeys { asked: PathBuf, held: PathBuf },
 }
 
 /// How a push ended short of activating bank 1. It is shared ([`Arc`]),
@@ -355,8 +366,15 @@ pub struct Processes {
     /// Every child runs registered here while it runs, so a cancel can
     /// signal it and the server can show it.
     children: Children,
-    /// Opened at the first status check and kept, with its session.
-    device: Option<Device>,
+    /// The session every device API request goes through: one lent by the
+    /// bench server, or one opened at the first request and kept.
+    link: Option<Link>,
+}
+
+/// A device API session and the key file it speaks as (root-relative).
+struct Link {
+    keys: PathBuf,
+    device: Box<dyn DeviceLink + Send>,
 }
 
 impl Processes {
@@ -375,8 +393,16 @@ impl Processes {
             build_bin,
             cancel,
             children,
-            device: None,
+            link: None,
         }
+    }
+
+    /// Ask through `device`, which speaks as the key file `keys`
+    /// (root-relative), rather than open a session of its own.
+    #[must_use]
+    pub fn with_link(mut self, keys: PathBuf, device: Box<dyn DeviceLink + Send>) -> Self {
+        self.link = Some(Link { keys, device });
+        self
     }
 }
 
@@ -610,22 +636,32 @@ impl Tools for Processes {
     }
 
     fn device_status(&mut self, keys: &Path, config: &Path) -> Result<DeviceStatus> {
-        let device = match &mut self.device {
-            Some(device) => device,
-            None => self.device.insert(Device::open(&self.root, keys, config)?),
-        };
-        match device.ask(&Ask::Status)? {
+        match self.device(keys, config)?.ask(&Ask::Status)? {
             Answer::Status(status) => Ok(status),
             other => Err(ToolsError::StatusAnswer(other).into()),
         }
     }
 
     fn cancel_update(&mut self, keys: &Path, config: &Path) -> Result<Answer> {
-        let device = match &mut self.device {
-            Some(device) => device,
-            None => self.device.insert(Device::open(&self.root, keys, config)?),
+        Ok(self.device(keys, config)?.ask(&Ask::CancelUpdate)?)
+    }
+
+    fn device(&mut self, keys: &Path, config: &Path) -> Result<&mut dyn DeviceLink> {
+        let link = match self.link.take() {
+            Some(link) => link,
+            None => Link {
+                keys: keys.to_path_buf(),
+                device: Box::new(Device::open(&self.root, keys, config)?),
+            },
         };
-        Ok(device.ask(&Ask::CancelUpdate)?)
+        let link = self.link.insert(link);
+        // The bench server lends its own session, opened with its key; a
+        // sequence asked to speak as another key must not borrow it.
+        require(link.keys == keys, || ToolsError::OtherKeys {
+            asked: keys.to_path_buf(),
+            held: link.keys.clone(),
+        })?;
+        Ok(link.device.as_mut())
     }
 
     fn build(&mut self, args: &[String], status: &mut Status) -> Result<i32> {
@@ -960,7 +996,7 @@ mod tests {
             build_bin: tmp.path().join("absent"),
             cancel: Cancel::new(),
             children: Children::new(),
-            device: None,
+            link: None,
         };
         let mut status = Status::new(tmp.path(), tmp.path().join("status"));
         status.begin(BenchCommand::Dump, Some("unit"), &[]).unwrap();
@@ -997,7 +1033,7 @@ echo '{"status":"complete","result":{"bytes":7}}' > "$8/report.json""#,
             build_bin: tmp.path().join("absent"),
             cancel: Cancel::new(),
             children: Children::new(),
-            device: None,
+            link: None,
         };
         let output = tmp.path().join("capture");
 
@@ -1019,7 +1055,7 @@ echo '{"status":"complete","result":{"bytes":7}}' > "$8/report.json""#,
             build_bin: tmp.path().join("absent"),
             cancel: Cancel::new(),
             children: Children::new(),
-            device: None,
+            link: None,
         };
 
         let error = tools
@@ -1048,7 +1084,7 @@ echo '{"status":"complete","result":{"bytes":7}}' > "$8/report.json""#,
             build_bin: tmp.join("absent"),
             cancel: Cancel::new(),
             children: Children::new(),
-            device: None,
+            link: None,
         };
         let root = tmp.to_path_buf();
         tools
@@ -1148,7 +1184,7 @@ echo '{"status":"complete","result":{"bytes":7}}' > "$8/report.json""#,
             build_bin: builder,
             cancel: Cancel::new(),
             children: Children::new(),
-            device: None,
+            link: None,
         };
         let mut status = Status::new(tmp.path(), tmp.path().join("status"));
         status.begin(BenchCommand::Ota, Some("unit"), &[]).unwrap();
@@ -1207,7 +1243,7 @@ echo '{"status":"complete","result":{"bytes":7}}' > "$8/report.json""#,
             build_bin: builder,
             cancel: Cancel::new(),
             children: children.clone(),
-            device: None,
+            link: None,
         };
 
         let build = std::thread::spawn(move || {
@@ -1235,7 +1271,7 @@ echo '{"status":"complete","result":{"bytes":7}}' > "$8/report.json""#,
             build_bin: tmp.path().join("absent"),
             cancel: Cancel::new(),
             children: Children::new(),
-            device: None,
+            link: None,
         };
         let mut status = Status::disabled();
 

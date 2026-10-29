@@ -12,6 +12,7 @@ use std::time::Duration;
 
 use clap::{Args, Parser, Subcommand};
 use wellfed_formats::bench::Config;
+use wellfed_formats::bench::banks::Written;
 use wellfed_formats::bench::progress::{BenchCommand, ProgressSink, Status};
 use wellfed_formats::bench::{CAPTURES, STATUS_DIR, plain_name};
 use wellfed_itest::{ItestArgs, StockOtaArgs};
@@ -25,6 +26,7 @@ use wellfed_rig::tools::{Children, Processes};
 
 use crate::api::Refusal;
 use crate::board::SharedBoard;
+use crate::feeder::Feeder;
 
 /// A bench command that touches the hardware, as a job.
 #[derive(Debug, Clone, Subcommand)]
@@ -143,6 +145,27 @@ impl JobCommand {
         }
     }
 
+    /// Whether the job holds the UART (a capture, a loader session, a read
+    /// or a write) or cold boots into one: the server's feeder session
+    /// closes for it. The over-the-air loop and the suite ask through that
+    /// session, so they keep it.
+    pub(crate) fn holds_uart(&self) -> bool {
+        match self {
+            Self::Capture { .. }
+            | Self::Boot { .. }
+            | Self::Loader { .. }
+            | Self::Transients(_)
+            | Self::Dump { .. }
+            | Self::FlashPrepare(_)
+            | Self::FlashExecute(_)
+            | Self::GiveWayPrepare(_)
+            | Self::GiveWayExecute(_)
+            | Self::StockPrepare(_)
+            | Self::StockExecute(_) => true,
+            Self::Off | Self::On | Self::Ota(_) | Self::Itest(_) | Self::StockOta(_) => false,
+        }
+    }
+
     /// One of the integration suite's commands.
     fn suite(&self) -> bool {
         matches!(self, Self::Itest(_) | Self::StockOta(_))
@@ -231,13 +254,15 @@ pub struct ToolPaths {
     pub build_bin: PathBuf,
 }
 
-/// What a job runs on: the server's checkout, config, board and tools.
+/// What a job runs on: the server's checkout, config, board, tools and
+/// feeder session.
 #[derive(Clone)]
 pub(crate) struct Bed {
     pub(crate) root: PathBuf,
     pub(crate) config: Config,
     pub(crate) board: SharedBoard,
     pub(crate) tools: ToolPaths,
+    pub(crate) feeder: Feeder,
 }
 
 /// Why a job stopped before or during its command.
@@ -262,16 +287,29 @@ pub(crate) struct Run {
     pub(crate) sink: Box<dyn ProgressSink>,
 }
 
+/// How a job ended: its exit code, the error it stopped on, and what its
+/// sequence wrote to the banks (whatever the code: a write that completed
+/// before a later step stopped still happened).
+pub(crate) struct Ran {
+    pub(crate) code: u8,
+    pub(crate) error: Option<JobError>,
+    pub(crate) written: Vec<Written>,
+}
+
 /// Run `spec` to its end on this thread: open the bench, record the steps,
-/// run the command and record how it finished. Returns the exit code and
-/// the error it stopped on.
-pub(crate) fn run(bed: &Bed, spec: &JobSpec, run: Run) -> (u8, Option<JobError>) {
+/// run the command and record how it finished.
+pub(crate) fn run(bed: &Bed, spec: &JobSpec, run: Run) -> Ran {
+    let stopped = |error| Ran {
+        code: 1,
+        error: Some(error),
+        written: Vec::new(),
+    };
     let mut bench = match open(bed, spec, &run) {
         Ok(bench) => bench,
-        Err(error) => return (1, Some(error)),
+        Err(error) => return stopped(error),
     };
     if let Err(error) = record_start(&mut bench, &spec.command, run.sink) {
-        return (1, Some(error));
+        return stopped(error);
     }
 
     let result = dispatch(&mut bench, &spec.command, bed.tools.stock_bin.clone());
@@ -282,7 +320,11 @@ pub(crate) fn run(bed: &Bed, spec: &JobSpec, run: Run) -> (u8, Option<JobError>)
     bench
         .status
         .finish(code, error.as_ref().map(ToString::to_string));
-    (code, error)
+    Ran {
+        code,
+        error,
+        written: std::mem::take(&mut bench.written),
+    }
 }
 
 fn open(bed: &Bed, spec: &JobSpec, run: &Run) -> Result<Bench, JobError> {
@@ -296,6 +338,9 @@ fn open(bed: &Bed, spec: &JobSpec, run: &Run) -> Result<Bench, JobError> {
     } else {
         Relay::detached()
     };
+    // Every device API request the job makes goes through the server's one
+    // session, never a second one of the job's own.
+    let (keys, link) = bed.feeder.link();
     let tools = Processes::new(
         bed.root.clone(),
         bed.tools.flash_bin.clone(),
@@ -303,7 +348,8 @@ fn open(bed: &Bed, spec: &JobSpec, run: &Run) -> Result<Bench, JobError> {
         bed.tools.build_bin.clone(),
         run.cancel.clone(),
         run.children.clone(),
-    );
+    )
+    .with_link(keys, Box::new(link));
 
     Ok(Bench {
         root: bed.root.clone(),
@@ -316,6 +362,7 @@ fn open(bed: &Bed, spec: &JobSpec, run: &Run) -> Result<Bench, JobError> {
         sleep: wellfed_rig::sleep,
         off_time,
         uart_when_off: spec.options.uart_when_off,
+        written: Vec::new(),
     })
 }
 
@@ -422,9 +469,20 @@ mod tests {
             activity: Vec::new(),
             uart: Uart::Idle,
             relays: Default::default(),
+            feeder: Default::default(),
+            capture: Default::default(),
+            banks: Default::default(),
         });
+        let root = PathBuf::from("/nonexistent");
+        let banks = crate::banks::Banks::open(&root, store.clone());
+        let (feeder, _) = Feeder::new(
+            &root,
+            &crate::feeder::DeviceOptions::default(),
+            store.clone(),
+            banks,
+        );
         let bed = Bed {
-            root: PathBuf::from("/nonexistent"),
+            root,
             config: serde_json::from_str(
                 r#"{"relay_port": "r", "uart_port": "u", "baseline": "b", "rom_report": "r"}"#,
             )
@@ -435,6 +493,7 @@ mod tests {
                 stock_bin: PathBuf::from("absent"),
                 build_bin: PathBuf::from("absent"),
             },
+            feeder,
         };
         let run = || Run {
             cancel: Cancel::new(),

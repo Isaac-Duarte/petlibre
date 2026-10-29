@@ -11,6 +11,8 @@
 pub mod banks;
 pub mod cancel;
 pub mod catalog;
+#[cfg(feature = "device")]
+pub mod feeder;
 pub mod lease;
 pub mod live;
 pub mod notes;

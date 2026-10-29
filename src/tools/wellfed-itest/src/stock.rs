@@ -31,6 +31,7 @@ use std::time::Duration;
 use crate::args::{ItestArgs, StockOtaArgs};
 use wellfed_core::ota::install::StopStage;
 use wellfed_core::record::Event;
+use wellfed_formats::bench::banks::{Bank, Content, Source};
 use wellfed_formats::bench::progress::StepState;
 use wellfed_formats::bench::run::SUFFIX;
 use wellfed_formats::bench::{VERIFICATION, catalog::Tier};
@@ -541,6 +542,9 @@ pub(super) fn stock_ota(bench: &mut Bench, args: &StockOtaArgs, stock_bin: PathB
     drop(rig);
 
     let (reports, silent) = result?;
+    for (bank, content) in written(&reports, &staged) {
+        bench.wrote(bank, content, Source::StockOta);
+    }
     say!("Results:");
     for report in &reports {
         let verdict = match report.verdict {
@@ -563,6 +567,30 @@ pub(super) fn stock_ota(bench: &mut Bench, args: &StockOtaArgs, stock_bin: PathB
     std::fs::write(&record, serde_json::to_string_pretty(&summary)? + "\n")?;
     say!("Recorded {}", bench.rel(&record));
     Ok(super::exit_code(&reports, silent.as_ref()))
+}
+
+/// What the run's passed stages left in the banks: stock writes the build
+/// into bank 0 and invalidates bank 1, and the promotion installs it into
+/// bank 1.
+fn written(reports: &[Report], staged: &Staged) -> Vec<(Bank, Content)> {
+    let passed = |stage: &str| {
+        reports
+            .iter()
+            .any(|r| r.scenario == stage && r.verdict == Verdict::Pass)
+    };
+    let build = || Content::Build {
+        id: staged.build.to_ascii_lowercase(),
+    };
+
+    let mut written = Vec::new();
+    if passed(DOWNLOAD) {
+        written.push((Bank::Zero, build()));
+        written.push((Bank::One, Content::Invalid));
+    }
+    if passed(PROMOTE) {
+        written.push((Bank::One, build()));
+    }
+    written
 }
 
 /// Once stock was asked, a failure may leave bank 1 invalid and bank 0

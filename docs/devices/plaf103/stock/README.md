@@ -204,7 +204,7 @@ A plan whose `skipEndTime` lies far in the future is stored but never runs.
 | Fact | Value | Evidence |
 | --- | --- | --- |
 | Reset holds | One hold: Reset about 5 s on an unlocked panel starts the factory restore. No Wi-Fi-only hold exists in the panel handler | static, emulation |
-| What the restore clears | Everything stock keeps: it erases `0x3e8000`–`0x3ea000` (the broker, Wi-Fi and binding records), `0x7d0000`–`0x7d6000` (the plans and the record rings) and `0x7da000`, then restarts. The plans are gone, so an install after a Reset hold imports none | static |
+| What the restore clears | Everything stock keeps: it erases `0x3e8000`–`0x3ea000` (the broker, Wi-Fi and binding records), `0x7d0000`–`0x7d6000` (the plans and the record rings) and `0x7da000`, then restarts. An install starts with no meals on either route. | static |
 | Setup mode | Only through the Reset hold. A set-up stock that cannot reach its Wi-Fi retries it forever and never opens its setup access point on its own | static |
 | MQTT `RESTORE` | Erases the same plan sectors, but keeps the Wi-Fi settings | static |
 | Home Assistant, history, remote control and the app | None on the device: no Home Assistant, history and remote control live in the cloud, and the vendor app is the client | static |

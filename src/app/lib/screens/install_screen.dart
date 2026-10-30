@@ -293,7 +293,7 @@ class _Before extends StatelessWidget {
         const SizedBox(height: Space.s4),
         const Notice(
           tone: Tone.warning,
-          lead: 'Its meals are erased either way.',
+          lead: 'Its meals don't come across.',
           text:
               "Write down any set in the vendor's app, and set them up again "
               'in Wellfed afterwards.',

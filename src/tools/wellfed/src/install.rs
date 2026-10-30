@@ -614,7 +614,7 @@ enum Refused {
     )]
     KeyWithManifest,
     #[error(
-        "feeder {feeder}, which this install paired with, did not answer where it last did, where stock connected from, or over mDNS: pass --address <ip> to resume"
+        "feeder {feeder}, which this install paired with, did not answer where it last did, where stock connected from, or over mDNS: pass --address <ip> to resume, or remove installing.json under --backups if its store was reset"
     )]
     NotAnswering { feeder: String },
 }
@@ -1080,7 +1080,6 @@ impl Run {
                         "Installed: build {} confirmed on bank 1. This computer is its owner.",
                         short(install.build())
                     );
-                    self.clear_paired()?;
                     match (install.import(), install.plans_skipped()) {
                         (_, Some(skipped)) => {
                             eprintln!("Stock's plans were not imported: {skipped}.");
@@ -1100,6 +1099,12 @@ impl Run {
                             "None of stock's plans could be converted (see the report above): \
                              nothing was set."
                         ),
+                    }
+                    // Last, and never a failure: the feeder is installed,
+                    // and a record left behind only keys a rerun of this
+                    // same install to the feeder it already confirmed.
+                    if let Err(error) = self.clear_paired() {
+                        eprintln!("warning: the resume record was not removed: {error:#}");
                     }
                     return Ok(());
                 }

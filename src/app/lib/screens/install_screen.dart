@@ -1128,6 +1128,13 @@ class _Stopped extends StatelessWidget {
               'Wellfed and still holds its original firmware.',
       },
     ),
+    StopCase_OtherFeeder() => (
+      'That was a different feeder',
+      'The code was keyed in on another feeder than the one this install is '
+          'for. That one now lists this phone as its owner and has your Wi-Fi, '
+          "and nothing else was done to it. Put this install's feeder in setup "
+          'mode, then pick up and key in the code on its buttons.',
+    ),
     StopCase_NotAnswering() => (
       'The feeder stopped answering',
       'It paired with this phone, but does not answer on this network. Check '

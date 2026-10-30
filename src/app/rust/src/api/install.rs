@@ -354,6 +354,9 @@ pub enum StopCase {
     SetupFailed {
         refusal: Option<SetupRefusal>,
     },
+    /// Bluetooth setup went through on another feeder than this install's. That
+    /// one now has this phone's key and the Wi-Fi; this install stays with its own.
+    OtherFeeder,
     /// The feeder this install paired with does not answer.
     NotAnswering,
     /// The feeder took the Wi-Fi over Bluetooth and never joined it: a wrong

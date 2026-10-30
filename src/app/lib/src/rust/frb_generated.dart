@@ -2546,30 +2546,32 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           refusal: dco_decode_opt_box_autoadd_setup_refusal(raw[1]),
         );
       case 13:
-        return StopCase_NotAnswering();
+        return StopCase_OtherFeeder();
       case 14:
-        return StopCase_NotJoined();
+        return StopCase_NotAnswering();
       case 15:
-        return StopCase_PhoneOffWifi();
+        return StopCase_NotJoined();
       case 16:
-        return StopCase_WifiRefused();
+        return StopCase_PhoneOffWifi();
       case 17:
-        return StopCase_NoWifiGiven();
+        return StopCase_WifiRefused();
       case 18:
-        return StopCase_PlansUnreadable();
+        return StopCase_NoWifiGiven();
       case 19:
-        return StopCase_PromotionFailed();
+        return StopCase_PlansUnreadable();
       case 20:
-        return StopCase_FellBack();
+        return StopCase_PromotionFailed();
       case 21:
-        return StopCase_PlansNotApplied();
+        return StopCase_FellBack();
       case 22:
-        return StopCase_PlansUnknown();
+        return StopCase_PlansNotApplied();
       case 23:
-        return StopCase_ServerFailed();
+        return StopCase_PlansUnknown();
       case 24:
-        return StopCase_Cancelled();
+        return StopCase_ServerFailed();
       case 25:
+        return StopCase_Cancelled();
+      case 26:
         return StopCase_Other();
       default:
         throw Exception("unreachable");
@@ -3888,30 +3890,32 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         );
         return StopCase_SetupFailed(refusal: var_refusal);
       case 13:
-        return StopCase_NotAnswering();
+        return StopCase_OtherFeeder();
       case 14:
-        return StopCase_NotJoined();
+        return StopCase_NotAnswering();
       case 15:
-        return StopCase_PhoneOffWifi();
+        return StopCase_NotJoined();
       case 16:
-        return StopCase_WifiRefused();
+        return StopCase_PhoneOffWifi();
       case 17:
-        return StopCase_NoWifiGiven();
+        return StopCase_WifiRefused();
       case 18:
-        return StopCase_PlansUnreadable();
+        return StopCase_NoWifiGiven();
       case 19:
-        return StopCase_PromotionFailed();
+        return StopCase_PlansUnreadable();
       case 20:
-        return StopCase_FellBack();
+        return StopCase_PromotionFailed();
       case 21:
-        return StopCase_PlansNotApplied();
+        return StopCase_FellBack();
       case 22:
-        return StopCase_PlansUnknown();
+        return StopCase_PlansNotApplied();
       case 23:
-        return StopCase_ServerFailed();
+        return StopCase_PlansUnknown();
       case 24:
-        return StopCase_Cancelled();
+        return StopCase_ServerFailed();
       case 25:
+        return StopCase_Cancelled();
+      case 26:
         return StopCase_Other();
       default:
         throw UnimplementedError('');
@@ -5206,32 +5210,34 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case StopCase_SetupFailed(refusal: final refusal):
         sse_encode_i_32(12, serializer);
         sse_encode_opt_box_autoadd_setup_refusal(refusal, serializer);
-      case StopCase_NotAnswering():
+      case StopCase_OtherFeeder():
         sse_encode_i_32(13, serializer);
-      case StopCase_NotJoined():
+      case StopCase_NotAnswering():
         sse_encode_i_32(14, serializer);
-      case StopCase_PhoneOffWifi():
+      case StopCase_NotJoined():
         sse_encode_i_32(15, serializer);
-      case StopCase_WifiRefused():
+      case StopCase_PhoneOffWifi():
         sse_encode_i_32(16, serializer);
-      case StopCase_NoWifiGiven():
+      case StopCase_WifiRefused():
         sse_encode_i_32(17, serializer);
-      case StopCase_PlansUnreadable():
+      case StopCase_NoWifiGiven():
         sse_encode_i_32(18, serializer);
-      case StopCase_PromotionFailed():
+      case StopCase_PlansUnreadable():
         sse_encode_i_32(19, serializer);
-      case StopCase_FellBack():
+      case StopCase_PromotionFailed():
         sse_encode_i_32(20, serializer);
-      case StopCase_PlansNotApplied():
+      case StopCase_FellBack():
         sse_encode_i_32(21, serializer);
-      case StopCase_PlansUnknown():
+      case StopCase_PlansNotApplied():
         sse_encode_i_32(22, serializer);
-      case StopCase_ServerFailed():
+      case StopCase_PlansUnknown():
         sse_encode_i_32(23, serializer);
-      case StopCase_Cancelled():
+      case StopCase_ServerFailed():
         sse_encode_i_32(24, serializer);
-      case StopCase_Other():
+      case StopCase_Cancelled():
         sse_encode_i_32(25, serializer);
+      case StopCase_Other():
+        sse_encode_i_32(26, serializer);
     }
   }
 

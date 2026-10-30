@@ -657,6 +657,7 @@ pub fn stop_of(error: &Error, from_stock: bool) -> (StopCase, Resume) {
             (StopCase::SetupFailed { refusal }, FromBank0)
         }
         Error::RequestRefused(refusal) => (request_refused(*refusal), FromStart),
+        Error::OtherFeeder { .. } => (StopCase::OtherFeeder, FromBank0),
         // The bench route's pairing, which no Bluetooth setup wraps.
         Error::SetupRefused(refusal) => (
             StopCase::SetupFailed {
@@ -1047,9 +1048,13 @@ fn run_on_this_thread(
         Err(error) => {
             let (case, resume) = stop_of(&error, from_stock);
             // Installed and confirmed, with only its meals left behind: there
-            // is nothing to pick up, and the record would offer it forever.
+            // is nothing to pick up, and the owner was told they are not sent
+            // again. A failure leaves what still stops a put.
             if matches!(case, StopCase::PlansNotApplied | StopCase::PlansUnknown) {
-                let _ = wellfed_install::storage::forget_paired(&backups);
+                let now_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |now| u64::try_from(now.as_millis()).unwrap_or(u64::MAX));
+                let _ = wellfed_install::storage::give_up_plans(&backups, now_ms);
                 let _ = wellfed_install::stock::forget_enrollment(&config);
             }
             InstallEnd::Stopped {

@@ -988,6 +988,12 @@ void main() {
         'Enter the Wi-Fi again',
       ),
       (
+        const StopCase.otherFeeder(),
+        'That was a different feeder',
+        Resume.fromBank0,
+        'Pick up where it stopped',
+      ),
+      (
         const StopCase.notAnswering(),
         'The feeder stopped answering',
         Resume.fromBank0,

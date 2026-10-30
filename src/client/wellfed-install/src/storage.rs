@@ -186,12 +186,16 @@ pub(crate) fn write_new(path: &Path, bytes: &[u8]) -> Result<(), Error> {
 /// or to a name with `now_ms` when an earlier applied copy holds that name:
 /// nothing kept is overwritten. `None` when nothing is kept there.
 pub(crate) fn set_aside(kept: &Path, now_ms: u64) -> Result<Option<PathBuf>, Error> {
+    set_aside_as(kept, "stock-plans.applied", now_ms)
+}
+
+fn set_aside_as(kept: &Path, stem: &str, now_ms: u64) -> Result<Option<PathBuf>, Error> {
     if !kept.exists() {
         return Ok(None);
     }
-    let mut applied = kept.with_file_name("stock-plans.applied.bin");
+    let mut applied = kept.with_file_name(format!("{stem}.bin"));
     if applied.exists() {
-        applied = kept.with_file_name(format!("stock-plans.applied-{now_ms}.bin"));
+        applied = kept.with_file_name(format!("{stem}-{now_ms}.bin"));
     }
     std::fs::rename(kept, &applied).map_err(|source| Error::SetAside {
         path: kept.to_path_buf(),
@@ -204,6 +208,24 @@ pub(crate) fn set_aside(kept: &Path, now_ms: u64) -> Result<Option<PathBuf>, Err
 /// a new one may pick up from bank 0.
 pub fn resumable(backups: &Path) -> bool {
     matches!(Paired::load(backups), Ok(Some(_)))
+}
+
+/// The install is over with stock's plans not sent again, as a platform that
+/// says so to the owner treats it: nothing it left may put them later. The kept
+/// plans go first, as `stock-plans.unapplied.bin`: without its base a kept copy
+/// would read as a put that never left, and go onto an empty table the owner
+/// may have emptied. A failure stops there, leaving what still stops a put.
+pub fn give_up_plans(backups: &Path, now_ms: u64) -> Result<(), Error> {
+    if let Some(record) = Paired::load(backups)? {
+        let identity = record.identity.0;
+        set_aside_as(
+            &plans_path(backups, &identity),
+            "stock-plans.unapplied",
+            now_ms,
+        )?;
+        forget_put_base(&put_base_path(backups, &identity))?;
+    }
+    forget_paired(backups)
 }
 
 /// Remove the paired record whoever's it is: a platform that treats the
@@ -307,6 +329,37 @@ mod tests {
             Err(Error::PlansExist { .. })
         ));
         assert_eq!(std::fs::read(&at).unwrap(), [1, 2, 3]);
+    }
+
+    /// Giving up takes the kept plans, the base and the record together, for the
+    /// recorded feeder alone.
+    #[test]
+    fn giving_up_on_the_plans_leaves_nothing_that_could_put_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let (ours, other) = ([0xab; 32], [0xcd; 32]);
+        for feeder in [&ours, &other] {
+            keep_plans(&plans_path(dir.path(), feeder), &[1, 2, 3]).unwrap();
+            keep_put_base(&put_base_path(dir.path(), feeder), Generation(4)).unwrap();
+        }
+        Paired {
+            device: "AF_A".into(),
+            identity: wellfed_model::Hex(ours),
+            address: None,
+        }
+        .keep(dir.path())
+        .unwrap();
+
+        give_up_plans(dir.path(), 7).unwrap();
+
+        assert!(!resumable(dir.path()));
+        assert!(!plans_path(dir.path(), &ours).exists());
+        assert!(!put_base_path(dir.path(), &ours).exists());
+        let unapplied = feeder_directory(dir.path(), &ours).join("stock-plans.unapplied.bin");
+        assert_eq!(std::fs::read(unapplied).unwrap(), [1, 2, 3]);
+        assert!(plans_path(dir.path(), &other).exists());
+        assert!(put_base_path(dir.path(), &other).exists());
+
+        give_up_plans(dir.path(), 7).unwrap();
     }
 
     /// A put's base stays as it was kept until the install's end. No file is the

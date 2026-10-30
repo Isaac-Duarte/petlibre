@@ -3149,42 +3149,45 @@ impl SseDecode for crate::api::install::StopCase {
                 };
             }
             13 => {
-                return crate::api::install::StopCase::NotAnswering;
+                return crate::api::install::StopCase::OtherFeeder;
             }
             14 => {
-                return crate::api::install::StopCase::NotJoined;
+                return crate::api::install::StopCase::NotAnswering;
             }
             15 => {
-                return crate::api::install::StopCase::PhoneOffWifi;
+                return crate::api::install::StopCase::NotJoined;
             }
             16 => {
-                return crate::api::install::StopCase::WifiRefused;
+                return crate::api::install::StopCase::PhoneOffWifi;
             }
             17 => {
-                return crate::api::install::StopCase::NoWifiGiven;
+                return crate::api::install::StopCase::WifiRefused;
             }
             18 => {
-                return crate::api::install::StopCase::PlansUnreadable;
+                return crate::api::install::StopCase::NoWifiGiven;
             }
             19 => {
-                return crate::api::install::StopCase::PromotionFailed;
+                return crate::api::install::StopCase::PlansUnreadable;
             }
             20 => {
-                return crate::api::install::StopCase::FellBack;
+                return crate::api::install::StopCase::PromotionFailed;
             }
             21 => {
-                return crate::api::install::StopCase::PlansNotApplied;
+                return crate::api::install::StopCase::FellBack;
             }
             22 => {
-                return crate::api::install::StopCase::PlansUnknown;
+                return crate::api::install::StopCase::PlansNotApplied;
             }
             23 => {
-                return crate::api::install::StopCase::ServerFailed;
+                return crate::api::install::StopCase::PlansUnknown;
             }
             24 => {
-                return crate::api::install::StopCase::Cancelled;
+                return crate::api::install::StopCase::ServerFailed;
             }
             25 => {
+                return crate::api::install::StopCase::Cancelled;
+            }
+            26 => {
                 return crate::api::install::StopCase::Other;
             }
             _ => {
@@ -4465,19 +4468,20 @@ impl flutter_rust_bridge::IntoDart for crate::api::install::StopCase {
             crate::api::install::StopCase::SetupFailed { refusal } => {
                 [12.into_dart(), refusal.into_into_dart().into_dart()].into_dart()
             }
-            crate::api::install::StopCase::NotAnswering => [13.into_dart()].into_dart(),
-            crate::api::install::StopCase::NotJoined => [14.into_dart()].into_dart(),
-            crate::api::install::StopCase::PhoneOffWifi => [15.into_dart()].into_dart(),
-            crate::api::install::StopCase::WifiRefused => [16.into_dart()].into_dart(),
-            crate::api::install::StopCase::NoWifiGiven => [17.into_dart()].into_dart(),
-            crate::api::install::StopCase::PlansUnreadable => [18.into_dart()].into_dart(),
-            crate::api::install::StopCase::PromotionFailed => [19.into_dart()].into_dart(),
-            crate::api::install::StopCase::FellBack => [20.into_dart()].into_dart(),
-            crate::api::install::StopCase::PlansNotApplied => [21.into_dart()].into_dart(),
-            crate::api::install::StopCase::PlansUnknown => [22.into_dart()].into_dart(),
-            crate::api::install::StopCase::ServerFailed => [23.into_dart()].into_dart(),
-            crate::api::install::StopCase::Cancelled => [24.into_dart()].into_dart(),
-            crate::api::install::StopCase::Other => [25.into_dart()].into_dart(),
+            crate::api::install::StopCase::OtherFeeder => [13.into_dart()].into_dart(),
+            crate::api::install::StopCase::NotAnswering => [14.into_dart()].into_dart(),
+            crate::api::install::StopCase::NotJoined => [15.into_dart()].into_dart(),
+            crate::api::install::StopCase::PhoneOffWifi => [16.into_dart()].into_dart(),
+            crate::api::install::StopCase::WifiRefused => [17.into_dart()].into_dart(),
+            crate::api::install::StopCase::NoWifiGiven => [18.into_dart()].into_dart(),
+            crate::api::install::StopCase::PlansUnreadable => [19.into_dart()].into_dart(),
+            crate::api::install::StopCase::PromotionFailed => [20.into_dart()].into_dart(),
+            crate::api::install::StopCase::FellBack => [21.into_dart()].into_dart(),
+            crate::api::install::StopCase::PlansNotApplied => [22.into_dart()].into_dart(),
+            crate::api::install::StopCase::PlansUnknown => [23.into_dart()].into_dart(),
+            crate::api::install::StopCase::ServerFailed => [24.into_dart()].into_dart(),
+            crate::api::install::StopCase::Cancelled => [25.into_dart()].into_dart(),
+            crate::api::install::StopCase::Other => [26.into_dart()].into_dart(),
             _ => {
                 unimplemented!("");
             }
@@ -5768,44 +5772,47 @@ impl SseEncode for crate::api::install::StopCase {
                 <i32>::sse_encode(12, serializer);
                 <Option<crate::api::model::SetupRefusal>>::sse_encode(refusal, serializer);
             }
-            crate::api::install::StopCase::NotAnswering => {
+            crate::api::install::StopCase::OtherFeeder => {
                 <i32>::sse_encode(13, serializer);
             }
-            crate::api::install::StopCase::NotJoined => {
+            crate::api::install::StopCase::NotAnswering => {
                 <i32>::sse_encode(14, serializer);
             }
-            crate::api::install::StopCase::PhoneOffWifi => {
+            crate::api::install::StopCase::NotJoined => {
                 <i32>::sse_encode(15, serializer);
             }
-            crate::api::install::StopCase::WifiRefused => {
+            crate::api::install::StopCase::PhoneOffWifi => {
                 <i32>::sse_encode(16, serializer);
             }
-            crate::api::install::StopCase::NoWifiGiven => {
+            crate::api::install::StopCase::WifiRefused => {
                 <i32>::sse_encode(17, serializer);
             }
-            crate::api::install::StopCase::PlansUnreadable => {
+            crate::api::install::StopCase::NoWifiGiven => {
                 <i32>::sse_encode(18, serializer);
             }
-            crate::api::install::StopCase::PromotionFailed => {
+            crate::api::install::StopCase::PlansUnreadable => {
                 <i32>::sse_encode(19, serializer);
             }
-            crate::api::install::StopCase::FellBack => {
+            crate::api::install::StopCase::PromotionFailed => {
                 <i32>::sse_encode(20, serializer);
             }
-            crate::api::install::StopCase::PlansNotApplied => {
+            crate::api::install::StopCase::FellBack => {
                 <i32>::sse_encode(21, serializer);
             }
-            crate::api::install::StopCase::PlansUnknown => {
+            crate::api::install::StopCase::PlansNotApplied => {
                 <i32>::sse_encode(22, serializer);
             }
-            crate::api::install::StopCase::ServerFailed => {
+            crate::api::install::StopCase::PlansUnknown => {
                 <i32>::sse_encode(23, serializer);
             }
-            crate::api::install::StopCase::Cancelled => {
+            crate::api::install::StopCase::ServerFailed => {
                 <i32>::sse_encode(24, serializer);
             }
-            crate::api::install::StopCase::Other => {
+            crate::api::install::StopCase::Cancelled => {
                 <i32>::sse_encode(25, serializer);
+            }
+            crate::api::install::StopCase::Other => {
+                <i32>::sse_encode(26, serializer);
             }
             _ => {
                 unimplemented!("");

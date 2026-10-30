@@ -993,6 +993,19 @@ where
             pairing::over_link(&mut self.io.keys, Some(wifi), link, &mut self.io.prompter)
                 .await
                 .map_err(|error| Error::Setup(Box::new(error)))?;
+        // Whichever feeder advertises first takes setup, and the code only proves
+        // the owner is at its panel. Setting this install's feeder up again must
+        // not move the install, and its backup and promotion, onto another.
+        if let Lookup::Recorded {
+            identity: expected, ..
+        } = lookup
+            && expected != identity
+        {
+            return Err(Error::OtherFeeder {
+                expected,
+                found: identity,
+            });
+        }
         self.io.report.event(Event::SetUp { identity, outcome });
         self.identity = Some(identity);
         self.record_paired(identity, None)?;

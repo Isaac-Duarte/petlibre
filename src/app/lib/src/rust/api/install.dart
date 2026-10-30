@@ -619,6 +619,10 @@ sealed class StopCase with _$StopCase {
   const factory StopCase.setupFailed({SetupRefusal? refusal}) =
       StopCase_SetupFailed;
 
+  /// Bluetooth setup went through on another feeder than this install's. That
+  /// one now has this phone's key and the Wi-Fi; this install stays with its own.
+  const factory StopCase.otherFeeder() = StopCase_OtherFeeder;
+
   /// The feeder this install paired with does not answer.
   const factory StopCase.notAnswering() = StopCase_NotAnswering;
 

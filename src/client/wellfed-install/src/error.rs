@@ -148,6 +148,13 @@ pub enum Error {
     )]
     NoAddress,
 
+    /// Bluetooth setup went through on another feeder than this install's.
+    #[error(
+        "the feeder that took setup is {}, not this install's {}: it has this client's key and the Wi-Fi, and nothing else of this install was done to it",
+        wellfed_formats::hex::encode(found),
+        wellfed_formats::hex::encode(expected)
+    )]
+    OtherFeeder { expected: [u8; 32], found: [u8; 32] },
     #[error("the feeder refused: {}", refusal_text(*.0))]
     SetupRefused(Refusal),
     #[error(transparent)]

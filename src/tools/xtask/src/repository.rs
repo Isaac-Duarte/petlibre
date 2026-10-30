@@ -29,10 +29,15 @@ const PRODUCT_CRATES: &str = "src/product/";
 /// Bring-up code, which may take the raw writers, but only as `bringup::…`,
 /// so the one door stays visible at every call.
 const BRINGUP: [&str; 2] = ["src/firmware/wellfed/", "src/sdk/wellfed-probes/src/"];
-/// The stock server's crate, which runs only as its own process: the bench,
-/// its suite and the page speak its loopback API through `wellfed-stock-api`.
-/// cargo-deny cannot ban every dependent without banning the crate itself.
+/// The stock server's crate. The bench, its suite and the page run it as
+/// its own process and speak its loopback API through `wellfed-stock-api`;
+/// only the shared install driver runs it in-process, since an app cannot
+/// spawn the binary. cargo-deny cannot ban every dependent without banning
+/// the crate itself.
 const STOCK_SERVER: &str = "src/tools/wellfed-stock/Cargo.toml";
+/// The one crate that links the stock server: the install driver the CLI
+/// and the Android app share.
+const STOCK_INSTALLER: &str = "src/client/wellfed-install/Cargo.toml";
 /// The flash client's crate, the audited UART writer: every read and write
 /// runs it as its own process, so a fault elsewhere never takes a write down
 /// with it. What other crates check of images and reviews is `wellfed-image`.
@@ -212,9 +217,9 @@ fn check_file(root: &Path, name: &str, summary: &mut Summary) {
         }
     }
     if first == "src" && relative.file_name().is_some_and(|f| f == "Cargo.toml") {
-        if name != STOCK_SERVER && STOCK_DEPENDENCY.is_match(&content) {
+        if ![STOCK_SERVER, STOCK_INSTALLER].contains(&name) && STOCK_DEPENDENCY.is_match(&content) {
             summary.errors.push(format!(
-                "{name}: links the stock server; run wellfed-stock and use wellfed-stock-api"
+                "{name}: links the stock server; run wellfed-stock and use wellfed-stock-api, or install through wellfed-install"
             ));
         }
         if name != FLASH_CLIENT && FLASH_DEPENDENCY.is_match(&content) {
@@ -581,7 +586,7 @@ mod tests {
                 "src/tools/a.py: first-party tools are Rust; no Python sources under src/",
                 "src/tools/b.rs: cites a board card; state the constraint instead",
                 "docs/page.md: cites a board card; state the constraint instead",
-                "src/tools/page/Cargo.toml: links the stock server; run wellfed-stock and use wellfed-stock-api",
+                "src/tools/page/Cargo.toml: links the stock server; run wellfed-stock and use wellfed-stock-api, or install through wellfed-install",
                 "src/tools/auditor/Cargo.toml: links the flash client; run wellfed-flash as a process and use wellfed-image",
             ]
         );

@@ -4912,31 +4912,30 @@ dependencies = [
  "axum",
  "bluer",
  "bytes",
- "chrono",
  "clap",
  "futures-util",
  "http-body-util",
  "hyper",
  "hyper-util",
  "jiff",
- "rustix",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror",
  "tokio",
+ "tracing-subscriber",
  "uuid",
  "wellfed-client",
  "wellfed-connect",
  "wellfed-feeder-sim",
  "wellfed-formats",
+ "wellfed-install",
  "wellfed-model",
  "wellfed-proto",
  "wellfed-server-client",
  "wellfed-server-testkit",
  "wellfed-session",
  "wellfed-signing",
- "wellfed-stock-api",
 ]
 
 [[package]]
@@ -5336,6 +5335,28 @@ dependencies = [
  "thiserror",
  "wellfed-core",
  "wellfed-formats",
+]
+
+[[package]]
+name = "wellfed-install"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "uuid",
+ "wellfed-client",
+ "wellfed-connect",
+ "wellfed-feeder-sim",
+ "wellfed-formats",
+ "wellfed-model",
+ "wellfed-proto",
+ "wellfed-session",
+ "wellfed-signing",
+ "wellfed-stock",
 ]
 
 [[package]]

@@ -169,11 +169,6 @@ Install trials are recorded beside the configuration, under an exclusive lock, i
 
 A server with the trial enabled starts only from a reviewable build: a clean commit of every input `build.rs` records. Those cover `wellfed-stock`, the crates it links, and the crates that decide and send the request in an installer (`wellfed-client`, `wellfed-install`). `server::Server::start` enforces it, so the binary and an in-process installer are refused alike; tests set `WELLFED_ALLOW_UNREVIEWED_OTA_BUILD`.
 
-Two older ledgers are never read, and `serve` refuses to start while either is present:
-
-- `feed-ledger.json`, which also held feeds and probe queries. Check that no trial in it is submitted, uncertain or failed, then rename it.
-- `stock-ledger.json`, the name every device's ledger once shared. If no trial in it is submitted, uncertain or failed, archive it by renaming it. If one is, move it to its device's name, where that device's server resolves it: `stock-ledger.$(printf %s "$DEVICE_ID" | sha256sum | cut -c1-16).json`, with `DEVICE_ID` the file's own `device_id`.
-
 ## HTTP API
 
 Write bodies are limited to 4096 bytes. Authenticate with the bearer token from the private configuration. The CLI handles it without putting the token in shell arguments.

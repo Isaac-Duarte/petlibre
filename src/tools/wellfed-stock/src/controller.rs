@@ -63,15 +63,6 @@ struct Ledger {
     ota_trials: BTreeMap<Uuid, ota::trial::Record>,
 }
 
-/// The retired ledger, which also held feeds and probe queries. It is
-/// never read: an operator archives it after checking no trial in it is open.
-pub const RETIRED_LEDGER_FILE: &str = "feed-ledger.json";
-
-/// The name every ledger once had, whichever device it was for. It is never
-/// read: a trial open in it would hold nothing back, since the same device's
-/// ledger is now found by the device.
-pub const UNKEYED_LEDGER_FILE: &str = "stock-ledger.json";
-
 /// The status document `GET /api/status` serves.
 pub type Status = StockStatus;
 
@@ -136,35 +127,14 @@ pub fn ledger_path(config_path: &Path, device: &str) -> Result<PathBuf> {
     Ok(directory.join(format!("stock-ledger.{name}.json")))
 }
 
-/// Refuse a ledger left under a retired name beside `beside`, which is never
-/// read: ignoring it would let its open trial stop counting.
-pub fn refuse_retired(beside: &Path) -> Result<()> {
-    let retired = beside.with_file_name(RETIRED_LEDGER_FILE);
-    ensure!(
-        !retired.exists(),
-        "{} is the retired ledger, which held feeds and probe queries; check that no trial in it is submitted, uncertain or failed, then archive it (rename it) and start again",
-        retired.display()
-    );
-
-    let unkeyed = beside.with_file_name(UNKEYED_LEDGER_FILE);
-    ensure!(
-        !unkeyed.exists(),
-        "{} is a ledger under its retired name, which is not read, so a trial open in it would hold nothing back; if none in it is submitted, uncertain or failed, archive it (rename it); otherwise rename it to stock-ledger.<first 16 digits of the SHA-256 of its device_id>.json, where its device's server resolves it; then start again",
-        unkeyed.display()
-    );
-    Ok(())
-}
-
 /// Whether the device the config at `config_path` now names has a request
 /// whose outcome is not settled: its latest trial is submitted (the server
 /// that sent it is gone), uncertain, or failed. Reads the ledger only; a
-/// running server holds the same answer in its status. A ledger under a
-/// retired name is an error, not a no.
+/// running server holds the same answer in its status.
 pub fn open_request(config_path: &Path) -> Result<bool> {
     let State::Device(config) = config::state(config_path)? else {
         return Ok(false);
     };
-    refuse_retired(config_path)?;
     let path = ledger_path(config_path, &config.device_id)?;
     if !path.exists() {
         return Ok(false);
@@ -193,8 +163,6 @@ pub struct Controller {
 
 impl Controller {
     pub fn load(config: Config, path: PathBuf, build: Build) -> Result<Self> {
-        refuse_retired(&path)?;
-
         let lease = storage::lock(&path)?;
         let mut ledger = if path.exists() {
             serde_json::from_slice::<Ledger>(&fs::read(&path)?).context("invalid stock ledger")?

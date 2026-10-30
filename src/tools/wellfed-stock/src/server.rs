@@ -248,10 +248,6 @@ async fn run(
     stop: watch::Receiver<bool>,
     ready: watch::Sender<Option<Handle>>,
 ) -> Result<()> {
-    // Before the feeder is told anything: an installer's device is not known
-    // until it enrolls, and the ledger is only opened then.
-    controller::refuse_retired(&path)?;
-
     let (enrolled, enrollment) = watch::channel(false);
     let (listening, heard) = watch::channel(false);
     let (listen, auth, known) = match (state, window) {

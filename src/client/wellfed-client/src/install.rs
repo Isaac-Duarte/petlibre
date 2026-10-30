@@ -10,12 +10,10 @@
 //!    first use; nothing captured, nothing redirected. Two routes
 //!    ([`Provision`]):
 //!    - **The Reset hold**, which needs nothing from the owner's router: the
-//!      hold runs stock's factory restore, which erases its plans, so the
-//!      owner accepts that first; then one type-3 setup frame ([`frame`]) to
-//!      stock's setup access point names the owner's Wi-Fi and the
-//!      installer's broker.
-//!    - **DNS** ([`dns`]), which keeps stock's plans for the import: the
-//!      owner's resolver answers stock's broker name with the installer's
+//!      hold runs stock's factory restore; then one type-3 setup frame
+//!      ([`frame`]) to stock's setup access point names the owner's Wi-Fi and
+//!      the installer's broker.
+//!    - **DNS** ([`dns`]): the owner's resolver answers stock's broker name with the installer's
 //!      address, and a restarted stock connects there. Nothing is written to
 //!      the feeder.
 //! 2. **Stock ready:** stock reports 1.1.15 on its adapter, the same
@@ -52,23 +50,15 @@
 //!    step without one. The bank-0 role streams bank 1 ([`Bank1Reader`]),
 //!    and [`StockBackup::from_bank`] checks it against the pinned payload
 //!    and rebuilds the owner's own stock OTA, which the caller keeps.
-//! 10. **Stock's plans:** the bank-0 role serves stock's two plan sectors
-//!     (`ReadStockPlans`), which [`plans`] decodes and converts; the caller
-//!     keeps the bytes beside the backup and shows the owner the import. A
-//!     table that cannot be read stops the run here, before promotion,
-//!     unless the owner chose to go on without plans
-//!     ([`Install::without_stock_plans`]).
-//! 11. **Version:** the feeder's floor (`UpdateState`) decides it. A
+//! 10. **Version:** the feeder's floor (`UpdateState`) decides it. A
 //!     manifest signed before the run must be above it; otherwise the
 //!     installer signs the build itself, above both the floor and any
 //!     version it signed before ([`Promotion`]).
-//! 12. **Promote:** the signed update ([`crate::update::Installer`]) writes
+//! 11. **Promote:** the signed update ([`crate::update::Installer`]) writes
 //!     bank 1 from bank 0, and its trial boot confirms on bank 1.
-//! 13. **Apply the plans:** once bank 1 confirms, the converted plans are
-//!     put, and only onto a table with every slot empty: plans the owner
-//!     already set on the replacement are never replaced. The put goes
-//!     once; one left unanswered is judged by reading the plans back, never
-//!     by sending it again.
+//!
+//! No route carries meals over: the replacement starts with none, and the
+//! owner sets them up again in Wellfed.
 //!
 //! A step that fails ends the run ([`Step::Failed`]); nothing is retried
 //! here, and the caller bounds every wait ([`Install::gave_up`]).
@@ -78,7 +68,6 @@
 pub mod backup;
 pub mod dns;
 pub mod frame;
-pub mod plans;
 
 pub use backup::{
     BackupError, Bank1Reader, CONTAINER_HEADER, DOWNGRADE_LEN, ReadError, RestoreError,
@@ -87,9 +76,8 @@ pub use backup::{
 };
 pub use dns::{DnsCheck, DnsError, DnsOverride, STOCK_BROKER_PORT};
 pub use frame::{FrameError, SETUP_ADDRESS, SetupFrame};
-pub use plans::{DecodeError, Import, StockPlans};
 
-use wellfed_model::{Client, ClientRole, Generation, PLANS, Plan, Plans, Readiness, Refusal};
+use wellfed_model::{Client, ClientRole, Readiness};
 
 use crate::update::InstallError as UpdateError;
 use crate::update_key::{EnrollError, Enrolled};
@@ -167,8 +155,7 @@ pub enum Provision {
     /// broker, and stock, restarted, connects there. Nothing is written to
     /// the feeder.
     Dns(DnsOverride),
-    /// The owner holds Reset, which runs stock's factory restore (its plans
-    /// erased with the rest) and opens its setup access point; then this
+    /// The owner holds Reset, which runs stock's factory restore and opens its setup access point; then this
     /// frame goes there.
     Frame(SetupFrame),
     /// Stock already connects to the installer's broker (provisioned by an
@@ -280,12 +267,10 @@ pub enum Phase {
     CloseTrial,
     UpdateKey,
     Backup,
-    StockPlans,
     /// The floor read and the version chosen or checked, and the signing.
     Sign,
     Promote,
     AwaitConfirm,
-    ApplyPlans,
     Done,
 }
 
@@ -301,10 +286,6 @@ pub enum InstallError {
     Contested,
     #[error("the owner did not recognize the enrolled feeder; nothing was sent to it")]
     FeederRejected,
-    #[error(
-        "the owner kept stock's plans: the Reset hold erases them, so nothing was done; point stock's broker name at the installer in your DNS instead"
-    )]
-    ResetDeclined,
     /// Stock saves a frame only once it reaches the broker the frame named,
     /// and otherwise opens its setup network again, so nothing is lost.
     #[error(
@@ -361,47 +342,6 @@ pub enum InstallError {
     WrongPromotion { reported: String },
     #[error("gave up waiting at {0:?}")]
     TimedOut(Phase),
-    /// Stock's plan sectors do not decode. Before promotion this stops the
-    /// run with stock intact in bank 1; with the owner's choice to go on, or
-    /// from a kept copy, it is the reason the plans were left behind.
-    #[error("stock's plans could not be read: {0}")]
-    StockPlans(DecodeError),
-    #[error("the feeder did not serve stock's plans ({0:?})")]
-    StockPlansUnread(Refusal),
-    #[error(
-        "the replacement is installed and confirmed, but it already has plans in slots {slots:?}; stock's plans were not applied over them"
-    )]
-    PlansAlreadySet { slots: Vec<usize> },
-    #[error(
-        "the replacement is installed and confirmed, but its plans cannot be written now; stock's plans were not applied"
-    )]
-    PlansNotWritable,
-    #[error(
-        "the replacement is installed and confirmed, but its plans changed (now generation {}) before stock's were put; nothing was changed",
-        current.0
-    )]
-    PlansStale { current: Generation },
-    #[error(
-        "the replacement is installed and confirmed, but it refused stock's plans ({0:?}); nothing was changed"
-    )]
-    PlansRefused(Refusal),
-    #[error(
-        "the replacement is installed and confirmed, but a put of stock's plans went out and whether they are on it is unknown: the plans read back are not the import, and it is not sent again: check the meals on the feeder and set any that are missing"
-    )]
-    PlansUncertain,
-    #[error(
-        "the replacement is installed and confirmed, but its plans could not be read; stock's plans were not applied"
-    )]
-    PlansUnread,
-}
-
-/// What became of the one `PutPlans` of the import.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PlansPut {
-    Done,
-    Refused(Refusal),
-    /// No answer came: it may or may not have been stored.
-    Unanswered,
 }
 
 /// What the caller does next.
@@ -413,11 +353,6 @@ pub enum Step {
     /// just before the owner restarts the feeder and stock looks the name up
     /// again; then [`Install::dns_pointed`].
     PointDns(DnsOverride),
-    /// Warn the owner, before the feeder is touched, that the Reset hold
-    /// runs stock's factory restore and erases its plans, so they note them
-    /// first (the vendor app shows them); then [`Install::reset_accepted`]
-    /// or [`Install::reset_declined`].
-    ConfirmReset,
     /// With this host joined to stock's setup access point, send these bytes
     /// once to [`SETUP_ADDRESS`] over UDP, then call
     /// [`Install::frame_sent`]. Never resent: stock applies a frame once.
@@ -464,11 +399,6 @@ pub enum Step {
     /// [`StockBackup::from_bank`] (or a copy kept earlier, with
     /// [`StockBackup::open`]), and keep it.
     Backup,
-    /// Read stock's plan sectors from the bank-0 role (`ReadStockPlans`)
-    /// and report them with [`Install::stock_plans`] (or a refusal with
-    /// [`Install::stock_plans_unread`]); keep the bytes beside the backup
-    /// and show the owner [`Install::import`].
-    ReadStockPlans,
     /// Read the feeder's floor (`UpdateState`'s `min_version`); report it
     /// with [`Install::floor`].
     ReadFloor,
@@ -485,22 +415,7 @@ pub enum Step {
     /// activation's restart: bank 0 answering before it would read as a
     /// fallback.
     AwaitConfirm,
-    /// Read the replacement's plans (`GetPlans`) and report them with
-    /// [`Install::plans`]: before the import is put, to see the table is
-    /// empty, and after a put that went unanswered, to judge it.
-    ReadPlans,
-    /// Send `PutPlans` with these values once, and report the answer with
-    /// [`Install::plans_put`]. Goes once in a run. Keep `base` durably before it
-    /// leaves: a later run reports it with [`Install::earlier_put`], and goes
-    /// again only if the plans are still at it.
-    PutPlans {
-        base: Generation,
-        plans: [Option<Plan>; PLANS],
-    },
-    /// The put is out; waiting for [`Install::plans_put`].
-    AwaitPut,
-    /// The replacement is confirmed on bank 1, with stock's plans applied
-    /// when there were any.
+    /// The replacement is confirmed on bank 1.
     Done,
     Failed(InstallError),
 }
@@ -508,8 +423,6 @@ pub enum Step {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Stage {
     PointDns(DnsOverride),
-    /// The frame waits for the owner to accept losing stock's plans.
-    ConfirmReset(FrameBytes),
     Provision(FrameBytes),
     /// The frame is out; waiting for the caller to say so.
     FrameOut,
@@ -527,22 +440,12 @@ enum Stage {
     Enrolling,
     CheckSigners,
     Backup,
-    StockPlans,
     Floor,
     Sign {
         version: u32,
     },
     Promote,
     AwaitConfirm,
-    /// Waiting for the plans to check the table is empty.
-    CheckPlans,
-    PutPlans {
-        base: Generation,
-    },
-    /// The put was sent; waiting for its answer.
-    Putting,
-    /// The put went unanswered: waiting for the plans read back.
-    VerifyPlans,
     Done,
     Failed(InstallError),
 }
@@ -564,25 +467,6 @@ pub struct Install {
     /// This run's request reached stock's session, so the stock server holds
     /// a record for it to close.
     sent: bool,
-    /// Stock's plans, converted, once read.
-    import: Option<Import>,
-    /// The owner chose to promote even when stock's plans cannot be read.
-    without_plans: bool,
-    /// Why stock's plans were left behind, when the owner chose to go on.
-    plans_skipped: Option<InstallError>,
-    /// What an earlier run's put of them left on record.
-    earlier_put: EarlierPut,
-}
-
-/// What an earlier run's put of stock's plans left on record, which is on disk
-/// before any put leaves. So `None` means no put ever left.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum EarlierPut {
-    None,
-    /// One may have left, against this generation.
-    From(Generation),
-    /// There is a record that cannot be read: one may have left.
-    Unread,
 }
 
 impl Install {
@@ -593,7 +477,7 @@ impl Install {
     pub fn new(provision: Provision, build: &str, options: Options) -> Result<Self, FrameError> {
         let stage = match provision {
             Provision::Dns(dns) => Stage::PointDns(dns),
-            Provision::Frame(frame) => Stage::ConfirmReset(FrameBytes(frame.encode()?)),
+            Provision::Frame(frame) => Stage::Provision(FrameBytes(frame.encode()?)),
             Provision::Done => Stage::AwaitStock,
         };
         Ok(Self::at(stage, build, options))
@@ -619,10 +503,6 @@ impl Install {
             backup: None,
             progress: None,
             sent: false,
-            import: None,
-            without_plans: false,
-            plans_skipped: None,
-            earlier_put: EarlierPut::None,
         }
     }
 
@@ -630,7 +510,6 @@ impl Install {
     pub fn step(&mut self) -> Step {
         match &self.stage {
             Stage::PointDns(dns) => Step::PointDns(dns.clone()),
-            Stage::ConfirmReset(_) => Step::ConfirmReset,
             Stage::Provision(frame) => {
                 let frame = frame.clone();
                 self.stage = Stage::FrameOut;
@@ -656,26 +535,14 @@ impl Install {
             Stage::Enrolling => Step::AwaitEnroll,
             Stage::CheckSigners => Step::CheckSigners,
             Stage::Backup if self.backup.is_some() => {
-                self.stage = Stage::StockPlans;
-                Step::ReadStockPlans
+                self.stage = Stage::Floor;
+                Step::ReadFloor
             }
             Stage::Backup => Step::Backup,
-            Stage::StockPlans => Step::ReadStockPlans,
             Stage::Floor => Step::ReadFloor,
             &Stage::Sign { version } => Step::Sign { version },
             Stage::Promote => Step::Promote,
             Stage::AwaitConfirm => Step::AwaitConfirm,
-            Stage::CheckPlans | Stage::VerifyPlans => Step::ReadPlans,
-            &Stage::PutPlans { base } => {
-                let plans = self
-                    .import
-                    .as_ref()
-                    .map_or([None; PLANS], |import| import.plans);
-                self.stage = Stage::Putting;
-                Step::PutPlans { base, plans }
-            }
-            // Sent once: until its answer comes, there is only waiting.
-            Stage::Putting => Step::AwaitPut,
             Stage::Done => Step::Done,
             Stage::Failed(error) => Step::Failed(error.clone()),
         }
@@ -684,9 +551,7 @@ impl Install {
     /// Where the run stands, for a progress display.
     pub fn phase(&self) -> Phase {
         match self.stage {
-            Stage::PointDns(_) | Stage::ConfirmReset(_) | Stage::Provision(_) | Stage::FrameOut => {
-                Phase::Provision
-            }
+            Stage::PointDns(_) | Stage::Provision(_) | Stage::FrameOut => Phase::Provision,
             Stage::AwaitStock => Phase::AwaitStock,
             Stage::ConfirmFeeder(_) => Phase::ConfirmFeeder,
             Stage::Request | Stage::Requesting => Phase::Request,
@@ -697,13 +562,9 @@ impl Install {
             Stage::CloseTrial => Phase::CloseTrial,
             Stage::EnrollKey(_) | Stage::Enrolling | Stage::CheckSigners => Phase::UpdateKey,
             Stage::Backup => Phase::Backup,
-            Stage::StockPlans => Phase::StockPlans,
             Stage::Floor | Stage::Sign { .. } => Phase::Sign,
             Stage::Promote => Phase::Promote,
             Stage::AwaitConfirm => Phase::AwaitConfirm,
-            Stage::CheckPlans | Stage::PutPlans { .. } | Stage::Putting | Stage::VerifyPlans => {
-                Phase::ApplyPlans
-            }
             Stage::Done => Phase::Done,
             // Failed is reported through `step`; its phase was the last.
             Stage::Failed(_) => Phase::Done,
@@ -730,43 +591,11 @@ impl Install {
         self.backup
     }
 
-    /// Stock's plans as converted, once read.
-    pub fn import(&self) -> Option<&Import> {
-        self.import.as_ref()
-    }
-
-    /// Why stock's plans were left behind, when the owner chose to promote
-    /// without them.
-    pub fn plans_skipped(&self) -> Option<&InstallError> {
-        self.plans_skipped.as_ref()
-    }
-
-    /// The owner chose to promote even if stock's plans cannot be read:
-    /// the run then goes on without them, and says why.
-    pub fn without_stock_plans(&mut self) {
-        self.without_plans = true;
-    }
-
     /// The owner says their resolver answers stock's broker name with the
     /// installer's broker and the feeder restarted: wait for stock there.
     pub fn dns_pointed(&mut self) {
         if matches!(self.stage, Stage::PointDns(_)) {
             self.stage = Stage::AwaitStock;
-        }
-    }
-
-    /// The owner noted stock's plans and accepts the Reset hold erasing
-    /// them: the frame comes next.
-    pub fn reset_accepted(&mut self) {
-        if let Stage::ConfirmReset(frame) = &self.stage {
-            self.stage = Stage::Provision(frame.clone());
-        }
-    }
-
-    /// The owner keeps stock's plans: nothing is done.
-    pub fn reset_declined(&mut self) {
-        if matches!(self.stage, Stage::ConfirmReset(_)) {
-            self.stage = Stage::Failed(InstallError::ResetDeclined);
         }
     }
 
@@ -992,66 +821,6 @@ impl Install {
         self.backup = Some(backup);
     }
 
-    /// Stock's plan sectors as the bank-0 role served them, read at
-    /// `now_ms` (Unix milliseconds, which decides whether a skip is still
-    /// in force). A readable table is converted, and promotion follows; one
-    /// that cannot be read stops the run unless the owner chose to go on
-    /// without it.
-    pub fn stock_plans(&mut self, count: u8, entries: &[u8], now_ms: u64) {
-        if self.stage != Stage::StockPlans {
-            return;
-        }
-        match StockPlans::decode_parts(count, entries) {
-            Ok(stock) => {
-                self.import = Some(plans::convert(&stock, now_ms));
-                self.stage = Stage::Floor;
-            }
-            Err(error) => self.skip_plans(InstallError::StockPlans(error)),
-        }
-    }
-
-    /// The feeder refused to serve stock's plans.
-    pub fn stock_plans_unread(&mut self, refusal: Refusal) {
-        if self.stage == Stage::StockPlans {
-            self.skip_plans(InstallError::StockPlansUnread(refusal));
-        }
-    }
-
-    /// Stock's plans as an earlier run kept them (`plans::kept`), for a
-    /// run that did not read the sectors itself: one resumed after the
-    /// promotion, when bank 0 no longer serves them. Taken only before the
-    /// plans are checked and only when this run has no import, so the same
-    /// empty-and-writable check applies. A copy that does not decode is
-    /// recorded as the reason the plans were left behind: the run that
-    /// kept it promoted without them.
-    pub fn kept_stock_plans(&mut self, kept: &[u8], now_ms: u64) {
-        let before_check = matches!(
-            self.stage,
-            Stage::Pair
-                | Stage::ReadStatus
-                | Stage::AwaitConfirm
-                | Stage::Floor
-                | Stage::Sign { .. }
-                | Stage::Promote
-        );
-        if !before_check || self.import.is_some() || self.plans_skipped.is_some() {
-            return;
-        }
-        match StockPlans::decode_kept(kept) {
-            Ok(stock) => self.import = Some(plans::convert(&stock, now_ms)),
-            Err(error) => self.plans_skipped = Some(InstallError::StockPlans(error)),
-        }
-    }
-
-    fn skip_plans(&mut self, error: InstallError) {
-        if self.without_plans {
-            self.plans_skipped = Some(error);
-            self.stage = Stage::Floor;
-        } else {
-            self.stage = Stage::Failed(error);
-        }
-    }
-
     /// The feeder's floor, its highest confirmed version: an offer at or
     /// below it needs a downgrade statement, which the installer never
     /// makes. A manifest signed before the run must be above it; a run that
@@ -1122,7 +891,7 @@ impl Install {
                 Some(version)
                     if confirmed_version >= version || readiness == Some(Readiness::Ready) =>
                 {
-                    self.stage = self.after_confirm();
+                    self.stage = Stage::Done;
                 }
                 Some(_) => {}
                 None => self.stage = Stage::Failed(InstallError::PromotionUnknown),
@@ -1130,130 +899,10 @@ impl Install {
         }
     }
 
-    /// Done, unless there are converted plans to apply.
-    fn after_confirm(&self) -> Stage {
-        let converted = self
-            .import
-            .as_ref()
-            .is_some_and(|import| import.plans.iter().any(Option::is_some));
-        if converted {
-            Stage::CheckPlans
-        } else {
-            Stage::Done
-        }
-    }
-
-    /// An earlier run may have sent its put of the import, against `base`.
-    /// Reported before the confirmation, as [`Install::kept_stock_plans`] is.
-    pub fn earlier_put(&mut self, base: Generation) {
-        if self.stage == Stage::AwaitConfirm {
-            self.earlier_put = EarlierPut::From(base);
-        }
-    }
-
-    /// An earlier run left a record of its put that cannot be read: treated as
-    /// a put against a table that has moved, so nothing is sent.
-    pub fn earlier_put_unread(&mut self) {
-        if self.stage == Stage::AwaitConfirm {
-            self.earlier_put = EarlierPut::Unread;
-        }
-    }
-
-    /// The replacement's plans, read for [`Step::ReadPlans`]. Before the
-    /// put, the import goes only onto a writable table with every slot
-    /// empty. After an unanswered put in this run, the table read back is the
-    /// judge: the import there is done, anything else is uncertain, and this
-    /// run does not send it again.
-    ///
-    /// After an earlier run's put ([`Install::earlier_put`]), the import there
-    /// is done, and otherwise it goes again only from the generation that put
-    /// was sent against. Every change to the table moves the generation, so
-    /// that one is proof neither the put nor the owner changed it; an empty
-    /// table alone is not, since the owner may have emptied it. Anything else
-    /// is uncertain, and nothing is sent.
-    pub fn plans(&mut self, view: &Plans) {
-        match self.stage {
-            // The import already there: a put an earlier run sent landed.
-            Stage::CheckPlans
-                if self
-                    .import
-                    .as_ref()
-                    .is_some_and(|import| import.plans == view.plans) =>
-            {
-                self.stage = Stage::Done;
-            }
-            Stage::CheckPlans => {
-                let slots: Vec<usize> = view
-                    .plans
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(slot, plan)| plan.map(|_| slot))
-                    .collect();
-                let moved = match self.earlier_put {
-                    EarlierPut::None => false,
-                    EarlierPut::From(base) => {
-                        base != view.generation || !slots.is_empty() || !view.writable
-                    }
-                    EarlierPut::Unread => true,
-                };
-                self.stage = if moved {
-                    Stage::Failed(InstallError::PlansUncertain)
-                } else if !slots.is_empty() {
-                    Stage::Failed(InstallError::PlansAlreadySet { slots })
-                } else if !view.writable {
-                    Stage::Failed(InstallError::PlansNotWritable)
-                } else {
-                    Stage::PutPlans {
-                        base: view.generation,
-                    }
-                };
-            }
-            Stage::VerifyPlans => {
-                let applied = self
-                    .import
-                    .as_ref()
-                    .is_some_and(|import| import.plans == view.plans);
-                self.stage = if applied {
-                    Stage::Done
-                } else {
-                    Stage::Failed(InstallError::PlansUncertain)
-                };
-            }
-            _ => {}
-        }
-    }
-
-    /// What became of the one put [`Step::PutPlans`] asked for. A refusal
-    /// changed nothing; no answer is judged by reading the plans back. Refused
-    /// after an earlier run's put, it says nothing of that one: it may be what
-    /// moved the table.
-    pub fn plans_put(&mut self, outcome: PlansPut) {
-        if self.stage != Stage::Putting {
-            return;
-        }
-        self.stage = match outcome {
-            PlansPut::Done => Stage::Done,
-            PlansPut::Refused(_) if self.earlier_put != EarlierPut::None => {
-                Stage::Failed(InstallError::PlansUncertain)
-            }
-            PlansPut::Refused(Refusal::Stale { current }) => {
-                Stage::Failed(InstallError::PlansStale { current })
-            }
-            PlansPut::Refused(refusal) => Stage::Failed(InstallError::PlansRefused(refusal)),
-            PlansPut::Unanswered => Stage::VerifyPlans,
-        };
-    }
-
     /// The caller's bound on the current wait ran out.
     pub fn gave_up(&mut self) {
         self.stage = match self.stage {
             Stage::Done | Stage::Failed(_) => return,
-            // Installed and confirmed: what is left unknown is the plans.
-            Stage::CheckPlans | Stage::PutPlans { .. } if self.earlier_put != EarlierPut::None => {
-                Stage::Failed(InstallError::PlansUncertain)
-            }
-            Stage::CheckPlans | Stage::PutPlans { .. } => Stage::Failed(InstallError::PlansUnread),
-            Stage::Putting | Stage::VerifyPlans => Stage::Failed(InstallError::PlansUncertain),
             // Unanswered may have enrolled the key; it is never sent again.
             Stage::Enrolling | Stage::CheckSigners => {
                 Stage::Failed(InstallError::UpdateKeyUncertain)

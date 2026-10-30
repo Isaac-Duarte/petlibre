@@ -101,12 +101,12 @@ An install needs no capture. `init-installer` writes a config with fresh secrets
 - **Contested.** Inside the window, any second stock-shaped identity, or a wrong password for the enrolled one, is noted in `installer.contested.json`, without its credentials. The status document's `enrollment` shows the device, its address and the contest. `POST /api/ota/trial` refuses (409) while the contest stands, because which feeder is the owner's can no longer be told. Only attempts inside the window count. After it closes, a second identity is refused but not flagged, so the installer's owner check of the device ID and address is then the only one.
 - **One or the other.** A config that names a captured device and has an enrollment beside it is refused.
 - **No redirect.** An installer's config has no hotspot interface or feeder MAC, so `network` refuses it. `ota-images` admits the enrolled feeder's address unless `--peer` is given.
-- **Stock's plans are left alone.** An installer's config holds no plan snapshot, so `GET_FEEDING_PLAN_EVENT` goes unanswered. Stock erases and rewrites its plan table on any reply that has a `plans` key, even an empty one. It does not check the code or the message ID, and it takes the message unasked. With no reply it keeps its table; it asks once and does not retry. An empty answer would erase the owner's plans before the installer can import them. The server never sends a plan message on its own: the commands it sends unasked are a closed set (`protocol::Sent`). (Static analysis of 1.1.15's KM4 image, with one UART capture of a stock install.)
+- **Stock's plans are left alone.** An installer's config holds no plan snapshot, so `GET_FEEDING_PLAN_EVENT` goes unanswered. Stock erases and rewrites its plan table on any reply that has a `plans` key, even an empty one. It does not check the code or the message ID, and it takes the message unasked. With no reply it keeps its table; it asks once and does not retry. An empty answer would erase the plans a rollback should find. The server never sends a plan message on its own: the commands it sends unasked are a closed set (`protocol::Sent`). (Static analysis of 1.1.15's KM4 image, with one UART capture of a stock install.)
 - **Stock's clock is set only when it is close.** Stock may hold the owner's plans, and we have not checked whether it runs meals that came due while its clock jumps forward. So with no snapshot, the `NTP` reply sets stock's clock (`calibrationTag`) only when stock's own clock is within 10 minutes of the server's, either way. That is no bigger a step than its vendor cloud's sync would make. Stock's `NTP` request carries its own clock in `ts`, and that alone decides. A request with no `ts`, a zero or an implausible one counts as unknown and is held; an earlier message's `ts` does not count, since it may predate a restart.
   - **When held,** stock's clock stays where it was. Stock 1.1.15 refused an install with error 1214 while its clock was two days behind, likely for that reason. `wellfed install` then names the flag below.
   - **`serve --calibrate-clock`** (and `wellfed install --calibrate-clock`, which passes it on) sets the clock whatever it reads. If stock's clock is far behind, stock may then run meals that came due in the jump, with real food.
   - **The log** says, for every `NTP` request, stock's `ts` (or `unknown`), the skew in seconds, and whether the clock was set and why. A held clock adds a warning that names the flag.
-  - **A captured snapshot** keeps its own rule: an empty table always sets the clock, and a nonempty one (a seeding config) holds it unless the flag is passed. With the flag, those captured plans may run any meals that came due in the jump.
+  - **A captured snapshot** keeps its own rule: an empty table always sets the clock, and a nonempty one holds it unless the flag is passed. With the flag, those captured plans may run any meals that came due in the jump.
 
 ### A set-up stock, moved by DNS
 
@@ -124,37 +124,6 @@ Modeled: the installer's DNS step and enrollment of a never-seen identity, on th
 `wellfed-stock broker-name <file>` prints the broker name stock's settings store, from a whole flash read or the settings sector alone. The name is the vendor's, so no tracked file carries it; the bench reads it from its own flash reads.
 
 `wellfed install` ([consumer installation](../firmware/consumer-installation.md#the-installer)) runs this server as its child.
-
-## Seed stock's plans on the bench
-
-The import is only proven against a stock that holds plans. Stock stores whatever table a `GET_FEEDING_PLAN_EVENT` reply carries, so the bench seeds it through a captured config with a test table. This needs the bench with stock 1.1.15 on bank 1, reaching this server. No motion: every seeded plan carries a far-future `skipEndTime`, so stock stores it but never runs it.
-
-1. Write the test table to a file, here `private/seed-plans.json`. Give every plan `repeatDay` and a `skipEndTime` far ahead, and at most 3 portions:
-
-   ```json
-   [
-     {"planId": 9001, "executionTime": "07:30", "grainNum": 2, "repeatDay": [1, 2, 3, 4, 5, 6, 7],
-      "enableAudio": false, "audioTimes": 0, "syncTime": 1792271861000, "skipEndTime": 4102444800000},
-     {"planId": 9002, "executionTime": "18:05", "grainNum": 3, "repeatDay": [6, 7],
-      "enableAudio": true, "audioTimes": 2, "syncTime": 1792271861000, "skipEndTime": 4102444800000}
-   ]
-   ```
-
-   `4102444800000` is 2100-01-01. The table's fields are in [how stock receives plans](../devices/plaf103/stock/README.md#how-stock-receives-plans).
-
-2. Write a seeding config from the bench's captured one, keeping its mode:
-
-   ```sh
-   (umask 077; jq --slurpfile p private/seed-plans.json '.plans = $p[0]' private/server.json > private/seed.json)
-   ```
-
-3. Run `./target/debug/wellfed-stock serve --config private/seed.json`, then restart stock, or return the feeder to stock. Stock asks for its plans once, within about 30 s of its boot, and stores the table.
-
-   You should see stock online with version 1.1.15 in `wellfed-stock status --config private/seed.json`. A full flash read then decodes with `wellfed-stock plans <flash read>`: each plan disabled, with a note that its skip is still ahead.
-
-4. Stop `serve`, and delete `private/seed.json`. Before any install trial, the server that stock reaches must hold no snapshot (`plans` absent), so the request goes unanswered and stock keeps the seeded table. A trial refuses while a nonempty snapshot is configured, and `wellfed install` refuses any config with a `plans` key.
-
-The seeded plans reach the replacement disabled. Delete them with `wellfed plans delete` after the run.
 
 ## The install ledger
 
@@ -199,7 +168,7 @@ Normal `serve` mode keeps trial dispatch disabled. Trial dispatch needs a clean,
 
    The lease records the served digest and the build's identity: the startup identity of the review's frozen `build-manifest.json`, which must match the review's `manifest_sha256`.
 
-2. Check the schedule snapshot is empty or absent. A captured snapshot is replayed to stock's schedule queries, so a trial needs it empty. With no snapshot (an installer's config), the queries go unanswered and stock keeps its own plans, which the installer imports.
+2. Check the schedule snapshot is empty or absent. A captured snapshot is replayed to stock's schedule queries, so a trial needs it empty. With no snapshot (an installer's config), the queries go unanswered and stock keeps its own plans.
 
 3. Start a trial with `POST /api/ota/trial` against a `serve --enable-ota-trial`. It needs the lease, announces target version `2.0.0` with the lease's digest, and records both in the ledger.
 

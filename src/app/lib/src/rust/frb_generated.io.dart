@@ -767,9 +767,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PlanView dco_decode_plan_view(dynamic raw);
 
   @protected
-  PlansOutcome dco_decode_plans_outcome(dynamic raw);
-
-  @protected
   PlansView dco_decode_plans_view(dynamic raw);
 
   @protected
@@ -792,6 +789,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RestoreEnd dco_decode_restore_end(dynamic raw);
+
+  @protected
+  RestoreSeen dco_decode_restore_seen(dynamic raw);
 
   @protected
   RestoreSpec dco_decode_restore_spec(dynamic raw);
@@ -1681,9 +1681,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PlanView sse_decode_plan_view(SseDeserializer deserializer);
 
   @protected
-  PlansOutcome sse_decode_plans_outcome(SseDeserializer deserializer);
-
-  @protected
   PlansView sse_decode_plans_view(SseDeserializer deserializer);
 
   @protected
@@ -1706,6 +1703,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RestoreEnd sse_decode_restore_end(SseDeserializer deserializer);
+
+  @protected
+  RestoreSeen sse_decode_restore_seen(SseDeserializer deserializer);
 
   @protected
   RestoreSpec sse_decode_restore_spec(SseDeserializer deserializer);
@@ -2804,9 +2804,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_plan_view(PlanView self, SseSerializer serializer);
 
   @protected
-  void sse_encode_plans_outcome(PlansOutcome self, SseSerializer serializer);
-
-  @protected
   void sse_encode_plans_view(PlansView self, SseSerializer serializer);
 
   @protected
@@ -2832,6 +2829,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_restore_end(RestoreEnd self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_restore_seen(RestoreSeen self, SseSerializer serializer);
 
   @protected
   void sse_encode_restore_spec(RestoreSpec self, SseSerializer serializer);

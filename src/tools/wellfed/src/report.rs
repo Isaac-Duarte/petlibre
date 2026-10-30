@@ -5,7 +5,7 @@
 use wellfed_client::install::{DnsCheck, STOCK_VERSION};
 use wellfed_client::update_key::Enrolled;
 use wellfed_install::Report;
-use wellfed_install::event::{Enrollment, Event, PlansResult, Wait};
+use wellfed_install::event::{Enrollment, Event, Wait};
 
 use crate::keys::fingerprint;
 
@@ -194,21 +194,6 @@ pub(crate) fn line(event: &Event) -> String {
         Event::BackupKept { path } => {
             format!("Kept the verified stock backup at {}.", path.display())
         }
-        Event::PlansKept { path } => format!("Kept stock's plan sectors at {}.", path.display()),
-        Event::StockPlans { import, kept } => {
-            let report = wellfed_client::install::plans::report(import);
-            let report = report.trim_end_matches('\n');
-            match kept {
-                None => format!("Stock's plans, as the replacement will run them:\n{report}"),
-                Some(path) => format!(
-                    "Stock's plans, from the copy kept at {}:\n{report}",
-                    path.display()
-                ),
-            }
-        }
-        Event::WithoutStockPlans { skipped } => {
-            format!("Going on without stock's plans (--without-stock-plans): {skipped}.")
-        }
         Event::Promoting => "Promoting: bank 0 writes the replacement into bank 1.".to_string(),
         Event::Written { written, length } => format!("  {written} of {length} bytes written"),
         Event::SessionDropped { error } => {
@@ -216,34 +201,10 @@ pub(crate) fn line(event: &Event) -> String {
         }
         Event::AlreadyActivated => "Bank 1 already runs the build: it was activated.".to_string(),
         Event::Activated => "Activated: the feeder restarts into bank 1.".to_string(),
-        Event::PlansUnread { error } => {
-            format!("The replacement's plans could not be read ({error}).")
-        }
-        Event::PuttingPlans => "Setting stock's converted plans on the replacement.".to_string(),
-        Event::EarlierPut { base } => format!(
-            "An earlier run may have sent stock's plans, against generation {base}: they go \
-             again only if the feeder's plans are still at it."
-        ),
         Event::Installed { build } => format!(
             "Installed: build {} confirmed on bank 1. This computer is its owner.",
             short(build)
         ),
-        Event::Plans(result) => match result {
-            PlansResult::Skipped(skipped) => {
-                format!("Stock's plans were not imported: {skipped}.")
-            }
-            PlansResult::NotRead => "Stock's plans were not read by this run, and no earlier run \
-                                     kept a copy it has not applied: nothing was set."
-                .to_string(),
-            PlansResult::Set => "Stock's converted plans are set on the replacement.".to_string(),
-            PlansResult::None => "Stock had no plans to set on the replacement.".to_string(),
-            PlansResult::NoneConverted => "None of stock's plans could be converted (see the \
-                                           report above): nothing was set."
-                .to_string(),
-        },
-        Event::PlansSetAside { path } => {
-            format!("Set the applied copy aside at {}.", path.display())
-        }
         Event::ResumeRecordKept { error } => {
             format!("warning: the resume record was not removed: {error}")
         }

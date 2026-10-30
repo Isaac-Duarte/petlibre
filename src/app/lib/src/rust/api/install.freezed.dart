@@ -1523,13 +1523,12 @@ extension InstallAskPatterns on InstallAsk {
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( InstallAsk_SetOverride value)?  setOverride,TResult Function( InstallAsk_RestartFeeder value)?  restartFeeder,TResult Function( InstallAsk_EraseStockPlans value)?  eraseStockPlans,TResult Function( InstallAsk_JoinFeederNetwork value)?  joinFeederNetwork,TResult Function( InstallAsk_LeaveFeederNetwork value)?  leaveFeederNetwork,TResult Function( InstallAsk_RecognizeFeeder value)?  recognizeFeeder,TResult Function( InstallAsk_OpenRecoveryWindow value)?  openRecoveryWindow,TResult Function( InstallAsk_OpenLink value)?  openLink,TResult Function( InstallAsk_WriteLink value)?  writeLink,TResult Function( InstallAsk_CloseLink value)?  closeLink,TResult Function( InstallAsk_Locate value)?  locate,required TResult orElse(),}){
+@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( InstallAsk_SetOverride value)?  setOverride,TResult Function( InstallAsk_RestartFeeder value)?  restartFeeder,TResult Function( InstallAsk_JoinFeederNetwork value)?  joinFeederNetwork,TResult Function( InstallAsk_LeaveFeederNetwork value)?  leaveFeederNetwork,TResult Function( InstallAsk_RecognizeFeeder value)?  recognizeFeeder,TResult Function( InstallAsk_OpenRecoveryWindow value)?  openRecoveryWindow,TResult Function( InstallAsk_OpenLink value)?  openLink,TResult Function( InstallAsk_WriteLink value)?  writeLink,TResult Function( InstallAsk_CloseLink value)?  closeLink,TResult Function( InstallAsk_Locate value)?  locate,required TResult orElse(),}){
 final _that = this;
 switch (_that) {
 case InstallAsk_SetOverride() when setOverride != null:
 return setOverride(_that);case InstallAsk_RestartFeeder() when restartFeeder != null:
-return restartFeeder(_that);case InstallAsk_EraseStockPlans() when eraseStockPlans != null:
-return eraseStockPlans(_that);case InstallAsk_JoinFeederNetwork() when joinFeederNetwork != null:
+return restartFeeder(_that);case InstallAsk_JoinFeederNetwork() when joinFeederNetwork != null:
 return joinFeederNetwork(_that);case InstallAsk_LeaveFeederNetwork() when leaveFeederNetwork != null:
 return leaveFeederNetwork(_that);case InstallAsk_RecognizeFeeder() when recognizeFeeder != null:
 return recognizeFeeder(_that);case InstallAsk_OpenRecoveryWindow() when openRecoveryWindow != null:
@@ -1555,13 +1554,12 @@ return locate(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( InstallAsk_SetOverride value)  setOverride,required TResult Function( InstallAsk_RestartFeeder value)  restartFeeder,required TResult Function( InstallAsk_EraseStockPlans value)  eraseStockPlans,required TResult Function( InstallAsk_JoinFeederNetwork value)  joinFeederNetwork,required TResult Function( InstallAsk_LeaveFeederNetwork value)  leaveFeederNetwork,required TResult Function( InstallAsk_RecognizeFeeder value)  recognizeFeeder,required TResult Function( InstallAsk_OpenRecoveryWindow value)  openRecoveryWindow,required TResult Function( InstallAsk_OpenLink value)  openLink,required TResult Function( InstallAsk_WriteLink value)  writeLink,required TResult Function( InstallAsk_CloseLink value)  closeLink,required TResult Function( InstallAsk_Locate value)  locate,}){
+@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( InstallAsk_SetOverride value)  setOverride,required TResult Function( InstallAsk_RestartFeeder value)  restartFeeder,required TResult Function( InstallAsk_JoinFeederNetwork value)  joinFeederNetwork,required TResult Function( InstallAsk_LeaveFeederNetwork value)  leaveFeederNetwork,required TResult Function( InstallAsk_RecognizeFeeder value)  recognizeFeeder,required TResult Function( InstallAsk_OpenRecoveryWindow value)  openRecoveryWindow,required TResult Function( InstallAsk_OpenLink value)  openLink,required TResult Function( InstallAsk_WriteLink value)  writeLink,required TResult Function( InstallAsk_CloseLink value)  closeLink,required TResult Function( InstallAsk_Locate value)  locate,}){
 final _that = this;
 switch (_that) {
 case InstallAsk_SetOverride():
 return setOverride(_that);case InstallAsk_RestartFeeder():
-return restartFeeder(_that);case InstallAsk_EraseStockPlans():
-return eraseStockPlans(_that);case InstallAsk_JoinFeederNetwork():
+return restartFeeder(_that);case InstallAsk_JoinFeederNetwork():
 return joinFeederNetwork(_that);case InstallAsk_LeaveFeederNetwork():
 return leaveFeederNetwork(_that);case InstallAsk_RecognizeFeeder():
 return recognizeFeeder(_that);case InstallAsk_OpenRecoveryWindow():
@@ -1583,13 +1581,12 @@ return locate(_that);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( InstallAsk_SetOverride value)?  setOverride,TResult? Function( InstallAsk_RestartFeeder value)?  restartFeeder,TResult? Function( InstallAsk_EraseStockPlans value)?  eraseStockPlans,TResult? Function( InstallAsk_JoinFeederNetwork value)?  joinFeederNetwork,TResult? Function( InstallAsk_LeaveFeederNetwork value)?  leaveFeederNetwork,TResult? Function( InstallAsk_RecognizeFeeder value)?  recognizeFeeder,TResult? Function( InstallAsk_OpenRecoveryWindow value)?  openRecoveryWindow,TResult? Function( InstallAsk_OpenLink value)?  openLink,TResult? Function( InstallAsk_WriteLink value)?  writeLink,TResult? Function( InstallAsk_CloseLink value)?  closeLink,TResult? Function( InstallAsk_Locate value)?  locate,}){
+@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( InstallAsk_SetOverride value)?  setOverride,TResult? Function( InstallAsk_RestartFeeder value)?  restartFeeder,TResult? Function( InstallAsk_JoinFeederNetwork value)?  joinFeederNetwork,TResult? Function( InstallAsk_LeaveFeederNetwork value)?  leaveFeederNetwork,TResult? Function( InstallAsk_RecognizeFeeder value)?  recognizeFeeder,TResult? Function( InstallAsk_OpenRecoveryWindow value)?  openRecoveryWindow,TResult? Function( InstallAsk_OpenLink value)?  openLink,TResult? Function( InstallAsk_WriteLink value)?  writeLink,TResult? Function( InstallAsk_CloseLink value)?  closeLink,TResult? Function( InstallAsk_Locate value)?  locate,}){
 final _that = this;
 switch (_that) {
 case InstallAsk_SetOverride() when setOverride != null:
 return setOverride(_that);case InstallAsk_RestartFeeder() when restartFeeder != null:
-return restartFeeder(_that);case InstallAsk_EraseStockPlans() when eraseStockPlans != null:
-return eraseStockPlans(_that);case InstallAsk_JoinFeederNetwork() when joinFeederNetwork != null:
+return restartFeeder(_that);case InstallAsk_JoinFeederNetwork() when joinFeederNetwork != null:
 return joinFeederNetwork(_that);case InstallAsk_LeaveFeederNetwork() when leaveFeederNetwork != null:
 return leaveFeederNetwork(_that);case InstallAsk_RecognizeFeeder() when recognizeFeeder != null:
 return recognizeFeeder(_that);case InstallAsk_OpenRecoveryWindow() when openRecoveryWindow != null:
@@ -1614,12 +1611,11 @@ return locate(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( String name,  String broker)?  setOverride,TResult Function()?  restartFeeder,TResult Function()?  eraseStockPlans,TResult Function()?  joinFeederNetwork,TResult Function()?  leaveFeederNetwork,TResult Function( String device,  String address)?  recognizeFeeder,TResult Function()?  openRecoveryWindow,TResult Function()?  openLink,TResult Function( List<Uint8List> pieces)?  writeLink,TResult Function()?  closeLink,TResult Function( String identity)?  locate,required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( String name,  String broker)?  setOverride,TResult Function()?  restartFeeder,TResult Function()?  joinFeederNetwork,TResult Function()?  leaveFeederNetwork,TResult Function( String device,  String address)?  recognizeFeeder,TResult Function()?  openRecoveryWindow,TResult Function()?  openLink,TResult Function( List<Uint8List> pieces)?  writeLink,TResult Function()?  closeLink,TResult Function( String identity)?  locate,required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case InstallAsk_SetOverride() when setOverride != null:
 return setOverride(_that.name,_that.broker);case InstallAsk_RestartFeeder() when restartFeeder != null:
-return restartFeeder();case InstallAsk_EraseStockPlans() when eraseStockPlans != null:
-return eraseStockPlans();case InstallAsk_JoinFeederNetwork() when joinFeederNetwork != null:
+return restartFeeder();case InstallAsk_JoinFeederNetwork() when joinFeederNetwork != null:
 return joinFeederNetwork();case InstallAsk_LeaveFeederNetwork() when leaveFeederNetwork != null:
 return leaveFeederNetwork();case InstallAsk_RecognizeFeeder() when recognizeFeeder != null:
 return recognizeFeeder(_that.device,_that.address);case InstallAsk_OpenRecoveryWindow() when openRecoveryWindow != null:
@@ -1645,12 +1641,11 @@ return locate(_that.identity);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( String name,  String broker)  setOverride,required TResult Function()  restartFeeder,required TResult Function()  eraseStockPlans,required TResult Function()  joinFeederNetwork,required TResult Function()  leaveFeederNetwork,required TResult Function( String device,  String address)  recognizeFeeder,required TResult Function()  openRecoveryWindow,required TResult Function()  openLink,required TResult Function( List<Uint8List> pieces)  writeLink,required TResult Function()  closeLink,required TResult Function( String identity)  locate,}) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( String name,  String broker)  setOverride,required TResult Function()  restartFeeder,required TResult Function()  joinFeederNetwork,required TResult Function()  leaveFeederNetwork,required TResult Function( String device,  String address)  recognizeFeeder,required TResult Function()  openRecoveryWindow,required TResult Function()  openLink,required TResult Function( List<Uint8List> pieces)  writeLink,required TResult Function()  closeLink,required TResult Function( String identity)  locate,}) {final _that = this;
 switch (_that) {
 case InstallAsk_SetOverride():
 return setOverride(_that.name,_that.broker);case InstallAsk_RestartFeeder():
-return restartFeeder();case InstallAsk_EraseStockPlans():
-return eraseStockPlans();case InstallAsk_JoinFeederNetwork():
+return restartFeeder();case InstallAsk_JoinFeederNetwork():
 return joinFeederNetwork();case InstallAsk_LeaveFeederNetwork():
 return leaveFeederNetwork();case InstallAsk_RecognizeFeeder():
 return recognizeFeeder(_that.device,_that.address);case InstallAsk_OpenRecoveryWindow():
@@ -1672,12 +1667,11 @@ return locate(_that.identity);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( String name,  String broker)?  setOverride,TResult? Function()?  restartFeeder,TResult? Function()?  eraseStockPlans,TResult? Function()?  joinFeederNetwork,TResult? Function()?  leaveFeederNetwork,TResult? Function( String device,  String address)?  recognizeFeeder,TResult? Function()?  openRecoveryWindow,TResult? Function()?  openLink,TResult? Function( List<Uint8List> pieces)?  writeLink,TResult? Function()?  closeLink,TResult? Function( String identity)?  locate,}) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( String name,  String broker)?  setOverride,TResult? Function()?  restartFeeder,TResult? Function()?  joinFeederNetwork,TResult? Function()?  leaveFeederNetwork,TResult? Function( String device,  String address)?  recognizeFeeder,TResult? Function()?  openRecoveryWindow,TResult? Function()?  openLink,TResult? Function( List<Uint8List> pieces)?  writeLink,TResult? Function()?  closeLink,TResult? Function( String identity)?  locate,}) {final _that = this;
 switch (_that) {
 case InstallAsk_SetOverride() when setOverride != null:
 return setOverride(_that.name,_that.broker);case InstallAsk_RestartFeeder() when restartFeeder != null:
-return restartFeeder();case InstallAsk_EraseStockPlans() when eraseStockPlans != null:
-return eraseStockPlans();case InstallAsk_JoinFeederNetwork() when joinFeederNetwork != null:
+return restartFeeder();case InstallAsk_JoinFeederNetwork() when joinFeederNetwork != null:
 return joinFeederNetwork();case InstallAsk_LeaveFeederNetwork() when leaveFeederNetwork != null:
 return leaveFeederNetwork();case InstallAsk_RecognizeFeeder() when recognizeFeeder != null:
 return recognizeFeeder(_that.device,_that.address);case InstallAsk_OpenRecoveryWindow() when openRecoveryWindow != null:
@@ -1787,38 +1781,6 @@ int get hashCode => runtimeType.hashCode;
 @override
 String toString() {
     return 'InstallAsk.restartFeeder()';
-}
-
-
-}
-
-
-
-
-/// @nodoc
-
-
-class InstallAsk_EraseStockPlans extends InstallAsk {
-  const InstallAsk_EraseStockPlans(): super._();
-  
-
-
-
-
-
-
-@override
-bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType&&other is InstallAsk_EraseStockPlans);
-}
-
-
-@override
-int get hashCode => runtimeType.hashCode;
-
-@override
-String toString() {
-    return 'InstallAsk.eraseStockPlans()';
 }
 
 
@@ -2517,7 +2479,7 @@ extension InstallEventPatterns on InstallEvent {
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( InstallEvent_DnsChecked value)?  dnsChecked,TResult Function( InstallEvent_StockServerStarted value)?  stockServerStarted,TResult Function( InstallEvent_AwaitingStock value)?  awaitingStock,TResult Function( InstallEvent_Waiting value)?  waiting,TResult Function( InstallEvent_VersionLost value)?  versionLost,TResult Function( InstallEvent_StockServerEnded value)?  stockServerEnded,TResult Function( InstallEvent_Requesting value)?  requesting,TResult Function( InstallEvent_StockProgress value)?  stockProgress,TResult Function( InstallEvent_StockRestarting value)?  stockRestarting,TResult Function( InstallEvent_KeyKnown value)?  keyKnown,TResult Function( InstallEvent_SetupStarting value)?  setupStarting,TResult Function( InstallEvent_NoSetupFeeder value)?  noSetupFeeder,TResult Function( InstallEvent_Code value)?  code,TResult Function( InstallEvent_PressDispense value)?  pressDispense,TResult Function( InstallEvent_Paired value)?  paired,TResult Function( InstallEvent_Joined value)?  joined,TResult Function( InstallEvent_ReplacementAnswers value)?  replacementAnswers,TResult Function( InstallEvent_ReadingBackup value)?  readingBackup,TResult Function( InstallEvent_BackupRead value)?  backupRead,TResult Function( InstallEvent_BackupKept value)?  backupKept,TResult Function( InstallEvent_StockPlans value)?  stockPlans,TResult Function( InstallEvent_WithoutStockPlans value)?  withoutStockPlans,TResult Function( InstallEvent_Promoting value)?  promoting,TResult Function( InstallEvent_Written value)?  written,TResult Function( InstallEvent_SessionDropped value)?  sessionDropped,TResult Function( InstallEvent_Activated value)?  activated,TResult Function( InstallEvent_PuttingPlans value)?  puttingPlans,TResult Function( InstallEvent_Installed value)?  installed,TResult Function( InstallEvent_Plans value)?  plans,TResult Function( InstallEvent_Note value)?  note,required TResult orElse(),}){
+@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( InstallEvent_DnsChecked value)?  dnsChecked,TResult Function( InstallEvent_StockServerStarted value)?  stockServerStarted,TResult Function( InstallEvent_AwaitingStock value)?  awaitingStock,TResult Function( InstallEvent_Waiting value)?  waiting,TResult Function( InstallEvent_VersionLost value)?  versionLost,TResult Function( InstallEvent_StockServerEnded value)?  stockServerEnded,TResult Function( InstallEvent_Requesting value)?  requesting,TResult Function( InstallEvent_StockProgress value)?  stockProgress,TResult Function( InstallEvent_StockRestarting value)?  stockRestarting,TResult Function( InstallEvent_KeyKnown value)?  keyKnown,TResult Function( InstallEvent_SetupStarting value)?  setupStarting,TResult Function( InstallEvent_NoSetupFeeder value)?  noSetupFeeder,TResult Function( InstallEvent_Code value)?  code,TResult Function( InstallEvent_PressDispense value)?  pressDispense,TResult Function( InstallEvent_Paired value)?  paired,TResult Function( InstallEvent_Joined value)?  joined,TResult Function( InstallEvent_ReplacementAnswers value)?  replacementAnswers,TResult Function( InstallEvent_ReadingBackup value)?  readingBackup,TResult Function( InstallEvent_BackupRead value)?  backupRead,TResult Function( InstallEvent_BackupKept value)?  backupKept,TResult Function( InstallEvent_Promoting value)?  promoting,TResult Function( InstallEvent_Written value)?  written,TResult Function( InstallEvent_SessionDropped value)?  sessionDropped,TResult Function( InstallEvent_Activated value)?  activated,TResult Function( InstallEvent_Installed value)?  installed,TResult Function( InstallEvent_Note value)?  note,required TResult orElse(),}){
 final _that = this;
 switch (_that) {
 case InstallEvent_DnsChecked() when dnsChecked != null:
@@ -2540,16 +2502,12 @@ return joined(_that);case InstallEvent_ReplacementAnswers() when replacementAnsw
 return replacementAnswers(_that);case InstallEvent_ReadingBackup() when readingBackup != null:
 return readingBackup(_that);case InstallEvent_BackupRead() when backupRead != null:
 return backupRead(_that);case InstallEvent_BackupKept() when backupKept != null:
-return backupKept(_that);case InstallEvent_StockPlans() when stockPlans != null:
-return stockPlans(_that);case InstallEvent_WithoutStockPlans() when withoutStockPlans != null:
-return withoutStockPlans(_that);case InstallEvent_Promoting() when promoting != null:
+return backupKept(_that);case InstallEvent_Promoting() when promoting != null:
 return promoting(_that);case InstallEvent_Written() when written != null:
 return written(_that);case InstallEvent_SessionDropped() when sessionDropped != null:
 return sessionDropped(_that);case InstallEvent_Activated() when activated != null:
-return activated(_that);case InstallEvent_PuttingPlans() when puttingPlans != null:
-return puttingPlans(_that);case InstallEvent_Installed() when installed != null:
-return installed(_that);case InstallEvent_Plans() when plans != null:
-return plans(_that);case InstallEvent_Note() when note != null:
+return activated(_that);case InstallEvent_Installed() when installed != null:
+return installed(_that);case InstallEvent_Note() when note != null:
 return note(_that);case _:
   return orElse();
 
@@ -2568,7 +2526,7 @@ return note(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( InstallEvent_DnsChecked value)  dnsChecked,required TResult Function( InstallEvent_StockServerStarted value)  stockServerStarted,required TResult Function( InstallEvent_AwaitingStock value)  awaitingStock,required TResult Function( InstallEvent_Waiting value)  waiting,required TResult Function( InstallEvent_VersionLost value)  versionLost,required TResult Function( InstallEvent_StockServerEnded value)  stockServerEnded,required TResult Function( InstallEvent_Requesting value)  requesting,required TResult Function( InstallEvent_StockProgress value)  stockProgress,required TResult Function( InstallEvent_StockRestarting value)  stockRestarting,required TResult Function( InstallEvent_KeyKnown value)  keyKnown,required TResult Function( InstallEvent_SetupStarting value)  setupStarting,required TResult Function( InstallEvent_NoSetupFeeder value)  noSetupFeeder,required TResult Function( InstallEvent_Code value)  code,required TResult Function( InstallEvent_PressDispense value)  pressDispense,required TResult Function( InstallEvent_Paired value)  paired,required TResult Function( InstallEvent_Joined value)  joined,required TResult Function( InstallEvent_ReplacementAnswers value)  replacementAnswers,required TResult Function( InstallEvent_ReadingBackup value)  readingBackup,required TResult Function( InstallEvent_BackupRead value)  backupRead,required TResult Function( InstallEvent_BackupKept value)  backupKept,required TResult Function( InstallEvent_StockPlans value)  stockPlans,required TResult Function( InstallEvent_WithoutStockPlans value)  withoutStockPlans,required TResult Function( InstallEvent_Promoting value)  promoting,required TResult Function( InstallEvent_Written value)  written,required TResult Function( InstallEvent_SessionDropped value)  sessionDropped,required TResult Function( InstallEvent_Activated value)  activated,required TResult Function( InstallEvent_PuttingPlans value)  puttingPlans,required TResult Function( InstallEvent_Installed value)  installed,required TResult Function( InstallEvent_Plans value)  plans,required TResult Function( InstallEvent_Note value)  note,}){
+@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( InstallEvent_DnsChecked value)  dnsChecked,required TResult Function( InstallEvent_StockServerStarted value)  stockServerStarted,required TResult Function( InstallEvent_AwaitingStock value)  awaitingStock,required TResult Function( InstallEvent_Waiting value)  waiting,required TResult Function( InstallEvent_VersionLost value)  versionLost,required TResult Function( InstallEvent_StockServerEnded value)  stockServerEnded,required TResult Function( InstallEvent_Requesting value)  requesting,required TResult Function( InstallEvent_StockProgress value)  stockProgress,required TResult Function( InstallEvent_StockRestarting value)  stockRestarting,required TResult Function( InstallEvent_KeyKnown value)  keyKnown,required TResult Function( InstallEvent_SetupStarting value)  setupStarting,required TResult Function( InstallEvent_NoSetupFeeder value)  noSetupFeeder,required TResult Function( InstallEvent_Code value)  code,required TResult Function( InstallEvent_PressDispense value)  pressDispense,required TResult Function( InstallEvent_Paired value)  paired,required TResult Function( InstallEvent_Joined value)  joined,required TResult Function( InstallEvent_ReplacementAnswers value)  replacementAnswers,required TResult Function( InstallEvent_ReadingBackup value)  readingBackup,required TResult Function( InstallEvent_BackupRead value)  backupRead,required TResult Function( InstallEvent_BackupKept value)  backupKept,required TResult Function( InstallEvent_Promoting value)  promoting,required TResult Function( InstallEvent_Written value)  written,required TResult Function( InstallEvent_SessionDropped value)  sessionDropped,required TResult Function( InstallEvent_Activated value)  activated,required TResult Function( InstallEvent_Installed value)  installed,required TResult Function( InstallEvent_Note value)  note,}){
 final _that = this;
 switch (_that) {
 case InstallEvent_DnsChecked():
@@ -2591,16 +2549,12 @@ return joined(_that);case InstallEvent_ReplacementAnswers():
 return replacementAnswers(_that);case InstallEvent_ReadingBackup():
 return readingBackup(_that);case InstallEvent_BackupRead():
 return backupRead(_that);case InstallEvent_BackupKept():
-return backupKept(_that);case InstallEvent_StockPlans():
-return stockPlans(_that);case InstallEvent_WithoutStockPlans():
-return withoutStockPlans(_that);case InstallEvent_Promoting():
+return backupKept(_that);case InstallEvent_Promoting():
 return promoting(_that);case InstallEvent_Written():
 return written(_that);case InstallEvent_SessionDropped():
 return sessionDropped(_that);case InstallEvent_Activated():
-return activated(_that);case InstallEvent_PuttingPlans():
-return puttingPlans(_that);case InstallEvent_Installed():
-return installed(_that);case InstallEvent_Plans():
-return plans(_that);case InstallEvent_Note():
+return activated(_that);case InstallEvent_Installed():
+return installed(_that);case InstallEvent_Note():
 return note(_that);}
 }
 /// A variant of `map` that fallback to returning `null`.
@@ -2615,7 +2569,7 @@ return note(_that);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( InstallEvent_DnsChecked value)?  dnsChecked,TResult? Function( InstallEvent_StockServerStarted value)?  stockServerStarted,TResult? Function( InstallEvent_AwaitingStock value)?  awaitingStock,TResult? Function( InstallEvent_Waiting value)?  waiting,TResult? Function( InstallEvent_VersionLost value)?  versionLost,TResult? Function( InstallEvent_StockServerEnded value)?  stockServerEnded,TResult? Function( InstallEvent_Requesting value)?  requesting,TResult? Function( InstallEvent_StockProgress value)?  stockProgress,TResult? Function( InstallEvent_StockRestarting value)?  stockRestarting,TResult? Function( InstallEvent_KeyKnown value)?  keyKnown,TResult? Function( InstallEvent_SetupStarting value)?  setupStarting,TResult? Function( InstallEvent_NoSetupFeeder value)?  noSetupFeeder,TResult? Function( InstallEvent_Code value)?  code,TResult? Function( InstallEvent_PressDispense value)?  pressDispense,TResult? Function( InstallEvent_Paired value)?  paired,TResult? Function( InstallEvent_Joined value)?  joined,TResult? Function( InstallEvent_ReplacementAnswers value)?  replacementAnswers,TResult? Function( InstallEvent_ReadingBackup value)?  readingBackup,TResult? Function( InstallEvent_BackupRead value)?  backupRead,TResult? Function( InstallEvent_BackupKept value)?  backupKept,TResult? Function( InstallEvent_StockPlans value)?  stockPlans,TResult? Function( InstallEvent_WithoutStockPlans value)?  withoutStockPlans,TResult? Function( InstallEvent_Promoting value)?  promoting,TResult? Function( InstallEvent_Written value)?  written,TResult? Function( InstallEvent_SessionDropped value)?  sessionDropped,TResult? Function( InstallEvent_Activated value)?  activated,TResult? Function( InstallEvent_PuttingPlans value)?  puttingPlans,TResult? Function( InstallEvent_Installed value)?  installed,TResult? Function( InstallEvent_Plans value)?  plans,TResult? Function( InstallEvent_Note value)?  note,}){
+@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( InstallEvent_DnsChecked value)?  dnsChecked,TResult? Function( InstallEvent_StockServerStarted value)?  stockServerStarted,TResult? Function( InstallEvent_AwaitingStock value)?  awaitingStock,TResult? Function( InstallEvent_Waiting value)?  waiting,TResult? Function( InstallEvent_VersionLost value)?  versionLost,TResult? Function( InstallEvent_StockServerEnded value)?  stockServerEnded,TResult? Function( InstallEvent_Requesting value)?  requesting,TResult? Function( InstallEvent_StockProgress value)?  stockProgress,TResult? Function( InstallEvent_StockRestarting value)?  stockRestarting,TResult? Function( InstallEvent_KeyKnown value)?  keyKnown,TResult? Function( InstallEvent_SetupStarting value)?  setupStarting,TResult? Function( InstallEvent_NoSetupFeeder value)?  noSetupFeeder,TResult? Function( InstallEvent_Code value)?  code,TResult? Function( InstallEvent_PressDispense value)?  pressDispense,TResult? Function( InstallEvent_Paired value)?  paired,TResult? Function( InstallEvent_Joined value)?  joined,TResult? Function( InstallEvent_ReplacementAnswers value)?  replacementAnswers,TResult? Function( InstallEvent_ReadingBackup value)?  readingBackup,TResult? Function( InstallEvent_BackupRead value)?  backupRead,TResult? Function( InstallEvent_BackupKept value)?  backupKept,TResult? Function( InstallEvent_Promoting value)?  promoting,TResult? Function( InstallEvent_Written value)?  written,TResult? Function( InstallEvent_SessionDropped value)?  sessionDropped,TResult? Function( InstallEvent_Activated value)?  activated,TResult? Function( InstallEvent_Installed value)?  installed,TResult? Function( InstallEvent_Note value)?  note,}){
 final _that = this;
 switch (_that) {
 case InstallEvent_DnsChecked() when dnsChecked != null:
@@ -2638,16 +2592,12 @@ return joined(_that);case InstallEvent_ReplacementAnswers() when replacementAnsw
 return replacementAnswers(_that);case InstallEvent_ReadingBackup() when readingBackup != null:
 return readingBackup(_that);case InstallEvent_BackupRead() when backupRead != null:
 return backupRead(_that);case InstallEvent_BackupKept() when backupKept != null:
-return backupKept(_that);case InstallEvent_StockPlans() when stockPlans != null:
-return stockPlans(_that);case InstallEvent_WithoutStockPlans() when withoutStockPlans != null:
-return withoutStockPlans(_that);case InstallEvent_Promoting() when promoting != null:
+return backupKept(_that);case InstallEvent_Promoting() when promoting != null:
 return promoting(_that);case InstallEvent_Written() when written != null:
 return written(_that);case InstallEvent_SessionDropped() when sessionDropped != null:
 return sessionDropped(_that);case InstallEvent_Activated() when activated != null:
-return activated(_that);case InstallEvent_PuttingPlans() when puttingPlans != null:
-return puttingPlans(_that);case InstallEvent_Installed() when installed != null:
-return installed(_that);case InstallEvent_Plans() when plans != null:
-return plans(_that);case InstallEvent_Note() when note != null:
+return activated(_that);case InstallEvent_Installed() when installed != null:
+return installed(_that);case InstallEvent_Note() when note != null:
 return note(_that);case _:
   return null;
 
@@ -2665,7 +2615,7 @@ return note(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( DnsResult result)?  dnsChecked,TResult Function()?  stockServerStarted,TResult Function()?  awaitingStock,TResult Function( WaitReason why)?  waiting,TResult Function()?  versionLost,TResult Function( String error)?  stockServerEnded,TResult Function( String build)?  requesting,TResult Function( int percent)?  stockProgress,TResult Function()?  stockRestarting,TResult Function()?  keyKnown,TResult Function()?  setupStarting,TResult Function( String error)?  noSetupFeeder,TResult Function( Uint8List code,  int seconds)?  code,TResult Function()?  pressDispense,TResult Function( Uint8List identity,  String? address,  bool rebooting)?  paired,TResult Function( String address)?  joined,TResult Function( String build,  int bank)?  replacementAnswers,TResult Function( int total)?  readingBackup,TResult Function( BigInt bytes,  int total)?  backupRead,TResult Function( String path)?  backupKept,TResult Function( int converted,  int refused)?  stockPlans,TResult Function()?  withoutStockPlans,TResult Function()?  promoting,TResult Function( int written,  int length)?  written,TResult Function()?  sessionDropped,TResult Function()?  activated,TResult Function()?  puttingPlans,TResult Function( String build)?  installed,TResult Function( PlansOutcome result)?  plans,TResult Function( String text)?  note,required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( DnsResult result)?  dnsChecked,TResult Function()?  stockServerStarted,TResult Function()?  awaitingStock,TResult Function( WaitReason why)?  waiting,TResult Function()?  versionLost,TResult Function( String error)?  stockServerEnded,TResult Function( String build)?  requesting,TResult Function( int percent)?  stockProgress,TResult Function()?  stockRestarting,TResult Function()?  keyKnown,TResult Function()?  setupStarting,TResult Function( String error)?  noSetupFeeder,TResult Function( Uint8List code,  int seconds)?  code,TResult Function()?  pressDispense,TResult Function( Uint8List identity,  String? address,  bool rebooting)?  paired,TResult Function( String address)?  joined,TResult Function( String build,  int bank)?  replacementAnswers,TResult Function( int total)?  readingBackup,TResult Function( BigInt bytes,  int total)?  backupRead,TResult Function( String path)?  backupKept,TResult Function()?  promoting,TResult Function( int written,  int length)?  written,TResult Function()?  sessionDropped,TResult Function()?  activated,TResult Function( String build)?  installed,TResult Function( String text)?  note,required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case InstallEvent_DnsChecked() when dnsChecked != null:
 return dnsChecked(_that.result);case InstallEvent_StockServerStarted() when stockServerStarted != null:
@@ -2687,16 +2637,12 @@ return joined(_that.address);case InstallEvent_ReplacementAnswers() when replace
 return replacementAnswers(_that.build,_that.bank);case InstallEvent_ReadingBackup() when readingBackup != null:
 return readingBackup(_that.total);case InstallEvent_BackupRead() when backupRead != null:
 return backupRead(_that.bytes,_that.total);case InstallEvent_BackupKept() when backupKept != null:
-return backupKept(_that.path);case InstallEvent_StockPlans() when stockPlans != null:
-return stockPlans(_that.converted,_that.refused);case InstallEvent_WithoutStockPlans() when withoutStockPlans != null:
-return withoutStockPlans();case InstallEvent_Promoting() when promoting != null:
+return backupKept(_that.path);case InstallEvent_Promoting() when promoting != null:
 return promoting();case InstallEvent_Written() when written != null:
 return written(_that.written,_that.length);case InstallEvent_SessionDropped() when sessionDropped != null:
 return sessionDropped();case InstallEvent_Activated() when activated != null:
-return activated();case InstallEvent_PuttingPlans() when puttingPlans != null:
-return puttingPlans();case InstallEvent_Installed() when installed != null:
-return installed(_that.build);case InstallEvent_Plans() when plans != null:
-return plans(_that.result);case InstallEvent_Note() when note != null:
+return activated();case InstallEvent_Installed() when installed != null:
+return installed(_that.build);case InstallEvent_Note() when note != null:
 return note(_that.text);case _:
   return orElse();
 
@@ -2715,7 +2661,7 @@ return note(_that.text);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( DnsResult result)  dnsChecked,required TResult Function()  stockServerStarted,required TResult Function()  awaitingStock,required TResult Function( WaitReason why)  waiting,required TResult Function()  versionLost,required TResult Function( String error)  stockServerEnded,required TResult Function( String build)  requesting,required TResult Function( int percent)  stockProgress,required TResult Function()  stockRestarting,required TResult Function()  keyKnown,required TResult Function()  setupStarting,required TResult Function( String error)  noSetupFeeder,required TResult Function( Uint8List code,  int seconds)  code,required TResult Function()  pressDispense,required TResult Function( Uint8List identity,  String? address,  bool rebooting)  paired,required TResult Function( String address)  joined,required TResult Function( String build,  int bank)  replacementAnswers,required TResult Function( int total)  readingBackup,required TResult Function( BigInt bytes,  int total)  backupRead,required TResult Function( String path)  backupKept,required TResult Function( int converted,  int refused)  stockPlans,required TResult Function()  withoutStockPlans,required TResult Function()  promoting,required TResult Function( int written,  int length)  written,required TResult Function()  sessionDropped,required TResult Function()  activated,required TResult Function()  puttingPlans,required TResult Function( String build)  installed,required TResult Function( PlansOutcome result)  plans,required TResult Function( String text)  note,}) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( DnsResult result)  dnsChecked,required TResult Function()  stockServerStarted,required TResult Function()  awaitingStock,required TResult Function( WaitReason why)  waiting,required TResult Function()  versionLost,required TResult Function( String error)  stockServerEnded,required TResult Function( String build)  requesting,required TResult Function( int percent)  stockProgress,required TResult Function()  stockRestarting,required TResult Function()  keyKnown,required TResult Function()  setupStarting,required TResult Function( String error)  noSetupFeeder,required TResult Function( Uint8List code,  int seconds)  code,required TResult Function()  pressDispense,required TResult Function( Uint8List identity,  String? address,  bool rebooting)  paired,required TResult Function( String address)  joined,required TResult Function( String build,  int bank)  replacementAnswers,required TResult Function( int total)  readingBackup,required TResult Function( BigInt bytes,  int total)  backupRead,required TResult Function( String path)  backupKept,required TResult Function()  promoting,required TResult Function( int written,  int length)  written,required TResult Function()  sessionDropped,required TResult Function()  activated,required TResult Function( String build)  installed,required TResult Function( String text)  note,}) {final _that = this;
 switch (_that) {
 case InstallEvent_DnsChecked():
 return dnsChecked(_that.result);case InstallEvent_StockServerStarted():
@@ -2737,16 +2683,12 @@ return joined(_that.address);case InstallEvent_ReplacementAnswers():
 return replacementAnswers(_that.build,_that.bank);case InstallEvent_ReadingBackup():
 return readingBackup(_that.total);case InstallEvent_BackupRead():
 return backupRead(_that.bytes,_that.total);case InstallEvent_BackupKept():
-return backupKept(_that.path);case InstallEvent_StockPlans():
-return stockPlans(_that.converted,_that.refused);case InstallEvent_WithoutStockPlans():
-return withoutStockPlans();case InstallEvent_Promoting():
+return backupKept(_that.path);case InstallEvent_Promoting():
 return promoting();case InstallEvent_Written():
 return written(_that.written,_that.length);case InstallEvent_SessionDropped():
 return sessionDropped();case InstallEvent_Activated():
-return activated();case InstallEvent_PuttingPlans():
-return puttingPlans();case InstallEvent_Installed():
-return installed(_that.build);case InstallEvent_Plans():
-return plans(_that.result);case InstallEvent_Note():
+return activated();case InstallEvent_Installed():
+return installed(_that.build);case InstallEvent_Note():
 return note(_that.text);}
 }
 /// A variant of `when` that fallback to returning `null`
@@ -2761,7 +2703,7 @@ return note(_that.text);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( DnsResult result)?  dnsChecked,TResult? Function()?  stockServerStarted,TResult? Function()?  awaitingStock,TResult? Function( WaitReason why)?  waiting,TResult? Function()?  versionLost,TResult? Function( String error)?  stockServerEnded,TResult? Function( String build)?  requesting,TResult? Function( int percent)?  stockProgress,TResult? Function()?  stockRestarting,TResult? Function()?  keyKnown,TResult? Function()?  setupStarting,TResult? Function( String error)?  noSetupFeeder,TResult? Function( Uint8List code,  int seconds)?  code,TResult? Function()?  pressDispense,TResult? Function( Uint8List identity,  String? address,  bool rebooting)?  paired,TResult? Function( String address)?  joined,TResult? Function( String build,  int bank)?  replacementAnswers,TResult? Function( int total)?  readingBackup,TResult? Function( BigInt bytes,  int total)?  backupRead,TResult? Function( String path)?  backupKept,TResult? Function( int converted,  int refused)?  stockPlans,TResult? Function()?  withoutStockPlans,TResult? Function()?  promoting,TResult? Function( int written,  int length)?  written,TResult? Function()?  sessionDropped,TResult? Function()?  activated,TResult? Function()?  puttingPlans,TResult? Function( String build)?  installed,TResult? Function( PlansOutcome result)?  plans,TResult? Function( String text)?  note,}) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( DnsResult result)?  dnsChecked,TResult? Function()?  stockServerStarted,TResult? Function()?  awaitingStock,TResult? Function( WaitReason why)?  waiting,TResult? Function()?  versionLost,TResult? Function( String error)?  stockServerEnded,TResult? Function( String build)?  requesting,TResult? Function( int percent)?  stockProgress,TResult? Function()?  stockRestarting,TResult? Function()?  keyKnown,TResult? Function()?  setupStarting,TResult? Function( String error)?  noSetupFeeder,TResult? Function( Uint8List code,  int seconds)?  code,TResult? Function()?  pressDispense,TResult? Function( Uint8List identity,  String? address,  bool rebooting)?  paired,TResult? Function( String address)?  joined,TResult? Function( String build,  int bank)?  replacementAnswers,TResult? Function( int total)?  readingBackup,TResult? Function( BigInt bytes,  int total)?  backupRead,TResult? Function( String path)?  backupKept,TResult? Function()?  promoting,TResult? Function( int written,  int length)?  written,TResult? Function()?  sessionDropped,TResult? Function()?  activated,TResult? Function( String build)?  installed,TResult? Function( String text)?  note,}) {final _that = this;
 switch (_that) {
 case InstallEvent_DnsChecked() when dnsChecked != null:
 return dnsChecked(_that.result);case InstallEvent_StockServerStarted() when stockServerStarted != null:
@@ -2783,16 +2725,12 @@ return joined(_that.address);case InstallEvent_ReplacementAnswers() when replace
 return replacementAnswers(_that.build,_that.bank);case InstallEvent_ReadingBackup() when readingBackup != null:
 return readingBackup(_that.total);case InstallEvent_BackupRead() when backupRead != null:
 return backupRead(_that.bytes,_that.total);case InstallEvent_BackupKept() when backupKept != null:
-return backupKept(_that.path);case InstallEvent_StockPlans() when stockPlans != null:
-return stockPlans(_that.converted,_that.refused);case InstallEvent_WithoutStockPlans() when withoutStockPlans != null:
-return withoutStockPlans();case InstallEvent_Promoting() when promoting != null:
+return backupKept(_that.path);case InstallEvent_Promoting() when promoting != null:
 return promoting();case InstallEvent_Written() when written != null:
 return written(_that.written,_that.length);case InstallEvent_SessionDropped() when sessionDropped != null:
 return sessionDropped();case InstallEvent_Activated() when activated != null:
-return activated();case InstallEvent_PuttingPlans() when puttingPlans != null:
-return puttingPlans();case InstallEvent_Installed() when installed != null:
-return installed(_that.build);case InstallEvent_Plans() when plans != null:
-return plans(_that.result);case InstallEvent_Note() when note != null:
+return activated();case InstallEvent_Installed() when installed != null:
+return installed(_that.build);case InstallEvent_Note() when note != null:
 return note(_that.text);case _:
   return null;
 
@@ -3931,108 +3869,6 @@ as String,
 /// @nodoc
 
 
-class InstallEvent_StockPlans extends InstallEvent {
-  const InstallEvent_StockPlans({required this.converted, required this.refused}): super._();
-  
-
- final  int converted;
- final  int refused;
-
-/// Create a copy of InstallEvent
-/// with the given fields replaced by the non-null parameter values.
-@JsonKey(includeFromJson: false, includeToJson: false)
-@pragma('vm:prefer-inline')
-$InstallEvent_StockPlansCopyWith<InstallEvent_StockPlans> get copyWith => _$InstallEvent_StockPlansCopyWithImpl<InstallEvent_StockPlans>(this, _$identity);
-
-
-
-@override
-bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType&&other is InstallEvent_StockPlans&&(identical(other.converted, converted) || other.converted == converted)&&(identical(other.refused, refused) || other.refused == refused));
-}
-
-
-@override
-int get hashCode {
-    return Object.hash(runtimeType,converted,refused);
-}
-
-@override
-String toString() {
-    return 'InstallEvent.stockPlans(converted: $converted, refused: $refused)';
-}
-
-
-}
-
-/// @nodoc
-abstract mixin class $InstallEvent_StockPlansCopyWith<$Res> implements $InstallEventCopyWith<$Res> {
-  factory $InstallEvent_StockPlansCopyWith(InstallEvent_StockPlans value, $Res Function(InstallEvent_StockPlans) _then) = _$InstallEvent_StockPlansCopyWithImpl;
-@useResult
-$Res call({
- int converted, int refused
-});
-
-
-
-
-}
-/// @nodoc
-class _$InstallEvent_StockPlansCopyWithImpl<$Res>
-    implements $InstallEvent_StockPlansCopyWith<$Res> {
-  _$InstallEvent_StockPlansCopyWithImpl(this._self, this._then);
-
-  final InstallEvent_StockPlans _self;
-  final $Res Function(InstallEvent_StockPlans) _then;
-
-/// Create a copy of InstallEvent
-/// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') $Res call({Object? converted = null,Object? refused = null,}) {
-  return _then(InstallEvent_StockPlans(
-converted: null == converted ? _self.converted : converted // ignore: cast_nullable_to_non_nullable
-as int,refused: null == refused ? _self.refused : refused // ignore: cast_nullable_to_non_nullable
-as int,
-  ));
-}
-
-
-}
-
-/// @nodoc
-
-
-class InstallEvent_WithoutStockPlans extends InstallEvent {
-  const InstallEvent_WithoutStockPlans(): super._();
-  
-
-
-
-
-
-
-@override
-bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType&&other is InstallEvent_WithoutStockPlans);
-}
-
-
-@override
-int get hashCode => runtimeType.hashCode;
-
-@override
-String toString() {
-    return 'InstallEvent.withoutStockPlans()';
-}
-
-
-}
-
-
-
-
-/// @nodoc
-
-
 class InstallEvent_Promoting extends InstallEvent {
   const InstallEvent_Promoting(): super._();
   
@@ -4199,38 +4035,6 @@ String toString() {
 /// @nodoc
 
 
-class InstallEvent_PuttingPlans extends InstallEvent {
-  const InstallEvent_PuttingPlans(): super._();
-  
-
-
-
-
-
-
-@override
-bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType&&other is InstallEvent_PuttingPlans);
-}
-
-
-@override
-int get hashCode => runtimeType.hashCode;
-
-@override
-String toString() {
-    return 'InstallEvent.puttingPlans()';
-}
-
-
-}
-
-
-
-
-/// @nodoc
-
-
 class InstallEvent_Installed extends InstallEvent {
   const InstallEvent_Installed({required this.build}): super._();
   
@@ -4290,74 +4094,6 @@ class _$InstallEvent_InstalledCopyWithImpl<$Res>
   return _then(InstallEvent_Installed(
 build: null == build ? _self.build : build // ignore: cast_nullable_to_non_nullable
 as String,
-  ));
-}
-
-
-}
-
-/// @nodoc
-
-
-class InstallEvent_Plans extends InstallEvent {
-  const InstallEvent_Plans({required this.result}): super._();
-  
-
- final  PlansOutcome result;
-
-/// Create a copy of InstallEvent
-/// with the given fields replaced by the non-null parameter values.
-@JsonKey(includeFromJson: false, includeToJson: false)
-@pragma('vm:prefer-inline')
-$InstallEvent_PlansCopyWith<InstallEvent_Plans> get copyWith => _$InstallEvent_PlansCopyWithImpl<InstallEvent_Plans>(this, _$identity);
-
-
-
-@override
-bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType&&other is InstallEvent_Plans&&(identical(other.result, result) || other.result == result));
-}
-
-
-@override
-int get hashCode {
-    return Object.hash(runtimeType,result);
-}
-
-@override
-String toString() {
-    return 'InstallEvent.plans(result: $result)';
-}
-
-
-}
-
-/// @nodoc
-abstract mixin class $InstallEvent_PlansCopyWith<$Res> implements $InstallEventCopyWith<$Res> {
-  factory $InstallEvent_PlansCopyWith(InstallEvent_Plans value, $Res Function(InstallEvent_Plans) _then) = _$InstallEvent_PlansCopyWithImpl;
-@useResult
-$Res call({
- PlansOutcome result
-});
-
-
-
-
-}
-/// @nodoc
-class _$InstallEvent_PlansCopyWithImpl<$Res>
-    implements $InstallEvent_PlansCopyWith<$Res> {
-  _$InstallEvent_PlansCopyWithImpl(this._self, this._then);
-
-  final InstallEvent_Plans _self;
-  final $Res Function(InstallEvent_Plans) _then;
-
-/// Create a copy of InstallEvent
-/// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') $Res call({Object? result = null,}) {
-  return _then(InstallEvent_Plans(
-result: null == result ? _self.result : result // ignore: cast_nullable_to_non_nullable
-as PlansOutcome,
   ));
 }
 
@@ -5734,7 +5470,7 @@ extension StopCasePatterns on StopCase {
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( StopCase_Uncertain value)?  uncertain,TResult Function( StopCase_UncertainWrite value)?  uncertainWrite,TResult Function( StopCase_OtherFirmware value)?  otherFirmware,TResult Function( StopCase_TwoFeeders value)?  twoFeeders,TResult Function( StopCase_BackupMismatch value)?  backupMismatch,TResult Function( StopCase_NotYourFeeder value)?  notYourFeeder,TResult Function( StopCase_NoFeederCame value)?  noFeederCame,TResult Function( StopCase_FrameNotTaken value)?  frameNotTaken,TResult Function( StopCase_HandoverFailed value)?  handoverFailed,TResult Function( StopCase_NotConfirmed value)?  notConfirmed,TResult Function( StopCase_EarlierRequestOpen value)?  earlierRequestOpen,TResult Function( StopCase_RequestRefused value)?  requestRefused,TResult Function( StopCase_StockRefused value)?  stockRefused,TResult Function( StopCase_ClockUnset value)?  clockUnset,TResult Function( StopCase_NoSetupFeeder value)?  noSetupFeeder,TResult Function( StopCase_SetupFailed value)?  setupFailed,TResult Function( StopCase_OtherFeeder value)?  otherFeeder,TResult Function( StopCase_NotAnswering value)?  notAnswering,TResult Function( StopCase_NotJoined value)?  notJoined,TResult Function( StopCase_PhoneOffWifi value)?  phoneOffWifi,TResult Function( StopCase_WifiRefused value)?  wifiRefused,TResult Function( StopCase_NoWifiGiven value)?  noWifiGiven,TResult Function( StopCase_PlansUnreadable value)?  plansUnreadable,TResult Function( StopCase_PromotionFailed value)?  promotionFailed,TResult Function( StopCase_FellBack value)?  fellBack,TResult Function( StopCase_PlansNotApplied value)?  plansNotApplied,TResult Function( StopCase_PlansUnknown value)?  plansUnknown,TResult Function( StopCase_ServerFailed value)?  serverFailed,TResult Function( StopCase_Cancelled value)?  cancelled,TResult Function( StopCase_Other value)?  other,required TResult orElse(),}){
+@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( StopCase_Uncertain value)?  uncertain,TResult Function( StopCase_UncertainWrite value)?  uncertainWrite,TResult Function( StopCase_OtherFirmware value)?  otherFirmware,TResult Function( StopCase_TwoFeeders value)?  twoFeeders,TResult Function( StopCase_BackupMismatch value)?  backupMismatch,TResult Function( StopCase_NotYourFeeder value)?  notYourFeeder,TResult Function( StopCase_NoFeederCame value)?  noFeederCame,TResult Function( StopCase_FrameNotTaken value)?  frameNotTaken,TResult Function( StopCase_HandoverFailed value)?  handoverFailed,TResult Function( StopCase_NotConfirmed value)?  notConfirmed,TResult Function( StopCase_EarlierRequestOpen value)?  earlierRequestOpen,TResult Function( StopCase_RequestRefused value)?  requestRefused,TResult Function( StopCase_StockRefused value)?  stockRefused,TResult Function( StopCase_ClockUnset value)?  clockUnset,TResult Function( StopCase_NoSetupFeeder value)?  noSetupFeeder,TResult Function( StopCase_SetupFailed value)?  setupFailed,TResult Function( StopCase_OtherFeeder value)?  otherFeeder,TResult Function( StopCase_NotAnswering value)?  notAnswering,TResult Function( StopCase_NotJoined value)?  notJoined,TResult Function( StopCase_PhoneOffWifi value)?  phoneOffWifi,TResult Function( StopCase_WifiRefused value)?  wifiRefused,TResult Function( StopCase_NoWifiGiven value)?  noWifiGiven,TResult Function( StopCase_PromotionFailed value)?  promotionFailed,TResult Function( StopCase_FellBack value)?  fellBack,TResult Function( StopCase_ServerFailed value)?  serverFailed,TResult Function( StopCase_Cancelled value)?  cancelled,TResult Function( StopCase_Other value)?  other,required TResult orElse(),}){
 final _that = this;
 switch (_that) {
 case StopCase_Uncertain() when uncertain != null:
@@ -5759,12 +5495,9 @@ return notAnswering(_that);case StopCase_NotJoined() when notJoined != null:
 return notJoined(_that);case StopCase_PhoneOffWifi() when phoneOffWifi != null:
 return phoneOffWifi(_that);case StopCase_WifiRefused() when wifiRefused != null:
 return wifiRefused(_that);case StopCase_NoWifiGiven() when noWifiGiven != null:
-return noWifiGiven(_that);case StopCase_PlansUnreadable() when plansUnreadable != null:
-return plansUnreadable(_that);case StopCase_PromotionFailed() when promotionFailed != null:
+return noWifiGiven(_that);case StopCase_PromotionFailed() when promotionFailed != null:
 return promotionFailed(_that);case StopCase_FellBack() when fellBack != null:
-return fellBack(_that);case StopCase_PlansNotApplied() when plansNotApplied != null:
-return plansNotApplied(_that);case StopCase_PlansUnknown() when plansUnknown != null:
-return plansUnknown(_that);case StopCase_ServerFailed() when serverFailed != null:
+return fellBack(_that);case StopCase_ServerFailed() when serverFailed != null:
 return serverFailed(_that);case StopCase_Cancelled() when cancelled != null:
 return cancelled(_that);case StopCase_Other() when other != null:
 return other(_that);case _:
@@ -5785,7 +5518,7 @@ return other(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( StopCase_Uncertain value)  uncertain,required TResult Function( StopCase_UncertainWrite value)  uncertainWrite,required TResult Function( StopCase_OtherFirmware value)  otherFirmware,required TResult Function( StopCase_TwoFeeders value)  twoFeeders,required TResult Function( StopCase_BackupMismatch value)  backupMismatch,required TResult Function( StopCase_NotYourFeeder value)  notYourFeeder,required TResult Function( StopCase_NoFeederCame value)  noFeederCame,required TResult Function( StopCase_FrameNotTaken value)  frameNotTaken,required TResult Function( StopCase_HandoverFailed value)  handoverFailed,required TResult Function( StopCase_NotConfirmed value)  notConfirmed,required TResult Function( StopCase_EarlierRequestOpen value)  earlierRequestOpen,required TResult Function( StopCase_RequestRefused value)  requestRefused,required TResult Function( StopCase_StockRefused value)  stockRefused,required TResult Function( StopCase_ClockUnset value)  clockUnset,required TResult Function( StopCase_NoSetupFeeder value)  noSetupFeeder,required TResult Function( StopCase_SetupFailed value)  setupFailed,required TResult Function( StopCase_OtherFeeder value)  otherFeeder,required TResult Function( StopCase_NotAnswering value)  notAnswering,required TResult Function( StopCase_NotJoined value)  notJoined,required TResult Function( StopCase_PhoneOffWifi value)  phoneOffWifi,required TResult Function( StopCase_WifiRefused value)  wifiRefused,required TResult Function( StopCase_NoWifiGiven value)  noWifiGiven,required TResult Function( StopCase_PlansUnreadable value)  plansUnreadable,required TResult Function( StopCase_PromotionFailed value)  promotionFailed,required TResult Function( StopCase_FellBack value)  fellBack,required TResult Function( StopCase_PlansNotApplied value)  plansNotApplied,required TResult Function( StopCase_PlansUnknown value)  plansUnknown,required TResult Function( StopCase_ServerFailed value)  serverFailed,required TResult Function( StopCase_Cancelled value)  cancelled,required TResult Function( StopCase_Other value)  other,}){
+@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( StopCase_Uncertain value)  uncertain,required TResult Function( StopCase_UncertainWrite value)  uncertainWrite,required TResult Function( StopCase_OtherFirmware value)  otherFirmware,required TResult Function( StopCase_TwoFeeders value)  twoFeeders,required TResult Function( StopCase_BackupMismatch value)  backupMismatch,required TResult Function( StopCase_NotYourFeeder value)  notYourFeeder,required TResult Function( StopCase_NoFeederCame value)  noFeederCame,required TResult Function( StopCase_FrameNotTaken value)  frameNotTaken,required TResult Function( StopCase_HandoverFailed value)  handoverFailed,required TResult Function( StopCase_NotConfirmed value)  notConfirmed,required TResult Function( StopCase_EarlierRequestOpen value)  earlierRequestOpen,required TResult Function( StopCase_RequestRefused value)  requestRefused,required TResult Function( StopCase_StockRefused value)  stockRefused,required TResult Function( StopCase_ClockUnset value)  clockUnset,required TResult Function( StopCase_NoSetupFeeder value)  noSetupFeeder,required TResult Function( StopCase_SetupFailed value)  setupFailed,required TResult Function( StopCase_OtherFeeder value)  otherFeeder,required TResult Function( StopCase_NotAnswering value)  notAnswering,required TResult Function( StopCase_NotJoined value)  notJoined,required TResult Function( StopCase_PhoneOffWifi value)  phoneOffWifi,required TResult Function( StopCase_WifiRefused value)  wifiRefused,required TResult Function( StopCase_NoWifiGiven value)  noWifiGiven,required TResult Function( StopCase_PromotionFailed value)  promotionFailed,required TResult Function( StopCase_FellBack value)  fellBack,required TResult Function( StopCase_ServerFailed value)  serverFailed,required TResult Function( StopCase_Cancelled value)  cancelled,required TResult Function( StopCase_Other value)  other,}){
 final _that = this;
 switch (_that) {
 case StopCase_Uncertain():
@@ -5810,12 +5543,9 @@ return notAnswering(_that);case StopCase_NotJoined():
 return notJoined(_that);case StopCase_PhoneOffWifi():
 return phoneOffWifi(_that);case StopCase_WifiRefused():
 return wifiRefused(_that);case StopCase_NoWifiGiven():
-return noWifiGiven(_that);case StopCase_PlansUnreadable():
-return plansUnreadable(_that);case StopCase_PromotionFailed():
+return noWifiGiven(_that);case StopCase_PromotionFailed():
 return promotionFailed(_that);case StopCase_FellBack():
-return fellBack(_that);case StopCase_PlansNotApplied():
-return plansNotApplied(_that);case StopCase_PlansUnknown():
-return plansUnknown(_that);case StopCase_ServerFailed():
+return fellBack(_that);case StopCase_ServerFailed():
 return serverFailed(_that);case StopCase_Cancelled():
 return cancelled(_that);case StopCase_Other():
 return other(_that);}
@@ -5832,7 +5562,7 @@ return other(_that);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( StopCase_Uncertain value)?  uncertain,TResult? Function( StopCase_UncertainWrite value)?  uncertainWrite,TResult? Function( StopCase_OtherFirmware value)?  otherFirmware,TResult? Function( StopCase_TwoFeeders value)?  twoFeeders,TResult? Function( StopCase_BackupMismatch value)?  backupMismatch,TResult? Function( StopCase_NotYourFeeder value)?  notYourFeeder,TResult? Function( StopCase_NoFeederCame value)?  noFeederCame,TResult? Function( StopCase_FrameNotTaken value)?  frameNotTaken,TResult? Function( StopCase_HandoverFailed value)?  handoverFailed,TResult? Function( StopCase_NotConfirmed value)?  notConfirmed,TResult? Function( StopCase_EarlierRequestOpen value)?  earlierRequestOpen,TResult? Function( StopCase_RequestRefused value)?  requestRefused,TResult? Function( StopCase_StockRefused value)?  stockRefused,TResult? Function( StopCase_ClockUnset value)?  clockUnset,TResult? Function( StopCase_NoSetupFeeder value)?  noSetupFeeder,TResult? Function( StopCase_SetupFailed value)?  setupFailed,TResult? Function( StopCase_OtherFeeder value)?  otherFeeder,TResult? Function( StopCase_NotAnswering value)?  notAnswering,TResult? Function( StopCase_NotJoined value)?  notJoined,TResult? Function( StopCase_PhoneOffWifi value)?  phoneOffWifi,TResult? Function( StopCase_WifiRefused value)?  wifiRefused,TResult? Function( StopCase_NoWifiGiven value)?  noWifiGiven,TResult? Function( StopCase_PlansUnreadable value)?  plansUnreadable,TResult? Function( StopCase_PromotionFailed value)?  promotionFailed,TResult? Function( StopCase_FellBack value)?  fellBack,TResult? Function( StopCase_PlansNotApplied value)?  plansNotApplied,TResult? Function( StopCase_PlansUnknown value)?  plansUnknown,TResult? Function( StopCase_ServerFailed value)?  serverFailed,TResult? Function( StopCase_Cancelled value)?  cancelled,TResult? Function( StopCase_Other value)?  other,}){
+@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( StopCase_Uncertain value)?  uncertain,TResult? Function( StopCase_UncertainWrite value)?  uncertainWrite,TResult? Function( StopCase_OtherFirmware value)?  otherFirmware,TResult? Function( StopCase_TwoFeeders value)?  twoFeeders,TResult? Function( StopCase_BackupMismatch value)?  backupMismatch,TResult? Function( StopCase_NotYourFeeder value)?  notYourFeeder,TResult? Function( StopCase_NoFeederCame value)?  noFeederCame,TResult? Function( StopCase_FrameNotTaken value)?  frameNotTaken,TResult? Function( StopCase_HandoverFailed value)?  handoverFailed,TResult? Function( StopCase_NotConfirmed value)?  notConfirmed,TResult? Function( StopCase_EarlierRequestOpen value)?  earlierRequestOpen,TResult? Function( StopCase_RequestRefused value)?  requestRefused,TResult? Function( StopCase_StockRefused value)?  stockRefused,TResult? Function( StopCase_ClockUnset value)?  clockUnset,TResult? Function( StopCase_NoSetupFeeder value)?  noSetupFeeder,TResult? Function( StopCase_SetupFailed value)?  setupFailed,TResult? Function( StopCase_OtherFeeder value)?  otherFeeder,TResult? Function( StopCase_NotAnswering value)?  notAnswering,TResult? Function( StopCase_NotJoined value)?  notJoined,TResult? Function( StopCase_PhoneOffWifi value)?  phoneOffWifi,TResult? Function( StopCase_WifiRefused value)?  wifiRefused,TResult? Function( StopCase_NoWifiGiven value)?  noWifiGiven,TResult? Function( StopCase_PromotionFailed value)?  promotionFailed,TResult? Function( StopCase_FellBack value)?  fellBack,TResult? Function( StopCase_ServerFailed value)?  serverFailed,TResult? Function( StopCase_Cancelled value)?  cancelled,TResult? Function( StopCase_Other value)?  other,}){
 final _that = this;
 switch (_that) {
 case StopCase_Uncertain() when uncertain != null:
@@ -5857,12 +5587,9 @@ return notAnswering(_that);case StopCase_NotJoined() when notJoined != null:
 return notJoined(_that);case StopCase_PhoneOffWifi() when phoneOffWifi != null:
 return phoneOffWifi(_that);case StopCase_WifiRefused() when wifiRefused != null:
 return wifiRefused(_that);case StopCase_NoWifiGiven() when noWifiGiven != null:
-return noWifiGiven(_that);case StopCase_PlansUnreadable() when plansUnreadable != null:
-return plansUnreadable(_that);case StopCase_PromotionFailed() when promotionFailed != null:
+return noWifiGiven(_that);case StopCase_PromotionFailed() when promotionFailed != null:
 return promotionFailed(_that);case StopCase_FellBack() when fellBack != null:
-return fellBack(_that);case StopCase_PlansNotApplied() when plansNotApplied != null:
-return plansNotApplied(_that);case StopCase_PlansUnknown() when plansUnknown != null:
-return plansUnknown(_that);case StopCase_ServerFailed() when serverFailed != null:
+return fellBack(_that);case StopCase_ServerFailed() when serverFailed != null:
 return serverFailed(_that);case StopCase_Cancelled() when cancelled != null:
 return cancelled(_that);case StopCase_Other() when other != null:
 return other(_that);case _:
@@ -5882,7 +5609,7 @@ return other(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function()?  uncertain,TResult Function( UncertainWrite write)?  uncertainWrite,TResult Function( String version)?  otherFirmware,TResult Function()?  twoFeeders,TResult Function()?  backupMismatch,TResult Function()?  notYourFeeder,TResult Function()?  noFeederCame,TResult Function()?  frameNotTaken,TResult Function()?  handoverFailed,TResult Function()?  notConfirmed,TResult Function()?  earlierRequestOpen,TResult Function( RequestRefusal why)?  requestRefused,TResult Function( int? code)?  stockRefused,TResult Function()?  clockUnset,TResult Function()?  noSetupFeeder,TResult Function( SetupRefusal? refusal)?  setupFailed,TResult Function()?  otherFeeder,TResult Function()?  notAnswering,TResult Function()?  notJoined,TResult Function()?  phoneOffWifi,TResult Function()?  wifiRefused,TResult Function()?  noWifiGiven,TResult Function()?  plansUnreadable,TResult Function()?  promotionFailed,TResult Function()?  fellBack,TResult Function()?  plansNotApplied,TResult Function()?  plansUnknown,TResult Function()?  serverFailed,TResult Function()?  cancelled,TResult Function()?  other,required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function()?  uncertain,TResult Function( UncertainWrite write)?  uncertainWrite,TResult Function( String version)?  otherFirmware,TResult Function()?  twoFeeders,TResult Function()?  backupMismatch,TResult Function()?  notYourFeeder,TResult Function()?  noFeederCame,TResult Function()?  frameNotTaken,TResult Function()?  handoverFailed,TResult Function()?  notConfirmed,TResult Function()?  earlierRequestOpen,TResult Function( RequestRefusal why)?  requestRefused,TResult Function( int? code)?  stockRefused,TResult Function()?  clockUnset,TResult Function()?  noSetupFeeder,TResult Function( SetupRefusal? refusal)?  setupFailed,TResult Function()?  otherFeeder,TResult Function()?  notAnswering,TResult Function()?  notJoined,TResult Function()?  phoneOffWifi,TResult Function()?  wifiRefused,TResult Function()?  noWifiGiven,TResult Function()?  promotionFailed,TResult Function()?  fellBack,TResult Function()?  serverFailed,TResult Function()?  cancelled,TResult Function()?  other,required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case StopCase_Uncertain() when uncertain != null:
 return uncertain();case StopCase_UncertainWrite() when uncertainWrite != null:
@@ -5906,12 +5633,9 @@ return notAnswering();case StopCase_NotJoined() when notJoined != null:
 return notJoined();case StopCase_PhoneOffWifi() when phoneOffWifi != null:
 return phoneOffWifi();case StopCase_WifiRefused() when wifiRefused != null:
 return wifiRefused();case StopCase_NoWifiGiven() when noWifiGiven != null:
-return noWifiGiven();case StopCase_PlansUnreadable() when plansUnreadable != null:
-return plansUnreadable();case StopCase_PromotionFailed() when promotionFailed != null:
+return noWifiGiven();case StopCase_PromotionFailed() when promotionFailed != null:
 return promotionFailed();case StopCase_FellBack() when fellBack != null:
-return fellBack();case StopCase_PlansNotApplied() when plansNotApplied != null:
-return plansNotApplied();case StopCase_PlansUnknown() when plansUnknown != null:
-return plansUnknown();case StopCase_ServerFailed() when serverFailed != null:
+return fellBack();case StopCase_ServerFailed() when serverFailed != null:
 return serverFailed();case StopCase_Cancelled() when cancelled != null:
 return cancelled();case StopCase_Other() when other != null:
 return other();case _:
@@ -5932,7 +5656,7 @@ return other();case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function()  uncertain,required TResult Function( UncertainWrite write)  uncertainWrite,required TResult Function( String version)  otherFirmware,required TResult Function()  twoFeeders,required TResult Function()  backupMismatch,required TResult Function()  notYourFeeder,required TResult Function()  noFeederCame,required TResult Function()  frameNotTaken,required TResult Function()  handoverFailed,required TResult Function()  notConfirmed,required TResult Function()  earlierRequestOpen,required TResult Function( RequestRefusal why)  requestRefused,required TResult Function( int? code)  stockRefused,required TResult Function()  clockUnset,required TResult Function()  noSetupFeeder,required TResult Function( SetupRefusal? refusal)  setupFailed,required TResult Function()  otherFeeder,required TResult Function()  notAnswering,required TResult Function()  notJoined,required TResult Function()  phoneOffWifi,required TResult Function()  wifiRefused,required TResult Function()  noWifiGiven,required TResult Function()  plansUnreadable,required TResult Function()  promotionFailed,required TResult Function()  fellBack,required TResult Function()  plansNotApplied,required TResult Function()  plansUnknown,required TResult Function()  serverFailed,required TResult Function()  cancelled,required TResult Function()  other,}) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function()  uncertain,required TResult Function( UncertainWrite write)  uncertainWrite,required TResult Function( String version)  otherFirmware,required TResult Function()  twoFeeders,required TResult Function()  backupMismatch,required TResult Function()  notYourFeeder,required TResult Function()  noFeederCame,required TResult Function()  frameNotTaken,required TResult Function()  handoverFailed,required TResult Function()  notConfirmed,required TResult Function()  earlierRequestOpen,required TResult Function( RequestRefusal why)  requestRefused,required TResult Function( int? code)  stockRefused,required TResult Function()  clockUnset,required TResult Function()  noSetupFeeder,required TResult Function( SetupRefusal? refusal)  setupFailed,required TResult Function()  otherFeeder,required TResult Function()  notAnswering,required TResult Function()  notJoined,required TResult Function()  phoneOffWifi,required TResult Function()  wifiRefused,required TResult Function()  noWifiGiven,required TResult Function()  promotionFailed,required TResult Function()  fellBack,required TResult Function()  serverFailed,required TResult Function()  cancelled,required TResult Function()  other,}) {final _that = this;
 switch (_that) {
 case StopCase_Uncertain():
 return uncertain();case StopCase_UncertainWrite():
@@ -5956,12 +5680,9 @@ return notAnswering();case StopCase_NotJoined():
 return notJoined();case StopCase_PhoneOffWifi():
 return phoneOffWifi();case StopCase_WifiRefused():
 return wifiRefused();case StopCase_NoWifiGiven():
-return noWifiGiven();case StopCase_PlansUnreadable():
-return plansUnreadable();case StopCase_PromotionFailed():
+return noWifiGiven();case StopCase_PromotionFailed():
 return promotionFailed();case StopCase_FellBack():
-return fellBack();case StopCase_PlansNotApplied():
-return plansNotApplied();case StopCase_PlansUnknown():
-return plansUnknown();case StopCase_ServerFailed():
+return fellBack();case StopCase_ServerFailed():
 return serverFailed();case StopCase_Cancelled():
 return cancelled();case StopCase_Other():
 return other();}
@@ -5978,7 +5699,7 @@ return other();}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function()?  uncertain,TResult? Function( UncertainWrite write)?  uncertainWrite,TResult? Function( String version)?  otherFirmware,TResult? Function()?  twoFeeders,TResult? Function()?  backupMismatch,TResult? Function()?  notYourFeeder,TResult? Function()?  noFeederCame,TResult? Function()?  frameNotTaken,TResult? Function()?  handoverFailed,TResult? Function()?  notConfirmed,TResult? Function()?  earlierRequestOpen,TResult? Function( RequestRefusal why)?  requestRefused,TResult? Function( int? code)?  stockRefused,TResult? Function()?  clockUnset,TResult? Function()?  noSetupFeeder,TResult? Function( SetupRefusal? refusal)?  setupFailed,TResult? Function()?  otherFeeder,TResult? Function()?  notAnswering,TResult? Function()?  notJoined,TResult? Function()?  phoneOffWifi,TResult? Function()?  wifiRefused,TResult? Function()?  noWifiGiven,TResult? Function()?  plansUnreadable,TResult? Function()?  promotionFailed,TResult? Function()?  fellBack,TResult? Function()?  plansNotApplied,TResult? Function()?  plansUnknown,TResult? Function()?  serverFailed,TResult? Function()?  cancelled,TResult? Function()?  other,}) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function()?  uncertain,TResult? Function( UncertainWrite write)?  uncertainWrite,TResult? Function( String version)?  otherFirmware,TResult? Function()?  twoFeeders,TResult? Function()?  backupMismatch,TResult? Function()?  notYourFeeder,TResult? Function()?  noFeederCame,TResult? Function()?  frameNotTaken,TResult? Function()?  handoverFailed,TResult? Function()?  notConfirmed,TResult? Function()?  earlierRequestOpen,TResult? Function( RequestRefusal why)?  requestRefused,TResult? Function( int? code)?  stockRefused,TResult? Function()?  clockUnset,TResult? Function()?  noSetupFeeder,TResult? Function( SetupRefusal? refusal)?  setupFailed,TResult? Function()?  otherFeeder,TResult? Function()?  notAnswering,TResult? Function()?  notJoined,TResult? Function()?  phoneOffWifi,TResult? Function()?  wifiRefused,TResult? Function()?  noWifiGiven,TResult? Function()?  promotionFailed,TResult? Function()?  fellBack,TResult? Function()?  serverFailed,TResult? Function()?  cancelled,TResult? Function()?  other,}) {final _that = this;
 switch (_that) {
 case StopCase_Uncertain() when uncertain != null:
 return uncertain();case StopCase_UncertainWrite() when uncertainWrite != null:
@@ -6002,12 +5723,9 @@ return notAnswering();case StopCase_NotJoined() when notJoined != null:
 return notJoined();case StopCase_PhoneOffWifi() when phoneOffWifi != null:
 return phoneOffWifi();case StopCase_WifiRefused() when wifiRefused != null:
 return wifiRefused();case StopCase_NoWifiGiven() when noWifiGiven != null:
-return noWifiGiven();case StopCase_PlansUnreadable() when plansUnreadable != null:
-return plansUnreadable();case StopCase_PromotionFailed() when promotionFailed != null:
+return noWifiGiven();case StopCase_PromotionFailed() when promotionFailed != null:
 return promotionFailed();case StopCase_FellBack() when fellBack != null:
-return fellBack();case StopCase_PlansNotApplied() when plansNotApplied != null:
-return plansNotApplied();case StopCase_PlansUnknown() when plansUnknown != null:
-return plansUnknown();case StopCase_ServerFailed() when serverFailed != null:
+return fellBack();case StopCase_ServerFailed() when serverFailed != null:
 return serverFailed();case StopCase_Cancelled() when cancelled != null:
 return cancelled();case StopCase_Other() when other != null:
 return other();case _:
@@ -6905,38 +6623,6 @@ String toString() {
 /// @nodoc
 
 
-class StopCase_PlansUnreadable extends StopCase {
-  const StopCase_PlansUnreadable(): super._();
-  
-
-
-
-
-
-
-@override
-bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType&&other is StopCase_PlansUnreadable);
-}
-
-
-@override
-int get hashCode => runtimeType.hashCode;
-
-@override
-String toString() {
-    return 'StopCase.plansUnreadable()';
-}
-
-
-}
-
-
-
-
-/// @nodoc
-
-
 class StopCase_PromotionFailed extends StopCase {
   const StopCase_PromotionFailed(): super._();
   
@@ -6990,70 +6676,6 @@ int get hashCode => runtimeType.hashCode;
 @override
 String toString() {
     return 'StopCase.fellBack()';
-}
-
-
-}
-
-
-
-
-/// @nodoc
-
-
-class StopCase_PlansNotApplied extends StopCase {
-  const StopCase_PlansNotApplied(): super._();
-  
-
-
-
-
-
-
-@override
-bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType&&other is StopCase_PlansNotApplied);
-}
-
-
-@override
-int get hashCode => runtimeType.hashCode;
-
-@override
-String toString() {
-    return 'StopCase.plansNotApplied()';
-}
-
-
-}
-
-
-
-
-/// @nodoc
-
-
-class StopCase_PlansUnknown extends StopCase {
-  const StopCase_PlansUnknown(): super._();
-  
-
-
-
-
-
-
-@override
-bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType&&other is StopCase_PlansUnknown);
-}
-
-
-@override
-int get hashCode => runtimeType.hashCode;
-
-@override
-String toString() {
-    return 'StopCase.plansUnknown()';
 }
 
 

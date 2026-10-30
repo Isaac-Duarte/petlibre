@@ -33,10 +33,15 @@ enum RestoreStage {
 enum RestoreLook {
   looking,
 
-  /// On the network: Wellfed runs, as it did.
+  /// A session read it idle: Wellfed runs, as it did.
   wellfed,
 
-  /// Advertising Bluetooth setup: Wellfed runs, with its people cleared.
+  /// Seen on the network, but never read idle: it may be mid-install, about
+  /// to restart, or a stale sighting.
+  sighted,
+
+  /// A feeder nearby advertises Bluetooth setup. Nothing says which: it may
+  /// be this one with its people cleared, or another.
   setup,
 
   /// Neither in time: probably on the original firmware.
@@ -97,6 +102,7 @@ class RestoreFlow extends ChangeNotifier {
   Timer? _lookEnd;
   Timer? _lookAgain;
   StreamSubscription<void>? _setup;
+  bool _sighted = false;
 
   /// How long a feeder has to come back: a restart, then its join.
   static const lookFor = Duration(minutes: 3);
@@ -321,11 +327,15 @@ class RestoreFlow extends ChangeNotifier {
 
   /// Look for the feeder, since the words for an uncertain end depend on it.
   /// Wellfed advertises on the network with its people in place, or Bluetooth
-  /// setup with them cleared; stock does neither. This only listens, and
+  /// setup with them cleared; stock does neither. This reads and listens, and
   /// offers the feeder nothing.
   void startLook() {
     look = RestoreLook.looking;
-    _lookEnd = Timer(lookFor, () => _looked(RestoreLook.nothing));
+    _sighted = false;
+    _lookEnd = Timer(
+      lookFor,
+      () => _looked(_sighted ? RestoreLook.sighted : RestoreLook.nothing),
+    );
     _setup = _ports.setupHeard().listen(
       (_) => _looked(RestoreLook.setup),
       onError: (Object _) {},
@@ -340,10 +350,15 @@ class RestoreFlow extends ChangeNotifier {
     final found = await _ports.locate(hex);
     if (look != RestoreLook.looking || _lookEnd == null) return;
     if (found != null) {
-      _looked(RestoreLook.wellfed);
-    } else {
-      _lookAgain = Timer(_lookEvery, () => unawaited(_locate()));
+      _sighted = true;
+      final seen = await _ports.readFeeder(identity, found);
+      if (look != RestoreLook.looking || _lookEnd == null) return;
+      if (seen == RestoreSeen.idle) {
+        _looked(RestoreLook.wellfed);
+        return;
+      }
     }
+    _lookAgain = Timer(_lookEvery, () => unawaited(_locate()));
   }
 
   void _looked(RestoreLook found) {

@@ -61,7 +61,7 @@ Subscribe { after, samples }          Events [{ seq, at, body }, …]   // as ma
 | `UPDATE` | `OfferUpdate`, `UpdateChunk`, `UpdateState`, `CancelUpdate`, `EnrollUpdateKey`, `UpdateKeyStatement` |
 | `STATS` | `Stats { section }`, and four more metrics |
 | `TRACES` with `STATS` | `FeedTrace { feed, offset }`, answered `FeedTrace(TracePage)` |
-| `BACKUP` | `ReadBank1 { offset }`, answered `Bank1(Bank1Page)`; `ReadStockPlans`, answered `StockPlans(StockPlanSectors)` |
+| `BACKUP` | `ReadBank1 { offset }`, answered `Bank1(Bank1Page)` |
 | `LOG` | `TailLog { after }`, answered with `Log` batches |
 | `CALIBRATION` | `GetCalibration`, `PutCalibration` |
 | `POWER` | The `Supply` metric and event, the supply in `FeederStatus`, and the `Battery` readiness reason |
@@ -277,7 +277,7 @@ Every flash lease checks that the outputs are stopped, and fails closed when the
   - An update key is enrolled only once someone at the feeder presses Dispense within 60 s. The session's answer waits for it (`wellfed-client` waits 75 s for this op, not its usual 10 s), and a session that leaves cancels the offer. `wellfed update-key enroll` sends it ([OTA design](ota-design.md#keys-and-anti-rollback)); that path has run only in simulation, not yet on a feeder.
 - **Debug log** (`Capabilities::LOG`, owner sessions only): `TailLog { after }` streams the firmware's record lines from a RAM tail ([below](#debug-log)).
 - **Feed traces** (`Capabilities::TRACES` with `STATS`): `FeedTrace { feed, offset }` reads what a feed's drive measured, a page at a time, from RAM or storage sectors 29–31 ([below](#feed-traces)).
-- **Stock backup** (`Capabilities::BACKUP`, bit 512, owner sessions only): `ReadBank1 { offset }` reads bank 1 a page at a time, and `ReadStockPlans` stock's plan sectors, both served only from bank 0 ([below](#stock-backup)).
+- **Stock backup** (`Capabilities::BACKUP`, bit 512, owner sessions only): `ReadBank1 { offset }` reads bank 1 a page at a time, served only from bank 0 ([below](#stock-backup)).
 - **Invites.** `CreateInvite` mints a secret, which is the PSK of the new client's XXpsk3 handshake. Its third message carries the label, and the key enrolls through the keys mailbox.
 - **Recovery.** The recovery window runs the same setup exchange as BLE (XX plus the code proof) over the stream, so the owner keys the client's code in before it becomes an owner. A LAN neighbour cannot slip in while the window is open, and the window closes at the first offer. Recovery takes no Wi-Fi ([pairing](pairing.md)).
 
@@ -434,7 +434,6 @@ After stock installs the replacement into bank 0, bank 1 still holds stock, with
   - Served only from bank 0 (`Unavailable` from bank 1, whose own image is the running build). The SDK's read also refuses unless the flash MMU maps bank 0.
   - `Busy` while an install holds the flash, since it rewrites the bank under the read. `Invalid` at or past the bank's end.
 - **How.** The loop copies the page through the mapped flash window (`sdk::bank1_read`, a sector at a time; a read takes no lease) into the 768-byte page buffer, which the trace answers also borrow. Nothing vouches for the bytes: `wellfed_client::install::StockBackup::from_bank` restores the marker's first word, checks the payload against the pinned 1.1.15 hash, and rebuilds the vendor's container, whose hash must match its own pin. Page answers are not logged one by one, like update chunks.
-- **Stock's plans.** `ReadStockPlans` (op `0x1e`) answers `Outcome::StockPlans` (`0x0f`): `StockPlanSectors { count, entries }`, stock's count byte at flash `0x7d0000` and the first 440 bytes (`STOCK_PLAN_ENTRIES_LEN`, ten 44-byte entries) at `0x7d1000`, everything stock's boot reads ([plan records](../devices/plaf103/stock/README.md#plan-records)). The same bit, roles and refusals as `ReadBank1`: owners only, bank 0 only, `Busy` during an install. The SDK reads the two fixed spans through the flash window (`sdk::stock_plans_read`) into the page buffer; nothing in Wellfed writes those sectors, so a rollback finds stock's plans as it left them. The feeder judges none of the bytes: `wellfed_client::install::plans` decodes and converts them.
 
 ## Resources
 

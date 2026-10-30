@@ -36,7 +36,6 @@ pub mod neighbour;
 #[cfg(feature = "bench")]
 pub mod network;
 pub mod ota;
-pub mod plans;
 pub mod protocol;
 pub mod server;
 pub mod setup;

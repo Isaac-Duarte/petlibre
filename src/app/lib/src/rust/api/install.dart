@@ -14,7 +14,7 @@ import 'setup.dart';
 import 'store.dart';
 part 'install.freezed.dart';
 
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`
 
 /// The image unpacked in `dir`, checked against this build's pin and against
 /// its own review.
@@ -179,10 +179,6 @@ sealed class InstallAsk with _$InstallAsk {
   /// Answered done once the owner was told: the broker already listens.
   const factory InstallAsk.restartFeeder() = InstallAsk_RestartFeeder;
 
-  /// The reset route: the owner answers that resetting erases the feeder's
-  /// meals, which the screen before asked.
-  const factory InstallAsk.eraseStockPlans() = InstallAsk_EraseStockPlans;
-
   /// Join the feeder's setup network, answered done once this process's
   /// sockets go over it. The broker already listens.
   const factory InstallAsk.joinFeederNetwork() = InstallAsk_JoinFeederNetwork;
@@ -319,16 +315,6 @@ sealed class InstallEvent with _$InstallEvent {
   const factory InstallEvent.backupKept({required String path}) =
       InstallEvent_BackupKept;
 
-  /// Stock's plans, as the replacement will run them.
-  const factory InstallEvent.stockPlans({
-    required int converted,
-    required int refused,
-  }) = InstallEvent_StockPlans;
-
-  /// The owner chose to go on without stock's plans.
-  const factory InstallEvent.withoutStockPlans() =
-      InstallEvent_WithoutStockPlans;
-
   /// Bank 0 writes the replacement into bank 1.
   const factory InstallEvent.promoting() = InstallEvent_Promoting;
 
@@ -344,16 +330,9 @@ sealed class InstallEvent with _$InstallEvent {
   /// Bank 1 is activated; the feeder restarts into it.
   const factory InstallEvent.activated() = InstallEvent_Activated;
 
-  /// Stock's converted plans go to the replacement, once.
-  const factory InstallEvent.puttingPlans() = InstallEvent_PuttingPlans;
-
   /// The install is confirmed on bank 1.
   const factory InstallEvent.installed({required String build}) =
       InstallEvent_Installed;
-
-  /// What became of stock's plans.
-  const factory InstallEvent.plans({required PlansOutcome result}) =
-      InstallEvent_Plans;
 
   /// Something only a log needs: a read the run tries again, a record it
   /// could not remove.
@@ -400,9 +379,6 @@ class InstallSpec {
   /// jump, so the owner chooses this.
   final bool calibrateClock;
 
-  /// Promote even if stock's plans cannot be read.
-  final bool withoutStockPlans;
-
   /// Forget the feeder the broker trusted before: the owner said it was
   /// not theirs, or two answered.
   final bool forgetEnrollment;
@@ -424,7 +400,6 @@ class InstallSpec {
     required this.imageDir,
     required this.dataDir,
     required this.calibrateClock,
-    required this.withoutStockPlans,
     required this.forgetEnrollment,
     required this.setupAgain,
   });
@@ -442,7 +417,6 @@ class InstallSpec {
       imageDir.hashCode ^
       dataDir.hashCode ^
       calibrateClock.hashCode ^
-      withoutStockPlans.hashCode ^
       forgetEnrollment.hashCode ^
       setupAgain.hashCode;
 
@@ -462,7 +436,6 @@ class InstallSpec {
           imageDir == other.imageDir &&
           dataDir == other.dataDir &&
           calibrateClock == other.calibrateClock &&
-          withoutStockPlans == other.withoutStockPlans &&
           forgetEnrollment == other.forgetEnrollment &&
           setupAgain == other.setupAgain;
 }
@@ -545,24 +518,6 @@ enum PendingInstall {
   /// running the replacement, waiting for its owner, or still on stock:
   /// listen for it, or look for it over Bluetooth.
   requestOpen,
-}
-
-/// What became of stock's plans at the end of the run.
-enum PlansOutcome {
-  /// Set on the replacement.
-  set_,
-
-  /// Stock held none.
-  noneHeld,
-
-  /// None converted: nothing was set.
-  noneConverted,
-
-  /// Neither read by this run nor kept by an earlier one.
-  notRead,
-
-  /// Left behind, as the owner chose.
-  skipped,
 }
 
 /// Why the server would not send the install request. Nothing reached stock.
@@ -672,23 +627,11 @@ sealed class StopCase with _$StopCase {
   /// The image needs a Wi-Fi to be given, and none was. Nothing was sent.
   const factory StopCase.noWifiGiven() = StopCase_NoWifiGiven;
 
-  /// Stock's plans could not be read, so nothing was promoted.
-  const factory StopCase.plansUnreadable() = StopCase_PlansUnreadable;
-
   /// The promotion was refused or failed; the feeder runs bank 0.
   const factory StopCase.promotionFailed() = StopCase_PromotionFailed;
 
   /// Bank 1's trial boot fell back to bank 0.
   const factory StopCase.fellBack() = StopCase_FellBack;
-
-  /// The replacement is installed and confirmed, but stock's plans were
-  /// not applied.
-  const factory StopCase.plansNotApplied() = StopCase_PlansNotApplied;
-
-  /// The replacement is installed and confirmed, but a put of stock's plans
-  /// went out and whether they are on it is unknown. Not sent again: the
-  /// owner checks the meals.
-  const factory StopCase.plansUnknown() = StopCase_PlansUnknown;
 
   /// The stock server could not start: its port is taken, say.
   const factory StopCase.serverFailed() = StopCase_ServerFailed;
@@ -699,17 +642,13 @@ sealed class StopCase with _$StopCase {
 }
 
 /// A write whose outcome is not settled. It may have run, and it is never sent
-/// again, but for the plans' put, which a pick-up sends only from a generation
-/// that has not moved.
+/// again.
 enum UncertainWrite {
   /// The update key's enrollment.
   updateKey,
 
   /// The signed update, pushed into bank 1.
   promotion,
-
-  /// Stock's converted plans.
-  plans,
 }
 
 /// Why the run still waits for stock.

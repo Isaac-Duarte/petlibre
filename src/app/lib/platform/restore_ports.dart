@@ -33,6 +33,9 @@ abstract interface class RestorePorts {
 
   Future<String?> locate(String identity);
 
+  /// What a read over a session says of the feeder at `address`.
+  Future<RestoreSeen> readFeeder(List<int> identity, String address);
+
   /// Each sighting of a feeder advertising Bluetooth setup.
   Stream<void> setupHeard();
 
@@ -78,6 +81,10 @@ class AppRestorePorts implements RestorePorts {
 
   @override
   Future<String?> locate(String identity) => _install.locate(identity);
+
+  @override
+  Future<RestoreSeen> readFeeder(List<int> identity, String address) =>
+      rust.readRestoreFeeder(key: _key, identity: identity, address: address);
 
   @override
   Stream<void> setupHeard() => _install.setupHeard();

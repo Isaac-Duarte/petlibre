@@ -54,7 +54,7 @@ pub use status::{
     Settings, SettingsPatch, Status, Supply, WifiSource, Window, WindowError,
 };
 pub use trace::{CurrentUnit, Malformed, Trace, TraceEntry, TraceMotor, TracePage, TraceSummary};
-pub use update::{Bank1Page, StockPlanSectors, UpdatePhase, UpdateRefusal, UpdateStop, UpdateView};
+pub use update::{Bank1Page, UpdatePhase, UpdateRefusal, UpdateStop, UpdateView};
 /// The desiccant reminder's period limits and default, in days.
 pub use wellfed_proto::api::{
     DESICCANT_DAYS_DEFAULT, DESICCANT_DAYS_MAX, DESICCANT_DAYS_MIN, MEAL_REMINDER_MINUTES_MAX,

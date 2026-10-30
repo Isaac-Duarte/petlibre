@@ -17,9 +17,7 @@ use wellfed_core::log_tail::Batch as LogBatch;
 use wellfed_core::ota::install::{Answer, Progress, Refused};
 use wellfed_core::supply::Reading;
 use wellfed_core::tone::Tune;
-use wellfed_proto::api::{
-    Capabilities, Counts, Erases, Power, Refusal, STOCK_PLAN_ENTRIES_LEN, TASKS_MAX, TraceSummary,
-};
+use wellfed_proto::api::{Capabilities, Counts, Erases, Power, Refusal, TASKS_MAX, TraceSummary};
 use wellfed_proto::trace::PAGE_MAX;
 
 use super::supply::Radio;
@@ -419,13 +417,6 @@ pub trait Platform {
     /// bank 1: it runs from bank 1, or keeps no banks.
     fn bank1_read(&mut self, _offset: u32, _out: &mut [u8]) -> bool {
         false
-    }
-    /// Stock's plan count byte, with its first entries copied into
-    /// `entries`, through the mapped flash. `None` when this platform keeps
-    /// no stock flash. Read only: the replacement never writes stock's
-    /// plan sectors, so a rollback finds its plans as it left them.
-    fn stock_plans_read(&mut self, _entries: &mut [u8; STOCK_PLAN_ENTRIES_LEN]) -> Option<u8> {
-        None
     }
 
     // ---- The device API's sockets.

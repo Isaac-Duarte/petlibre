@@ -968,29 +968,6 @@ pub unsafe fn bank1_give_way() -> bool {
     read(super::BANK1_OFFSET)[0] == 0
 }
 
-/// Stock's plan count byte and entries through the physical flash window,
-/// from either bank: what the installer imports before a promotion. The
-/// two spans are fixed; no caller value reaches an address. Read only.
-pub fn stock_plans_read(entries: &mut [u8; super::STOCK_PLAN_ENTRIES_LEN]) -> u8 {
-    let count = k::WELLFED_SPI_FLASH_BASE + super::STOCK_PLAN_COUNT;
-    // SAFETY: one byte inside the memory-mapped 8 MiB flash window, at a
-    // fixed offset below its end.
-    let count = unsafe { ptr::read_volatile(count as usize as *const u8) };
-
-    let base = k::WELLFED_SPI_FLASH_BASE + super::STOCK_PLAN_ENTRIES;
-    for (i, byte) in entries.iter_mut().enumerate() {
-        // SAFETY: inside the memory-mapped flash window: the fixed entries
-        // span, 440 bytes within its 4 KiB sector.
-        *byte = unsafe { ptr::read_volatile((base as usize + i) as *const u8) };
-    }
-    count
-}
-
-const _: () = assert!(
-    super::STOCK_PLAN_ENTRIES_LEN <= SECTOR_BYTES as usize
-        && super::STOCK_PLAN_ENTRIES + SECTOR_BYTES <= 0x80_0000
-);
-
 /// Read through the memory-mapped flash window; the SDK wrappers flush the
 /// cache after every erase or program.
 pub fn storage_read(sector: u32, offset: u32, bytes: &mut [u8]) -> bool {

@@ -315,61 +315,6 @@ fn bank_0_streams_bank_1_whole_and_bank_1_serves_none() {
     });
 }
 
-/// Stock's plan sectors are served where bank 1 is, by the bank-0 role
-/// only, byte for byte as the flash holds them, for the installer to
-/// import.
-#[test]
-fn bank_0_serves_stock_s_plan_sectors_and_bank_1_none() {
-    use wellfed_client::install::plans::{StockPlan, StockPlanState, StockPlans};
-    use wellfed_model::StockPlanSectors;
-    use wellfed_proto::api::STOCK_PLAN_ENTRIES_LEN;
-
-    let mut stock = StockPlans::default();
-    stock.slots[1] = Some(StockPlan {
-        id: 101,
-        hour: 7,
-        minute: 30,
-        once: false,
-        days: [1, 2, 3, 4, 5, 0, 0],
-        call: false,
-        call_times: 0,
-        portions: 2,
-        state: StockPlanState::Idle,
-        sync_ms: 0,
-        skip_until_ms: 0,
-    });
-    let sectors = stock.encode();
-    let entries = &sectors[SECTOR..SECTOR + STOCK_PLAN_ENTRIES_LEN];
-
-    paused(async {
-        let mut rig = Rig::start().await;
-        {
-            let mut banks = rig.banks.borrow_mut();
-            banks.stock_plan_count = sectors[0];
-            banks.stock_plan_entries.copy_from_slice(entries);
-        }
-        let mut connection = rig.open().await;
-        let answer = connection.ask(rig.id(), &Op::ReadStockPlans).await.unwrap();
-        assert_eq!(answer, Answer::Refused(Refusal::Unavailable));
-        drop(connection);
-
-        rig.banks.borrow_mut().stock_gave_way();
-        rig.sim.control(Control::Reboot);
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        assert_eq!(rig.bank().await, 0);
-
-        let mut connection = rig.open().await;
-        let answer = connection.ask(rig.id(), &Op::ReadStockPlans).await.unwrap();
-        let Answer::StockPlans(StockPlanSectors { count, entries }) = answer else {
-            panic!("the bank-0 role serves the sectors: {answer:?}");
-        };
-        assert_eq!(count, 2, "a deleted slot stays counted");
-        assert_eq!(entries, &sectors[SECTOR..SECTOR + STOCK_PLAN_ENTRIES_LEN]);
-        assert_eq!(StockPlans::decode_parts(count, &entries), Ok(stock));
-        rig.sim.stop().await;
-    });
-}
-
 #[test]
 fn a_flipped_byte_stops_at_the_hash() {
     paused(async {

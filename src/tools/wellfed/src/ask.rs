@@ -290,6 +290,13 @@ mod tests {
 
     use crate::ask::{scripted, written};
 
+    fn recognize() -> Prompt {
+        Prompt::RecognizeFeeder {
+            device: "AF_FEEDER".to_string(),
+            address: "10.42.0.2".to_string(),
+        }
+    }
+
     #[tokio::test]
     async fn each_prompt_is_one_json_line_and_each_answer_one_line_back() {
         let mut asker = scripted(Prompts::Lines, &[r#""done""#, r#""no""#]);
@@ -314,12 +321,12 @@ mod tests {
     async fn a_closed_input_is_no_answer_at_all() {
         for prompts in [Prompts::Lines, Prompts::Terminal] {
             let mut asker = scripted(prompts, &[]);
-            let error = asker.yes(Prompt::EraseStockPlans).await.unwrap_err();
+            let error = asker.yes(recognize()).await.unwrap_err();
             assert!(
                 matches!(
                     error,
                     AskError::Closed {
-                        prompt: Prompt::EraseStockPlans
+                        prompt: Prompt::RecognizeFeeder { .. }
                     }
                 ),
                 "{error}"
@@ -348,7 +355,7 @@ mod tests {
             error.to_string(),
             "the restart-feeder prompt takes done, not yes"
         );
-        let error = asker.yes(Prompt::EraseStockPlans).await.unwrap_err();
+        let error = asker.yes(recognize()).await.unwrap_err();
         assert!(
             matches!(
                 error,
@@ -364,7 +371,7 @@ mod tests {
     #[tokio::test]
     async fn a_line_that_is_not_an_answer_is_refused() {
         let mut asker = scripted(Prompts::Lines, &["y"]);
-        let error = asker.yes(Prompt::EraseStockPlans).await.unwrap_err();
+        let error = asker.yes(recognize()).await.unwrap_err();
         assert!(matches!(error, AskError::Unreadable { .. }), "{error}");
     }
 
@@ -401,7 +408,7 @@ mod tests {
         // when it is read.
         let mut asker = scripted(Prompts::Lines, &[r#""yes""#]);
         asker.announce(code(), "").await.unwrap();
-        let error = asker.yes(Prompt::EraseStockPlans).await.unwrap_err();
+        let error = asker.yes(recognize()).await.unwrap_err();
         assert!(
             matches!(
                 error,
@@ -459,14 +466,14 @@ mod tests {
     async fn the_terminal_reads_enter_and_y() {
         let mut asker = scripted(Prompts::Terminal, &["", "y", "nope"]);
         asker.done(Prompt::JoinBack).await.unwrap();
-        assert!(asker.yes(Prompt::EraseStockPlans).await.unwrap());
-        assert!(!asker.yes(Prompt::EraseStockPlans).await.unwrap());
+        assert!(asker.yes(recognize()).await.unwrap());
+        assert!(!asker.yes(recognize()).await.unwrap());
 
         let lines = written(&asker);
         assert_eq!(
             lines[0],
             "Join this computer back to your own network. Then press Enter."
         );
-        assert!(lines[1].ends_with("go on? [y/N]"), "{}", lines[1]);
+        assert!(lines[1].ends_with("[y/N]"), "{}", lines[1]);
     }
 }

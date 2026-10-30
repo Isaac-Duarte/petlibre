@@ -6,8 +6,7 @@
 //! UART capture). So when the owner's own resolver answers that name with
 //! the installer's address, a restarted stock connects to the installer's
 //! broker with its own credentials, and nothing is written to the feeder: no
-//! setup mode, no Reset hold, and stock's plans stay in their sectors for
-//! the import.
+//! setup mode, and no Reset hold.
 //!
 //! The name is the vendor's and is never built into Wellfed: the caller
 //! takes it from the owner (or, on the bench, from a flash read of stock's

@@ -5,19 +5,23 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use tokio::sync::watch;
 use wellfed_client::install::STOCK_VERSION;
 use wellfed_client::update_key::EnrollError;
+use wellfed_connect::Connection;
 use wellfed_install::restore::{
     Offering, Plan, Platform, Restored, Signing, Target, Uncertainty, forget_key as forget, restore,
 };
 use wellfed_install::{Error, storage};
+use wellfed_model::{Answer, Op, UpdatePhase};
 use wellfed_session::noise::Keypair;
 
 use crate::api::install::{InstallAnswer, InstallUpdate};
+use crate::api::keys::{ClientKey, random};
 use crate::api::restore::{
-    BackupCheck, RestoreEnd, RestoreSpec, RestoreStop, RestoreUpdate, UncertainWhy,
+    BackupCheck, RestoreEnd, RestoreSeen, RestoreSpec, RestoreStop, RestoreUpdate, UncertainWhy,
 };
 use crate::install::{
     AppDiscovery, AppPrompter, AppReport, Asks, BACKUPS, STACK, guarded, stopped, text,
@@ -40,6 +44,30 @@ pub fn check_backup(path: &Path) -> BackupCheck {
 pub fn forget_key(data_dir: &Path, identity: &[u8]) {
     if let Ok(identity) = <[u8; 32]>::try_from(identity) {
         let _ = forget(&data_dir.join(BACKUPS), &identity);
+    }
+}
+
+/// How long one read of a feeder may take, session and answer together.
+const READ_WAIT: Duration = Duration::from_secs(10);
+
+/// See [`read_restore_feeder`](crate::api::restore::read_restore_feeder).
+pub async fn read_feeder(key: &ClientKey, identity: &[u8], address: &str) -> RestoreSeen {
+    let (Ok(identity), Ok(address)) = (
+        <[u8; 32]>::try_from(identity),
+        wellfed_connect::parse_address(address),
+    ) else {
+        return RestoreSeen::Unread;
+    };
+    let read = async {
+        let mut connection = Connection::open(key.keypair(), identity, address, random().ok()?)
+            .await
+            .ok()?;
+        connection.ask(random().ok()?, &Op::UpdateState).await.ok()
+    };
+    match tokio::time::timeout(READ_WAIT, read).await {
+        Ok(Some(Answer::Update(view))) if view.phase == UpdatePhase::Idle => RestoreSeen::Idle,
+        Ok(Some(Answer::Update(_))) => RestoreSeen::Installing,
+        _ => RestoreSeen::Unread,
     }
 }
 

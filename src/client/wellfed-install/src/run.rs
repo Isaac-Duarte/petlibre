@@ -6,13 +6,6 @@
 //! an uncertain outcome ends the run; so does the update key's enrollment,
 //! which an unanswered one judges by the signer list.
 //!
-//! The put of stock's plans goes once in a run, an unanswered one judged by
-//! reading the plans back. Its base is on disk before it leaves, so a later run
-//! knows one may have left, and sends it again only if the plans' generation
-//! still equals that base; otherwise it stops with nothing sent. An empty table
-//! is no proof, since the owner may have emptied it; every change moves the
-//! generation. A first put arriving late is refused by the same base.
-//!
 //! Reads (a status, a session opening) are tried again until their wait
 //! runs out, since they change nothing.
 
@@ -22,8 +15,8 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use wellfed_client::install::{
-    FeederTrust, Install, InstallError, Options, PairRoute, PlansPut, Promotion, Provision,
-    Replacement, Requested, Step, StockBackup, StockNotReady, UpdateKey, plans,
+    FeederTrust, Install, InstallError, Options, PairRoute, Promotion, Provision, Replacement,
+    Requested, Step, StockBackup, StockNotReady, UpdateKey,
 };
 use wellfed_client::setup::Credentials;
 use wellfed_client::update::{Image, InstallError as UpdateError};
@@ -31,13 +24,13 @@ use wellfed_client::update_key::{EnrollError, Enrolled};
 use wellfed_formats::bench::prompt::Prompt;
 use wellfed_formats::manifest::Provisioning;
 use wellfed_formats::stock::TrialPhase;
-use wellfed_model::{Answer, Generation, Op, PLANS, Plan as FeedingPlan, Plans};
+use wellfed_model::{Answer, Op};
 use wellfed_proto::api::PORT;
 use wellfed_signing::{Frozen, Key, Motion, highest_signed};
 use wellfed_stock::ota::trial::{AnsweredInput, Input};
 use wellfed_stock::server::Refusal;
 
-use crate::event::{Enrollment, Event, PlansResult, Wait};
+use crate::event::{Enrollment, Event, Wait};
 use crate::platform::{Bluetooth, Discovery, Keys, Prompter, Report};
 use crate::push::{Pushed, push};
 use crate::review::Review;
@@ -65,8 +58,8 @@ const REPLACEMENT_WAIT: Duration = Duration::from_secs(5 * 60);
 const CLOSE_WAIT: Duration = Duration::from_secs(150);
 /// Bank 1's trial boot confirms within a few minutes of activation.
 const CONFIRM_WAIT: Duration = Duration::from_secs(6 * 60);
-/// Reading the plans back may wait for a session to open again.
-const PLANS_WAIT: Duration = Duration::from_secs(60);
+/// Reading after an unanswered write may wait for a session to open again.
+const READ_WAIT: Duration = Duration::from_secs(60);
 /// From the end of Bluetooth setup until the feeder, rebooted onto the
 /// owner's Wi-Fi, answers the device API.
 const JOIN_WAIT: Duration = Duration::from_secs(5 * 60);
@@ -130,8 +123,6 @@ pub struct Plan {
     /// A copy of stock 1.1.15's image the owner holds, kept beside the
     /// backups before the promotion once the feeder's identity is known.
     pub backup: Option<StockBackup>,
-    /// Promote even if stock's stored plans cannot be read.
-    pub without_stock_plans: bool,
     /// Stock's MQTT client ID as the owner already knows it: the feeder
     /// check passes without asking for exactly this device, and stops the
     /// run for another.
@@ -394,33 +385,6 @@ async fn restart_feeder(prompter: &mut impl Prompter, report: &impl Report) -> R
     Ok(())
 }
 
-/// Keep the put's base, then send the put. Nothing else sends it, so a put on the
-/// wire means its base is on disk, and no base means no put left; if the base
-/// cannot be kept, the put does not go out.
-async fn put_once(
-    connection: &mut wellfed_connect::Connection,
-    kept: &std::path::Path,
-    base: Generation,
-    plans: [Option<FeedingPlan>; PLANS],
-) -> Result<PlansPut, Error> {
-    storage::keep_put_base(kept, base).map_err(|error| Error::KeepPutBase(Box::new(error)))?;
-
-    let op = Op::PutPlans { base, plans };
-    Ok(match connection.ask(random()?, &op).await {
-        Ok(Answer::Done { .. }) => PlansPut::Done,
-        Ok(Answer::Refused(refusal)) => PlansPut::Refused(refusal),
-        Ok(_) | Err(_) => PlansPut::Unanswered,
-    })
-}
-
-/// Unix milliseconds now, which decides whether a stock skip still holds.
-fn now_ms() -> Result<u64, Error> {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|_| Error::Clock)?;
-    u64::try_from(now.as_millis()).map_err(|_| Error::Clock)
-}
-
 /// The run's IO state beside the steps.
 struct Run<P, B, D, K, R> {
     io: Platform<P, B, D, K, R>,
@@ -502,9 +466,6 @@ where
             Start::Stock(provision) => Install::new(provision, &build, options)?,
             Start::Bank0 => Install::from_bank0(&build, options),
         };
-        if plan.without_stock_plans {
-            install.without_stock_plans();
-        }
         if let Some(backup) = &plan.backup {
             install.backup(backup.verified().ok_or(Error::Unverified)?);
         }
@@ -551,21 +512,6 @@ where
                     self.serve()?;
                     restart_feeder(&mut self.io.prompter, &self.io.report).await?;
                     install.dns_pointed();
-                }
-                Step::ConfirmReset => {
-                    // Warned up front: the Reset hold erases stock's plans
-                    // before the installer can read them.
-                    let accepted = self
-                        .io
-                        .prompter
-                        .yes(Prompt::EraseStockPlans)
-                        .await
-                        .map_err(Error::Platform)?;
-                    if accepted {
-                        install.reset_accepted();
-                    } else {
-                        install.reset_declined();
-                    }
                 }
                 Step::SendFrame(frame) => {
                     self.serve()?;
@@ -621,7 +567,6 @@ where
                         .map_err(|error| Error::Backup(Box::new(error)))?;
                     install.backup(backup.verified().ok_or(Error::Unverified)?);
                 }
-                Step::ReadStockPlans => self.stock_plans(install).await?,
                 Step::ReadFloor => self.read_floor(install).await,
                 Step::Sign { version } => {
                     self.sign(version)?;
@@ -633,16 +578,8 @@ where
                     install.promoted(outcome);
                 }
                 Step::AwaitConfirm => {
-                    self.kept_plans(install)?;
-                    self.earlier_put(install);
                     self.await_confirm(install).await?;
                 }
-                Step::ReadPlans => self.read_plans(install).await,
-                Step::PutPlans { base, plans } => {
-                    let outcome = self.put_plans(base, plans).await?;
-                    install.plans_put(outcome);
-                }
-                Step::AwaitPut => return Err(Error::PutEnded),
                 Step::Done => {
                     self.done(install)?;
                     return Ok(());
@@ -652,35 +589,15 @@ where
         }
     }
 
-    /// The end: what was installed, and what became of stock's plans.
+    /// The end: what was installed.
     fn done(&mut self, install: &Install) -> Result<(), Error> {
-        let report = &self.io.report;
-        report.event(Event::Installed {
+        self.io.report.event(Event::Installed {
             build: install.build().to_string(),
         });
-        let result = match (install.import(), install.plans_skipped()) {
-            (_, Some(skipped)) => PlansResult::Skipped(skipped.clone()),
-            (None, None) => PlansResult::NotRead,
-            (Some(import), None) if import.plans.iter().any(Option::is_some) => PlansResult::Set,
-            (Some(import), None) if import.outcomes.is_empty() => PlansResult::None,
-            (Some(_), None) => PlansResult::NoneConverted,
-        };
-        let applied = result == PlansResult::Set;
-        report.event(Event::Plans(result));
-        if applied {
-            self.kept_plans_applied()?;
-        }
         // Last, and never a failure: the feeder is installed, and a record
         // left behind only keys a rerun of this same install to the feeder
-        // it already confirmed. The put's base goes after the kept plans it
-        // judges, which a rerun cannot put without.
-        let cleared = self.clear_paired().and_then(|()| match self.identity {
-            Some(identity) => {
-                storage::forget_put_base(&storage::put_base_path(&self.backups, &identity))
-            }
-            None => Ok(()),
-        });
-        if let Err(error) = cleared {
+        // it already confirmed.
+        if let Err(error) = self.clear_paired() {
             self.io.report.event(Event::ResumeRecordKept {
                 error: crate::text(&error),
             });
@@ -1135,7 +1052,7 @@ where
 
     /// Enroll the installer's update key once, the owner pressing Dispense.
     async fn enroll_key(&mut self) -> Result<Result<Enrolled, EnrollError>, Error> {
-        let mut connection = self.session(PLANS_WAIT).await?;
+        let mut connection = self.session(READ_WAIT).await?;
         let Some((_, key)) = &self.signing else {
             return Err(Error::NoUpdateKey);
         };
@@ -1164,9 +1081,9 @@ where
     }
 
     /// The feeder's clients after an unanswered enrollment; a read changes
-    /// nothing, so a session is opened again until [`PLANS_WAIT`] runs out.
+    /// nothing, so a session is opened again until [`READ_WAIT`] runs out.
     async fn check_signers(&self, install: &mut Install) {
-        let deadline = Instant::now() + PLANS_WAIT;
+        let deadline = Instant::now() + READ_WAIT;
         loop {
             let read = async {
                 let mut connection = self.connect().await?;
@@ -1187,7 +1104,7 @@ where
 
     /// The feeder's floor, its highest confirmed version.
     async fn read_floor(&self, install: &mut Install) {
-        let deadline = Instant::now() + PLANS_WAIT;
+        let deadline = Instant::now() + READ_WAIT;
         loop {
             let read = async {
                 let mut connection = self.connect().await?;
@@ -1299,158 +1216,6 @@ where
         })
         .await?;
         Ok(backup)
-    }
-
-    /// Stock's plan sectors from the bank-0 role: kept beside the backup,
-    /// then decoded and converted, and the import shown to the owner.
-    async fn stock_plans(&self, install: &mut Install) -> Result<(), Error> {
-        let identity = self.identity.ok_or(Error::NoIdentity)?;
-        let mut connection = self.connect().await?;
-        // A feeder that predates the backup would end the session on it.
-        wellfed_formats::require(connection.capabilities().backup, || Error::NoPlansServed)?;
-
-        let sectors = match connection.ask(random()?, &Op::ReadStockPlans).await? {
-            Answer::StockPlans(sectors) => sectors,
-            Answer::Refused(refusal) => {
-                install.stock_plans_unread(refusal);
-                return Ok(());
-            }
-            other => {
-                return Err(Error::Answered {
-                    request: "stock plans",
-                    answer: Box::new(other),
-                });
-            }
-        };
-        let path = storage::plans_path(&self.backups, &identity);
-        storage::keep_plans(&path, &plans::kept(sectors.count, &sectors.entries))
-            .map_err(|error| Error::KeepPlans(Box::new(error)))?;
-        self.io.report.event(Event::PlansKept { path });
-
-        install.stock_plans(sectors.count, &sectors.entries, now_ms()?);
-        if let Some(import) = install.import() {
-            self.io.report.event(Event::StockPlans {
-                import: import.clone(),
-                kept: None,
-            });
-        }
-        if let Some(skipped) = install.plans_skipped() {
-            self.io.report.event(Event::WithoutStockPlans {
-                skipped: skipped.clone(),
-            });
-        }
-        Ok(())
-    }
-
-    /// What an earlier run's put left on record. One that cannot be read counts
-    /// as a put that may have left.
-    fn earlier_put(&self, install: &mut Install) {
-        let Some(identity) = self.identity else {
-            return;
-        };
-        let path = storage::put_base_path(&self.backups, &identity);
-        match storage::kept_put_base(&path) {
-            Ok(None) => {}
-            Ok(Some(base)) => {
-                self.io.report.event(Event::EarlierPut { base });
-                install.earlier_put(base);
-            }
-            Err(error) => {
-                self.io.report.event(Event::PlansUnread {
-                    error: crate::text(&error),
-                });
-                install.earlier_put_unread();
-            }
-        }
-    }
-
-    /// A run that reaches the confirmation without reading stock's
-    /// sectors (resumed after the promotion) takes the copy an earlier
-    /// run kept beside the backup, if there is one.
-    fn kept_plans(&self, install: &mut Install) -> Result<(), Error> {
-        if install.import().is_some() || install.plans_skipped().is_some() {
-            return Ok(());
-        }
-        let Some(identity) = self.identity else {
-            return Ok(());
-        };
-        let path = storage::plans_path(&self.backups, &identity);
-        let Some(kept) = storage::kept_plans(&path)? else {
-            return Ok(());
-        };
-        install.kept_stock_plans(&kept, now_ms()?);
-        if let Some(import) = install.import() {
-            self.io.report.event(Event::StockPlans {
-                import: import.clone(),
-                kept: Some(path),
-            });
-        }
-        Ok(())
-    }
-
-    /// Set the kept copy aside once its plans are on the replacement, as
-    /// `stock-plans.applied.bin` (or a name with the time if one is there
-    /// already), so a later resumed run does not put them back over plans
-    /// the owner has changed since.
-    fn kept_plans_applied(&self) -> Result<(), Error> {
-        let Some(identity) = self.identity else {
-            return Ok(());
-        };
-        let kept = storage::plans_path(&self.backups, &identity);
-        if let Some(path) = storage::set_aside(&kept, now_ms()?)? {
-            self.io.report.event(Event::PlansSetAside { path });
-        }
-        Ok(())
-    }
-
-    /// The replacement's plans for the steps. A read changes nothing, so a
-    /// session that fails is opened again until [`PLANS_WAIT`] runs out.
-    async fn read_plans(&self, install: &mut Install) {
-        let deadline = Instant::now() + PLANS_WAIT;
-        loop {
-            match self.plans().await {
-                Ok(view) => return install.plans(&view),
-                Err(error) if Instant::now() >= deadline => {
-                    self.io.report.event(Event::PlansUnread {
-                        error: crate::text(&error),
-                    });
-                    return install.gave_up();
-                }
-                Err(_) => tokio::time::sleep(POLL).await,
-            }
-        }
-    }
-
-    async fn plans(&self) -> Result<Plans, Error> {
-        let mut connection = self.connect().await?;
-        match connection.ask(random()?, &Op::GetPlans).await? {
-            Answer::Plans(view) => Ok(view),
-            other => Err(Error::Answered {
-                request: "plans",
-                answer: Box::new(other),
-            }),
-        }
-    }
-
-    /// Put the import once. Anything but an answer is unanswered, which
-    /// the steps judge by reading the plans back; this run does not send it
-    /// again ([`put_once`]).
-    async fn put_plans(
-        &mut self,
-        base: Generation,
-        plans: [Option<FeedingPlan>; PLANS],
-    ) -> Result<PlansPut, Error> {
-        self.io.report.event(Event::PuttingPlans);
-        // Opening a session sends nothing, so it may be tried again; the
-        // put itself goes once.
-        let mut connection = self
-            .session(PLANS_WAIT)
-            .await
-            .map_err(|error| Error::PlansNotSent(Box::new(error)))?;
-        let identity = self.identity.ok_or(Error::NoIdentity)?;
-        let kept = storage::put_base_path(&self.backups, &identity);
-        self.track.sent(Unsettled::Plans);
-        put_once(&mut connection, &kept, base, plans).await
     }
 
     async fn connect(&self) -> Result<wellfed_connect::Connection, Error> {
@@ -1590,9 +1355,6 @@ mod tests {
     use super::*;
     use crate::tests::Scripted;
     use wellfed_client::update::{Installer, Next};
-    use wellfed_feeder_sim::flash::Flash;
-    use wellfed_feeder_sim::harness::Running;
-    use wellfed_session::noise::Keypair;
     use wellfed_stock::controller::Rejection;
 
     /// A session lost after the last chunk, reopened once the feeder
@@ -1716,138 +1478,6 @@ mod tests {
             .await
             .unwrap()
         );
-    }
-
-    fn on_a_feeder(test: impl std::future::Future<Output = ()>) {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-        runtime.block_on(tokio::task::LocalSet::new().run_until(test));
-    }
-
-    fn a_meal() -> [Option<FeedingPlan>; PLANS] {
-        let mut plans = [None; PLANS];
-        plans[0] = Some(FeedingPlan {
-            minute: 600,
-            portions: 1,
-            days: wellfed_model::Weekdays::ONCE,
-            enabled: false,
-            call: 0,
-        });
-        plans
-    }
-
-    async fn read(connection: &mut wellfed_connect::Connection) -> Plans {
-        match connection.ask(random().unwrap(), &Op::GetPlans).await {
-            Ok(Answer::Plans(plans)) => plans,
-            other => panic!("{other:?}"),
-        }
-    }
-
-    /// With the base not kept, the put never reaches the feeder. Kept, it is
-    /// there by the time the put is answered, and a later run finds it.
-    #[test]
-    fn the_base_is_kept_before_the_put_or_the_put_does_not_go() {
-        on_a_feeder(async {
-            let keys = Keypair::from_secret([0x51; 32]);
-            let sim = Running::start(&Flash::memory(), Some(*keys.public())).await;
-            let dir = tempfile::tempdir().unwrap();
-            let mut connection = wellfed_connect::Connection::open(
-                &keys,
-                sim.identity,
-                sim.address,
-                random().unwrap(),
-            )
-            .await
-            .unwrap();
-            let before = read(&mut connection).await;
-
-            // A file where its directory should be.
-            std::fs::write(dir.path().join("blocked"), b"").unwrap();
-            let blocked = dir.path().join("blocked/stock-plans.base.json");
-            let refused = put_once(&mut connection, &blocked, before.generation, a_meal()).await;
-            assert!(matches!(refused, Err(Error::KeepPutBase(_))), "{refused:?}");
-            assert_eq!(read(&mut connection).await, before, "the put went out");
-
-            let kept = dir.path().join("stock-plans.base.json");
-            assert_eq!(storage::kept_put_base(&kept).unwrap(), None);
-            let put = put_once(&mut connection, &kept, before.generation, a_meal())
-                .await
-                .unwrap();
-            assert_eq!(put, PlansPut::Done);
-            assert_eq!(
-                storage::kept_put_base(&kept).unwrap(),
-                Some(before.generation)
-            );
-
-            sim.stop().await;
-        });
-    }
-
-    /// Two puts from one base cannot both land: a first put arriving after the
-    /// read, or after the second, is refused by it, and the table moves once.
-    /// The owner emptying the table afterwards moves it on again, so a table
-    /// that reads empty still does not read as the base.
-    #[test]
-    fn a_late_first_put_is_refused_by_its_base() {
-        on_a_feeder(async {
-            let keys = Keypair::from_secret([0x51; 32]);
-            let sim = Running::start(&Flash::memory(), Some(*keys.public())).await;
-            let dir = tempfile::tempdir().unwrap();
-            let kept = dir.path().join("stock-plans.base.json");
-            let open = || async {
-                wellfed_connect::Connection::open(
-                    &keys,
-                    sim.identity,
-                    sim.address,
-                    random().unwrap(),
-                )
-                .await
-                .unwrap()
-            };
-            let mut again = open().await;
-            let mut first = open().await;
-            let base = read(&mut again).await.generation;
-
-            // The run after the stop goes first, against the same base.
-            let put = put_once(&mut again, &kept, base, a_meal()).await.unwrap();
-            assert_eq!(put, PlansPut::Done);
-
-            // The stopped run's put, still on its way, arrives.
-            let late = Op::PutPlans {
-                base,
-                plans: a_meal(),
-            };
-            let landed = read(&mut again).await;
-            assert_ne!(landed.generation, base);
-            assert_eq!(landed.plans, a_meal());
-            assert_eq!(
-                first.ask(random().unwrap(), &late).await.unwrap(),
-                Answer::Refused(wellfed_model::Refusal::Stale {
-                    current: landed.generation
-                })
-            );
-            assert_eq!(read(&mut again).await, landed);
-
-            // The owner empties the table: empty, and not at the base.
-            let empty = Op::PutPlans {
-                base: landed.generation,
-                plans: [None; PLANS],
-            };
-            assert!(matches!(
-                again.ask(random().unwrap(), &empty).await.unwrap(),
-                Answer::Done { .. }
-            ));
-            let emptied = read(&mut again).await;
-            assert_eq!(emptied.plans, [None; PLANS]);
-            assert_ne!(
-                Some(emptied.generation),
-                storage::kept_put_base(&kept).unwrap()
-            );
-
-            sim.stop().await;
-        });
     }
 
     /// A run takes the paired record only when its broker enrolled the

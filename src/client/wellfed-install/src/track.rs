@@ -1,10 +1,8 @@
 //! Where a run is, for the report of a stop that ends it: the step, and the
 //! write it sent whose outcome had not settled (the request until the
 //! replacement answers, the update key's enrollment until the run moves on,
-//! the promotion until bank 1 confirms it, the plans' put until the end).
-//! That write is uncertain. None is sent again, but for the plans' put: a later
-//! run sends it again only if the plans' generation still equals the base kept
-//! on disk before it left, and otherwise stops with nothing sent.
+//! the promotion until bank 1 confirms it). That write is uncertain, and none
+//! is sent again.
 
 use std::fmt;
 
@@ -22,10 +20,6 @@ pub enum Unsettled {
     /// The signed update, pushed from bank 0 into bank 1: settled once
     /// bank 1 confirms it.
     Promotion,
-    /// Stock's converted plans, put on the replacement: settled once the
-    /// run ends, a put that went unanswered being judged by a read back. A
-    /// later run sends it again only from an unchanged generation.
-    Plans,
 }
 
 impl Unsettled {
@@ -35,7 +29,6 @@ impl Unsettled {
             Self::Request(_) => phase > Phase::ReadStatus,
             Self::UpdateKey => phase > Phase::UpdateKey,
             Self::Promotion => phase > Phase::AwaitConfirm,
-            Self::Plans => phase == Phase::Done,
         }
     }
 }
@@ -46,7 +39,6 @@ impl fmt::Display for Unsettled {
             Self::Request(id) => write!(f, "stock's install request {id}"),
             Self::UpdateKey => f.write_str("the update key's enrollment"),
             Self::Promotion => f.write_str("the promotion's push"),
-            Self::Plans => f.write_str("the put of stock's plans"),
         }
     }
 }
@@ -65,11 +57,9 @@ const fn phase_text(phase: Phase) -> &'static str {
         Phase::CloseTrial => "closing the stock server's record",
         Phase::UpdateKey => "enrolling the update key",
         Phase::Backup => "reading the stock backup",
-        Phase::StockPlans => "reading stock's plans",
         Phase::Sign => "reading the feeder's floor and signing the promotion",
         Phase::Promote => "the promotion",
         Phase::AwaitConfirm => "waiting for bank 1 to confirm the promotion",
-        Phase::ApplyPlans => "applying stock's plans to the replacement",
         Phase::Done => "the end of the run",
     }
 }
@@ -161,15 +151,9 @@ fn unsettled_note(phase: Phase, unsettled: Option<Unsettled>) -> String {
             } else {
                 ""
             };
-            let again = match write {
-                Unsettled::Plans => {
-                    "a later run sends it again only if the feeder's plans have not changed since"
-                }
-                _ => "it is not sent again",
-            };
             format!(
                 ", with {write} sent and its outcome not yet settled: it may have run, and \
-                 {again}.{enrollment} Read what the feeder runs (wellfed status, or \
+                 it is not sent again.{enrollment} Read what the feeder runs (wellfed status, or \
                  stock's own report) before running again"
             )
         }
@@ -236,15 +220,6 @@ mod tests {
                 .contains("waiting for bank 1 to confirm the promotion, with the promotion's push")
         );
 
-        track.enter(Phase::ApplyPlans);
-        assert_eq!(track.unsettled, None);
-        track.enter(Phase::ApplyPlans);
-        track.sent(Unsettled::Plans);
-        // A put that went unanswered is judged by reading the plans back.
-        track.enter(Phase::ApplyPlans);
-        assert_eq!(track.unsettled, Some(Unsettled::Plans));
-        let stopped = track.stopped(Stop::Interrupt).to_string();
-        assert!(stopped.contains("only if the feeder's plans have not changed since"));
         track.enter(Phase::Done);
         assert_eq!(track.unsettled, None);
     }

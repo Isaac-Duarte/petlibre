@@ -79,7 +79,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.13.0';
 
   @override
-  int get rustContentHash => -306081833;
+  int get rustContentHash => 1228228035;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -273,6 +273,12 @@ abstract class RustLibApi extends BaseApi {
   Future<AppStore> crateApiStoreLoadStore({required String path});
 
   PendingInstall crateApiInstallPendingInstall({required String dataDir});
+
+  Future<RestoreSeen> crateApiRestoreReadRestoreFeeder({
+    required ClientKey key,
+    required List<int> identity,
+    required String address,
+  });
 
   Future<void> crateApiStoreSaveStore({
     required String path,
@@ -1965,6 +1971,46 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(debugName: "pending_install", argNames: ["dataDir"]);
 
   @override
+  Future<RestoreSeen> crateApiRestoreReadRestoreFeeder({
+    required ClientKey key,
+    required List<int> identity,
+    required String address,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerClientKey(
+            key,
+            serializer,
+          );
+          sse_encode_list_prim_u_8_loose(identity, serializer);
+          sse_encode_String(address, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 54,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_restore_seen,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiRestoreReadRestoreFeederConstMeta,
+        argValues: [key, identity, address],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiRestoreReadRestoreFeederConstMeta =>
+      const TaskConstMeta(
+        debugName: "read_restore_feeder",
+        argNames: ["key", "identity", "address"],
+      );
+
+  @override
   Future<void> crateApiStoreSaveStore({
     required String path,
     required AppStore store,
@@ -1978,7 +2024,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 54,
+            funcId: 55,
             port: port_,
           );
         },
@@ -2005,7 +2051,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 55,
+            funcId: 56,
             port: port_,
           );
         },
@@ -2029,7 +2075,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 56)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 57)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_String,
@@ -2051,7 +2097,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 57)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 58)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_String,
@@ -3528,27 +3574,25 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case 1:
         return InstallAsk_RestartFeeder();
       case 2:
-        return InstallAsk_EraseStockPlans();
-      case 3:
         return InstallAsk_JoinFeederNetwork();
-      case 4:
+      case 3:
         return InstallAsk_LeaveFeederNetwork();
-      case 5:
+      case 4:
         return InstallAsk_RecognizeFeeder(
           device: dco_decode_String(raw[1]),
           address: dco_decode_String(raw[2]),
         );
-      case 6:
+      case 5:
         return InstallAsk_OpenRecoveryWindow();
-      case 7:
+      case 6:
         return InstallAsk_OpenLink();
-      case 8:
+      case 7:
         return InstallAsk_WriteLink(
           pieces: dco_decode_list_list_prim_u_8_strict(raw[1]),
         );
-      case 9:
+      case 8:
         return InstallAsk_CloseLink();
-      case 10:
+      case 9:
         return InstallAsk_Locate(identity: dco_decode_String(raw[1]));
       default:
         throw Exception("unreachable");
@@ -3632,30 +3676,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case 19:
         return InstallEvent_BackupKept(path: dco_decode_String(raw[1]));
       case 20:
-        return InstallEvent_StockPlans(
-          converted: dco_decode_u_8(raw[1]),
-          refused: dco_decode_u_8(raw[2]),
-        );
-      case 21:
-        return InstallEvent_WithoutStockPlans();
-      case 22:
         return InstallEvent_Promoting();
-      case 23:
+      case 21:
         return InstallEvent_Written(
           written: dco_decode_u_32(raw[1]),
           length: dco_decode_u_32(raw[2]),
         );
-      case 24:
+      case 22:
         return InstallEvent_SessionDropped();
-      case 25:
+      case 23:
         return InstallEvent_Activated();
-      case 26:
-        return InstallEvent_PuttingPlans();
-      case 27:
+      case 24:
         return InstallEvent_Installed(build: dco_decode_String(raw[1]));
-      case 28:
-        return InstallEvent_Plans(result: dco_decode_plans_outcome(raw[1]));
-      case 29:
+      case 25:
         return InstallEvent_Note(text: dco_decode_String(raw[1]));
       default:
         throw Exception("unreachable");
@@ -3666,8 +3699,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   InstallSpec dco_decode_install_spec(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 14)
-      throw Exception('unexpected arr length: expect 14 but see ${arr.length}');
+    if (arr.length != 13)
+      throw Exception('unexpected arr length: expect 13 but see ${arr.length}');
     return InstallSpec(
       start: dco_decode_install_start(arr[0]),
       address: dco_decode_opt_String(arr[1]),
@@ -3680,9 +3713,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       imageDir: dco_decode_String(arr[8]),
       dataDir: dco_decode_String(arr[9]),
       calibrateClock: dco_decode_bool(arr[10]),
-      withoutStockPlans: dco_decode_bool(arr[11]),
-      forgetEnrollment: dco_decode_bool(arr[12]),
-      setupAgain: dco_decode_bool(arr[13]),
+      forgetEnrollment: dco_decode_bool(arr[11]),
+      setupAgain: dco_decode_bool(arr[12]),
     );
   }
 
@@ -4248,12 +4280,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  PlansOutcome dco_decode_plans_outcome(dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return PlansOutcome.values[raw as int];
-  }
-
-  @protected
   PlansView dco_decode_plans_view(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
@@ -4363,6 +4389,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       default:
         throw Exception("unreachable");
     }
+  }
+
+  @protected
+  RestoreSeen dco_decode_restore_seen(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return RestoreSeen.values[raw as int];
   }
 
   @protected
@@ -4621,20 +4653,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case 21:
         return StopCase_NoWifiGiven();
       case 22:
-        return StopCase_PlansUnreadable();
-      case 23:
         return StopCase_PromotionFailed();
-      case 24:
+      case 23:
         return StopCase_FellBack();
-      case 25:
-        return StopCase_PlansNotApplied();
-      case 26:
-        return StopCase_PlansUnknown();
-      case 27:
+      case 24:
         return StopCase_ServerFailed();
-      case 28:
+      case 25:
         return StopCase_Cancelled();
-      case 29:
+      case 26:
         return StopCase_Other();
       default:
         throw Exception("unreachable");
@@ -6583,28 +6609,26 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case 1:
         return InstallAsk_RestartFeeder();
       case 2:
-        return InstallAsk_EraseStockPlans();
-      case 3:
         return InstallAsk_JoinFeederNetwork();
-      case 4:
+      case 3:
         return InstallAsk_LeaveFeederNetwork();
-      case 5:
+      case 4:
         var var_device = sse_decode_String(deserializer);
         var var_address = sse_decode_String(deserializer);
         return InstallAsk_RecognizeFeeder(
           device: var_device,
           address: var_address,
         );
-      case 6:
+      case 5:
         return InstallAsk_OpenRecoveryWindow();
-      case 7:
+      case 6:
         return InstallAsk_OpenLink();
-      case 8:
+      case 7:
         var var_pieces = sse_decode_list_list_prim_u_8_strict(deserializer);
         return InstallAsk_WriteLink(pieces: var_pieces);
-      case 9:
+      case 8:
         return InstallAsk_CloseLink();
-      case 10:
+      case 9:
         var var_identity = sse_decode_String(deserializer);
         return InstallAsk_Locate(identity: var_identity);
       default:
@@ -6706,33 +6730,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         var var_path = sse_decode_String(deserializer);
         return InstallEvent_BackupKept(path: var_path);
       case 20:
-        var var_converted = sse_decode_u_8(deserializer);
-        var var_refused = sse_decode_u_8(deserializer);
-        return InstallEvent_StockPlans(
-          converted: var_converted,
-          refused: var_refused,
-        );
-      case 21:
-        return InstallEvent_WithoutStockPlans();
-      case 22:
         return InstallEvent_Promoting();
-      case 23:
+      case 21:
         var var_written = sse_decode_u_32(deserializer);
         var var_length = sse_decode_u_32(deserializer);
         return InstallEvent_Written(written: var_written, length: var_length);
-      case 24:
+      case 22:
         return InstallEvent_SessionDropped();
-      case 25:
+      case 23:
         return InstallEvent_Activated();
-      case 26:
-        return InstallEvent_PuttingPlans();
-      case 27:
+      case 24:
         var var_build = sse_decode_String(deserializer);
         return InstallEvent_Installed(build: var_build);
-      case 28:
-        var var_result = sse_decode_plans_outcome(deserializer);
-        return InstallEvent_Plans(result: var_result);
-      case 29:
+      case 25:
         var var_text = sse_decode_String(deserializer);
         return InstallEvent_Note(text: var_text);
       default:
@@ -6754,7 +6764,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_imageDir = sse_decode_String(deserializer);
     var var_dataDir = sse_decode_String(deserializer);
     var var_calibrateClock = sse_decode_bool(deserializer);
-    var var_withoutStockPlans = sse_decode_bool(deserializer);
     var var_forgetEnrollment = sse_decode_bool(deserializer);
     var var_setupAgain = sse_decode_bool(deserializer);
     return InstallSpec(
@@ -6769,7 +6778,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       imageDir: var_imageDir,
       dataDir: var_dataDir,
       calibrateClock: var_calibrateClock,
-      withoutStockPlans: var_withoutStockPlans,
       forgetEnrollment: var_forgetEnrollment,
       setupAgain: var_setupAgain,
     );
@@ -7638,13 +7646,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  PlansOutcome sse_decode_plans_outcome(SseDeserializer deserializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    var inner = sse_decode_i_32(deserializer);
-    return PlansOutcome.values[inner];
-  }
-
-  @protected
   PlansView sse_decode_plans_view(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_generation = sse_decode_u_32(deserializer);
@@ -7767,6 +7768,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       default:
         throw UnimplementedError('');
     }
+  }
+
+  @protected
+  RestoreSeen sse_decode_restore_seen(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return RestoreSeen.values[inner];
   }
 
   @protected
@@ -8064,20 +8072,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case 21:
         return StopCase_NoWifiGiven();
       case 22:
-        return StopCase_PlansUnreadable();
-      case 23:
         return StopCase_PromotionFailed();
-      case 24:
+      case 23:
         return StopCase_FellBack();
-      case 25:
-        return StopCase_PlansNotApplied();
-      case 26:
-        return StopCase_PlansUnknown();
-      case 27:
+      case 24:
         return StopCase_ServerFailed();
-      case 28:
+      case 25:
         return StopCase_Cancelled();
-      case 29:
+      case 26:
         return StopCase_Other();
       default:
         throw UnimplementedError('');
@@ -10067,30 +10069,28 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_String(broker, serializer);
       case InstallAsk_RestartFeeder():
         sse_encode_i_32(1, serializer);
-      case InstallAsk_EraseStockPlans():
-        sse_encode_i_32(2, serializer);
       case InstallAsk_JoinFeederNetwork():
-        sse_encode_i_32(3, serializer);
+        sse_encode_i_32(2, serializer);
       case InstallAsk_LeaveFeederNetwork():
-        sse_encode_i_32(4, serializer);
+        sse_encode_i_32(3, serializer);
       case InstallAsk_RecognizeFeeder(
         device: final device,
         address: final address,
       ):
-        sse_encode_i_32(5, serializer);
+        sse_encode_i_32(4, serializer);
         sse_encode_String(device, serializer);
         sse_encode_String(address, serializer);
       case InstallAsk_OpenRecoveryWindow():
-        sse_encode_i_32(6, serializer);
+        sse_encode_i_32(5, serializer);
       case InstallAsk_OpenLink():
-        sse_encode_i_32(7, serializer);
+        sse_encode_i_32(6, serializer);
       case InstallAsk_WriteLink(pieces: final pieces):
-        sse_encode_i_32(8, serializer);
+        sse_encode_i_32(7, serializer);
         sse_encode_list_list_prim_u_8_strict(pieces, serializer);
       case InstallAsk_CloseLink():
-        sse_encode_i_32(9, serializer);
+        sse_encode_i_32(8, serializer);
       case InstallAsk_Locate(identity: final identity):
-        sse_encode_i_32(10, serializer);
+        sse_encode_i_32(9, serializer);
         sse_encode_String(identity, serializer);
     }
   }
@@ -10182,35 +10182,21 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case InstallEvent_BackupKept(path: final path):
         sse_encode_i_32(19, serializer);
         sse_encode_String(path, serializer);
-      case InstallEvent_StockPlans(
-        converted: final converted,
-        refused: final refused,
-      ):
-        sse_encode_i_32(20, serializer);
-        sse_encode_u_8(converted, serializer);
-        sse_encode_u_8(refused, serializer);
-      case InstallEvent_WithoutStockPlans():
-        sse_encode_i_32(21, serializer);
       case InstallEvent_Promoting():
-        sse_encode_i_32(22, serializer);
+        sse_encode_i_32(20, serializer);
       case InstallEvent_Written(written: final written, length: final length):
-        sse_encode_i_32(23, serializer);
+        sse_encode_i_32(21, serializer);
         sse_encode_u_32(written, serializer);
         sse_encode_u_32(length, serializer);
       case InstallEvent_SessionDropped():
-        sse_encode_i_32(24, serializer);
+        sse_encode_i_32(22, serializer);
       case InstallEvent_Activated():
-        sse_encode_i_32(25, serializer);
-      case InstallEvent_PuttingPlans():
-        sse_encode_i_32(26, serializer);
+        sse_encode_i_32(23, serializer);
       case InstallEvent_Installed(build: final build):
-        sse_encode_i_32(27, serializer);
+        sse_encode_i_32(24, serializer);
         sse_encode_String(build, serializer);
-      case InstallEvent_Plans(result: final result):
-        sse_encode_i_32(28, serializer);
-        sse_encode_plans_outcome(result, serializer);
       case InstallEvent_Note(text: final text):
-        sse_encode_i_32(29, serializer);
+        sse_encode_i_32(25, serializer);
         sse_encode_String(text, serializer);
     }
   }
@@ -10229,7 +10215,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_String(self.imageDir, serializer);
     sse_encode_String(self.dataDir, serializer);
     sse_encode_bool(self.calibrateClock, serializer);
-    sse_encode_bool(self.withoutStockPlans, serializer);
     sse_encode_bool(self.forgetEnrollment, serializer);
     sse_encode_bool(self.setupAgain, serializer);
   }
@@ -11038,12 +11023,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  void sse_encode_plans_outcome(PlansOutcome self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_i_32(self.index, serializer);
-  }
-
-  @protected
   void sse_encode_plans_view(PlansView self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_u_32(self.generation, serializer);
@@ -11130,6 +11109,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_restore_stop(case_, serializer);
         sse_encode_String(detail, serializer);
     }
+  }
+
+  @protected
+  void sse_encode_restore_seen(RestoreSeen self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
   }
 
   @protected
@@ -11376,22 +11361,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_i_32(20, serializer);
       case StopCase_NoWifiGiven():
         sse_encode_i_32(21, serializer);
-      case StopCase_PlansUnreadable():
-        sse_encode_i_32(22, serializer);
       case StopCase_PromotionFailed():
-        sse_encode_i_32(23, serializer);
+        sse_encode_i_32(22, serializer);
       case StopCase_FellBack():
-        sse_encode_i_32(24, serializer);
-      case StopCase_PlansNotApplied():
-        sse_encode_i_32(25, serializer);
-      case StopCase_PlansUnknown():
-        sse_encode_i_32(26, serializer);
+        sse_encode_i_32(23, serializer);
       case StopCase_ServerFailed():
-        sse_encode_i_32(27, serializer);
+        sse_encode_i_32(24, serializer);
       case StopCase_Cancelled():
-        sse_encode_i_32(28, serializer);
+        sse_encode_i_32(25, serializer);
       case StopCase_Other():
-        sse_encode_i_32(29, serializer);
+        sse_encode_i_32(26, serializer);
     }
   }
 

@@ -85,6 +85,13 @@ class FakeRestorePorts implements RestorePorts {
   @override
   Future<String?> locate(String identity) async => located;
 
+  /// What a read over a session says.
+  RestoreSeen seen = RestoreSeen.idle;
+
+  @override
+  Future<RestoreSeen> readFeeder(List<int> identity, String address) async =>
+      seen;
+
   /// Where the feeder shows up on the network, if it does.
   String? located;
 
@@ -473,6 +480,28 @@ void main() {
       );
     });
 
+    testWidgets('a sighting that never reads idle says only that', (
+      tester,
+    ) async {
+      final ports = FakeRestorePorts()
+        ..located = '10.0.0.9:7700'
+        ..seen = RestoreSeen.unread;
+      await uncertain(tester, ports);
+      await tester.pump();
+      expect(find.text('Kitchen is still running Wellfed'), findsNothing);
+
+      await tester.pump(RestoreFlow.lookFor);
+      await tester.pump();
+
+      expect(find.text("We still can't tell"), findsOneWidget);
+      expect(find.text('Kitchen is still running Wellfed'), findsNothing);
+      expect(find.text('Restore again'), findsNothing);
+      expect(
+        find.textContaining('hold Reset', findRichText: true),
+        findsNothing,
+      );
+    });
+
     testWidgets('a feeder in setup warns off Reset and offers setup', (
       tester,
     ) async {
@@ -483,7 +512,7 @@ void main() {
 
       expect(find.text('Set it up'), findsOneWidget);
       expect(
-        find.textContaining("Don't hold Reset", findRichText: true),
+        find.textContaining("Don't hold Reset yet", findRichText: true),
         findsOneWidget,
       );
     });

@@ -72,8 +72,7 @@ pub const fn parity(op: &Op) -> Parity {
         | Op::UpdateChunk { .. }
         | Op::UpdateState
         | Op::CancelUpdate
-        | Op::ReadBank1 { .. }
-        | Op::ReadStockPlans => Without(NoRoute::Install),
+        | Op::ReadBank1 { .. } => Without(NoRoute::Install),
         Op::EnrollUpdateKey { .. } | Op::UpdateKeyStatement { .. } => Without(NoRoute::AtTheFeeder),
         Op::TailLog { .. } | Op::Stats { .. } | Op::FeedTrace { .. } => {
             Without(NoRoute::Diagnostics)

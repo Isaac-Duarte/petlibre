@@ -5,7 +5,7 @@
 
 use wellfed_feeder::feeder::Platform;
 use wellfed_fw_feeder::platform::Plaf103;
-use wellfed_proto::api::{BANK1_PAGE_MAX, STOCK_PLAN_ENTRIES_LEN};
+use wellfed_proto::api::BANK1_PAGE_MAX;
 use wellfed_sdk::hal::sdk::fake;
 
 #[test]
@@ -33,25 +33,4 @@ fn a_page_across_a_sector_boundary_reads_whole_and_only_from_bank_0() {
     assert!(!platform.bank1_read(0x15_0000 - 4, &mut tail));
     fake::with(|h| h.running_bank = Some(1));
     assert!(!platform.bank1_read(0, &mut page));
-}
-
-#[test]
-fn stock_s_plan_sectors_read_as_the_flash_holds_them() {
-    fake::reset_hardware();
-    let mut platform = Plaf103::new();
-    let mut entries = [0; STOCK_PLAN_ENTRIES_LEN];
-    assert_eq!(platform.stock_plans_read(&mut entries), Some(0xff));
-    assert_eq!(
-        entries, [0xff; STOCK_PLAN_ENTRIES_LEN],
-        "never saved: erased"
-    );
-
-    fake::with(|h| {
-        h.stock_plan_count = 3;
-        for (at, byte) in h.stock_plan_entries.iter_mut().enumerate() {
-            *byte = (at % 44) as u8;
-        }
-    });
-    assert_eq!(platform.stock_plans_read(&mut entries), Some(3));
-    assert_eq!(entries[45], 1);
 }

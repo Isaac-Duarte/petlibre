@@ -63,14 +63,10 @@ fn event_line(event: &InstallEvent) -> Option<String> {
         | InstallEvent::ReplacementAnswers { .. }
         | InstallEvent::ReadingBackup { .. }
         | InstallEvent::BackupKept { .. }
-        | InstallEvent::StockPlans { .. }
-        | InstallEvent::WithoutStockPlans
         | InstallEvent::Promoting
         | InstallEvent::SessionDropped
         | InstallEvent::Activated
-        | InstallEvent::PuttingPlans
         | InstallEvent::Installed { .. }
-        | InstallEvent::Plans { .. }
         | InstallEvent::Note { .. } => Some(format!("{event:?}")),
     }
 }
@@ -82,7 +78,6 @@ fn asked(ask: &InstallAsk) -> String {
 
         InstallAsk::SetOverride { .. }
         | InstallAsk::RestartFeeder
-        | InstallAsk::EraseStockPlans
         | InstallAsk::JoinFeederNetwork
         | InstallAsk::LeaveFeederNetwork
         | InstallAsk::RecognizeFeeder { .. }

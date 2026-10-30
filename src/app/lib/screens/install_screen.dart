@@ -279,7 +279,7 @@ class _Before extends StatelessWidget {
           title: "Through the feeder's own Wi-Fi",
           body:
               'The easy way. You hold Reset and this phone joins it for a '
-              "moment. Erases meals set in the vendor's app.",
+              'moment.',
         ),
         const SizedBox(height: Space.s3),
         _RouteChoice(
@@ -288,7 +288,15 @@ class _Before extends StatelessWidget {
           title: 'Through your router',
           body:
               "For a feeder already set up in the vendor's app. You add one "
-              'DNS record on your router. Keeps its meals.',
+              'DNS record on your router.',
+        ),
+        const SizedBox(height: Space.s4),
+        const Notice(
+          tone: Tone.warning,
+          lead: 'Its meals are erased either way.',
+          text:
+              "Write down any set in the vendor's app, and set them up again "
+              'in Wellfed afterwards.',
         ),
         if (refusal != null) ...[const SizedBox(height: Space.s4), refusal],
         if (flow.bluetoothRefused) ...[
@@ -1041,18 +1049,6 @@ class _DoneState extends State<_Done> {
   Widget build(BuildContext context) {
     final c = context.colors;
     final flow = widget.flow;
-    final meals = switch (flow.plans) {
-      PlansOutcome.set_ =>
-        flow.plansConverted == 1
-            ? 'Its meal came along.'
-            : 'Its ${flow.plansConverted} meals came along.',
-      PlansOutcome.noneHeld => 'It had no meals set.',
-      PlansOutcome.noneConverted =>
-        "Its meals couldn't be moved. Set them up again here.",
-      PlansOutcome.skipped || PlansOutcome.notRead =>
-        'Its meals stayed behind. Set them up again here.',
-      null => null,
-    };
     return Scaffold(
       body: SafeArea(
         child: ListView(
@@ -1076,10 +1072,8 @@ class _DoneState extends State<_Done> {
               ),
             ),
             const Headline('Your feeder runs Wellfed.', size: 32),
-            if (meals != null) ...[
-              const SizedBox(height: Space.s2),
-              Text(meals, style: bodyStyle(context)),
-            ],
+            const SizedBox(height: Space.s2),
+            Text('Set up its meals here next.', style: bodyStyle(context)),
             const SizedBox(height: Space.s5),
             LabeledField(
               label: 'Name it',
@@ -1180,10 +1174,6 @@ class _Stopped extends StatelessWidget {
         UncertainWrite.promotion =>
           'The feeder stopped answering while Wellfed became permanent. Leave '
               'it plugged in: picking up reads where it got to.',
-        UncertainWrite.plans =>
-          'Its meals may or may not have been set. Picking up reads them back '
-              'from the feeder, and sets them again only if nothing has changed '
-              'on it since. Otherwise it stops, and you check them yourself.',
       },
     ),
     StopCase_OtherFirmware(:final version) => (
@@ -1323,11 +1313,6 @@ class _Stopped extends StatelessWidget {
       'Nothing was sent. The feeder has no other way to join your network. '
           'Enter its name and password.',
     ),
-    StopCase_PlansUnreadable() => (
-      "Its meals couldn't be read",
-      'Nothing was made permanent: the feeder still holds its original '
-          'firmware. You can go on without them and set them up again here.',
-    ),
     StopCase_PromotionFailed() => (
       "Wellfed didn't become permanent",
       'The feeder runs Wellfed for now and still holds its original firmware.',
@@ -1336,17 +1321,6 @@ class _Stopped extends StatelessWidget {
       'It went back after restarting',
       "The new copy didn't confirm, so the feeder returned to the one it was "
           'running.',
-    ),
-    StopCase_PlansNotApplied() => (
-      'Wellfed is installed, but its meals are not',
-      "The feeder runs Wellfed. Its old meals weren't set on it. Set them up "
-          'again here.',
-    ),
-    StopCase_PlansUnknown() => (
-      "We don't know if its meals came along",
-      'The feeder runs Wellfed. Its old meals were sent, but they may not have '
-          'arrived, or something on the feeder has changed since, so they are '
-          'not sent again. Check its meals, and set up any that are missing.',
     ),
     StopCase_ServerFailed() => (
       "This phone couldn't serve the feeder",
@@ -1476,17 +1450,9 @@ class _Stopped extends StatelessWidget {
           () => unawaited(flow.again(calibrate: true)),
         ),
       ],
-      StopCase_PlansUnreadable() => [
-        primary(
-          'Go on without its meals',
-          () => unawaited(flow.again(withoutPlans: true)),
-        ),
-      ],
       StopCase_TwoFeeders() || StopCase_NotYourFeeder() => [
         primary('Start again', () => unawaited(flow.again(forget: true))),
       ],
-      StopCase_PlansNotApplied() ||
-      StopCase_PlansUnknown() => [primary('Go to Home', () => context.go('/'))],
       StopCase_NotJoined() => [
         primary('Enter the Wi-Fi again', flow.newWifiForSetup),
         const SizedBox(height: Space.s2),

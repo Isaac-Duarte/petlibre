@@ -52,6 +52,28 @@ pub fn forget_restore_key(data_dir: String, identity: Vec<u8>) {
     restore::forget_key(std::path::Path::new(&data_dir), &identity);
 }
 
+/// What a read over a session says of a feeder a restore lost sight of.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RestoreSeen {
+    /// It answers this phone's key, with no install in hand: it is on Wellfed.
+    Idle,
+    /// It answers, with an install running or activated: it may restart yet.
+    Installing,
+    /// No session opened, or no answer came: a sighting, and nothing more.
+    Unread,
+}
+
+/// Read the feeder at `address` over a session. A sighting on the network may
+/// come from a cache or a feeder about to restart, and only this says it runs
+/// Wellfed now. It sends nothing but the read.
+pub async fn read_restore_feeder(
+    key: &ClientKey,
+    identity: Vec<u8>,
+    address: String,
+) -> RestoreSeen {
+    restore::read_feeder(key, &identity, &address).await
+}
+
 /// Why a restore stopped with nothing put back, in the cases the screens tell
 /// apart.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

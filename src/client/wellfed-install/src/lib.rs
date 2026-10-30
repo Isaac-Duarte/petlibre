@@ -13,8 +13,8 @@
 //! - stock reaches the broker by DNS: the owner's resolver answers stock's
 //!   broker name with this host and the owner restarts the feeder (the run
 //!   guides it and looks the name up as advice; stock arriving at the broker
-//!   is the check); or by the setup frame: one UDP datagram, sent after the owner accepted that the Reset hold erases
-//!   stock's plans and joined this host to the feeder's setup access point;
+//!   is the check); or by the setup frame: one UDP datagram, sent after the owner
+//!   joined this host to the feeder's setup access point;
 //! - the replacement is reached over the device API with the platform's
 //!   client key. A key the build already knows opens a session at once.
 //!   Otherwise the review's provisioning picks the route: a consumer image

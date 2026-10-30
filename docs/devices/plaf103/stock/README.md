@@ -71,7 +71,7 @@ Stock's reply handler for `GET_FEEDING_PLAN_EVENT` erases and rewrites both plan
 
 How stock reads the reply is in [plan records](#how-stock-receives-plans).
 
-Our stock server answers that request only with a captured snapshot. An installer's config captures none, so the request goes unanswered and stock keeps its plans for the installer to import. The server never sends a plan message on its own. Nonempty plans are unvalidated for this release. While plans may exist, the `NTP` reply sets stock's clock only when the clock is already within 10 minutes of the server's, or when the owner passes `--calibrate-clock`; a captured nonempty snapshot holds it unless the flag is passed ([stock server](../../../development/stock-server.md#an-installers-server-trust-on-first-use)). Stock's `NTP` request carries its own clock in `ts` (observed). With its clock held two days behind, stock refused an install with error 1214 (observed once; the clock as the cause is likely, not confirmed statically). Before this change, our server answered an installer's config with `plans: []`, so installs run before then may have erased stock's table. Responses use the configured IANA time zone, including DST transitions. Stock's full time zone and timer activation, and how the cloud builds plans, remain unresolved.
+Our stock server answers that request only with a captured snapshot. An installer's config captures none, so the request goes unanswered and stock keeps its plans, for a rollback to find. The server never sends a plan message on its own. Nonempty plans are unvalidated for this release. While plans may exist, the `NTP` reply sets stock's clock only when the clock is already within 10 minutes of the server's, or when the owner passes `--calibrate-clock`; a captured nonempty snapshot holds it unless the flag is passed ([stock server](../../../development/stock-server.md#an-installers-server-trust-on-first-use)). Stock's `NTP` request carries its own clock in `ts` (observed). With its clock held two days behind, stock refused an install with error 1214 (observed once; the clock as the cause is likely, not confirmed statically). Before this change, our server answered an installer's config with `plans: []`, so installs run before then may have erased stock's table. Responses use the configured IANA time zone, including DST transitions. Stock's full time zone and timer activation, and how the cloud builds plans, remain unresolved.
 
 Wellfed's schedules will still need durable occurrence identities, a time zone and DST policy, restart reconciliation and explicit handling of interrupted meals. A successful manual feed says nothing about scheduled or unattended reliability.
 
@@ -95,14 +95,14 @@ What stock does at the edges of each feature, and what it writes as defaults whe
 
 #### Plan records
 
-Stock keeps its plans in two flash sectors and rereads them at every boot. The installer reads the same bytes from the replacement on bank 0 (`ReadStockPlans`) to import them before promotion ([consumer installation](../../../firmware/consumer-installation.md#the-installer)), and keeps them beside the stock backup. `wellfed-stock plans <file>` reads a flash read, the sectors alone or the installer's kept copy offline (`wellfed_client::install::plans`). Wellfed never writes either sector.
+Stock keeps its plans in two flash sectors and rereads them at every boot. Wellfed neither reads nor writes either sector, so a rollback finds them as stock left them.
 
-- **0x7d0000, the count.** One byte. Stock's boot reads an erased byte (0xff) as no plans, and reads the count without bounding it. Its setter never writes more than 10. A count over 10 makes the import refuse the whole table.
+- **0x7d0000, the count.** One byte. Stock's boot reads an erased byte (0xff) as no plans, and reads the count without bounding it. Its setter never writes more than 10.
 - **0x7d1000, the entries.** Count × 44 bytes, entry *i* in plan slot *i*. Bytes past the count are not read.
 - **Writes.** Each save erases the count sector and writes it, then erases the entries sector and writes it. Nothing makes the pair atomic:
-  - A cut after the count's erase leaves an erased count over the old entries. An empty save writes count 0, and a feeder that never saved has both sectors erased, so the import refuses an erased count over entries that are not erased.
-  - A cut between the two writes leaves the new count over the old or erased entries. The import refuses each erased entry by name.
-  - The same cut can bring back a one-off plan stock had just deleted, which then imports as once. Stock has the same flaw, and nothing in the sectors shows it.
+  - A cut after the count's erase leaves an erased count over the old entries. An empty save writes count 0, and a feeder that never saved has both sectors erased, so an erased count over entries that are not erased can only be such a cut.
+  - A cut between the two writes leaves the new count over the old or erased entries.
+  - The same cut can bring back a one-off plan stock had just deleted, and nothing in the sectors shows it.
 - **Deletes.** After a one-off plan's feed, stock zeroes its 44 bytes and keeps the count. An all-zero entry is a deleted plan.
 
 | Offset | Bytes | Field | Meaning |
@@ -143,24 +143,7 @@ Stock's reply handler for `GET_FEEDING_PLAN_EVENT` reads a root `plans` array (s
 
 Always send `repeatDay`. Without it, stock records an error, and whether the plan gets the one-off flag depends on the plan before it in the list.
 
-A plan whose `skipEndTime` lies far in the future is stored but never runs. The bench seeds stock's table this way to test the import without motion ([stock server](../../../development/stock-server.md#seed-stocks-plans-on-the-bench)).
-
-#### Importing them
-
-The import keeps each plan's slot and converts it to a [replacement plan](../../../firmware/schedules.md), or refuses it by name (slot, `planId` and time). It never drops a plan without saying so.
-
-| Stock plan | Replacement |
-| --- | --- |
-| Hour and minute | The same local time. In a half-hour zone the replacement runs it at the time the owner set, not 30 min off as stock did |
-| Repeat days 1–7 | Those weekdays |
-| One-off flag | Once, whatever its days say |
-| Portions 1–48 | The same |
-| `skipEndTime` still ahead | The plan, disabled, with a note: the replacement has no skip, and a meal the owner skipped must not run |
-| Meal call | Kept, with a note: `audioTimes` plays (at most 5) when `enableAudio` is set, none otherwise. Stock's clip is not carried over, so the call sounds once the owner uploads one |
-| Repeating plan due, waiting or resumed | The meal stock started or owed is dropped with a note; the plan runs from its next occurrence |
-| One-off plan due, waiting or resumed | Refused. Its feed may already have run before a cut, and run late it would be a day late |
-
-Also refused, each with its own reason: an erased entry, a time no day has (hour over 23 or minute over 59), portions 0 or over 48, a repeat-day value outside 1–7, no repeat day and no one-off flag (stock never runs it), and a run state stock never writes.
+A plan whose `skipEndTime` lies far in the future is stored but never runs.
 
 ### Feeding
 
@@ -238,8 +221,7 @@ Restarting only the stock server reproduced repeated startups and a KM4 watchdog
 - **Observed, October 23, 2026:** Wellfed's panel rules, with the owner pressing the buttons; also host-tested. Before the device API, the deleted MQTT transport's signed `lock` request did what `SetLock` does now.
 - **Recovered, October 24, 2026:** the feature limits and defaults, from a static pass over the 1.1.15 image and the vendor app, combined with the earlier Unicorn emulations of the plan, manual-feed, panel, audio and Wi-Fi handlers.
 - **Recovered, October 28, 2026:** the plan records, from a static pass over stock's plan boot load, setter, due check and feed-end delete in the 1.1.15 KM4 image. The weekday numbering, the stored byte widths and the millisecond times come from the October 18 Unicorn emulations of the setter and the calendar.
-- **Observed, October 28, 2026:** every full flash read of our feeder (October 18 to 26) holds count 0 and an erased entries sector, which is what stock's setter leaves for an empty plan list, as our server's `plans: []` replies wrote it. The decoder reads them as no plans. No read held a stored plan, so the entry layout is not yet checked against real bytes.
-- **Modeled, October 28, 2026:** the decoder and the conversion, host-tested on synthetic sectors.
+- **Observed, October 28, 2026:** every full flash read of our feeder (October 18 to 26) holds count 0 and an erased entries sector, which is what stock's setter leaves for an empty plan list, as our server's `plans: []` replies wrote it. Stock's boot reads them as no plans. No read held a stored plan, so the entry layout is not yet checked against real bytes.
 - **Recovered, October 28, 2026 (evening):** from a read-only static pass over the 1.1.15 KM4 image. The factory restore's erase list and its restart; that setup mode is entered only through it; the broker kept as a DNS name in `0x3e8000` on plaintext 1883; that `DEVICE_CONFIG_SYNC` and `WIFI_CHANGE_SERVICE` touch only their own settings; and the plan reply handler's fields and their mapping onto the 44-byte entry.
 - **Observed, October 23, 2026:** stock's boot through our bench server (`fw40-stock-ota-07-uart-01`, UART): the name looked up through two resolvers, the network's and a public one, and a set-up stock's first messages, with no `BINDING`. The settings record's offsets match every full flash read of our feeder.
 - **Recovered:** Bluetooth LE, from static analysis of the 1.1.15 KM4 image and the vendor app.

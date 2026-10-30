@@ -2,7 +2,7 @@
 //! build next boots on this feeder finds the owner went back to stock, and
 //! starts over as a first install does, with no Wi-Fi and no clients but the
 //! same identity (the owner's backup is filed by it), and no meals, so setup
-//! starts by itself and stock's plans import onto an empty table.
+//! starts by itself.
 //!
 //! Stock runs nothing of ours, so the clearing cannot happen until a Wellfed
 //! build boots again: a later install, or the loader falling back because

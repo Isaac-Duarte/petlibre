@@ -680,7 +680,7 @@ Unknown on hardware: whether stock posts its `softwareVersion` between taking th
 
 ### Install as a job
 
-`install` runs `wellfed install` ([consumer installation](../../firmware/consumer-installation.md)) as the server's job, so the server never stops for it. It takes the installer's bench flags, `--review`, `--stock-config`, and `--broker-name` (the DNS route) or `--from-bank0`, with `--manifest` or `--update-key`, `--home-network`, `--ble-address`, `--expect-device`, `--enroll-minutes`, `--calibrate-clock`, `--without-stock-plans`, `--keys` and `--address` passed through. `--virtual-panel` is the server's own: the installer never sees it. The setup-frame route (`--ssid`) and `--home-ssid` read a passphrase at a terminal and are no job; the bench uses the DNS route, and a consumer image's network comes from `--home-network private/hotspot.json`.
+`install` runs `wellfed install` ([consumer installation](../../firmware/consumer-installation.md)) as the server's job, so the server never stops for it. It takes the installer's bench flags, `--review`, `--stock-config`, and `--broker-name` (the DNS route) or `--from-bank0`, with `--manifest` or `--update-key`, `--home-network`, `--ble-address`, `--expect-device`, `--enroll-minutes`, `--calibrate-clock`, `--keys` and `--address` passed through. `--virtual-panel` is the server's own: the installer never sees it. The setup-frame route (`--ssid`) and `--home-ssid` read a passphrase at a terminal and are no job; the bench uses the DNS route, and a consumer image's network comes from `--home-network private/hotspot.json`.
 
 ```sh
 target/release/wellfed-bench install --review private/verification/<review> --manifest private/<manifest>.json \

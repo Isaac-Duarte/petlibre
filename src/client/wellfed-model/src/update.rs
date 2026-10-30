@@ -26,16 +26,6 @@ impl std::fmt::Debug for Bank1Page {
     }
 }
 
-/// Stock's plan sectors, as the bank-0 recovery role answers
-/// `ReadStockPlans`: the count byte and the first entries, as the flash
-/// holds them (`wellfed_client::install::plans::StockPlans::decode_parts`
-/// reads them).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct StockPlanSectors {
-    pub count: u8,
-    pub entries: Vec<u8>,
-}
-
 /// Where an update stands. The install does not depend on the session: a
 /// client that lost its connection reconnects, reads the state and sends
 /// what [`Self::wanted`] names.

@@ -1017,20 +1017,6 @@ fn messages() -> Vec<Fixture> {
             |b| decode::<EventBody>(b).is_ok(),
         ),
         (
-            "op-read-stock-plans",
-            entry(&request(Op::ReadStockPlans)),
-            client,
-        ),
-        (
-            "outcome-stock-plans",
-            entry(&response(Outcome::StockPlans(StockPlanSectors {
-                count: 1,
-                // A plan entry's first bytes: its id, then 07:30.
-                entries: &[0x65, 0, 0, 0, 30, 7],
-            }))),
-            feeder,
-        ),
-        (
             "event-food",
             entry(&EventBody::Food {
                 level: FoodLevel::Empty,

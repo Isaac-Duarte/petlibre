@@ -6,7 +6,8 @@
 //! `check-repository` checks local documentation links, portable repository
 //! inputs, that no Python returns under `src/`, and the source rules (raw
 //! output writers only through the HAL's owners, no board card ids), that
-//! each diagram in `docs/` still matches its Mermaid, then the server's crate
+//! each diagram in `docs/` still matches its Mermaid, that every device API op
+//! has a client in the CLI and the app, then the server's crate
 //! layering from `cargo metadata`. It is a maintenance check, not a secret
 //! scanner or a licensing audit.
 //!
@@ -19,6 +20,7 @@
 mod diagrams;
 mod fuzz;
 mod layers;
+mod op_clients;
 mod repository;
 
 use std::fmt::Write as _;

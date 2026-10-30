@@ -732,6 +732,10 @@ fn finish_handover(flash: &Rc<Flash>) {
     for unit in 0..storage::NET.count {
         net.erase(unit);
     }
+    let plans = Region::new(flash, storage::PLANS);
+    for unit in 0..storage::PLANS.count {
+        plans.erase(unit);
+    }
     let mut clients = ClientStore::default();
     clients.open(Region::new(flash, storage::CLIENTS));
     if let Some(identity) = clients.identity().copied() {

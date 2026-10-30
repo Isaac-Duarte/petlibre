@@ -291,8 +291,8 @@ pub enum Record {
     /// The statistics' wear-only save failed, so the reset erased them:
     /// the erase counts are lost, and the reset goes on.
     ResetWearLost,
-    /// The handover from stock's activation is done: Wi-Fi and clients went,
-    /// unless the build has its own Wi-Fi and keeps its bench key (`cleared`).
+    /// The handover from stock's activation is done: Wi-Fi, plans and clients
+    /// went, unless the build has its own Wi-Fi and keeps its bench key (`cleared`).
     HandoverDone {
         cleared: bool,
     },
@@ -1179,7 +1179,8 @@ impl<F: FlashOps> Writer<F> {
         status
     }
 
-    /// One step of the handover: each under its own write turn and attempt
+    /// One step of the handover: the Wi-Fi's two sectors, the plans' two, the
+    /// clients, then the mark, each under its own write turn and attempt
     /// marker. A cut anywhere repeats it, since the mark goes last. A build
     /// with Wi-Fi of its own is a bench image, which pairs through the
     /// recovery window rather than Bluetooth, so it keeps its stores and only
@@ -1199,13 +1200,16 @@ impl<F: FlashOps> Writer<F> {
         let clears = !cfg!(build_wifi);
         arming::set_attempt();
         let done = match step {
-            0 | 1 if !clears => true,
+            0..=4 if !clears => true,
             0 | 1 => {
                 let sector = NET_BASE + u32::from(step);
                 F::erase(sector) && blank::<F>(sector)
             }
-            2 if !clears => true,
-            2 => {
+            2 | 3 => {
+                let sector = PLANS_BASE + u32::from(step - 2);
+                F::erase(sector) && blank::<F>(sector)
+            }
+            4 => {
                 self.clients.open(Slots::new());
                 match self.clients.identity().copied() {
                     Some(identity) => self.clients.reset(&identity).is_ok(),
@@ -1220,7 +1224,7 @@ impl<F: FlashOps> Writer<F> {
         if !done {
             return self.handover_end(Record::HandoverStopped { stage: step });
         }
-        if step < 3 {
+        if step < 5 {
             self.handing_over = Some(step + 1);
             return next(RESET_POLL_MS, None);
         }
@@ -1229,8 +1233,13 @@ impl<F: FlashOps> Writer<F> {
 
     fn handover_end(&mut self, record: Record) -> Step {
         self.handing_over = None;
+        if matches!(record, Record::HandoverStopped { .. }) {
+            network::handover_put_off();
+        }
         self.net = NetStore::default();
         self.net.open(Slots::new());
+        self.plans = PlansStore::default();
+        self.plans.open(Slots::new());
         self.publish();
         next(POLL_MS, Some(record))
     }

@@ -1904,7 +1904,9 @@ fn reset_boot(provider: &mut Provider, steps: Option<usize>) -> Vec<Record> {
 
 /// A paired feeder on Wi-Fi with one more boot to go: the identity it has.
 fn paired_with_wifi() -> (MutexGuard<'static, ()>, Provider, [u8; 32]) {
+    use wellfed_device_api::mailbox::{PLANS, Plan, PlansChange, Weekdays};
     use wellfed_device_api::wifi::Credentials;
+    use wellfed_feeder_runtime::plans;
 
     let (guard, mut writer, mut provider) = start();
     fake::with(|h| h.adc_noise = 0x0f0f_5a5a);
@@ -1914,6 +1916,24 @@ fn paired_with_wifi() -> (MutexGuard<'static, ()>, Provider, [u8; 32]) {
     }
     network::change(Some(Credentials::new(b"home", b"passphrase").unwrap()));
     step(&mut writer, &mut provider);
+    let mut table = [None; PLANS];
+    table[0] = Some(Plan {
+        minute: 8 * 60,
+        portions: 2,
+        days: Weekdays::EVERY_DAY,
+        enabled: true,
+        call: 0,
+    });
+    plans::change(PlansChange::Replace {
+        table,
+        at_s: Some(1_000),
+    });
+    step(&mut writer, &mut provider);
+    assert!(
+        sectors(wellfed_hal::plaf103::storage::PLANS)
+            .iter()
+            .any(|&b| b != 0xff)
+    );
     let phone = Change::Enroll {
         key: [7; 32],
         label: Label::new(b"phone").unwrap(),
@@ -1933,7 +1953,7 @@ fn storage_reset_first() -> usize {
     wellfed_hal::plaf103::storage::RESET.first as usize * 0x1000
 }
 
-/// The boot that finds the handover mark clears the Wi-Fi and the clients,
+/// The boot that finds the handover mark clears the Wi-Fi, plans and clients,
 /// keeps the identity the backup is filed by, publishes nothing stale, and
 /// erases the mark, so a later boot keeps whatever pairing comes next.
 #[test]
@@ -1950,6 +1970,7 @@ fn a_handover_clears_wifi_and_clients_and_keeps_the_identity() {
         "{records:?}"
     );
     assert!(sectors(storage::NET).iter().all(|&byte| byte == 0xff));
+    assert!(sectors(storage::PLANS).iter().all(|&byte| byte == 0xff));
     assert!(sectors(storage::RESET).iter().all(|&byte| byte == 0xff));
     assert_eq!(keys::identity_since(0).map(|(_, key)| key), Some(identity));
     assert!(
@@ -1971,7 +1992,7 @@ fn a_handover_clears_wifi_and_clients_and_keeps_the_identity() {
 fn a_cut_during_a_handover_repeats_it() {
     use wellfed_hal::plaf103::storage;
 
-    for cut in 1..5 {
+    for cut in 1..7 {
         let (guard, mut provider, identity) = paired_with_wifi();
         plant_handover();
 

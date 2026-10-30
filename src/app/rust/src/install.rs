@@ -32,7 +32,7 @@ use wellfed_install::listen::{self, Listened, UNCERTAIN_WAIT};
 use wellfed_install::{
     Announcement, Api, Bluetooth, ClockPolicy, Discovery, Error, Event, Keys, Plan, Platform,
     PlatformError, Prompter, Refusal, Rejection, Report, Review, SetupLink, Signer, Start,
-    StockOptions, Stop, Unsettled,
+    StockOptions, Stop, Unjoined, Unsettled,
 };
 use wellfed_session::noise::Keypair;
 
@@ -712,16 +712,20 @@ const fn uncertain_write(write: UncertainWrite) -> (StopCase, Resume) {
 }
 
 /// A wait that ran out. Before the request nothing was sent. After it, with
-/// no replacement answering yet, the request may have done anything.
+/// no replacement answering yet, the request may have done anything, unless the
+/// replacement already took its Wi-Fi.
 const fn timed_out(phase: Phase, from_stock: bool) -> (StopCase, Resume) {
     match phase {
         Phase::Provision | Phase::AwaitStock | Phase::ConfirmFeeder | Phase::Request => {
             (StopCase::NoFeederCame, Resume::FromStart)
         }
-        Phase::AwaitInstall | Phase::Pair | Phase::Join | Phase::ReadStatus if from_stock => {
+        // It took the Wi-Fi over Bluetooth, so a new run has only that to do
+        // again, and asks stock nothing.
+        Phase::Join => (StopCase::NotJoined, Resume::FromBank0),
+        Phase::AwaitInstall | Phase::Pair | Phase::ReadStatus if from_stock => {
             (StopCase::Uncertain, Resume::Nothing)
         }
-        Phase::Pair | Phase::Join | Phase::ReadStatus | Phase::AwaitInstall => {
+        Phase::Pair | Phase::ReadStatus | Phase::AwaitInstall => {
             (StopCase::NoSetupFeeder, Resume::FromBank0)
         }
         _ => (StopCase::Other, Resume::FromBank0),
@@ -746,6 +750,11 @@ enum NotPlanned {
     /// The image is not the one this build may install. The screen refuses
     /// it first; a run does not take the screen's word for it.
     Image(ImageCheck),
+    /// What the run was given cannot start it, which a new one can fix.
+    Spec {
+        case: StopCase,
+        detail: String,
+    },
     Run(Error),
 }
 
@@ -773,14 +782,47 @@ fn plan(
     })?;
     let version = manifest_version(&manifest).ok_or(Error::NoManifest)?;
 
+    let from_stock = matches!(spec.start, InstallStart::Dns { .. });
+    let unjoined = if spec.setup_again {
+        Unjoined::SetUpAgain
+    } else {
+        Unjoined::Wait
+    };
+
+    // A bench image joins its build network, and takes no Wi-Fi. A consumer
+    // one has only what setup gives it, so nothing that may send it there goes
+    // without: stock's request above all, which cannot be taken back.
+    let consumer = review.provisioning() == Provisioning::Consumer;
+    if consumer && spec.home.is_none() && (from_stock || unjoined == Unjoined::SetUpAgain) {
+        return Err(NotPlanned::Spec {
+            case: StopCase::NoWifiGiven,
+            detail: Error::NoHomeNetwork.to_string(),
+        });
+    }
+    let home = match spec.home {
+        Some(wifi) if consumer => Some(
+            Credentials::new(wifi.ssid.into_bytes(), wifi.passphrase).map_err(|error| {
+                NotPlanned::Spec {
+                    case: StopCase::WifiRefused,
+                    detail: text(&error),
+                }
+            })?,
+        ),
+        _ => None,
+    };
+
     let data = Path::new(&spec.data_dir);
-    let phone: IpAddr = spec.phone_ip.parse().map_err(|_| Error::NoAddress)?;
+    let phone: IpAddr = spec.phone_ip.parse().map_err(|_| NotPlanned::Spec {
+        case: StopCase::PhoneOffWifi,
+        detail: format!("this phone's address is {:?}", spec.phone_ip),
+    })?;
     let config = installer_config(data, phone)?;
-    if spec.forget_enrollment {
+    // Only for a new request: a run from bank 0 finds its own record through
+    // the feeder this broker trusted.
+    if spec.forget_enrollment && from_stock {
         wellfed_install::stock::forget_enrollment(&config)?;
     }
 
-    let from_stock = matches!(spec.start, InstallStart::Dns { .. });
     let start = match &spec.start {
         InstallStart::Dns { name } => {
             let broker = SocketAddr::new(phone, STOCK_BROKER_PORT);
@@ -789,15 +831,6 @@ fn plan(
             Start::Stock(Provision::Dns(dns))
         }
         InstallStart::Bank0 => Start::Bank0,
-    };
-
-    // A bench image joins its build network, and takes no Wi-Fi.
-    let home = match (review.provisioning(), spec.home) {
-        (Provisioning::Consumer, Some(wifi)) => Some(
-            Credentials::new(wifi.ssid.into_bytes(), wifi.passphrase)
-                .map_err(Error::SetupSession)?,
-        ),
-        _ => None,
     };
 
     let plan = Plan {
@@ -815,6 +848,7 @@ fn plan(
             .address
             .as_deref()
             .and_then(|address| wellfed_connect::parse_address(address).ok()),
+        unjoined,
         backups: data.join(BACKUPS),
         stock: StockOptions {
             config,
@@ -959,8 +993,20 @@ fn run_on_this_thread(
         }
     };
 
+    let again = if matches!(spec.start, InstallStart::Dns { .. }) {
+        Resume::FromStart
+    } else {
+        Resume::FromBank0
+    };
     let (plan, keys, from_stock) = match plan(spec, keypair, pin) {
         Ok(planned) => planned,
+        Err(NotPlanned::Spec { case, detail }) => {
+            return InstallEnd::Stopped {
+                case,
+                resume: again,
+                detail,
+            };
+        }
         Err(NotPlanned::Image(refused)) => {
             return InstallEnd::Stopped {
                 case: StopCase::Other,
@@ -1164,12 +1210,7 @@ mod tests {
             timed_out(Phase::AwaitStock, true),
             (StopCase::NoFeederCame, Resume::FromStart)
         );
-        for phase in [
-            Phase::AwaitInstall,
-            Phase::Pair,
-            Phase::Join,
-            Phase::ReadStatus,
-        ] {
+        for phase in [Phase::AwaitInstall, Phase::Pair, Phase::ReadStatus] {
             assert_eq!(
                 timed_out(phase, true),
                 (StopCase::Uncertain, Resume::Nothing)
@@ -1177,6 +1218,15 @@ mod tests {
             assert_eq!(
                 timed_out(phase, false),
                 (StopCase::NoSetupFeeder, Resume::FromBank0)
+            );
+        }
+
+        // A feeder that took the Wi-Fi and never joined it: the owner can give
+        // it another, and nothing goes to stock.
+        for from_stock in [true, false] {
+            assert_eq!(
+                timed_out(Phase::Join, from_stock),
+                (StopCase::NotJoined, Resume::FromBank0)
             );
         }
     }

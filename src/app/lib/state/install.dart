@@ -142,6 +142,15 @@ class InstallFlow extends ChangeNotifier {
   bool _withoutPlans = false;
   bool _forget = false;
 
+  /// The owner gave a new Wi-Fi for a feeder that never joined: the run goes
+  /// through Bluetooth setup again, and the claim screen says how to get the
+  /// feeder there.
+  bool settingUpAgain = false;
+
+  /// Android refused Bluetooth to a pick-up that may need it.
+  bool bluetoothRefused = false;
+  bool _permitted = false;
+
   InstallRun? _run;
   StreamSubscription<InstallUpdate>? _updates;
   InstallLink? _link;
@@ -154,7 +163,8 @@ class InstallFlow extends ChangeNotifier {
   /// the broker alive.
   bool holdRefused = false;
 
-  /// A pick-up asked for the Wi-Fi first: it goes on once it has it.
+  /// A pick-up asked for the phone's name or the Wi-Fi first: it goes on once
+  /// it has them.
   bool _resumeAfterWifi = false;
   String? _resumeAddress;
   bool _disposed = false;
@@ -197,15 +207,29 @@ class InstallFlow extends ChangeNotifier {
   /// On from the first screen: the phone's name if it has none, then the
   /// Wi-Fi a consumer image needs, then the record.
   Future<bool> begin() async {
-    final bluetooth = provisioning == ImageProvisioning.consumer;
-    if (!await _ports.askPermissions(bluetooth: bluetooth)) return false;
+    if (!await _permissions()) return false;
     phoneIp = await _ports.phoneAddress();
     _nextAfter(InstallStage.before);
     return true;
   }
 
+  /// What the install needs from Android. Every way into a run or a listener
+  /// comes through here, since a fresh launch can take any of them first.
+  Future<bool> _permissions() async {
+    if (_permitted) return true;
+    final bluetooth = provisioning == ImageProvisioning.consumer;
+    _permitted = await _ports.askPermissions(bluetooth: bluetooth);
+    bluetoothRefused = !_permitted;
+    return _permitted;
+  }
+
   Future<void> setLabel(String label) async {
     await _book.setLabel(label);
+    if (_resumeAfterWifi) {
+      _resumeAfterWifi = false;
+      unawaited(resume(address: _resumeAddress));
+      return;
+    }
     _nextAfter(InstallStage.naming);
   }
 
@@ -219,7 +243,18 @@ class InstallFlow extends ChangeNotifier {
     _nextAfter(InstallStage.wifi);
   }
 
-  void back(InstallStage to) => _go(to);
+  /// Back out of a screen. A pick-up that asked for it ends here: Continue from
+  /// the first screen is the owner's choice of a new request.
+  void back(InstallStage to) {
+    _resumeAfterWifi = false;
+    _resumeAddress = null;
+    settingUpAgain = false;
+    final paths = _paths;
+    if (to == InstallStage.before && paths != null) {
+      pending = _ports.pending(paths);
+    }
+    _go(to);
+  }
 
   void _nextAfter(InstallStage from) {
     final consumer = provisioning == ImageProvisioning.consumer;
@@ -262,8 +297,19 @@ class InstallFlow extends ChangeNotifier {
   /// setup, which only an earlier run on this screen would have asked for.
   Future<void> resume({String? address}) async {
     if (_run != null) return;
+    if (!await _permissions()) {
+      _notify();
+      return;
+    }
     _stopListening();
     listening = Listening.idle;
+    if (_book.label.isEmpty) {
+      _resumeAfterWifi = true;
+      _resumeAddress = address;
+      stop = null;
+      _go(InstallStage.naming);
+      return;
+    }
     if (provisioning == ImageProvisioning.consumer &&
         pending != PendingInstall.paired &&
         address == null &&
@@ -284,6 +330,10 @@ class InstallFlow extends ChangeNotifier {
   /// A request from an earlier run has no settled outcome: listen for what
   /// became of it, as a run that just stopped there would.
   Future<void> listenForOpenRequest() async {
+    if (!await _permissions()) {
+      _notify();
+      return;
+    }
     stop = InstallEnd_Stopped(
       case_: const StopCase.uncertain(),
       resume: Resume.nothing,
@@ -310,6 +360,34 @@ class InstallFlow extends ChangeNotifier {
     sessionDropped = false;
   }
 
+  /// A feeder that never joined: take a new Wi-Fi and go through Bluetooth
+  /// setup again. Only stock's request cannot be sent twice, and this asks stock
+  /// nothing.
+  void newWifiForSetup() {
+    settingUpAgain = true;
+    _home = null;
+    _resumeAfterWifi = true;
+    _resumeAddress = null;
+    stop = null;
+    _go(InstallStage.wifi);
+  }
+
+  /// Wi-Fi the feeder could not be given, or none: ask again, and go on by the
+  /// route that stopped.
+  void changeWifi() {
+    _home = null;
+    _resumeAfterWifi = stop?.resume == Resume.fromBank0;
+    _resumeAddress = null;
+    stop = null;
+    _go(InstallStage.wifi);
+  }
+
+  /// A feeder that never joined may still be restarting: look again.
+  Future<void> keepWaiting() async {
+    settingUpAgain = false;
+    await again();
+  }
+
   /// The stop's way on: from the start, or from bank 0, as the run said.
   Future<void> again({
     bool calibrate = false,
@@ -324,13 +402,25 @@ class InstallFlow extends ChangeNotifier {
       await resume();
       return;
     }
+    if (!await _permissions()) {
+      _notify();
+      return;
+    }
+    phoneIp = await _ports.phoneAddress();
     stop = null;
     _resetProgress();
     listening = Listening.idle;
     waitReason = null;
     restartAgain = false;
     dns = null;
-    _go(InstallStage.record);
+    // A fresh launch can get here from an open request, with neither asked yet.
+    if (_book.label.isEmpty) {
+      _go(InstallStage.naming);
+    } else if (provisioning == ImageProvisioning.consumer && _home == null) {
+      _go(InstallStage.wifi);
+    } else {
+      _go(InstallStage.record);
+    }
   }
 
   Future<void> _start(InstallStart start, String ip, {String? address}) async {
@@ -355,6 +445,7 @@ class InstallFlow extends ChangeNotifier {
         calibrateClock: _calibrate,
         withoutStockPlans: _withoutPlans,
         forgetEnrollment: forget,
+        setupAgain: settingUpAgain,
       ),
     );
     _run = run;
@@ -499,6 +590,7 @@ class InstallFlow extends ChangeNotifier {
         joining = rebooting ? CheckState.running : CheckState.waiting;
       case InstallEvent_Joined(:final address):
         stage = InstallStage.finishing;
+        settingUpAgain = false;
         _address = address;
         joining = CheckState.done;
       case InstallEvent_ReplacementAnswers():

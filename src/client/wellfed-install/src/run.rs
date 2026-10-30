@@ -79,6 +79,17 @@ pub enum Start {
     Bank0,
 }
 
+/// What a run does about a feeder an earlier run gave Wi-Fi to, when it does not
+/// answer on the network.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Unjoined {
+    /// Wait for it to join: it may be restarting still.
+    Wait,
+    /// Go through Bluetooth setup again with `Plan::home`: the owner says the
+    /// Wi-Fi it was given was wrong, and has put it back in setup mode.
+    SetUpAgain,
+}
+
 /// What the promotion into bank 1 is signed with.
 pub enum Signer {
     /// An update manifest for the build, signed elsewhere at `version`,
@@ -116,6 +127,8 @@ pub struct Plan {
     pub feeder: Option<String>,
     /// The replacement's address; where it answered or stock connected
     /// from otherwise.
+    /// What to do about a paired feeder that never joined.
+    pub unjoined: Unjoined,
     pub address: Option<SocketAddr>,
     /// The owner's data directory: one subdirectory per feeder, and the
     /// resume record ([`crate::storage`]).
@@ -223,19 +236,68 @@ fn lookup(
     }
 }
 
-/// What a lookup that found its feeder `answered` (or not) means: paired
-/// there, setup next (`None`), or a stop when this install's own feeder no
-/// longer answers.
+/// What a run does after its lookup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Looked {
+    /// Paired already, and answering there.
+    Paired([u8; 32], SocketAddr),
+    /// Paired over Bluetooth by a run that never saw it join: it may be
+    /// restarting still, so this run waits as that one would have.
+    Rejoining([u8; 32]),
+    /// Bluetooth setup.
+    SetUp,
+}
+
+/// What a lookup that found its feeder `answered` (or not) means. This
+/// install's own feeder no longer answering is a stop, unless it never
+/// answered yet.
 fn looked_up(
     lookup: Lookup,
     answered: Option<SocketAddr>,
-) -> Result<Option<([u8; 32], SocketAddr)>, Error> {
+    unjoined: Unjoined,
+) -> Result<Looked, Error> {
     match (lookup, answered) {
         (Lookup::Recorded { identity, .. } | Lookup::KeyFile { identity }, Some(address)) => {
-            Ok(Some((identity, address)))
+            Ok(Looked::Paired(identity, address))
         }
+        (
+            Lookup::Recorded {
+                identity,
+                last: None,
+            },
+            None,
+        ) => Ok(match unjoined {
+            Unjoined::Wait => Looked::Rejoining(identity),
+            Unjoined::SetUpAgain => Looked::SetUp,
+        }),
         (Lookup::Recorded { identity, .. }, None) => Err(Error::NotAnswering { feeder: identity }),
-        (Lookup::KeyFile { .. } | Lookup::Setup, _) => Ok(None),
+        (Lookup::KeyFile { .. } | Lookup::Setup, _) => Ok(Looked::SetUp),
+    }
+}
+
+/// What the one request came to, and why when the server refused it: refused
+/// only on the server's word and a ledger read that shows no record; anything
+/// unread or unanswered is uncertain, since a refused call may still have
+/// recorded the request (a dropped broker session marks it uncertain).
+fn judged<T, E>(
+    answered: &Result<T, Refusal>,
+    recorded: &Result<Option<TrialPhase>, E>,
+) -> (Requested, Option<Refusal>) {
+    match (answered, recorded) {
+        (Ok(_), _) | (_, Ok(Some(TrialPhase::Submitted))) => (Requested::Sent, None),
+        (Err(refusal @ (Refusal::Contested | Refusal::Rejected(_))), Ok(None)) => {
+            (Requested::Refused, Some(*refusal))
+        }
+        _ => (Requested::Uncertain, None),
+    }
+}
+
+/// The error a failed step ends the run with: a refused request keeps the
+/// server's reason.
+fn failure(error: InstallError, refused: Option<Refusal>) -> Error {
+    match (error, refused) {
+        (InstallError::RequestRefused, Some(refusal)) => Error::RequestRefused(refusal),
+        (error, _) => Error::Steps(error),
     }
 }
 
@@ -340,6 +402,7 @@ struct Run<P, B, D, K, R> {
     expect_device: Option<String>,
     feeder: Option<String>,
     address: Option<SocketAddr>,
+    unjoined: Unjoined,
     backups: PathBuf,
     /// The one request's id, once made.
     request: Option<uuid::Uuid>,
@@ -421,6 +484,7 @@ where
             expect_device: plan.expect_device,
             feeder: plan.feeder,
             address: plan.address,
+            unjoined: plan.unjoined,
             backups: plan.backups,
             request: None,
             peer: None,
@@ -545,13 +609,7 @@ where
                     self.done(install)?;
                     return Ok(());
                 }
-                Step::Failed(InstallError::RequestRefused) if self.refused.is_some() => {
-                    return Err(self.refused.take().map_or(
-                        Error::Steps(InstallError::RequestRefused),
-                        Error::RequestRefused,
-                    ));
-                }
-                Step::Failed(error) => return Err(Error::Steps(error)),
+                Step::Failed(error) => return Err(failure(error, self.refused.take())),
             }
         }
     }
@@ -679,8 +737,7 @@ where
     }
 
     /// Serve the image and ask once. What the server answered is read back
-    /// from its ledger, since a refused call may still have recorded the
-    /// request (a dropped broker session marks it uncertain).
+    /// from its ledger ([`judged`]).
     async fn request(&mut self) -> Result<Requested, Error> {
         let lease = self.stock.images(&self.review.directory).await?;
         let id = uuid::Uuid::new_v4();
@@ -698,21 +755,14 @@ where
         self.track.sent(Unsettled::Request(id));
         let answered = self.stock.trial(input).await;
 
-        // Refused only on the server's word and a ledger read that shows no
-        // record; anything unread or unanswered is uncertain.
         let recorded = self
             .stock
             .status()
             .await
             .map(|status| status.trial(&id.to_string()).map(|trial| trial.phase));
-        Ok(match (answered, recorded) {
-            (Ok(_), _) | (_, Ok(Some(TrialPhase::Submitted))) => Requested::Sent,
-            (Err(refusal @ (Refusal::Contested | Refusal::Rejected(_))), Ok(None)) => {
-                self.refused = Some(refusal);
-                Requested::Refused
-            }
-            _ => Requested::Uncertain,
-        })
+        let (requested, refused) = judged(&answered, &recorded);
+        self.refused = refused;
+        Ok(requested)
     }
 
     /// Stock's reports on this run's request, until its session ends.
@@ -869,28 +919,22 @@ where
             Lookup::KeyFile { identity } => self.answering(identity, Look::Known, None).await,
             Lookup::Setup => None,
         };
-        // Paired over Bluetooth by a run that never saw it join: it may be
-        // restarting still, so this run waits as that one would have.
-        if let (
-            Lookup::Recorded {
-                identity,
-                last: None,
-            },
-            None,
-        ) = (lookup, answered)
-        {
-            self.io.report.event(Event::Rejoining { identity });
-            self.identity = Some(identity);
-            install.set_up();
-            return Ok(());
-        }
-        if let Some((identity, address)) = looked_up(lookup, answered)? {
-            self.io
-                .report
-                .event(Event::KeyKnownAt { identity, address });
-            self.paired_at(identity, address)?;
-            install.paired();
-            return Ok(());
+        match looked_up(lookup, answered, self.unjoined)? {
+            Looked::Paired(identity, address) => {
+                self.io
+                    .report
+                    .event(Event::KeyKnownAt { identity, address });
+                self.paired_at(identity, address)?;
+                install.paired();
+                return Ok(());
+            }
+            Looked::Rejoining(identity) => {
+                self.io.report.event(Event::Rejoining { identity });
+                self.identity = Some(identity);
+                install.set_up();
+                return Ok(());
+            }
+            Looked::SetUp => {}
         }
 
         let Some(wifi) = self.home.clone() else {
@@ -1423,6 +1467,7 @@ mod tests {
     use super::*;
     use crate::tests::Scripted;
     use wellfed_client::update::{Installer, Next};
+    use wellfed_stock::controller::Rejection;
 
     /// A session lost after the last chunk, reopened once the feeder
     /// restarted into its trial boot, is the activation: the manifest is not
@@ -1560,23 +1605,100 @@ mod tests {
 
         // This install's feeder not answering stops the run.
         let here: SocketAddr = "192.168.4.31:7100".parse().unwrap();
+        let wait = Unjoined::Wait;
         assert!(matches!(
-            looked_up(ours, None),
+            looked_up(ours, None, wait),
             Err(Error::NotAnswering { .. })
         ));
         assert_eq!(
-            looked_up(ours, Some(here)).unwrap(),
-            Some(([0xab; 32], here))
+            looked_up(ours, Some(here), wait).unwrap(),
+            Looked::Paired([0xab; 32], here)
+        );
+        // Setting it up again is for a feeder that never joined, and one that
+        // answers needs none.
+        assert!(matches!(
+            looked_up(ours, None, Unjoined::SetUpAgain),
+            Err(Error::NotAnswering { .. })
+        ));
+        let never_joined = Lookup::Recorded {
+            identity: [0xab; 32],
+            last: None,
+        };
+        assert_eq!(
+            looked_up(never_joined, None, wait).unwrap(),
+            Looked::Rejoining([0xab; 32])
+        );
+        assert_eq!(
+            looked_up(never_joined, None, Unjoined::SetUpAgain).unwrap(),
+            Looked::SetUp
+        );
+        assert_eq!(
+            looked_up(never_joined, Some(here), Unjoined::SetUpAgain).unwrap(),
+            Looked::Paired([0xab; 32], here)
         );
         // The key's feeder not answering falls through to setup.
         let key = Lookup::KeyFile {
             identity: [0xcd; 32],
         };
-        assert_eq!(looked_up(key, None).unwrap(), None);
+        assert_eq!(looked_up(key, None, wait).unwrap(), Looked::SetUp);
         assert_eq!(
-            looked_up(key, Some(here)).unwrap(),
-            Some(([0xcd; 32], here))
+            looked_up(key, Some(here), wait).unwrap(),
+            Looked::Paired([0xcd; 32], here)
         );
-        assert_eq!(looked_up(Lookup::Setup, None).unwrap(), None);
+        assert_eq!(looked_up(Lookup::Setup, None, wait).unwrap(), Looked::SetUp);
+    }
+
+    /// Refused is the server's word with no record in its ledger, and keeps
+    /// the server's reason to the end of the run; anything else that was not
+    /// plainly sent is uncertain, and is never asked again.
+    #[test]
+    fn a_request_is_refused_only_on_the_servers_word_and_an_empty_ledger() {
+        let offline = Refusal::Rejected(Rejection::Offline);
+        let refused: Result<(), Refusal> = Err(offline);
+        let no_record: Result<_, ()> = Ok(None);
+
+        assert_eq!(
+            judged(&refused, &no_record),
+            (Requested::Refused, Some(offline))
+        );
+        assert_eq!(
+            judged(&Err::<(), _>(Refusal::Contested), &no_record),
+            (Requested::Refused, Some(Refusal::Contested))
+        );
+
+        // The call's own answer, or the record it left, shows it went.
+        assert_eq!(judged(&Ok(()), &Err::<_, ()>(())), (Requested::Sent, None));
+        assert_eq!(
+            judged(&refused, &Ok::<_, ()>(Some(TrialPhase::Submitted))),
+            (Requested::Sent, None)
+        );
+
+        // A record in another phase, an unread ledger, or no answer at all.
+        assert_eq!(
+            judged(&refused, &Ok::<_, ()>(Some(TrialPhase::Uncertain))),
+            (Requested::Uncertain, None)
+        );
+        assert_eq!(
+            judged(&refused, &Err::<_, ()>(())),
+            (Requested::Uncertain, None)
+        );
+        assert_eq!(
+            judged(&Err::<(), _>(Refusal::Unanswered), &no_record),
+            (Requested::Uncertain, None)
+        );
+
+        // The steps' refusal ends the run with the reason, or plainly with none.
+        assert!(matches!(
+            failure(InstallError::RequestRefused, Some(offline)),
+            Error::RequestRefused(reason) if reason == offline
+        ));
+        assert!(matches!(
+            failure(InstallError::RequestRefused, None),
+            Error::Steps(InstallError::RequestRefused)
+        ));
+        assert!(matches!(
+            failure(InstallError::Contested, Some(offline)),
+            Error::Steps(InstallError::Contested)
+        ));
     }
 }

@@ -331,6 +331,7 @@ pub(crate) async fn run(args: InstallArgs) -> Result<()> {
         expect_device: args.expect_device.clone(),
         feeder: args.feeder.clone(),
         address,
+        unjoined: wellfed_install::Unjoined::Wait,
         backups: args.backups.clone(),
         stock: StockOptions {
             config: config_path,

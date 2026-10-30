@@ -2221,8 +2221,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   InstallSpec dco_decode_install_spec(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 13)
-      throw Exception('unexpected arr length: expect 13 but see ${arr.length}');
+    if (arr.length != 14)
+      throw Exception('unexpected arr length: expect 14 but see ${arr.length}');
     return InstallSpec(
       start: dco_decode_install_start(arr[0]),
       address: dco_decode_opt_String(arr[1]),
@@ -2237,6 +2237,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       calibrateClock: dco_decode_bool(arr[10]),
       withoutStockPlans: dco_decode_bool(arr[11]),
       forgetEnrollment: dco_decode_bool(arr[12]),
+      setupAgain: dco_decode_bool(arr[13]),
     );
   }
 
@@ -2547,18 +2548,26 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case 13:
         return StopCase_NotAnswering();
       case 14:
-        return StopCase_PlansUnreadable();
+        return StopCase_NotJoined();
       case 15:
-        return StopCase_PromotionFailed();
+        return StopCase_PhoneOffWifi();
       case 16:
-        return StopCase_FellBack();
+        return StopCase_WifiRefused();
       case 17:
-        return StopCase_PlansNotApplied();
+        return StopCase_NoWifiGiven();
       case 18:
-        return StopCase_ServerFailed();
+        return StopCase_PlansUnreadable();
       case 19:
-        return StopCase_Cancelled();
+        return StopCase_PromotionFailed();
       case 20:
+        return StopCase_FellBack();
+      case 21:
+        return StopCase_PlansNotApplied();
+      case 22:
+        return StopCase_ServerFailed();
+      case 23:
+        return StopCase_Cancelled();
+      case 24:
         return StopCase_Other();
       default:
         throw Exception("unreachable");
@@ -3446,6 +3455,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_calibrateClock = sse_decode_bool(deserializer);
     var var_withoutStockPlans = sse_decode_bool(deserializer);
     var var_forgetEnrollment = sse_decode_bool(deserializer);
+    var var_setupAgain = sse_decode_bool(deserializer);
     return InstallSpec(
       start: var_start,
       address: var_address,
@@ -3460,6 +3470,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       calibrateClock: var_calibrateClock,
       withoutStockPlans: var_withoutStockPlans,
       forgetEnrollment: var_forgetEnrollment,
+      setupAgain: var_setupAgain,
     );
   }
 
@@ -3877,18 +3888,26 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case 13:
         return StopCase_NotAnswering();
       case 14:
-        return StopCase_PlansUnreadable();
+        return StopCase_NotJoined();
       case 15:
-        return StopCase_PromotionFailed();
+        return StopCase_PhoneOffWifi();
       case 16:
-        return StopCase_FellBack();
+        return StopCase_WifiRefused();
       case 17:
-        return StopCase_PlansNotApplied();
+        return StopCase_NoWifiGiven();
       case 18:
-        return StopCase_ServerFailed();
+        return StopCase_PlansUnreadable();
       case 19:
-        return StopCase_Cancelled();
+        return StopCase_PromotionFailed();
       case 20:
+        return StopCase_FellBack();
+      case 21:
+        return StopCase_PlansNotApplied();
+      case 22:
+        return StopCase_ServerFailed();
+      case 23:
+        return StopCase_Cancelled();
+      case 24:
         return StopCase_Other();
       default:
         throw UnimplementedError('');
@@ -4796,6 +4815,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self.calibrateClock, serializer);
     sse_encode_bool(self.withoutStockPlans, serializer);
     sse_encode_bool(self.forgetEnrollment, serializer);
+    sse_encode_bool(self.setupAgain, serializer);
   }
 
   @protected
@@ -5184,20 +5204,28 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_opt_box_autoadd_setup_refusal(refusal, serializer);
       case StopCase_NotAnswering():
         sse_encode_i_32(13, serializer);
-      case StopCase_PlansUnreadable():
+      case StopCase_NotJoined():
         sse_encode_i_32(14, serializer);
-      case StopCase_PromotionFailed():
+      case StopCase_PhoneOffWifi():
         sse_encode_i_32(15, serializer);
-      case StopCase_FellBack():
+      case StopCase_WifiRefused():
         sse_encode_i_32(16, serializer);
-      case StopCase_PlansNotApplied():
+      case StopCase_NoWifiGiven():
         sse_encode_i_32(17, serializer);
-      case StopCase_ServerFailed():
+      case StopCase_PlansUnreadable():
         sse_encode_i_32(18, serializer);
-      case StopCase_Cancelled():
+      case StopCase_PromotionFailed():
         sse_encode_i_32(19, serializer);
-      case StopCase_Other():
+      case StopCase_FellBack():
         sse_encode_i_32(20, serializer);
+      case StopCase_PlansNotApplied():
+        sse_encode_i_32(21, serializer);
+      case StopCase_ServerFailed():
+        sse_encode_i_32(22, serializer);
+      case StopCase_Cancelled():
+        sse_encode_i_32(23, serializer);
+      case StopCase_Other():
+        sse_encode_i_32(24, serializer);
     }
   }
 

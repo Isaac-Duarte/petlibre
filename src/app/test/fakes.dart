@@ -170,6 +170,7 @@ class FakeInstallPorts implements InstallPorts {
   bool holds = true;
   String? kept;
   bool allowed = true;
+  int asked = 0;
 
   final specs = <InstallSpec>[];
   final runs = <FakeRun>[];
@@ -215,7 +216,10 @@ class FakeInstallPorts implements InstallPorts {
   }
 
   @override
-  Future<bool> askPermissions({required bool bluetooth}) async => allowed;
+  Future<bool> askPermissions({required bool bluetooth}) async {
+    asked++;
+    return allowed;
+  }
 
   @override
   InstallRun newRun(InstallSpec spec) {

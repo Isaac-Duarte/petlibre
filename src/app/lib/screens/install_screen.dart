@@ -303,6 +303,10 @@ class _Before extends StatelessWidget {
               "for a moment. Erases meals set in the vendor's app.",
         ),
         if (refusal != null) ...[const SizedBox(height: Space.s4), refusal],
+        if (flow.bluetoothRefused) ...[
+          const SizedBox(height: Space.s4),
+          const _BluetoothRefused(),
+        ],
         if (flow.mayStart && flow.pending == PendingInstall.requestOpen) ...[
           const SizedBox(height: Space.s4),
           const Notice(
@@ -338,6 +342,20 @@ class _Before extends StatelessWidget {
       ],
     );
   }
+}
+
+/// Android refused what a pick-up may need.
+class _BluetoothRefused extends StatelessWidget {
+  const _BluetoothRefused();
+
+  @override
+  Widget build(BuildContext context) => const Notice(
+    tone: Tone.fault,
+    lead: 'Nearby devices is off.',
+    text:
+        'The install claims the feeder over Bluetooth. Allow "Nearby devices" '
+        'for Wellfed in Android settings, then try again.',
+  );
 }
 
 /// 2.3b: the DNS record, its check, and the wait for the feeder.
@@ -669,9 +687,19 @@ class _Claim extends StatelessWidget {
           'Hold the **Lock** button, then also the **Dispense** button, for '
               '5 seconds. The lock light blinks fast.',
         ])
-      else if (flow.code.isEmpty)
-        const Searching('Looking for the feeder over Bluetooth…')
-      else ...[
+      else if (flow.code.isEmpty) ...[
+        if (flow.settingUpAgain) ...[
+          const NumberedSteps([
+            'If the lock light is on, hold **Lock** for 5 seconds to unlock '
+                'the panel.',
+            'Hold **Lock** and **Mic** together for 5 seconds.',
+            'The Wi-Fi light blinks slowly, about once a second. Setup mode '
+                'lasts 15 minutes.',
+          ]),
+          const SizedBox(height: Space.s4),
+        ],
+        const Searching('Looking for the feeder over Bluetooth…'),
+      ] else ...[
         Text(
           'Press these buttons once each, in order:',
           style: bodyStyle(context),
@@ -1104,6 +1132,26 @@ class _Stopped extends StatelessWidget {
       'It paired with this phone, but does not answer on this network. Check '
           'that this phone is on the network you gave it.',
     ),
+    StopCase_NotJoined() => (
+      "It didn't join your Wi-Fi",
+      'It runs Wellfed and this phone is its owner, but it never appeared on '
+          'your network. The Wi-Fi password may be wrong, or this phone may be '
+          'on another network. Give it the Wi-Fi again: you put the feeder back '
+          'in setup mode with its buttons, and this phone shows how.',
+    ),
+    StopCase_PhoneOffWifi() => (
+      "This phone isn't on Wi-Fi",
+      'Nothing was sent. Join your home network, then try again.',
+    ),
+    StopCase_WifiRefused() => (
+      "That Wi-Fi can't be given to a feeder",
+      'Nothing was sent. Check its name and password, and enter them again.',
+    ),
+    StopCase_NoWifiGiven() => (
+      'This install needs your Wi-Fi',
+      'Nothing was sent. The feeder has no other way to join your network. '
+          'Enter its name and password.',
+    ),
     StopCase_PlansUnreadable() => (
       "Its meals couldn't be read",
       'Nothing was made permanent: the feeder still holds its original '
@@ -1184,6 +1232,10 @@ class _Stopped extends StatelessWidget {
           ],
           const SizedBox(height: Space.s5),
         ],
+        if (flow.bluetoothRefused) ...[
+          const _BluetoothRefused(),
+          const SizedBox(height: Space.s4),
+        ],
         ..._nextSteps(context, stop),
         if (stop.detail.isNotEmpty && !listening) ...[
           const SizedBox(height: Space.s4),
@@ -1258,6 +1310,14 @@ class _Stopped extends StatelessWidget {
       ],
       StopCase_PlansNotApplied() => [
         primary('Go to Home', () => context.go('/')),
+      ],
+      StopCase_NotJoined() => [
+        primary('Enter the Wi-Fi again', flow.newWifiForSetup),
+        const SizedBox(height: Space.s2),
+        secondary('Keep waiting for it', () => unawaited(flow.keepWaiting())),
+      ],
+      StopCase_WifiRefused() || StopCase_NoWifiGiven() => [
+        primary('Enter the Wi-Fi again', flow.changeWifi),
       ],
       _ => switch (stop.resume) {
         Resume.fromStart => [

@@ -127,6 +127,7 @@ impl Fixture {
             calibrate_clock: false,
             without_stock_plans: false,
             forget_enrollment: false,
+            setup_again: false,
         }
     }
 }
@@ -871,4 +872,134 @@ fn the_manifest_must_name_the_review_s_build_and_a_release_a_consumer_image() {
         check_image(dir.path(), Some(&repinned)),
         ImageCheck::Mismatch { .. }
     ));
+}
+
+/// What a run is given decides what stops it, in its own words, before any
+/// of it starts, and leaves a way on by the same route.
+#[test]
+fn a_run_that_cannot_start_says_why_and_touches_nothing() {
+    local(async {
+        // A request with no Wi-Fi to give the replacement could not be taken
+        // back, and the replacement would have nothing to join.
+        let fixture = Fixture::new(Provisioning::Consumer);
+        let mut spec = dns_spec(&fixture, "127.41.8.30");
+        spec.home = None;
+        let data = Path::new(&spec.data_dir).to_path_buf();
+        let (_run, mut heard) = started(&fixture, spec);
+        let InstallEnd::Stopped { case, resume, .. } = ended(&mut heard).await else {
+            panic!("a run with no Wi-Fi started");
+        };
+        assert_eq!(case, StopCase::NoWifiGiven);
+        assert_eq!(resume, Resume::FromStart);
+        assert!(!data.join("installer.json").exists());
+
+        // A new Wi-Fi for a feeder that never joined needs one too.
+        let mut spec = fixture.spec(InstallStart::Bank0, "127.41.8.30");
+        spec.home = None;
+        spec.setup_again = true;
+        let (_run, mut heard) = started(&fixture, spec);
+        let InstallEnd::Stopped { case, resume, .. } = ended(&mut heard).await else {
+            panic!("a run with no Wi-Fi started");
+        };
+        assert_eq!(case, StopCase::NoWifiGiven);
+        assert_eq!(resume, Resume::FromBank0);
+
+        // A phone off Wi-Fi, and a Wi-Fi no feeder could be given.
+        let spec = dns_spec(&fixture, "");
+        let (_run, mut heard) = started(&fixture, spec);
+        let InstallEnd::Stopped { case, resume, .. } = ended(&mut heard).await else {
+            panic!("a phone with no address started");
+        };
+        assert_eq!(case, StopCase::PhoneOffWifi);
+        assert_eq!(resume, Resume::FromStart);
+
+        let mut spec = dns_spec(&fixture, "127.41.8.30");
+        spec.home = Some(WifiCredentials {
+            ssid: String::new(),
+            passphrase: "correcthorse".into(),
+        });
+        let (_run, mut heard) = started(&fixture, spec);
+        let InstallEnd::Stopped { case, resume, .. } = ended(&mut heard).await else {
+            panic!("an empty Wi-Fi name started");
+        };
+        assert_eq!(case, StopCase::WifiRefused);
+        assert_eq!(resume, Resume::FromStart);
+    });
+}
+
+/// Forgetting the broker's trust is for a new request. A run from bank 0 finds
+/// its own record through that trust, so it keeps it.
+#[test]
+fn a_pick_up_keeps_the_feeder_the_broker_trusted() {
+    local(async {
+        let fixture = Fixture::new(Provisioning::Bench);
+        let mut spec = fixture.spec(InstallStart::Bank0, "127.41.8.31");
+        spec.forget_enrollment = true;
+        let data = Path::new(&spec.data_dir).to_path_buf();
+        std::fs::create_dir_all(&data).unwrap();
+        enroll(&data, "AF_A", "127.41.8.32");
+
+        let (run, mut heard) = started(&fixture, spec);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        run.stop();
+        ended(&mut heard).await;
+        assert!(Enrollment::path(&data.join("installer.json")).exists());
+    });
+}
+
+/// A feeder that paired and never joined: the run waits for it, unless the
+/// owner gave a new Wi-Fi, when it goes through Bluetooth setup again and gives
+/// that one to the same key.
+#[test]
+fn a_new_wifi_goes_through_setup_again_for_a_feeder_that_never_joined() {
+    local(async {
+        let fixture = Fixture::new(Provisioning::Consumer);
+        let sim = Running::start(&Flash::memory(), None).await;
+
+        let mut spec = fixture.spec(InstallStart::Bank0, "127.41.8.33");
+        spec.setup_again = true;
+        let data = Path::new(&spec.data_dir).to_path_buf();
+        std::fs::create_dir_all(data.join("backups")).unwrap();
+        enroll(&data, "AF_A", "127.41.8.34");
+        let paired = serde_json::json!({
+            "device": "AF_A",
+            "identity": wellfed_formats::hex::encode(&sim.identity),
+            "address": null,
+        });
+        std::fs::write(
+            data.join("backups/installing.json"),
+            serde_json::to_vec(&paired).unwrap(),
+        )
+        .unwrap();
+
+        // It looks on the network first, and the feeder is not there.
+        let (run, mut heard) = started(&fixture, spec);
+        let mut opened = false;
+        loop {
+            match next(&mut heard).await {
+                InstallUpdate::Ask {
+                    id,
+                    ask: InstallAsk::Locate { .. },
+                } => run.answer(id, InstallAnswer::Located { address: None }),
+                InstallUpdate::Ask {
+                    id,
+                    ask: InstallAsk::OpenLink,
+                } => {
+                    opened = true;
+                    run.answer(
+                        id,
+                        InstallAnswer::Failed {
+                            reason: "the test stops here".into(),
+                        },
+                    );
+                    run.stop();
+                }
+                InstallUpdate::Ask { ask, .. } => panic!("{ask:?}"),
+                InstallUpdate::Event { .. } => {}
+                InstallUpdate::Ended { .. } => break,
+            }
+        }
+        assert!(opened, "the run did not go back to Bluetooth");
+        sim.stop().await;
+    });
 }

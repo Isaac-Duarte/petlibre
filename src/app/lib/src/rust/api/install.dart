@@ -394,6 +394,11 @@ class InstallSpec {
   /// not theirs, or two answered.
   final bool forgetEnrollment;
 
+  /// The owner gave a new Wi-Fi for a feeder that paired and never joined,
+  /// and put it back in setup mode: Bluetooth setup goes again rather than
+  /// waiting for it.
+  final bool setupAgain;
+
   const InstallSpec({
     required this.start,
     this.address,
@@ -408,6 +413,7 @@ class InstallSpec {
     required this.calibrateClock,
     required this.withoutStockPlans,
     required this.forgetEnrollment,
+    required this.setupAgain,
   });
 
   @override
@@ -424,7 +430,8 @@ class InstallSpec {
       dataDir.hashCode ^
       calibrateClock.hashCode ^
       withoutStockPlans.hashCode ^
-      forgetEnrollment.hashCode;
+      forgetEnrollment.hashCode ^
+      setupAgain.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -443,7 +450,8 @@ class InstallSpec {
           dataDir == other.dataDir &&
           calibrateClock == other.calibrateClock &&
           withoutStockPlans == other.withoutStockPlans &&
-          forgetEnrollment == other.forgetEnrollment;
+          forgetEnrollment == other.forgetEnrollment &&
+          setupAgain == other.setupAgain;
 }
 
 @freezed
@@ -613,6 +621,19 @@ sealed class StopCase with _$StopCase {
 
   /// The feeder this install paired with does not answer.
   const factory StopCase.notAnswering() = StopCase_NotAnswering;
+
+  /// The feeder took the Wi-Fi over Bluetooth and never joined it: a wrong
+  /// password, say.
+  const factory StopCase.notJoined() = StopCase_NotJoined;
+
+  /// This phone has no address on a Wi-Fi network. Nothing was sent.
+  const factory StopCase.phoneOffWifi() = StopCase_PhoneOffWifi;
+
+  /// The Wi-Fi name or password cannot be sent to a feeder. Nothing was sent.
+  const factory StopCase.wifiRefused() = StopCase_WifiRefused;
+
+  /// The image needs a Wi-Fi to be given, and none was. Nothing was sent.
+  const factory StopCase.noWifiGiven() = StopCase_NoWifiGiven;
 
   /// Stock's plans could not be read, so nothing was promoted.
   const factory StopCase.plansUnreadable() = StopCase_PlansUnreadable;

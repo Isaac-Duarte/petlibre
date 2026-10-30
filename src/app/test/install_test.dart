@@ -252,6 +252,77 @@ void main() {
         expect(find.text('Wellfed is running. Now claim it.'), findsOneWidget);
       },
     );
+
+    testWidgets('Back from the Wi-Fi a pick-up asked for drops that pick-up', (
+      tester,
+    ) async {
+      final ports = FakeInstallPorts(
+        pendingInstall: PendingInstall.requestOpen,
+      );
+      await _open(tester, ports);
+      await _tap(tester, 'Look for it over Bluetooth');
+      expect(find.text('Connect it to your Wi-Fi'), findsOneWidget);
+
+      await tester.tap(find.byTooltip('Back'));
+      await settle(tester);
+      await _tap(tester, 'Continue');
+      await tester.enterText(find.byType(TextField).at(0), 'Maple St');
+      await tester.enterText(find.byType(TextField).at(1), 'correcthorse');
+      await tester.pump();
+      await _tap(tester, 'Continue');
+
+      // The owner's Continue is the first screen's: on to the record, with no
+      // run from bank 0.
+      expect(ports.runs, isEmpty);
+      expect(find.text('Point the feeder at this phone'), findsOneWidget);
+    });
+
+    testWidgets('every way on from the first screen asks Android first', (
+      tester,
+    ) async {
+      for (final button in [
+        'Listen for the feeder',
+        'Look for it over Bluetooth',
+      ]) {
+        final ports = FakeInstallPorts(
+          pendingInstall: PendingInstall.requestOpen,
+        )..allowed = false;
+        await _open(tester, ports);
+        await _tap(tester, button);
+        expect(ports.asked, 1, reason: button);
+        expect(ports.runs, isEmpty, reason: button);
+        expect(ports.listeners, isEmpty, reason: button);
+        expect(
+          find.textContaining('Nearby devices is off.', findRichText: true),
+          findsOneWidget,
+          reason: button,
+        );
+        await tester.pumpWidget(const SizedBox());
+        await settle(tester);
+      }
+
+      final ports = FakeInstallPorts(pendingInstall: PendingInstall.paired)
+        ..allowed = false;
+      await _open(tester, ports);
+      await _tap(tester, 'Pick up where it stopped');
+      expect(ports.asked, 1);
+      expect(ports.runs, isEmpty);
+    });
+
+    testWidgets('an unnamed phone is named before a pick-up, which goes on', (
+      tester,
+    ) async {
+      final book = FakeBook(label: '');
+      final ports = FakeInstallPorts(pendingInstall: PendingInstall.paired);
+      await _open(tester, ports, book: book);
+      await _tap(tester, 'Pick up where it stopped');
+      expect(find.text('Name this phone'), findsOneWidget);
+      await tester.enterText(find.byType(TextField).first, 'Pixel');
+      await tester.pump();
+      await _tap(tester, 'Continue');
+      expect(ports.specs.single.label, 'Pixel');
+      expect(ports.specs.single.start, const InstallStart.bank0());
+    });
   });
 
   group('2.3b the record', () {
@@ -911,6 +982,12 @@ void main() {
         'Pick up where it stopped',
       ),
       (
+        const StopCase.notJoined(),
+        "It didn't join your Wi-Fi",
+        Resume.fromBank0,
+        'Enter the Wi-Fi again',
+      ),
+      (
         const StopCase.notAnswering(),
         'The feeder stopped answering',
         Resume.fromBank0,
@@ -973,6 +1050,173 @@ void main() {
         expect(find.text('its words'), findsOneWidget);
       });
     }
+
+    group('a request with no Wi-Fi to give', () {
+      /// A fresh launch: an open request listened for, and stock staying.
+      Future<void> stockStayed(
+        WidgetTester tester,
+        FakeInstallPorts ports,
+      ) async {
+        await _open(tester, ports);
+        await _tap(tester, 'Listen for the feeder');
+        ports.listeners.single.updates.add(
+          const ListenUpdate.stockStayed(resolved: true),
+        );
+        await settle(tester);
+        expect(find.text('Start again'), findsOneWidget);
+      }
+
+      testWidgets('Start again after a fresh launch asks for the Wi-Fi', (
+        tester,
+      ) async {
+        final ports = FakeInstallPorts(
+          pendingInstall: PendingInstall.requestOpen,
+        );
+        await stockStayed(tester, ports);
+
+        await _tap(tester, 'Start again');
+        expect(ports.runs, isEmpty);
+        expect(find.text('Connect it to your Wi-Fi'), findsOneWidget);
+
+        await tester.enterText(find.byType(TextField).at(0), 'Maple St');
+        await tester.enterText(find.byType(TextField).at(1), 'correcthorse');
+        await tester.pump();
+        await _tap(tester, 'Continue');
+        expect(find.text('Point the feeder at this phone'), findsOneWidget);
+
+        await tester.enterText(find.byType(TextField), 'broker.example.net');
+        await tester.pump();
+        await _tap(tester, 'Check the record');
+        expect(ports.specs.single.home?.ssid, 'Maple St');
+        expect(ports.specs.single.start, isA<InstallStart_Dns>());
+      });
+
+      testWidgets('a bench image has none to ask for', (tester) async {
+        final ports = FakeInstallPorts(
+          pendingInstall: PendingInstall.requestOpen,
+          image: const ImageCheck.ready(
+            provisioning: ImageProvisioning.bench,
+            build: 'ab',
+            version: 7,
+          ),
+        );
+        await stockStayed(tester, ports);
+        await _tap(tester, 'Start again');
+        expect(find.text('Point the feeder at this phone'), findsOneWidget);
+      });
+    });
+
+    group('a feeder that never joined', () {
+      Future<FakeRun> notJoined(WidgetTester tester, FakeInstallPorts ports) =>
+          _stopped(
+            tester,
+            ports,
+            const StopCase.notJoined(),
+            resume: Resume.fromBank0,
+          );
+
+      testWidgets('a new Wi-Fi goes through setup again, and says how', (
+        tester,
+      ) async {
+        final ports = FakeInstallPorts();
+        await notJoined(tester, ports);
+        expect(find.text("It didn't join your Wi-Fi"), findsOneWidget);
+
+        await _tap(tester, 'Enter the Wi-Fi again');
+        expect(find.text('Connect it to your Wi-Fi'), findsOneWidget);
+        await tester.enterText(find.byType(TextField).at(0), 'Maple St');
+        await tester.enterText(find.byType(TextField).at(1), 'rightpassword');
+        await tester.pump();
+        await _tap(tester, 'Continue');
+
+        expect(ports.specs, hasLength(2));
+        final again = ports.specs.last;
+        expect(again.start, const InstallStart.bank0());
+        expect(again.home?.passphrase, 'rightpassword');
+        expect(again.setupAgain, isTrue);
+
+        expect(find.text('Wellfed is running. Now claim it.'), findsOneWidget);
+        expect(find.textContaining('Mic', findRichText: true), findsOneWidget);
+      });
+
+      testWidgets('a pick-up that finds no feeder keeps going through setup', (
+        tester,
+      ) async {
+        final ports = FakeInstallPorts();
+        await notJoined(tester, ports);
+        await _tap(tester, 'Enter the Wi-Fi again');
+        await tester.enterText(find.byType(TextField).at(0), 'Maple St');
+        await tester.enterText(find.byType(TextField).at(1), 'rightpassword');
+        await tester.pump();
+        await _tap(tester, 'Continue');
+
+        ports.run.stopped(
+          const StopCase.noSetupFeeder(),
+          resume: Resume.fromBank0,
+        );
+        await settle(tester);
+        await _tap(tester, 'Pick up where it stopped');
+        expect(ports.specs.last.setupAgain, isTrue);
+      });
+
+      testWidgets('Back from the Wi-Fi leaves setup alone', (tester) async {
+        final ports = FakeInstallPorts();
+        await notJoined(tester, ports);
+        await _tap(tester, 'Enter the Wi-Fi again');
+        await tester.tap(find.byTooltip('Back'));
+        await settle(tester);
+        expect(find.text('Install Wellfed'), findsOneWidget);
+        expect(ports.specs, hasLength(1));
+      });
+
+      testWidgets('waiting longer keeps the Wi-Fi it has', (tester) async {
+        final ports = FakeInstallPorts();
+        await notJoined(tester, ports);
+        await _tap(tester, 'Keep waiting for it');
+        expect(ports.specs.last.start, const InstallStart.bank0());
+        expect(ports.specs.last.setupAgain, isFalse);
+      });
+    });
+
+    group('what a run was given', () {
+      testWidgets('a phone off Wi-Fi says so, not that the feeder stopped', (
+        tester,
+      ) async {
+        final ports = FakeInstallPorts();
+        await _stopped(
+          tester,
+          ports,
+          const StopCase.phoneOffWifi(),
+          resume: Resume.fromStart,
+        );
+        expect(find.text("This phone isn't on Wi-Fi"), findsOneWidget);
+        expect(find.text('The feeder stopped answering'), findsNothing);
+        await _tap(tester, 'Start again');
+        expect(find.text('Point the feeder at this phone'), findsOneWidget);
+      });
+
+      for (final (stop, title) in [
+        (const StopCase.wifiRefused(), "That Wi-Fi can't be given to a feeder"),
+        (const StopCase.noWifiGiven(), 'This install needs your Wi-Fi'),
+      ]) {
+        testWidgets(' asks for it again, and goes on from there', (
+          tester,
+        ) async {
+          final ports = FakeInstallPorts();
+          await _stopped(tester, ports, stop, resume: Resume.fromStart);
+          expect(find.text(title), findsOneWidget);
+          expect(find.text('The Bluetooth link dropped'), findsNothing);
+
+          await _tap(tester, 'Enter the Wi-Fi again');
+          expect(find.text('Connect it to your Wi-Fi'), findsOneWidget);
+          await tester.enterText(find.byType(TextField).at(0), 'Maple St');
+          await tester.enterText(find.byType(TextField).at(1), 'correcthorse');
+          await tester.pump();
+          await _tap(tester, 'Continue');
+          expect(find.text('Point the feeder at this phone'), findsOneWidget);
+        });
+      }
+    });
 
     for (final (why, title) in [
       (RequestRefusal.stale, "The feeder's reports got too old"),

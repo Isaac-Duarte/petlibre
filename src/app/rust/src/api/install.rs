@@ -65,6 +65,10 @@ pub struct InstallSpec {
     /// Forget the feeder the broker trusted before: the owner said it was
     /// not theirs, or two answered.
     pub forget_enrollment: bool,
+    /// The owner gave a new Wi-Fi for a feeder that paired and never joined,
+    /// and put it back in setup mode: Bluetooth setup goes again rather than
+    /// waiting for it.
+    pub setup_again: bool,
 }
 
 /// What a resolver answered for stock's broker name.
@@ -351,6 +355,15 @@ pub enum StopCase {
     },
     /// The feeder this install paired with does not answer.
     NotAnswering,
+    /// The feeder took the Wi-Fi over Bluetooth and never joined it: a wrong
+    /// password, say.
+    NotJoined,
+    /// This phone has no address on a Wi-Fi network. Nothing was sent.
+    PhoneOffWifi,
+    /// The Wi-Fi name or password cannot be sent to a feeder. Nothing was sent.
+    WifiRefused,
+    /// The image needs a Wi-Fi to be given, and none was. Nothing was sent.
+    NoWifiGiven,
     /// Stock's plans could not be read, so nothing was promoted.
     PlansUnreadable,
     /// The promotion was refused or failed; the feeder runs bank 0.

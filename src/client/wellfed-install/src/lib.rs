@@ -63,7 +63,7 @@ pub use platform::{
     Announcement, Bluetooth, Discovery, Keys, Mdns, PlatformError, Prompter, Report, SetupLink,
 };
 pub use review::Review;
-pub use run::{Plan, Platform, Signer, Start, run};
+pub use run::{Plan, Platform, Signer, Start, Unjoined, run};
 pub use stock::StockOptions;
 pub use track::{Stop, Stopped, Unsettled};
 /// What stock's server is built from, which the CLI checks before it

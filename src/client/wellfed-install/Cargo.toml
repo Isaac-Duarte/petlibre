@@ -8,6 +8,7 @@ description = "The install from stock 1.1.15 to Wellfed, driven over tokio: stoc
 publish.workspace = true
 
 [dependencies]
+chrono-tz = "0.10.4"
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

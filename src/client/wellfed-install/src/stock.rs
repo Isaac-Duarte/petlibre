@@ -4,7 +4,7 @@
 //! started for the one request. Both stop when the run ends, however it
 //! ends, so the broker is never left on the MQTT port.
 
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -36,6 +36,50 @@ pub struct StockOptions {
     /// Whether the server also answers its loopback API, for the bench's
     /// page to read.
     pub api: Api,
+}
+
+/// The installer's config at `path`, for a broker at `listen`: created once,
+/// with fresh secrets and `zone` (an IANA name, UTC if it is none we know),
+/// and kept, since the secrets and the records beside it outlive a run. The
+/// platform's address may have changed since (a new DHCP lease), so the
+/// broker's is written each time.
+pub fn installer_config(path: &Path, listen: SocketAddr, zone: Option<&str>) -> Result<(), Error> {
+    if !path.exists() {
+        let zone = zone
+            .and_then(|zone| zone.parse().ok())
+            .unwrap_or(chrono_tz::UTC);
+        return wellfed_stock::config::init_installer(path, listen, zone)
+            .map_err(|error| Error::StockServer(error.into()));
+    }
+
+    let text = std::fs::read(path).map_err(|source| Error::Read {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let mut config: wellfed_stock::config::InstallConfig =
+        serde_json::from_slice(&text).map_err(|source| Error::Parse {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    if config.mqtt_listen == listen {
+        return Ok(());
+    }
+    config.mqtt_listen = listen;
+    wellfed_stock::storage::write_json(path, &config)
+        .map_err(|error| Error::StockServer(error.into()))
+}
+
+/// Forget the feeder the broker beside `config` trusted, and any contest: the
+/// next feeder that connects is asked about from the start.
+pub fn forget_enrollment(config: &Path) -> Result<(), Error> {
+    for path in [Enrollment::path(config), Enrollment::contested_path(config)] {
+        match std::fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
+            Err(source) => return Err(Error::Remove { path, source }),
+        }
+    }
+    Ok(())
 }
 
 /// Why the server's status is not there to read.
@@ -259,6 +303,43 @@ mod tests {
     };
 
     use super::*;
+
+    /// The config's secrets outlive a run, and its broker follows the
+    /// platform's address.
+    #[test]
+    fn the_installers_config_is_kept_and_follows_the_broker() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("installer.json");
+        let read = || -> wellfed_stock::config::InstallConfig {
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap()
+        };
+
+        let one: SocketAddr = "192.168.1.9:1883".parse().unwrap();
+        installer_config(&path, one, Some("Not/AZone")).unwrap();
+        let first = read();
+        assert_eq!(first.mqtt_listen, one);
+        assert_eq!(first.timezone, chrono_tz::UTC);
+
+        let other: SocketAddr = "192.168.1.10:1883".parse().unwrap();
+        installer_config(&path, other, None).unwrap();
+        let second = read();
+        assert_eq!(second.mqtt_listen, other);
+        assert_eq!(second.server_password, first.server_password);
+    }
+
+    /// Forgetting the broker's trust takes the contest with it, and is safe
+    /// to ask for with nothing to forget.
+    #[test]
+    fn forgetting_the_enrollment_takes_the_contest_with_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("installer.json");
+        std::fs::write(Enrollment::path(&config), "{}").unwrap();
+        std::fs::write(Enrollment::contested_path(&config), "{}").unwrap();
+        forget_enrollment(&config).unwrap();
+        assert!(!Enrollment::path(&config).exists());
+        assert!(!Enrollment::contested_path(&config).exists());
+        forget_enrollment(&config).unwrap();
+    }
 
     #[test]
     fn the_server_s_document_becomes_the_steps_view() {

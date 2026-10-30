@@ -140,6 +140,12 @@ pub(crate) fn set_aside(kept: &Path, now_ms: u64) -> Result<Option<PathBuf>, Err
     Ok(Some(applied))
 }
 
+/// Whether an earlier run paired with a feeder and did not reach the end, so
+/// a new one may pick up from bank 0.
+pub fn resumable(backups: &Path) -> bool {
+    matches!(Paired::load(backups), Ok(Some(_)))
+}
+
 /// The feeder an install paired with and where it answered, kept beside
 /// the backups (`installing.json`) so a resumed run finds it with no image
 /// lease left. It names the stock device this install enrolled (trust on

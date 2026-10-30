@@ -47,6 +47,16 @@ impl Review {
         })
     }
 
+    /// Check the review in `directory` as the image server does before it
+    /// serves one: the image and the build manifest against the review's
+    /// digests. A platform that carries its image with it runs this before
+    /// offering to install it.
+    pub fn check_served(directory: &Path) -> Result<(), Error> {
+        wellfed_stock::ota::image::Build::load(directory)
+            .map(|_| ())
+            .map_err(|error| Error::Images(error.into()))
+    }
+
     /// The startup identity, 64 lowercase hex.
     pub fn build(&self) -> &str {
         &self.build

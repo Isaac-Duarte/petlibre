@@ -2089,21 +2089,27 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case 1:
         return InstallAsk_RestartFeeder();
       case 2:
+        return InstallAsk_EraseStockPlans();
+      case 3:
+        return InstallAsk_JoinFeederNetwork();
+      case 4:
+        return InstallAsk_LeaveFeederNetwork();
+      case 5:
         return InstallAsk_RecognizeFeeder(
           device: dco_decode_String(raw[1]),
           address: dco_decode_String(raw[2]),
         );
-      case 3:
+      case 6:
         return InstallAsk_OpenRecoveryWindow();
-      case 4:
+      case 7:
         return InstallAsk_OpenLink();
-      case 5:
+      case 8:
         return InstallAsk_WriteLink(
           pieces: dco_decode_list_list_prim_u_8_strict(raw[1]),
         );
-      case 6:
+      case 9:
         return InstallAsk_CloseLink();
-      case 7:
+      case 10:
         return InstallAsk_Locate(identity: dco_decode_String(raw[1]));
       default:
         throw Exception("unreachable");
@@ -2248,6 +2254,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case 0:
         return InstallStart_Dns(name: dco_decode_String(raw[1]));
       case 1:
+        return InstallStart_Reset();
+      case 2:
+        return InstallStart_FrameTaken();
+      case 3:
         return InstallStart_Bank0();
       default:
         throw Exception("unreachable");
@@ -2530,48 +2540,50 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case 6:
         return StopCase_NoFeederCame();
       case 7:
-        return StopCase_EarlierRequestOpen();
+        return StopCase_FrameNotTaken();
       case 8:
-        return StopCase_RequestRefused(why: dco_decode_request_refusal(raw[1]));
+        return StopCase_EarlierRequestOpen();
       case 9:
+        return StopCase_RequestRefused(why: dco_decode_request_refusal(raw[1]));
+      case 10:
         return StopCase_StockRefused(
           code: dco_decode_opt_box_autoadd_u_32(raw[1]),
         );
-      case 10:
-        return StopCase_ClockUnset();
       case 11:
-        return StopCase_NoSetupFeeder();
+        return StopCase_ClockUnset();
       case 12:
+        return StopCase_NoSetupFeeder();
+      case 13:
         return StopCase_SetupFailed(
           refusal: dco_decode_opt_box_autoadd_setup_refusal(raw[1]),
         );
-      case 13:
-        return StopCase_OtherFeeder();
       case 14:
-        return StopCase_NotAnswering();
+        return StopCase_OtherFeeder();
       case 15:
-        return StopCase_NotJoined();
+        return StopCase_NotAnswering();
       case 16:
-        return StopCase_PhoneOffWifi();
+        return StopCase_NotJoined();
       case 17:
-        return StopCase_WifiRefused();
+        return StopCase_PhoneOffWifi();
       case 18:
-        return StopCase_NoWifiGiven();
+        return StopCase_WifiRefused();
       case 19:
-        return StopCase_PlansUnreadable();
+        return StopCase_NoWifiGiven();
       case 20:
-        return StopCase_PromotionFailed();
+        return StopCase_PlansUnreadable();
       case 21:
-        return StopCase_FellBack();
+        return StopCase_PromotionFailed();
       case 22:
-        return StopCase_PlansNotApplied();
+        return StopCase_FellBack();
       case 23:
-        return StopCase_PlansUnknown();
+        return StopCase_PlansNotApplied();
       case 24:
-        return StopCase_ServerFailed();
+        return StopCase_PlansUnknown();
       case 25:
-        return StopCase_Cancelled();
+        return StopCase_ServerFailed();
       case 26:
+        return StopCase_Cancelled();
+      case 27:
         return StopCase_Other();
       default:
         throw Exception("unreachable");
@@ -3292,22 +3304,28 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case 1:
         return InstallAsk_RestartFeeder();
       case 2:
+        return InstallAsk_EraseStockPlans();
+      case 3:
+        return InstallAsk_JoinFeederNetwork();
+      case 4:
+        return InstallAsk_LeaveFeederNetwork();
+      case 5:
         var var_device = sse_decode_String(deserializer);
         var var_address = sse_decode_String(deserializer);
         return InstallAsk_RecognizeFeeder(
           device: var_device,
           address: var_address,
         );
-      case 3:
+      case 6:
         return InstallAsk_OpenRecoveryWindow();
-      case 4:
+      case 7:
         return InstallAsk_OpenLink();
-      case 5:
+      case 8:
         var var_pieces = sse_decode_list_list_prim_u_8_strict(deserializer);
         return InstallAsk_WriteLink(pieces: var_pieces);
-      case 6:
+      case 9:
         return InstallAsk_CloseLink();
-      case 7:
+      case 10:
         var var_identity = sse_decode_String(deserializer);
         return InstallAsk_Locate(identity: var_identity);
       default:
@@ -3488,6 +3506,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         var var_name = sse_decode_String(deserializer);
         return InstallStart_Dns(name: var_name);
       case 1:
+        return InstallStart_Reset();
+      case 2:
+        return InstallStart_FrameTaken();
+      case 3:
         return InstallStart_Bank0();
       default:
         throw UnimplementedError('');
@@ -3873,49 +3895,51 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case 6:
         return StopCase_NoFeederCame();
       case 7:
-        return StopCase_EarlierRequestOpen();
+        return StopCase_FrameNotTaken();
       case 8:
+        return StopCase_EarlierRequestOpen();
+      case 9:
         var var_why = sse_decode_request_refusal(deserializer);
         return StopCase_RequestRefused(why: var_why);
-      case 9:
+      case 10:
         var var_code = sse_decode_opt_box_autoadd_u_32(deserializer);
         return StopCase_StockRefused(code: var_code);
-      case 10:
-        return StopCase_ClockUnset();
       case 11:
-        return StopCase_NoSetupFeeder();
+        return StopCase_ClockUnset();
       case 12:
+        return StopCase_NoSetupFeeder();
+      case 13:
         var var_refusal = sse_decode_opt_box_autoadd_setup_refusal(
           deserializer,
         );
         return StopCase_SetupFailed(refusal: var_refusal);
-      case 13:
-        return StopCase_OtherFeeder();
       case 14:
-        return StopCase_NotAnswering();
+        return StopCase_OtherFeeder();
       case 15:
-        return StopCase_NotJoined();
+        return StopCase_NotAnswering();
       case 16:
-        return StopCase_PhoneOffWifi();
+        return StopCase_NotJoined();
       case 17:
-        return StopCase_WifiRefused();
+        return StopCase_PhoneOffWifi();
       case 18:
-        return StopCase_NoWifiGiven();
+        return StopCase_WifiRefused();
       case 19:
-        return StopCase_PlansUnreadable();
+        return StopCase_NoWifiGiven();
       case 20:
-        return StopCase_PromotionFailed();
+        return StopCase_PlansUnreadable();
       case 21:
-        return StopCase_FellBack();
+        return StopCase_PromotionFailed();
       case 22:
-        return StopCase_PlansNotApplied();
+        return StopCase_FellBack();
       case 23:
-        return StopCase_PlansUnknown();
+        return StopCase_PlansNotApplied();
       case 24:
-        return StopCase_ServerFailed();
+        return StopCase_PlansUnknown();
       case 25:
-        return StopCase_Cancelled();
+        return StopCase_ServerFailed();
       case 26:
+        return StopCase_Cancelled();
+      case 27:
         return StopCase_Other();
       default:
         throw UnimplementedError('');
@@ -4665,24 +4689,30 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_String(broker, serializer);
       case InstallAsk_RestartFeeder():
         sse_encode_i_32(1, serializer);
+      case InstallAsk_EraseStockPlans():
+        sse_encode_i_32(2, serializer);
+      case InstallAsk_JoinFeederNetwork():
+        sse_encode_i_32(3, serializer);
+      case InstallAsk_LeaveFeederNetwork():
+        sse_encode_i_32(4, serializer);
       case InstallAsk_RecognizeFeeder(
         device: final device,
         address: final address,
       ):
-        sse_encode_i_32(2, serializer);
+        sse_encode_i_32(5, serializer);
         sse_encode_String(device, serializer);
         sse_encode_String(address, serializer);
       case InstallAsk_OpenRecoveryWindow():
-        sse_encode_i_32(3, serializer);
+        sse_encode_i_32(6, serializer);
       case InstallAsk_OpenLink():
-        sse_encode_i_32(4, serializer);
+        sse_encode_i_32(7, serializer);
       case InstallAsk_WriteLink(pieces: final pieces):
-        sse_encode_i_32(5, serializer);
+        sse_encode_i_32(8, serializer);
         sse_encode_list_list_prim_u_8_strict(pieces, serializer);
       case InstallAsk_CloseLink():
-        sse_encode_i_32(6, serializer);
+        sse_encode_i_32(9, serializer);
       case InstallAsk_Locate(identity: final identity):
-        sse_encode_i_32(7, serializer);
+        sse_encode_i_32(10, serializer);
         sse_encode_String(identity, serializer);
     }
   }
@@ -4833,8 +4863,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case InstallStart_Dns(name: final name):
         sse_encode_i_32(0, serializer);
         sse_encode_String(name, serializer);
-      case InstallStart_Bank0():
+      case InstallStart_Reset():
         sse_encode_i_32(1, serializer);
+      case InstallStart_FrameTaken():
+        sse_encode_i_32(2, serializer);
+      case InstallStart_Bank0():
+        sse_encode_i_32(3, serializer);
     }
   }
 
@@ -5195,49 +5229,51 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_i_32(5, serializer);
       case StopCase_NoFeederCame():
         sse_encode_i_32(6, serializer);
-      case StopCase_EarlierRequestOpen():
+      case StopCase_FrameNotTaken():
         sse_encode_i_32(7, serializer);
-      case StopCase_RequestRefused(why: final why):
+      case StopCase_EarlierRequestOpen():
         sse_encode_i_32(8, serializer);
+      case StopCase_RequestRefused(why: final why):
+        sse_encode_i_32(9, serializer);
         sse_encode_request_refusal(why, serializer);
       case StopCase_StockRefused(code: final code):
-        sse_encode_i_32(9, serializer);
+        sse_encode_i_32(10, serializer);
         sse_encode_opt_box_autoadd_u_32(code, serializer);
       case StopCase_ClockUnset():
-        sse_encode_i_32(10, serializer);
-      case StopCase_NoSetupFeeder():
         sse_encode_i_32(11, serializer);
-      case StopCase_SetupFailed(refusal: final refusal):
+      case StopCase_NoSetupFeeder():
         sse_encode_i_32(12, serializer);
+      case StopCase_SetupFailed(refusal: final refusal):
+        sse_encode_i_32(13, serializer);
         sse_encode_opt_box_autoadd_setup_refusal(refusal, serializer);
       case StopCase_OtherFeeder():
-        sse_encode_i_32(13, serializer);
-      case StopCase_NotAnswering():
         sse_encode_i_32(14, serializer);
-      case StopCase_NotJoined():
+      case StopCase_NotAnswering():
         sse_encode_i_32(15, serializer);
-      case StopCase_PhoneOffWifi():
+      case StopCase_NotJoined():
         sse_encode_i_32(16, serializer);
-      case StopCase_WifiRefused():
+      case StopCase_PhoneOffWifi():
         sse_encode_i_32(17, serializer);
-      case StopCase_NoWifiGiven():
+      case StopCase_WifiRefused():
         sse_encode_i_32(18, serializer);
-      case StopCase_PlansUnreadable():
+      case StopCase_NoWifiGiven():
         sse_encode_i_32(19, serializer);
-      case StopCase_PromotionFailed():
+      case StopCase_PlansUnreadable():
         sse_encode_i_32(20, serializer);
-      case StopCase_FellBack():
+      case StopCase_PromotionFailed():
         sse_encode_i_32(21, serializer);
-      case StopCase_PlansNotApplied():
+      case StopCase_FellBack():
         sse_encode_i_32(22, serializer);
-      case StopCase_PlansUnknown():
+      case StopCase_PlansNotApplied():
         sse_encode_i_32(23, serializer);
-      case StopCase_ServerFailed():
+      case StopCase_PlansUnknown():
         sse_encode_i_32(24, serializer);
-      case StopCase_Cancelled():
+      case StopCase_ServerFailed():
         sse_encode_i_32(25, serializer);
-      case StopCase_Other():
+      case StopCase_Cancelled():
         sse_encode_i_32(26, serializer);
+      case StopCase_Other():
+        sse_encode_i_32(27, serializer);
     }
   }
 

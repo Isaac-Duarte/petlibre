@@ -89,7 +89,7 @@ pub use dns::{DnsCheck, DnsError, DnsOverride, STOCK_BROKER_PORT};
 pub use frame::{FrameError, SETUP_ADDRESS, SetupFrame};
 pub use plans::{DecodeError, Import, StockPlans};
 
-use wellfed_model::{Client, ClientRole, Generation, PLANS, Plan, Plans, Refusal};
+use wellfed_model::{Client, ClientRole, Generation, PLANS, Plan, Plans, Readiness, Refusal};
 
 use crate::update::InstallError as UpdateError;
 use crate::update_key::{EnrollError, Enrolled};
@@ -305,6 +305,12 @@ pub enum InstallError {
         "the owner kept stock's plans: the Reset hold erases them, so nothing was done; point stock's broker name at the installer in your DNS instead"
     )]
     ResetDeclined,
+    /// Stock saves a frame only once it reaches the broker the frame named,
+    /// and otherwise opens its setup network again, so nothing is lost.
+    #[error(
+        "stock never reached the broker after the setup frame: it keeps nothing, and reopens its setup network for another try. Check the Wi-Fi's password and that it has a 2.4 GHz band"
+    )]
+    FrameNotTaken,
     #[error(
         "the server refused the install request without sending it; stock is unchanged, and a new run may ask again once the reason is fixed"
     )]
@@ -771,6 +777,13 @@ impl Install {
         }
     }
 
+    /// The frame went out and no stock arrived in the time joining takes.
+    pub fn frame_not_taken(&mut self) {
+        if self.stage == Stage::AwaitStock {
+            self.stage = Stage::Failed(InstallError::FrameNotTaken);
+        }
+    }
+
     /// Stock as the broker sees it. Ready moves the run to the owner's check
     /// of the feeder; a version other than [`STOCK_VERSION`], or a contested
     /// enrollment, ends it.
@@ -1083,10 +1096,19 @@ impl Install {
     }
 
     /// The replacement after the promotion's restart, with the highest
-    /// version it reports confirmed (`UpdateView::min_version`). Done once
-    /// bank 1 runs the build and has confirmed the promoted version; a
-    /// trial boot still deciding waits.
-    pub fn confirmed(&mut self, status: Replacement<'_>, confirmed_version: u32) {
+    /// version it reports confirmed (`UpdateView::min_version`) and its
+    /// readiness. Done once bank 1 runs the build and either has confirmed
+    /// the promoted version, or can feed: a trial build takes no feed until it
+    /// confirms, so a ready one has confirmed. Readiness is what settles a
+    /// reinstall of a build the feeder confirmed before, which skips the trial
+    /// and leaves the floor below the version. A trial boot still deciding
+    /// waits.
+    pub fn confirmed(
+        &mut self,
+        status: Replacement<'_>,
+        confirmed_version: u32,
+        readiness: Option<Readiness>,
+    ) {
         if self.stage != Stage::AwaitConfirm {
             return;
         }
@@ -1097,7 +1119,11 @@ impl Install {
                 self.stage = Stage::Failed(InstallError::WrongPromotion { reported });
             }
             _ => match self.version {
-                Some(version) if confirmed_version >= version => self.stage = self.after_confirm(),
+                Some(version)
+                    if confirmed_version >= version || readiness == Some(Readiness::Ready) =>
+                {
+                    self.stage = self.after_confirm();
+                }
                 Some(_) => {}
                 None => self.stage = Stage::Failed(InstallError::PromotionUnknown),
             },

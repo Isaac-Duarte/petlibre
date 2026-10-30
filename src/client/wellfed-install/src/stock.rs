@@ -36,6 +36,8 @@ pub struct StockOptions {
     /// Whether the server also answers its loopback API, for the bench's
     /// page to read.
     pub api: Api,
+    /// Which address the broker listens on.
+    pub bind: server::Bind,
 }
 
 /// The installer's config at `path`, for a broker at `listen`: created once,
@@ -166,6 +168,7 @@ impl Stock {
                 enroll: Some(self.options.enroll),
                 clock: self.options.clock,
                 api: self.options.api,
+                bind: self.options.bind,
             },
         )
         .map_err(|error| Error::StockServer(error.into()))?;
@@ -397,6 +400,7 @@ mod tests {
                     enroll: None,
                     clock: clock::Policy::Bounded,
                     api: Api::Off,
+                    bind: server::Bind::Configured,
                 },
             )
             .unwrap();

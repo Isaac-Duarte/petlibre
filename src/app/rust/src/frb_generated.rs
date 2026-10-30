@@ -2399,6 +2399,15 @@ impl SseDecode for crate::api::install::InstallAsk {
                 return crate::api::install::InstallAsk::RestartFeeder;
             }
             2 => {
+                return crate::api::install::InstallAsk::EraseStockPlans;
+            }
+            3 => {
+                return crate::api::install::InstallAsk::JoinFeederNetwork;
+            }
+            4 => {
+                return crate::api::install::InstallAsk::LeaveFeederNetwork;
+            }
+            5 => {
                 let mut var_device = <String>::sse_decode(deserializer);
                 let mut var_address = <String>::sse_decode(deserializer);
                 return crate::api::install::InstallAsk::RecognizeFeeder {
@@ -2406,20 +2415,20 @@ impl SseDecode for crate::api::install::InstallAsk {
                     address: var_address,
                 };
             }
-            3 => {
+            6 => {
                 return crate::api::install::InstallAsk::OpenRecoveryWindow;
             }
-            4 => {
+            7 => {
                 return crate::api::install::InstallAsk::OpenLink;
             }
-            5 => {
+            8 => {
                 let mut var_pieces = <Vec<Vec<u8>>>::sse_decode(deserializer);
                 return crate::api::install::InstallAsk::WriteLink { pieces: var_pieces };
             }
-            6 => {
+            9 => {
                 return crate::api::install::InstallAsk::CloseLink;
             }
-            7 => {
+            10 => {
                 let mut var_identity = <String>::sse_decode(deserializer);
                 return crate::api::install::InstallAsk::Locate {
                     identity: var_identity,
@@ -2653,6 +2662,12 @@ impl SseDecode for crate::api::install::InstallStart {
                 return crate::api::install::InstallStart::Dns { name: var_name };
             }
             1 => {
+                return crate::api::install::InstallStart::Reset;
+            }
+            2 => {
+                return crate::api::install::InstallStart::FrameTaken;
+            }
+            3 => {
                 return crate::api::install::InstallStart::Bank0;
             }
             _ => {
@@ -3125,69 +3140,72 @@ impl SseDecode for crate::api::install::StopCase {
                 return crate::api::install::StopCase::NoFeederCame;
             }
             7 => {
-                return crate::api::install::StopCase::EarlierRequestOpen;
+                return crate::api::install::StopCase::FrameNotTaken;
             }
             8 => {
+                return crate::api::install::StopCase::EarlierRequestOpen;
+            }
+            9 => {
                 let mut var_why = <crate::api::install::RequestRefusal>::sse_decode(deserializer);
                 return crate::api::install::StopCase::RequestRefused { why: var_why };
             }
-            9 => {
+            10 => {
                 let mut var_code = <Option<u32>>::sse_decode(deserializer);
                 return crate::api::install::StopCase::StockRefused { code: var_code };
             }
-            10 => {
+            11 => {
                 return crate::api::install::StopCase::ClockUnset;
             }
-            11 => {
+            12 => {
                 return crate::api::install::StopCase::NoSetupFeeder;
             }
-            12 => {
+            13 => {
                 let mut var_refusal =
                     <Option<crate::api::model::SetupRefusal>>::sse_decode(deserializer);
                 return crate::api::install::StopCase::SetupFailed {
                     refusal: var_refusal,
                 };
             }
-            13 => {
+            14 => {
                 return crate::api::install::StopCase::OtherFeeder;
             }
-            14 => {
+            15 => {
                 return crate::api::install::StopCase::NotAnswering;
             }
-            15 => {
+            16 => {
                 return crate::api::install::StopCase::NotJoined;
             }
-            16 => {
+            17 => {
                 return crate::api::install::StopCase::PhoneOffWifi;
             }
-            17 => {
+            18 => {
                 return crate::api::install::StopCase::WifiRefused;
             }
-            18 => {
+            19 => {
                 return crate::api::install::StopCase::NoWifiGiven;
             }
-            19 => {
+            20 => {
                 return crate::api::install::StopCase::PlansUnreadable;
             }
-            20 => {
+            21 => {
                 return crate::api::install::StopCase::PromotionFailed;
             }
-            21 => {
+            22 => {
                 return crate::api::install::StopCase::FellBack;
             }
-            22 => {
+            23 => {
                 return crate::api::install::StopCase::PlansNotApplied;
             }
-            23 => {
+            24 => {
                 return crate::api::install::StopCase::PlansUnknown;
             }
-            24 => {
+            25 => {
                 return crate::api::install::StopCase::ServerFailed;
             }
-            25 => {
+            26 => {
                 return crate::api::install::StopCase::Cancelled;
             }
-            26 => {
+            27 => {
                 return crate::api::install::StopCase::Other;
             }
             _ => {
@@ -3910,20 +3928,23 @@ impl flutter_rust_bridge::IntoDart for crate::api::install::InstallAsk {
             ]
             .into_dart(),
             crate::api::install::InstallAsk::RestartFeeder => [1.into_dart()].into_dart(),
+            crate::api::install::InstallAsk::EraseStockPlans => [2.into_dart()].into_dart(),
+            crate::api::install::InstallAsk::JoinFeederNetwork => [3.into_dart()].into_dart(),
+            crate::api::install::InstallAsk::LeaveFeederNetwork => [4.into_dart()].into_dart(),
             crate::api::install::InstallAsk::RecognizeFeeder { device, address } => [
-                2.into_dart(),
+                5.into_dart(),
                 device.into_into_dart().into_dart(),
                 address.into_into_dart().into_dart(),
             ]
             .into_dart(),
-            crate::api::install::InstallAsk::OpenRecoveryWindow => [3.into_dart()].into_dart(),
-            crate::api::install::InstallAsk::OpenLink => [4.into_dart()].into_dart(),
+            crate::api::install::InstallAsk::OpenRecoveryWindow => [6.into_dart()].into_dart(),
+            crate::api::install::InstallAsk::OpenLink => [7.into_dart()].into_dart(),
             crate::api::install::InstallAsk::WriteLink { pieces } => {
-                [5.into_dart(), pieces.into_into_dart().into_dart()].into_dart()
+                [8.into_dart(), pieces.into_into_dart().into_dart()].into_dart()
             }
-            crate::api::install::InstallAsk::CloseLink => [6.into_dart()].into_dart(),
+            crate::api::install::InstallAsk::CloseLink => [9.into_dart()].into_dart(),
             crate::api::install::InstallAsk::Locate { identity } => {
-                [7.into_dart(), identity.into_into_dart().into_dart()].into_dart()
+                [10.into_dart(), identity.into_into_dart().into_dart()].into_dart()
             }
             _ => {
                 unimplemented!("");
@@ -4125,7 +4146,9 @@ impl flutter_rust_bridge::IntoDart for crate::api::install::InstallStart {
             crate::api::install::InstallStart::Dns { name } => {
                 [0.into_dart(), name.into_into_dart().into_dart()].into_dart()
             }
-            crate::api::install::InstallStart::Bank0 => [1.into_dart()].into_dart(),
+            crate::api::install::InstallStart::Reset => [1.into_dart()].into_dart(),
+            crate::api::install::InstallStart::FrameTaken => [2.into_dart()].into_dart(),
+            crate::api::install::InstallStart::Bank0 => [3.into_dart()].into_dart(),
             _ => {
                 unimplemented!("");
             }
@@ -4456,32 +4479,33 @@ impl flutter_rust_bridge::IntoDart for crate::api::install::StopCase {
             crate::api::install::StopCase::BackupMismatch => [4.into_dart()].into_dart(),
             crate::api::install::StopCase::NotYourFeeder => [5.into_dart()].into_dart(),
             crate::api::install::StopCase::NoFeederCame => [6.into_dart()].into_dart(),
-            crate::api::install::StopCase::EarlierRequestOpen => [7.into_dart()].into_dart(),
+            crate::api::install::StopCase::FrameNotTaken => [7.into_dart()].into_dart(),
+            crate::api::install::StopCase::EarlierRequestOpen => [8.into_dart()].into_dart(),
             crate::api::install::StopCase::RequestRefused { why } => {
-                [8.into_dart(), why.into_into_dart().into_dart()].into_dart()
+                [9.into_dart(), why.into_into_dart().into_dart()].into_dart()
             }
             crate::api::install::StopCase::StockRefused { code } => {
-                [9.into_dart(), code.into_into_dart().into_dart()].into_dart()
+                [10.into_dart(), code.into_into_dart().into_dart()].into_dart()
             }
-            crate::api::install::StopCase::ClockUnset => [10.into_dart()].into_dart(),
-            crate::api::install::StopCase::NoSetupFeeder => [11.into_dart()].into_dart(),
+            crate::api::install::StopCase::ClockUnset => [11.into_dart()].into_dart(),
+            crate::api::install::StopCase::NoSetupFeeder => [12.into_dart()].into_dart(),
             crate::api::install::StopCase::SetupFailed { refusal } => {
-                [12.into_dart(), refusal.into_into_dart().into_dart()].into_dart()
+                [13.into_dart(), refusal.into_into_dart().into_dart()].into_dart()
             }
-            crate::api::install::StopCase::OtherFeeder => [13.into_dart()].into_dart(),
-            crate::api::install::StopCase::NotAnswering => [14.into_dart()].into_dart(),
-            crate::api::install::StopCase::NotJoined => [15.into_dart()].into_dart(),
-            crate::api::install::StopCase::PhoneOffWifi => [16.into_dart()].into_dart(),
-            crate::api::install::StopCase::WifiRefused => [17.into_dart()].into_dart(),
-            crate::api::install::StopCase::NoWifiGiven => [18.into_dart()].into_dart(),
-            crate::api::install::StopCase::PlansUnreadable => [19.into_dart()].into_dart(),
-            crate::api::install::StopCase::PromotionFailed => [20.into_dart()].into_dart(),
-            crate::api::install::StopCase::FellBack => [21.into_dart()].into_dart(),
-            crate::api::install::StopCase::PlansNotApplied => [22.into_dart()].into_dart(),
-            crate::api::install::StopCase::PlansUnknown => [23.into_dart()].into_dart(),
-            crate::api::install::StopCase::ServerFailed => [24.into_dart()].into_dart(),
-            crate::api::install::StopCase::Cancelled => [25.into_dart()].into_dart(),
-            crate::api::install::StopCase::Other => [26.into_dart()].into_dart(),
+            crate::api::install::StopCase::OtherFeeder => [14.into_dart()].into_dart(),
+            crate::api::install::StopCase::NotAnswering => [15.into_dart()].into_dart(),
+            crate::api::install::StopCase::NotJoined => [16.into_dart()].into_dart(),
+            crate::api::install::StopCase::PhoneOffWifi => [17.into_dart()].into_dart(),
+            crate::api::install::StopCase::WifiRefused => [18.into_dart()].into_dart(),
+            crate::api::install::StopCase::NoWifiGiven => [19.into_dart()].into_dart(),
+            crate::api::install::StopCase::PlansUnreadable => [20.into_dart()].into_dart(),
+            crate::api::install::StopCase::PromotionFailed => [21.into_dart()].into_dart(),
+            crate::api::install::StopCase::FellBack => [22.into_dart()].into_dart(),
+            crate::api::install::StopCase::PlansNotApplied => [23.into_dart()].into_dart(),
+            crate::api::install::StopCase::PlansUnknown => [24.into_dart()].into_dart(),
+            crate::api::install::StopCase::ServerFailed => [25.into_dart()].into_dart(),
+            crate::api::install::StopCase::Cancelled => [26.into_dart()].into_dart(),
+            crate::api::install::StopCase::Other => [27.into_dart()].into_dart(),
             _ => {
                 unimplemented!("");
             }
@@ -5108,26 +5132,35 @@ impl SseEncode for crate::api::install::InstallAsk {
             crate::api::install::InstallAsk::RestartFeeder => {
                 <i32>::sse_encode(1, serializer);
             }
-            crate::api::install::InstallAsk::RecognizeFeeder { device, address } => {
+            crate::api::install::InstallAsk::EraseStockPlans => {
                 <i32>::sse_encode(2, serializer);
+            }
+            crate::api::install::InstallAsk::JoinFeederNetwork => {
+                <i32>::sse_encode(3, serializer);
+            }
+            crate::api::install::InstallAsk::LeaveFeederNetwork => {
+                <i32>::sse_encode(4, serializer);
+            }
+            crate::api::install::InstallAsk::RecognizeFeeder { device, address } => {
+                <i32>::sse_encode(5, serializer);
                 <String>::sse_encode(device, serializer);
                 <String>::sse_encode(address, serializer);
             }
             crate::api::install::InstallAsk::OpenRecoveryWindow => {
-                <i32>::sse_encode(3, serializer);
+                <i32>::sse_encode(6, serializer);
             }
             crate::api::install::InstallAsk::OpenLink => {
-                <i32>::sse_encode(4, serializer);
+                <i32>::sse_encode(7, serializer);
             }
             crate::api::install::InstallAsk::WriteLink { pieces } => {
-                <i32>::sse_encode(5, serializer);
+                <i32>::sse_encode(8, serializer);
                 <Vec<Vec<u8>>>::sse_encode(pieces, serializer);
             }
             crate::api::install::InstallAsk::CloseLink => {
-                <i32>::sse_encode(6, serializer);
+                <i32>::sse_encode(9, serializer);
             }
             crate::api::install::InstallAsk::Locate { identity } => {
-                <i32>::sse_encode(7, serializer);
+                <i32>::sse_encode(10, serializer);
                 <String>::sse_encode(identity, serializer);
             }
             _ => {
@@ -5319,8 +5352,14 @@ impl SseEncode for crate::api::install::InstallStart {
                 <i32>::sse_encode(0, serializer);
                 <String>::sse_encode(name, serializer);
             }
-            crate::api::install::InstallStart::Bank0 => {
+            crate::api::install::InstallStart::Reset => {
                 <i32>::sse_encode(1, serializer);
+            }
+            crate::api::install::InstallStart::FrameTaken => {
+                <i32>::sse_encode(2, serializer);
+            }
+            crate::api::install::InstallStart::Bank0 => {
+                <i32>::sse_encode(3, serializer);
             }
             _ => {
                 unimplemented!("");
@@ -5751,68 +5790,71 @@ impl SseEncode for crate::api::install::StopCase {
             crate::api::install::StopCase::NoFeederCame => {
                 <i32>::sse_encode(6, serializer);
             }
-            crate::api::install::StopCase::EarlierRequestOpen => {
+            crate::api::install::StopCase::FrameNotTaken => {
                 <i32>::sse_encode(7, serializer);
             }
-            crate::api::install::StopCase::RequestRefused { why } => {
+            crate::api::install::StopCase::EarlierRequestOpen => {
                 <i32>::sse_encode(8, serializer);
+            }
+            crate::api::install::StopCase::RequestRefused { why } => {
+                <i32>::sse_encode(9, serializer);
                 <crate::api::install::RequestRefusal>::sse_encode(why, serializer);
             }
             crate::api::install::StopCase::StockRefused { code } => {
-                <i32>::sse_encode(9, serializer);
+                <i32>::sse_encode(10, serializer);
                 <Option<u32>>::sse_encode(code, serializer);
             }
             crate::api::install::StopCase::ClockUnset => {
-                <i32>::sse_encode(10, serializer);
-            }
-            crate::api::install::StopCase::NoSetupFeeder => {
                 <i32>::sse_encode(11, serializer);
             }
-            crate::api::install::StopCase::SetupFailed { refusal } => {
+            crate::api::install::StopCase::NoSetupFeeder => {
                 <i32>::sse_encode(12, serializer);
+            }
+            crate::api::install::StopCase::SetupFailed { refusal } => {
+                <i32>::sse_encode(13, serializer);
                 <Option<crate::api::model::SetupRefusal>>::sse_encode(refusal, serializer);
             }
             crate::api::install::StopCase::OtherFeeder => {
-                <i32>::sse_encode(13, serializer);
-            }
-            crate::api::install::StopCase::NotAnswering => {
                 <i32>::sse_encode(14, serializer);
             }
-            crate::api::install::StopCase::NotJoined => {
+            crate::api::install::StopCase::NotAnswering => {
                 <i32>::sse_encode(15, serializer);
             }
-            crate::api::install::StopCase::PhoneOffWifi => {
+            crate::api::install::StopCase::NotJoined => {
                 <i32>::sse_encode(16, serializer);
             }
-            crate::api::install::StopCase::WifiRefused => {
+            crate::api::install::StopCase::PhoneOffWifi => {
                 <i32>::sse_encode(17, serializer);
             }
-            crate::api::install::StopCase::NoWifiGiven => {
+            crate::api::install::StopCase::WifiRefused => {
                 <i32>::sse_encode(18, serializer);
             }
-            crate::api::install::StopCase::PlansUnreadable => {
+            crate::api::install::StopCase::NoWifiGiven => {
                 <i32>::sse_encode(19, serializer);
             }
-            crate::api::install::StopCase::PromotionFailed => {
+            crate::api::install::StopCase::PlansUnreadable => {
                 <i32>::sse_encode(20, serializer);
             }
-            crate::api::install::StopCase::FellBack => {
+            crate::api::install::StopCase::PromotionFailed => {
                 <i32>::sse_encode(21, serializer);
             }
-            crate::api::install::StopCase::PlansNotApplied => {
+            crate::api::install::StopCase::FellBack => {
                 <i32>::sse_encode(22, serializer);
             }
-            crate::api::install::StopCase::PlansUnknown => {
+            crate::api::install::StopCase::PlansNotApplied => {
                 <i32>::sse_encode(23, serializer);
             }
-            crate::api::install::StopCase::ServerFailed => {
+            crate::api::install::StopCase::PlansUnknown => {
                 <i32>::sse_encode(24, serializer);
             }
-            crate::api::install::StopCase::Cancelled => {
+            crate::api::install::StopCase::ServerFailed => {
                 <i32>::sse_encode(25, serializer);
             }
-            crate::api::install::StopCase::Other => {
+            crate::api::install::StopCase::Cancelled => {
                 <i32>::sse_encode(26, serializer);
+            }
+            crate::api::install::StopCase::Other => {
+                <i32>::sse_encode(27, serializer);
             }
             _ => {
                 unimplemented!("");

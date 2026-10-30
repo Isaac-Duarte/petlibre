@@ -178,6 +178,18 @@ sealed class InstallAsk with _$InstallAsk {
   /// Answered done once the owner was told: the broker already listens.
   const factory InstallAsk.restartFeeder() = InstallAsk_RestartFeeder;
 
+  /// The reset route: the owner answers that resetting erases the feeder's
+  /// meals, which the screen before asked.
+  const factory InstallAsk.eraseStockPlans() = InstallAsk_EraseStockPlans;
+
+  /// Join the feeder's setup network, answered done once this process's
+  /// sockets go over it. The broker already listens.
+  const factory InstallAsk.joinFeederNetwork() = InstallAsk_JoinFeederNetwork;
+
+  /// The frame went out: leave the feeder's setup network, answered done
+  /// once this phone is back on its Wi-Fi at the address the frame named.
+  const factory InstallAsk.leaveFeederNetwork() = InstallAsk_LeaveFeederNetwork;
+
   /// Trust on first use admitted `device`, connecting from `address`; the
   /// owner answers whether it is theirs.
   const factory InstallAsk.recognizeFeeder({
@@ -461,6 +473,14 @@ sealed class InstallStart with _$InstallStart {
   /// The owner's resolver answers stock's broker `name` with this phone.
   const factory InstallStart.dns({required String name}) = InstallStart_Dns;
 
+  /// The owner reset the feeder, which opened its setup network: this phone
+  /// joins it and sends `home` and its own address there, once.
+  const factory InstallStart.reset() = InstallStart_Reset;
+
+  /// A frame from an earlier run reached this phone's broker, so stock
+  /// already looks for it here and has no setup network left to join.
+  const factory InstallStart.frameTaken() = InstallStart_FrameTaken;
+
   /// The replacement is already on bank 0 from an earlier run: start at
   /// pairing, and ask stock nothing.
   const factory InstallStart.bank0() = InstallStart_Bank0;
@@ -596,6 +616,10 @@ sealed class StopCase with _$StopCase {
 
   /// No feeder reached the broker in time. Nothing was sent.
   const factory StopCase.noFeederCame() = StopCase_NoFeederCame;
+
+  /// The setup frame went out and the feeder never reached this phone: the
+  /// wrong password, say. It keeps nothing and reopens its setup network.
+  const factory StopCase.frameNotTaken() = StopCase_FrameNotTaken;
 
   /// A request from an earlier run has not been resolved, so the server
   /// sent none; [`InstallListener`] can resolve it.

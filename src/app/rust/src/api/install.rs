@@ -26,6 +26,12 @@ use crate::install::{self, Listener, Run};
 pub enum InstallStart {
     /// The owner's resolver answers stock's broker `name` with this phone.
     Dns { name: String },
+    /// The owner reset the feeder, which opened its setup network: this phone
+    /// joins it and sends `home` and its own address there, once.
+    Reset,
+    /// A frame from an earlier run reached this phone's broker, so stock
+    /// already looks for it here and has no setup network left to join.
+    FrameTaken,
     /// The replacement is already on bank 0 from an earlier run: start at
     /// pairing, and ask stock nothing.
     Bank0,
@@ -249,6 +255,15 @@ pub enum InstallAsk {
     SetOverride { name: String, broker: String },
     /// Answered done once the owner was told: the broker already listens.
     RestartFeeder,
+    /// The reset route: the owner answers that resetting erases the feeder's
+    /// meals, which the screen before asked.
+    EraseStockPlans,
+    /// Join the feeder's setup network, answered done once this process's
+    /// sockets go over it. The broker already listens.
+    JoinFeederNetwork,
+    /// The frame went out: leave the feeder's setup network, answered done
+    /// once this phone is back on its Wi-Fi at the address the frame named.
+    LeaveFeederNetwork,
     /// Trust on first use admitted `device`, connecting from `address`; the
     /// owner answers whether it is theirs.
     RecognizeFeeder { device: String, address: String },
@@ -334,6 +349,9 @@ pub enum StopCase {
     NotYourFeeder,
     /// No feeder reached the broker in time. Nothing was sent.
     NoFeederCame,
+    /// The setup frame went out and the feeder never reached this phone: the
+    /// wrong password, say. It keeps nothing and reopens its setup network.
+    FrameNotTaken,
     /// A request from an earlier run has not been resolved, so the server
     /// sent none; [`InstallListener`] can resolve it.
     EarlierRequestOpen,

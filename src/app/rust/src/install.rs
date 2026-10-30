@@ -20,7 +20,7 @@ use std::time::Duration;
 
 use tokio::sync::{mpsc, oneshot, watch};
 use wellfed_client::install::{
-    DnsOverride, InstallError, Phase, Provision, STOCK_BROKER_PORT, STOCK_PAYLOAD_LEN,
+    DnsOverride, InstallError, Phase, Provision, STOCK_BROKER_PORT, STOCK_PAYLOAD_LEN, SetupFrame,
     manifest_build, manifest_version,
 };
 use wellfed_client::setup::{Credentials, Deframer, frame};
@@ -30,7 +30,7 @@ use wellfed_formats::manifest::Provisioning;
 use wellfed_install::event::{Enrollment as KeyEnrollment, PlansResult, Wait};
 use wellfed_install::listen::{self, Listened, UNCERTAIN_WAIT};
 use wellfed_install::{
-    Announcement, Api, Bluetooth, ClockPolicy, Discovery, Error, Event, Keys, Plan, Platform,
+    Announcement, Api, Bind, Bluetooth, ClockPolicy, Discovery, Error, Event, Keys, Plan, Platform,
     PlatformError, Prompter, Refusal, Rejection, Report, Review, SetupLink, Signer, Start,
     StockOptions, Stop, Unjoined, Unsettled,
 };
@@ -50,6 +50,9 @@ const STACK: usize = 16 * 1024 * 1024;
 const LOCATE_WAIT: Duration = Duration::from_secs(15);
 /// A link the feeder already dropped may stall hanging up.
 const CLOSE_WAIT: Duration = Duration::from_secs(3);
+/// The numeric account the setup frame carries. Stock keeps it beside the
+/// broker and checks only its form; no vendor account exists to name here.
+const FRAME_ACCOUNT: &str = "1";
 /// How long the broker trusts the first stock feeder that connects.
 const ENROLL: Duration = Duration::from_secs(15 * 60);
 
@@ -300,22 +303,24 @@ impl Prompter for AppPrompter {
             },
             Prompt::RestartFeeder => InstallAsk::RestartFeeder,
             Prompt::OpenRecoveryWindow => InstallAsk::OpenRecoveryWindow,
-            // The app takes the DNS route alone, and the feeder times the
-            // code and the Dispense press, so these are never waited on.
+            Prompt::SetupMode => InstallAsk::JoinFeederNetwork,
+            Prompt::JoinBack => InstallAsk::LeaveFeederNetwork,
+            // The feeder times the code and the Dispense press, so those are
+            // never waited on.
             other => return Err(format!("the app does not show {other:?}").into()),
         };
         self.0.done(ask).await
     }
 
     async fn yes(&mut self, prompt: Prompt) -> Result<bool, PlatformError> {
-        let Prompt::RecognizeFeeder { device, address } = prompt else {
-            return Err(format!("the app does not ask {prompt:?}").into());
+        let ask = match prompt {
+            Prompt::RecognizeFeeder { device, address } => {
+                InstallAsk::RecognizeFeeder { device, address }
+            }
+            Prompt::EraseStockPlans => InstallAsk::EraseStockPlans,
+            other => return Err(format!("the app does not ask {other:?}").into()),
         };
-        match self
-            .0
-            .ask(InstallAsk::RecognizeFeeder { device, address })
-            .await?
-        {
+        match self.0.ask(ask).await? {
             InstallAnswer::Yes { yes } => Ok(yes),
             InstallAnswer::Failed { reason } => Err(reason.into()),
             other => Err(format!("the app answered {other:?}").into()),
@@ -639,6 +644,7 @@ pub fn stop_of(error: &Error, from_stock: bool) -> (StopCase, Resume) {
             | InstallError::PlansRefused(_)
             | InstallError::PlansUnread => (StopCase::PlansNotApplied, Nothing),
             InstallError::PlansUncertain => (StopCase::PlansUnknown, Nothing),
+            InstallError::FrameNotTaken => (StopCase::FrameNotTaken, FromStart),
             InstallError::ResetDeclined | InstallError::WrongReplacement { .. } => {
                 (StopCase::Other, Nothing)
             }
@@ -657,6 +663,7 @@ pub fn stop_of(error: &Error, from_stock: bool) -> (StopCase, Resume) {
             (StopCase::SetupFailed { refusal }, FromBank0)
         }
         Error::RequestRefused(refusal) => (request_refused(*refusal), FromStart),
+        Error::Frame(_) => (StopCase::WifiRefused, FromStart),
         Error::OtherFeeder { .. } => (StopCase::OtherFeeder, FromBank0),
         // The bench route's pairing, which no Bluetooth setup wraps.
         Error::SetupRefused(refusal) => (
@@ -787,7 +794,8 @@ fn plan(
     })?;
     let version = manifest_version(&manifest).ok_or(Error::NoManifest)?;
 
-    let from_stock = matches!(spec.start, InstallStart::Dns { .. });
+    let reset = matches!(spec.start, InstallStart::Reset | InstallStart::FrameTaken);
+    let from_stock = reset || matches!(spec.start, InstallStart::Dns { .. });
     let unjoined = if spec.setup_again {
         Unjoined::SetUpAgain
     } else {
@@ -798,12 +806,19 @@ fn plan(
     // one has only what setup gives it, so nothing that may send it there goes
     // without: stock's request above all, which cannot be taken back.
     let consumer = review.provisioning() == Provisioning::Consumer;
-    if consumer && spec.home.is_none() && (from_stock || unjoined == Unjoined::SetUpAgain) {
+    let wants_home = matches!(spec.start, InstallStart::Reset)
+        || (consumer && (from_stock || unjoined == Unjoined::SetUpAgain));
+    if wants_home && spec.home.is_none() {
         return Err(NotPlanned::Spec {
             case: StopCase::NoWifiGiven,
             detail: Error::NoHomeNetwork.to_string(),
         });
     }
+    // What the frame says, before Bluetooth setup takes the same network.
+    let frame_wifi = spec
+        .home
+        .as_ref()
+        .map(|wifi| (wifi.ssid.clone(), wifi.passphrase.clone()));
     let home = match spec.home {
         Some(wifi) if consumer => Some(
             Credentials::new(wifi.ssid.into_bytes(), wifi.passphrase).map_err(|error| {
@@ -835,6 +850,20 @@ fn plan(
                 DnsOverride::new(name, broker).map_err(|error| Error::StockServer(error.into()))?;
             Start::Stock(Provision::Dns(dns))
         }
+        InstallStart::Reset => {
+            let (ssid, password) = frame_wifi.ok_or(NotPlanned::Spec {
+                case: StopCase::NoWifiGiven,
+                detail: Error::NoHomeNetwork.to_string(),
+            })?;
+            Start::Stock(Provision::Frame(SetupFrame {
+                ssid,
+                password,
+                host: phone.to_string(),
+                port: STOCK_BROKER_PORT,
+                id: FRAME_ACCOUNT.to_string(),
+            }))
+        }
+        InstallStart::FrameTaken => Start::Stock(Provision::Done),
         InstallStart::Bank0 => Start::Bank0,
     };
 
@@ -858,12 +887,14 @@ fn plan(
         stock: StockOptions {
             config,
             enroll: ENROLL,
-            clock: if spec.calibrate_clock {
+            // A reset feeder has no plans, so no meal comes due in the jump.
+            clock: if spec.calibrate_clock || reset {
                 ClockPolicy::Always
             } else {
                 ClockPolicy::Bounded
             },
             api: Api::Off,
+            bind: if reset { Bind::Any } else { Bind::Configured },
         },
     };
     let keys = AppKeys {

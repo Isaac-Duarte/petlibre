@@ -32,10 +32,13 @@ Widget _app(FakeBook book, FakeInstallPorts ports, {Brightness? brightness}) {
   );
 }
 
+/// The install's first screen. Most of these tests are about what both routes
+/// share, and reach it by the router's.
 Future<void> _open(
   WidgetTester tester,
   FakeInstallPorts ports, {
   FakeBook? book,
+  InstallRoute route = InstallRoute.dns,
 }) async {
   // Tall enough that a whole screen is built, not just what scrolls into view.
   tester.view.physicalSize = const Size(1080, 6000);
@@ -43,6 +46,7 @@ Future<void> _open(
   addTearDown(tester.view.reset);
   await tester.pumpWidget(_app(book ?? FakeBook(), ports));
   await settle(tester);
+  if (route == InstallRoute.dns) await _tap(tester, 'Through your router');
 }
 
 Future<void> _tap(WidgetTester tester, String text) async {
@@ -122,19 +126,15 @@ Future<FakeRun> _stopped(
 void main() {
   group('2.1 before you start', () {
     testWidgets(
-      'the router route is the one on offer, and the other is coming later',
+      'the feeder\'s own Wi-Fi is first, and the router is on offer',
       (tester) async {
         final ports = FakeInstallPorts();
-        await _open(tester, ports);
+        await _open(tester, ports, route: InstallRoute.reset);
 
         expect(find.text('Install Wellfed'), findsOneWidget);
         expect(find.text('Through your router'), findsOneWidget);
         expect(find.text("Through the feeder's own Wi-Fi"), findsOneWidget);
-        expect(find.text('Coming later'), findsOneWidget);
-
-        await tester.tap(find.text("Through the feeder's own Wi-Fi"));
-        await settle(tester);
-        expect(find.text('Continue'), findsOneWidget);
+        expect(find.text('Coming later'), findsNothing);
       },
     );
 
@@ -1341,6 +1341,7 @@ void main() {
     await settle(tester);
     expect(find.text('Install Wellfed'), findsOneWidget);
 
+    await _tap(tester, 'Through your router');
     await _tap(tester, 'Continue');
     await tester.enterText(find.byType(TextField).at(0), 'Maple St');
     await tester.enterText(find.byType(TextField).at(1), 'correcthorse');
@@ -1465,4 +1466,156 @@ void main() {
     expect(ports.releases, 1);
     expect(flow.stage, InstallStage.before);
   });
+
+  group('2.2 and 2.3 the reset route', () {
+    testWidgets('Reset waits for the owner to understand what it erases', (
+      tester,
+    ) async {
+      final ports = FakeInstallPorts();
+      await _open(tester, ports, route: InstallRoute.reset);
+      await _tap(tester, 'Continue');
+      await tester.enterText(find.byType(TextField).at(0), 'Maple St');
+      await tester.enterText(find.byType(TextField).at(1), 'correcthorse');
+      await tester.pump();
+      await _tap(tester, 'Continue');
+
+      expect(find.text('Reset the feeder'), findsOneWidget);
+      await tester.tap(find.text('I held Reset'));
+      await settle(tester);
+      expect(ports.runs, isEmpty);
+    });
+
+    testWidgets('the phone joins, sends once, comes back and waits', (
+      tester,
+    ) async {
+      final ports = FakeInstallPorts();
+      final run = await _toHandover(tester, ports);
+      expect(ports.specs.single.start, const InstallStart.reset());
+      expect(ports.specs.single.home?.ssid, 'Maple St');
+
+      run.ask(1, const InstallAsk.eraseStockPlans());
+      await settle(tester);
+      expect(run.answers[1], const InstallAnswer.yes(yes: true));
+
+      // The broker listens first, then the owner joins.
+      run.ask(2, const InstallAsk.joinFeederNetwork());
+      await settle(tester);
+      expect(run.answers[2], isNull);
+      await _tap(tester, "Join the feeder's network");
+      expect(ports.joined, 1);
+      expect(run.answers[2], const InstallAnswer.done());
+
+      run.ask(3, const InstallAsk.leaveFeederNetwork());
+      await settle(tester);
+      expect(ports.left, 1);
+      expect(run.answers[3], const InstallAnswer.done());
+      expect(
+        find.text('Waiting for the feeder to join your Wi-Fi…'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('an empty picker lets the owner try again', (tester) async {
+      final ports = FakeInstallPorts()..joinFails = 'no network';
+      final run = await _toHandover(tester, ports);
+      run.ask(2, const InstallAsk.joinFeederNetwork());
+      await settle(tester);
+
+      await _tap(tester, "Join the feeder's network");
+      expect(
+        find.textContaining(
+          "This phone didn't join the feeder's network.",
+          findRichText: true,
+        ),
+        findsOneWidget,
+      );
+      expect(run.answers[2], isNull);
+
+      ports.joinFails = null;
+      await _tap(tester, "Join the feeder's network");
+      expect(run.answers[2], const InstallAnswer.done());
+    });
+
+    testWidgets('coming back at another address fails the ask', (tester) async {
+      final ports = FakeInstallPorts()..ipAfterLeaving = '192.168.1.99';
+      final run = await _toHandover(tester, ports);
+      run.ask(3, const InstallAsk.leaveFeederNetwork());
+      await settle(tester);
+      expect(run.answers[3], isA<InstallAnswer_Failed>());
+    });
+
+    testWidgets('a run that ends on the feeder\'s network leaves it', (
+      tester,
+    ) async {
+      final ports = FakeInstallPorts();
+      final run = await _toHandover(tester, ports);
+      run.ask(2, const InstallAsk.joinFeederNetwork());
+      await settle(tester);
+      await _tap(tester, "Join the feeder's network");
+
+      run.stopped(const StopCase.cancelled(), resume: Resume.fromStart);
+      await settle(tester);
+      expect(ports.left, 1);
+    });
+
+    testWidgets('a frame stock did not keep goes again with no second reset', (
+      tester,
+    ) async {
+      final ports = FakeInstallPorts();
+      final run = await _toHandover(tester, ports);
+      run.stopped(const StopCase.frameNotTaken(), resume: Resume.fromStart);
+      await settle(tester);
+      expect(find.text("The feeder didn't reach this phone"), findsOneWidget);
+
+      await _tap(tester, 'Try again');
+      expect(ports.runs, hasLength(2));
+      expect(ports.specs.last.start, const InstallStart.reset());
+      expect(find.text('Reset the feeder'), findsNothing);
+    });
+
+    testWidgets('a new password goes straight to the handover', (tester) async {
+      final ports = FakeInstallPorts();
+      final run = await _toHandover(tester, ports);
+      run.stopped(const StopCase.frameNotTaken(), resume: Resume.fromStart);
+      await settle(tester);
+
+      await _tap(tester, 'Enter the Wi-Fi again');
+      await tester.enterText(find.byType(TextField).at(0), 'Maple St');
+      await tester.enterText(find.byType(TextField).at(1), 'betterhorse');
+      await tester.pump();
+      await _tap(tester, 'Continue');
+      expect(ports.runs, hasLength(2));
+      expect(ports.specs.last.home?.passphrase, 'betterhorse');
+    });
+
+    testWidgets('a stock that kept the frame is only waited for', (
+      tester,
+    ) async {
+      final ports = FakeInstallPorts();
+      final run = await _toHandover(tester, ports);
+      run.ask(
+        4,
+        const InstallAsk.recognizeFeeder(device: 'AF', address: '192.168.1.40'),
+      );
+      await settle(tester);
+      run.stopped(const StopCase.serverFailed(), resume: Resume.fromStart);
+      await settle(tester);
+
+      await _tap(tester, 'Start again');
+      expect(ports.specs.last.start, const InstallStart.frameTaken());
+    });
+  });
+}
+
+/// From the first screen to the reset route's broker running.
+Future<FakeRun> _toHandover(WidgetTester tester, FakeInstallPorts ports) async {
+  await _open(tester, ports, route: InstallRoute.reset);
+  await _tap(tester, 'Continue');
+  await tester.enterText(find.byType(TextField).at(0), 'Maple St');
+  await tester.enterText(find.byType(TextField).at(1), 'correcthorse');
+  await tester.pump();
+  await _tap(tester, 'Continue');
+  await _tap(tester, 'I understand its meals will be erased');
+  await _tap(tester, 'I held Reset');
+  return ports.run;
 }

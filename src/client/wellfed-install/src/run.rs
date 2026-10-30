@@ -70,8 +70,13 @@ const PLANS_WAIT: Duration = Duration::from_secs(60);
 /// From the end of Bluetooth setup until the feeder, rebooted onto the
 /// owner's Wi-Fi, answers the device API.
 const JOIN_WAIT: Duration = Duration::from_secs(5 * 60);
-/// How long the setup frame's answer is waited for; it is never resent.
-const FRAME_ANSWER: Duration = Duration::from_secs(5);
+/// How long the setup frame's answer is waited for; it is never resent. Stock
+/// gives its broker about 20 s once it joins the Wi-Fi, and a phone with one
+/// Wi-Fi radio cannot go home until this is over.
+const FRAME_ANSWER: Duration = Duration::from_secs(2);
+/// From the frame until stock reaches the broker: its Wi-Fi join and those
+/// 20 s, with room. Past this it has gone back to its setup network.
+const FRAME_ARRIVAL: Duration = Duration::from_secs(2 * 60);
 /// How the feeder lists the installer's update key.
 const UPDATE_KEY_LABEL: &str = "installer";
 
@@ -446,6 +451,8 @@ struct Run<P, B, D, K, R> {
     given: Option<StockBackup>,
     /// Where the run is, for the report of a stop that ends it.
     track: Track,
+    /// When this run's setup frame went out.
+    frame_out: Option<Instant>,
 }
 
 impl<P, B, D, K, R> Run<P, B, D, K, R>
@@ -519,6 +526,7 @@ where
             identity: None,
             given: plan.backup,
             track: Track::new(),
+            frame_out: None,
         };
         Ok((run, install))
     }
@@ -560,6 +568,7 @@ where
                 Step::SendFrame(frame) => {
                     self.serve()?;
                     self.send_frame(frame.bytes()).await?;
+                    self.frame_out = Some(Instant::now());
                     install.frame_sent();
                 }
                 Step::AwaitStock => {
@@ -758,9 +767,18 @@ where
                 silent_since = None;
             }
 
+            let no_feeder = wait == Wait::NoFeeder;
             if said.as_ref() != Some(&wait) {
                 self.io.report.event(Event::Waiting(wait.clone()));
                 said = Some(wait);
+            }
+            if no_feeder
+                && self
+                    .frame_out
+                    .is_some_and(|sent| sent.elapsed() >= FRAME_ARRIVAL)
+            {
+                install.frame_not_taken();
+                return Ok(());
             }
             if Instant::now() >= deadline {
                 install.gave_up();
@@ -1516,6 +1534,7 @@ where
                         bank: status.bank,
                     },
                     view.min_version,
+                    status.readiness,
                 );
                 if !matches!(install.step(), Step::AwaitConfirm) {
                     return Ok(());

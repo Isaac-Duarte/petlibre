@@ -16,8 +16,7 @@ import 'name_step.dart';
 import 'setup_screen.dart';
 
 /// Installing Wellfed on a feeder that runs stock, one screen per stage of
-/// its [InstallFlow]. The DNS route only: the feeder's own Wi-Fi is drawn and
-/// waits for a person to see stock's Reset hold once.
+/// its [InstallFlow].
 class InstallScreen extends StatefulWidget {
   const InstallScreen({super.key, required this.book, required this.ports});
 
@@ -100,6 +99,8 @@ class _InstallScreenState extends State<InstallScreen> {
           onBack: () => _flow.back(InstallStage.before),
           onDone: _flow.setHome,
         ),
+        InstallStage.reset => _Reset(flow: _flow),
+        InstallStage.handover => _Handover(flow: _flow, onLeave: _leave),
         InstallStage.record => _Record(flow: _flow, onLeave: _leave),
         InstallStage.confirm => _Confirm(flow: _flow, onLeave: _leave),
         InstallStage.sending => _Sending(flow: _flow),
@@ -140,57 +141,42 @@ class _Fact extends StatelessWidget {
   }
 }
 
-/// One way for the feeder to find this phone. A route that is not built yet
-/// stays on the screen, so the owner knows it is coming.
+/// One way for the feeder to find this phone.
 class _RouteChoice extends StatelessWidget {
   const _RouteChoice({
     required this.title,
     required this.body,
-    this.selected = false,
-    this.later = false,
+    required this.selected,
+    required this.onTap,
   });
 
   final String title;
   final String body;
   final bool selected;
-  final bool later;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    return Opacity(
-      opacity: later ? 0.55 : 1,
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
       child: Panel(
         highlight: selected,
         padding: const EdgeInsets.all(Space.s4),
         child: Semantics(
+          button: true,
           selected: selected,
-          enabled: !later,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      title,
-                      style: TextStyle(
-                        fontSize: Sizes.md,
-                        fontWeight: Fonts.semibold,
-                        color: c.text,
-                      ),
-                    ),
-                  ),
-                  if (later)
-                    Text(
-                      'Coming later',
-                      style: TextStyle(
-                        fontSize: Sizes.sm,
-                        fontWeight: Fonts.semibold,
-                        color: c.textMuted,
-                      ),
-                    ),
-                ],
+              Text(
+                title,
+                style: TextStyle(
+                  fontSize: Sizes.md,
+                  fontWeight: Fonts.semibold,
+                  color: c.text,
+                ),
               ),
               const SizedBox(height: Space.s1),
               Text(
@@ -287,20 +273,22 @@ class _Before extends StatelessWidget {
         const SizedBox(height: Space.s4),
         const SectionLabel('How should the feeder find this phone?'),
         const SizedBox(height: Space.s3),
-        const _RouteChoice(
-          selected: true,
+        _RouteChoice(
+          selected: flow.route == InstallRoute.reset,
+          onTap: () => flow.chooseRoute(InstallRoute.reset),
+          title: "Through the feeder's own Wi-Fi",
+          body:
+              'The easy way. You hold Reset and this phone joins it for a '
+              "moment. Erases meals set in the vendor's app.",
+        ),
+        const SizedBox(height: Space.s3),
+        _RouteChoice(
+          selected: flow.route == InstallRoute.dns,
+          onTap: () => flow.chooseRoute(InstallRoute.dns),
           title: 'Through your router',
           body:
               "For a feeder already set up in the vendor's app. You add one "
               'DNS record on your router. Keeps its meals.',
-        ),
-        const SizedBox(height: Space.s3),
-        const _RouteChoice(
-          later: true,
-          title: "Through the feeder's own Wi-Fi",
-          body:
-              'Best for a new feeder. You hold Reset and this phone joins it '
-              "for a moment. Erases meals set in the vendor's app.",
         ),
         if (refusal != null) ...[const SizedBox(height: Space.s4), refusal],
         if (flow.bluetoothRefused) ...[
@@ -495,6 +483,133 @@ class _RecordState extends State<_Record> {
           OutlinedButton(
             onPressed: flow.checking ? null : () => unawaited(flow.startRun()),
             child: const Text('Go on anyway'),
+          ),
+      ],
+    );
+  }
+}
+
+/// 2.2: hold Reset. It erases the feeder's settings, so the owner says they
+/// understand first.
+class _Reset extends StatefulWidget {
+  const _Reset({required this.flow});
+
+  final InstallFlow flow;
+
+  @override
+  State<_Reset> createState() => _ResetState();
+}
+
+class _ResetState extends State<_Reset> {
+  bool _understood = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final flow = widget.flow;
+    final offWifi = flow.phoneIp == null;
+    return StepScaffold(
+      stepLabel: 'Step 1 of 5',
+      progress: 0.2,
+      leading: Leading.back,
+      onLeading: () => flow.back(InstallStage.wifi),
+      title: 'Reset the feeder',
+      content: [
+        const _Fact(
+          'If the lock light is on, hold the lock button for 5 seconds.',
+        ),
+        const _Fact('Hold the rightmost button, Reset, for 5 seconds.'),
+        const _Fact('It restarts and opens its own Wi-Fi network for setup.'),
+        const SizedBox(height: Space.s4),
+        const Notice(
+          tone: Tone.warning,
+          lead: 'Resetting erases its meals and Wi-Fi.',
+          text:
+              "Everything saved by the vendor's app goes. Write the meals down "
+              'first if you want them back.',
+        ),
+        const SizedBox(height: Space.s3),
+        CheckboxListTile(
+          contentPadding: EdgeInsets.zero,
+          controlAffinity: ListTileControlAffinity.leading,
+          value: _understood,
+          onChanged: (value) => setState(() => _understood = value ?? false),
+          title: const Text('I understand its meals will be erased'),
+        ),
+        if (offWifi) ...[
+          const SizedBox(height: Space.s3),
+          const Notice(
+            tone: Tone.fault,
+            lead: "This phone isn't on Wi-Fi.",
+            text: 'Join your home Wi-Fi, then press the button again.',
+          ),
+        ],
+      ],
+      actions: [
+        FilledButton(
+          onPressed: _understood ? () => unawaited(flow.startHandover()) : null,
+          child: const Text('I held Reset'),
+        ),
+      ],
+    );
+  }
+}
+
+/// 2.3: this phone joins the feeder's network, sends the Wi-Fi once and comes
+/// back, then waits for the feeder to reach it.
+class _Handover extends StatelessWidget {
+  const _Handover({required this.flow, required this.onLeave});
+
+  final InstallFlow flow;
+  final Future<void> Function() onLeave;
+
+  @override
+  Widget build(BuildContext context) {
+    final stateText = switch (flow.handover) {
+      Handover.starting => 'Getting ready…',
+      Handover.join || Handover.joining => null,
+      Handover.sending => 'Sending your Wi-Fi to the feeder…',
+      Handover.waiting => 'Waiting for the feeder to join your Wi-Fi…',
+    };
+    return StepScaffold(
+      stepLabel: 'Step 2 of 5',
+      progress: 0.35,
+      leading: Leading.close,
+      onLeading: () => unawaited(onLeave()),
+      title: 'Tell the feeder how to reach this phone',
+      body:
+          "This phone joins the feeder's setup network for a few seconds, "
+          'sends your Wi-Fi once, then comes back to your network.',
+      content: [
+        const Notice(
+          tone: Tone.neutral,
+          lead: 'Your password goes unencrypted.',
+          text:
+              "The feeder's setup network has no password, so someone close "
+              'by could read it during those few seconds. The feeder also '
+              'needs a 2.4 GHz Wi-Fi.',
+        ),
+        if (flow.joinFailed) ...[
+          const SizedBox(height: Space.s3),
+          const Notice(
+            tone: Tone.warning,
+            lead: "This phone didn't join the feeder's network.",
+            text:
+                'Its name starts with PL-AF103. It can take a minute to appear '
+                'after the reset. If it never does, hold Reset again.',
+          ),
+        ],
+        if (stateText != null) ...[
+          const SizedBox(height: Space.s4),
+          Searching(stateText),
+        ],
+      ],
+      actions: [
+        if (flow.handover == Handover.join || flow.handover == Handover.joining)
+          FilledButton(
+            onPressed: flow.handover == Handover.join
+                ? () => unawaited(flow.joinFeeder())
+                : null,
+            child: const Text("Join the feeder's network"),
           ),
       ],
     );
@@ -1064,8 +1179,17 @@ class _Stopped extends StatelessWidget {
     ),
     StopCase_NoFeederCame() => (
       'No feeder connected',
-      'Nothing was sent. The feeder may ask a public DNS server instead of '
-          'your router. Check the record, restart the feeder and start again.',
+      flow.route == InstallRoute.reset
+          ? 'Nothing was sent. Check that it is plugged in, then start again.'
+          : 'Nothing was sent. The feeder may ask a public DNS server instead '
+                'of your router. Check the record, restart the feeder and '
+                'start again.',
+    ),
+    StopCase_FrameNotTaken() => (
+      "The feeder didn't reach this phone",
+      'It keeps nothing when that happens, and opens its setup network again. '
+          'Check the Wi-Fi password, that your Wi-Fi has a 2.4 GHz band, and '
+          'that this phone stayed on it.',
     ),
     StopCase_EarlierRequestOpen() => (
       'An earlier install is still open',
@@ -1328,6 +1452,10 @@ class _Stopped extends StatelessWidget {
         primary('Enter the Wi-Fi again', flow.newWifiForSetup),
         const SizedBox(height: Space.s2),
         secondary('Keep waiting for it', () => unawaited(flow.keepWaiting())),
+      ],
+      StopCase_FrameNotTaken() => [
+        primary('Enter the Wi-Fi again', flow.changeWifi),
+        secondary('Try again', () => unawaited(flow.again())),
       ],
       StopCase_WifiRefused() || StopCase_NoWifiGiven() => [
         primary('Enter the Wi-Fi again', flow.changeWifi),

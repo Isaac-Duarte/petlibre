@@ -209,6 +209,26 @@ class FakeInstallPorts implements InstallPorts {
   @override
   Future<String?> phoneAddress() async => ip;
 
+  /// Android's picker: throws this instead of joining.
+  Object? joinFails;
+  int joined = 0;
+  int left = 0;
+
+  /// The address after leaving, when it is not [ip].
+  String? ipAfterLeaving;
+
+  @override
+  Future<void> joinFeederNetwork() async {
+    if (joinFails case final error?) throw error;
+    joined++;
+  }
+
+  @override
+  Future<String?> leaveFeederNetwork() async {
+    left++;
+    return ipAfterLeaving ?? ip;
+  }
+
   @override
   Future<DnsResult> checkDns(String name, String phoneIp) async {
     dnsAsked.add(name);

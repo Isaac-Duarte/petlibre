@@ -115,6 +115,19 @@ fn binding_is_replayed_with_fresh_ids() {
     );
 }
 
+/// A stock fresh from the setup frame saves nothing and takes no install until
+/// it is answered, and an installer has no captured reply to give it.
+#[test]
+fn binding_with_no_captured_reply_is_answered_as_bound() {
+    let config = common::config();
+    assert_eq!(config.binding_response, None);
+
+    assert_eq!(
+        answer(&config, "system", json!({"cmd":"BINDING","msgId":"b"})),
+        r#"{"bindId":1,"cameraAuthInfo":"","cmd":"BINDING","code":0,"linkId":"LINK","msgId":"b","ts":1792271861000}"#
+    );
+}
+
 #[test]
 fn commands() {
     let config = common::config();

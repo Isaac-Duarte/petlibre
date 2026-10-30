@@ -340,6 +340,7 @@ pub(crate) async fn run(args: InstallArgs) -> Result<()> {
             clock,
             // The bench's page reads the stock server's status.
             api: Api::Loopback,
+            bind: wellfed_install::Bind::Configured,
         },
     };
 

@@ -564,6 +564,7 @@ async fn serve(
             enroll: enroll_minutes.map(|minutes| Duration::from_secs(minutes * 60)),
             clock,
             api: server::Api::Loopback,
+            bind: server::Bind::Configured,
         },
     )?;
 

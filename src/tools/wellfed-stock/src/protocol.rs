@@ -208,6 +208,17 @@ fn link_id() -> String {
     Uuid::new_v4().simple().to_string()
 }
 
+/// The `BINDING` reply of a server with no captured one: bound, under an
+/// association only this server knows, and with no camera to authorize.
+fn installer_binding() -> Map<String, Value> {
+    let mut reply = Map::new();
+    reply.insert("cmd".into(), "BINDING".into());
+    reply.insert("code".into(), 0.into());
+    reply.insert("bindId".into(), 1.into());
+    reply.insert("cameraAuthInfo".into(), "".into());
+    reply
+}
+
 /// The reply to `msg`, if it gets one. `clock` is the owner's policy, which
 /// with an `NTP` request's own `ts` decides whether the reply sets stock's
 /// clock ([`crate::clock`]).
@@ -238,7 +249,14 @@ pub fn reply(
 
         (Channel::System, "BINDING") => {
             // The captured cloud reply, replayed with this exchange's IDs.
-            let mut payload = config.binding_response.clone()?;
+            // An installer has none, and a stock fresh from the setup frame
+            // needs an answer: until one comes it saves nothing from that
+            // frame, goes back to its setup network, and refuses an install
+            // (1204, "device not bound").
+            let mut payload = config
+                .binding_response
+                .clone()
+                .unwrap_or_else(installer_binding);
             payload.insert("ts".into(), now.timestamp_millis().into());
             payload.insert("msgId".into(), msg.msg_id.clone().into());
             payload.insert("linkId".into(), link_id().into());

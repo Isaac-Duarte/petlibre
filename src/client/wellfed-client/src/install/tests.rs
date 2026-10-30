@@ -153,6 +153,7 @@ fn confirmed() -> Install {
             bank: 1,
         },
         VERSION,
+        None,
     );
     install
 }
@@ -291,9 +292,9 @@ fn a_whole_run_goes_from_the_frame_to_a_confirmed_replacement() {
         build: BUILD,
         bank: 1,
     };
-    install.confirmed(running, VERSION - 1);
+    install.confirmed(running, VERSION - 1, None);
     assert_eq!(install.step(), Step::AwaitConfirm);
-    install.confirmed(running, VERSION);
+    install.confirmed(running, VERSION, None);
 
     // Stock's plans go onto the confirmed replacement's empty table.
     assert_eq!(install.step(), Step::ReadPlans);
@@ -524,7 +525,31 @@ fn a_run_resumed_after_activation_only_waits_for_the_confirmation() {
     };
     install.replacement(running);
     assert_eq!(install.step(), Step::AwaitConfirm);
-    install.confirmed(running, VERSION);
+    install.confirmed(running, VERSION, None);
+    assert_eq!(install.step(), Step::Done);
+}
+
+/// A reinstall of a build the feeder confirmed before skips the trial, so the
+/// floor stays below the version: only readiness can say it is over, and a
+/// trial still deciding reports `Starting`.
+#[test]
+fn a_reinstall_that_leaves_the_floor_behind_is_confirmed_by_its_readiness() {
+    let mut install = Install::from_bank0(BUILD, bench());
+    install.paired();
+    let running = Replacement {
+        build: BUILD,
+        bank: 1,
+    };
+    install.replacement(running);
+    assert_eq!(install.step(), Step::AwaitConfirm);
+
+    let starting = Some(Readiness::Blocked(wellfed_model::Blocked::Starting));
+    install.confirmed(running, VERSION - 1, starting);
+    assert_eq!(install.step(), Step::AwaitConfirm);
+    install.confirmed(running, VERSION - 1, None);
+    assert_eq!(install.step(), Step::AwaitConfirm);
+
+    install.confirmed(running, VERSION - 1, Some(Readiness::Ready));
     assert_eq!(install.step(), Step::Done);
 }
 
@@ -589,6 +614,7 @@ fn a_failed_promotion_or_a_fallback_ends_the_run() {
             bank: 0,
         },
         6,
+        None,
     );
     assert_eq!(install.step(), Step::Failed(InstallError::FellBack));
 
@@ -599,6 +625,7 @@ fn a_failed_promotion_or_a_fallback_ends_the_run() {
             bank: 1,
         },
         VERSION,
+        None,
     );
     assert_eq!(
         install.step(),
@@ -690,6 +717,7 @@ fn unreadable_stock_plans_stop_before_promotion() {
             bank: 1,
         },
         VERSION,
+        None,
     );
     assert_eq!(without.step(), Step::Done, "nothing to apply");
 }
@@ -730,6 +758,7 @@ fn confirmed_after_a_put() -> Install {
             bank: 1,
         },
         VERSION,
+        None,
     );
     install
 }
@@ -796,6 +825,7 @@ fn an_earlier_put_never_goes_again_once_the_generation_moved() {
             bank: 1,
         },
         VERSION,
+        None,
     );
     unread.plans(&view([None; PLANS], true));
     assert_eq!(unread.step(), Step::Failed(InstallError::PlansUncertain));
@@ -961,6 +991,7 @@ fn nothing_converted_leaves_nothing_to_apply() {
                 bank: 1,
             },
             VERSION,
+            None,
         );
         assert_eq!(install.step(), Step::Done);
     }
@@ -992,7 +1023,7 @@ fn a_resumed_run_applies_the_kept_copy() {
     let mut install = resumed();
     install.kept_stock_plans(&kept, NOW);
     let imported = install.import().expect("the kept copy converts").plans;
-    install.confirmed(running, VERSION);
+    install.confirmed(running, VERSION, None);
     assert_eq!(install.step(), Step::ReadPlans);
     install.plans(&view([None; PLANS], true));
     assert_eq!(
@@ -1006,7 +1037,7 @@ fn a_resumed_run_applies_the_kept_copy() {
     // The import already there counts as applied; other plans still stop it.
     let mut landed = resumed();
     landed.kept_stock_plans(&kept, NOW);
-    landed.confirmed(running, VERSION);
+    landed.confirmed(running, VERSION, None);
     landed.plans(&view(imported, true));
     assert_eq!(landed.step(), Step::Done);
 
@@ -1024,7 +1055,7 @@ fn a_resumed_run_applies_the_kept_copy() {
         torn.plans_skipped(),
         Some(&InstallError::StockPlans(DecodeError::Torn))
     );
-    torn.confirmed(running, VERSION);
+    torn.confirmed(running, VERSION, None);
     assert_eq!(torn.step(), Step::Done);
 }
 
@@ -1279,9 +1310,9 @@ fn a_resumed_consumer_run_enrolls_signs_and_promotes() {
         build: BUILD,
         bank: 1,
     };
-    install.confirmed(running, 11);
+    install.confirmed(running, 11, None);
     assert_eq!(install.step(), Step::AwaitConfirm);
-    install.confirmed(running, 12);
+    install.confirmed(running, 12, None);
     assert_eq!(install.step(), Step::ReadPlans);
 }
 
@@ -1305,9 +1336,9 @@ fn a_resumed_run_on_bank_1_needs_the_promoted_version() {
     kept.promoted_before(12);
     kept.replacement(running);
     assert_eq!(kept.step(), Step::AwaitConfirm);
-    kept.confirmed(running, 11);
+    kept.confirmed(running, 11, None);
     assert_eq!(kept.step(), Step::AwaitConfirm);
-    kept.confirmed(running, 12);
+    kept.confirmed(running, 12, None);
     assert_eq!(kept.step(), Step::Done);
 
     // A manifest given to the run names its own version.

@@ -2,9 +2,8 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart' show FlutterError;
-import 'package:flutter/services.dart' show ByteData, rootBundle;
+import 'package:flutter/services.dart' show ByteData, MethodChannel, rootBundle;
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
-import 'package:network_info_plus/network_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:share_plus/share_plus.dart';
@@ -62,6 +61,14 @@ abstract interface class InstallPorts {
   /// This phone's address on the Wi-Fi, or `null` when it is on none.
   Future<String?> phoneAddress();
 
+  /// Join the feeder's setup network, through Android's picker, so this
+  /// process's sockets go over it. Throws when none was joined.
+  Future<void> joinFeederNetwork();
+
+  /// Leave the setup network: this phone's address once it is back on its
+  /// Wi-Fi, or `null` if it does not come back in time.
+  Future<String?> leaveFeederNetwork();
+
   Future<DnsResult> checkDns(String name, String phoneIp);
 
   /// Ask Android for what the install needs; whether Bluetooth was allowed.
@@ -100,6 +107,8 @@ abstract interface class InstallPorts {
 }
 
 class AppInstallPorts implements InstallPorts {
+  static const _wifi = MethodChannel('io.github.isaacduarte.wellfed/wifi');
+
   const AppInstallPorts(this._key);
 
   final ClientKey _key;
@@ -158,7 +167,14 @@ class AppInstallPorts implements InstallPorts {
       rust.keptBackup(dataDir: paths.data, identity: identity);
 
   @override
-  Future<String?> phoneAddress() => NetworkInfo().getWifiIP();
+  Future<String?> phoneAddress() => _wifi.invokeMethod<String>('phoneAddress');
+
+  @override
+  Future<void> joinFeederNetwork() => _wifi.invokeMethod<void>('joinFeeder');
+
+  @override
+  Future<String?> leaveFeederNetwork() =>
+      _wifi.invokeMethod<String>('leaveFeeder');
 
   @override
   Future<DnsResult> checkDns(String name, String phoneIp) =>

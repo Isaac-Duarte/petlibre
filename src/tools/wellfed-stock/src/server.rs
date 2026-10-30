@@ -17,7 +17,12 @@
 //! a request that gets no answer within 5 s is [`Refusal::Unanswered`], and
 //! its outcome is read from the ledger, never by asking again.
 
-use std::{net::IpAddr, path::Path, sync::Arc, time::Duration};
+use std::{
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+    path::Path,
+    sync::Arc,
+    time::Duration,
+};
 
 use anyhow::{Context, Result, bail};
 use tokio::{
@@ -66,6 +71,27 @@ pub struct Options {
     pub enroll: Option<Duration>,
     pub clock: clock::Policy,
     pub api: Api,
+    pub bind: Bind,
+}
+
+/// Which address the broker listens on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Bind {
+    /// The config's `mqtt_listen` alone.
+    Configured,
+    /// Every address, on `mqtt_listen`'s port: a phone that leaves its Wi-Fi to
+    /// send the setup frame loses that address, and Android destroys sockets
+    /// bound to one. `mqtt_listen` is still what stock is told to reach.
+    Any,
+}
+
+impl Bind {
+    fn address(self, configured: SocketAddr) -> SocketAddr {
+        match self {
+            Self::Configured => configured,
+            Self::Any => SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), configured.port()),
+        }
+    }
 }
 
 /// How long a request waits for the server's answer. A request it times
@@ -281,7 +307,7 @@ async fn run(
             }
         }
     };
-    let broker = broker::run(listen, auth, broker_stop);
+    let broker = broker::run(options.bind.address(listen), auth, broker_stop);
     tokio::pin!(broker);
     let session = async {
         let config = match (known, window) {

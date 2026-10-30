@@ -217,7 +217,7 @@ async fn the_first_stock_feeder_enrolls_and_is_then_the_only_one() {
 async fn a_feeder_s_first_report_reaches_an_in_process_server() {
     use wellfed_stock::{
         clock,
-        server::{Api, Options, OtaTrial, Server},
+        server::{Api, Bind, Options, OtaTrial, Server},
     };
 
     let dir = tempfile::tempdir().unwrap();
@@ -231,6 +231,7 @@ async fn a_feeder_s_first_report_reaches_an_in_process_server() {
             enroll: Some(Duration::from_secs(60)),
             clock: clock::Policy::Bounded,
             api: Api::Off,
+            bind: Bind::Configured,
         },
     )
     .unwrap();
@@ -298,7 +299,7 @@ async fn an_in_process_server_refuses_the_trial_on_an_unreviewable_build() {
     use wellfed_stock::{
         build_info::{ALLOW_UNREVIEWED_ENV, BUILD},
         clock,
-        server::{Api, Options, OtaTrial, Server},
+        server::{Api, Bind, Options, OtaTrial, Server},
     };
     if BUILD.reviewable() || std::env::var_os(ALLOW_UNREVIEWED_ENV).is_some() {
         return; // A clean build, or the escape hatch: the guard permits it.
@@ -313,6 +314,7 @@ async fn an_in_process_server_refuses_the_trial_on_an_unreviewable_build() {
         enroll: Some(Duration::from_secs(60)),
         clock: clock::Policy::Bounded,
         api: Api::Off,
+        bind: Bind::Configured,
     };
     let Err(error) = Server::start(&path.canonicalize().unwrap(), options) else {
         panic!("the trial is refused on an unreviewable build");
@@ -322,4 +324,41 @@ async fn an_in_process_server_refuses_the_trial_on_an_unreviewable_build() {
         std::net::TcpStream::connect(listen).is_err(),
         "nothing started"
     );
+}
+
+/// A phone that leaves its Wi-Fi to send the setup frame loses `mqtt_listen`'s
+/// address, so that route's broker answers on every address.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_broker_bound_to_any_address_answers_beyond_the_configured_one() {
+    use wellfed_stock::{
+        clock,
+        server::{Api, Bind, Options, OtaTrial, Server},
+    };
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("server.json");
+    let [listen] = common::addresses().unwrap();
+    config::init_installer(&path, listen, chrono_tz::UTC).unwrap();
+    let server = Server::start(
+        &path.canonicalize().unwrap(),
+        Options {
+            trial: OtaTrial::Disabled,
+            enroll: Some(Duration::from_secs(60)),
+            clock: clock::Policy::Bounded,
+            api: Api::Off,
+            bind: Bind::Any,
+        },
+    )
+    .unwrap();
+
+    let other = std::net::SocketAddr::from(([127, 9, 9, 9], listen.port()));
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    while std::net::TcpStream::connect(other).is_err() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the broker never answered on another address"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    server.stop().await;
 }

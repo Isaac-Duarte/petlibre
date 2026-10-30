@@ -76,6 +76,7 @@ pub async fn listen(
             enroll: None,
             clock: wellfed_stock::clock::Policy::Bounded,
             api: Api::Off,
+            bind: server::Bind::Configured,
         },
     )
     .map_err(|error| Error::StockServer(error.into()))?;

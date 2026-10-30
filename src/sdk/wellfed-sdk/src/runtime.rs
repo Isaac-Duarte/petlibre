@@ -612,6 +612,16 @@ fn confirm_step() -> u32 {
         CONFIRM_DONE.store(true, Ordering::Release);
         if matches!(step.record, Some(confirm::Record::Confirmed { .. })) {
             CONFIRMED.store(true, Ordering::Release);
+            // The feeder's worst gap through the trial, the first Wi-Fi
+            // join's SAE included: the margin under the watchdog's 1 s
+            // progress gap that the feeder's priority buys.
+            let mut report = startup::Report::new();
+            if let Ok(line) = report.record(format_args!(
+                "PLSUP1 trial feed_gap_max_ms={}\r\n",
+                FEED_GAP_MAX_MS.load(Ordering::Relaxed)
+            )) {
+                sdk::log(line);
+            }
         }
         if matches!(
             step.record,
@@ -1244,8 +1254,9 @@ pub extern "C" fn wellfed_app_start() {
     // 40–50 ms of the watchdog's 1 s progress gap, a margin an image's
     // layout alone crossed (physical, October 29). Its step never blocks,
     // and a driver thread that hangs with interrupts running still stops
-    // the beats it starves, so the feeder then stops feeding. The stack
-    // audit reads the priority as written here.
+    // the beats it starves, so the feeder then stops feeding. The literal
+    // is `tasks::FEEDER_PRIORITY`, written out because the stack audit
+    // reads it.
     // SAFETY: the step takes no context and keeps its state in statics.
     if !unsafe { sdk::task_create(c"wellfed-wdg", 512, 7, feeder_task, ptr::null_mut()) } {
         sdk::log(c"PLSUP1 error task=create\r\n");

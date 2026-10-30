@@ -31,6 +31,12 @@ pub struct Task {
     pub(crate) step: extern "C" fn(*mut c_void) -> u32,
 }
 
+/// The watchdog feeder's FreeRTOS priority, above every other task the
+/// runtime or a firmware starts (the runtime creates it with this value
+/// written out, for the stack audit). Firmware tasks are refused at or
+/// above it.
+pub(crate) const FEEDER_PRIORITY: u32 = 7;
+
 impl Task {
     /// Only `#[task]` calls this: the stack audit reads a task's stack from
     /// the attribute, and refuses a task made any other way.
@@ -41,6 +47,13 @@ impl Task {
         priority: u32,
         step: extern "C" fn(*mut c_void) -> u32,
     ) -> Self {
+        // A firmware task at the feeder's priority would share its time
+        // slices, and one above it could starve it unseen: the feeder sits
+        // above every other task so a hang shows as a missed beat.
+        assert!(
+            priority < FEEDER_PRIORITY,
+            "a firmware task runs below the watchdog feeder's priority 7"
+        );
         Self {
             name,
             stack_words,

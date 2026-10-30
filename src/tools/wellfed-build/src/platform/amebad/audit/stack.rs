@@ -992,7 +992,7 @@ mod tests {
     fn tasks_resolve_word_constants() {
         let source = "const PROBE_STACK_WORDS: u16 = 2048;\n\
                       sdk::task_create(\n    c\"wellfed-optics\",\n    PROBE_STACK_WORDS,\n    3,\n    optics_task,\n\
-                      let ok = sdk::task_create(c\"wellfed-wdg\", 512, 3, feeder_task, ptr::null_mut());\n\
+                      let ok = sdk::task_create(c\"wellfed-wdg\", 512, 7, feeder_task, ptr::null_mut());\n\
                       /// The chime.\n\
                       #[wellfed_sdk::task(name = \"wellfed-aud\", stack = 1024, priority = 2)]\n\
                       fn audio_task() -> u32 {\n\

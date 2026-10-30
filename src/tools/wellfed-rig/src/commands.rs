@@ -56,6 +56,14 @@ const ANALYZER_DRIVER_CHANNELS: [(&str, u8); 4] =
     [("ina", 0), ("inb", 1), ("outa", 2), ("outb", 3)];
 const ANALYZER_OUTPUT_CHANNELS: [(&str, u8); 2] = [("outa", 2), ("outb", 3)];
 
+/// Whether a press is its own job, with a step row, or one step inside
+/// another job's sequence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PressStep {
+    Own,
+    Within,
+}
+
 const STOPPED_POWERED: &str =
     "Stopped without retry; the feeder stays powered. Inspect the evidence.";
 
@@ -464,6 +472,28 @@ impl Bench {
     /// for `hold_ms`, through the same gestures as a finger. Never touches
     /// power; the press is sent once, and a missing echo stops the job.
     pub fn press(&mut self, name: &str, chord: Buttons, hold_ms: u32) -> Result<u8> {
+        if self.typed_press(name, chord, hold_ms, PressStep::Own)? {
+            return Ok(0);
+        }
+        say!("{STOPPED_POWERED}");
+        Ok(1)
+    }
+
+    /// One press inside another job's sequence (the install's answers to
+    /// its panel prompts): whether it echoed and released. It adds no step
+    /// row of its own and says nothing about stopping, since the job that
+    /// asked decides what a failed press means.
+    pub fn press_within(&mut self, name: &str, chord: Buttons, hold_ms: u32) -> Result<bool> {
+        self.typed_press(name, chord, hold_ms, PressStep::Within)
+    }
+
+    fn typed_press(
+        &mut self,
+        name: &str,
+        chord: Buttons,
+        hold_ms: u32,
+        step: PressStep,
+    ) -> Result<bool> {
         if !self.get(POWER)? {
             return Err(CommandsError::PressUnpowered.into());
         }
@@ -471,7 +501,7 @@ impl Bench {
         self.fresh(&output)?;
         self.connect_uart()?;
 
-        let step = argv(
+        let args = argv(
             &["read", "press"],
             &[
                 &["--port".into(), self.config.uart_port.clone()],
@@ -484,11 +514,22 @@ impl Bench {
                 ],
             ],
         );
-        if !self.run_all(&[step])? {
-            return Ok(1);
+        let code = match step {
+            PressStep::Own => self.run(&args)?,
+            PressStep::Within => {
+                say!("+ wellfed-flash {}", args.join(" "));
+                let code = self.tools.flash(&args, &mut self.status)?;
+                if self.cancel.is_cancelled() {
+                    return Err(Error::Interrupted);
+                }
+                code
+            }
+        };
+        if code != 0 {
+            return Ok(false);
         }
         say!("Pressed {chord} for {hold_ms} ms; the gesture is in the capture");
-        Ok(0)
+        Ok(true)
     }
 
     /// Cold boot into the installed application while recording it from the start.

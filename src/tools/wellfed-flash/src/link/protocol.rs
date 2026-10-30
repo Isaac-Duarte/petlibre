@@ -484,6 +484,16 @@ pub fn read_region(port: &mut dyn Port, offset: usize, length: usize) -> Result<
 }
 
 pub fn collect(port: &mut dyn Port, timeout: Duration) -> Result<Vec<u8>> {
+    collect_until(port, timeout, |_| false)
+}
+
+/// What `port` sends until `timeout`, or until `done` holds for all of it
+/// so far, whichever comes first.
+fn collect_until(
+    port: &mut dyn Port,
+    timeout: Duration,
+    done: impl Fn(&[u8]) -> bool,
+) -> Result<Vec<u8>> {
     let deadline = Instant::now() + timeout;
     let mut result = Vec::new();
     let mut buffer = [0u8; 4096];
@@ -496,6 +506,9 @@ pub fn collect(port: &mut dyn Port, timeout: Duration) -> Result<Vec<u8>> {
                 bytes: result.len(),
             }
         })?;
+        if count > 0 && done(&result) {
+            break;
+        }
     }
     Ok(result)
 }
@@ -896,7 +909,9 @@ impl Echo {
 }
 
 /// Types one press line to a running `virtual-panel` build, paced, and
-/// waits through the hold for its echo and its chord's release. The line
+/// waits for its echo and its chord's release: it returns once both are in
+/// whole lines, and otherwise reads until the hold plus [`PRESS_MARGIN`],
+/// so a wrong answer is classified on everything the window brought. The line
 /// is built here from the typed press and read back through the firmware's
 /// own parser, so nothing else is ever sent; a leading line end first ends
 /// any partial line the build holds. It is sent once, never again: a line
@@ -917,7 +932,14 @@ pub fn press(
         std::thread::sleep(PRESS_BYTE_GAP);
     }
     let window = Duration::from_millis(u64::from(press.hold_ms)) + PRESS_MARGIN;
-    let reply = collect(port, window)?;
+    let reply = collect_until(port, window, |reply| {
+        // Whole lines only: a release record cut mid-line is not read yet.
+        let whole = reply
+            .iter()
+            .rposition(|&byte| byte == b'\n')
+            .map_or(&reply[..0], |end| &reply[..=end]);
+        Echo::read(whole, press) == Echo::Pressed { released: true }
+    })?;
 
     let released = match Echo::read(&reply, press) {
         Echo::Pressed { released } => released,
@@ -1006,8 +1028,25 @@ mod press_tests {
             b"PLKEY1 virtual press=dispense hold_ms=150\r\nPLKEY1 down chord=dispense dropped=0\r\n\
               PLKEY1 up chord=dispense level=0 held_ms=150 dropped=0\r\n",
         );
+        let started = std::time::Instant::now();
         let result = press(&mut feeder, DISPENSE).unwrap();
         assert!(result.echoed && result.released);
+        assert_eq!(feeder.sent, LINE);
+        // It returned on the release, well before the window's end.
+        assert!(started.elapsed() < PRESS_MARGIN, "{:?}", started.elapsed());
+    }
+
+    /// A release record still cut mid-line does not end the read early:
+    /// the press waits out its window for the rest, and the outcome is
+    /// then classified as before.
+    #[test]
+    fn a_release_cut_mid_line_waits_out_the_window() {
+        let mut feeder = Feeder::new(
+            b"PLKEY1 virtual press=dispense hold_ms=150\r\nPLKEY1 up chord=dispense lev",
+        );
+        let started = std::time::Instant::now();
+        assert!(press(&mut feeder, DISPENSE).unwrap().released);
+        assert!(started.elapsed() >= PRESS_MARGIN, "{:?}", started.elapsed());
         assert_eq!(feeder.sent, LINE);
     }
 

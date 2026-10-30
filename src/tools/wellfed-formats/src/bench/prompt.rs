@@ -240,14 +240,14 @@ impl Prompt {
                 format!(
                     "Key in the setup code on the feeder's panel within its window, one button \
                      at a time: {}. It proves this computer is talking to that feeder, and is \
-                     used once.",
+                     used once. Answer done once it is keyed in.",
                     names.join(", ")
                 )
             }
             Self::PressDispense {
                 purpose: DispensePurpose::EnrollUpdateKey,
             } => "Press Dispense once on the feeder's panel within 60 s, to enroll the \
-                  installer's update key."
+                  installer's update key. Answer done once it is pressed."
                 .to_string(),
         }
     }

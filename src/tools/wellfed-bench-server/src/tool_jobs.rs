@@ -28,10 +28,11 @@
 //! is pressed again: a code half keyed in is not keyed over, and a Dispense
 //! pressed twice may feed.
 
+use std::collections::VecDeque;
 use std::ffi::OsString;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{ChildStdin, Command, Stdio};
+use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -41,6 +42,7 @@ use wellfed_core::virtual_panel::DEFAULT_HOLD_MS;
 use wellfed_formats::bench::banks::{Bank, Content, Source};
 use wellfed_formats::bench::live::{ActivityKind, AnswerError, JobId, PendingPrompt};
 use wellfed_formats::bench::prompt::{Answer, DispensePurpose, Prompt};
+use wellfed_formats::manifest::{BuildManifest, Provisioning};
 use wellfed_rig::commands::{Bench, installed};
 use wellfed_rig::tools::own_group_with_input;
 
@@ -200,6 +202,24 @@ pub(crate) enum ToolJobError {
         number: usize,
         count: usize,
         chord: Buttons,
+    },
+    /// The virtual panel answers only a consumer image's prompts. On the
+    /// recovery route a person has unlocked the panel, where a press left
+    /// over from a code cut short would feed.
+    #[error(
+        "--virtual-panel needs a consumer review, and {} is provisioned {}; nothing was started",
+        review.display(),
+        provisioning.name()
+    )]
+    PanelForBench {
+        review: PathBuf,
+        provisioning: Provisioning,
+    },
+    #[error("--virtual-panel: read {}", path.display())]
+    PanelReview {
+        path: PathBuf,
+        #[source]
+        source: wellfed_formats::Error,
     },
     /// The installer stopped: its own last words, as it printed them.
     #[error("{}", message.as_deref().unwrap_or("wellfed install stopped without saying why"))]
@@ -399,6 +419,9 @@ pub(crate) fn install(
     wellfed_formats::require(path.is_file(), || ToolJobError::WellfedMissing {
         path: path.clone(),
     })?;
+    if args.virtual_panel {
+        consumer_review(&bench.root, &args.review)?;
+    }
     asking.until_paused(&bench.cancel)?;
 
     let mut command = Command::new(path);
@@ -425,8 +448,9 @@ pub(crate) fn install(
         stopping: None,
         cancelled: false,
         last_words: LastWords::default(),
+        backlog: VecDeque::new(),
     };
-    talk.run(bench, asking);
+    talk.run(bench, asking, &mut child);
 
     // Every pipe has closed, so the installer has exited or is about to.
     let waited = child.wait();
@@ -458,6 +482,20 @@ pub(crate) fn install(
     }
 }
 
+/// Refused unless the review at `review` (root-relative) is a consumer
+/// image's.
+fn consumer_review(root: &Path, review: &Path) -> Result<(), ToolJobError> {
+    let path = root.join(review).join("build-manifest.json");
+    let manifest: BuildManifest = wellfed_formats::load(&path)
+        .map_err(|source| ToolJobError::PanelReview { path, source })?;
+    wellfed_formats::require(manifest.provisioning == Provisioning::Consumer, || {
+        ToolJobError::PanelForBench {
+            review: review.to_path_buf(),
+            provisioning: manifest.provisioning,
+        }
+    })
+}
+
 /// What an installer that ran left in the banks, decided by its exit
 /// alone. A success leaves the review's build in bank 1, and in bank 0
 /// unless it started there. Anything else may have stopped part-way
@@ -485,10 +523,22 @@ struct Conversation {
     stopping: Option<JobError>,
     cancelled: bool,
     last_words: LastWords,
+    /// Events read while the job pressed, to handle before any new one.
+    backlog: VecDeque<Event>,
+}
+
+/// How the job's presses for one panel prompt ended, short of an error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Pressed {
+    /// Every press echoed and released: the prompt is answered done.
+    All,
+    /// The job stopped pressing, as the installer ended or the job is
+    /// stopping: no answer, and nothing more is pressed.
+    Abandoned,
 }
 
 impl Conversation {
-    fn run(&mut self, bench: &mut Bench, asking: &Asking) {
+    fn run(&mut self, bench: &mut Bench, asking: &Asking, child: &mut Child) {
         let mut open = 2;
         while open > 0 {
             // A cancel signals the installer itself (`Children::interrupt`),
@@ -497,7 +547,11 @@ impl Conversation {
                 self.cancelled = true;
                 asking.withdraw();
             }
-            let event = match asking.events.recv_timeout(TICK) {
+            let received = match self.backlog.pop_front() {
+                Some(event) => Ok(event),
+                None => asking.events.recv_timeout(TICK),
+            };
+            let event = match received {
                 Ok(event) => event,
                 Err(mpsc::RecvTimeoutError::Timeout) => continue,
                 // The job holds a sender itself, so this never comes.
@@ -523,8 +577,9 @@ impl Conversation {
                     Err(error) => self.stop(bench, asking, error.into()),
                 },
                 Event::Prompt(prompt) if self.virtual_panel && panel_presses(&prompt).is_some() => {
-                    match press_for(bench, &prompt) {
-                        Ok(()) => self.reply(Answer::Done),
+                    match self.press_for(bench, asking, child, &prompt) {
+                        Ok(Pressed::All) => self.reply(Answer::Done),
+                        Ok(Pressed::Abandoned) => {}
                         // A cancel interrupted the press: the loop's own
                         // check stops the installer.
                         Err(_) if bench.cancel.is_cancelled() => {}
@@ -554,6 +609,66 @@ impl Conversation {
                 }
             }
         }
+    }
+
+    /// Type `prompt`'s presses to the virtual panel, in order, each recorded
+    /// in the job's output. Before each one the job looks again: once it is
+    /// stopping, or the installer has ended, nothing more is pressed, since
+    /// no feeder window waits for it any longer. The first press that does
+    /// not echo and release ends it, and none is typed again.
+    fn press_for(
+        &mut self,
+        bench: &mut Bench,
+        asking: &Asking,
+        child: &mut Child,
+        prompt: &Prompt,
+    ) -> Result<Pressed, JobError> {
+        let chords = panel_presses(prompt).unwrap_or_default();
+        let count = chords.len();
+        for (index, chord) in chords.into_iter().enumerate() {
+            let number = index + 1;
+            if self.halted(bench, asking, child) {
+                wellfed_rig::say!(
+                    "Virtual panel: stopped before press {number} of {count} for the {} prompt; \
+                     the installer ended or the job is stopping",
+                    prompt.name()
+                );
+                return Ok(Pressed::Abandoned);
+            }
+            wellfed_rig::say!(
+                "Virtual panel, for the {} prompt: press {number} of {count}, {chord}",
+                prompt.name()
+            );
+            // Numbered too: two presses must never share a millisecond's
+            // evidence directory, which the second would refuse.
+            let name = format!("{}-{number}", press_name());
+            let pressed = bench.press_within(&name, chord, DEFAULT_HOLD_MS)?;
+            wellfed_formats::require(pressed, || ToolJobError::PressFailed {
+                prompt: prompt.name(),
+                number,
+                count,
+                chord,
+            })?;
+        }
+        Ok(Pressed::All)
+    }
+
+    /// Whether the job must press nothing more: a cancel or a stop, or an
+    /// installer whose pipes closed or that exited. Events read to know
+    /// wait in the backlog, in order, for the loop.
+    fn halted(&mut self, bench: &Bench, asking: &Asking, child: &mut Child) -> bool {
+        if self.cancelled || self.stopping.is_some() || bench.cancel.is_cancelled() {
+            return true;
+        }
+        while let Ok(event) = asking.events.try_recv() {
+            self.backlog.push_back(event);
+        }
+        let closed = self
+            .backlog
+            .iter()
+            .any(|event| matches!(event, Event::Closed));
+        // `try_wait` keeps the status it reaps for the job's own `wait`.
+        closed || !matches!(child.try_wait(), Ok(None))
     }
 
     /// Write `answer` as the installer's next input line. A closed pipe
@@ -606,32 +721,6 @@ fn panel_presses(prompt: &Prompt) -> Option<Vec<Buttons>> {
         | Prompt::JoinBack
         | Prompt::OpenRecoveryWindow => None,
     }
-}
-
-/// Type `prompt`'s presses to the virtual panel, in order, each recorded
-/// in the job's output; the first that does not echo and release ends it,
-/// and none is typed again.
-fn press_for(bench: &mut Bench, prompt: &Prompt) -> Result<(), JobError> {
-    let chords = panel_presses(prompt).unwrap_or_default();
-    let count = chords.len();
-    for (index, chord) in chords.into_iter().enumerate() {
-        let number = index + 1;
-        wellfed_rig::say!(
-            "Virtual panel, for the {} prompt: press {number} of {count}, {chord}",
-            prompt.name()
-        );
-        // Numbered too: two presses must never share a millisecond's
-        // evidence directory, which the second would refuse.
-        let name = format!("{}-{number}", press_name());
-        let code = bench.press(&name, chord, DEFAULT_HOLD_MS)?;
-        wellfed_formats::require(code == 0, || ToolJobError::PressFailed {
-            prompt: prompt.name(),
-            number,
-            count,
-            chord,
-        })?;
-    }
-    Ok(())
 }
 
 /// Restart the feeder for the installer: power off for `off`, then on

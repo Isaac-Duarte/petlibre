@@ -27,9 +27,11 @@ use crate::{Target, connect};
 
 /// How long after the enrollment goes out the press is asked for. The
 /// feeder takes a Dispense press as the confirmation only once the request
-/// waits for it; a press that came first would be lost (on a locked panel)
-/// or be a feed (on an unlocked one). A LAN request arrives within
-/// milliseconds, and the window is 60 s.
+/// waits for it, and nothing tells the run when that is: this is a timing
+/// assumption (a LAN request arrives within milliseconds; the window is
+/// 60 s), not a signal. If it fails, the press comes first: on a consumer
+/// image's panel, locked since its boot, that press does nothing, the
+/// window closes `Unconfirmed`, and the run stops with no second request.
 const PRESS_AFTER: Duration = Duration::from_secs(1);
 
 #[derive(Args)]

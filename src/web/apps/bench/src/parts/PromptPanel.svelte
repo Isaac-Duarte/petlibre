@@ -2,8 +2,9 @@
   // The question a job waits on (`install`'s prompts), with the buttons
   // that answer it. It sits right above the job's output, where the
   // installer prints what goes with a question. A setup code's presses
-  // are also listed one per button, to key in from left to right; the
-  // installer goes on without waiting, and done only tells it the code is in.
+  // are also listed one per button, to key in from left to right. For a
+  // code or a Dispense press the installer goes on without waiting, and
+  // done only tells it the presses are in.
   // An answer is sent once: a refused one says why, and the buttons stay
   // off for that question until the server moves on. A page opened
   // without the console's link shows the question but cannot answer.

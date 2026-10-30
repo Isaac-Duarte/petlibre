@@ -136,6 +136,7 @@ case "$3 $4" in
   ;;
 "read press")
   mkdir -p "$8"
+  sleep 0.1
   echo "${{10}} ${{12}}" >> "$2/presses"
   if [ "$(cat "$2/press-fails" 2>/dev/null)" = "${{10}}" ]; then exit 1; fi
   ;;

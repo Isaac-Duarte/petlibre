@@ -7,11 +7,21 @@
 
 use serde::{Deserialize, Serialize};
 
-/// The development Wi-Fi network the first-boot image joins.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+/// The development Wi-Fi network the first-boot image joins, and the
+/// network `wellfed install --home-network` gives a consumer image. Its
+/// `Debug` leaves the password out, so no error or log line carries it.
+#[derive(Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct WifiCredential {
     pub ssid: String,
     pub password: String,
+}
+
+impl std::fmt::Debug for WifiCredential {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WifiCredential")
+            .field("ssid", &self.ssid)
+            .finish_non_exhaustive()
+    }
 }
 
 /// An update-signing key; `seed` never leaves the file. The bench key and
@@ -84,5 +94,16 @@ mod tests {
             "cd".repeat(32)
         );
         assert!(serde_json::from_str::<ReleaseKeyFile>(&with_seed).is_err());
+    }
+
+    #[test]
+    fn a_wifi_credential_s_debug_names_the_network_but_not_its_password() {
+        let credential = WifiCredential {
+            ssid: "Bench".into(),
+            password: "hunter2 secret".into(),
+        };
+        let debug = format!("{credential:?}");
+        assert!(debug.contains("Bench"), "{debug}");
+        assert!(!debug.contains("hunter2"), "{debug}");
     }
 }

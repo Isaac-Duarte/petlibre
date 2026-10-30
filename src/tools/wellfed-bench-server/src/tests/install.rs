@@ -376,6 +376,17 @@ const UNATTENDED: &[&str] = &[
     "--virtual-panel",
 ];
 
+/// The consumer review `UNATTENDED` names, as far as the job reads it.
+fn consumer_review(checkout: &Checkout, provisioning: &str) {
+    let review = checkout.root().join("private/verification/consumer");
+    fs::create_dir_all(&review).unwrap();
+    fs::write(
+        review.join("build-manifest.json"),
+        format!(r#"{{"provisioning": "{provisioning}"}}"#),
+    )
+    .unwrap();
+}
+
 /// An installer that announces the setup code, then the Dispense press,
 /// and records each answer it reads; until a signal stops it, if one does.
 const PANEL: &str = r#"#!/bin/sh
@@ -400,6 +411,7 @@ async fn a_virtual_panel_install_presses_the_code_and_dispense_itself() {
     let _one = ONE_SERVER.lock().await;
     let checkout = Checkout::new(0.0);
     stand_in(&checkout, "wellfed", PANEL);
+    consumer_review(&checkout, "consumer");
     checkout.board.lock().on[1] = true;
     let server = Running::start(checkout.open());
 
@@ -464,11 +476,12 @@ sleep 30 & wait $!
 "#,
     );
     fs::write(checkout.root().join("press-fails"), "mic").unwrap();
+    consumer_review(&checkout, "consumer");
     checkout.board.lock().on[1] = true;
     let server = Running::start(checkout.open());
 
     let id = server.submit(UNATTENDED).await.unwrap();
-    let (end, _) = follow(&server.client, id).await;
+    let (end, lines) = follow(&server.client, id).await;
 
     assert_eq!(end.code, 1);
     assert!(
@@ -480,6 +493,23 @@ sleep 30 & wait $!
     assert_eq!(
         read(&checkout, "presses"),
         "dispense 150\nlock 150\nmic 150\n"
+    );
+    // The install's presses add no step rows of their own, and the job's
+    // error, not a press job's "stopped" line, says what the failure means.
+    let record = server.state().await.job.unwrap().record.unwrap();
+    assert!(
+        record
+            .steps
+            .iter()
+            .all(|step| !step.label.contains("read press")),
+        "{:?}",
+        record.steps
+    );
+    assert!(
+        !lines
+            .iter()
+            .any(|line| line.contains("Stopped without retry")),
+        "{lines:?}"
     );
     assert_eq!(read(&checkout, "signal").trim(), "TERM");
     assert_eq!(read(&checkout, "answers"), "");
@@ -524,6 +554,82 @@ async fn without_the_virtual_panel_the_code_is_a_person_s_to_key_in() {
     let (end, _) = follow(&server.client, id).await;
     assert_eq!((end.code, end.error), (0, None));
     assert_eq!(read(&checkout, "presses"), "");
+
+    server.quit().await;
+}
+
+/// The virtual panel answers a consumer image's prompts only: with a bench
+/// review the job is refused before the installer starts, since on the
+/// recovery route a person has unlocked the panel.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_virtual_panel_is_refused_for_a_bench_review() {
+    if crate::tests::run_alone() {
+        return;
+    }
+    let _one = ONE_SERVER.lock().await;
+    let checkout = Checkout::new(0.0);
+    stand_in(&checkout, "wellfed", PANEL);
+    consumer_review(&checkout, "bench");
+    checkout.board.lock().on[1] = true;
+    let server = Running::start(checkout.open());
+
+    let id = server.submit(UNATTENDED).await.unwrap();
+    let (end, _) = follow(&server.client, id).await;
+
+    assert!(
+        end.error
+            .as_deref()
+            .is_some_and(|error| error.contains("needs a consumer review")
+                && error.contains("provisioned bench")),
+        "{end:?}"
+    );
+    assert_eq!(read(&checkout, "args"), "", "the installer never started");
+    assert_eq!(read(&checkout, "presses"), "");
+
+    server.quit().await;
+}
+
+/// An installer that ends while its code is being keyed in gets no more
+/// presses: the job looks before each one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn no_press_follows_an_installer_that_has_ended() {
+    if crate::tests::run_alone() {
+        return;
+    }
+    let _one = ONE_SERVER.lock().await;
+    let checkout = Checkout::new(0.0);
+    stand_in(
+        &checkout,
+        "wellfed",
+        r#"#!/bin/sh
+echo '{"kind":"key-setup-code","presses":["dispense","lock","mic","reset","lock","dispense"]}'
+echo "Error: the feeder refused: the code was not keyed in in time" >&2
+exit 1
+"#,
+    );
+    consumer_review(&checkout, "consumer");
+    checkout.board.lock().on[1] = true;
+    let server = Running::start(checkout.open());
+
+    let id = server.submit(UNATTENDED).await.unwrap();
+    let (end, lines) = follow(&server.client, id).await;
+
+    assert_eq!(
+        (end.code, end.error.as_deref()),
+        (
+            1,
+            Some("the feeder refused: the code was not keyed in in time")
+        )
+    );
+    // At most the press under way when it ended; none after it.
+    let presses = read(&checkout, "presses");
+    assert!(presses.lines().count() <= 1, "{presses}");
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("Virtual panel: stopped before press")),
+        "{lines:?}"
+    );
 
     server.quit().await;
 }

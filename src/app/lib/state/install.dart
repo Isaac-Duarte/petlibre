@@ -587,7 +587,7 @@ class InstallFlow extends ChangeNotifier {
         home: _home,
         label: _book.label,
         feederName: defaultFeederName,
-        knownFeeders: [for (final feeder in _book.feeders) feeder.identity],
+        knownFeeders: _book.feeders,
         storePath: paths.store,
         imageDir: paths.image,
         dataDir: paths.data,

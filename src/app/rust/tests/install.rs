@@ -20,6 +20,7 @@ use wellfed_app_bridge::api::install::{
 };
 use wellfed_app_bridge::api::model::SetupRefusal;
 use wellfed_app_bridge::api::setup::WifiCredentials;
+use wellfed_app_bridge::api::store::KnownFeeder;
 use wellfed_app_bridge::install::{Listener, Pin, Run, check_dns, check_image, pending};
 use wellfed_client::install::plans::{self, StockPlan, StockPlanState, StockPlans};
 use wellfed_client::setup::{Deframer, frame};
@@ -470,6 +471,68 @@ fn a_resumed_run_finds_its_feeder_over_the_platforms_discovery() {
             paired,
             Some((sim.identity.to_vec(), Some(sim.address.to_string())))
         );
+        assert!(matches!(end, InstallEnd::Stopped { .. }), "{end:?}");
+        sim.stop().await;
+    });
+}
+
+/// A record with no address, as a crash during setup leaves one: Home's last
+/// known address is tried before the phone's NSD is asked at all.
+#[test]
+fn a_resumed_run_tries_where_home_last_reached_its_feeder_first() {
+    local(async {
+        let fixture = Fixture::new(Provisioning::Consumer);
+        let keys = Keypair::from_secret([0x51; 32]);
+        let sim = Running::start(&Flash::memory(), Some(*keys.public())).await;
+
+        let mut spec = fixture.spec(InstallStart::Bank0, "127.41.8.6");
+        spec.known_feeders = vec![KnownFeeder {
+            identity: wellfed_formats::hex::encode(&sim.identity),
+            name: "Kitchen".into(),
+            address: Some(sim.address.to_string()),
+        }];
+        let data = Path::new(&spec.data_dir).to_path_buf();
+        std::fs::create_dir_all(data.join("backups")).unwrap();
+        let record = Enrollment {
+            client_id: "AF_TEST".into(),
+            username: "stock".into(),
+            password: "its-password".into(),
+            address: "127.41.8.7".parse().unwrap(),
+            enrolled_at: chrono::DateTime::from_timestamp(1, 0).unwrap(),
+        };
+        std::fs::write(
+            Enrollment::path(&data.join("installer.json")),
+            serde_json::to_vec(&record).unwrap(),
+        )
+        .unwrap();
+        let paired = serde_json::json!({
+            "device": "AF_TEST",
+            "identity": wellfed_formats::hex::encode(&sim.identity),
+            "address": null,
+        });
+        std::fs::write(
+            data.join("backups/installing.json"),
+            serde_json::to_vec(&paired).unwrap(),
+        )
+        .unwrap();
+
+        let (run, mut heard) = started(&fixture, spec);
+        let mut found = None;
+        let end = loop {
+            match next(&mut heard).await {
+                InstallUpdate::Ask { ask, .. } => panic!("{ask:?}"),
+                InstallUpdate::Event {
+                    event: InstallEvent::Paired { address, .. },
+                } => found = Some(address),
+                InstallUpdate::Event {
+                    event: InstallEvent::ReplacementAnswers { .. },
+                } => run.stop(),
+                InstallUpdate::Event { .. } => {}
+                InstallUpdate::Ended { end } => break end,
+            }
+        };
+
+        assert_eq!(found, Some(Some(sim.address.to_string())));
         assert!(matches!(end, InstallEnd::Stopped { .. }), "{end:?}");
         sim.stop().await;
     });

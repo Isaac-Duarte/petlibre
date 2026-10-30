@@ -140,6 +140,12 @@ pub trait Keys {
     /// the only one known; `None` for none or several.
     fn feeder(&self, prefix: Option<&str>) -> Option<[u8; 32]>;
 
+    /// Where this client last reached the feeder `identity`, if it keeps
+    /// that. Only a place to try first: a session there proves the identity.
+    fn last_address(&self, _identity: &[u8; 32]) -> Option<SocketAddr> {
+        None
+    }
+
     /// Note a feeder that enrolled this key.
     fn remember(&mut self, identity: &[u8; 32]) -> Result<(), PlatformError>;
 }

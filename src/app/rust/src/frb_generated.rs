@@ -2957,7 +2957,7 @@ impl SseDecode for crate::api::install::InstallSpec {
         let mut var_home = <Option<crate::api::setup::WifiCredentials>>::sse_decode(deserializer);
         let mut var_label = <String>::sse_decode(deserializer);
         let mut var_feederName = <String>::sse_decode(deserializer);
-        let mut var_knownFeeders = <Vec<String>>::sse_decode(deserializer);
+        let mut var_knownFeeders = <Vec<crate::api::store::KnownFeeder>>::sse_decode(deserializer);
         let mut var_storePath = <String>::sse_decode(deserializer);
         let mut var_imageDir = <String>::sse_decode(deserializer);
         let mut var_dataDir = <String>::sse_decode(deserializer);
@@ -6024,7 +6024,7 @@ impl SseEncode for crate::api::install::InstallSpec {
         <Option<crate::api::setup::WifiCredentials>>::sse_encode(self.home, serializer);
         <String>::sse_encode(self.label, serializer);
         <String>::sse_encode(self.feeder_name, serializer);
-        <Vec<String>>::sse_encode(self.known_feeders, serializer);
+        <Vec<crate::api::store::KnownFeeder>>::sse_encode(self.known_feeders, serializer);
         <String>::sse_encode(self.store_path, serializer);
         <String>::sse_encode(self.image_dir, serializer);
         <String>::sse_encode(self.data_dir, serializer);

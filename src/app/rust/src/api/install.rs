@@ -19,6 +19,7 @@ use wellfed_install::build_info::BUILD;
 use crate::api::keys::ClientKey;
 use crate::api::model::SetupRefusal;
 use crate::api::setup::WifiCredentials;
+use crate::api::store::KnownFeeder;
 use crate::frb_generated::StreamSink;
 use crate::install::{self, Listener, Run};
 
@@ -53,8 +54,8 @@ pub struct InstallSpec {
     pub label: String,
     /// What this phone calls the feeder until the owner renames it.
     pub feeder_name: String,
-    /// The feeders this phone knows, by identity (hex).
-    pub known_feeders: Vec<String>,
+    /// The feeders this phone knows, and where it last reached them.
+    pub known_feeders: Vec<KnownFeeder>,
     /// The app's own file, where a feeder that enrolled this key is saved.
     pub store_path: String,
     /// The folder the APK's image was unpacked into ([`check_image`]).

@@ -9,7 +9,7 @@ use common::Controller;
 use serde_json::json;
 use wellfed_stock::protocol::Channel;
 use wellfed_stock::{
-    controller::{LEDGER_FILE, RETIRED_LEDGER_FILE},
+    controller::{RETIRED_LEDGER_FILE, UNKEYED_LEDGER_FILE},
     protocol::Message,
 };
 
@@ -140,12 +140,34 @@ fn a_ledger_from_before_fw51_is_never_read_or_overwritten() {
     let old = br#"{"device_id":"test-device","feeds":{},"ota_trials":{},"ota_hold":true,"probe_queries":{}}"#;
     std::fs::write(&retired, old).unwrap();
 
-    let refused = common::load(dir.path().join(LEDGER_FILE)).err().unwrap();
+    let ledger = dir.path().join("ledger.json");
+    let refused = common::load(ledger.clone()).err().unwrap();
     assert!(refused.to_string().contains("archive it"));
     assert_eq!(std::fs::read(&retired).unwrap(), old);
-    assert!(!dir.path().join(LEDGER_FILE).exists());
+    assert!(!ledger.exists());
 
-    // The same records under the new name are refused, not silently dropped.
-    std::fs::rename(&retired, dir.path().join(LEDGER_FILE)).unwrap();
-    assert!(common::load(dir.path().join(LEDGER_FILE)).is_err());
+    // The same records under a current name are refused, not silently dropped.
+    std::fs::rename(&retired, &ledger).unwrap();
+    assert!(common::load(ledger).is_err());
+}
+
+/// A ledger under the name every device once shared stops the server, and
+/// stays as it was: left alone, a trial open in it would stop counting.
+#[test]
+fn a_ledger_under_its_retired_name_is_never_read_or_overwritten() {
+    let dir = tempfile::tempdir().unwrap();
+    let retired = dir.path().join(UNKEYED_LEDGER_FILE);
+    let old = br#"{"device_id":"test-device","ota_trials":{}}"#;
+    std::fs::write(&retired, old).unwrap();
+
+    let ledger = dir.path().join("ledger.json");
+    let refused = common::load(ledger.clone()).err().unwrap().to_string();
+    assert!(refused.contains("archive it"), "{refused}");
+    assert!(refused.contains("its retired name"), "{refused}");
+    assert_eq!(std::fs::read(&retired).unwrap(), old);
+    assert!(!ledger.exists());
+
+    // Archived, the server starts.
+    std::fs::rename(&retired, dir.path().join("archived-ledger.json")).unwrap();
+    assert!(common::load(ledger).is_ok());
 }

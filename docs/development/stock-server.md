@@ -158,7 +158,7 @@ The seeded plans reach the replacement disabled. Delete them with `wellfed plans
 
 ## The install ledger
 
-Install trials are recorded in `stock-ledger.json` beside the configuration, under an exclusive lock. An installer's config, which may serve several feeders over its life, keeps one ledger per device (`stock-ledger.<digest>.json`), so another feeder is not refused by this one's, and this one's open trial still holds back a second request after its trust is forgotten and given again.
+Install trials are recorded beside the configuration, under an exclusive lock, in one ledger per device: `stock-ledger.<first 16 digits of the SHA-256 of the device ID>.json`. A captured config and an installer's in one directory share the ledger of the device they both name. So another feeder is not refused by this one's, and this one's open trial still holds back a second request however the device is reached, and after its trust is forgotten and given again.
 
 - Each trial is persisted before its one `OTA_UPGRADE` goes out, and is never resent. A repeated request ID returns the stored record.
 - A trial in flight when the server stops or loses the broker becomes uncertain.
@@ -169,7 +169,10 @@ Install trials are recorded in `stock-ledger.json` beside the configuration, und
 
 A server with the trial enabled starts only from a reviewable build: a clean commit of every input `build.rs` records. Those cover `wellfed-stock`, the crates it links, and the crates that decide and send the request in an installer (`wellfed-client`, `wellfed-install`). `server::Server::start` enforces it, so the binary and an in-process installer are refused alike; tests set `WELLFED_ALLOW_UNREVIEWED_OTA_BUILD`.
 
-An older ledger, `feed-ledger.json`, also held feeds and probe queries. `serve` refuses to start while it is present. Check that no trial in it is submitted, uncertain or failed, then rename it.
+Two older ledgers are never read, and `serve` refuses to start while either is present:
+
+- `feed-ledger.json`, which also held feeds and probe queries. Check that no trial in it is submitted, uncertain or failed, then rename it.
+- `stock-ledger.json`, the name every device's ledger once shared. If no trial in it is submitted, uncertain or failed, archive it by renaming it. If one is, move it to its device's name, where that device's server resolves it: `stock-ledger.$(printf %s "$DEVICE_ID" | sha256sum | cut -c1-16).json`, with `DEVICE_ID` the file's own `device_id`.
 
 ## HTTP API
 

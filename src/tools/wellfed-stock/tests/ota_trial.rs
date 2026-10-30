@@ -9,9 +9,11 @@ use chrono::{DateTime, Duration, Utc};
 use common::Controller;
 use serde_json::json;
 use uuid::Uuid;
+use wellfed_formats::stock::Enrollment;
+use wellfed_stock::config::State;
 use wellfed_stock::protocol::Channel;
 use wellfed_stock::{
-    controller::Rejection,
+    controller::{self, Rejection},
     ota::{
         self,
         image::Lease,
@@ -796,4 +798,58 @@ fn stock_s_61_second_heartbeat_keeps_the_quiet_interval_running() {
 
     let record = c.resolve_trial(resolve(request.request_id), at).unwrap();
     assert_eq!(record.phase, Phase::NotInstalled);
+}
+
+/// A device's open trial counts however the device is reached: written through
+/// a captured config, it refuses the same device coming through an installer's
+/// config beside it, and says so to anyone reading the records.
+#[test]
+fn a_trial_open_under_a_captured_config_refuses_the_same_device_through_an_installer() {
+    let dir = tempfile::tempdir().unwrap();
+    let captured = dir.path().join("server.json");
+    let mut config = common::config();
+    [config.mqtt_listen, config.http_listen] = common::addresses().unwrap();
+    wellfed_stock::storage::write_json(&captured, &config).unwrap();
+    assert!(!controller::open_request(&captured).unwrap());
+
+    // The captured config sends a request, whose outcome nobody hears.
+    let ledger = controller::ledger_path(&captured, &config.device_id).unwrap();
+    let mut c = common::load(ledger).unwrap();
+    ready(&mut c, "1.1.15");
+    c.enable_ota_trial();
+    submit(&mut c, input(), Utc::now()).unwrap();
+    drop(c);
+    assert!(controller::open_request(&captured).unwrap());
+
+    // The same device enrolls through an installer's config in that directory.
+    let installer = dir.path().join("installer.json");
+    wellfed_stock::config::init_installer(
+        &installer,
+        config.mqtt_listen,
+        chrono_tz::America::Denver,
+    )
+    .unwrap();
+    assert!(!controller::open_request(&installer).unwrap());
+    let enrollment = Enrollment {
+        client_id: config.device_id.clone(),
+        username: "stock".to_owned(),
+        password: "stock-password".to_owned(),
+        address: "10.0.0.2".parse().unwrap(),
+        enrolled_at: Utc::now(),
+    };
+    wellfed_stock::enroll::create(&enrollment, &Enrollment::path(&installer)).unwrap();
+    assert!(controller::open_request(&installer).unwrap());
+
+    let State::Device(enrolled) = wellfed_stock::config::state(&installer).unwrap() else {
+        panic!("the enrollment names a device");
+    };
+    let ledger = controller::ledger_path(&installer, &enrolled.device_id).unwrap();
+    let mut c = Controller::load(*enrolled, ledger, common::BUILD).unwrap();
+    ready(&mut c, "1.1.15");
+    c.enable_ota_trial();
+    assert_eq!(c.status.ota_trials.len(), 1);
+    assert!(matches!(
+        submit(&mut c, input(), Utc::now()),
+        Err(Rejection::OtaActive)
+    ));
 }

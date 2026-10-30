@@ -42,7 +42,7 @@ async fn a_refused_resolution_asks_stock_for_its_attributes_and_nothing_else() {
         },
     });
     wellfed_stock::storage::write_json(
-        &dir.path().join(wellfed_stock::controller::LEDGER_FILE),
+        &wellfed_stock::controller::ledger_path(&path, &config.device_id).unwrap(),
         &ledger,
     )
     .unwrap();

@@ -23,4 +23,5 @@ pub mod api;
 )]
 mod frb_generated;
 pub mod install;
+pub mod restore;
 pub mod session;

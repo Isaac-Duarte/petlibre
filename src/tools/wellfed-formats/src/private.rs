@@ -42,10 +42,10 @@ pub fn write_new(path: &Path, data: &[u8]) -> Result<()> {
 }
 
 /// Create `path` whole or not at all; refuses to replace an existing file.
-/// The bytes go to a temporary file beside it first, which is then
-/// hard-linked into place (a link never replaces), so a reader never sees
-/// it half written, and a writer killed partway leaves no partial file that
-/// would refuse the next attempt.
+/// The bytes go to a temporary file beside it first, which is then moved into
+/// place by a step that never replaces ([`move_new`]), so a reader never sees it
+/// half written, and a writer killed partway leaves no partial file that would
+/// refuse the next attempt.
 pub fn write_new_whole(path: &Path, data: &[u8]) -> Result<()> {
     let name = path
         .file_name()
@@ -56,7 +56,7 @@ pub fn write_new_whole(path: &Path, data: &[u8]) -> Result<()> {
 
     write_new(&temporary, data)?;
     let result = (|| {
-        fs::hard_link(&temporary, path)?;
+        move_new(&temporary, path)?;
         if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
             fs::File::open(parent)?.sync_all()?;
         }
@@ -65,6 +65,24 @@ pub fn write_new_whole(path: &Path, data: &[u8]) -> Result<()> {
 
     let _ = fs::remove_file(&temporary);
     result
+}
+
+/// Move `from` to `to`, failing if anything is there. Android's policy denies an
+/// app hard links, so Linux and Android use `renameat2(RENAME_NOREPLACE)`. A
+/// filesystem that refuses it fails the write: no other step gives both whole
+/// and never-replaces, so there is nothing safe to fall back to.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn move_new(from: &Path, to: &Path) -> std::io::Result<()> {
+    use rustix::fs::{CWD, RenameFlags, renameat_with};
+
+    renameat_with(CWD, from, CWD, to, RenameFlags::NOREPLACE).map_err(Into::into)
+}
+
+/// Move `from` to `to`, failing if anything is there: elsewhere a link, which
+/// never replaces. The caller removes `from`.
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
+fn move_new(from: &Path, to: &Path) -> std::io::Result<()> {
+    fs::hard_link(from, to)
 }
 
 /// Fsync a directory, so the entries just created in it are durable.

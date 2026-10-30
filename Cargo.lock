@@ -4977,10 +4977,12 @@ dependencies = [
  "wellfed-client",
  "wellfed-connect",
  "wellfed-core",
+ "wellfed-device-api",
  "wellfed-feeder-sim",
  "wellfed-formats",
  "wellfed-install",
  "wellfed-model",
+ "wellfed-proto",
  "wellfed-session",
 ]
 
@@ -5252,6 +5254,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "clap",
+ "rustix",
  "serde",
  "serde_json",
  "sha2 0.11.1",

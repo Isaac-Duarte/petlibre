@@ -23,8 +23,9 @@
 
 use wellfed_core::store::slot::SlotIo;
 
-/// The marker's bytes, at the start of its sector.
-pub const MARKER: [u8; 16] = *b"PLFRST01FACTORY!";
+/// The marker's bytes, at the start of its sector. Stock's handover mark
+/// shares the sector, and has to know this one to leave it alone.
+pub use wellfed_core::store::handover::RESET_MARKER as MARKER;
 
 /// Whether `bytes`, read from the marker's sector, say a reset is pending.
 pub fn marked(bytes: &[u8; MARKER.len()]) -> bool {

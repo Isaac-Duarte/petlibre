@@ -41,3 +41,8 @@ kotlin {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    // The Bluetooth plugin's own RxJava, for its error handler in MainActivity.
+    implementation("io.reactivex.rxjava2:rxjava:2.2.21")
+}

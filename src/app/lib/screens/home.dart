@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../src/rust/api/install.dart' show PendingInstall;
 import '../src/rust/api/model.dart';
 import '../src/rust/api/session.dart' as api;
 import '../state/app_state.dart';
@@ -14,9 +17,18 @@ import 'restore_screen.dart';
 /// Feeder-first Home: one card per feeder this phone knows, large for one
 /// feeder and compact for several.
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key, required this.app});
+  const HomeScreen({
+    super.key,
+    required this.app,
+    required this.earlierInstall,
+  });
 
   final AppState app;
+
+  /// What an earlier install left, read from its records. A run that died
+  /// before it ended (the app killed, say) has no other way to say so, and a
+  /// feeder on bank 0 answers Ready with its stock not yet saved.
+  final Future<PendingInstall> Function() earlierInstall;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -24,12 +36,24 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final _feeders = <String, FeederController>{};
+  PendingInstall _earlier = PendingInstall.nothing;
 
   @override
   void initState() {
     super.initState();
     widget.app.addListener(_sync);
     _sync();
+    unawaited(_readEarlier());
+  }
+
+  Future<void> _readEarlier() async {
+    final earlier = await widget.earlierInstall();
+    if (mounted) setState(() => _earlier = earlier);
+  }
+
+  Future<void> _openInstall() async {
+    await context.push('/install');
+    await _readEarlier();
   }
 
   /// One controller per known feeder, kept across rebuilds.
@@ -85,6 +109,21 @@ class _HomeScreenState extends State<HomeScreen> {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
         children: [
+          if (_earlier != PendingInstall.nothing) ...[
+            const Notice(
+              tone: Tone.warning,
+              lead: "An install didn't finish.",
+              text:
+                  "The original firmware isn't saved yet, and Wellfed isn't "
+                  'permanent. Finish it before you rely on this feeder.',
+            ),
+            const SizedBox(height: Space.s2),
+            FilledButton(
+              onPressed: () => unawaited(_openInstall()),
+              child: const Text('Finish installing'),
+            ),
+            const SizedBox(height: Space.s4),
+          ],
           for (final (i, controller) in _feeders.values.indexed) ...[
             if (i > 0) const SizedBox(height: Space.s3),
             FeederCard(controller: controller, compact: !one),

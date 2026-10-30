@@ -355,20 +355,24 @@ pub(crate) async fn run(args: InstallArgs) -> Result<()> {
         .try_init();
 
     // From here on a signal ends the run through its stop, so the stock
-    // server's broker is never left on the MQTT port. Once seen, the
-    // handlers stay installed but nothing listens, so a second Ctrl-C does
-    // not cut the stop short; the stop is itself bounded.
+    // server's broker is never left on the MQTT port.
+    wellfed_install::run(plan, platform, signalled()?)
+        .await
+        .map_err(|error| explain(error, args.calibrate_clock))
+}
+
+/// Resolves on SIGTERM or SIGINT. Once seen, the handlers stay installed but
+/// nothing listens, so a second Ctrl-C does not cut the stop short; the stop
+/// is itself bounded.
+pub(crate) fn signalled() -> Result<impl Future<Output = Stop>> {
     let mut terminate = signal(SignalKind::terminate()).context("handle SIGTERM")?;
     let mut interrupt = signal(SignalKind::interrupt()).context("handle SIGINT")?;
-    let stop = async move {
+    Ok(async move {
         tokio::select! {
             _ = terminate.recv() => Stop::Terminate,
             _ = interrupt.recv() => Stop::Interrupt,
         }
-    };
-    wellfed_install::run(plan, platform, stop)
-        .await
-        .map_err(|error| explain(error, args.calibrate_clock))
+    })
 }
 
 /// How the replacement is paired, by the review's provisioning.

@@ -6,6 +6,7 @@
 //! same dual-slot store, beside its event ring.
 
 pub mod feed_journal;
+pub mod handover;
 pub mod seed;
 pub mod slot;
 pub mod update;

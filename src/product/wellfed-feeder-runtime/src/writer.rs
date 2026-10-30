@@ -67,6 +67,7 @@ use core::fmt;
 
 use wellfed_core::named_enum;
 
+use wellfed_core::store::handover;
 use wellfed_core::store::seed::{SeedStatus, SeedStore};
 use wellfed_device_api::mailbox::{CallChange, CallClip};
 use wellfed_feeder::stats::{SAVE_MS, TOTAL_SECTORS, Totals, reset_cause};
@@ -290,6 +291,15 @@ pub enum Record {
     /// The statistics' wear-only save failed, so the reset erased them:
     /// the erase counts are lost, and the reset goes on.
     ResetWearLost,
+    /// The handover from stock's activation is done: Wi-Fi, plans and clients
+    /// went, unless the build has its own Wi-Fi and keeps its bench key (`cleared`).
+    HandoverDone {
+        cleared: bool,
+    },
+    /// The handover cannot go on this boot; the next one tries again.
+    HandoverStopped {
+        stage: u8,
+    },
     /// The factory reset erased every cleared store, then its marker.
     ResetDone {
         erased: u32,
@@ -470,6 +480,10 @@ pub fn describe(record: Record, f: &mut impl fmt::Write) -> fmt::Result {
         Record::ResetPending => f.write_str("reset pending"),
         Record::ResetWearLost => f.write_str("reset wear_lost=1"),
         Record::ResetDone { erased } => write!(f, "reset done erased={erased}"),
+        Record::HandoverDone { cleared } => {
+            write!(f, "handover done cleared={}", u8::from(cleared))
+        }
+        Record::HandoverStopped { stage } => write!(f, "handover stopped stage={stage}"),
         Record::ResetError {
             stage,
             sector,
@@ -605,6 +619,9 @@ pub struct Writer<F> {
     resetting: Option<u32>,
     /// The reset could not go on this boot (unarmed, or an erase failed).
     reset_stopped: bool,
+    /// A handover this boot finishes: the next of its steps. Until it is
+    /// `None` nothing is published, so no one sees the Wi-Fi it clears.
+    handing_over: Option<u8>,
     /// This boot recorded its attempt in the marker sector.
     reset_attempted: bool,
     /// Arming skipped this boot: the boot before reset inside a write.
@@ -642,6 +659,7 @@ impl<F> Default for Writer<F> {
             turn: WriteTurn::new(),
             resetting: None,
             reset_stopped: false,
+            handing_over: None,
             reset_attempted: false,
             skipped: false,
         }
@@ -1161,6 +1179,71 @@ impl<F: FlashOps> Writer<F> {
         status
     }
 
+    /// One step of the handover: the Wi-Fi's two sectors, the plans' two, the
+    /// clients, then the mark, each under its own write turn and attempt
+    /// marker. A cut anywhere repeats it, since the mark goes last. A build
+    /// with Wi-Fi of its own is a bench image, which pairs through the
+    /// recovery window rather than Bluetooth, so it keeps its stores and only
+    /// erases the mark. A step that fails leaves the mark for the next boot,
+    /// and this one serves what it has.
+    fn handover_step<H: Hooks>(&mut self) -> Step {
+        let Some(step) = self.handing_over else {
+            return next(POLL_MS, None);
+        };
+        if self.stage == Stage::Serve || !H::armed() {
+            return self.handover_end(Record::HandoverStopped { stage: step });
+        }
+        let Some(turn) = self.take_turn() else {
+            return next(WRITE_WAIT_POLL_MS, None);
+        };
+
+        let clears = !cfg!(build_wifi);
+        arming::set_attempt();
+        let done = match step {
+            0..=4 if !clears => true,
+            0 | 1 => {
+                let sector = NET_BASE + u32::from(step);
+                F::erase(sector) && blank::<F>(sector)
+            }
+            2 | 3 => {
+                let sector = PLANS_BASE + u32::from(step - 2);
+                F::erase(sector) && blank::<F>(sector)
+            }
+            4 => {
+                self.clients.open(Slots::new());
+                match self.clients.identity().copied() {
+                    Some(identity) => self.clients.reset(&identity).is_ok(),
+                    None => true,
+                }
+            }
+            _ => F::erase(RESET_BASE) && blank::<F>(RESET_BASE),
+        };
+        arming::clear_attempt();
+        drop(turn);
+
+        if !done {
+            return self.handover_end(Record::HandoverStopped { stage: step });
+        }
+        if step < 5 {
+            self.handing_over = Some(step + 1);
+            return next(RESET_POLL_MS, None);
+        }
+        self.handover_end(Record::HandoverDone { cleared: clears })
+    }
+
+    fn handover_end(&mut self, record: Record) -> Step {
+        self.handing_over = None;
+        if matches!(record, Record::HandoverStopped { .. }) {
+            network::handover_put_off();
+        }
+        self.net = NetStore::default();
+        self.net.open(Slots::new());
+        self.plans = PlansStore::default();
+        self.plans.open(Slots::new());
+        self.publish();
+        next(POLL_MS, Some(record))
+    }
+
     /// One step of a factory reset this boot finishes: one erase, under
     /// its own write turn (so it waits for a feed's outputs to stop) and
     /// attempt marker; then, after the marker's, the cleared stores open
@@ -1268,7 +1351,7 @@ impl<F: FlashOps> Writer<F> {
     /// Publish every store's view; nothing while a factory reset is
     /// unfinished, so no client, plan or credential it clears is served.
     fn publish(&self) {
-        if self.resetting.is_some() {
+        if self.resetting.is_some() || self.handing_over.is_some() {
             return;
         }
         let writable = self.armed
@@ -1297,6 +1380,9 @@ impl<F: FlashOps> Writer<F> {
                     self.resetting = Some(0);
                     Record::ResetPending
                 } else {
+                    if handover::pending(&Region::<F, RESET_BASE, 1>::new()) {
+                        self.handing_over = Some(0);
+                    }
                     let status = self.open_cleared();
                     Record::Open {
                         status,
@@ -1344,6 +1430,9 @@ impl<F: FlashOps> Writer<F> {
                 // is a store the reset clears.
                 if self.resetting.is_some() {
                     return self.reset_step::<H>();
+                }
+                if self.handing_over.is_some() {
+                    return self.handover_step::<H>();
                 }
                 if !self.net_opened {
                     self.net_opened = true;

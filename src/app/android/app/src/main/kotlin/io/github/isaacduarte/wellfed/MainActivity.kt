@@ -11,6 +11,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.PatternMatcher
 import android.util.Log
+import android.view.WindowManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -89,6 +90,26 @@ class MainActivity : FlutterActivity() {
                 "leaveFeeder" -> leaveFeeder(result)
                 else -> result.notImplemented()
             }
+        }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, SCREEN_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "keepOn" -> {
+                        keepScreenOn(call.arguments == true)
+                        result.success(null)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+    }
+
+    // For the length of a run: the flag holds only while this activity is on
+    // screen, and needs no permission.
+    private fun keepScreenOn(on: Boolean) {
+        if (on) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         }
     }
 
@@ -188,6 +209,7 @@ class MainActivity : FlutterActivity() {
     private companion object {
         const val TAG = "wellfed"
         const val CHANNEL = "io.github.isaacduarte.wellfed/wifi"
+        const val SCREEN_CHANNEL = "io.github.isaacduarte.wellfed/screen"
         const val SETUP_PREFIX = "PL-AF103-"
         const val JOIN_TIMEOUT_MS = 60_000
         const val HOME_WAIT_MS = 30_000L

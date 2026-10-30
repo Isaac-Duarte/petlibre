@@ -268,9 +268,13 @@ pub(crate) async fn restore(args: RestoreArgs) -> Result<()> {
                 }
             };
             bail!(
-                "uncertain: {what}. The feeder may be running stock already, or still the \
-                 replacement; nothing is sent again. Look at the feeder (stock's app, or a \
-                 session with this computer's key) before trying anything else."
+                "uncertain: {what}. Nothing is sent again. Look for the feeder first: if a \
+                 session with this computer's key opens, the replacement still runs and \
+                 `wellfed restore-stock` may go again. If it advertises Bluetooth setup, the \
+                 replacement cleared its Wi-Fi, clients and plans: `wellfed setup`, and do not \
+                 hold Reset, which on the replacement erases the identity the backup is filed \
+                 under. Only if neither shows after a few minutes is it probably on stock: check \
+                 stock's app, and only then hold Reset to set it up there."
             )
         }
     }

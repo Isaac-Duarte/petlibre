@@ -5,6 +5,7 @@ use std::cell::Cell;
 use std::sync::{Mutex, MutexGuard};
 
 use wellfed_core::record::{self, Event, Record as Line, Tag};
+use wellfed_core::store::handover;
 use wellfed_core::store::seed::SeedStatus;
 use wellfed_device_api::Reader;
 use wellfed_device_api::clients::{Label, Role};
@@ -1889,13 +1890,150 @@ fn reset_boot(provider: &mut Provider, steps: Option<usize>) -> Vec<Record> {
         }
         let record = step(&mut writer, provider);
         left = left.map(|n| n - 1);
-        if matches!(record, Some(Record::ResetDone { .. } | Record::Open { .. })) {
+        if matches!(
+            record,
+            Some(Record::ResetDone { .. } | Record::Open { .. } | Record::HandoverDone { .. })
+        ) {
             // Net, time, keys, events, stats and the stats save.
             left = Some(6);
         }
         records.extend(record);
     }
     panic!("the boot never settled: {records:?}");
+}
+
+/// A paired feeder on Wi-Fi with one more boot to go: the identity it has.
+fn paired_with_wifi() -> (MutexGuard<'static, ()>, Provider, [u8; 32]) {
+    use wellfed_device_api::mailbox::{PLANS, Plan, PlansChange, Weekdays};
+    use wellfed_device_api::wifi::Credentials;
+    use wellfed_feeder_runtime::plans;
+
+    let (guard, mut writer, mut provider) = start();
+    fake::with(|h| h.adc_noise = 0x0f0f_5a5a);
+    assert_eq!(rng::start().result, Ok(()));
+    for _ in 0..7 {
+        step(&mut writer, &mut provider);
+    }
+    network::change(Some(Credentials::new(b"home", b"passphrase").unwrap()));
+    step(&mut writer, &mut provider);
+    let mut table = [None; PLANS];
+    table[0] = Some(Plan {
+        minute: 8 * 60,
+        portions: 2,
+        days: Weekdays::EVERY_DAY,
+        enabled: true,
+        call: 0,
+    });
+    plans::change(PlansChange::Replace {
+        table,
+        at_s: Some(1_000),
+    });
+    step(&mut writer, &mut provider);
+    assert!(
+        sectors(wellfed_hal::plaf103::storage::PLANS)
+            .iter()
+            .any(|&b| b != 0xff)
+    );
+    let phone = Change::Enroll {
+        key: [7; 32],
+        label: Label::new(b"phone").unwrap(),
+        role: Role::Owner,
+    };
+    change(&mut writer, &mut provider, phone);
+    let (_, identity) = keys::identity_since(0).expect("the identity is published");
+    (guard, provider, identity)
+}
+
+fn plant_handover() {
+    let at = storage_reset_first();
+    fake::with(|h| h.storage[at..at + 16].copy_from_slice(&handover::MARKER));
+}
+
+fn storage_reset_first() -> usize {
+    wellfed_hal::plaf103::storage::RESET.first as usize * 0x1000
+}
+
+/// The boot that finds the handover mark clears the Wi-Fi, plans and clients,
+/// keeps the identity the backup is filed by, publishes nothing stale, and
+/// erases the mark, so a later boot keeps whatever pairing comes next.
+#[test]
+fn a_handover_clears_wifi_and_clients_and_keeps_the_identity() {
+    use wellfed_hal::plaf103::storage;
+
+    let (_guard, mut provider, identity) = paired_with_wifi();
+    plant_handover();
+
+    let records = reset_boot(&mut provider, None);
+
+    assert!(
+        records.contains(&Record::HandoverDone { cleared: true }),
+        "{records:?}"
+    );
+    assert!(sectors(storage::NET).iter().all(|&byte| byte == 0xff));
+    assert!(sectors(storage::PLANS).iter().all(|&byte| byte == 0xff));
+    assert!(sectors(storage::RESET).iter().all(|&byte| byte == 0xff));
+    assert_eq!(keys::identity_since(0).map(|(_, key)| key), Some(identity));
+    assert!(
+        records.iter().any(|record| matches!(
+            record,
+            Record::Keys {
+                enrolled: 0,
+                identity: Identity::Loaded,
+                ..
+            }
+        )),
+        "{records:?}"
+    );
+}
+
+/// A cut at each step of the clearing leaves the mark, and the next boot does
+/// the whole of it, keeping the identity.
+#[test]
+fn a_cut_during_a_handover_repeats_it() {
+    use wellfed_hal::plaf103::storage;
+
+    for cut in 1..7 {
+        let (guard, mut provider, identity) = paired_with_wifi();
+        plant_handover();
+
+        let first = reset_boot(&mut provider, Some(cut));
+        assert!(
+            !first.contains(&Record::HandoverDone { cleared: true }),
+            "the mark goes last: {first:?}"
+        );
+        let second = reset_boot(&mut provider, None);
+
+        assert!(
+            second.contains(&Record::HandoverDone { cleared: true }),
+            "after {cut} steps: {second:?}"
+        );
+        assert!(sectors(storage::NET).iter().all(|&byte| byte == 0xff));
+        assert_eq!(keys::identity_since(0).map(|(_, key)| key), Some(identity));
+        drop(guard);
+    }
+}
+
+/// An erase that fails leaves the mark for the next boot, and this boot goes
+/// on rather than serving nothing.
+#[test]
+fn a_handover_that_cannot_finish_waits_for_the_next_boot() {
+    let (_guard, mut provider, _) = paired_with_wifi();
+    plant_handover();
+    PROGRAM_FAILS.with(|f| f.set(true));
+
+    let records = reset_boot(&mut provider, None);
+
+    assert!(
+        records
+            .iter()
+            .any(|record| matches!(record, Record::HandoverStopped { .. })),
+        "{records:?}"
+    );
+    let at = storage_reset_first();
+    assert_eq!(
+        fake::with(|h| h.storage[at..at + 16].to_vec()),
+        handover::MARKER
+    );
 }
 
 /// After a finished reset: every cleared store opens empty and writable,

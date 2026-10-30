@@ -33,6 +33,9 @@ class UpdateFlow extends ChangeNotifier {
   /// Why a look at an unknown end settled nothing.
   bool stillUnknown = false;
 
+  /// The build and version this run offered.
+  (String, int)? _served;
+
   UpdatePush? _push;
   StreamSubscription<UpdateProgress>? _run;
   bool _holding = false;
@@ -45,8 +48,10 @@ class UpdateFlow extends ChangeNotifier {
   bool get endUnknown =>
       end is UpdateEnd_Uncertain || end is UpdateEnd_Unconfirmed;
 
-  Future<void> start() async {
+  /// Offer the image with this `build` and `version`.
+  Future<void> start({required String build, required int version}) async {
     if (stage != UpdateStage.idle) return;
+    _served = (build, version);
     stage = UpdateStage.sending;
     written = 0;
     length = 0;
@@ -148,17 +153,34 @@ class UpdateFlow extends ChangeNotifier {
     _changed();
   }
 
-  /// Read what the feeder says of an unknown end. Only its word that nothing is
-  /// under way settles it; a read goes as often as the owner looks.
+  /// Read what the feeder says of an unknown end. Idle alone settles nothing: a
+  /// bank 1 on trial reads idle too, before its verdict. Bank 0 idle means nothing
+  /// is under way and the new build is not running, so the owner may decide
+  /// again. The served build at or past its version has kept it. Reads go as
+  /// often as the owner looks; the end stays until then.
   Future<void> lookAgain() async {
     if (!endUnknown) return;
     final reply = await _feeder.ask(const FeederRequest.updateState());
-    stillUnknown =
-        !(reply is FeederReply_Update &&
-            reply.update.phase == UpdatePhase.idle);
-    if (!stillUnknown) {
+    final idle =
+        reply is FeederReply_Update && reply.update.phase == UpdatePhase.idle;
+    final state = reply is FeederReply_Update ? reply.update : null;
+    final served = _served;
+    final card = _feeder.card;
+
+    stillUnknown = true;
+    if (idle && state != null && state.bank == 0) {
+      stillUnknown = false;
       stage = UpdateStage.idle;
       end = null;
+    } else if (idle &&
+        state != null &&
+        served != null &&
+        card != null &&
+        _feeder.cardIsCurrent &&
+        card.build.toLowerCase() == served.$1.toLowerCase() &&
+        state.minVersion >= served.$2) {
+      stillUnknown = false;
+      end = const UpdateEnd.confirmed();
     }
     _changed();
   }

@@ -98,8 +98,7 @@ class _UpdatesScreenState extends State<UpdatesScreen> {
       _ => null,
     };
     final current = offered != null && build != null && offered.$1 == build;
-    final can =
-        offered != null && !current && _feeder.connection == Connection.online;
+    final can = offered != null && !current && _feeder.cardIsCurrent;
 
     return ListView(
       padding: const EdgeInsets.all(Space.s4),
@@ -153,7 +152,11 @@ class _UpdatesScreenState extends State<UpdatesScreen> {
           ),
           const SizedBox(height: Space.s4),
           FilledButton(
-            onPressed: can ? () => unawaited(_flow.start()) : null,
+            onPressed: can
+                ? () => unawaited(
+                    _flow.start(build: offered.$1, version: offered.$2),
+                  )
+                : null,
             child: Text('Install on $name'),
           ),
         ],

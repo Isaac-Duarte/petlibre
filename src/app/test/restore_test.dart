@@ -9,6 +9,7 @@ import 'package:wellfed/screens/restore_screen.dart';
 import 'package:wellfed/src/rust/api/install.dart';
 import 'package:wellfed/src/rust/api/restore.dart';
 import 'package:wellfed/state/restore.dart';
+import 'package:wellfed/widgets/layout.dart';
 
 import 'fakes.dart';
 
@@ -82,7 +83,16 @@ class FakeRestorePorts implements RestorePorts {
   }
 
   @override
-  Future<String?> locate(String identity) async => '10.0.0.9:7700';
+  Future<String?> locate(String identity) async => located;
+
+  /// Where the feeder shows up on the network, if it does.
+  String? located;
+
+  // ignore: close_sinks, the test ends with it
+  final heard = StreamController<void>.broadcast();
+
+  @override
+  Stream<void> setupHeard() => heard.stream;
 
   @override
   void forgetKey(String dataDir, List<int> identity) => forgotten++;
@@ -295,7 +305,7 @@ void main() {
   });
 
   testWidgets('the run asks only where the feeder is', (tester) async {
-    final ports = FakeRestorePorts();
+    final ports = FakeRestorePorts()..located = '10.0.0.9:7700';
     await _open(tester, ports);
     final run = await _started(tester, ports);
 
@@ -402,6 +412,106 @@ void main() {
 
     expect(find.text("This phone couldn't set up the restore"), findsOneWidget);
     expect(find.text("That isn't the original firmware"), findsNothing);
+  });
+
+  testWidgets('a key gone before the offer has its own words and a retry', (
+    tester,
+  ) async {
+    final ports = FakeRestorePorts();
+    await _open(tester, ports);
+    final run = await _started(tester, ports);
+
+    run.stopped(RestoreStop.keyGone);
+    await settle(tester);
+
+    expect(find.text('The restore lost its key'), findsOneWidget);
+    expect(find.textContaining('space or storage'), findsNothing);
+    expect(find.text('Try again'), findsOneWidget);
+  });
+
+  testWidgets('a long wait says what it waits for, but not during the press', (
+    tester,
+  ) async {
+    final ports = FakeRestorePorts();
+    await _open(tester, ports);
+    final run = await _started(tester, ports);
+    await tester.pump(WaitWords.after);
+    await tester.pump();
+    Finder words() =>
+        find.textContaining('answer on your Wi-Fi', findRichText: true);
+    expect(words(), findsOneWidget);
+
+    run.event(const InstallEvent.pressDispense());
+    await tester.pump();
+    await tester.pump(WaitWords.after);
+    await tester.pump();
+    expect(words(), findsNothing);
+  });
+
+  group('after an uncertain end', () {
+    Future<void> uncertain(WidgetTester tester, FakeRestorePorts ports) async {
+      await _open(tester, ports);
+      final run = await _started(tester, ports);
+      run.end(
+        const RestoreEnd.uncertain(why: UncertainWhy.gone, detail: 'gone'),
+      );
+      await tester.pump();
+    }
+
+    testWidgets('Wellfed on the network offers to restore again', (
+      tester,
+    ) async {
+      final ports = FakeRestorePorts()..located = '10.0.0.9:7700';
+      await uncertain(tester, ports);
+      await tester.pump();
+
+      expect(find.text('Kitchen is still running Wellfed'), findsOneWidget);
+      expect(find.text('Restore again'), findsOneWidget);
+      expect(
+        find.textContaining('hold Reset', findRichText: true),
+        findsNothing,
+      );
+    });
+
+    testWidgets('a feeder in setup warns off Reset and offers setup', (
+      tester,
+    ) async {
+      final ports = FakeRestorePorts();
+      await uncertain(tester, ports);
+      ports.heard.add(null);
+      await tester.pump();
+
+      expect(find.text('Set it up'), findsOneWidget);
+      expect(
+        find.textContaining("Don't hold Reset", findRichText: true),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('only with nothing found does it speak of Reset', (
+      tester,
+    ) async {
+      final ports = FakeRestorePorts();
+      await uncertain(tester, ports);
+      await tester.pump();
+      expect(
+        find.textContaining('hold Reset', findRichText: true),
+        findsNothing,
+        reason: 'not while it looks',
+      );
+
+      await tester.pump(RestoreFlow.lookFor);
+      await tester.pump();
+
+      expect(
+        find.text("It's probably on the original firmware"),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('hold Reset', findRichText: true),
+        findsOneWidget,
+      );
+    });
   });
 
   testWidgets('leaving after a stopped run forgets the key', (tester) async {

@@ -19,6 +19,9 @@
 //! the key is not enrolled. A spent key stays listed on the feeder with its
 //! private half gone, and signs nothing more.
 //!
+//! The press is consent to this restore, not to one days later: a file older
+//! than [`KEY_LIFE`] is spent like the others, and the run enrolls a new key.
+//!
 //! The push is the installer's own, from either bank: on bank 1 the offer is
 //! recorded and bank 1 gives way, then bank 0 takes the same manifest and
 //! statement (both banks read one store and one list of enrolled keys, and the
@@ -44,7 +47,7 @@ use wellfed_client::update::{Image, InstallError as UpdateError};
 use wellfed_client::update_key::{EnrollError, Enrolled};
 use wellfed_connect::Connection;
 use wellfed_formats::credentials::KeyScope;
-use wellfed_model::{Answer, ClientRole, Op};
+use wellfed_model::{Answer, ClientRole, Op, UpdatePhase, UpdateView};
 use wellfed_session::noise::Keypair;
 use wellfed_signing::{Frozen, Key, Motion};
 
@@ -251,7 +254,7 @@ async fn drive(
 
     // The statement is bound to this floor, and the push's own offers come
     // before anything can raise it.
-    let floor = floor(&mut session).await?;
+    let floor = clear_floor(&mut session, report).await?;
     report.event(Event::Floor(floor));
     let version = match target.version {
         Some(version) => version,
@@ -272,7 +275,13 @@ async fn drive(
     // later run offer with no press. One that will not go stops the run here.
     if matches!(target.signing, Signing::Fresh) {
         let file = storage::restore_key_path(&target.backups, &target.identity);
-        std::fs::remove_file(&file).map_err(|source| Error::Remove { path: file, source })?;
+        std::fs::remove_file(&file).map_err(|source| {
+            if source.kind() == std::io::ErrorKind::NotFound {
+                Error::RestoreKeyGone
+            } else {
+                Error::Remove { path: file, source }
+            }
+        })?;
     }
 
     report.event(Event::Restoring);
@@ -303,12 +312,29 @@ async fn drive(
     }
 }
 
-/// The key an earlier run of this restore left, or a new one. A file that
-/// does not load was never enrolled, since enrolling takes a loaded key, so
-/// it is replaced.
+/// How long a key file left by an earlier run still stands for the press
+/// that enrolled it.
+const KEY_LIFE: Duration = Duration::from_secs(60 * 60);
+
+/// Whether `file` was written within [`KEY_LIFE`]. A time that cannot be read,
+/// or one ahead of the clock, proves nothing, so it does not stand.
+fn key_is_recent(file: &Path) -> bool {
+    std::fs::metadata(file)
+        .and_then(|metadata| metadata.modified())
+        .ok()
+        .and_then(|written| written.elapsed().ok())
+        .is_some_and(|age| age < KEY_LIFE)
+}
+
+/// The key an earlier run of this restore left, or a new one. A file too old
+/// to stand for its press is replaced, so a new press enrolls the new key. So
+/// is a file that does not load, which was never enrolled, since enrolling
+/// takes a loaded key.
 fn fresh_key(file: &Path) -> Result<Key, Error> {
     if file.exists() {
-        if let Ok(key) = Key::load(file) {
+        if key_is_recent(file)
+            && let Ok(key) = Key::load(file)
+        {
             return Ok(key);
         }
         std::fs::remove_file(file).map_err(|source| Error::Remove {
@@ -412,13 +438,40 @@ async fn signed_up<D: Discovery>(
     }
 }
 
-async fn floor(session: &mut Connection) -> Result<u32, Error> {
+async fn state(session: &mut Connection) -> Result<UpdateView, Error> {
     match session.ask(random()?, &Op::UpdateState).await? {
-        Answer::Update(view) => Ok(view.min_version),
+        Answer::Update(view) => Ok(view),
         other => Err(Error::Answered {
             request: "update state",
             answer: Box::new(other),
         }),
+    }
+}
+
+/// The floor, with the way clear for this run's offer. A running install is
+/// left alone. A candidate a cut or kill left pending refuses every other
+/// manifest, and a restore's is always another, so it is cancelled once; a
+/// cancel with any doubt about it stops the run, since the one offer is not
+/// to be spent on a refusal.
+async fn clear_floor(session: &mut Connection, report: &impl Report) -> Result<u32, Error> {
+    let view = state(session).await?;
+    if view.phase != UpdatePhase::Idle {
+        return Err(Error::RestoreInstallRunning { phase: view.phase });
+    }
+    if view.digest.is_none() {
+        return Ok(view.min_version);
+    }
+
+    report.event(Event::StaleInstallCancelled);
+    let cancelled = session.ask(random()?, &Op::CancelUpdate).await;
+    if !matches!(cancelled, Ok(Answer::Update(_))) {
+        return Err(Error::RestoreCancelUnknown);
+    }
+    match state(session).await {
+        Ok(view) if view.phase == UpdatePhase::Idle && view.digest.is_none() => {
+            Ok(view.min_version)
+        }
+        _ => Err(Error::RestoreCancelUnknown),
     }
 }
 
@@ -460,6 +513,7 @@ impl<D: Discovery> Sessions<'_, D> {
 mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
+    use std::time::SystemTime;
 
     use tokio::task::LocalSet;
     use wellfed_client::install::StockPins;
@@ -897,6 +951,243 @@ mod tests {
 
             assert_eq!(restored, Restored::Activated);
             assert_eq!(hands.asked.get(), 1);
+            rig.sim.stop().await;
+        });
+    }
+
+    /// A press from long ago is not consent to this restore: the listed key's
+    /// file is spent by age, and only a new press enrolls a new one.
+    #[test]
+    fn a_key_older_than_an_hour_takes_a_new_press() {
+        paused(async {
+            let rig = Rig::start().await;
+            let backup = synthetic();
+            let hands = Hands::pressing(&rig.sim);
+            let sim = &rig.sim;
+            let report = |event| {
+                if matches!(event, Event::KeyEnrollment { .. }) {
+                    sim.control(Control::Quit);
+                }
+            };
+            let plan = rig.plan(&backup, Signing::Fresh);
+            assert!(rig.run(plan, &hands, report).await.is_err());
+            let old = Key::load(&rig.key_file()).unwrap().id();
+
+            let written = SystemTime::now() - KEY_LIFE - Duration::from_secs(1);
+            std::fs::File::options()
+                .write(true)
+                .open(rig.key_file())
+                .unwrap()
+                .set_modified(written)
+                .unwrap();
+
+            let rig = rig.again().await;
+            let hands = Hands::pressing(&rig.sim);
+            let signed = Cell::new(None);
+            let report = |event| {
+                if let Event::RestoreSigned { key, .. } = event {
+                    signed.set(Some(key));
+                }
+            };
+            let plan = rig.plan(&backup, Signing::Fresh);
+            let second = rig.run(plan, &hands, report).await.unwrap();
+
+            assert_eq!(second, Restored::Activated);
+            assert_eq!(hands.asked.get(), 1, "a new press");
+            assert_ne!(signed.get(), Some(old), "signed with a new key");
+            rig.sim.stop().await;
+        });
+    }
+
+    /// Stock's activation leaves what the next Wellfed boot acts on, as after
+    /// the loader falls back: no clients, so the owner's key no longer opens
+    /// a session, and the identity the backup is filed by.
+    #[test]
+    fn a_boot_after_a_restore_has_no_clients_and_the_same_identity() {
+        paused(async {
+            let rig = Rig::start().await;
+            let backup = synthetic();
+            let hands = Hands::pressing(&rig.sim);
+            let plan = rig.plan(&backup, Signing::Fresh);
+            let restored = rig.run(plan, &hands, |_| {}).await.unwrap();
+            assert_eq!(restored, Restored::Activated);
+            let identity = rig.sim.identity;
+            let address = rig.sim.address;
+            rig.sim.stop().await;
+
+            let sim = Running::start_with(&rig.flash, &rig.banks, None, None, address).await;
+
+            assert_eq!(sim.identity, identity);
+            let opened =
+                Connection::open(&Keypair::from_secret(OWNER), identity, sim.address, [7; 32])
+                    .await;
+            assert!(opened.is_err(), "the owner's key is not listed");
+            sim.stop().await;
+        });
+    }
+
+    /// Power lost and back: the bit that refuses offers after a restart inside
+    /// an install goes with it.
+    async fn power_cycled(sim: &Running) {
+        tokio::time::sleep(Duration::from_secs(10)).await;
+        sim.control(Control::Reboot);
+        tokio::time::sleep(Duration::from_secs(5)).await;
+    }
+
+    /// A power cut mid-write leaves its manifest pending on bank 0. The next
+    /// run's own key makes another manifest, so it cancels the stale one once,
+    /// then its one offer goes in.
+    #[test]
+    fn a_stale_pending_install_is_cancelled_once_and_the_retry_goes_in() {
+        paused(async {
+            let rig = Rig::start().await;
+            let backup = synthetic();
+            let hands = Hands::pressing(&rig.sim);
+            let sim = &rig.sim;
+            let cut = Cell::new(false);
+            let report = |event| {
+                if matches!(event, Event::Written { .. }) && !cut.replace(true) {
+                    sim.control(Control::Quit);
+                }
+            };
+            let plan = rig.plan(&backup, Signing::Fresh);
+            let first = rig.run(plan, &hands, report).await.unwrap();
+            assert_eq!(first, Restored::Uncertain(Uncertainty::Gone));
+
+            let rig = rig.again().await;
+            power_cycled(&rig.sim).await;
+            let hands = Hands::pressing(&rig.sim);
+            let cancels = Cell::new(0);
+            let report = |event| {
+                if matches!(event, Event::StaleInstallCancelled) {
+                    cancels.set(cancels.get() + 1);
+                }
+            };
+            let plan = rig.plan(&backup, Signing::Fresh);
+            let second = rig.run(plan, &hands, report).await.unwrap();
+
+            assert_eq!(second, Restored::Activated);
+            assert_eq!(cancels.get(), 1);
+            assert_eq!(
+                &rig.banks.borrow().bank1()[..backup.payload().len()],
+                backup.payload()
+            );
+            rig.sim.stop().await;
+        });
+    }
+
+    /// A cancel that goes unanswered may or may not have landed: the run
+    /// stops, with its one offer unspent.
+    #[test]
+    fn an_unanswered_cancel_stops_the_run_with_nothing_offered() {
+        paused(async {
+            let rig = Rig::start().await;
+            let backup = synthetic();
+            let hands = Hands::pressing(&rig.sim);
+            let sim = &rig.sim;
+            let cut = Cell::new(false);
+            let report = |event| {
+                if matches!(event, Event::Written { .. }) && !cut.replace(true) {
+                    sim.control(Control::Quit);
+                }
+            };
+            let plan = rig.plan(&backup, Signing::Fresh);
+            rig.run(plan, &hands, report).await.unwrap();
+
+            let rig = rig.again().await;
+            power_cycled(&rig.sim).await;
+            let hands = Hands::pressing(&rig.sim);
+            let sim = &rig.sim;
+            let offered = Cell::new(false);
+            let report = |event| match event {
+                Event::StaleInstallCancelled => sim.control(Control::Quit),
+                Event::Restoring => offered.set(true),
+                _ => {}
+            };
+            let plan = rig.plan(&backup, Signing::Fresh);
+            let ended = rig.run(plan, &hands, report).await;
+
+            assert!(
+                matches!(ended, Err(Error::RestoreCancelUnknown)),
+                "{ended:?}"
+            );
+            assert!(!offered.get());
+            rig.sim.stop().await;
+        });
+    }
+
+    /// An install running now is not stale: a second run neither cancels it
+    /// nor offers, and the first goes on to the end.
+    #[test]
+    fn a_running_install_stops_a_second_run_and_is_left_alone() {
+        paused(async {
+            let rig = Rig::start().await;
+            let backup = synthetic();
+            let hands = Hands::pressing(&rig.sim);
+            let key = RefCell::new(None);
+            let written = Cell::new(false);
+            let file = rig.key_file();
+            let report = |event| match event {
+                Event::RestoreSigned { .. } => {
+                    *key.borrow_mut() = Key::load(&file).ok();
+                }
+                Event::Written { .. } => written.set(true),
+                _ => {}
+            };
+            let plan = rig.plan(&backup, Signing::Fresh);
+            let first = rig.run(plan, &hands, report);
+
+            let second = async {
+                while !written.get() {
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+                let key = key.borrow_mut().take().unwrap();
+                let plan = rig.plan(&backup, Signing::Given(Box::new(key)));
+                let away = Hands::away();
+                let report = |event| {
+                    assert!(
+                        !matches!(event, Event::StaleInstallCancelled | Event::Restoring),
+                        "{event:?}"
+                    );
+                };
+                rig.run(plan, &away, report).await
+            };
+            let (first, second) = tokio::join!(first, second);
+
+            assert!(
+                matches!(
+                    second,
+                    Err(Error::RestoreInstallRunning {
+                        phase: UpdatePhase::Receiving
+                    })
+                ),
+                "{second:?}"
+            );
+            assert_eq!(first.unwrap(), Restored::Activated);
+            rig.sim.stop().await;
+        });
+    }
+
+    /// A key file removed from under the run (an earlier screen's forget) is
+    /// its own stop, before anything is offered.
+    #[test]
+    fn a_key_file_gone_before_the_offer_stops_with_nothing_offered() {
+        paused(async {
+            let rig = Rig::start().await;
+            let backup = synthetic();
+            let hands = Hands::pressing(&rig.sim);
+            let file = rig.key_file();
+            let report = |event| {
+                if matches!(event, Event::RestoreSigned { .. }) {
+                    std::fs::remove_file(&file).unwrap();
+                }
+            };
+
+            let plan = rig.plan(&backup, Signing::Fresh);
+            let ended = rig.run(plan, &hands, report).await;
+
+            assert!(matches!(ended, Err(Error::RestoreKeyGone)), "{ended:?}");
+            assert_eq!(rig.banks.borrow().bank1()[0], MARKER[0], "nothing offered");
             rig.sim.stop().await;
         });
     }

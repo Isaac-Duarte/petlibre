@@ -76,6 +76,16 @@ pub enum RestoreStop {
     /// This phone could not make or keep the restore's key: its own storage,
     /// not the backup. Nothing was offered.
     KeyFailed,
+    /// The restore's key file went away just before the offer, as when an
+    /// earlier restore screen was left and forgot it. Nothing was offered,
+    /// and a new run starts clean.
+    KeyGone,
+    /// An install is running on the feeder now, and it was left alone. Nothing
+    /// was offered.
+    InstallRunning,
+    /// An earlier install was left pending, and cancelling it did not clearly
+    /// work. Nothing was offered.
+    CancelUnknown,
     /// The feeder refused the offer, or the install stopped. It is not
     /// offered again, and the feeder keeps running Wellfed.
     Refused,

@@ -4381,7 +4381,7 @@ impl SseDecode for crate::api::install::InstallSpec {
         let mut var_home = <Option<crate::api::setup::WifiCredentials>>::sse_decode(deserializer);
         let mut var_label = <String>::sse_decode(deserializer);
         let mut var_feederName = <String>::sse_decode(deserializer);
-        let mut var_knownFeeders = <Vec<String>>::sse_decode(deserializer);
+        let mut var_knownFeeders = <Vec<crate::api::store::KnownFeeder>>::sse_decode(deserializer);
         let mut var_storePath = <String>::sse_decode(deserializer);
         let mut var_imageDir = <String>::sse_decode(deserializer);
         let mut var_dataDir = <String>::sse_decode(deserializer);
@@ -5552,9 +5552,12 @@ impl SseDecode for crate::api::restore::RestoreStop {
             5 => crate::api::restore::RestoreStop::NoUpdates,
             6 => crate::api::restore::RestoreStop::BackupRefused,
             7 => crate::api::restore::RestoreStop::KeyFailed,
-            8 => crate::api::restore::RestoreStop::Refused,
-            9 => crate::api::restore::RestoreStop::Cancelled,
-            10 => crate::api::restore::RestoreStop::Other,
+            8 => crate::api::restore::RestoreStop::KeyGone,
+            9 => crate::api::restore::RestoreStop::InstallRunning,
+            10 => crate::api::restore::RestoreStop::CancelUnknown,
+            11 => crate::api::restore::RestoreStop::Refused,
+            12 => crate::api::restore::RestoreStop::Cancelled,
+            13 => crate::api::restore::RestoreStop::Other,
             _ => unreachable!("Invalid variant for RestoreStop: {}", inner),
         };
     }
@@ -8903,9 +8906,12 @@ impl flutter_rust_bridge::IntoDart for crate::api::restore::RestoreStop {
             Self::NoUpdates => 5.into_dart(),
             Self::BackupRefused => 6.into_dart(),
             Self::KeyFailed => 7.into_dart(),
-            Self::Refused => 8.into_dart(),
-            Self::Cancelled => 9.into_dart(),
-            Self::Other => 10.into_dart(),
+            Self::KeyGone => 8.into_dart(),
+            Self::InstallRunning => 9.into_dart(),
+            Self::CancelUnknown => 10.into_dart(),
+            Self::Refused => 11.into_dart(),
+            Self::Cancelled => 12.into_dart(),
+            Self::Other => 13.into_dart(),
             _ => unreachable!(),
         }
     }
@@ -11313,7 +11319,7 @@ impl SseEncode for crate::api::install::InstallSpec {
         <Option<crate::api::setup::WifiCredentials>>::sse_encode(self.home, serializer);
         <String>::sse_encode(self.label, serializer);
         <String>::sse_encode(self.feeder_name, serializer);
-        <Vec<String>>::sse_encode(self.known_feeders, serializer);
+        <Vec<crate::api::store::KnownFeeder>>::sse_encode(self.known_feeders, serializer);
         <String>::sse_encode(self.store_path, serializer);
         <String>::sse_encode(self.image_dir, serializer);
         <String>::sse_encode(self.data_dir, serializer);
@@ -12317,9 +12323,12 @@ impl SseEncode for crate::api::restore::RestoreStop {
                 crate::api::restore::RestoreStop::NoUpdates => 5,
                 crate::api::restore::RestoreStop::BackupRefused => 6,
                 crate::api::restore::RestoreStop::KeyFailed => 7,
-                crate::api::restore::RestoreStop::Refused => 8,
-                crate::api::restore::RestoreStop::Cancelled => 9,
-                crate::api::restore::RestoreStop::Other => 10,
+                crate::api::restore::RestoreStop::KeyGone => 8,
+                crate::api::restore::RestoreStop::InstallRunning => 9,
+                crate::api::restore::RestoreStop::CancelUnknown => 10,
+                crate::api::restore::RestoreStop::Refused => 11,
+                crate::api::restore::RestoreStop::Cancelled => 12,
+                crate::api::restore::RestoreStop::Other => 13,
                 _ => {
                     unimplemented!("");
                 }

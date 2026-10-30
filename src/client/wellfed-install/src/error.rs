@@ -247,6 +247,20 @@ pub enum Error {
     /// The update key could not be made or read back here.
     #[error("the restore's update key file")]
     RestoreKey(#[source] wellfed_signing::Error),
+    /// The key file was gone when the run came to spend it: something else
+    /// removed it (an owner leaving an earlier run's screen forgets it). The
+    /// run stops, since what it signed with is no longer what this phone
+    /// holds, and nothing was offered.
+    #[error("the restore's update key file went away before the offer, so nothing was offered")]
+    RestoreKeyGone,
+    /// An install is running on the feeder now, so nothing was cancelled and
+    /// nothing offered.
+    #[error("an install is running on the feeder ({phase:?}), so nothing was offered")]
+    RestoreInstallRunning { phase: wellfed_model::UpdatePhase },
+    /// An earlier install was left pending, and the one cancel of it did not
+    /// show it gone. Nothing was offered.
+    #[error("an earlier install is pending and could not be cancelled, so nothing was offered")]
+    RestoreCancelUnknown,
     /// Stopped with nothing offered, so the feeder keeps the replacement.
     #[error("the restore stopped on {0}, with nothing offered")]
     RestoreStopped(crate::track::Stop),

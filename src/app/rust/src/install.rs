@@ -243,6 +243,7 @@ impl Asks {
 
     /// Hand `update` to Dart; `false` once nobody listens.
     fn update(&self, update: InstallUpdate) -> bool {
+        crate::trace::update(&update);
         self.deliver()
             .as_ref()
             .is_some_and(|deliver| deliver(update))
@@ -274,6 +275,7 @@ impl Asks {
     }
 
     pub(crate) fn answer(&self, id: u32, answer: InstallAnswer) {
+        crate::trace::answer(id, &answer);
         let waiting = self.waiting.lock().ok().and_then(|mut w| w.remove(&id));
         if let Some(waiting) = waiting {
             // The run stopped waiting: nothing to tell.
@@ -428,6 +430,8 @@ struct AppKeys {
     keypair: Keypair,
     label: String,
     feeders: Vec<[u8; 32]>,
+    /// Where Home last reached a known feeder.
+    addresses: HashMap<[u8; 32], SocketAddr>,
     store: PathBuf,
     name: String,
 }
@@ -450,6 +454,10 @@ impl Keys for AppKeys {
             (Some(only), None) => Some(*only),
             _ => None,
         }
+    }
+
+    fn last_address(&self, identity: &[u8; 32]) -> Option<SocketAddr> {
+        self.addresses.get(identity).copied()
     }
 
     fn remember(&mut self, identity: &[u8; 32]) -> Result<(), PlatformError> {
@@ -598,6 +606,12 @@ impl From<Event> for InstallEvent {
             }
             Event::RestoreKeyKept { error } => note(error),
             Event::Floor(floor) => note(format!("the feeder's floor is {floor}")),
+            Event::StaleInstallCancelled => {
+                note("an earlier install left pending was cancelled".to_string())
+            }
+            Event::FeederTried { address, answered } => note(format!(
+                "tried the feeder at {address}, answered: {answered}"
+            )),
             Event::Signed { version, .. } => note(format!("signed at version {version}")),
             Event::PlansKept { .. } => note("stock's plans were kept".to_string()),
             Event::PlansSetAside { .. } => note("the applied plans were set aside".to_string()),
@@ -913,13 +927,25 @@ fn plan(
             },
         },
     };
+    let known: Vec<([u8; 32], Option<SocketAddr>)> = spec
+        .known_feeders
+        .iter()
+        .filter_map(|feeder| {
+            let identity = wellfed_formats::hex::decode::<32>(&feeder.identity)?;
+            let address = feeder
+                .address
+                .as_deref()
+                .and_then(|address| wellfed_connect::parse_address(address).ok());
+            Some((identity, address))
+        })
+        .collect();
     let keys = AppKeys {
         keypair,
         label: spec.label,
-        feeders: spec
-            .known_feeders
+        feeders: known.iter().map(|(identity, _)| *identity).collect(),
+        addresses: known
             .iter()
-            .filter_map(|hex| wellfed_formats::hex::decode::<32>(hex))
+            .filter_map(|(identity, address)| Some((*identity, (*address)?)))
             .collect(),
         store: PathBuf::from(spec.store_path),
         name: spec.feeder_name,
@@ -1424,6 +1450,7 @@ mod tests {
             keypair: Keypair::from_secret([0x61; 32]),
             label: "phone".into(),
             feeders: Vec::new(),
+            addresses: HashMap::new(),
             store: store.to_path_buf(),
             name: "Kitchen".into(),
         }

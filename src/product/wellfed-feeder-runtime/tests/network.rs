@@ -138,6 +138,34 @@ fn without_build_wifi_only_stored_credentials_join() {
     }
 }
 
+/// A handover's mark keeps stored Wi-Fi from a join until the writer has
+/// cleared it; if the writer put the handover off, what is stored joins, so
+/// the boot is not left with no network and no setup.
+#[test]
+fn a_handover_withholds_stored_wifi_until_it_is_put_off() {
+    let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    fake::reset_hardware();
+    forget();
+    store(Some(
+        Credentials::new(b"stored-net", b"stored-pass").unwrap(),
+    ));
+    let at = wellfed_hal::plaf103::storage::RESET.first as usize * 0x1000;
+    fake::with(|h| {
+        h.storage[at..at + 16].copy_from_slice(&wellfed_core::store::handover::MARKER);
+    });
+
+    assert_eq!(select_consumer(), None, "the mark is down");
+    outcome(0);
+
+    network::handover_put_off();
+    assert_eq!(
+        select_consumer(),
+        Some((b"stored-net".to_vec(), b"stored-pass".to_vec(), 1))
+    );
+    outcome(0);
+    forget();
+}
+
 #[test]
 fn a_consumer_image_joins_only_what_is_stored() {
     let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());

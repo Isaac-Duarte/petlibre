@@ -27,6 +27,7 @@
 
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 
+use wellfed_core::store::handover;
 use wellfed_core::store::slot::SlotIo;
 use wellfed_device_api::mailbox::{WifiResult, WifiSource, WifiView};
 use wellfed_device_api::wifi::Credentials;
@@ -108,6 +109,7 @@ static STATE: AtomicU8 = AtomicU8::new(Hand::Empty as u8);
 
 /// What NOR holds, published by the writer.
 static LOADED: AtomicBool = AtomicBool::new(false);
+static HANDOVER_PUT_OFF: AtomicBool = AtomicBool::new(false);
 static WRITABLE: AtomicBool = AtomicBool::new(false);
 static STORED: AtomicBool = AtomicBool::new(false);
 static STORED_CRC: AtomicU32 = AtomicU32::new(0);
@@ -223,7 +225,7 @@ pub fn publish<I: SlotIo>(store: &NetStore<I>, armed: bool) {
 /// # Safety
 /// No Wi-Fi task is running: the join state is the Wi-Fi task's own.
 pub unsafe fn reset() {
-    for flag in [&LOADED, &WRITABLE, &STORED, &RELOAD] {
+    for flag in [&LOADED, &WRITABLE, &STORED, &RELOAD, &HANDOVER_PUT_OFF] {
         flag.store(false, Ordering::Release);
     }
     GENERATION.store(0, Ordering::Release);
@@ -280,20 +282,33 @@ impl SlotIo for MappedNet {
 }
 
 /// The stored credentials, read once through the flash map (no lease).
-/// None while a factory reset is unfinished: the Wi-Fi task may ask before
-/// the settings writer has erased the credentials the reset clears.
+/// None while a factory reset or a handover is unfinished: the Wi-Fi task may
+/// ask before the settings writer has erased the credentials it clears. An
+/// image with build Wi-Fi keeps its stores through a handover.
 fn stored(join: &mut Join) -> Option<Credentials> {
     if !join.opened {
-        join.opened = true;
         let mut marker = [0; reset::MARKER.len()];
-        let resetting = sdk::storage_read(RESET_BASE, 0, &mut marker) && reset::marked(&marker);
-        let mut store = NetStore::default();
-        if !resetting {
-            store.open(MappedNet);
+        let waiting = sdk::storage_read(RESET_BASE, 0, &mut marker)
+            && (reset::marked(&marker)
+                || (!cfg!(build_wifi)
+                    && handover::marked(&marker)
+                    && !HANDOVER_PUT_OFF.load(Ordering::Acquire)));
+        // Asked again at the next join, by when the writer has finished.
+        if waiting {
+            return None;
         }
+        join.opened = true;
+        let mut store = NetStore::default();
+        store.open(MappedNet);
         join.stored = store.credentials;
     }
     join.stored
+}
+
+/// The writer could not finish a handover this boot, so what is stored stands
+/// until the next: this boot joins with it rather than with nothing.
+pub fn handover_put_off() {
+    HANDOVER_PUT_OFF.store(true, Ordering::Release);
 }
 
 /// The C view of one join's credentials; prefilled with the build's, or

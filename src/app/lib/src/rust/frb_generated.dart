@@ -3675,7 +3675,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       home: dco_decode_opt_box_autoadd_wifi_credentials(arr[3]),
       label: dco_decode_String(arr[4]),
       feederName: dco_decode_String(arr[5]),
-      knownFeeders: dco_decode_list_String(arr[6]),
+      knownFeeders: dco_decode_list_known_feeder(arr[6]),
       storePath: dco_decode_String(arr[7]),
       imageDir: dco_decode_String(arr[8]),
       dataDir: dco_decode_String(arr[9]),
@@ -6749,7 +6749,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_home = sse_decode_opt_box_autoadd_wifi_credentials(deserializer);
     var var_label = sse_decode_String(deserializer);
     var var_feederName = sse_decode_String(deserializer);
-    var var_knownFeeders = sse_decode_list_String(deserializer);
+    var var_knownFeeders = sse_decode_list_known_feeder(deserializer);
     var var_storePath = sse_decode_String(deserializer);
     var var_imageDir = sse_decode_String(deserializer);
     var var_dataDir = sse_decode_String(deserializer);
@@ -10224,7 +10224,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_opt_box_autoadd_wifi_credentials(self.home, serializer);
     sse_encode_String(self.label, serializer);
     sse_encode_String(self.feederName, serializer);
-    sse_encode_list_String(self.knownFeeders, serializer);
+    sse_encode_list_known_feeder(self.knownFeeders, serializer);
     sse_encode_String(self.storePath, serializer);
     sse_encode_String(self.imageDir, serializer);
     sse_encode_String(self.dataDir, serializer);

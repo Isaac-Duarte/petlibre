@@ -159,6 +159,60 @@ void main() {
     },
   );
 
+  testWidgets('the served build past its version has kept the update', (
+    tester,
+  ) async {
+    final (ports, session) = await _show(tester);
+    await tapIn(tester, find.text('Install on Kitchen'));
+    ports.progress.add(
+      const UpdateProgress.ended(end: UpdateEnd.unconfirmed()),
+    );
+    await settle(tester);
+
+    session.status(fakeCard(build: _newBuild));
+    await settle(tester);
+    session.replies.add(
+      const FeederReply.update(
+        update: UpdateInfo(
+          phase: UpdatePhase.idle,
+          bank: 1,
+          minVersion: 7,
+          version: 0,
+          imageLen: 0,
+          written: 0,
+        ),
+      ),
+    );
+    await tapIn(tester, find.text('Look again'));
+    expect(find.text('Updated'), findsOneWidget);
+  });
+
+  testWidgets('an offer held by an earlier stop offers its cancel, once', (
+    tester,
+  ) async {
+    final (ports, session) = await _show(tester);
+    await tapIn(tester, find.text('Install on Kitchen'));
+    ports.progress.add(
+      const UpdateProgress.ended(
+        end: UpdateEnd.refused(
+          refusal: FeederRefusal.update(reason: UpdateRefusal.pending),
+        ),
+      ),
+    );
+    await settle(tester);
+    expect(find.textContaining('Let it finish'), findsNothing);
+
+    session.replies.add(
+      const FeederReply.refused(refusal: FeederRefusal.busy()),
+    );
+    await tapIn(tester, find.text('Cancel the earlier update'));
+    expect(session.requests.single, const FeederRequest.cancelUpdate());
+    expect(find.textContaining('busy'), findsOneWidget);
+
+    await tapIn(tester, find.text('Cancel the earlier update'));
+    expect(find.text('Install on Kitchen'), findsOneWidget);
+  });
+
   testWidgets('holds the process for the run, and says if refused', (
     tester,
   ) async {
@@ -228,6 +282,10 @@ void main() {
       tester,
     ) async {
       await end(tester, const UpdateEnd.stopped(stop: UpdateStop.cancelled));
+      expect(
+        find.textContaining('Kitchen runs its other copy'),
+        findsOneWidget,
+      );
       expect(find.textContaining('other copy of Wellfed'), findsOneWidget);
       expect(find.textContaining('still runs'), findsNothing);
       expect(find.text('Running now'), findsOneWidget);

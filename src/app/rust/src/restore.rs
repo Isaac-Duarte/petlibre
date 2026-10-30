@@ -64,6 +64,9 @@ pub const fn stop_of(error: &Error) -> RestoreStop {
         Error::RestoreKey(_) | Error::Create { .. } | Error::Remove { .. } => {
             RestoreStop::KeyFailed
         }
+        Error::RestoreKeyGone => RestoreStop::KeyGone,
+        Error::RestoreInstallRunning { .. } => RestoreStop::InstallRunning,
+        Error::RestoreCancelUnknown => RestoreStop::CancelUnknown,
         Error::RestoreStopped(_) => RestoreStop::Cancelled,
         _ => RestoreStop::Other,
     }

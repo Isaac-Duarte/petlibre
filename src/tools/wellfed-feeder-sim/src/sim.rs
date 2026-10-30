@@ -101,6 +101,7 @@ impl fmt::Display for Record {
 
 pub struct Sim {
     feeder: Box<Feeder<SimPlatform>>,
+    flash: Rc<Flash>,
     /// The feeding owner, stepped before each pass as the firmware's is.
     feeds: SimFeeds,
     booted: bool,
@@ -158,6 +159,7 @@ impl Sim {
         platform.attach_banks(banks);
         Ok(Self {
             feeder: Box::new(Feeder::new(platform)),
+            flash: Rc::clone(flash),
             feeds: SimFeeds::open(flash),
             booted: false,
             banks: Rc::clone(banks),
@@ -301,6 +303,7 @@ impl Sim {
         let mut bus = Bus {
             banks: &mut banks,
             bank: self.bank,
+            handover: Region::new(&self.flash, storage::RESET),
         };
         let step = self.stage.step(&mut bus, now_ms);
         if let Some(event) = step.record {

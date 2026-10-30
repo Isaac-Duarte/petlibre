@@ -122,7 +122,7 @@ All storage-region sectors are named in one table, `wellfed_board_plaf103::stora
 | 29–31 | Per-feed trace ring: the last 8 to 12 feeds' traces ([device API](device-api.md#feed-traces)) |
 | 32–33 | Lifetime statistics ([device API](device-api.md#statistics)) |
 | 34–35 | Portion calibration ([calibration](calibration.md#storage)) |
-| 36 | The factory reset's marker ([factory reset](#factory-reset)) |
+| 36 | The factory reset's marker ([factory reset](#factory-reset)), or the [handover mark](consumer-installation.md#rollback) stock's activation leaves |
 | 37–39 | Free |
 | 40–47 | The meal call's clip ([schedules](schedules.md#meal-call)) |
 

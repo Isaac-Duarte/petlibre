@@ -18,6 +18,7 @@ use wellfed_core::ota::offer::{
     self, ImageKind, KeyError, KeyStatement, OfferError, Signed, StatementError, key_id,
 };
 use wellfed_core::ota::{MARKER, MAX_CHUNK, Manifest, SECTOR};
+use wellfed_core::store::handover;
 use wellfed_core::store::slot::SlotIo;
 use wellfed_core::store::update::{Bank0, Candidate, State, UpdateStore};
 use wellfed_hal::flash::park::{self, Mmio};
@@ -99,6 +100,11 @@ struct TestFlash {
     /// when the marker went in.
     marker_seen: Vec<[u8; 8]>,
     state_at_marker: Option<State>,
+    handover_marked: u32,
+    handover_at_marker: u32,
+    handover_cleared: u32,
+    fail_handover: bool,
+    fail_marker: bool,
     /// The attempt register as each bank-1 program found it: what a reset
     /// inside that write would leave behind.
     register_seen: Vec<u32>,
@@ -116,12 +122,13 @@ impl Flash for TestFlash {
             .push(fake::with(|h| h.bank1[..8].try_into().unwrap()));
         if sector == 0 && offset == 0 && data == MARKER {
             self.state_at_marker = Some(store().record().state);
+            self.handover_at_marker = self.handover_marked;
         }
         self.register_seen
             .push(fake::with(|h| h.backup[MARKER_REGISTER as usize]));
         let n = self.programs;
         self.programs += 1;
-        if self.fail_program == Some(n) {
+        if self.fail_program == Some(n) || (self.fail_marker && data == MARKER) {
             return false;
         }
         if self.corrupt_program == Some(n) {
@@ -131,6 +138,14 @@ impl Flash for TestFlash {
             return self.inner.program(sector, offset, &bad);
         }
         self.inner.program(sector, offset, data)
+    }
+    fn mark_handover(&mut self) -> bool {
+        self.handover_marked += 1;
+        !self.fail_handover && self.inner.mark_handover()
+    }
+    fn clear_handover(&mut self) -> bool {
+        self.handover_cleared += 1;
+        self.inner.clear_handover()
     }
     fn read(&mut self, sector: u32, offset: u32, bytes: &mut [u8]) -> bool {
         let n = self.reads;
@@ -1167,6 +1182,97 @@ fn bank_1_never_gives_way_for_a_downgrade_bank_0_could_not_check() {
     assert_eq!(rig.offer(&stock, Some(&statement)), Err(Refused::Fallback));
     assert_eq!(store().record().state, State::None);
     assert!(fake::with(|h| h.bank1[..8] == MARKER));
+}
+
+/// A stock image `payload` signed by the bench key, and its downgrade
+/// statement at floor 0.
+fn stock_offer(payload: &[u8]) -> (Vec<u8>, Vec<u8>) {
+    let stock = manifest_for(&bench(), 3, payload, 0x22, ImageKind::Stock);
+    let body = offer::downgrade_body(
+        &key_id(&bench().verifying_key().to_bytes()),
+        &DEVICE,
+        &offer::manifest_digest(&stock),
+        0,
+    );
+    let mut statement = body.to_vec();
+    statement.extend_from_slice(&bench().sign(&body).to_bytes());
+    (stock, statement)
+}
+
+fn handover_bytes() -> [u8; 16] {
+    let at = wellfed_hal::plaf103::storage::RESET.first as usize * SECTOR;
+    fake::with(|h| h.storage[at..at + 16].try_into().unwrap())
+}
+
+/// Bank 0 activating stock leaves the handover mark, after the record and
+/// before the marker: a cut at any point leaves a feeder that boots Wellfed
+/// with its owner, or one that clears itself into Bluetooth setup.
+#[test]
+fn activating_stock_marks_the_handover_between_the_record_and_the_marker() {
+    let _guard = start(0);
+    let mut rig = Rig::bench(0);
+    let payload = image(LEN);
+    let (stock, statement) = stock_offer(&payload);
+
+    progress(rig.offer(&stock, Some(&statement)));
+    let done = rig.push(&payload, None);
+
+    assert_eq!(done.phase, Phase::Activated);
+    assert!(matches!(
+        rig.flash.state_at_marker,
+        Some(State::Activated(_))
+    ));
+    assert_eq!(rig.flash.handover_at_marker, 1);
+    assert_eq!(handover_bytes(), handover::MARKER);
+}
+
+/// A replacement leaves the owner in place.
+#[test]
+fn activating_a_replacement_leaves_no_handover() {
+    let _guard = start(0);
+    let mut rig = Rig::bench(0);
+    let payload = image(LEN);
+
+    progress(rig.offer(&manifest(3, &payload), None));
+    let done = rig.push(&payload, None);
+
+    assert_eq!(done.phase, Phase::Activated);
+    assert_eq!(rig.flash.handover_marked, 0);
+    assert_eq!(handover_bytes(), [0xff; 16]);
+}
+
+/// With no mark down, stock does not go in: the feeder would keep a stale
+/// owner under it, and the offer may try again.
+#[test]
+fn a_handover_that_will_not_mark_stops_the_activation() {
+    let _guard = start(0);
+    let mut rig = Rig::bench(0);
+    rig.flash.fail_handover = true;
+    let payload = image(LEN);
+    let (stock, statement) = stock_offer(&payload);
+
+    progress(rig.offer(&stock, Some(&statement)));
+    let done = rig.push(&payload, None);
+
+    assert_ne!(done.phase, Phase::Activated);
+    assert!(matches!(store().record().state, State::Pending(_)));
+    assert_eq!(rig.flash.state_at_marker, None, "no marker went in");
+}
+
+/// A bank-1 marker that does not land takes the mark back with it.
+#[test]
+fn a_marker_that_fails_takes_the_handover_back() {
+    let _guard = start(0);
+    let mut rig = Rig::bench(0);
+    let payload = image(LEN);
+    let (stock, statement) = stock_offer(&payload);
+    progress(rig.offer(&stock, Some(&statement)));
+    rig.flash.fail_marker = true;
+
+    let done = rig.push(&payload, None);
+
+    assert_ne!(done.phase, Phase::Activated);
+    assert_eq!(handover_bytes(), [0xff; 16]);
 }
 
 #[test]

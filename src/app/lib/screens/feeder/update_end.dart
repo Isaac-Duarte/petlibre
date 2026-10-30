@@ -9,6 +9,7 @@ import '../../state/feeder.dart';
 import '../../theme/theme.dart';
 import '../../widgets/icons.dart';
 import '../../widgets/layout.dart';
+import '../../widgets/replies.dart';
 
 /// What an update's end comes to: a title and what it means (12.3).
 (String, String) updateEndWords(String name, UpdateEnd end) => switch (end) {
@@ -23,7 +24,7 @@ import '../../widgets/layout.dart';
   UpdateEnd_Refused(:final refusal) => _refused(name, refusal),
   UpdateEnd_Stopped(stop: UpdateStop.cancelled) => (
     'Update cancelled',
-    ' runs its other copy of Wellfed now. It can feed, and may be older '
+    '$name runs its other copy of Wellfed now. It can feed, and may be older '
         'than the one it ran.',
   ),
   UpdateEnd_Stopped(stop: UpdateStop.hash || UpdateStop.marker) => (
@@ -99,13 +100,15 @@ import '../../widgets/layout.dart';
     'Restart $name first',
     'An install already reset it since it was last powered up. Nothing changed.',
   ),
-  FeederRefusal_Update(
-    reason: UpdateRefusal.installing || UpdateRefusal.pending,
-  ) =>
-    (
-      'Another update is under way',
-      'Let it finish, then look again. Nothing changed.',
-    ),
+  FeederRefusal_Update(reason: UpdateRefusal.installing) => (
+    'Another update is under way',
+    'Let it finish, then look again. Nothing changed.',
+  ),
+  FeederRefusal_Update(reason: UpdateRefusal.pending) => (
+    'An earlier update is still held',
+    "One stopped partway, and $name won't take another until it's cancelled. "
+        'Nothing is installing now.',
+  ),
   FeederRefusal_Update() => (
     '$name said no',
     "It can't install an update right now. Nothing changed.",
@@ -159,6 +162,17 @@ class UpdateEndScreen extends StatelessWidget {
         ],
       ],
       actions: [
+        if (_heldEarlier)
+          FilledButton(
+            onPressed: flow.cancelling
+                ? null
+                : () async {
+                    final reply = await flow.cancel();
+                    if (!context.mounted) return;
+                    if (showProblem(context, reply)) flow.acknowledge();
+                  },
+            child: const Text('Cancel the earlier update'),
+          ),
         if (flow.endUnknown)
           FilledButton(
             onPressed: () => unawaited(flow.lookAgain()),
@@ -174,6 +188,15 @@ class UpdateEndScreen extends StatelessWidget {
       ],
     );
   }
+
+  /// A stop left its candidate recorded, and only a cancel forgets it.
+  bool get _heldEarlier => switch (end) {
+    UpdateEnd_Refused(
+      refusal: FeederRefusal_Update(reason: UpdateRefusal.pending),
+    ) =>
+      true,
+    _ => false,
+  };
 
   static String _short(String build) =>
       build.length > 12 ? build.substring(0, 12) : build;

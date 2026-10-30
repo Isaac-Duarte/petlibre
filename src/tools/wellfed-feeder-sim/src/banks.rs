@@ -26,8 +26,11 @@ use std::rc::Rc;
 use sha2::{Digest, Sha256};
 use wellfed_amebad_sys::{BANK0_OFFSET, BANK1_OFFSET, SECTOR_BYTES, STOCK_PLAN_ENTRIES_LEN};
 use wellfed_core::ota::{BANK1_BYTES, CONFIRM_LEN, MARKER, image};
+use wellfed_core::store::handover;
 use wellfed_core::store::update::Bank0;
 use wellfed_hal::ota::update::Flash;
+
+use crate::flash::Region;
 use wellfed_hal::trial::{self, Decision, Storm};
 
 /// KM0's limit: unconfirmed boots before it gives way.
@@ -240,6 +243,8 @@ impl Banks {
 pub(crate) struct Bus<'a> {
     pub banks: &'a mut Banks,
     pub bank: u8,
+    /// The handover mark's sector, in the flash the stores live in.
+    pub handover: Region,
 }
 
 impl Bus<'_> {
@@ -289,6 +294,14 @@ impl Flash for Bus<'_> {
         };
         bytes.copy_from_slice(source);
         true
+    }
+
+    fn mark_handover(&mut self) -> bool {
+        handover::mark(&self.handover)
+    }
+
+    fn clear_handover(&mut self) -> bool {
+        handover::clear(&self.handover)
     }
 
     fn give_way(&mut self) -> bool {

@@ -1088,36 +1088,49 @@ where
 
     /// Where the feeder with `identity` opens a session with this client's
     /// key now, if anywhere: the given address; else `last` (where it
-    /// answered before), then (by `look`) by discovery, then where it
-    /// answered this run or stock connected from. Opening a session sends
-    /// nothing.
+    /// answered before), then where this client last reached it, then (by
+    /// `look`) by discovery, then where it answered this run or stock
+    /// connected from. Opening a session sends nothing.
     async fn answering(
         &self,
         identity: [u8; 32],
         look: Look,
         last: Option<SocketAddr>,
     ) -> Option<SocketAddr> {
-        let mut candidates = Vec::new();
+        // Known places go before discovery: its wait is the longest here, and
+        // a dozing phone's discovery may not answer at all.
         if self.address.is_none() {
-            candidates.extend(last);
-        }
-        if self.address.is_none() && look == Look::Discovered {
-            candidates.extend(self.io.discovery.locate(identity).await);
-        }
-        candidates.extend(self.address().ok());
-        for address in candidates {
-            let opened = wellfed_connect::Connection::open(
-                self.io.keys.keypair(),
-                identity,
-                address,
-                random().ok()?,
-            )
-            .await;
-            if opened.is_ok() {
-                return Some(address);
+            let known = [last, self.io.keys.last_address(&identity)];
+            for address in known.into_iter().flatten() {
+                if self.opens_at(identity, address).await {
+                    return Some(address);
+                }
             }
         }
-        None
+        if self.address.is_none()
+            && look == Look::Discovered
+            && let Some(address) = self.io.discovery.locate(identity).await
+            && self.opens_at(identity, address).await
+        {
+            return Some(address);
+        }
+        let address = self.address().ok()?;
+        self.opens_at(identity, address).await.then_some(address)
+    }
+
+    /// Whether a session with this client's key opens at `address`.
+    async fn opens_at(&self, identity: [u8; 32], address: SocketAddr) -> bool {
+        let Ok(nonce) = random() else {
+            return false;
+        };
+        let answered =
+            wellfed_connect::Connection::open(self.io.keys.keypair(), identity, address, nonce)
+                .await
+                .is_ok();
+        self.io
+            .report
+            .event(Event::FeederTried { address, answered });
+        answered
     }
 
     /// Enroll the installer's update key once, the owner pressing Dispense.

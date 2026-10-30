@@ -41,10 +41,12 @@ use sha2::{Digest, Sha256};
 pub use wellfed_core::ota::SectorStep;
 use wellfed_core::ota::install::{Install, Phase, Progress, Refused, Stop, Taken};
 use wellfed_core::ota::offer::{
-    self, Admitted, Context, KeyId, KeyRing, KeyStatement, Trust, admit_offer, admit_statement,
+    self, Admitted, Context, ImageKind, KeyId, KeyRing, KeyStatement, Trust, admit_offer,
+    admit_statement,
 };
 use wellfed_core::ota::{BANK1_OFFSET, MARKER, SECTOR, SECTOR_BYTES, image};
 use wellfed_core::record::Tag;
+use wellfed_core::store::handover;
 use wellfed_core::store::slot::SlotIo;
 use wellfed_core::store::update::{Bank0, Candidate, State, UpdateStatus, UpdateStore};
 
@@ -88,6 +90,10 @@ pub trait Flash {
     fn bank0(&mut self, offset: u32, bytes: &mut [u8]) -> bool;
     /// Clear bank 1's first marker byte, from bank 1 with bank 0 valid.
     fn give_way(&mut self) -> bool;
+    /// Program the [handover mark](wellfed_core::store::handover).
+    fn mark_handover(&mut self) -> bool;
+    /// Erase the handover mark.
+    fn clear_handover(&mut self) -> bool;
 }
 
 /// The flash through the SDK wrappers, refused unless the hooks are armed
@@ -132,6 +138,41 @@ impl<H: Hooks> Flash for SdkFlash<H> {
         // SAFETY: the hooks are armed; the give-way clears only bank 1's
         // first marker byte, which the update stage owns.
         H::armed() && unsafe { sdk::bank1_give_way() }
+    }
+    fn mark_handover(&mut self) -> bool {
+        handover::mark(&HandoverSector::<H>(PhantomData))
+    }
+    fn clear_handover(&mut self) -> bool {
+        handover::clear(&HandoverSector::<H>(PhantomData))
+    }
+}
+
+/// The one sector the handover mark is in, through the SDK wrappers.
+struct HandoverSector<H>(PhantomData<fn() -> H>);
+
+impl<H: Hooks> SlotIo for HandoverSector<H> {
+    fn unit_bytes(&self) -> u32 {
+        sdk::SECTOR_BYTES
+    }
+    fn read(&self, slot: u32, offset: u32, bytes: &mut [u8]) -> bool {
+        slot == 0 && sdk::storage_read(crate::plaf103::storage::RESET.first, offset, bytes)
+    }
+    fn program(&self, slot: u32, offset: u32, bytes: &[u8]) -> bool {
+        // SAFETY: the hooks are armed, and the writer, the sector's other
+        // user, touches it only at boot or in a factory reset, never while
+        // bank 0 activates an image.
+        slot == 0
+            && H::armed()
+            && unsafe { sdk::storage_program(crate::plaf103::storage::RESET.first, offset, bytes) }
+    }
+    fn erase(&self, slot: u32) -> bool {
+        // SAFETY: as in `program`.
+        slot == 0
+            && H::armed()
+            && unsafe { sdk::storage_erase(crate::plaf103::storage::RESET.first) }
+    }
+    fn writable(&self) -> bool {
+        H::armed()
     }
 }
 
@@ -519,7 +560,16 @@ impl<I: SlotIo + Clone> Update<I> {
                 }
                 progress
             }
-            _ => idle,
+            // A candidate no install is running for: a cut or kill left it,
+            // and it refuses every other manifest until a client cancels it.
+            _ => match self.store.record().state {
+                State::Pending(c) => Progress {
+                    digest: Some(c.digest),
+                    version: c.version,
+                    ..idle
+                },
+                _ => idle,
+            },
         }
     }
 
@@ -984,6 +1034,19 @@ impl<I: SlotIo + Clone> Update<I> {
             return next(IDLE_MS, Some(record));
         }
 
+        // The order keeps every cut recoverable. After the record alone, this
+        // Wellfed boots as it was, with its owner. After the handover mark,
+        // the next boot clears Wi-Fi and clients, and Bluetooth setup recovers
+        // the feeder whether or not stock went in. Clearing first would leave
+        // the record naming a manifest whose key is gone.
+        let stock = candidate.kind == ImageKind::Stock;
+        if stock && !under_marker(|| flash.mark_handover()) {
+            let _ = under_marker(|| flash.clear_handover());
+            let _ = under_marker(|| self.store.set_pending(candidate));
+            let record = self.stop(Stop::Store);
+            return next(IDLE_MS, Some(record));
+        }
+
         let Some(install) = self.install.as_mut() else {
             return next(IDLE_MS, None);
         };
@@ -999,8 +1062,11 @@ impl<I: SlotIo + Clone> Update<I> {
         };
         if install.marked(marked).is_err() {
             // Bank 1 stays invalid: a later offer of the same manifest may
-            // try again, as it never ran.
+            // try again, as it never ran. This feeder also keeps its owner.
             let _ = under_marker(|| self.store.set_pending(candidate));
+            if stock {
+                let _ = under_marker(|| flash.clear_handover());
+            }
             let record = self.stop(Stop::Activate);
             return next(IDLE_MS, Some(record));
         }

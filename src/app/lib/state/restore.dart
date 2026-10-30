@@ -93,6 +93,7 @@ class RestoreFlow extends ChangeNotifier {
     RestoreStop.noPress ||
     RestoreStop.enrollmentUnknown ||
     RestoreStop.keyRefused ||
+    RestoreStop.keyGone ||
     RestoreStop.notAnswering ||
     RestoreStop.cancelled => true,
     _ => false,

@@ -485,6 +485,12 @@ class _Stopped extends StatelessWidget {
           '$name keeps running Wellfed, and nothing was sent. The backup is '
               'fine: this is about space or storage on this phone.',
         ),
+        RestoreStop.keyGone => (
+          'The restore lost its key',
+          '$name keeps running Wellfed, and nothing was sent. An earlier '
+              'restore on this phone cleared the key as this one was about to '
+              'use it. Try again; you may be asked to press Dispense once more.',
+        ),
         RestoreStop.refused => (
           '$name said no',
           "It keeps running Wellfed, though the vendor's copy may be partly "

@@ -404,6 +404,21 @@ void main() {
     expect(find.text("That isn't the original firmware"), findsNothing);
   });
 
+  testWidgets('a key gone before the offer has its own words and a retry', (
+    tester,
+  ) async {
+    final ports = FakeRestorePorts();
+    await _open(tester, ports);
+    final run = await _started(tester, ports);
+
+    run.stopped(RestoreStop.keyGone);
+    await settle(tester);
+
+    expect(find.text('The restore lost its key'), findsOneWidget);
+    expect(find.textContaining('space or storage'), findsNothing);
+    expect(find.text('Try again'), findsOneWidget);
+  });
+
   testWidgets('leaving after a stopped run forgets the key', (tester) async {
     final ports = FakeRestorePorts();
     final flow = await _open(tester, ports);

@@ -275,7 +275,13 @@ async fn drive(
     // later run offer with no press. One that will not go stops the run here.
     if matches!(target.signing, Signing::Fresh) {
         let file = storage::restore_key_path(&target.backups, &target.identity);
-        std::fs::remove_file(&file).map_err(|source| Error::Remove { path: file, source })?;
+        std::fs::remove_file(&file).map_err(|source| {
+            if source.kind() == std::io::ErrorKind::NotFound {
+                Error::RestoreKeyGone
+            } else {
+                Error::Remove { path: file, source }
+            }
+        })?;
     }
 
     report.event(Event::Restoring);
@@ -962,6 +968,30 @@ mod tests {
             assert_eq!(second, Restored::Activated);
             assert_eq!(hands.asked.get(), 1, "a new press");
             assert_ne!(signed.get(), Some(old), "signed with a new key");
+            rig.sim.stop().await;
+        });
+    }
+
+    /// A key file removed from under the run (an earlier screen's forget) is
+    /// its own stop, before anything is offered.
+    #[test]
+    fn a_key_file_gone_before_the_offer_stops_with_nothing_offered() {
+        paused(async {
+            let rig = Rig::start().await;
+            let backup = synthetic();
+            let hands = Hands::pressing(&rig.sim);
+            let file = rig.key_file();
+            let report = |event| {
+                if matches!(event, Event::RestoreSigned { .. }) {
+                    std::fs::remove_file(&file).unwrap();
+                }
+            };
+
+            let plan = rig.plan(&backup, Signing::Fresh);
+            let ended = rig.run(plan, &hands, report).await;
+
+            assert!(matches!(ended, Err(Error::RestoreKeyGone)), "{ended:?}");
+            assert_eq!(rig.banks.borrow().bank1()[0], MARKER[0], "nothing offered");
             rig.sim.stop().await;
         });
     }

@@ -32,7 +32,7 @@ Invites, schedules, history, settings and servers come later ([roadmap](../../do
 
 `wellfed_install::restore` drives it, the same as `wellfed restore-stock`, on a thread of its own (`rust/src/restore.rs`), with the install's asks and events on its stream and an end of its own. `platform/restore_ports.dart` is what its screens reach outside Dart.
 
-- **The key lasts only as long as the restore.** It is made when the restore starts, enrolled with a Dispense press, and removed once an offer went out. A retry after an enrollment that went through needs no second press.
+- **The key lasts only as long as the restore.** It is made when the restore starts, enrolled with a Dispense press, and removed before an offer goes out, or when you leave the screen. A retry from the same screen after an enrollment that went through needs no second press.
 - **An uncertain restore is never sent again.** Once the offer may be out, the screen has no way back, and a feeder that stops answering ends on "We can't tell if it went through" with no retry.
 - **A picked file takes the same checks as the kept backup:** `StockBackup::open`, then the signer's own pin.
 

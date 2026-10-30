@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:file_selector/file_selector.dart';
 
@@ -31,6 +32,9 @@ abstract interface class RestorePorts {
   RestoreRun newRun(RestoreSpec spec);
 
   Future<String?> locate(String identity);
+
+  /// Forget the restore's key for the feeder with `identity`.
+  void forgetKey(String dataDir, List<int> identity);
 
   /// Keep this process alive with a notification while the firmware goes
   /// across. `false` when Android refused.
@@ -71,6 +75,12 @@ class AppRestorePorts implements RestorePorts {
 
   @override
   Future<String?> locate(String identity) => _install.locate(identity);
+
+  @override
+  void forgetKey(String dataDir, List<int> identity) => rust.forgetRestoreKey(
+    dataDir: dataDir,
+    identity: Uint8List.fromList(identity),
+  );
 
   @override
   Future<bool> holdProcess(String text) => _install.holdProcess(text);

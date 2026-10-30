@@ -391,10 +391,20 @@ class _Uncertain extends StatelessWidget {
   Widget build(BuildContext context) => StepScaffold(
     leading: Leading.none,
     title: "We can't tell if it went through",
-    body:
+    body: switch (flow.uncertain) {
+      UncertainWhy.stopped =>
+        'This was stopped as the firmware was starting to go across, or after '
+            'it had. ${flow.feederName} may already be on the vendor firmware, '
+            'or still on Wellfed. Nothing more is sent.',
+      UncertainWhy.failed =>
+        'This phone hit a problem as the firmware was starting to go across, '
+            'or after it had. ${flow.feederName} may already be on the vendor '
+            'firmware, or still on Wellfed. Nothing more is sent.',
+      _ =>
         '${flow.feederName} stopped answering after the firmware started '
-        'going across. It may already be on the vendor firmware, or still on '
-        'Wellfed. Nothing more is sent.',
+            'going across. It may already be on the vendor firmware, or still '
+            'on Wellfed. Nothing more is sent.',
+    },
     content: [
       const Notice(
         tone: Tone.warning,
@@ -469,6 +479,11 @@ class _Stopped extends StatelessWidget {
         RestoreStop.backupRefused => (
           "That isn't the original firmware",
           "It doesn't match the vendor's 1.1.15 exactly, so nothing was sent.",
+        ),
+        RestoreStop.keyFailed => (
+          "This phone couldn't set up the restore",
+          '$name keeps running Wellfed, and nothing was sent. The backup is '
+              'fine: this is about space or storage on this phone.',
         ),
         RestoreStop.refused => (
           '$name said no',

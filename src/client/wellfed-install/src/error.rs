@@ -244,6 +244,9 @@ pub enum Error {
     /// The update key a restore signs with did not reach the feeder.
     #[error("the restore's update key")]
     RestoreEnroll(#[source] wellfed_client::update_key::EnrollError),
+    /// The update key could not be made or read back here.
+    #[error("the restore's update key file")]
+    RestoreKey(#[source] wellfed_signing::Error),
     /// Stopped with nothing offered, so the feeder keeps the replacement.
     #[error("the restore stopped on {0}, with nothing offered")]
     RestoreStopped(crate::track::Stop),

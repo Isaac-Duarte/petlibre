@@ -457,11 +457,11 @@ return stopped(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function()?  activated,TResult Function( String detail)?  uncertain,TResult Function( RestoreStop case_,  String detail)?  stopped,required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function()?  activated,TResult Function( UncertainWhy why,  String detail)?  uncertain,TResult Function( RestoreStop case_,  String detail)?  stopped,required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case RestoreEnd_Activated() when activated != null:
 return activated();case RestoreEnd_Uncertain() when uncertain != null:
-return uncertain(_that.detail);case RestoreEnd_Stopped() when stopped != null:
+return uncertain(_that.why,_that.detail);case RestoreEnd_Stopped() when stopped != null:
 return stopped(_that.case_,_that.detail);case _:
   return orElse();
 
@@ -480,11 +480,11 @@ return stopped(_that.case_,_that.detail);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function()  activated,required TResult Function( String detail)  uncertain,required TResult Function( RestoreStop case_,  String detail)  stopped,}) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function()  activated,required TResult Function( UncertainWhy why,  String detail)  uncertain,required TResult Function( RestoreStop case_,  String detail)  stopped,}) {final _that = this;
 switch (_that) {
 case RestoreEnd_Activated():
 return activated();case RestoreEnd_Uncertain():
-return uncertain(_that.detail);case RestoreEnd_Stopped():
+return uncertain(_that.why,_that.detail);case RestoreEnd_Stopped():
 return stopped(_that.case_,_that.detail);}
 }
 /// A variant of `when` that fallback to returning `null`
@@ -499,11 +499,11 @@ return stopped(_that.case_,_that.detail);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function()?  activated,TResult? Function( String detail)?  uncertain,TResult? Function( RestoreStop case_,  String detail)?  stopped,}) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function()?  activated,TResult? Function( UncertainWhy why,  String detail)?  uncertain,TResult? Function( RestoreStop case_,  String detail)?  stopped,}) {final _that = this;
 switch (_that) {
 case RestoreEnd_Activated() when activated != null:
 return activated();case RestoreEnd_Uncertain() when uncertain != null:
-return uncertain(_that.detail);case RestoreEnd_Stopped() when stopped != null:
+return uncertain(_that.why,_that.detail);case RestoreEnd_Stopped() when stopped != null:
 return stopped(_that.case_,_that.detail);case _:
   return null;
 
@@ -548,9 +548,10 @@ String toString() {
 
 
 class RestoreEnd_Uncertain extends RestoreEnd {
-  const RestoreEnd_Uncertain({required this.detail}): super._();
+  const RestoreEnd_Uncertain({required this.why, required this.detail}): super._();
   
 
+ final  UncertainWhy why;
  final  String detail;
 
 /// Create a copy of RestoreEnd
@@ -563,18 +564,18 @@ $RestoreEnd_UncertainCopyWith<RestoreEnd_Uncertain> get copyWith => _$RestoreEnd
 
 @override
 bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType&&other is RestoreEnd_Uncertain&&(identical(other.detail, detail) || other.detail == detail));
+    return identical(this, other) || (other.runtimeType == runtimeType&&other is RestoreEnd_Uncertain&&(identical(other.why, why) || other.why == why)&&(identical(other.detail, detail) || other.detail == detail));
 }
 
 
 @override
 int get hashCode {
-    return Object.hash(runtimeType,detail);
+    return Object.hash(runtimeType,why,detail);
 }
 
 @override
 String toString() {
-    return 'RestoreEnd.uncertain(detail: $detail)';
+    return 'RestoreEnd.uncertain(why: $why, detail: $detail)';
 }
 
 
@@ -585,7 +586,7 @@ abstract mixin class $RestoreEnd_UncertainCopyWith<$Res> implements $RestoreEndC
   factory $RestoreEnd_UncertainCopyWith(RestoreEnd_Uncertain value, $Res Function(RestoreEnd_Uncertain) _then) = _$RestoreEnd_UncertainCopyWithImpl;
 @useResult
 $Res call({
- String detail
+ UncertainWhy why, String detail
 });
 
 
@@ -602,9 +603,10 @@ class _$RestoreEnd_UncertainCopyWithImpl<$Res>
 
 /// Create a copy of RestoreEnd
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') $Res call({Object? detail = null,}) {
+@pragma('vm:prefer-inline') $Res call({Object? why = null,Object? detail = null,}) {
   return _then(RestoreEnd_Uncertain(
-detail: null == detail ? _self.detail : detail // ignore: cast_nullable_to_non_nullable
+why: null == why ? _self.why : why // ignore: cast_nullable_to_non_nullable
+as UncertainWhy,detail: null == detail ? _self.detail : detail // ignore: cast_nullable_to_non_nullable
 as String,
   ));
 }

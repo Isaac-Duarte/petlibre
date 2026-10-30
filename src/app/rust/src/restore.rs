@@ -9,12 +9,16 @@ use std::sync::Arc;
 use tokio::sync::watch;
 use wellfed_client::install::STOCK_VERSION;
 use wellfed_client::update_key::EnrollError;
-use wellfed_install::restore::{Plan, Platform, Restored, Signing, Target, restore};
+use wellfed_install::restore::{
+    Offering, Plan, Platform, Restored, Signing, Target, Uncertainty, forget_key as forget, restore,
+};
 use wellfed_install::{Error, storage};
 use wellfed_session::noise::Keypair;
 
 use crate::api::install::{InstallAnswer, InstallUpdate};
-use crate::api::restore::{BackupCheck, RestoreEnd, RestoreSpec, RestoreStop, RestoreUpdate};
+use crate::api::restore::{
+    BackupCheck, RestoreEnd, RestoreSpec, RestoreStop, RestoreUpdate, UncertainWhy,
+};
 use crate::install::{
     AppDiscovery, AppPrompter, AppReport, Asks, BACKUPS, STACK, guarded, stopped, text,
 };
@@ -28,6 +32,14 @@ pub fn check_backup(path: &Path) -> BackupCheck {
         Err(error) => BackupCheck::NotStock {
             detail: text(&error),
         },
+    }
+}
+
+/// [`forget`], under the installer's folder. A key that stays is found or
+/// replaced by the next run, so a failure is left at that.
+pub fn forget_key(data_dir: &Path, identity: &[u8]) {
+    if let Ok(identity) = <[u8; 32]>::try_from(identity) {
+        let _ = forget(&data_dir.join(BACKUPS), &identity);
     }
 }
 
@@ -48,8 +60,9 @@ pub const fn stop_of(error: &Error) -> RestoreStop {
         Error::Connection(_) | Error::RestoreNotFound | Error::NotAnswering { .. } => {
             RestoreStop::NotAnswering
         }
-        Error::Signing(_) | Error::BackupDamaged { .. } | Error::Read { .. } => {
-            RestoreStop::BackupRefused
+        Error::BackupDamaged { .. } | Error::Read { .. } => RestoreStop::BackupRefused,
+        Error::RestoreKey(_) | Error::Create { .. } | Error::Remove { .. } => {
+            RestoreStop::KeyFailed
         }
         Error::RestoreStopped(_) => RestoreStop::Cancelled,
         _ => RestoreStop::Other,
@@ -147,16 +160,28 @@ impl RestoreThread {
         let asks = self.asks.clone();
         let stop = self.stop.subscribe();
         let last = deliver.clone();
+        let offering = Offering::default();
         let thread = std::thread::Builder::new()
             .name("wellfed-restore".into())
             .stack_size(STACK)
             .spawn(move || {
+                let shown = offering.clone();
                 let end = guarded(
                     || match plan {
-                        Ok(plan) => run_on_this_thread(plan, keys, asks.clone(), stop),
+                        Ok(plan) => run_on_this_thread(plan, keys, asks.clone(), stop, offering),
                         Err(end) => end,
                     },
-                    |detail| stopped_with(RestoreStop::Other, detail),
+                    |detail| {
+                        // A panic says nothing about an offer that may be out.
+                        if shown.may_be_out() {
+                            RestoreEnd::Uncertain {
+                                why: UncertainWhy::Failed,
+                                detail,
+                            }
+                        } else {
+                            stopped_with(RestoreStop::Other, detail)
+                        }
+                    },
                 );
                 last(RestoreUpdate::Ended { end });
                 // Dropping the sink closes Dart's stream.
@@ -186,6 +211,7 @@ fn run_on_this_thread(
     keypair: Keypair,
     asks: Arc<Asks>,
     stop: watch::Receiver<bool>,
+    offering: Offering,
 ) -> RestoreEnd {
     let runtime = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -205,11 +231,23 @@ fn run_on_this_thread(
         discovery: AppDiscovery(asks.clone()),
         keypair,
         report: AppReport(asks),
+        offering,
     };
     match runtime.block_on(restore(plan, platform, stopped(stop))) {
         Ok(Restored::Activated) => RestoreEnd::Activated,
-        Ok(Restored::Uncertain) => RestoreEnd::Uncertain {
-            detail: "the feeder stopped answering after the offer went out".to_string(),
+        Ok(Restored::Uncertain(why)) => match why {
+            Uncertainty::Gone => RestoreEnd::Uncertain {
+                why: UncertainWhy::Gone,
+                detail: "the feeder stopped answering after the offer went out".to_string(),
+            },
+            Uncertainty::Stopped(by) => RestoreEnd::Uncertain {
+                why: UncertainWhy::Stopped,
+                detail: format!("stopped on {by} as the offer was going out, or after it had"),
+            },
+            Uncertainty::Failed(detail) => RestoreEnd::Uncertain {
+                why: UncertainWhy::Failed,
+                detail,
+            },
         },
         Ok(Restored::Refused(error)) => stopped_with(RestoreStop::Refused, text(&error)),
         Err(error) => stopped_with(stop_of(&error), text(&error)),

@@ -52,6 +52,7 @@ class FakeRestorePorts implements RestorePorts {
   String? picks;
   bool holds = true;
   int released = 0;
+  int forgotten = 0;
   final held = <String>[];
   final specs = <RestoreSpec>[];
   final runs = <FakeRestoreRun>[];
@@ -84,8 +85,15 @@ class FakeRestorePorts implements RestorePorts {
   Future<String?> locate(String identity) async => '10.0.0.9:7700';
 
   @override
+  void forgetKey(String dataDir, List<int> identity) => forgotten++;
+
+  /// Lets a test hold [holdProcess] open.
+  Completer<void>? holding;
+
+  @override
   Future<bool> holdProcess(String text) async {
     held.add(text);
+    await holding?.future;
     return holds;
   }
 
@@ -224,10 +232,11 @@ void main() {
     final run = await _started(tester, ports);
 
     run.event(const InstallEvent.promoting());
-    run.end(const RestoreEnd.uncertain(detail: 'gone'));
+    run.end(const RestoreEnd.uncertain(why: UncertainWhy.gone, detail: 'gone'));
     await settle(tester);
 
     expect(find.text("We can't tell if it went through"), findsOneWidget);
+    expect(find.textContaining('stopped answering'), findsWidgets);
     expect(find.text('Try again'), findsNothing);
     expect(ports.runs, hasLength(1));
     expect(flow.mayRetry, isFalse);
@@ -356,9 +365,94 @@ void main() {
 
     await tester.pumpWidget(const SizedBox.shrink());
     flow.dispose();
-
     expect(run.stops, 1);
+    expect(ports.forgotten, 0, reason: 'the run may still be using it');
+
+    run.stopped(RestoreStop.cancelled);
+    await tester.pump();
     expect(ports.released, 1);
+    expect(ports.forgotten, 1);
+  });
+
+  testWidgets('a stop after the offer words itself as a stop', (tester) async {
+    final ports = FakeRestorePorts();
+    final flow = await _open(tester, ports);
+    final run = await _started(tester, ports);
+
+    run.event(const InstallEvent.promoting());
+    run.end(
+      const RestoreEnd.uncertain(why: UncertainWhy.stopped, detail: 'stopped'),
+    );
+    await settle(tester);
+
+    expect(flow.stage, RestoreStage.uncertain);
+    expect(find.textContaining('This was stopped'), findsOneWidget);
+    expect(find.textContaining('stopped answering'), findsNothing);
+  });
+
+  testWidgets('a key this phone could not keep does not blame the backup', (
+    tester,
+  ) async {
+    final ports = FakeRestorePorts();
+    await _open(tester, ports);
+    final run = await _started(tester, ports);
+
+    run.stopped(RestoreStop.keyFailed);
+    await settle(tester);
+
+    expect(find.text("This phone couldn't set up the restore"), findsOneWidget);
+    expect(find.text("That isn't the original firmware"), findsNothing);
+  });
+
+  testWidgets('leaving after a stopped run forgets the key', (tester) async {
+    final ports = FakeRestorePorts();
+    final flow = await _open(tester, ports);
+    final run = await _started(tester, ports);
+    run.stopped(RestoreStop.notAnswering);
+    await settle(tester);
+    expect(ports.forgotten, 0, reason: 'Try again still wants it');
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    flow.dispose();
+    expect(ports.forgotten, 1);
+  });
+
+  testWidgets('a second tap during the hold starts nothing more', (
+    tester,
+  ) async {
+    final ports = FakeRestorePorts()..holding = Completer<void>();
+    final flow = await _open(tester, ports);
+    flow.setUnderstood(true);
+
+    unawaited(flow.start());
+    unawaited(flow.start());
+    await tester.pump();
+    expect(ports.held, hasLength(1));
+
+    ports.holding!.complete();
+    await tester.pump();
+    expect(ports.runs, hasLength(1));
+    ports.runs.single.stopped(RestoreStop.cancelled);
+    await settle(tester);
+  });
+
+  testWidgets('leaving during the hold lets the process go once it takes', (
+    tester,
+  ) async {
+    final ports = FakeRestorePorts()..holding = Completer<void>();
+    final flow = await _open(tester, ports);
+    flow.setUnderstood(true);
+    unawaited(flow.start());
+    await tester.pump();
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    flow.dispose();
+    final before = ports.released;
+    ports.holding!.complete();
+    await tester.pump();
+
+    expect(ports.released, before + 1);
+    expect(ports.runs, isEmpty);
   });
 
   for (final brightness in Brightness.values) {

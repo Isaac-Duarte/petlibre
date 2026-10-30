@@ -48,8 +48,7 @@ use wellfed_formats::canonical::sha256;
 use wellfed_formats::credentials::{KeyScope, OtaKeyFile};
 use wellfed_formats::hex;
 use wellfed_formats::manifest::BuildManifest;
-use wellfed_formats::private::write_new;
-use wellfed_formats::private::{SYSTEM_RANDOM, random};
+use wellfed_formats::private::{SYSTEM_RANDOM, random, write_new_whole};
 use wellfed_formats::require;
 use wellfed_formats::review::ImageKind;
 use wellfed_image::bank::BANK1;
@@ -113,7 +112,8 @@ pub fn keygen(output: &Path, scope: KeyScope) -> Result<String> {
     };
     let mut text = serde_json::to_vec_pretty(&file)?;
     text.push(b'\n');
-    write_new(output, &text)?;
+    // Whole or not at all: a partial file would refuse every later load.
+    write_new_whole(output, &text)?;
 
     Ok(public_key)
 }

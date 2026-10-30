@@ -15,7 +15,7 @@ use tokio::sync::mpsc;
 use tokio::task::LocalSet;
 use wellfed_app_bridge::api::install::{InstallAnswer, InstallAsk, InstallEvent};
 use wellfed_app_bridge::api::restore::{
-    BackupCheck, RestoreEnd, RestoreSpec, RestoreStop, RestoreUpdate,
+    BackupCheck, RestoreEnd, RestoreSpec, RestoreStop, RestoreUpdate, UncertainWhy,
 };
 use wellfed_app_bridge::restore::{RestoreThread, check_backup};
 use wellfed_client::install::{StockBackup, StockPins};
@@ -246,7 +246,16 @@ fn a_stop_reads_by_whether_an_offer_may_be_out() {
                 _ => {}
             }
         };
-        assert!(matches!(end, RestoreEnd::Uncertain { .. }), "{end:?}");
+        assert!(
+            matches!(
+                end,
+                RestoreEnd::Uncertain {
+                    why: UncertainWhy::Stopped,
+                    ..
+                }
+            ),
+            "{end:?}"
+        );
         rig.sim.stop().await;
     });
 }

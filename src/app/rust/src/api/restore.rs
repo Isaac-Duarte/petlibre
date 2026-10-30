@@ -44,6 +44,14 @@ pub fn check_backup(path: String) -> BackupCheck {
     restore::check_backup(std::path::Path::new(&path))
 }
 
+/// Forget the restore's key for the feeder with `identity`, as an owner
+/// leaving the screen does. A failure changes nothing they can act on: the
+/// next run finds the key, or replaces it.
+#[frb(sync)]
+pub fn forget_restore_key(data_dir: String, identity: Vec<u8>) {
+    restore::forget_key(std::path::Path::new(&data_dir), &identity);
+}
+
 /// Why a restore stopped with nothing put back, in the cases the screens tell
 /// apart.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -65,6 +73,9 @@ pub enum RestoreStop {
     NoUpdates,
     /// The copy is not stock's pinned image, or could not be read.
     BackupRefused,
+    /// This phone could not make or keep the restore's key: its own storage,
+    /// not the backup. Nothing was offered.
+    KeyFailed,
     /// The feeder refused the offer, or the install stopped. It is not
     /// offered again, and the feeder keeps running Wellfed.
     Refused,
@@ -73,14 +84,25 @@ pub enum RestoreStop {
     Other,
 }
 
+/// Why a restore's end is not known.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UncertainWhy {
+    /// The feeder stopped answering after the offer went out.
+    Gone,
+    /// The owner stopped it as the offer was going out, or after it had.
+    Stopped,
+    /// This run failed as the offer was going out, or after it had.
+    Failed,
+}
+
 /// How a restore ended.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RestoreEnd {
     /// Bank 1 is activated; the feeder restarts into stock.
     Activated,
-    /// The feeder stopped answering after the offer went out. It may run
-    /// stock already, or still Wellfed. Never offered again by this run.
-    Uncertain { detail: String },
+    /// It may run stock already, or still Wellfed. Never offered again by
+    /// this run.
+    Uncertain { why: UncertainWhy, detail: String },
     Stopped {
         case: RestoreStop,
         /// The run's own words, for the screen's small print.

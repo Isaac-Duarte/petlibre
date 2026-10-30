@@ -12,9 +12,12 @@
 //! The key file lives beside the backup only while it can still matter. An
 //! enrollment that went through, with the run ending before its offer, leaves
 //! it there, so the next run finds the key listed, sends no enrollment and
-//! asks for no second press. Once an offer went out, or the feeder said the
-//! key is not enrolled, the file goes. A spent key stays listed on the feeder
-//! with its private half gone, and signs nothing more.
+//! asks for no second press. The file goes before the offer, with the manifest
+//! and statement already signed in memory: a run killed after that leaves
+//! nothing that could offer again with no press, and a feeder that never
+//! answered the offer costs a second press. It goes too once the feeder says
+//! the key is not enrolled. A spent key stays listed on the feeder with its
+//! private half gone, and signs nothing more.
 //!
 //! The push is the installer's own, from either bank: on bank 1 the offer is
 //! recorded and bank 1 gives way, then bank 0 takes the same manifest and
@@ -31,6 +34,8 @@ use std::cell::Cell;
 use std::future::Future;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use tokio::time::Instant;
@@ -108,11 +113,27 @@ pub struct Platform<P, D, R> {
     pub discovery: D,
     pub keypair: Keypair,
     pub report: R,
+    pub offering: Offering,
+}
+
+/// Whether an offer may be out, for a caller that outlives the run: a thread
+/// that panicked says nothing else.
+#[derive(Clone, Debug, Default)]
+pub struct Offering(Arc<AtomicBool>);
+
+impl Offering {
+    pub fn may_be_out(&self) -> bool {
+        self.0.load(Ordering::SeqCst)
+    }
+
+    fn set(&self, may_be_out: bool) {
+        self.0.store(may_be_out, Ordering::SeqCst);
+    }
 }
 
 /// How a restore that reached its offer ended. Every way it ends before an
 /// offer goes out is an [`Error`], and the feeder keeps the replacement.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Restored {
     /// Bank 1 is activated; the feeder restarts into stock.
     Activated,
@@ -120,10 +141,22 @@ pub enum Restored {
     /// again, and the feeder keeps running the replacement from bank 0 (bank
     /// 1 may be partly written).
     Refused(UpdateError),
-    /// The feeder stopped answering after the offer went out, or the run was
-    /// stopped by then: it may run stock already, or still the replacement.
-    /// Nothing is sent again.
-    Uncertain,
+    /// The feeder may run stock already, or still the replacement. Nothing
+    /// is sent again.
+    Uncertain(Uncertainty),
+}
+
+/// Why a restore's end is not known.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Uncertainty {
+    /// The feeder stopped answering after the offer went out.
+    Gone,
+    /// The owner stopped the run once an offer may have gone out; it may not
+    /// have, since the mark goes up before anything is sent.
+    Stopped(Stop),
+    /// The run's own failure, with these words, once an offer may have gone
+    /// out.
+    Failed(String),
 }
 
 /// Run one restore to its end. `stop` ends it through its cleanup.
@@ -143,19 +176,20 @@ where
         discovery,
         keypair,
         report,
+        offering,
     } = platform;
-    let spent = Spent::default();
+    let absent = Cell::new(false);
 
     let ended = tokio::select! {
-        ended = drive(&image, &target, &mut prompter, &discovery, &keypair, &report, &spent) => ended,
-        by = stop => if spent.offer.get() {
-            Ok(Restored::Uncertain)
+        ended = drive(&image, &target, &mut prompter, &discovery, &keypair, &report, &absent, &offering) => settled(ended, &offering),
+        by = stop => if offering.may_be_out() {
+            Ok(Restored::Uncertain(Uncertainty::Stopped(by)))
         } else {
             Err(Error::RestoreStopped(by))
         },
     };
 
-    if matches!(target.signing, Signing::Fresh) && (spent.offer.get() || spent.absent.get()) {
+    if matches!(target.signing, Signing::Fresh) && absent.get() {
         let file = storage::restore_key_path(&target.backups, &target.identity);
         if let Err(error) = std::fs::remove_file(&file)
             && error.kind() != std::io::ErrorKind::NotFound
@@ -168,15 +202,21 @@ where
     ended
 }
 
-/// Why a fresh key's file need not stay for another run.
-#[derive(Default)]
-struct Spent {
-    /// An offer may be out.
-    offer: Cell<bool>,
-    /// The feeder said the key is not enrolled.
-    absent: Cell<bool>,
+/// `ended`, as it reads with what `offering` shows: a failure once an offer
+/// may be out says nothing about what the feeder did with it.
+fn settled(ended: Result<Restored, Error>, offering: &Offering) -> Result<Restored, Error> {
+    match ended {
+        Err(error) if offering.may_be_out() => Ok(Restored::Uncertain(Uncertainty::Failed(
+            crate::text(&error),
+        ))),
+        other => other,
+    }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the run's parts, taken apart once so `restore` can clean up after it"
+)]
 async fn drive(
     image: &Frozen,
     target: &Target,
@@ -184,7 +224,8 @@ async fn drive(
     discovery: &impl Discovery,
     keypair: &Keypair,
     report: &impl Report,
-    spent: &Spent,
+    absent: &Cell<bool>,
+    offering: &Offering,
 ) -> Result<Restored, Error> {
     let sessions = Sessions {
         identity: target.identity,
@@ -203,15 +244,7 @@ async fn drive(
                 &target.backups,
                 &target.identity,
             ))?;
-            enroll(
-                &mut session,
-                &sessions,
-                &fresh,
-                prompter,
-                report,
-                &spent.absent,
-            )
-            .await?;
+            enroll(&mut session, &sessions, &fresh, prompter, report, absent).await?;
             &fresh
         }
     };
@@ -235,8 +268,15 @@ async fn drive(
     });
     drop(session);
 
+    // Before anything is sent: a key file that outlived an offer would let a
+    // later run offer with no press. One that will not go stops the run here.
+    if matches!(target.signing, Signing::Fresh) {
+        let file = storage::restore_key_path(&target.backups, &target.identity);
+        std::fs::remove_file(&file).map_err(|source| Error::Remove { path: file, source })?;
+    }
+
     report.event(Event::Restoring);
-    spent.offer.set(true);
+    offering.set(true);
     let pushed = push(
         Image {
             manifest: &manifest,
@@ -253,9 +293,9 @@ async fn drive(
     match pushed {
         Pushed::Activated | Pushed::AlreadyRunning => Ok(Restored::Activated),
         Pushed::Failed(error) => Ok(Restored::Refused(error)),
-        Pushed::Gone { offered: true } => Ok(Restored::Uncertain),
+        Pushed::Gone { offered: true } => Ok(Restored::Uncertain(Uncertainty::Gone)),
         Pushed::Gone { offered: false } => {
-            spent.offer.set(false);
+            offering.set(false);
             Err(Error::NotAnswering {
                 feeder: target.identity,
             })
@@ -263,18 +303,41 @@ async fn drive(
     }
 }
 
-/// The key an earlier run of this restore left, or a new one.
+/// The key an earlier run of this restore left, or a new one. A file that
+/// does not load was never enrolled, since enrolling takes a loaded key, so
+/// it is replaced.
 fn fresh_key(file: &Path) -> Result<Key, Error> {
-    if !file.exists() {
-        if let Some(directory) = file.parent() {
-            std::fs::create_dir_all(directory).map_err(|source| Error::Create {
-                path: directory.to_path_buf(),
-                source,
-            })?;
+    if file.exists() {
+        if let Ok(key) = Key::load(file) {
+            return Ok(key);
         }
-        wellfed_signing::keygen(file, KeyScope::Owner)?;
+        std::fs::remove_file(file).map_err(|source| Error::Remove {
+            path: file.to_path_buf(),
+            source,
+        })?;
     }
-    Ok(Key::load(file)?)
+    if let Some(directory) = file.parent() {
+        std::fs::create_dir_all(directory).map_err(|source| Error::Create {
+            path: directory.to_path_buf(),
+            source,
+        })?;
+    }
+    wellfed_signing::keygen(file, KeyScope::Owner).map_err(Error::RestoreKey)?;
+    Key::load(file).map_err(Error::RestoreKey)
+}
+
+/// Forget what a restore left for the feeder `identity`, as an owner leaving
+/// it does: a live key with no expiry should not outlast their interest. The
+/// feeder still lists it, and nothing can sign with it.
+pub fn forget_key(backups: &Path, identity: &[u8; 32]) -> Result<(), Error> {
+    let file = storage::restore_key_path(backups, identity);
+    match std::fs::remove_file(&file) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(Error::Remove {
+            path: file,
+            source: error,
+        }),
+        _ => Ok(()),
+    }
 }
 
 /// Enroll `key` at most once. An enrollment with no answer may have gone
@@ -503,6 +566,7 @@ mod tests {
                 discovery: Nowhere,
                 keypair: Keypair::from_secret(OWNER),
                 report,
+                offering: Offering::default(),
             };
             restore(plan, platform, std::future::pending()).await
         }
@@ -591,10 +655,15 @@ mod tests {
             let backup = synthetic();
             let hands = Hands::pressing(&rig.sim);
             let signed = Cell::new(None);
-            let report = |event| {
-                if let Event::RestoreSigned { version, floor, .. } = event {
+            let file = rig.key_file();
+            let report = |event| match event {
+                Event::RestoreSigned { version, floor, .. } => {
                     signed.set(Some((version, floor)));
                 }
+                // A kill from here on must leave nothing that offers with no
+                // press.
+                Event::Restoring => assert!(!file.exists(), "the key outlived the offer"),
+                _ => {}
             };
 
             let plan = rig.plan(&backup, Signing::Fresh);
@@ -735,7 +804,7 @@ mod tests {
             let plan = rig.plan(&backup, Signing::Fresh);
             let restored = rig.run(plan, &hands, report).await.unwrap();
 
-            assert_eq!(restored, Restored::Uncertain);
+            assert_eq!(restored, Restored::Uncertain(Uncertainty::Gone));
             assert!(!rig.key_file().exists());
             rig.sim.stop().await;
         });
@@ -754,6 +823,7 @@ mod tests {
                 discovery: Nowhere,
                 keypair: Keypair::from_secret(OWNER),
                 report: |_| {},
+                offering: Offering::default(),
             };
             let plan = rig.plan(&backup, Signing::Fresh);
 
@@ -790,6 +860,7 @@ mod tests {
                         offering.set(true);
                     }
                 },
+                offering: Offering::default(),
             };
             let plan = rig.plan(&backup, Signing::Fresh);
             let stop = async {
@@ -801,10 +872,64 @@ mod tests {
 
             let restored = restore(plan, platform, stop).await.unwrap();
 
-            assert_eq!(restored, Restored::Uncertain);
+            assert_eq!(
+                restored,
+                Restored::Uncertain(Uncertainty::Stopped(Stop::Terminate))
+            );
             assert!(!rig.key_file().exists());
             rig.sim.stop().await;
         });
+    }
+
+    /// A file a killed run left half written was never enrolled: it is replaced,
+    /// and the restore goes on.
+    #[test]
+    fn a_key_file_that_does_not_load_is_replaced() {
+        paused(async {
+            let rig = Rig::start().await;
+            let backup = synthetic();
+            std::fs::create_dir_all(rig.key_file().parent().unwrap()).unwrap();
+            std::fs::write(rig.key_file(), b"{\"version\":").unwrap();
+            let hands = Hands::pressing(&rig.sim);
+
+            let plan = rig.plan(&backup, Signing::Fresh);
+            let restored = rig.run(plan, &hands, |_| {}).await.unwrap();
+
+            assert_eq!(restored, Restored::Activated);
+            assert_eq!(hands.asked.get(), 1);
+            rig.sim.stop().await;
+        });
+    }
+
+    /// Any failure once an offer may be out is uncertain, in its own words;
+    /// before that it stays the failure it is.
+    #[test]
+    fn a_failure_after_the_offer_is_uncertain() {
+        let offering = Offering::default();
+        let failure = || Err(Error::RestoreNotFound);
+
+        assert!(matches!(
+            settled(failure(), &offering),
+            Err(Error::RestoreNotFound)
+        ));
+        offering.set(true);
+        assert!(matches!(
+            settled(failure(), &offering),
+            Ok(Restored::Uncertain(Uncertainty::Failed(_)))
+        ));
+    }
+
+    /// Leaving forgets the key; with none there, there is nothing to do.
+    #[test]
+    fn forgetting_removes_the_key_file_and_minds_no_absence() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = storage::restore_key_path(dir.path(), &[0xab; 32]);
+        forget_key(dir.path(), &[0xab; 32]).unwrap();
+
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, b"key").unwrap();
+        forget_key(dir.path(), &[0xab; 32]).unwrap();
+        assert!(!file.exists());
     }
 
     /// Only the pinned image signs, and a file of other bytes is no backup.

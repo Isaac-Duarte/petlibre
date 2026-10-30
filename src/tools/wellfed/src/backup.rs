@@ -28,7 +28,9 @@ use clap::{Args, Subcommand};
 use serde::Serialize;
 use wellfed_client::install::{STOCK_VERSION, StockBackup};
 use wellfed_formats::canonical::sha256;
-use wellfed_install::restore::{Plan, Platform, Restored, Signing, Target as RestoreTarget};
+use wellfed_install::restore::{
+    Offering, Plan, Platform, Restored, Signing, Target as RestoreTarget, Uncertainty,
+};
 use wellfed_install::storage::{backup_path, load_backup};
 use wellfed_install::{Discovery, Mdns};
 use wellfed_signing::Key;
@@ -235,6 +237,7 @@ pub(crate) async fn restore(args: RestoreArgs) -> Result<()> {
         discovery,
         keypair: key_file.keypair().clone(),
         report: Printer,
+        offering: Offering::default(),
     };
     match wellfed_install::restore::restore(plan, platform, crate::install::signalled()?).await? {
         Restored::Activated => {
@@ -252,12 +255,24 @@ pub(crate) async fn restore(args: RestoreArgs) -> Result<()> {
             "the restore stopped: {error}; the offer is not sent again. The feeder keeps \
              running the replacement from bank 0 (bank 1 may be partly written)."
         ),
-        Restored::Uncertain => bail!(
-            "uncertain: the feeder stopped answering after the offer went out. It may be \
-             running stock already, or still the replacement; nothing is sent again. Look at \
-             the feeder (stock's app, or a session with this computer's key) before trying \
-             anything else."
-        ),
+        Restored::Uncertain(why) => {
+            let what = match why {
+                Uncertainty::Gone => {
+                    "the feeder stopped answering after the offer went out".to_string()
+                }
+                Uncertainty::Stopped(by) => {
+                    format!("stopped on {by} as the offer was going out, or after it had")
+                }
+                Uncertainty::Failed(error) => {
+                    format!("this run failed as the offer was going out, or after it had ({error})")
+                }
+            };
+            bail!(
+                "uncertain: {what}. The feeder may be running stock already, or still the \
+                 replacement; nothing is sent again. Look at the feeder (stock's app, or a \
+                 session with this computer's key) before trying anything else."
+            )
+        }
     }
 }
 

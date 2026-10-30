@@ -11,11 +11,20 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'restore.freezed.dart';
 
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// Check the copy of stock at `path`, as a run will.
 BackupCheck checkBackup({required String path}) =>
     RustLib.instance.api.crateApiRestoreCheckBackup(path: path);
+
+/// Forget the restore's key for the feeder with `identity`, as an owner
+/// leaving the screen does. A failure changes nothing they can act on: the
+/// next run finds the key, or replaces it.
+void forgetRestoreKey({required String dataDir, required List<int> identity}) =>
+    RustLib.instance.api.crateApiRestoreForgetRestoreKey(
+      dataDir: dataDir,
+      identity: identity,
+    );
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<RestoreRun>>
 abstract class RestoreRun implements RustOpaqueInterface {
@@ -58,10 +67,12 @@ sealed class RestoreEnd with _$RestoreEnd {
   /// Bank 1 is activated; the feeder restarts into stock.
   const factory RestoreEnd.activated() = RestoreEnd_Activated;
 
-  /// The feeder stopped answering after the offer went out. It may run
-  /// stock already, or still Wellfed. Never offered again by this run.
-  const factory RestoreEnd.uncertain({required String detail}) =
-      RestoreEnd_Uncertain;
+  /// It may run stock already, or still Wellfed. Never offered again by
+  /// this run.
+  const factory RestoreEnd.uncertain({
+    required UncertainWhy why,
+    required String detail,
+  }) = RestoreEnd_Uncertain;
   const factory RestoreEnd.stopped({
     required RestoreStop case_,
 
@@ -135,6 +146,10 @@ enum RestoreStop {
   /// The copy is not stock's pinned image, or could not be read.
   backupRefused,
 
+  /// This phone could not make or keep the restore's key: its own storage,
+  /// not the backup. Nothing was offered.
+  keyFailed,
+
   /// The feeder refused the offer, or the install stopped. It is not
   /// offered again, and the feeder keeps running Wellfed.
   refused,
@@ -156,4 +171,16 @@ sealed class RestoreUpdate with _$RestoreUpdate {
   /// The last update of a run.
   const factory RestoreUpdate.ended({required RestoreEnd end}) =
       RestoreUpdate_Ended;
+}
+
+/// Why a restore's end is not known.
+enum UncertainWhy {
+  /// The feeder stopped answering after the offer went out.
+  gone,
+
+  /// The owner stopped it as the offer was going out, or after it had.
+  stopped,
+
+  /// This run failed as the offer was going out, or after it had.
+  failed,
 }

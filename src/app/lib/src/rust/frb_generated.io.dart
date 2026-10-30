@@ -461,6 +461,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   int dco_decode_u_8(dynamic raw);
 
   @protected
+  UncertainWhy dco_decode_uncertain_why(dynamic raw);
+
+  @protected
   UncertainWrite dco_decode_uncertain_write(dynamic raw);
 
   @protected
@@ -903,6 +906,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   int sse_decode_u_8(SseDeserializer deserializer);
+
+  @protected
+  UncertainWhy sse_decode_uncertain_why(SseDeserializer deserializer);
 
   @protected
   UncertainWrite sse_decode_uncertain_write(SseDeserializer deserializer);
@@ -1444,6 +1450,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_u_8(int self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_uncertain_why(UncertainWhy self, SseSerializer serializer);
 
   @protected
   void sse_encode_uncertain_write(

@@ -73,6 +73,9 @@ class RestoreFlow extends ChangeNotifier {
   bool holdRefused = false;
 
   RestoreStop? stop;
+
+  /// Why the end is not known, at [RestoreStage.uncertain].
+  UncertainWhy? uncertain;
   String? detail;
 
   RestoreRun? _run;
@@ -141,7 +144,11 @@ class RestoreFlow extends ChangeNotifier {
   /// The owner's word is what starts it, each time.
   Future<void> start() async {
     final (dataDir, backup) = (_dataDir, _backup);
-    if (!understood || _run != null || dataDir == null || backup == null) {
+    // `_run` is set only after the hold below, so the stage guards a second tap.
+    if (!understood ||
+        stage != RestoreStage.before ||
+        dataDir == null ||
+        backup == null) {
       return;
     }
     pressDispense = false;
@@ -151,6 +158,7 @@ class RestoreFlow extends ChangeNotifier {
     written = 0;
     sessionDropped = false;
     stop = null;
+    uncertain = null;
     detail = null;
     stage = RestoreStage.running;
     _changed();
@@ -159,7 +167,12 @@ class RestoreFlow extends ChangeNotifier {
     holdRefused = !await _ports.holdProcess(
       'Putting the original firmware back on $feederName',
     );
-    if (_disposed) return;
+    if (_disposed) {
+      // The screen went away during the wait, and its release ran before this
+      // hold took effect.
+      await _ports.releaseProcess();
+      return;
+    }
 
     final run = _ports.newRun(
       RestoreSpec(
@@ -231,7 +244,8 @@ class RestoreFlow extends ChangeNotifier {
     switch (end) {
       case RestoreEnd_Activated():
         stage = RestoreStage.done;
-      case RestoreEnd_Uncertain(detail: final words):
+      case RestoreEnd_Uncertain(:final why, detail: final words):
+        uncertain = why;
         detail = words;
         stage = RestoreStage.uncertain;
       case RestoreEnd_Stopped(:final case_, detail: final words):
@@ -250,6 +264,7 @@ class RestoreFlow extends ChangeNotifier {
         ? RestoreStage.stopped
         : RestoreStage.uncertain;
     if (stage == RestoreStage.stopped) stop = RestoreStop.other;
+    if (stage == RestoreStage.uncertain) uncertain = UncertainWhy.failed;
     _finish();
     _changed();
   }
@@ -262,6 +277,13 @@ class RestoreFlow extends ChangeNotifier {
       _holding = false;
       unawaited(_ports.releaseProcess());
     }
+    if (_disposed) _forget();
+  }
+
+  /// The owner has left: a live key has no expiry, so it does not outlast
+  /// them. Only a [start] from the same screen reuses it.
+  void _forget() {
+    if (_dataDir case final dataDir?) _ports.forgetKey(dataDir, identity);
   }
 
   void _changed() {
@@ -271,8 +293,12 @@ class RestoreFlow extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
-    _run?.stop();
-    _finish();
+    if (_run case final run?) {
+      // Its end does the rest: the key goes once the run can no longer use it.
+      run.stop();
+    } else {
+      _finish();
+    }
     super.dispose();
   }
 }

@@ -44,7 +44,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.13.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -2109545739;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1912847342;
 
 // Section: executor
 
@@ -1788,6 +1788,39 @@ fn wire__crate__api__store__fingerprint_impl(
         },
     )
 }
+fn wire__crate__api__restore__forget_restore_key_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "forget_restore_key",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_data_dir = <String>::sse_decode(&mut deserializer);
+            let api_identity = <Vec<u8>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let output_ok = Ok::<_, ()>({
+                    crate::api::restore::forget_restore_key(api_data_dir, api_identity);
+                })?;
+                std::result::Result::Ok(output_ok)
+            })())
+        },
+    )
+}
 fn wire__crate__api__store__identity_bytes_impl(
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
     rust_vec_len_: i32,
@@ -3283,8 +3316,12 @@ impl SseDecode for crate::api::restore::RestoreEnd {
                 return crate::api::restore::RestoreEnd::Activated;
             }
             1 => {
+                let mut var_why = <crate::api::restore::UncertainWhy>::sse_decode(deserializer);
                 let mut var_detail = <String>::sse_decode(deserializer);
-                return crate::api::restore::RestoreEnd::Uncertain { detail: var_detail };
+                return crate::api::restore::RestoreEnd::Uncertain {
+                    why: var_why,
+                    detail: var_detail,
+                };
             }
             2 => {
                 let mut var_case_ = <crate::api::restore::RestoreStop>::sse_decode(deserializer);
@@ -3329,9 +3366,10 @@ impl SseDecode for crate::api::restore::RestoreStop {
             4 => crate::api::restore::RestoreStop::NotAnswering,
             5 => crate::api::restore::RestoreStop::NoUpdates,
             6 => crate::api::restore::RestoreStop::BackupRefused,
-            7 => crate::api::restore::RestoreStop::Refused,
-            8 => crate::api::restore::RestoreStop::Cancelled,
-            9 => crate::api::restore::RestoreStop::Other,
+            7 => crate::api::restore::RestoreStop::KeyFailed,
+            8 => crate::api::restore::RestoreStop::Refused,
+            9 => crate::api::restore::RestoreStop::Cancelled,
+            10 => crate::api::restore::RestoreStop::Other,
             _ => unreachable!("Invalid variant for RestoreStop: {}", inner),
         };
     }
@@ -3639,6 +3677,19 @@ impl SseDecode for u8 {
     }
 }
 
+impl SseDecode for crate::api::restore::UncertainWhy {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <i32>::sse_decode(deserializer);
+        return match inner {
+            0 => crate::api::restore::UncertainWhy::Gone,
+            1 => crate::api::restore::UncertainWhy::Stopped,
+            2 => crate::api::restore::UncertainWhy::Failed,
+            _ => unreachable!("Invalid variant for UncertainWhy: {}", inner),
+        };
+    }
+}
+
 impl SseDecode for crate::api::install::UncertainWrite {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -3721,9 +3772,9 @@ fn pde_ffi_dispatcher_primary_impl(
         27 => wire__crate__api__restore__RestoreRun_run_impl(port, ptr, rust_vec_len, data_len),
         33 => wire__crate__api__store__app_store_default_impl(port, ptr, rust_vec_len, data_len),
         36 => wire__crate__api__install__check_dns_impl(port, ptr, rust_vec_len, data_len),
-        41 => wire__crate__api__init_app_impl(port, ptr, rust_vec_len, data_len),
-        43 => wire__crate__api__store__load_store_impl(port, ptr, rust_vec_len, data_len),
-        45 => wire__crate__api__store__save_store_impl(port, ptr, rust_vec_len, data_len),
+        42 => wire__crate__api__init_app_impl(port, ptr, rust_vec_len, data_len),
+        44 => wire__crate__api__store__load_store_impl(port, ptr, rust_vec_len, data_len),
+        46 => wire__crate__api__store__save_store_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -3771,12 +3822,13 @@ fn pde_ffi_dispatcher_sync_impl(
         35 => wire__crate__api__install__check_build_impl(ptr, rust_vec_len, data_len),
         37 => wire__crate__api__install__check_image_impl(ptr, rust_vec_len, data_len),
         38 => wire__crate__api__store__fingerprint_impl(ptr, rust_vec_len, data_len),
-        39 => wire__crate__api__store__identity_bytes_impl(ptr, rust_vec_len, data_len),
-        40 => wire__crate__api__store__identity_hex_impl(ptr, rust_vec_len, data_len),
-        42 => wire__crate__api__install__kept_backup_impl(ptr, rust_vec_len, data_len),
-        44 => wire__crate__api__install__pending_install_impl(ptr, rust_vec_len, data_len),
-        46 => wire__crate__api__setup__setup_control_impl(ptr, rust_vec_len, data_len),
-        47 => wire__crate__api__setup__setup_service_impl(ptr, rust_vec_len, data_len),
+        39 => wire__crate__api__restore__forget_restore_key_impl(ptr, rust_vec_len, data_len),
+        40 => wire__crate__api__store__identity_bytes_impl(ptr, rust_vec_len, data_len),
+        41 => wire__crate__api__store__identity_hex_impl(ptr, rust_vec_len, data_len),
+        43 => wire__crate__api__install__kept_backup_impl(ptr, rust_vec_len, data_len),
+        45 => wire__crate__api__install__pending_install_impl(ptr, rust_vec_len, data_len),
+        47 => wire__crate__api__setup__setup_control_impl(ptr, rust_vec_len, data_len),
+        48 => wire__crate__api__setup__setup_service_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -4777,9 +4829,12 @@ impl flutter_rust_bridge::IntoDart for crate::api::restore::RestoreEnd {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         match self {
             crate::api::restore::RestoreEnd::Activated => [0.into_dart()].into_dart(),
-            crate::api::restore::RestoreEnd::Uncertain { detail } => {
-                [1.into_dart(), detail.into_into_dart().into_dart()].into_dart()
-            }
+            crate::api::restore::RestoreEnd::Uncertain { why, detail } => [
+                1.into_dart(),
+                why.into_into_dart().into_dart(),
+                detail.into_into_dart().into_dart(),
+            ]
+            .into_dart(),
             crate::api::restore::RestoreEnd::Stopped { case, detail } => [
                 2.into_dart(),
                 case.into_into_dart().into_dart(),
@@ -4837,9 +4892,10 @@ impl flutter_rust_bridge::IntoDart for crate::api::restore::RestoreStop {
             Self::NotAnswering => 4.into_dart(),
             Self::NoUpdates => 5.into_dart(),
             Self::BackupRefused => 6.into_dart(),
-            Self::Refused => 7.into_dart(),
-            Self::Cancelled => 8.into_dart(),
-            Self::Other => 9.into_dart(),
+            Self::KeyFailed => 7.into_dart(),
+            Self::Refused => 8.into_dart(),
+            Self::Cancelled => 9.into_dart(),
+            Self::Other => 10.into_dart(),
             _ => unreachable!(),
         }
     }
@@ -5079,6 +5135,28 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::install::StopCase>
     for crate::api::install::StopCase
 {
     fn into_into_dart(self) -> crate::api::install::StopCase {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::restore::UncertainWhy {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            Self::Gone => 0.into_dart(),
+            Self::Stopped => 1.into_dart(),
+            Self::Failed => 2.into_dart(),
+            _ => unreachable!(),
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::restore::UncertainWhy
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::restore::UncertainWhy>
+    for crate::api::restore::UncertainWhy
+{
+    fn into_into_dart(self) -> crate::api::restore::UncertainWhy {
         self
     }
 }
@@ -6257,8 +6335,9 @@ impl SseEncode for crate::api::restore::RestoreEnd {
             crate::api::restore::RestoreEnd::Activated => {
                 <i32>::sse_encode(0, serializer);
             }
-            crate::api::restore::RestoreEnd::Uncertain { detail } => {
+            crate::api::restore::RestoreEnd::Uncertain { why, detail } => {
                 <i32>::sse_encode(1, serializer);
+                <crate::api::restore::UncertainWhy>::sse_encode(why, serializer);
                 <String>::sse_encode(detail, serializer);
             }
             crate::api::restore::RestoreEnd::Stopped { case, detail } => {
@@ -6295,9 +6374,10 @@ impl SseEncode for crate::api::restore::RestoreStop {
                 crate::api::restore::RestoreStop::NotAnswering => 4,
                 crate::api::restore::RestoreStop::NoUpdates => 5,
                 crate::api::restore::RestoreStop::BackupRefused => 6,
-                crate::api::restore::RestoreStop::Refused => 7,
-                crate::api::restore::RestoreStop::Cancelled => 8,
-                crate::api::restore::RestoreStop::Other => 9,
+                crate::api::restore::RestoreStop::KeyFailed => 7,
+                crate::api::restore::RestoreStop::Refused => 8,
+                crate::api::restore::RestoreStop::Cancelled => 9,
+                crate::api::restore::RestoreStop::Other => 10,
                 _ => {
                     unimplemented!("");
                 }
@@ -6586,6 +6666,23 @@ impl SseEncode for u8 {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         serializer.cursor.write_u8(self).unwrap();
+    }
+}
+
+impl SseEncode for crate::api::restore::UncertainWhy {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(
+            match self {
+                crate::api::restore::UncertainWhy::Gone => 0,
+                crate::api::restore::UncertainWhy::Stopped => 1,
+                crate::api::restore::UncertainWhy::Failed => 2,
+                _ => {
+                    unimplemented!("");
+                }
+            },
+            serializer,
+        );
     }
 }
 

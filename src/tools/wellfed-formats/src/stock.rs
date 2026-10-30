@@ -56,6 +56,69 @@ pub struct StockEnrollment {
     pub contested: bool,
 }
 
+/// An installer's trust-on-first-use record, beside its config
+/// (`installer.json`'s is `installer.device.json`): the feeder that
+/// enrolled, by its own MQTT identity, and where it first connected from.
+/// Its client ID is its device ID. `wellfed-stock`'s broker writes it once;
+/// `wellfed install` reads which device its run enrolled.
+///
+/// It holds working credentials, so it has no `Debug`, and is written mode
+/// 0600.
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Enrollment {
+    pub client_id: String,
+    pub username: String,
+    pub password: String,
+    pub address: std::net::IpAddr,
+    pub enrolled_at: DateTime<Utc>,
+}
+
+impl Enrollment {
+    /// The record's extension, after the config's own stem. Named for its
+    /// config, so an installer's config beside the bench's captured one
+    /// (both in `private/`) never lends the bench its enrollment.
+    const EXTENSION: &str = "device.json";
+    /// The contest marker's: written when a second stock-shaped identity
+    /// tried the broker while the enrollment window was open.
+    const CONTESTED_EXTENSION: &str = "contested.json";
+
+    /// The record beside `config_path`.
+    pub fn path(config_path: &Path) -> PathBuf {
+        config_path.with_extension(Self::EXTENSION)
+    }
+
+    /// The contest marker beside `config_path` (`installer.contested.json`).
+    pub fn contested_path(config_path: &Path) -> PathBuf {
+        config_path.with_extension(Self::CONTESTED_EXTENSION)
+    }
+
+    /// The record at `path`, if one exists.
+    pub fn load(path: &Path) -> crate::Result<Option<Self>> {
+        match std::fs::read(path) {
+            Ok(bytes) => Ok(Some(serde_json::from_slice(&bytes)?)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    /// What the status document shows of the enrollment beside
+    /// `config_path`: the device and its address, never its credentials.
+    /// An unreadable record is an error, not "no enrollment": shown as none,
+    /// the installer would take the feeder for a captured one and skip the
+    /// owner's check.
+    pub fn view(config_path: &Path) -> crate::Result<Option<StockEnrollment>> {
+        let Some(record) = Self::load(&Self::path(config_path))? else {
+            return Ok(None);
+        };
+        Ok(Some(StockEnrollment {
+            device: record.client_id,
+            address: record.address,
+            contested: Self::contested_path(config_path).exists(),
+        }))
+    }
+}
+
 impl StockStatus {
     /// The trial with `request_id`.
     pub fn trial(&self, request_id: &str) -> Option<&TrialRecord> {

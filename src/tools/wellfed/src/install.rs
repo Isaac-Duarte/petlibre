@@ -71,7 +71,8 @@ use wellfed_formats::bench::prompt::Prompt;
 use wellfed_formats::credentials::KeyScope;
 use wellfed_formats::manifest::{BuildManifest, Provisioning};
 use wellfed_formats::stock::{
-    ImageLease, OtaReport, ServerConfig, StockStatus, TrialAnswer, TrialPhase, TrialRequest,
+    Enrollment, ImageLease, OtaReport, ServerConfig, StockStatus, TrialAnswer, TrialPhase,
+    TrialRequest,
 };
 use wellfed_model::{Answer, Generation, Op, PLANS, Plan, Plans};
 use wellfed_proto::api::PORT;
@@ -613,16 +614,21 @@ enum Refused {
     )]
     KeyWithManifest,
     #[error(
-        "feeder {feeder} knows this computer's key, but it did not answer where it last did, where stock connected from, or over mDNS: pass --address <ip> to resume"
+        "feeder {feeder}, which this install paired with, did not answer where it last did, where stock connected from, or over mDNS: pass --address <ip> to resume"
     )]
     NotAnswering { feeder: String },
 }
 
 /// The feeder an install paired with and where it answered, kept beside
 /// the backups (`installing.json`) so a resumed run finds it with no image
-/// lease left. Its identity is the one the feeder proved.
+/// lease left. It names the stock device this install enrolled (trust on
+/// first use), and only a run of that same install takes it: the file is
+/// shared by every feeder the backups hold. Its identity is the one the
+/// feeder proved. The run that reaches the end removes it.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct Paired {
+    /// Stock's device ID, as the installer's broker enrolled it.
+    device: String,
     identity: wellfed_model::Hex<32>,
     address: SocketAddr,
 }
@@ -641,30 +647,84 @@ impl Paired {
         }
     }
 
-    fn keep(self, backups: &Path) -> Result<()> {
+    fn keep(&self, backups: &Path) -> Result<()> {
         std::fs::create_dir_all(backups)
             .with_context(|| format!("create {}", backups.display()))?;
         let path = backups.join(Self::FILE);
-        wellfed_formats::private::write_json(&path, &self)
+        wellfed_formats::private::write_json(&path, self)
             .with_context(|| format!("write {}", path.display()))
+    }
+
+    /// Remove the record when it is `device`'s: that install is done.
+    fn clear(backups: &Path, device: &str) -> Result<()> {
+        if Self::load(backups)?.is_some_and(|record| record.device == device) {
+            let path = backups.join(Self::FILE);
+            std::fs::remove_file(&path).with_context(|| format!("remove {}", path.display()))?;
+        }
+        Ok(())
     }
 }
 
-/// Which feeder a resumed run looks for, and where it last answered: the
-/// one an earlier run recorded (unless `--feeder` names another), else the
-/// one the key file knows (`known`, `None` when it knows none).
-fn resumed_feeder(
+/// Where a run looks for a feeder this computer's key already opens,
+/// before Bluetooth setup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Lookup {
+    /// This install's own record: the identity its feeder proved, looked
+    /// for where it last answered, where stock connected from and over
+    /// mDNS, where only that identity completes a session. Its feeder not
+    /// answering stops the run: it knows this key, so setup would not
+    /// start.
+    Recorded {
+        identity: [u8; 32],
+        last: SocketAddr,
+    },
+    /// The key file's feeder, which may be another of the owner's: tried
+    /// only where this run knows its feeder is, never over mDNS, and
+    /// setup follows if it does not answer.
+    KeyFile { identity: [u8; 32] },
+    /// Nothing to try: Bluetooth setup.
+    Setup,
+}
+
+/// The lookup for a run whose broker enrolled `device`: the record when it
+/// is this install's (and `--feeder`, if given, names its feeder), else the
+/// key file's feeder, else setup.
+fn lookup(
     record: Option<&Paired>,
+    device: Option<&str>,
     prefix: Option<&str>,
-    known: impl FnOnce() -> Result<Option<[u8; 32]>>,
-) -> Result<Option<([u8; 32], Option<SocketAddr>)>> {
-    if let Some(record) = record {
+    key_file: Option<[u8; 32]>,
+) -> Lookup {
+    let ours = record.filter(|record| {
         let identity = wellfed_formats::hex::encode(&record.identity.0);
-        if prefix.is_none_or(|prefix| identity.starts_with(prefix)) {
-            return Ok(Some((record.identity.0, Some(record.address))));
-        }
+        device == Some(record.device.as_str()) && prefix.is_none_or(|p| identity.starts_with(p))
+    });
+    match (ours, key_file) {
+        (Some(record), _) => Lookup::Recorded {
+            identity: record.identity.0,
+            last: record.address,
+        },
+        (None, Some(identity)) => Lookup::KeyFile { identity },
+        (None, None) => Lookup::Setup,
     }
-    Ok(known()?.map(|identity| (identity, None)))
+}
+
+/// What a lookup that found its feeder `answered` (or not) means: paired
+/// there, setup next (`None`), or a stop when this install's own feeder no
+/// longer answers.
+fn looked_up(
+    lookup: Lookup,
+    answered: Option<SocketAddr>,
+) -> Result<Option<([u8; 32], SocketAddr)>, Refused> {
+    match (lookup, answered) {
+        (Lookup::Recorded { identity, .. } | Lookup::KeyFile { identity }, Some(address)) => {
+            Ok(Some((identity, address)))
+        }
+        (Lookup::Recorded { identity, .. }, None) => Err(Refused::NotAnswering {
+            feeder: fingerprint(&identity),
+        }),
+        (Lookup::KeyFile { .. } | Lookup::Setup, _) => Ok(None),
+    }
 }
 
 /// The update key the run signs with: `--update-key` (created if
@@ -1020,6 +1080,7 @@ impl Run {
                         "Installed: build {} confirmed on bank 1. This computer is its owner.",
                         short(install.build())
                     );
+                    self.clear_paired()?;
                     match (install.import(), install.plans_skipped()) {
                         (_, Some(skipped)) => {
                             eprintln!("Stock's plans were not imported: {skipped}.");
@@ -1346,21 +1407,27 @@ impl Run {
     /// looks for it advertising until it does; the exchange then goes once,
     /// with the code the owner keys in.
     async fn set_up(&mut self, install: &mut Install) -> Result<()> {
-        if self.args.from_bank0 {
-            if let Some(identity) = self.resume(install).await? {
-                eprintln!(
-                    "The replacement knows this computer's key already: feeder {}.",
-                    fingerprint(&identity)
-                );
-                return Ok(());
+        let device = self.stock_device()?;
+        let record = Paired::load(&self.args.backups)?;
+        let prefix = self.args.feeder.as_deref();
+        let lookup = lookup(
+            record.as_ref(),
+            device.as_deref(),
+            prefix,
+            self.key.feeder(prefix).ok(),
+        );
+        let answered = match lookup {
+            Lookup::Recorded { identity, last } => {
+                self.answering(identity, Look::Mdns, Some(last)).await
             }
-        } else if let Ok(identity) = self.key.feeder(self.args.feeder.as_deref())
-            // Only where this feeder is known to be: the key file may know
-            // another feeder of the owner's, which mDNS would find, and a
-            // replacement stock just installed has no network until setup.
-            && let Some(address) = self.answering(identity, Look::Known, None).await
-        {
-            eprintln!("The replacement knows this computer's key already, at {address}.");
+            Lookup::KeyFile { identity } => self.answering(identity, Look::Known, None).await,
+            Lookup::Setup => None,
+        };
+        if let Some((identity, address)) = looked_up(lookup, answered)? {
+            eprintln!(
+                "The replacement knows this computer's key already: feeder {} at {address}.",
+                fingerprint(&identity)
+            );
             self.paired_at(identity, address)?;
             install.paired();
             return Ok(());
@@ -1422,50 +1489,41 @@ impl Run {
         Ok(())
     }
 
-    /// A resumed consumer run: the feeder this computer's key already
-    /// opens, never Bluetooth setup once the key knows it. The feeder is the
-    /// one an earlier run recorded beside the backups (its proven identity
-    /// and last address), or the one the key file names; it is looked for
-    /// there, where stock connected from, and over mDNS, where only that
-    /// identity can complete the session. `None` when the key knows no
-    /// feeder: setup is the way in.
-    async fn resume(&mut self, install: &mut Install) -> Result<Option<[u8; 32]>> {
-        let record = Paired::load(&self.args.backups)?;
-        let known = || {
-            if self.key.knows_feeders() {
-                self.key.feeder(self.args.feeder.as_deref()).map(Some)
-            } else {
-                Ok(None)
-            }
-        };
-        let Some((identity, last)) =
-            resumed_feeder(record.as_ref(), self.args.feeder.as_deref(), known)?
-        else {
-            return Ok(None);
-        };
-
-        let Some(address) = self.answering(identity, Look::Mdns, last).await else {
-            return Err(Refused::NotAnswering {
-                feeder: fingerprint(&identity),
-            }
-            .into());
-        };
-        self.paired_at(identity, address)?;
-        install.paired();
-        Ok(Some(identity))
+    /// The stock device this install's broker enrolled (trust on first
+    /// use), from its record beside the stock config; `None` for a captured
+    /// device or before stock enrolled.
+    fn stock_device(&self) -> Result<Option<String>> {
+        let path = Enrollment::path(&self.config_path);
+        let record = Enrollment::load(&path)
+            .with_context(|| format!("read the enrollment {}", path.display()))?;
+        Ok(record.map(|record| record.client_id))
     }
 
     /// The paired feeder answered at `address`: use it, and record it
-    /// beside the backups for a resumed run, which may find no image lease
-    /// (the image server removes it when it stops).
+    /// beside the backups, keyed to this install's stock device, for a
+    /// resumed run, which may find no image lease (the image server removes
+    /// it when it stops). With no enrolled device there is nothing to key
+    /// it to, and nothing is recorded.
     fn paired_at(&mut self, identity: [u8; 32], address: SocketAddr) -> Result<()> {
         self.identity = Some(identity);
         self.found = Some(address);
+        let Some(device) = self.stock_device()? else {
+            return Ok(());
+        };
         Paired {
+            device,
             identity: wellfed_model::Hex(identity),
             address,
         }
         .keep(&self.args.backups)
+    }
+
+    /// The install is done: its record is no longer anyone's to resume.
+    fn clear_paired(&self) -> Result<()> {
+        match self.stock_device()? {
+            Some(device) => Paired::clear(&self.args.backups, &device),
+            None => Ok(()),
+        }
     }
 
     /// Where the feeder with `identity` opens a session with this
@@ -2434,53 +2492,84 @@ mod tests {
         ));
     }
 
-    /// A resumed run looks for the feeder an earlier run recorded, with the
-    /// address it answered at, before the one the key file names; a
-    /// `--feeder` naming another passes the record over.
+    /// A run takes the paired record only when its broker enrolled the
+    /// same stock device: another feeder's record, left by an earlier
+    /// install, never answers for this one. The key file's feeder is tried
+    /// only where this run knows its feeder is, and setup follows when it
+    /// does not answer.
     #[test]
-    fn a_resumed_run_finds_the_recorded_feeder_first() {
+    fn a_run_takes_only_its_own_installs_record() {
         let dir = tempfile::tempdir().unwrap();
         let backups = dir.path().join("stock-backups");
         assert_eq!(Paired::load(&backups).unwrap(), None);
 
         let recorded = Paired {
+            device: "AF_A".into(),
             identity: wellfed_model::Hex([0xab; 32]),
             address: "192.168.4.20:7100".parse().unwrap(),
         };
-        recorded.clone().keep(&backups).unwrap();
+        recorded.keep(&backups).unwrap();
         let loaded = Paired::load(&backups).unwrap().unwrap();
         assert_eq!(loaded, recorded);
 
-        let key_file = || Ok(Some([0xcd; 32]));
-        assert_eq!(
-            resumed_feeder(Some(&loaded), None, key_file).unwrap(),
-            Some(([0xab; 32], Some(recorded.address)))
-        );
-        assert_eq!(
-            resumed_feeder(Some(&loaded), Some("abab"), key_file).unwrap(),
-            Some(([0xab; 32], Some(recorded.address)))
-        );
-        // Another feeder named: the key file's, with no address known.
-        assert_eq!(
-            resumed_feeder(Some(&loaded), Some("cd"), key_file).unwrap(),
-            Some(([0xcd; 32], None))
-        );
-        assert_eq!(
-            resumed_feeder(None, None, key_file).unwrap(),
-            Some(([0xcd; 32], None))
-        );
-        // A key that knows no feeder: Bluetooth setup is the way in.
-        assert_eq!(resumed_feeder(None, None, || Ok(None)).unwrap(), None);
-        // An ambiguous key file stops the run rather than guess.
-        assert!(resumed_feeder(None, None, || bail!("2 feeders match")).is_err());
-
-        // A later pairing replaces the record.
-        let moved = Paired {
-            address: "192.168.4.31:7100".parse().unwrap(),
-            ..recorded
+        let key_file = Some([0xcd; 32]);
+        let ours = Lookup::Recorded {
+            identity: [0xab; 32],
+            last: recorded.address,
         };
-        moved.clone().keep(&backups).unwrap();
-        assert_eq!(Paired::load(&backups).unwrap(), Some(moved));
+        assert_eq!(lookup(Some(&loaded), Some("AF_A"), None, key_file), ours);
+        assert_eq!(
+            lookup(Some(&loaded), Some("AF_A"), Some("abab"), key_file),
+            ours
+        );
+        // `--feeder` naming another passes the record over.
+        assert_eq!(
+            lookup(Some(&loaded), Some("AF_A"), Some("cd"), key_file),
+            Lookup::KeyFile {
+                identity: [0xcd; 32]
+            }
+        );
+
+        // A stale record from another stock device: never this run's.
+        assert_eq!(
+            lookup(Some(&loaded), Some("AF_B"), None, key_file),
+            Lookup::KeyFile {
+                identity: [0xcd; 32]
+            }
+        );
+        assert_eq!(
+            lookup(Some(&loaded), Some("AF_B"), None, None),
+            Lookup::Setup
+        );
+        // No enrolled device (a captured config): the record is no one's.
+        assert_eq!(lookup(Some(&loaded), None, None, None), Lookup::Setup);
+
+        // This install's feeder not answering stops the run.
+        let here: SocketAddr = "192.168.4.31:7100".parse().unwrap();
+        assert!(matches!(
+            looked_up(ours, None),
+            Err(Refused::NotAnswering { .. })
+        ));
+        assert_eq!(
+            looked_up(ours, Some(here)).unwrap(),
+            Some(([0xab; 32], here))
+        );
+        // The key file's feeder not answering falls through to setup.
+        let key = Lookup::KeyFile {
+            identity: [0xcd; 32],
+        };
+        assert_eq!(looked_up(key, None).unwrap(), None);
+        assert_eq!(
+            looked_up(key, Some(here)).unwrap(),
+            Some(([0xcd; 32], here))
+        );
+        assert_eq!(looked_up(Lookup::Setup, None).unwrap(), None);
+
+        // The end of another install leaves the record; its own clears it.
+        Paired::clear(&backups, "AF_B").unwrap();
+        assert_eq!(Paired::load(&backups).unwrap(), Some(recorded));
+        Paired::clear(&backups, "AF_A").unwrap();
+        assert_eq!(Paired::load(&backups).unwrap(), None);
     }
 
     #[test]

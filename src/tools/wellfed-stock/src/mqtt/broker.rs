@@ -39,7 +39,7 @@ use tracing::{info, warn};
 
 use crate::{
     config::{self, Config, InstallConfig},
-    enroll::{Contest, Enrollment},
+    enroll::{self, Contest, Enrollment},
     mqtt::compat::{self, Peers},
 };
 
@@ -145,7 +145,7 @@ impl DeviceAuth {
         let Some(window) = &self.window else {
             return;
         };
-        if Instant::now() >= window.until || !Enrollment::plausible(client_id, username, password) {
+        if Instant::now() >= window.until || !enroll::plausible(client_id, username, password) {
             return;
         }
         warn!(
@@ -173,7 +173,7 @@ impl DeviceAuth {
         peer: Option<IpAddr>,
     ) -> Option<Device> {
         let window = self.window.as_ref()?;
-        if Instant::now() >= window.until || !Enrollment::plausible(client_id, username, password) {
+        if Instant::now() >= window.until || !enroll::plausible(client_id, username, password) {
             return None;
         }
         // Stock's credentials are text; anything else is not a feeder.
@@ -187,7 +187,7 @@ impl DeviceAuth {
             address: peer,
             enrolled_at: Utc::now(),
         };
-        if let Err(error) = record.create(&window.record) {
+        if let Err(error) = enroll::create(&record, &window.record) {
             warn!(%error, "enrollment not recorded; refusing the feeder");
             return None;
         }

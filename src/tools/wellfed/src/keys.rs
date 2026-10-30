@@ -75,11 +75,6 @@ impl OwnerKey {
         &self.file.label
     }
 
-    /// Whether the key file knows any feeder.
-    pub(crate) fn knows_feeders(&self) -> bool {
-        !self.file.feeders.is_empty()
-    }
-
     /// The feeder to talk to: the one whose identity starts with `prefix`,
     /// or the only one this key knows.
     pub(crate) fn feeder(&self, prefix: Option<&str>) -> Result<[u8; 32]> {

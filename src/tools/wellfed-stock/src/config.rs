@@ -410,7 +410,9 @@ pub fn load(path: &Path) -> Result<Config> {
 /// The config at `path`, and whether it has a device yet.
 pub fn state(path: &Path) -> Result<State> {
     let bytes = fs::read(path).context("read configuration")?;
-    let enrollment = Enrollment::load(&Enrollment::path(path))?;
+    let record = Enrollment::path(path);
+    let enrollment = Enrollment::load(&record)
+        .with_context(|| format!("invalid enrollment {}", record.display()))?;
     let state = parse_state(&bytes, enrollment).context("invalid server configuration")?;
     match &state {
         State::Device(config) => config.validate()?,

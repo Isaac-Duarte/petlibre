@@ -6,15 +6,15 @@ No vendor code, credentials or device identifiers appear here. The evidence inde
 
 ## The one idea
 
-Stock's own updater does the hard part. Stock 1.1.15 will install any image we serve it into its other bank, with no UART and no soldering. So the installer only has to get stock talking to it, ask for one update, and serve the image. Stock finds its broker by a DNS name, so your router's DNS can send it to the installer without touching the feeder. Before Wellfed overwrites stock's last copy, the installer saves the feeder's own stock image and its feeding plans, so you can always go back, and your meals come along.
+Stock's own updater does the hard part. Stock 1.1.15 will install any image we serve it into its other bank, with no UART and no soldering. So the installer only has to get stock talking to it, ask for one update, and serve the image. There are two ways to do that. The main one needs nothing from your router: you hold Reset, which erases stock's settings and meals, and your phone hands the feeder your Wi-Fi over the feeder's own setup network. The other keeps your meals: your router's DNS sends stock to the installer without touching the feeder. Before Wellfed overwrites stock's last copy, the installer saves the feeder's own stock image, and any feeding plans it still has, so you can always go back.
 
 | Step | Status |
 | --- | --- |
 | Stock installs Wellfed over its updater | Works |
 | Promotion to bank 1 and confirmation | Works |
 | Going back to stock over the air | Works, using a stock image we serve |
-| Moving stock to the installer by DNS | Experimental: host-tested, not yet run on stock |
-| The Reset-hold fallback with the setup frame | Experimental: host-tested, not yet run on stock |
+| Moving stock to the installer by DNS | Works: run on the research unit, from the bench and from the phone |
+| The Reset hold and the setup frame, from the app | Works: run once on the research unit, from the phone |
 | The guided installer, `wellfed install` | Experimental |
 | Saving and restoring the feeder's own stock image | Experimental |
 
@@ -40,13 +40,13 @@ What the bench still uses, and a consumer must not need:
 - device MQTT credentials captured from traffic (`wellfed-stock init`);
 - a build carrying the owner's Wi-Fi credentials, broker credentials and update key.
 
-Moving stock by DNS, below, removes the first two; stock's setup protocol is the fallback. Generic images remove the third.
+Stock's setup protocol, or moving it by DNS, removes the first two. Generic images remove the third.
 
 ## Moving stock by DNS
 
 Stock keeps its broker as a DNS name, connects to it on plaintext MQTT port 1883 with no TLS and no pinning, and looks the name up each time it starts ([where stock connects](../devices/plaf103/stock/README.md#where-stock-connects)). So if your network's DNS answers that name with the installer's address, stock connects to the installer instead of the vendor's cloud, with its own credentials. Nothing is written to the feeder: its Wi-Fi, settings and feeding plans stay as they are, and the installer imports the plans before it overwrites stock.
 
-This is the installer's first route. What you do:
+This route keeps stock's meals, and suits a feeder already set up in the vendor's app. What you do:
 
 1. **Override one name.** In your router's DNS settings, or a resolver you run that your router hands out, make stock's broker name resolve to the computer running the installer. Many routers call this a local DNS record or a host override.
 2. **Restart the feeder.** Unplug its adapter for about 10 s, with its batteries out if fitted, and plug it back in. Stock keeps its session to the cloud until it restarts.
@@ -62,17 +62,17 @@ The broker name is the vendor's, and Wellfed does not ship it: `wellfed install 
 
 **What the installer's broker does differently** for a stock that was already set up: nothing, so far as is known. Stock presents its own credentials, which enrollment trusts on first use. A set-up stock sends no `BINDING` when it connects (observed), so the missing captured binding reply does not matter. The server never sends the messages that rewrite stock's broker or Wi-Fi settings, or erase its plans ([stock server](../development/stock-server.md#a-set-up-stock-moved-by-dns)).
 
-**Modeled and unproven.** The DNS step and enrollment of a never-seen identity are host-tested. Unproven on hardware: stock following a resolver override (rather than the bench's firewall redirect), and the time stock takes to retry a broker that is not yet listening.
+**Seen and unseen.** Stock followed a resolver override, with no firewall redirect, and enrolled with an identity the broker had not seen (observed). How long stock takes to retry a broker that is not yet listening is not measured.
 
 **Stock's clock.** The installer's server sets stock's clock only when stock's own clock is within 10 minutes of it, as a stock fresh from its vendor's cloud should be ([stock server](../development/stock-server.md#an-installers-server-trust-on-first-use)). Otherwise it leaves the clock alone, since we have not checked whether stock runs meals that came due while its clock jumps. Stock with its clock two days behind refused an install with error 1214 (observed once; the clock as the cause is likely). The run then ends and names `--calibrate-clock`. Pass it to have the clock set anyway, if you accept that stock may run those meals. An install with the clock set is not yet run on stock.
 
-**Where DNS cannot be changed**, the fallback is stock's setup protocol, below. It starts with the Reset hold, which erases stock's feeding plans, so the installer warns you first and asks you to note them in the vendor app.
+**Where DNS cannot be changed, or you would rather not,** use stock's setup protocol, below. It starts with the Reset hold, which erases stock's feeding plans, so the installer warns you first and asks you to note them in the vendor app.
 
 ## Stock's setup protocol
 
-This is the fallback route. The vendor app provisions a PLAF103 through the feeder's **setup access point**, not over Bluetooth:
+This is the app's main route. The vendor app provisions a PLAF103 through the feeder's **setup access point**, not over Bluetooth:
 
-1. The feeder, in setup mode, runs its own Wi-Fi access point.
+1. The feeder, in setup mode, runs its own open Wi-Fi access point, `PL-AF103-` and the last two bytes of its MAC, on channel 11 (observed).
 2. The app joins it and sends one UDP datagram to **192.168.1.1:17484** (`0x444C`). Stock's `Ap_Config_Udp_Thread` receives it on that port.
 3. BLE service `ffee` is connected alongside (`ffe1` write, `ffe2` data, `ffe3` read, `ffe4` notify), but the frame itself goes over UDP.
 
@@ -96,19 +96,22 @@ This is the fallback route. The vendor app provisions a PLAF103 through the feed
 - **Applying it:** the setup thread `0e0084d8` sets the MQTT port, host and id. It then polls whether MQTT came up (`0e012780`, up to 20 tries). Only then does it persist the record to flash `0x3e8000`, and a 0x60-byte record to `0x3e9000`.
 - **At every boot:** stock loads `0x3e8000` and connects to that host and port.
 
+**Saving it takes an answer.** The setup thread's wait is for the state stock also requires before an install, and that state clears when `BINDING` is answered. With no answer, stock joined the Wi-Fi and reached the broker, then refused the install with error 1204 ("device not bound") and, about 20 s after it arrived, went back to its setup network with nothing saved (observed). So the broker must be listening before the frame goes, and reachable within that time. An installer's server has no captured reply, so it answers with `code` 0, a nonzero `bindId` and an empty `cameraAuthInfo`. Stock accepts that, saves the frame, and takes an install (observed). What the vendor's `bindId` means is not established.
+
 **Re-provisioning guard.** While the `0x3e9000` record is non-blank and the device state is bound, types 1–3 are acknowledged but not applied. A feeder must be reset or unbound first.
 
 **Credentials.** The MQTT client ID, username and password the feeder presents are its own: they are loaded from flash at boot, not issued at bind. `BINDING` is an application-level association, which `wellfed-stock` already answers by replaying the captured cloud reply. The commands stock dispatches over MQTT are `OTA_UPGRADE`, `GET_CONFIG`, `BINDING`, `UNBIND`, `DEVICE_REBOOT`, `WIFI_RECONNECT_SERVICE`, `WIFI_CHANGE_SERVICE`, `ATTR_SET_SERVICE` and `ATTR_GET_SERVICE` ([stock behavior](../devices/plaf103/stock/README.md)).
 
-**Getting into setup mode** costs stock's plans. A set-up stock never opens its setup access point on its own: when it cannot reach its Wi-Fi, it retries forever. The only way in is the Reset hold: Reset (the rightmost button) held about 5 s on an unlocked panel. That runs stock's full factory restore. It erases its broker, Wi-Fi and binding records, its feeding plans and their record rings, then restarts ([what the restore clears](../devices/plaf103/stock/README.md#reset-and-the-cloud)). So an install through this route imports no plans. The panel is unlocked by holding Lock about 5 s while the lock light is on. That the restart then opens the setup access point, and its name, are not yet seen on hardware.
+**Getting into setup mode** costs stock's plans. A set-up stock never opens its setup access point on its own: when it cannot reach its Wi-Fi, it retries forever. The only way in is the Reset hold: Reset (the rightmost button) held about 5 s on an unlocked panel. That runs stock's full factory restore. It erases its broker, Wi-Fi and binding records, its feeding plans and their record rings, then restarts ([what the restore clears](../devices/plaf103/stock/README.md#reset-and-the-cloud)). The feeder then says it is ready for a Wi-Fi connection and opens its setup network (observed). So an install through this route imports no plans: the plan sectors read back erased (observed). The panel is unlocked by holding Lock about 5 s while the lock light is on.
 
-**Open questions,** to settle on the feeder:
-- Is type 3 really what goes on the wire? Reading the decompiled app depends on its integer encoding, so a capture should confirm it.
-- What exactly is the numeric id?
-- How is a feeder reset or unbound? Is there a button hold? What does `UNBIND` (`0e015fd4`, not decompiled) clear?
-- Are the credentials fixed at the factory, or derived from the serial? Either way they arrive at our broker unchanged.
+**On a phone.** The app asks Android for a network whose name starts with `PL-AF103-`, and Android shows its own picker. Once joined, the process's sockets go over that network until the frame is out. A phone that can hold a local-only network alongside its Wi-Fi stays on both, as the research unit's Pixel did (observed). One that cannot leaves home for those seconds and has to be back within stock's wait, which is modeled but not run. It comes back at the address the frame named, or the run stops: the feeder would look in the wrong place. The password goes unencrypted over the setup network, so the screen says so.
 
-**The planned first test.** With stock in setup mode, the bench host joins its access point. It sends one type-3 frame with `wellfed-stock setup-send --ssid <hotspot> --id <digits>`, which reads the passphrase from stdin and names this server's broker (`10.42.103.1:1883`) unless `--broker` is given. If stock then joins the hotspot and connects to `wellfed-stock serve` with its own credentials, the redirect and the captured credentials are no longer needed. The frame encoder (`wellfed_client::install::frame`) is host-tested against the parser's length rule and field limits.
+**If the feeder does not arrive.** Two minutes after the frame with no feeder at the broker, the run stops with nothing asked of stock. A wrong password or a Wi-Fi with no 2.4 GHz band ends this way. Stock keeps nothing and reopens its setup network, so a new frame needs no second Reset hold. That is a new frame to a feeder visibly still in setup mode, unlike the install request, which is never resent. Once stock has reached the broker it has kept the frame and has no setup network left, so a later run only waits for it.
+
+**Still open:**
+- What exactly is the numeric id? Stock checks only its form, and repeats it in `BINDING`.
+- What does `UNBIND` (`0e015fd4`, not decompiled) clear?
+- Are the credentials fixed at the factory, or derived from the serial? Either way they arrive at our broker unchanged, and they survive the Reset hold (observed).
 
 ## What the installer's server must answer
 
@@ -116,7 +119,7 @@ This is the fallback route. The vendor app provisions a PLAF103 through the feed
 
 - a broker on TCP 1883 that accepts stock's legacy MQTT 3.1 CONNECT;
 - the `dl/PLAF103/<device-id>/…/post` and `/sub` topics;
-- replies to `NTP` and to `BINDING` (only with a captured reply, which a stock fresh from the setup frame asks for), and to `GET_FEEDING_PLAN_EVENT` only with a captured plan snapshot. An installer's config has none, so that request goes unanswered: stock erases its plan table on any reply with a `plans` key, and the installer must find the owner's plans intact ([stock server](../development/stock-server.md#an-installers-server-trust-on-first-use));
+- replies to `NTP` and to `BINDING` (a captured reply if there is one, otherwise a generic one, which a stock fresh from the setup frame needs before it saves the frame or takes an install), and to `GET_FEEDING_PLAN_EVENT` only with a captured plan snapshot. An installer's config has none, so that request goes unanswered: stock erases its plan table on any reply with a `plans` key, and the installer must find the owner's plans intact ([stock server](../development/stock-server.md#an-installers-server-trust-on-first-use));
 - acknowledgements of the startup, attribute, log and error events.
 
 For a consumer it must also accept a device whose credentials it has never seen. **Trust on first use:** an installer's config (`wellfed-stock init-installer`) names no device. `serve --enroll-minutes N` admits the first stock-shaped CONNECT within the window. It records that client's ID, username, password and address beside the config (`installer.json`'s record is `installer.device.json`) and pins it, so nobody else logs in, then or later ([stock server](../development/stock-server.md#an-installers-server-trust-on-first-use)). Stock's client ID is its device ID. A stock moved by DNS arrives the same way, with the same credentials. The captured-credential `init` and the `network` redirect stay for the bench until either route has moved stock on hardware.
@@ -138,7 +141,7 @@ For a consumer it must also accept a device whose credentials it has never seen.
 
 Steps 1–3 replace the bench's firewall redirect and captured credentials. On the DNS route, stock's plans are still in place at step 9.
 
-Where DNS cannot be changed, the fallback replaces steps 1 and 2: you note your plans, reset the feeder into its setup access point (which erases its plans), and the installer sends one type-3 frame there with your home network and its own `host:1883`.
+The Reset route replaces steps 1 and 2: you note your plans, reset the feeder into its setup access point (which erases its plans), and the installer sends one type-3 frame there with your home network and its own `host:1883`. Stock's clock is then set whatever its own reading, since no plan can come due in the jump.
 
 ## The installer
 
@@ -152,7 +155,7 @@ Stock's side runs in the driver's own process, since an app cannot spawn the `we
 
 | Step | Decided in `wellfed-client` | IO in `wellfed-install` (and the CLI's flags) |
 | --- | --- | --- |
-| 1. Provision | DNS first: the override, refused unless it names a DNS name and the broker listens on port 1883, and its lookup judged as advice only. The fallback: a warning that the Reset hold erases stock's plans, which the owner must accept, then the type-3 frame, refused before anything is sent if stock would misread a field; sent once | `--broker-name`: the guidance, the owner's word that the override is set and the feeder restarted, and a lookup from this computer. `--ssid`: the warning and a `[y/N]`, then the owner puts stock into setup mode and joins this computer to its access point (platform Wi-Fi); one UDP datagram to 192.168.1.1:17484; the owner rejoins the home network |
+| 1. Provision | The override, refused unless it names a DNS name and the broker listens on port 1883, and its lookup judged as advice only. Or the Reset route: a warning that the Reset hold erases stock's plans, which the owner must accept, then the type-3 frame, refused before anything is sent if stock would misread a field; sent once | `--broker-name`: the guidance, the owner's word that the override is set and the feeder restarted, and a lookup from this computer. `--ssid`: the warning and a `[y/N]`, then the owner puts stock into setup mode and joins this computer to its access point (platform Wi-Fi); one UDP datagram to 192.168.1.1:17484; the owner rejoins the home network |
 | 2. Stock ready | Online, 1.1.15 (any other version ends the run), on its adapter | Stock's server in this process, with the trial enabled and an enrollment window of `--enroll-minutes`: the broker trusts the first feeder, and holds that feeder's CONNACK until the server has subscribed, so stock's startup reports reach it. Its status, polled. If stock still reports no version after 90 s, the owner restarts it once to replay them |
 | 3. Confirm the feeder | The owner checks the enrolled device ID and address before anything is sent; a contested enrollment ends the run | The status document's `enrollment` (never its credentials) and a `[y/N]` prompt. With `--expect-device`, the owner's answer given ahead: the pinned device passes without a prompt, and any other ends the run naming both. A bench config with a captured device needs no check |
 | 4. Request | Exactly one `OTA_UPGRADE` per run; refused or uncertain ends the run | The image server in this process, serving the review to the enrolled feeder's address, then the trial request. What the server recorded is read back: refused only when the server refused and a successful ledger read shows no record, uncertain otherwise (an unanswered request included). The server itself refuses while the enrollment is contested |
@@ -164,7 +167,7 @@ Stock's side runs in the driver's own process, since an app cannot spawn the `we
 | 10. Stock's plans | `StockPlans::decode_parts` reads the sectors as stock's boot does, and `plans::convert` converts each plan or refuses it by name. **A table that cannot be read stops the run before promotion**, unless the owner chose to go on without it | `ReadStockPlans` over the device API (owners only, bank 0 only). The 441 bytes are kept beside the backup (`private/stock-backups/<identity>/stock-plans.bin`, never replaced by a different read), and the import is shown. `--without-stock-plans` promotes even when the sectors cannot be read |
 | 11. Version | The floor (`UpdateState`'s highest confirmed version) decides. A given manifest at or below it is refused (it would need a downgrade statement); a run that signs for itself picks one above the floor and above every version it signed before | `--manifest`, or the reviewed build verified as `wellfed-build sign` verifies it and signed with the update key above the floor, the bench's `private/verification/*.manifest` and the manifests kept under `--backups`. The manifest is kept as `promotion-v<N>.manifest` beside the backup before it is offered. The bench reads only the default `private/stock-backups`, so it does not see promotions kept under another `--backups`. A build that moves the motor at startup is refused: sign it attended and pass `--manifest` |
 | 12. Promote | `update::Installer`, the same push as the bench's. Its error ends the run. Once writing began, bank 1 may be partly overwritten, so the verified backup is then the copy of stock | Chunks over the device API until bank 1 is activated. A dropped session is reopened, and the install resumes where bank 0 says |
-| 13. Confirm | Done only when bank 1 runs the build and reports the manifest's version confirmed; bank 0 means it fell back | `Status` and `UpdateState` after the restart |
+| 13. Confirm | Done only when bank 1 runs the build and either reports the manifest's version confirmed or is ready to feed, which an unconfirmed trial never is. A reinstall of a build the feeder confirmed before skips the trial and leaves the floor below the version. Bank 0 means it fell back | `Status` and `UpdateState` after the restart |
 | 14. Apply the plans | Only with converted plans, and only onto a writable table with every slot empty: plans already set stop it. One `PutPlans` from the generation read; `Stale` or another refusal changed nothing and ends the run. A table already holding the import counts as applied. An unanswered put is not sent again in that run: the plans read back decide, the import there is done, anything else is uncertain. A run resumed after the promotion reads no sectors, so it takes the copy an earlier run kept. If an earlier run may have sent its put, the import there is done, and otherwise it goes again only if the plans' generation still equals the base that put went against. Every change to the table moves the generation, so an unchanged one shows that neither the put nor the owner changed it, while an empty table does not: the owner may have emptied it, and putting it back would bring back deleted meals. Anything else stops the run uncertain with nothing sent, and the owner checks the meals. Two puts from one base cannot both land: the feeder refuses the second `Stale`, which after an earlier put is uncertain too | `GetPlans`, then the one `PutPlans`, then `GetPlans` again if it went unanswered. The base is written to `stock-plans.base.json` beside the backup, and synced, before the put leaves; if it cannot be written the put does not go, and with no such file no put ever left. A resumed run loads `stock-plans.bin` from beside the backup, or says that stock's plans were not read. The run that reaches the end removes the base |
 
 **Trust on first use, and its risk.** The broker trusts whichever stock-shaped client reaches it first inside the window. A host on the same network that wins that race (or a second feeder) would be enrolled instead. Without a check, it could be walked through the whole run to a false "Installed" while the real feeder stays on stock. So:
@@ -230,7 +233,7 @@ This needs the owner at the panel. The frame route reads the passphrase at a ter
 
 ### Running a consumer install on the bench
 
-This is the first consumer install from stock, not yet run (everything about it is static analysis and host tests). It runs unattended as the bench server's `install` job: the server keys in the Bluetooth setup code and presses Dispense for the update key on a [virtual panel](../devices/plaf103/bench.md#virtual-panel) build, and the owner's `--expect-device` answers the feeder check. It runs the [DNS route](#running-the-dns-route-on-the-bench) with a consumer image, so start from that section's state: the owner's DNS drop-in, the WAN block without the redirect, the hotspot up as a bounded foreground process, `wellfed-stock` built from a clean commit, and `wellfed-bench serve` running. The bench host's Bluetooth adapter must be on and in range. No motion is planned, but the job presses Dispense, so keep the hopper empty.
+This is the consumer install from stock, run on the research unit (observed). It runs unattended as the bench server's `install` job: the server keys in the Bluetooth setup code and presses Dispense for the update key on a [virtual panel](../devices/plaf103/bench.md#virtual-panel) build, and the owner's `--expect-device` answers the feeder check. It runs the [DNS route](#running-the-dns-route-on-the-bench) with a consumer image, so start from that section's state: the owner's DNS drop-in, the WAN block without the redirect, the hotspot up as a bounded foreground process, `wellfed-stock` built from a clean commit, and `wellfed-bench serve` running. The bench host's Bluetooth adapter must be on and in range. No motion is planned, but the job presses Dispense, so keep the hopper empty.
 
 1. **Clear the replacement's stored Wi-Fi first,** while a bench image still runs on bank 1: `target/release/wellfed wifi --clear`. A consumer image starts Bluetooth setup only with no Wi-Fi stored; with the hotspot still stored it would join, and the run would pair by the known key without trying Bluetooth.
 2. **Build and freeze a consumer image with the virtual panel:** `make -C src/firmware/vendor firstboot FIRMWARE=feeder PROVISION=consumer VARIANT=virtual-panel` (it needs `private/release-key.pub.json`), then `target/release/wellfed-build review build --build private/firmware-build/plaf103/firstboot-consumer --output private/verification/<name>-consumer-review`. The variant reads press lines on its UART; it is for the bench only and never ships.

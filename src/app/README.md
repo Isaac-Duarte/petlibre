@@ -4,7 +4,7 @@ This is Wellfed's phone app. It installs Wellfed on a feeder that runs stock, se
 
 So far it does:
 
-- **Install:** from stock 1.1.15, through a DNS record on your router, from the same driver as `wellfed install`. It backs up stock, moves your meals across and makes Wellfed permanent ([consumer installation](../../docs/firmware/consumer-installation.md)). The route through the feeder's own Wi-Fi is drawn and comes later: it needs stock's Reset hold, which no one has yet seen on hardware.
+- **Install:** from stock 1.1.15, from the same driver as `wellfed install`: through the feeder's own Wi-Fi after a Reset hold, which erases its meals, or through a DNS record on your router, which keeps them. It backs up stock and makes Wellfed permanent ([consumer installation](../../docs/firmware/consumer-installation.md)).
 - **Setup:** BLE setup of a new or reset feeder. You hold Lock, then Mic, give the Wi-Fi and the names, pick the feeder from those nearby in setup mode, then key in the 6-press code.
 - **Recovery:** taking a feeder already on your network as its owner again. You hold Lock, then Dispense, and key in the same kind of code.
 - **Home:** a card per feeder (compact when there are several), with whether it can feed now, the food, power, panel lock, Wi-Fi signal and anything that needs attention.

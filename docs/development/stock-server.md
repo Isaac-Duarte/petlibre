@@ -42,7 +42,7 @@ The [example inputs](../../src/tools/wellfed-stock/examples/README.md) contain o
 
 ## Configure a real device
 
-Use your own isolated gateway or access point, and capture only the device you mean to control. A laptop that merely shares the Wi-Fi may not see the feeder's unicast traffic. Initial stock pairing normally uses the vendor app. Cloud-free provisioning through the setup frame and an [installer's server](#an-installers-server-trust-on-first-use) is host-tested only.
+Use your own isolated gateway or access point, and capture only the device you mean to control. A laptop that merely shares the Wi-Fi may not see the feeder's unicast traffic. Initial stock pairing normally uses the vendor app. Cloud-free provisioning through the setup frame and an [installer's server](#an-installers-server-trust-on-first-use) has run once on the research unit, from the app.
 
 1. Store the device's single MQTT CONNECT credential record as a JSON array, in the shape the credential example shows.
 
@@ -115,7 +115,7 @@ The consumer install moves a stock that is already set up: the owner's resolver 
 - **Its firewall on the bench.** `network apply --redirect off` keeps the feeder's WAN block and both input accepts but redirects nothing, so stock reaches the broker only by the name it resolves, and a failed override fails closed.
 - **Its port.** Stock keeps its stored port, so `--mqtt-listen` must use port 1883 on an address the owner's resolver can name. `wellfed install --broker-name` refuses any other port.
 - **Its credentials.** Stock presents its own, as after a setup frame, so enrollment trusts it on first use the same way.
-- **No binding.** A set-up stock sends no `BINDING` when it connects (observed). An installer's config has no captured binding reply, which only a stock fresh from the setup frame would ask for.
+- **No binding.** A set-up stock sends no `BINDING` when it connects (observed). A stock fresh from the setup frame does, and an installer's config answers it with a generic reply built in the server, since it has no captured one ([saving the frame](../firmware/consumer-installation.md#stocks-setup-protocol)).
 - **Its settings stay.** The server never sends `DEVICE_CONFIG_SYNC`, `WIFI_CHANGE_SERVICE` or the MQTT `RESTORE` (`protocol::Sent` is a closed set). So stock's stored broker name, Wi-Fi and plans are untouched, and removing the override returns stock to the vendor's cloud.
 - **Its clock.** A stock that was on its vendor's cloud has a clock close to the right time, so the `NTP` reply sets it ([above](#an-installers-server-trust-on-first-use)). A stock whose clock is more than 10 minutes off needs `--calibrate-clock`.
 

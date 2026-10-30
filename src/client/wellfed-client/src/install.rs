@@ -9,15 +9,15 @@
 //!    connects with its own MQTT credentials, which the broker trusts on
 //!    first use; nothing captured, nothing redirected. Two routes
 //!    ([`Provision`]):
-//!    - **DNS first** ([`dns`]): the owner's resolver answers stock's broker
-//!      name with the installer's address, and a restarted stock connects
-//!      there. Nothing is written to the feeder, so stock's plans stay for
-//!      the import.
-//!    - **The Reset hold**, where the owner's router cannot override a
-//!      name: the hold runs stock's factory restore, which erases its plans,
-//!      so the owner accepts that first; then one type-3 setup frame
-//!      ([`frame`]) to stock's setup access point names the owner's Wi-Fi
-//!      and the installer's broker.
+//!    - **The Reset hold**, which needs nothing from the owner's router: the
+//!      hold runs stock's factory restore, which erases its plans, so the
+//!      owner accepts that first; then one type-3 setup frame ([`frame`]) to
+//!      stock's setup access point names the owner's Wi-Fi and the
+//!      installer's broker.
+//!    - **DNS** ([`dns`]), which keeps stock's plans for the import: the
+//!      owner's resolver answers stock's broker name with the installer's
+//!      address, and a restarted stock connects there. Nothing is written to
+//!      the feeder.
 //! 2. **Stock ready:** stock reports 1.1.15 on its adapter, the same
 //!    conditions its own precheck and the server's trial gate hold.
 //! 3. **Confirm the feeder:** trust on first use admits whichever stock-
@@ -163,13 +163,13 @@ pub const STOCK_CLOCK_UNSET: u32 = 1214;
 /// How stock is pointed at the installer's broker.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Provision {
-    /// DNS first: the owner's resolver answers stock's broker name with the
-    /// installer's broker, and stock, restarted, connects there. Nothing is
-    /// written to the feeder.
+    /// The owner's resolver answers stock's broker name with the installer's
+    /// broker, and stock, restarted, connects there. Nothing is written to
+    /// the feeder.
     Dns(DnsOverride),
-    /// The fallback: the owner holds Reset, which runs stock's factory
-    /// restore (its plans erased with the rest) and opens its setup access
-    /// point; then this frame goes there.
+    /// The owner holds Reset, which runs stock's factory restore (its plans
+    /// erased with the rest) and opens its setup access point; then this
+    /// frame goes there.
     Frame(SetupFrame),
     /// Stock already connects to the installer's broker (provisioned by an
     /// earlier frame, or on the bench).

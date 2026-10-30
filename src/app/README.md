@@ -9,6 +9,7 @@ So far it does:
 - **Recovery:** taking a feeder already on your network as its owner again. You hold Lock, then Dispense, and key in the same kind of code.
 - **Home:** a card per feeder (compact when there are several), with whether it can feed now, the food, power, panel lock, Wi-Fi signal and anything that needs attention.
 - **Feed now:** a feed of 1 to 48 portions, followed to its result.
+- **Restore:** the vendor's firmware back on the feeder, from the backup the install kept or a copy you saved. You press Dispense on the feeder, and it goes across as an update. Then stock runs, which this app cannot talk to.
 
 Invites, schedules, history, settings and servers come later ([roadmap](../../docs/roadmap.md)).
 
@@ -26,6 +27,14 @@ Invites, schedules, history, settings and servers come later ([roadmap](../../do
 - **The client secret never leaves the phone.** Android backup is off, so a new phone pairs again.
 - **A session gives a feeder this phone's clock** right after pairing, and whenever the feeder's clock is not set, as `wellfed time` does.
 - **Every socket follows the Wi-Fi network.** Android keeps mobile data as the default network while the Wi-Fi has no internet, so `MainActivity` binds the app to Wi-Fi. A VPN that apps cannot bypass (Tailscale, for one) refuses that: exclude Wellfed from it.
+
+## The restore
+
+`wellfed_install::restore` drives it, the same as `wellfed restore-stock`, on a thread of its own (`rust/src/restore.rs`), with the install's asks and events on its stream and an end of its own. `platform/restore_ports.dart` is what its screens reach outside Dart.
+
+- **The key lasts only as long as the restore.** It is made when the restore starts, enrolled with a Dispense press, and removed once an offer went out. A retry after an enrollment that went through needs no second press.
+- **An uncertain restore is never sent again.** Once the offer may be out, the screen has no way back, and a feeder that stops answering ends on "We can't tell if it went through" with no retry.
+- **A picked file takes the same checks as the kept backup:** `StockBackup::open`, then the signer's own pin.
 
 ## The install
 
@@ -45,7 +54,7 @@ Stock's install goes only from a build whose sources can be reviewed, as with ev
 
 ### The image it installs
 
-The APK carries one image, the consumer build signed with the key the image trusts, so nothing is downloaded at install time. The phone never holds a key a feeder trusts: the update manifest is signed elsewhere, and the run promotes it as signed.
+The APK carries one image, the consumer build signed with the key the image trusts, so nothing is downloaded at install time. Installing, the phone never holds a key a feeder trusts: the update manifest is signed elsewhere, and the run promotes it as signed.
 
 The image is a build-time input. `make app-installer-input` copies a review and its signed manifest into `assets/installer/`, which Git ignores, and prints the pin to build with:
 

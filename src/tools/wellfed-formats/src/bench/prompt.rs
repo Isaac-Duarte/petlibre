@@ -46,9 +46,6 @@ pub enum Prompt {
     /// the owner checks the label and the router's client list before
     /// anything is sent to it.
     RecognizeFeeder { device: String, address: String },
-    /// The setup-frame route starts with stock's Reset hold, which erases
-    /// its plans before the installer can read them.
-    EraseStockPlans,
     /// Put stock into setup mode and join its access point.
     SetupMode,
     /// Join this computer back to the owner's network after the frame.
@@ -160,7 +157,7 @@ impl Prompt {
     /// The kind of answer this prompt takes.
     pub const fn expects(&self) -> Expects {
         match self {
-            Self::RecognizeFeeder { .. } | Self::EraseStockPlans => Expects::YesNo,
+            Self::RecognizeFeeder { .. } => Expects::YesNo,
             Self::SetOverride { .. }
             | Self::RestartFeeder
             | Self::SetupMode
@@ -178,7 +175,6 @@ impl Prompt {
             Self::SetOverride { .. } => "set-override",
             Self::RestartFeeder => "restart-feeder",
             Self::RecognizeFeeder { .. } => "recognize-feeder",
-            Self::EraseStockPlans => "erase-stock-plans",
             Self::SetupMode => "setup-mode",
             Self::JoinBack => "join-back",
             Self::OpenRecoveryWindow => "open-recovery-window",
@@ -202,9 +198,9 @@ impl Prompt {
             Self::SetOverride { name, broker } => format!(
                 "Point stock's broker name at this computer. In your router's DNS settings (or a \
                  resolver you run, if your router hands that one out), make {name} resolve to \
-                 {broker}. Only that name changes; stock keeps its Wi-Fi, its credentials and its \
-                 plans, and nothing is written to it. Remove the override once the install is \
-                 done: a feeder rolled back to stock would otherwise keep looking for this \
+                 {broker}. Only that name changes, and nothing is written to stock. Its meals do \
+                 not come along: set them up again in Wellfed afterwards. Remove the override \
+                 once the install is done: a feeder rolled back to stock would otherwise keep looking for this \
                  computer. While it stands, any other device that uses the same name reaches \
                  this computer too, and loses its connection to the vendor. Set the override."
             ),
@@ -216,19 +212,9 @@ impl Prompt {
                 "The broker trusted feeder {device}, connecting from {address}. Is this your \
                  feeder?"
             ),
-            Self::EraseStockPlans => "The fallback route starts with stock's Reset hold, which \
-                                      runs its factory restore: it erases stock's feeding plans, \
-                                      Wi-Fi and settings before the installer can read them, so \
-                                      no plans are imported. Note your plans in the vendor app \
-                                      now, to set them again on the replacement. Where your \
-                                      router (or a resolver you run) can override a DNS name, \
-                                      stop here and run with --broker-name instead: that keeps \
-                                      the plans. Erase stock's plans with the Reset hold and go \
-                                      on?"
-            .to_string(),
             Self::SetupMode => "Put stock into setup mode: unlock its panel (hold Lock about 5 s \
                                 if the lock light is on), then hold Reset (the rightmost button) \
-                                about 5 s. Join this computer to the access point the feeder \
+                                about 5 s, which erases its meals, Wi-Fi and settings. Join this computer to the access point the feeder \
                                 then opens."
                 .to_string(),
             Self::JoinBack => "Join this computer back to your own network.".to_string(),
@@ -291,7 +277,7 @@ mod tests {
         Button::Lock,
     ];
 
-    fn every() -> [Prompt; 9] {
+    fn every() -> [Prompt; 8] {
         [
             Prompt::SetOverride {
                 name: "broker.example.net".into(),
@@ -302,7 +288,6 @@ mod tests {
                 device: "AF_TEST".into(),
                 address: "192.168.1.31".into(),
             },
-            Prompt::EraseStockPlans,
             Prompt::SetupMode,
             Prompt::JoinBack,
             Prompt::OpenRecoveryWindow,

@@ -27,7 +27,7 @@ use wellfed_client::setup::{Credentials, Deframer, frame};
 use wellfed_formats::bench::prompt::Prompt;
 use wellfed_formats::canonical::sha256;
 use wellfed_formats::manifest::Provisioning;
-use wellfed_install::event::{Enrollment as KeyEnrollment, PlansResult, Wait};
+use wellfed_install::event::{Enrollment as KeyEnrollment, Wait};
 use wellfed_install::listen::{self, Listened, UNCERTAIN_WAIT};
 use wellfed_install::{
     Announcement, Api, Bind, Bluetooth, ClockPolicy, Discovery, Error, Event, Keys, Plan, Platform,
@@ -38,8 +38,8 @@ use wellfed_session::noise::Keypair;
 
 use crate::api::install::{
     DnsResult, ImageCheck, ImageProvisioning, InstallAnswer, InstallAsk, InstallEnd, InstallEvent,
-    InstallSpec, InstallStart, InstallUpdate, ListenUpdate, PendingInstall, PlansOutcome,
-    RequestRefusal, Resume, StopCase, UncertainWrite, WaitReason,
+    InstallSpec, InstallStart, InstallUpdate, ListenUpdate, PendingInstall, RequestRefusal, Resume,
+    StopCase, UncertainWrite, WaitReason,
 };
 use crate::api::setup::CONTROL_PIECE;
 use crate::api::store::{KnownFeeder, load_store, save_store};
@@ -319,7 +319,6 @@ impl Prompter for AppPrompter {
             Prompt::RecognizeFeeder { device, address } => {
                 InstallAsk::RecognizeFeeder { device, address }
             }
-            Prompt::EraseStockPlans => InstallAsk::EraseStockPlans,
             other => return Err(format!("the app does not ask {other:?}").into()),
         };
         match self.0.ask(ask).await? {
@@ -560,29 +559,11 @@ impl From<Event> for InstallEvent {
             | Event::GivenBackupKept { path } => Self::BackupKept {
                 path: path.display().to_string(),
             },
-            Event::StockPlans { import, .. } => Self::StockPlans {
-                converted: count(import.plans.iter().flatten().count()),
-                refused: count(import.refused().count()),
-            },
-            Event::WithoutStockPlans { .. } => Self::WithoutStockPlans,
             Event::Promoting => Self::Promoting,
             Event::Written { written, length } => Self::Written { written, length },
             Event::SessionDropped { .. } => Self::SessionDropped,
             Event::AlreadyActivated | Event::Activated => Self::Activated,
-            Event::PuttingPlans => Self::PuttingPlans,
-            Event::EarlierPut { base } => note(format!(
-                "an earlier put of the plans went against generation {base}"
-            )),
             Event::Installed { build } => Self::Installed { build },
-            Event::Plans(result) => Self::Plans {
-                result: match result {
-                    PlansResult::Set => PlansOutcome::Set,
-                    PlansResult::None => PlansOutcome::NoneHeld,
-                    PlansResult::NoneConverted => PlansOutcome::NoneConverted,
-                    PlansResult::NotRead => PlansOutcome::NotRead,
-                    PlansResult::Skipped(_) => PlansOutcome::Skipped,
-                },
-            },
             Event::FrameSent { .. } => note("the setup frame went out".to_string()),
             Event::DevicePinned { device, .. } => note(format!("device {device} was pinned")),
             Event::KnownKeyRefused { error }
@@ -591,7 +572,6 @@ impl From<Event> for InstallEvent {
             | Event::PressNotAnnounced { error }
             | Event::SignersUnread { error }
             | Event::FloorUnread { error }
-            | Event::PlansUnread { error }
             | Event::ResumeRecordKept { error } => note(error),
             Event::TrialClosed => note("the stock server closed its record".to_string()),
             Event::KeyEnrollment { outcome, .. } => note(match outcome {
@@ -613,15 +593,8 @@ impl From<Event> for InstallEvent {
                 "tried the feeder at {address}, answered: {answered}"
             )),
             Event::Signed { version, .. } => note(format!("signed at version {version}")),
-            Event::PlansKept { .. } => note("stock's plans were kept".to_string()),
-            Event::PlansSetAside { .. } => note("the applied plans were set aside".to_string()),
         }
     }
-}
-
-/// A count that cannot exceed the plan table's few slots.
-fn count(n: usize) -> u8 {
-    u8::try_from(n).unwrap_or(u8::MAX)
 }
 
 /// How a run's error reads on the screens. `from_stock` says whether this
@@ -646,9 +619,6 @@ pub fn stop_of(error: &Error, from_stock: bool) -> (StopCase, Resume) {
             }
             InstallError::StockClockUnset => (StopCase::ClockUnset, FromStart),
             InstallError::TimedOut(phase) => timed_out(*phase, from_stock),
-            InstallError::StockPlans(_) | InstallError::StockPlansUnread(_) => {
-                (StopCase::PlansUnreadable, FromBank0)
-            }
             InstallError::UpdateKey(_)
             | InstallError::UpdateKeyUncertain
             | InstallError::NotAboveFloor { .. }
@@ -657,16 +627,8 @@ pub fn stop_of(error: &Error, from_stock: bool) -> (StopCase, Resume) {
             | InstallError::Promotion(_)
             | InstallError::WrongPromotion { .. } => (StopCase::PromotionFailed, FromBank0),
             InstallError::FellBack => (StopCase::FellBack, FromBank0),
-            InstallError::PlansAlreadySet { .. }
-            | InstallError::PlansNotWritable
-            | InstallError::PlansStale { .. }
-            | InstallError::PlansRefused(_)
-            | InstallError::PlansUnread => (StopCase::PlansNotApplied, Nothing),
-            InstallError::PlansUncertain => (StopCase::PlansUnknown, Nothing),
             InstallError::FrameNotTaken => (StopCase::FrameNotTaken, FromStart),
-            InstallError::ResetDeclined | InstallError::WrongReplacement { .. } => {
-                (StopCase::Other, Nothing)
-            }
+            InstallError::WrongReplacement { .. } => (StopCase::Other, Nothing),
         },
         Error::Backup(inner) if inner.is_connection_lost() => (StopCase::NotAnswering, FromBank0),
         Error::Handover(_) | Error::FrameSend { .. } | Error::UdpSocket(_) => {
@@ -706,10 +668,7 @@ pub fn stop_of(error: &Error, from_stock: bool) -> (StopCase, Resume) {
             (StopCase::Other, FromBank0)
         }
         Error::NotAnswering { .. } | Error::NoAddress => (StopCase::NotAnswering, FromBank0),
-        Error::NoHomeNetwork
-        | Error::KeepPlans(_)
-        | Error::PlansNotSent(_)
-        | Error::KeepPutBase(_) => (StopCase::Other, FromBank0),
+        Error::NoHomeNetwork => (StopCase::Other, FromBank0),
         Error::StockServer(_)
         | Error::Images(_)
         | Error::StockServerGone
@@ -718,7 +677,6 @@ pub fn stop_of(error: &Error, from_stock: bool) -> (StopCase, Resume) {
             Some(Unsettled::Request(_)) => (StopCase::Uncertain, Nothing),
             Some(Unsettled::UpdateKey) => uncertain_write(UncertainWrite::UpdateKey),
             Some(Unsettled::Promotion) => uncertain_write(UncertainWrite::Promotion),
-            Some(Unsettled::Plans) => uncertain_write(UncertainWrite::Plans),
             None if stopped.phase <= Phase::Request && from_stock => {
                 (StopCase::Cancelled, FromStart)
             }
@@ -900,7 +858,6 @@ fn plan(
         signer: Signer::Manifest { manifest, version },
         home,
         backup: None,
-        without_stock_plans: spec.without_stock_plans,
         expect_device: None,
         feeder: None,
         address: spec
@@ -1101,7 +1058,7 @@ fn run_on_this_thread(
             };
         }
     };
-    let (config, backups) = (plan.stock.config.clone(), plan.backups.clone());
+    let config = plan.stock.config.clone();
     let platform = Platform {
         prompter: AppPrompter(asks.clone()),
         bluetooth: AppBluetooth(asks.clone()),
@@ -1120,16 +1077,6 @@ fn run_on_this_thread(
         }
         Err(error) => {
             let (case, resume) = stop_of(&error, from_stock);
-            // Installed and confirmed, with only its meals left behind: there
-            // is nothing to pick up, and the owner was told they are not sent
-            // again. A failure leaves what still stops a put.
-            if matches!(case, StopCase::PlansNotApplied | StopCase::PlansUnknown) {
-                let now_ms = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map_or(0, |now| u64::try_from(now.as_millis()).unwrap_or(u64::MAX));
-                let _ = wellfed_install::storage::give_up_plans(&backups, now_ms);
-                let _ = wellfed_install::stock::forget_enrollment(&config);
-            }
             InstallEnd::Stopped {
                 case,
                 resume,
@@ -1281,12 +1228,6 @@ mod tests {
         assert_eq!(
             steps(InstallError::RequestUncertain),
             (StopCase::Uncertain, Resume::Nothing)
-        );
-        // Installed, with the meals unknown: not "not set", and no way on that
-        // could send them.
-        assert_eq!(
-            steps(InstallError::PlansUncertain),
-            (StopCase::PlansUnknown, Resume::Nothing)
         );
     }
 

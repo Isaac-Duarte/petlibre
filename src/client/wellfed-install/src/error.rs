@@ -68,15 +68,6 @@ pub enum Error {
         #[source]
         source: std::io::Error,
     },
-    #[error(
-        "set {} aside as applied; delete it so a resumed run does not apply it again",
-        path.display()
-    )]
-    SetAside {
-        path: PathBuf,
-        #[source]
-        source: std::io::Error,
-    },
 
     #[error("read the review's build-manifest.json")]
     ReviewManifest {
@@ -184,8 +175,6 @@ pub enum Error {
 
     #[error("this build serves no stock backup; update bank 0 first, or pass a copy you hold")]
     NoBackupServed,
-    #[error("this build serves no stock backup or plans; update bank 0 first")]
-    NoPlansServed,
     #[error("read bank 1")]
     Bank1(#[source] ReadError),
     #[error(
@@ -203,20 +192,6 @@ pub enum Error {
     },
     #[error("{} already holds another copy of stock; it is never replaced", path.display())]
     BackupExists { path: PathBuf },
-    #[error(
-        "{} already holds another copy of stock's plans; it is never replaced: move it aside to keep this one",
-        path.display()
-    )]
-    PlansExist { path: PathBuf },
-    #[error(
-        "{} says an earlier put of stock's plans went against generation {kept}, not {base}; nothing is sent",
-        path.display()
-    )]
-    PutBaseExists {
-        path: PathBuf,
-        kept: wellfed_model::Generation,
-        base: wellfed_model::Generation,
-    },
     #[error("the stock backup is not stock's pinned image")]
     Unverified,
     /// No verified backup could be had: the promotion, which overwrites
@@ -226,13 +201,6 @@ pub enum Error {
     /// The owner's own stock copy could not be kept before the promotion.
     #[error(transparent)]
     KeepGiven(Box<Error>),
-    #[error(
-        "Promotion refused: stock's plans could not be kept; the feeder runs the replacement from bank 0 and still holds stock in bank 1"
-    )]
-    KeepPlans(#[source] Box<Error>),
-    /// The put's base could not be kept, so the put did not go out.
-    #[error("stock's plans were not sent: the generation they go against could not be kept")]
-    KeepPutBase(#[source] Box<Error>),
     /// Bluetooth setup failed; the replacement runs from bank 0.
     #[error(transparent)]
     Setup(Box<Error>),
@@ -273,12 +241,8 @@ pub enum Error {
     NoManifest,
     #[error("image.bin is shorter than its header")]
     ShortImage,
-    #[error("stock's plans were not sent")]
-    PlansNotSent(#[source] Box<Error>),
     #[error("the enrollment ended before this step")]
     EnrollmentEnded,
-    #[error("the plans' put was answered before this step")]
-    PutEnded,
 
     /// The steps ended the install.
     #[error(transparent)]

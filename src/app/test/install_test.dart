@@ -732,9 +732,8 @@ void main() {
   group('2.8 done', () {
     Future<(FakeRun, FakeBook)> finished(
       WidgetTester tester,
-      FakeInstallPorts ports, {
-      PlansOutcome plans = PlansOutcome.set_,
-    }) async {
+      FakeInstallPorts ports,
+    ) async {
       final book = FakeBook();
       final run = await _toRun(tester, ports, book: book);
       run.event(
@@ -745,22 +744,20 @@ void main() {
       );
       run.event(const InstallEvent.joined(address: '192.168.1.40:4747'));
       run.event(const InstallEvent.backupKept(path: '/data/stock.bin'));
-      run.event(const InstallEvent.stockPlans(converted: 3, refused: 0));
       run.event(const InstallEvent.installed(build: 'ab'));
-      run.event(InstallEvent.plans(result: plans));
       run.end(const InstallEnd.done());
       await settle(tester);
       return (run, book);
     }
 
     testWidgets(
-      'it says what came along and to remove the record, and names the feeder',
+      'it says to set up meals and remove the record, and names the feeder',
       (tester) async {
         final ports = FakeInstallPorts();
         final (_, book) = await finished(tester, ports);
 
         expect(find.text('Your feeder runs Wellfed.'), findsOneWidget);
-        expect(find.text('Its 3 meals came along.'), findsOneWidget);
+        expect(find.text('Set up its meals here next.'), findsOneWidget);
         expect(
           find.textContaining('Remove the DNS record now.', findRichText: true),
           findsOneWidget,
@@ -786,18 +783,6 @@ void main() {
       await _tap(tester, 'Save the backup somewhere else');
       expect(ports.shared, ['/data/stock.bin']);
     });
-
-    for (final (plans, words) in [
-      (PlansOutcome.noneHeld, 'It had no meals set.'),
-      (PlansOutcome.noneConverted, "Its meals couldn't be moved."),
-      (PlansOutcome.skipped, 'Its meals stayed behind.'),
-      (PlansOutcome.notRead, 'Its meals stayed behind.'),
-    ]) {
-      testWidgets('meals: $words', (tester) async {
-        await finished(tester, FakeInstallPorts(), plans: plans);
-        expect(find.textContaining(words), findsOneWidget);
-      });
-    }
   });
 
   group('2.9 stopped', () {
@@ -1010,20 +995,6 @@ void main() {
       expect(ports.specs.last.calibrateClock, isTrue);
     });
 
-    testWidgets('unreadable meals are the owner\'s to leave', (tester) async {
-      final ports = FakeInstallPorts();
-      await _stopped(
-        tester,
-        ports,
-        const StopCase.plansUnreadable(),
-        resume: Resume.fromBank0,
-      );
-      expect(find.text("Its meals couldn't be read"), findsOneWidget);
-      await _tap(tester, 'Go on without its meals');
-      expect(ports.specs.last.withoutStockPlans, isTrue);
-      expect(ports.specs.last.start, const InstallStart.bank0());
-    });
-
     for (final (stop, title, resume, button) in [
       (
         const StopCase.noFeederCame(),
@@ -1092,12 +1063,6 @@ void main() {
         'Pick up where it stopped',
       ),
       (
-        const StopCase.uncertainWrite(write: UncertainWrite.plans),
-        "We don't know if that last step ran",
-        Resume.fromBank0,
-        'Pick up where it stopped',
-      ),
-      (
         const StopCase.serverFailed(),
         "This phone couldn't serve the feeder",
         Resume.fromStart,
@@ -1112,18 +1077,6 @@ void main() {
       (
         const StopCase.other(),
         'The install stopped',
-        Resume.nothing,
-        'Go to Home',
-      ),
-      (
-        const StopCase.plansUnknown(),
-        "We don't know if its meals came along",
-        Resume.nothing,
-        'Go to Home',
-      ),
-      (
-        const StopCase.plansNotApplied(),
-        'Wellfed is installed, but its meals are not',
         Resume.nothing,
         'Go to Home',
       ),
@@ -1572,10 +1525,6 @@ void main() {
       final run = await _toHandover(tester, ports);
       expect(ports.specs.single.start, const InstallStart.reset());
       expect(ports.specs.single.home?.ssid, 'Maple St');
-
-      run.ask(1, const InstallAsk.eraseStockPlans());
-      await settle(tester);
-      expect(run.answers[1], const InstallAnswer.yes(yes: true));
 
       // The broker listens first, then the owner joins.
       run.ask(2, const InstallAsk.joinFeederNetwork());

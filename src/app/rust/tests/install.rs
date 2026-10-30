@@ -7,7 +7,6 @@
 
 use std::future::Future;
 use std::path::Path;
-use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -22,17 +21,13 @@ use wellfed_app_bridge::api::model::SetupRefusal;
 use wellfed_app_bridge::api::setup::WifiCredentials;
 use wellfed_app_bridge::api::store::KnownFeeder;
 use wellfed_app_bridge::install::{Listener, Pin, Run, check_dns, check_image, pending};
-use wellfed_client::install::plans::{self, StockPlan, StockPlanState, StockPlans};
 use wellfed_client::setup::{Deframer, frame};
-use wellfed_connect::Connection;
-use wellfed_feeder_sim::banks::BANK1_BUILD;
 use wellfed_feeder_sim::flash::Flash;
 use wellfed_feeder_sim::harness::{Running, SetupFeeder};
 use wellfed_formats::canonical::sha256;
 use wellfed_formats::manifest::{BuildManifest, Provisioning};
 use wellfed_formats::review::{Details, ImageKind, ImageReview, ReviewKind};
 use wellfed_formats::stock::Enrollment;
-use wellfed_model::{Answer, Op, PLANS, Plan, Plans, Weekdays};
 use wellfed_session::noise::Keypair;
 use wellfed_session::setup_code::{Button, Code};
 
@@ -138,7 +133,6 @@ impl Fixture {
             image_dir: path("image"),
             data_dir: path("install"),
             calibrate_clock: false,
-            without_stock_plans: false,
             forget_enrollment: false,
             setup_again: false,
         }
@@ -854,26 +848,6 @@ fn another_feeder_is_served_after_the_owner_said_no_to_the_first() {
     });
 }
 
-/// Saying no to the erase ends the run with nothing sent: the frame comes only
-/// after the owner accepted it and the phone is on the feeder's network.
-#[test]
-fn a_reset_run_asks_for_the_erase_first() {
-    local(async {
-        let fixture = Fixture::new(Provisioning::Consumer);
-        let (run, mut heard) = started(&fixture, fixture.spec(InstallStart::Reset, "127.41.8.40"));
-
-        let (id, ask) = next_ask(&mut heard).await;
-        assert_eq!(ask, InstallAsk::EraseStockPlans);
-        run.answer(id, InstallAnswer::Yes { yes: false });
-
-        let end = ended(&mut heard).await;
-        let InstallEnd::Stopped { resume, .. } = end else {
-            panic!("{end:?}");
-        };
-        assert_eq!(resume, Resume::Nothing);
-    });
-}
-
 /// A phone that cannot join the feeder's network has asked nothing of the
 /// feeder, so the owner may simply start over.
 #[test]
@@ -885,8 +859,6 @@ fn a_join_that_fails_stops_the_reset_run_before_the_frame() {
         let fixture = Fixture::new(Provisioning::Consumer);
         let (run, mut heard) = started(&fixture, fixture.spec(InstallStart::Reset, "127.41.8.41"));
 
-        let (id, _) = next_ask(&mut heard).await;
-        run.answer(id, InstallAnswer::Yes { yes: true });
         let (id, ask) = next_ask(&mut heard).await;
         assert_eq!(ask, InstallAsk::JoinFeederNetwork);
         run.answer(
@@ -1232,200 +1204,5 @@ fn setup_again_on_another_feeder_stops_and_keeps_the_record() {
             recorded_identity(&record),
             wellfed_formats::hex::encode(ours.public())
         );
-    });
-}
-
-/// `await_confirm` waits this long before it looks, and then a while more.
-const THROUGH_THE_CONFIRMATION: Duration = Duration::from_secs(60);
-
-/// A new id: a repeated one is answered from what the feeder remembers of it.
-fn request_id() -> [u8; 16] {
-    static NEXT: AtomicU8 = AtomicU8::new(1);
-    [NEXT.fetch_add(1, Ordering::Relaxed); 16]
-}
-
-/// A session with the simulated feeder, as the owner's other client.
-async fn owner_session(sim: &Running, keys: &Keypair) -> Connection {
-    Connection::open(keys, sim.identity, sim.address, [0x11; 32])
-        .await
-        .unwrap()
-}
-
-async fn read_plans(owner: &mut Connection) -> Plans {
-    match owner.ask(request_id(), &Op::GetPlans).await.unwrap() {
-        Answer::Plans(plans) => plans,
-        other => panic!("{other:?}"),
-    }
-}
-
-/// A stopped put's leavings on a feeder running this build on bank 1: its
-/// record, the kept copy of stock's plans, and the base that put went against.
-/// The fixture's image is the one the simulator runs, at its confirmed version.
-async fn after_a_stopped_put(
-    sim: &Running,
-    owner: &mut Connection,
-) -> (Fixture, InstallSpec, std::path::PathBuf) {
-    let Answer::Update(update) = owner.ask(request_id(), &Op::UpdateState).await.unwrap() else {
-        panic!("no update state");
-    };
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::create_dir(dir.path().join("image")).unwrap();
-    let pin = image_of(
-        &dir.path().join("image"),
-        Provisioning::Consumer,
-        update.min_version,
-        BANK1_BUILD,
-    );
-    let fixture = Fixture { dir, pin };
-
-    let spec = fixture.spec(InstallStart::Bank0, "127.41.8.36");
-    let data = Path::new(&spec.data_dir).to_path_buf();
-    let backups = data.join("backups");
-    std::fs::create_dir_all(&backups).unwrap();
-    enroll(&data, "AF_A", "127.41.8.37");
-    let paired = serde_json::json!({
-        "device": "AF_A",
-        "identity": wellfed_formats::hex::encode(&sim.identity),
-        "address": sim.address.to_string(),
-    });
-    std::fs::write(
-        backups.join("installing.json"),
-        serde_json::to_vec(&paired).unwrap(),
-    )
-    .unwrap();
-
-    let mut stock = StockPlans::default();
-    stock.slots[0] = Some(StockPlan {
-        id: 101,
-        hour: 7,
-        minute: 30,
-        once: false,
-        days: [1, 2, 3, 4, 5, 6, 7],
-        call: false,
-        call_times: 0,
-        portions: 2,
-        state: StockPlanState::Idle,
-        sync_ms: 0,
-        skip_until_ms: 0,
-    });
-    let sectors = stock.encode();
-    let feeder = backups.join(wellfed_formats::hex::encode(&sim.identity));
-    std::fs::create_dir_all(&feeder).unwrap();
-    std::fs::write(
-        feeder.join("stock-plans.bin"),
-        plans::kept(sectors[0], &sectors[0x1000..0x1000 + plans::ENTRIES_LEN]),
-    )
-    .unwrap();
-    let base = read_plans(owner).await.generation;
-    std::fs::write(
-        feeder.join("stock-plans.base.json"),
-        serde_json::to_vec(&base).unwrap(),
-    )
-    .unwrap();
-
-    (fixture, spec, feeder)
-}
-
-/// A run to its end, through the confirmation's wait. Answers the discovery it
-/// asks for with nothing: the record says where the feeder is.
-async fn to_the_end(run: &Run, heard: &mut mpsc::UnboundedReceiver<InstallUpdate>) -> InstallEnd {
-    loop {
-        let update = tokio::time::timeout(THROUGH_THE_CONFIRMATION, heard.recv())
-            .await
-            .expect("no update in time")
-            .expect("the run ended with no last update");
-        match update {
-            InstallUpdate::Ask {
-                id,
-                ask: InstallAsk::Locate { .. },
-            } => run.answer(id, InstallAnswer::Located { address: None }),
-            InstallUpdate::Ask { ask, .. } => panic!("{ask:?}"),
-            InstallUpdate::Event { .. } => {}
-            InstallUpdate::Ended { end } => return end,
-        }
-    }
-}
-
-/// The owner emptied the table after the stopped put landed: empty, but at
-/// another generation. The resume finds the base, sends nothing and says so; the
-/// first put's path would have put the deleted meal back. The base, the kept copy
-/// and the record then go together.
-#[test]
-fn a_resume_after_the_owner_edited_the_plans_sends_nothing() {
-    local(async {
-        let keys = Keypair::from_secret([0x51; 32]);
-        let sim = Running::start(&Flash::memory(), Some(*keys.public())).await;
-        let mut owner = owner_session(&sim, &keys).await;
-        let (fixture, spec, feeder) = after_a_stopped_put(&sim, &mut owner).await;
-        let data = Path::new(&spec.data_dir).to_path_buf();
-
-        let base = read_plans(&mut owner).await.generation;
-        let mut meal = [None; PLANS];
-        meal[1] = Some(Plan {
-            minute: 600,
-            portions: 1,
-            days: Weekdays::ONCE,
-            enabled: false,
-            call: 0,
-        });
-        let landed = Op::PutPlans { base, plans: meal };
-        assert!(matches!(
-            owner.ask(request_id(), &landed).await.unwrap(),
-            Answer::Done { .. }
-        ));
-        let moved = read_plans(&mut owner).await.generation;
-        let emptied = Op::PutPlans {
-            base: moved,
-            plans: [None; PLANS],
-        };
-        assert!(matches!(
-            owner.ask(request_id(), &emptied).await.unwrap(),
-            Answer::Done { .. }
-        ));
-        let table = read_plans(&mut owner).await;
-        assert_eq!(table.plans, [None; PLANS]);
-        assert_ne!(table.generation, base);
-
-        let (run, mut heard) = started(&fixture, spec);
-        let end = to_the_end(&run, &mut heard).await;
-
-        let InstallEnd::Stopped { case, resume, .. } = end else {
-            panic!("{end:?}");
-        };
-        assert_eq!(case, StopCase::PlansUnknown);
-        assert_eq!(resume, Resume::Nothing);
-        assert_eq!(read_plans(&mut owner).await, table, "the put went out");
-
-        assert!(!feeder.join("stock-plans.base.json").exists());
-        assert!(!feeder.join("stock-plans.bin").exists());
-        assert!(feeder.join("stock-plans.unapplied.bin").exists());
-        assert_eq!(pending(&data), PendingInstall::Nothing);
-        sim.stop().await;
-    });
-}
-
-/// Nothing changed the table since the stopped put: it goes once more, the run
-/// reaches its end, and the base goes with the kept copy.
-#[test]
-fn a_resume_from_an_unchanged_generation_puts_once_and_clears_its_base() {
-    local(async {
-        let keys = Keypair::from_secret([0x51; 32]);
-        let sim = Running::start(&Flash::memory(), Some(*keys.public())).await;
-        let mut owner = owner_session(&sim, &keys).await;
-        let (fixture, spec, feeder) = after_a_stopped_put(&sim, &mut owner).await;
-        let before = read_plans(&mut owner).await;
-
-        let (run, mut heard) = started(&fixture, spec);
-        let end = to_the_end(&run, &mut heard).await;
-
-        assert_eq!(end, InstallEnd::Done);
-        let after = read_plans(&mut owner).await;
-        assert!(after.plans.iter().any(Option::is_some), "nothing was put");
-        assert_eq!(after.generation.0, before.generation.0 + 1);
-
-        assert!(!feeder.join("stock-plans.base.json").exists());
-        assert!(!feeder.join("stock-plans.bin").exists());
-        assert!(feeder.join("stock-plans.applied.bin").exists());
-        sim.stop().await;
     });
 }

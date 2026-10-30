@@ -120,9 +120,6 @@ pub struct InstallArgs {
     /// Have the stock server set stock's clock even when it is far off.
     #[arg(long)]
     pub calibrate_clock: bool,
-    /// Promote even if stock's stored plans cannot be read.
-    #[arg(long)]
-    pub without_stock_plans: bool,
     /// This computer's client key; the installer's default otherwise.
     #[arg(long)]
     pub keys: Option<PathBuf>,
@@ -174,7 +171,6 @@ impl InstallArgs {
         for (flag, on) in [
             ("--from-bank0", self.from_bank0),
             ("--calibrate-clock", self.calibrate_clock),
-            ("--without-stock-plans", self.without_stock_plans),
         ] {
             if on {
                 arguments.push(flag.into());
@@ -842,7 +838,6 @@ fn panel_presses(prompt: &Prompt) -> Option<Vec<Buttons>> {
         Prompt::SetOverride { .. }
         | Prompt::RestartFeeder
         | Prompt::RecognizeFeeder { .. }
-        | Prompt::EraseStockPlans
         | Prompt::SetupMode
         | Prompt::JoinBack
         | Prompt::OpenRecoveryWindow => None,
@@ -894,7 +889,6 @@ mod tests {
             from_bank0: false,
             enroll_minutes: Some(5),
             calibrate_clock: true,
-            without_stock_plans: false,
             keys: None,
             address: None,
         };

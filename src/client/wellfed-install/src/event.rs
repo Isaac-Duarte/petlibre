@@ -10,7 +10,7 @@
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 
-use wellfed_client::install::{DnsCheck, Import, InstallError, StockNotReady};
+use wellfed_client::install::{DnsCheck, StockNotReady};
 use wellfed_client::update_key::Enrolled;
 
 /// One step of progress.
@@ -157,20 +157,6 @@ pub enum Event {
     BackupKept {
         path: PathBuf,
     },
-    /// Stock's plan sectors were kept at `path`.
-    PlansKept {
-        path: PathBuf,
-    },
-    /// Stock's plans, as the replacement will run them, read now or (with
-    /// `kept`) from the copy an earlier run kept there.
-    StockPlans {
-        import: Import,
-        kept: Option<PathBuf>,
-    },
-    /// The owner chose to go on without stock's plans, for this reason.
-    WithoutStockPlans {
-        skipped: InstallError,
-    },
     /// Bank 0 writes the replacement into bank 1.
     Promoting,
     /// The push's progress.
@@ -199,26 +185,9 @@ pub enum Event {
     RestoreKeyKept {
         error: String,
     },
-    /// The replacement's plans could not be read.
-    PlansUnread {
-        error: String,
-    },
-    /// Stock's converted plans go to the replacement, once.
-    PuttingPlans,
-    /// An earlier run may have sent its put of stock's plans, against this
-    /// generation: it goes again only from the same one.
-    EarlierPut {
-        base: wellfed_model::Generation,
-    },
     /// The install is confirmed on bank 1.
     Installed {
         build: String,
-    },
-    /// What became of stock's plans.
-    Plans(PlansResult),
-    /// The applied copy of stock's plans was set aside at `path`.
-    PlansSetAside {
-        path: PathBuf,
     },
     /// The resume record was not removed (the install is done regardless).
     ResumeRecordKept {
@@ -245,19 +214,4 @@ pub enum Enrollment {
     Enrolled(Enrolled),
     /// No answer came; the feeder's signer list decides instead.
     Unanswered,
-}
-
-/// What became of stock's plans at the end of the run.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PlansResult {
-    /// Skipped, for this reason.
-    Skipped(InstallError),
-    /// Neither read by this run nor kept unapplied by an earlier one.
-    NotRead,
-    /// Set on the replacement.
-    Set,
-    /// Stock held none.
-    None,
-    /// None converted: nothing was set.
-    NoneConverted,
 }

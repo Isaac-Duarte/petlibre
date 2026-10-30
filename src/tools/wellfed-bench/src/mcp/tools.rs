@@ -277,8 +277,6 @@ struct InstallArgs {
     enroll_minutes: Option<u64>,
     #[serde(default)]
     calibrate_clock: bool,
-    #[serde(default)]
-    without_stock_plans: bool,
     /// The owner key file; the installer's default otherwise.
     keys: Option<String>,
     /// The replacement's address.
@@ -893,7 +891,6 @@ pub(crate) fn agent_may_answer(prompt: &Prompt) -> Result<(), ToolError> {
         // answer, which only lets the installer ask its next question.
         Prompt::SetOverride { .. }
         | Prompt::RestartFeeder
-        | Prompt::EraseStockPlans
         | Prompt::SetupMode
         | Prompt::JoinBack
         | Prompt::KeySetupCode { .. }
@@ -1126,7 +1123,6 @@ fn job_words(name: &str, args: JsonObject) -> Result<Vec<String>, ToolError> {
                 .switch("--from-bank0", args.from_bank0)
                 .value("--enroll-minutes", args.enroll_minutes)
                 .switch("--calibrate-clock", args.calibrate_clock)
-                .switch("--without-stock-plans", args.without_stock_plans)
                 .value("--keys", args.keys)
                 .value("--address", args.address)
         }

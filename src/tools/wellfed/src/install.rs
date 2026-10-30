@@ -2,8 +2,8 @@
 //! replacement confirmed on bank 1 ([consumer installation]).
 //!
 //! The run is `wellfed_install`'s, the same the Android app runs: stock's
-//! server in this process, the request, pairing, the backup, the promotion
-//! and the plans' import. This module is its shell for a computer: it reads
+//! server in this process, the request, pairing, the backup and the promotion.
+//! This module is its shell for a computer: it reads
 //! and checks the review, the keys, the manifest and the networks before
 //! the feeder is touched, holds the bench lease beside the stock config for
 //! the whole run, and gives the run this computer's platform:
@@ -21,8 +21,7 @@
 //!
 //! SIGTERM (a job's cancel) and SIGINT end the run through the same stop as
 //! its end. The report names the step it stopped in and any write whose
-//! outcome had not settled; that write is uncertain, and never sent again, but
-//! for the plans' put, which a later run sends only from an unchanged generation.
+//! outcome had not settled; that write is uncertain, and never sent again.
 //!
 //! [consumer installation]: ../../../../docs/firmware/consumer-installation.md
 
@@ -106,12 +105,12 @@ pub(crate) struct InstallArgs {
     backups: PathBuf,
     /// Stock's broker name (the vendor's, which Wellfed does not ship):
     /// the owner's resolver is to answer it with this computer, and the
-    /// restarted feeder connects here with nothing written to it, so its
-    /// plans stay for the import. The DNS-first route.
+    /// restarted feeder connects here with nothing written to it. The
+    /// DNS-first route.
     #[arg(long, conflicts_with_all = ["ssid", "from_bank0"])]
     broker_name: Option<String>,
     /// The fallback where the router cannot override a name: the owner
-    /// holds Reset, which erases stock's plans, and the setup frame points
+    /// holds Reset, and the setup frame points
     /// stock at this network (passphrase from standard input) and the
     /// installer's broker. Without it or --broker-name, stock already
     /// connects to the installer's broker.
@@ -146,11 +145,6 @@ pub(crate) struct InstallArgs {
     /// The replacement's address; where stock connected from otherwise.
     #[arg(long)]
     address: Option<String>,
-    /// Promote even if stock's stored plans cannot be read (a cut save, or
-    /// a build that does not serve them). Without it the run stops before
-    /// promotion, with stock intact in bank 1.
-    #[arg(long)]
-    without_stock_plans: bool,
     /// Have the stock server set stock's clock even when its own reading is
     /// unknown or more than 10 minutes off. Stock may refuse the install
     /// with its clock unset, but once set it may run meals that came due in
@@ -329,7 +323,6 @@ pub(crate) async fn run(args: InstallArgs) -> Result<()> {
         signer,
         home,
         backup,
-        without_stock_plans: args.without_stock_plans,
         expect_device: args.expect_device.clone(),
         feeder: args.feeder.clone(),
         address,
@@ -392,13 +385,6 @@ fn explain(error: wellfed_install::Error, calibrate_clock: bool) -> anyhow::Erro
     use wellfed_install::Error;
 
     match error {
-        Error::Steps(InstallError::StockPlans(_) | InstallError::StockPlansUnread(_)) => {
-            anyhow::Error::from(error).context(
-                "Promotion refused: nothing was promoted, and the feeder runs the replacement \
-                 from bank 0 and still holds stock in bank 1. Run again with --from-bank0 \
-                 --without-stock-plans to install without stock's plans",
-            )
-        }
         Error::Steps(InstallError::StockClockUnset) if !calibrate_clock => {
             anyhow::Error::from(error).context(
                 "If the stock server's log above shows its NTP reply held stock's clock, run \

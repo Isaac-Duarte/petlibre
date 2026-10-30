@@ -4,7 +4,7 @@ name = "wellfed-install"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
-description = "The install from stock 1.1.15 to Wellfed, driven over tokio: stock's server in-process, pairing, the backup, the promotion and the plans' import, with prompts, Bluetooth, discovery and progress from the platform"
+description = "The install from stock 1.1.15 to Wellfed, driven over tokio: stock's server in-process, pairing, the backup and the promotion, with prompts, Bluetooth, discovery and progress from the platform"
 publish.workspace = true
 
 [dependencies]

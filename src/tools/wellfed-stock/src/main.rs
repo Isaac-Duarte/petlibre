@@ -25,7 +25,7 @@ use wellfed_stock::{
     clock,
     config::{self, State},
     mqtt::{broker, broker::DeviceAuth},
-    neighbour, network, ota, plans,
+    neighbour, network, ota,
     server::{self, OtaTrial, Server},
 };
 
@@ -184,11 +184,6 @@ enum Action {
         #[arg(long, default_value_t = std::net::SocketAddr::V4(SETUP_ADDRESS))]
         to: std::net::SocketAddr,
     },
-
-    /// Read stock's stored feeding plans from a file (its two plan
-    /// sectors, or a whole flash read) and show what an install would
-    /// import: each plan converted, or refused by name. Touches no feeder.
-    Plans { file: PathBuf },
 
     /// Print the broker name stock's settings store, from a file (the
     /// settings sector at 0x3e8000, or a whole flash read): the name the
@@ -441,22 +436,6 @@ async fn main() -> Result<()> {
                 }),
             )
             .await?;
-        }
-
-        Action::Plans { file } => {
-            let bytes =
-                std::fs::read(&file).with_context(|| format!("reading {}", file.display()))?;
-            let stock = plans::decode(&bytes)?;
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .context("the clock is before 1970")?;
-            let now_ms = u64::try_from(now.as_millis()).context("the clock is past 2554")?;
-            print!(
-                "{}",
-                wellfed_client::install::plans::report(&wellfed_client::install::plans::convert(
-                    &stock, now_ms
-                ))
-            );
         }
 
         Action::BrokerName { file } => {

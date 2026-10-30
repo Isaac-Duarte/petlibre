@@ -1,6 +1,4 @@
 use super::*;
-use plans::{ENTRIES_LEN, StockPlan, StockPlanState};
-use wellfed_model::Weekdays;
 
 const BUILD: &str = "ab12000000000000000000000000000000000000000000000000000000000000";
 const OTHER: &str = "cd34000000000000000000000000000000000000000000000000000000000000";
@@ -61,7 +59,6 @@ fn run_to(phase: Phase) -> Install {
         Phase::ReadStatus,
         Phase::CloseTrial,
         Phase::Backup,
-        Phase::StockPlans,
         Phase::Sign,
         Phase::Promote,
         Phase::AwaitConfirm,
@@ -87,13 +84,8 @@ fn run_to(phase: Phase) -> Install {
                 bank: 0,
             }),
             Phase::Backup => install.trial_closed(),
-            Phase::StockPlans => {
-                install.backup(VerifiedBackup::for_tests());
-                assert_eq!(install.step(), Step::ReadStockPlans);
-            }
             Phase::Sign => {
-                let (count, entries) = stock_sectors(&[Some(breakfast())]);
-                install.stock_plans(count, &entries, NOW);
+                install.backup(VerifiedBackup::for_tests());
                 assert_eq!(install.step(), Step::ReadFloor);
             }
             Phase::Promote => {
@@ -107,44 +99,7 @@ fn run_to(phase: Phase) -> Install {
     install
 }
 
-/// 2026-10-28T12:00:00Z.
-const NOW: u64 = 1_792_843_200_000;
-
-/// Stock's daily 07:30 plan of 2 portions.
-fn breakfast() -> StockPlan {
-    StockPlan {
-        id: 101,
-        hour: 7,
-        minute: 30,
-        once: false,
-        days: [1, 2, 3, 4, 5, 6, 7],
-        call: false,
-        call_times: 0,
-        portions: 2,
-        state: StockPlanState::Idle,
-        sync_ms: 0,
-        skip_until_ms: 0,
-    }
-}
-
-/// The count byte and entries the bank-0 role serves for these plans.
-fn stock_sectors(plans: &[Option<StockPlan>]) -> (u8, Vec<u8>) {
-    let mut stock = StockPlans::default();
-    stock.slots[..plans.len()].copy_from_slice(plans);
-    let sectors = stock.encode();
-    (sectors[0], sectors[0x1000..0x1000 + ENTRIES_LEN].to_vec())
-}
-
-/// The replacement's plans as `GetPlans` answers them.
-fn view(plans: [Option<Plan>; PLANS], writable: bool) -> Plans {
-    Plans {
-        generation: Generation(4),
-        writable,
-        plans,
-    }
-}
-
-/// A run whose bank 1 just confirmed, with stock's breakfast imported.
+/// A run whose bank 1 just confirmed.
 fn confirmed() -> Install {
     let mut install = run_to(Phase::AwaitConfirm);
     install.confirmed(
@@ -225,9 +180,7 @@ fn the_passphrase_never_reaches_a_debug_line() {
 
     let mut install = Install::new(Provision::Frame(f), BUILD, bench()).unwrap();
     assert!(!format!("{install:?}").contains("hunter2"));
-    assert_eq!(install.step(), Step::ConfirmReset);
     assert!(!format!("{install:?}").contains("104, 117, 110"));
-    install.reset_accepted();
     let step = install.step();
     assert!(!format!("{step:?}").contains("hunter2"));
     let Step::SendFrame(bytes) = step else {
@@ -242,11 +195,6 @@ fn the_passphrase_never_reaches_a_debug_line() {
 fn a_whole_run_goes_from_the_frame_to_a_confirmed_replacement() {
     let mut install = Install::new(Provision::Frame(frame()), BUILD, bench()).unwrap();
 
-    // The Reset hold erases stock's plans: the owner accepts that first.
-    assert_eq!(install.step(), Step::ConfirmReset);
-    install.frame_sent();
-    assert_eq!(install.step(), Step::ConfirmReset, "no frame before it");
-    install.reset_accepted();
     let Step::SendFrame(bytes) = install.step() else {
         panic!("the frame goes first");
     };
@@ -276,11 +224,6 @@ fn a_whole_run_goes_from_the_frame_to_a_confirmed_replacement() {
 
     assert_eq!(install.step(), Step::Backup);
     install.backup(VerifiedBackup::for_tests());
-    assert_eq!(install.step(), Step::ReadStockPlans);
-    let (count, entries) = stock_sectors(&[Some(breakfast())]);
-    install.stock_plans(count, &entries, NOW);
-    let import = install.import().expect("stock's plans were read");
-    assert_eq!(import.plans.iter().flatten().count(), 1);
     assert_eq!(install.step(), Step::ReadFloor);
     install.floor(FLOOR);
     assert_eq!(install.step(), Step::Promote);
@@ -296,18 +239,7 @@ fn a_whole_run_goes_from_the_frame_to_a_confirmed_replacement() {
     assert_eq!(install.step(), Step::AwaitConfirm);
     install.confirmed(running, VERSION, None);
 
-    // Stock's plans go onto the confirmed replacement's empty table.
-    assert_eq!(install.step(), Step::ReadPlans);
-    install.plans(&view([None; PLANS], true));
-    let imported = install.import().unwrap().plans;
-    assert_eq!(
-        install.step(),
-        Step::PutPlans {
-            base: Generation(4),
-            plans: imported
-        }
-    );
-    install.plans_put(PlansPut::Done);
+    // No meals come along: the confirmation is the end.
     assert_eq!(install.step(), Step::Done);
 }
 
@@ -327,7 +259,6 @@ fn the_dns_route_sends_no_frame_and_waits_for_stock() {
     // Nothing moves it on but the owner's word.
     install.stock(&ready()).unwrap();
     install.frame_sent();
-    install.reset_accepted();
     assert_eq!(install.step(), Step::PointDns(dns()));
 
     install.dns_pointed();
@@ -355,16 +286,6 @@ fn stock_that_never_arrives_ends_the_run_with_nothing_sent() {
         install.step(),
         Step::Failed(InstallError::TimedOut(Phase::AwaitStock))
     );
-}
-
-#[test]
-fn declining_the_reset_hold_ends_the_run_before_anything_is_sent() {
-    let mut install = Install::new(Provision::Frame(frame()), BUILD, bench()).unwrap();
-    assert_eq!(install.step(), Step::ConfirmReset);
-    install.reset_declined();
-    assert_eq!(install.step(), Step::Failed(InstallError::ResetDeclined));
-    install.reset_accepted();
-    assert_eq!(install.step(), Step::Failed(InstallError::ResetDeclined));
 }
 
 #[test]
@@ -512,7 +433,7 @@ fn a_run_resumed_on_bank_0_asks_stock_nothing_and_still_needs_the_backup() {
     // No request this run, so no record to close: straight to the gate.
     assert_eq!(install.step(), Step::Backup);
     install.backup(VerifiedBackup::for_tests());
-    assert_eq!(install.step(), Step::ReadStockPlans);
+    assert_eq!(install.step(), Step::ReadFloor);
 }
 
 #[test]
@@ -577,7 +498,7 @@ fn promotion_is_refused_without_a_verified_backup() {
         bank: 0,
     });
     early.trial_closed();
-    assert_eq!(early.step(), Step::ReadStockPlans);
+    assert_eq!(early.step(), Step::ReadFloor);
 }
 
 #[test]
@@ -645,9 +566,6 @@ fn giving_up_names_the_wait() {
     );
 
     let mut done = confirmed();
-    done.plans(&view([None; PLANS], true));
-    assert!(matches!(done.step(), Step::PutPlans { .. }));
-    done.plans_put(PlansPut::Done);
     done.gave_up();
     assert_eq!(done.step(), Step::Done, "a finished run stays finished");
 }
@@ -666,397 +584,6 @@ fn answers_out_of_turn_change_nothing() {
     install.requested(Requested::Sent);
     install.stock_refused(None);
     assert_eq!(install.step(), Step::AwaitStock);
-}
-
-/// A table stock's boot could not read stops the run before promotion,
-/// with stock intact in bank 1, unless the owner chose to go on without
-/// it; so does a feeder that does not serve the sectors.
-#[test]
-fn unreadable_stock_plans_stop_before_promotion() {
-    let (_, entries) = stock_sectors(&[Some(breakfast())]);
-
-    let mut install = run_to(Phase::StockPlans);
-    install.stock_plans(11, &entries, NOW);
-    let error = InstallError::StockPlans(DecodeError::Count { count: 11 });
-    assert_eq!(install.step(), Step::Failed(error.clone()));
-    install.promoted(Ok(()));
-    assert_eq!(install.step(), Step::Failed(error));
-
-    let mut torn = run_to(Phase::StockPlans);
-    torn.stock_plans(0xff, &entries, NOW);
-    assert_eq!(
-        torn.step(),
-        Step::Failed(InstallError::StockPlans(DecodeError::Torn))
-    );
-
-    let mut refused = run_to(Phase::StockPlans);
-    refused.stock_plans_unread(Refusal::Unavailable);
-    assert_eq!(
-        refused.step(),
-        Step::Failed(InstallError::StockPlansUnread(Refusal::Unavailable))
-    );
-
-    // The owner's choice: promote, and say what was left behind.
-    let mut without = run_to(Phase::Backup);
-    without.without_stock_plans();
-    without.backup(VerifiedBackup::for_tests());
-    assert_eq!(without.step(), Step::ReadStockPlans);
-    without.stock_plans(0xff, &entries, NOW);
-    assert_eq!(without.step(), Step::ReadFloor);
-    without.floor(FLOOR);
-    assert_eq!(without.step(), Step::Promote);
-    assert_eq!(
-        without.plans_skipped(),
-        Some(&InstallError::StockPlans(DecodeError::Torn))
-    );
-    assert!(without.import().is_none());
-    without.promoted(Ok(()));
-    without.confirmed(
-        Replacement {
-            build: BUILD,
-            bank: 1,
-        },
-        VERSION,
-        None,
-    );
-    assert_eq!(without.step(), Step::Done, "nothing to apply");
-}
-
-/// Plans the owner already set on the replacement are never replaced, and
-/// a table that cannot be written is not tried.
-#[test]
-fn plans_already_set_are_never_replaced() {
-    let mut set = [None; PLANS];
-    set[3] = Some(Plan {
-        minute: 600,
-        portions: 1,
-        days: Weekdays::ONCE,
-        enabled: true,
-        call: 0,
-    });
-    let mut install = confirmed();
-    assert_eq!(install.step(), Step::ReadPlans);
-    install.plans(&view(set, true));
-    assert_eq!(
-        install.step(),
-        Step::Failed(InstallError::PlansAlreadySet { slots: vec![3] })
-    );
-
-    let mut locked = confirmed();
-    locked.plans(&view([None; PLANS], false));
-    assert_eq!(locked.step(), Step::Failed(InstallError::PlansNotWritable));
-}
-
-/// A run whose bank 1 just confirmed, whose earlier run sent its put against
-/// the generation [`view`] reads.
-fn confirmed_after_a_put() -> Install {
-    let mut install = run_to(Phase::AwaitConfirm);
-    install.earlier_put(Generation(4));
-    install.confirmed(
-        Replacement {
-            build: BUILD,
-            bank: 1,
-        },
-        VERSION,
-        None,
-    );
-    install
-}
-
-/// The same generation is proof nothing changed the table since that put went
-/// out, so it goes once more, against that generation.
-#[test]
-fn an_earlier_put_goes_again_once_from_an_unchanged_generation() {
-    let mut install = confirmed_after_a_put();
-    install.plans(&view([None; PLANS], true));
-    assert!(matches!(
-        install.step(),
-        Step::PutPlans {
-            base: Generation(4),
-            ..
-        }
-    ));
-    for _ in 0..3 {
-        assert_eq!(install.step(), Step::AwaitPut);
-    }
-    install.plans_put(PlansPut::Done);
-    assert_eq!(install.step(), Step::Done);
-}
-
-/// Anything else stops with nothing sent. An empty table at a later generation
-/// is the owner having emptied it after the put landed: putting it back would
-/// bring back meals the owner deleted.
-#[test]
-fn an_earlier_put_never_goes_again_once_the_generation_moved() {
-    let mut breakfast = [None; PLANS];
-    breakfast[3] = Some(Plan {
-        minute: 600,
-        portions: 1,
-        days: Weekdays::ONCE,
-        enabled: true,
-        call: 0,
-    });
-    let emptied = Plans {
-        generation: Generation(6),
-        writable: true,
-        plans: [None; PLANS],
-    };
-    let edited = Plans {
-        generation: Generation(5),
-        writable: true,
-        plans: breakfast,
-    };
-    for table in [emptied, edited] {
-        let mut install = confirmed_after_a_put();
-        install.plans(&table);
-        assert_eq!(install.step(), Step::Failed(InstallError::PlansUncertain));
-    }
-
-    let mut locked = confirmed_after_a_put();
-    locked.plans(&view([None; PLANS], false));
-    assert_eq!(locked.step(), Step::Failed(InstallError::PlansUncertain));
-
-    // A record that cannot be read is no proof of anything.
-    let mut unread = run_to(Phase::AwaitConfirm);
-    unread.earlier_put_unread();
-    unread.confirmed(
-        Replacement {
-            build: BUILD,
-            bank: 1,
-        },
-        VERSION,
-        None,
-    );
-    unread.plans(&view([None; PLANS], true));
-    assert_eq!(unread.step(), Step::Failed(InstallError::PlansUncertain));
-
-    // Not reading the plans leaves it just as unknown.
-    let mut silent = confirmed_after_a_put();
-    silent.gave_up();
-    assert_eq!(silent.step(), Step::Failed(InstallError::PlansUncertain));
-}
-
-/// A put already settled is not sent again, at whatever generation it landed.
-#[test]
-fn an_earlier_put_that_landed_is_done_and_not_sent_again() {
-    let mut install = confirmed_after_a_put();
-    let imported = install.import().unwrap().plans;
-    install.plans(&Plans {
-        generation: Generation(5),
-        writable: true,
-        plans: imported,
-    });
-    assert_eq!(install.step(), Step::Done);
-}
-
-/// The first put arriving late moves the table, and the feeder refuses the
-/// second by its base. That refusal says the first may have landed, not that
-/// someone else changed the plans.
-#[test]
-fn a_put_refused_after_an_earlier_one_leaves_it_uncertain() {
-    for refusal in [
-        Refusal::Stale {
-            current: Generation(5),
-        },
-        Refusal::Busy,
-    ] {
-        let mut install = confirmed_after_a_put();
-        install.plans(&view([None; PLANS], true));
-        assert!(matches!(install.step(), Step::PutPlans { .. }));
-        install.plans_put(PlansPut::Refused(refusal));
-        assert_eq!(install.step(), Step::Failed(InstallError::PlansUncertain));
-    }
-}
-
-/// With no record, no put ever left: the first put's path, and its refusals in
-/// their own words.
-#[test]
-fn no_earlier_put_is_the_first_puts_path() {
-    let mut install = confirmed();
-    install.plans(&view([None; PLANS], true));
-    assert!(matches!(install.step(), Step::PutPlans { .. }));
-    install.plans_put(PlansPut::Refused(Refusal::Stale {
-        current: Generation(5),
-    }));
-    assert_eq!(
-        install.step(),
-        Step::Failed(InstallError::PlansStale {
-            current: Generation(5)
-        })
-    );
-
-    // Reported any later, it changes nothing: this run's own unanswered put is
-    // judged by its read back.
-    let mut late = confirmed();
-    late.earlier_put(Generation(4));
-    late.plans(&view([None; PLANS], true));
-    assert!(matches!(late.step(), Step::PutPlans { .. }));
-    late.plans_put(PlansPut::Refused(Refusal::Invalid));
-    assert_eq!(
-        late.step(),
-        Step::Failed(InstallError::PlansRefused(Refusal::Invalid))
-    );
-}
-
-/// A stale or refused put changed nothing and ends the run; an
-/// unanswered one is judged by reading the plans back, never resent.
-#[test]
-fn the_put_goes_once_and_an_unanswered_one_is_read_back() {
-    let put = || {
-        let mut install = confirmed();
-        install.plans(&view([None; PLANS], true));
-        assert!(matches!(install.step(), Step::PutPlans { .. }));
-        // Until its answer comes, the put is never asked for again.
-        for _ in 0..3 {
-            assert_eq!(install.step(), Step::AwaitPut);
-            install.plans(&view([None; PLANS], true));
-        }
-        install
-    };
-
-    let mut stale = put();
-    stale.plans_put(PlansPut::Refused(Refusal::Stale {
-        current: Generation(5),
-    }));
-    assert_eq!(
-        stale.step(),
-        Step::Failed(InstallError::PlansStale {
-            current: Generation(5)
-        })
-    );
-
-    let mut refused = put();
-    refused.plans_put(PlansPut::Refused(Refusal::Invalid));
-    assert_eq!(
-        refused.step(),
-        Step::Failed(InstallError::PlansRefused(Refusal::Invalid))
-    );
-
-    // Unanswered, and the plans read back are the import: it landed.
-    let mut landed = put();
-    let imported = landed.import().unwrap().plans;
-    landed.plans_put(PlansPut::Unanswered);
-    assert_eq!(landed.step(), Step::ReadPlans);
-    landed.plans(&Plans {
-        generation: Generation(5),
-        writable: true,
-        plans: imported,
-    });
-    assert_eq!(landed.step(), Step::Done);
-
-    // Unanswered, and the table is still empty (or anything else): it is
-    // uncertain, and nothing is sent again.
-    let mut lost = put();
-    lost.plans_put(PlansPut::Unanswered);
-    lost.plans(&view([None; PLANS], true));
-    assert_eq!(lost.step(), Step::Failed(InstallError::PlansUncertain));
-    lost.plans_put(PlansPut::Done);
-    assert_eq!(lost.step(), Step::Failed(InstallError::PlansUncertain));
-
-    // Giving up on the read back leaves it uncertain, never resent.
-    let mut silent = put();
-    silent.plans_put(PlansPut::Unanswered);
-    silent.gave_up();
-    assert_eq!(silent.step(), Step::Failed(InstallError::PlansUncertain));
-
-    // Giving up before the put: installed, with the plans unread.
-    let mut unread = confirmed();
-    assert_eq!(unread.step(), Step::ReadPlans);
-    unread.gave_up();
-    assert_eq!(unread.step(), Step::Failed(InstallError::PlansUnread));
-}
-
-/// Stock with no plans, or only refused ones, leaves nothing to apply: the
-/// run ends at the confirmation, the refusals named in the import.
-#[test]
-fn nothing_converted_leaves_nothing_to_apply() {
-    let mut never = breakfast();
-    never.days = [0; 7];
-    for plans in [vec![], vec![Some(never)]] {
-        let mut install = run_to(Phase::StockPlans);
-        let (count, entries) = stock_sectors(&plans);
-        install.stock_plans(count, &entries, NOW);
-        assert_eq!(
-            install.import().unwrap().refused().count(),
-            plans.len(),
-            "a refused plan is named, not dropped"
-        );
-        assert_eq!(install.step(), Step::ReadFloor);
-        install.floor(FLOOR);
-        assert_eq!(install.step(), Step::Promote);
-        install.promoted(Ok(()));
-        install.confirmed(
-            Replacement {
-                build: BUILD,
-                bank: 1,
-            },
-            VERSION,
-            None,
-        );
-        assert_eq!(install.step(), Step::Done);
-    }
-}
-
-/// A run resumed after the promotion reads no sectors from bank 1: it takes
-/// the copy an earlier run kept, under the same empty-table check, and a
-/// table already holding the import (a put that landed unanswered) is done.
-#[test]
-fn a_resumed_run_applies_the_kept_copy() {
-    let resumed = || {
-        let mut install = Install::from_bank0(BUILD, bench());
-        install.paired();
-        install.replacement(Replacement {
-            build: BUILD,
-            bank: 1,
-        });
-        assert_eq!(install.step(), Step::AwaitConfirm);
-        install
-    };
-    let (count, entries) = stock_sectors(&[Some(breakfast())]);
-    let kept = plans::kept(count, &entries);
-    let running = Replacement {
-        build: BUILD,
-        bank: 1,
-    };
-
-    // The kept copy goes on through the usual check and one put.
-    let mut install = resumed();
-    install.kept_stock_plans(&kept, NOW);
-    let imported = install.import().expect("the kept copy converts").plans;
-    install.confirmed(running, VERSION, None);
-    assert_eq!(install.step(), Step::ReadPlans);
-    install.plans(&view([None; PLANS], true));
-    assert_eq!(
-        install.step(),
-        Step::PutPlans {
-            base: Generation(4),
-            plans: imported
-        }
-    );
-
-    // The import already there counts as applied; other plans still stop it.
-    let mut landed = resumed();
-    landed.kept_stock_plans(&kept, NOW);
-    landed.confirmed(running, VERSION, None);
-    landed.plans(&view(imported, true));
-    assert_eq!(landed.step(), Step::Done);
-
-    // Too late once the plans are being checked, and never over an import.
-    let mut late = confirmed();
-    let before = late.import().cloned();
-    late.kept_stock_plans(&plans::kept(0, &entries), NOW);
-    assert_eq!(late.import().cloned(), before);
-
-    // A kept copy that does not decode is the reason none were applied.
-    let mut torn = resumed();
-    torn.kept_stock_plans(&plans::kept(0xff, &entries), NOW);
-    assert!(torn.import().is_none());
-    assert_eq!(
-        torn.plans_skipped(),
-        Some(&InstallError::StockPlans(DecodeError::Torn))
-    );
-    torn.confirmed(running, VERSION, None);
-    assert_eq!(torn.step(), Step::Done);
 }
 
 /// The installer's update key, which a consumer image does not build in.
@@ -1096,7 +623,7 @@ fn consumer_on_bank0(above: u32) -> Install {
 }
 
 /// A run resumed on bank 0 carried to its floor read, its update key
-/// built in and stock's plans read.
+/// built in.
 fn resumed_to_floor(options: Options) -> Install {
     let mut install = Install::from_bank0(BUILD, options);
     install.paired();
@@ -1105,9 +632,6 @@ fn resumed_to_floor(options: Options) -> Install {
         bank: 0,
     });
     install.backup(VerifiedBackup::for_tests());
-    assert_eq!(install.step(), Step::ReadStockPlans);
-    let (count, entries) = stock_sectors(&[Some(breakfast())]);
-    install.stock_plans(count, &entries, NOW);
     assert_eq!(install.step(), Step::ReadFloor);
     install
 }
@@ -1169,7 +693,7 @@ fn the_update_key_is_enrolled_once_before_the_backup() {
     install.backup(VerifiedBackup::for_tests());
     assert_eq!(install.step(), Step::AwaitEnroll);
     install.key_enrolled(Ok(Enrolled::Now));
-    assert_eq!(install.step(), Step::ReadStockPlans);
+    assert_eq!(install.step(), Step::ReadFloor);
 
     // A bench image builds its key in: nothing is enrolled.
     let mut bench = run_to(Phase::Backup);
@@ -1291,9 +815,7 @@ fn a_resumed_consumer_run_enrolls_signs_and_promotes() {
     assert_eq!(install.step(), Step::EnrollKey(UPDATE_KEY));
     install.key_enrolled(Ok(Enrolled::Now));
     install.backup(VerifiedBackup::for_tests());
-    assert_eq!(install.step(), Step::ReadStockPlans);
-    let (count, entries) = stock_sectors(&[Some(breakfast())]);
-    install.stock_plans(count, &entries, NOW);
+    assert_eq!(install.step(), Step::ReadFloor);
 
     assert_eq!(install.step(), Step::ReadFloor);
     install.floor(FLOOR);
@@ -1313,7 +835,7 @@ fn a_resumed_consumer_run_enrolls_signs_and_promotes() {
     install.confirmed(running, 11, None);
     assert_eq!(install.step(), Step::AwaitConfirm);
     install.confirmed(running, 12, None);
-    assert_eq!(install.step(), Step::ReadPlans);
+    assert_eq!(install.step(), Step::Done);
 }
 
 /// Resumed after the activation, a run that signs for itself waits for the

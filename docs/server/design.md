@@ -25,7 +25,7 @@ src/client/wellfed-client    sans-IO. Noise sessions, pairing, invites, the Conn
 src/client/wellfed-connect   tokio loop over wellfed-client's Connection: locate, open, ask, request and receive (several outstanding), follow, join, recover,
                               and the update driver (Installer) the CLI and the server share
 src/client/wellfed-install   tokio driver of wellfed-client's install from stock: stock's server in-process (wellfed-stock),
-                              pairing, the backup, the promotion, the plans' import; the CLI and the Android app share it
+                              pairing, the backup, the promotion; the CLI and the Android app share it
 src/client/wellfed-server-client  a typed async client of the server's HTTP API over wellfed-api (reqwest with rustls,
                               the SSE stream included): the CLI and the server's own tests
 src/tools/wellfed-feeder-sim the host-simulated feeder: wellfed-feeder's loop pass and stores over real TCP

@@ -67,8 +67,6 @@ pub struct InstallSpec {
     /// unknown or far off. Stock may then run meals that came due in the
     /// jump, so the owner chooses this.
     pub calibrate_clock: bool,
-    /// Promote even if stock's plans cannot be read.
-    pub without_stock_plans: bool,
     /// Forget the feeder the broker trusted before: the owner said it was
     /// not theirs, or two answered.
     pub forget_enrollment: bool,
@@ -123,21 +121,6 @@ pub enum WaitReason {
     NoVersion,
     /// Stock is not on its mains adapter.
     NotOnAdapter,
-}
-
-/// What became of stock's plans at the end of the run.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PlansOutcome {
-    /// Set on the replacement.
-    Set,
-    /// Stock held none.
-    NoneHeld,
-    /// None converted: nothing was set.
-    NoneConverted,
-    /// Neither read by this run nor kept by an earlier one.
-    NotRead,
-    /// Left behind, as the owner chose.
-    Skipped,
 }
 
 /// One step of progress, for the screens.
@@ -214,13 +197,6 @@ pub enum InstallEvent {
     BackupKept {
         path: String,
     },
-    /// Stock's plans, as the replacement will run them.
-    StockPlans {
-        converted: u8,
-        refused: u8,
-    },
-    /// The owner chose to go on without stock's plans.
-    WithoutStockPlans,
     /// Bank 0 writes the replacement into bank 1.
     Promoting,
     /// The push's progress.
@@ -232,15 +208,9 @@ pub enum InstallEvent {
     SessionDropped,
     /// Bank 1 is activated; the feeder restarts into it.
     Activated,
-    /// Stock's converted plans go to the replacement, once.
-    PuttingPlans,
     /// The install is confirmed on bank 1.
     Installed {
         build: String,
-    },
-    /// What became of stock's plans.
-    Plans {
-        result: PlansOutcome,
     },
     /// Something only a log needs: a read the run tries again, a record it
     /// could not remove.
@@ -256,9 +226,6 @@ pub enum InstallAsk {
     SetOverride { name: String, broker: String },
     /// Answered done once the owner was told: the broker already listens.
     RestartFeeder,
-    /// The reset route: the owner answers that resetting erases the feeder's
-    /// meals, which the screen before asked.
-    EraseStockPlans,
     /// Join the feeder's setup network, answered done once this process's
     /// sockets go over it. The broker already listens.
     JoinFeederNetwork,
@@ -302,16 +269,13 @@ pub enum InstallAnswer {
 }
 
 /// A write whose outcome is not settled. It may have run, and it is never sent
-/// again, but for the plans' put, which a pick-up sends only from a generation
-/// that has not moved.
+/// again.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UncertainWrite {
     /// The update key's enrollment.
     UpdateKey,
     /// The signed update, pushed into bank 1.
     Promotion,
-    /// Stock's converted plans.
-    Plans,
 }
 
 /// Why the server would not send the install request. Nothing reached stock.
@@ -393,19 +357,10 @@ pub enum StopCase {
     WifiRefused,
     /// The image needs a Wi-Fi to be given, and none was. Nothing was sent.
     NoWifiGiven,
-    /// Stock's plans could not be read, so nothing was promoted.
-    PlansUnreadable,
     /// The promotion was refused or failed; the feeder runs bank 0.
     PromotionFailed,
     /// Bank 1's trial boot fell back to bank 0.
     FellBack,
-    /// The replacement is installed and confirmed, but stock's plans were
-    /// not applied.
-    PlansNotApplied,
-    /// The replacement is installed and confirmed, but a put of stock's plans
-    /// went out and whether they are on it is unknown. Not sent again: the
-    /// owner checks the meals.
-    PlansUnknown,
     /// The stock server could not start: its port is taken, say.
     ServerFailed,
     /// The owner stopped the run, with nothing unsettled.

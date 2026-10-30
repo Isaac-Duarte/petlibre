@@ -11,7 +11,8 @@
 
 use core::ops::Range;
 
-use crate::plans::FLASH_BYTES;
+/// Bytes in a whole flash read of the feeder.
+const FLASH_BYTES: usize = 0x80_0000;
 
 /// The settings sector in flash.
 const SECTOR: Range<usize> = 0x3e_8000..0x3e_9000;

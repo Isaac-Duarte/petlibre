@@ -57,7 +57,7 @@ Outside `src/tools/`, the simulator `wellfed-sim` (in `src/sdk/`) has the `virtu
 | `update-key new\|enroll\|show` | Create an owner's update-signing key, enroll it on the feeder with a Dispense press there, and list the enrolled ones |
 | `calibrate`, `stats`, `trace FEED`, `logs` | Portion weight, statistics, one feed's drive trace and the debug log |
 | `reboot` | Restart the feeder |
-| `install`, `backup`, `restore-stock` | Move from stock 1.1.15 to Wellfed (importing stock's plans), keep stock's image, and go back |
+| `install`, `backup`, `restore-stock` | Move from stock 1.1.15 to Wellfed, keep stock's image, and go back |
 | `server …` | The same reads and writes through the owner's server, with its history |
 
 `status`, `settings`, `plans list`, `events`, `feeds` and `desiccant` print text for a person, and `--json` prints the feeder's values as the wire spells them, for scripts. The other commands print the feeder's answer as JSON.

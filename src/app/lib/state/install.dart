@@ -53,7 +53,7 @@ enum InstallRoute {
   /// the router; its meals are erased.
   reset,
 
-  /// The router's DNS sends it here. It keeps its meals.
+  /// The router's DNS sends it here. Its meals don't come along either.
   dns,
 }
 
@@ -179,8 +179,6 @@ class InstallFlow extends ChangeNotifier {
   String? _identity;
   List<int>? _identityBytes;
   String? _address;
-  PlansOutcome? plans;
-  int plansConverted = 0;
   InstallEnd_Stopped? stop;
 
   // After an uncertain request.
@@ -191,7 +189,6 @@ class InstallFlow extends ChangeNotifier {
 
   WifiCredentials? _home;
   bool _calibrate = false;
-  bool _withoutPlans = false;
   bool _forget = false;
 
   /// The owner gave a new Wi-Fi for a feeder that never joined: the run goes
@@ -582,13 +579,8 @@ class InstallFlow extends ChangeNotifier {
   }
 
   /// The stop's way on: from the start, or from bank 0, as the run said.
-  Future<void> again({
-    bool calibrate = false,
-    bool withoutPlans = false,
-    bool forget = false,
-  }) async {
+  Future<void> again({bool calibrate = false, bool forget = false}) async {
     _calibrate = calibrate;
-    _withoutPlans = withoutPlans;
     _forget = forget;
     final resumeFrom = stop?.resume;
     if (resumeFrom == Resume.fromBank0) {
@@ -640,7 +632,6 @@ class InstallFlow extends ChangeNotifier {
         imageDir: paths.image,
         dataDir: paths.data,
         calibrateClock: _calibrate,
-        withoutStockPlans: _withoutPlans,
         forgetEnrollment: forget,
         setupAgain: settingUpAgain,
       ),
@@ -703,9 +694,6 @@ class InstallFlow extends ChangeNotifier {
       // The screen says to restart it; the broker is already listening.
       case InstallAsk_RestartFeeder():
         answer(const InstallAnswer.done());
-      // The reset screen asked this before the run started.
-      case InstallAsk_EraseStockPlans():
-        answer(const InstallAnswer.yes(yes: true));
       case InstallAsk_JoinFeederNetwork():
         _joinAsk = id;
         handover = Handover.join;
@@ -820,8 +808,6 @@ class InstallFlow extends ChangeNotifier {
         backupPath = path;
         copying = CheckState.done;
         checked = CheckState.done;
-      case InstallEvent_StockPlans(:final converted):
-        plansConverted = converted;
       case InstallEvent_Promoting():
         copying = CheckState.done;
         checked = CheckState.done;
@@ -836,16 +822,12 @@ class InstallFlow extends ChangeNotifier {
         confirming = CheckState.running;
       case InstallEvent_Installed():
         confirming = CheckState.done;
-      case InstallEvent_Plans(:final result):
-        plans = result;
       case InstallEvent_SessionDropped():
         sessionDropped = true;
       case InstallEvent_StockServerStarted() ||
           InstallEvent_AwaitingStock() ||
           InstallEvent_StockServerEnded() ||
-          InstallEvent_NoSetupFeeder() ||
-          InstallEvent_WithoutStockPlans() ||
-          InstallEvent_PuttingPlans():
+          InstallEvent_NoSetupFeeder():
         break;
       case InstallEvent_Note(:final text):
         debugPrint('install: $text');

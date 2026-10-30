@@ -416,9 +416,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PendingInstall dco_decode_pending_install(dynamic raw);
 
   @protected
-  PlansOutcome dco_decode_plans_outcome(dynamic raw);
-
-  @protected
   RequestRefusal dco_decode_request_refusal(dynamic raw);
 
   @protected
@@ -864,9 +861,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   PendingInstall sse_decode_pending_install(SseDeserializer deserializer);
-
-  @protected
-  PlansOutcome sse_decode_plans_outcome(SseDeserializer deserializer);
 
   @protected
   RequestRefusal sse_decode_request_refusal(SseDeserializer deserializer);
@@ -1408,9 +1402,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
     PendingInstall self,
     SseSerializer serializer,
   );
-
-  @protected
-  void sse_encode_plans_outcome(PlansOutcome self, SseSerializer serializer);
 
   @protected
   void sse_encode_request_refusal(

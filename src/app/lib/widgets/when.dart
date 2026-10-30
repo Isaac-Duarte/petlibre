@@ -37,3 +37,35 @@ String _text(BuildContext context, TimeOfDay time) =>
 String deliveredText(FeedResult fed) => fed.uncertain
     ? '${fed.confirmed} to ${fed.atMost} of ${fed.requested}'
     : '${fed.confirmed} of ${fed.requested}';
+
+const _dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const _monthNames = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
+];
+
+/// `Today`, `Yesterday`, or `Fri 30 Oct`, by this phone's calendar.
+String dayText(DateTime at, {DateTime? now}) {
+  final today = now ?? DateTime.now();
+  final days = DateTime(
+    today.year,
+    today.month,
+    today.day,
+  ).difference(DateTime(at.year, at.month, at.day)).inDays;
+  return switch (days) {
+    0 => 'Today',
+    1 => 'Yesterday',
+    -1 => 'Tomorrow',
+    _ => '${_dayNames[at.weekday - 1]} ${at.day} ${_monthNames[at.month - 1]}',
+  };
+}

@@ -9,8 +9,6 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'model.freezed.dart';
 
-// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `Battery`
-
 enum Blocked {
   starting,
   journal,
@@ -364,6 +362,16 @@ class Memory {
           tasksTotal == other.tasksTotal;
 }
 
+@freezed
+sealed class MissedReason with _$MissedReason {
+  const MissedReason._();
+
+  const factory MissedReason.late_() = MissedReason_Late;
+  const factory MissedReason.blocked({required Blocked reason}) =
+      MissedReason_Blocked;
+  const factory MissedReason.interrupted() = MissedReason_Interrupted;
+}
+
 enum NtpResult { used, bounded, lost, refused }
 
 enum Phase { atMark, unknown }
@@ -642,6 +650,8 @@ class TraceSummary {
 }
 
 enum Tune { chime, meal, coin, alert, test, twinkle }
+
+enum UpdatePhase { idle, checking, givingWay, receiving, activated }
 
 enum UpdateRefusal {
   manifest,

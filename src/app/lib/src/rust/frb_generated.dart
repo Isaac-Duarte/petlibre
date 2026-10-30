@@ -2049,6 +2049,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  MissedReason dco_decode_box_autoadd_missed_reason(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_missed_reason(raw);
+  }
+
+  @protected
   NextMealView dco_decode_box_autoadd_next_meal_view(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_next_meal_view(raw);
@@ -2187,6 +2193,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  UpdateInfo dco_decode_box_autoadd_update_info(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_update_info(raw);
+  }
+
+  @protected
   WifiCredentials dco_decode_box_autoadd_wifi_credentials(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_wifi_credentials(raw);
@@ -2283,8 +2295,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   Card dco_decode_card(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 17)
-      throw Exception('unexpected arr length: expect 17 but see ${arr.length}');
+    if (arr.length != 19)
+      throw Exception('unexpected arr length: expect 19 but see ${arr.length}');
     return Card(
       build: dco_decode_String(arr[0]),
       food: dco_decode_food_level(arr[1]),
@@ -2303,6 +2315,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       lastFed: dco_decode_opt_box_autoadd_feed_result(arr[14]),
       meals: dco_decode_list_meal_view(arr[15]),
       time: dco_decode_opt_box_autoadd_time_info(arr[16]),
+      plans: dco_decode_opt_box_autoadd_plans_view(arr[17]),
+      wifiGeneration: dco_decode_u_32(arr[18]),
     );
   }
 
@@ -2604,16 +2618,20 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           trace: dco_decode_box_autoadd_trace_view(raw[1]),
         );
       case 10:
+        return FeederReply_Update(
+          update: dco_decode_box_autoadd_update_info(raw[1]),
+        );
+      case 11:
         return FeederReply_Refused(
           refusal: dco_decode_box_autoadd_feeder_refusal(raw[1]),
         );
-      case 11:
-        return FeederReply_NotAsked(reason: dco_decode_not_asked(raw[1]));
       case 12:
-        return FeederReply_Unanswered();
+        return FeederReply_NotAsked(reason: dco_decode_not_asked(raw[1]));
       case 13:
-        return FeederReply_NotSent();
+        return FeederReply_Unanswered();
       case 14:
+        return FeederReply_NotSent();
+      case 15:
         return FeederReply_Unexpected();
       default:
         throw Exception("unreachable");
@@ -2693,6 +2711,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case 22:
         return FeederRequest_DeleteCall();
       case 23:
+        return FeederRequest_UpdateState();
+      case 24:
+        return FeederRequest_CancelUpdate();
+      case 25:
         return FeederRequest_TailLog(
           after: dco_decode_opt_box_autoadd_u_32(raw[1]),
         );
@@ -2747,7 +2769,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         return HistoryBody_Missed(
           slot: dco_decode_u_8(raw[1]),
           dueMs: dco_decode_i_64(raw[2]),
-          late_: dco_decode_bool(raw[3]),
+          reason: dco_decode_box_autoadd_missed_reason(raw[3]),
         );
       case 2:
         return HistoryBody_Restarted();
@@ -3290,6 +3312,21 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  MissedReason dco_decode_missed_reason(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    switch (raw[0]) {
+      case 0:
+        return MissedReason_Late();
+      case 1:
+        return MissedReason_Blocked(reason: dco_decode_blocked(raw[1]));
+      case 2:
+        return MissedReason_Interrupted();
+      default:
+        throw Exception("unreachable");
+    }
+  }
+
+  @protected
   NextMealView dco_decode_next_meal_view(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
@@ -3429,6 +3466,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  PlansView? dco_decode_opt_box_autoadd_plans_view(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_plans_view(raw);
+  }
+
+  @protected
   Resets? dco_decode_opt_box_autoadd_resets(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_box_autoadd_resets(raw);
@@ -3531,6 +3574,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           portions: dco_decode_opt_box_autoadd_u_8(raw[3]),
           days: dco_decode_opt_list_weekday(raw[4]),
           call: dco_decode_opt_box_autoadd_u_8(raw[5]),
+          enabled: dco_decode_opt_box_autoadd_bool(raw[6]),
         );
       case 2:
         return PlanEdit_Enabled(
@@ -4053,6 +4097,28 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   void dco_decode_unit(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return;
+  }
+
+  @protected
+  UpdateInfo dco_decode_update_info(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 6)
+      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
+    return UpdateInfo(
+      phase: dco_decode_update_phase(arr[0]),
+      bank: dco_decode_u_8(arr[1]),
+      minVersion: dco_decode_u_32(arr[2]),
+      version: dco_decode_u_32(arr[3]),
+      imageLen: dco_decode_u_32(arr[4]),
+      written: dco_decode_u_32(arr[5]),
+    );
+  }
+
+  @protected
+  UpdatePhase dco_decode_update_phase(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return UpdatePhase.values[raw as int];
   }
 
   @protected
@@ -4629,6 +4695,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  MissedReason sse_decode_box_autoadd_missed_reason(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_missed_reason(deserializer));
+  }
+
+  @protected
   NextMealView sse_decode_box_autoadd_next_meal_view(
     SseDeserializer deserializer,
   ) {
@@ -4779,6 +4853,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  UpdateInfo sse_decode_box_autoadd_update_info(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_update_info(deserializer));
+  }
+
+  @protected
   WifiCredentials sse_decode_box_autoadd_wifi_credentials(
     SseDeserializer deserializer,
   ) {
@@ -4894,6 +4974,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_lastFed = sse_decode_opt_box_autoadd_feed_result(deserializer);
     var var_meals = sse_decode_list_meal_view(deserializer);
     var var_time = sse_decode_opt_box_autoadd_time_info(deserializer);
+    var var_plans = sse_decode_opt_box_autoadd_plans_view(deserializer);
+    var var_wifiGeneration = sse_decode_u_32(deserializer);
     return Card(
       build: var_build,
       food: var_food,
@@ -4912,6 +4994,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       lastFed: var_lastFed,
       meals: var_meals,
       time: var_time,
+      plans: var_plans,
+      wifiGeneration: var_wifiGeneration,
     );
   }
 
@@ -5262,16 +5346,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         var var_trace = sse_decode_box_autoadd_trace_view(deserializer);
         return FeederReply_Trace(trace: var_trace);
       case 10:
+        var var_update = sse_decode_box_autoadd_update_info(deserializer);
+        return FeederReply_Update(update: var_update);
+      case 11:
         var var_refusal = sse_decode_box_autoadd_feeder_refusal(deserializer);
         return FeederReply_Refused(refusal: var_refusal);
-      case 11:
+      case 12:
         var var_reason = sse_decode_not_asked(deserializer);
         return FeederReply_NotAsked(reason: var_reason);
-      case 12:
-        return FeederReply_Unanswered();
       case 13:
-        return FeederReply_NotSent();
+        return FeederReply_Unanswered();
       case 14:
+        return FeederReply_NotSent();
+      case 15:
         return FeederReply_Unexpected();
       default:
         throw UnimplementedError('');
@@ -5364,6 +5451,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case 22:
         return FeederRequest_DeleteCall();
       case 23:
+        return FeederRequest_UpdateState();
+      case 24:
+        return FeederRequest_CancelUpdate();
+      case 25:
         var var_after = sse_decode_opt_box_autoadd_u_32(deserializer);
         return FeederRequest_TailLog(after: var_after);
       default:
@@ -5420,11 +5511,11 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case 1:
         var var_slot = sse_decode_u_8(deserializer);
         var var_dueMs = sse_decode_i_64(deserializer);
-        var var_late_ = sse_decode_bool(deserializer);
+        var var_reason = sse_decode_box_autoadd_missed_reason(deserializer);
         return HistoryBody_Missed(
           slot: var_slot,
           dueMs: var_dueMs,
-          late_: var_late_,
+          reason: var_reason,
         );
       case 2:
         return HistoryBody_Restarted();
@@ -6099,6 +6190,24 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  MissedReason sse_decode_missed_reason(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var tag_ = sse_decode_i_32(deserializer);
+    switch (tag_) {
+      case 0:
+        return MissedReason_Late();
+      case 1:
+        var var_reason = sse_decode_blocked(deserializer);
+        return MissedReason_Blocked(reason: var_reason);
+      case 2:
+        return MissedReason_Interrupted();
+      default:
+        throw UnimplementedError('');
+    }
+  }
+
+  @protected
   NextMealView sse_decode_next_meal_view(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_atMs = sse_decode_i_64(deserializer);
@@ -6336,6 +6445,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  PlansView? sse_decode_opt_box_autoadd_plans_view(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_plans_view(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
   Resets? sse_decode_opt_box_autoadd_resets(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
@@ -6517,12 +6639,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         var var_portions = sse_decode_opt_box_autoadd_u_8(deserializer);
         var var_days = sse_decode_opt_list_weekday(deserializer);
         var var_call = sse_decode_opt_box_autoadd_u_8(deserializer);
+        var var_enabled = sse_decode_opt_box_autoadd_bool(deserializer);
         return PlanEdit_Change(
           slot: var_slot,
           minute: var_minute,
           portions: var_portions,
           days: var_days,
           call: var_call,
+          enabled: var_enabled,
         );
       case 2:
         var var_slot = sse_decode_u_8(deserializer);
@@ -7127,6 +7251,32 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   @protected
   void sse_decode_unit(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
+  }
+
+  @protected
+  UpdateInfo sse_decode_update_info(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_phase = sse_decode_update_phase(deserializer);
+    var var_bank = sse_decode_u_8(deserializer);
+    var var_minVersion = sse_decode_u_32(deserializer);
+    var var_version = sse_decode_u_32(deserializer);
+    var var_imageLen = sse_decode_u_32(deserializer);
+    var var_written = sse_decode_u_32(deserializer);
+    return UpdateInfo(
+      phase: var_phase,
+      bank: var_bank,
+      minVersion: var_minVersion,
+      version: var_version,
+      imageLen: var_imageLen,
+      written: var_written,
+    );
+  }
+
+  @protected
+  UpdatePhase sse_decode_update_phase(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return UpdatePhase.values[inner];
   }
 
   @protected
@@ -7802,6 +7952,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_box_autoadd_missed_reason(
+    MissedReason self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_missed_reason(self, serializer);
+  }
+
+  @protected
   void sse_encode_box_autoadd_next_meal_view(
     NextMealView self,
     SseSerializer serializer,
@@ -7988,6 +8147,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_box_autoadd_update_info(
+    UpdateInfo self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_update_info(self, serializer);
+  }
+
+  @protected
   void sse_encode_box_autoadd_wifi_credentials(
     WifiCredentials self,
     SseSerializer serializer,
@@ -8093,6 +8261,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_opt_box_autoadd_feed_result(self.lastFed, serializer);
     sse_encode_list_meal_view(self.meals, serializer);
     sse_encode_opt_box_autoadd_time_info(self.time, serializer);
+    sse_encode_opt_box_autoadd_plans_view(self.plans, serializer);
+    sse_encode_u_32(self.wifiGeneration, serializer);
   }
 
   @protected
@@ -8351,18 +8521,21 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case FeederReply_Trace(trace: final trace):
         sse_encode_i_32(9, serializer);
         sse_encode_box_autoadd_trace_view(trace, serializer);
-      case FeederReply_Refused(refusal: final refusal):
+      case FeederReply_Update(update: final update):
         sse_encode_i_32(10, serializer);
+        sse_encode_box_autoadd_update_info(update, serializer);
+      case FeederReply_Refused(refusal: final refusal):
+        sse_encode_i_32(11, serializer);
         sse_encode_box_autoadd_feeder_refusal(refusal, serializer);
       case FeederReply_NotAsked(reason: final reason):
-        sse_encode_i_32(11, serializer);
+        sse_encode_i_32(12, serializer);
         sse_encode_not_asked(reason, serializer);
       case FeederReply_Unanswered():
-        sse_encode_i_32(12, serializer);
-      case FeederReply_NotSent():
         sse_encode_i_32(13, serializer);
-      case FeederReply_Unexpected():
+      case FeederReply_NotSent():
         sse_encode_i_32(14, serializer);
+      case FeederReply_Unexpected():
+        sse_encode_i_32(15, serializer);
     }
   }
 
@@ -8449,8 +8622,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_list_prim_u_8_strict(wav, serializer);
       case FeederRequest_DeleteCall():
         sse_encode_i_32(22, serializer);
-      case FeederRequest_TailLog(after: final after):
+      case FeederRequest_UpdateState():
         sse_encode_i_32(23, serializer);
+      case FeederRequest_CancelUpdate():
+        sse_encode_i_32(24, serializer);
+      case FeederRequest_TailLog(after: final after):
+        sse_encode_i_32(25, serializer);
         sse_encode_opt_box_autoadd_u_32(after, serializer);
     }
   }
@@ -8489,12 +8666,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case HistoryBody_Missed(
         slot: final slot,
         dueMs: final dueMs,
-        late_: final late_,
+        reason: final reason,
       ):
         sse_encode_i_32(1, serializer);
         sse_encode_u_8(slot, serializer);
         sse_encode_i_64(dueMs, serializer);
-        sse_encode_bool(late_, serializer);
+        sse_encode_box_autoadd_missed_reason(reason, serializer);
       case HistoryBody_Restarted():
         sse_encode_i_32(2, serializer);
       case HistoryBody_Lock(locked: final locked, by: final by):
@@ -9087,6 +9264,20 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_missed_reason(MissedReason self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    switch (self) {
+      case MissedReason_Late():
+        sse_encode_i_32(0, serializer);
+      case MissedReason_Blocked(reason: final reason):
+        sse_encode_i_32(1, serializer);
+        sse_encode_blocked(reason, serializer);
+      case MissedReason_Interrupted():
+        sse_encode_i_32(2, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_next_meal_view(NextMealView self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_64(self.atMs, serializer);
@@ -9319,6 +9510,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_opt_box_autoadd_plans_view(
+    PlansView? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_plans_view(self, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_opt_box_autoadd_resets(
     Resets? self,
     SseSerializer serializer,
@@ -9503,6 +9707,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         portions: final portions,
         days: final days,
         call: final call,
+        enabled: final enabled,
       ):
         sse_encode_i_32(1, serializer);
         sse_encode_u_8(slot, serializer);
@@ -9510,6 +9715,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_opt_box_autoadd_u_8(portions, serializer);
         sse_encode_opt_list_weekday(days, serializer);
         sse_encode_opt_box_autoadd_u_8(call, serializer);
+        sse_encode_opt_box_autoadd_bool(enabled, serializer);
       case PlanEdit_Enabled(slot: final slot, enabled: final enabled):
         sse_encode_i_32(2, serializer);
         sse_encode_u_8(slot, serializer);
@@ -9985,6 +10191,23 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   @protected
   void sse_encode_unit(void self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
+  }
+
+  @protected
+  void sse_encode_update_info(UpdateInfo self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_update_phase(self.phase, serializer);
+    sse_encode_u_8(self.bank, serializer);
+    sse_encode_u_32(self.minVersion, serializer);
+    sse_encode_u_32(self.version, serializer);
+    sse_encode_u_32(self.imageLen, serializer);
+    sse_encode_u_32(self.written, serializer);
+  }
+
+  @protected
+  void sse_encode_update_phase(UpdatePhase self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
   }
 
   @protected

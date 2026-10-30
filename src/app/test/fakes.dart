@@ -498,6 +498,7 @@ Card fakeCard({
   FeedResult? lastFed,
   List<MealView> meals = const [],
   TimeInfo? time,
+  PlansView? plans,
 }) => Card(
   build: 'test',
   food: food,
@@ -516,6 +517,8 @@ Card fakeCard({
   lastFed: lastFed,
   meals: meals,
   time: time,
+  plans: plans,
+  wifiGeneration: 1,
 );
 
 FeedResult fakeFed({
@@ -539,3 +542,20 @@ FeedResult fakeFed({
   by: const FedBy.panel(),
   hopper: FoodLevel.present,
 );
+
+extension CopyBy on FeedResult {
+  /// The same feed, asked for by a client.
+  FeedResult copyByClient(String fingerprint) => FeedResult(
+    feed: feed,
+    requested: requested,
+    confirmed: confirmed,
+    atMost: atMost,
+    outcome: outcome,
+    reason: reason,
+    uncertain: uncertain,
+    words: words,
+    atMs: atMs,
+    by: FedBy.client(fingerprint: fingerprint),
+    hopper: hopper,
+  );
+}

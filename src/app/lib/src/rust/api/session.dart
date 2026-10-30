@@ -102,6 +102,12 @@ class Card {
   /// The time settings and the clock, once read.
   final TimeInfo? time;
 
+  /// The feeding plans, once read.
+  final PlansView? plans;
+
+  /// The base of a Wi-Fi change.
+  final int wifiGeneration;
+
   const Card({
     required this.build,
     required this.food,
@@ -120,6 +126,8 @@ class Card {
     this.lastFed,
     required this.meals,
     this.time,
+    this.plans,
+    required this.wifiGeneration,
   });
 
   @override
@@ -140,7 +148,9 @@ class Card {
       nextMeal.hashCode ^
       lastFed.hashCode ^
       meals.hashCode ^
-      time.hashCode;
+      time.hashCode ^
+      plans.hashCode ^
+      wifiGeneration.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -163,7 +173,9 @@ class Card {
           nextMeal == other.nextMeal &&
           lastFed == other.lastFed &&
           meals == other.meals &&
-          time == other.time;
+          time == other.time &&
+          plans == other.plans &&
+          wifiGeneration == other.wifiGeneration;
 }
 
 /// The feed `Status.feed_fault` names, with its `Fed` event once read.
@@ -309,7 +321,7 @@ sealed class HistoryBody with _$HistoryBody {
   const factory HistoryBody.missed({
     required int slot,
     required PlatformInt64 dueMs,
-    required bool late_,
+    required MissedReason reason,
   }) = HistoryBody_Missed;
   const factory HistoryBody.restarted() = HistoryBody_Restarted;
   const factory HistoryBody.lock({required bool locked, required FedBy by}) =

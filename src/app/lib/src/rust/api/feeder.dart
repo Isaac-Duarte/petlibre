@@ -10,7 +10,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'feeder.freezed.dart';
 
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 class CalibrationInfo {
   final int generation;
@@ -158,6 +158,8 @@ sealed class FeederReply with _$FeederReply {
   const factory FeederReply.stats({required Stats stats}) = FeederReply_Stats;
   const factory FeederReply.trace({required TraceView trace}) =
       FeederReply_Trace;
+  const factory FeederReply.update({required UpdateInfo update}) =
+      FeederReply_Update;
   const factory FeederReply.refused({required FeederRefusal refusal}) =
       FeederReply_Refused;
 
@@ -239,6 +241,12 @@ sealed class FeederRequest with _$FeederRequest {
   const factory FeederRequest.uploadCall({required Uint8List wav}) =
       FeederRequest_UploadCall;
   const factory FeederRequest.deleteCall() = FeederRequest_DeleteCall;
+
+  /// Where an install stands.
+  const factory FeederRequest.updateState() = FeederRequest_UpdateState;
+
+  /// Stop the install, with bank 1 left invalid.
+  const factory FeederRequest.cancelUpdate() = FeederRequest_CancelUpdate;
 
   /// Push the feeder's record lines after `after`, as [`SessionUpdate::Log`].
   ///
@@ -325,6 +333,7 @@ sealed class PlanEdit with _$PlanEdit {
     int? portions,
     List<Weekday>? days,
     int? call,
+    bool? enabled,
   }) = PlanEdit_Change;
   const factory PlanEdit.enabled({required int slot, required bool enabled}) =
       PlanEdit_Enabled;
@@ -602,6 +611,52 @@ class TraceView {
           summary == other.summary &&
           stored == other.stored &&
           entries == other.entries;
+}
+
+/// Where an install stands.
+class UpdateInfo {
+  final UpdatePhase phase;
+
+  /// The bank it answers from.
+  final int bank;
+
+  /// The lowest version it will install.
+  final int minVersion;
+
+  /// The version being installed.
+  final int version;
+  final int imageLen;
+  final int written;
+
+  const UpdateInfo({
+    required this.phase,
+    required this.bank,
+    required this.minVersion,
+    required this.version,
+    required this.imageLen,
+    required this.written,
+  });
+
+  @override
+  int get hashCode =>
+      phase.hashCode ^
+      bank.hashCode ^
+      minVersion.hashCode ^
+      version.hashCode ^
+      imageLen.hashCode ^
+      written.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is UpdateInfo &&
+          runtimeType == other.runtimeType &&
+          phase == other.phase &&
+          bank == other.bank &&
+          minVersion == other.minVersion &&
+          version == other.version &&
+          imageLen == other.imageLen &&
+          written == other.written;
 }
 
 @freezed

@@ -23,7 +23,7 @@ use wellfed_model::{
 use crate::api::feeder::{
     CalibrationInfo, CallInfo, ClientView, FeederRefusal, FeederReply, FeederRequest, InviteView,
     NotAsked, NtpView, PlanEdit, PlanView, PlansView, PortionChange, SettingsView, TimeInfo,
-    TraceView, ZoneChange,
+    TraceView, UpdateInfo, ZoneChange,
 };
 use crate::session::Command;
 
@@ -148,6 +148,8 @@ pub async fn run(
         FeederRequest::GetCall => Op::GetCall,
         FeederRequest::UploadCall { wav } => return upload_call(commands, &wav).await,
         FeederRequest::DeleteCall => Op::DeleteCall,
+        FeederRequest::UpdateState => Op::UpdateState,
+        FeederRequest::CancelUpdate => Op::CancelUpdate,
         FeederRequest::TailLog { after } => Op::TailLog { after },
     };
 
@@ -272,12 +274,14 @@ fn edit_of(edit: PlanEdit) -> Result<plans::Edit, NotAsked> {
             portions,
             days,
             call,
+            enabled,
         } => plans::Edit::Change {
             slot,
             at: minute.map(TimeOfDay),
             portions,
             days: days.as_deref().map(weekdays_of),
             call,
+            enabled,
         },
         PlanEdit::Enabled { slot, enabled } => plans::Edit::Enabled { slot, enabled },
         PlanEdit::Delete { slot } => plans::Edit::Delete { slot },
@@ -467,13 +471,22 @@ fn reply_of(answer: Answer) -> FeederReply {
             call: call_of(view),
         },
         Answer::Stats(stats) => FeederReply::Stats { stats },
+        Answer::Update(view) => FeederReply::Update {
+            update: UpdateInfo {
+                phase: view.phase,
+                bank: view.bank,
+                min_version: view.min_version,
+                version: view.version,
+                image_len: view.image_len,
+                written: view.written,
+            },
+        },
         Answer::Refused(refusal) => FeederReply::Refused {
             refusal: refusal_of(refusal),
         },
         Answer::Invite(_)
         | Answer::Status(_)
         | Answer::Feeding { .. }
-        | Answer::Update(_)
         | Answer::FeedTrace(_)
         | Answer::Bank1(_)
         | Answer::StockPlans(_) => FeederReply::Unexpected,

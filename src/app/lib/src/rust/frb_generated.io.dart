@@ -293,6 +293,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Memory dco_decode_box_autoadd_memory(dynamic raw);
 
   @protected
+  MissedReason dco_decode_box_autoadd_missed_reason(dynamic raw);
+
+  @protected
   NextMealView dco_decode_box_autoadd_next_meal_view(dynamic raw);
 
   @protected
@@ -360,6 +363,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   int dco_decode_box_autoadd_u_8(dynamic raw);
+
+  @protected
+  UpdateInfo dco_decode_box_autoadd_update_info(dynamic raw);
 
   @protected
   WifiCredentials dco_decode_box_autoadd_wifi_credentials(dynamic raw);
@@ -563,6 +569,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Memory dco_decode_memory(dynamic raw);
 
   @protected
+  MissedReason dco_decode_missed_reason(dynamic raw);
+
+  @protected
   NextMealView dco_decode_next_meal_view(dynamic raw);
 
   @protected
@@ -621,6 +630,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   PlanView? dco_decode_opt_box_autoadd_plan_view(dynamic raw);
+
+  @protected
+  PlansView? dco_decode_opt_box_autoadd_plans_view(dynamic raw);
 
   @protected
   Resets? dco_decode_opt_box_autoadd_resets(dynamic raw);
@@ -765,6 +777,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void dco_decode_unit(dynamic raw);
+
+  @protected
+  UpdateInfo dco_decode_update_info(dynamic raw);
+
+  @protected
+  UpdatePhase dco_decode_update_phase(dynamic raw);
 
   @protected
   UpdateRefusal dco_decode_update_refusal(dynamic raw);
@@ -1045,6 +1063,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Memory sse_decode_box_autoadd_memory(SseDeserializer deserializer);
 
   @protected
+  MissedReason sse_decode_box_autoadd_missed_reason(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   NextMealView sse_decode_box_autoadd_next_meal_view(
     SseDeserializer deserializer,
   );
@@ -1124,6 +1147,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   int sse_decode_box_autoadd_u_8(SseDeserializer deserializer);
+
+  @protected
+  UpdateInfo sse_decode_box_autoadd_update_info(SseDeserializer deserializer);
 
   @protected
   WifiCredentials sse_decode_box_autoadd_wifi_credentials(
@@ -1335,6 +1361,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Memory sse_decode_memory(SseDeserializer deserializer);
 
   @protected
+  MissedReason sse_decode_missed_reason(SseDeserializer deserializer);
+
+  @protected
   NextMealView sse_decode_next_meal_view(SseDeserializer deserializer);
 
   @protected
@@ -1407,6 +1436,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   PlanView? sse_decode_opt_box_autoadd_plan_view(SseDeserializer deserializer);
+
+  @protected
+  PlansView? sse_decode_opt_box_autoadd_plans_view(
+    SseDeserializer deserializer,
+  );
 
   @protected
   Resets? sse_decode_opt_box_autoadd_resets(SseDeserializer deserializer);
@@ -1561,6 +1595,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_decode_unit(SseDeserializer deserializer);
+
+  @protected
+  UpdateInfo sse_decode_update_info(SseDeserializer deserializer);
+
+  @protected
+  UpdatePhase sse_decode_update_phase(SseDeserializer deserializer);
 
   @protected
   UpdateRefusal sse_decode_update_refusal(SseDeserializer deserializer);
@@ -1912,6 +1952,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_box_autoadd_memory(Memory self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_missed_reason(
+    MissedReason self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_next_meal_view(
     NextMealView self,
     SseSerializer serializer,
@@ -2024,6 +2070,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_box_autoadd_u_8(int self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_update_info(
+    UpdateInfo self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_box_autoadd_wifi_credentials(
@@ -2272,6 +2324,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_memory(Memory self, SseSerializer serializer);
 
   @protected
+  void sse_encode_missed_reason(MissedReason self, SseSerializer serializer);
+
+  @protected
   void sse_encode_next_meal_view(NextMealView self, SseSerializer serializer);
 
   @protected
@@ -2364,6 +2419,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_opt_box_autoadd_plan_view(
     PlanView? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_plans_view(
+    PlansView? self,
     SseSerializer serializer,
   );
 
@@ -2549,6 +2610,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_unit(void self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_update_info(UpdateInfo self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_update_phase(UpdatePhase self, SseSerializer serializer);
 
   @protected
   void sse_encode_update_refusal(UpdateRefusal self, SseSerializer serializer);

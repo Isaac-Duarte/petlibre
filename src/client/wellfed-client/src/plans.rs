@@ -22,6 +22,7 @@ pub enum Edit {
         portions: Option<u8>,
         days: Option<Weekdays>,
         call: Option<u8>,
+        enabled: Option<bool>,
     },
     Enabled {
         slot: u8,
@@ -79,15 +80,22 @@ pub fn edited(plans: &Plans, edit: Edit) -> Result<[Option<Plan>; PLANS], EditEr
             portions,
             days,
             call,
+            enabled,
         } => {
             let mut plan = filled(&table, slot)?;
-            if at.is_none() && portions.is_none() && days.is_none() && call.is_none() {
+            let named = at.is_some()
+                || portions.is_some()
+                || days.is_some()
+                || call.is_some()
+                || enabled.is_some();
+            if !named {
                 return Err(EditError::Nothing);
             }
             plan.minute = at.map_or(plan.minute, |at| at.0);
             plan.portions = portions.unwrap_or(plan.portions);
             plan.days = days.unwrap_or(plan.days);
             plan.call = call.unwrap_or(plan.call);
+            plan.enabled = enabled.unwrap_or(plan.enabled);
             table[usize::from(slot)] = Some(checked(plan)?);
         }
         Edit::Enabled { slot, enabled } => {
@@ -244,6 +252,7 @@ mod tests {
             portions: Some(3),
             days: None,
             call: Some(2),
+            enabled: None,
         };
         let table = edited(&plans(table), change).unwrap();
         assert_eq!(
@@ -280,6 +289,7 @@ mod tests {
             portions,
             days: None,
             call,
+            enabled: None,
         };
         assert_eq!(
             edited(&plans(table), change(None, None)),

@@ -578,11 +578,11 @@ return other(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( FeedResult result)?  fed,TResult Function( int slot,  PlatformInt64 dueMs,  bool late_)?  missed,TResult Function()?  restarted,TResult Function( bool locked,  FedBy by)?  lock,TResult Function( FedBy by)?  settingsChanged,TResult Function( FedBy by)?  wifiChanged,TResult Function( FedBy by)?  plansChanged,TResult Function( String fingerprint)?  joined,TResult Function( String fingerprint,  FedBy by)?  revoked,TResult Function( FedBy by)?  clockSet,TResult Function( int count)?  lost,TResult Function( Blocked? reason)?  feedingBlocked,TResult Function( int minute,  int portions)?  mealSoon,TResult Function( bool? adapter)?  supply,TResult Function( Blocked reason)?  dispenseRefused,TResult Function( FoodLevel level)?  food,TResult Function( BigInt from,  BigInt to)?  gap,TResult Function()?  other,required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( FeedResult result)?  fed,TResult Function( int slot,  PlatformInt64 dueMs,  MissedReason reason)?  missed,TResult Function()?  restarted,TResult Function( bool locked,  FedBy by)?  lock,TResult Function( FedBy by)?  settingsChanged,TResult Function( FedBy by)?  wifiChanged,TResult Function( FedBy by)?  plansChanged,TResult Function( String fingerprint)?  joined,TResult Function( String fingerprint,  FedBy by)?  revoked,TResult Function( FedBy by)?  clockSet,TResult Function( int count)?  lost,TResult Function( Blocked? reason)?  feedingBlocked,TResult Function( int minute,  int portions)?  mealSoon,TResult Function( bool? adapter)?  supply,TResult Function( Blocked reason)?  dispenseRefused,TResult Function( FoodLevel level)?  food,TResult Function( BigInt from,  BigInt to)?  gap,TResult Function()?  other,required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case HistoryBody_Fed() when fed != null:
 return fed(_that.result);case HistoryBody_Missed() when missed != null:
-return missed(_that.slot,_that.dueMs,_that.late_);case HistoryBody_Restarted() when restarted != null:
+return missed(_that.slot,_that.dueMs,_that.reason);case HistoryBody_Restarted() when restarted != null:
 return restarted();case HistoryBody_Lock() when lock != null:
 return lock(_that.locked,_that.by);case HistoryBody_SettingsChanged() when settingsChanged != null:
 return settingsChanged(_that.by);case HistoryBody_WifiChanged() when wifiChanged != null:
@@ -616,11 +616,11 @@ return other();case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( FeedResult result)  fed,required TResult Function( int slot,  PlatformInt64 dueMs,  bool late_)  missed,required TResult Function()  restarted,required TResult Function( bool locked,  FedBy by)  lock,required TResult Function( FedBy by)  settingsChanged,required TResult Function( FedBy by)  wifiChanged,required TResult Function( FedBy by)  plansChanged,required TResult Function( String fingerprint)  joined,required TResult Function( String fingerprint,  FedBy by)  revoked,required TResult Function( FedBy by)  clockSet,required TResult Function( int count)  lost,required TResult Function( Blocked? reason)  feedingBlocked,required TResult Function( int minute,  int portions)  mealSoon,required TResult Function( bool? adapter)  supply,required TResult Function( Blocked reason)  dispenseRefused,required TResult Function( FoodLevel level)  food,required TResult Function( BigInt from,  BigInt to)  gap,required TResult Function()  other,}) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( FeedResult result)  fed,required TResult Function( int slot,  PlatformInt64 dueMs,  MissedReason reason)  missed,required TResult Function()  restarted,required TResult Function( bool locked,  FedBy by)  lock,required TResult Function( FedBy by)  settingsChanged,required TResult Function( FedBy by)  wifiChanged,required TResult Function( FedBy by)  plansChanged,required TResult Function( String fingerprint)  joined,required TResult Function( String fingerprint,  FedBy by)  revoked,required TResult Function( FedBy by)  clockSet,required TResult Function( int count)  lost,required TResult Function( Blocked? reason)  feedingBlocked,required TResult Function( int minute,  int portions)  mealSoon,required TResult Function( bool? adapter)  supply,required TResult Function( Blocked reason)  dispenseRefused,required TResult Function( FoodLevel level)  food,required TResult Function( BigInt from,  BigInt to)  gap,required TResult Function()  other,}) {final _that = this;
 switch (_that) {
 case HistoryBody_Fed():
 return fed(_that.result);case HistoryBody_Missed():
-return missed(_that.slot,_that.dueMs,_that.late_);case HistoryBody_Restarted():
+return missed(_that.slot,_that.dueMs,_that.reason);case HistoryBody_Restarted():
 return restarted();case HistoryBody_Lock():
 return lock(_that.locked,_that.by);case HistoryBody_SettingsChanged():
 return settingsChanged(_that.by);case HistoryBody_WifiChanged():
@@ -650,11 +650,11 @@ return other();}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( FeedResult result)?  fed,TResult? Function( int slot,  PlatformInt64 dueMs,  bool late_)?  missed,TResult? Function()?  restarted,TResult? Function( bool locked,  FedBy by)?  lock,TResult? Function( FedBy by)?  settingsChanged,TResult? Function( FedBy by)?  wifiChanged,TResult? Function( FedBy by)?  plansChanged,TResult? Function( String fingerprint)?  joined,TResult? Function( String fingerprint,  FedBy by)?  revoked,TResult? Function( FedBy by)?  clockSet,TResult? Function( int count)?  lost,TResult? Function( Blocked? reason)?  feedingBlocked,TResult? Function( int minute,  int portions)?  mealSoon,TResult? Function( bool? adapter)?  supply,TResult? Function( Blocked reason)?  dispenseRefused,TResult? Function( FoodLevel level)?  food,TResult? Function( BigInt from,  BigInt to)?  gap,TResult? Function()?  other,}) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( FeedResult result)?  fed,TResult? Function( int slot,  PlatformInt64 dueMs,  MissedReason reason)?  missed,TResult? Function()?  restarted,TResult? Function( bool locked,  FedBy by)?  lock,TResult? Function( FedBy by)?  settingsChanged,TResult? Function( FedBy by)?  wifiChanged,TResult? Function( FedBy by)?  plansChanged,TResult? Function( String fingerprint)?  joined,TResult? Function( String fingerprint,  FedBy by)?  revoked,TResult? Function( FedBy by)?  clockSet,TResult? Function( int count)?  lost,TResult? Function( Blocked? reason)?  feedingBlocked,TResult? Function( int minute,  int portions)?  mealSoon,TResult? Function( bool? adapter)?  supply,TResult? Function( Blocked reason)?  dispenseRefused,TResult? Function( FoodLevel level)?  food,TResult? Function( BigInt from,  BigInt to)?  gap,TResult? Function()?  other,}) {final _that = this;
 switch (_that) {
 case HistoryBody_Fed() when fed != null:
 return fed(_that.result);case HistoryBody_Missed() when missed != null:
-return missed(_that.slot,_that.dueMs,_that.late_);case HistoryBody_Restarted() when restarted != null:
+return missed(_that.slot,_that.dueMs,_that.reason);case HistoryBody_Restarted() when restarted != null:
 return restarted();case HistoryBody_Lock() when lock != null:
 return lock(_that.locked,_that.by);case HistoryBody_SettingsChanged() when settingsChanged != null:
 return settingsChanged(_that.by);case HistoryBody_WifiChanged() when wifiChanged != null:
@@ -750,12 +750,12 @@ as FeedResult,
 
 
 class HistoryBody_Missed extends HistoryBody {
-  const HistoryBody_Missed({required this.slot, required this.dueMs, required this.late_}): super._();
+  const HistoryBody_Missed({required this.slot, required this.dueMs, required this.reason}): super._();
   
 
  final  int slot;
  final  PlatformInt64 dueMs;
- final  bool late_;
+ final  MissedReason reason;
 
 /// Create a copy of HistoryBody
 /// with the given fields replaced by the non-null parameter values.
@@ -767,18 +767,18 @@ $HistoryBody_MissedCopyWith<HistoryBody_Missed> get copyWith => _$HistoryBody_Mi
 
 @override
 bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType&&other is HistoryBody_Missed&&(identical(other.slot, slot) || other.slot == slot)&&(identical(other.dueMs, dueMs) || other.dueMs == dueMs)&&(identical(other.late_, late_) || other.late_ == late_));
+    return identical(this, other) || (other.runtimeType == runtimeType&&other is HistoryBody_Missed&&(identical(other.slot, slot) || other.slot == slot)&&(identical(other.dueMs, dueMs) || other.dueMs == dueMs)&&(identical(other.reason, reason) || other.reason == reason));
 }
 
 
 @override
 int get hashCode {
-    return Object.hash(runtimeType,slot,dueMs,late_);
+    return Object.hash(runtimeType,slot,dueMs,reason);
 }
 
 @override
 String toString() {
-    return 'HistoryBody.missed(slot: $slot, dueMs: $dueMs, late_: $late_)';
+    return 'HistoryBody.missed(slot: $slot, dueMs: $dueMs, reason: $reason)';
 }
 
 
@@ -789,11 +789,11 @@ abstract mixin class $HistoryBody_MissedCopyWith<$Res> implements $HistoryBodyCo
   factory $HistoryBody_MissedCopyWith(HistoryBody_Missed value, $Res Function(HistoryBody_Missed) _then) = _$HistoryBody_MissedCopyWithImpl;
 @useResult
 $Res call({
- int slot, PlatformInt64 dueMs, bool late_
+ int slot, PlatformInt64 dueMs, MissedReason reason
 });
 
 
-
+$MissedReasonCopyWith<$Res> get reason;
 
 }
 /// @nodoc
@@ -806,16 +806,25 @@ class _$HistoryBody_MissedCopyWithImpl<$Res>
 
 /// Create a copy of HistoryBody
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') $Res call({Object? slot = null,Object? dueMs = null,Object? late_ = null,}) {
+@pragma('vm:prefer-inline') $Res call({Object? slot = null,Object? dueMs = null,Object? reason = null,}) {
   return _then(HistoryBody_Missed(
 slot: null == slot ? _self.slot : slot // ignore: cast_nullable_to_non_nullable
 as int,dueMs: null == dueMs ? _self.dueMs : dueMs // ignore: cast_nullable_to_non_nullable
-as PlatformInt64,late_: null == late_ ? _self.late_ : late_ // ignore: cast_nullable_to_non_nullable
-as bool,
+as PlatformInt64,reason: null == reason ? _self.reason : reason // ignore: cast_nullable_to_non_nullable
+as MissedReason,
   ));
 }
 
-
+/// Create a copy of HistoryBody
+/// with the given fields replaced by the non-null parameter values.
+@override
+@pragma('vm:prefer-inline')
+$MissedReasonCopyWith<$Res> get reason {
+  
+  return $MissedReasonCopyWith<$Res>(_self.reason, (value) {
+    return _then(_self.copyWith(reason: value));
+  });
+}
 }
 
 /// @nodoc

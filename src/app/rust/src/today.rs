@@ -17,7 +17,7 @@ use crate::api::session::{
     Card, FaultView, FedBy, FeedResult, HistoryBody, HistoryEntry, MealStanding, MealView,
     NextMealView,
 };
-use crate::requests::time_info;
+use crate::requests::{plans_view, time_info};
 
 /// What a session has read of the feeder.
 #[derive(Default)]
@@ -77,6 +77,8 @@ impl Facts {
             last_fed: self.feeds.last().map(result),
             meals,
             time,
+            plans: self.plans.as_ref().map(plans_view),
+            wifi_generation: status.wifi_generation.0,
         })
     }
 
@@ -167,7 +169,7 @@ pub(crate) fn event_entry(event: &Event) -> HistoryEntry {
         EventBody::Missed { plan, due, reason } => HistoryBody::Missed {
             slot: plan,
             due_ms: due.as_millisecond(),
-            late: matches!(reason, wellfed_model::MissedReason::Late),
+            reason,
         },
         EventBody::Boot { .. } => HistoryBody::Restarted,
         EventBody::Lock { locked, by } => HistoryBody::Lock {

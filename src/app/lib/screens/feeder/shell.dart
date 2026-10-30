@@ -8,6 +8,8 @@ import '../../state/fleet.dart';
 import '../../theme/theme.dart';
 import '../../widgets/icons.dart';
 import '../../widgets/replies.dart';
+import 'history.dart';
+import 'schedule.dart';
 import 'today.dart';
 
 /// One feeder: its name, the menu, and the tabs (board 7).
@@ -89,8 +91,8 @@ class FeederShell extends StatelessWidget {
         body: TabBarView(
           children: [
             TodayTab(feeder: feeder),
-            const _NotBuilt('Schedule'),
-            const _NotBuilt('History'),
+            ScheduleTab(feeder: feeder),
+            HistoryTab(feeder: feeder),
             const _NotBuilt('Settings'),
           ],
         ),

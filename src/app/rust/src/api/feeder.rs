@@ -9,7 +9,7 @@
 pub use crate::api::model::{
     Blocked, Bowl, CallClip, ClientRole, Desiccant, FeedOutcome, FeedReason, FoodLevel,
     MealReminder, NtpResult, Phase, Stats, StatsSection, TimeSource, TraceEntry, TraceSummary,
-    Tune, UpdateRefusal, Weekday, Window,
+    Tune, UpdatePhase, UpdateRefusal, Weekday, Window,
 };
 
 /// What the owner asks of a feeder.
@@ -77,6 +77,10 @@ pub enum FeederRequest {
         wav: Vec<u8>,
     },
     DeleteCall,
+    /// Where an install stands.
+    UpdateState,
+    /// Stop the install, with bank 1 left invalid.
+    CancelUpdate,
     /// Push the feeder's record lines after `after`, as [`SessionUpdate::Log`].
     ///
     /// [`SessionUpdate::Log`]: crate::api::session::SessionUpdate::Log
@@ -130,6 +134,7 @@ pub enum PlanEdit {
         portions: Option<u8>,
         days: Option<Vec<Weekday>>,
         call: Option<u8>,
+        enabled: Option<bool>,
     },
     Enabled {
         slot: u8,
@@ -243,6 +248,20 @@ pub struct TraceView {
     pub entries: Vec<TraceEntry>,
 }
 
+/// Where an install stands.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UpdateInfo {
+    pub phase: UpdatePhase,
+    /// The bank it answers from.
+    pub bank: u8,
+    /// The lowest version it will install.
+    pub min_version: u32,
+    /// The version being installed.
+    pub version: u32,
+    pub image_len: u32,
+    pub written: u32,
+}
+
 /// Why the feeder refused a request: the device API's refusals.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FeederRefusal {
@@ -328,6 +347,9 @@ pub enum FeederReply {
     },
     Trace {
         trace: TraceView,
+    },
+    Update {
+        update: UpdateInfo,
     },
     Refused {
         refusal: FeederRefusal,

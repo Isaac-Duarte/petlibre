@@ -152,6 +152,28 @@ class FeederController extends ChangeNotifier {
 
   void dismissFeed() => _setFeed(FeedState.idle);
 
+  /// The clients the feeder lists, once asked for.
+  List<ClientView> clients = const [];
+
+  /// A client by its fingerprint, as events name it.
+  String clientName(String fingerprint) {
+    for (final client in clients) {
+      if (client.fingerprint == fingerprint) {
+        return client.you ? 'This phone' : client.label;
+      }
+    }
+    return 'A phone or server';
+  }
+
+  /// Read who the feeder lists.
+  Future<void> loadClients() async {
+    final reply = await ask(const FeederRequest.listClients());
+    if (reply is FeederReply_Clients) {
+      clients = reply.clients;
+      _notify();
+    }
+  }
+
   /// One request to the feeder. A write goes out once and is never sent
   /// again; the reply says how it ended, an unknown end included.
   Future<FeederReply> ask(FeederRequest request) async {

@@ -913,6 +913,304 @@ as int,
 }
 
 /// @nodoc
+mixin _$MissedReason {
+
+
+
+
+
+@override
+bool operator ==(Object other) {
+    return identical(this, other) || (other.runtimeType == runtimeType&&other is MissedReason);
+}
+
+
+@override
+int get hashCode => runtimeType.hashCode;
+
+@override
+String toString() {
+    return 'MissedReason()';
+}
+
+
+}
+
+/// @nodoc
+class $MissedReasonCopyWith<$Res>  {
+$MissedReasonCopyWith(MissedReason _, $Res Function(MissedReason) __);
+}
+
+
+/// Adds pattern-matching-related methods to [MissedReason].
+extension MissedReasonPatterns on MissedReason {
+/// A variant of `map` that fallback to returning `orElse`.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case _:
+///     return orElse();
+/// }
+/// ```
+
+@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( MissedReason_Late value)?  late_,TResult Function( MissedReason_Blocked value)?  blocked,TResult Function( MissedReason_Interrupted value)?  interrupted,required TResult orElse(),}){
+final _that = this;
+switch (_that) {
+case MissedReason_Late() when late_ != null:
+return late_(_that);case MissedReason_Blocked() when blocked != null:
+return blocked(_that);case MissedReason_Interrupted() when interrupted != null:
+return interrupted(_that);case _:
+  return orElse();
+
+}
+}
+/// A `switch`-like method, using callbacks.
+///
+/// Callbacks receives the raw object, upcasted.
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case final Subclass2 value:
+///     return ...;
+/// }
+/// ```
+
+@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( MissedReason_Late value)  late_,required TResult Function( MissedReason_Blocked value)  blocked,required TResult Function( MissedReason_Interrupted value)  interrupted,}){
+final _that = this;
+switch (_that) {
+case MissedReason_Late():
+return late_(_that);case MissedReason_Blocked():
+return blocked(_that);case MissedReason_Interrupted():
+return interrupted(_that);}
+}
+/// A variant of `map` that fallback to returning `null`.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case _:
+///     return null;
+/// }
+/// ```
+
+@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( MissedReason_Late value)?  late_,TResult? Function( MissedReason_Blocked value)?  blocked,TResult? Function( MissedReason_Interrupted value)?  interrupted,}){
+final _that = this;
+switch (_that) {
+case MissedReason_Late() when late_ != null:
+return late_(_that);case MissedReason_Blocked() when blocked != null:
+return blocked(_that);case MissedReason_Interrupted() when interrupted != null:
+return interrupted(_that);case _:
+  return null;
+
+}
+}
+/// A variant of `when` that fallback to an `orElse` callback.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case _:
+///     return orElse();
+/// }
+/// ```
+
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function()?  late_,TResult Function( Blocked reason)?  blocked,TResult Function()?  interrupted,required TResult orElse(),}) {final _that = this;
+switch (_that) {
+case MissedReason_Late() when late_ != null:
+return late_();case MissedReason_Blocked() when blocked != null:
+return blocked(_that.reason);case MissedReason_Interrupted() when interrupted != null:
+return interrupted();case _:
+  return orElse();
+
+}
+}
+/// A `switch`-like method, using callbacks.
+///
+/// As opposed to `map`, this offers destructuring.
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case Subclass2(:final field2):
+///     return ...;
+/// }
+/// ```
+
+@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function()  late_,required TResult Function( Blocked reason)  blocked,required TResult Function()  interrupted,}) {final _that = this;
+switch (_that) {
+case MissedReason_Late():
+return late_();case MissedReason_Blocked():
+return blocked(_that.reason);case MissedReason_Interrupted():
+return interrupted();}
+}
+/// A variant of `when` that fallback to returning `null`
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case _:
+///     return null;
+/// }
+/// ```
+
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function()?  late_,TResult? Function( Blocked reason)?  blocked,TResult? Function()?  interrupted,}) {final _that = this;
+switch (_that) {
+case MissedReason_Late() when late_ != null:
+return late_();case MissedReason_Blocked() when blocked != null:
+return blocked(_that.reason);case MissedReason_Interrupted() when interrupted != null:
+return interrupted();case _:
+  return null;
+
+}
+}
+
+}
+
+/// @nodoc
+
+
+class MissedReason_Late extends MissedReason {
+  const MissedReason_Late(): super._();
+  
+
+
+
+
+
+
+@override
+bool operator ==(Object other) {
+    return identical(this, other) || (other.runtimeType == runtimeType&&other is MissedReason_Late);
+}
+
+
+@override
+int get hashCode => runtimeType.hashCode;
+
+@override
+String toString() {
+    return 'MissedReason.late_()';
+}
+
+
+}
+
+
+
+
+/// @nodoc
+
+
+class MissedReason_Blocked extends MissedReason {
+  const MissedReason_Blocked({required this.reason}): super._();
+  
+
+ final  Blocked reason;
+
+/// Create a copy of MissedReason
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$MissedReason_BlockedCopyWith<MissedReason_Blocked> get copyWith => _$MissedReason_BlockedCopyWithImpl<MissedReason_Blocked>(this, _$identity);
+
+
+
+@override
+bool operator ==(Object other) {
+    return identical(this, other) || (other.runtimeType == runtimeType&&other is MissedReason_Blocked&&(identical(other.reason, reason) || other.reason == reason));
+}
+
+
+@override
+int get hashCode {
+    return Object.hash(runtimeType,reason);
+}
+
+@override
+String toString() {
+    return 'MissedReason.blocked(reason: $reason)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $MissedReason_BlockedCopyWith<$Res> implements $MissedReasonCopyWith<$Res> {
+  factory $MissedReason_BlockedCopyWith(MissedReason_Blocked value, $Res Function(MissedReason_Blocked) _then) = _$MissedReason_BlockedCopyWithImpl;
+@useResult
+$Res call({
+ Blocked reason
+});
+
+
+
+
+}
+/// @nodoc
+class _$MissedReason_BlockedCopyWithImpl<$Res>
+    implements $MissedReason_BlockedCopyWith<$Res> {
+  _$MissedReason_BlockedCopyWithImpl(this._self, this._then);
+
+  final MissedReason_Blocked _self;
+  final $Res Function(MissedReason_Blocked) _then;
+
+/// Create a copy of MissedReason
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') $Res call({Object? reason = null,}) {
+  return _then(MissedReason_Blocked(
+reason: null == reason ? _self.reason : reason // ignore: cast_nullable_to_non_nullable
+as Blocked,
+  ));
+}
+
+
+}
+
+/// @nodoc
+
+
+class MissedReason_Interrupted extends MissedReason {
+  const MissedReason_Interrupted(): super._();
+  
+
+
+
+
+
+
+@override
+bool operator ==(Object other) {
+    return identical(this, other) || (other.runtimeType == runtimeType&&other is MissedReason_Interrupted);
+}
+
+
+@override
+int get hashCode => runtimeType.hashCode;
+
+@override
+String toString() {
+    return 'MissedReason.interrupted()';
+}
+
+
+}
+
+
+
+
+/// @nodoc
 mixin _$Stats {
 
  Object get field0;

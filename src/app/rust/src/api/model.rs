@@ -88,20 +88,11 @@ pub enum _FeedReason {
 }
 
 pub use wellfed_model::{
-    Battery, Bowl, CallClip, Counters, Counts, CurrentUnit, Desiccant, Erases, FeedStats, Flash,
+    Bowl, CallClip, Counters, Counts, CurrentUnit, Desiccant, Erases, FeedStats, Flash,
     Food, MealReminder, Memory, NtpResult, Phase, Portions, PowerStats, ResetCause, Resets, Stats,
     StatsSection, TaskStack, TimeSource, TraceEntry, TraceMotor, TraceSummary, Tune, UpdateRefusal,
     Weekday, Window,
 };
-
-#[frb(mirror(Battery))]
-pub enum _Battery {
-    Absent,
-    Reading { mv: u16, percent: u8 },
-    Implausible { mv: u16 },
-    Unread,
-    Stale { age_ms: u32 },
-}
 
 #[frb(mirror(Bowl))]
 pub enum _Bowl {
@@ -196,6 +187,22 @@ pub enum _UpdateRefusal {
     Store,
     Unconfirmed,
     Battery,
+}
+
+#[frb(mirror(UpdatePhase))]
+pub enum _UpdatePhase {
+    Idle,
+    Checking,
+    GivingWay,
+    Receiving,
+    Activated,
+}
+
+#[frb(mirror(MissedReason))]
+pub enum _MissedReason {
+    Late,
+    Blocked { reason: Blocked },
+    Interrupted,
 }
 
 #[frb(mirror(StatsSection))]

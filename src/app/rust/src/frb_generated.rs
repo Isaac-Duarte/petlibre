@@ -2019,6 +2019,13 @@ const _: fn() = || {
         let _: Vec<crate::api::model::TaskStack> = Memory.tasks;
         let _: u32 = Memory.tasks_total;
     }
+    match None::<crate::api::model::MissedReason>.unwrap() {
+        crate::api::model::MissedReason::Late => {}
+        crate::api::model::MissedReason::Blocked { reason } => {
+            let _: crate::api::model::Blocked = reason;
+        }
+        crate::api::model::MissedReason::Interrupted => {}
+    }
     {
         let Portions = None::<crate::api::model::Portions>.unwrap();
         let _: u32 = Portions.portions;
@@ -2501,6 +2508,8 @@ impl SseDecode for crate::api::session::Card {
         let mut var_lastFed = <Option<crate::api::session::FeedResult>>::sse_decode(deserializer);
         let mut var_meals = <Vec<crate::api::session::MealView>>::sse_decode(deserializer);
         let mut var_time = <Option<crate::api::feeder::TimeInfo>>::sse_decode(deserializer);
+        let mut var_plans = <Option<crate::api::feeder::PlansView>>::sse_decode(deserializer);
+        let mut var_wifiGeneration = <u32>::sse_decode(deserializer);
         return crate::api::session::Card {
             build: var_build,
             food: var_food,
@@ -2519,6 +2528,8 @@ impl SseDecode for crate::api::session::Card {
             last_fed: var_lastFed,
             meals: var_meals,
             time: var_time,
+            plans: var_plans,
+            wifi_generation: var_wifiGeneration,
         };
     }
 }
@@ -3007,22 +3018,26 @@ impl SseDecode for crate::api::feeder::FeederReply {
                 return crate::api::feeder::FeederReply::Trace { trace: var_trace };
             }
             10 => {
+                let mut var_update = <crate::api::feeder::UpdateInfo>::sse_decode(deserializer);
+                return crate::api::feeder::FeederReply::Update { update: var_update };
+            }
+            11 => {
                 let mut var_refusal = <crate::api::feeder::FeederRefusal>::sse_decode(deserializer);
                 return crate::api::feeder::FeederReply::Refused {
                     refusal: var_refusal,
                 };
             }
-            11 => {
+            12 => {
                 let mut var_reason = <crate::api::feeder::NotAsked>::sse_decode(deserializer);
                 return crate::api::feeder::FeederReply::NotAsked { reason: var_reason };
             }
-            12 => {
+            13 => {
                 return crate::api::feeder::FeederReply::Unanswered;
             }
-            13 => {
+            14 => {
                 return crate::api::feeder::FeederReply::NotSent;
             }
-            14 => {
+            15 => {
                 return crate::api::feeder::FeederReply::Unexpected;
             }
             _ => {
@@ -3150,6 +3165,12 @@ impl SseDecode for crate::api::feeder::FeederRequest {
                 return crate::api::feeder::FeederRequest::DeleteCall;
             }
             23 => {
+                return crate::api::feeder::FeederRequest::UpdateState;
+            }
+            24 => {
+                return crate::api::feeder::FeederRequest::CancelUpdate;
+            }
+            25 => {
                 let mut var_after = <Option<u32>>::sse_decode(deserializer);
                 return crate::api::feeder::FeederRequest::TailLog { after: var_after };
             }
@@ -3217,11 +3238,11 @@ impl SseDecode for crate::api::session::HistoryBody {
             1 => {
                 let mut var_slot = <u8>::sse_decode(deserializer);
                 let mut var_dueMs = <i64>::sse_decode(deserializer);
-                let mut var_late_ = <bool>::sse_decode(deserializer);
+                let mut var_reason = <crate::api::model::MissedReason>::sse_decode(deserializer);
                 return crate::api::session::HistoryBody::Missed {
                     slot: var_slot,
                     due_ms: var_dueMs,
-                    late: var_late_,
+                    reason: var_reason,
                 };
             }
             2 => {
@@ -4061,6 +4082,28 @@ impl SseDecode for crate::api::model::Memory {
     }
 }
 
+impl SseDecode for crate::api::model::MissedReason {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut tag_ = <i32>::sse_decode(deserializer);
+        match tag_ {
+            0 => {
+                return crate::api::model::MissedReason::Late;
+            }
+            1 => {
+                let mut var_reason = <crate::api::model::Blocked>::sse_decode(deserializer);
+                return crate::api::model::MissedReason::Blocked { reason: var_reason };
+            }
+            2 => {
+                return crate::api::model::MissedReason::Interrupted;
+            }
+            _ => {
+                unimplemented!("");
+            }
+        }
+    }
+}
+
 impl SseDecode for crate::api::session::NextMealView {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -4314,6 +4357,17 @@ impl SseDecode for Option<crate::api::feeder::PlanView> {
     }
 }
 
+impl SseDecode for Option<crate::api::feeder::PlansView> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<crate::api::feeder::PlansView>::sse_decode(deserializer));
+        } else {
+            return None;
+        }
+    }
+}
+
 impl SseDecode for Option<crate::api::model::Resets> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -4500,12 +4554,14 @@ impl SseDecode for crate::api::feeder::PlanEdit {
                 let mut var_days =
                     <Option<Vec<crate::api::model::Weekday>>>::sse_decode(deserializer);
                 let mut var_call = <Option<u8>>::sse_decode(deserializer);
+                let mut var_enabled = <Option<bool>>::sse_decode(deserializer);
                 return crate::api::feeder::PlanEdit::Change {
                     slot: var_slot,
                     minute: var_minute,
                     portions: var_portions,
                     days: var_days,
                     call: var_call,
+                    enabled: var_enabled,
                 };
             }
             2 => {
@@ -5309,6 +5365,41 @@ impl SseDecode for () {
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {}
 }
 
+impl SseDecode for crate::api::feeder::UpdateInfo {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_phase = <crate::api::model::UpdatePhase>::sse_decode(deserializer);
+        let mut var_bank = <u8>::sse_decode(deserializer);
+        let mut var_minVersion = <u32>::sse_decode(deserializer);
+        let mut var_version = <u32>::sse_decode(deserializer);
+        let mut var_imageLen = <u32>::sse_decode(deserializer);
+        let mut var_written = <u32>::sse_decode(deserializer);
+        return crate::api::feeder::UpdateInfo {
+            phase: var_phase,
+            bank: var_bank,
+            min_version: var_minVersion,
+            version: var_version,
+            image_len: var_imageLen,
+            written: var_written,
+        };
+    }
+}
+
+impl SseDecode for crate::api::model::UpdatePhase {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <i32>::sse_decode(deserializer);
+        return match inner {
+            0 => crate::api::model::UpdatePhase::Idle,
+            1 => crate::api::model::UpdatePhase::Checking,
+            2 => crate::api::model::UpdatePhase::GivingWay,
+            3 => crate::api::model::UpdatePhase::Receiving,
+            4 => crate::api::model::UpdatePhase::Activated,
+            _ => unreachable!("Invalid variant for UpdatePhase: {}", inner),
+        };
+    }
+}
+
 impl SseDecode for crate::api::model::UpdateRefusal {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -5834,6 +5925,8 @@ impl flutter_rust_bridge::IntoDart for crate::api::session::Card {
             self.last_fed.into_into_dart().into_dart(),
             self.meals.into_into_dart().into_dart(),
             self.time.into_into_dart().into_dart(),
+            self.plans.into_into_dart().into_dart(),
+            self.wifi_generation.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -6369,15 +6462,18 @@ impl flutter_rust_bridge::IntoDart for crate::api::feeder::FeederReply {
             crate::api::feeder::FeederReply::Trace { trace } => {
                 [9.into_dart(), trace.into_into_dart().into_dart()].into_dart()
             }
+            crate::api::feeder::FeederReply::Update { update } => {
+                [10.into_dart(), update.into_into_dart().into_dart()].into_dart()
+            }
             crate::api::feeder::FeederReply::Refused { refusal } => {
-                [10.into_dart(), refusal.into_into_dart().into_dart()].into_dart()
+                [11.into_dart(), refusal.into_into_dart().into_dart()].into_dart()
             }
             crate::api::feeder::FeederReply::NotAsked { reason } => {
-                [11.into_dart(), reason.into_into_dart().into_dart()].into_dart()
+                [12.into_dart(), reason.into_into_dart().into_dart()].into_dart()
             }
-            crate::api::feeder::FeederReply::Unanswered => [12.into_dart()].into_dart(),
-            crate::api::feeder::FeederReply::NotSent => [13.into_dart()].into_dart(),
-            crate::api::feeder::FeederReply::Unexpected => [14.into_dart()].into_dart(),
+            crate::api::feeder::FeederReply::Unanswered => [13.into_dart()].into_dart(),
+            crate::api::feeder::FeederReply::NotSent => [14.into_dart()].into_dart(),
+            crate::api::feeder::FeederReply::Unexpected => [15.into_dart()].into_dart(),
             _ => {
                 unimplemented!("");
             }
@@ -6474,8 +6570,10 @@ impl flutter_rust_bridge::IntoDart for crate::api::feeder::FeederRequest {
                 [21.into_dart(), wav.into_into_dart().into_dart()].into_dart()
             }
             crate::api::feeder::FeederRequest::DeleteCall => [22.into_dart()].into_dart(),
+            crate::api::feeder::FeederRequest::UpdateState => [23.into_dart()].into_dart(),
+            crate::api::feeder::FeederRequest::CancelUpdate => [24.into_dart()].into_dart(),
             crate::api::feeder::FeederRequest::TailLog { after } => {
-                [23.into_dart(), after.into_into_dart().into_dart()].into_dart()
+                [25.into_dart(), after.into_into_dart().into_dart()].into_dart()
             }
             _ => {
                 unimplemented!("");
@@ -6569,11 +6667,15 @@ impl flutter_rust_bridge::IntoDart for crate::api::session::HistoryBody {
             crate::api::session::HistoryBody::Fed { result } => {
                 [0.into_dart(), result.into_into_dart().into_dart()].into_dart()
             }
-            crate::api::session::HistoryBody::Missed { slot, due_ms, late } => [
+            crate::api::session::HistoryBody::Missed {
+                slot,
+                due_ms,
+                reason,
+            } => [
                 1.into_dart(),
                 slot.into_into_dart().into_dart(),
                 due_ms.into_into_dart().into_dart(),
-                late.into_into_dart().into_dart(),
+                reason.into_into_dart().into_dart(),
             ]
             .into_dart(),
             crate::api::session::HistoryBody::Restarted => [2.into_dart()].into_dart(),
@@ -7223,6 +7325,32 @@ impl flutter_rust_bridge::IntoIntoDart<FrbWrapper<crate::api::model::Memory>>
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::api::model::MissedReason> {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self.0 {
+            crate::api::model::MissedReason::Late => [0.into_dart()].into_dart(),
+            crate::api::model::MissedReason::Blocked { reason } => {
+                [1.into_dart(), reason.into_into_dart().into_dart()].into_dart()
+            }
+            crate::api::model::MissedReason::Interrupted => [2.into_dart()].into_dart(),
+            _ => {
+                unimplemented!("");
+            }
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for FrbWrapper<crate::api::model::MissedReason>
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<FrbWrapper<crate::api::model::MissedReason>>
+    for crate::api::model::MissedReason
+{
+    fn into_into_dart(self) -> FrbWrapper<crate::api::model::MissedReason> {
+        self.into()
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::session::NextMealView {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -7377,6 +7505,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::feeder::PlanEdit {
                 portions,
                 days,
                 call,
+                enabled,
             } => [
                 1.into_dart(),
                 slot.into_into_dart().into_dart(),
@@ -7384,6 +7513,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::feeder::PlanEdit {
                 portions.into_into_dart().into_dart(),
                 days.into_into_dart().into_dart(),
                 call.into_into_dart().into_dart(),
+                enabled.into_into_dart().into_dart(),
             ]
             .into_dart(),
             crate::api::feeder::PlanEdit::Enabled { slot, enabled } => [
@@ -8214,6 +8344,55 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::install::UncertainWrite>
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::feeder::UpdateInfo {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.phase.into_into_dart().into_dart(),
+            self.bank.into_into_dart().into_dart(),
+            self.min_version.into_into_dart().into_dart(),
+            self.version.into_into_dart().into_dart(),
+            self.image_len.into_into_dart().into_dart(),
+            self.written.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::feeder::UpdateInfo
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::feeder::UpdateInfo>
+    for crate::api::feeder::UpdateInfo
+{
+    fn into_into_dart(self) -> crate::api::feeder::UpdateInfo {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::api::model::UpdatePhase> {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self.0 {
+            crate::api::model::UpdatePhase::Idle => 0.into_dart(),
+            crate::api::model::UpdatePhase::Checking => 1.into_dart(),
+            crate::api::model::UpdatePhase::GivingWay => 2.into_dart(),
+            crate::api::model::UpdatePhase::Receiving => 3.into_dart(),
+            crate::api::model::UpdatePhase::Activated => 4.into_dart(),
+            _ => unreachable!(),
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for FrbWrapper<crate::api::model::UpdatePhase>
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<FrbWrapper<crate::api::model::UpdatePhase>>
+    for crate::api::model::UpdatePhase
+{
+    fn into_into_dart(self) -> FrbWrapper<crate::api::model::UpdatePhase> {
+        self.into()
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::api::model::UpdateRefusal> {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         match self.0 {
@@ -8705,6 +8884,8 @@ impl SseEncode for crate::api::session::Card {
         <Option<crate::api::session::FeedResult>>::sse_encode(self.last_fed, serializer);
         <Vec<crate::api::session::MealView>>::sse_encode(self.meals, serializer);
         <Option<crate::api::feeder::TimeInfo>>::sse_encode(self.time, serializer);
+        <Option<crate::api::feeder::PlansView>>::sse_encode(self.plans, serializer);
+        <u32>::sse_encode(self.wifi_generation, serializer);
     }
 }
 
@@ -9131,22 +9312,26 @@ impl SseEncode for crate::api::feeder::FeederReply {
                 <i32>::sse_encode(9, serializer);
                 <crate::api::feeder::TraceView>::sse_encode(trace, serializer);
             }
-            crate::api::feeder::FeederReply::Refused { refusal } => {
+            crate::api::feeder::FeederReply::Update { update } => {
                 <i32>::sse_encode(10, serializer);
+                <crate::api::feeder::UpdateInfo>::sse_encode(update, serializer);
+            }
+            crate::api::feeder::FeederReply::Refused { refusal } => {
+                <i32>::sse_encode(11, serializer);
                 <crate::api::feeder::FeederRefusal>::sse_encode(refusal, serializer);
             }
             crate::api::feeder::FeederReply::NotAsked { reason } => {
-                <i32>::sse_encode(11, serializer);
+                <i32>::sse_encode(12, serializer);
                 <crate::api::feeder::NotAsked>::sse_encode(reason, serializer);
             }
             crate::api::feeder::FeederReply::Unanswered => {
-                <i32>::sse_encode(12, serializer);
-            }
-            crate::api::feeder::FeederReply::NotSent => {
                 <i32>::sse_encode(13, serializer);
             }
-            crate::api::feeder::FeederReply::Unexpected => {
+            crate::api::feeder::FeederReply::NotSent => {
                 <i32>::sse_encode(14, serializer);
+            }
+            crate::api::feeder::FeederReply::Unexpected => {
+                <i32>::sse_encode(15, serializer);
             }
             _ => {
                 unimplemented!("");
@@ -9257,8 +9442,14 @@ impl SseEncode for crate::api::feeder::FeederRequest {
             crate::api::feeder::FeederRequest::DeleteCall => {
                 <i32>::sse_encode(22, serializer);
             }
-            crate::api::feeder::FeederRequest::TailLog { after } => {
+            crate::api::feeder::FeederRequest::UpdateState => {
                 <i32>::sse_encode(23, serializer);
+            }
+            crate::api::feeder::FeederRequest::CancelUpdate => {
+                <i32>::sse_encode(24, serializer);
+            }
+            crate::api::feeder::FeederRequest::TailLog { after } => {
+                <i32>::sse_encode(25, serializer);
                 <Option<u32>>::sse_encode(after, serializer);
             }
             _ => {
@@ -9313,11 +9504,15 @@ impl SseEncode for crate::api::session::HistoryBody {
                 <i32>::sse_encode(0, serializer);
                 <crate::api::session::FeedResult>::sse_encode(result, serializer);
             }
-            crate::api::session::HistoryBody::Missed { slot, due_ms, late } => {
+            crate::api::session::HistoryBody::Missed {
+                slot,
+                due_ms,
+                reason,
+            } => {
                 <i32>::sse_encode(1, serializer);
                 <u8>::sse_encode(slot, serializer);
                 <i64>::sse_encode(due_ms, serializer);
-                <bool>::sse_encode(late, serializer);
+                <crate::api::model::MissedReason>::sse_encode(reason, serializer);
             }
             crate::api::session::HistoryBody::Restarted => {
                 <i32>::sse_encode(2, serializer);
@@ -10016,6 +10211,27 @@ impl SseEncode for crate::api::model::Memory {
     }
 }
 
+impl SseEncode for crate::api::model::MissedReason {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        match self {
+            crate::api::model::MissedReason::Late => {
+                <i32>::sse_encode(0, serializer);
+            }
+            crate::api::model::MissedReason::Blocked { reason } => {
+                <i32>::sse_encode(1, serializer);
+                <crate::api::model::Blocked>::sse_encode(reason, serializer);
+            }
+            crate::api::model::MissedReason::Interrupted => {
+                <i32>::sse_encode(2, serializer);
+            }
+            _ => {
+                unimplemented!("");
+            }
+        }
+    }
+}
+
 impl SseEncode for crate::api::session::NextMealView {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -10250,6 +10466,16 @@ impl SseEncode for Option<crate::api::feeder::PlanView> {
     }
 }
 
+impl SseEncode for Option<crate::api::feeder::PlansView> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::api::feeder::PlansView>::sse_encode(value, serializer);
+        }
+    }
+}
+
 impl SseEncode for Option<crate::api::model::Resets> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -10427,6 +10653,7 @@ impl SseEncode for crate::api::feeder::PlanEdit {
                 portions,
                 days,
                 call,
+                enabled,
             } => {
                 <i32>::sse_encode(1, serializer);
                 <u8>::sse_encode(slot, serializer);
@@ -10434,6 +10661,7 @@ impl SseEncode for crate::api::feeder::PlanEdit {
                 <Option<u8>>::sse_encode(portions, serializer);
                 <Option<Vec<crate::api::model::Weekday>>>::sse_encode(days, serializer);
                 <Option<u8>>::sse_encode(call, serializer);
+                <Option<bool>>::sse_encode(enabled, serializer);
             }
             crate::api::feeder::PlanEdit::Enabled { slot, enabled } => {
                 <i32>::sse_encode(2, serializer);
@@ -11123,6 +11351,37 @@ impl SseEncode for crate::api::install::UncertainWrite {
 impl SseEncode for () {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {}
+}
+
+impl SseEncode for crate::api::feeder::UpdateInfo {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <crate::api::model::UpdatePhase>::sse_encode(self.phase, serializer);
+        <u8>::sse_encode(self.bank, serializer);
+        <u32>::sse_encode(self.min_version, serializer);
+        <u32>::sse_encode(self.version, serializer);
+        <u32>::sse_encode(self.image_len, serializer);
+        <u32>::sse_encode(self.written, serializer);
+    }
+}
+
+impl SseEncode for crate::api::model::UpdatePhase {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(
+            match self {
+                crate::api::model::UpdatePhase::Idle => 0,
+                crate::api::model::UpdatePhase::Checking => 1,
+                crate::api::model::UpdatePhase::GivingWay => 2,
+                crate::api::model::UpdatePhase::Receiving => 3,
+                crate::api::model::UpdatePhase::Activated => 4,
+                _ => {
+                    unimplemented!("");
+                }
+            },
+            serializer,
+        );
+    }
 }
 
 impl SseEncode for crate::api::model::UpdateRefusal {

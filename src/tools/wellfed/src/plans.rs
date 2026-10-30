@@ -128,6 +128,7 @@ impl PlanChange {
             portions: self.portions,
             days: self.days,
             call: self.call,
+            enabled: None,
         }
     }
 }

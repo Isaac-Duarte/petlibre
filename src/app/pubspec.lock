@@ -25,6 +25,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.3.4"
+  android_file_picker:
+    dependency: transitive
+    description:
+      name: android_file_picker
+      sha256: "03d3dd3cb578ab26b1e528aeea27bf6b976942f5a24e3da82d270369b8e161a8"
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.1.2"
   args:
     dependency: transitive
     description:
@@ -241,6 +249,46 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "7.0.1"
+  file_picker:
+    dependency: "direct main"
+    description:
+      name: file_picker
+      sha256: e67f1bcbef00f8b28f3b6ce09a1f0d2d9de37cf1e1e7e73b70df7a20d3eee8be
+      url: "https://pub.dev"
+    source: hosted
+    version: "13.3.0"
+  file_picker_darwin:
+    dependency: transitive
+    description:
+      name: file_picker_darwin
+      sha256: "13e731433fb3e59c1aff5a1197e41c5c5f930fad16342d101579086271a70d7b"
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.4.0"
+  file_picker_linux:
+    dependency: transitive
+    description:
+      name: file_picker_linux
+      sha256: c6562fc7d426db2fb85ea66fe2627953d2709932df5584ceaacf0aa5e39cf4da
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.0.2"
+  file_picker_platform_interface:
+    dependency: transitive
+    description:
+      name: file_picker_platform_interface
+      sha256: "336e7168306834a2b68e6168ed768e00d3fabeac23154d5793e277ca9f97cf20"
+      url: "https://pub.dev"
+    source: hosted
+    version: "4.2.0"
+  file_picker_web:
+    dependency: transitive
+    description:
+      name: file_picker_web
+      sha256: a2288008280aabe371aff029466b3405e60838e0a1d714767488c59b926c8b8c
+      url: "https://pub.dev"
+    source: hosted
+    version: "4.2.0"
   fixnum:
     dependency: transitive
     description:
@@ -565,6 +613,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.1.0"
+  mobile_scanner:
+    dependency: "direct main"
+    description:
+      name: mobile_scanner
+      sha256: "5a51ea79f0cf8293f616a5d08baae185b59b5e6bb24df01f2a63037ade0bade0"
+      url: "https://pub.dev"
+    source: hosted
+    version: "7.4.2"
   nested:
     dependency: transitive
     description:
@@ -837,6 +893,22 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.7.0"
+  qr:
+    dependency: transitive
+    description:
+      name: qr
+      sha256: "2c0189dca64a3ab08dda7acd7911c89af2374f08eb4eaded3e8ef4609f3b9c8b"
+      url: "https://pub.dev"
+    source: hosted
+    version: "3.0.3"
+  qr_flutter:
+    dependency: "direct main"
+    description:
+      name: qr_flutter
+      sha256: "5095f0fc6e3f71d08adef8feccc8cea4f12eec18a2e31c2e8d82cb6019f4b097"
+      url: "https://pub.dev"
+    source: hosted
+    version: "4.1.0"
   reactive_ble_mobile:
     dependency: transitive
     description:
@@ -1161,6 +1233,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "3.0.3"
+  windows_file_picker:
+    dependency: transitive
+    description:
+      name: windows_file_picker
+      sha256: "18452aa293de3b6961c6d05b0e71b4be7bb90c67635abdd3aa5c4e75dd875072"
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.0.1"
   xdg_directories:
     dependency: transitive
     description:

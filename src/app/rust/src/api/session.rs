@@ -11,9 +11,11 @@ use wellfed_model::Refusal;
 use wellfed_session::noise::Keypair;
 
 use crate::api::error::{BridgeError, ErrorKind};
-use crate::api::feeder::{FeederReply, FeederRequest, TimeInfo};
+use crate::api::feeder::{FeederReply, FeederRequest, PlansView, TimeInfo};
 use crate::api::keys::ClientKey;
-use crate::api::model::{Blocked, ClientRole, Desiccant, FeedOutcome, FeedReason, FoodLevel};
+use crate::api::model::{
+    Blocked, ClientRole, Desiccant, FeedOutcome, FeedReason, FoodLevel, MissedReason,
+};
 use crate::frb_generated::StreamSink;
 use crate::requests;
 use crate::session::{self, Command};
@@ -51,6 +53,10 @@ pub struct Card {
     pub meals: Vec<MealView>,
     /// The time settings and the clock, once read.
     pub time: Option<TimeInfo>,
+    /// The feeding plans, once read.
+    pub plans: Option<PlansView>,
+    /// The base of a Wi-Fi change.
+    pub wifi_generation: u32,
 }
 
 /// The feed `Status.feed_fault` names, with its `Fed` event once read.
@@ -121,7 +127,7 @@ pub enum HistoryBody {
     Missed {
         slot: u8,
         due_ms: i64,
-        late: bool,
+        reason: MissedReason,
     },
     Restarted,
     Lock {

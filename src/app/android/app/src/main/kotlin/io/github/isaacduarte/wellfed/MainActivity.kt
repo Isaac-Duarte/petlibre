@@ -35,10 +35,13 @@ class MainActivity : FlutterActivity() {
     private val wifi =
         object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
+                // This request also matches the feeder's setup network while
+                // this process holds it, and that is not home.
+                if (feeder != null) return
                 home = network
                 // Refused under a VPN that apps cannot bypass: the user
                 // must exclude the app from it.
-                if (feeder == null) connectivity.bindProcessToNetwork(network)
+                connectivity.bindProcessToNetwork(network)
             }
 
             override fun onLost(network: Network) {

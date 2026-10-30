@@ -8,7 +8,10 @@ import 'error.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `eq`, `eq`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`
+
+/// This app's version, as its About screen says it.
+String appVersion() => RustLib.instance.api.crateApiStoreAppVersion();
 
 /// The store at `path`, or an empty one when the app has never saved.
 Future<AppStore> loadStore({required String path}) =>
@@ -34,14 +37,19 @@ class AppStore {
   /// How feeders list this phone: 1-16 bytes. Empty until setup asks.
   final String label;
   final List<KnownFeeder> feeders;
+  final Appearance appearance;
 
-  const AppStore({required this.label, required this.feeders});
+  const AppStore({
+    required this.label,
+    required this.feeders,
+    required this.appearance,
+  });
 
   static Future<AppStore> default_() =>
       RustLib.instance.api.crateApiStoreAppStoreDefault();
 
   @override
-  int get hashCode => label.hashCode ^ feeders.hashCode;
+  int get hashCode => label.hashCode ^ feeders.hashCode ^ appearance.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -49,7 +57,18 @@ class AppStore {
       other is AppStore &&
           runtimeType == other.runtimeType &&
           label == other.label &&
-          feeders == other.feeders;
+          feeders == other.feeders &&
+          appearance == other.appearance;
+}
+
+/// Which theme the app draws.
+enum Appearance {
+  system,
+  light,
+  dark;
+
+  static Future<Appearance> default_() =>
+      RustLib.instance.api.crateApiStoreAppearanceDefault();
 }
 
 class KnownFeeder {

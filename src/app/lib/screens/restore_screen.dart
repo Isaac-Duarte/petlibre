@@ -4,34 +4,11 @@ import 'package:go_router/go_router.dart';
 import '../platform/restore_ports.dart';
 import '../src/rust/api/restore.dart';
 import '../src/rust/api/store.dart';
-import '../state/app_state.dart';
 import '../state/install.dart' show CheckState;
 import '../state/restore.dart';
 import '../theme/theme.dart';
 import '../widgets/icons.dart';
 import '../widgets/layout.dart';
-
-/// Where Home reaches a restore: one line under a feeder's card.
-class RestoreEntry extends StatelessWidget {
-  const RestoreEntry({super.key, required this.app, required this.feeder});
-
-  final AppState app;
-  final KnownFeeder feeder;
-
-  @override
-  Widget build(BuildContext context) => Align(
-    alignment: Alignment.centerLeft,
-    child: TextButton(
-      onPressed: () => Navigator.of(context).push(
-        MaterialPageRoute<void>(
-          builder: (_) =>
-              RestoreScreen(feeder: feeder, ports: AppRestorePorts(app.key)),
-        ),
-      ),
-      child: const Text('Restore original firmware'),
-    ),
-  );
-}
 
 /// 12.4: putting the vendor's firmware back from the backup the install kept.
 class RestoreScreen extends StatefulWidget {

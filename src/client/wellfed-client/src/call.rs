@@ -21,6 +21,9 @@
 //! back against the CRC: [`Clip::settled`] says whether it stored it.
 //! Nothing here feeds, and a chunk is idempotent by offset, so resending
 //! one is always safe.
+//! [`Upload`] holds those decisions for a client that loops on them.
+
+use std::time::{Duration, Instant};
 
 use wellfed_core::clip;
 use wellfed_core::store::slot::crc32;
@@ -198,6 +201,175 @@ impl Clip {
 
     fn ours(&self, bytes: u32, crc: u32) -> bool {
         bytes == self.bytes() && crc == self.crc
+    }
+}
+
+/// The pause before a chunk the feeder was still writing for is sent again,
+/// and between reads while it reads the stream back.
+const RETRY: Duration = Duration::from_millis(50);
+/// How long an upload waits on chunks the feeder keeps refusing `Busy`, or
+/// on its read back: past any feed, during which no store is written.
+const BUSY_WAIT: Duration = Duration::from_secs(180);
+
+/// What a client does next for an [`Upload`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Step {
+    /// Send this and give [`Upload::answer`] the answer. One that never
+    /// comes ends the upload at the caller: the chunks are safe to resend,
+    /// but starting over is the owner's call.
+    Ask(Op),
+    /// Wait this long, then poll again.
+    Wait(Duration),
+    /// The feeder stored the clip.
+    Stored(CallView),
+    Failed(UploadFailed),
+}
+
+/// Why an [`Upload`] stopped. The clip the feeder held is gone once it began.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum UploadFailed {
+    #[error(transparent)]
+    Upload(#[from] UploadError),
+    #[error("the feeder stayed busy for {} s", BUSY_WAIT.as_secs())]
+    Busy,
+    #[error("the feeder did not store the clip in time")]
+    NotStored,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Stage {
+    Start,
+    /// The chunk at `offset` is next, or was just asked for.
+    Chunk {
+        offset: u32,
+    },
+    /// Where the upload stands, after a chunk the feeder did not want.
+    Where,
+    /// Every chunk is in: the feeder reads them back until `deadline`.
+    Settling {
+        deadline: Option<Instant>,
+    },
+}
+
+/// One upload's decisions, the same for every client: a client loops on
+/// [`Self::poll`], and its clock comes in, so a test can fix it.
+#[derive(Debug)]
+pub struct Upload<'a> {
+    clip: &'a Clip,
+    stage: Stage,
+    busy_since: Option<Instant>,
+    wait: Option<Duration>,
+    ended: Option<Step>,
+}
+
+impl<'a> Upload<'a> {
+    pub const fn new(clip: &'a Clip) -> Self {
+        Self {
+            clip,
+            stage: Stage::Start,
+            busy_since: None,
+            wait: None,
+            ended: None,
+        }
+    }
+
+    pub fn poll(&mut self, now: Instant) -> Step {
+        if let Some(step) = &self.ended {
+            return step.clone();
+        }
+        if let Some(wait) = self.wait.take() {
+            return Step::Wait(wait);
+        }
+        match self.stage {
+            Stage::Start => Step::Ask(self.clip.start()),
+            Stage::Chunk { offset } => match self.clip.chunk(offset) {
+                Some(op) => {
+                    if self
+                        .busy_since
+                        .is_some_and(|since| now.duration_since(since) > BUSY_WAIT)
+                    {
+                        return self.fail(UploadFailed::Busy);
+                    }
+                    Step::Ask(op)
+                }
+                // The last chunk is in.
+                None => {
+                    self.stage = Stage::Settling {
+                        deadline: Some(now + BUSY_WAIT),
+                    };
+                    Step::Ask(Op::GetCall)
+                }
+            },
+            Stage::Where => Step::Ask(Op::GetCall),
+            Stage::Settling { deadline } => {
+                if deadline.is_some_and(|deadline| now > deadline) {
+                    return self.fail(UploadFailed::NotStored);
+                }
+                Step::Ask(Op::GetCall)
+            }
+        }
+    }
+
+    /// The feeder's answer to the last [`Step::Ask`], read as of `now`.
+    pub fn answer(&mut self, answer: &Answer, now: Instant) {
+        if let Err(error) = self.answered(answer, now) {
+            self.fail(error.into());
+        }
+    }
+
+    fn answered(&mut self, answer: &Answer, now: Instant) -> Result<(), UploadError> {
+        match self.stage {
+            Stage::Start => match answer {
+                Answer::Done { .. } => {
+                    self.stage = Stage::Chunk { offset: 0 };
+                    Ok(())
+                }
+                Answer::Refused(refusal) => Err(UploadError::Refused(*refusal)),
+                _ => Err(UploadError::Unexpected),
+            },
+            Stage::Chunk { offset } => {
+                match self.clip.after_chunk(offset, answer)? {
+                    Sent::Next(next) => {
+                        self.stage = Stage::Chunk { offset: next };
+                        self.busy_since = None;
+                    }
+                    Sent::Retry => {
+                        self.busy_since.get_or_insert(now);
+                        self.wait = Some(RETRY);
+                    }
+                    Sent::Ask => self.stage = Stage::Where,
+                }
+                Ok(())
+            }
+            Stage::Where => {
+                let offset = self.clip.resume(&call_view(answer)?)?;
+                self.stage = Stage::Chunk { offset };
+                Ok(())
+            }
+            Stage::Settling { .. } => {
+                let view = call_view(answer)?;
+                if self.clip.settled(&view)? {
+                    self.ended = Some(Step::Stored(view));
+                } else {
+                    self.wait = Some(RETRY);
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn fail(&mut self, failed: UploadFailed) -> Step {
+        let step = Step::Failed(failed);
+        self.ended = Some(step.clone());
+        step
+    }
+}
+
+fn call_view(answer: &Answer) -> Result<CallView, UploadError> {
+    match answer {
+        Answer::Call(view) => Ok(*view),
+        Answer::Refused(refusal) => Err(UploadError::Refused(*refusal)),
+        _ => Err(UploadError::Unexpected),
     }
 }
 
@@ -639,5 +811,85 @@ mod tests {
         };
         assert_eq!(clip.settled(&none), Err(UploadError::Rejected));
         assert_eq!(clip.resume(&none), Err(UploadError::Lost));
+    }
+
+    fn short_clip() -> Clip {
+        Clip {
+            stream: vec![7; CALL_CHUNK_MAX + 1],
+            crc: 9,
+        }
+    }
+
+    #[test]
+    fn an_upload_waits_on_busy_and_gives_up_past_its_bound() {
+        let clip = short_clip();
+        let start = Instant::now();
+        let mut upload = Upload::new(&clip);
+        assert_eq!(upload.poll(start), Step::Ask(clip.start()));
+        upload.answer(&Answer::Done { generation: None }, start);
+
+        let Step::Ask(first) = upload.poll(start) else {
+            panic!("no first chunk");
+        };
+        upload.answer(&Answer::Refused(Refusal::Busy), start);
+        assert_eq!(upload.poll(start), Step::Wait(RETRY));
+        assert_eq!(upload.poll(start), Step::Ask(first));
+
+        let late = start + BUSY_WAIT + Duration::from_secs(1);
+        assert_eq!(upload.poll(late), Step::Failed(UploadFailed::Busy));
+    }
+
+    #[test]
+    fn an_upload_ends_once_the_feeder_stored_the_clip_it_sent() {
+        let clip = short_clip();
+        let now = Instant::now();
+        let (bytes, crc) = (clip.bytes(), clip.crc());
+        let view = |clip| CallView {
+            writable: true,
+            clip,
+        };
+        let mut upload = Upload::new(&clip);
+        assert!(matches!(upload.poll(now), Step::Ask(_)));
+        upload.answer(&Answer::Done { generation: None }, now);
+
+        // Two chunks, the last shorter.
+        for received in [512, bytes] {
+            assert!(matches!(upload.poll(now), Step::Ask(Op::CallChunk { .. })));
+            let receiving = CallClip::Receiving {
+                bytes,
+                crc,
+                received,
+            };
+            upload.answer(&Answer::Call(view(receiving)), now);
+        }
+
+        assert_eq!(upload.poll(now), Step::Ask(Op::GetCall));
+        let reading = CallClip::Receiving {
+            bytes,
+            crc,
+            received: bytes,
+        };
+        upload.answer(&Answer::Call(view(reading)), now);
+        assert_eq!(upload.poll(now), Step::Wait(RETRY));
+
+        assert_eq!(upload.poll(now), Step::Ask(Op::GetCall));
+        let stored = view(CallClip::Stored { bytes, crc });
+        upload.answer(&Answer::Call(stored), now);
+        assert_eq!(upload.poll(now), Step::Stored(stored));
+    }
+
+    #[test]
+    fn an_upload_refused_at_its_start_says_so() {
+        let clip = short_clip();
+        let now = Instant::now();
+        let mut upload = Upload::new(&clip);
+        upload.poll(now);
+        upload.answer(&Answer::Refused(Refusal::Forbidden), now);
+        assert_eq!(
+            upload.poll(now),
+            Step::Failed(UploadFailed::Upload(UploadError::Refused(
+                Refusal::Forbidden
+            )))
+        );
     }
 }

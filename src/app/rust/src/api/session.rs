@@ -11,9 +11,13 @@ use wellfed_model::Refusal;
 use wellfed_session::noise::Keypair;
 
 use crate::api::error::{BridgeError, ErrorKind};
+use crate::api::feeder::{FeederReply, FeederRequest, PlansView, SettingsView, TimeInfo};
 use crate::api::keys::ClientKey;
-use crate::api::model::{Blocked, ClientRole, FeedOutcome, FeedReason, FoodLevel};
+use crate::api::model::{
+    Blocked, ClientRole, Desiccant, FeedOutcome, FeedReason, FoodLevel, MissedReason,
+};
 use crate::frb_generated::StreamSink;
+use crate::requests;
 use crate::session::{self, Command};
 
 /// What the Home card shows, from the feeder's status.
@@ -33,8 +37,150 @@ pub struct Card {
     pub clock_set: bool,
     /// Wi-Fi signal, dBm.
     pub rssi: i32,
-    /// How the last feed this boot ended when it ended on a fault.
-    pub fault: Option<FeedOutcome>,
+    /// The last feed this boot, when it ended on a fault, until a later feed
+    /// completes.
+    pub fault: Option<FaultView>,
+    pub desiccant: Desiccant,
+    pub uptime_ms: u32,
+    /// The flash bank it runs from.
+    pub bank: u8,
+    /// The plans' next meal, by the feeder's clock; `None` with no enabled
+    /// plan, no clock, or before the plans are read.
+    pub next_meal: Option<NextMealView>,
+    /// The newest feed the history has given so far.
+    pub last_fed: Option<FeedResult>,
+    /// Today's meals, earliest first.
+    pub meals: Vec<MealView>,
+    /// The time settings and the clock, once read.
+    pub time: Option<TimeInfo>,
+    /// The settings, once read.
+    pub settings: Option<SettingsView>,
+    /// The feeding plans, once read.
+    pub plans: Option<PlansView>,
+    /// The base of a Wi-Fi change.
+    pub wifi_generation: u32,
+}
+
+/// The feed `Status.feed_fault` names, with its `Fed` event once read.
+pub struct FaultView {
+    pub feed: u32,
+    pub outcome: FeedOutcome,
+    pub reason: FeedReason,
+    pub result: Option<FeedResult>,
+}
+
+pub struct NextMealView {
+    pub at_ms: i64,
+    /// The minute of the feeder's local day.
+    pub minute: u16,
+    pub portions: u8,
+}
+
+/// One enabled plan that runs today.
+pub struct MealView {
+    pub slot: u8,
+    pub minute: u16,
+    pub portions: u8,
+    /// Plays of the meal call before it.
+    pub call: u8,
+    pub standing: MealStanding,
+}
+
+pub enum MealStanding {
+    Fed {
+        result: FeedResult,
+    },
+    /// Its time passed with no feed recorded for it.
+    Passed,
+    /// The next meal of all the plans.
+    Next {
+        at_ms: i64,
+    },
+    Later,
+}
+
+/// Who asked for a feed or a change.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FedBy {
+    Panel,
+    /// A client, by its key's first 4 bytes in hex.
+    Client {
+        fingerprint: String,
+    },
+    Feeder,
+    Plan {
+        slot: u8,
+    },
+    /// A feed a reset interrupted, whose requester the journal lost.
+    Unknown,
+}
+
+/// One entry of the feeder's history.
+pub struct HistoryEntry {
+    pub seq: u64,
+    pub at_ms: Option<i64>,
+    pub body: HistoryBody,
+}
+
+pub enum HistoryBody {
+    Fed {
+        result: FeedResult,
+    },
+    Missed {
+        slot: u8,
+        due_ms: i64,
+        reason: MissedReason,
+    },
+    Restarted,
+    Lock {
+        locked: bool,
+        by: FedBy,
+    },
+    SettingsChanged {
+        by: FedBy,
+    },
+    WifiChanged {
+        by: FedBy,
+    },
+    PlansChanged {
+        by: FedBy,
+    },
+    Joined {
+        fingerprint: String,
+    },
+    Revoked {
+        fingerprint: String,
+        by: FedBy,
+    },
+    ClockSet {
+        by: FedBy,
+    },
+    Lost {
+        count: u16,
+    },
+    FeedingBlocked {
+        reason: Option<Blocked>,
+    },
+    MealSoon {
+        minute: u16,
+        portions: u8,
+    },
+    Supply {
+        adapter: Option<bool>,
+    },
+    DispenseRefused {
+        reason: Blocked,
+    },
+    Food {
+        level: FoodLevel,
+    },
+    /// Events that left the ring before they were read.
+    Gap {
+        from: u64,
+        to: u64,
+    },
+    /// Nothing the history shows.
+    Other,
 }
 
 /// A feed's end, from its `Fed` event. An uncertain feed delivered between
@@ -49,6 +195,11 @@ pub struct FeedResult {
     pub uncertain: bool,
     /// The history's words for it, the same as the CLI's.
     pub words: String,
+    /// When the feeder recorded it; `None` while its clock was invalid.
+    pub at_ms: Option<i64>,
+    pub by: FedBy,
+    /// What the food beam read during the feed.
+    pub hopper: FoodLevel,
 }
 
 /// Why the feeder refused a feed or its cancel.
@@ -84,6 +235,10 @@ impl From<Refusal> for FeedRefusal {
     }
 }
 
+#[allow(
+    clippy::large_enum_variant,
+    reason = "each message is encoded for Dart at once, and never held"
+)]
 pub enum SessionUpdate {
     Opened {
         build: String,
@@ -116,6 +271,19 @@ pub enum SessionUpdate {
     /// The feeder refused this phone's clock, or never answered. The next
     /// session tries again.
     ClockNotSynced,
+    /// More of the history, oldest first. A session reads it from the oldest
+    /// event the feeder keeps, so `Opened` starts it anew; `caught_up` is
+    /// false only ever before the first batch, and marks that batch's end.
+    History {
+        entries: Vec<HistoryEntry>,
+        caught_up: bool,
+    },
+    /// Record lines after a `TailLog`.
+    Log {
+        seq: u32,
+        dropped: u32,
+        lines: Vec<String>,
+    },
     /// The session ended; `error` says why when it was not asked to.
     Closed {
         error: Option<BridgeError>,
@@ -125,7 +293,6 @@ pub enum SessionUpdate {
 /// What [`FeederSession::run`] starts from, taken once.
 struct Start {
     keys: Keypair,
-    feeder: [u8; 32],
     address: SocketAddr,
     commands: mpsc::UnboundedReceiver<Command>,
     sync_clock: bool,
@@ -133,6 +300,7 @@ struct Start {
 
 #[frb(opaque)]
 pub struct FeederSession {
+    feeder: [u8; 32],
     commands: mpsc::UnboundedSender<Command>,
     start: Mutex<Option<Start>>,
 }
@@ -156,10 +324,10 @@ impl FeederSession {
         let address = wellfed_connect::parse_address(&address)?;
         let (commands, receiver) = mpsc::unbounded_channel();
         Ok(Self {
+            feeder,
             commands,
             start: Mutex::new(Some(Start {
                 keys: key.keypair().clone(),
-                feeder,
                 address,
                 commands: receiver,
                 sync_clock,
@@ -179,7 +347,7 @@ impl FeederSession {
         };
         session::run(
             start.keys,
-            start.feeder,
+            self.feeder,
             start.address,
             start.sync_clock,
             start.commands,
@@ -198,6 +366,12 @@ impl FeederSession {
     #[frb(sync)]
     pub fn cancel_feed(&self, feed: u32) -> Result<(), BridgeError> {
         self.send(Command::CancelFeed { feed })
+    }
+
+    /// Run one request. A write goes out once; see [`FeederReply`] for how it
+    /// can end short of an answer.
+    pub async fn ask(&self, request: FeederRequest) -> FeederReply {
+        requests::run(&self.commands, self.feeder, request).await
     }
 
     /// Read the status again.

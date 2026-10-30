@@ -146,6 +146,9 @@ pub(crate) fn check(root: &Path) -> io::Result<Summary> {
         check_file(&root, name, &mut summary);
     }
     check_release_toolchain(&root, &mut summary);
+    summary
+        .errors
+        .extend(crate::op_clients::check(&root, &names));
     summary.errors.extend(
         crate::diagrams::check(&root, &names)
             .iter()

@@ -4,13 +4,16 @@
 // ignore_for_file: unused_import, unused_element, unnecessary_import, duplicate_ignore, invalid_use_of_internal_member, annotate_overrides, non_constant_identifier_names, curly_braces_in_flow_control_structures, prefer_const_literals_to_create_immutables, unused_field
 
 import 'api/error.dart';
+import 'api/feeder.dart';
 import 'api/install.dart';
+import 'api/join.dart';
 import 'api/keys.dart';
 import 'api/model.dart';
 import 'api/restore.dart';
 import 'api/session.dart';
 import 'api/setup.dart';
 import 'api/store.dart';
+import 'api/update.dart';
 
 import 'dart:async';
 import 'dart:convert';
@@ -35,6 +38,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   CrossPlatformFinalizerArg
   get rust_arc_decrement_strong_count_FeederSessionPtr => wire
       ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerFeederSessionPtr;
+
+  CrossPlatformFinalizerArg
+  get rust_arc_decrement_strong_count_FirmwareUpdatePtr => wire
+      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerFirmwareUpdatePtr;
 
   CrossPlatformFinalizerArg
   get rust_arc_decrement_strong_count_InstallListenerPtr => wire
@@ -68,6 +75,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   FeederSession
   dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerFeederSession(
+    dynamic raw,
+  );
+
+  @protected
+  FirmwareUpdate
+  dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerFirmwareUpdate(
     dynamic raw,
   );
 
@@ -120,6 +133,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  FirmwareUpdate
+  dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerFirmwareUpdate(
+    dynamic raw,
+  );
+
+  @protected
   InstallListener
   dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerInstallListener(
     dynamic raw,
@@ -158,6 +177,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   FeederSession
   dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerFeederSession(
+    dynamic raw,
+  );
+
+  @protected
+  FirmwareUpdate
+  dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerFirmwareUpdate(
     dynamic raw,
   );
 
@@ -215,10 +240,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RustStreamSink<SetupStep> dco_decode_StreamSink_setup_step_Sse(dynamic raw);
 
   @protected
+  RustStreamSink<UpdateProgress> dco_decode_StreamSink_update_progress_Sse(
+    dynamic raw,
+  );
+
+  @protected
   String dco_decode_String(dynamic raw);
 
   @protected
   AppStore dco_decode_app_store(dynamic raw);
+
+  @protected
+  Appearance dco_decode_appearance(dynamic raw);
 
   @protected
   BackupCheck dco_decode_backup_check(dynamic raw);
@@ -228,6 +261,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   bool dco_decode_bool(dynamic raw);
+
+  @protected
+  Bowl dco_decode_bowl(dynamic raw);
 
   @protected
   AppStore dco_decode_box_autoadd_app_store(dynamic raw);
@@ -242,19 +278,58 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BridgeError dco_decode_box_autoadd_bridge_error(dynamic raw);
 
   @protected
+  CalibrationInfo dco_decode_box_autoadd_calibration_info(dynamic raw);
+
+  @protected
+  CallInfo dco_decode_box_autoadd_call_info(dynamic raw);
+
+  @protected
   Card dco_decode_box_autoadd_card(dynamic raw);
+
+  @protected
+  Counters dco_decode_box_autoadd_counters(dynamic raw);
+
+  @protected
+  Counts dco_decode_box_autoadd_counts(dynamic raw);
 
   @protected
   DnsResult dco_decode_box_autoadd_dns_result(dynamic raw);
 
   @protected
-  FeedOutcome dco_decode_box_autoadd_feed_outcome(dynamic raw);
+  Erases dco_decode_box_autoadd_erases(dynamic raw);
+
+  @protected
+  FaultView dco_decode_box_autoadd_fault_view(dynamic raw);
+
+  @protected
+  FedBy dco_decode_box_autoadd_fed_by(dynamic raw);
 
   @protected
   FeedRefusal dco_decode_box_autoadd_feed_refusal(dynamic raw);
 
   @protected
   FeedResult dco_decode_box_autoadd_feed_result(dynamic raw);
+
+  @protected
+  FeedStats dco_decode_box_autoadd_feed_stats(dynamic raw);
+
+  @protected
+  FeederRefusal dco_decode_box_autoadd_feeder_refusal(dynamic raw);
+
+  @protected
+  FeederRequest dco_decode_box_autoadd_feeder_request(dynamic raw);
+
+  @protected
+  Flash dco_decode_box_autoadd_flash(dynamic raw);
+
+  @protected
+  Food dco_decode_box_autoadd_food(dynamic raw);
+
+  @protected
+  int dco_decode_box_autoadd_i_32(dynamic raw);
+
+  @protected
+  PlatformInt64 dco_decode_box_autoadd_i_64(dynamic raw);
 
   @protected
   InstallAnswer dco_decode_box_autoadd_install_answer(dynamic raw);
@@ -272,25 +347,106 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   InstallSpec dco_decode_box_autoadd_install_spec(dynamic raw);
 
   @protected
+  InviteView dco_decode_box_autoadd_invite_view(dynamic raw);
+
+  @protected
+  MealReminder dco_decode_box_autoadd_meal_reminder(dynamic raw);
+
+  @protected
+  Memory dco_decode_box_autoadd_memory(dynamic raw);
+
+  @protected
+  MissedReason dco_decode_box_autoadd_missed_reason(dynamic raw);
+
+  @protected
+  NextMealView dco_decode_box_autoadd_next_meal_view(dynamic raw);
+
+  @protected
+  NtpResult dco_decode_box_autoadd_ntp_result(dynamic raw);
+
+  @protected
+  Phase dco_decode_box_autoadd_phase(dynamic raw);
+
+  @protected
+  PlanEdit dco_decode_box_autoadd_plan_edit(dynamic raw);
+
+  @protected
+  PlanView dco_decode_box_autoadd_plan_view(dynamic raw);
+
+  @protected
+  PlansView dco_decode_box_autoadd_plans_view(dynamic raw);
+
+  @protected
+  PortionChange dco_decode_box_autoadd_portion_change(dynamic raw);
+
+  @protected
+  Portions dco_decode_box_autoadd_portions(dynamic raw);
+
+  @protected
+  PowerStats dco_decode_box_autoadd_power_stats(dynamic raw);
+
+  @protected
+  Resets dco_decode_box_autoadd_resets(dynamic raw);
+
+  @protected
   RestoreEnd dco_decode_box_autoadd_restore_end(dynamic raw);
 
   @protected
   RestoreSpec dco_decode_box_autoadd_restore_spec(dynamic raw);
 
   @protected
+  SettingsChanges dco_decode_box_autoadd_settings_changes(dynamic raw);
+
+  @protected
+  SettingsView dco_decode_box_autoadd_settings_view(dynamic raw);
+
+  @protected
   SetupRefusal dco_decode_box_autoadd_setup_refusal(dynamic raw);
+
+  @protected
+  Stats dco_decode_box_autoadd_stats(dynamic raw);
 
   @protected
   StopCase dco_decode_box_autoadd_stop_case(dynamic raw);
 
   @protected
+  TimeInfo dco_decode_box_autoadd_time_info(dynamic raw);
+
+  @protected
+  TimeSource dco_decode_box_autoadd_time_source(dynamic raw);
+
+  @protected
+  TraceSummary dco_decode_box_autoadd_trace_summary(dynamic raw);
+
+  @protected
+  TraceView dco_decode_box_autoadd_trace_view(dynamic raw);
+
+  @protected
+  int dco_decode_box_autoadd_u_16(dynamic raw);
+
+  @protected
   int dco_decode_box_autoadd_u_32(dynamic raw);
+
+  @protected
+  BigInt dco_decode_box_autoadd_u_64(dynamic raw);
 
   @protected
   int dco_decode_box_autoadd_u_8(dynamic raw);
 
   @protected
+  UpdateEnd dco_decode_box_autoadd_update_end(dynamic raw);
+
+  @protected
+  UpdateInfo dco_decode_box_autoadd_update_info(dynamic raw);
+
+  @protected
   WifiCredentials dco_decode_box_autoadd_wifi_credentials(dynamic raw);
+
+  @protected
+  Window dco_decode_box_autoadd_window(dynamic raw);
+
+  @protected
+  ZoneChange dco_decode_box_autoadd_zone_change(dynamic raw);
 
   @protected
   BridgeError dco_decode_bridge_error(dynamic raw);
@@ -299,10 +455,34 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BuildCheck dco_decode_build_check(dynamic raw);
 
   @protected
+  CalibrationInfo dco_decode_calibration_info(dynamic raw);
+
+  @protected
+  CallClip dco_decode_call_clip(dynamic raw);
+
+  @protected
+  CallInfo dco_decode_call_info(dynamic raw);
+
+  @protected
   Card dco_decode_card(dynamic raw);
 
   @protected
   ClientRole dco_decode_client_role(dynamic raw);
+
+  @protected
+  ClientView dco_decode_client_view(dynamic raw);
+
+  @protected
+  Counters dco_decode_counters(dynamic raw);
+
+  @protected
+  Counts dco_decode_counts(dynamic raw);
+
+  @protected
+  CurrentUnit dco_decode_current_unit(dynamic raw);
+
+  @protected
+  Desiccant dco_decode_desiccant(dynamic raw);
 
   @protected
   DnsResult dco_decode_dns_result(dynamic raw);
@@ -311,7 +491,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Enrolled dco_decode_enrolled(dynamic raw);
 
   @protected
+  Erases dco_decode_erases(dynamic raw);
+
+  @protected
   ErrorKind dco_decode_error_kind(dynamic raw);
+
+  @protected
+  FaultView dco_decode_fault_view(dynamic raw);
+
+  @protected
+  FedBy dco_decode_fed_by(dynamic raw);
 
   @protected
   FeedOutcome dco_decode_feed_outcome(dynamic raw);
@@ -326,10 +515,37 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   FeedResult dco_decode_feed_result(dynamic raw);
 
   @protected
+  FeedStats dco_decode_feed_stats(dynamic raw);
+
+  @protected
+  FeederRefusal dco_decode_feeder_refusal(dynamic raw);
+
+  @protected
+  FeederReply dco_decode_feeder_reply(dynamic raw);
+
+  @protected
+  FeederRequest dco_decode_feeder_request(dynamic raw);
+
+  @protected
+  Flash dco_decode_flash(dynamic raw);
+
+  @protected
+  Food dco_decode_food(dynamic raw);
+
+  @protected
   FoodLevel dco_decode_food_level(dynamic raw);
 
   @protected
+  HistoryBody dco_decode_history_body(dynamic raw);
+
+  @protected
+  HistoryEntry dco_decode_history_entry(dynamic raw);
+
+  @protected
   int dco_decode_i_32(dynamic raw);
+
+  @protected
+  PlatformInt64 dco_decode_i_64(dynamic raw);
 
   @protected
   ImageCheck dco_decode_image_check(dynamic raw);
@@ -359,16 +575,40 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   InstallUpdate dco_decode_install_update(dynamic raw);
 
   @protected
+  InviteView dco_decode_invite_view(dynamic raw);
+
+  @protected
+  JoinAnswer dco_decode_join_answer(dynamic raw);
+
+  @protected
   KnownFeeder dco_decode_known_feeder(dynamic raw);
 
   @protected
   List<String> dco_decode_list_String(dynamic raw);
 
   @protected
+  List<ClientView> dco_decode_list_client_view(dynamic raw);
+
+  @protected
+  List<HistoryEntry> dco_decode_list_history_entry(dynamic raw);
+
+  @protected
   List<KnownFeeder> dco_decode_list_known_feeder(dynamic raw);
 
   @protected
   List<Uint8List> dco_decode_list_list_prim_u_8_strict(dynamic raw);
+
+  @protected
+  List<MealView> dco_decode_list_meal_view(dynamic raw);
+
+  @protected
+  List<PlanView?> dco_decode_list_opt_box_autoadd_plan_view(dynamic raw);
+
+  @protected
+  List<int?> dco_decode_list_opt_box_autoadd_u_16(dynamic raw);
+
+  @protected
+  Uint32List dco_decode_list_prim_u_32_strict(dynamic raw);
 
   @protected
   List<int> dco_decode_list_prim_u_8_loose(dynamic raw);
@@ -380,7 +620,43 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<SetupStep> dco_decode_list_setup_step(dynamic raw);
 
   @protected
+  List<TaskStack> dco_decode_list_task_stack(dynamic raw);
+
+  @protected
+  List<TraceEntry> dco_decode_list_trace_entry(dynamic raw);
+
+  @protected
+  List<Weekday> dco_decode_list_weekday(dynamic raw);
+
+  @protected
   ListenUpdate dco_decode_listen_update(dynamic raw);
+
+  @protected
+  MealReminder dco_decode_meal_reminder(dynamic raw);
+
+  @protected
+  MealStanding dco_decode_meal_standing(dynamic raw);
+
+  @protected
+  MealView dco_decode_meal_view(dynamic raw);
+
+  @protected
+  Memory dco_decode_memory(dynamic raw);
+
+  @protected
+  MissedReason dco_decode_missed_reason(dynamic raw);
+
+  @protected
+  NextMealView dco_decode_next_meal_view(dynamic raw);
+
+  @protected
+  NotAsked dco_decode_not_asked(dynamic raw);
+
+  @protected
+  NtpResult dco_decode_ntp_result(dynamic raw);
+
+  @protected
+  NtpView dco_decode_ntp_view(dynamic raw);
 
   @protected
   String? dco_decode_opt_String(dynamic raw);
@@ -395,16 +671,70 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BridgeError? dco_decode_opt_box_autoadd_bridge_error(dynamic raw);
 
   @protected
-  FeedOutcome? dco_decode_opt_box_autoadd_feed_outcome(dynamic raw);
+  Counts? dco_decode_opt_box_autoadd_counts(dynamic raw);
+
+  @protected
+  Erases? dco_decode_opt_box_autoadd_erases(dynamic raw);
+
+  @protected
+  FaultView? dco_decode_opt_box_autoadd_fault_view(dynamic raw);
 
   @protected
   FeedRefusal? dco_decode_opt_box_autoadd_feed_refusal(dynamic raw);
 
   @protected
+  FeedResult? dco_decode_opt_box_autoadd_feed_result(dynamic raw);
+
+  @protected
+  int? dco_decode_opt_box_autoadd_i_32(dynamic raw);
+
+  @protected
+  PlatformInt64? dco_decode_opt_box_autoadd_i_64(dynamic raw);
+
+  @protected
+  MealReminder? dco_decode_opt_box_autoadd_meal_reminder(dynamic raw);
+
+  @protected
+  NextMealView? dco_decode_opt_box_autoadd_next_meal_view(dynamic raw);
+
+  @protected
+  NtpResult? dco_decode_opt_box_autoadd_ntp_result(dynamic raw);
+
+  @protected
+  Phase? dco_decode_opt_box_autoadd_phase(dynamic raw);
+
+  @protected
+  PlanView? dco_decode_opt_box_autoadd_plan_view(dynamic raw);
+
+  @protected
+  PlansView? dco_decode_opt_box_autoadd_plans_view(dynamic raw);
+
+  @protected
+  Resets? dco_decode_opt_box_autoadd_resets(dynamic raw);
+
+  @protected
+  SettingsView? dco_decode_opt_box_autoadd_settings_view(dynamic raw);
+
+  @protected
   SetupRefusal? dco_decode_opt_box_autoadd_setup_refusal(dynamic raw);
 
   @protected
+  TimeInfo? dco_decode_opt_box_autoadd_time_info(dynamic raw);
+
+  @protected
+  TimeSource? dco_decode_opt_box_autoadd_time_source(dynamic raw);
+
+  @protected
+  TraceSummary? dco_decode_opt_box_autoadd_trace_summary(dynamic raw);
+
+  @protected
+  int? dco_decode_opt_box_autoadd_u_16(dynamic raw);
+
+  @protected
   int? dco_decode_opt_box_autoadd_u_32(dynamic raw);
+
+  @protected
+  BigInt? dco_decode_opt_box_autoadd_u_64(dynamic raw);
 
   @protected
   int? dco_decode_opt_box_autoadd_u_8(dynamic raw);
@@ -413,10 +743,49 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   WifiCredentials? dco_decode_opt_box_autoadd_wifi_credentials(dynamic raw);
 
   @protected
+  Window? dco_decode_opt_box_autoadd_window(dynamic raw);
+
+  @protected
+  ZoneChange? dco_decode_opt_box_autoadd_zone_change(dynamic raw);
+
+  @protected
+  Uint8List? dco_decode_opt_list_prim_u_8_strict(dynamic raw);
+
+  @protected
+  List<Weekday>? dco_decode_opt_list_weekday(dynamic raw);
+
+  @protected
   PendingInstall dco_decode_pending_install(dynamic raw);
 
   @protected
+  Phase dco_decode_phase(dynamic raw);
+
+  @protected
+  PlanEdit dco_decode_plan_edit(dynamic raw);
+
+  @protected
+  PlanView dco_decode_plan_view(dynamic raw);
+
+  @protected
+  PlansView dco_decode_plans_view(dynamic raw);
+
+  @protected
+  PortionChange dco_decode_portion_change(dynamic raw);
+
+  @protected
+  Portions dco_decode_portions(dynamic raw);
+
+  @protected
+  PowerStats dco_decode_power_stats(dynamic raw);
+
+  @protected
   RequestRefusal dco_decode_request_refusal(dynamic raw);
+
+  @protected
+  ResetCause dco_decode_reset_cause(dynamic raw);
+
+  @protected
+  Resets dco_decode_resets(dynamic raw);
 
   @protected
   RestoreEnd dco_decode_restore_end(dynamic raw);
@@ -440,13 +809,49 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   SessionUpdate dco_decode_session_update(dynamic raw);
 
   @protected
+  SettingsChanges dco_decode_settings_changes(dynamic raw);
+
+  @protected
+  SettingsView dco_decode_settings_view(dynamic raw);
+
+  @protected
   SetupRefusal dco_decode_setup_refusal(dynamic raw);
 
   @protected
   SetupStep dco_decode_setup_step(dynamic raw);
 
   @protected
+  Stats dco_decode_stats(dynamic raw);
+
+  @protected
+  StatsSection dco_decode_stats_section(dynamic raw);
+
+  @protected
   StopCase dco_decode_stop_case(dynamic raw);
+
+  @protected
+  TaskStack dco_decode_task_stack(dynamic raw);
+
+  @protected
+  TimeInfo dco_decode_time_info(dynamic raw);
+
+  @protected
+  TimeSource dco_decode_time_source(dynamic raw);
+
+  @protected
+  TraceEntry dco_decode_trace_entry(dynamic raw);
+
+  @protected
+  TraceMotor dco_decode_trace_motor(dynamic raw);
+
+  @protected
+  TraceSummary dco_decode_trace_summary(dynamic raw);
+
+  @protected
+  TraceView dco_decode_trace_view(dynamic raw);
+
+  @protected
+  Tune dco_decode_tune(dynamic raw);
 
   @protected
   int dco_decode_u_16(dynamic raw);
@@ -470,16 +875,43 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void dco_decode_unit(dynamic raw);
 
   @protected
+  UpdateEnd dco_decode_update_end(dynamic raw);
+
+  @protected
+  UpdateInfo dco_decode_update_info(dynamic raw);
+
+  @protected
+  UpdatePhase dco_decode_update_phase(dynamic raw);
+
+  @protected
+  UpdateProgress dco_decode_update_progress(dynamic raw);
+
+  @protected
+  UpdateRefusal dco_decode_update_refusal(dynamic raw);
+
+  @protected
+  UpdateStop dco_decode_update_stop(dynamic raw);
+
+  @protected
   BigInt dco_decode_usize(dynamic raw);
 
   @protected
   WaitReason dco_decode_wait_reason(dynamic raw);
 
   @protected
+  Weekday dco_decode_weekday(dynamic raw);
+
+  @protected
   WifiCredentials dco_decode_wifi_credentials(dynamic raw);
 
   @protected
   WifiSaved dco_decode_wifi_saved(dynamic raw);
+
+  @protected
+  Window dco_decode_window(dynamic raw);
+
+  @protected
+  ZoneChange dco_decode_zone_change(dynamic raw);
 
   @protected
   AnyhowException sse_decode_AnyhowException(SseDeserializer deserializer);
@@ -493,6 +925,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   FeederSession
   sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerFeederSession(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  FirmwareUpdate
+  sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerFirmwareUpdate(
     SseDeserializer deserializer,
   );
 
@@ -545,6 +983,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  FirmwareUpdate
+  sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerFirmwareUpdate(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   InstallListener
   sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerInstallListener(
     SseDeserializer deserializer,
@@ -583,6 +1027,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   FeederSession
   sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerFeederSession(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  FirmwareUpdate
+  sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerFirmwareUpdate(
     SseDeserializer deserializer,
   );
 
@@ -642,10 +1092,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  RustStreamSink<UpdateProgress> sse_decode_StreamSink_update_progress_Sse(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   String sse_decode_String(SseDeserializer deserializer);
 
   @protected
   AppStore sse_decode_app_store(SseDeserializer deserializer);
+
+  @protected
+  Appearance sse_decode_appearance(SseDeserializer deserializer);
 
   @protected
   BackupCheck sse_decode_backup_check(SseDeserializer deserializer);
@@ -655,6 +1113,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   bool sse_decode_bool(SseDeserializer deserializer);
+
+  @protected
+  Bowl sse_decode_bowl(SseDeserializer deserializer);
 
   @protected
   AppStore sse_decode_box_autoadd_app_store(SseDeserializer deserializer);
@@ -669,19 +1130,64 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BridgeError sse_decode_box_autoadd_bridge_error(SseDeserializer deserializer);
 
   @protected
+  CalibrationInfo sse_decode_box_autoadd_calibration_info(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CallInfo sse_decode_box_autoadd_call_info(SseDeserializer deserializer);
+
+  @protected
   Card sse_decode_box_autoadd_card(SseDeserializer deserializer);
+
+  @protected
+  Counters sse_decode_box_autoadd_counters(SseDeserializer deserializer);
+
+  @protected
+  Counts sse_decode_box_autoadd_counts(SseDeserializer deserializer);
 
   @protected
   DnsResult sse_decode_box_autoadd_dns_result(SseDeserializer deserializer);
 
   @protected
-  FeedOutcome sse_decode_box_autoadd_feed_outcome(SseDeserializer deserializer);
+  Erases sse_decode_box_autoadd_erases(SseDeserializer deserializer);
+
+  @protected
+  FaultView sse_decode_box_autoadd_fault_view(SseDeserializer deserializer);
+
+  @protected
+  FedBy sse_decode_box_autoadd_fed_by(SseDeserializer deserializer);
 
   @protected
   FeedRefusal sse_decode_box_autoadd_feed_refusal(SseDeserializer deserializer);
 
   @protected
   FeedResult sse_decode_box_autoadd_feed_result(SseDeserializer deserializer);
+
+  @protected
+  FeedStats sse_decode_box_autoadd_feed_stats(SseDeserializer deserializer);
+
+  @protected
+  FeederRefusal sse_decode_box_autoadd_feeder_refusal(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  FeederRequest sse_decode_box_autoadd_feeder_request(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  Flash sse_decode_box_autoadd_flash(SseDeserializer deserializer);
+
+  @protected
+  Food sse_decode_box_autoadd_food(SseDeserializer deserializer);
+
+  @protected
+  int sse_decode_box_autoadd_i_32(SseDeserializer deserializer);
+
+  @protected
+  PlatformInt64 sse_decode_box_autoadd_i_64(SseDeserializer deserializer);
 
   @protected
   InstallAnswer sse_decode_box_autoadd_install_answer(
@@ -703,10 +1209,70 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   InstallSpec sse_decode_box_autoadd_install_spec(SseDeserializer deserializer);
 
   @protected
+  InviteView sse_decode_box_autoadd_invite_view(SseDeserializer deserializer);
+
+  @protected
+  MealReminder sse_decode_box_autoadd_meal_reminder(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  Memory sse_decode_box_autoadd_memory(SseDeserializer deserializer);
+
+  @protected
+  MissedReason sse_decode_box_autoadd_missed_reason(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  NextMealView sse_decode_box_autoadd_next_meal_view(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  NtpResult sse_decode_box_autoadd_ntp_result(SseDeserializer deserializer);
+
+  @protected
+  Phase sse_decode_box_autoadd_phase(SseDeserializer deserializer);
+
+  @protected
+  PlanEdit sse_decode_box_autoadd_plan_edit(SseDeserializer deserializer);
+
+  @protected
+  PlanView sse_decode_box_autoadd_plan_view(SseDeserializer deserializer);
+
+  @protected
+  PlansView sse_decode_box_autoadd_plans_view(SseDeserializer deserializer);
+
+  @protected
+  PortionChange sse_decode_box_autoadd_portion_change(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  Portions sse_decode_box_autoadd_portions(SseDeserializer deserializer);
+
+  @protected
+  PowerStats sse_decode_box_autoadd_power_stats(SseDeserializer deserializer);
+
+  @protected
+  Resets sse_decode_box_autoadd_resets(SseDeserializer deserializer);
+
+  @protected
   RestoreEnd sse_decode_box_autoadd_restore_end(SseDeserializer deserializer);
 
   @protected
   RestoreSpec sse_decode_box_autoadd_restore_spec(SseDeserializer deserializer);
+
+  @protected
+  SettingsChanges sse_decode_box_autoadd_settings_changes(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  SettingsView sse_decode_box_autoadd_settings_view(
+    SseDeserializer deserializer,
+  );
 
   @protected
   SetupRefusal sse_decode_box_autoadd_setup_refusal(
@@ -714,18 +1280,53 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  Stats sse_decode_box_autoadd_stats(SseDeserializer deserializer);
+
+  @protected
   StopCase sse_decode_box_autoadd_stop_case(SseDeserializer deserializer);
+
+  @protected
+  TimeInfo sse_decode_box_autoadd_time_info(SseDeserializer deserializer);
+
+  @protected
+  TimeSource sse_decode_box_autoadd_time_source(SseDeserializer deserializer);
+
+  @protected
+  TraceSummary sse_decode_box_autoadd_trace_summary(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  TraceView sse_decode_box_autoadd_trace_view(SseDeserializer deserializer);
+
+  @protected
+  int sse_decode_box_autoadd_u_16(SseDeserializer deserializer);
 
   @protected
   int sse_decode_box_autoadd_u_32(SseDeserializer deserializer);
 
   @protected
+  BigInt sse_decode_box_autoadd_u_64(SseDeserializer deserializer);
+
+  @protected
   int sse_decode_box_autoadd_u_8(SseDeserializer deserializer);
+
+  @protected
+  UpdateEnd sse_decode_box_autoadd_update_end(SseDeserializer deserializer);
+
+  @protected
+  UpdateInfo sse_decode_box_autoadd_update_info(SseDeserializer deserializer);
 
   @protected
   WifiCredentials sse_decode_box_autoadd_wifi_credentials(
     SseDeserializer deserializer,
   );
+
+  @protected
+  Window sse_decode_box_autoadd_window(SseDeserializer deserializer);
+
+  @protected
+  ZoneChange sse_decode_box_autoadd_zone_change(SseDeserializer deserializer);
 
   @protected
   BridgeError sse_decode_bridge_error(SseDeserializer deserializer);
@@ -734,10 +1335,34 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BuildCheck sse_decode_build_check(SseDeserializer deserializer);
 
   @protected
+  CalibrationInfo sse_decode_calibration_info(SseDeserializer deserializer);
+
+  @protected
+  CallClip sse_decode_call_clip(SseDeserializer deserializer);
+
+  @protected
+  CallInfo sse_decode_call_info(SseDeserializer deserializer);
+
+  @protected
   Card sse_decode_card(SseDeserializer deserializer);
 
   @protected
   ClientRole sse_decode_client_role(SseDeserializer deserializer);
+
+  @protected
+  ClientView sse_decode_client_view(SseDeserializer deserializer);
+
+  @protected
+  Counters sse_decode_counters(SseDeserializer deserializer);
+
+  @protected
+  Counts sse_decode_counts(SseDeserializer deserializer);
+
+  @protected
+  CurrentUnit sse_decode_current_unit(SseDeserializer deserializer);
+
+  @protected
+  Desiccant sse_decode_desiccant(SseDeserializer deserializer);
 
   @protected
   DnsResult sse_decode_dns_result(SseDeserializer deserializer);
@@ -746,7 +1371,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Enrolled sse_decode_enrolled(SseDeserializer deserializer);
 
   @protected
+  Erases sse_decode_erases(SseDeserializer deserializer);
+
+  @protected
   ErrorKind sse_decode_error_kind(SseDeserializer deserializer);
+
+  @protected
+  FaultView sse_decode_fault_view(SseDeserializer deserializer);
+
+  @protected
+  FedBy sse_decode_fed_by(SseDeserializer deserializer);
 
   @protected
   FeedOutcome sse_decode_feed_outcome(SseDeserializer deserializer);
@@ -761,10 +1395,37 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   FeedResult sse_decode_feed_result(SseDeserializer deserializer);
 
   @protected
+  FeedStats sse_decode_feed_stats(SseDeserializer deserializer);
+
+  @protected
+  FeederRefusal sse_decode_feeder_refusal(SseDeserializer deserializer);
+
+  @protected
+  FeederReply sse_decode_feeder_reply(SseDeserializer deserializer);
+
+  @protected
+  FeederRequest sse_decode_feeder_request(SseDeserializer deserializer);
+
+  @protected
+  Flash sse_decode_flash(SseDeserializer deserializer);
+
+  @protected
+  Food sse_decode_food(SseDeserializer deserializer);
+
+  @protected
   FoodLevel sse_decode_food_level(SseDeserializer deserializer);
 
   @protected
+  HistoryBody sse_decode_history_body(SseDeserializer deserializer);
+
+  @protected
+  HistoryEntry sse_decode_history_entry(SseDeserializer deserializer);
+
+  @protected
   int sse_decode_i_32(SseDeserializer deserializer);
+
+  @protected
+  PlatformInt64 sse_decode_i_64(SseDeserializer deserializer);
 
   @protected
   ImageCheck sse_decode_image_check(SseDeserializer deserializer);
@@ -794,10 +1455,24 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   InstallUpdate sse_decode_install_update(SseDeserializer deserializer);
 
   @protected
+  InviteView sse_decode_invite_view(SseDeserializer deserializer);
+
+  @protected
+  JoinAnswer sse_decode_join_answer(SseDeserializer deserializer);
+
+  @protected
   KnownFeeder sse_decode_known_feeder(SseDeserializer deserializer);
 
   @protected
   List<String> sse_decode_list_String(SseDeserializer deserializer);
+
+  @protected
+  List<ClientView> sse_decode_list_client_view(SseDeserializer deserializer);
+
+  @protected
+  List<HistoryEntry> sse_decode_list_history_entry(
+    SseDeserializer deserializer,
+  );
 
   @protected
   List<KnownFeeder> sse_decode_list_known_feeder(SseDeserializer deserializer);
@@ -806,6 +1481,20 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<Uint8List> sse_decode_list_list_prim_u_8_strict(
     SseDeserializer deserializer,
   );
+
+  @protected
+  List<MealView> sse_decode_list_meal_view(SseDeserializer deserializer);
+
+  @protected
+  List<PlanView?> sse_decode_list_opt_box_autoadd_plan_view(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<int?> sse_decode_list_opt_box_autoadd_u_16(SseDeserializer deserializer);
+
+  @protected
+  Uint32List sse_decode_list_prim_u_32_strict(SseDeserializer deserializer);
 
   @protected
   List<int> sse_decode_list_prim_u_8_loose(SseDeserializer deserializer);
@@ -817,7 +1506,43 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<SetupStep> sse_decode_list_setup_step(SseDeserializer deserializer);
 
   @protected
+  List<TaskStack> sse_decode_list_task_stack(SseDeserializer deserializer);
+
+  @protected
+  List<TraceEntry> sse_decode_list_trace_entry(SseDeserializer deserializer);
+
+  @protected
+  List<Weekday> sse_decode_list_weekday(SseDeserializer deserializer);
+
+  @protected
   ListenUpdate sse_decode_listen_update(SseDeserializer deserializer);
+
+  @protected
+  MealReminder sse_decode_meal_reminder(SseDeserializer deserializer);
+
+  @protected
+  MealStanding sse_decode_meal_standing(SseDeserializer deserializer);
+
+  @protected
+  MealView sse_decode_meal_view(SseDeserializer deserializer);
+
+  @protected
+  Memory sse_decode_memory(SseDeserializer deserializer);
+
+  @protected
+  MissedReason sse_decode_missed_reason(SseDeserializer deserializer);
+
+  @protected
+  NextMealView sse_decode_next_meal_view(SseDeserializer deserializer);
+
+  @protected
+  NotAsked sse_decode_not_asked(SseDeserializer deserializer);
+
+  @protected
+  NtpResult sse_decode_ntp_result(SseDeserializer deserializer);
+
+  @protected
+  NtpView sse_decode_ntp_view(SseDeserializer deserializer);
 
   @protected
   String? sse_decode_opt_String(SseDeserializer deserializer);
@@ -834,7 +1559,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
-  FeedOutcome? sse_decode_opt_box_autoadd_feed_outcome(
+  Counts? sse_decode_opt_box_autoadd_counts(SseDeserializer deserializer);
+
+  @protected
+  Erases? sse_decode_opt_box_autoadd_erases(SseDeserializer deserializer);
+
+  @protected
+  FaultView? sse_decode_opt_box_autoadd_fault_view(
     SseDeserializer deserializer,
   );
 
@@ -844,12 +1575,76 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  FeedResult? sse_decode_opt_box_autoadd_feed_result(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  int? sse_decode_opt_box_autoadd_i_32(SseDeserializer deserializer);
+
+  @protected
+  PlatformInt64? sse_decode_opt_box_autoadd_i_64(SseDeserializer deserializer);
+
+  @protected
+  MealReminder? sse_decode_opt_box_autoadd_meal_reminder(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  NextMealView? sse_decode_opt_box_autoadd_next_meal_view(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  NtpResult? sse_decode_opt_box_autoadd_ntp_result(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  Phase? sse_decode_opt_box_autoadd_phase(SseDeserializer deserializer);
+
+  @protected
+  PlanView? sse_decode_opt_box_autoadd_plan_view(SseDeserializer deserializer);
+
+  @protected
+  PlansView? sse_decode_opt_box_autoadd_plans_view(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  Resets? sse_decode_opt_box_autoadd_resets(SseDeserializer deserializer);
+
+  @protected
+  SettingsView? sse_decode_opt_box_autoadd_settings_view(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   SetupRefusal? sse_decode_opt_box_autoadd_setup_refusal(
     SseDeserializer deserializer,
   );
 
   @protected
+  TimeInfo? sse_decode_opt_box_autoadd_time_info(SseDeserializer deserializer);
+
+  @protected
+  TimeSource? sse_decode_opt_box_autoadd_time_source(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  TraceSummary? sse_decode_opt_box_autoadd_trace_summary(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  int? sse_decode_opt_box_autoadd_u_16(SseDeserializer deserializer);
+
+  @protected
   int? sse_decode_opt_box_autoadd_u_32(SseDeserializer deserializer);
+
+  @protected
+  BigInt? sse_decode_opt_box_autoadd_u_64(SseDeserializer deserializer);
 
   @protected
   int? sse_decode_opt_box_autoadd_u_8(SseDeserializer deserializer);
@@ -860,10 +1655,51 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  Window? sse_decode_opt_box_autoadd_window(SseDeserializer deserializer);
+
+  @protected
+  ZoneChange? sse_decode_opt_box_autoadd_zone_change(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  Uint8List? sse_decode_opt_list_prim_u_8_strict(SseDeserializer deserializer);
+
+  @protected
+  List<Weekday>? sse_decode_opt_list_weekday(SseDeserializer deserializer);
+
+  @protected
   PendingInstall sse_decode_pending_install(SseDeserializer deserializer);
 
   @protected
+  Phase sse_decode_phase(SseDeserializer deserializer);
+
+  @protected
+  PlanEdit sse_decode_plan_edit(SseDeserializer deserializer);
+
+  @protected
+  PlanView sse_decode_plan_view(SseDeserializer deserializer);
+
+  @protected
+  PlansView sse_decode_plans_view(SseDeserializer deserializer);
+
+  @protected
+  PortionChange sse_decode_portion_change(SseDeserializer deserializer);
+
+  @protected
+  Portions sse_decode_portions(SseDeserializer deserializer);
+
+  @protected
+  PowerStats sse_decode_power_stats(SseDeserializer deserializer);
+
+  @protected
   RequestRefusal sse_decode_request_refusal(SseDeserializer deserializer);
+
+  @protected
+  ResetCause sse_decode_reset_cause(SseDeserializer deserializer);
+
+  @protected
+  Resets sse_decode_resets(SseDeserializer deserializer);
 
   @protected
   RestoreEnd sse_decode_restore_end(SseDeserializer deserializer);
@@ -887,13 +1723,49 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   SessionUpdate sse_decode_session_update(SseDeserializer deserializer);
 
   @protected
+  SettingsChanges sse_decode_settings_changes(SseDeserializer deserializer);
+
+  @protected
+  SettingsView sse_decode_settings_view(SseDeserializer deserializer);
+
+  @protected
   SetupRefusal sse_decode_setup_refusal(SseDeserializer deserializer);
 
   @protected
   SetupStep sse_decode_setup_step(SseDeserializer deserializer);
 
   @protected
+  Stats sse_decode_stats(SseDeserializer deserializer);
+
+  @protected
+  StatsSection sse_decode_stats_section(SseDeserializer deserializer);
+
+  @protected
   StopCase sse_decode_stop_case(SseDeserializer deserializer);
+
+  @protected
+  TaskStack sse_decode_task_stack(SseDeserializer deserializer);
+
+  @protected
+  TimeInfo sse_decode_time_info(SseDeserializer deserializer);
+
+  @protected
+  TimeSource sse_decode_time_source(SseDeserializer deserializer);
+
+  @protected
+  TraceEntry sse_decode_trace_entry(SseDeserializer deserializer);
+
+  @protected
+  TraceMotor sse_decode_trace_motor(SseDeserializer deserializer);
+
+  @protected
+  TraceSummary sse_decode_trace_summary(SseDeserializer deserializer);
+
+  @protected
+  TraceView sse_decode_trace_view(SseDeserializer deserializer);
+
+  @protected
+  Tune sse_decode_tune(SseDeserializer deserializer);
 
   @protected
   int sse_decode_u_16(SseDeserializer deserializer);
@@ -917,16 +1789,43 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_decode_unit(SseDeserializer deserializer);
 
   @protected
+  UpdateEnd sse_decode_update_end(SseDeserializer deserializer);
+
+  @protected
+  UpdateInfo sse_decode_update_info(SseDeserializer deserializer);
+
+  @protected
+  UpdatePhase sse_decode_update_phase(SseDeserializer deserializer);
+
+  @protected
+  UpdateProgress sse_decode_update_progress(SseDeserializer deserializer);
+
+  @protected
+  UpdateRefusal sse_decode_update_refusal(SseDeserializer deserializer);
+
+  @protected
+  UpdateStop sse_decode_update_stop(SseDeserializer deserializer);
+
+  @protected
   BigInt sse_decode_usize(SseDeserializer deserializer);
 
   @protected
   WaitReason sse_decode_wait_reason(SseDeserializer deserializer);
 
   @protected
+  Weekday sse_decode_weekday(SseDeserializer deserializer);
+
+  @protected
   WifiCredentials sse_decode_wifi_credentials(SseDeserializer deserializer);
 
   @protected
   WifiSaved sse_decode_wifi_saved(SseDeserializer deserializer);
+
+  @protected
+  Window sse_decode_window(SseDeserializer deserializer);
+
+  @protected
+  ZoneChange sse_decode_zone_change(SseDeserializer deserializer);
 
   @protected
   void sse_encode_AnyhowException(
@@ -945,6 +1844,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void
   sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerFeederSession(
     FeederSession self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
+  sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerFirmwareUpdate(
+    FirmwareUpdate self,
     SseSerializer serializer,
   );
 
@@ -1006,6 +1912,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void
+  sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerFirmwareUpdate(
+    FirmwareUpdate self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
   sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerInstallListener(
     InstallListener self,
     SseSerializer serializer,
@@ -1050,6 +1963,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void
   sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerFeederSession(
     FeederSession self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
+  sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerFirmwareUpdate(
+    FirmwareUpdate self,
     SseSerializer serializer,
   );
 
@@ -1119,10 +2039,19 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_StreamSink_update_progress_Sse(
+    RustStreamSink<UpdateProgress> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_String(String self, SseSerializer serializer);
 
   @protected
   void sse_encode_app_store(AppStore self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_appearance(Appearance self, SseSerializer serializer);
 
   @protected
   void sse_encode_backup_check(BackupCheck self, SseSerializer serializer);
@@ -1132,6 +2061,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_bool(bool self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bowl(Bowl self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_app_store(
@@ -1152,7 +2084,25 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_calibration_info(
+    CalibrationInfo self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_call_info(
+    CallInfo self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_card(Card self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_counters(Counters self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_counts(Counts self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_dns_result(
@@ -1161,10 +2111,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
-  void sse_encode_box_autoadd_feed_outcome(
-    FeedOutcome self,
+  void sse_encode_box_autoadd_erases(Erases self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_fault_view(
+    FaultView self,
     SseSerializer serializer,
   );
+
+  @protected
+  void sse_encode_box_autoadd_fed_by(FedBy self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_feed_refusal(
@@ -1175,6 +2131,39 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_box_autoadd_feed_result(
     FeedResult self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_feed_stats(
+    FeedStats self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_feeder_refusal(
+    FeederRefusal self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_feeder_request(
+    FeederRequest self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_flash(Flash self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_food(Food self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_i_32(int self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_i_64(
+    PlatformInt64 self,
     SseSerializer serializer,
   );
 
@@ -1209,6 +2198,78 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_invite_view(
+    InviteView self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_meal_reminder(
+    MealReminder self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_memory(Memory self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_missed_reason(
+    MissedReason self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_next_meal_view(
+    NextMealView self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_ntp_result(
+    NtpResult self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_phase(Phase self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_plan_edit(
+    PlanEdit self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_plan_view(
+    PlanView self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_plans_view(
+    PlansView self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_portion_change(
+    PortionChange self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_portions(Portions self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_power_stats(
+    PowerStats self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_resets(Resets self, SseSerializer serializer);
+
+  @protected
   void sse_encode_box_autoadd_restore_end(
     RestoreEnd self,
     SseSerializer serializer,
@@ -1221,10 +2282,25 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_settings_changes(
+    SettingsChanges self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_settings_view(
+    SettingsView self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_setup_refusal(
     SetupRefusal self,
     SseSerializer serializer,
   );
+
+  @protected
+  void sse_encode_box_autoadd_stats(Stats self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_stop_case(
@@ -1233,14 +2309,65 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_time_info(
+    TimeInfo self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_time_source(
+    TimeSource self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_trace_summary(
+    TraceSummary self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_trace_view(
+    TraceView self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_u_16(int self, SseSerializer serializer);
+
+  @protected
   void sse_encode_box_autoadd_u_32(int self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_u_64(BigInt self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_u_8(int self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_update_end(
+    UpdateEnd self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_update_info(
+    UpdateInfo self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_wifi_credentials(
     WifiCredentials self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_window(Window self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_zone_change(
+    ZoneChange self,
     SseSerializer serializer,
   );
 
@@ -1251,10 +2378,37 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_build_check(BuildCheck self, SseSerializer serializer);
 
   @protected
+  void sse_encode_calibration_info(
+    CalibrationInfo self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_call_clip(CallClip self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_call_info(CallInfo self, SseSerializer serializer);
+
+  @protected
   void sse_encode_card(Card self, SseSerializer serializer);
 
   @protected
   void sse_encode_client_role(ClientRole self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_client_view(ClientView self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_counters(Counters self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_counts(Counts self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_current_unit(CurrentUnit self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_desiccant(Desiccant self, SseSerializer serializer);
 
   @protected
   void sse_encode_dns_result(DnsResult self, SseSerializer serializer);
@@ -1263,7 +2417,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_enrolled(Enrolled self, SseSerializer serializer);
 
   @protected
+  void sse_encode_erases(Erases self, SseSerializer serializer);
+
+  @protected
   void sse_encode_error_kind(ErrorKind self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_fault_view(FaultView self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_fed_by(FedBy self, SseSerializer serializer);
 
   @protected
   void sse_encode_feed_outcome(FeedOutcome self, SseSerializer serializer);
@@ -1278,10 +2441,37 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_feed_result(FeedResult self, SseSerializer serializer);
 
   @protected
+  void sse_encode_feed_stats(FeedStats self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_feeder_refusal(FeederRefusal self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_feeder_reply(FeederReply self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_feeder_request(FeederRequest self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_flash(Flash self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_food(Food self, SseSerializer serializer);
+
+  @protected
   void sse_encode_food_level(FoodLevel self, SseSerializer serializer);
 
   @protected
+  void sse_encode_history_body(HistoryBody self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_history_entry(HistoryEntry self, SseSerializer serializer);
+
+  @protected
   void sse_encode_i_32(int self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_i_64(PlatformInt64 self, SseSerializer serializer);
 
   @protected
   void sse_encode_image_check(ImageCheck self, SseSerializer serializer);
@@ -1314,10 +2504,28 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_install_update(InstallUpdate self, SseSerializer serializer);
 
   @protected
+  void sse_encode_invite_view(InviteView self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_join_answer(JoinAnswer self, SseSerializer serializer);
+
+  @protected
   void sse_encode_known_feeder(KnownFeeder self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_String(List<String> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_client_view(
+    List<ClientView> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_history_entry(
+    List<HistoryEntry> self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_list_known_feeder(
@@ -1328,6 +2536,27 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_list_list_prim_u_8_strict(
     List<Uint8List> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_meal_view(List<MealView> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_opt_box_autoadd_plan_view(
+    List<PlanView?> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_opt_box_autoadd_u_16(
+    List<int?> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_prim_u_32_strict(
+    Uint32List self,
     SseSerializer serializer,
   );
 
@@ -1347,7 +2576,49 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_task_stack(
+    List<TaskStack> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_trace_entry(
+    List<TraceEntry> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_weekday(List<Weekday> self, SseSerializer serializer);
+
+  @protected
   void sse_encode_listen_update(ListenUpdate self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_meal_reminder(MealReminder self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_meal_standing(MealStanding self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_meal_view(MealView self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_memory(Memory self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_missed_reason(MissedReason self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_next_meal_view(NextMealView self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_not_asked(NotAsked self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_ntp_result(NtpResult self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_ntp_view(NtpView self, SseSerializer serializer);
 
   @protected
   void sse_encode_opt_String(String? self, SseSerializer serializer);
@@ -1368,8 +2639,20 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
-  void sse_encode_opt_box_autoadd_feed_outcome(
-    FeedOutcome? self,
+  void sse_encode_opt_box_autoadd_counts(
+    Counts? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_erases(
+    Erases? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_fault_view(
+    FaultView? self,
     SseSerializer serializer,
   );
 
@@ -1380,13 +2663,97 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_opt_box_autoadd_feed_result(
+    FeedResult? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_i_32(int? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_box_autoadd_i_64(
+    PlatformInt64? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_meal_reminder(
+    MealReminder? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_next_meal_view(
+    NextMealView? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_ntp_result(
+    NtpResult? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_phase(Phase? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_box_autoadd_plan_view(
+    PlanView? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_plans_view(
+    PlansView? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_resets(
+    Resets? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_settings_view(
+    SettingsView? self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_opt_box_autoadd_setup_refusal(
     SetupRefusal? self,
     SseSerializer serializer,
   );
 
   @protected
+  void sse_encode_opt_box_autoadd_time_info(
+    TimeInfo? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_time_source(
+    TimeSource? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_trace_summary(
+    TraceSummary? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_u_16(int? self, SseSerializer serializer);
+
+  @protected
   void sse_encode_opt_box_autoadd_u_32(int? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_box_autoadd_u_64(BigInt? self, SseSerializer serializer);
 
   @protected
   void sse_encode_opt_box_autoadd_u_8(int? self, SseSerializer serializer);
@@ -1398,16 +2765,67 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_opt_box_autoadd_window(
+    Window? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_zone_change(
+    ZoneChange? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_list_prim_u_8_strict(
+    Uint8List? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_list_weekday(
+    List<Weekday>? self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_pending_install(
     PendingInstall self,
     SseSerializer serializer,
   );
 
   @protected
+  void sse_encode_phase(Phase self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_plan_edit(PlanEdit self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_plan_view(PlanView self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_plans_view(PlansView self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_portion_change(PortionChange self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_portions(Portions self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_power_stats(PowerStats self, SseSerializer serializer);
+
+  @protected
   void sse_encode_request_refusal(
     RequestRefusal self,
     SseSerializer serializer,
   );
+
+  @protected
+  void sse_encode_reset_cause(ResetCause self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_resets(Resets self, SseSerializer serializer);
 
   @protected
   void sse_encode_restore_end(RestoreEnd self, SseSerializer serializer);
@@ -1431,13 +2849,52 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_session_update(SessionUpdate self, SseSerializer serializer);
 
   @protected
+  void sse_encode_settings_changes(
+    SettingsChanges self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_settings_view(SettingsView self, SseSerializer serializer);
+
+  @protected
   void sse_encode_setup_refusal(SetupRefusal self, SseSerializer serializer);
 
   @protected
   void sse_encode_setup_step(SetupStep self, SseSerializer serializer);
 
   @protected
+  void sse_encode_stats(Stats self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_stats_section(StatsSection self, SseSerializer serializer);
+
+  @protected
   void sse_encode_stop_case(StopCase self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_task_stack(TaskStack self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_time_info(TimeInfo self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_time_source(TimeSource self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_trace_entry(TraceEntry self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_trace_motor(TraceMotor self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_trace_summary(TraceSummary self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_trace_view(TraceView self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_tune(Tune self, SseSerializer serializer);
 
   @protected
   void sse_encode_u_16(int self, SseSerializer serializer);
@@ -1464,10 +2921,34 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_unit(void self, SseSerializer serializer);
 
   @protected
+  void sse_encode_update_end(UpdateEnd self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_update_info(UpdateInfo self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_update_phase(UpdatePhase self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_update_progress(
+    UpdateProgress self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_update_refusal(UpdateRefusal self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_update_stop(UpdateStop self, SseSerializer serializer);
+
+  @protected
   void sse_encode_usize(BigInt self, SseSerializer serializer);
 
   @protected
   void sse_encode_wait_reason(WaitReason self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_weekday(Weekday self, SseSerializer serializer);
 
   @protected
   void sse_encode_wifi_credentials(
@@ -1477,6 +2958,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_wifi_saved(WifiSaved self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_window(Window self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_zone_change(ZoneChange self, SseSerializer serializer);
 }
 
 // Section: wire_class
@@ -1559,6 +3046,40 @@ class RustLibWire implements BaseWire {
       );
   late final _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerFeederSession =
       _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerFeederSessionPtr
+          .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
+
+  void
+  rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerFirmwareUpdate(
+    ffi.Pointer<ffi.Void> ptr,
+  ) {
+    return _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerFirmwareUpdate(
+      ptr,
+    );
+  }
+
+  late final _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerFirmwareUpdatePtr =
+      _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<ffi.Void>)>>(
+        'frbgen_wellfed_rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerFirmwareUpdate',
+      );
+  late final _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerFirmwareUpdate =
+      _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerFirmwareUpdatePtr
+          .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
+
+  void
+  rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerFirmwareUpdate(
+    ffi.Pointer<ffi.Void> ptr,
+  ) {
+    return _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerFirmwareUpdate(
+      ptr,
+    );
+  }
+
+  late final _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerFirmwareUpdatePtr =
+      _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<ffi.Void>)>>(
+        'frbgen_wellfed_rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerFirmwareUpdate',
+      );
+  late final _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerFirmwareUpdate =
+      _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerFirmwareUpdatePtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
   void

@@ -61,7 +61,7 @@ const CONFIG: &str = "installer.json";
 pub(crate) const BACKUPS: &str = "backups";
 
 /// The image's own files, in the folder the APK's were unpacked into.
-const UPDATE_MANIFEST: &str = "update.manifest";
+pub(crate) const UPDATE_MANIFEST: &str = "update.manifest";
 const REVIEW_FILE: &str = "review.json";
 
 /// The image a build installs: its review (which binds the image and its

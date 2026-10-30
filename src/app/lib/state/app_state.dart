@@ -15,6 +15,11 @@ abstract interface class FeederBook implements Listenable {
 
   Future<void> setLabel(String label);
 
+  /// Which theme the app draws.
+  Appearance get appearance;
+
+  Future<void> setAppearance(Appearance appearance);
+
   /// Add `feeder`, or replace the one with its identity. With `paired`, this
   /// phone just became its owner, so its next session gives it this phone's
   /// clock. With `keepName`, a feeder already known keeps the name the owner
@@ -28,6 +33,15 @@ abstract interface class FeederBook implements Listenable {
   /// Keep where `identity` last answered, so the next start tries it before
   /// NSD has looked.
   Future<void> answeredAt(String identity, String address);
+
+  /// Remove `identity` from this phone. It leaves the feeder's list as it
+  /// is: only an owner's revocation takes a key off a feeder.
+  Future<void> forget(String identity);
+
+  /// Whether this phone owes `identity` its clock, having just paired.
+  bool clockDue(String identity);
+
+  void clockSynced(String identity);
 }
 
 /// The phone's identity and the feeders it knows. The client secret lives
@@ -75,13 +89,32 @@ class AppState extends ChangeNotifier implements FeederBook {
   @override
   List<KnownFeeder> get feeders => _store.feeders;
 
+  @override
   bool clockDue(String identity) => _clockDue.contains(identity);
 
+  @override
   void clockSynced(String identity) => _clockDue.remove(identity);
 
   @override
-  Future<void> setLabel(String label) =>
-      _update((store) => AppStore(label: label, feeders: store.feeders));
+  Appearance get appearance => _store.appearance;
+
+  @override
+  Future<void> setAppearance(Appearance appearance) => _update(
+    (store) => AppStore(
+      label: store.label,
+      feeders: store.feeders,
+      appearance: appearance,
+    ),
+  );
+
+  @override
+  Future<void> setLabel(String label) => _update(
+    (store) => AppStore(
+      label: label,
+      feeders: store.feeders,
+      appearance: store.appearance,
+    ),
+  );
 
   @override
   Future<void> remember(
@@ -103,9 +136,22 @@ class AppState extends ChangeNotifier implements FeederBook {
             address: feeder.address,
           ),
         ],
+        appearance: store.appearance,
       );
     });
   }
+
+  @override
+  Future<void> forget(String identity) => _update(
+    (store) => AppStore(
+      label: store.label,
+      feeders: [
+        for (final feeder in store.feeders)
+          if (feeder.identity != identity) feeder,
+      ],
+      appearance: store.appearance,
+    ),
+  );
 
   @override
   Future<void> answeredAt(String identity, String address) async {

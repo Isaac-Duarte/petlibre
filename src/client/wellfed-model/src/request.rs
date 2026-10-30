@@ -1,6 +1,7 @@
 //! A session's requests and the feeder's answers to them.
 
 use std::fmt;
+use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
@@ -219,6 +220,42 @@ pub enum NtpServer {
     },
 }
 
+/// Why an NTP server's text did not parse.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("{0:?} is not off, gateway[:PORT] or an IPv4 address[:PORT]")]
+pub struct NtpServerError(String);
+
+/// `off`, `gateway`, `gateway:PORT`, `IP` or `IP:PORT`, port 123 unless named.
+impl FromStr for NtpServer {
+    type Err = NtpServerError;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        const PORT: u16 = 123;
+        let invalid = || NtpServerError(text.to_owned());
+        let (host, port) = match text.split_once(':') {
+            Some((host, port)) => (host, Some(port)),
+            None => (text, None),
+        };
+        let port_of = |port: Option<&str>| match port {
+            None => Ok(PORT),
+            Some(port) => match port.parse::<u16>() {
+                Ok(0) | Err(_) => Err(invalid()),
+                Ok(port) => Ok(port),
+            },
+        };
+        match host {
+            "off" if port.is_none() => Ok(Self::Off),
+            "gateway" => Ok(Self::Gateway {
+                port: port_of(port)?,
+            }),
+            _ => Ok(Self::Address {
+                ip: host.parse().map_err(|_| invalid())?,
+                port: port_of(port)?,
+            }),
+        }
+    }
+}
+
 /// Who last set the feeder's clock.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -402,5 +439,29 @@ impl fmt::Debug for Invite {
             .field("id", &self.id)
             .field("seconds", &self.seconds)
             .finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::NtpServer;
+
+    #[test]
+    fn ntp_servers_parse() {
+        let parse = |text: &str| text.parse::<NtpServer>();
+
+        assert_eq!(parse("off"), Ok(NtpServer::Off));
+        assert_eq!(parse("gateway"), Ok(NtpServer::Gateway { port: 123 }));
+        assert_eq!(parse("gateway:1123"), Ok(NtpServer::Gateway { port: 1123 }));
+        assert_eq!(
+            parse("10.42.103.1:1123"),
+            Ok(NtpServer::Address {
+                ip: [10, 42, 103, 1].into(),
+                port: 1123
+            })
+        );
+        for bad in ["off:123", "gateway:0", "pool.ntp.org", "10.42.103.1:x"] {
+            assert!(parse(bad).is_err(), "{bad}");
+        }
     }
 }

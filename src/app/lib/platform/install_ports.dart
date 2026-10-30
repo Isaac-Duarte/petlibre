@@ -11,6 +11,7 @@ import 'package:share_plus/share_plus.dart';
 import '../src/rust/api/install.dart';
 import '../src/rust/api/install.dart' as rust;
 import '../src/rust/api/keys.dart';
+import '../src/rust/api/store.dart';
 import 'discovery.dart';
 import 'setup_link.dart';
 
@@ -302,4 +303,26 @@ class _Link implements InstallLink {
     await _notifications.cancel();
     await _link.close();
   }
+}
+
+/// The firmware backups this phone keeps: which feeder, and handing one on.
+abstract interface class BackupPorts {
+  /// The kept backup's path for feeder `identity`, if there is one.
+  Future<String?> kept(String identity);
+
+  Future<void> share(String path);
+}
+
+/// The kept backups, by the paths the install keeps them under.
+class AppBackupPorts implements BackupPorts {
+  AppBackupPorts(ClientKey key) : _install = AppInstallPorts(key);
+
+  final AppInstallPorts _install;
+
+  @override
+  Future<String?> kept(String identity) async =>
+      _install.keptBackup(await _install.paths(), identityBytes(hex: identity));
+
+  @override
+  Future<void> share(String path) => _install.shareBackup(path);
 }

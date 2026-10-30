@@ -1,6 +1,6 @@
 # The Android app
 
-This is Wellfed's phone app. It installs Wellfed on a feeder that runs stock, sets up a feeder over Bluetooth, finds it on the LAN, shows its status and feeds. It is for owners; contributors start with the layout below.
+This is Wellfed's phone app. It installs Wellfed on a feeder that runs stock, sets up a feeder over Bluetooth, finds it on the LAN, and does everything the device API offers. It is for owners; contributors start with the layout below.
 
 So far it does:
 
@@ -9,9 +9,19 @@ So far it does:
 - **Recovery:** taking a feeder already on your network as its owner again. You hold Lock, then Dispense, and key in the same kind of code.
 - **Home:** a card per feeder (compact when there are several), with whether it can feed now, the food, power, panel lock, Wi-Fi signal and anything that needs attention.
 - **Feed now:** a feed of 1 to 48 portions, followed to its result.
+- **Today:** what the feeder is doing, the day's meals, the lock, the desiccant and a restart.
+- **Schedule:** the meals, each edited against the generation it read, and the meal call.
+- **History:** what happened, by kind, and one feed's detail.
+- **Settings:** lights, sounds and their hours, reminders, Wi-Fi, time zone, where the time comes from, and the portion size.
+- **People:** who a feeder lists, removing them, invites as a code or a link, and joining with one.
+- **Updates:** the image this APK carries, offered once and followed to its end. The run outlives the screen, and an end only the feeder can settle stays until it answers that nothing is under way. Restoring the original firmware opens from here.
+- **Diagnostics:** the feeder's counters, motor traces and the live log.
+- **App settings:** appearance, this phone's name, kept backups and About.
 - **Restore:** the vendor's firmware back on the feeder, from the backup the install kept or a copy you saved. You press Dispense on the feeder, and it goes across as an update. Then stock runs, which this app cannot talk to.
 
-Invites, schedules, history, settings and servers come later ([roadmap](../../docs/roadmap.md)).
+Servers come later ([roadmap](../../docs/roadmap.md)). Meal reminders are a setting on the feeder for now: the app sends no notifications.
+
+`cargo xtask check-repository` fails when an `Op` has no client in the app, or a request the bridge offers has no screen.
 
 ## How it is built
 
@@ -66,6 +76,10 @@ WELLFED_INSTALLER_PIN=<what it printed, with the version> flutter build apk --de
 The pin is compiled in: the digest of the review (which binds the image and its build manifest), the digest of the manifest, and the manifest's version. At startup the bridge checks the unpacked files against it, and against the review's own digests, as the image server does. A mismatch, or an image with no pin, is refused on the first screen.
 
 A release build's pin goes in the bridge as `RELEASE_PIN`, which the environment cannot override. It is empty until a release image exists, since only the offline release key can sign one. Until then a build with no input says it has no firmware to install.
+
+### What the app's file holds
+
+The app's own file gained `appearance`, with no fallback for older files: clear the app's data on a phone that ran an earlier build, then pair again.
 
 ## Toolchain
 

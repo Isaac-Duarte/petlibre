@@ -105,6 +105,14 @@ impl Credentials {
     pub fn ssid(&self) -> &[u8] {
         &self.ssid
     }
+
+    /// As a device API `PutWifi` carries them.
+    pub fn into_wifi(self) -> wellfed_model::Wifi {
+        wellfed_model::Wifi {
+            ssid: self.ssid,
+            psk: self.psk,
+        }
+    }
 }
 
 impl std::fmt::Debug for Credentials {

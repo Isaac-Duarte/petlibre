@@ -14,13 +14,19 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{Notify, mpsc};
 use tokio::task::LocalSet;
 use wellfed_app_bridge::api::error::ErrorKind;
+use wellfed_app_bridge::api::feeder::{
+    FeederRefusal, FeederReply, FeederRequest, NotAsked, PlanEdit, PlanView, PortionChange,
+    SettingsChanges,
+};
+use wellfed_app_bridge::api::join::{JoinAnswer, invite_feeder, join_feeder};
 use wellfed_app_bridge::api::keys::ClientKey;
-use wellfed_app_bridge::api::model::{ClientRole, FeedOutcome};
-use wellfed_app_bridge::api::session::{FeedRefusal, SessionUpdate};
+use wellfed_app_bridge::api::model::{CallClip, ClientRole, FeedOutcome, StatsSection};
+use wellfed_app_bridge::api::session::{FedBy, FeedRefusal, HistoryBody, SessionUpdate};
 use wellfed_app_bridge::api::setup::{
     SetupDriver, SetupStep, recover, setup_control, setup_service,
 };
 use wellfed_app_bridge::api::store::{AppStore, KnownFeeder, load_store, save_store};
+use wellfed_app_bridge::requests;
 use wellfed_app_bridge::session::{self, Command};
 use wellfed_client::setup::{Ask, Session, panel_position};
 use wellfed_connect::Connection;
@@ -401,6 +407,7 @@ fn the_store_round_trips_and_starts_empty() {
 
     assert_eq!(load_store(path).unwrap(), AppStore::default());
     let store = AppStore {
+        appearance: wellfed_app_bridge::api::store::Appearance::Dark,
         label: "Pixel 8".into(),
         feeders: vec![KnownFeeder {
             identity: "ab".repeat(32),
@@ -410,4 +417,417 @@ fn the_store_round_trips_and_starts_empty() {
     };
     save_store(path, &store).unwrap();
     assert_eq!(load_store(path).unwrap(), store);
+}
+
+/// A session on the local set, opened and caught up with the history.
+async fn opened(
+    feeder: [u8; 32],
+    address: std::net::SocketAddr,
+) -> (
+    mpsc::UnboundedSender<Command>,
+    mpsc::UnboundedReceiver<SessionUpdate>,
+) {
+    let (commands, mut heard) = start_session(feeder, address, false);
+    next(&mut heard, |update| match update {
+        SessionUpdate::History { caught_up, .. } => caught_up.then_some(()),
+        _ => None,
+    })
+    .await;
+    (commands, heard)
+}
+
+#[test]
+fn requests_read_and_change_the_feeder_through_the_session() {
+    local(async {
+        let owner = *Keypair::from_secret(OWNER).public();
+        let sim = Running::start(&Flash::memory(), Some(owner)).await;
+        let (commands, mut heard) = opened(sim.identity, sim.address).await;
+        let ask = |request| requests::run(&commands, sim.identity, request);
+
+        let FeederReply::Settings { settings } = ask(FeederRequest::GetSettings).await else {
+            panic!("no settings");
+        };
+        let changes = SettingsChanges {
+            volume: Some(30),
+            ..SettingsChanges::default()
+        };
+        let reply = ask(FeederRequest::PutSettings {
+            base: settings.generation,
+            changes,
+        })
+        .await;
+        assert!(matches!(reply, FeederReply::Done { .. }), "{reply:?}");
+        let reply = ask(FeederRequest::PutSettings {
+            base: settings.generation,
+            changes,
+        })
+        .await;
+        assert!(
+            matches!(
+                reply,
+                FeederReply::Refused {
+                    refusal: FeederRefusal::Stale { .. }
+                }
+            ),
+            "{reply:?}"
+        );
+
+        // What the feeder would refuse anyway goes no further than Rust.
+        let reply = ask(FeederRequest::PutWifi {
+            base: 0,
+            ssid: "Home".into(),
+            passphrase: "short".into(),
+        })
+        .await;
+        assert_eq!(
+            reply,
+            FeederReply::NotAsked {
+                reason: NotAsked::Credentials
+            }
+        );
+
+        let FeederReply::Invite { invite } = ask(FeederRequest::CreateInvite {
+            role: ClientRole::Member,
+        })
+        .await
+        else {
+            panic!("no invite");
+        };
+        assert_eq!(invite.role, ClientRole::Member);
+        assert_eq!(
+            wellfed_client::api::Invite::parse(&invite.text)
+                .unwrap()
+                .feeder,
+            sim.identity
+        );
+
+        // The invite's reader names the feeder, and the invite works once.
+        assert_eq!(invite_feeder(&invite.text), Some(sim.identity.to_vec()));
+        assert_eq!(invite_feeder("not an invite"), None);
+        let joining = ClientKey::generate().unwrap();
+        let answer = join_feeder(
+            &joining,
+            invite.text.clone(),
+            "Ana".into(),
+            sim.address.to_string(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            answer,
+            JoinAnswer::Joined {
+                role: ClientRole::Member
+            }
+        );
+        let again = join_feeder(&joining, invite.text, "Ana".into(), sim.address.to_string()).await;
+        assert!(again.is_err(), "{again:?}");
+
+        let FeederReply::Clients { clients } = ask(FeederRequest::ListClients).await else {
+            panic!("no clients");
+        };
+        assert!(clients.iter().any(|client| client.you));
+
+        let FeederReply::Time { time } = ask(FeederRequest::GetTime).await else {
+            panic!("no time");
+        };
+        let reply = ask(FeederRequest::PutTime {
+            base: time.generation,
+            zone: None,
+            ntp: Some("pool.ntp.org".into()),
+        })
+        .await;
+        assert_eq!(
+            reply,
+            FeederReply::NotAsked {
+                reason: NotAsked::BadNtp
+            }
+        );
+
+        let FeederReply::Calibration { calibration } = ask(FeederRequest::GetCalibration).await
+        else {
+            panic!("no calibration");
+        };
+        let reply = ask(FeederRequest::PutCalibration {
+            base: calibration.generation,
+            portion: PortionChange::Weighed {
+                grams: "98.4".into(),
+                portions: 10,
+            },
+            bowl: calibration.bowl,
+        })
+        .await;
+        assert!(matches!(reply, FeederReply::Done { .. }), "{reply:?}");
+        let FeederReply::Calibration { calibration } = ask(FeederRequest::GetCalibration).await
+        else {
+            panic!("no calibration");
+        };
+        assert_eq!(calibration.portion_mg, Some(9_840));
+
+        let reply = ask(FeederRequest::Stats {
+            section: StatsSection::Counters,
+        })
+        .await;
+        assert!(matches!(reply, FeederReply::Stats { .. }), "{reply:?}");
+
+        let reply = ask(FeederRequest::TailLog { after: None }).await;
+        assert!(matches!(reply, FeederReply::Done { .. }), "{reply:?}");
+        next(&mut heard, |update| match update {
+            SessionUpdate::Log { lines, .. } => (!lines.is_empty()).then_some(()),
+            _ => None,
+        })
+        .await;
+
+        let reply = ask(FeederRequest::SetLock { locked: false }).await;
+        assert!(matches!(reply, FeederReply::Done { .. }), "{reply:?}");
+        let card = next(&mut heard, |update| match update {
+            SessionUpdate::Status { card } if card.locked == Some(false) => Some(card),
+            _ => None,
+        })
+        .await;
+        assert!(!card.build.is_empty());
+
+        commands.send(Command::Close).unwrap();
+        sim.stop().await;
+    });
+}
+
+#[test]
+fn the_plans_change_through_their_edit_and_show_on_the_card() {
+    local(async {
+        let owner = *Keypair::from_secret(OWNER).public();
+        let sim = Running::start(&Flash::memory(), Some(owner)).await;
+        let (commands, mut heard) = opened(sim.identity, sim.address).await;
+        let ask = |request| requests::run(&commands, sim.identity, request);
+        // The card says no meal without a clock.
+        let reply = ask(FeederRequest::SyncClock).await;
+        assert!(matches!(reply, FeederReply::Done { .. }), "{reply:?}");
+
+        let FeederReply::Plans { plans } = ask(FeederRequest::GetPlans).await else {
+            panic!("no plans");
+        };
+        let plan = PlanView {
+            minute: 7 * 60 + 30,
+            portions: 2,
+            days: vec![wellfed_model::Weekday::Mon, wellfed_model::Weekday::Thu],
+            enabled: true,
+            call: 0,
+        };
+        let reply = ask(FeederRequest::EditPlans {
+            plans: plans.clone(),
+            edit: PlanEdit::Add { plan: plan.clone() },
+        })
+        .await;
+        assert!(matches!(reply, FeederReply::Done { .. }), "{reply:?}");
+
+        let FeederReply::Plans { plans: stored } = ask(FeederRequest::GetPlans).await else {
+            panic!("no plans");
+        };
+        assert_eq!(stored.plans[0], Some(plan));
+
+        // Its `Plans` event moves the card without being asked.
+        let next_meal = next(&mut heard, |update| match update {
+            SessionUpdate::Status { card } => card.next_meal,
+            _ => None,
+        })
+        .await;
+        assert_eq!(next_meal.minute, 7 * 60 + 30);
+        assert_eq!(next_meal.portions, 2);
+
+        // An edit of the table as it was is refused rather than merged.
+        let reply = ask(FeederRequest::EditPlans {
+            plans,
+            edit: PlanEdit::Add {
+                plan: PlanView {
+                    minute: 9 * 60,
+                    portions: 1,
+                    days: vec![],
+                    enabled: true,
+                    call: 0,
+                },
+            },
+        })
+        .await;
+        assert!(
+            matches!(
+                reply,
+                FeederReply::Refused {
+                    refusal: FeederRefusal::Stale { .. }
+                }
+            ),
+            "{reply:?}"
+        );
+
+        let reply = ask(FeederRequest::EditPlans {
+            plans: stored,
+            edit: PlanEdit::Delete { slot: 5 },
+        })
+        .await;
+        assert_eq!(
+            reply,
+            FeederReply::NotAsked {
+                reason: NotAsked::EmptySlot
+            }
+        );
+
+        commands.send(Command::Close).unwrap();
+        sim.stop().await;
+    });
+}
+
+#[test]
+fn the_card_and_the_history_show_a_feed_read_again_by_a_new_session() {
+    local(async {
+        let owner = *Keypair::from_secret(OWNER).public();
+        let sim = Running::start(&Flash::memory(), Some(owner)).await;
+        let (commands, mut heard) = opened(sim.identity, sim.address).await;
+        commands.send(Command::Feed { portions: 1 }).unwrap();
+        let ended = next(&mut heard, |update| match update {
+            SessionUpdate::FeedEnded { result } => Some(result),
+            _ => None,
+        })
+        .await;
+        assert_eq!(
+            ended.by,
+            FedBy::Client {
+                fingerprint: ended_by(owner)
+            }
+        );
+        commands.send(Command::Close).unwrap();
+
+        // The next session has it from the history, as no news: no FeedEnded.
+        let (commands, mut heard) = start_session(sim.identity, sim.address, false);
+        let mut ends = 0;
+        let entries = next(&mut heard, |update| match update {
+            SessionUpdate::History { entries, caught_up } => caught_up.then_some(entries),
+            SessionUpdate::FeedEnded { .. } => {
+                ends += 1;
+                None
+            }
+            _ => None,
+        })
+        .await;
+        assert_eq!(ends, 0);
+        assert!(entries.iter().any(
+            |entry| matches!(&entry.body, HistoryBody::Fed { result } if result.feed == ended.feed)
+        ));
+        let card = next(&mut heard, |update| match update {
+            SessionUpdate::Status { card } => Some(card),
+            _ => None,
+        })
+        .await;
+        assert_eq!(card.last_fed.map(|fed| fed.feed), Some(ended.feed));
+
+        commands.send(Command::Close).unwrap();
+        sim.stop().await;
+    });
+}
+
+/// A client's name in events: its key's first 4 bytes.
+fn ended_by(key: [u8; 32]) -> String {
+    wellfed_session::hex::Lower(&key[..4]).to_string()
+}
+
+#[test]
+fn a_write_whose_answer_never_comes_says_so_and_a_request_after_the_end_went_nowhere() {
+    local(async {
+        let owner = *Keypair::from_secret(OWNER).public();
+        let sim = Running::start(&Flash::memory(), Some(owner)).await;
+        let relay = Relay::start(sim.address).await;
+        let (commands, mut heard) = opened(sim.identity, relay.address).await;
+
+        relay.hold_answers();
+        let lock = requests::run(
+            &commands,
+            sim.identity,
+            FeederRequest::SetLock { locked: false },
+        );
+        let cut = async {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            relay.cut();
+        };
+        let (reply, ()) = tokio::join!(lock, cut);
+        assert_eq!(reply, FeederReply::Unanswered);
+
+        next(&mut heard, |update| match update {
+            SessionUpdate::Closed { error } => error,
+            _ => None,
+        })
+        .await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let reply = requests::run(&commands, sim.identity, FeederRequest::Reboot).await;
+        assert_eq!(reply, FeederReply::NotSent);
+        sim.stop().await;
+    });
+}
+
+/// 8 kHz, 16-bit mono PCM of `samples` samples.
+fn wav(samples: usize) -> Vec<u8> {
+    let data = samples * 2;
+    let mut file = Vec::new();
+    file.extend(b"RIFF");
+    file.extend(u32::try_from(36 + data).unwrap().to_le_bytes());
+    file.extend(b"WAVEfmt ");
+    file.extend(16u32.to_le_bytes());
+    file.extend(1u16.to_le_bytes());
+    file.extend(1u16.to_le_bytes());
+    file.extend(8_000u32.to_le_bytes());
+    file.extend(16_000u32.to_le_bytes());
+    file.extend(2u16.to_le_bytes());
+    file.extend(16u16.to_le_bytes());
+    file.extend(b"data");
+    file.extend(u32::try_from(data).unwrap().to_le_bytes());
+    for sample in 0..samples {
+        let tone = if sample % 16 < 8 { 8_000i16 } else { -8_000 };
+        file.extend(tone.to_le_bytes());
+    }
+    file
+}
+
+#[test]
+fn a_recording_uploads_as_the_meal_call_and_a_trace_refused_says_so() {
+    local(async {
+        let owner = *Keypair::from_secret(OWNER).public();
+        let sim = Running::start(&Flash::memory(), Some(owner)).await;
+        let (commands, mut heard) = opened(sim.identity, sim.address).await;
+        let ask = |request| requests::run(&commands, sim.identity, request);
+
+        let reply = ask(FeederRequest::UploadCall { wav: wav(4_000) }).await;
+        let FeederReply::Call { call } = reply else {
+            panic!("no call: {reply:?}");
+        };
+        assert!(matches!(call.clip, CallClip::Stored { .. }), "{call:?}");
+        assert!(call.ms.is_some());
+
+        let reply = ask(FeederRequest::UploadCall {
+            wav: b"not a recording".to_vec(),
+        })
+        .await;
+        assert_eq!(
+            reply,
+            FeederReply::NotAsked {
+                reason: NotAsked::BadRecording
+            }
+        );
+
+        let reply = ask(FeederRequest::DeleteCall).await;
+        assert!(matches!(reply, FeederReply::Done { .. }), "{reply:?}");
+
+        commands.send(Command::Feed { portions: 1 }).unwrap();
+        let feed = next(&mut heard, |update| match update {
+            SessionUpdate::FeedEnded { result } => Some(result.feed),
+            _ => None,
+        })
+        .await;
+        // The simulated feeder keeps no traces, so this is a refusal, by name.
+        let reply = ask(FeederRequest::ReadTrace { feed }).await;
+        assert_eq!(
+            reply,
+            FeederReply::Refused {
+                refusal: FeederRefusal::NotFound
+            }
+        );
+
+        commands.send(Command::Close).unwrap();
+        sim.stop().await;
+    });
 }

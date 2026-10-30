@@ -1,20 +1,26 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Card;
 import 'package:flutter_reactive_ble/flutter_reactive_ble.dart'
     show DiscoveredDevice, Uuid;
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart'
     show RustOpaqueInterface;
 import 'package:flutter_test/flutter_test.dart' show WidgetTester;
+import 'package:wellfed/platform/feeder_ports.dart';
 import 'package:wellfed/platform/install_ports.dart';
 import 'package:wellfed/platform/pairing_ports.dart';
+import 'package:wellfed/platform/restore_ports.dart';
 import 'package:wellfed/platform/setup_link.dart';
+import 'package:wellfed/src/rust/api/feeder.dart';
 import 'package:wellfed/src/rust/api/install.dart';
 import 'package:wellfed/src/rust/api/model.dart';
+import 'package:wellfed/src/rust/api/session.dart';
 import 'package:wellfed/src/rust/api/setup.dart';
 import 'package:wellfed/src/rust/api/store.dart';
+import 'package:wellfed/src/rust/api/update.dart';
 import 'package:wellfed/state/app_state.dart';
+import 'package:wellfed/state/feeder.dart';
 import 'package:wellfed/theme/theme.dart';
 
 /// Pump past transitions. Not `pumpAndSettle`: a screen waiting on the feeder
@@ -38,6 +44,15 @@ mixin _FakeOpaque implements RustOpaqueInterface {
 
 /// The feeders the app knows, in memory.
 class FakeBook extends ChangeNotifier implements FeederBook {
+  @override
+  Appearance appearance = Appearance.system;
+
+  @override
+  Future<void> setAppearance(Appearance next) async {
+    appearance = next;
+    notifyListeners();
+  }
+
   FakeBook({this.label = 'Pixel'});
 
   @override
@@ -81,6 +96,25 @@ class FakeBook extends ChangeNotifier implements FeederBook {
 
   @override
   Future<void> answeredAt(String identity, String address) async {}
+
+  @override
+  Future<void> forget(String identity) async {
+    feeders = [
+      for (final feeder in feeders)
+        if (feeder.identity != identity) feeder,
+    ];
+    notifyListeners();
+  }
+
+  final _clockDue = <String>{};
+
+  void clockOwed(String identity) => _clockDue.add(identity);
+
+  @override
+  bool clockDue(String identity) => _clockDue.contains(identity);
+
+  @override
+  void clockSynced(String identity) => _clockDue.remove(identity);
 }
 
 /// A run the test drives: its updates are the test's, its answers recorded.
@@ -403,3 +437,194 @@ final doneStep = SetupStep.done(
   wifi: WifiSaved.saved,
   feeder: Uint8List.fromList(const [0xab, 0xcd]),
 );
+
+/// A device API session the test drives: its updates are the test's, and each
+/// request is recorded and answered from [replies].
+class FakeSession with _FakeOpaque implements FeederSession {
+  // ignore: close_sinks, the test ends with it
+  final updates = StreamController<SessionUpdate>();
+  final requests = <FeederRequest>[];
+  final feeds = <int>[];
+
+  /// What the next requests get, in order; `Done` once they run out.
+  final replies = <FeederReply>[];
+  int closes = 0;
+
+  @override
+  Stream<SessionUpdate> run() => updates.stream;
+
+  @override
+  Future<FeederReply> ask({required FeederRequest request}) async {
+    requests.add(request);
+    return replies.isEmpty
+        ? const FeederReply.done(generation: null)
+        : replies.removeAt(0);
+  }
+
+  @override
+  void feed({required int portions}) => feeds.add(portions);
+
+  @override
+  void cancelFeed({required int feed}) {}
+
+  @override
+  void refresh() {}
+
+  @override
+  void close() => closes++;
+
+  void opened() => updates.add(
+    const SessionUpdate.opened(build: 'test', role: ClientRole.owner),
+  );
+
+  void status(Card card) => updates.add(SessionUpdate.status(card: card));
+
+  void history(List<HistoryEntry> entries) =>
+      updates.add(SessionUpdate.history(entries: entries, caughtUp: true));
+}
+
+class FakeFeederPorts implements FeederPorts {
+  final sessions = <FakeSession>[];
+
+  FakeSession get session => sessions.last;
+
+  @override
+  FeederSession open(
+    String identity,
+    String address, {
+    required bool syncClock,
+  }) {
+    final session = FakeSession();
+    sessions.add(session);
+    return session;
+  }
+
+  @override
+  Future<String?> locate(String identity, Duration wait) async => 'lan:4747';
+
+  /// For a test that leaves a screen and comes back to the same feeder.
+  late FeederController controller;
+
+  ImageCheck image = const ImageCheck.absent();
+  final pushes = <String?>[];
+  final located = <(int, String?)>[];
+  int holds = 0;
+  int releases = 0;
+  bool holdGranted = true;
+  // ignore: close_sinks, a test ends with its stream open, as a run does when its screen goes.
+  final progress = StreamController<UpdateProgress>();
+
+  @override
+  Future<ImageCheck> updateImage() async => image;
+
+  @override
+  UpdatePush pushUpdate(String identity, String? address) {
+    pushes.add(address);
+    return _FakePush(this);
+  }
+
+  @override
+  Future<bool> holdProcess(String text) async {
+    holds++;
+    return holdGranted;
+  }
+
+  @override
+  Future<void> releaseProcess() async => releases++;
+
+  @override
+  RestorePorts get restore => throw UnimplementedError('no restore here');
+}
+
+class _FakePush implements UpdatePush {
+  _FakePush(this._ports);
+
+  final FakeFeederPorts _ports;
+
+  @override
+  Stream<UpdateProgress> get progress => _ports.progress.stream;
+
+  @override
+  void located(int id, String? address) => _ports.located.add((id, address));
+}
+
+/// A feeder that is ready, with what a test leaves out unread.
+Card fakeCard({
+  String build = 'test',
+  FoodLevel food = FoodLevel.present,
+  bool? locked = false,
+  bool ready = true,
+  Blocked? blocked,
+  bool? adapter = true,
+  int? batteryPercent = 90,
+  bool clockSet = true,
+  int rssi = -50,
+  FaultView? fault,
+  Desiccant desiccant = const Desiccant.remaining(days: 9, due: false),
+  NextMealView? nextMeal,
+  FeedResult? lastFed,
+  List<MealView> meals = const [],
+  TimeInfo? time,
+  SettingsView? settings,
+  PlansView? plans,
+}) => Card(
+  build: build,
+  food: food,
+  locked: locked,
+  ready: ready,
+  blocked: blocked,
+  adapter: adapter,
+  batteryPercent: batteryPercent,
+  clockSet: clockSet,
+  rssi: rssi,
+  fault: fault,
+  desiccant: desiccant,
+  uptimeMs: 1000,
+  bank: 1,
+  nextMeal: nextMeal,
+  lastFed: lastFed,
+  meals: meals,
+  time: time,
+  settings: settings,
+  plans: plans,
+  wifiGeneration: 1,
+);
+
+FeedResult fakeFed({
+  int feed = 7,
+  int requested = 2,
+  int confirmed = 2,
+  int? atMost,
+  FeedOutcome outcome = FeedOutcome.done,
+  FeedReason reason = FeedReason.done,
+  int? atMs,
+}) => FeedResult(
+  feed: feed,
+  requested: requested,
+  confirmed: confirmed,
+  atMost: atMost ?? confirmed,
+  outcome: outcome,
+  reason: reason,
+  uncertain: outcome == FeedOutcome.uncertain,
+  words: '$confirmed of $requested portions, ${outcome.name}',
+  atMs: atMs,
+  by: const FedBy.panel(),
+  hopper: FoodLevel.present,
+);
+
+extension CopyBy on FeedResult {
+  /// The same feed, asked for by a client.
+  FeedResult copyByClient(String fingerprint) => FeedResult(
+    feed: feed,
+    requested: requested,
+    confirmed: confirmed,
+    atMost: atMost,
+    outcome: outcome,
+    reason: reason,
+    uncertain: uncertain,
+    words: words,
+    atMs: atMs,
+    by: FedBy.client(fingerprint: fingerprint),
+    hopper: hopper,
+  );
+}

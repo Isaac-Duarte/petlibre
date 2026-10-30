@@ -2,12 +2,14 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
-import '../platform/discovery.dart';
+import '../platform/feeder_ports.dart';
 import '../src/rust/api/error.dart';
+import '../src/rust/api/feeder.dart';
 import '../src/rust/api/model.dart';
 import '../src/rust/api/session.dart';
 import '../src/rust/api/store.dart';
 import 'app_state.dart';
+import 'update.dart';
 
 enum Connection {
   /// Looking for the feeder's address on the LAN.
@@ -81,7 +83,7 @@ class FeedState {
 /// goes through the device API like any other client's; this holds no
 /// feeding logic beyond showing what the feeder said.
 class FeederController extends ChangeNotifier {
-  FeederController(this._app, this.known) {
+  FeederController(this._book, this._ports, this.known) {
     unawaited(_serve());
   }
 
@@ -89,7 +91,16 @@ class FeederController extends ChangeNotifier {
   static const _retryFirst = Duration(seconds: 3);
   static const _retryMost = Duration(seconds: 30);
 
-  final AppState _app;
+  final FeederBook _book;
+  final FeederPorts _ports;
+
+  /// What the firmware screen reaches outside Dart.
+  FeederPorts get ports => _ports;
+
+  /// This feeder's update: it outlives the firmware screen, so coming back shows
+  /// the run as it stands and can never start a second one.
+  UpdateFlow get update => _update ??= UpdateFlow(this);
+  UpdateFlow? _update;
   KnownFeeder known;
 
   Connection connection = Connection.looking;
@@ -101,11 +112,20 @@ class FeederController extends ChangeNotifier {
   ErrorKind? error;
   FeedState feed = FeedState.idle;
 
+  /// The feeder's history as this session has read it, oldest first.
+  List<HistoryEntry> history = const [];
+
+  /// [history] holds everything the feeder kept when this session opened.
+  bool historyRead = false;
+
   FeederSession? _session;
   bool _disposed = false;
 
   /// The card was read in the session now open, not an earlier one.
   bool _fresh = false;
+
+  /// The card is what this session read, not an earlier one.
+  bool get cardIsCurrent => connection == Connection.online && _fresh;
 
   bool get canFeed =>
       connection == Connection.online &&
@@ -144,6 +164,42 @@ class FeederController extends ChangeNotifier {
 
   void dismissFeed() => _setFeed(FeedState.idle);
 
+  /// Hears the record lines a tail pushes, while a screen is showing them.
+  void Function(int dropped, List<String> lines)? onLog;
+
+  /// The clients the feeder lists, once asked for.
+  List<ClientView> clients = const [];
+
+  /// A client by its fingerprint, as events name it.
+  String clientName(String fingerprint) {
+    for (final client in clients) {
+      if (client.fingerprint == fingerprint) {
+        return client.you ? 'This phone' : client.label;
+      }
+    }
+    return 'A phone or server';
+  }
+
+  /// Read who the feeder lists.
+  Future<void> loadClients() async {
+    final reply = await ask(const FeederRequest.listClients());
+    if (reply is FeederReply_Clients) {
+      clients = reply.clients;
+      _notify();
+    }
+  }
+
+  /// Take this feeder off this phone.
+  Future<void> forgetHere() => _book.forget(known.identity);
+
+  /// One request to the feeder. A write goes out once and is never sent
+  /// again; the reply says how it ended, an unknown end included.
+  Future<FeederReply> ask(FeederRequest request) async {
+    final session = _session;
+    if (session == null) return const FeederReply.notSent();
+    return session.ask(request: request);
+  }
+
   Future<void> _serve() async {
     var retry = _retryFirst;
     while (!_disposed) {
@@ -169,18 +225,17 @@ class FeederController extends ChangeNotifier {
       return known.address;
     }
     _set(Connection.looking);
-    return await Discovery.locate(known.identity, _locateWait) ?? known.address;
+    return await _ports.locate(known.identity, _locateWait) ?? known.address;
   }
 
   /// One session until it closes; whether it opened.
   Future<bool> _run(String address) async {
     final FeederSession session;
     try {
-      session = FeederSession(
-        key: _app.key,
-        feeder: identityBytes(hex: known.identity),
-        address: address,
-        syncClock: _app.clockDue(known.identity),
+      session = _ports.open(
+        known.identity,
+        address,
+        syncClock: _book.clockDue(known.identity),
       );
     } on BridgeError catch (failed) {
       error = failed.kind;
@@ -201,10 +256,12 @@ class FeederController extends ChangeNotifier {
           opened = true;
           role = r;
           error = null;
+          history = const [];
+          historyRead = false;
           _set(Connection.online);
           try {
-            await _app.answeredAt(known.identity, address);
-            known = _app.feeders.firstWhere(
+            await _book.answeredAt(known.identity, address);
+            known = _book.feeders.firstWhere(
               (f) => f.identity == known.identity,
               orElse: () => known,
             );
@@ -270,10 +327,16 @@ class FeederController extends ChangeNotifier {
             );
           }
         case SessionUpdate_ClockSynced():
-          _app.clockSynced(known.identity);
+          _book.clockSynced(known.identity);
         case SessionUpdate_ClockNotSynced():
           // Still due: the next session tries again.
           break;
+        case SessionUpdate_History(:final entries, :final caughtUp):
+          history = [...history, ...entries];
+          historyRead = historyRead || caughtUp;
+          _notify();
+        case SessionUpdate_Log(:final dropped, :final lines):
+          onLog?.call(dropped, lines);
         case SessionUpdate_Closed(error: final e):
           error = e?.kind;
       }
@@ -324,6 +387,7 @@ class FeederController extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _session?.close();
+    _update?.dispose();
     super.dispose();
   }
 }

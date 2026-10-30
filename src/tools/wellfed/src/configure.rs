@@ -6,9 +6,11 @@
 
 use anyhow::{Context, Result, bail};
 use clap::Args;
+use wellfed_client::calibration::{mean_mg, parse_grams};
+use wellfed_client::setup::Credentials;
 use wellfed_model::{
     self as model, Answer, DESICCANT_DAYS_MAX, DESICCANT_DAYS_MIN, Desiccant, MealReminder,
-    NtpServer, Op, SettingsPatch, StatsSection, TimeChanges, Wifi, Window,
+    NtpServer, Op, SettingsPatch, StatsSection, TimeChanges, Window,
 };
 
 use crate::{Target, Toggle, ask_and_print, connect, passphrase, print_answer, print_json, text};
@@ -90,6 +92,36 @@ pub(crate) async fn lock_command(args: LockArgs) -> Result<()> {
     ask_and_print(&args.target, &Op::SetLock { locked }).await
 }
 
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum TuneName {
+    Chime,
+    Meal,
+    Coin,
+    Alert,
+    Test,
+    Twinkle,
+}
+
+#[derive(Args)]
+pub(crate) struct PlayArgs {
+    #[command(flatten)]
+    target: Target,
+    #[arg(value_enum)]
+    tune: TuneName,
+}
+
+pub(crate) async fn play_command(args: PlayArgs) -> Result<()> {
+    let tune = match args.tune {
+        TuneName::Chime => model::Tune::Chime,
+        TuneName::Meal => model::Tune::Meal,
+        TuneName::Coin => model::Tune::Coin,
+        TuneName::Alert => model::Tune::Alert,
+        TuneName::Test => model::Tune::Test,
+        TuneName::Twinkle => model::Tune::Twinkle,
+    };
+    ask_and_print(&args.target, &Op::Play { tune }).await
+}
+
 #[derive(Args)]
 pub(crate) struct WifiArgs {
     #[command(flatten)]
@@ -115,42 +147,11 @@ pub(crate) struct TimeArgs {
     clear_zone: bool,
     /// Where the feeder asks for the time: `off`, `gateway`, `gateway:PORT`,
     /// `IP` or `IP:PORT` (port 123 unless named).
-    #[arg(long, value_parser = parse_ntp)]
+    #[arg(long)]
     ntp: Option<NtpServer>,
     /// Read the time settings and the clock's state.
     #[arg(long, conflicts_with_all = ["zone", "clear_zone", "ntp"])]
     show: bool,
-}
-
-/// An NTP server as `--ntp` takes it.
-fn parse_ntp(text: &str) -> Result<NtpServer, String> {
-    const PORT: u16 = 123;
-    let port = |text: Option<&str>| match text {
-        None => Ok(PORT),
-        Some(port) => match port.parse::<u16>() {
-            Ok(0) | Err(_) => Err(format!("{port:?} is not a port")),
-            Ok(port) => Ok(port),
-        },
-    };
-    let (host, port_text) = match text.split_once(':') {
-        Some((host, port)) => (host, Some(port)),
-        None => (text, None),
-    };
-    match host {
-        "off" if port_text.is_none() => Ok(NtpServer::Off),
-        "gateway" => Ok(NtpServer::Gateway {
-            port: port(port_text)?,
-        }),
-        _ => match host.parse() {
-            Ok(ip) => Ok(NtpServer::Address {
-                ip,
-                port: port(port_text)?,
-            }),
-            Err(_) => Err(format!(
-                "{text:?} is not off, gateway[:PORT] or an IPv4 address[:PORT]"
-            )),
-        },
-    }
 }
 
 #[derive(Args)]
@@ -171,41 +172,6 @@ pub(crate) struct CalibrateArgs {
     /// Forget the stored weight.
     #[arg(long, conflicts_with = "weighed")]
     clear: bool,
-}
-
-/// A `--weighed` or `--portion` value that is not a weight in grams.
-#[derive(Debug, PartialEq, Eq, thiserror::Error)]
-#[error("{text:?} is not a weight in grams (like 9.8)")]
-struct NotGrams {
-    text: String,
-}
-
-/// Grams with up to three decimals, as milligrams.
-fn parse_grams(text: &str) -> Result<u32, NotGrams> {
-    let invalid = || NotGrams {
-        text: text.to_owned(),
-    };
-    let (whole, fraction) = text.split_once('.').unwrap_or((text, ""));
-    if whole.is_empty() || fraction.len() > 3 || !fraction.bytes().all(|b| b.is_ascii_digit()) {
-        return Err(invalid());
-    }
-    let whole: u32 = whole.parse().map_err(|_| invalid())?;
-    let padded = format!("{fraction:0<3}");
-    let fraction: u32 = padded.parse().map_err(|_| invalid())?;
-    whole
-        .checked_mul(1000)
-        .and_then(|mg| mg.checked_add(fraction))
-        .ok_or_else(invalid)
-}
-
-/// The mean of `portions` portions that weighed `weighed_mg` together,
-/// rounded to the milligram.
-fn mean_mg(weighed_mg: u32, portions: u32) -> Result<u32> {
-    if portions == 0 {
-        bail!("--portions must count at least one portion");
-    }
-    let mean = (u64::from(weighed_mg) + u64::from(portions) / 2) / u64::from(portions);
-    Ok(u32::try_from(mean)?)
 }
 
 pub(crate) async fn settings_command(args: SettingsArgs) -> Result<()> {
@@ -305,21 +271,15 @@ fn desiccant_line(view: &DesiccantView) -> String {
 }
 
 pub(crate) async fn wifi_command(args: WifiArgs) -> Result<()> {
-    let passphrase = match &args.ssid {
-        Some(_) => Some(passphrase()?),
+    // The feeder's own rules, checked before anything is sent.
+    let wifi = match args.ssid {
+        Some(ssid) => Some(Credentials::new(ssid.into_bytes(), passphrase()?)?.into_wifi()),
         None if args.clear => None,
         None => bail!("pass --ssid or --clear"),
     };
     let (_, _, mut connection) = connect(&args.target).await?;
     let Answer::Status(status) = connection.ask(&Op::Status).await? else {
         bail!("the feeder did not return its status");
-    };
-    let wifi = match (args.ssid, passphrase) {
-        (Some(ssid), Some(psk)) => Some(Wifi {
-            ssid: ssid.into_bytes(),
-            psk,
-        }),
-        _ => None,
     };
     let answer = connection
         .ask(&Op::PutWifi {
@@ -420,44 +380,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn grams_parse_to_milligrams() {
-        assert_eq!(parse_grams("9.8"), Ok(9_800));
-        assert_eq!(parse_grams("98.425"), Ok(98_425));
-        assert_eq!(parse_grams("12"), Ok(12_000));
-        for bad in ["", ".5", "9.8765", "9,8", "-1", "1e3", "9.x"] {
-            assert!(parse_grams(bad).is_err(), "{bad}");
-        }
-        assert_eq!(mean_mg(98_400, 10).unwrap(), 9_840);
-        assert_eq!(mean_mg(10_000, 3).unwrap(), 3_333);
-        assert!(mean_mg(1_000, 0).is_err());
-    }
-
-    #[test]
     fn a_desiccant_period_is_one_to_ninety_days() {
         assert_eq!(desiccant_days("1"), Ok(1));
         assert_eq!(desiccant_days("90"), Ok(90));
         for bad in ["0", "91", "-1", "14d", ""] {
             assert!(desiccant_days(bad).is_err(), "{bad}");
-        }
-    }
-
-    #[test]
-    fn ntp_servers_parse() {
-        assert_eq!(parse_ntp("off"), Ok(NtpServer::Off));
-        assert_eq!(parse_ntp("gateway"), Ok(NtpServer::Gateway { port: 123 }));
-        assert_eq!(
-            parse_ntp("gateway:1123"),
-            Ok(NtpServer::Gateway { port: 1123 })
-        );
-        assert_eq!(
-            parse_ntp("10.42.103.1:1123"),
-            Ok(NtpServer::Address {
-                ip: [10, 42, 103, 1].into(),
-                port: 1123
-            })
-        );
-        for bad in ["off:123", "gateway:0", "pool.ntp.org", "10.42.103.1:x"] {
-            assert!(parse_ntp(bad).is_err(), "{bad}");
         }
     }
 }

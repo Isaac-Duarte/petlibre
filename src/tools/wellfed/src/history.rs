@@ -7,7 +7,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use clap::{Args, ValueEnum};
 use jiff::tz::TimeZone;
-use wellfed_client::history::Entry;
+use wellfed_client::history::{Backlog, Entry};
 use wellfed_client::trace::Pages;
 use wellfed_model::{self as model, Answer, Gap, Op, Pushed, StatsSection};
 
@@ -135,8 +135,7 @@ pub(crate) async fn stats_command(args: StatsArgs) -> Result<()> {
         let capabilities = connection.capabilities();
         StatsSection::ALL
             .into_iter()
-            .filter(|&section| section != StatsSection::Feeds || capabilities.traces)
-            .filter(|&section| section != StatsSection::Portions || capabilities.calibration)
+            .filter(|section| section.served(capabilities))
             .collect()
     } else {
         args.section.iter().map(|section| section.model()).collect()
@@ -178,7 +177,7 @@ pub(crate) async fn events_command(args: EventsArgs) -> Result<()> {
     let backlog = if args.follow {
         None
     } else {
-        Some(Backlog::ask(&mut connection).await?)
+        Some(backlog(&mut connection).await?)
     };
     if backlog.is_some_and(|backlog| backlog.read(args.after)) {
         return Ok(());
@@ -230,7 +229,7 @@ pub(crate) async fn status_command(args: StatusArgs) -> Result<()> {
 /// this computer's time zone.
 pub(crate) async fn feeds_command(args: FeedsArgs) -> Result<()> {
     let (_, _, mut connection) = connect(&args.target).await?;
-    let backlog = Backlog::ask(&mut connection).await?;
+    let backlog = backlog(&mut connection).await?;
     if backlog.read(args.after) {
         return Ok(());
     }
@@ -254,39 +253,13 @@ pub(crate) async fn feeds_command(args: FeedsArgs) -> Result<()> {
     Ok(())
 }
 
-/// Where the history a subscription sends first ends: the newest event the
-/// feeder had when asked. Later events may follow at once; a command that
-/// reads the history once stops here rather than waiting for a quiet
-/// moment after it.
-#[derive(Clone, Copy)]
-struct Backlog {
-    newest: Option<u64>,
-}
-
-impl Backlog {
-    async fn ask(connection: &mut Connection) -> Result<Self> {
-        match connection.ask(&Op::Status).await? {
-            Answer::Status(status) => Ok(Self {
-                newest: status.last_event,
-            }),
-            other => bail!("unexpected answer {other:?}"),
-        }
-    }
-
-    /// Whether a reader at `after` has it all already.
-    fn read(self, after: Option<u64>) -> bool {
-        self.newest
-            .is_none_or(|newest| after.is_some_and(|after| after >= newest))
-    }
-
-    /// Whether `pushed` is the backlog's newest event, or past it.
-    fn ends_at(self, pushed: &Pushed) -> bool {
-        let seq = match pushed {
-            Pushed::Event(event) => event.seq,
-            Pushed::Gap(gap) => gap.to,
-            Pushed::Sample(_) | Pushed::Log(_) => return false,
-        };
-        self.read(Some(seq))
+/// Where the history a subscription would send first ends, now.
+async fn backlog(connection: &mut Connection) -> Result<Backlog> {
+    match connection.ask(&Op::Status).await? {
+        Answer::Status(status) => Ok(Backlog {
+            newest: status.last_event,
+        }),
+        other => bail!("unexpected answer {other:?}"),
     }
 }
 

@@ -37,6 +37,10 @@ pub enum ErrorKind {
     Ended,
     /// The app's own file could not be read or written.
     Store,
+    /// The text is not an invite.
+    Invite,
+    /// The connection broke during an exchange: its outcome is unknown.
+    Interrupted,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -15,13 +15,13 @@ use clap::{Args, Subcommand};
 use wellfed_client::update_key::{self, EnrollError, Enrolled};
 use wellfed_formats::credentials::KeyScope;
 use wellfed_formats::hex;
-use wellfed_model::{Client, ClientRole};
+use wellfed_model::{Client, ClientRole, Op};
 use wellfed_signing::Key;
 
 use crate::ask::Asker;
 use crate::device::Connection;
 use crate::report::Printer;
-use crate::{Target, connect};
+use crate::{Target, ask_and_print, connect};
 
 #[derive(Args)]
 pub(crate) struct UpdateKeyArgs {
@@ -42,6 +42,14 @@ enum Action {
     Enroll(EnrollArgs),
     /// The update keys the feeder has enrolled.
     Show(Target),
+    /// Send a key statement a built-in or the release key signed offline: a
+    /// key the feeder then trusts or stops trusting, with no press there.
+    Statement {
+        #[command(flatten)]
+        target: Target,
+        /// The signed statement.
+        file: PathBuf,
+    },
 }
 
 #[derive(Args)]
@@ -80,6 +88,11 @@ pub(crate) async fn command(args: UpdateKeyArgs) -> Result<()> {
         Action::Show(target) => {
             let (_, _, mut connection) = connect(&target).await?;
             show(&mut connection).await
+        }
+        Action::Statement { target, file } => {
+            let statement =
+                std::fs::read(&file).with_context(|| format!("read {}", file.display()))?;
+            ask_and_print(&target, &Op::UpdateKeyStatement { statement }).await
         }
     }
 }

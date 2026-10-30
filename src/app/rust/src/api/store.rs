@@ -16,6 +16,23 @@ pub struct AppStore {
     /// How feeders list this phone: 1-16 bytes. Empty until setup asks.
     pub label: String,
     pub feeders: Vec<KnownFeeder>,
+    pub appearance: Appearance,
+}
+
+/// Which theme the app draws.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Appearance {
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
+/// This app's version, as its About screen says it.
+#[flutter_rust_bridge::frb(sync)]
+pub fn app_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

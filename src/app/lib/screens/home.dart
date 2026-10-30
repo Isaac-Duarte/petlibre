@@ -114,8 +114,8 @@ class _HomeScreenState extends State<HomeScreen> {
               tone: Tone.warning,
               lead: "An install didn't finish.",
               text:
-                  "The original firmware isn't saved yet, and Wellfed isn't "
-                  'permanent. Finish it before you rely on this feeder.',
+                  'Its last steps may not have run, and the original firmware '
+                  'may not be saved. Finish it before you rely on this feeder.',
             ),
             const SizedBox(height: Space.s2),
             FilledButton(

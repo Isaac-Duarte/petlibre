@@ -1185,6 +1185,17 @@ class _Stopped extends StatelessWidget {
                 'of your router. Check the record, restart the feeder and '
                 'start again.',
     ),
+    StopCase_HandoverFailed() => (
+      "This phone couldn't finish the handover",
+      "Nothing was installed. Check that the feeder's setup network is up and "
+          'that this phone is on your Wi-Fi, then start again. If its setup '
+          'network is gone, hold Reset again first.',
+    ),
+    StopCase_NotConfirmed() => (
+      "Wellfed hasn't confirmed yet",
+      'It is installed and may still be checking itself. Stay near it and pick '
+          'up where it stopped to look again.',
+    ),
     StopCase_FrameNotTaken() => (
       "The feeder didn't reach this phone",
       'It keeps nothing when that happens, and opens its setup network again. '

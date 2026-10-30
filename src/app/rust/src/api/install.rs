@@ -352,6 +352,12 @@ pub enum StopCase {
     /// The setup frame went out and the feeder never reached this phone: the
     /// wrong password, say. It keeps nothing and reopens its setup network.
     FrameNotTaken,
+    /// Joining the feeder's setup network, or coming back from it, failed. A new
+    /// run may go again: nothing was asked of the feeder.
+    HandoverFailed,
+    /// Bank 1's build answered and never confirmed in time. It may yet: picking
+    /// up looks again.
+    NotConfirmed,
     /// A request from an earlier run has not been resolved, so the server
     /// sent none; [`InstallListener`] can resolve it.
     EarlierRequestOpen,

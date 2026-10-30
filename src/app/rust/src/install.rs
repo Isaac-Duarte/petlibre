@@ -649,6 +649,8 @@ pub fn stop_of(error: &Error, from_stock: bool) -> (StopCase, Resume) {
                 (StopCase::Other, Nothing)
             }
         },
+        Error::Backup(inner) if inner.is_connection_lost() => (StopCase::NotAnswering, FromBank0),
+        Error::Handover(_) => (StopCase::HandoverFailed, FromStart),
         Error::Backup(_)
         | Error::NotStock(_)
         | Error::Unverified
@@ -734,6 +736,7 @@ const fn timed_out(phase: Phase, from_stock: bool) -> (StopCase, Resume) {
         // It took the Wi-Fi over Bluetooth, so a new run has only that to do
         // again, and asks stock nothing.
         Phase::Join => (StopCase::NotJoined, Resume::FromBank0),
+        Phase::AwaitConfirm => (StopCase::NotConfirmed, Resume::FromBank0),
         Phase::AwaitInstall | Phase::Pair | Phase::ReadStatus if from_stock => {
             (StopCase::Uncertain, Resume::Nothing)
         }
@@ -1275,6 +1278,33 @@ mod tests {
                 (StopCase::NotJoined, Resume::FromBank0)
             );
         }
+    }
+
+    /// A dropped connection during the backup says nothing about the backup,
+    /// and a handover that failed asked nothing of the feeder.
+    #[test]
+    fn a_lost_connection_is_not_a_bad_backup() {
+        let lost = Error::Backup(Box::new(Error::Platform("connection reset".into())));
+        assert_eq!(
+            stop_of(&lost, true),
+            (StopCase::NotAnswering, Resume::FromBank0)
+        );
+        assert_eq!(
+            stop_of(&Error::Backup(Box::new(Error::Unverified)), true),
+            (StopCase::BackupMismatch, Resume::FromBank0)
+        );
+        assert_eq!(
+            stop_of(&Error::Handover("no network".into()), true),
+            (StopCase::HandoverFailed, Resume::FromStart)
+        );
+        assert_eq!(
+            stop_of(&Error::Steps(InstallError::FrameNotTaken), true),
+            (StopCase::FrameNotTaken, Resume::FromStart)
+        );
+        assert_eq!(
+            timed_out(Phase::AwaitConfirm, true),
+            (StopCase::NotConfirmed, Resume::FromBank0)
+        );
     }
 
     /// The server's reason stays with the refusal: a stale report is not an

@@ -621,6 +621,14 @@ sealed class StopCase with _$StopCase {
   /// wrong password, say. It keeps nothing and reopens its setup network.
   const factory StopCase.frameNotTaken() = StopCase_FrameNotTaken;
 
+  /// Joining the feeder's setup network, or coming back from it, failed. A new
+  /// run may go again: nothing was asked of the feeder.
+  const factory StopCase.handoverFailed() = StopCase_HandoverFailed;
+
+  /// Bank 1's build answered and never confirmed in time. It may yet: picking
+  /// up looks again.
+  const factory StopCase.notConfirmed() = StopCase_NotConfirmed;
+
   /// A request from an earlier run has not been resolved, so the server
   /// sent none; [`InstallListener`] can resolve it.
   const factory StopCase.earlierRequestOpen() = StopCase_EarlierRequestOpen;

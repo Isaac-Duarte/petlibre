@@ -19,6 +19,10 @@ pub enum Error {
     /// The platform's own failure: a prompt, the radio, the key store.
     #[error(transparent)]
     Platform(PlatformError),
+    /// Joining stock's setup network, or coming back from it, failed. Nothing
+    /// is asked of stock until it reaches the broker, so a new run may go again.
+    #[error("the handover over the feeder's setup network: {0}")]
+    Handover(#[source] PlatformError),
     #[error("show the setup code")]
     ShowCode(#[source] PlatformError),
     #[error(transparent)]
@@ -253,4 +257,15 @@ pub enum Error {
     Steps(InstallError),
     #[error(transparent)]
     Stopped(Stopped),
+}
+
+impl Error {
+    /// The session with the feeder ended, with nothing said about its contents:
+    /// a read may simply go again.
+    pub fn is_connection_lost(&self) -> bool {
+        matches!(
+            self,
+            Self::Platform(_) | Self::Connect { .. } | Self::Connection(_) | Self::NoSession(_)
+        )
+    }
 }

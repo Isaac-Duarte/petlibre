@@ -77,6 +77,8 @@ const FRAME_ANSWER: Duration = Duration::from_secs(2);
 /// From the frame until stock reaches the broker: its Wi-Fi join and those
 /// 20 s, with room. Past this it has gone back to its setup network.
 const FRAME_ARRIVAL: Duration = Duration::from_secs(2 * 60);
+/// How long the backup's read keeps coming back to a feeder that dropped it.
+const BACKUP_RECONNECT: Duration = Duration::from_secs(3 * 60);
 /// How the feeder lists the installer's update key.
 const UPDATE_KEY_LABEL: &str = "installer";
 
@@ -704,7 +706,7 @@ where
             .prompter
             .done(Prompt::SetupMode)
             .await
-            .map_err(Error::Platform)?;
+            .map_err(Error::Handover)?;
         let to = wellfed_client::install::SETUP_ADDRESS;
         let socket = tokio::net::UdpSocket::bind(SocketAddr::from(([0, 0, 0, 0], 0)))
             .await
@@ -723,7 +725,7 @@ where
             .prompter
             .done(Prompt::JoinBack)
             .await
-            .map_err(Error::Platform)
+            .map_err(Error::Handover)
     }
 
     /// Until stock reports ready, or the window and its grace run out.
@@ -1271,12 +1273,28 @@ where
 
     /// The stock backup for the paired feeder: kept from an earlier run, or
     /// read from bank 1 now and kept.
+    /// Bank 1 read and kept. A read changes nothing on the feeder, so a
+    /// connection that drops (the restart that ends Bluetooth setup, say) only
+    /// starts the read again.
     async fn backup(&self) -> Result<StockBackup, Error> {
         let identity = self.identity.ok_or(Error::NoIdentity)?;
-        let mut connection = self.connect().await?;
-        let (_, backup) =
-            backup::fetch(&mut connection, &self.backups, &identity, &self.io.report).await?;
-        Ok(backup)
+        let deadline = Instant::now() + BACKUP_RECONNECT;
+        loop {
+            let read = async {
+                let mut connection = self.connect().await?;
+                backup::fetch(&mut connection, &self.backups, &identity, &self.io.report).await
+            };
+            match read.await {
+                Ok((_, backup)) => return Ok(backup),
+                Err(error) if error.is_connection_lost() && Instant::now() < deadline => {
+                    self.io.report.event(Event::SessionDropped {
+                        error: crate::text(&error),
+                    });
+                    tokio::time::sleep(POLL).await;
+                }
+                Err(error) => return Err(error),
+            }
+        }
     }
 
     /// Stock's plan sectors from the bank-0 role: kept beside the backup,

@@ -243,6 +243,7 @@ impl Asks {
 
     /// Hand `update` to Dart; `false` once nobody listens.
     fn update(&self, update: InstallUpdate) -> bool {
+        crate::trace::update(&update);
         self.deliver()
             .as_ref()
             .is_some_and(|deliver| deliver(update))
@@ -274,6 +275,7 @@ impl Asks {
     }
 
     pub(crate) fn answer(&self, id: u32, answer: InstallAnswer) {
+        crate::trace::answer(id, &answer);
         let waiting = self.waiting.lock().ok().and_then(|mut w| w.remove(&id));
         if let Some(waiting) = waiting {
             // The run stopped waiting: nothing to tell.
@@ -598,6 +600,9 @@ impl From<Event> for InstallEvent {
             }
             Event::RestoreKeyKept { error } => note(error),
             Event::Floor(floor) => note(format!("the feeder's floor is {floor}")),
+            Event::FeederTried { address, answered } => {
+                note(format!("tried the feeder at {address}, answered: {answered}"))
+            }
             Event::Signed { version, .. } => note(format!("signed at version {version}")),
             Event::PlansKept { .. } => note("stock's plans were kept".to_string()),
             Event::PlansSetAside { .. } => note("the applied plans were set aside".to_string()),

@@ -4967,6 +4967,7 @@ dependencies = [
  "chrono",
  "flutter_rust_bridge",
  "jiff",
+ "log",
  "rumqttc",
  "serde",
  "serde_json",

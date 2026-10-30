@@ -1113,6 +1113,10 @@ where
                 random().ok()?,
             )
             .await;
+            self.io.report.event(Event::FeederTried {
+                address,
+                answered: opened.is_ok(),
+            });
             if opened.is_ok() {
                 return Some(address);
             }

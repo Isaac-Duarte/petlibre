@@ -1237,8 +1237,17 @@ pub extern "C" fn wellfed_app_start() {
 
     // Supervise from the first scheduled step, so a startup fault or
     // hang is a reset KM0 can count.
+    // Priority 7, above the vendor Wi-Fi driver's threads (receive and
+    // transmit tasklets at 5, interrupt and command threads at 6): their
+    // WPA3 SAE work on every join (0.85–1.0 s, twice when the access point
+    // asks for hash-to-element) otherwise starves the feeder to within
+    // 40–50 ms of the watchdog's 1 s progress gap, a margin an image's
+    // layout alone crossed (physical, October 29). Its step never blocks,
+    // and a driver thread that hangs with interrupts running still stops
+    // the beats it starves, so the feeder then stops feeding. The stack
+    // audit reads the priority as written here.
     // SAFETY: the step takes no context and keeps its state in statics.
-    if !unsafe { sdk::task_create(c"wellfed-wdg", 512, 3, feeder_task, ptr::null_mut()) } {
+    if !unsafe { sdk::task_create(c"wellfed-wdg", 512, 7, feeder_task, ptr::null_mut()) } {
         sdk::log(c"PLSUP1 error task=create\r\n");
     }
     let mut report = startup::Report::new();

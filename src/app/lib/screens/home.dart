@@ -9,6 +9,7 @@ import '../theme/theme.dart';
 import '../widgets/icons.dart';
 import '../widgets/layout.dart';
 import 'feed_sheet.dart';
+import 'restore_screen.dart';
 
 /// Feeder-first Home: one card per feeder this phone knows, large for one
 /// feeder and compact for several.
@@ -87,6 +88,7 @@ class _HomeScreenState extends State<HomeScreen> {
           for (final (i, controller) in _feeders.values.indexed) ...[
             if (i > 0) const SizedBox(height: Space.s3),
             FeederCard(controller: controller, compact: !one),
+            RestoreEntry(app: widget.app, feeder: controller.known),
           ],
         ],
       ),

@@ -32,8 +32,6 @@ rumqttc = { version = "0.25.1", default-features = false }
 tempfile.workspace = true
 uuid.workspace = true
 wellfed-core.workspace = true
-wellfed-device-api.workspace = true
-wellfed-proto.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
 wellfed-feeder-sim = { workspace = true, features = ["harness"] }
 

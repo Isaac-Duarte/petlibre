@@ -4977,12 +4977,10 @@ dependencies = [
  "wellfed-client",
  "wellfed-connect",
  "wellfed-core",
- "wellfed-device-api",
  "wellfed-feeder-sim",
  "wellfed-formats",
  "wellfed-install",
  "wellfed-model",
- "wellfed-proto",
  "wellfed-session",
 ]
 

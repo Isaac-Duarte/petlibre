@@ -24,16 +24,14 @@ use wellfed_app_bridge::install::{Listener, Pin, Run, check_dns, check_image, pe
 use wellfed_client::install::plans::{self, StockPlan, StockPlanState, StockPlans};
 use wellfed_client::setup::{Deframer, frame};
 use wellfed_connect::Connection;
-use wellfed_device_api::setup::{MAX_MESSAGE, Received, Responder};
 use wellfed_feeder_sim::banks::BANK1_BUILD;
 use wellfed_feeder_sim::flash::Flash;
-use wellfed_feeder_sim::harness::Running;
+use wellfed_feeder_sim::harness::{Running, SetupFeeder};
 use wellfed_formats::canonical::sha256;
 use wellfed_formats::manifest::{BuildManifest, Provisioning};
 use wellfed_formats::review::{Details, ImageKind, ImageReview, ReviewKind};
 use wellfed_formats::stock::Enrollment;
 use wellfed_model::{Answer, Op, PLANS, Plan, Plans, Weekdays};
-use wellfed_proto::setup::{Enrolled, Reply, WifiSaved};
 use wellfed_session::noise::Keypair;
 use wellfed_session::setup_code::{Button, Code};
 
@@ -997,9 +995,8 @@ async fn set_up_by(
             run.notified(piece.to_vec());
         }
     };
-    let mut responder = Responder::new(feeder, [4; 32]).unwrap();
+    let mut played = SetupFeeder::new(feeder);
     let mut deframer = Deframer::default();
-    let mut out = [0u8; MAX_MESSAGE];
     loop {
         match next(heard).await {
             InstallUpdate::Ask { id, ask } => {
@@ -1011,22 +1008,7 @@ async fn set_up_by(
                             deframer.push(&piece);
                         }
                         while let Some(message) = deframer.next_message().unwrap() {
-                            let reply = match responder.receive(&message, &mut out).unwrap() {
-                                Received::Send(len) => Some(len),
-                                Received::Offer(_) => None,
-                                Received::Proven { .. } => {
-                                    let done = Reply::Done {
-                                        enrolled: Enrolled::Already,
-                                        wifi: WifiSaved::Saved,
-                                    };
-                                    Some(responder.reply(&done, &mut out).unwrap())
-                                }
-                            };
-                            let len = reply.unwrap_or_else(|| {
-                                let entering = Reply::EnterCode { seconds: 60 };
-                                responder.reply(&entering, &mut out).unwrap()
-                            });
-                            notify(&out[..len]);
+                            notify(&played.hear(&message));
                         }
                         InstallAnswer::Done
                     }
@@ -1042,10 +1024,7 @@ async fn set_up_by(
                 for (press, position) in presses.iter_mut().zip(&code) {
                     *press = order[usize::from(*position) - 1];
                 }
-                let len = responder
-                    .prove(Code::new(presses), [6; 32], &mut out)
-                    .unwrap();
-                notify(&out[..len]);
+                notify(&played.prove(Code::new(presses)));
             }
             InstallUpdate::Event {
                 event: InstallEvent::Paired { .. },

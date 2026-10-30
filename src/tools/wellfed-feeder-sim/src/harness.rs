@@ -16,10 +16,14 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
 use wellfed_device_api::clients::{Label, Role};
+use wellfed_device_api::setup::{MAX_MESSAGE, Received, Responder};
 
 use wellfed_board_plaf103::storage;
 use wellfed_feeder::store::traces::{TraceError, TraceRing};
 use wellfed_proto::api::TraceSummary;
+use wellfed_proto::setup::{Enrolled, Reply, WifiSaved};
+use wellfed_session::noise::Keypair;
+use wellfed_session::setup_code::Code;
 
 use crate::banks::Banks;
 use crate::console::{self, ConsoleError};
@@ -458,6 +462,58 @@ impl<'a> Waiting<'a> {
 impl Drop for Waiting<'_> {
     fn drop(&mut self) {
         self.count.fetch_sub(self.n, Ordering::SeqCst);
+    }
+}
+
+/// A feeder in setup mode with no radio around it, for a client's test to play
+/// over whatever link it fakes: its own responder, which asks for the code,
+/// takes it, and answers that it saved the Wi-Fi and already holds the owner.
+pub struct SetupFeeder {
+    responder: Responder,
+    out: Box<[u8; MAX_MESSAGE]>,
+}
+
+impl SetupFeeder {
+    /// A feeder answering as `identity`.
+    pub fn new(identity: &Keypair) -> Self {
+        Self {
+            responder: Responder::new(identity, [4; 32]).expect("a fixed ephemeral is a valid key"),
+            out: Box::new([0; MAX_MESSAGE]),
+        }
+    }
+
+    /// The feeder's answer to one whole message from the client, unframed. A
+    /// client that breaks the protocol fails the test here.
+    pub fn hear(&mut self, message: &[u8]) -> Vec<u8> {
+        let len = match self
+            .responder
+            .receive(message, &mut self.out[..])
+            .expect("the client keeps to the setup protocol")
+        {
+            Received::Send(len) => len,
+            Received::Offer(_) => self.reply(&Reply::EnterCode { seconds: 60 }),
+            Received::Proven { .. } => self.reply(&Reply::Done {
+                enrolled: Enrolled::Already,
+                wifi: WifiSaved::Saved,
+            }),
+        };
+        self.out[..len].to_vec()
+    }
+
+    /// The feeder's proof of `code`, as if someone had pressed it on its
+    /// panel, unframed.
+    pub fn prove(&mut self, code: Code) -> Vec<u8> {
+        let len = self
+            .responder
+            .prove(code, [6; 32], &mut self.out[..])
+            .expect("the feeder has asked for the code");
+        self.out[..len].to_vec()
+    }
+
+    fn reply(&mut self, reply: &Reply) -> usize {
+        self.responder
+            .reply(reply, &mut self.out[..])
+            .expect("a reply fits a setup message")
     }
 }
 

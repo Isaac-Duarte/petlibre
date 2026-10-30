@@ -732,6 +732,7 @@ where
         let mut said = None;
         let mut silent_since = None;
         let mut restarted = false;
+        let mut arrived = false;
         loop {
             let wait = match self.stock.status().await {
                 Ok(status) => match install.stock(&view(&status)) {
@@ -767,12 +768,15 @@ where
                 silent_since = None;
             }
 
-            let no_feeder = wait == Wait::NoFeeder;
+            // Enrolled by an earlier run, a feeder that never took this frame
+            // reads as offline, not as no feeder.
+            let absent = matches!(wait, Wait::NoFeeder | Wait::Stock(StockNotReady::Offline));
+            arrived |= !absent;
             if said.as_ref() != Some(&wait) {
                 self.io.report.event(Event::Waiting(wait.clone()));
                 said = Some(wait);
             }
-            if no_feeder
+            if !arrived
                 && self
                     .frame_out
                     .is_some_and(|sent| sent.elapsed() >= FRAME_ARRIVAL)

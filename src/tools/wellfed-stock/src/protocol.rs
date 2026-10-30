@@ -253,10 +253,11 @@ pub fn reply(
             // needs an answer: until one comes it saves nothing from that
             // frame, goes back to its setup network, and refuses an install
             // (1204, "device not bound").
-            let mut payload = config
-                .binding_response
-                .clone()
-                .unwrap_or_else(installer_binding);
+            let mut payload = match &config.binding_response {
+                Some(captured) => captured.clone(),
+                None if config.hotspot().is_err() => installer_binding(),
+                None => return None,
+            };
             payload.insert("ts".into(), now.timestamp_millis().into());
             payload.insert("msgId".into(), msg.msg_id.clone().into());
             payload.insert("linkId".into(), link_id().into());

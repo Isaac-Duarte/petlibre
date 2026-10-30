@@ -849,9 +849,7 @@ fn a_join_that_fails_stops_the_reset_run_before_the_frame() {
     });
 }
 
-/// A run for a stock that kept an earlier frame asks only for the check: its
-/// feeder comes to a broker listening on every address, which is what lets a
-/// single-radio phone send the frame from the feeder's network.
+/// A run for a stock that kept an earlier frame asks only for the check.
 #[test]
 fn a_frame_taken_run_waits_for_the_feeder_and_asks_nothing_of_the_handover() {
     // SAFETY: nextest runs each test in a process of its own, and no other
@@ -864,7 +862,7 @@ fn a_frame_taken_run_waits_for_the_feeder_and_asks_nothing_of_the_handover() {
             fixture.spec(InstallStart::FrameTaken, "127.0.0.1"),
         );
 
-        let feeder = stock_feeder("127.0.0.9", "AF_RESET_FEEDER");
+        let feeder = stock_feeder("127.0.0.1", "AF_RESET_FEEDER");
         let (_, ask) = next_ask(&mut heard).await;
         feeder.abort();
         let InstallAsk::RecognizeFeeder { device, .. } = ask else {

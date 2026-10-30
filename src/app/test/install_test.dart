@@ -1604,6 +1604,24 @@ void main() {
       await _tap(tester, 'Start again');
       expect(ports.specs.last.start, const InstallStart.frameTaken());
     });
+
+    testWidgets('a client the owner said no to took no frame of ours', (
+      tester,
+    ) async {
+      final ports = FakeInstallPorts();
+      final run = await _toHandover(tester, ports);
+      run.ask(
+        4,
+        const InstallAsk.recognizeFeeder(device: 'AF', address: '192.168.1.40'),
+      );
+      await settle(tester);
+      await _tap(tester, "That's not my feeder");
+      run.stopped(const StopCase.notYourFeeder(), resume: Resume.fromStart);
+      await settle(tester);
+
+      await _tap(tester, 'Start again');
+      expect(ports.specs.last.start, const InstallStart.reset());
+    });
   });
 }
 

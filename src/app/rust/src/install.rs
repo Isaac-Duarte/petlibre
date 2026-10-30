@@ -650,7 +650,9 @@ pub fn stop_of(error: &Error, from_stock: bool) -> (StopCase, Resume) {
             }
         },
         Error::Backup(inner) if inner.is_connection_lost() => (StopCase::NotAnswering, FromBank0),
-        Error::Handover(_) => (StopCase::HandoverFailed, FromStart),
+        Error::Handover(_) | Error::FrameSend { .. } | Error::UdpSocket(_) => {
+            (StopCase::HandoverFailed, FromStart)
+        }
         Error::Backup(_)
         | Error::NotStock(_)
         | Error::Unverified
@@ -798,6 +800,7 @@ fn plan(
     let version = manifest_version(&manifest).ok_or(Error::NoManifest)?;
 
     let reset = matches!(spec.start, InstallStart::Reset | InstallStart::FrameTaken);
+    let sends_frame = matches!(spec.start, InstallStart::Reset);
     let from_stock = reset || matches!(spec.start, InstallStart::Dns { .. });
     let unjoined = if spec.setup_again {
         Unjoined::SetUpAgain
@@ -897,7 +900,12 @@ fn plan(
                 ClockPolicy::Bounded
             },
             api: Api::Off,
-            bind: if reset { Bind::Any } else { Bind::Configured },
+            // Only a phone leaving for the feeder's network loses the address.
+            bind: if sends_frame {
+                Bind::Any
+            } else {
+                Bind::Configured
+            },
         },
     };
     let keys = AppKeys {

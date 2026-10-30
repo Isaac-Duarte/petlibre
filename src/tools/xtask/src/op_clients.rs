@@ -17,6 +17,8 @@ const REQUEST: &str = "src/client/wellfed-model/src/request.rs";
 /// Where the bridge declares what a screen can ask.
 const BRIDGE: &str = "src/app/rust/src/api/feeder.rs";
 const DART: &str = "src/app/lib/";
+/// Reads the session itself keeps on the card, so no screen asks for them.
+const READ_FOR_THE_CARD: [&str; 2] = ["GetSettings", "GetTime"];
 /// Dart written by the code generator.
 const DART_GENERATED: &str = "src/app/lib/src/rust/";
 const CLI: &str = "src/tools/wellfed/src/";
@@ -124,6 +126,7 @@ fn dart_name(variant: &str) -> String {
 fn unsent(requests: &[&str], dart: &[String]) -> Vec<String> {
     requests
         .iter()
+        .filter(|request| !READ_FOR_THE_CARD.contains(request))
         .filter(|request| {
             let call = format!("FeederRequest.{}(", dart_name(request));
             !dart.iter().any(|source| source.contains(&call))
@@ -257,9 +260,9 @@ pub enum Other {
 
     #[test]
     fn a_request_no_screen_sends_is_found() {
-        let dart = ["ask(const FeederRequest.getSettings());".to_string()];
+        let dart = ["ask(const FeederRequest.play());".to_string()];
         assert_eq!(
-            unsent(&["GetSettings", "Reboot"], &dart),
+            unsent(&["Play", "Reboot", "GetTime"], &dart),
             [format!(
                 "FeederRequest::Reboot is sent by no screen in {DART}"
             )]

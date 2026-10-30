@@ -178,6 +178,20 @@ void main() {
       expect(session.requests, hasLength(1));
     });
 
+    testWidgets('forgetting asks first, goes once, and says if unanswered', (
+      tester,
+    ) async {
+      final session = await wifi(tester);
+      session.replies.add(const FeederReply.unanswered());
+
+      await tapIn(tester, find.text('Forget this network'));
+      expect(session.requests, isEmpty);
+      await tapIn(tester, find.widgetWithText(FilledButton, 'Forget'));
+
+      expect(session.requests.single, isA<FeederRequest_ForgetWifi>());
+      expect(find.textContaining('may or may not have'), findsOneWidget);
+    });
+
     testWidgets('a restart that fails says the network is saved', (
       tester,
     ) async {

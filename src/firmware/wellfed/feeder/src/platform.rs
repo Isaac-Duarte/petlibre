@@ -39,9 +39,7 @@ use wellfed_feeder::store::events::{BODY_BYTES, Read};
 use wellfed_feeder_runtime::{
     calibration, call, events, keys, network, plans, stats, time, traces,
 };
-use wellfed_proto::api::{
-    Capabilities, Counts, Erases, FLASH_SECTORS, Power, Refusal, STOCK_PLAN_ENTRIES_LEN, TASKS_MAX,
-};
+use wellfed_proto::api::{Capabilities, Counts, Erases, FLASH_SECTORS, Power, Refusal, TASKS_MAX};
 use wellfed_proto::trace::PAGE_MAX;
 use wellfed_sdk::hal::audio::{self, Speaker};
 use wellfed_sdk::hal::ble::{self, BleSetup, DropReason};
@@ -479,12 +477,6 @@ impl Platform for Plaf103 {
             rest = after;
         }
         true
-    }
-
-    /// Stock's plan sectors through the mapped flash: two fixed spans
-    /// outside both banks and the storage region, read and never written.
-    fn stock_plans_read(&mut self, entries: &mut [u8; STOCK_PLAN_ENTRIES_LEN]) -> Option<u8> {
-        Some(sdk::stock_plans_read(entries))
     }
 
     fn listen(&mut self, port: u16) -> Option<i32> {

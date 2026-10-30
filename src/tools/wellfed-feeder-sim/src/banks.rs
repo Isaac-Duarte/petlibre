@@ -24,7 +24,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use sha2::{Digest, Sha256};
-use wellfed_amebad_sys::{BANK0_OFFSET, BANK1_OFFSET, SECTOR_BYTES, STOCK_PLAN_ENTRIES_LEN};
+use wellfed_amebad_sys::{BANK0_OFFSET, BANK1_OFFSET, SECTOR_BYTES};
 use wellfed_core::ota::{BANK1_BYTES, CONFIRM_LEN, MARKER, image};
 use wellfed_core::store::handover;
 use wellfed_core::store::update::Bank0;
@@ -80,11 +80,6 @@ pub struct Banks {
     register: u32,
     /// How a newly activated build behaves.
     pub trial: Trial,
-    /// Stock's plan sectors, outside both banks: the count byte and the
-    /// entries the bank-0 role serves. Erased until a test sets them; the
-    /// update never writes them.
-    pub stock_plan_count: u8,
-    pub stock_plan_entries: [u8; STOCK_PLAN_ENTRIES_LEN],
 }
 
 /// A bank laid out as the reviewed builds are: five core images, each a
@@ -123,8 +118,6 @@ impl Banks {
             bank0_build: BANK0_BUILD,
             register: 0,
             trial: Trial::Confirms,
-            stock_plan_count: u8::MAX,
-            stock_plan_entries: [u8::MAX; STOCK_PLAN_ENTRIES_LEN],
         }))
     }
 

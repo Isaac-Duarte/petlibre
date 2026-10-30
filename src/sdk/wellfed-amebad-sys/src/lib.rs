@@ -122,13 +122,6 @@ pub const MARKER: [u8; 8] = *b"81958711";
 /// One NOR erase sector.
 pub const SECTOR_BYTES: u32 = 0x1000;
 
-/// Stock 1.1.15's plan count byte, alone at the start of its sector.
-pub const STOCK_PLAN_COUNT: u32 = 0x7d_0000;
-/// Stock's plan entries, from the start of the next sector: ten of 44
-/// bytes, all its boot reads. Nothing here writes either sector.
-pub const STOCK_PLAN_ENTRIES: u32 = 0x7d_1000;
-pub const STOCK_PLAN_ENTRIES_LEN: usize = 440;
-
 /// Words of `wellfed_time_carry`, the 64 bytes the builder's KM4 linker
 /// script leaves above the heap at the top of main RAM (`example_entry.c`).
 pub const TIME_CARRY_WORDS: usize = 16;

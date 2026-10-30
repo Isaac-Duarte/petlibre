@@ -397,13 +397,6 @@ impl Server {
                 };
                 return self.seal_and_send(index, &FeederMessage::Response { id, result });
             }
-            Reply::StockPlans => {
-                let result = match device.stock_plans() {
-                    Ok(sectors) => Outcome::StockPlans(sectors),
-                    Err(refusal) => Outcome::Refused(refusal),
-                };
-                return self.seal_and_send(index, &FeederMessage::Response { id, result });
-            }
         };
         self.seal_and_send(index, &FeederMessage::Response { id, result })
     }

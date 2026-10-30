@@ -80,7 +80,6 @@ fn every_op() -> Vec<Op> {
             plans: [None; PLANS],
         },
         Op::ResetDesiccant,
-        Op::ReadStockPlans,
         Op::GetCall,
         Op::StartCall { bytes: 1, crc: 0 },
         Op::CallChunk {
@@ -129,11 +128,10 @@ fn kind(op: &Op) -> u8 {
         Op::GetPlans => 27,
         Op::PutPlans { .. } => 28,
         Op::ResetDesiccant => 29,
-        Op::ReadStockPlans => 30,
-        Op::GetCall => 31,
-        Op::StartCall { .. } => 32,
-        Op::CallChunk { .. } => 33,
-        Op::DeleteCall => 34,
+        Op::GetCall => 30,
+        Op::StartCall { .. } => 31,
+        Op::CallChunk { .. } => 32,
+        Op::DeleteCall => 33,
     }
 }
 

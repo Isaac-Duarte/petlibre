@@ -743,16 +743,14 @@ pub fn the_statistics_follow_the_loop(rig: &mut impl Rig) {
 /// role answers them: running from bank 1, whose image is the running
 /// build, it refuses every page, and stock's plan sectors with them.
 pub fn bank_1_is_read_only_from_bank_0(rig: &mut impl Rig) {
-    let (capabilities, bank, page, plans) = device(rig, 0, |device| {
+    let (capabilities, bank, page) = device(rig, 0, |device| {
         let bank = device.status(0).bank;
         let page = device.bank1_page(0).map(|page| page.offset);
-        let plans = device.stock_plans().map(|sectors| sectors.count);
-        (device.capabilities(), bank, page, plans)
+        (device.capabilities(), bank, page)
     });
     assert!(capabilities.contains(Capabilities::BACKUP));
     assert_eq!(bank, 1, "the suite's rigs run from bank 1");
     assert_eq!(page, Err(Refusal::Unavailable));
-    assert_eq!(plans, Err(Refusal::Unavailable));
 }
 
 /// Every platform serves the traces beside the statistics: a feed it keeps

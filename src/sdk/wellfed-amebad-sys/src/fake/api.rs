@@ -204,15 +204,6 @@ pub fn bank1_read(sector: u32, offset: u32, bytes: &mut [u8]) -> bool {
     true
 }
 
-/// Stock's plan count and entries, as a test left them (erased by
-/// default).
-pub fn stock_plans_read(entries: &mut [u8; crate::STOCK_PLAN_ENTRIES_LEN]) -> u8 {
-    with(|h| {
-        entries.copy_from_slice(&h.stock_plan_entries);
-        h.stock_plan_count
-    })
-}
-
 /// The fake has no cache: the same bytes as `bank1_read`.
 pub fn bank1_read_uncached(sector: u32, offset: u32, bytes: &mut [u8]) -> bool {
     bank1_read(sector, offset, bytes)

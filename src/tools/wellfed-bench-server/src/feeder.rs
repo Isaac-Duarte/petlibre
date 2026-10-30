@@ -469,7 +469,6 @@ fn read_only(op: &Op) -> bool {
             | Op::GetCalibration
             | Op::ReadBank1 { .. }
             | Op::GetPlans
-            | Op::ReadStockPlans
             | Op::GetCall
     )
 }

@@ -120,9 +120,8 @@ impl Capabilities {
     /// [`Blocked::Battery`]. A session without the bit sees that reason as
     /// [`Blocked::Starting`] ([`Blocked::seen_by`]).
     pub const POWER: Self = Self(128);
-    /// The stock backup: [`Op::ReadBank1`] and [`Outcome::Bank1`], and
-    /// stock's stored plans, [`Op::ReadStockPlans`] and
-    /// [`Outcome::StockPlans`]. Owner sessions only, and served only by the
+    /// The stock backup: [`Op::ReadBank1`] and [`Outcome::Bank1`]. Owner
+    /// sessions only, and served only by the
     /// bank-0 recovery role, which can read bank 1 while it holds the
     /// feeder's only copy of stock.
     pub const BACKUP: Self = Self(512);
@@ -405,12 +404,6 @@ pub enum Op<'a> {
     /// store holds it. Refused [`Refusal::NoClock`] while the clock is
     /// invalid: the feeder never records a date it does not know.
     ResetDesiccant,
-    /// Stock's two plan sectors as the flash holds them, answered
-    /// [`Outcome::StockPlans`]: what the installer imports before a
-    /// promotion. Read-only, owner sessions only, and served only where
-    /// [`Op::ReadBank1`] is (the bank-0 role, `Busy` while an install holds
-    /// the flash).
-    ReadStockPlans,
     /// The stored meal call, answered [`Outcome::Call`].
     GetCall,
     /// Start uploading a new meal call of `bytes` stream bytes (1 to
@@ -479,10 +472,6 @@ pub struct CallView {
     pub writable: bool,
     pub clip: CallClip,
 }
-
-/// The entries [`Outcome::StockPlans`] carries: stock's ten 44-byte
-/// entries, everything its boot can read.
-pub const STOCK_PLAN_ENTRIES_LEN: usize = 440;
 
 /// The most bank-1 bytes one [`Outcome::Bank1`] carries: well within a
 /// frame beside the response's id and numbers, and a whole number of pages
@@ -589,7 +578,6 @@ impl Op<'_> {
                 | Self::GetCalibration
                 | Self::ReadBank1 { .. }
                 | Self::GetPlans
-                | Self::ReadStockPlans
                 | Self::GetCall
                 | Self::CallChunk { .. }
         )
@@ -611,7 +599,7 @@ impl Op<'_> {
             Self::GetTime | Self::PutTime { .. } => Capabilities::TIME,
             Self::TailLog { .. } => Capabilities::LOG,
             Self::GetCalibration | Self::PutCalibration { .. } => Capabilities::CALIBRATION,
-            Self::ReadBank1 { .. } | Self::ReadStockPlans => Capabilities::BACKUP,
+            Self::ReadBank1 { .. } => Capabilities::BACKUP,
             Self::GetPlans | Self::PutPlans { .. } => Capabilities::PLANS,
             Self::ResetDesiccant => Capabilities::DESICCANT,
             Self::GetCall | Self::StartCall { .. } | Self::CallChunk { .. } | Self::DeleteCall => {
@@ -983,9 +971,6 @@ pub enum Outcome<'a> {
     Bank1(Bank1Page<'a>),
     /// The plans, after [`Op::GetPlans`].
     Plans(Plans),
-    /// Stock's plan sectors, after [`Op::ReadStockPlans`].
-    #[serde(borrow)]
-    StockPlans(StockPlanSectors<'a>),
     /// The meal call, after [`Op::GetCall`] or [`Op::CallChunk`].
     Call(CallView),
 }
@@ -998,16 +983,6 @@ pub struct Bank1Page<'a> {
     pub total: u32,
     #[serde(borrow)]
     pub bytes: &'a [u8],
-}
-
-/// Stock's plan sectors as the flash holds them: the count byte and the
-/// first [`STOCK_PLAN_ENTRIES_LEN`] bytes of the entries. The feeder judges
-/// none of it; the installer decodes it as stock's boot does.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct StockPlanSectors<'a> {
-    pub count: u8,
-    #[serde(borrow)]
-    pub entries: &'a [u8],
 }
 
 /// Whether the feeder can start a feed now. One decision, which both
@@ -2133,16 +2108,6 @@ mod tests {
         assert_eq!(decode::<FeederMessage<'_>>(&out[..len]), Ok(bank1));
         // The bank is a whole number of pages.
         assert_eq!(0x15_0000 % BANK1_PAGE_MAX, 0);
-
-        let stock = FeederMessage::Response {
-            id: [0xff; 16],
-            result: Outcome::StockPlans(StockPlanSectors {
-                count: u8::MAX,
-                entries: &[0xff; STOCK_PLAN_ENTRIES_LEN],
-            }),
-        };
-        let len = encode(&stock, &mut out).unwrap();
-        assert_eq!(decode::<FeederMessage<'_>>(&out[..len]), Ok(stock));
 
         let plan = Some(Plan {
             minute: u16::MAX,

@@ -15,7 +15,7 @@ use wellfed_core::ota::offer::KeyId;
 use wellfed_core::tone::Tune as CoreTune;
 use wellfed_proto::api::{
     self as proto, Bank1Page, Blocked, Bowl, Capabilities, EventBody, Phase, Readiness, Refusal,
-    Source, Stats, StatsSection, Status, StockPlanSectors, Supply, TracePage, UpdateView,
+    Source, Stats, StatsSection, Status, Supply, TracePage, UpdateView,
 };
 
 /// The rest of the feeder, as the server needs it. Every call returns at
@@ -94,11 +94,6 @@ pub trait Device {
     /// bank's end. Asked only of a device whose capabilities carry
     /// [`Capabilities::BACKUP`], and only for an owner.
     fn bank1_page(&mut self, _offset: u32) -> Result<Bank1Page<'_>, Refusal> {
-        Err(Refusal::Unavailable)
-    }
-    /// Stock's plan sectors, read when the answer is sealed: served where
-    /// [`Self::bank1_page`] is, and refused as it refuses.
-    fn stock_plans(&mut self) -> Result<StockPlanSectors<'_>, Refusal> {
         Err(Refusal::Unavailable)
     }
 

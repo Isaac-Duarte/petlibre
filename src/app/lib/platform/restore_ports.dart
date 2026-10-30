@@ -33,6 +33,9 @@ abstract interface class RestorePorts {
 
   Future<String?> locate(String identity);
 
+  /// Each sighting of a feeder advertising Bluetooth setup.
+  Stream<void> setupHeard();
+
   /// Forget the restore's key for the feeder with `identity`.
   void forgetKey(String dataDir, List<int> identity);
 
@@ -75,6 +78,9 @@ class AppRestorePorts implements RestorePorts {
 
   @override
   Future<String?> locate(String identity) => _install.locate(identity);
+
+  @override
+  Stream<void> setupHeard() => _install.setupHeard();
 
   @override
   void forgetKey(String dataDir, List<int> identity) => rust.forgetRestoreKey(

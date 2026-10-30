@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
 import '../platform/restore_ports.dart';
 import '../src/rust/api/restore.dart';
@@ -386,45 +387,114 @@ class _Done extends StatelessWidget {
   );
 }
 
-class _Uncertain extends StatelessWidget {
+class _Uncertain extends StatefulWidget {
   const _Uncertain(this.flow);
 
   final RestoreFlow flow;
 
   @override
-  Widget build(BuildContext context) => StepScaffold(
-    leading: Leading.none,
-    title: "We can't tell if it went through",
-    body: switch (flow.uncertain) {
-      UncertainWhy.stopped =>
-        'This was stopped as the firmware was starting to go across, or after '
-            'it had. ${flow.feederName} may already be on the vendor firmware, '
-            'or still on Wellfed. Nothing more is sent.',
-      UncertainWhy.failed =>
-        'This phone hit a problem as the firmware was starting to go across, '
-            'or after it had. ${flow.feederName} may already be on the vendor '
-            'firmware, or still on Wellfed. Nothing more is sent.',
-      _ =>
-        '${flow.feederName} stopped answering after the firmware started '
-            'going across. It may already be on the vendor firmware, or still '
-            'on Wellfed. Nothing more is sent.',
-    },
-    content: [
-      const Notice(
-        tone: Tone.warning,
-        lead: 'Keep it plugged in, and give it a few minutes.',
-        text:
-            'If it shows up as usual in Wellfed, it kept Wellfed. If it never '
-            "does, it's likely on the vendor firmware: hold Reset for about 5 "
-            "seconds and set it up in the vendor's app.",
+  State<_Uncertain> createState() => _UncertainState();
+}
+
+class _UncertainState extends State<_Uncertain> {
+  RestoreFlow get flow => widget.flow;
+
+  @override
+  void initState() {
+    super.initState();
+    flow.startLook();
+  }
+
+  @override
+  void dispose() {
+    flow.stopLook();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final name = flow.feederName;
+    final (title, body) = switch (flow.look) {
+      RestoreLook.looking => ("We can't tell if it went through", _why()),
+      RestoreLook.wellfed => (
+        '$name is still running Wellfed',
+        "The restore didn't finish, and nothing is lost. You can restore "
+            'again; you press Dispense on the feeder once more.',
       ),
-      if (flow.detail case final detail?) ...[
-        const SizedBox(height: Space.s3),
-        _Small(detail),
+      RestoreLook.setup => (
+        '$name is still running Wellfed, and needs setting up',
+        "The restore didn't finish, and Wellfed had already cleared its Wi-Fi, "
+            'its phones and its meals to make way. Your backup is still good. '
+            'Set it up again, then restore from there if you still want to.',
+      ),
+      RestoreLook.nothing => (
+        "It's probably on the original firmware",
+        "$name didn't show up on your Wi-Fi or over Bluetooth. Check in the "
+            "vendor's app: if it shows up there, the restore worked.",
+      ),
+    };
+    return StepScaffold(
+      leading: Leading.none,
+      title: title,
+      body: body,
+      content: [
+        switch (flow.look) {
+          RestoreLook.looking => const Searching(
+            'Looking for it on your Wi-Fi and over Bluetooth…',
+          ),
+          RestoreLook.wellfed => const SizedBox.shrink(),
+          RestoreLook.setup => const Notice(
+            tone: Tone.warning,
+            lead: "Don't hold Reset.",
+            text:
+                'On Wellfed, that erases the identity your backup is filed '
+                'under.',
+          ),
+          RestoreLook.nothing => const Notice(
+            tone: Tone.warning,
+            lead: "If the vendor's app can't find it,",
+            text:
+                'hold Reset for about 5 seconds and set it up there. Only do '
+                'this once you are sure it is not on Wellfed: on Wellfed, that '
+                'hold erases the identity your backup is filed under.',
+          ),
+        },
+        if (flow.detail case final detail?) ...[
+          const SizedBox(height: Space.s3),
+          _Small(detail),
+        ],
       ],
-    ],
-    actions: [_Close()],
-  );
+      actions: [
+        if (flow.look == RestoreLook.wellfed)
+          FilledButton(
+            onPressed: flow.again,
+            child: const Text('Restore again'),
+          ),
+        if (flow.look == RestoreLook.setup)
+          FilledButton(
+            onPressed: () => context.push('/setup'),
+            child: const Text('Set it up'),
+          ),
+        _Close(
+          outlined:
+              flow.look == RestoreLook.wellfed ||
+              flow.look == RestoreLook.setup,
+        ),
+      ],
+    );
+  }
+
+  String _why() => switch (flow.uncertain) {
+    UncertainWhy.stopped =>
+      'This was stopped as the firmware was starting to go across, or after it '
+          'had. Nothing more is sent.',
+    UncertainWhy.failed =>
+      'This phone hit a problem as the firmware was starting to go across, or '
+          'after it had. Nothing more is sent.',
+    _ =>
+      '${flow.feederName} stopped answering after the firmware started going '
+          'across. Nothing more is sent. Keep it plugged in while this looks.',
+  };
 }
 
 class _Stopped extends StatelessWidget {

@@ -29,6 +29,20 @@ enum RestoreStage {
   stopped,
 }
 
+/// What became of a feeder after an uncertain end.
+enum RestoreLook {
+  looking,
+
+  /// On the network: Wellfed runs, as it did.
+  wellfed,
+
+  /// Advertising Bluetooth setup: Wellfed runs, with its people cleared.
+  setup,
+
+  /// Neither in time: probably on the original firmware.
+  nothing,
+}
+
 /// One restore of a feeder's original firmware.
 class RestoreFlow extends ChangeNotifier {
   RestoreFlow(
@@ -77,6 +91,16 @@ class RestoreFlow extends ChangeNotifier {
   /// Why the end is not known, at [RestoreStage.uncertain].
   UncertainWhy? uncertain;
   String? detail;
+
+  /// What the look after an uncertain end has found.
+  RestoreLook look = RestoreLook.looking;
+  Timer? _lookEnd;
+  Timer? _lookAgain;
+  StreamSubscription<void>? _setup;
+
+  /// How long a feeder has to come back: a restart, then its join.
+  static const lookFor = Duration(minutes: 3);
+  static const _lookEvery = Duration(seconds: 5);
 
   RestoreRun? _run;
   StreamSubscription<RestoreUpdate>? _updates;
@@ -295,6 +319,48 @@ class RestoreFlow extends ChangeNotifier {
     if (_dataDir case final dataDir?) _ports.forgetKey(dataDir, identity);
   }
 
+  /// Look for the feeder, since the words for an uncertain end depend on it.
+  /// Wellfed advertises on the network with its people in place, or Bluetooth
+  /// setup with them cleared; stock does neither. This only listens, and
+  /// offers the feeder nothing.
+  void startLook() {
+    look = RestoreLook.looking;
+    _lookEnd = Timer(lookFor, () => _looked(RestoreLook.nothing));
+    _setup = _ports.setupHeard().listen(
+      (_) => _looked(RestoreLook.setup),
+      onError: (Object _) {},
+    );
+    unawaited(_locate());
+  }
+
+  Future<void> _locate() async {
+    final hex = identity
+        .map((byte) => byte.toRadixString(16).padLeft(2, '0'))
+        .join();
+    final found = await _ports.locate(hex);
+    if (look != RestoreLook.looking || _lookEnd == null) return;
+    if (found != null) {
+      _looked(RestoreLook.wellfed);
+    } else {
+      _lookAgain = Timer(_lookEvery, () => unawaited(_locate()));
+    }
+  }
+
+  void _looked(RestoreLook found) {
+    stopLook();
+    look = found;
+    _changed();
+  }
+
+  void stopLook() {
+    _lookEnd?.cancel();
+    _lookEnd = null;
+    _lookAgain?.cancel();
+    _lookAgain = null;
+    unawaited(_setup?.cancel());
+    _setup = null;
+  }
+
   void _changed() {
     if (!_disposed) notifyListeners();
   }
@@ -302,6 +368,7 @@ class RestoreFlow extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    stopLook();
     if (_run case final run?) {
       // Its end does the rest: the key goes once the run can no longer use it.
       run.stop();

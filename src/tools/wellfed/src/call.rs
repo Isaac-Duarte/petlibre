@@ -8,13 +8,14 @@
 //! call only once its `--call` names how many times.
 
 use std::path::PathBuf;
+use std::time::Instant;
 
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
-use wellfed_client::call::Clip;
-use wellfed_connect::call::upload;
-use wellfed_model::Op;
+use wellfed_client::call::{Clip, Step, Upload};
+use wellfed_model::{CallView, Op};
 
+use crate::device::Connection;
 use crate::{Target, ask_and_print, connect, print_json};
 
 #[derive(Args)]
@@ -54,8 +55,24 @@ pub(crate) async fn command(args: CallArgs) -> Result<()> {
                 clip.bytes()
             );
             let (_, _, mut connection) = connect(&target).await?;
-            let view = upload(&clip, async |op: &Op| connection.ask(op).await).await??;
+            let view = upload(&mut connection, &clip).await?;
             print_json(&view)
+        }
+    }
+}
+
+/// Upload `clip` whole: the feeder's view once it has stored it.
+async fn upload(connection: &mut Connection, clip: &Clip) -> Result<CallView> {
+    let mut upload = Upload::new(clip);
+    loop {
+        match upload.poll(Instant::now()) {
+            Step::Ask(op) => {
+                let answer = connection.ask(&op).await?;
+                upload.answer(&answer, Instant::now());
+            }
+            Step::Wait(wait) => tokio::time::sleep(wait).await,
+            Step::Stored(view) => return Ok(view),
+            Step::Failed(failed) => return Err(failed.into()),
         }
     }
 }

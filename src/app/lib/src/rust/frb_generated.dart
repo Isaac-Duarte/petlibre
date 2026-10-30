@@ -4,6 +4,7 @@
 // ignore_for_file: unused_import, unused_element, unnecessary_import, duplicate_ignore, invalid_use_of_internal_member, annotate_overrides, non_constant_identifier_names, curly_braces_in_flow_control_structures, prefer_const_literals_to_create_immutables, unused_field
 
 import 'api/error.dart';
+import 'api/feeder.dart';
 import 'api/install.dart';
 import 'api/keys.dart';
 import 'api/model.dart';
@@ -75,7 +76,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.13.0';
 
   @override
-  int get rustContentHash => 649528112;
+  int get rustContentHash => 375574585;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -94,6 +95,11 @@ abstract class RustLibApi extends BaseApi {
   ClientKey crateApiKeysClientKeyRestore({required List<int> secret});
 
   Uint8List crateApiKeysClientKeySecret({required ClientKey that});
+
+  Future<FeederReply> crateApiSessionFeederSessionAsk({
+    required FeederSession that,
+    required FeederRequest request,
+  });
 
   void crateApiSessionFeederSessionCancelFeed({
     required FeederSession that,
@@ -215,6 +221,8 @@ abstract class RustLibApi extends BaseApi {
     required String path,
     required AppStore store,
   });
+
+  Future<SettingsChanges> crateApiFeederSettingsChangesDefault();
 
   String crateApiSetupSetupControl();
 
@@ -379,6 +387,44 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(debugName: "ClientKey_secret", argNames: ["that"]);
 
   @override
+  Future<FeederReply> crateApiSessionFeederSessionAsk({
+    required FeederSession that,
+    required FeederRequest request,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerFeederSession(
+            that,
+            serializer,
+          );
+          sse_encode_box_autoadd_feeder_request(request, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 5,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_feeder_reply,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiSessionFeederSessionAskConstMeta,
+        argValues: [that, request],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSessionFeederSessionAskConstMeta =>
+      const TaskConstMeta(
+        debugName: "FeederSession_ask",
+        argNames: ["that", "request"],
+      );
+
+  @override
   void crateApiSessionFeederSessionCancelFeed({
     required FeederSession that,
     required int feed,
@@ -392,7 +438,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             serializer,
           );
           sse_encode_u_32(feed, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 5)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 6)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -421,7 +467,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             that,
             serializer,
           );
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 6)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 7)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -451,7 +497,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             serializer,
           );
           sse_encode_u_8(portions, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 7)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 8)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -488,7 +534,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_list_prim_u_8_loose(feeder, serializer);
           sse_encode_String(address, serializer);
           sse_encode_bool(syncClock, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 8)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 9)!;
         },
         codec: SseCodec(
           decodeSuccessData:
@@ -518,7 +564,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             that,
             serializer,
           );
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 9)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 10)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -555,7 +601,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             pdeCallFfi(
               generalizedFrbRustBinding,
               serializer,
-              funcId: 10,
+              funcId: 11,
               port: port_,
             );
           },
@@ -585,7 +631,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(dataDir, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 11)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 12)!;
         },
         codec: SseCodec(
           decodeSuccessData:
@@ -623,7 +669,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             pdeCallFfi(
               generalizedFrbRustBinding,
               serializer,
-              funcId: 12,
+              funcId: 13,
               port: port_,
             );
           },
@@ -656,7 +702,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             that,
             serializer,
           );
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 13)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 14)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -681,7 +727,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 14)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 15)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_u_32,
@@ -716,7 +762,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           );
           sse_encode_u_32(id, serializer);
           sse_encode_box_autoadd_install_answer(answer, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 15)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 16)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -745,7 +791,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             that,
             serializer,
           );
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 16)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 17)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -778,7 +824,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             serializer,
           );
           sse_encode_box_autoadd_install_spec(spec, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 17)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 18)!;
         },
         codec: SseCodec(
           decodeSuccessData:
@@ -812,7 +858,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             serializer,
           );
           sse_encode_list_prim_u_8_loose(bytes, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 18)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 19)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -849,7 +895,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             pdeCallFfi(
               generalizedFrbRustBinding,
               serializer,
-              funcId: 19,
+              funcId: 20,
               port: port_,
             );
           },
@@ -882,7 +928,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             that,
             serializer,
           );
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 20)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 21)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -908,7 +954,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             that,
             serializer,
           );
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 21)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 22)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -934,7 +980,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             that,
             serializer,
           );
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 22)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 23)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_list_prim_u_8_strict,
@@ -964,7 +1010,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             serializer,
           );
           sse_encode_String(label, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 23)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 24)!;
         },
         codec: SseCodec(
           decodeSuccessData:
@@ -1003,7 +1049,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             pdeCallFfi(
               generalizedFrbRustBinding,
               serializer,
-              funcId: 24,
+              funcId: 25,
               port: port_,
             );
           },
@@ -1035,7 +1081,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             that,
             serializer,
           );
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 25)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 26)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_list_prim_u_8_strict,
@@ -1067,7 +1113,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           );
           sse_encode_String(label, serializer);
           sse_encode_opt_box_autoadd_wifi_credentials(wifi, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 26)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 27)!;
         },
         codec: SseCodec(
           decodeSuccessData:
@@ -1101,7 +1147,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             serializer,
           );
           sse_encode_list_prim_u_8_loose(bytes, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 27)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 28)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_list_setup_step,
@@ -1130,7 +1176,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             that,
             serializer,
           );
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 28)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 29)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_list_list_prim_u_8_strict,
@@ -1155,7 +1201,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 29,
+            funcId: 30,
             port: port_,
           );
         },
@@ -1179,7 +1225,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 30)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 31)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_build_check,
@@ -1209,7 +1255,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 31,
+            funcId: 32,
             port: port_,
           );
         },
@@ -1236,7 +1282,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(dir, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 32)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 33)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_image_check,
@@ -1259,7 +1305,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_list_prim_u_8_loose(identity, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 33)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 34)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_String,
@@ -1282,7 +1328,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(hex, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 34)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 35)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_list_prim_u_8_strict,
@@ -1305,7 +1351,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_list_prim_u_8_loose(identity, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 35)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 36)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_String,
@@ -1330,7 +1376,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 36,
+            funcId: 37,
             port: port_,
           );
         },
@@ -1359,7 +1405,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(dataDir, serializer);
           sse_encode_list_prim_u_8_loose(identity, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 37)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 38)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_opt_String,
@@ -1387,7 +1433,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 38,
+            funcId: 39,
             port: port_,
           );
         },
@@ -1412,7 +1458,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(dataDir, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 39)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 40)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_pending_install,
@@ -1442,7 +1488,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 40,
+            funcId: 41,
             port: port_,
           );
         },
@@ -1461,12 +1507,39 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(debugName: "save_store", argNames: ["path", "store"]);
 
   @override
+  Future<SettingsChanges> crateApiFeederSettingsChangesDefault() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 42,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_settings_changes,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiFeederSettingsChangesDefaultConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiFeederSettingsChangesDefaultConstMeta =>
+      const TaskConstMeta(debugName: "settings_changes_default", argNames: []);
+
+  @override
   String crateApiSetupSetupControl() {
     return handler.executeSync(
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 41)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 43)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_String,
@@ -1488,7 +1561,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 42)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 44)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_String,
@@ -1790,6 +1863,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  Bowl dco_decode_bowl(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return Bowl.values[raw as int];
+  }
+
+  @protected
   AppStore dco_decode_box_autoadd_app_store(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_app_store(raw);
@@ -1814,9 +1893,33 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  CalibrationInfo dco_decode_box_autoadd_calibration_info(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_calibration_info(raw);
+  }
+
+  @protected
+  CallInfo dco_decode_box_autoadd_call_info(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_call_info(raw);
+  }
+
+  @protected
   Card dco_decode_box_autoadd_card(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_card(raw);
+  }
+
+  @protected
+  Counters dco_decode_box_autoadd_counters(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_counters(raw);
+  }
+
+  @protected
+  Counts dco_decode_box_autoadd_counts(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_counts(raw);
   }
 
   @protected
@@ -1826,9 +1929,21 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  FeedOutcome dco_decode_box_autoadd_feed_outcome(dynamic raw) {
+  Erases dco_decode_box_autoadd_erases(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
-    return dco_decode_feed_outcome(raw);
+    return dco_decode_erases(raw);
+  }
+
+  @protected
+  FaultView dco_decode_box_autoadd_fault_view(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_fault_view(raw);
+  }
+
+  @protected
+  FedBy dco_decode_box_autoadd_fed_by(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_fed_by(raw);
   }
 
   @protected
@@ -1841,6 +1956,48 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   FeedResult dco_decode_box_autoadd_feed_result(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_feed_result(raw);
+  }
+
+  @protected
+  FeedStats dco_decode_box_autoadd_feed_stats(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_feed_stats(raw);
+  }
+
+  @protected
+  FeederRefusal dco_decode_box_autoadd_feeder_refusal(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_feeder_refusal(raw);
+  }
+
+  @protected
+  FeederRequest dco_decode_box_autoadd_feeder_request(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_feeder_request(raw);
+  }
+
+  @protected
+  Flash dco_decode_box_autoadd_flash(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_flash(raw);
+  }
+
+  @protected
+  Food dco_decode_box_autoadd_food(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_food(raw);
+  }
+
+  @protected
+  int dco_decode_box_autoadd_i_32(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as int;
+  }
+
+  @protected
+  PlatformInt64 dco_decode_box_autoadd_i_64(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_i_64(raw);
   }
 
   @protected
@@ -1874,9 +2031,105 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  InviteView dco_decode_box_autoadd_invite_view(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_invite_view(raw);
+  }
+
+  @protected
+  MealReminder dco_decode_box_autoadd_meal_reminder(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_meal_reminder(raw);
+  }
+
+  @protected
+  Memory dco_decode_box_autoadd_memory(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_memory(raw);
+  }
+
+  @protected
+  NextMealView dco_decode_box_autoadd_next_meal_view(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_next_meal_view(raw);
+  }
+
+  @protected
+  NtpResult dco_decode_box_autoadd_ntp_result(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_ntp_result(raw);
+  }
+
+  @protected
+  Phase dco_decode_box_autoadd_phase(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_phase(raw);
+  }
+
+  @protected
+  PlanEdit dco_decode_box_autoadd_plan_edit(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_plan_edit(raw);
+  }
+
+  @protected
+  PlanView dco_decode_box_autoadd_plan_view(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_plan_view(raw);
+  }
+
+  @protected
+  PlansView dco_decode_box_autoadd_plans_view(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_plans_view(raw);
+  }
+
+  @protected
+  PortionChange dco_decode_box_autoadd_portion_change(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_portion_change(raw);
+  }
+
+  @protected
+  Portions dco_decode_box_autoadd_portions(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_portions(raw);
+  }
+
+  @protected
+  PowerStats dco_decode_box_autoadd_power_stats(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_power_stats(raw);
+  }
+
+  @protected
+  Resets dco_decode_box_autoadd_resets(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_resets(raw);
+  }
+
+  @protected
+  SettingsChanges dco_decode_box_autoadd_settings_changes(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_settings_changes(raw);
+  }
+
+  @protected
+  SettingsView dco_decode_box_autoadd_settings_view(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_settings_view(raw);
+  }
+
+  @protected
   SetupRefusal dco_decode_box_autoadd_setup_refusal(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_setup_refusal(raw);
+  }
+
+  @protected
+  Stats dco_decode_box_autoadd_stats(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_stats(raw);
   }
 
   @protected
@@ -1886,9 +2139,45 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  TimeInfo dco_decode_box_autoadd_time_info(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_time_info(raw);
+  }
+
+  @protected
+  TimeSource dco_decode_box_autoadd_time_source(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_time_source(raw);
+  }
+
+  @protected
+  TraceSummary dco_decode_box_autoadd_trace_summary(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_trace_summary(raw);
+  }
+
+  @protected
+  TraceView dco_decode_box_autoadd_trace_view(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_trace_view(raw);
+  }
+
+  @protected
+  int dco_decode_box_autoadd_u_16(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as int;
+  }
+
+  @protected
   int dco_decode_box_autoadd_u_32(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as int;
+  }
+
+  @protected
+  BigInt dco_decode_box_autoadd_u_64(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_u_64(raw);
   }
 
   @protected
@@ -1901,6 +2190,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   WifiCredentials dco_decode_box_autoadd_wifi_credentials(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_wifi_credentials(raw);
+  }
+
+  @protected
+  Window dco_decode_box_autoadd_window(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_window(raw);
+  }
+
+  @protected
+  ZoneChange dco_decode_box_autoadd_zone_change(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_zone_change(raw);
   }
 
   @protected
@@ -1929,11 +2230,61 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  CalibrationInfo dco_decode_calibration_info(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 5)
+      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
+    return CalibrationInfo(
+      generation: dco_decode_u_32(arr[0]),
+      writable: dco_decode_bool(arr[1]),
+      portionMg: dco_decode_opt_box_autoadd_u_32(arr[2]),
+      bowl: dco_decode_bowl(arr[3]),
+      phase: dco_decode_opt_box_autoadd_phase(arr[4]),
+    );
+  }
+
+  @protected
+  CallClip dco_decode_call_clip(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    switch (raw[0]) {
+      case 0:
+        return CallClip_None();
+      case 1:
+        return CallClip_Receiving(
+          bytes: dco_decode_u_32(raw[1]),
+          crc: dco_decode_u_32(raw[2]),
+          received: dco_decode_u_32(raw[3]),
+        );
+      case 2:
+        return CallClip_Stored(
+          bytes: dco_decode_u_32(raw[1]),
+          crc: dco_decode_u_32(raw[2]),
+        );
+      default:
+        throw Exception("unreachable");
+    }
+  }
+
+  @protected
+  CallInfo dco_decode_call_info(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    return CallInfo(
+      writable: dco_decode_bool(arr[0]),
+      clip: dco_decode_call_clip(arr[1]),
+      ms: dco_decode_opt_box_autoadd_u_32(arr[2]),
+    );
+  }
+
+  @protected
   Card dco_decode_card(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 10)
-      throw Exception('unexpected arr length: expect 10 but see ${arr.length}');
+    if (arr.length != 17)
+      throw Exception('unexpected arr length: expect 17 but see ${arr.length}');
     return Card(
       build: dco_decode_String(arr[0]),
       food: dco_decode_food_level(arr[1]),
@@ -1944,7 +2295,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       batteryPercent: dco_decode_opt_box_autoadd_u_8(arr[6]),
       clockSet: dco_decode_bool(arr[7]),
       rssi: dco_decode_i_32(arr[8]),
-      fault: dco_decode_opt_box_autoadd_feed_outcome(arr[9]),
+      fault: dco_decode_opt_box_autoadd_fault_view(arr[9]),
+      desiccant: dco_decode_desiccant(arr[10]),
+      uptimeMs: dco_decode_u_32(arr[11]),
+      bank: dco_decode_u_8(arr[12]),
+      nextMeal: dco_decode_opt_box_autoadd_next_meal_view(arr[13]),
+      lastFed: dco_decode_opt_box_autoadd_feed_result(arr[14]),
+      meals: dco_decode_list_meal_view(arr[15]),
+      time: dco_decode_opt_box_autoadd_time_info(arr[16]),
     );
   }
 
@@ -1952,6 +2310,81 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ClientRole dco_decode_client_role(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return ClientRole.values[raw as int];
+  }
+
+  @protected
+  ClientView dco_decode_client_view(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 5)
+      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
+    return ClientView(
+      key: dco_decode_list_prim_u_8_strict(arr[0]),
+      fingerprint: dco_decode_String(arr[1]),
+      label: dco_decode_String(arr[2]),
+      role: dco_decode_client_role(arr[3]),
+      you: dco_decode_bool(arr[4]),
+    );
+  }
+
+  @protected
+  Counters dco_decode_counters(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 6)
+      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
+    return Counters(
+      boot: dco_decode_counts(arr[0]),
+      reset: dco_decode_reset_cause(arr[1]),
+      lifetime: dco_decode_opt_box_autoadd_counts(arr[2]),
+      resets: dco_decode_opt_box_autoadd_resets(arr[3]),
+      handshakeMaxMs: dco_decode_u_32(arr[4]),
+      handshakeMeanMs: dco_decode_u_32(arr[5]),
+    );
+  }
+
+  @protected
+  Counts dco_decode_counts(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 10)
+      throw Exception('unexpected arr length: expect 10 but see ${arr.length}');
+    return Counts(
+      uptimeS: dco_decode_u_32(arr[0]),
+      feeds: dco_decode_u_32(arr[1]),
+      feedsFailed: dco_decode_u_32(arr[2]),
+      portions: dco_decode_u_32(arr[3]),
+      presses: dco_decode_u_32(arr[4]),
+      sessions: dco_decode_u_32(arr[5]),
+      reconnects: dco_decode_u_32(arr[6]),
+      dhcpRenewals: dco_decode_u_32(arr[7]),
+      outages: dco_decode_u_32(arr[8]),
+      batteryS: dco_decode_u_32(arr[9]),
+    );
+  }
+
+  @protected
+  CurrentUnit dco_decode_current_unit(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return CurrentUnit.values[raw as int];
+  }
+
+  @protected
+  Desiccant dco_decode_desiccant(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    switch (raw[0]) {
+      case 0:
+        return Desiccant_Unset();
+      case 1:
+        return Desiccant_Unknown();
+      case 2:
+        return Desiccant_Remaining(
+          days: dco_decode_i_32(raw[1]),
+          due: dco_decode_bool(raw[2]),
+        );
+      default:
+        throw Exception("unreachable");
+    }
   }
 
   @protected
@@ -1980,9 +2413,54 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  Erases dco_decode_erases(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2)
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    return Erases(
+      storage: dco_decode_list_prim_u_32_strict(arr[0]),
+      update: dco_decode_u_32(arr[1]),
+    );
+  }
+
+  @protected
   ErrorKind dco_decode_error_kind(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return ErrorKind.values[raw as int];
+  }
+
+  @protected
+  FaultView dco_decode_fault_view(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 4)
+      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+    return FaultView(
+      feed: dco_decode_u_32(arr[0]),
+      outcome: dco_decode_feed_outcome(arr[1]),
+      reason: dco_decode_feed_reason(arr[2]),
+      result: dco_decode_opt_box_autoadd_feed_result(arr[3]),
+    );
+  }
+
+  @protected
+  FedBy dco_decode_fed_by(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    switch (raw[0]) {
+      case 0:
+        return FedBy_Panel();
+      case 1:
+        return FedBy_Client(fingerprint: dco_decode_String(raw[1]));
+      case 2:
+        return FedBy_Feeder();
+      case 3:
+        return FedBy_Plan(slot: dco_decode_u_8(raw[1]));
+      case 4:
+        return FedBy_Unknown();
+      default:
+        throw Exception("unreachable");
+    }
   }
 
   @protected
@@ -2007,8 +2485,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   FeedResult dco_decode_feed_result(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 8)
-      throw Exception('unexpected arr length: expect 8 but see ${arr.length}');
+    if (arr.length != 11)
+      throw Exception('unexpected arr length: expect 11 but see ${arr.length}');
     return FeedResult(
       feed: dco_decode_u_32(arr[0]),
       requested: dco_decode_u_8(arr[1]),
@@ -2018,6 +2496,236 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       reason: dco_decode_feed_reason(arr[5]),
       uncertain: dco_decode_bool(arr[6]),
       words: dco_decode_String(arr[7]),
+      atMs: dco_decode_opt_box_autoadd_i_64(arr[8]),
+      by: dco_decode_fed_by(arr[9]),
+      hopper: dco_decode_food_level(arr[10]),
+    );
+  }
+
+  @protected
+  FeedStats dco_decode_feed_stats(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 14)
+      throw Exception('unexpected arr length: expect 14 but see ${arr.length}');
+    return FeedStats(
+      traced: dco_decode_u_32(arr[0]),
+      driveMs: dco_decode_u_32(arr[1]),
+      samples: dco_decode_u_32(arr[2]),
+      unit: dco_decode_current_unit(arr[3]),
+      currentPeak: dco_decode_u_32(arr[4]),
+      currentMean: dco_decode_opt_box_autoadd_u_32(arr[5]),
+      rising: dco_decode_u_32(arr[6]),
+      falling: dco_decode_u_32(arr[7]),
+      beamBreaks: dco_decode_u_32(arr[8]),
+      reversals: dco_decode_u_32(arr[9]),
+      kept: dco_decode_u_32(arr[10]),
+      capacity: dco_decode_u_32(arr[11]),
+      unsaved: dco_decode_u_32(arr[12]),
+      last: dco_decode_opt_box_autoadd_trace_summary(arr[13]),
+    );
+  }
+
+  @protected
+  FeederRefusal dco_decode_feeder_refusal(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    switch (raw[0]) {
+      case 0:
+        return FeederRefusal_Forbidden();
+      case 1:
+        return FeederRefusal_Stale(current: dco_decode_u_32(raw[1]));
+      case 2:
+        return FeederRefusal_Busy();
+      case 3:
+        return FeederRefusal_Unavailable();
+      case 4:
+        return FeederRefusal_Invalid();
+      case 5:
+        return FeederRefusal_NotWritable();
+      case 6:
+        return FeederRefusal_Full();
+      case 7:
+        return FeederRefusal_NotFound();
+      case 8:
+        return FeederRefusal_Muted();
+      case 9:
+        return FeederRefusal_Time();
+      case 10:
+        return FeederRefusal_Fault();
+      case 11:
+        return FeederRefusal_Update(reason: dco_decode_update_refusal(raw[1]));
+      case 12:
+        return FeederRefusal_Unverified();
+      case 13:
+        return FeederRefusal_Portions(asked: dco_decode_u_8(raw[1]));
+      case 14:
+        return FeederRefusal_NoClock();
+      default:
+        throw Exception("unreachable");
+    }
+  }
+
+  @protected
+  FeederReply dco_decode_feeder_reply(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    switch (raw[0]) {
+      case 0:
+        return FeederReply_Done(
+          generation: dco_decode_opt_box_autoadd_u_32(raw[1]),
+        );
+      case 1:
+        return FeederReply_Settings(
+          settings: dco_decode_box_autoadd_settings_view(raw[1]),
+        );
+      case 2:
+        return FeederReply_Time(time: dco_decode_box_autoadd_time_info(raw[1]));
+      case 3:
+        return FeederReply_Plans(
+          plans: dco_decode_box_autoadd_plans_view(raw[1]),
+        );
+      case 4:
+        return FeederReply_Clients(
+          clients: dco_decode_list_client_view(raw[1]),
+        );
+      case 5:
+        return FeederReply_Invite(
+          invite: dco_decode_box_autoadd_invite_view(raw[1]),
+        );
+      case 6:
+        return FeederReply_Calibration(
+          calibration: dco_decode_box_autoadd_calibration_info(raw[1]),
+        );
+      case 7:
+        return FeederReply_Call(call: dco_decode_box_autoadd_call_info(raw[1]));
+      case 8:
+        return FeederReply_Stats(stats: dco_decode_box_autoadd_stats(raw[1]));
+      case 9:
+        return FeederReply_Trace(
+          trace: dco_decode_box_autoadd_trace_view(raw[1]),
+        );
+      case 10:
+        return FeederReply_Refused(
+          refusal: dco_decode_box_autoadd_feeder_refusal(raw[1]),
+        );
+      case 11:
+        return FeederReply_NotAsked(reason: dco_decode_not_asked(raw[1]));
+      case 12:
+        return FeederReply_Unanswered();
+      case 13:
+        return FeederReply_NotSent();
+      case 14:
+        return FeederReply_Unexpected();
+      default:
+        throw Exception("unreachable");
+    }
+  }
+
+  @protected
+  FeederRequest dco_decode_feeder_request(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    switch (raw[0]) {
+      case 0:
+        return FeederRequest_GetSettings();
+      case 1:
+        return FeederRequest_PutSettings(
+          base: dco_decode_u_32(raw[1]),
+          changes: dco_decode_box_autoadd_settings_changes(raw[2]),
+        );
+      case 2:
+        return FeederRequest_PutWifi(
+          base: dco_decode_u_32(raw[1]),
+          ssid: dco_decode_String(raw[2]),
+          passphrase: dco_decode_String(raw[3]),
+        );
+      case 3:
+        return FeederRequest_ForgetWifi(base: dco_decode_u_32(raw[1]));
+      case 4:
+        return FeederRequest_SetLock(locked: dco_decode_bool(raw[1]));
+      case 5:
+        return FeederRequest_Play(tune: dco_decode_tune(raw[1]));
+      case 6:
+        return FeederRequest_SyncClock();
+      case 7:
+        return FeederRequest_GetTime();
+      case 8:
+        return FeederRequest_PutTime(
+          base: dco_decode_u_32(raw[1]),
+          zone: dco_decode_opt_box_autoadd_zone_change(raw[2]),
+          ntp: dco_decode_opt_String(raw[3]),
+        );
+      case 9:
+        return FeederRequest_CreateInvite(role: dco_decode_client_role(raw[1]));
+      case 10:
+        return FeederRequest_ListClients();
+      case 11:
+        return FeederRequest_RevokeClient(
+          key: dco_decode_list_prim_u_8_strict(raw[1]),
+        );
+      case 12:
+        return FeederRequest_Reboot();
+      case 13:
+        return FeederRequest_ResetDesiccant();
+      case 14:
+        return FeederRequest_Stats(section: dco_decode_stats_section(raw[1]));
+      case 15:
+        return FeederRequest_ReadTrace(feed: dco_decode_u_32(raw[1]));
+      case 16:
+        return FeederRequest_GetCalibration();
+      case 17:
+        return FeederRequest_PutCalibration(
+          base: dco_decode_u_32(raw[1]),
+          portion: dco_decode_box_autoadd_portion_change(raw[2]),
+          bowl: dco_decode_bowl(raw[3]),
+        );
+      case 18:
+        return FeederRequest_GetPlans();
+      case 19:
+        return FeederRequest_EditPlans(
+          plans: dco_decode_box_autoadd_plans_view(raw[1]),
+          edit: dco_decode_box_autoadd_plan_edit(raw[2]),
+        );
+      case 20:
+        return FeederRequest_GetCall();
+      case 21:
+        return FeederRequest_UploadCall(
+          wav: dco_decode_list_prim_u_8_strict(raw[1]),
+        );
+      case 22:
+        return FeederRequest_DeleteCall();
+      case 23:
+        return FeederRequest_TailLog(
+          after: dco_decode_opt_box_autoadd_u_32(raw[1]),
+        );
+      default:
+        throw Exception("unreachable");
+    }
+  }
+
+  @protected
+  Flash dco_decode_flash(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 4)
+      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+    return Flash(
+      boot: dco_decode_erases(arr[0]),
+      lifetime: dco_decode_opt_box_autoadd_erases(arr[1]),
+      eventsKept: dco_decode_u_32(arr[2]),
+      eventsCapacity: dco_decode_u_32(arr[3]),
+    );
+  }
+
+  @protected
+  Food dco_decode_food(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 4)
+      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+    return Food(
+      present: dco_decode_opt_box_autoadd_bool(arr[0]),
+      emptied: dco_decode_u_32(arr[1]),
+      refilled: dco_decode_u_32(arr[2]),
+      feedsSinceRefill: dco_decode_opt_box_autoadd_u_32(arr[3]),
     );
   }
 
@@ -2028,9 +2736,101 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  HistoryBody dco_decode_history_body(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    switch (raw[0]) {
+      case 0:
+        return HistoryBody_Fed(
+          result: dco_decode_box_autoadd_feed_result(raw[1]),
+        );
+      case 1:
+        return HistoryBody_Missed(
+          slot: dco_decode_u_8(raw[1]),
+          dueMs: dco_decode_i_64(raw[2]),
+          late_: dco_decode_bool(raw[3]),
+        );
+      case 2:
+        return HistoryBody_Restarted();
+      case 3:
+        return HistoryBody_Lock(
+          locked: dco_decode_bool(raw[1]),
+          by: dco_decode_box_autoadd_fed_by(raw[2]),
+        );
+      case 4:
+        return HistoryBody_SettingsChanged(
+          by: dco_decode_box_autoadd_fed_by(raw[1]),
+        );
+      case 5:
+        return HistoryBody_WifiChanged(
+          by: dco_decode_box_autoadd_fed_by(raw[1]),
+        );
+      case 6:
+        return HistoryBody_PlansChanged(
+          by: dco_decode_box_autoadd_fed_by(raw[1]),
+        );
+      case 7:
+        return HistoryBody_Joined(fingerprint: dco_decode_String(raw[1]));
+      case 8:
+        return HistoryBody_Revoked(
+          fingerprint: dco_decode_String(raw[1]),
+          by: dco_decode_box_autoadd_fed_by(raw[2]),
+        );
+      case 9:
+        return HistoryBody_ClockSet(by: dco_decode_box_autoadd_fed_by(raw[1]));
+      case 10:
+        return HistoryBody_Lost(count: dco_decode_u_16(raw[1]));
+      case 11:
+        return HistoryBody_FeedingBlocked(
+          reason: dco_decode_opt_box_autoadd_blocked(raw[1]),
+        );
+      case 12:
+        return HistoryBody_MealSoon(
+          minute: dco_decode_u_16(raw[1]),
+          portions: dco_decode_u_8(raw[2]),
+        );
+      case 13:
+        return HistoryBody_Supply(
+          adapter: dco_decode_opt_box_autoadd_bool(raw[1]),
+        );
+      case 14:
+        return HistoryBody_DispenseRefused(reason: dco_decode_blocked(raw[1]));
+      case 15:
+        return HistoryBody_Food(level: dco_decode_food_level(raw[1]));
+      case 16:
+        return HistoryBody_Gap(
+          from: dco_decode_u_64(raw[1]),
+          to: dco_decode_u_64(raw[2]),
+        );
+      case 17:
+        return HistoryBody_Other();
+      default:
+        throw Exception("unreachable");
+    }
+  }
+
+  @protected
+  HistoryEntry dco_decode_history_entry(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    return HistoryEntry(
+      seq: dco_decode_u_64(arr[0]),
+      atMs: dco_decode_opt_box_autoadd_i_64(arr[1]),
+      body: dco_decode_history_body(arr[2]),
+    );
+  }
+
+  @protected
   int dco_decode_i_32(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as int;
+  }
+
+  @protected
+  PlatformInt64 dco_decode_i_64(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dcoDecodeI64(raw);
   }
 
   @protected
@@ -2287,6 +3087,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  InviteView dco_decode_invite_view(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    return InviteView(
+      text: dco_decode_String(arr[0]),
+      seconds: dco_decode_u_16(arr[1]),
+      role: dco_decode_client_role(arr[2]),
+    );
+  }
+
+  @protected
   KnownFeeder dco_decode_known_feeder(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
@@ -2306,6 +3119,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<ClientView> dco_decode_list_client_view(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_client_view).toList();
+  }
+
+  @protected
+  List<HistoryEntry> dco_decode_list_history_entry(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_history_entry).toList();
+  }
+
+  @protected
   List<KnownFeeder> dco_decode_list_known_feeder(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return (raw as List<dynamic>).map(dco_decode_known_feeder).toList();
@@ -2315,6 +3140,32 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   List<Uint8List> dco_decode_list_list_prim_u_8_strict(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return (raw as List<dynamic>).map(dco_decode_list_prim_u_8_strict).toList();
+  }
+
+  @protected
+  List<MealView> dco_decode_list_meal_view(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_meal_view).toList();
+  }
+
+  @protected
+  List<PlanView?> dco_decode_list_opt_box_autoadd_plan_view(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>)
+        .map(dco_decode_opt_box_autoadd_plan_view)
+        .toList();
+  }
+
+  @protected
+  List<int?> dco_decode_list_opt_box_autoadd_u_16(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_opt_box_autoadd_u_16).toList();
+  }
+
+  @protected
+  Uint32List dco_decode_list_prim_u_32_strict(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as Uint32List;
   }
 
   @protected
@@ -2336,6 +3187,24 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<TaskStack> dco_decode_list_task_stack(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_task_stack).toList();
+  }
+
+  @protected
+  List<TraceEntry> dco_decode_list_trace_entry(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_trace_entry).toList();
+  }
+
+  @protected
+  List<Weekday> dco_decode_list_weekday(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_weekday).toList();
+  }
+
+  @protected
   ListenUpdate dco_decode_listen_update(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     switch (raw[0]) {
@@ -2354,6 +3223,110 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         return ListenUpdate_Failed(detail: dco_decode_String(raw[1]));
       case 5:
         return ListenUpdate_Stopped();
+      default:
+        throw Exception("unreachable");
+    }
+  }
+
+  @protected
+  MealReminder dco_decode_meal_reminder(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    switch (raw[0]) {
+      case 0:
+        return MealReminder_Off();
+      case 1:
+        return MealReminder_Before(minutes: dco_decode_u_8(raw[1]));
+      default:
+        throw Exception("unreachable");
+    }
+  }
+
+  @protected
+  MealStanding dco_decode_meal_standing(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    switch (raw[0]) {
+      case 0:
+        return MealStanding_Fed(
+          result: dco_decode_box_autoadd_feed_result(raw[1]),
+        );
+      case 1:
+        return MealStanding_Passed();
+      case 2:
+        return MealStanding_Next(atMs: dco_decode_i_64(raw[1]));
+      case 3:
+        return MealStanding_Later();
+      default:
+        throw Exception("unreachable");
+    }
+  }
+
+  @protected
+  MealView dco_decode_meal_view(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 5)
+      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
+    return MealView(
+      slot: dco_decode_u_8(arr[0]),
+      minute: dco_decode_u_16(arr[1]),
+      portions: dco_decode_u_8(arr[2]),
+      call: dco_decode_u_8(arr[3]),
+      standing: dco_decode_meal_standing(arr[4]),
+    );
+  }
+
+  @protected
+  Memory dco_decode_memory(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 4)
+      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+    return Memory(
+      heapFree: dco_decode_u_32(arr[0]),
+      heapMin: dco_decode_u_32(arr[1]),
+      tasks: dco_decode_list_task_stack(arr[2]),
+      tasksTotal: dco_decode_u_32(arr[3]),
+    );
+  }
+
+  @protected
+  NextMealView dco_decode_next_meal_view(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    return NextMealView(
+      atMs: dco_decode_i_64(arr[0]),
+      minute: dco_decode_u_16(arr[1]),
+      portions: dco_decode_u_8(arr[2]),
+    );
+  }
+
+  @protected
+  NotAsked dco_decode_not_asked(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return NotAsked.values[raw as int];
+  }
+
+  @protected
+  NtpResult dco_decode_ntp_result(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return NtpResult.values[raw as int];
+  }
+
+  @protected
+  NtpView dco_decode_ntp_view(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    switch (raw[0]) {
+      case 0:
+        return NtpView_Off();
+      case 1:
+        return NtpView_Gateway(port: dco_decode_u_16(raw[1]));
+      case 2:
+        return NtpView_Address(
+          ip: dco_decode_String(raw[1]),
+          port: dco_decode_u_16(raw[2]),
+        );
       default:
         throw Exception("unreachable");
     }
@@ -2384,9 +3357,21 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  FeedOutcome? dco_decode_opt_box_autoadd_feed_outcome(dynamic raw) {
+  Counts? dco_decode_opt_box_autoadd_counts(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
-    return raw == null ? null : dco_decode_box_autoadd_feed_outcome(raw);
+    return raw == null ? null : dco_decode_box_autoadd_counts(raw);
+  }
+
+  @protected
+  Erases? dco_decode_opt_box_autoadd_erases(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_erases(raw);
+  }
+
+  @protected
+  FaultView? dco_decode_opt_box_autoadd_fault_view(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_fault_view(raw);
   }
 
   @protected
@@ -2396,15 +3381,99 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  FeedResult? dco_decode_opt_box_autoadd_feed_result(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_feed_result(raw);
+  }
+
+  @protected
+  int? dco_decode_opt_box_autoadd_i_32(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_i_32(raw);
+  }
+
+  @protected
+  PlatformInt64? dco_decode_opt_box_autoadd_i_64(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_i_64(raw);
+  }
+
+  @protected
+  MealReminder? dco_decode_opt_box_autoadd_meal_reminder(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_meal_reminder(raw);
+  }
+
+  @protected
+  NextMealView? dco_decode_opt_box_autoadd_next_meal_view(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_next_meal_view(raw);
+  }
+
+  @protected
+  NtpResult? dco_decode_opt_box_autoadd_ntp_result(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_ntp_result(raw);
+  }
+
+  @protected
+  Phase? dco_decode_opt_box_autoadd_phase(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_phase(raw);
+  }
+
+  @protected
+  PlanView? dco_decode_opt_box_autoadd_plan_view(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_plan_view(raw);
+  }
+
+  @protected
+  Resets? dco_decode_opt_box_autoadd_resets(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_resets(raw);
+  }
+
+  @protected
   SetupRefusal? dco_decode_opt_box_autoadd_setup_refusal(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_box_autoadd_setup_refusal(raw);
   }
 
   @protected
+  TimeInfo? dco_decode_opt_box_autoadd_time_info(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_time_info(raw);
+  }
+
+  @protected
+  TimeSource? dco_decode_opt_box_autoadd_time_source(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_time_source(raw);
+  }
+
+  @protected
+  TraceSummary? dco_decode_opt_box_autoadd_trace_summary(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_trace_summary(raw);
+  }
+
+  @protected
+  int? dco_decode_opt_box_autoadd_u_16(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_u_16(raw);
+  }
+
+  @protected
   int? dco_decode_opt_box_autoadd_u_32(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_box_autoadd_u_32(raw);
+  }
+
+  @protected
+  BigInt? dco_decode_opt_box_autoadd_u_64(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_u_64(raw);
   }
 
   @protected
@@ -2420,9 +3489,74 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  Window? dco_decode_opt_box_autoadd_window(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_window(raw);
+  }
+
+  @protected
+  ZoneChange? dco_decode_opt_box_autoadd_zone_change(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_zone_change(raw);
+  }
+
+  @protected
+  List<Weekday>? dco_decode_opt_list_weekday(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_list_weekday(raw);
+  }
+
+  @protected
   PendingInstall dco_decode_pending_install(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return PendingInstall.values[raw as int];
+  }
+
+  @protected
+  Phase dco_decode_phase(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return Phase.values[raw as int];
+  }
+
+  @protected
+  PlanEdit dco_decode_plan_edit(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    switch (raw[0]) {
+      case 0:
+        return PlanEdit_Add(plan: dco_decode_box_autoadd_plan_view(raw[1]));
+      case 1:
+        return PlanEdit_Change(
+          slot: dco_decode_u_8(raw[1]),
+          minute: dco_decode_opt_box_autoadd_u_16(raw[2]),
+          portions: dco_decode_opt_box_autoadd_u_8(raw[3]),
+          days: dco_decode_opt_list_weekday(raw[4]),
+          call: dco_decode_opt_box_autoadd_u_8(raw[5]),
+        );
+      case 2:
+        return PlanEdit_Enabled(
+          slot: dco_decode_u_8(raw[1]),
+          enabled: dco_decode_bool(raw[2]),
+        );
+      case 3:
+        return PlanEdit_Delete(slot: dco_decode_u_8(raw[1]));
+      default:
+        throw Exception("unreachable");
+    }
+  }
+
+  @protected
+  PlanView dco_decode_plan_view(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 5)
+      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
+    return PlanView(
+      minute: dco_decode_u_16(arr[0]),
+      portions: dco_decode_u_8(arr[1]),
+      days: dco_decode_list_weekday(arr[2]),
+      enabled: dco_decode_bool(arr[3]),
+      call: dco_decode_u_8(arr[4]),
+    );
   }
 
   @protected
@@ -2432,9 +3566,94 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  PlansView dco_decode_plans_view(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    return PlansView(
+      generation: dco_decode_u_32(arr[0]),
+      writable: dco_decode_bool(arr[1]),
+      plans: dco_decode_list_opt_box_autoadd_plan_view(arr[2]),
+    );
+  }
+
+  @protected
+  PortionChange dco_decode_portion_change(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    switch (raw[0]) {
+      case 0:
+        return PortionChange_Clear();
+      case 1:
+        return PortionChange_Milligrams(mg: dco_decode_u_32(raw[1]));
+      case 2:
+        return PortionChange_Weighed(
+          grams: dco_decode_String(raw[1]),
+          portions: dco_decode_u_32(raw[2]),
+        );
+      default:
+        throw Exception("unreachable");
+    }
+  }
+
+  @protected
+  Portions dco_decode_portions(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 5)
+      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
+    return Portions(
+      portions: dco_decode_u_32(arr[0]),
+      homed: dco_decode_u_32(arr[1]),
+      outletBreaks: dco_decode_u_32(arr[2]),
+      portionMg: dco_decode_opt_box_autoadd_u_32(arr[3]),
+      deliveredMg: dco_decode_opt_box_autoadd_u_64(arr[4]),
+    );
+  }
+
+  @protected
+  PowerStats dco_decode_power_stats(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 8)
+      throw Exception('unexpected arr length: expect 8 but see ${arr.length}');
+    return PowerStats(
+      adapter: dco_decode_opt_box_autoadd_bool(arr[0]),
+      adapterChanges: dco_decode_u_32(arr[1]),
+      outages: dco_decode_u_32(arr[2]),
+      batteryS: dco_decode_u_32(arr[3]),
+      batteryMinMv: dco_decode_opt_box_autoadd_u_32(arr[4]),
+      batteryMaxMv: dco_decode_opt_box_autoadd_u_32(arr[5]),
+      batteryMv: dco_decode_list_opt_box_autoadd_u_16(arr[6]),
+      periodS: dco_decode_u_32(arr[7]),
+    );
+  }
+
+  @protected
   RequestRefusal dco_decode_request_refusal(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return RequestRefusal.values[raw as int];
+  }
+
+  @protected
+  ResetCause dco_decode_reset_cause(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return ResetCause.values[raw as int];
+  }
+
+  @protected
+  Resets dco_decode_resets(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 5)
+      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
+    return Resets(
+      powerOn: dco_decode_u_32(arr[0]),
+      watchdog: dco_decode_u_32(arr[1]),
+      software: dco_decode_u_32(arr[2]),
+      brownout: dco_decode_u_32(arr[3]),
+      other: dco_decode_u_32(arr[4]),
+    );
   }
 
   @protected
@@ -2478,12 +3697,60 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case 8:
         return SessionUpdate_ClockNotSynced();
       case 9:
+        return SessionUpdate_History(
+          entries: dco_decode_list_history_entry(raw[1]),
+          caughtUp: dco_decode_bool(raw[2]),
+        );
+      case 10:
+        return SessionUpdate_Log(
+          seq: dco_decode_u_32(raw[1]),
+          dropped: dco_decode_u_32(raw[2]),
+          lines: dco_decode_list_String(raw[3]),
+        );
+      case 11:
         return SessionUpdate_Closed(
           error: dco_decode_opt_box_autoadd_bridge_error(raw[1]),
         );
       default:
         throw Exception("unreachable");
     }
+  }
+
+  @protected
+  SettingsChanges dco_decode_settings_changes(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 7)
+      throw Exception('unexpected arr length: expect 7 but see ${arr.length}');
+    return SettingsChanges(
+      lights: dco_decode_opt_box_autoadd_bool(arr[0]),
+      sound: dco_decode_opt_box_autoadd_bool(arr[1]),
+      volume: dco_decode_opt_box_autoadd_u_8(arr[2]),
+      lightsWindow: dco_decode_opt_box_autoadd_window(arr[3]),
+      soundWindow: dco_decode_opt_box_autoadd_window(arr[4]),
+      desiccantDays: dco_decode_opt_box_autoadd_u_8(arr[5]),
+      mealReminder: dco_decode_opt_box_autoadd_meal_reminder(arr[6]),
+    );
+  }
+
+  @protected
+  SettingsView dco_decode_settings_view(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 10)
+      throw Exception('unexpected arr length: expect 10 but see ${arr.length}');
+    return SettingsView(
+      generation: dco_decode_u_32(arr[0]),
+      lights: dco_decode_bool(arr[1]),
+      sound: dco_decode_bool(arr[2]),
+      volume: dco_decode_u_8(arr[3]),
+      lightsWindow: dco_decode_window(arr[4]),
+      soundWindow: dco_decode_window(arr[5]),
+      desiccantDays: dco_decode_u_8(arr[6]),
+      desiccantReplaced: dco_decode_opt_String(arr[7]),
+      mealReminder: dco_decode_meal_reminder(arr[8]),
+      writable: dco_decode_bool(arr[9]),
+    );
   }
 
   @protected
@@ -2517,6 +3784,35 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       default:
         throw Exception("unreachable");
     }
+  }
+
+  @protected
+  Stats dco_decode_stats(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    switch (raw[0]) {
+      case 0:
+        return Stats_Counters(dco_decode_box_autoadd_counters(raw[1]));
+      case 1:
+        return Stats_Memory(dco_decode_box_autoadd_memory(raw[1]));
+      case 2:
+        return Stats_Flash(dco_decode_box_autoadd_flash(raw[1]));
+      case 3:
+        return Stats_Power(dco_decode_box_autoadd_power_stats(raw[1]));
+      case 4:
+        return Stats_Food(dco_decode_box_autoadd_food(raw[1]));
+      case 5:
+        return Stats_Feeds(dco_decode_box_autoadd_feed_stats(raw[1]));
+      case 6:
+        return Stats_Portions(dco_decode_box_autoadd_portions(raw[1]));
+      default:
+        throw Exception("unreachable");
+    }
+  }
+
+  @protected
+  StatsSection dco_decode_stats_section(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return StatsSection.values[raw as int];
   }
 
   @protected
@@ -2595,6 +3891,135 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  TaskStack dco_decode_task_stack(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2)
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    return TaskStack(
+      name: dco_decode_String(arr[0]),
+      freeMin: dco_decode_u_32(arr[1]),
+    );
+  }
+
+  @protected
+  TimeInfo dco_decode_time_info(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 11)
+      throw Exception('unexpected arr length: expect 11 but see ${arr.length}');
+    return TimeInfo(
+      generation: dco_decode_u_32(arr[0]),
+      writable: dco_decode_bool(arr[1]),
+      zone: dco_decode_opt_String(arr[2]),
+      ntp: dco_decode_ntp_view(arr[3]),
+      clockMs: dco_decode_opt_box_autoadd_i_64(arr[4]),
+      errorMs: dco_decode_opt_box_autoadd_u_32(arr[5]),
+      offsetS: dco_decode_opt_box_autoadd_i_32(arr[6]),
+      syncs: dco_decode_u_32(arr[7]),
+      last: dco_decode_opt_box_autoadd_time_source(arr[8]),
+      lastAtMs: dco_decode_opt_box_autoadd_i_64(arr[9]),
+      ntpLast: dco_decode_opt_box_autoadd_ntp_result(arr[10]),
+    );
+  }
+
+  @protected
+  TimeSource dco_decode_time_source(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return TimeSource.values[raw as int];
+  }
+
+  @protected
+  TraceEntry dco_decode_trace_entry(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    switch (raw[0]) {
+      case 0:
+        return TraceEntry_Current(
+          atMs: dco_decode_u_32(raw[1]),
+          value: dco_decode_u_32(raw[2]),
+        );
+      case 1:
+        return TraceEntry_Mark(
+          atMs: dco_decode_u_32(raw[1]),
+          edges: dco_decode_u_32(raw[2]),
+          high: dco_decode_bool(raw[3]),
+        );
+      case 2:
+        return TraceEntry_Beams(
+          atMs: dco_decode_u_32(raw[1]),
+          outletClear: dco_decode_bool(raw[2]),
+          food: dco_decode_bool(raw[3]),
+        );
+      case 3:
+        return TraceEntry_Battery(
+          atMs: dco_decode_u_32(raw[1]),
+          mv: dco_decode_u_32(raw[2]),
+        );
+      case 4:
+        return TraceEntry_Motor(
+          atMs: dco_decode_u_32(raw[1]),
+          motor: dco_decode_trace_motor(raw[2]),
+        );
+      default:
+        throw Exception("unreachable");
+    }
+  }
+
+  @protected
+  TraceMotor dco_decode_trace_motor(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return TraceMotor.values[raw as int];
+  }
+
+  @protected
+  TraceSummary dco_decode_trace_summary(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 19)
+      throw Exception('unexpected arr length: expect 19 but see ${arr.length}');
+    return TraceSummary(
+      feed: dco_decode_u_32(arr[0]),
+      requested: dco_decode_u_8(arr[1]),
+      completed: dco_decode_u_8(arr[2]),
+      outcome: dco_decode_feed_outcome(arr[3]),
+      reason: dco_decode_feed_reason(arr[4]),
+      driveMs: dco_decode_u_32(arr[5]),
+      samples: dco_decode_u_32(arr[6]),
+      unit: dco_decode_current_unit(arr[7]),
+      currentPeak: dco_decode_u_32(arr[8]),
+      currentMean: dco_decode_opt_box_autoadd_u_32(arr[9]),
+      rising: dco_decode_u_16(arr[10]),
+      falling: dco_decode_u_16(arr[11]),
+      firstEdgeMs: dco_decode_opt_box_autoadd_u_32(arr[12]),
+      beamBreaks: dco_decode_u_16(arr[13]),
+      reversals: dco_decode_u_16(arr[14]),
+      batteryRestMv: dco_decode_opt_box_autoadd_u_16(arr[15]),
+      batteryMinMv: dco_decode_opt_box_autoadd_u_16(arr[16]),
+      stride: dco_decode_u_16(arr[17]),
+      truncated: dco_decode_bool(arr[18]),
+    );
+  }
+
+  @protected
+  TraceView dco_decode_trace_view(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    return TraceView(
+      summary: dco_decode_trace_summary(arr[0]),
+      stored: dco_decode_bool(arr[1]),
+      entries: dco_decode_list_trace_entry(arr[2]),
+    );
+  }
+
+  @protected
+  Tune dco_decode_tune(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return Tune.values[raw as int];
+  }
+
+  @protected
   int dco_decode_u_16(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as int;
@@ -2631,6 +4056,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  UpdateRefusal dco_decode_update_refusal(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return UpdateRefusal.values[raw as int];
+  }
+
+  @protected
   BigInt dco_decode_usize(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dcoDecodeU64(raw);
@@ -2640,6 +4071,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   WaitReason dco_decode_wait_reason(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return WaitReason.values[raw as int];
+  }
+
+  @protected
+  Weekday dco_decode_weekday(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return Weekday.values[raw as int];
   }
 
   @protected
@@ -2658,6 +4095,37 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   WifiSaved dco_decode_wifi_saved(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return WifiSaved.values[raw as int];
+  }
+
+  @protected
+  Window dco_decode_window(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    switch (raw[0]) {
+      case 0:
+        return Window_Always();
+      case 1:
+        return Window_Between(
+          start: dco_decode_u_16(raw[1]),
+          end: dco_decode_u_16(raw[2]),
+        );
+      default:
+        throw Exception("unreachable");
+    }
+  }
+
+  @protected
+  ZoneChange dco_decode_zone_change(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    switch (raw[0]) {
+      case 0:
+        return ZoneChange_Phone();
+      case 1:
+        return ZoneChange_Named(name: dco_decode_String(raw[1]));
+      case 2:
+        return ZoneChange_Clear();
+      default:
+        throw Exception("unreachable");
+    }
   }
 
   @protected
@@ -2956,6 +4424,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  Bowl sse_decode_bowl(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return Bowl.values[inner];
+  }
+
+  @protected
   AppStore sse_decode_box_autoadd_app_store(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return (sse_decode_app_store(deserializer));
@@ -2982,9 +4457,35 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  CalibrationInfo sse_decode_box_autoadd_calibration_info(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_calibration_info(deserializer));
+  }
+
+  @protected
+  CallInfo sse_decode_box_autoadd_call_info(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_call_info(deserializer));
+  }
+
+  @protected
   Card sse_decode_box_autoadd_card(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return (sse_decode_card(deserializer));
+  }
+
+  @protected
+  Counters sse_decode_box_autoadd_counters(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_counters(deserializer));
+  }
+
+  @protected
+  Counts sse_decode_box_autoadd_counts(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_counts(deserializer));
   }
 
   @protected
@@ -2994,11 +4495,21 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  FeedOutcome sse_decode_box_autoadd_feed_outcome(
-    SseDeserializer deserializer,
-  ) {
+  Erases sse_decode_box_autoadd_erases(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-    return (sse_decode_feed_outcome(deserializer));
+    return (sse_decode_erases(deserializer));
+  }
+
+  @protected
+  FaultView sse_decode_box_autoadd_fault_view(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_fault_view(deserializer));
+  }
+
+  @protected
+  FedBy sse_decode_box_autoadd_fed_by(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_fed_by(deserializer));
   }
 
   @protected
@@ -3013,6 +4524,52 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   FeedResult sse_decode_box_autoadd_feed_result(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return (sse_decode_feed_result(deserializer));
+  }
+
+  @protected
+  FeedStats sse_decode_box_autoadd_feed_stats(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_feed_stats(deserializer));
+  }
+
+  @protected
+  FeederRefusal sse_decode_box_autoadd_feeder_refusal(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_feeder_refusal(deserializer));
+  }
+
+  @protected
+  FeederRequest sse_decode_box_autoadd_feeder_request(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_feeder_request(deserializer));
+  }
+
+  @protected
+  Flash sse_decode_box_autoadd_flash(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_flash(deserializer));
+  }
+
+  @protected
+  Food sse_decode_box_autoadd_food(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_food(deserializer));
+  }
+
+  @protected
+  int sse_decode_box_autoadd_i_32(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_i_32(deserializer));
+  }
+
+  @protected
+  PlatformInt64 sse_decode_box_autoadd_i_64(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_i_64(deserializer));
   }
 
   @protected
@@ -3052,11 +4609,117 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  InviteView sse_decode_box_autoadd_invite_view(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_invite_view(deserializer));
+  }
+
+  @protected
+  MealReminder sse_decode_box_autoadd_meal_reminder(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_meal_reminder(deserializer));
+  }
+
+  @protected
+  Memory sse_decode_box_autoadd_memory(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_memory(deserializer));
+  }
+
+  @protected
+  NextMealView sse_decode_box_autoadd_next_meal_view(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_next_meal_view(deserializer));
+  }
+
+  @protected
+  NtpResult sse_decode_box_autoadd_ntp_result(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_ntp_result(deserializer));
+  }
+
+  @protected
+  Phase sse_decode_box_autoadd_phase(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_phase(deserializer));
+  }
+
+  @protected
+  PlanEdit sse_decode_box_autoadd_plan_edit(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_plan_edit(deserializer));
+  }
+
+  @protected
+  PlanView sse_decode_box_autoadd_plan_view(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_plan_view(deserializer));
+  }
+
+  @protected
+  PlansView sse_decode_box_autoadd_plans_view(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_plans_view(deserializer));
+  }
+
+  @protected
+  PortionChange sse_decode_box_autoadd_portion_change(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_portion_change(deserializer));
+  }
+
+  @protected
+  Portions sse_decode_box_autoadd_portions(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_portions(deserializer));
+  }
+
+  @protected
+  PowerStats sse_decode_box_autoadd_power_stats(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_power_stats(deserializer));
+  }
+
+  @protected
+  Resets sse_decode_box_autoadd_resets(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_resets(deserializer));
+  }
+
+  @protected
+  SettingsChanges sse_decode_box_autoadd_settings_changes(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_settings_changes(deserializer));
+  }
+
+  @protected
+  SettingsView sse_decode_box_autoadd_settings_view(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_settings_view(deserializer));
+  }
+
+  @protected
   SetupRefusal sse_decode_box_autoadd_setup_refusal(
     SseDeserializer deserializer,
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return (sse_decode_setup_refusal(deserializer));
+  }
+
+  @protected
+  Stats sse_decode_box_autoadd_stats(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_stats(deserializer));
   }
 
   @protected
@@ -3066,9 +4729,47 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  TimeInfo sse_decode_box_autoadd_time_info(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_time_info(deserializer));
+  }
+
+  @protected
+  TimeSource sse_decode_box_autoadd_time_source(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_time_source(deserializer));
+  }
+
+  @protected
+  TraceSummary sse_decode_box_autoadd_trace_summary(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_trace_summary(deserializer));
+  }
+
+  @protected
+  TraceView sse_decode_box_autoadd_trace_view(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_trace_view(deserializer));
+  }
+
+  @protected
+  int sse_decode_box_autoadd_u_16(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_u_16(deserializer));
+  }
+
+  @protected
   int sse_decode_box_autoadd_u_32(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return (sse_decode_u_32(deserializer));
+  }
+
+  @protected
+  BigInt sse_decode_box_autoadd_u_64(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_u_64(deserializer));
   }
 
   @protected
@@ -3083,6 +4784,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return (sse_decode_wifi_credentials(deserializer));
+  }
+
+  @protected
+  Window sse_decode_box_autoadd_window(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_window(deserializer));
+  }
+
+  @protected
+  ZoneChange sse_decode_box_autoadd_zone_change(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_zone_change(deserializer));
   }
 
   @protected
@@ -3110,6 +4823,58 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  CalibrationInfo sse_decode_calibration_info(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_generation = sse_decode_u_32(deserializer);
+    var var_writable = sse_decode_bool(deserializer);
+    var var_portionMg = sse_decode_opt_box_autoadd_u_32(deserializer);
+    var var_bowl = sse_decode_bowl(deserializer);
+    var var_phase = sse_decode_opt_box_autoadd_phase(deserializer);
+    return CalibrationInfo(
+      generation: var_generation,
+      writable: var_writable,
+      portionMg: var_portionMg,
+      bowl: var_bowl,
+      phase: var_phase,
+    );
+  }
+
+  @protected
+  CallClip sse_decode_call_clip(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var tag_ = sse_decode_i_32(deserializer);
+    switch (tag_) {
+      case 0:
+        return CallClip_None();
+      case 1:
+        var var_bytes = sse_decode_u_32(deserializer);
+        var var_crc = sse_decode_u_32(deserializer);
+        var var_received = sse_decode_u_32(deserializer);
+        return CallClip_Receiving(
+          bytes: var_bytes,
+          crc: var_crc,
+          received: var_received,
+        );
+      case 2:
+        var var_bytes = sse_decode_u_32(deserializer);
+        var var_crc = sse_decode_u_32(deserializer);
+        return CallClip_Stored(bytes: var_bytes, crc: var_crc);
+      default:
+        throw UnimplementedError('');
+    }
+  }
+
+  @protected
+  CallInfo sse_decode_call_info(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_writable = sse_decode_bool(deserializer);
+    var var_clip = sse_decode_call_clip(deserializer);
+    var var_ms = sse_decode_opt_box_autoadd_u_32(deserializer);
+    return CallInfo(writable: var_writable, clip: var_clip, ms: var_ms);
+  }
+
+  @protected
   Card sse_decode_card(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_build = sse_decode_String(deserializer);
@@ -3121,7 +4886,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_batteryPercent = sse_decode_opt_box_autoadd_u_8(deserializer);
     var var_clockSet = sse_decode_bool(deserializer);
     var var_rssi = sse_decode_i_32(deserializer);
-    var var_fault = sse_decode_opt_box_autoadd_feed_outcome(deserializer);
+    var var_fault = sse_decode_opt_box_autoadd_fault_view(deserializer);
+    var var_desiccant = sse_decode_desiccant(deserializer);
+    var var_uptimeMs = sse_decode_u_32(deserializer);
+    var var_bank = sse_decode_u_8(deserializer);
+    var var_nextMeal = sse_decode_opt_box_autoadd_next_meal_view(deserializer);
+    var var_lastFed = sse_decode_opt_box_autoadd_feed_result(deserializer);
+    var var_meals = sse_decode_list_meal_view(deserializer);
+    var var_time = sse_decode_opt_box_autoadd_time_info(deserializer);
     return Card(
       build: var_build,
       food: var_food,
@@ -3133,6 +4905,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       clockSet: var_clockSet,
       rssi: var_rssi,
       fault: var_fault,
+      desiccant: var_desiccant,
+      uptimeMs: var_uptimeMs,
+      bank: var_bank,
+      nextMeal: var_nextMeal,
+      lastFed: var_lastFed,
+      meals: var_meals,
+      time: var_time,
     );
   }
 
@@ -3141,6 +4920,95 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var inner = sse_decode_i_32(deserializer);
     return ClientRole.values[inner];
+  }
+
+  @protected
+  ClientView sse_decode_client_view(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_key = sse_decode_list_prim_u_8_strict(deserializer);
+    var var_fingerprint = sse_decode_String(deserializer);
+    var var_label = sse_decode_String(deserializer);
+    var var_role = sse_decode_client_role(deserializer);
+    var var_you = sse_decode_bool(deserializer);
+    return ClientView(
+      key: var_key,
+      fingerprint: var_fingerprint,
+      label: var_label,
+      role: var_role,
+      you: var_you,
+    );
+  }
+
+  @protected
+  Counters sse_decode_counters(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_boot = sse_decode_counts(deserializer);
+    var var_reset = sse_decode_reset_cause(deserializer);
+    var var_lifetime = sse_decode_opt_box_autoadd_counts(deserializer);
+    var var_resets = sse_decode_opt_box_autoadd_resets(deserializer);
+    var var_handshakeMaxMs = sse_decode_u_32(deserializer);
+    var var_handshakeMeanMs = sse_decode_u_32(deserializer);
+    return Counters(
+      boot: var_boot,
+      reset: var_reset,
+      lifetime: var_lifetime,
+      resets: var_resets,
+      handshakeMaxMs: var_handshakeMaxMs,
+      handshakeMeanMs: var_handshakeMeanMs,
+    );
+  }
+
+  @protected
+  Counts sse_decode_counts(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_uptimeS = sse_decode_u_32(deserializer);
+    var var_feeds = sse_decode_u_32(deserializer);
+    var var_feedsFailed = sse_decode_u_32(deserializer);
+    var var_portions = sse_decode_u_32(deserializer);
+    var var_presses = sse_decode_u_32(deserializer);
+    var var_sessions = sse_decode_u_32(deserializer);
+    var var_reconnects = sse_decode_u_32(deserializer);
+    var var_dhcpRenewals = sse_decode_u_32(deserializer);
+    var var_outages = sse_decode_u_32(deserializer);
+    var var_batteryS = sse_decode_u_32(deserializer);
+    return Counts(
+      uptimeS: var_uptimeS,
+      feeds: var_feeds,
+      feedsFailed: var_feedsFailed,
+      portions: var_portions,
+      presses: var_presses,
+      sessions: var_sessions,
+      reconnects: var_reconnects,
+      dhcpRenewals: var_dhcpRenewals,
+      outages: var_outages,
+      batteryS: var_batteryS,
+    );
+  }
+
+  @protected
+  CurrentUnit sse_decode_current_unit(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return CurrentUnit.values[inner];
+  }
+
+  @protected
+  Desiccant sse_decode_desiccant(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var tag_ = sse_decode_i_32(deserializer);
+    switch (tag_) {
+      case 0:
+        return Desiccant_Unset();
+      case 1:
+        return Desiccant_Unknown();
+      case 2:
+        var var_days = sse_decode_i_32(deserializer);
+        var var_due = sse_decode_bool(deserializer);
+        return Desiccant_Remaining(days: var_days, due: var_due);
+      default:
+        throw UnimplementedError('');
+    }
   }
 
   @protected
@@ -3174,10 +5042,56 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  Erases sse_decode_erases(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_storage = sse_decode_list_prim_u_32_strict(deserializer);
+    var var_update = sse_decode_u_32(deserializer);
+    return Erases(storage: var_storage, update: var_update);
+  }
+
+  @protected
   ErrorKind sse_decode_error_kind(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var inner = sse_decode_i_32(deserializer);
     return ErrorKind.values[inner];
+  }
+
+  @protected
+  FaultView sse_decode_fault_view(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_feed = sse_decode_u_32(deserializer);
+    var var_outcome = sse_decode_feed_outcome(deserializer);
+    var var_reason = sse_decode_feed_reason(deserializer);
+    var var_result = sse_decode_opt_box_autoadd_feed_result(deserializer);
+    return FaultView(
+      feed: var_feed,
+      outcome: var_outcome,
+      reason: var_reason,
+      result: var_result,
+    );
+  }
+
+  @protected
+  FedBy sse_decode_fed_by(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var tag_ = sse_decode_i_32(deserializer);
+    switch (tag_) {
+      case 0:
+        return FedBy_Panel();
+      case 1:
+        var var_fingerprint = sse_decode_String(deserializer);
+        return FedBy_Client(fingerprint: var_fingerprint);
+      case 2:
+        return FedBy_Feeder();
+      case 3:
+        var var_slot = sse_decode_u_8(deserializer);
+        return FedBy_Plan(slot: var_slot);
+      case 4:
+        return FedBy_Unknown();
+      default:
+        throw UnimplementedError('');
+    }
   }
 
   @protected
@@ -3212,6 +5126,9 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_reason = sse_decode_feed_reason(deserializer);
     var var_uncertain = sse_decode_bool(deserializer);
     var var_words = sse_decode_String(deserializer);
+    var var_atMs = sse_decode_opt_box_autoadd_i_64(deserializer);
+    var var_by = sse_decode_fed_by(deserializer);
+    var var_hopper = sse_decode_food_level(deserializer);
     return FeedResult(
       feed: var_feed,
       requested: var_requested,
@@ -3221,6 +5138,266 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       reason: var_reason,
       uncertain: var_uncertain,
       words: var_words,
+      atMs: var_atMs,
+      by: var_by,
+      hopper: var_hopper,
+    );
+  }
+
+  @protected
+  FeedStats sse_decode_feed_stats(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_traced = sse_decode_u_32(deserializer);
+    var var_driveMs = sse_decode_u_32(deserializer);
+    var var_samples = sse_decode_u_32(deserializer);
+    var var_unit = sse_decode_current_unit(deserializer);
+    var var_currentPeak = sse_decode_u_32(deserializer);
+    var var_currentMean = sse_decode_opt_box_autoadd_u_32(deserializer);
+    var var_rising = sse_decode_u_32(deserializer);
+    var var_falling = sse_decode_u_32(deserializer);
+    var var_beamBreaks = sse_decode_u_32(deserializer);
+    var var_reversals = sse_decode_u_32(deserializer);
+    var var_kept = sse_decode_u_32(deserializer);
+    var var_capacity = sse_decode_u_32(deserializer);
+    var var_unsaved = sse_decode_u_32(deserializer);
+    var var_last = sse_decode_opt_box_autoadd_trace_summary(deserializer);
+    return FeedStats(
+      traced: var_traced,
+      driveMs: var_driveMs,
+      samples: var_samples,
+      unit: var_unit,
+      currentPeak: var_currentPeak,
+      currentMean: var_currentMean,
+      rising: var_rising,
+      falling: var_falling,
+      beamBreaks: var_beamBreaks,
+      reversals: var_reversals,
+      kept: var_kept,
+      capacity: var_capacity,
+      unsaved: var_unsaved,
+      last: var_last,
+    );
+  }
+
+  @protected
+  FeederRefusal sse_decode_feeder_refusal(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var tag_ = sse_decode_i_32(deserializer);
+    switch (tag_) {
+      case 0:
+        return FeederRefusal_Forbidden();
+      case 1:
+        var var_current = sse_decode_u_32(deserializer);
+        return FeederRefusal_Stale(current: var_current);
+      case 2:
+        return FeederRefusal_Busy();
+      case 3:
+        return FeederRefusal_Unavailable();
+      case 4:
+        return FeederRefusal_Invalid();
+      case 5:
+        return FeederRefusal_NotWritable();
+      case 6:
+        return FeederRefusal_Full();
+      case 7:
+        return FeederRefusal_NotFound();
+      case 8:
+        return FeederRefusal_Muted();
+      case 9:
+        return FeederRefusal_Time();
+      case 10:
+        return FeederRefusal_Fault();
+      case 11:
+        var var_reason = sse_decode_update_refusal(deserializer);
+        return FeederRefusal_Update(reason: var_reason);
+      case 12:
+        return FeederRefusal_Unverified();
+      case 13:
+        var var_asked = sse_decode_u_8(deserializer);
+        return FeederRefusal_Portions(asked: var_asked);
+      case 14:
+        return FeederRefusal_NoClock();
+      default:
+        throw UnimplementedError('');
+    }
+  }
+
+  @protected
+  FeederReply sse_decode_feeder_reply(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var tag_ = sse_decode_i_32(deserializer);
+    switch (tag_) {
+      case 0:
+        var var_generation = sse_decode_opt_box_autoadd_u_32(deserializer);
+        return FeederReply_Done(generation: var_generation);
+      case 1:
+        var var_settings = sse_decode_box_autoadd_settings_view(deserializer);
+        return FeederReply_Settings(settings: var_settings);
+      case 2:
+        var var_time = sse_decode_box_autoadd_time_info(deserializer);
+        return FeederReply_Time(time: var_time);
+      case 3:
+        var var_plans = sse_decode_box_autoadd_plans_view(deserializer);
+        return FeederReply_Plans(plans: var_plans);
+      case 4:
+        var var_clients = sse_decode_list_client_view(deserializer);
+        return FeederReply_Clients(clients: var_clients);
+      case 5:
+        var var_invite = sse_decode_box_autoadd_invite_view(deserializer);
+        return FeederReply_Invite(invite: var_invite);
+      case 6:
+        var var_calibration = sse_decode_box_autoadd_calibration_info(
+          deserializer,
+        );
+        return FeederReply_Calibration(calibration: var_calibration);
+      case 7:
+        var var_call = sse_decode_box_autoadd_call_info(deserializer);
+        return FeederReply_Call(call: var_call);
+      case 8:
+        var var_stats = sse_decode_box_autoadd_stats(deserializer);
+        return FeederReply_Stats(stats: var_stats);
+      case 9:
+        var var_trace = sse_decode_box_autoadd_trace_view(deserializer);
+        return FeederReply_Trace(trace: var_trace);
+      case 10:
+        var var_refusal = sse_decode_box_autoadd_feeder_refusal(deserializer);
+        return FeederReply_Refused(refusal: var_refusal);
+      case 11:
+        var var_reason = sse_decode_not_asked(deserializer);
+        return FeederReply_NotAsked(reason: var_reason);
+      case 12:
+        return FeederReply_Unanswered();
+      case 13:
+        return FeederReply_NotSent();
+      case 14:
+        return FeederReply_Unexpected();
+      default:
+        throw UnimplementedError('');
+    }
+  }
+
+  @protected
+  FeederRequest sse_decode_feeder_request(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var tag_ = sse_decode_i_32(deserializer);
+    switch (tag_) {
+      case 0:
+        return FeederRequest_GetSettings();
+      case 1:
+        var var_base = sse_decode_u_32(deserializer);
+        var var_changes = sse_decode_box_autoadd_settings_changes(deserializer);
+        return FeederRequest_PutSettings(base: var_base, changes: var_changes);
+      case 2:
+        var var_base = sse_decode_u_32(deserializer);
+        var var_ssid = sse_decode_String(deserializer);
+        var var_passphrase = sse_decode_String(deserializer);
+        return FeederRequest_PutWifi(
+          base: var_base,
+          ssid: var_ssid,
+          passphrase: var_passphrase,
+        );
+      case 3:
+        var var_base = sse_decode_u_32(deserializer);
+        return FeederRequest_ForgetWifi(base: var_base);
+      case 4:
+        var var_locked = sse_decode_bool(deserializer);
+        return FeederRequest_SetLock(locked: var_locked);
+      case 5:
+        var var_tune = sse_decode_tune(deserializer);
+        return FeederRequest_Play(tune: var_tune);
+      case 6:
+        return FeederRequest_SyncClock();
+      case 7:
+        return FeederRequest_GetTime();
+      case 8:
+        var var_base = sse_decode_u_32(deserializer);
+        var var_zone = sse_decode_opt_box_autoadd_zone_change(deserializer);
+        var var_ntp = sse_decode_opt_String(deserializer);
+        return FeederRequest_PutTime(
+          base: var_base,
+          zone: var_zone,
+          ntp: var_ntp,
+        );
+      case 9:
+        var var_role = sse_decode_client_role(deserializer);
+        return FeederRequest_CreateInvite(role: var_role);
+      case 10:
+        return FeederRequest_ListClients();
+      case 11:
+        var var_key = sse_decode_list_prim_u_8_strict(deserializer);
+        return FeederRequest_RevokeClient(key: var_key);
+      case 12:
+        return FeederRequest_Reboot();
+      case 13:
+        return FeederRequest_ResetDesiccant();
+      case 14:
+        var var_section = sse_decode_stats_section(deserializer);
+        return FeederRequest_Stats(section: var_section);
+      case 15:
+        var var_feed = sse_decode_u_32(deserializer);
+        return FeederRequest_ReadTrace(feed: var_feed);
+      case 16:
+        return FeederRequest_GetCalibration();
+      case 17:
+        var var_base = sse_decode_u_32(deserializer);
+        var var_portion = sse_decode_box_autoadd_portion_change(deserializer);
+        var var_bowl = sse_decode_bowl(deserializer);
+        return FeederRequest_PutCalibration(
+          base: var_base,
+          portion: var_portion,
+          bowl: var_bowl,
+        );
+      case 18:
+        return FeederRequest_GetPlans();
+      case 19:
+        var var_plans = sse_decode_box_autoadd_plans_view(deserializer);
+        var var_edit = sse_decode_box_autoadd_plan_edit(deserializer);
+        return FeederRequest_EditPlans(plans: var_plans, edit: var_edit);
+      case 20:
+        return FeederRequest_GetCall();
+      case 21:
+        var var_wav = sse_decode_list_prim_u_8_strict(deserializer);
+        return FeederRequest_UploadCall(wav: var_wav);
+      case 22:
+        return FeederRequest_DeleteCall();
+      case 23:
+        var var_after = sse_decode_opt_box_autoadd_u_32(deserializer);
+        return FeederRequest_TailLog(after: var_after);
+      default:
+        throw UnimplementedError('');
+    }
+  }
+
+  @protected
+  Flash sse_decode_flash(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_boot = sse_decode_erases(deserializer);
+    var var_lifetime = sse_decode_opt_box_autoadd_erases(deserializer);
+    var var_eventsKept = sse_decode_u_32(deserializer);
+    var var_eventsCapacity = sse_decode_u_32(deserializer);
+    return Flash(
+      boot: var_boot,
+      lifetime: var_lifetime,
+      eventsKept: var_eventsKept,
+      eventsCapacity: var_eventsCapacity,
+    );
+  }
+
+  @protected
+  Food sse_decode_food(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_present = sse_decode_opt_box_autoadd_bool(deserializer);
+    var var_emptied = sse_decode_u_32(deserializer);
+    var var_refilled = sse_decode_u_32(deserializer);
+    var var_feedsSinceRefill = sse_decode_opt_box_autoadd_u_32(deserializer);
+    return Food(
+      present: var_present,
+      emptied: var_emptied,
+      refilled: var_refilled,
+      feedsSinceRefill: var_feedsSinceRefill,
     );
   }
 
@@ -3232,9 +5409,97 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  HistoryBody sse_decode_history_body(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var tag_ = sse_decode_i_32(deserializer);
+    switch (tag_) {
+      case 0:
+        var var_result = sse_decode_box_autoadd_feed_result(deserializer);
+        return HistoryBody_Fed(result: var_result);
+      case 1:
+        var var_slot = sse_decode_u_8(deserializer);
+        var var_dueMs = sse_decode_i_64(deserializer);
+        var var_late_ = sse_decode_bool(deserializer);
+        return HistoryBody_Missed(
+          slot: var_slot,
+          dueMs: var_dueMs,
+          late_: var_late_,
+        );
+      case 2:
+        return HistoryBody_Restarted();
+      case 3:
+        var var_locked = sse_decode_bool(deserializer);
+        var var_by = sse_decode_box_autoadd_fed_by(deserializer);
+        return HistoryBody_Lock(locked: var_locked, by: var_by);
+      case 4:
+        var var_by = sse_decode_box_autoadd_fed_by(deserializer);
+        return HistoryBody_SettingsChanged(by: var_by);
+      case 5:
+        var var_by = sse_decode_box_autoadd_fed_by(deserializer);
+        return HistoryBody_WifiChanged(by: var_by);
+      case 6:
+        var var_by = sse_decode_box_autoadd_fed_by(deserializer);
+        return HistoryBody_PlansChanged(by: var_by);
+      case 7:
+        var var_fingerprint = sse_decode_String(deserializer);
+        return HistoryBody_Joined(fingerprint: var_fingerprint);
+      case 8:
+        var var_fingerprint = sse_decode_String(deserializer);
+        var var_by = sse_decode_box_autoadd_fed_by(deserializer);
+        return HistoryBody_Revoked(fingerprint: var_fingerprint, by: var_by);
+      case 9:
+        var var_by = sse_decode_box_autoadd_fed_by(deserializer);
+        return HistoryBody_ClockSet(by: var_by);
+      case 10:
+        var var_count = sse_decode_u_16(deserializer);
+        return HistoryBody_Lost(count: var_count);
+      case 11:
+        var var_reason = sse_decode_opt_box_autoadd_blocked(deserializer);
+        return HistoryBody_FeedingBlocked(reason: var_reason);
+      case 12:
+        var var_minute = sse_decode_u_16(deserializer);
+        var var_portions = sse_decode_u_8(deserializer);
+        return HistoryBody_MealSoon(minute: var_minute, portions: var_portions);
+      case 13:
+        var var_adapter = sse_decode_opt_box_autoadd_bool(deserializer);
+        return HistoryBody_Supply(adapter: var_adapter);
+      case 14:
+        var var_reason = sse_decode_blocked(deserializer);
+        return HistoryBody_DispenseRefused(reason: var_reason);
+      case 15:
+        var var_level = sse_decode_food_level(deserializer);
+        return HistoryBody_Food(level: var_level);
+      case 16:
+        var var_from = sse_decode_u_64(deserializer);
+        var var_to = sse_decode_u_64(deserializer);
+        return HistoryBody_Gap(from: var_from, to: var_to);
+      case 17:
+        return HistoryBody_Other();
+      default:
+        throw UnimplementedError('');
+    }
+  }
+
+  @protected
+  HistoryEntry sse_decode_history_entry(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_seq = sse_decode_u_64(deserializer);
+    var var_atMs = sse_decode_opt_box_autoadd_i_64(deserializer);
+    var var_body = sse_decode_history_body(deserializer);
+    return HistoryEntry(seq: var_seq, atMs: var_atMs, body: var_body);
+  }
+
+  @protected
   int sse_decode_i_32(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return deserializer.buffer.getInt32();
+  }
+
+  @protected
+  PlatformInt64 sse_decode_i_64(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return deserializer.buffer.getPlatformInt64();
   }
 
   @protected
@@ -3542,6 +5807,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  InviteView sse_decode_invite_view(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_text = sse_decode_String(deserializer);
+    var var_seconds = sse_decode_u_16(deserializer);
+    var var_role = sse_decode_client_role(deserializer);
+    return InviteView(text: var_text, seconds: var_seconds, role: var_role);
+  }
+
+  @protected
   KnownFeeder sse_decode_known_feeder(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_identity = sse_decode_String(deserializer);
@@ -3562,6 +5836,32 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var ans_ = <String>[];
     for (var idx_ = 0; idx_ < len_; ++idx_) {
       ans_.add(sse_decode_String(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<ClientView> sse_decode_list_client_view(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <ClientView>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_client_view(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<HistoryEntry> sse_decode_list_history_entry(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <HistoryEntry>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_history_entry(deserializer));
     }
     return ans_;
   }
@@ -3593,6 +5893,53 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<MealView> sse_decode_list_meal_view(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <MealView>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_meal_view(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<PlanView?> sse_decode_list_opt_box_autoadd_plan_view(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <PlanView?>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_opt_box_autoadd_plan_view(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<int?> sse_decode_list_opt_box_autoadd_u_16(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <int?>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_opt_box_autoadd_u_16(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  Uint32List sse_decode_list_prim_u_32_strict(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var len_ = sse_decode_i_32(deserializer);
+    return deserializer.buffer.getUint32List(len_);
+  }
+
+  @protected
   List<int> sse_decode_list_prim_u_8_loose(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var len_ = sse_decode_i_32(deserializer);
@@ -3614,6 +5961,42 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var ans_ = <SetupStep>[];
     for (var idx_ = 0; idx_ < len_; ++idx_) {
       ans_.add(sse_decode_setup_step(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<TaskStack> sse_decode_list_task_stack(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <TaskStack>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_task_stack(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<TraceEntry> sse_decode_list_trace_entry(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <TraceEntry>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_trace_entry(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<Weekday> sse_decode_list_weekday(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <Weekday>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_weekday(deserializer));
     }
     return ans_;
   }
@@ -3641,6 +6024,122 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         return ListenUpdate_Failed(detail: var_detail);
       case 5:
         return ListenUpdate_Stopped();
+      default:
+        throw UnimplementedError('');
+    }
+  }
+
+  @protected
+  MealReminder sse_decode_meal_reminder(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var tag_ = sse_decode_i_32(deserializer);
+    switch (tag_) {
+      case 0:
+        return MealReminder_Off();
+      case 1:
+        var var_minutes = sse_decode_u_8(deserializer);
+        return MealReminder_Before(minutes: var_minutes);
+      default:
+        throw UnimplementedError('');
+    }
+  }
+
+  @protected
+  MealStanding sse_decode_meal_standing(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var tag_ = sse_decode_i_32(deserializer);
+    switch (tag_) {
+      case 0:
+        var var_result = sse_decode_box_autoadd_feed_result(deserializer);
+        return MealStanding_Fed(result: var_result);
+      case 1:
+        return MealStanding_Passed();
+      case 2:
+        var var_atMs = sse_decode_i_64(deserializer);
+        return MealStanding_Next(atMs: var_atMs);
+      case 3:
+        return MealStanding_Later();
+      default:
+        throw UnimplementedError('');
+    }
+  }
+
+  @protected
+  MealView sse_decode_meal_view(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_slot = sse_decode_u_8(deserializer);
+    var var_minute = sse_decode_u_16(deserializer);
+    var var_portions = sse_decode_u_8(deserializer);
+    var var_call = sse_decode_u_8(deserializer);
+    var var_standing = sse_decode_meal_standing(deserializer);
+    return MealView(
+      slot: var_slot,
+      minute: var_minute,
+      portions: var_portions,
+      call: var_call,
+      standing: var_standing,
+    );
+  }
+
+  @protected
+  Memory sse_decode_memory(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_heapFree = sse_decode_u_32(deserializer);
+    var var_heapMin = sse_decode_u_32(deserializer);
+    var var_tasks = sse_decode_list_task_stack(deserializer);
+    var var_tasksTotal = sse_decode_u_32(deserializer);
+    return Memory(
+      heapFree: var_heapFree,
+      heapMin: var_heapMin,
+      tasks: var_tasks,
+      tasksTotal: var_tasksTotal,
+    );
+  }
+
+  @protected
+  NextMealView sse_decode_next_meal_view(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_atMs = sse_decode_i_64(deserializer);
+    var var_minute = sse_decode_u_16(deserializer);
+    var var_portions = sse_decode_u_8(deserializer);
+    return NextMealView(
+      atMs: var_atMs,
+      minute: var_minute,
+      portions: var_portions,
+    );
+  }
+
+  @protected
+  NotAsked sse_decode_not_asked(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return NotAsked.values[inner];
+  }
+
+  @protected
+  NtpResult sse_decode_ntp_result(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return NtpResult.values[inner];
+  }
+
+  @protected
+  NtpView sse_decode_ntp_view(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var tag_ = sse_decode_i_32(deserializer);
+    switch (tag_) {
+      case 0:
+        return NtpView_Off();
+      case 1:
+        var var_port = sse_decode_u_16(deserializer);
+        return NtpView_Gateway(port: var_port);
+      case 2:
+        var var_ip = sse_decode_String(deserializer);
+        var var_port = sse_decode_u_16(deserializer);
+        return NtpView_Address(ip: var_ip, port: var_port);
       default:
         throw UnimplementedError('');
     }
@@ -3693,13 +6192,35 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  FeedOutcome? sse_decode_opt_box_autoadd_feed_outcome(
+  Counts? sse_decode_opt_box_autoadd_counts(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_counts(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  Erases? sse_decode_opt_box_autoadd_erases(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_erases(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  FaultView? sse_decode_opt_box_autoadd_fault_view(
     SseDeserializer deserializer,
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
     if (sse_decode_bool(deserializer)) {
-      return (sse_decode_box_autoadd_feed_outcome(deserializer));
+      return (sse_decode_box_autoadd_fault_view(deserializer));
     } else {
       return null;
     }
@@ -3719,6 +6240,113 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  FeedResult? sse_decode_opt_box_autoadd_feed_result(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_feed_result(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  int? sse_decode_opt_box_autoadd_i_32(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_i_32(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  PlatformInt64? sse_decode_opt_box_autoadd_i_64(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_i_64(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  MealReminder? sse_decode_opt_box_autoadd_meal_reminder(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_meal_reminder(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  NextMealView? sse_decode_opt_box_autoadd_next_meal_view(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_next_meal_view(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  NtpResult? sse_decode_opt_box_autoadd_ntp_result(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_ntp_result(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  Phase? sse_decode_opt_box_autoadd_phase(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_phase(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  PlanView? sse_decode_opt_box_autoadd_plan_view(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_plan_view(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  Resets? sse_decode_opt_box_autoadd_resets(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_resets(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
   SetupRefusal? sse_decode_opt_box_autoadd_setup_refusal(
     SseDeserializer deserializer,
   ) {
@@ -3732,11 +6360,70 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  TimeInfo? sse_decode_opt_box_autoadd_time_info(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_time_info(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  TimeSource? sse_decode_opt_box_autoadd_time_source(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_time_source(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  TraceSummary? sse_decode_opt_box_autoadd_trace_summary(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_trace_summary(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  int? sse_decode_opt_box_autoadd_u_16(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_u_16(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
   int? sse_decode_opt_box_autoadd_u_32(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
     if (sse_decode_bool(deserializer)) {
       return (sse_decode_box_autoadd_u_32(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  BigInt? sse_decode_opt_box_autoadd_u_64(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_u_64(deserializer));
     } else {
       return null;
     }
@@ -3767,10 +6454,103 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  Window? sse_decode_opt_box_autoadd_window(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_window(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  ZoneChange? sse_decode_opt_box_autoadd_zone_change(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_zone_change(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  List<Weekday>? sse_decode_opt_list_weekday(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_list_weekday(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
   PendingInstall sse_decode_pending_install(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var inner = sse_decode_i_32(deserializer);
     return PendingInstall.values[inner];
+  }
+
+  @protected
+  Phase sse_decode_phase(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return Phase.values[inner];
+  }
+
+  @protected
+  PlanEdit sse_decode_plan_edit(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var tag_ = sse_decode_i_32(deserializer);
+    switch (tag_) {
+      case 0:
+        var var_plan = sse_decode_box_autoadd_plan_view(deserializer);
+        return PlanEdit_Add(plan: var_plan);
+      case 1:
+        var var_slot = sse_decode_u_8(deserializer);
+        var var_minute = sse_decode_opt_box_autoadd_u_16(deserializer);
+        var var_portions = sse_decode_opt_box_autoadd_u_8(deserializer);
+        var var_days = sse_decode_opt_list_weekday(deserializer);
+        var var_call = sse_decode_opt_box_autoadd_u_8(deserializer);
+        return PlanEdit_Change(
+          slot: var_slot,
+          minute: var_minute,
+          portions: var_portions,
+          days: var_days,
+          call: var_call,
+        );
+      case 2:
+        var var_slot = sse_decode_u_8(deserializer);
+        var var_enabled = sse_decode_bool(deserializer);
+        return PlanEdit_Enabled(slot: var_slot, enabled: var_enabled);
+      case 3:
+        var var_slot = sse_decode_u_8(deserializer);
+        return PlanEdit_Delete(slot: var_slot);
+      default:
+        throw UnimplementedError('');
+    }
+  }
+
+  @protected
+  PlanView sse_decode_plan_view(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_minute = sse_decode_u_16(deserializer);
+    var var_portions = sse_decode_u_8(deserializer);
+    var var_days = sse_decode_list_weekday(deserializer);
+    var var_enabled = sse_decode_bool(deserializer);
+    var var_call = sse_decode_u_8(deserializer);
+    return PlanView(
+      minute: var_minute,
+      portions: var_portions,
+      days: var_days,
+      enabled: var_enabled,
+      call: var_call,
+    );
   }
 
   @protected
@@ -3781,10 +6561,107 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  PlansView sse_decode_plans_view(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_generation = sse_decode_u_32(deserializer);
+    var var_writable = sse_decode_bool(deserializer);
+    var var_plans = sse_decode_list_opt_box_autoadd_plan_view(deserializer);
+    return PlansView(
+      generation: var_generation,
+      writable: var_writable,
+      plans: var_plans,
+    );
+  }
+
+  @protected
+  PortionChange sse_decode_portion_change(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var tag_ = sse_decode_i_32(deserializer);
+    switch (tag_) {
+      case 0:
+        return PortionChange_Clear();
+      case 1:
+        var var_mg = sse_decode_u_32(deserializer);
+        return PortionChange_Milligrams(mg: var_mg);
+      case 2:
+        var var_grams = sse_decode_String(deserializer);
+        var var_portions = sse_decode_u_32(deserializer);
+        return PortionChange_Weighed(grams: var_grams, portions: var_portions);
+      default:
+        throw UnimplementedError('');
+    }
+  }
+
+  @protected
+  Portions sse_decode_portions(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_portions = sse_decode_u_32(deserializer);
+    var var_homed = sse_decode_u_32(deserializer);
+    var var_outletBreaks = sse_decode_u_32(deserializer);
+    var var_portionMg = sse_decode_opt_box_autoadd_u_32(deserializer);
+    var var_deliveredMg = sse_decode_opt_box_autoadd_u_64(deserializer);
+    return Portions(
+      portions: var_portions,
+      homed: var_homed,
+      outletBreaks: var_outletBreaks,
+      portionMg: var_portionMg,
+      deliveredMg: var_deliveredMg,
+    );
+  }
+
+  @protected
+  PowerStats sse_decode_power_stats(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_adapter = sse_decode_opt_box_autoadd_bool(deserializer);
+    var var_adapterChanges = sse_decode_u_32(deserializer);
+    var var_outages = sse_decode_u_32(deserializer);
+    var var_batteryS = sse_decode_u_32(deserializer);
+    var var_batteryMinMv = sse_decode_opt_box_autoadd_u_32(deserializer);
+    var var_batteryMaxMv = sse_decode_opt_box_autoadd_u_32(deserializer);
+    var var_batteryMv = sse_decode_list_opt_box_autoadd_u_16(deserializer);
+    var var_periodS = sse_decode_u_32(deserializer);
+    return PowerStats(
+      adapter: var_adapter,
+      adapterChanges: var_adapterChanges,
+      outages: var_outages,
+      batteryS: var_batteryS,
+      batteryMinMv: var_batteryMinMv,
+      batteryMaxMv: var_batteryMaxMv,
+      batteryMv: var_batteryMv,
+      periodS: var_periodS,
+    );
+  }
+
+  @protected
   RequestRefusal sse_decode_request_refusal(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var inner = sse_decode_i_32(deserializer);
     return RequestRefusal.values[inner];
+  }
+
+  @protected
+  ResetCause sse_decode_reset_cause(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return ResetCause.values[inner];
+  }
+
+  @protected
+  Resets sse_decode_resets(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_powerOn = sse_decode_u_32(deserializer);
+    var var_watchdog = sse_decode_u_32(deserializer);
+    var var_software = sse_decode_u_32(deserializer);
+    var var_brownout = sse_decode_u_32(deserializer);
+    var var_other = sse_decode_u_32(deserializer);
+    return Resets(
+      powerOn: var_powerOn,
+      watchdog: var_watchdog,
+      software: var_software,
+      brownout: var_brownout,
+      other: var_other,
+    );
   }
 
   @protected
@@ -3830,11 +6707,77 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case 8:
         return SessionUpdate_ClockNotSynced();
       case 9:
+        var var_entries = sse_decode_list_history_entry(deserializer);
+        var var_caughtUp = sse_decode_bool(deserializer);
+        return SessionUpdate_History(
+          entries: var_entries,
+          caughtUp: var_caughtUp,
+        );
+      case 10:
+        var var_seq = sse_decode_u_32(deserializer);
+        var var_dropped = sse_decode_u_32(deserializer);
+        var var_lines = sse_decode_list_String(deserializer);
+        return SessionUpdate_Log(
+          seq: var_seq,
+          dropped: var_dropped,
+          lines: var_lines,
+        );
+      case 11:
         var var_error = sse_decode_opt_box_autoadd_bridge_error(deserializer);
         return SessionUpdate_Closed(error: var_error);
       default:
         throw UnimplementedError('');
     }
+  }
+
+  @protected
+  SettingsChanges sse_decode_settings_changes(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_lights = sse_decode_opt_box_autoadd_bool(deserializer);
+    var var_sound = sse_decode_opt_box_autoadd_bool(deserializer);
+    var var_volume = sse_decode_opt_box_autoadd_u_8(deserializer);
+    var var_lightsWindow = sse_decode_opt_box_autoadd_window(deserializer);
+    var var_soundWindow = sse_decode_opt_box_autoadd_window(deserializer);
+    var var_desiccantDays = sse_decode_opt_box_autoadd_u_8(deserializer);
+    var var_mealReminder = sse_decode_opt_box_autoadd_meal_reminder(
+      deserializer,
+    );
+    return SettingsChanges(
+      lights: var_lights,
+      sound: var_sound,
+      volume: var_volume,
+      lightsWindow: var_lightsWindow,
+      soundWindow: var_soundWindow,
+      desiccantDays: var_desiccantDays,
+      mealReminder: var_mealReminder,
+    );
+  }
+
+  @protected
+  SettingsView sse_decode_settings_view(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_generation = sse_decode_u_32(deserializer);
+    var var_lights = sse_decode_bool(deserializer);
+    var var_sound = sse_decode_bool(deserializer);
+    var var_volume = sse_decode_u_8(deserializer);
+    var var_lightsWindow = sse_decode_window(deserializer);
+    var var_soundWindow = sse_decode_window(deserializer);
+    var var_desiccantDays = sse_decode_u_8(deserializer);
+    var var_desiccantReplaced = sse_decode_opt_String(deserializer);
+    var var_mealReminder = sse_decode_meal_reminder(deserializer);
+    var var_writable = sse_decode_bool(deserializer);
+    return SettingsView(
+      generation: var_generation,
+      lights: var_lights,
+      sound: var_sound,
+      volume: var_volume,
+      lightsWindow: var_lightsWindow,
+      soundWindow: var_soundWindow,
+      desiccantDays: var_desiccantDays,
+      desiccantReplaced: var_desiccantReplaced,
+      mealReminder: var_mealReminder,
+      writable: var_writable,
+    );
   }
 
   @protected
@@ -3874,6 +6817,45 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       default:
         throw UnimplementedError('');
     }
+  }
+
+  @protected
+  Stats sse_decode_stats(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var tag_ = sse_decode_i_32(deserializer);
+    switch (tag_) {
+      case 0:
+        var var_field0 = sse_decode_box_autoadd_counters(deserializer);
+        return Stats_Counters(var_field0);
+      case 1:
+        var var_field0 = sse_decode_box_autoadd_memory(deserializer);
+        return Stats_Memory(var_field0);
+      case 2:
+        var var_field0 = sse_decode_box_autoadd_flash(deserializer);
+        return Stats_Flash(var_field0);
+      case 3:
+        var var_field0 = sse_decode_box_autoadd_power_stats(deserializer);
+        return Stats_Power(var_field0);
+      case 4:
+        var var_field0 = sse_decode_box_autoadd_food(deserializer);
+        return Stats_Food(var_field0);
+      case 5:
+        var var_field0 = sse_decode_box_autoadd_feed_stats(deserializer);
+        return Stats_Feeds(var_field0);
+      case 6:
+        var var_field0 = sse_decode_box_autoadd_portions(deserializer);
+        return Stats_Portions(var_field0);
+      default:
+        throw UnimplementedError('');
+    }
+  }
+
+  @protected
+  StatsSection sse_decode_stats_section(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return StatsSection.values[inner];
   }
 
   @protected
@@ -3955,6 +6937,163 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  TaskStack sse_decode_task_stack(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_name = sse_decode_String(deserializer);
+    var var_freeMin = sse_decode_u_32(deserializer);
+    return TaskStack(name: var_name, freeMin: var_freeMin);
+  }
+
+  @protected
+  TimeInfo sse_decode_time_info(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_generation = sse_decode_u_32(deserializer);
+    var var_writable = sse_decode_bool(deserializer);
+    var var_zone = sse_decode_opt_String(deserializer);
+    var var_ntp = sse_decode_ntp_view(deserializer);
+    var var_clockMs = sse_decode_opt_box_autoadd_i_64(deserializer);
+    var var_errorMs = sse_decode_opt_box_autoadd_u_32(deserializer);
+    var var_offsetS = sse_decode_opt_box_autoadd_i_32(deserializer);
+    var var_syncs = sse_decode_u_32(deserializer);
+    var var_last = sse_decode_opt_box_autoadd_time_source(deserializer);
+    var var_lastAtMs = sse_decode_opt_box_autoadd_i_64(deserializer);
+    var var_ntpLast = sse_decode_opt_box_autoadd_ntp_result(deserializer);
+    return TimeInfo(
+      generation: var_generation,
+      writable: var_writable,
+      zone: var_zone,
+      ntp: var_ntp,
+      clockMs: var_clockMs,
+      errorMs: var_errorMs,
+      offsetS: var_offsetS,
+      syncs: var_syncs,
+      last: var_last,
+      lastAtMs: var_lastAtMs,
+      ntpLast: var_ntpLast,
+    );
+  }
+
+  @protected
+  TimeSource sse_decode_time_source(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return TimeSource.values[inner];
+  }
+
+  @protected
+  TraceEntry sse_decode_trace_entry(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var tag_ = sse_decode_i_32(deserializer);
+    switch (tag_) {
+      case 0:
+        var var_atMs = sse_decode_u_32(deserializer);
+        var var_value = sse_decode_u_32(deserializer);
+        return TraceEntry_Current(atMs: var_atMs, value: var_value);
+      case 1:
+        var var_atMs = sse_decode_u_32(deserializer);
+        var var_edges = sse_decode_u_32(deserializer);
+        var var_high = sse_decode_bool(deserializer);
+        return TraceEntry_Mark(
+          atMs: var_atMs,
+          edges: var_edges,
+          high: var_high,
+        );
+      case 2:
+        var var_atMs = sse_decode_u_32(deserializer);
+        var var_outletClear = sse_decode_bool(deserializer);
+        var var_food = sse_decode_bool(deserializer);
+        return TraceEntry_Beams(
+          atMs: var_atMs,
+          outletClear: var_outletClear,
+          food: var_food,
+        );
+      case 3:
+        var var_atMs = sse_decode_u_32(deserializer);
+        var var_mv = sse_decode_u_32(deserializer);
+        return TraceEntry_Battery(atMs: var_atMs, mv: var_mv);
+      case 4:
+        var var_atMs = sse_decode_u_32(deserializer);
+        var var_motor = sse_decode_trace_motor(deserializer);
+        return TraceEntry_Motor(atMs: var_atMs, motor: var_motor);
+      default:
+        throw UnimplementedError('');
+    }
+  }
+
+  @protected
+  TraceMotor sse_decode_trace_motor(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return TraceMotor.values[inner];
+  }
+
+  @protected
+  TraceSummary sse_decode_trace_summary(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_feed = sse_decode_u_32(deserializer);
+    var var_requested = sse_decode_u_8(deserializer);
+    var var_completed = sse_decode_u_8(deserializer);
+    var var_outcome = sse_decode_feed_outcome(deserializer);
+    var var_reason = sse_decode_feed_reason(deserializer);
+    var var_driveMs = sse_decode_u_32(deserializer);
+    var var_samples = sse_decode_u_32(deserializer);
+    var var_unit = sse_decode_current_unit(deserializer);
+    var var_currentPeak = sse_decode_u_32(deserializer);
+    var var_currentMean = sse_decode_opt_box_autoadd_u_32(deserializer);
+    var var_rising = sse_decode_u_16(deserializer);
+    var var_falling = sse_decode_u_16(deserializer);
+    var var_firstEdgeMs = sse_decode_opt_box_autoadd_u_32(deserializer);
+    var var_beamBreaks = sse_decode_u_16(deserializer);
+    var var_reversals = sse_decode_u_16(deserializer);
+    var var_batteryRestMv = sse_decode_opt_box_autoadd_u_16(deserializer);
+    var var_batteryMinMv = sse_decode_opt_box_autoadd_u_16(deserializer);
+    var var_stride = sse_decode_u_16(deserializer);
+    var var_truncated = sse_decode_bool(deserializer);
+    return TraceSummary(
+      feed: var_feed,
+      requested: var_requested,
+      completed: var_completed,
+      outcome: var_outcome,
+      reason: var_reason,
+      driveMs: var_driveMs,
+      samples: var_samples,
+      unit: var_unit,
+      currentPeak: var_currentPeak,
+      currentMean: var_currentMean,
+      rising: var_rising,
+      falling: var_falling,
+      firstEdgeMs: var_firstEdgeMs,
+      beamBreaks: var_beamBreaks,
+      reversals: var_reversals,
+      batteryRestMv: var_batteryRestMv,
+      batteryMinMv: var_batteryMinMv,
+      stride: var_stride,
+      truncated: var_truncated,
+    );
+  }
+
+  @protected
+  TraceView sse_decode_trace_view(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_summary = sse_decode_trace_summary(deserializer);
+    var var_stored = sse_decode_bool(deserializer);
+    var var_entries = sse_decode_list_trace_entry(deserializer);
+    return TraceView(
+      summary: var_summary,
+      stored: var_stored,
+      entries: var_entries,
+    );
+  }
+
+  @protected
+  Tune sse_decode_tune(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return Tune.values[inner];
+  }
+
+  @protected
   int sse_decode_u_16(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return deserializer.buffer.getUint16();
@@ -3991,6 +7130,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  UpdateRefusal sse_decode_update_refusal(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return UpdateRefusal.values[inner];
+  }
+
+  @protected
   BigInt sse_decode_usize(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return deserializer.buffer.getBigUint64();
@@ -4001,6 +7147,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var inner = sse_decode_i_32(deserializer);
     return WaitReason.values[inner];
+  }
+
+  @protected
+  Weekday sse_decode_weekday(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return Weekday.values[inner];
   }
 
   @protected
@@ -4016,6 +7169,41 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var inner = sse_decode_i_32(deserializer);
     return WifiSaved.values[inner];
+  }
+
+  @protected
+  Window sse_decode_window(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var tag_ = sse_decode_i_32(deserializer);
+    switch (tag_) {
+      case 0:
+        return Window_Always();
+      case 1:
+        var var_start = sse_decode_u_16(deserializer);
+        var var_end = sse_decode_u_16(deserializer);
+        return Window_Between(start: var_start, end: var_end);
+      default:
+        throw UnimplementedError('');
+    }
+  }
+
+  @protected
+  ZoneChange sse_decode_zone_change(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var tag_ = sse_decode_i_32(deserializer);
+    switch (tag_) {
+      case 0:
+        return ZoneChange_Phone();
+      case 1:
+        var var_name = sse_decode_String(deserializer);
+        return ZoneChange_Named(name: var_name);
+      case 2:
+        return ZoneChange_Clear();
+      default:
+        throw UnimplementedError('');
+    }
   }
 
   @protected
@@ -4368,6 +7556,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_bowl(Bowl self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
   void sse_encode_box_autoadd_app_store(
     AppStore self,
     SseSerializer serializer,
@@ -4398,9 +7592,42 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_box_autoadd_calibration_info(
+    CalibrationInfo self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_calibration_info(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_call_info(
+    CallInfo self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_call_info(self, serializer);
+  }
+
+  @protected
   void sse_encode_box_autoadd_card(Card self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_card(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_counters(
+    Counters self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_counters(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_counts(Counts self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_counts(self, serializer);
   }
 
   @protected
@@ -4413,12 +7640,24 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  void sse_encode_box_autoadd_feed_outcome(
-    FeedOutcome self,
+  void sse_encode_box_autoadd_erases(Erases self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_erases(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_fault_view(
+    FaultView self,
     SseSerializer serializer,
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_feed_outcome(self, serializer);
+    sse_encode_fault_view(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_fed_by(FedBy self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_fed_by(self, serializer);
   }
 
   @protected
@@ -4437,6 +7676,60 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_feed_result(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_feed_stats(
+    FeedStats self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_feed_stats(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_feeder_refusal(
+    FeederRefusal self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_feeder_refusal(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_feeder_request(
+    FeederRequest self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_feeder_request(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_flash(Flash self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_flash(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_food(Food self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_food(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_i_32(int self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_i_64(
+    PlatformInt64 self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_64(self, serializer);
   }
 
   @protected
@@ -4485,12 +7778,144 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_box_autoadd_invite_view(
+    InviteView self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_invite_view(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_meal_reminder(
+    MealReminder self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_meal_reminder(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_memory(Memory self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_memory(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_next_meal_view(
+    NextMealView self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_next_meal_view(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_ntp_result(
+    NtpResult self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_ntp_result(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_phase(Phase self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_phase(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_plan_edit(
+    PlanEdit self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_plan_edit(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_plan_view(
+    PlanView self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_plan_view(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_plans_view(
+    PlansView self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_plans_view(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_portion_change(
+    PortionChange self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_portion_change(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_portions(
+    Portions self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_portions(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_power_stats(
+    PowerStats self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_power_stats(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_resets(Resets self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_resets(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_settings_changes(
+    SettingsChanges self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_settings_changes(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_settings_view(
+    SettingsView self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_settings_view(self, serializer);
+  }
+
+  @protected
   void sse_encode_box_autoadd_setup_refusal(
     SetupRefusal self,
     SseSerializer serializer,
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_setup_refusal(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_stats(Stats self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_stats(self, serializer);
   }
 
   @protected
@@ -4503,9 +7928,57 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_box_autoadd_time_info(
+    TimeInfo self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_time_info(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_time_source(
+    TimeSource self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_time_source(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_trace_summary(
+    TraceSummary self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_trace_summary(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_trace_view(
+    TraceView self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_trace_view(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_u_16(int self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_16(self, serializer);
+  }
+
+  @protected
   void sse_encode_box_autoadd_u_32(int self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_u_32(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_u_64(BigInt self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_64(self, serializer);
   }
 
   @protected
@@ -4521,6 +7994,21 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_wifi_credentials(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_window(Window self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_window(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_zone_change(
+    ZoneChange self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_zone_change(self, serializer);
   }
 
   @protected
@@ -4543,6 +8031,49 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_calibration_info(
+    CalibrationInfo self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_32(self.generation, serializer);
+    sse_encode_bool(self.writable, serializer);
+    sse_encode_opt_box_autoadd_u_32(self.portionMg, serializer);
+    sse_encode_bowl(self.bowl, serializer);
+    sse_encode_opt_box_autoadd_phase(self.phase, serializer);
+  }
+
+  @protected
+  void sse_encode_call_clip(CallClip self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    switch (self) {
+      case CallClip_None():
+        sse_encode_i_32(0, serializer);
+      case CallClip_Receiving(
+        bytes: final bytes,
+        crc: final crc,
+        received: final received,
+      ):
+        sse_encode_i_32(1, serializer);
+        sse_encode_u_32(bytes, serializer);
+        sse_encode_u_32(crc, serializer);
+        sse_encode_u_32(received, serializer);
+      case CallClip_Stored(bytes: final bytes, crc: final crc):
+        sse_encode_i_32(2, serializer);
+        sse_encode_u_32(bytes, serializer);
+        sse_encode_u_32(crc, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_call_info(CallInfo self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_bool(self.writable, serializer);
+    sse_encode_call_clip(self.clip, serializer);
+    sse_encode_opt_box_autoadd_u_32(self.ms, serializer);
+  }
+
+  @protected
   void sse_encode_card(Card self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_String(self.build, serializer);
@@ -4554,13 +8085,77 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_opt_box_autoadd_u_8(self.batteryPercent, serializer);
     sse_encode_bool(self.clockSet, serializer);
     sse_encode_i_32(self.rssi, serializer);
-    sse_encode_opt_box_autoadd_feed_outcome(self.fault, serializer);
+    sse_encode_opt_box_autoadd_fault_view(self.fault, serializer);
+    sse_encode_desiccant(self.desiccant, serializer);
+    sse_encode_u_32(self.uptimeMs, serializer);
+    sse_encode_u_8(self.bank, serializer);
+    sse_encode_opt_box_autoadd_next_meal_view(self.nextMeal, serializer);
+    sse_encode_opt_box_autoadd_feed_result(self.lastFed, serializer);
+    sse_encode_list_meal_view(self.meals, serializer);
+    sse_encode_opt_box_autoadd_time_info(self.time, serializer);
   }
 
   @protected
   void sse_encode_client_role(ClientRole self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_client_view(ClientView self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_list_prim_u_8_strict(self.key, serializer);
+    sse_encode_String(self.fingerprint, serializer);
+    sse_encode_String(self.label, serializer);
+    sse_encode_client_role(self.role, serializer);
+    sse_encode_bool(self.you, serializer);
+  }
+
+  @protected
+  void sse_encode_counters(Counters self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_counts(self.boot, serializer);
+    sse_encode_reset_cause(self.reset, serializer);
+    sse_encode_opt_box_autoadd_counts(self.lifetime, serializer);
+    sse_encode_opt_box_autoadd_resets(self.resets, serializer);
+    sse_encode_u_32(self.handshakeMaxMs, serializer);
+    sse_encode_u_32(self.handshakeMeanMs, serializer);
+  }
+
+  @protected
+  void sse_encode_counts(Counts self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_32(self.uptimeS, serializer);
+    sse_encode_u_32(self.feeds, serializer);
+    sse_encode_u_32(self.feedsFailed, serializer);
+    sse_encode_u_32(self.portions, serializer);
+    sse_encode_u_32(self.presses, serializer);
+    sse_encode_u_32(self.sessions, serializer);
+    sse_encode_u_32(self.reconnects, serializer);
+    sse_encode_u_32(self.dhcpRenewals, serializer);
+    sse_encode_u_32(self.outages, serializer);
+    sse_encode_u_32(self.batteryS, serializer);
+  }
+
+  @protected
+  void sse_encode_current_unit(CurrentUnit self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_desiccant(Desiccant self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    switch (self) {
+      case Desiccant_Unset():
+        sse_encode_i_32(0, serializer);
+      case Desiccant_Unknown():
+        sse_encode_i_32(1, serializer);
+      case Desiccant_Remaining(days: final days, due: final due):
+        sse_encode_i_32(2, serializer);
+        sse_encode_i_32(days, serializer);
+        sse_encode_bool(due, serializer);
+    }
   }
 
   @protected
@@ -4589,9 +8184,44 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_erases(Erases self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_list_prim_u_32_strict(self.storage, serializer);
+    sse_encode_u_32(self.update, serializer);
+  }
+
+  @protected
   void sse_encode_error_kind(ErrorKind self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_fault_view(FaultView self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_32(self.feed, serializer);
+    sse_encode_feed_outcome(self.outcome, serializer);
+    sse_encode_feed_reason(self.reason, serializer);
+    sse_encode_opt_box_autoadd_feed_result(self.result, serializer);
+  }
+
+  @protected
+  void sse_encode_fed_by(FedBy self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    switch (self) {
+      case FedBy_Panel():
+        sse_encode_i_32(0, serializer);
+      case FedBy_Client(fingerprint: final fingerprint):
+        sse_encode_i_32(1, serializer);
+        sse_encode_String(fingerprint, serializer);
+      case FedBy_Feeder():
+        sse_encode_i_32(2, serializer);
+      case FedBy_Plan(slot: final slot):
+        sse_encode_i_32(3, serializer);
+        sse_encode_u_8(slot, serializer);
+      case FedBy_Unknown():
+        sse_encode_i_32(4, serializer);
+    }
   }
 
   @protected
@@ -4623,6 +8253,224 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_feed_reason(self.reason, serializer);
     sse_encode_bool(self.uncertain, serializer);
     sse_encode_String(self.words, serializer);
+    sse_encode_opt_box_autoadd_i_64(self.atMs, serializer);
+    sse_encode_fed_by(self.by, serializer);
+    sse_encode_food_level(self.hopper, serializer);
+  }
+
+  @protected
+  void sse_encode_feed_stats(FeedStats self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_32(self.traced, serializer);
+    sse_encode_u_32(self.driveMs, serializer);
+    sse_encode_u_32(self.samples, serializer);
+    sse_encode_current_unit(self.unit, serializer);
+    sse_encode_u_32(self.currentPeak, serializer);
+    sse_encode_opt_box_autoadd_u_32(self.currentMean, serializer);
+    sse_encode_u_32(self.rising, serializer);
+    sse_encode_u_32(self.falling, serializer);
+    sse_encode_u_32(self.beamBreaks, serializer);
+    sse_encode_u_32(self.reversals, serializer);
+    sse_encode_u_32(self.kept, serializer);
+    sse_encode_u_32(self.capacity, serializer);
+    sse_encode_u_32(self.unsaved, serializer);
+    sse_encode_opt_box_autoadd_trace_summary(self.last, serializer);
+  }
+
+  @protected
+  void sse_encode_feeder_refusal(FeederRefusal self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    switch (self) {
+      case FeederRefusal_Forbidden():
+        sse_encode_i_32(0, serializer);
+      case FeederRefusal_Stale(current: final current):
+        sse_encode_i_32(1, serializer);
+        sse_encode_u_32(current, serializer);
+      case FeederRefusal_Busy():
+        sse_encode_i_32(2, serializer);
+      case FeederRefusal_Unavailable():
+        sse_encode_i_32(3, serializer);
+      case FeederRefusal_Invalid():
+        sse_encode_i_32(4, serializer);
+      case FeederRefusal_NotWritable():
+        sse_encode_i_32(5, serializer);
+      case FeederRefusal_Full():
+        sse_encode_i_32(6, serializer);
+      case FeederRefusal_NotFound():
+        sse_encode_i_32(7, serializer);
+      case FeederRefusal_Muted():
+        sse_encode_i_32(8, serializer);
+      case FeederRefusal_Time():
+        sse_encode_i_32(9, serializer);
+      case FeederRefusal_Fault():
+        sse_encode_i_32(10, serializer);
+      case FeederRefusal_Update(reason: final reason):
+        sse_encode_i_32(11, serializer);
+        sse_encode_update_refusal(reason, serializer);
+      case FeederRefusal_Unverified():
+        sse_encode_i_32(12, serializer);
+      case FeederRefusal_Portions(asked: final asked):
+        sse_encode_i_32(13, serializer);
+        sse_encode_u_8(asked, serializer);
+      case FeederRefusal_NoClock():
+        sse_encode_i_32(14, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_feeder_reply(FeederReply self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    switch (self) {
+      case FeederReply_Done(generation: final generation):
+        sse_encode_i_32(0, serializer);
+        sse_encode_opt_box_autoadd_u_32(generation, serializer);
+      case FeederReply_Settings(settings: final settings):
+        sse_encode_i_32(1, serializer);
+        sse_encode_box_autoadd_settings_view(settings, serializer);
+      case FeederReply_Time(time: final time):
+        sse_encode_i_32(2, serializer);
+        sse_encode_box_autoadd_time_info(time, serializer);
+      case FeederReply_Plans(plans: final plans):
+        sse_encode_i_32(3, serializer);
+        sse_encode_box_autoadd_plans_view(plans, serializer);
+      case FeederReply_Clients(clients: final clients):
+        sse_encode_i_32(4, serializer);
+        sse_encode_list_client_view(clients, serializer);
+      case FeederReply_Invite(invite: final invite):
+        sse_encode_i_32(5, serializer);
+        sse_encode_box_autoadd_invite_view(invite, serializer);
+      case FeederReply_Calibration(calibration: final calibration):
+        sse_encode_i_32(6, serializer);
+        sse_encode_box_autoadd_calibration_info(calibration, serializer);
+      case FeederReply_Call(call: final call):
+        sse_encode_i_32(7, serializer);
+        sse_encode_box_autoadd_call_info(call, serializer);
+      case FeederReply_Stats(stats: final stats):
+        sse_encode_i_32(8, serializer);
+        sse_encode_box_autoadd_stats(stats, serializer);
+      case FeederReply_Trace(trace: final trace):
+        sse_encode_i_32(9, serializer);
+        sse_encode_box_autoadd_trace_view(trace, serializer);
+      case FeederReply_Refused(refusal: final refusal):
+        sse_encode_i_32(10, serializer);
+        sse_encode_box_autoadd_feeder_refusal(refusal, serializer);
+      case FeederReply_NotAsked(reason: final reason):
+        sse_encode_i_32(11, serializer);
+        sse_encode_not_asked(reason, serializer);
+      case FeederReply_Unanswered():
+        sse_encode_i_32(12, serializer);
+      case FeederReply_NotSent():
+        sse_encode_i_32(13, serializer);
+      case FeederReply_Unexpected():
+        sse_encode_i_32(14, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_feeder_request(FeederRequest self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    switch (self) {
+      case FeederRequest_GetSettings():
+        sse_encode_i_32(0, serializer);
+      case FeederRequest_PutSettings(base: final base, changes: final changes):
+        sse_encode_i_32(1, serializer);
+        sse_encode_u_32(base, serializer);
+        sse_encode_box_autoadd_settings_changes(changes, serializer);
+      case FeederRequest_PutWifi(
+        base: final base,
+        ssid: final ssid,
+        passphrase: final passphrase,
+      ):
+        sse_encode_i_32(2, serializer);
+        sse_encode_u_32(base, serializer);
+        sse_encode_String(ssid, serializer);
+        sse_encode_String(passphrase, serializer);
+      case FeederRequest_ForgetWifi(base: final base):
+        sse_encode_i_32(3, serializer);
+        sse_encode_u_32(base, serializer);
+      case FeederRequest_SetLock(locked: final locked):
+        sse_encode_i_32(4, serializer);
+        sse_encode_bool(locked, serializer);
+      case FeederRequest_Play(tune: final tune):
+        sse_encode_i_32(5, serializer);
+        sse_encode_tune(tune, serializer);
+      case FeederRequest_SyncClock():
+        sse_encode_i_32(6, serializer);
+      case FeederRequest_GetTime():
+        sse_encode_i_32(7, serializer);
+      case FeederRequest_PutTime(
+        base: final base,
+        zone: final zone,
+        ntp: final ntp,
+      ):
+        sse_encode_i_32(8, serializer);
+        sse_encode_u_32(base, serializer);
+        sse_encode_opt_box_autoadd_zone_change(zone, serializer);
+        sse_encode_opt_String(ntp, serializer);
+      case FeederRequest_CreateInvite(role: final role):
+        sse_encode_i_32(9, serializer);
+        sse_encode_client_role(role, serializer);
+      case FeederRequest_ListClients():
+        sse_encode_i_32(10, serializer);
+      case FeederRequest_RevokeClient(key: final key):
+        sse_encode_i_32(11, serializer);
+        sse_encode_list_prim_u_8_strict(key, serializer);
+      case FeederRequest_Reboot():
+        sse_encode_i_32(12, serializer);
+      case FeederRequest_ResetDesiccant():
+        sse_encode_i_32(13, serializer);
+      case FeederRequest_Stats(section: final section):
+        sse_encode_i_32(14, serializer);
+        sse_encode_stats_section(section, serializer);
+      case FeederRequest_ReadTrace(feed: final feed):
+        sse_encode_i_32(15, serializer);
+        sse_encode_u_32(feed, serializer);
+      case FeederRequest_GetCalibration():
+        sse_encode_i_32(16, serializer);
+      case FeederRequest_PutCalibration(
+        base: final base,
+        portion: final portion,
+        bowl: final bowl,
+      ):
+        sse_encode_i_32(17, serializer);
+        sse_encode_u_32(base, serializer);
+        sse_encode_box_autoadd_portion_change(portion, serializer);
+        sse_encode_bowl(bowl, serializer);
+      case FeederRequest_GetPlans():
+        sse_encode_i_32(18, serializer);
+      case FeederRequest_EditPlans(plans: final plans, edit: final edit):
+        sse_encode_i_32(19, serializer);
+        sse_encode_box_autoadd_plans_view(plans, serializer);
+        sse_encode_box_autoadd_plan_edit(edit, serializer);
+      case FeederRequest_GetCall():
+        sse_encode_i_32(20, serializer);
+      case FeederRequest_UploadCall(wav: final wav):
+        sse_encode_i_32(21, serializer);
+        sse_encode_list_prim_u_8_strict(wav, serializer);
+      case FeederRequest_DeleteCall():
+        sse_encode_i_32(22, serializer);
+      case FeederRequest_TailLog(after: final after):
+        sse_encode_i_32(23, serializer);
+        sse_encode_opt_box_autoadd_u_32(after, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_flash(Flash self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_erases(self.boot, serializer);
+    sse_encode_opt_box_autoadd_erases(self.lifetime, serializer);
+    sse_encode_u_32(self.eventsKept, serializer);
+    sse_encode_u_32(self.eventsCapacity, serializer);
+  }
+
+  @protected
+  void sse_encode_food(Food self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_opt_box_autoadd_bool(self.present, serializer);
+    sse_encode_u_32(self.emptied, serializer);
+    sse_encode_u_32(self.refilled, serializer);
+    sse_encode_opt_box_autoadd_u_32(self.feedsSinceRefill, serializer);
   }
 
   @protected
@@ -4632,9 +8480,92 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_history_body(HistoryBody self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    switch (self) {
+      case HistoryBody_Fed(result: final result):
+        sse_encode_i_32(0, serializer);
+        sse_encode_box_autoadd_feed_result(result, serializer);
+      case HistoryBody_Missed(
+        slot: final slot,
+        dueMs: final dueMs,
+        late_: final late_,
+      ):
+        sse_encode_i_32(1, serializer);
+        sse_encode_u_8(slot, serializer);
+        sse_encode_i_64(dueMs, serializer);
+        sse_encode_bool(late_, serializer);
+      case HistoryBody_Restarted():
+        sse_encode_i_32(2, serializer);
+      case HistoryBody_Lock(locked: final locked, by: final by):
+        sse_encode_i_32(3, serializer);
+        sse_encode_bool(locked, serializer);
+        sse_encode_box_autoadd_fed_by(by, serializer);
+      case HistoryBody_SettingsChanged(by: final by):
+        sse_encode_i_32(4, serializer);
+        sse_encode_box_autoadd_fed_by(by, serializer);
+      case HistoryBody_WifiChanged(by: final by):
+        sse_encode_i_32(5, serializer);
+        sse_encode_box_autoadd_fed_by(by, serializer);
+      case HistoryBody_PlansChanged(by: final by):
+        sse_encode_i_32(6, serializer);
+        sse_encode_box_autoadd_fed_by(by, serializer);
+      case HistoryBody_Joined(fingerprint: final fingerprint):
+        sse_encode_i_32(7, serializer);
+        sse_encode_String(fingerprint, serializer);
+      case HistoryBody_Revoked(fingerprint: final fingerprint, by: final by):
+        sse_encode_i_32(8, serializer);
+        sse_encode_String(fingerprint, serializer);
+        sse_encode_box_autoadd_fed_by(by, serializer);
+      case HistoryBody_ClockSet(by: final by):
+        sse_encode_i_32(9, serializer);
+        sse_encode_box_autoadd_fed_by(by, serializer);
+      case HistoryBody_Lost(count: final count):
+        sse_encode_i_32(10, serializer);
+        sse_encode_u_16(count, serializer);
+      case HistoryBody_FeedingBlocked(reason: final reason):
+        sse_encode_i_32(11, serializer);
+        sse_encode_opt_box_autoadd_blocked(reason, serializer);
+      case HistoryBody_MealSoon(minute: final minute, portions: final portions):
+        sse_encode_i_32(12, serializer);
+        sse_encode_u_16(minute, serializer);
+        sse_encode_u_8(portions, serializer);
+      case HistoryBody_Supply(adapter: final adapter):
+        sse_encode_i_32(13, serializer);
+        sse_encode_opt_box_autoadd_bool(adapter, serializer);
+      case HistoryBody_DispenseRefused(reason: final reason):
+        sse_encode_i_32(14, serializer);
+        sse_encode_blocked(reason, serializer);
+      case HistoryBody_Food(level: final level):
+        sse_encode_i_32(15, serializer);
+        sse_encode_food_level(level, serializer);
+      case HistoryBody_Gap(from: final from, to: final to):
+        sse_encode_i_32(16, serializer);
+        sse_encode_u_64(from, serializer);
+        sse_encode_u_64(to, serializer);
+      case HistoryBody_Other():
+        sse_encode_i_32(17, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_history_entry(HistoryEntry self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_64(self.seq, serializer);
+    sse_encode_opt_box_autoadd_i_64(self.atMs, serializer);
+    sse_encode_history_body(self.body, serializer);
+  }
+
+  @protected
   void sse_encode_i_32(int self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     serializer.buffer.putInt32(self);
+  }
+
+  @protected
+  void sse_encode_i_64(PlatformInt64 self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    serializer.buffer.putPlatformInt64(self);
   }
 
   @protected
@@ -4898,6 +8829,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_invite_view(InviteView self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.text, serializer);
+    sse_encode_u_16(self.seconds, serializer);
+    sse_encode_client_role(self.role, serializer);
+  }
+
+  @protected
   void sse_encode_known_feeder(KnownFeeder self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_String(self.identity, serializer);
@@ -4911,6 +8850,30 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_i_32(self.length, serializer);
     for (final item in self) {
       sse_encode_String(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_client_view(
+    List<ClientView> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_client_view(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_history_entry(
+    List<HistoryEntry> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_history_entry(item, serializer);
     }
   }
 
@@ -4936,6 +8899,52 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     for (final item in self) {
       sse_encode_list_prim_u_8_strict(item, serializer);
     }
+  }
+
+  @protected
+  void sse_encode_list_meal_view(
+    List<MealView> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_meal_view(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_opt_box_autoadd_plan_view(
+    List<PlanView?> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_opt_box_autoadd_plan_view(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_opt_box_autoadd_u_16(
+    List<int?> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_opt_box_autoadd_u_16(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_prim_u_32_strict(
+    Uint32List self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    serializer.buffer.putUint32List(self);
   }
 
   @protected
@@ -4973,6 +8982,39 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_list_task_stack(
+    List<TaskStack> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_task_stack(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_trace_entry(
+    List<TraceEntry> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_trace_entry(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_weekday(List<Weekday> self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_weekday(item, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_listen_update(ListenUpdate self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     switch (self) {
@@ -4993,6 +9035,90 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_String(detail, serializer);
       case ListenUpdate_Stopped():
         sse_encode_i_32(5, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_meal_reminder(MealReminder self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    switch (self) {
+      case MealReminder_Off():
+        sse_encode_i_32(0, serializer);
+      case MealReminder_Before(minutes: final minutes):
+        sse_encode_i_32(1, serializer);
+        sse_encode_u_8(minutes, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_meal_standing(MealStanding self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    switch (self) {
+      case MealStanding_Fed(result: final result):
+        sse_encode_i_32(0, serializer);
+        sse_encode_box_autoadd_feed_result(result, serializer);
+      case MealStanding_Passed():
+        sse_encode_i_32(1, serializer);
+      case MealStanding_Next(atMs: final atMs):
+        sse_encode_i_32(2, serializer);
+        sse_encode_i_64(atMs, serializer);
+      case MealStanding_Later():
+        sse_encode_i_32(3, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_meal_view(MealView self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_8(self.slot, serializer);
+    sse_encode_u_16(self.minute, serializer);
+    sse_encode_u_8(self.portions, serializer);
+    sse_encode_u_8(self.call, serializer);
+    sse_encode_meal_standing(self.standing, serializer);
+  }
+
+  @protected
+  void sse_encode_memory(Memory self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_32(self.heapFree, serializer);
+    sse_encode_u_32(self.heapMin, serializer);
+    sse_encode_list_task_stack(self.tasks, serializer);
+    sse_encode_u_32(self.tasksTotal, serializer);
+  }
+
+  @protected
+  void sse_encode_next_meal_view(NextMealView self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_64(self.atMs, serializer);
+    sse_encode_u_16(self.minute, serializer);
+    sse_encode_u_8(self.portions, serializer);
+  }
+
+  @protected
+  void sse_encode_not_asked(NotAsked self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_ntp_result(NtpResult self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_ntp_view(NtpView self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    switch (self) {
+      case NtpView_Off():
+        sse_encode_i_32(0, serializer);
+      case NtpView_Gateway(port: final port):
+        sse_encode_i_32(1, serializer);
+        sse_encode_u_16(port, serializer);
+      case NtpView_Address(ip: final ip, port: final port):
+        sse_encode_i_32(2, serializer);
+        sse_encode_String(ip, serializer);
+        sse_encode_u_16(port, serializer);
     }
   }
 
@@ -5043,15 +9169,41 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  void sse_encode_opt_box_autoadd_feed_outcome(
-    FeedOutcome? self,
+  void sse_encode_opt_box_autoadd_counts(
+    Counts? self,
     SseSerializer serializer,
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
     sse_encode_bool(self != null, serializer);
     if (self != null) {
-      sse_encode_box_autoadd_feed_outcome(self, serializer);
+      sse_encode_box_autoadd_counts(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_erases(
+    Erases? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_erases(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_fault_view(
+    FaultView? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_fault_view(self, serializer);
     }
   }
 
@@ -5069,6 +9221,117 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_opt_box_autoadd_feed_result(
+    FeedResult? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_feed_result(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_i_32(int? self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_i_32(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_i_64(
+    PlatformInt64? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_i_64(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_meal_reminder(
+    MealReminder? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_meal_reminder(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_next_meal_view(
+    NextMealView? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_next_meal_view(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_ntp_result(
+    NtpResult? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_ntp_result(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_phase(Phase? self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_phase(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_plan_view(
+    PlanView? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_plan_view(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_resets(
+    Resets? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_resets(self, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_opt_box_autoadd_setup_refusal(
     SetupRefusal? self,
     SseSerializer serializer,
@@ -5082,12 +9345,71 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_opt_box_autoadd_time_info(
+    TimeInfo? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_time_info(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_time_source(
+    TimeSource? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_time_source(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_trace_summary(
+    TraceSummary? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_trace_summary(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_u_16(int? self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_u_16(self, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_opt_box_autoadd_u_32(int? self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
     sse_encode_bool(self != null, serializer);
     if (self != null) {
       sse_encode_box_autoadd_u_32(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_u_64(BigInt? self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_u_64(self, serializer);
     }
   }
 
@@ -5115,6 +9437,45 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_opt_box_autoadd_window(
+    Window? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_window(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_zone_change(
+    ZoneChange? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_zone_change(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_list_weekday(
+    List<Weekday>? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_list_weekday(self, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_pending_install(
     PendingInstall self,
     SseSerializer serializer,
@@ -5124,9 +9485,102 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_phase(Phase self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_plan_edit(PlanEdit self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    switch (self) {
+      case PlanEdit_Add(plan: final plan):
+        sse_encode_i_32(0, serializer);
+        sse_encode_box_autoadd_plan_view(plan, serializer);
+      case PlanEdit_Change(
+        slot: final slot,
+        minute: final minute,
+        portions: final portions,
+        days: final days,
+        call: final call,
+      ):
+        sse_encode_i_32(1, serializer);
+        sse_encode_u_8(slot, serializer);
+        sse_encode_opt_box_autoadd_u_16(minute, serializer);
+        sse_encode_opt_box_autoadd_u_8(portions, serializer);
+        sse_encode_opt_list_weekday(days, serializer);
+        sse_encode_opt_box_autoadd_u_8(call, serializer);
+      case PlanEdit_Enabled(slot: final slot, enabled: final enabled):
+        sse_encode_i_32(2, serializer);
+        sse_encode_u_8(slot, serializer);
+        sse_encode_bool(enabled, serializer);
+      case PlanEdit_Delete(slot: final slot):
+        sse_encode_i_32(3, serializer);
+        sse_encode_u_8(slot, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_plan_view(PlanView self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_16(self.minute, serializer);
+    sse_encode_u_8(self.portions, serializer);
+    sse_encode_list_weekday(self.days, serializer);
+    sse_encode_bool(self.enabled, serializer);
+    sse_encode_u_8(self.call, serializer);
+  }
+
+  @protected
   void sse_encode_plans_outcome(PlansOutcome self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_plans_view(PlansView self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_32(self.generation, serializer);
+    sse_encode_bool(self.writable, serializer);
+    sse_encode_list_opt_box_autoadd_plan_view(self.plans, serializer);
+  }
+
+  @protected
+  void sse_encode_portion_change(PortionChange self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    switch (self) {
+      case PortionChange_Clear():
+        sse_encode_i_32(0, serializer);
+      case PortionChange_Milligrams(mg: final mg):
+        sse_encode_i_32(1, serializer);
+        sse_encode_u_32(mg, serializer);
+      case PortionChange_Weighed(grams: final grams, portions: final portions):
+        sse_encode_i_32(2, serializer);
+        sse_encode_String(grams, serializer);
+        sse_encode_u_32(portions, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_portions(Portions self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_32(self.portions, serializer);
+    sse_encode_u_32(self.homed, serializer);
+    sse_encode_u_32(self.outletBreaks, serializer);
+    sse_encode_opt_box_autoadd_u_32(self.portionMg, serializer);
+    sse_encode_opt_box_autoadd_u_64(self.deliveredMg, serializer);
+  }
+
+  @protected
+  void sse_encode_power_stats(PowerStats self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_opt_box_autoadd_bool(self.adapter, serializer);
+    sse_encode_u_32(self.adapterChanges, serializer);
+    sse_encode_u_32(self.outages, serializer);
+    sse_encode_u_32(self.batteryS, serializer);
+    sse_encode_opt_box_autoadd_u_32(self.batteryMinMv, serializer);
+    sse_encode_opt_box_autoadd_u_32(self.batteryMaxMv, serializer);
+    sse_encode_list_opt_box_autoadd_u_16(self.batteryMv, serializer);
+    sse_encode_u_32(self.periodS, serializer);
   }
 
   @protected
@@ -5136,6 +9590,22 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_reset_cause(ResetCause self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_resets(Resets self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_32(self.powerOn, serializer);
+    sse_encode_u_32(self.watchdog, serializer);
+    sse_encode_u_32(self.software, serializer);
+    sse_encode_u_32(self.brownout, serializer);
+    sse_encode_u_32(self.other, serializer);
   }
 
   @protected
@@ -5177,10 +9647,56 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_i_32(7, serializer);
       case SessionUpdate_ClockNotSynced():
         sse_encode_i_32(8, serializer);
-      case SessionUpdate_Closed(error: final error):
+      case SessionUpdate_History(
+        entries: final entries,
+        caughtUp: final caughtUp,
+      ):
         sse_encode_i_32(9, serializer);
+        sse_encode_list_history_entry(entries, serializer);
+        sse_encode_bool(caughtUp, serializer);
+      case SessionUpdate_Log(
+        seq: final seq,
+        dropped: final dropped,
+        lines: final lines,
+      ):
+        sse_encode_i_32(10, serializer);
+        sse_encode_u_32(seq, serializer);
+        sse_encode_u_32(dropped, serializer);
+        sse_encode_list_String(lines, serializer);
+      case SessionUpdate_Closed(error: final error):
+        sse_encode_i_32(11, serializer);
         sse_encode_opt_box_autoadd_bridge_error(error, serializer);
     }
+  }
+
+  @protected
+  void sse_encode_settings_changes(
+    SettingsChanges self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_opt_box_autoadd_bool(self.lights, serializer);
+    sse_encode_opt_box_autoadd_bool(self.sound, serializer);
+    sse_encode_opt_box_autoadd_u_8(self.volume, serializer);
+    sse_encode_opt_box_autoadd_window(self.lightsWindow, serializer);
+    sse_encode_opt_box_autoadd_window(self.soundWindow, serializer);
+    sse_encode_opt_box_autoadd_u_8(self.desiccantDays, serializer);
+    sse_encode_opt_box_autoadd_meal_reminder(self.mealReminder, serializer);
+  }
+
+  @protected
+  void sse_encode_settings_view(SettingsView self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_32(self.generation, serializer);
+    sse_encode_bool(self.lights, serializer);
+    sse_encode_bool(self.sound, serializer);
+    sse_encode_u_8(self.volume, serializer);
+    sse_encode_window(self.lightsWindow, serializer);
+    sse_encode_window(self.soundWindow, serializer);
+    sse_encode_u_8(self.desiccantDays, serializer);
+    sse_encode_opt_String(self.desiccantReplaced, serializer);
+    sse_encode_meal_reminder(self.mealReminder, serializer);
+    sse_encode_bool(self.writable, serializer);
   }
 
   @protected
@@ -5215,6 +9731,40 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_i_32(4, serializer);
         sse_encode_box_autoadd_bridge_error(error, serializer);
     }
+  }
+
+  @protected
+  void sse_encode_stats(Stats self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    switch (self) {
+      case Stats_Counters(field0: final field0):
+        sse_encode_i_32(0, serializer);
+        sse_encode_box_autoadd_counters(field0, serializer);
+      case Stats_Memory(field0: final field0):
+        sse_encode_i_32(1, serializer);
+        sse_encode_box_autoadd_memory(field0, serializer);
+      case Stats_Flash(field0: final field0):
+        sse_encode_i_32(2, serializer);
+        sse_encode_box_autoadd_flash(field0, serializer);
+      case Stats_Power(field0: final field0):
+        sse_encode_i_32(3, serializer);
+        sse_encode_box_autoadd_power_stats(field0, serializer);
+      case Stats_Food(field0: final field0):
+        sse_encode_i_32(4, serializer);
+        sse_encode_box_autoadd_food(field0, serializer);
+      case Stats_Feeds(field0: final field0):
+        sse_encode_i_32(5, serializer);
+        sse_encode_box_autoadd_feed_stats(field0, serializer);
+      case Stats_Portions(field0: final field0):
+        sse_encode_i_32(6, serializer);
+        sse_encode_box_autoadd_portions(field0, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_stats_section(StatsSection self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
   }
 
   @protected
@@ -5290,6 +9840,116 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_task_stack(TaskStack self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.name, serializer);
+    sse_encode_u_32(self.freeMin, serializer);
+  }
+
+  @protected
+  void sse_encode_time_info(TimeInfo self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_32(self.generation, serializer);
+    sse_encode_bool(self.writable, serializer);
+    sse_encode_opt_String(self.zone, serializer);
+    sse_encode_ntp_view(self.ntp, serializer);
+    sse_encode_opt_box_autoadd_i_64(self.clockMs, serializer);
+    sse_encode_opt_box_autoadd_u_32(self.errorMs, serializer);
+    sse_encode_opt_box_autoadd_i_32(self.offsetS, serializer);
+    sse_encode_u_32(self.syncs, serializer);
+    sse_encode_opt_box_autoadd_time_source(self.last, serializer);
+    sse_encode_opt_box_autoadd_i_64(self.lastAtMs, serializer);
+    sse_encode_opt_box_autoadd_ntp_result(self.ntpLast, serializer);
+  }
+
+  @protected
+  void sse_encode_time_source(TimeSource self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_trace_entry(TraceEntry self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    switch (self) {
+      case TraceEntry_Current(atMs: final atMs, value: final value):
+        sse_encode_i_32(0, serializer);
+        sse_encode_u_32(atMs, serializer);
+        sse_encode_u_32(value, serializer);
+      case TraceEntry_Mark(
+        atMs: final atMs,
+        edges: final edges,
+        high: final high,
+      ):
+        sse_encode_i_32(1, serializer);
+        sse_encode_u_32(atMs, serializer);
+        sse_encode_u_32(edges, serializer);
+        sse_encode_bool(high, serializer);
+      case TraceEntry_Beams(
+        atMs: final atMs,
+        outletClear: final outletClear,
+        food: final food,
+      ):
+        sse_encode_i_32(2, serializer);
+        sse_encode_u_32(atMs, serializer);
+        sse_encode_bool(outletClear, serializer);
+        sse_encode_bool(food, serializer);
+      case TraceEntry_Battery(atMs: final atMs, mv: final mv):
+        sse_encode_i_32(3, serializer);
+        sse_encode_u_32(atMs, serializer);
+        sse_encode_u_32(mv, serializer);
+      case TraceEntry_Motor(atMs: final atMs, motor: final motor):
+        sse_encode_i_32(4, serializer);
+        sse_encode_u_32(atMs, serializer);
+        sse_encode_trace_motor(motor, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_trace_motor(TraceMotor self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_trace_summary(TraceSummary self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_32(self.feed, serializer);
+    sse_encode_u_8(self.requested, serializer);
+    sse_encode_u_8(self.completed, serializer);
+    sse_encode_feed_outcome(self.outcome, serializer);
+    sse_encode_feed_reason(self.reason, serializer);
+    sse_encode_u_32(self.driveMs, serializer);
+    sse_encode_u_32(self.samples, serializer);
+    sse_encode_current_unit(self.unit, serializer);
+    sse_encode_u_32(self.currentPeak, serializer);
+    sse_encode_opt_box_autoadd_u_32(self.currentMean, serializer);
+    sse_encode_u_16(self.rising, serializer);
+    sse_encode_u_16(self.falling, serializer);
+    sse_encode_opt_box_autoadd_u_32(self.firstEdgeMs, serializer);
+    sse_encode_u_16(self.beamBreaks, serializer);
+    sse_encode_u_16(self.reversals, serializer);
+    sse_encode_opt_box_autoadd_u_16(self.batteryRestMv, serializer);
+    sse_encode_opt_box_autoadd_u_16(self.batteryMinMv, serializer);
+    sse_encode_u_16(self.stride, serializer);
+    sse_encode_bool(self.truncated, serializer);
+  }
+
+  @protected
+  void sse_encode_trace_view(TraceView self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_trace_summary(self.summary, serializer);
+    sse_encode_bool(self.stored, serializer);
+    sse_encode_list_trace_entry(self.entries, serializer);
+  }
+
+  @protected
+  void sse_encode_tune(Tune self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
   void sse_encode_u_16(int self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     serializer.buffer.putUint16(self);
@@ -5328,6 +9988,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_update_refusal(UpdateRefusal self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
   void sse_encode_usize(BigInt self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     serializer.buffer.putBigUint64(self);
@@ -5335,6 +10001,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   void sse_encode_wait_reason(WaitReason self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_weekday(Weekday self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_32(self.index, serializer);
   }
@@ -5353,6 +10025,33 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   void sse_encode_wifi_saved(WifiSaved self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_window(Window self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    switch (self) {
+      case Window_Always():
+        sse_encode_i_32(0, serializer);
+      case Window_Between(start: final start, end: final end):
+        sse_encode_i_32(1, serializer);
+        sse_encode_u_16(start, serializer);
+        sse_encode_u_16(end, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_zone_change(ZoneChange self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    switch (self) {
+      case ZoneChange_Phone():
+        sse_encode_i_32(0, serializer);
+      case ZoneChange_Named(name: final name):
+        sse_encode_i_32(1, serializer);
+        sse_encode_String(name, serializer);
+      case ZoneChange_Clear():
+        sse_encode_i_32(2, serializer);
+    }
   }
 }
 
@@ -5402,6 +10101,13 @@ class FeederSessionImpl extends RustOpaque implements FeederSession {
     rustArcDecrementStrongCountPtr:
         RustLib.instance.api.rust_arc_decrement_strong_count_FeederSessionPtr,
   );
+
+  /// Run one request. A write goes out once; see [`FeederReply`] for how it
+  /// can end short of an answer.
+  Future<FeederReply> ask({required FeederRequest request}) => RustLib
+      .instance
+      .api
+      .crateApiSessionFeederSessionAsk(that: this, request: request);
 
   void cancelFeed({required int feed}) => RustLib.instance.api
       .crateApiSessionFeederSessionCancelFeed(that: this, feed: feed);

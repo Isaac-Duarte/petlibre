@@ -5,6 +5,7 @@
 
 import '../frb_generated.dart';
 import 'error.dart';
+import 'feeder.dart';
 import 'keys.dart';
 import 'model.dart';
 
@@ -14,10 +15,14 @@ part 'session.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `send`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `Start`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `eq`, `fmt`, `from`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `eq`, `eq`, `fmt`, `fmt`, `from`
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<FeederSession>>
 abstract class FeederSession implements RustOpaqueInterface {
+  /// Run one request. A write goes out once; see [`FeederReply`] for how it
+  /// can end short of an answer.
+  Future<FeederReply> ask({required FeederRequest request});
+
   void cancelFeed({required int feed});
 
   void close();
@@ -75,8 +80,27 @@ class Card {
   /// Wi-Fi signal, dBm.
   final int rssi;
 
-  /// How the last feed this boot ended when it ended on a fault.
-  final FeedOutcome? fault;
+  /// The last feed this boot, when it ended on a fault, until a later feed
+  /// completes.
+  final FaultView? fault;
+  final Desiccant desiccant;
+  final int uptimeMs;
+
+  /// The flash bank it runs from.
+  final int bank;
+
+  /// The plans' next meal, by the feeder's clock; `None` with no enabled
+  /// plan, no clock, or before the plans are read.
+  final NextMealView? nextMeal;
+
+  /// The newest feed the history has given so far.
+  final FeedResult? lastFed;
+
+  /// Today's meals, earliest first.
+  final List<MealView> meals;
+
+  /// The time settings and the clock, once read.
+  final TimeInfo? time;
 
   const Card({
     required this.build,
@@ -89,6 +113,13 @@ class Card {
     required this.clockSet,
     required this.rssi,
     this.fault,
+    required this.desiccant,
+    required this.uptimeMs,
+    required this.bank,
+    this.nextMeal,
+    this.lastFed,
+    required this.meals,
+    this.time,
   });
 
   @override
@@ -102,7 +133,14 @@ class Card {
       batteryPercent.hashCode ^
       clockSet.hashCode ^
       rssi.hashCode ^
-      fault.hashCode;
+      fault.hashCode ^
+      desiccant.hashCode ^
+      uptimeMs.hashCode ^
+      bank.hashCode ^
+      nextMeal.hashCode ^
+      lastFed.hashCode ^
+      meals.hashCode ^
+      time.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -118,7 +156,58 @@ class Card {
           batteryPercent == other.batteryPercent &&
           clockSet == other.clockSet &&
           rssi == other.rssi &&
-          fault == other.fault;
+          fault == other.fault &&
+          desiccant == other.desiccant &&
+          uptimeMs == other.uptimeMs &&
+          bank == other.bank &&
+          nextMeal == other.nextMeal &&
+          lastFed == other.lastFed &&
+          meals == other.meals &&
+          time == other.time;
+}
+
+/// The feed `Status.feed_fault` names, with its `Fed` event once read.
+class FaultView {
+  final int feed;
+  final FeedOutcome outcome;
+  final FeedReason reason;
+  final FeedResult? result;
+
+  const FaultView({
+    required this.feed,
+    required this.outcome,
+    required this.reason,
+    this.result,
+  });
+
+  @override
+  int get hashCode =>
+      feed.hashCode ^ outcome.hashCode ^ reason.hashCode ^ result.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is FaultView &&
+          runtimeType == other.runtimeType &&
+          feed == other.feed &&
+          outcome == other.outcome &&
+          reason == other.reason &&
+          result == other.result;
+}
+
+@freezed
+sealed class FedBy with _$FedBy {
+  const FedBy._();
+
+  const factory FedBy.panel() = FedBy_Panel;
+
+  /// A client, by its key's first 4 bytes in hex.
+  const factory FedBy.client({required String fingerprint}) = FedBy_Client;
+  const factory FedBy.feeder() = FedBy_Feeder;
+  const factory FedBy.plan({required int slot}) = FedBy_Plan;
+
+  /// A feed a reset interrupted, whose requester the journal lost.
+  const factory FedBy.unknown() = FedBy_Unknown;
 }
 
 /// Why the feeder refused a feed or its cancel.
@@ -159,6 +248,13 @@ class FeedResult {
   /// The history's words for it, the same as the CLI's.
   final String words;
 
+  /// When the feeder recorded it; `None` while its clock was invalid.
+  final PlatformInt64? atMs;
+  final FedBy by;
+
+  /// What the food beam read during the feed.
+  final FoodLevel hopper;
+
   const FeedResult({
     required this.feed,
     required this.requested,
@@ -168,6 +264,9 @@ class FeedResult {
     required this.reason,
     required this.uncertain,
     required this.words,
+    this.atMs,
+    required this.by,
+    required this.hopper,
   });
 
   @override
@@ -179,7 +278,10 @@ class FeedResult {
       outcome.hashCode ^
       reason.hashCode ^
       uncertain.hashCode ^
-      words.hashCode;
+      words.hashCode ^
+      atMs.hashCode ^
+      by.hashCode ^
+      hopper.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -193,7 +295,158 @@ class FeedResult {
           outcome == other.outcome &&
           reason == other.reason &&
           uncertain == other.uncertain &&
-          words == other.words;
+          words == other.words &&
+          atMs == other.atMs &&
+          by == other.by &&
+          hopper == other.hopper;
+}
+
+@freezed
+sealed class HistoryBody with _$HistoryBody {
+  const HistoryBody._();
+
+  const factory HistoryBody.fed({required FeedResult result}) = HistoryBody_Fed;
+  const factory HistoryBody.missed({
+    required int slot,
+    required PlatformInt64 dueMs,
+    required bool late_,
+  }) = HistoryBody_Missed;
+  const factory HistoryBody.restarted() = HistoryBody_Restarted;
+  const factory HistoryBody.lock({required bool locked, required FedBy by}) =
+      HistoryBody_Lock;
+  const factory HistoryBody.settingsChanged({required FedBy by}) =
+      HistoryBody_SettingsChanged;
+  const factory HistoryBody.wifiChanged({required FedBy by}) =
+      HistoryBody_WifiChanged;
+  const factory HistoryBody.plansChanged({required FedBy by}) =
+      HistoryBody_PlansChanged;
+  const factory HistoryBody.joined({required String fingerprint}) =
+      HistoryBody_Joined;
+  const factory HistoryBody.revoked({
+    required String fingerprint,
+    required FedBy by,
+  }) = HistoryBody_Revoked;
+  const factory HistoryBody.clockSet({required FedBy by}) =
+      HistoryBody_ClockSet;
+  const factory HistoryBody.lost({required int count}) = HistoryBody_Lost;
+  const factory HistoryBody.feedingBlocked({Blocked? reason}) =
+      HistoryBody_FeedingBlocked;
+  const factory HistoryBody.mealSoon({
+    required int minute,
+    required int portions,
+  }) = HistoryBody_MealSoon;
+  const factory HistoryBody.supply({bool? adapter}) = HistoryBody_Supply;
+  const factory HistoryBody.dispenseRefused({required Blocked reason}) =
+      HistoryBody_DispenseRefused;
+  const factory HistoryBody.food({required FoodLevel level}) = HistoryBody_Food;
+
+  /// Events that left the ring before they were read.
+  const factory HistoryBody.gap({required BigInt from, required BigInt to}) =
+      HistoryBody_Gap;
+
+  /// Nothing the history shows.
+  const factory HistoryBody.other() = HistoryBody_Other;
+}
+
+/// One entry of the feeder's history.
+class HistoryEntry {
+  final BigInt seq;
+  final PlatformInt64? atMs;
+  final HistoryBody body;
+
+  const HistoryEntry({required this.seq, this.atMs, required this.body});
+
+  @override
+  int get hashCode => seq.hashCode ^ atMs.hashCode ^ body.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is HistoryEntry &&
+          runtimeType == other.runtimeType &&
+          seq == other.seq &&
+          atMs == other.atMs &&
+          body == other.body;
+}
+
+@freezed
+sealed class MealStanding with _$MealStanding {
+  const MealStanding._();
+
+  const factory MealStanding.fed({required FeedResult result}) =
+      MealStanding_Fed;
+
+  /// Its time passed with no feed recorded for it.
+  const factory MealStanding.passed() = MealStanding_Passed;
+
+  /// The next meal of all the plans.
+  const factory MealStanding.next({required PlatformInt64 atMs}) =
+      MealStanding_Next;
+  const factory MealStanding.later() = MealStanding_Later;
+}
+
+/// One enabled plan that runs today.
+class MealView {
+  final int slot;
+  final int minute;
+  final int portions;
+
+  /// Plays of the meal call before it.
+  final int call;
+  final MealStanding standing;
+
+  const MealView({
+    required this.slot,
+    required this.minute,
+    required this.portions,
+    required this.call,
+    required this.standing,
+  });
+
+  @override
+  int get hashCode =>
+      slot.hashCode ^
+      minute.hashCode ^
+      portions.hashCode ^
+      call.hashCode ^
+      standing.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is MealView &&
+          runtimeType == other.runtimeType &&
+          slot == other.slot &&
+          minute == other.minute &&
+          portions == other.portions &&
+          call == other.call &&
+          standing == other.standing;
+}
+
+class NextMealView {
+  final PlatformInt64 atMs;
+
+  /// The minute of the feeder's local day.
+  final int minute;
+  final int portions;
+
+  const NextMealView({
+    required this.atMs,
+    required this.minute,
+    required this.portions,
+  });
+
+  @override
+  int get hashCode => atMs.hashCode ^ minute.hashCode ^ portions.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is NextMealView &&
+          runtimeType == other.runtimeType &&
+          atMs == other.atMs &&
+          minute == other.minute &&
+          portions == other.portions;
 }
 
 @freezed
@@ -232,6 +485,21 @@ sealed class SessionUpdate with _$SessionUpdate {
   /// The feeder refused this phone's clock, or never answered. The next
   /// session tries again.
   const factory SessionUpdate.clockNotSynced() = SessionUpdate_ClockNotSynced;
+
+  /// More of the history, oldest first. A session reads it from the oldest
+  /// event the feeder keeps, so `Opened` starts it anew; `caught_up` is
+  /// false only ever before the first batch, and marks that batch's end.
+  const factory SessionUpdate.history({
+    required List<HistoryEntry> entries,
+    required bool caughtUp,
+  }) = SessionUpdate_History;
+
+  /// Record lines after a `TailLog`.
+  const factory SessionUpdate.log({
+    required int seq,
+    required int dropped,
+    required List<String> lines,
+  }) = SessionUpdate_Log;
 
   /// The session ended; `error` says why when it was not asked to.
   const factory SessionUpdate.closed({BridgeError? error}) =

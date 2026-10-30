@@ -6,6 +6,10 @@
 import '../frb_generated.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
+import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
+part 'model.freezed.dart';
+
+// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `Battery`
 
 enum Blocked {
   starting,
@@ -21,9 +25,149 @@ enum Blocked {
   restarting,
 }
 
+enum Bowl { single, double }
+
+@freezed
+sealed class CallClip with _$CallClip {
+  const CallClip._();
+
+  const factory CallClip.none() = CallClip_None;
+  const factory CallClip.receiving({
+    required int bytes,
+    required int crc,
+    required int received,
+  }) = CallClip_Receiving;
+  const factory CallClip.stored({required int bytes, required int crc}) =
+      CallClip_Stored;
+}
+
 enum ClientRole { owner, member, server, updateSigner }
 
+class Counters {
+  final Counts boot;
+  final ResetCause reset;
+  final Counts? lifetime;
+  final Resets? resets;
+  final int handshakeMaxMs;
+  final int handshakeMeanMs;
+
+  const Counters({
+    required this.boot,
+    required this.reset,
+    this.lifetime,
+    this.resets,
+    required this.handshakeMaxMs,
+    required this.handshakeMeanMs,
+  });
+
+  @override
+  int get hashCode =>
+      boot.hashCode ^
+      reset.hashCode ^
+      lifetime.hashCode ^
+      resets.hashCode ^
+      handshakeMaxMs.hashCode ^
+      handshakeMeanMs.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is Counters &&
+          runtimeType == other.runtimeType &&
+          boot == other.boot &&
+          reset == other.reset &&
+          lifetime == other.lifetime &&
+          resets == other.resets &&
+          handshakeMaxMs == other.handshakeMaxMs &&
+          handshakeMeanMs == other.handshakeMeanMs;
+}
+
+class Counts {
+  final int uptimeS;
+  final int feeds;
+  final int feedsFailed;
+  final int portions;
+  final int presses;
+  final int sessions;
+  final int reconnects;
+  final int dhcpRenewals;
+  final int outages;
+  final int batteryS;
+
+  const Counts({
+    required this.uptimeS,
+    required this.feeds,
+    required this.feedsFailed,
+    required this.portions,
+    required this.presses,
+    required this.sessions,
+    required this.reconnects,
+    required this.dhcpRenewals,
+    required this.outages,
+    required this.batteryS,
+  });
+
+  @override
+  int get hashCode =>
+      uptimeS.hashCode ^
+      feeds.hashCode ^
+      feedsFailed.hashCode ^
+      portions.hashCode ^
+      presses.hashCode ^
+      sessions.hashCode ^
+      reconnects.hashCode ^
+      dhcpRenewals.hashCode ^
+      outages.hashCode ^
+      batteryS.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is Counts &&
+          runtimeType == other.runtimeType &&
+          uptimeS == other.uptimeS &&
+          feeds == other.feeds &&
+          feedsFailed == other.feedsFailed &&
+          portions == other.portions &&
+          presses == other.presses &&
+          sessions == other.sessions &&
+          reconnects == other.reconnects &&
+          dhcpRenewals == other.dhcpRenewals &&
+          outages == other.outages &&
+          batteryS == other.batteryS;
+}
+
+enum CurrentUnit { scaled, milliAmps }
+
+@freezed
+sealed class Desiccant with _$Desiccant {
+  const Desiccant._();
+
+  const factory Desiccant.unset() = Desiccant_Unset;
+  const factory Desiccant.unknown() = Desiccant_Unknown;
+  const factory Desiccant.remaining({required int days, required bool due}) =
+      Desiccant_Remaining;
+}
+
 enum Enrolled { new_, already }
+
+class Erases {
+  final Uint32List storage;
+  final int update;
+
+  const Erases({required this.storage, required this.update});
+
+  @override
+  int get hashCode => storage.hashCode ^ update.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is Erases &&
+          runtimeType == other.runtimeType &&
+          storage == other.storage &&
+          update == other.update;
+}
 
 enum FeedOutcome { done, cancelled, expired, failed, uncertain }
 
@@ -45,8 +189,489 @@ enum FeedReason {
   interrupted,
 }
 
+class FeedStats {
+  final int traced;
+  final int driveMs;
+  final int samples;
+  final CurrentUnit unit;
+  final int currentPeak;
+  final int? currentMean;
+  final int rising;
+  final int falling;
+  final int beamBreaks;
+  final int reversals;
+  final int kept;
+  final int capacity;
+  final int unsaved;
+  final TraceSummary? last;
+
+  const FeedStats({
+    required this.traced,
+    required this.driveMs,
+    required this.samples,
+    required this.unit,
+    required this.currentPeak,
+    this.currentMean,
+    required this.rising,
+    required this.falling,
+    required this.beamBreaks,
+    required this.reversals,
+    required this.kept,
+    required this.capacity,
+    required this.unsaved,
+    this.last,
+  });
+
+  @override
+  int get hashCode =>
+      traced.hashCode ^
+      driveMs.hashCode ^
+      samples.hashCode ^
+      unit.hashCode ^
+      currentPeak.hashCode ^
+      currentMean.hashCode ^
+      rising.hashCode ^
+      falling.hashCode ^
+      beamBreaks.hashCode ^
+      reversals.hashCode ^
+      kept.hashCode ^
+      capacity.hashCode ^
+      unsaved.hashCode ^
+      last.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is FeedStats &&
+          runtimeType == other.runtimeType &&
+          traced == other.traced &&
+          driveMs == other.driveMs &&
+          samples == other.samples &&
+          unit == other.unit &&
+          currentPeak == other.currentPeak &&
+          currentMean == other.currentMean &&
+          rising == other.rising &&
+          falling == other.falling &&
+          beamBreaks == other.beamBreaks &&
+          reversals == other.reversals &&
+          kept == other.kept &&
+          capacity == other.capacity &&
+          unsaved == other.unsaved &&
+          last == other.last;
+}
+
+class Flash {
+  final Erases boot;
+  final Erases? lifetime;
+  final int eventsKept;
+  final int eventsCapacity;
+
+  const Flash({
+    required this.boot,
+    this.lifetime,
+    required this.eventsKept,
+    required this.eventsCapacity,
+  });
+
+  @override
+  int get hashCode =>
+      boot.hashCode ^
+      lifetime.hashCode ^
+      eventsKept.hashCode ^
+      eventsCapacity.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is Flash &&
+          runtimeType == other.runtimeType &&
+          boot == other.boot &&
+          lifetime == other.lifetime &&
+          eventsKept == other.eventsKept &&
+          eventsCapacity == other.eventsCapacity;
+}
+
+class Food {
+  final bool? present;
+  final int emptied;
+  final int refilled;
+  final int? feedsSinceRefill;
+
+  const Food({
+    this.present,
+    required this.emptied,
+    required this.refilled,
+    this.feedsSinceRefill,
+  });
+
+  @override
+  int get hashCode =>
+      present.hashCode ^
+      emptied.hashCode ^
+      refilled.hashCode ^
+      feedsSinceRefill.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is Food &&
+          runtimeType == other.runtimeType &&
+          present == other.present &&
+          emptied == other.emptied &&
+          refilled == other.refilled &&
+          feedsSinceRefill == other.feedsSinceRefill;
+}
+
 enum FoodLevel { unread, present, empty }
+
+@freezed
+sealed class MealReminder with _$MealReminder {
+  const MealReminder._();
+
+  const factory MealReminder.off() = MealReminder_Off;
+  const factory MealReminder.before({required int minutes}) =
+      MealReminder_Before;
+}
+
+class Memory {
+  final int heapFree;
+  final int heapMin;
+  final List<TaskStack> tasks;
+  final int tasksTotal;
+
+  const Memory({
+    required this.heapFree,
+    required this.heapMin,
+    required this.tasks,
+    required this.tasksTotal,
+  });
+
+  @override
+  int get hashCode =>
+      heapFree.hashCode ^
+      heapMin.hashCode ^
+      tasks.hashCode ^
+      tasksTotal.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is Memory &&
+          runtimeType == other.runtimeType &&
+          heapFree == other.heapFree &&
+          heapMin == other.heapMin &&
+          tasks == other.tasks &&
+          tasksTotal == other.tasksTotal;
+}
+
+enum NtpResult { used, bounded, lost, refused }
+
+enum Phase { atMark, unknown }
+
+class Portions {
+  final int portions;
+  final int homed;
+  final int outletBreaks;
+  final int? portionMg;
+  final BigInt? deliveredMg;
+
+  const Portions({
+    required this.portions,
+    required this.homed,
+    required this.outletBreaks,
+    this.portionMg,
+    this.deliveredMg,
+  });
+
+  @override
+  int get hashCode =>
+      portions.hashCode ^
+      homed.hashCode ^
+      outletBreaks.hashCode ^
+      portionMg.hashCode ^
+      deliveredMg.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is Portions &&
+          runtimeType == other.runtimeType &&
+          portions == other.portions &&
+          homed == other.homed &&
+          outletBreaks == other.outletBreaks &&
+          portionMg == other.portionMg &&
+          deliveredMg == other.deliveredMg;
+}
+
+class PowerStats {
+  final bool? adapter;
+  final int adapterChanges;
+  final int outages;
+  final int batteryS;
+  final int? batteryMinMv;
+  final int? batteryMaxMv;
+  final List<int?> batteryMv;
+  final int periodS;
+
+  const PowerStats({
+    this.adapter,
+    required this.adapterChanges,
+    required this.outages,
+    required this.batteryS,
+    this.batteryMinMv,
+    this.batteryMaxMv,
+    required this.batteryMv,
+    required this.periodS,
+  });
+
+  @override
+  int get hashCode =>
+      adapter.hashCode ^
+      adapterChanges.hashCode ^
+      outages.hashCode ^
+      batteryS.hashCode ^
+      batteryMinMv.hashCode ^
+      batteryMaxMv.hashCode ^
+      batteryMv.hashCode ^
+      periodS.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is PowerStats &&
+          runtimeType == other.runtimeType &&
+          adapter == other.adapter &&
+          adapterChanges == other.adapterChanges &&
+          outages == other.outages &&
+          batteryS == other.batteryS &&
+          batteryMinMv == other.batteryMinMv &&
+          batteryMaxMv == other.batteryMaxMv &&
+          batteryMv == other.batteryMv &&
+          periodS == other.periodS;
+}
+
+enum ResetCause { powerOn, watchdog, software, brownout, other }
+
+class Resets {
+  final int powerOn;
+  final int watchdog;
+  final int software;
+  final int brownout;
+  final int other;
+
+  const Resets({
+    required this.powerOn,
+    required this.watchdog,
+    required this.software,
+    required this.brownout,
+    required this.other,
+  });
+
+  @override
+  int get hashCode =>
+      powerOn.hashCode ^
+      watchdog.hashCode ^
+      software.hashCode ^
+      brownout.hashCode ^
+      other.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is Resets &&
+          runtimeType == other.runtimeType &&
+          powerOn == other.powerOn &&
+          watchdog == other.watchdog &&
+          software == other.software &&
+          brownout == other.brownout &&
+          other == other.other;
+}
 
 enum SetupRefusal { busy, unconfirmed, wrongCode, full, notWritable, invalid }
 
+@freezed
+sealed class Stats with _$Stats {
+  const Stats._();
+
+  const factory Stats.counters(Counters field0) = Stats_Counters;
+  const factory Stats.memory(Memory field0) = Stats_Memory;
+  const factory Stats.flash(Flash field0) = Stats_Flash;
+  const factory Stats.power(PowerStats field0) = Stats_Power;
+  const factory Stats.food(Food field0) = Stats_Food;
+  const factory Stats.feeds(FeedStats field0) = Stats_Feeds;
+  const factory Stats.portions(Portions field0) = Stats_Portions;
+}
+
+enum StatsSection { counters, memory, flash, power, food, feeds, portions }
+
+class TaskStack {
+  final String name;
+  final int freeMin;
+
+  const TaskStack({required this.name, required this.freeMin});
+
+  @override
+  int get hashCode => name.hashCode ^ freeMin.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is TaskStack &&
+          runtimeType == other.runtimeType &&
+          name == other.name &&
+          freeMin == other.freeMin;
+}
+
+enum TimeSource { owner, client, ntp }
+
+@freezed
+sealed class TraceEntry with _$TraceEntry {
+  const TraceEntry._();
+
+  const factory TraceEntry.current({required int atMs, required int value}) =
+      TraceEntry_Current;
+  const factory TraceEntry.mark({
+    required int atMs,
+    required int edges,
+    required bool high,
+  }) = TraceEntry_Mark;
+  const factory TraceEntry.beams({
+    required int atMs,
+    required bool outletClear,
+    required bool food,
+  }) = TraceEntry_Beams;
+  const factory TraceEntry.battery({required int atMs, required int mv}) =
+      TraceEntry_Battery;
+  const factory TraceEntry.motor({
+    required int atMs,
+    required TraceMotor motor,
+  }) = TraceEntry_Motor;
+}
+
+enum TraceMotor { stop, drive0, drive1 }
+
+class TraceSummary {
+  final int feed;
+  final int requested;
+  final int completed;
+  final FeedOutcome outcome;
+  final FeedReason reason;
+  final int driveMs;
+  final int samples;
+  final CurrentUnit unit;
+  final int currentPeak;
+  final int? currentMean;
+  final int rising;
+  final int falling;
+  final int? firstEdgeMs;
+  final int beamBreaks;
+  final int reversals;
+  final int? batteryRestMv;
+  final int? batteryMinMv;
+  final int stride;
+  final bool truncated;
+
+  const TraceSummary({
+    required this.feed,
+    required this.requested,
+    required this.completed,
+    required this.outcome,
+    required this.reason,
+    required this.driveMs,
+    required this.samples,
+    required this.unit,
+    required this.currentPeak,
+    this.currentMean,
+    required this.rising,
+    required this.falling,
+    this.firstEdgeMs,
+    required this.beamBreaks,
+    required this.reversals,
+    this.batteryRestMv,
+    this.batteryMinMv,
+    required this.stride,
+    required this.truncated,
+  });
+
+  @override
+  int get hashCode =>
+      feed.hashCode ^
+      requested.hashCode ^
+      completed.hashCode ^
+      outcome.hashCode ^
+      reason.hashCode ^
+      driveMs.hashCode ^
+      samples.hashCode ^
+      unit.hashCode ^
+      currentPeak.hashCode ^
+      currentMean.hashCode ^
+      rising.hashCode ^
+      falling.hashCode ^
+      firstEdgeMs.hashCode ^
+      beamBreaks.hashCode ^
+      reversals.hashCode ^
+      batteryRestMv.hashCode ^
+      batteryMinMv.hashCode ^
+      stride.hashCode ^
+      truncated.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is TraceSummary &&
+          runtimeType == other.runtimeType &&
+          feed == other.feed &&
+          requested == other.requested &&
+          completed == other.completed &&
+          outcome == other.outcome &&
+          reason == other.reason &&
+          driveMs == other.driveMs &&
+          samples == other.samples &&
+          unit == other.unit &&
+          currentPeak == other.currentPeak &&
+          currentMean == other.currentMean &&
+          rising == other.rising &&
+          falling == other.falling &&
+          firstEdgeMs == other.firstEdgeMs &&
+          beamBreaks == other.beamBreaks &&
+          reversals == other.reversals &&
+          batteryRestMv == other.batteryRestMv &&
+          batteryMinMv == other.batteryMinMv &&
+          stride == other.stride &&
+          truncated == other.truncated;
+}
+
+enum Tune { chime, meal, coin, alert, test, twinkle }
+
+enum UpdateRefusal {
+  manifest,
+  key,
+  revoked,
+  signature,
+  target,
+  same,
+  downgrade,
+  statement,
+  pending,
+  failed,
+  fallback,
+  attempt,
+  installing,
+  notInstalling,
+  store,
+  unconfirmed,
+  battery,
+}
+
+enum Weekday { mon, tue, wed, thu, fri, sat, sun }
+
 enum WifiSaved { saved, unchanged }
+
+@freezed
+sealed class Window with _$Window {
+  const Window._();
+
+  const factory Window.always() = Window_Always;
+  const factory Window.between({required int start, required int end}) =
+      Window_Between;
+}

@@ -606,6 +606,9 @@ impl From<Event> for InstallEvent {
             }
             Event::RestoreKeyKept { error } => note(error),
             Event::Floor(floor) => note(format!("the feeder's floor is {floor}")),
+            Event::StaleInstallCancelled => {
+                note("an earlier install left pending was cancelled".to_string())
+            }
             Event::FeederTried { address, answered } => note(format!(
                 "tried the feeder at {address}, answered: {answered}"
             )),

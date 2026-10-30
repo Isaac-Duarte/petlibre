@@ -157,6 +157,9 @@ pub(crate) fn line(event: &Event) -> String {
         Event::RestoreKeyKept { error } => {
             format!("The restore's update key file could not be removed: {error}")
         }
+        Event::StaleInstallCancelled => {
+            "An earlier install was left pending; cancelling it before this offer.".to_string()
+        }
         Event::FeederTried { address, answered } => {
             if *answered {
                 format!("  The feeder answers at {address}.")

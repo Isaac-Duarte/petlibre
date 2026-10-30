@@ -560,7 +560,16 @@ impl<I: SlotIo + Clone> Update<I> {
                 }
                 progress
             }
-            _ => idle,
+            // A candidate no install is running for: a cut or kill left it,
+            // and it refuses every other manifest until a client cancels it.
+            _ => match self.store.record().state {
+                State::Pending(c) => Progress {
+                    digest: Some(c.digest),
+                    version: c.version,
+                    ..idle
+                },
+                _ => idle,
+            },
         }
     }
 

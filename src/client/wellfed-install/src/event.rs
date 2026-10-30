@@ -119,6 +119,9 @@ pub enum Event {
     SignersUnread {
         error: String,
     },
+    /// A cut or kill left an earlier install pending, and none is running:
+    /// the restore cancels it, once, before its own offer.
+    StaleInstallCancelled,
     /// A session was tried at `address`, where the feeder may be.
     FeederTried {
         address: SocketAddr,

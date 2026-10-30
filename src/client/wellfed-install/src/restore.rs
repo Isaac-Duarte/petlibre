@@ -47,7 +47,7 @@ use wellfed_client::update::{Image, InstallError as UpdateError};
 use wellfed_client::update_key::{EnrollError, Enrolled};
 use wellfed_connect::Connection;
 use wellfed_formats::credentials::KeyScope;
-use wellfed_model::{Answer, ClientRole, Op};
+use wellfed_model::{Answer, ClientRole, Op, UpdatePhase, UpdateView};
 use wellfed_session::noise::Keypair;
 use wellfed_signing::{Frozen, Key, Motion};
 
@@ -254,7 +254,7 @@ async fn drive(
 
     // The statement is bound to this floor, and the push's own offers come
     // before anything can raise it.
-    let floor = floor(&mut session).await?;
+    let floor = clear_floor(&mut session, report).await?;
     report.event(Event::Floor(floor));
     let version = match target.version {
         Some(version) => version,
@@ -438,13 +438,40 @@ async fn signed_up<D: Discovery>(
     }
 }
 
-async fn floor(session: &mut Connection) -> Result<u32, Error> {
+async fn state(session: &mut Connection) -> Result<UpdateView, Error> {
     match session.ask(random()?, &Op::UpdateState).await? {
-        Answer::Update(view) => Ok(view.min_version),
+        Answer::Update(view) => Ok(view),
         other => Err(Error::Answered {
             request: "update state",
             answer: Box::new(other),
         }),
+    }
+}
+
+/// The floor, with the way clear for this run's offer. A running install is
+/// left alone. A candidate a cut or kill left pending refuses every other
+/// manifest, and a restore's is always another, so it is cancelled once; a
+/// cancel with any doubt about it stops the run, since the one offer is not
+/// to be spent on a refusal.
+async fn clear_floor(session: &mut Connection, report: &impl Report) -> Result<u32, Error> {
+    let view = state(session).await?;
+    if view.phase != UpdatePhase::Idle {
+        return Err(Error::RestoreInstallRunning { phase: view.phase });
+    }
+    if view.digest.is_none() {
+        return Ok(view.min_version);
+    }
+
+    report.event(Event::StaleInstallCancelled);
+    let cancelled = session.ask(random()?, &Op::CancelUpdate).await;
+    if !matches!(cancelled, Ok(Answer::Update(_))) {
+        return Err(Error::RestoreCancelUnknown);
+    }
+    match state(session).await {
+        Ok(view) if view.phase == UpdatePhase::Idle && view.digest.is_none() => {
+            Ok(view.min_version)
+        }
+        _ => Err(Error::RestoreCancelUnknown),
     }
 }
 
@@ -996,6 +1023,148 @@ mod tests {
                     .await;
             assert!(opened.is_err(), "the owner's key is not listed");
             sim.stop().await;
+        });
+    }
+
+    /// Power lost and back: the bit that refuses offers after a restart inside
+    /// an install goes with it.
+    async fn power_cycled(sim: &Running) {
+        tokio::time::sleep(Duration::from_secs(10)).await;
+        sim.control(Control::Reboot);
+        tokio::time::sleep(Duration::from_secs(5)).await;
+    }
+
+    /// A power cut mid-write leaves its manifest pending on bank 0. The next
+    /// run's own key makes another manifest, so it cancels the stale one once,
+    /// then its one offer goes in.
+    #[test]
+    fn a_stale_pending_install_is_cancelled_once_and_the_retry_goes_in() {
+        paused(async {
+            let rig = Rig::start().await;
+            let backup = synthetic();
+            let hands = Hands::pressing(&rig.sim);
+            let sim = &rig.sim;
+            let cut = Cell::new(false);
+            let report = |event| {
+                if matches!(event, Event::Written { .. }) && !cut.replace(true) {
+                    sim.control(Control::Quit);
+                }
+            };
+            let plan = rig.plan(&backup, Signing::Fresh);
+            let first = rig.run(plan, &hands, report).await.unwrap();
+            assert_eq!(first, Restored::Uncertain(Uncertainty::Gone));
+
+            let rig = rig.again().await;
+            power_cycled(&rig.sim).await;
+            let hands = Hands::pressing(&rig.sim);
+            let cancels = Cell::new(0);
+            let report = |event| {
+                if matches!(event, Event::StaleInstallCancelled) {
+                    cancels.set(cancels.get() + 1);
+                }
+            };
+            let plan = rig.plan(&backup, Signing::Fresh);
+            let second = rig.run(plan, &hands, report).await.unwrap();
+
+            assert_eq!(second, Restored::Activated);
+            assert_eq!(cancels.get(), 1);
+            assert_eq!(
+                &rig.banks.borrow().bank1()[..backup.payload().len()],
+                backup.payload()
+            );
+            rig.sim.stop().await;
+        });
+    }
+
+    /// A cancel that goes unanswered may or may not have landed: the run
+    /// stops, with its one offer unspent.
+    #[test]
+    fn an_unanswered_cancel_stops_the_run_with_nothing_offered() {
+        paused(async {
+            let rig = Rig::start().await;
+            let backup = synthetic();
+            let hands = Hands::pressing(&rig.sim);
+            let sim = &rig.sim;
+            let cut = Cell::new(false);
+            let report = |event| {
+                if matches!(event, Event::Written { .. }) && !cut.replace(true) {
+                    sim.control(Control::Quit);
+                }
+            };
+            let plan = rig.plan(&backup, Signing::Fresh);
+            rig.run(plan, &hands, report).await.unwrap();
+
+            let rig = rig.again().await;
+            power_cycled(&rig.sim).await;
+            let hands = Hands::pressing(&rig.sim);
+            let sim = &rig.sim;
+            let offered = Cell::new(false);
+            let report = |event| match event {
+                Event::StaleInstallCancelled => sim.control(Control::Quit),
+                Event::Restoring => offered.set(true),
+                _ => {}
+            };
+            let plan = rig.plan(&backup, Signing::Fresh);
+            let ended = rig.run(plan, &hands, report).await;
+
+            assert!(
+                matches!(ended, Err(Error::RestoreCancelUnknown)),
+                "{ended:?}"
+            );
+            assert!(!offered.get());
+            rig.sim.stop().await;
+        });
+    }
+
+    /// An install running now is not stale: a second run neither cancels it
+    /// nor offers, and the first goes on to the end.
+    #[test]
+    fn a_running_install_stops_a_second_run_and_is_left_alone() {
+        paused(async {
+            let rig = Rig::start().await;
+            let backup = synthetic();
+            let hands = Hands::pressing(&rig.sim);
+            let key = RefCell::new(None);
+            let written = Cell::new(false);
+            let file = rig.key_file();
+            let report = |event| match event {
+                Event::RestoreSigned { .. } => {
+                    *key.borrow_mut() = Key::load(&file).ok();
+                }
+                Event::Written { .. } => written.set(true),
+                _ => {}
+            };
+            let plan = rig.plan(&backup, Signing::Fresh);
+            let first = rig.run(plan, &hands, report);
+
+            let second = async {
+                while !written.get() {
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+                let key = key.borrow_mut().take().unwrap();
+                let plan = rig.plan(&backup, Signing::Given(Box::new(key)));
+                let away = Hands::away();
+                let report = |event| {
+                    assert!(
+                        !matches!(event, Event::StaleInstallCancelled | Event::Restoring),
+                        "{event:?}"
+                    );
+                };
+                rig.run(plan, &away, report).await
+            };
+            let (first, second) = tokio::join!(first, second);
+
+            assert!(
+                matches!(
+                    second,
+                    Err(Error::RestoreInstallRunning {
+                        phase: UpdatePhase::Receiving
+                    })
+                ),
+                "{second:?}"
+            );
+            assert_eq!(first.unwrap(), Restored::Activated);
+            rig.sim.stop().await;
         });
     }
 

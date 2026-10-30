@@ -3368,9 +3368,11 @@ impl SseDecode for crate::api::restore::RestoreStop {
             6 => crate::api::restore::RestoreStop::BackupRefused,
             7 => crate::api::restore::RestoreStop::KeyFailed,
             8 => crate::api::restore::RestoreStop::KeyGone,
-            9 => crate::api::restore::RestoreStop::Refused,
-            10 => crate::api::restore::RestoreStop::Cancelled,
-            11 => crate::api::restore::RestoreStop::Other,
+            9 => crate::api::restore::RestoreStop::InstallRunning,
+            10 => crate::api::restore::RestoreStop::CancelUnknown,
+            11 => crate::api::restore::RestoreStop::Refused,
+            12 => crate::api::restore::RestoreStop::Cancelled,
+            13 => crate::api::restore::RestoreStop::Other,
             _ => unreachable!("Invalid variant for RestoreStop: {}", inner),
         };
     }
@@ -4895,9 +4897,11 @@ impl flutter_rust_bridge::IntoDart for crate::api::restore::RestoreStop {
             Self::BackupRefused => 6.into_dart(),
             Self::KeyFailed => 7.into_dart(),
             Self::KeyGone => 8.into_dart(),
-            Self::Refused => 9.into_dart(),
-            Self::Cancelled => 10.into_dart(),
-            Self::Other => 11.into_dart(),
+            Self::InstallRunning => 9.into_dart(),
+            Self::CancelUnknown => 10.into_dart(),
+            Self::Refused => 11.into_dart(),
+            Self::Cancelled => 12.into_dart(),
+            Self::Other => 13.into_dart(),
             _ => unreachable!(),
         }
     }
@@ -6378,9 +6382,11 @@ impl SseEncode for crate::api::restore::RestoreStop {
                 crate::api::restore::RestoreStop::BackupRefused => 6,
                 crate::api::restore::RestoreStop::KeyFailed => 7,
                 crate::api::restore::RestoreStop::KeyGone => 8,
-                crate::api::restore::RestoreStop::Refused => 9,
-                crate::api::restore::RestoreStop::Cancelled => 10,
-                crate::api::restore::RestoreStop::Other => 11,
+                crate::api::restore::RestoreStop::InstallRunning => 9,
+                crate::api::restore::RestoreStop::CancelUnknown => 10,
+                crate::api::restore::RestoreStop::Refused => 11,
+                crate::api::restore::RestoreStop::Cancelled => 12,
+                crate::api::restore::RestoreStop::Other => 13,
                 _ => {
                     unimplemented!("");
                 }

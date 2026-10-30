@@ -155,6 +155,14 @@ enum RestoreStop {
   /// and a new run starts clean.
   keyGone,
 
+  /// An install is running on the feeder now, and it was left alone. Nothing
+  /// was offered.
+  installRunning,
+
+  /// An earlier install was left pending, and cancelling it did not clearly
+  /// work. Nothing was offered.
+  cancelUnknown,
+
   /// The feeder refused the offer, or the install stopped. It is not
   /// offered again, and the feeder keeps running Wellfed.
   refused,

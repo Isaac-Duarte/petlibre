@@ -47,7 +47,9 @@ pub struct UpdateView {
     /// The highest confirmed version: an offer at or below it needs a
     /// downgrade statement.
     pub min_version: u32,
-    /// The manifest being checked, installed or given way for, if any.
+    /// The manifest being checked, installed or given way for, if any. At
+    /// `Idle`, one a cut or kill left pending: the feeder refuses any other
+    /// until it is cancelled.
     pub digest: Option<Hex<32>>,
     pub version: u32,
     pub image_len: u32,

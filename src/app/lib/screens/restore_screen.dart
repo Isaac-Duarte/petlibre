@@ -491,6 +491,17 @@ class _Stopped extends StatelessWidget {
       '$name keeps running Wellfed, and nothing was sent. The backup is '
           'fine: this is about space or storage on this phone.',
     ),
+    RestoreStop.installRunning => (
+      'An install is running on $name',
+      '$name is busy with another install, so this restore sent nothing. '
+          'Wait for it to finish, then try again.',
+    ),
+    RestoreStop.cancelUnknown => (
+      "$name didn't clear an earlier install",
+      'An earlier install was cut short, and it has to go before the original '
+          'firmware can. $name keeps running Wellfed, and nothing was sent. '
+          'Try again in a minute.',
+    ),
     RestoreStop.keyGone => (
       'The restore lost its key',
       '$name keeps running Wellfed, and nothing was sent. An earlier '

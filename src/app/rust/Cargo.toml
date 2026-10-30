@@ -27,8 +27,10 @@ wellfed-model.workspace = true
 wellfed-session.workspace = true
 
 [dev-dependencies]
-chrono = { version = "0.4.45", default-features = false, features = ["std"] }
+chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
+rumqttc = { version = "0.25.1", default-features = false }
 tempfile.workspace = true
+uuid.workspace = true
 wellfed-core.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
 wellfed-feeder-sim = { workspace = true, features = ["harness"] }

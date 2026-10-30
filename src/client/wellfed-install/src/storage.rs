@@ -146,9 +146,26 @@ pub fn resumable(backups: &Path) -> bool {
     matches!(Paired::load(backups), Ok(Some(_)))
 }
 
-/// The feeder an install paired with and where it answered, kept beside
-/// the backups (`installing.json`) so a resumed run finds it with no image
-/// lease left. It names the stock device this install enrolled (trust on
+/// Remove the paired record whoever's it is: a platform that treats the
+/// install as over though the run stopped short of its end.
+pub fn forget_paired(backups: &Path) -> Result<(), Error> {
+    let path = backups.join(Paired::FILE);
+    match std::fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(source) => Err(Error::Remove { path, source }),
+    }
+}
+
+/// The checked copy of stock kept for `identity`, if there is one.
+pub fn kept_backup(backups: &Path, identity: &[u8; 32]) -> Option<PathBuf> {
+    let path = backup_path(backups, identity);
+    path.exists().then_some(path)
+}
+
+/// The feeder an install paired with and where it answered, if it has yet,
+/// kept beside the backups (`installing.json`) as soon as pairing succeeds,
+/// so a resumed run finds it with no image lease left. It names the stock device this install enrolled (trust on
 /// first use), and only a run of that same install takes it: the file is
 /// shared by every feeder the backups hold. Its identity is the one the
 /// feeder proved. The run that reaches the end removes it.
@@ -157,7 +174,9 @@ pub(crate) struct Paired {
     /// Stock's device ID, as the installer's broker enrolled it.
     pub(crate) device: String,
     pub(crate) identity: wellfed_model::Hex<32>,
-    pub(crate) address: SocketAddr,
+    /// Where it last answered; `None` while it restarts onto the owner's
+    /// Wi-Fi after Bluetooth setup.
+    pub(crate) address: Option<SocketAddr>,
 }
 
 impl Paired {
@@ -260,7 +279,7 @@ mod tests {
         let recorded = Paired {
             device: "AF_A".into(),
             identity: wellfed_model::Hex([0xab; 32]),
-            address: "192.168.4.20:7100".parse().unwrap(),
+            address: Some("192.168.4.20:7100".parse().unwrap()),
         };
         recorded.keep(&backups).unwrap();
         assert_eq!(Paired::load(&backups).unwrap(), Some(recorded.clone()));

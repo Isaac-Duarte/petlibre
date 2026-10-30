@@ -13,7 +13,7 @@ use wellfed_formats::stock::{Enrollment, ImageLease, OtaReport, StockStatus};
 use wellfed_stock::clock;
 use wellfed_stock::ota::image::{self, Images};
 use wellfed_stock::ota::trial::{AnsweredInput, Input, Record};
-use wellfed_stock::server::{self, Api, Handle, OtaTrial, Refusal, Server};
+use wellfed_stock::server::{self, Api, Handle, NoFeederEnrolled, OtaTrial, Refusal, Server};
 
 use crate::Error;
 
@@ -82,23 +82,53 @@ pub fn forget_enrollment(config: &Path) -> Result<(), Error> {
     Ok(())
 }
 
+/// Where the ledger of `device`, by the installer's config, lives.
+pub fn ledger_path(config: &Path, device: &str) -> Result<PathBuf, Error> {
+    wellfed_stock::controller::ledger_path(config, device)
+        .map_err(|error| Error::StockServer(error.into()))
+}
+
+/// Whether the feeder the broker beside `config` trusts has a request whose
+/// outcome is not settled. An unreadable record counts as open: only the
+/// server's own check may rule a request out.
+pub fn open_request(config: &Path) -> bool {
+    config.exists() && wellfed_stock::controller::open_request(config).unwrap_or(true)
+}
+
 /// Why the server's status is not there to read.
 pub(crate) enum Unready {
     /// No feeder has enrolled, so the session with stock has not started.
     NoFeeder,
-    /// The server ended on its own (its enrollment window closed, or it
-    /// failed), with its error.
-    Ended(String),
+    /// The enrollment window closed with no feeder.
+    WindowClosed(String),
+    /// The server failed, with its error.
+    Failed(String),
     /// The enrollment record beside the config cannot be read.
     Unreadable(String),
+}
+
+/// How a server that ended on its own ended.
+#[derive(Clone)]
+enum Ended {
+    WindowClosed(String),
+    Failed(String),
+}
+
+impl From<Ended> for Unready {
+    fn from(ended: Ended) -> Self {
+        match ended {
+            Ended::WindowClosed(error) => Self::WindowClosed(error),
+            Ended::Failed(error) => Self::Failed(error),
+        }
+    }
 }
 
 pub(crate) struct Stock {
     options: StockOptions,
     server: Option<Server>,
     images: Option<Images>,
-    /// The server's error once it ended on its own.
-    ended: Option<String>,
+    /// Why it ended, once it ended on its own.
+    ended: Option<Ended>,
 }
 
 impl Stock {
@@ -145,20 +175,23 @@ impl Stock {
 
     /// The server's status, or why it is not there.
     pub(crate) async fn status(&mut self) -> Result<StockStatus, Unready> {
-        if let Some(error) = &self.ended {
-            return Err(Unready::Ended(error.clone()));
+        if let Some(ended) = &self.ended {
+            return Err(ended.clone().into());
         }
         let Some(server) = &mut self.server else {
             return Err(Unready::NoFeeder);
         };
         if server.is_finished() {
-            let error = match server.finished().await {
-                Ok(()) => "it stopped".to_string(),
-                Err(error) => format!("{error:#}"),
+            let ended = match server.finished().await {
+                Ok(()) => Ended::Failed("it stopped".to_string()),
+                Err(error) if error.downcast_ref::<NoFeederEnrolled>().is_some() => {
+                    Ended::WindowClosed(format!("{error:#}"))
+                }
+                Err(error) => Ended::Failed(format!("{error:#}")),
             };
             self.server = None;
-            self.ended = Some(error.clone());
-            return Err(Unready::Ended(error));
+            self.ended = Some(ended.clone());
+            return Err(ended.into());
         }
         let handle = server.handle().ok_or(Unready::NoFeeder)?;
         handle
@@ -216,6 +249,14 @@ impl Stock {
         let lease: ImageLease =
             wellfed_formats::load(&ImageLease::path(&self.options.config)).ok()?;
         Some(IpAddr::V4(lease.peer))
+    }
+
+    /// Where the enrolled feeder first connected from, for a run that has
+    /// no image lease left to read it from.
+    pub(crate) fn enrolled_peer(&self) -> Option<IpAddr> {
+        let path = Enrollment::path(&self.options.config);
+        let record = Enrollment::load(&path).ok()??;
+        Some(record.address)
     }
 
     /// The stock device this install's broker enrolled (trust on first
@@ -325,6 +366,84 @@ mod tests {
         let second = read();
         assert_eq!(second.mqtt_listen, other);
         assert_eq!(second.server_password, first.server_password);
+    }
+
+    /// Forgetting a feeder does not lock the next one out, and does not let
+    /// the forgotten one's open request go: each device has its own ledger.
+    #[tokio::test(flavor = "current_thread")]
+    async fn each_device_keeps_its_own_ledger_across_forgetting() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("installer.json");
+        let listen: SocketAddr = "127.41.6.1:21883".parse().unwrap();
+        installer_config(&path, listen, None).unwrap();
+        let path = path.canonicalize().unwrap();
+        assert!(!open_request(&path));
+
+        let enroll = |device: &str| {
+            let record = Enrollment {
+                client_id: device.into(),
+                username: "stock".into(),
+                password: "its-password".into(),
+                address: "127.41.6.2".parse().unwrap(),
+                enrolled_at: chrono::DateTime::UNIX_EPOCH,
+            };
+            wellfed_stock::enroll::create(&record, &Enrollment::path(&path)).unwrap();
+        };
+        let serve = async |device: &str| {
+            let server = Server::start(
+                &path,
+                server::Options {
+                    trial: OtaTrial::Disabled,
+                    enroll: None,
+                    clock: clock::Policy::Bounded,
+                    api: Api::Off,
+                },
+            )
+            .unwrap();
+            for _ in 0..100 {
+                if server.handle().is_some() || server.is_finished() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            let status = server.handle().expect(device).status().unwrap();
+            server.stop().await;
+            status.ota_trials.first().map(|trial| trial.phase)
+        };
+
+        // The first feeder's request went unanswered.
+        enroll("AF_FIRST");
+        let id = uuid::Uuid::new_v4();
+        let at = chrono::DateTime::UNIX_EPOCH;
+        let ledger = json!({
+            "device_id": "AF_FIRST",
+            "ota_trials": {
+                id.to_string(): {
+                    "sequence": 1,
+                    "input": {"request_id": id, "server_token": id},
+                    "created_at": at, "updated_at": at,
+                    "phase": "submitted", "download_reported": false,
+                    "resolution_note": null, "image_sha256": "ab".repeat(32),
+                }
+            },
+        });
+        let first = wellfed_stock::controller::ledger_path(&path, "AF_FIRST").unwrap();
+        wellfed_stock::storage::write_json(&first, &ledger).unwrap();
+        assert!(open_request(&path));
+
+        // The owner said it was not theirs: another feeder may come.
+        forget_enrollment(&path).unwrap();
+        assert!(!open_request(&path));
+        enroll("AF_SECOND");
+        assert_eq!(serve("AF_SECOND").await, None);
+        assert!(!open_request(&path));
+
+        // The first one back: its request is still open, and uncertain now
+        // that the server that sent it is gone.
+        forget_enrollment(&path).unwrap();
+        enroll("AF_FIRST");
+        assert_eq!(serve("AF_FIRST").await, Some(TrialPhase::Uncertain));
+        assert!(open_request(&path));
     }
 
     /// Forgetting the broker's trust takes the contest with it, and is safe

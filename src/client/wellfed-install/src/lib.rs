@@ -72,6 +72,8 @@ pub use wellfed_stock::build_info;
 /// Whether stock's clock is set even when its own reading is far off, and
 /// whether stock's server answers its loopback API.
 pub use wellfed_stock::{clock::Policy as ClockPolicy, server::Api};
+/// Why the server would not send the install request.
+pub use wellfed_stock::{controller::Rejection, server::Refusal};
 
 /// `error` and its causes on one line, as a report shows a failure the run
 /// went on from.

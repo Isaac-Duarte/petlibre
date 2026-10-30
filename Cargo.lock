@@ -4967,6 +4967,7 @@ dependencies = [
  "chrono",
  "flutter_rust_bridge",
  "jiff",
+ "rumqttc",
  "serde",
  "serde_json",
  "tempfile",
@@ -5348,6 +5349,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "chrono-tz",
+ "rumqttc",
  "serde",
  "serde_json",
  "tempfile",

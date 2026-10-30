@@ -90,6 +90,10 @@ pub(crate) fn line(event: &Event) -> String {
             "The replacement knows this computer's key already: feeder {} at {address}.",
             fingerprint(identity)
         ),
+        Event::Rejoining { identity } => format!(
+            "Feeder {} paired with this computer in an earlier run; waiting for it to join the network.",
+            fingerprint(identity)
+        ),
         Event::KnownKeyRefused { error } => {
             format!("No session with the known feeder key ({error}).")
         }

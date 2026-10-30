@@ -65,6 +65,11 @@ pub enum Event {
     KnownKeyRefused {
         error: String,
     },
+    /// An earlier run paired with this feeder over Bluetooth and never saw
+    /// it join; the run waits for it now.
+    Rejoining {
+        identity: [u8; 32],
+    },
     /// Paired through the recovery window.
     Recovered {
         identity: [u8; 32],

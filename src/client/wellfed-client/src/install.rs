@@ -146,6 +146,14 @@ pub fn manifest_version(manifest: &[u8]) -> Option<u32> {
         .map(|signed| signed.manifest.version)
 }
 
+/// The build a signed update manifest names, which bank 1 must then run;
+/// `None` for bytes that are not a manifest.
+pub fn manifest_build(manifest: &[u8]) -> Option<[u8; 32]> {
+    wellfed_core::ota::offer::parse_manifest(manifest)
+        .ok()
+        .map(|signed| signed.manifest.build_id)
+}
+
 /// Stock 1.1.15's error for an `OTA_UPGRADE` it refused at once, with no
 /// download, while its clock stood days behind and unset by the server
 /// (physical, one run; the link to its time-valid precheck is likely, not

@@ -15,8 +15,8 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use wellfed_client::install::{
-    CONTAINER_HEADER, FeederTrust, Install, Options, PairRoute, PlansPut, Promotion, Provision,
-    Replacement, Requested, Step, StockBackup, StockNotReady, UpdateKey, plans,
+    CONTAINER_HEADER, FeederTrust, Install, InstallError, Options, PairRoute, PlansPut, Promotion,
+    Provision, Replacement, Requested, Step, StockBackup, StockNotReady, UpdateKey, plans,
 };
 use wellfed_client::setup::Credentials;
 use wellfed_client::update::{Image, InstallError as UpdateError};
@@ -141,7 +141,8 @@ pub struct Platform<P, B, D, K, R> {
 /// generic state machine this deep), so a platform drives it with
 /// `block_on`, on a thread of its own: the CLI on its main thread, the app
 /// on a thread it starts for the install. Stock's server and image server,
-/// which it spawns, are `Send` tasks and run on that runtime's workers.
+/// which it spawns, are `Send` tasks on that same runtime: on its workers for
+/// the CLI's, and between the run's own awaits on the app's current-thread one.
 pub async fn run<P, B, D, K, R>(
     plan: Plan,
     platform: Platform<P, B, D, K, R>,
@@ -185,11 +186,11 @@ enum Lookup {
     /// This install's own record: the identity its feeder proved, looked
     /// for where it last answered, where stock connected from and by
     /// discovery, where only that identity completes a session. Its feeder
-    /// not answering stops the run: it knows this key, so setup would not
-    /// start.
+    /// not answering stops the run, since it knows this key and setup would
+    /// not start; unless it never answered yet, when it may still be joining.
     Recorded {
         identity: [u8; 32],
-        last: SocketAddr,
+        last: Option<SocketAddr>,
     },
     /// The key's known feeder, which may be another of the owner's: tried
     /// only where this run knows its feeder is, never by discovery, and
@@ -344,6 +345,8 @@ struct Run<P, B, D, K, R> {
     request: Option<uuid::Uuid>,
     /// Where the feeder connected from (the image lease's peer).
     peer: Option<IpAddr>,
+    /// Why the server refused the request, when it did.
+    refused: Option<Refusal>,
     /// Where the feeder answered after joining the owner's Wi-Fi, or where
     /// a lookup found it.
     found: Option<SocketAddr>,
@@ -421,6 +424,7 @@ where
             backups: plan.backups,
             request: None,
             peer: None,
+            refused: None,
             found: None,
             identity: None,
             given: plan.backup,
@@ -541,6 +545,12 @@ where
                     self.done(install)?;
                     return Ok(());
                 }
+                Step::Failed(InstallError::RequestRefused) if self.refused.is_some() => {
+                    return Err(self.refused.take().map_or(
+                        Error::Steps(InstallError::RequestRefused),
+                        Error::RequestRefused,
+                    ));
+                }
                 Step::Failed(error) => return Err(Error::Steps(error)),
             }
         }
@@ -629,12 +639,18 @@ where
                 },
                 Err(Unready::NoFeeder) => Wait::NoFeeder,
                 Err(Unready::Unreadable(error)) => Wait::Unreadable { error },
-                // Nothing will report now: the window closed with no
-                // feeder, or the server failed.
-                Err(Unready::Ended(error)) => {
+                // Nothing will report now: the window closed with no feeder.
+                Err(Unready::WindowClosed(error)) => {
                     self.io.report.event(Event::StockServerEnded { error });
                     install.gave_up();
                     return Ok(());
+                }
+                // Not the same as no feeder coming: its port was taken, say.
+                Err(Unready::Failed(error)) => {
+                    self.io.report.event(Event::StockServerEnded {
+                        error: error.clone(),
+                    });
+                    return Err(Error::StockServerFailed(error));
                 }
             };
 
@@ -691,7 +707,10 @@ where
             .map(|status| status.trial(&id.to_string()).map(|trial| trial.phase));
         Ok(match (answered, recorded) {
             (Ok(_), _) | (_, Ok(Some(TrialPhase::Submitted))) => Requested::Sent,
-            (Err(Refusal::Contested | Refusal::Rejected(_)), Ok(None)) => Requested::Refused,
+            (Err(refusal @ (Refusal::Contested | Refusal::Rejected(_))), Ok(None)) => {
+                self.refused = Some(refusal);
+                Requested::Refused
+            }
             _ => Requested::Uncertain,
         })
     }
@@ -732,7 +751,8 @@ where
     }
 
     /// The replacement's address: given, where it answered, or where stock
-    /// connected from.
+    /// connected from, as the image lease or (a resumed run has no lease) the
+    /// enrollment says.
     fn address(&self) -> Result<SocketAddr, Error> {
         if let Some(address) = self.address {
             return Ok(address);
@@ -740,7 +760,11 @@ where
         if let Some(found) = self.found {
             return Ok(found);
         }
-        match self.peer.or_else(|| self.stock.leased_peer()) {
+        let stock = self
+            .peer
+            .or_else(|| self.stock.leased_peer())
+            .or_else(|| self.stock.enrolled_peer());
+        match stock {
             Some(ip) => Ok(SocketAddr::new(ip, PORT)),
             None => Err(Error::NoAddress),
         }
@@ -759,6 +783,14 @@ where
     /// replacement knows this client's key. It may still be starting, so
     /// a session is tried until it answers.
     async fn recover(&mut self, install: &mut Install) -> Result<(), Error> {
+        // A resumed run: where this install's feeder last answered.
+        if self.found.is_none()
+            && let Some(device) = self.stock.device()?
+            && let Some(record) = storage::Paired::load(&self.backups)?
+            && record.device == device
+        {
+            self.found = record.address;
+        }
         let address = self.address()?;
         if let Some(identity) = self.io.keys.feeder(self.feeder.as_deref()) {
             let deadline = Instant::now() + REPLACEMENT_WAIT;
@@ -774,6 +806,7 @@ where
                     Ok(_) => {
                         self.io.report.event(Event::KeyKnown);
                         self.identity = Some(identity);
+                        self.record_paired(identity, Some(address))?;
                         install.paired();
                         return Ok(());
                     }
@@ -809,6 +842,7 @@ where
             pairing::recover(&mut self.io.keys, address, &mut self.io.prompter).await?;
         self.io.report.event(Event::Recovered { identity, outcome });
         self.identity = Some(identity);
+        self.record_paired(identity, Some(address))?;
         install.paired();
         Ok(())
     }
@@ -830,11 +864,26 @@ where
         );
         let answered = match lookup {
             Lookup::Recorded { identity, last } => {
-                self.answering(identity, Look::Discovered, Some(last)).await
+                self.answering(identity, Look::Discovered, last).await
             }
             Lookup::KeyFile { identity } => self.answering(identity, Look::Known, None).await,
             Lookup::Setup => None,
         };
+        // Paired over Bluetooth by a run that never saw it join: it may be
+        // restarting still, so this run waits as that one would have.
+        if let (
+            Lookup::Recorded {
+                identity,
+                last: None,
+            },
+            None,
+        ) = (lookup, answered)
+        {
+            self.io.report.event(Event::Rejoining { identity });
+            self.identity = Some(identity);
+            install.set_up();
+            return Ok(());
+        }
         if let Some((identity, address)) = looked_up(lookup, answered)? {
             self.io
                 .report
@@ -868,6 +917,7 @@ where
                 .map_err(|error| Error::Setup(Box::new(error)))?;
         self.io.report.event(Event::SetUp { identity, outcome });
         self.identity = Some(identity);
+        self.record_paired(identity, None)?;
         install.set_up();
         Ok(())
     }
@@ -891,14 +941,19 @@ where
         Ok(())
     }
 
-    /// The paired feeder answered at `address`: use it, and record it
-    /// beside the backups, keyed to this install's stock device, for a
-    /// resumed run, which may find no image lease (the image server removes
-    /// it when it stops). With no enrolled device there is nothing to key
-    /// it to, and nothing is recorded.
+    /// The paired feeder answered at `address`: use it, and record it.
     fn paired_at(&mut self, identity: [u8; 32], address: SocketAddr) -> Result<(), Error> {
         self.identity = Some(identity);
         self.found = Some(address);
+        self.record_paired(identity, Some(address))
+    }
+
+    /// Record the paired feeder beside the backups, keyed to this install's
+    /// stock device, as soon as pairing succeeds: a resumed run may find no
+    /// image lease (the image server removes it when it stops), and this
+    /// install is one to pick up from now on. With no enrolled device there
+    /// is nothing to key it to, and nothing is recorded.
+    fn record_paired(&self, identity: [u8; 32], address: Option<SocketAddr>) -> Result<(), Error> {
         let Some(device) = self.stock.device()? else {
             return Ok(());
         };
@@ -1468,7 +1523,7 @@ mod tests {
         let recorded = storage::Paired {
             device: "AF_A".into(),
             identity: wellfed_model::Hex([0xab; 32]),
-            address: "192.168.4.20:7100".parse().unwrap(),
+            address: Some("192.168.4.20:7100".parse().unwrap()),
         };
 
         let known = Some([0xcd; 32]);

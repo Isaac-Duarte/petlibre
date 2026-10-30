@@ -478,6 +478,11 @@ impl From<Event> for InstallEvent {
             Event::StockProgress(percent) => Self::StockProgress { percent },
             Event::StockRestarting => Self::StockRestarting,
             Event::KeyKnown => Self::KeyKnown,
+            Event::Rejoining { identity } => Self::Paired {
+                identity: identity.to_vec(),
+                address: None,
+                rebooting: true,
+            },
             Event::KeyKnownAt { identity, address } => Self::Paired {
                 identity: identity.to_vec(),
                 address: Some(address.to_string()),

@@ -92,6 +92,16 @@ pub enum Error {
     Images(#[source] PlatformError),
     #[error("the stock server has stopped")]
     StockServerGone,
+    /// It ended on its own, for a reason other than its enrollment window
+    /// closing: its port was taken, or its records could not be read.
+    #[error("the stock server stopped: {0}")]
+    StockServerFailed(String),
+    /// The server would not send the install request, and its ledger shows
+    /// no record of it, so nothing reached stock.
+    #[error(
+        "the server refused the install request without sending it; stock is unchanged, and a new run may ask again once the reason is fixed"
+    )]
+    RequestRefused(#[source] wellfed_stock::server::Refusal),
     #[error(transparent)]
     Trial(#[from] wellfed_stock::server::Refusal),
     /// The image server admits one IPv4 peer: the address the enrollment

@@ -65,9 +65,9 @@ const RESTART_OFF: Duration = if cfg!(test) {
 };
 
 /// `install`: the flags of `wellfed install` the bench uses. The job adds
-/// `--prompts lines` and the server's own `wellfed-stock`; the frame route
-/// (`--ssid`) and `--home-ssid` read a passphrase at a terminal and have no
-/// place here.
+/// `--prompts lines`; the installer runs stock's server in its own
+/// process. The frame route (`--ssid`) and `--home-ssid` read a passphrase
+/// at a terminal and have no place here.
 #[derive(Debug, Clone, Args)]
 pub struct InstallArgs {
     /// The replacement's frozen review, root-relative.
@@ -129,14 +129,13 @@ pub struct InstallArgs {
 impl InstallArgs {
     /// The installer's arguments. Each value goes as `--flag=value`, so
     /// none can read as a flag of its own.
-    fn arguments(&self, stock_bin: &Path) -> Vec<OsString> {
+    fn arguments(&self) -> Vec<OsString> {
         let mut arguments: Vec<OsString> = vec!["install".into(), "--prompts=lines".into()];
         let mut value = |flag: &str, value: &dyn AsRef<std::ffi::OsStr>| {
             let mut word = OsString::from(format!("--{flag}="));
             word.push(value);
             arguments.push(word);
         };
-        value("stock-server", &stock_bin);
         value("review", &self.review);
         if let Some(manifest) = &self.manifest {
             value("manifest", manifest);
@@ -379,9 +378,9 @@ fn prompt_line(line: String) -> Event {
 
 /// The installer's own error once it stops. Its `main` returns every
 /// failure, so the error is the last block on its standard error: an
-/// `Error: ` line and anyhow's `Caused by:` list. Its stock server shares
-/// that pipe and may print an `Error: ` of its own; any line after a block
-/// that is not part of anyhow's shape means it was not the last word.
+/// `Error: ` line and anyhow's `Caused by:` list. Its stock server's log
+/// shares that pipe; any line after a block that is not part of anyhow's
+/// shape means it was not the last word.
 #[derive(Default)]
 struct LastWords {
     lines: Vec<String>,
@@ -427,7 +426,7 @@ pub(crate) fn install(
     let mut command = Command::new(path);
     own_group_with_input(&mut command)
         .current_dir(&bench.root)
-        .args(args.arguments(&tools.stock_bin))
+        .args(args.arguments())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let mut child = command.spawn().map_err(wellfed_rig::Error::from)?;
@@ -774,7 +773,7 @@ mod tests {
         };
 
         let words: Vec<String> = args
-            .arguments(Path::new("/bin/stock"))
+            .arguments()
             .into_iter()
             .map(|word| word.into_string().unwrap())
             .collect();
@@ -784,7 +783,6 @@ mod tests {
             [
                 "install",
                 "--prompts=lines",
-                "--stock-server=/bin/stock",
                 "--review=private/r",
                 "--manifest=private/m.json",
                 "--stock-config=private/installer.json",

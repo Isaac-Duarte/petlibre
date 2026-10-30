@@ -21,21 +21,23 @@ jiff = "0.2.38"
 wellfed-client.workspace = true
 wellfed-connect.workspace = true
 wellfed-formats = { workspace = true, features = ["device"] }
+wellfed-install.workspace = true
 wellfed-model.workspace = true
 wellfed-proto.workspace = true
 wellfed-server-client.workspace = true
 wellfed-session.workspace = true
 wellfed-signing.workspace = true
-wellfed-stock-api.workspace = true
-rustix = { version = "1", features = ["process"] }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["io-util", "macros", "net", "process", "rt", "signal", "sync", "time"] }
+# `wellfed install` drives stock's server in this process, which spawns its
+# broker and session on the runtime's workers.
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "rt-multi-thread", "signal", "sync", "time"] }
+# The in-process stock server's log, as `wellfed-stock serve` writes it.
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]
-chrono = { version = "0.4.45", default-features = false, features = ["std"] }
 wellfed-server-testkit.workspace = true
 # `wellfed status` through a stand-in for the bench server's device routes,
 # in front of a simulated feeder.

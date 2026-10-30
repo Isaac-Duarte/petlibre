@@ -48,7 +48,7 @@ A DSD TECH SH-UR04A USB relay board (CP2102 serial, 9600 8N1) adds four switches
    cargo build --locked --release -p wellfed-bench -p wellfed-flash -p wellfed-stock -p wellfed
    ```
 
-   The server runs the `wellfed-flash` beside itself unless `serve --flash-bin` names another. `itest`, `stock-ota` and `install` run the `wellfed-stock` beside it unless `serve --stock-bin` names another ([stock server](../../development/stock-server.md)), and `install` runs the `wellfed` beside it unless `serve --wellfed-bin` names another.
+   The server runs the `wellfed-flash` beside itself unless `serve --flash-bin` names another. `itest` and `stock-ota` run the `wellfed-stock` beside it unless `serve --stock-bin` names another ([stock server](../../development/stock-server.md)), and `install` runs the `wellfed` beside it unless `serve --wellfed-bin` names another, which runs stock's server in its own process.
 
 2. Write the ignored `private/bench.json`. The relay board also enumerates as a USB serial port and can take the name the UART adapter used to have, so use `/dev/serial/by-id/` paths:
 
@@ -339,7 +339,7 @@ The lease names its holder: its pid, its start time and boot (so a reused pid is
 Stopped: The bench is held by pid 81234 (`wellfed-bench serve`, since 2026-10-26 12:00:00 UTC on bench); wait for it to finish or stop it
 ```
 
-**Chained tools.** A process descended from the holder runs on the holder's lease and leaves it in place. So the children the server's jobs start (`wellfed-flash` captures, reads and updates; the `serve --enable-ota-trial` of `itest` and `stock-ota`; `wellfed install` and its stock server) never wait on their own parent. That is checked once, when the child starts, and a job waits for or stops its children before it ends, as the server waits for its job before it releases. Run by hand, `wellfed-flash` takes the lease itself, so a hand-run read cannot open the UART under a running server.
+**Chained tools.** A process descended from the holder runs on the holder's lease and leaves it in place. So the children the server's jobs start (`wellfed-flash` captures, reads and updates; the `serve --enable-ota-trial` of `itest` and `stock-ota`; `wellfed install`, with its stock server in its own process) never wait on their own parent. That is checked once, when the child starts, and a job waits for or stops its children before it ends, as the server waits for its job before it releases. Run by hand, `wellfed-flash` takes the lease itself, so a hand-run read cannot open the UART under a running server.
 
 **Tools that take no lease.** The progress page, alone or as `serve --ui`, only reads; under the server, the server holds the lease. A client only asks the server. The offline `wellfed-flash` commands (`plan-stock-recovery`, `decode-status`, `inspect-journal`) and an emulated helper (`WELLFED_FLASH_EMULATOR`, the host tests) take none.
 

@@ -3,9 +3,8 @@
 //!
 //! The copy comes from the feeder: while the replacement runs from bank 0
 //! after stock installed it, bank 1 still holds stock, and the bank-0
-//! role streams it over the device API. `wellfed_client::install` checks
-//! it against the pinned 1.1.15 payload and rebuilds the vendor's
-//! container, which is kept here per feeder, under the owner's data
+//! role streams it over the device API (`wellfed_install::backup`, which
+//! the install runs too). It is kept per feeder under the owner's data
 //! directory (`private/stock-backups/<identity>/stock-1.1.15.bin` by
 //! default), never replaced by another copy.
 //!
@@ -26,22 +25,20 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use clap::{Args, Subcommand};
 use serde::Serialize;
-use wellfed_client::install::{Bank1Reader, STOCK_VERSION, StockBackup};
+use wellfed_client::install::{STOCK_VERSION, StockBackup};
 use wellfed_client::update::Image;
 use wellfed_formats::canonical::sha256;
-use wellfed_formats::hex;
+use wellfed_install::push::{Pushed, push};
+use wellfed_install::storage::{backup_path, load_backup};
 use wellfed_model::{Answer, Op};
 use wellfed_signing::{Frozen, Key, Motion};
 
-use crate::device::Connection;
-use crate::keys::{OwnerKey, fingerprint};
-use crate::push::{Pushed, push};
+use crate::keys::OwnerKey;
+use crate::report::Printer;
 use crate::{Target, connect};
 
 /// The owner's data directory for backups, one subdirectory per feeder.
 pub(crate) const BACKUPS: &str = wellfed_formats::bench::STOCK_BACKUPS;
-/// Report the read's progress every this many bytes.
-const PROGRESS: usize = 256 * 1024;
 
 #[derive(Args)]
 pub(crate) struct BackupArgs {
@@ -126,7 +123,9 @@ pub(crate) async fn command(args: BackupArgs) -> Result<()> {
     match args.command {
         BackupCommand::Read(args) => {
             let (_, identity, mut connection) = connect(&args.target).await?;
-            let (path, _) = fetch(&mut connection, &args.backups, &identity).await?;
+            let (path, _) =
+                wellfed_install::backup::fetch(&mut connection, &args.backups, &identity, &Printer)
+                    .await?;
             show(&path)
         }
         BackupCommand::Show(stored) => show(&stored.path()?),
@@ -139,138 +138,12 @@ impl Stored {
     fn path(&self) -> Result<PathBuf> {
         let key = OwnerKey::open(&self.keys, None, OwnerKey::system())?;
         let identity = key.feeder(self.feeder.as_deref())?;
-        Ok(path(&self.backups, &identity))
+        Ok(backup_path(&self.backups, &identity))
     }
-}
-
-/// Where the feeder `identity`'s backup is kept under `backups`.
-pub(crate) fn path(backups: &Path, identity: &[u8; 32]) -> PathBuf {
-    feeder_directory(backups, identity).join(format!("stock-{STOCK_VERSION}.bin"))
-}
-
-/// The directory under `backups` that holds what is kept for the feeder
-/// `identity`.
-pub(crate) fn feeder_directory(backups: &Path, identity: &[u8; 32]) -> PathBuf {
-    backups.join(hex::encode(identity))
-}
-
-/// Where the install keeps the update manifest it signed for the feeder
-/// `identity` at `version`, beside its backup: a run resumed after the
-/// activation reads the version it waits for there, and a later run signs
-/// above it.
-pub(crate) fn promotion_path(backups: &Path, identity: &[u8; 32], version: u32) -> PathBuf {
-    feeder_directory(backups, identity).join(format!("promotion-v{version}.manifest"))
-}
-
-/// Where the install keeps stock's plan sectors, beside the feeder's
-/// backup: the count byte and entries as the feeder served them
-/// (`wellfed_client::install::plans::kept`), which `wellfed-stock plans`
-/// reads again.
-pub(crate) fn plans_path(backups: &Path, identity: &[u8; 32]) -> PathBuf {
-    feeder_directory(backups, identity).join("stock-plans.bin")
-}
-
-/// Keep stock's plan bytes at `path`. As with the backup, a copy already
-/// there stays: the same bytes are kept as they are, and different ones
-/// refuse rather than replace what an earlier run read.
-pub(crate) fn keep_plans(path: &Path, bytes: &[u8]) -> Result<()> {
-    match std::fs::read(path) {
-        Ok(kept) if kept == bytes => return Ok(()),
-        Ok(_) => bail!(
-            "{} already holds another copy of stock's plans; it is never replaced: move it \
-             aside to keep this one",
-            path.display()
-        ),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error).with_context(|| format!("read {}", path.display())),
-    }
-    let directory = path.parent().context("a plans path has a directory")?;
-    std::fs::create_dir_all(directory)
-        .with_context(|| format!("create {}", directory.display()))?;
-    wellfed_formats::private::write_new_whole(path, bytes)
-        .with_context(|| format!("write {}", path.display()))
-}
-
-/// The backup kept at `path`, checked again; `None` when there is none.
-pub(crate) fn load(path: &Path) -> Result<Option<StockBackup>> {
-    let bytes = match std::fs::read(path) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error).with_context(|| format!("read {}", path.display())),
-    };
-    let backup = StockBackup::open(bytes).with_context(|| {
-        format!(
-            "{0} is not stock {STOCK_VERSION}'s image (damaged, partial or foreign); \
-             delete {0} to read the backup from the feeder again",
-            path.display()
-        )
-    })?;
-    Ok(Some(backup))
-}
-
-/// Keep `backup` at `path`. A copy already there stays: the same bytes are
-/// kept as they are, and different ones refuse.
-pub(crate) fn keep(path: &Path, backup: &StockBackup) -> Result<()> {
-    if let Some(kept) = load(path)? {
-        if kept.bytes() == backup.bytes() {
-            return Ok(());
-        }
-        bail!(
-            "{} already holds another copy of stock; it is never replaced",
-            path.display()
-        );
-    }
-    let directory = path.parent().context("a backup path has a directory")?;
-    std::fs::create_dir_all(directory)
-        .with_context(|| format!("create {}", directory.display()))?;
-    // Whole or not at all: a partial file would refuse every later run.
-    wellfed_formats::private::write_new_whole(path, backup.bytes())
-        .with_context(|| format!("write {}", path.display()))
-}
-
-/// The kept backup for `identity`, or bank 1 read now from the bank-0 role
-/// and kept: the copy the promotion waits for.
-pub(crate) async fn fetch(
-    connection: &mut Connection,
-    backups: &Path,
-    identity: &[u8; 32],
-) -> Result<(PathBuf, StockBackup)> {
-    let path = path(backups, identity);
-    if let Some(kept) = load(&path)? {
-        eprintln!("Using the stock backup kept at {}.", path.display());
-        return Ok((path, kept));
-    }
-    // A feeder that predates the op would end the session on it.
-    if !connection.capabilities().backup {
-        bail!("this build serves no stock backup; update bank 0 first, or pass a copy you hold");
-    }
-
-    eprintln!(
-        "Reading bank 1 from feeder {} (about 1.3 MB)...",
-        fingerprint(identity)
-    );
-    let mut reader = Bank1Reader::new();
-    let mut shown = 0;
-    let bank = loop {
-        let answer = connection.ask(&reader.next_op()).await?;
-        if let Some(bank) = reader.take(answer).context("read bank 1")? {
-            break bank;
-        }
-        if reader.read() / PROGRESS != shown {
-            shown = reader.read() / PROGRESS;
-            eprintln!("  {} bytes read", reader.read());
-        }
-    };
-    let backup = StockBackup::from_bank(bank).context(
-        "bank 1 is not stock 1.1.15's pinned image; nothing was kept, and the feeder is unchanged",
-    )?;
-    keep(&path, &backup)?;
-    eprintln!("Kept the verified stock backup at {}.", path.display());
-    Ok((path, backup))
 }
 
 fn show(path: &Path) -> Result<()> {
-    let Some(backup) = load(path)? else {
+    let Some(backup) = load_backup(path)? else {
         bail!("no stock backup kept at {}", path.display());
     };
     crate::print_json(&Shown {
@@ -284,7 +157,7 @@ fn show(path: &Path) -> Result<()> {
 
 /// Copy the kept backup to `output` byte for byte, checked again first.
 fn export(path: &Path, output: &Path) -> Result<()> {
-    let Some(backup) = load(path)? else {
+    let Some(backup) = load_backup(path)? else {
         bail!("no stock backup kept at {}", path.display());
     };
     wellfed_formats::private::write_new_whole(output, backup.bytes())
@@ -308,8 +181,8 @@ pub(crate) async fn restore(args: RestoreArgs) -> Result<()> {
             StockBackup::open(bytes).with_context(|| format!("{}", given.display()))?
         }
         None => {
-            let kept = path(&args.backups, &identity);
-            load(&kept)?.with_context(|| {
+            let kept = backup_path(&args.backups, &identity);
+            load_backup(&kept)?.with_context(|| {
                 format!(
                     "no stock backup kept at {}; pass --backup with a copy",
                     kept.display()
@@ -352,12 +225,13 @@ pub(crate) async fn restore(args: RestoreArgs) -> Result<()> {
                 keypair,
                 identity,
                 address,
-                crate::device::random()?,
+                wellfed_install::session::random()?,
             )
             .await?)
         },
         // Stock serves no device API: a session that opens is never it.
         |_, _| false,
+        &Printer,
     )
     .await?;
 
@@ -390,35 +264,17 @@ pub(crate) async fn restore(args: RestoreArgs) -> Result<()> {
 mod tests {
     use super::*;
 
-    /// A backup is kept per feeder and never replaced by a different copy;
-    /// an unreadable or foreign file there is refused, not trusted.
+    /// A foreign file where the backup is kept is refused, not shown or
+    /// exported.
     #[test]
-    fn a_kept_backup_is_never_replaced_and_a_foreign_file_is_refused() {
+    fn a_foreign_file_is_neither_shown_nor_exported() {
         let dir = tempfile::tempdir().unwrap();
-        let at = path(dir.path(), &[0xab; 32]);
-        assert!(at.ends_with(format!("{}/stock-1.1.15.bin", "ab".repeat(32))));
-        assert!(load(&at).unwrap().is_none());
-
+        let at = backup_path(dir.path(), &[0xab; 32]);
         std::fs::create_dir_all(at.parent().unwrap()).unwrap();
         std::fs::write(&at, b"not stock").unwrap();
-        assert!(load(&at).is_err());
         assert!(show(&at).is_err());
         let output = dir.path().join("exported.bin");
         assert!(export(&at, &output).is_err());
         assert!(!output.exists(), "nothing exported from a foreign file");
-    }
-
-    /// Stock's plans are kept beside the backup, and never replaced by a
-    /// different read.
-    #[test]
-    fn kept_plans_sit_beside_the_backup_and_are_never_replaced() {
-        let dir = tempfile::tempdir().unwrap();
-        let at = plans_path(dir.path(), &[0xab; 32]);
-        assert_eq!(at.parent(), path(dir.path(), &[0xab; 32]).parent());
-
-        keep_plans(&at, &[1, 2, 3]).unwrap();
-        keep_plans(&at, &[1, 2, 3]).unwrap();
-        assert!(keep_plans(&at, &[1, 2, 4]).is_err());
-        assert_eq!(std::fs::read(&at).unwrap(), [1, 2, 3]);
     }
 }

@@ -110,6 +110,26 @@ impl OwnerKey {
     }
 }
 
+/// The key file is the install's client key: what it opens sessions and
+/// setups with, and where a feeder that enrolled it is noted.
+impl wellfed_install::Keys for OwnerKey {
+    fn keypair(&self) -> &Keypair {
+        Self::keypair(self)
+    }
+
+    fn label(&self) -> &str {
+        Self::label(self)
+    }
+
+    fn feeder(&self, prefix: Option<&str>) -> Option<[u8; 32]> {
+        Self::feeder(self, prefix).ok()
+    }
+
+    fn remember(&mut self, identity: &[u8; 32]) -> Result<(), wellfed_install::PlatformError> {
+        Ok(Self::remember(self, identity)?)
+    }
+}
+
 /// The identity's first 8 bytes, as the feeder logs them (`PLID1`).
 pub(crate) fn fingerprint(identity: &[u8; 32]) -> String {
     hex::encode(&identity[..8])

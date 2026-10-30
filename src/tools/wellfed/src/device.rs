@@ -105,3 +105,19 @@ impl Connection {
         }
     }
 }
+
+/// The shared steps (the backup's read, the update key's enrollment) run
+/// over whichever session a command holds, the bench server's among them.
+impl wellfed_install::session::Session for Connection {
+    fn role(&self) -> ClientRole {
+        Self::role(self)
+    }
+
+    fn capabilities(&self) -> Capabilities {
+        Self::capabilities(self)
+    }
+
+    async fn ask(&mut self, op: &Op) -> Result<Answer, wellfed_install::PlatformError> {
+        Ok(Self::ask(self, op).await?)
+    }
+}

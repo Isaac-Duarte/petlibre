@@ -181,7 +181,7 @@ async fn an_install_restarts_the_feeder_itself_and_asks_the_rest_through_the_sta
     }
     let args = read(&checkout, "args");
     assert!(
-        args.starts_with("install --prompts=lines --stock-server=")
+        args.starts_with("install --prompts=lines --review=")
             && args.contains("--broker-name=broker.example.net")
             && !args.contains("restart"),
         "{args}"

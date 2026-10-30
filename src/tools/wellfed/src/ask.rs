@@ -20,7 +20,10 @@ use std::io::{self, BufRead, Write};
 
 use clap::ValueEnum;
 use tokio::sync::mpsc;
+use wellfed_client::setup::panel_position;
 use wellfed_formats::bench::prompt::{Answer, Expects, Prompt};
+use wellfed_install::{Announcement, PlatformError, Prompter};
+use wellfed_session::setup_code::Code;
 
 /// Where prompts go and how answers come back.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
@@ -210,6 +213,57 @@ impl<W: Write> Asker<W> {
     }
 }
 
+/// The install's person at the feeder is this asker: a question or an
+/// instruction as before, and an announced press in the words a person at
+/// a terminal has always read.
+impl<W: Write> Prompter for Asker<W> {
+    async fn done(&mut self, prompt: Prompt) -> Result<(), PlatformError> {
+        Ok(Self::done(self, prompt).await?)
+    }
+
+    async fn yes(&mut self, prompt: Prompt) -> Result<bool, PlatformError> {
+        Ok(Self::yes(self, prompt).await?)
+    }
+
+    async fn announce(&mut self, announcement: Announcement) -> Result<(), PlatformError> {
+        let words = announcement_text(&announcement);
+        Ok(Self::announce(self, announcement.prompt(), &words).await?)
+    }
+
+    async fn settle(&mut self) -> Result<(), PlatformError> {
+        Ok(Self::settle(self).await?)
+    }
+}
+
+/// An announced press as a person at a terminal reads it.
+fn announcement_text(announcement: &Announcement) -> String {
+    match announcement {
+        Announcement::SetupCode { code, seconds } => code_text(*code, *seconds),
+        Announcement::PressDispense { key } => format!(
+            "Press Dispense on the feeder within 60 s to enroll update key {}.",
+            wellfed_formats::hex::encode(key)
+        ),
+    }
+}
+
+/// The code as the owner keys it in: button positions, then their names.
+fn code_text(code: Code, seconds: u16) -> String {
+    let presses = code.presses();
+    let positions: Vec<String> = presses
+        .iter()
+        .map(|&b| panel_position(b).to_string())
+        .collect();
+    let names: Vec<&str> = presses.iter().map(|b| b.as_str()).collect();
+    format!(
+        "Within {seconds} s, press these buttons on the feeder one at a time \
+         (numbered from the left: 1 Lock, 2 Dispense, 3 Mic, 4 Reset):\n\n    \
+         {}\n    ({})\n\nThe code proves this computer is talking to that feeder; \
+         it is used once.",
+        positions.join(" "),
+        names.join(", ")
+    )
+}
+
 /// An asker whose standard input holds `lines`, then ends.
 #[cfg(test)]
 pub(crate) fn scripted(prompts: Prompts, lines: &[&str]) -> Asker<Vec<u8>> {
@@ -377,6 +431,26 @@ mod tests {
             lines[1].starts_with("Join this computer back"),
             "{}",
             lines[1]
+        );
+    }
+
+    /// The install's Dispense press is its prompt line for the bench, and
+    /// its words at a terminal.
+    #[tokio::test]
+    async fn an_announced_press_is_its_line_or_its_words() {
+        let press = Announcement::PressDispense { key: [0xab; 8] };
+        let mut asker = scripted(Prompts::Lines, &[]);
+        Prompter::announce(&mut asker, press).await.unwrap();
+        assert_eq!(
+            written(&asker),
+            [r#"{"kind":"press-dispense","purpose":"enroll-update-key"}"#]
+        );
+
+        let mut asker = scripted(Prompts::Terminal, &[]);
+        Prompter::announce(&mut asker, press).await.unwrap();
+        assert_eq!(
+            written(&asker),
+            ["Press Dispense on the feeder within 60 s to enroll update key abababababababab."]
         );
     }
 

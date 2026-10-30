@@ -20,8 +20,8 @@
 //!   the token `wellfed server login` keeps.
 //!
 //! `wellfed install` takes a feeder from stock 1.1.15 to the replacement
-//! (the `install` module), running `wellfed-stock` beside it for stock's
-//! side.
+//! (the `install` module): `wellfed-install`'s run, the one the Android app
+//! runs, with stock's server in this process.
 //!
 //! [tools]: ../../../../src/tools/README.md
 //! [two paths, one feed]: ../../../../docs/server/README.md#two-paths-one-feed
@@ -42,7 +42,7 @@ mod install;
 mod keys;
 mod pairing;
 mod plans;
-mod push;
+mod report;
 mod server;
 mod text;
 mod trace;
@@ -153,9 +153,15 @@ enum Command {
 /// when a write's outcome is unknown.
 fn main() -> Result<ExitCode> {
     let cli = Cli::parse();
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()?;
+    // The install drives stock's server in this process: its broker and
+    // session run on worker threads beside the run, which this thread
+    // drives. Every other command is one session on one thread.
+    let runtime = match &cli.command {
+        Command::Install(_) => tokio::runtime::Builder::new_multi_thread(),
+        _ => tokio::runtime::Builder::new_current_thread(),
+    }
+    .enable_all()
+    .build()?;
 
     // These open sessions of their own, beside the one the bench server
     // holds: setup and recovery over the pairing window, a join with

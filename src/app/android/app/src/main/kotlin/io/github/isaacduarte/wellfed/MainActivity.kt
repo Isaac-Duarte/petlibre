@@ -46,7 +46,9 @@ class MainActivity : FlutterActivity() {
 
             override fun onLost(network: Network) {
                 if (home == network) home = null
-                if (connectivity.boundNetworkForProcess == network) {
+                // This request matches the feeder's network too: while it is
+                // held, an unbound process would send the frame out by default.
+                if (feeder == null && connectivity.boundNetworkForProcess == network) {
                     connectivity.bindProcessToNetwork(null)
                 }
             }
@@ -91,10 +93,11 @@ class MainActivity : FlutterActivity() {
     // Android shows its own picker for the networks this pattern matches, and
     // answers once the owner chose one. No passphrase: the setup network is open.
     private fun joinFeeder(result: MethodChannel.Result) {
-        if (feeder != null) {
-            result.success(null)
-            return
-        }
+        // A request left from a stopped run answers nothing here, and its network
+        // may be gone: only a join this call made says the frame can go.
+        feeder?.let { connectivity.unregisterNetworkCallback(it) }
+        feeder = null
+        home?.let { connectivity.bindProcessToNetwork(it) }
         val wifiManager = getSystemService(WifiManager::class.java)
         Log.i(
             TAG,
@@ -127,11 +130,9 @@ class MainActivity : FlutterActivity() {
                     main.post { result.error("unavailable", "no setup network joined", null) }
                 }
 
-                override fun onLost(network: Network) {
-                    if (connectivity.boundNetworkForProcess == network) {
-                        connectivity.bindProcessToNetwork(home)
-                    }
-                }
+                // Stays bound to the lost network: a frame sent now fails, where
+                // on the home network its password would go to whatever answers.
+                // Leaving rebinds.
             }
         feeder = callback
         connectivity.requestNetwork(request, callback, JOIN_TIMEOUT_MS)

@@ -317,7 +317,8 @@ pub(crate) async fn run(args: InstallArgs) -> Result<()> {
         keys: OwnerKey::open(&args.keys, None, OwnerKey::system())?,
         report: Printer,
     };
-    let clock = if args.calibrate_clock {
+    // After the Reset hold no plan is left to come due in the jump.
+    let clock = if args.calibrate_clock || args.ssid.is_some() {
         ClockPolicy::Always
     } else {
         ClockPolicy::Bounded

@@ -1198,7 +1198,7 @@ class _Stopped extends StatelessWidget {
     ),
     StopCase_FrameNotTaken() => (
       "The feeder didn't reach this phone",
-      'It keeps nothing when that happens, and opens its setup network again. '
+      'It should keep nothing and open its setup network again. '
           'Check the Wi-Fi password, that your Wi-Fi has a 2.4 GHz band, and '
           'that this phone stayed on it.',
     ),

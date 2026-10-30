@@ -130,6 +130,7 @@ class InstallFlow extends ChangeNotifier {
   /// This phone's broker heard the feeder after a frame: stock kept it, and
   /// has no setup network left.
   bool _frameTaken = false;
+  String? _frameAddress;
 
   // The record.
   String? phoneIp;
@@ -360,6 +361,14 @@ class InstallFlow extends ChangeNotifier {
       _notify();
       return;
     }
+    // Stock kept the address the frame named, so it looks nowhere else; a new
+    // frame is the only way to tell it this one, and that takes another hold.
+    if (_frameTaken && ip != _frameAddress) {
+      _frameTaken = false;
+      _feederReset = false;
+      _go(InstallStage.reset);
+      return;
+    }
     _feederReset = true;
     joinFailed = false;
     handover = _frameTaken ? Handover.waiting : Handover.starting;
@@ -387,6 +396,11 @@ class InstallFlow extends ChangeNotifier {
       handover = Handover.join;
       joinFailed = true;
       _notify();
+      return;
+    }
+    // The run ended while the picker was up: nothing will ever ask to leave.
+    if (_disposed || !identical(_run, run)) {
+      await _ports.leaveFeederNetwork();
       return;
     }
     _joinAsk = null;
@@ -650,7 +664,12 @@ class InstallFlow extends ChangeNotifier {
       case InstallAsk_LeaveFeederNetwork():
         await _leaveFeeder(answer);
       case InstallAsk_RecognizeFeeder(:final device, :final address):
-        _frameTaken = route == InstallRoute.reset;
+        // Whatever reached the broker took the frame, and has no setup network
+        // to take another.
+        if (route == InstallRoute.reset) {
+          _frameTaken = true;
+          _frameAddress = phoneIp;
+        }
         this.device = device;
         deviceAddress = address;
         _recognizeAsk = id;
@@ -811,6 +830,11 @@ class InstallFlow extends ChangeNotifier {
     _updates = null;
     unawaited(_settle());
     _closeLink();
+    if (end case InstallEnd_Stopped(
+      case_: StopCase_NoFeederCame() || StopCase_TwoFeeders(),
+    )) {
+      _frameTaken = false;
+    }
     switch (end) {
       case InstallEnd_Done():
         stage = InstallStage.done;
@@ -851,6 +875,8 @@ class InstallFlow extends ChangeNotifier {
     final id = _recognizeAsk;
     if (id == null) return;
     _recognizeAsk = null;
+    // Somebody else's client: the feeder may still be waiting for its frame.
+    if (!yes) _frameTaken = false;
     _run?.answer(
       id: id,
       answer: InstallAnswer.yes(yes: yes),
@@ -981,6 +1007,10 @@ class InstallFlow extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _run?.stop();
+    if (_onFeederNetwork) {
+      _onFeederNetwork = false;
+      unawaited(_ports.leaveFeederNetwork());
+    }
     unawaited(_updates?.cancel());
     _stopListening();
     _closeLink();

@@ -119,7 +119,8 @@ fn binding_is_replayed_with_fresh_ids() {
 /// it is answered, and an installer has no captured reply to give it.
 #[test]
 fn binding_with_no_captured_reply_is_answered_as_bound() {
-    let config = common::config();
+    let mut config = common::config();
+    config.hotspot_interface = None;
     assert_eq!(config.binding_response, None);
 
     assert_eq!(

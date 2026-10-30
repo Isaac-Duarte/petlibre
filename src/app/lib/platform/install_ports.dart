@@ -53,7 +53,11 @@ abstract interface class InstallPorts {
 
   BuildCheck checkBuild();
 
-  bool pending(InstallPaths paths);
+  /// What an earlier run left on the feeder.
+  PendingInstall pending(InstallPaths paths);
+
+  /// The checked copy of stock kept for the feeder with `identity`.
+  String? keptBackup(InstallPaths paths, List<int> identity);
 
   /// This phone's address on the Wi-Fi, or `null` when it is on none.
   Future<String?> phoneAddress();
@@ -85,8 +89,9 @@ abstract interface class InstallPorts {
   Future<String?> locate(String identity);
 
   /// Keep this process alive with a notification, for as long as a run or a
-  /// listener needs stock's server on this phone.
-  Future<void> holdProcess(String text);
+  /// listener needs stock's server on this phone. `false` when Android
+  /// refused, so the app's being on screen is all that keeps it alive.
+  Future<bool> holdProcess(String text);
 
   Future<void> releaseProcess();
 
@@ -145,7 +150,12 @@ class AppInstallPorts implements InstallPorts {
   BuildCheck checkBuild() => rust.checkBuild();
 
   @override
-  bool pending(InstallPaths paths) => pendingInstall(dataDir: paths.data);
+  PendingInstall pending(InstallPaths paths) =>
+      pendingInstall(dataDir: paths.data);
+
+  @override
+  String? keptBackup(InstallPaths paths, List<int> identity) =>
+      rust.keptBackup(dataDir: paths.data, identity: identity);
 
   @override
   Future<String?> phoneAddress() => NetworkInfo().getWifiIP();
@@ -203,13 +213,13 @@ class AppInstallPorts implements InstallPorts {
       Discovery.locate(identity, _locateWait);
 
   @override
-  Future<void> holdProcess(String text) async {
+  Future<bool> holdProcess(String text) async {
     if (await FlutterForegroundTask.isRunningService) {
-      await FlutterForegroundTask.updateService(
+      final updated = await FlutterForegroundTask.updateService(
         notificationTitle: _notificationTitle,
         notificationText: text,
       );
-      return;
+      return updated is ServiceRequestSuccess;
     }
     FlutterForegroundTask.init(
       androidNotificationOptions: AndroidNotificationOptions(
@@ -230,10 +240,11 @@ class AppInstallPorts implements InstallPorts {
         stopWithTask: true,
       ),
     );
-    await FlutterForegroundTask.startService(
+    final started = await FlutterForegroundTask.startService(
       notificationTitle: _notificationTitle,
       notificationText: text,
     );
+    return started is ServiceRequestSuccess;
   }
 
   static const _notificationTitle = 'Wellfed is installing on a feeder';

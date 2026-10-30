@@ -13,7 +13,7 @@ import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 import 'setup.dart';
 part 'install.freezed.dart';
 
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`
 
 /// The image unpacked in `dir`, checked against this build's pin and against
 /// its own review.
@@ -30,9 +30,16 @@ BuildCheck checkBuild() => RustLib.instance.api.crateApiInstallCheckBuild();
 Future<DnsResult> checkDns({required String name, required String phoneIp}) =>
     RustLib.instance.api.crateApiInstallCheckDns(name: name, phoneIp: phoneIp);
 
-/// Whether an earlier run left an install to pick up at pairing.
-bool pendingInstall({required String dataDir}) =>
+/// What an earlier run left, read from its records alone.
+PendingInstall pendingInstall({required String dataDir}) =>
     RustLib.instance.api.crateApiInstallPendingInstall(dataDir: dataDir);
+
+/// The checked copy of stock this phone keeps for the feeder with `identity`.
+String? keptBackup({required String dataDir, required List<int> identity}) =>
+    RustLib.instance.api.crateApiInstallKeptBackup(
+      dataDir: dataDir,
+      identity: identity,
+    );
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<InstallListener>>
 abstract class InstallListener implements RustOpaqueInterface {
@@ -344,6 +351,11 @@ sealed class InstallEvent with _$InstallEvent {
 class InstallSpec {
   final InstallStart start;
 
+  /// Where the replacement answers (`ip:port`), when a listener heard it
+  /// there. Without one a run looks where the replacement last answered,
+  /// and where stock connected from.
+  final String? address;
+
   /// This phone's address on the owner's Wi-Fi: where the broker and the
   /// image server listen.
   final String phoneIp;
@@ -384,6 +396,7 @@ class InstallSpec {
 
   const InstallSpec({
     required this.start,
+    this.address,
     required this.phoneIp,
     this.home,
     required this.label,
@@ -400,6 +413,7 @@ class InstallSpec {
   @override
   int get hashCode =>
       start.hashCode ^
+      address.hashCode ^
       phoneIp.hashCode ^
       home.hashCode ^
       label.hashCode ^
@@ -418,6 +432,7 @@ class InstallSpec {
       other is InstallSpec &&
           runtimeType == other.runtimeType &&
           start == other.start &&
+          address == other.address &&
           phoneIp == other.phoneIp &&
           home == other.home &&
           label == other.label &&
@@ -489,6 +504,20 @@ sealed class ListenUpdate with _$ListenUpdate {
   const factory ListenUpdate.stopped() = ListenUpdate_Stopped;
 }
 
+/// What an earlier run left on the feeder.
+enum PendingInstall {
+  nothing,
+
+  /// It paired with this phone and did not reach the end: pick up from
+  /// bank 0.
+  paired,
+
+  /// Its request has no settled outcome, and it never paired. It may be
+  /// running the replacement, waiting for its owner, or still on stock:
+  /// listen for it, or look for it over Bluetooth.
+  requestOpen,
+}
+
 /// What became of stock's plans at the end of the run.
 enum PlansOutcome {
   /// Set on the replacement.
@@ -505,6 +534,20 @@ enum PlansOutcome {
 
   /// Left behind, as the owner chose.
   skipped,
+}
+
+/// Why the server would not send the install request. Nothing reached stock.
+enum RequestRefusal {
+  /// Stock's reports are too old to act on: it only asks right after stock
+  /// reported, and the owner may have taken a while to answer.
+  stale,
+
+  /// The feeder is offline, or its telemetry stopped.
+  offline,
+
+  /// This phone's image server is not ready, or its window is nearly out.
+  imageServer,
+  other,
 }
 
 /// What a new run may do after a stop.
@@ -549,6 +592,10 @@ sealed class StopCase with _$StopCase {
   /// A request from an earlier run has not been resolved, so the server
   /// sent none; [`InstallListener`] can resolve it.
   const factory StopCase.earlierRequestOpen() = StopCase_EarlierRequestOpen;
+
+  /// The server would not send the request, for another reason.
+  const factory StopCase.requestRefused({required RequestRefusal why}) =
+      StopCase_RequestRefused;
 
   /// Stock refused or failed the install, and keeps running stock.
   const factory StopCase.stockRefused({int? code}) = StopCase_StockRefused;

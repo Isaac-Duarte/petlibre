@@ -15,13 +15,13 @@ use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use tokio::sync::{mpsc, oneshot, watch};
 use wellfed_client::install::{
     DnsOverride, InstallError, Phase, Provision, STOCK_BROKER_PORT, STOCK_PAYLOAD_LEN,
-    manifest_version,
+    manifest_build, manifest_version,
 };
 use wellfed_client::setup::{Credentials, Deframer, frame};
 use wellfed_formats::bench::prompt::Prompt;
@@ -31,15 +31,15 @@ use wellfed_install::event::{Enrollment as KeyEnrollment, PlansResult, Wait};
 use wellfed_install::listen::{self, Listened, UNCERTAIN_WAIT};
 use wellfed_install::{
     Announcement, Api, Bluetooth, ClockPolicy, Discovery, Error, Event, Keys, Plan, Platform,
-    PlatformError, Prompter, Report, Review, SetupLink, Signer, Start, StockOptions, Stop,
-    Unsettled,
+    PlatformError, Prompter, Refusal, Rejection, Report, Review, SetupLink, Signer, Start,
+    StockOptions, Stop, Unsettled,
 };
 use wellfed_session::noise::Keypair;
 
 use crate::api::install::{
     DnsResult, ImageCheck, ImageProvisioning, InstallAnswer, InstallAsk, InstallEnd, InstallEvent,
-    InstallSpec, InstallStart, InstallUpdate, ListenUpdate, PlansOutcome, Resume, StopCase,
-    UncertainWrite, WaitReason,
+    InstallSpec, InstallStart, InstallUpdate, ListenUpdate, PendingInstall, PlansOutcome,
+    RequestRefusal, Resume, StopCase, UncertainWrite, WaitReason,
 };
 use crate::api::setup::CONTROL_PIECE;
 use crate::api::store::{KnownFeeder, load_store, save_store};
@@ -69,6 +69,8 @@ pub struct Pin {
     pub review_sha256: &'static str,
     pub manifest_sha256: &'static str,
     pub version: u32,
+    /// A release's pin, which takes a consumer image and nothing else.
+    pub release: bool,
 }
 
 /// The release's pin, set when a release image exists; it can only be
@@ -99,6 +101,7 @@ pub fn parse_pin(text: &'static str) -> Option<Pin> {
         review_sha256,
         manifest_sha256,
         version: version.parse().ok()?,
+        release: false,
     })
 }
 
@@ -130,16 +133,27 @@ pub fn check_image(dir: &Path, pin: Option<&Pin>) -> ImageCheck {
     if let Err(error) = Review::check_served(dir) {
         return mismatch(text(&error));
     }
-    match Review::open(dir) {
-        Ok(opened) => ImageCheck::Ready {
-            provisioning: match opened.provisioning() {
-                Provisioning::Consumer => ImageProvisioning::Consumer,
-                Provisioning::Bench => ImageProvisioning::Bench,
-            },
-            build: opened.build().to_string(),
-            version: pin.version,
-        },
-        Err(error) => mismatch(text(&error)),
+    let opened = match Review::open(dir) {
+        Ok(opened) => opened,
+        Err(error) => return mismatch(text(&error)),
+    };
+    // Refused here rather than at the promotion, with stock already overwritten
+    // in bank 0 and a manifest no feeder would take for this build.
+    let names = manifest_build(&manifest).map(|build| wellfed_formats::hex::encode(&build));
+    if names.as_deref() != Some(opened.build()) {
+        return mismatch("the update manifest names another build".to_string());
+    }
+    let provisioning = match opened.provisioning() {
+        Provisioning::Consumer => ImageProvisioning::Consumer,
+        Provisioning::Bench if pin.release => {
+            return mismatch("a release installs a consumer image, not a bench one".to_string());
+        }
+        Provisioning::Bench => ImageProvisioning::Bench,
+    };
+    ImageCheck::Ready {
+        provisioning,
+        build: opened.build().to_string(),
+        version: pin.version,
     }
 }
 
@@ -158,8 +172,20 @@ pub async fn check_dns(name: &str, phone_ip: &str) -> DnsResult {
     dns.check(&resolved).into()
 }
 
-pub fn pending(data_dir: &Path) -> bool {
-    wellfed_install::storage::resumable(&data_dir.join(BACKUPS))
+pub fn pending(data_dir: &Path) -> PendingInstall {
+    if wellfed_install::storage::resumable(&data_dir.join(BACKUPS)) {
+        PendingInstall::Paired
+    } else if wellfed_install::stock::open_request(&data_dir.join(CONFIG)) {
+        PendingInstall::RequestOpen
+    } else {
+        PendingInstall::Nothing
+    }
+}
+
+pub fn kept_backup(data_dir: &Path, identity: &[u8]) -> Option<String> {
+    let identity: [u8; 32] = identity.try_into().ok()?;
+    let path = wellfed_install::storage::kept_backup(&data_dir.join(BACKUPS), &identity)?;
+    Some(path.display().to_string())
 }
 
 pub fn listen_seconds() -> u32 {
@@ -206,12 +232,17 @@ impl Asks {
         }
     }
 
+    /// The delivery, even after a panic while it was held: the last update
+    /// is what tells the screen that happened.
+    fn deliver(&self) -> MutexGuard<'_, Option<Deliver>> {
+        self.deliver.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
     /// Hand `update` to Dart; `false` once nobody listens.
     fn update(&self, update: InstallUpdate) -> bool {
-        let Ok(deliver) = self.deliver.lock() else {
-            return false;
-        };
-        deliver.as_ref().is_some_and(|deliver| deliver(update))
+        self.deliver()
+            .as_ref()
+            .is_some_and(|deliver| deliver(update))
     }
 
     /// Ask Dart, and wait for its answer. The run's stop drops this future,
@@ -622,13 +653,32 @@ pub fn stop_of(error: &Error, from_stock: bool) -> (StopCase, Resume) {
             };
             (StopCase::SetupFailed { refusal }, FromBank0)
         }
-        Error::NotAnswering { .. } => (StopCase::NotAnswering, FromBank0),
+        Error::RequestRefused(refusal) => (request_refused(*refusal), FromStart),
+        // The bench route's pairing, which no Bluetooth setup wraps.
+        Error::SetupRefused(refusal) => (
+            StopCase::SetupFailed {
+                refusal: Some(*refusal),
+            },
+            FromBank0,
+        ),
+        Error::RecoveryClosed
+        | Error::RecoveryTimeout
+        | Error::NoProof
+        | Error::SetupSession(_)
+        | Error::Connect { .. } => (StopCase::SetupFailed { refusal: None }, FromBank0),
+        // No session opened with a feeder that paired: it runs the replacement,
+        // and a new run reads where it got to.
+        Error::Connection(_) | Error::NoSession(_) | Error::Answered { .. } => {
+            (StopCase::Other, FromBank0)
+        }
+        Error::NotAnswering { .. } | Error::NoAddress => (StopCase::NotAnswering, FromBank0),
         Error::NoHomeNetwork | Error::KeepPlans(_) | Error::PlansNotSent(_) => {
             (StopCase::Other, FromBank0)
         }
-        Error::StockServer(_) | Error::Images(_) | Error::StockServerGone => {
-            (StopCase::ServerFailed, FromStart)
-        }
+        Error::StockServer(_)
+        | Error::Images(_)
+        | Error::StockServerGone
+        | Error::StockServerFailed(_) => (StopCase::ServerFailed, FromStart),
         Error::Stopped(stopped) => match stopped.unsettled {
             Some(Unsettled::Request(_)) => (StopCase::Uncertain, Nothing),
             Some(Unsettled::UpdateKey) => uncertain_write(UncertainWrite::UpdateKey),
@@ -641,6 +691,20 @@ pub fn stop_of(error: &Error, from_stock: bool) -> (StopCase, Resume) {
         },
         _ => (StopCase::Other, Nothing),
     }
+}
+
+/// The server's refusal, in the screens' words: a contest and an open request
+/// are cases of their own, with a way on of their own.
+const fn request_refused(refusal: Refusal) -> StopCase {
+    let why = match refusal {
+        Refusal::Contested => return StopCase::TwoFeeders,
+        Refusal::Rejected(Rejection::OtaActive) => return StopCase::EarlierRequestOpen,
+        Refusal::Rejected(Rejection::InvalidOta) => RequestRefusal::Stale,
+        Refusal::Rejected(Rejection::Offline) => RequestRefusal::Offline,
+        Refusal::Rejected(Rejection::ImageServer) => RequestRefusal::ImageServer,
+        Refusal::Rejected(_) | Refusal::Unanswered => RequestRefusal::Other,
+    };
+    StopCase::RequestRefused { why }
 }
 
 const fn uncertain_write(write: UncertainWrite) -> (StopCase, Resume) {
@@ -677,8 +741,30 @@ fn installer_config(dir: &Path, phone: IpAddr) -> Result<PathBuf, Error> {
     Ok(path)
 }
 
+/// Why a run never started.
+enum NotPlanned {
+    /// The image is not the one this build may install. The screen refuses
+    /// it first; a run does not take the screen's word for it.
+    Image(ImageCheck),
+    Run(Error),
+}
+
+impl From<Error> for NotPlanned {
+    fn from(error: Error) -> Self {
+        Self::Run(error)
+    }
+}
+
 /// Everything a run needs, read and checked before the feeder is touched.
-fn plan(spec: InstallSpec, keypair: Keypair) -> Result<(Plan, AppKeys, bool), Error> {
+fn plan(
+    spec: InstallSpec,
+    keypair: Keypair,
+    pin: Option<&Pin>,
+) -> Result<(Plan, AppKeys, bool), NotPlanned> {
+    match check_image(Path::new(&spec.image_dir), pin) {
+        ImageCheck::Ready { .. } => {}
+        refused => return Err(NotPlanned::Image(refused)),
+    }
     let review = Review::open(Path::new(&spec.image_dir))?;
     let manifest_path = Path::new(&spec.image_dir).join(UPDATE_MANIFEST);
     let manifest = std::fs::read(&manifest_path).map_err(|source| Error::Read {
@@ -725,7 +811,10 @@ fn plan(spec: InstallSpec, keypair: Keypair) -> Result<(Plan, AppKeys, bool), Er
         without_stock_plans: spec.without_stock_plans,
         expect_device: None,
         feeder: None,
-        address: None,
+        address: spec
+            .address
+            .as_deref()
+            .and_then(|address| wellfed_connect::parse_address(address).ok()),
         backups: data.join(BACKUPS),
         stock: StockOptions {
             config,
@@ -756,19 +845,16 @@ fn plan(spec: InstallSpec, keypair: Keypair) -> Result<(Plan, AppKeys, bool), Er
 pub struct Run {
     asks: Arc<Asks>,
     stop: watch::Sender<bool>,
-}
-
-impl Default for Run {
-    fn default() -> Self {
-        Self::new()
-    }
+    pin: Option<Pin>,
 }
 
 impl Run {
-    pub fn new() -> Self {
+    /// A run that installs only the image `pin` names.
+    pub fn new(pin: Option<Pin>) -> Self {
         Self {
             asks: Arc::new(Asks::new()),
             stop: watch::channel(false).0,
+            pin,
         }
     }
 
@@ -781,29 +867,35 @@ impl Run {
         keys: Keypair,
         deliver: impl Fn(InstallUpdate) -> bool + Send + 'static,
     ) {
-        if let Ok(mut slot) = self.asks.deliver.lock() {
-            *slot = Some(Box::new(deliver));
-        }
+        *self.asks.deliver() = Some(Box::new(deliver));
         let asks = self.asks.clone();
         let stop = self.stop.subscribe();
+        let pin = self.pin;
 
         let thread = std::thread::Builder::new()
             .name("wellfed-install".into())
             .stack_size(STACK)
             .spawn(move || {
-                let end = match spec {
-                    Some(spec) => run_on_this_thread(spec, keys, asks.clone(), stop),
-                    None => InstallEnd::Stopped {
+                let end = guarded(
+                    || match spec {
+                        Some(spec) => {
+                            run_on_this_thread(spec, keys, pin.as_ref(), asks.clone(), stop)
+                        }
+                        None => InstallEnd::Stopped {
+                            case: StopCase::Other,
+                            resume: Resume::Nothing,
+                            detail: "this install already ran".to_string(),
+                        },
+                    },
+                    |detail| InstallEnd::Stopped {
                         case: StopCase::Other,
                         resume: Resume::Nothing,
-                        detail: "this install already ran".to_string(),
+                        detail,
                     },
-                };
+                );
                 asks.update(InstallUpdate::Ended { end });
                 // Dropping the sink closes Dart's stream.
-                if let Ok(mut slot) = asks.deliver.lock() {
-                    *slot = None;
-                }
+                *asks.deliver() = None;
             });
         if let Err(error) = thread {
             self.asks.update(InstallUpdate::Ended {
@@ -833,9 +925,23 @@ impl Run {
     }
 }
 
+/// `work`, or `on_panic` with what it said if it panicked: a thread that just
+/// died would leave its screen waiting for an update that never comes.
+fn guarded<T>(work: impl FnOnce() -> T, on_panic: impl FnOnce(String) -> T) -> T {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(work)).unwrap_or_else(|panic| {
+        let said = panic
+            .downcast_ref::<&str>()
+            .map(ToString::to_string)
+            .or_else(|| panic.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "no message".to_string());
+        on_panic(format!("the install's thread panicked: {said}"))
+    })
+}
+
 fn run_on_this_thread(
     spec: InstallSpec,
     keypair: Keypair,
+    pin: Option<&Pin>,
     asks: Arc<Asks>,
     stop: watch::Receiver<bool>,
 ) -> InstallEnd {
@@ -853,9 +959,16 @@ fn run_on_this_thread(
         }
     };
 
-    let (plan, keys, from_stock) = match plan(spec, keypair) {
+    let (plan, keys, from_stock) = match plan(spec, keypair, pin) {
         Ok(planned) => planned,
-        Err(error) => {
+        Err(NotPlanned::Image(refused)) => {
+            return InstallEnd::Stopped {
+                case: StopCase::Other,
+                resume: Resume::Nothing,
+                detail: format!("this build will not install its image: {refused:?}"),
+            };
+        }
+        Err(NotPlanned::Run(error)) => {
             let (case, _) = stop_of(&error, false);
             return InstallEnd::Stopped {
                 case,
@@ -864,7 +977,7 @@ fn run_on_this_thread(
             };
         }
     };
-    let config = plan.stock.config.clone();
+    let (config, backups) = (plan.stock.config.clone(), plan.backups.clone());
     let platform = Platform {
         prompter: AppPrompter(asks.clone()),
         bluetooth: AppBluetooth(asks.clone()),
@@ -883,6 +996,12 @@ fn run_on_this_thread(
         }
         Err(error) => {
             let (case, resume) = stop_of(&error, from_stock);
+            // Installed and confirmed, with only its meals left behind: there
+            // is nothing to pick up, and the record would offer it forever.
+            if case == StopCase::PlansNotApplied {
+                let _ = wellfed_install::storage::forget_paired(&backups);
+                let _ = wellfed_install::stock::forget_enrollment(&config);
+            }
             InstallEnd::Stopped {
                 case,
                 resume,
@@ -933,7 +1052,10 @@ impl Listener {
             .name("wellfed-listen".into())
             .stack_size(STACK)
             .spawn(move || {
-                let last = listen_on_this_thread(&config, wait, on_thread.as_ref(), stop);
+                let last = guarded(
+                    || listen_on_this_thread(&config, wait, on_thread.as_ref(), stop),
+                    |detail| ListenUpdate::Failed { detail },
+                );
                 on_thread(last);
             });
         if let Err(error) = thread {
@@ -1057,6 +1179,60 @@ mod tests {
                 (StopCase::NoSetupFeeder, Resume::FromBank0)
             );
         }
+    }
+
+    /// The server's reason stays with the refusal: a stale report is not an
+    /// earlier request, and a contest during the prompt is two feeders.
+    #[test]
+    fn a_refused_request_keeps_its_reason() {
+        let refused = |refusal| stop_of(&Error::RequestRefused(refusal), true);
+
+        assert_eq!(
+            refused(Refusal::Contested),
+            (StopCase::TwoFeeders, Resume::FromStart)
+        );
+        assert_eq!(
+            refused(Refusal::Rejected(Rejection::OtaActive)),
+            (StopCase::EarlierRequestOpen, Resume::FromStart)
+        );
+        for (rejection, why) in [
+            (Rejection::InvalidOta, RequestRefusal::Stale),
+            (Rejection::Offline, RequestRefusal::Offline),
+            (Rejection::ImageServer, RequestRefusal::ImageServer),
+            (Rejection::Storage, RequestRefusal::Other),
+        ] {
+            assert_eq!(
+                refused(Refusal::Rejected(rejection)),
+                (StopCase::RequestRefused { why }, Resume::FromStart),
+                "{rejection:?}"
+            );
+        }
+    }
+
+    /// A dead server is not "no feeder came", and the bench route's pairing
+    /// failing leaves a way on, as Bluetooth setup's does.
+    #[test]
+    fn a_failed_server_and_a_failed_recovery_are_not_dead_ends() {
+        assert_eq!(
+            stop_of(&Error::StockServerFailed("address in use".into()), true),
+            (StopCase::ServerFailed, Resume::FromStart)
+        );
+        assert_eq!(
+            stop_of(&Error::RecoveryClosed, true),
+            (StopCase::SetupFailed { refusal: None }, Resume::FromBank0)
+        );
+        assert_eq!(
+            stop_of(&Error::NoAddress, true),
+            (StopCase::NotAnswering, Resume::FromBank0)
+        );
+    }
+
+    /// A panic on the run's thread still ends the stream, in words.
+    #[test]
+    fn a_panic_becomes_an_end() {
+        let end = guarded(|| panic!("the steps broke"), |detail| detail);
+        assert!(end.contains("the steps broke"), "{end}");
+        assert_eq!(guarded(|| 7, |_| 0), 7);
     }
 
     /// A stop keeps what it had not settled: the request is listened for,

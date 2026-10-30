@@ -36,6 +36,7 @@ Invites, schedules, history, settings and servers come later ([roadmap](../../do
 - **Errors on a stream are values.** flutter_rust_bridge decodes a stream's errors as `AnyhowException` whatever Rust encoded, so nothing sends a typed error with `add_error`.
 - **An uncertain request is never sent again.** The run ends, and a listener takes over: stock's server with no trial enabled, for up to 20 minutes. Stock reporting its version means it did not install, and the ledger may then close the request. The replacement answering on the network, or advertising Bluetooth setup, means it did, and a new run picks up from bank 0.
 - **A foreground service keeps the process alive** while a run or a listener needs the broker. The notification says so. Swiping the app away ends the run, which is why the screen asks you to keep it open.
+- **Leaving does not strand a feeder.** A run records its feeder as soon as it pairs, and each feeder's request stays in its own ledger. The first screen reads both: a paired feeder can be picked up from bank 0, and a request with no settled outcome offers the listener and a look over Bluetooth. Neither ever sends the request again.
 
 ### Which builds can install
 

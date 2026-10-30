@@ -75,7 +75,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.13.0';
 
   @override
-  int get rustContentHash => -1048310491;
+  int get rustContentHash => 649528112;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -202,9 +202,14 @@ abstract class RustLibApi extends BaseApi {
 
   Future<void> crateApiInitApp();
 
+  String? crateApiInstallKeptBackup({
+    required String dataDir,
+    required List<int> identity,
+  });
+
   Future<AppStore> crateApiStoreLoadStore({required String path});
 
-  bool crateApiInstallPendingInstall({required String dataDir});
+  PendingInstall crateApiInstallPendingInstall({required String dataDir});
 
   Future<void> crateApiStoreSaveStore({
     required String path,
@@ -1344,6 +1349,35 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(debugName: "init_app", argNames: []);
 
   @override
+  String? crateApiInstallKeptBackup({
+    required String dataDir,
+    required List<int> identity,
+  }) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(dataDir, serializer);
+          sse_encode_list_prim_u_8_loose(identity, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 37)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_opt_String,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiInstallKeptBackupConstMeta,
+        argValues: [dataDir, identity],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiInstallKeptBackupConstMeta => const TaskConstMeta(
+    debugName: "kept_backup",
+    argNames: ["dataDir", "identity"],
+  );
+
+  @override
   Future<AppStore> crateApiStoreLoadStore({required String path}) {
     return handler.executeNormal(
       NormalTask(
@@ -1353,7 +1387,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 37,
+            funcId: 38,
             port: port_,
           );
         },
@@ -1372,16 +1406,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(debugName: "load_store", argNames: ["path"]);
 
   @override
-  bool crateApiInstallPendingInstall({required String dataDir}) {
+  PendingInstall crateApiInstallPendingInstall({required String dataDir}) {
     return handler.executeSync(
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(dataDir, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 38)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 39)!;
         },
         codec: SseCodec(
-          decodeSuccessData: sse_decode_bool,
+          decodeSuccessData: sse_decode_pending_install,
           decodeErrorData: null,
         ),
         constMeta: kCrateApiInstallPendingInstallConstMeta,
@@ -1408,7 +1442,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 39,
+            funcId: 40,
             port: port_,
           );
         },
@@ -1432,7 +1466,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 40)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 41)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_String,
@@ -1454,7 +1488,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 41)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 42)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_String,
@@ -2187,21 +2221,22 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   InstallSpec dco_decode_install_spec(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 12)
-      throw Exception('unexpected arr length: expect 12 but see ${arr.length}');
+    if (arr.length != 13)
+      throw Exception('unexpected arr length: expect 13 but see ${arr.length}');
     return InstallSpec(
       start: dco_decode_install_start(arr[0]),
-      phoneIp: dco_decode_String(arr[1]),
-      home: dco_decode_opt_box_autoadd_wifi_credentials(arr[2]),
-      label: dco_decode_String(arr[3]),
-      feederName: dco_decode_String(arr[4]),
-      knownFeeders: dco_decode_list_String(arr[5]),
-      storePath: dco_decode_String(arr[6]),
-      imageDir: dco_decode_String(arr[7]),
-      dataDir: dco_decode_String(arr[8]),
-      calibrateClock: dco_decode_bool(arr[9]),
-      withoutStockPlans: dco_decode_bool(arr[10]),
-      forgetEnrollment: dco_decode_bool(arr[11]),
+      address: dco_decode_opt_String(arr[1]),
+      phoneIp: dco_decode_String(arr[2]),
+      home: dco_decode_opt_box_autoadd_wifi_credentials(arr[3]),
+      label: dco_decode_String(arr[4]),
+      feederName: dco_decode_String(arr[5]),
+      knownFeeders: dco_decode_list_String(arr[6]),
+      storePath: dco_decode_String(arr[7]),
+      imageDir: dco_decode_String(arr[8]),
+      dataDir: dco_decode_String(arr[9]),
+      calibrateClock: dco_decode_bool(arr[10]),
+      withoutStockPlans: dco_decode_bool(arr[11]),
+      forgetEnrollment: dco_decode_bool(arr[12]),
     );
   }
 
@@ -2374,9 +2409,21 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  PendingInstall dco_decode_pending_install(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return PendingInstall.values[raw as int];
+  }
+
+  @protected
   PlansOutcome dco_decode_plans_outcome(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return PlansOutcome.values[raw as int];
+  }
+
+  @protected
+  RequestRefusal dco_decode_request_refusal(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return RequestRefusal.values[raw as int];
   }
 
   @protected
@@ -2484,32 +2531,34 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case 7:
         return StopCase_EarlierRequestOpen();
       case 8:
+        return StopCase_RequestRefused(why: dco_decode_request_refusal(raw[1]));
+      case 9:
         return StopCase_StockRefused(
           code: dco_decode_opt_box_autoadd_u_32(raw[1]),
         );
-      case 9:
-        return StopCase_ClockUnset();
       case 10:
-        return StopCase_NoSetupFeeder();
+        return StopCase_ClockUnset();
       case 11:
+        return StopCase_NoSetupFeeder();
+      case 12:
         return StopCase_SetupFailed(
           refusal: dco_decode_opt_box_autoadd_setup_refusal(raw[1]),
         );
-      case 12:
-        return StopCase_NotAnswering();
       case 13:
-        return StopCase_PlansUnreadable();
+        return StopCase_NotAnswering();
       case 14:
-        return StopCase_PromotionFailed();
+        return StopCase_PlansUnreadable();
       case 15:
-        return StopCase_FellBack();
+        return StopCase_PromotionFailed();
       case 16:
-        return StopCase_PlansNotApplied();
+        return StopCase_FellBack();
       case 17:
-        return StopCase_ServerFailed();
+        return StopCase_PlansNotApplied();
       case 18:
-        return StopCase_Cancelled();
+        return StopCase_ServerFailed();
       case 19:
+        return StopCase_Cancelled();
+      case 20:
         return StopCase_Other();
       default:
         throw Exception("unreachable");
@@ -3385,6 +3434,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   InstallSpec sse_decode_install_spec(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_start = sse_decode_install_start(deserializer);
+    var var_address = sse_decode_opt_String(deserializer);
     var var_phoneIp = sse_decode_String(deserializer);
     var var_home = sse_decode_opt_box_autoadd_wifi_credentials(deserializer);
     var var_label = sse_decode_String(deserializer);
@@ -3398,6 +3448,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_forgetEnrollment = sse_decode_bool(deserializer);
     return InstallSpec(
       start: var_start,
+      address: var_address,
       phoneIp: var_phoneIp,
       home: var_home,
       label: var_label,
@@ -3675,10 +3726,24 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  PendingInstall sse_decode_pending_install(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return PendingInstall.values[inner];
+  }
+
+  @protected
   PlansOutcome sse_decode_plans_outcome(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var inner = sse_decode_i_32(deserializer);
     return PlansOutcome.values[inner];
+  }
+
+  @protected
+  RequestRefusal sse_decode_request_refusal(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return RequestRefusal.values[inner];
   }
 
   @protected
@@ -3795,32 +3860,35 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case 7:
         return StopCase_EarlierRequestOpen();
       case 8:
+        var var_why = sse_decode_request_refusal(deserializer);
+        return StopCase_RequestRefused(why: var_why);
+      case 9:
         var var_code = sse_decode_opt_box_autoadd_u_32(deserializer);
         return StopCase_StockRefused(code: var_code);
-      case 9:
-        return StopCase_ClockUnset();
       case 10:
-        return StopCase_NoSetupFeeder();
+        return StopCase_ClockUnset();
       case 11:
+        return StopCase_NoSetupFeeder();
+      case 12:
         var var_refusal = sse_decode_opt_box_autoadd_setup_refusal(
           deserializer,
         );
         return StopCase_SetupFailed(refusal: var_refusal);
-      case 12:
-        return StopCase_NotAnswering();
       case 13:
-        return StopCase_PlansUnreadable();
+        return StopCase_NotAnswering();
       case 14:
-        return StopCase_PromotionFailed();
+        return StopCase_PlansUnreadable();
       case 15:
-        return StopCase_FellBack();
+        return StopCase_PromotionFailed();
       case 16:
-        return StopCase_PlansNotApplied();
+        return StopCase_FellBack();
       case 17:
-        return StopCase_ServerFailed();
+        return StopCase_PlansNotApplied();
       case 18:
-        return StopCase_Cancelled();
+        return StopCase_ServerFailed();
       case 19:
+        return StopCase_Cancelled();
+      case 20:
         return StopCase_Other();
       default:
         throw UnimplementedError('');
@@ -4716,6 +4784,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   void sse_encode_install_spec(InstallSpec self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_install_start(self.start, serializer);
+    sse_encode_opt_String(self.address, serializer);
     sse_encode_String(self.phoneIp, serializer);
     sse_encode_opt_box_autoadd_wifi_credentials(self.home, serializer);
     sse_encode_String(self.label, serializer);
@@ -4976,7 +5045,25 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_pending_install(
+    PendingInstall self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
   void sse_encode_plans_outcome(PlansOutcome self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_request_refusal(
+    RequestRefusal self,
+    SseSerializer serializer,
+  ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_32(self.index, serializer);
   }
@@ -5082,32 +5169,35 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_i_32(6, serializer);
       case StopCase_EarlierRequestOpen():
         sse_encode_i_32(7, serializer);
-      case StopCase_StockRefused(code: final code):
+      case StopCase_RequestRefused(why: final why):
         sse_encode_i_32(8, serializer);
+        sse_encode_request_refusal(why, serializer);
+      case StopCase_StockRefused(code: final code):
+        sse_encode_i_32(9, serializer);
         sse_encode_opt_box_autoadd_u_32(code, serializer);
       case StopCase_ClockUnset():
-        sse_encode_i_32(9, serializer);
-      case StopCase_NoSetupFeeder():
         sse_encode_i_32(10, serializer);
-      case StopCase_SetupFailed(refusal: final refusal):
+      case StopCase_NoSetupFeeder():
         sse_encode_i_32(11, serializer);
+      case StopCase_SetupFailed(refusal: final refusal):
+        sse_encode_i_32(12, serializer);
         sse_encode_opt_box_autoadd_setup_refusal(refusal, serializer);
       case StopCase_NotAnswering():
-        sse_encode_i_32(12, serializer);
-      case StopCase_PlansUnreadable():
         sse_encode_i_32(13, serializer);
-      case StopCase_PromotionFailed():
+      case StopCase_PlansUnreadable():
         sse_encode_i_32(14, serializer);
-      case StopCase_FellBack():
+      case StopCase_PromotionFailed():
         sse_encode_i_32(15, serializer);
-      case StopCase_PlansNotApplied():
+      case StopCase_FellBack():
         sse_encode_i_32(16, serializer);
-      case StopCase_ServerFailed():
+      case StopCase_PlansNotApplied():
         sse_encode_i_32(17, serializer);
-      case StopCase_Cancelled():
+      case StopCase_ServerFailed():
         sse_encode_i_32(18, serializer);
-      case StopCase_Other():
+      case StopCase_Cancelled():
         sse_encode_i_32(19, serializer);
+      case StopCase_Other():
+        sse_encode_i_32(20, serializer);
     }
   }
 

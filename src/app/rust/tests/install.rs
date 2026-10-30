@@ -12,6 +12,7 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc;
 use tokio::task::LocalSet;
+use wellfed_app_bridge::api::install::PendingInstall;
 use wellfed_app_bridge::api::install::{
     DnsResult, ImageCheck, ImageProvisioning, InstallAnswer, InstallAsk, InstallEnd, InstallEvent,
     InstallSpec, InstallStart, InstallUpdate, ListenUpdate, Resume, StopCase,
@@ -76,7 +77,7 @@ fn image(dir: &Path, provisioning: Provisioning, version: u32) -> Pin {
             image_len: 1,
             target_bank: 1,
             image_sha256: [0; 32],
-            build_id: [0; 32],
+            build_id: [0xab; 32],
         },
         kind: wellfed_core::ota::offer::ImageKind::Replacement,
         key_id: [0; 8],
@@ -89,26 +90,29 @@ fn image(dir: &Path, provisioning: Provisioning, version: u32) -> Pin {
         review_sha256: Box::leak(sha256(&review).into_boxed_str()),
         manifest_sha256: Box::leak(sha256(&update).into_boxed_str()),
         version,
+        release: false,
     }
 }
 
 struct Fixture {
     /// Kept for its folders.
     dir: tempfile::TempDir,
+    pin: Pin,
 }
 
 impl Fixture {
     fn new(provisioning: Provisioning) -> Self {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir(dir.path().join("image")).unwrap();
-        image(&dir.path().join("image"), provisioning, 7);
-        Self { dir }
+        let pin = image(&dir.path().join("image"), provisioning, 7);
+        Self { dir, pin }
     }
 
     fn spec(&self, start: InstallStart, phone_ip: &str) -> InstallSpec {
         let path = |name: &str| self.dir.path().join(name).to_str().unwrap().to_string();
         InstallSpec {
             start,
+            address: None,
             phone_ip: phone_ip.into(),
             home: Some(WifiCredentials {
                 ssid: "Maple St".into(),
@@ -127,8 +131,8 @@ impl Fixture {
     }
 }
 
-fn started(spec: InstallSpec) -> (Run, mpsc::UnboundedReceiver<InstallUpdate>) {
-    let run = Run::new();
+fn started(fixture: &Fixture, spec: InstallSpec) -> (Run, mpsc::UnboundedReceiver<InstallUpdate>) {
+    let run = Run::new(Some(fixture.pin));
     let (updates, heard) = mpsc::unbounded_channel();
     run.start(
         Some(spec),
@@ -179,7 +183,7 @@ fn dns_spec(fixture: &Fixture, phone: &str) -> InstallSpec {
 fn a_stop_while_a_person_is_asked_ends_the_run() {
     local(async {
         let fixture = Fixture::new(Provisioning::Consumer);
-        let (run, mut heard) = started(dns_spec(&fixture, "127.41.8.1"));
+        let (run, mut heard) = started(&fixture, dns_spec(&fixture, "127.41.8.1"));
 
         let (_, ask) = next_ask(&mut heard).await;
         assert_eq!(
@@ -205,7 +209,7 @@ fn a_stop_while_a_person_is_asked_ends_the_run() {
 fn an_ask_that_fails_ends_the_run_in_its_words() {
     local(async {
         let fixture = Fixture::new(Provisioning::Consumer);
-        let (run, mut heard) = started(dns_spec(&fixture, "127.41.8.2"));
+        let (run, mut heard) = started(&fixture, dns_spec(&fixture, "127.41.8.2"));
 
         let (id, _) = next_ask(&mut heard).await;
         run.answer(
@@ -228,7 +232,7 @@ fn an_ask_that_fails_ends_the_run_in_its_words() {
 #[test]
 fn a_run_with_nobody_listening_ends() {
     let fixture = Fixture::new(Provisioning::Consumer);
-    let run = Run::new();
+    let run = Run::new(Some(fixture.pin));
     let (done, finished) = std::sync::mpsc::channel();
     run.start(
         Some(dns_spec(&fixture, "127.41.8.3")),
@@ -247,7 +251,7 @@ fn a_run_with_nobody_listening_ends() {
 /// A run with nothing to run says so, rather than running twice.
 #[test]
 fn a_run_starts_once() {
-    let run = Run::new();
+    let run = Run::new(None);
     let (done, finished) = std::sync::mpsc::channel();
     run.start(None, Keypair::from_secret([0x51; 32]), move |update| {
         if let InstallUpdate::Ended { end } = update {
@@ -272,7 +276,7 @@ fn a_run_with_no_image_stops_before_anything_starts() {
     local(async {
         let fixture = Fixture::new(Provisioning::Consumer);
         std::fs::remove_file(fixture.dir.path().join("image/image.bin")).unwrap();
-        let (_run, mut heard) = started(dns_spec(&fixture, "127.41.8.4"));
+        let (_run, mut heard) = started(&fixture, dns_spec(&fixture, "127.41.8.4"));
         let end = ended(&mut heard).await;
         assert!(
             matches!(
@@ -300,7 +304,7 @@ fn a_run_speaks_to_the_feeder_over_the_platforms_radio() {
         sim.type_line("hold lock").unwrap();
         sim.type_line("hold lock+dispense").unwrap();
 
-        let (run, mut heard) = started(fixture.spec(InstallStart::Bank0, "127.41.8.5"));
+        let (run, mut heard) = started(&fixture, fixture.spec(InstallStart::Bank0, "127.41.8.5"));
 
         let mut stream: Option<tokio::net::TcpStream> = None;
         let mut hello = vec![1, 0, 2];
@@ -414,9 +418,9 @@ fn a_resumed_run_finds_its_feeder_over_the_platforms_discovery() {
             serde_json::to_vec(&paired).unwrap(),
         )
         .unwrap();
-        assert!(pending(&data));
+        assert_eq!(pending(&data), PendingInstall::Paired);
 
-        let (run, mut heard) = started(spec);
+        let (run, mut heard) = started(&fixture, spec);
         let mut located = false;
         let mut paired = None;
         let end = loop {
@@ -532,7 +536,339 @@ fn a_listener_with_no_enrolled_feeder_says_so() {
 }
 
 #[test]
-fn nothing_is_pending_without_a_paired_record() {
+fn what_an_earlier_run_left_is_read_from_its_records() {
     let dir = tempfile::tempdir().unwrap();
-    assert!(!pending(dir.path()));
+    assert_eq!(pending(dir.path()), PendingInstall::Nothing);
+
+    // Enrolled, with a request that never settled and no pairing.
+    let (id, at) = (uuid::Uuid::from_u128(7), chrono::DateTime::UNIX_EPOCH);
+    wellfed_install::stock::installer_config(
+        &dir.path().join("installer.json"),
+        "127.41.8.20:1883".parse().unwrap(),
+        None,
+    )
+    .unwrap();
+    enroll(dir.path(), "AF_A", "127.41.8.21");
+    assert_eq!(pending(dir.path()), PendingInstall::Nothing);
+    let record = serde_json::json!({
+        "device_id": "AF_A",
+        "ota_trials": {
+            id.to_string(): {
+                "sequence": 1,
+                "input": {"request_id": id, "server_token": id},
+                "created_at": at, "updated_at": at,
+                "phase": "uncertain", "download_reported": false,
+                "resolution_note": null, "image_sha256": "ab".repeat(32),
+            }
+        },
+    });
+    let ledger = wellfed_install::stock::ledger_path(&dir.path().join("installer.json"), "AF_A");
+    std::fs::write(ledger.unwrap(), serde_json::to_vec(&record).unwrap()).unwrap();
+    assert_eq!(pending(dir.path()), PendingInstall::RequestOpen);
+
+    // Paired since, with no address yet: that says more.
+    std::fs::create_dir_all(dir.path().join("backups")).unwrap();
+    std::fs::write(
+        dir.path().join("backups/installing.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "device": "AF_A",
+            "identity": "ab".repeat(32),
+            "address": null,
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(pending(dir.path()), PendingInstall::Paired);
+}
+
+/// The enrollment record beside an installer's config in `data`.
+fn enroll(data: &Path, device: &str, address: &str) {
+    let record = Enrollment {
+        client_id: device.into(),
+        username: "stock".into(),
+        password: "its-password".into(),
+        address: address.parse().unwrap(),
+        enrolled_at: chrono::DateTime::from_timestamp(1, 0).unwrap(),
+    };
+    std::fs::write(
+        Enrollment::path(&data.join("installer.json")),
+        serde_json::to_vec(&record).unwrap(),
+    )
+    .unwrap();
+}
+
+/// A bench image is reached where the listener heard it: the run opens its
+/// recovery window there, with no lease left to say where stock connected
+/// from, and the phone pairs.
+#[test]
+fn a_bench_run_goes_where_the_listener_heard_it() {
+    local(async {
+        let fixture = Fixture::new(Provisioning::Bench);
+        let sim = Running::start(&Flash::memory(), None).await;
+
+        let mut spec = fixture.spec(InstallStart::Bank0, "127.41.8.22");
+        spec.address = Some(sim.address.to_string());
+        let (run, mut heard) = started(&fixture, spec);
+
+        let (id, ask) = next_ask(&mut heard).await;
+        assert_eq!(ask, InstallAsk::OpenRecoveryWindow);
+        sim.type_line("hold lock").unwrap();
+        sim.type_line("hold lock+dispense").unwrap();
+        run.answer(id, InstallAnswer::Done);
+
+        let paired = loop {
+            match next(&mut heard).await {
+                InstallUpdate::Event {
+                    event: InstallEvent::Code { code, .. },
+                } => {
+                    let presses: Vec<String> = code.iter().map(u8::to_string).collect();
+                    sim.type_line(&format!("press {}", presses.join(" ")))
+                        .unwrap();
+                }
+                InstallUpdate::Event {
+                    event: InstallEvent::Paired { identity, .. },
+                } => break identity,
+                InstallUpdate::Ended { end } => panic!("{end:?}"),
+                _ => {}
+            }
+        };
+        assert_eq!(paired, sim.identity.to_vec());
+
+        run.stop();
+        assert!(matches!(
+            ended(&mut heard).await,
+            InstallEnd::Stopped { .. }
+        ));
+        sim.stop().await;
+    });
+}
+
+/// Picking up a bench image with nothing said about where it is: the lease is
+/// gone with the run that held it, so the enrollment's record says, and the
+/// run waits there. A stop ends the wait; it never reads "no address".
+#[test]
+fn a_bench_run_with_no_lease_looks_where_the_feeder_enrolled_from() {
+    local(async {
+        let fixture = Fixture::new(Provisioning::Bench);
+        let spec = fixture.spec(InstallStart::Bank0, "127.41.8.23");
+        let data = Path::new(&spec.data_dir).to_path_buf();
+        std::fs::create_dir_all(&data).unwrap();
+        enroll(&data, "AF_A", "127.41.8.24");
+
+        let (run, mut heard) = started(&fixture, spec);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(
+            heard.try_recv().is_err(),
+            "the run ended, or asked, before the feeder answered"
+        );
+        run.stop();
+
+        let InstallEnd::Stopped { case, resume, .. } = ended(&mut heard).await else {
+            panic!("a stopped run did not stop");
+        };
+        assert_eq!(case, StopCase::Cancelled);
+        assert_eq!(resume, Resume::FromBank0);
+    });
+}
+
+/// A stock feeder on the broker, reporting its version until aborted.
+fn stock_feeder(broker: &str, device: &str) -> tokio::task::JoinHandle<()> {
+    use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS};
+
+    let mut options = MqttOptions::new(device, broker, 1883);
+    options.set_credentials("stock-user", "its-own-password");
+    options.set_clean_session(true);
+    let (client, mut events) = AsyncClient::new(options, 32);
+    let (subscribe, report) = (
+        format!("dl/PLAF103/{device}/device/+/sub"),
+        format!("dl/PLAF103/{device}/device/event/post"),
+    );
+    tokio::spawn(async move {
+        let mut beat = tokio::time::interval(Duration::from_millis(200));
+        loop {
+            tokio::select! {
+                event = events.poll() => match event {
+                    Ok(Event::Incoming(Packet::ConnAck(_))) => {
+                        let _ = client.subscribe(&subscribe, QoS::AtLeastOnce).await;
+                    }
+                    Ok(_) => {}
+                    Err(_) => tokio::time::sleep(Duration::from_millis(100)).await,
+                },
+                _ = beat.tick() => {
+                    let body = serde_json::json!({
+                        "cmd": "DEVICE_START_EVENT",
+                        "ts": chrono::Utc::now().timestamp_millis(),
+                        "softwareVersion": "1.1.15",
+                        "powerType": 1,
+                    });
+                    let _ = client.try_publish(&report, QoS::AtMostOnce, false, body.to_string());
+                }
+            }
+        }
+    })
+}
+
+/// A run from stock up to the feeder check, answering what comes before it,
+/// with `device` on the broker. The ask's id comes back with the run.
+async fn to_the_feeder_check(
+    fixture: &Fixture,
+    spec: InstallSpec,
+    broker: &str,
+    device: &str,
+) -> (Run, mpsc::UnboundedReceiver<InstallUpdate>, u32) {
+    let (run, mut heard) = started(fixture, spec);
+    let mut feeder = None;
+    loop {
+        let (id, ask) = next_ask(&mut heard).await;
+        match ask {
+            InstallAsk::SetOverride { .. } => run.answer(id, InstallAnswer::Done),
+            // The broker is listening now, and only now may the feeder come.
+            InstallAsk::RestartFeeder => {
+                run.answer(id, InstallAnswer::Done);
+                feeder = Some(stock_feeder(broker, device));
+            }
+            InstallAsk::RecognizeFeeder {
+                device: asked,
+                address,
+            } => {
+                assert_eq!(asked, device);
+                assert!(!address.is_empty());
+                feeder.expect("the feeder was restarted first").abort();
+                return (run, heard, id);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+}
+
+/// Stock's side on this thread's runtime: the broker, its trust on first use
+/// and the server's session, as the phone runs them. Saying no to one feeder
+/// forgets it, and the next one is served, not refused by the first one's
+/// ledger. Past the check the image server wants private addresses, which a
+/// loopback test has not got, so the run stops there with its own words.
+#[test]
+fn another_feeder_is_served_after_the_owner_said_no_to_the_first() {
+    // SAFETY: nextest runs each test in a process of its own, and no other
+    // thread is running yet.
+    unsafe { std::env::set_var("WELLFED_ALLOW_UNREVIEWED_OTA_BUILD", "1") };
+    local(async {
+        let fixture = Fixture::new(Provisioning::Consumer);
+        let broker = "127.41.8.30";
+
+        let spec = dns_spec(&fixture, broker);
+        let (run, mut heard, id) =
+            to_the_feeder_check(&fixture, spec, broker, "AF_FIRST_FEEDER").await;
+        run.answer(id, InstallAnswer::Yes { yes: false });
+        let InstallEnd::Stopped { case, resume, .. } = ended(&mut heard).await else {
+            panic!("the run went on");
+        };
+        assert_eq!(case, StopCase::NotYourFeeder);
+        assert_eq!(resume, Resume::FromStart);
+
+        let mut spec = dns_spec(&fixture, broker);
+        spec.forget_enrollment = true;
+        let (run, mut heard, id) =
+            to_the_feeder_check(&fixture, spec, broker, "AF_OTHER_FEEDER").await;
+        run.answer(id, InstallAnswer::Yes { yes: true });
+        let end = ended(&mut heard).await;
+        let InstallEnd::Stopped { case, detail, .. } = &end else {
+            panic!("{end:?}");
+        };
+        assert_eq!(*case, StopCase::ServerFailed, "{detail}");
+    });
+}
+
+/// A dead server is the server's failure: not "no feeder connected".
+#[test]
+fn a_taken_port_is_not_no_feeder() {
+    // SAFETY: as above, and the listener below is this thread's own.
+    unsafe { std::env::set_var("WELLFED_ALLOW_UNREVIEWED_OTA_BUILD", "1") };
+    local(async {
+        let fixture = Fixture::new(Provisioning::Consumer);
+        let broker = "127.41.8.31";
+        let _taken = tokio::net::TcpListener::bind((broker, 1883)).await.unwrap();
+
+        let (run, mut heard) = started(&fixture, dns_spec(&fixture, broker));
+        loop {
+            match next(&mut heard).await {
+                InstallUpdate::Ask { id, .. } => run.answer(id, InstallAnswer::Done),
+                InstallUpdate::Event { .. } => {}
+                InstallUpdate::Ended { end } => {
+                    let InstallEnd::Stopped { case, .. } = end else {
+                        panic!("{end:?}");
+                    };
+                    assert_eq!(case, StopCase::ServerFailed);
+                    break;
+                }
+            }
+        }
+    });
+}
+
+/// The screen refuses an image first; the run does not take its word for it.
+#[test]
+fn a_run_refuses_an_image_its_pin_does_not_name() {
+    local(async {
+        let fixture = Fixture::new(Provisioning::Consumer);
+        let mut other = fixture.pin;
+        other.version = 8;
+        let run = Run::new(Some(other));
+        let (updates, mut heard) = mpsc::unbounded_channel();
+        run.start(
+            Some(dns_spec(&fixture, "127.41.8.32")),
+            Keypair::from_secret([0x51; 32]),
+            move |update| updates.send(update).is_ok(),
+        );
+        let end = ended(&mut heard).await;
+        assert!(
+            matches!(
+                end,
+                InstallEnd::Stopped {
+                    case: StopCase::Other,
+                    resume: Resume::Nothing,
+                    ..
+                }
+            ),
+            "{end:?}"
+        );
+    });
+}
+
+/// A manifest for another build is refused before anything is sent, and a
+/// release pin takes no bench image.
+#[test]
+fn the_manifest_must_name_the_review_s_build_and_a_release_a_consumer_image() {
+    let dir = tempfile::tempdir().unwrap();
+    let pin = image(dir.path(), Provisioning::Bench, 7);
+    let mut release = pin;
+    release.release = true;
+    assert!(matches!(
+        check_image(dir.path(), Some(&pin)),
+        ImageCheck::Ready {
+            provisioning: ImageProvisioning::Bench,
+            ..
+        }
+    ));
+    assert!(matches!(
+        check_image(dir.path(), Some(&release)),
+        ImageCheck::Mismatch { .. }
+    ));
+
+    let manifest = BuildManifest {
+        startup_identity: Some("cd".repeat(32)),
+        ..BuildManifest::default()
+    };
+    let manifest = serde_json::to_vec(&manifest).unwrap();
+    std::fs::write(dir.path().join("build-manifest.json"), &manifest).unwrap();
+    let mut review: ImageReview =
+        serde_json::from_slice(&std::fs::read(dir.path().join("review.json")).unwrap()).unwrap();
+    review.manifest_sha256 = Some(sha256(&manifest));
+    let review = serde_json::to_vec(&review).unwrap();
+    std::fs::write(dir.path().join("review.json"), &review).unwrap();
+    let mut repinned = pin;
+    repinned.review_sha256 = Box::leak(sha256(&review).into_boxed_str());
+    assert!(matches!(
+        check_image(dir.path(), Some(&repinned)),
+        ImageCheck::Mismatch { .. }
+    ));
 }

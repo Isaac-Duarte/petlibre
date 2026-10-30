@@ -17,8 +17,13 @@ abstract interface class FeederBook implements Listenable {
 
   /// Add `feeder`, or replace the one with its identity. With `paired`, this
   /// phone just became its owner, so its next session gives it this phone's
-  /// clock.
-  Future<void> remember(KnownFeeder feeder, {bool paired = false});
+  /// clock. With `keepName`, a feeder already known keeps the name the owner
+  /// gave it.
+  Future<void> remember(
+    KnownFeeder feeder, {
+    bool paired = false,
+    bool keepName = false,
+  });
 
   /// Keep where `identity` last answered, so the next start tries it before
   /// NSD has looked.
@@ -41,6 +46,8 @@ class AppState extends ChangeNotifier implements FeederBook {
   /// not set yet. In memory: a feeder with no clock is set whenever a
   /// session opens, whatever this holds.
   final _clockDue = <String>{};
+
+  Future<void> _writing = Future.value();
 
   static Future<AppState> load() async {
     const storage = FlutterSecureStorage();
@@ -74,21 +81,30 @@ class AppState extends ChangeNotifier implements FeederBook {
 
   @override
   Future<void> setLabel(String label) =>
-      _save(AppStore(label: label, feeders: _store.feeders));
+      _update((store) => AppStore(label: label, feeders: store.feeders));
 
   @override
-  Future<void> remember(KnownFeeder feeder, {bool paired = false}) {
+  Future<void> remember(
+    KnownFeeder feeder, {
+    bool paired = false,
+    bool keepName = false,
+  }) {
     if (paired) _clockDue.add(feeder.identity);
-    return _save(
-      AppStore(
-        label: _store.label,
+    return _update((store) {
+      final known = store.feeders.where((f) => f.identity == feeder.identity);
+      return AppStore(
+        label: store.label,
         feeders: [
-          for (final known in _store.feeders)
-            if (known.identity != feeder.identity) known,
-          feeder,
+          for (final other in store.feeders)
+            if (other.identity != feeder.identity) other,
+          KnownFeeder(
+            identity: feeder.identity,
+            name: keepName && known.isNotEmpty ? known.first.name : feeder.name,
+            address: feeder.address,
+          ),
         ],
-      ),
-    );
+      );
+    });
   }
 
   @override
@@ -99,12 +115,22 @@ class AppState extends ChangeNotifier implements FeederBook {
     }
     await remember(
       KnownFeeder(identity: identity, name: known.first.name, address: address),
+      keepName: true,
     );
   }
 
-  Future<void> _save(AppStore store) async {
-    await saveStore(path: _path, store: store);
-    _store = store;
-    notifyListeners();
+  /// Change the file from what it holds now, not from this copy of it: an
+  /// install's run saves a feeder there from Rust, before Dart hears of it.
+  /// One at a time, so two changes do not read the same file.
+  Future<void> _update(AppStore Function(AppStore) change) {
+    final done = _writing.then((_) async {
+      final store = change(await loadStore(path: _path));
+      await saveStore(path: _path, store: store);
+      _store = store;
+      notifyListeners();
+    });
+    // A failed write is its caller's to hear; the next one still goes.
+    _writing = done.catchError((Object _) {});
+    return done;
   }
 }

@@ -76,8 +76,8 @@ class InstallFlow extends ChangeNotifier {
   ImageCheck? image;
   BuildCheck? build;
 
-  /// An earlier run left an install to pick up from bank 0.
-  bool pending = false;
+  /// What an earlier run left on the feeder.
+  PendingInstall pending = PendingInstall.nothing;
   InstallPaths? _paths;
 
   // The record.
@@ -125,6 +125,7 @@ class InstallFlow extends ChangeNotifier {
 
   // The end.
   String? _identity;
+  List<int>? _identityBytes;
   String? _address;
   PlansOutcome? plans;
   int plansConverted = 0;
@@ -148,6 +149,14 @@ class InstallFlow extends ChangeNotifier {
   StreamSubscription<ListenUpdate>? _listenUpdates;
   StreamSubscription<void>? _heard;
   bool _holding = false;
+
+  /// Android refused the foreground service, so only staying on screen keeps
+  /// the broker alive.
+  bool holdRefused = false;
+
+  /// A pick-up asked for the Wi-Fi first: it goes on once it has it.
+  bool _resumeAfterWifi = false;
+  String? _resumeAddress;
   bool _disposed = false;
 
   /// How long a listener listens, for "3 of 20 min".
@@ -202,6 +211,11 @@ class InstallFlow extends ChangeNotifier {
 
   void setHome(WifiCredentials? home) {
     _home = home;
+    if (_resumeAfterWifi) {
+      _resumeAfterWifi = false;
+      unawaited(resume(address: _resumeAddress));
+      return;
+    }
     _nextAfter(InstallStage.wifi);
   }
 
@@ -243,14 +257,57 @@ class InstallFlow extends ChangeNotifier {
   }
 
   /// Pick up from bank 0: the replacement runs, and only its owner is
-  /// missing, or the backup and the promotion.
-  Future<void> resume() async {
+  /// missing, or the backup and the promotion. With `address`, it answers
+  /// there. A consumer image that never paired needs its Wi-Fi for Bluetooth
+  /// setup, which only an earlier run on this screen would have asked for.
+  Future<void> resume({String? address}) async {
+    if (_run != null) return;
+    _stopListening();
+    listening = Listening.idle;
+    if (provisioning == ImageProvisioning.consumer &&
+        pending != PendingInstall.paired &&
+        address == null &&
+        _home == null) {
+      _resumeAfterWifi = true;
+      _resumeAddress = address;
+      stop = null;
+      _go(InstallStage.wifi);
+      return;
+    }
     final ip = phoneIp ?? await _ports.phoneAddress() ?? '';
     stop = null;
-    listening = Listening.idle;
-    _stopListening();
+    _resetProgress();
     _go(InstallStage.claim);
-    await _start(const InstallStart.bank0(), ip);
+    await _start(const InstallStart.bank0(), ip, address: address);
+  }
+
+  /// A request from an earlier run has no settled outcome: listen for what
+  /// became of it, as a run that just stopped there would.
+  Future<void> listenForOpenRequest() async {
+    stop = InstallEnd_Stopped(
+      case_: const StopCase.uncertain(),
+      resume: Resume.nothing,
+      detail: stop?.detail ?? '',
+    );
+    _go(InstallStage.stopped);
+    await listen();
+  }
+
+  void _resetProgress() {
+    code = const [];
+    deadline = null;
+    _windowAsk = null;
+    pressDispense = false;
+    percent = 0;
+    restarting = false;
+    joining = CheckState.waiting;
+    copying = CheckState.waiting;
+    copied = 0;
+    checked = CheckState.waiting;
+    promoting = CheckState.waiting;
+    written = 0;
+    confirming = CheckState.waiting;
+    sessionDropped = false;
   }
 
   /// The stop's way on: from the start, or from bank 0, as the run said.
@@ -268,6 +325,7 @@ class InstallFlow extends ChangeNotifier {
       return;
     }
     stop = null;
+    _resetProgress();
     listening = Listening.idle;
     waitReason = null;
     restartAgain = false;
@@ -275,12 +333,17 @@ class InstallFlow extends ChangeNotifier {
     _go(InstallStage.record);
   }
 
-  Future<void> _start(InstallStart start, String ip) async {
+  Future<void> _start(InstallStart start, String ip, {String? address}) async {
     final paths = _paths;
-    if (paths == null) return;
+    // One run at a time: a second would orphan the first, with no way left
+    // to stop it and the broker's port still held.
+    if (paths == null || _run != null) return;
+    final forget = _forget;
+    _forget = false;
     final run = _ports.newRun(
       InstallSpec(
         start: start,
+        address: address,
         phoneIp: ip,
         home: _home,
         label: _book.label,
@@ -291,21 +354,25 @@ class InstallFlow extends ChangeNotifier {
         dataDir: paths.data,
         calibrateClock: _calibrate,
         withoutStockPlans: _withoutPlans,
-        forgetEnrollment: _forget,
+        forgetEnrollment: forget,
       ),
     );
     _run = run;
+    _notify();
     await _hold('Keep the feeder plugged in.');
+    if (_disposed) return;
+    InstallEnd lost(String detail) => InstallEnd.stopped(
+      case_: const StopCase.other(),
+      resume: Resume.nothing,
+      detail: detail,
+    );
     _updates = run.run().listen(
       (update) => unawaited(_update(run, update)),
-      onError: (Object error) {
-        _ended(
-          InstallEnd.stopped(
-            case_: const StopCase.other(),
-            resume: Resume.nothing,
-            detail: '$error',
-          ),
-        );
+      onError: (Object error) => _ended(lost('$error')),
+      // A run's last update is its end, which cancels this first; a stream
+      // that closes without one lost its thread.
+      onDone: () {
+        if (identical(_run, run)) _ended(lost('the install stopped answering'));
       },
     );
     _notify();
@@ -313,7 +380,10 @@ class InstallFlow extends ChangeNotifier {
 
   Future<void> _hold(String text) async {
     _holding = true;
-    await _ports.holdProcess(text);
+    holdRefused = !await _ports.holdProcess(text);
+    // The screen went away during the wait, and its release ran before this
+    // hold took effect.
+    if (_disposed) await _ports.releaseProcess();
   }
 
   Future<void> _release() async {
@@ -421,6 +491,7 @@ class InstallFlow extends ChangeNotifier {
         :final rebooting,
       ):
         stage = InstallStage.finishing;
+        _identityBytes = identity;
         _identity = identity
             .map((byte) => byte.toRadixString(16).padLeft(2, '0'))
             .join();
@@ -488,6 +559,8 @@ class InstallFlow extends ChangeNotifier {
         address: _address,
       ),
       paired: true,
+      // A pick-up of a feeder the owner already named.
+      keepName: true,
     );
   }
 
@@ -496,9 +569,15 @@ class InstallFlow extends ChangeNotifier {
     unawaited(_updates?.cancel());
     _updates = null;
     unawaited(_settle());
+    _closeLink();
     switch (end) {
       case InstallEnd_Done():
         stage = InstallStage.done;
+        // A pick-up past the backup never read it again.
+        final (identity, paths) = (_identityBytes, _paths);
+        if (backupPath == null && identity != null && paths != null) {
+          backupPath = _ports.keptBackup(paths, identity);
+        }
         unawaited(_release());
       case final InstallEnd_Stopped stopped:
         stop = stopped;
@@ -512,6 +591,18 @@ class InstallFlow extends ChangeNotifier {
         }
     }
     _notify();
+  }
+
+  /// A feeder still linked does not advertise, so a pick-up would never find
+  /// it. The run asks for this itself, unless it stopped first.
+  void _closeLink() {
+    final link = _link;
+    _link = null;
+    unawaited(
+      link?.close().catchError((Object _) {
+        // A link the feeder dropped has nothing left to close.
+      }),
+    );
   }
 
   /// The owner's word on the feeder that connected.
@@ -548,7 +639,9 @@ class InstallFlow extends ChangeNotifier {
     listening = Listening.running;
     listened = Duration.zero;
     stockSeen = false;
+    _notify();
     await _hold('Listening for the feeder. Leave it plugged in.');
+    if (_disposed || listening != Listening.running) return;
     final listener = _ports.newListener(paths);
     _listener = listener;
     _listenUpdates = listener.run().listen(
@@ -556,6 +649,14 @@ class InstallFlow extends ChangeNotifier {
       onError: (Object error) {
         listenerDetail = '$error';
         _listenEnded(Listening.failed);
+      },
+      // Its last update ends the listening; a stream that closes before one
+      // lost its thread.
+      onDone: () {
+        if (identical(_listener, listener) && listening == Listening.running) {
+          listenerDetail = 'the listener stopped answering';
+          _listenEnded(Listening.failed);
+        }
       },
     );
     // A consumer image has no network until setup gives it one, so it is
@@ -573,8 +674,8 @@ class InstallFlow extends ChangeNotifier {
         listened = Duration(seconds: seconds);
         stockSeen = stock;
         _notify();
-      case ListenUpdate_Replacement():
-        unawaited(resume());
+      case ListenUpdate_Replacement(:final address):
+        unawaited(resume(address: address));
       case ListenUpdate_StockStayed(:final resolved):
         stop = InstallEnd_Stopped(
           case_: const StopCase.uncertain(),
@@ -641,7 +742,7 @@ class InstallFlow extends ChangeNotifier {
     _run?.stop();
     unawaited(_updates?.cancel());
     _stopListening();
-    unawaited(_link?.close());
+    _closeLink();
     unawaited(_release());
     super.dispose();
   }

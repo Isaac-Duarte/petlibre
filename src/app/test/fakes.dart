@@ -59,13 +59,22 @@ class FakeBook extends ChangeNotifier implements FeederBook {
   }
 
   @override
-  Future<void> remember(KnownFeeder feeder, {bool paired = false}) async {
+  Future<void> remember(
+    KnownFeeder feeder, {
+    bool paired = false,
+    bool keepName = false,
+  }) async {
     if (saveFails case final error?) throw error;
     remembered.add((feeder, paired));
+    final known = feeders.where((f) => f.identity == feeder.identity);
     feeders = [
-      for (final known in feeders)
-        if (known.identity != feeder.identity) known,
-      feeder,
+      for (final other in feeders)
+        if (other.identity != feeder.identity) other,
+      KnownFeeder(
+        identity: feeder.identity,
+        name: keepName && known.isNotEmpty ? known.first.name : feeder.name,
+        address: feeder.address,
+      ),
     ];
     notifyListeners();
   }
@@ -150,21 +159,23 @@ class FakeInstallPorts implements InstallPorts {
     this.build = const BuildCheck.reviewable(),
     this.dns = const DnsResult.points(),
     this.ip = '192.168.1.23',
-    this.pendingInstall = false,
+    this.pendingInstall = PendingInstall.nothing,
   });
 
   ImageCheck image;
   BuildCheck build;
   DnsResult dns;
   String? ip;
-  bool pendingInstall;
+  PendingInstall pendingInstall;
+  bool holds = true;
+  String? kept;
   bool allowed = true;
 
   final specs = <InstallSpec>[];
   final runs = <FakeRun>[];
   final listeners = <FakeListener>[];
   final dnsAsked = <String>[];
-  final holds = <String>[];
+  final held = <String>[];
   int releases = 0;
   final shared = <String>[];
   // ignore: close_sinks, the test ends with it
@@ -189,7 +200,10 @@ class FakeInstallPorts implements InstallPorts {
   BuildCheck checkBuild() => build;
 
   @override
-  bool pending(InstallPaths paths) => pendingInstall;
+  PendingInstall pending(InstallPaths paths) => pendingInstall;
+
+  @override
+  String? keptBackup(InstallPaths paths, List<int> identity) => kept;
 
   @override
   Future<String?> phoneAddress() async => ip;
@@ -239,7 +253,10 @@ class FakeInstallPorts implements InstallPorts {
   Future<String?> locate(String identity) async => located;
 
   @override
-  Future<void> holdProcess(String text) async => holds.add(text);
+  Future<bool> holdProcess(String text) async {
+    held.add(text);
+    return holds;
+  }
 
   @override
   Future<void> releaseProcess() async => releases++;

@@ -34,6 +34,10 @@ pub enum InstallStart {
 /// Everything a run needs, read and checked before the feeder is touched.
 pub struct InstallSpec {
     pub start: InstallStart,
+    /// Where the replacement answers (`ip:port`), when a listener heard it
+    /// there. Without one a run looks where the replacement last answered,
+    /// and where stock connected from.
+    pub address: Option<String>,
     /// This phone's address on the owner's Wi-Fi: where the broker and the
     /// image server listen.
     pub phone_ip: String,
@@ -289,6 +293,19 @@ pub enum UncertainWrite {
     Plans,
 }
 
+/// Why the server would not send the install request. Nothing reached stock.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RequestRefusal {
+    /// Stock's reports are too old to act on: it only asks right after stock
+    /// reported, and the owner may have taken a while to answer.
+    Stale,
+    /// The feeder is offline, or its telemetry stopped.
+    Offline,
+    /// This phone's image server is not ready, or its window is nearly out.
+    ImageServer,
+    Other,
+}
+
 /// Why a run stopped, in the cases the screens tell apart.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StopCase {
@@ -315,6 +332,10 @@ pub enum StopCase {
     /// A request from an earlier run has not been resolved, so the server
     /// sent none; [`InstallListener`] can resolve it.
     EarlierRequestOpen,
+    /// The server would not send the request, for another reason.
+    RequestRefused {
+        why: RequestRefusal,
+    },
     /// Stock refused or failed the install, and keeps running stock.
     StockRefused {
         code: Option<u32>,
@@ -395,7 +416,7 @@ impl InstallRun {
     #[frb(sync)]
     pub fn new(key: &ClientKey, spec: InstallSpec) -> Self {
         Self {
-            run: Run::new(),
+            run: Run::new(install::pin()),
             spec: Mutex::new(Some(spec)),
             keys: key.keypair().clone(),
         }
@@ -558,8 +579,27 @@ pub async fn check_dns(name: String, phone_ip: String) -> DnsResult {
     install::check_dns(&name, &phone_ip).await
 }
 
-/// Whether an earlier run left an install to pick up at pairing.
+/// What an earlier run left on the feeder.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PendingInstall {
+    Nothing,
+    /// It paired with this phone and did not reach the end: pick up from
+    /// bank 0.
+    Paired,
+    /// Its request has no settled outcome, and it never paired. It may be
+    /// running the replacement, waiting for its owner, or still on stock:
+    /// listen for it, or look for it over Bluetooth.
+    RequestOpen,
+}
+
+/// What an earlier run left, read from its records alone.
 #[frb(sync)]
-pub fn pending_install(data_dir: String) -> bool {
+pub fn pending_install(data_dir: String) -> PendingInstall {
     install::pending(std::path::Path::new(&data_dir))
+}
+
+/// The checked copy of stock this phone keeps for the feeder with `identity`.
+#[frb(sync)]
+pub fn kept_backup(data_dir: String, identity: Vec<u8>) -> Option<String> {
+    install::kept_backup(std::path::Path::new(&data_dir), &identity)
 }

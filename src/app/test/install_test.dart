@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -6,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import 'package:wellfed/screens/install_screen.dart';
 import 'package:wellfed/src/rust/api/install.dart';
 import 'package:wellfed/src/rust/api/model.dart';
+import 'package:wellfed/src/rust/api/store.dart';
 import 'package:wellfed/state/install.dart';
 import 'package:wellfed/theme/theme.dart';
 import 'package:wellfed/widgets/code_tiles.dart';
@@ -196,10 +198,57 @@ void main() {
     testWidgets(
       'a pending install picks up from bank 0, asking stock nothing',
       (tester) async {
-        final ports = FakeInstallPorts(pendingInstall: true);
+        final ports = FakeInstallPorts(pendingInstall: PendingInstall.paired);
         await _open(tester, ports);
         await _tap(tester, 'Pick up where it stopped');
         expect(ports.specs.single.start, const InstallStart.bank0());
+        // Paired: no Wi-Fi to give it.
+        expect(ports.specs.single.home, isNull);
+        expect(find.text('Wellfed is running. Now claim it.'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'an open request offers the listener, and never a new request',
+      (tester) async {
+        final ports = FakeInstallPorts(
+          pendingInstall: PendingInstall.requestOpen,
+        );
+        await _open(tester, ports);
+        expect(
+          find.textContaining(
+            'An earlier install has not finished.',
+            findRichText: true,
+          ),
+          findsOneWidget,
+        );
+        expect(find.text('Pick up where it stopped'), findsNothing);
+
+        await _tap(tester, 'Listen for the feeder');
+        expect(ports.runs, isEmpty);
+        expect(ports.listeners, hasLength(1));
+        expect(find.text("We don't know yet if it installed"), findsOneWidget);
+        await tester.pumpWidget(const SizedBox());
+      },
+    );
+
+    testWidgets(
+      'looking over Bluetooth after a restart asks for the Wi-Fi first',
+      (tester) async {
+        final ports = FakeInstallPorts(
+          pendingInstall: PendingInstall.requestOpen,
+        );
+        await _open(tester, ports);
+        await _tap(tester, 'Look for it over Bluetooth');
+        expect(ports.runs, isEmpty);
+        expect(find.text('Connect it to your Wi-Fi'), findsOneWidget);
+
+        await tester.enterText(find.byType(TextField).at(0), 'Maple St');
+        await tester.enterText(find.byType(TextField).at(1), 'correcthorse');
+        await tester.pump();
+        await _tap(tester, 'Continue');
+        expect(ports.specs.single.start, const InstallStart.bank0());
+        expect(ports.specs.single.home?.ssid, 'Maple St');
         expect(find.text('Wellfed is running. Now claim it.'), findsOneWidget);
       },
     );
@@ -232,7 +281,7 @@ void main() {
         expect(run.answers[1], const InstallAnswer.done());
         expect(run.answers[2], const InstallAnswer.done());
         // The process is held for the run.
-        expect(ports.holds, isNotEmpty);
+        expect(ports.held, isNotEmpty);
       },
     );
 
@@ -373,13 +422,10 @@ void main() {
       expect(find.text('Sending firmware'), findsOneWidget);
       expect(find.textContaining('62%'), findsOneWidget);
       expect(
-        find.textContaining(
-          'Keep Wellfed open and the screen on.',
-          findRichText: true,
-        ),
+        find.textContaining('Keep Wellfed open.', findRichText: true),
         findsOneWidget,
       );
-      expect(ports.holds.last, contains('serving the firmware'));
+      expect(ports.held.last, contains('serving the firmware'));
 
       run.event(const InstallEvent.stockRestarting());
       await settle(tester);
@@ -669,6 +715,10 @@ void main() {
         );
         await settle(tester);
         expect(ports.specs.last.start, const InstallStart.bank0());
+        expect(ports.specs.last.address, '192.168.1.40:4747');
+        // A run of its own, with the listener's port let go.
+        expect(ports.runs, hasLength(2));
+        expect(ports.listeners.single.stops, 1);
       },
     );
 
@@ -924,6 +974,85 @@ void main() {
       });
     }
 
+    for (final (why, title) in [
+      (RequestRefusal.stale, "The feeder's reports got too old"),
+      (RequestRefusal.offline, 'The feeder went offline'),
+      (
+        RequestRefusal.imageServer,
+        "This phone wasn't ready to serve the firmware",
+      ),
+      (RequestRefusal.other, "The install wasn't sent"),
+    ]) {
+      testWidgets('a refused request says why: $title', (tester) async {
+        final ports = FakeInstallPorts();
+        await _stopped(
+          tester,
+          ports,
+          StopCase.requestRefused(why: why),
+          resume: Resume.fromStart,
+        );
+        expect(find.text(title), findsOneWidget);
+        expect(find.text('An earlier install is still open'), findsNothing);
+        await _tap(tester, 'Start again');
+        expect(find.text('Point the feeder at this phone'), findsOneWidget);
+      });
+    }
+
+    testWidgets('a stop closes the link, so the feeder advertises again', (
+      tester,
+    ) async {
+      final ports = FakeInstallPorts();
+      final run = await _toRun(tester, ports);
+      run.ask(3, const InstallAsk.openLink());
+      await settle(tester);
+      expect(ports.link.closes, 0);
+
+      run.stopped(const StopCase.setupFailed(), resume: Resume.fromBank0);
+      await settle(tester);
+      expect(ports.link.closes, 1);
+    });
+
+    testWidgets('a pick-up starts its code and checklist over', (tester) async {
+      final ports = FakeInstallPorts();
+      final run = await _toRun(tester, ports);
+      run.event(const InstallEvent.setupStarting());
+      run.event(
+        InstallEvent.code(
+          code: Uint8List.fromList(const [3, 1, 4, 4, 2, 1]),
+          seconds: 60,
+        ),
+      );
+      await tester.pump();
+      run.stopped(const StopCase.setupFailed(), resume: Resume.fromBank0);
+      await settle(tester);
+
+      await _tap(tester, 'Pick up where it stopped');
+      expect(find.byType(CodeTiles), findsNothing);
+      expect(
+        find.text('Looking for the feeder over Bluetooth…'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('a stream that closes with no end is a stop, not a hang', (
+      tester,
+    ) async {
+      final ports = FakeInstallPorts();
+      final run = await _toRun(tester, ports);
+      unawaited(run.updates.close());
+      await settle(tester);
+      expect(find.text('The install stopped'), findsOneWidget);
+      expect(find.text('the install stopped answering'), findsOneWidget);
+    });
+
+    testWidgets('a listener that closes with no end says so', (tester) async {
+      final ports = FakeInstallPorts();
+      await _stopped(tester, ports, const StopCase.uncertain());
+      unawaited(ports.listeners.single.updates.close());
+      await settle(tester);
+      expect(find.text("We can't listen for the feeder"), findsOneWidget);
+    });
+
     testWidgets('a stop with a paired feeder saves it for Home', (
       tester,
     ) async {
@@ -986,13 +1115,84 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('a pick-up past the backup still offers to save it', (
+    tester,
+  ) async {
+    final ports = FakeInstallPorts(pendingInstall: PendingInstall.paired)
+      ..kept = '/data/kept.bin';
+    await _open(tester, ports);
+    await _tap(tester, 'Pick up where it stopped');
+    final run = ports.run;
+    run.event(
+      InstallEvent.paired(
+        identity: Uint8List.fromList(const [0xab, 0xcd]),
+        address: '192.168.1.40:4747',
+        rebooting: false,
+      ),
+    );
+    run.end(const InstallEnd.done());
+    await settle(tester);
+    await _tap(tester, 'Save the backup somewhere else');
+    expect(ports.shared, ['/data/kept.bin']);
+  });
+
+  testWidgets('a pick-up keeps the name the owner gave the feeder', (
+    tester,
+  ) async {
+    final book = FakeBook();
+    await book.remember(const KnownFeeder(identity: 'abcd', name: 'Kitchen'));
+    final ports = FakeInstallPorts(pendingInstall: PendingInstall.paired);
+    await _open(tester, ports, book: book);
+    await _tap(tester, 'Pick up where it stopped');
+    final run = ports.run;
+    run.event(
+      InstallEvent.paired(
+        identity: Uint8List.fromList(const [0xab, 0xcd]),
+        rebooting: false,
+      ),
+    );
+    run.stopped(const StopCase.promotionFailed(), resume: Resume.fromBank0);
+    await settle(tester);
+    expect(book.feeders.single.name, 'Kitchen');
+  });
+
+  testWidgets('Android refusing the service says to stay on screen', (
+    tester,
+  ) async {
+    final ports = FakeInstallPorts()..holds = false;
+    final run = await _toRun(tester, ports);
+    run.event(const InstallEvent.requesting(build: 'ab'));
+    await settle(tester);
+    expect(
+      find.textContaining(
+        "Android won't keep Wellfed running in the background.",
+        findRichText: true,
+      ),
+      findsOneWidget,
+    );
+  });
+
+  test(
+    'only one run at a time: a second start leaves the first alone',
+    () async {
+      final ports = FakeInstallPorts();
+      final flow = InstallFlow(FakeBook(), ports);
+      await flow.load();
+      flow.brokerName = 'broker.example.net';
+      await flow.startRun();
+      await flow.startRun();
+      expect(ports.runs, hasLength(1));
+      flow.dispose();
+    },
+  );
+
   test('the flow reads the APK before it offers anything', () async {
-    final ports = FakeInstallPorts(pendingInstall: true);
+    final ports = FakeInstallPorts(pendingInstall: PendingInstall.paired);
     final flow = InstallFlow(FakeBook(), ports);
     await flow.load();
     expect(flow.stage, InstallStage.before);
     expect(flow.mayStart, isTrue);
-    expect(flow.pending, isTrue);
+    expect(flow.pending, PendingInstall.paired);
     expect(flow.phoneIp, '192.168.1.23');
     flow.dispose();
   });

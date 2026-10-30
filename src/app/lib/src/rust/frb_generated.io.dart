@@ -376,7 +376,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   WifiCredentials? dco_decode_opt_box_autoadd_wifi_credentials(dynamic raw);
 
   @protected
+  PendingInstall dco_decode_pending_install(dynamic raw);
+
+  @protected
   PlansOutcome dco_decode_plans_outcome(dynamic raw);
+
+  @protected
+  RequestRefusal dco_decode_request_refusal(dynamic raw);
 
   @protected
   Resume dco_decode_resume(dynamic raw);
@@ -770,7 +776,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  PendingInstall sse_decode_pending_install(SseDeserializer deserializer);
+
+  @protected
   PlansOutcome sse_decode_plans_outcome(SseDeserializer deserializer);
+
+  @protected
+  RequestRefusal sse_decode_request_refusal(SseDeserializer deserializer);
 
   @protected
   Resume sse_decode_resume(SseDeserializer deserializer);
@@ -1245,7 +1257,19 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_pending_install(
+    PendingInstall self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_plans_outcome(PlansOutcome self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_request_refusal(
+    RequestRefusal self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_resume(Resume self, SseSerializer serializer);

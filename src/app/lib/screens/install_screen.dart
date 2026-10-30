@@ -55,7 +55,7 @@ class _InstallScreenState extends State<InstallScreen> {
       builder: (context) => AlertDialog(
         title: const Text('Stop the install?'),
         content: const Text(
-          'This phone stops serving the feeder. Anything already sent is '
+          'This phone stops serving the feeder. The install request is '
           'never sent a second time.',
         ),
         actions: [
@@ -303,13 +303,34 @@ class _Before extends StatelessWidget {
               "for a moment. Erases meals set in the vendor's app.",
         ),
         if (refusal != null) ...[const SizedBox(height: Space.s4), refusal],
+        if (flow.mayStart && flow.pending == PendingInstall.requestOpen) ...[
+          const SizedBox(height: Space.s4),
+          const Notice(
+            tone: Tone.warning,
+            lead: 'An earlier install has not finished.',
+            text:
+                'Its feeder may be running Wellfed, waiting for its owner, '
+                'or still on its original firmware. The install is never sent '
+                'to it a second time.',
+          ),
+        ],
       ],
       actions: [
-        if (flow.pending && flow.mayStart)
+        if (flow.mayStart && flow.pending == PendingInstall.paired)
           OutlinedButton(
             onPressed: () => unawaited(flow.resume()),
             child: const Text('Pick up where it stopped'),
           ),
+        if (flow.mayStart && flow.pending == PendingInstall.requestOpen) ...[
+          OutlinedButton(
+            onPressed: () => unawaited(flow.listenForOpenRequest()),
+            child: const Text('Listen for the feeder'),
+          ),
+          OutlinedButton(
+            onPressed: () => unawaited(flow.resume()),
+            child: const Text('Look for it over Bluetooth'),
+          ),
+        ],
         FilledButton(
           onPressed: flow.mayStart ? () => unawaited(_begin(context)) : null,
           child: const Text('Continue'),
@@ -454,7 +475,7 @@ class _RecordState extends State<_Record> {
         // The lookup is this phone's; the feeder's own resolver may differ.
         if (!waiting && advice)
           OutlinedButton(
-            onPressed: () => unawaited(flow.startRun()),
+            onPressed: flow.checking ? null : () => unawaited(flow.startRun()),
             child: const Text('Go on anyway'),
           ),
       ],
@@ -608,10 +629,20 @@ class _Sending extends StatelessWidget {
         const SizedBox(height: Space.s2),
         Bar(value: flow.restarting ? 1 : flow.percent / 100),
         const SizedBox(height: Space.s5),
+        if (flow.holdRefused) ...[
+          const Notice(
+            tone: Tone.fault,
+            lead: "Android won't keep Wellfed running in the background.",
+            text: 'Keep it on the screen until this finishes.',
+          ),
+          const SizedBox(height: Space.s3),
+        ],
         const Notice(
           tone: Tone.warning,
-          lead: 'Keep Wellfed open and the screen on.',
-          text: "This phone is serving the firmware. Don't unplug the feeder.",
+          lead: 'Keep Wellfed open.',
+          text:
+              'This phone is serving the firmware, and closing the app stops '
+              "it. Don't unplug the feeder.",
         ),
       ],
     );
@@ -979,8 +1010,8 @@ class _Stopped extends StatelessWidget {
           'The feeder stopped answering while Wellfed became permanent. Leave '
               'it plugged in: picking up reads where it got to.',
         UncertainWrite.plans =>
-          'Its meals may or may not have been set, and they are never sent a '
-              'second time. Check them on the feeder.',
+          'Its meals may or may not have been set. Picking up reads them back '
+              'from the feeder, and sets them only if it holds none.',
       },
     ),
     StopCase_OtherFirmware(:final version) => (
@@ -1012,6 +1043,26 @@ class _Stopped extends StatelessWidget {
       'The feeder never answered about it, so Wellfed will not ask again until '
           'it has heard from it.',
     ),
+    StopCase_RequestRefused(:final why) => switch (why) {
+      RequestRefusal.stale => (
+        "The feeder's reports got too old",
+        'Wellfed only sends the install right after the feeder reports in. '
+            'Nothing was sent. Restart the feeder and start again.',
+      ),
+      RequestRefusal.offline => (
+        'The feeder went offline',
+        'It left this phone before the install went out, and nothing was '
+            'sent. Check that it is plugged in, then start again.',
+      ),
+      RequestRefusal.imageServer => (
+        "This phone wasn't ready to serve the firmware",
+        'Nothing was sent. Start again.',
+      ),
+      RequestRefusal.other => (
+        "The install wasn't sent",
+        'Nothing reached the feeder. See below for what this phone said.',
+      ),
+    },
     StopCase_StockRefused(:final code) => (
       'The feeder refused the install',
       code == null
@@ -1188,14 +1239,7 @@ class _Stopped extends StatelessWidget {
         ],
       },
       StopCase_EarlierRequestOpen() => [
-        primary('Listen for it', () {
-          flow.stop = InstallEnd_Stopped(
-            case_: const StopCase.uncertain(),
-            resume: Resume.nothing,
-            detail: stop.detail,
-          );
-          unawaited(flow.listen());
-        }),
+        primary('Listen for it', () => unawaited(flow.listenForOpenRequest())),
       ],
       StopCase_ClockUnset() => [
         primary(

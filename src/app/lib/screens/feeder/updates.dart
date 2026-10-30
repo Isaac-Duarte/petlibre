@@ -223,6 +223,15 @@ class _UpdatesScreenState extends State<UpdatesScreen> {
             child: Text('Install on $name'),
           ),
         ],
+        const SizedBox(height: Space.s5),
+        const SectionLabel('Original firmware'),
+        const SizedBox(height: Space.s2),
+        // Returning to stock opens from here. It is its own flow, with its own
+        // fresh key and a press on the feeder.
+        const OutlinedButton(
+          onPressed: null,
+          child: Text('Put the original firmware back'),
+        ),
       ],
     );
   }

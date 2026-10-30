@@ -44,7 +44,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.13.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 468105913;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -290764325;
 
 // Section: executor
 
@@ -1588,6 +1588,67 @@ fn wire__crate__api__store__app_store_default_impl(
         },
     )
 }
+fn wire__crate__api__store__app_version_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "app_version",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let output_ok = Ok::<_, ()>(crate::api::store::app_version())?;
+                std::result::Result::Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__store__appearance_default_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "appearance_default",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, ()>((move || {
+                    let output_ok = Ok::<_, ()>(crate::api::store::Appearance::default())?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
 fn wire__crate__api__install__check_build_impl(
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
     rust_vec_len_: i32,
@@ -2580,9 +2641,24 @@ impl SseDecode for crate::api::store::AppStore {
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         let mut var_label = <String>::sse_decode(deserializer);
         let mut var_feeders = <Vec<crate::api::store::KnownFeeder>>::sse_decode(deserializer);
+        let mut var_appearance = <crate::api::store::Appearance>::sse_decode(deserializer);
         return crate::api::store::AppStore {
             label: var_label,
             feeders: var_feeders,
+            appearance: var_appearance,
+        };
+    }
+}
+
+impl SseDecode for crate::api::store::Appearance {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <i32>::sse_decode(deserializer);
+        return match inner {
+            0 => crate::api::store::Appearance::System,
+            1 => crate::api::store::Appearance::Light,
+            2 => crate::api::store::Appearance::Dark,
+            _ => unreachable!("Invalid variant for Appearance: {}", inner),
         };
     }
 }
@@ -5578,10 +5654,12 @@ impl SseDecode for crate::api::feeder::TraceView {
         let mut var_summary = <crate::api::model::TraceSummary>::sse_decode(deserializer);
         let mut var_stored = <bool>::sse_decode(deserializer);
         let mut var_entries = <Vec<crate::api::model::TraceEntry>>::sse_decode(deserializer);
+        let mut var_portionMs = <Vec<u32>>::sse_decode(deserializer);
         return crate::api::feeder::TraceView {
             summary: var_summary,
             stored: var_stored,
             entries: var_entries,
+            portion_ms: var_portionMs,
         };
     }
 }
@@ -5931,12 +6009,13 @@ fn pde_ffi_dispatcher_primary_impl(
         22 => wire__crate__api__install__InstallRun_run_impl(port, ptr, rust_vec_len, data_len),
         27 => wire__crate__api__setup__Recovery_run_impl(port, ptr, rust_vec_len, data_len),
         32 => wire__crate__api__store__app_store_default_impl(port, ptr, rust_vec_len, data_len),
-        34 => wire__crate__api__install__check_dns_impl(port, ptr, rust_vec_len, data_len),
-        39 => wire__crate__api__init_app_impl(port, ptr, rust_vec_len, data_len),
-        41 => wire__crate__api__join__join_feeder_impl(port, ptr, rust_vec_len, data_len),
-        43 => wire__crate__api__store__load_store_impl(port, ptr, rust_vec_len, data_len),
-        45 => wire__crate__api__store__save_store_impl(port, ptr, rust_vec_len, data_len),
-        46 => wire__crate__api__feeder__settings_changes_default_impl(
+        34 => wire__crate__api__store__appearance_default_impl(port, ptr, rust_vec_len, data_len),
+        36 => wire__crate__api__install__check_dns_impl(port, ptr, rust_vec_len, data_len),
+        41 => wire__crate__api__init_app_impl(port, ptr, rust_vec_len, data_len),
+        43 => wire__crate__api__join__join_feeder_impl(port, ptr, rust_vec_len, data_len),
+        45 => wire__crate__api__store__load_store_impl(port, ptr, rust_vec_len, data_len),
+        47 => wire__crate__api__store__save_store_impl(port, ptr, rust_vec_len, data_len),
+        48 => wire__crate__api__feeder__settings_changes_default_impl(
             port,
             ptr,
             rust_vec_len,
@@ -5983,16 +6062,17 @@ fn pde_ffi_dispatcher_sync_impl(
         29 => wire__crate__api__setup__SetupDriver_new_impl(ptr, rust_vec_len, data_len),
         30 => wire__crate__api__setup__SetupDriver_notified_impl(ptr, rust_vec_len, data_len),
         31 => wire__crate__api__setup__SetupDriver_start_impl(ptr, rust_vec_len, data_len),
-        33 => wire__crate__api__install__check_build_impl(ptr, rust_vec_len, data_len),
-        35 => wire__crate__api__install__check_image_impl(ptr, rust_vec_len, data_len),
-        36 => wire__crate__api__store__fingerprint_impl(ptr, rust_vec_len, data_len),
-        37 => wire__crate__api__store__identity_bytes_impl(ptr, rust_vec_len, data_len),
-        38 => wire__crate__api__store__identity_hex_impl(ptr, rust_vec_len, data_len),
-        40 => wire__crate__api__join__invite_feeder_impl(ptr, rust_vec_len, data_len),
-        42 => wire__crate__api__install__kept_backup_impl(ptr, rust_vec_len, data_len),
-        44 => wire__crate__api__install__pending_install_impl(ptr, rust_vec_len, data_len),
-        47 => wire__crate__api__setup__setup_control_impl(ptr, rust_vec_len, data_len),
-        48 => wire__crate__api__setup__setup_service_impl(ptr, rust_vec_len, data_len),
+        33 => wire__crate__api__store__app_version_impl(ptr, rust_vec_len, data_len),
+        35 => wire__crate__api__install__check_build_impl(ptr, rust_vec_len, data_len),
+        37 => wire__crate__api__install__check_image_impl(ptr, rust_vec_len, data_len),
+        38 => wire__crate__api__store__fingerprint_impl(ptr, rust_vec_len, data_len),
+        39 => wire__crate__api__store__identity_bytes_impl(ptr, rust_vec_len, data_len),
+        40 => wire__crate__api__store__identity_hex_impl(ptr, rust_vec_len, data_len),
+        42 => wire__crate__api__join__invite_feeder_impl(ptr, rust_vec_len, data_len),
+        44 => wire__crate__api__install__kept_backup_impl(ptr, rust_vec_len, data_len),
+        46 => wire__crate__api__install__pending_install_impl(ptr, rust_vec_len, data_len),
+        49 => wire__crate__api__setup__setup_control_impl(ptr, rust_vec_len, data_len),
+        50 => wire__crate__api__setup__setup_service_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -6110,6 +6190,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::store::AppStore {
         [
             self.label.into_into_dart().into_dart(),
             self.feeders.into_into_dart().into_dart(),
+            self.appearance.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -6119,6 +6200,25 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::store::AppStore>
     for crate::api::store::AppStore
 {
     fn into_into_dart(self) -> crate::api::store::AppStore {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::store::Appearance {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            Self::System => 0.into_dart(),
+            Self::Light => 1.into_dart(),
+            Self::Dark => 2.into_dart(),
+            _ => unreachable!(),
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for crate::api::store::Appearance {}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::store::Appearance>
+    for crate::api::store::Appearance
+{
+    fn into_into_dart(self) -> crate::api::store::Appearance {
         self
     }
 }
@@ -8707,6 +8807,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::feeder::TraceView {
             self.summary.into_into_dart().into_dart(),
             self.stored.into_into_dart().into_dart(),
             self.entries.into_into_dart().into_dart(),
+            self.portion_ms.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -9281,6 +9382,24 @@ impl SseEncode for crate::api::store::AppStore {
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <String>::sse_encode(self.label, serializer);
         <Vec<crate::api::store::KnownFeeder>>::sse_encode(self.feeders, serializer);
+        <crate::api::store::Appearance>::sse_encode(self.appearance, serializer);
+    }
+}
+
+impl SseEncode for crate::api::store::Appearance {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(
+            match self {
+                crate::api::store::Appearance::System => 0,
+                crate::api::store::Appearance::Light => 1,
+                crate::api::store::Appearance::Dark => 2,
+                _ => {
+                    unimplemented!("");
+                }
+            },
+            serializer,
+        );
     }
 }
 
@@ -11864,6 +11983,7 @@ impl SseEncode for crate::api::feeder::TraceView {
         <crate::api::model::TraceSummary>::sse_encode(self.summary, serializer);
         <bool>::sse_encode(self.stored, serializer);
         <Vec<crate::api::model::TraceEntry>>::sse_encode(self.entries, serializer);
+        <Vec<u32>>::sse_encode(self.portion_ms, serializer);
     }
 }
 

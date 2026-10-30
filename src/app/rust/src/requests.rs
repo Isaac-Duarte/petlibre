@@ -17,8 +17,8 @@ use wellfed_client::setup::Credentials;
 use wellfed_client::trace::Pages;
 use wellfed_model::{
     Answer, Calibration, CalibrationView, CallView, Client, ClientRole, Generation, NtpServer, Op,
-    Plan, Plans, Refusal, Settings, SettingsPatch, TimeChanges, TimeOfDay, TimeView, Weekday,
-    Weekdays,
+    Plan, Plans, Refusal, Settings, SettingsPatch, TimeChanges, TimeOfDay, TimeView, TraceEntry,
+    TraceMotor, Weekday, Weekdays,
 };
 
 use crate::api::feeder::{
@@ -184,6 +184,7 @@ async fn read_trace(commands: &mpsc::UnboundedSender<Command>, feed: u32) -> Fee
                     trace: TraceView {
                         summary: trace.summary,
                         stored: trace.stored,
+                        portion_ms: portion_times(&trace.entries, trace.summary.completed),
                         entries: trace.entries,
                     },
                 };
@@ -391,6 +392,35 @@ pub(crate) fn time_info(view: &TimeView) -> TimeInfo {
     }
 }
 
+/// Each portion's time: from the drive's start or the mark before, to its own
+/// mark, since the feeder counts one portion per rotor mark. Empty when the
+/// marks kept do not add up to the portions it counted.
+fn portion_times(entries: &[TraceEntry], completed: u8) -> Vec<u32> {
+    let mut from = None;
+    let mut times = Vec::new();
+    for entry in entries {
+        match *entry {
+            TraceEntry::Motor {
+                at_ms,
+                motor: TraceMotor::Drive0 | TraceMotor::Drive1,
+            } if from.is_none() => from = Some(at_ms),
+            TraceEntry::Mark {
+                at_ms, high: true, ..
+            } => {
+                let Some(start) = from else { return Vec::new() };
+                times.push(at_ms.saturating_sub(start));
+                from = Some(at_ms);
+            }
+            _ => {}
+        }
+    }
+    if times.len() == usize::from(completed) {
+        times
+    } else {
+        Vec::new()
+    }
+}
+
 pub(crate) const fn refusal_of(refusal: Refusal) -> FeederRefusal {
     match refusal {
         Refusal::Forbidden => FeederRefusal::Forbidden,
@@ -495,5 +525,31 @@ fn reply_of(answer: Answer) -> FeederReply {
         | Answer::FeedTrace(_)
         | Answer::Bank1(_)
         | Answer::StockPlans(_) => FeederReply::Unexpected,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_portion_runs_from_the_mark_before_and_marks_must_add_up() {
+        let mark = |at_ms, high| TraceEntry::Mark {
+            at_ms,
+            edges: 0,
+            high,
+        };
+        let entries = [
+            TraceEntry::Motor {
+                at_ms: 100,
+                motor: TraceMotor::Drive0,
+            },
+            mark(9_100, true),
+            mark(9_300, false),
+            mark(18_200, true),
+        ];
+
+        assert_eq!(portion_times(&entries, 2), [9_000, 9_100]);
+        assert!(portion_times(&entries, 3).is_empty());
     }
 }

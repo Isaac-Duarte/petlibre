@@ -4,6 +4,9 @@
 //! installs, whose drivers (the install, an update's push, the update key's
 //! enrollment, a trace's pages, a call's upload) they each run. Tests don't
 //! count, and neither does the model's own conversion to the wire.
+//!
+//! A request the bridge offers and no screen sends is no client either, so
+//! every `FeederRequest` variant must be named by the app's Dart too.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -11,6 +14,11 @@ use std::path::Path;
 
 /// Where `Op` is declared.
 const REQUEST: &str = "src/client/wellfed-model/src/request.rs";
+/// Where the bridge declares what a screen can ask.
+const BRIDGE: &str = "src/app/rust/src/api/feeder.rs";
+const DART: &str = "src/app/lib/";
+/// Dart written by the code generator.
+const DART_GENERATED: &str = "src/app/lib/src/rust/";
 const CLI: &str = "src/tools/wellfed/src/";
 const APP: &str = "src/app/rust/src/";
 /// The sessions' and installs' drivers both clients run.
@@ -31,11 +39,12 @@ const NOT_IN_APP: [(&str, &str); 1] = [(
      key a feeder trusts; the owner's computer carries one to the feeder",
 )];
 
-/// The variants `source` declares for `enum Op`, in order.
-fn variants(source: &str) -> Vec<&str> {
+/// The variants `source` declares for `enum`, in order.
+fn variants<'a>(source: &'a str, name: &str) -> Vec<&'a str> {
+    let header = format!("pub enum {name} {{");
     source
         .lines()
-        .skip_while(|line| !line.starts_with("pub enum Op {"))
+        .skip_while(|line| !line.starts_with(&header))
         .skip(1)
         .take_while(|line| !line.starts_with('}'))
         .filter_map(|line| {
@@ -102,6 +111,27 @@ fn union<'a>(sources: impl IntoIterator<Item = &'a String>) -> BTreeSet<&'a str>
         .collect()
 }
 
+/// What Dart calls a generated variant: its first letter lower-cased.
+fn dart_name(variant: &str) -> String {
+    let mut chars = variant.chars();
+    chars
+        .next()
+        .map(|first| first.to_ascii_lowercase().to_string() + chars.as_str())
+        .unwrap_or_default()
+}
+
+/// The bridge's requests no Dart source names as `FeederRequest.name`.
+fn unsent(requests: &[&str], dart: &[String]) -> Vec<String> {
+    requests
+        .iter()
+        .filter(|request| {
+            let call = format!("FeederRequest.{}(", dart_name(request));
+            !dart.iter().any(|source| source.contains(&call))
+        })
+        .map(|request| format!("FeederRequest::{request} is sent by no screen in {DART}"))
+        .collect()
+}
+
 /// The findings over the checkout at `root`, whose files are `names`.
 pub(crate) fn check(root: &Path, names: &[String]) -> Vec<String> {
     let read = |prefixes: &[&str]| -> Vec<String> {
@@ -118,7 +148,7 @@ pub(crate) fn check(root: &Path, names: &[String]) -> Vec<String> {
     let Ok(request) = fs::read_to_string(root.join(REQUEST)) else {
         return vec![format!("{REQUEST}: cannot be read")];
     };
-    let ops = variants(&request);
+    let ops = variants(&request, "Op");
     if ops.is_empty() {
         return vec![format!("{REQUEST}: no `pub enum Op` found")];
     }
@@ -142,6 +172,19 @@ pub(crate) fn check(root: &Path, names: &[String]) -> Vec<String> {
         &NOT_IN_APP,
         &mut errors,
     );
+
+    let Ok(bridge) = fs::read_to_string(root.join(BRIDGE)) else {
+        errors.push(format!("{BRIDGE}: cannot be read"));
+        return errors;
+    };
+    let dart: Vec<String> = names
+        .iter()
+        .filter(|name| {
+            name.ends_with(".dart") && name.starts_with(DART) && !name.starts_with(DART_GENERATED)
+        })
+        .filter_map(|name| fs::read_to_string(root.join(name)).ok())
+        .collect();
+    errors.extend(unsent(&variants(&bridge, "FeederRequest"), &dart));
     errors
 }
 
@@ -168,7 +211,11 @@ pub enum Other {
 
     #[test]
     fn the_ops_are_read_from_their_enum() {
-        assert_eq!(variants(REQUESTS), ["Status", "PutSettings", "TimeSync"]);
+        assert_eq!(
+            variants(REQUESTS, "Op"),
+            ["Status", "PutSettings", "TimeSync"]
+        );
+        assert_eq!(variants(REQUESTS, "Other"), ["Not"]);
     }
 
     #[test]
@@ -206,6 +253,17 @@ pub enum Other {
         let stale = [("Status", "why"), ("Gone", "why"), ("Reboot", "why")];
         client("the app", &ops, &own, &shared, &stale, &mut errors);
         assert_eq!(errors.len(), 2, "{errors:?}");
+    }
+
+    #[test]
+    fn a_request_no_screen_sends_is_found() {
+        let dart = ["ask(const FeederRequest.getSettings());".to_string()];
+        assert_eq!(
+            unsent(&["GetSettings", "Reboot"], &dart),
+            [format!(
+                "FeederRequest::Reboot is sent by no screen in {DART}"
+            )]
+        );
     }
 
     #[test]

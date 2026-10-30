@@ -42,6 +42,15 @@ mixin _FakeOpaque implements RustOpaqueInterface {
 
 /// The feeders the app knows, in memory.
 class FakeBook extends ChangeNotifier implements FeederBook {
+  @override
+  Appearance appearance = Appearance.system;
+
+  @override
+  Future<void> setAppearance(Appearance next) async {
+    appearance = next;
+    notifyListeners();
+  }
+
   FakeBook({this.label = 'Pixel'});
 
   @override

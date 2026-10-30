@@ -60,7 +60,7 @@ This page tracks what works today and what comes next. It covers the replacement
 | Command-line client (`wellfed`) | Partial | Every owner setting and action: pairing, status, settings, plans, the meal call, feeds, history, the desiccant reminder, lock, Wi-Fi, time, invites and the installer, with text for people and `--json` for scripts. The meal call, the desiccant reminder and the newer status fields are tested in simulation only. See [the command overview](../src/tools/README.md#the-wellfed-command-line). |
 | Self-hosted server | Partial | Adopts a real feeder and keeps its history whole across a server restart, a power cut and a Wi-Fi drop. A phone talking to the feeder directly gets no events while the server is connected. Feeds, plans with the next meal, accounts, releases and installs are tested in simulation only. |
 | Server web UI | Not started | |
-| Android app | Experimental | Installs from stock through the feeder's own Wi-Fi after a Reset hold, or through a DNS record that keeps its meals, sets up a feeder over Bluetooth or takes it back over the LAN, then shows its status and feeds. Its install has run once on the research unit from each route, the Reset route to the end. See [the app](../src/app/README.md). |
+| Android app | Experimental | Installs from stock through the feeder's own Wi-Fi after a Reset hold, or through a DNS record that keeps its meals, sets up a feeder over Bluetooth or takes it back over the LAN, and has a screen for everything the device API offers: meals, history, settings, people and invites, updates and diagnostics. Its install has run once on the research unit from each route, the Reset route to the end; the other screens have run only against fakes and the simulator so far. See [the app](../src/app/README.md). |
 | Home Assistant | Not started | Paused. |
 
 ## Development hardware
@@ -74,5 +74,5 @@ This page tracks what works today and what comes next. It covers the replacement
 1. A long unattended run with injected faults, to prove the feeder stays safe over hours.
 2. Checking calibration, jams, lights and the battery on the bench.
 3. Schedules, then a finished manual feed with stock's portion rules.
-4. The server's web UI and the Android app.
+4. The server's web UI, and the Android app's first run of its new screens on the research unit.
 5. A first research release.

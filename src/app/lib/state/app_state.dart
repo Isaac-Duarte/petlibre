@@ -15,6 +15,11 @@ abstract interface class FeederBook implements Listenable {
 
   Future<void> setLabel(String label);
 
+  /// Which theme the app draws.
+  Appearance get appearance;
+
+  Future<void> setAppearance(Appearance appearance);
+
   /// Add `feeder`, or replace the one with its identity. With `paired`, this
   /// phone just became its owner, so its next session gives it this phone's
   /// clock. With `keepName`, a feeder already known keeps the name the owner
@@ -91,8 +96,25 @@ class AppState extends ChangeNotifier implements FeederBook {
   void clockSynced(String identity) => _clockDue.remove(identity);
 
   @override
-  Future<void> setLabel(String label) =>
-      _update((store) => AppStore(label: label, feeders: store.feeders));
+  Appearance get appearance => _store.appearance;
+
+  @override
+  Future<void> setAppearance(Appearance appearance) => _update(
+    (store) => AppStore(
+      label: store.label,
+      feeders: store.feeders,
+      appearance: appearance,
+    ),
+  );
+
+  @override
+  Future<void> setLabel(String label) => _update(
+    (store) => AppStore(
+      label: label,
+      feeders: store.feeders,
+      appearance: store.appearance,
+    ),
+  );
 
   @override
   Future<void> remember(
@@ -114,6 +136,7 @@ class AppState extends ChangeNotifier implements FeederBook {
             address: feeder.address,
           ),
         ],
+        appearance: store.appearance,
       );
     });
   }
@@ -126,6 +149,7 @@ class AppState extends ChangeNotifier implements FeederBook {
         for (final feeder in store.feeders)
           if (feeder.identity != identity) feeder,
       ],
+      appearance: store.appearance,
     ),
   );
 

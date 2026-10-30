@@ -155,6 +155,9 @@ class FeederController extends ChangeNotifier {
 
   void dismissFeed() => _setFeed(FeedState.idle);
 
+  /// Hears the record lines a tail pushes, while a screen is showing them.
+  void Function(int dropped, List<String> lines)? onLog;
+
   /// The clients the feeder lists, once asked for.
   List<ClientView> clients = const [];
 
@@ -323,9 +326,8 @@ class FeederController extends ChangeNotifier {
           history = [...history, ...entries];
           historyRead = historyRead || caughtUp;
           _notify();
-        case SessionUpdate_Log():
-          // Heard only by a screen that asked; none does yet.
-          break;
+        case SessionUpdate_Log(:final dropped, :final lines):
+          onLog?.call(dropped, lines);
         case SessionUpdate_Closed(error: final e):
           error = e?.kind;
       }

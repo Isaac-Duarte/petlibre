@@ -594,14 +594,23 @@ class TraceView {
   final bool stored;
   final List<TraceEntry> entries;
 
+  /// How long each portion took, from each confirmed wheel mark to the last;
+  /// empty when the marks do not match the portions counted.
+  final Uint32List portionMs;
+
   const TraceView({
     required this.summary,
     required this.stored,
     required this.entries,
+    required this.portionMs,
   });
 
   @override
-  int get hashCode => summary.hashCode ^ stored.hashCode ^ entries.hashCode;
+  int get hashCode =>
+      summary.hashCode ^
+      stored.hashCode ^
+      entries.hashCode ^
+      portionMs.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -610,7 +619,8 @@ class TraceView {
           runtimeType == other.runtimeType &&
           summary == other.summary &&
           stored == other.stored &&
-          entries == other.entries;
+          entries == other.entries &&
+          portionMs == other.portionMs;
 }
 
 /// Where an install stands.

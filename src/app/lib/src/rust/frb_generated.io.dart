@@ -223,6 +223,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   AppStore dco_decode_app_store(dynamic raw);
 
   @protected
+  Appearance dco_decode_appearance(dynamic raw);
+
+  @protected
   Blocked dco_decode_blocked(dynamic raw);
 
   @protected
@@ -1023,6 +1026,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   AppStore sse_decode_app_store(SseDeserializer deserializer);
+
+  @protected
+  Appearance sse_decode_appearance(SseDeserializer deserializer);
 
   @protected
   Blocked sse_decode_blocked(SseDeserializer deserializer);
@@ -1917,6 +1923,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_app_store(AppStore self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_appearance(Appearance self, SseSerializer serializer);
 
   @protected
   void sse_encode_blocked(Blocked self, SseSerializer serializer);

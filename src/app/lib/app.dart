@@ -6,6 +6,7 @@ import 'platform/install_ports.dart';
 import 'platform/join_ports.dart';
 import 'platform/pairing_ports.dart';
 import 'screens/add_feeder.dart';
+import 'screens/app_settings.dart';
 import 'screens/feeder/shell.dart';
 import 'screens/home.dart';
 import 'screens/install_screen.dart';
@@ -13,6 +14,7 @@ import 'screens/join.dart';
 import 'screens/recover_screen.dart';
 import 'screens/setup_screen.dart';
 import 'screens/welcome.dart';
+import 'src/rust/api/store.dart';
 import 'state/app_state.dart';
 import 'state/fleet.dart';
 import 'theme/theme.dart';
@@ -72,6 +74,10 @@ class _WellfedAppState extends State<WellfedApp> {
     pages: {
       '/add': (context) => const AddFeederScreen(),
       '/setup': (context) => SetupScreen(app: widget.app, ports: _pairing),
+      '/settings': (context) => AppSettingsScreen(
+        book: widget.app,
+        backups: AppBackupPorts(widget.app.key),
+      ),
       '/join': (context) =>
           JoinScreen(book: widget.app, ports: AppJoinPorts(widget.app.key)),
       '/recover': (context) => RecoverScreen(app: widget.app, ports: _pairing),
@@ -90,11 +96,19 @@ class _WellfedAppState extends State<WellfedApp> {
   }
 
   @override
-  Widget build(BuildContext context) => MaterialApp.router(
-    title: 'Wellfed',
-    debugShowCheckedModeBanner: false,
-    theme: wellfedTheme(Brightness.light),
-    darkTheme: wellfedTheme(Brightness.dark),
-    routerConfig: _router,
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: widget.app,
+    builder: (context, _) => MaterialApp.router(
+      title: 'Wellfed',
+      debugShowCheckedModeBanner: false,
+      theme: wellfedTheme(Brightness.light),
+      darkTheme: wellfedTheme(Brightness.dark),
+      themeMode: switch (widget.app.appearance) {
+        Appearance.system => ThemeMode.system,
+        Appearance.light => ThemeMode.light,
+        Appearance.dark => ThemeMode.dark,
+      },
+      routerConfig: _router,
+    ),
   );
 }

@@ -246,6 +246,9 @@ pub struct TraceView {
     pub summary: TraceSummary,
     pub stored: bool,
     pub entries: Vec<TraceEntry>,
+    /// How long each portion took, from each confirmed wheel mark to the last;
+    /// empty when the marks do not match the portions counted.
+    pub portion_ms: Vec<u32>,
 }
 
 /// Where an install stands.

@@ -408,6 +408,7 @@ fn the_store_round_trips_and_starts_empty() {
 
     assert_eq!(load_store(path).unwrap(), AppStore::default());
     let store = AppStore {
+        appearance: wellfed_app_bridge::api::store::Appearance::Dark,
         label: "Pixel 8".into(),
         feeders: vec![KnownFeeder {
             identity: "ab".repeat(32),

@@ -11,6 +11,7 @@ import '../theme/theme.dart';
 import '../widgets/icons.dart';
 import '../widgets/layout.dart';
 import '../widgets/when.dart';
+import 'app_settings.dart';
 import 'feed_sheet.dart';
 import 'feeder/no_time.dart';
 import 'feeder/tabs.dart';
@@ -33,6 +34,7 @@ class HomeScreen extends StatelessWidget {
     final feeders = fleet.all.toList();
     final one = feeders.length == 1;
     return Scaffold(
+      bottomNavigationBar: const MainNav(selected: 0),
       appBar: AppBar(
         toolbarHeight: 64,
         titleSpacing: 20,

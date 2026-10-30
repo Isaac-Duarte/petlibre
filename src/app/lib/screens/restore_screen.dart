@@ -272,6 +272,10 @@ class _Running extends StatelessWidget {
           text: 'Keep this screen open: Android would not let this run behind.',
         ),
       ],
+      WaitWords(
+        flow.pressDispense ? null : flow.waitWords,
+        progress: (flow.pressing, flow.sending, flow.written, flow.restarting),
+      ),
     ],
   );
 }
@@ -444,67 +448,67 @@ class _Stopped extends StatelessWidget {
     );
   }
 
-  static (String, String) _words(RestoreStop? stop, String name) =>
-      switch (stop) {
-        RestoreStop.noPress => (
-          'Dispense was not pressed in time',
-          '$name keeps running Wellfed, and nothing was sent.',
-        ),
-        RestoreStop.enrollmentUnknown => (
-          "We don't know if the press got through",
-          '$name stopped answering just then. It keeps running Wellfed, and '
-              'trying again finds out first, without asking for a second '
-              'press if it took.',
-        ),
-        RestoreStop.keyRefused => (
-          "$name wouldn't take the press",
-          'It may be busy with another request, or its list of phones and '
-              'keys may be full. It keeps running Wellfed, and nothing was '
-              'sent.',
-        ),
-        RestoreStop.notOwner => (
-          'Only the owner can do this',
-          "This phone isn't the owner of $name, which keeps running Wellfed.",
-        ),
-        RestoreStop.notAnswering => (
-          "$name isn't answering",
-          'Nothing was sent. Check that it is plugged in and this phone is '
-              'on the same Wi-Fi.',
-        ),
-        RestoreStop.noUpdates => (
-          "$name can't take this",
-          'The firmware it runs takes no updates from this app. Nothing was '
-              'sent.',
-        ),
-        RestoreStop.backupRefused => (
-          "That isn't the original firmware",
-          "It doesn't match the vendor's 1.1.15 exactly, so nothing was sent.",
-        ),
-        RestoreStop.keyFailed => (
-          "This phone couldn't set up the restore",
-          '$name keeps running Wellfed, and nothing was sent. The backup is '
-              'fine: this is about space or storage on this phone.',
-        ),
-        RestoreStop.keyGone => (
-          'The restore lost its key',
-          '$name keeps running Wellfed, and nothing was sent. An earlier '
-              'restore on this phone cleared the key as this one was about to '
-              'use it. Try again; you may be asked to press Dispense once more.',
-        ),
-        RestoreStop.refused => (
-          '$name said no',
-          "It keeps running Wellfed, though the vendor's copy may be partly "
-              "written. This isn't sent again from here.",
-        ),
-        RestoreStop.cancelled => (
-          'Stopped',
-          '$name keeps running Wellfed, and nothing was sent.',
-        ),
-        RestoreStop.other || null => (
-          'The restore stopped',
-          '$name most likely keeps running Wellfed.',
-        ),
-      };
+  static (String, String) _words(
+    RestoreStop? stop,
+    String name,
+  ) => switch (stop) {
+    RestoreStop.noPress => (
+      'Dispense was not pressed in time',
+      '$name keeps running Wellfed, and nothing was sent.',
+    ),
+    RestoreStop.enrollmentUnknown => (
+      "We don't know if the press got through",
+      '$name stopped answering just then. It keeps running Wellfed, and '
+          'trying again finds out first, without asking for a second '
+          'press if it took.',
+    ),
+    RestoreStop.keyRefused => (
+      "$name wouldn't take the press",
+      'It may be busy with another request, or its list of phones and '
+          'keys may be full. It keeps running Wellfed, and nothing was '
+          'sent.',
+    ),
+    RestoreStop.notOwner => (
+      'Only the owner can do this',
+      "This phone isn't the owner of $name, which keeps running Wellfed.",
+    ),
+    RestoreStop.notAnswering => (
+      "$name isn't answering",
+      'Nothing was sent. Check that it is plugged in and this phone is '
+          'on the same Wi-Fi.',
+    ),
+    RestoreStop.noUpdates => (
+      "$name can't take this",
+      'The firmware it runs takes no updates from this app. Nothing was '
+          'sent.',
+    ),
+    RestoreStop.backupRefused => (
+      "That isn't the original firmware",
+      "It doesn't match the vendor's 1.1.15 exactly, so nothing was sent.",
+    ),
+    RestoreStop.keyFailed => (
+      "This phone couldn't set up the restore",
+      '$name keeps running Wellfed, and nothing was sent. The backup is '
+          'fine: this is about space or storage on this phone.',
+    ),
+    RestoreStop.keyGone => (
+      'The restore lost its key',
+      '$name keeps running Wellfed, and nothing was sent. An earlier '
+          'restore on this phone cleared the key as this one was about to '
+          'use it. Try again; you may be asked to press Dispense once more.',
+    ),
+    RestoreStop.refused => (
+      '$name said no',
+      "It keeps running Wellfed, though the vendor's copy may be partly "
+          "written. This isn't sent again from here.",
+    ),
+    RestoreStop.cancelled => (
+      'Stopped',
+      '$name keeps running Wellfed, and nothing was sent.',
+    ),
+    RestoreStop.other ||
+    null => ('The restore stopped', '$name most likely keeps running Wellfed.'),
+  };
 }
 
 class _Small extends StatelessWidget {

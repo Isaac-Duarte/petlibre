@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../theme/theme.dart';
@@ -712,4 +714,61 @@ class FeederImage extends StatelessWidget {
       excludeFromSemantics: true,
     ),
   );
+}
+
+/// What a run waits for, once it has waited [after] with the same `words` and
+/// the same `progress`: no screen stays still for long with nothing said.
+class WaitWords extends StatefulWidget {
+  const WaitWords(this.words, {super.key, this.progress});
+
+  /// Longer than any step that is just working.
+  static const after = Duration(seconds: 30);
+
+  /// `null` when the screen already says what it waits for.
+  final String? words;
+
+  /// What, when it moves, shows the run is not stuck.
+  final Object? progress;
+
+  @override
+  State<WaitWords> createState() => _WaitWordsState();
+}
+
+class _WaitWordsState extends State<WaitWords> {
+  Timer? _timer;
+  bool _long = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _watch();
+  }
+
+  @override
+  void didUpdateWidget(WaitWords old) {
+    super.didUpdateWidget(old);
+    if (old.words != widget.words || old.progress != widget.progress) _watch();
+  }
+
+  void _watch() {
+    _long = false;
+    _timer?.cancel();
+    _timer = Timer(WaitWords.after, () => setState(() => _long = true));
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final words = widget.words;
+    if (!_long || words == null) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: Space.s3),
+      child: Notice(tone: Tone.neutral, text: words),
+    );
+  }
 }

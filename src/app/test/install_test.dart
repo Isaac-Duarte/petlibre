@@ -11,6 +11,7 @@ import 'package:wellfed/src/rust/api/store.dart';
 import 'package:wellfed/state/install.dart';
 import 'package:wellfed/theme/theme.dart';
 import 'package:wellfed/widgets/code_tiles.dart';
+import 'package:wellfed/widgets/layout.dart';
 
 import 'fakes.dart';
 
@@ -624,6 +625,79 @@ void main() {
         expect(run.answers[7], const InstallAnswer.done());
       },
     );
+  });
+
+  group('long waits', () {
+    testWidgets(
+      'no find over Bluetooth asks for the hold, until a code comes',
+      (tester) async {
+        final ports = FakeInstallPorts();
+        final run = await _atClaim(tester, ports);
+        Finder hint() =>
+            find.textContaining('Hold Lock + Mic for 5 s', findRichText: true);
+        expect(hint(), findsNothing);
+
+        await tester.pump(InstallFlow.setupHintAfter);
+        expect(hint(), findsOneWidget);
+        expect(
+          find.textContaining('If the lock light is on', findRichText: true),
+          findsOneWidget,
+        );
+
+        run.event(
+          InstallEvent.code(
+            code: Uint8List.fromList(const [1, 2]),
+            seconds: 60,
+          ),
+        );
+        await tester.pump();
+        expect(hint(), findsNothing);
+      },
+    );
+
+    testWidgets('joining says what it waits for, and only once it is long', (
+      tester,
+    ) async {
+      final ports = FakeInstallPorts();
+      final run = await _atFinishing(tester, ports);
+      Finder words() => find.textContaining(
+        'restart and join your Wi-Fi',
+        findRichText: true,
+      );
+      expect(words(), findsNothing);
+
+      await tester.pump(WaitWords.after);
+      await tester.pump();
+      expect(words(), findsOneWidget);
+
+      run.event(const InstallEvent.joined(address: '192.168.1.40:4747'));
+      await tester.pump();
+      expect(words(), findsNothing);
+    });
+
+    testWidgets('copying goes quiet only when its progress stops', (
+      tester,
+    ) async {
+      final ports = FakeInstallPorts();
+      final run = await _atFinishing(tester, ports);
+      run.event(const InstallEvent.joined(address: '192.168.1.40:4747'));
+      run.event(const InstallEvent.readingBackup(total: 1000));
+      await tester.pump();
+      Finder words() => find.textContaining(
+        'Waiting for the feeder to answer',
+        findRichText: true,
+      );
+
+      await tester.pump(WaitWords.after - const Duration(seconds: 1));
+      run.event(InstallEvent.backupRead(bytes: BigInt.from(500), total: 1000));
+      await tester.pump();
+      await tester.pump(WaitWords.after - const Duration(seconds: 1));
+      expect(words(), findsNothing);
+
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pump();
+      expect(words(), findsOneWidget);
+    });
   });
 
   group('2.7 back up and finish', () {
@@ -1285,7 +1359,13 @@ void main() {
       await _tap(tester, 'Pick up where it stopped');
       expect(find.byType(CodeTiles), findsNothing);
       expect(
-        find.text('Looking for the feeder over Bluetooth…'),
+        find.text('Looking for the feeder on your Wi-Fi…'),
+        findsOneWidget,
+      );
+      await tester.pump(WaitWords.after);
+      await tester.pump();
+      expect(
+        find.textContaining('Still looking for the feeder', findRichText: true),
         findsOneWidget,
       );
     });

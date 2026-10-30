@@ -210,6 +210,7 @@ class InstallFlow extends ChangeNotifier {
   StreamSubscription<ListenUpdate>? _listenUpdates;
   StreamSubscription<void>? _heard;
   bool _holding = false;
+  Timer? _holdHintTimer;
 
   /// This process's sockets go over the feeder's setup network.
   bool _onFeederNetwork = false;
@@ -240,12 +241,57 @@ class InstallFlow extends ChangeNotifier {
   bool get mayStart =>
       image is ImageCheck_Ready && build is BuildCheck_Reviewable;
 
+  /// The run looks for a feeder advertising Bluetooth setup, rather than for
+  /// one already on the owner's Wi-Fi.
+  bool searchingBluetooth = false;
+
+  /// Bluetooth has found nothing for [setupHintAfter]: a feeder that is not
+  /// advertising by itself takes the owner's hold.
+  bool setupHint = false;
+
+  static const setupHintAfter = Duration(seconds: 20);
+
+  /// What the run waits for now, when nothing on the screen says so already:
+  /// for a long wait, so a screen is never just still.
+  String? get waitWords => switch (stage) {
+    InstallStage.claim
+        when !searchingBluetooth && code.isEmpty && !windowAsked =>
+      "Still looking for the feeder on your Wi-Fi. It's found once it has "
+          'restarted and joined, which can take a few minutes.',
+    InstallStage.sending when restarting =>
+      'Waiting for the feeder to restart into Wellfed and come back. This can '
+          'take a few minutes.',
+    InstallStage.sending =>
+      'Waiting for the feeder to ask for the next part of the firmware.',
+    InstallStage.finishing when joining == CheckState.running =>
+      'Waiting for the feeder to restart and join your Wi-Fi. This can take a '
+          'few minutes.',
+    InstallStage.finishing when !pressDispense =>
+      'Waiting for the feeder to answer on your Wi-Fi.',
+    _ => null,
+  };
+
   /// A rough time left in stock's download, from how fast it has gone.
   Duration? get timeLeft {
     final since = _sendingSince;
     if (since == null || percent < 5 || percent >= 100) return null;
     final elapsed = DateTime.now().difference(since);
     return elapsed * ((100 - percent) / percent);
+  }
+
+  void _searchBluetooth() {
+    searchingBluetooth = true;
+    if (setupHint || _holdHintTimer != null) return;
+    _holdHintTimer = Timer(setupHintAfter, () {
+      setupHint = true;
+      _notify();
+    });
+  }
+
+  void _foundOverBluetooth() {
+    _holdHintTimer?.cancel();
+    _holdHintTimer = null;
+    setupHint = false;
   }
 
   /// Read what decides whether this phone can install at all.
@@ -503,6 +549,8 @@ class InstallFlow extends ChangeNotifier {
     written = 0;
     confirming = CheckState.waiting;
     sessionDropped = false;
+    searchingBluetooth = false;
+    _foundOverBluetooth();
   }
 
   /// A feeder that never joined: take a new Wi-Fi and go through Bluetooth
@@ -679,6 +727,7 @@ class InstallFlow extends ChangeNotifier {
         stage = InstallStage.claim;
       case InstallAsk_OpenLink():
         stage = InstallStage.claim;
+        _searchBluetooth();
         try {
           _link = await _ports.openLink(
             onBytes: (bytes) => run.notified(bytes: bytes),
@@ -729,10 +778,12 @@ class InstallFlow extends ChangeNotifier {
         restarting = true;
       case InstallEvent_SetupStarting():
         stage = InstallStage.claim;
+        _searchBluetooth();
         await _hold('The feeder is waiting for its owner.');
       case InstallEvent_Code(:final code, :final seconds):
         stage = InstallStage.claim;
         this.code = code;
+        _foundOverBluetooth();
         deadline = DateTime.now().add(Duration(seconds: seconds));
         _windowAsk = null;
       case InstallEvent_PressDispense():
@@ -830,6 +881,7 @@ class InstallFlow extends ChangeNotifier {
     _updates = null;
     unawaited(_settle());
     _closeLink();
+    _foundOverBluetooth();
     if (end case InstallEnd_Stopped(
       case_: StopCase_NoFeederCame() || StopCase_TwoFeeders(),
     )) {
@@ -1014,6 +1066,7 @@ class InstallFlow extends ChangeNotifier {
     unawaited(_updates?.cancel());
     _stopListening();
     _closeLink();
+    _holdHintTimer?.cancel();
     unawaited(_release());
     super.dispose();
   }

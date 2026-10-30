@@ -9,6 +9,7 @@ import 'package:wellfed/screens/restore_screen.dart';
 import 'package:wellfed/src/rust/api/install.dart';
 import 'package:wellfed/src/rust/api/restore.dart';
 import 'package:wellfed/state/restore.dart';
+import 'package:wellfed/widgets/layout.dart';
 
 import 'fakes.dart';
 
@@ -417,6 +418,25 @@ void main() {
     expect(find.text('The restore lost its key'), findsOneWidget);
     expect(find.textContaining('space or storage'), findsNothing);
     expect(find.text('Try again'), findsOneWidget);
+  });
+
+  testWidgets('a long wait says what it waits for, but not during the press', (
+    tester,
+  ) async {
+    final ports = FakeRestorePorts();
+    await _open(tester, ports);
+    final run = await _started(tester, ports);
+    await tester.pump(WaitWords.after);
+    await tester.pump();
+    Finder words() =>
+        find.textContaining('answer on your Wi-Fi', findRichText: true);
+    expect(words(), findsOneWidget);
+
+    run.event(const InstallEvent.pressDispense());
+    await tester.pump();
+    await tester.pump(WaitWords.after);
+    await tester.pump();
+    expect(words(), findsNothing);
   });
 
   testWidgets('leaving after a stopped run forgets the key', (tester) async {

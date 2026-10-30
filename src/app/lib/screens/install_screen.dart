@@ -777,6 +777,7 @@ class _Sending extends StatelessWidget {
               'This phone is serving the firmware, and closing the app stops '
               "it. Don't unplug the feeder.",
         ),
+        WaitWords(flow.waitWords, progress: flow.percent),
       ],
     );
   }
@@ -813,7 +814,22 @@ class _Claim extends StatelessWidget {
           ]),
           const SizedBox(height: Space.s4),
         ],
-        const Searching('Looking for the feeder over Bluetooth…'),
+        if (flow.setupHint && !flow.settingUpAgain) ...[
+          const Notice(
+            tone: Tone.warning,
+            lead: 'Hold Lock + Mic for 5 s on the feeder.',
+            text:
+                'If the lock light is on, hold Lock for 5 seconds to unlock '
+                'the panel first.',
+          ),
+          const SizedBox(height: Space.s4),
+        ],
+        Searching(
+          flow.searchingBluetooth || flow.settingUpAgain
+              ? 'Looking for the feeder over Bluetooth…'
+              : 'Looking for the feeder on your Wi-Fi…',
+        ),
+        WaitWords(flow.waitWords),
       ] else ...[
         Text(
           'Press these buttons once each, in order:',
@@ -967,6 +983,18 @@ class _Finishing extends StatelessWidget {
           tone: Tone.neutral,
           lead: 'Keep the feeder plugged in.',
           text: 'If this phone loses it, Wellfed picks up where it stopped.',
+        ),
+        WaitWords(
+          flow.waitWords,
+          progress: (
+            flow.joining,
+            flow.copied,
+            flow.copying,
+            flow.checked,
+            flow.written,
+            flow.promoting,
+            flow.confirming,
+          ),
         ),
       ],
     );

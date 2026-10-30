@@ -99,6 +99,12 @@ class RestoreFlow extends ChangeNotifier {
     _ => false,
   };
 
+  /// What the run waits for now, for a long wait.
+  String get waitWords => sending == CheckState.waiting
+      ? 'Waiting for the feeder to answer on your Wi-Fi.'
+      : 'Waiting for the feeder. It restarts on the way, which can take a few '
+            'minutes.';
+
   Future<void> load() async {
     final dataDir = await _ports.dataDir();
     _dataDir = dataDir;

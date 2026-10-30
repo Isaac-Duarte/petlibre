@@ -97,7 +97,7 @@ pub enum ProtocolError {
     /// Bytes were lost into another valid line, which the build pressed.
     #[error("The feeder pressed something else ({echoed}): bytes were lost; check the capture")]
     PressMismatch { echoed: String },
-    #[error("The feeder echoed the press but reported no release of its button")]
+    #[error("The feeder echoed the press but reported no release of its chord")]
     PressNotReleased,
     #[error("Fault or startup observed during console query; stop and inspect capture")]
     ConsoleFault,
@@ -832,7 +832,7 @@ mod tests {
 pub struct PressResult {
     pub chord: String,
     pub hold_ms: u32,
-    /// The build echoed this exact press, then its button's release.
+    /// The build echoed this exact press, then its chord's release.
     pub echoed: bool,
     pub released: bool,
     pub bytes: usize,
@@ -894,7 +894,7 @@ impl Echo {
 }
 
 /// Types one press line to a running `virtual-panel` build, paced, and
-/// waits through the hold for its echo and its button's release. The line
+/// waits through the hold for its echo and its chord's release. The line
 /// is built here from the typed press and read back through the firmware's
 /// own parser, so nothing else is ever sent; a leading line end first ends
 /// any partial line the build holds. It is sent once, never again: a line
@@ -936,7 +936,7 @@ pub fn press(
         echoed: true,
         released,
         bytes: reply.len(),
-        limit: "The build read the line and its button went down and up; what the gesture did is in the capture",
+        limit: "The build read the line and its chord went down and up; what the gesture did is in the capture",
     })
 }
 

@@ -46,7 +46,7 @@ pub enum JobCommand {
         #[arg(long, default_value_t = 60.0)]
         seconds: f64,
     },
-    /// Hold a panel button on a running `virtual-panel` build, typed on
+    /// Hold a chord of panel buttons on a running `virtual-panel` build, typed on
     /// its UART: the same gesture as a finger, with nobody at the bench.
     Press {
         /// The chord: reset, mic, dispense or lock, or several joined by +

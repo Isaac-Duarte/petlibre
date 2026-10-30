@@ -64,6 +64,8 @@ pub(crate) enum ToolError {
     UnconfirmedReset { tool: String },
     #[error("{tool}: a press names each button once")]
     RepeatedButton { tool: String },
+    #[error("{tool}: a press names at least one button")]
+    NoButton { tool: String },
     /// The owner's identity check, and a step at the feeder's panel: an
     /// agent saying yes or done would stand in for a person who may not
     /// be there.
@@ -349,7 +351,7 @@ struct PressArgs {
     /// open the recovery window).
     #[schemars(length(min = 1, max = 4))]
     buttons: Vec<PanelButton>,
-    /// How long the button is held, 1 to 15000 ms (default 150: a press).
+    /// How long the chord is held, 1 to 15000 ms (default 150: a press).
     #[schemars(range(min = 1, max = 15000))]
     hold_ms: Option<u32>,
     /// Required for a dispense press, which feeds outside a setup or
@@ -628,7 +630,7 @@ const SPECS: &[Spec] = &[
     },
     Spec {
         name: "press",
-        description: "Hold panel buttons together on a running virtual-panel build, typed on its UART: the same gesture as fingers, for setup codes, the recovery window (lock and dispense held 5 s) and update-key enrollment. Refused unless the build echoes the press and reports its release. Its effects are a finger's: a 5 s Lock hold unlocks the panel; any press with Dispense can feed (needs confirm_motion, hopper empty); a Reset hold over 1 s needs confirm_destructive, as one of 5 s on an unlocked panel erases the enrolled keys. Opening the recovery window does not let an agent answer an install's recovery question: that stays a person's.",
+        description: "Hold panel buttons together on a running virtual-panel build, typed on its UART: the same gesture as fingers, for setup codes, the recovery window (lock and dispense held 5 s, on a panel a 5 s lock hold unlocked first; it relocks after 30 s idle) and update-key enrollment. Refused unless the build echoes the press and reports its release. Its effects are a finger's: a 5 s Lock hold unlocks the panel; any press with Dispense can feed (needs confirm_motion, hopper empty); a Reset hold over 1 s needs confirm_destructive, as one of 5 s on an unlocked panel erases the enrolled keys. Opening the recovery window does not let an agent answer an install's recovery question: that stays a person's.",
         schema: schema::<PressArgs>,
     },
     Spec {
@@ -930,6 +932,9 @@ fn job_words(name: &str, args: JsonObject) -> Result<Vec<String>, ToolError> {
             let mut words: Vec<&str> = args.buttons.iter().map(|b| b.word()).collect();
             words.sort_unstable();
             words.dedup();
+            if args.buttons.is_empty() {
+                return Err(ToolError::NoButton { tool: name.into() });
+            }
             if words.len() != args.buttons.len() {
                 return Err(ToolError::RepeatedButton { tool: name.into() });
             }
@@ -1306,6 +1311,10 @@ mod tests {
         assert!(matches!(
             press(serde_json::json!({"buttons": ["reset"], "hold_ms": 1000})),
             Ok(Call::Job(_))
+        ));
+        assert!(matches!(
+            press(serde_json::json!({"buttons": []})),
+            Err(ToolError::NoButton { .. })
         ));
         assert!(matches!(
             press(serde_json::json!({"buttons": ["mic", "mic"]})),

@@ -159,7 +159,7 @@ struct ReadArgs {
     /// joined by + (lock+dispense).
     #[arg(long, value_parser = virtual_panel::chord)]
     chord: Option<Buttons>,
-    /// How long a press holds its button.
+    /// How long a press holds its chord.
     #[arg(long, default_value_t = virtual_panel::DEFAULT_HOLD_MS,
           value_parser = clap::value_parser!(u32).range(1..=i64::from(virtual_panel::MAX_HOLD_MS)))]
     hold_ms: u32,

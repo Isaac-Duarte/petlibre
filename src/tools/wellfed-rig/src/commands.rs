@@ -460,7 +460,7 @@ impl Bench {
         Ok(0)
     }
 
-    /// Type one press to the running `virtual-panel` build: the button held
+    /// Type one press to the running `virtual-panel` build: the chord held
     /// for `hold_ms`, through the same gestures as a finger. Never touches
     /// power; the press is sent once, and a missing echo stops the job.
     pub fn press(&mut self, name: &str, chord: Buttons, hold_ms: u32) -> Result<u8> {

@@ -56,7 +56,7 @@ extension SessionUpdatePatterns on SessionUpdate {
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( SessionUpdate_Opened value)?  opened,TResult Function( SessionUpdate_Status value)?  status,TResult Function( SessionUpdate_FeedStarted value)?  feedStarted,TResult Function( SessionUpdate_FeedRefused value)?  feedRefused,TResult Function( SessionUpdate_FeedUnanswered value)?  feedUnanswered,TResult Function( SessionUpdate_FeedEnded value)?  feedEnded,TResult Function( SessionUpdate_CancelUnconfirmed value)?  cancelUnconfirmed,TResult Function( SessionUpdate_Closed value)?  closed,required TResult orElse(),}){
+@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( SessionUpdate_Opened value)?  opened,TResult Function( SessionUpdate_Status value)?  status,TResult Function( SessionUpdate_FeedStarted value)?  feedStarted,TResult Function( SessionUpdate_FeedRefused value)?  feedRefused,TResult Function( SessionUpdate_FeedUnanswered value)?  feedUnanswered,TResult Function( SessionUpdate_FeedEnded value)?  feedEnded,TResult Function( SessionUpdate_CancelUnconfirmed value)?  cancelUnconfirmed,TResult Function( SessionUpdate_ClockSynced value)?  clockSynced,TResult Function( SessionUpdate_ClockNotSynced value)?  clockNotSynced,TResult Function( SessionUpdate_Closed value)?  closed,required TResult orElse(),}){
 final _that = this;
 switch (_that) {
 case SessionUpdate_Opened() when opened != null:
@@ -66,7 +66,9 @@ return feedStarted(_that);case SessionUpdate_FeedRefused() when feedRefused != n
 return feedRefused(_that);case SessionUpdate_FeedUnanswered() when feedUnanswered != null:
 return feedUnanswered(_that);case SessionUpdate_FeedEnded() when feedEnded != null:
 return feedEnded(_that);case SessionUpdate_CancelUnconfirmed() when cancelUnconfirmed != null:
-return cancelUnconfirmed(_that);case SessionUpdate_Closed() when closed != null:
+return cancelUnconfirmed(_that);case SessionUpdate_ClockSynced() when clockSynced != null:
+return clockSynced(_that);case SessionUpdate_ClockNotSynced() when clockNotSynced != null:
+return clockNotSynced(_that);case SessionUpdate_Closed() when closed != null:
 return closed(_that);case _:
   return orElse();
 
@@ -85,7 +87,7 @@ return closed(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( SessionUpdate_Opened value)  opened,required TResult Function( SessionUpdate_Status value)  status,required TResult Function( SessionUpdate_FeedStarted value)  feedStarted,required TResult Function( SessionUpdate_FeedRefused value)  feedRefused,required TResult Function( SessionUpdate_FeedUnanswered value)  feedUnanswered,required TResult Function( SessionUpdate_FeedEnded value)  feedEnded,required TResult Function( SessionUpdate_CancelUnconfirmed value)  cancelUnconfirmed,required TResult Function( SessionUpdate_Closed value)  closed,}){
+@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( SessionUpdate_Opened value)  opened,required TResult Function( SessionUpdate_Status value)  status,required TResult Function( SessionUpdate_FeedStarted value)  feedStarted,required TResult Function( SessionUpdate_FeedRefused value)  feedRefused,required TResult Function( SessionUpdate_FeedUnanswered value)  feedUnanswered,required TResult Function( SessionUpdate_FeedEnded value)  feedEnded,required TResult Function( SessionUpdate_CancelUnconfirmed value)  cancelUnconfirmed,required TResult Function( SessionUpdate_ClockSynced value)  clockSynced,required TResult Function( SessionUpdate_ClockNotSynced value)  clockNotSynced,required TResult Function( SessionUpdate_Closed value)  closed,}){
 final _that = this;
 switch (_that) {
 case SessionUpdate_Opened():
@@ -95,7 +97,9 @@ return feedStarted(_that);case SessionUpdate_FeedRefused():
 return feedRefused(_that);case SessionUpdate_FeedUnanswered():
 return feedUnanswered(_that);case SessionUpdate_FeedEnded():
 return feedEnded(_that);case SessionUpdate_CancelUnconfirmed():
-return cancelUnconfirmed(_that);case SessionUpdate_Closed():
+return cancelUnconfirmed(_that);case SessionUpdate_ClockSynced():
+return clockSynced(_that);case SessionUpdate_ClockNotSynced():
+return clockNotSynced(_that);case SessionUpdate_Closed():
 return closed(_that);}
 }
 /// A variant of `map` that fallback to returning `null`.
@@ -110,7 +114,7 @@ return closed(_that);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( SessionUpdate_Opened value)?  opened,TResult? Function( SessionUpdate_Status value)?  status,TResult? Function( SessionUpdate_FeedStarted value)?  feedStarted,TResult? Function( SessionUpdate_FeedRefused value)?  feedRefused,TResult? Function( SessionUpdate_FeedUnanswered value)?  feedUnanswered,TResult? Function( SessionUpdate_FeedEnded value)?  feedEnded,TResult? Function( SessionUpdate_CancelUnconfirmed value)?  cancelUnconfirmed,TResult? Function( SessionUpdate_Closed value)?  closed,}){
+@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( SessionUpdate_Opened value)?  opened,TResult? Function( SessionUpdate_Status value)?  status,TResult? Function( SessionUpdate_FeedStarted value)?  feedStarted,TResult? Function( SessionUpdate_FeedRefused value)?  feedRefused,TResult? Function( SessionUpdate_FeedUnanswered value)?  feedUnanswered,TResult? Function( SessionUpdate_FeedEnded value)?  feedEnded,TResult? Function( SessionUpdate_CancelUnconfirmed value)?  cancelUnconfirmed,TResult? Function( SessionUpdate_ClockSynced value)?  clockSynced,TResult? Function( SessionUpdate_ClockNotSynced value)?  clockNotSynced,TResult? Function( SessionUpdate_Closed value)?  closed,}){
 final _that = this;
 switch (_that) {
 case SessionUpdate_Opened() when opened != null:
@@ -120,7 +124,9 @@ return feedStarted(_that);case SessionUpdate_FeedRefused() when feedRefused != n
 return feedRefused(_that);case SessionUpdate_FeedUnanswered() when feedUnanswered != null:
 return feedUnanswered(_that);case SessionUpdate_FeedEnded() when feedEnded != null:
 return feedEnded(_that);case SessionUpdate_CancelUnconfirmed() when cancelUnconfirmed != null:
-return cancelUnconfirmed(_that);case SessionUpdate_Closed() when closed != null:
+return cancelUnconfirmed(_that);case SessionUpdate_ClockSynced() when clockSynced != null:
+return clockSynced(_that);case SessionUpdate_ClockNotSynced() when clockNotSynced != null:
+return clockNotSynced(_that);case SessionUpdate_Closed() when closed != null:
 return closed(_that);case _:
   return null;
 
@@ -138,7 +144,7 @@ return closed(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( String build,  ClientRole role)?  opened,TResult Function( Card card)?  status,TResult Function( int feed,  int portions)?  feedStarted,TResult Function( FeedRefusal refusal)?  feedRefused,TResult Function()?  feedUnanswered,TResult Function( FeedResult result)?  feedEnded,TResult Function( FeedRefusal? refusal)?  cancelUnconfirmed,TResult Function( BridgeError? error)?  closed,required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( String build,  ClientRole role)?  opened,TResult Function( Card card)?  status,TResult Function( int feed,  int portions)?  feedStarted,TResult Function( FeedRefusal refusal)?  feedRefused,TResult Function()?  feedUnanswered,TResult Function( FeedResult result)?  feedEnded,TResult Function( FeedRefusal? refusal)?  cancelUnconfirmed,TResult Function()?  clockSynced,TResult Function()?  clockNotSynced,TResult Function( BridgeError? error)?  closed,required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case SessionUpdate_Opened() when opened != null:
 return opened(_that.build,_that.role);case SessionUpdate_Status() when status != null:
@@ -147,7 +153,9 @@ return feedStarted(_that.feed,_that.portions);case SessionUpdate_FeedRefused() w
 return feedRefused(_that.refusal);case SessionUpdate_FeedUnanswered() when feedUnanswered != null:
 return feedUnanswered();case SessionUpdate_FeedEnded() when feedEnded != null:
 return feedEnded(_that.result);case SessionUpdate_CancelUnconfirmed() when cancelUnconfirmed != null:
-return cancelUnconfirmed(_that.refusal);case SessionUpdate_Closed() when closed != null:
+return cancelUnconfirmed(_that.refusal);case SessionUpdate_ClockSynced() when clockSynced != null:
+return clockSynced();case SessionUpdate_ClockNotSynced() when clockNotSynced != null:
+return clockNotSynced();case SessionUpdate_Closed() when closed != null:
 return closed(_that.error);case _:
   return orElse();
 
@@ -166,7 +174,7 @@ return closed(_that.error);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( String build,  ClientRole role)  opened,required TResult Function( Card card)  status,required TResult Function( int feed,  int portions)  feedStarted,required TResult Function( FeedRefusal refusal)  feedRefused,required TResult Function()  feedUnanswered,required TResult Function( FeedResult result)  feedEnded,required TResult Function( FeedRefusal? refusal)  cancelUnconfirmed,required TResult Function( BridgeError? error)  closed,}) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( String build,  ClientRole role)  opened,required TResult Function( Card card)  status,required TResult Function( int feed,  int portions)  feedStarted,required TResult Function( FeedRefusal refusal)  feedRefused,required TResult Function()  feedUnanswered,required TResult Function( FeedResult result)  feedEnded,required TResult Function( FeedRefusal? refusal)  cancelUnconfirmed,required TResult Function()  clockSynced,required TResult Function()  clockNotSynced,required TResult Function( BridgeError? error)  closed,}) {final _that = this;
 switch (_that) {
 case SessionUpdate_Opened():
 return opened(_that.build,_that.role);case SessionUpdate_Status():
@@ -175,7 +183,9 @@ return feedStarted(_that.feed,_that.portions);case SessionUpdate_FeedRefused():
 return feedRefused(_that.refusal);case SessionUpdate_FeedUnanswered():
 return feedUnanswered();case SessionUpdate_FeedEnded():
 return feedEnded(_that.result);case SessionUpdate_CancelUnconfirmed():
-return cancelUnconfirmed(_that.refusal);case SessionUpdate_Closed():
+return cancelUnconfirmed(_that.refusal);case SessionUpdate_ClockSynced():
+return clockSynced();case SessionUpdate_ClockNotSynced():
+return clockNotSynced();case SessionUpdate_Closed():
 return closed(_that.error);}
 }
 /// A variant of `when` that fallback to returning `null`
@@ -190,7 +200,7 @@ return closed(_that.error);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( String build,  ClientRole role)?  opened,TResult? Function( Card card)?  status,TResult? Function( int feed,  int portions)?  feedStarted,TResult? Function( FeedRefusal refusal)?  feedRefused,TResult? Function()?  feedUnanswered,TResult? Function( FeedResult result)?  feedEnded,TResult? Function( FeedRefusal? refusal)?  cancelUnconfirmed,TResult? Function( BridgeError? error)?  closed,}) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( String build,  ClientRole role)?  opened,TResult? Function( Card card)?  status,TResult? Function( int feed,  int portions)?  feedStarted,TResult? Function( FeedRefusal refusal)?  feedRefused,TResult? Function()?  feedUnanswered,TResult? Function( FeedResult result)?  feedEnded,TResult? Function( FeedRefusal? refusal)?  cancelUnconfirmed,TResult? Function()?  clockSynced,TResult? Function()?  clockNotSynced,TResult? Function( BridgeError? error)?  closed,}) {final _that = this;
 switch (_that) {
 case SessionUpdate_Opened() when opened != null:
 return opened(_that.build,_that.role);case SessionUpdate_Status() when status != null:
@@ -199,7 +209,9 @@ return feedStarted(_that.feed,_that.portions);case SessionUpdate_FeedRefused() w
 return feedRefused(_that.refusal);case SessionUpdate_FeedUnanswered() when feedUnanswered != null:
 return feedUnanswered();case SessionUpdate_FeedEnded() when feedEnded != null:
 return feedEnded(_that.result);case SessionUpdate_CancelUnconfirmed() when cancelUnconfirmed != null:
-return cancelUnconfirmed(_that.refusal);case SessionUpdate_Closed() when closed != null:
+return cancelUnconfirmed(_that.refusal);case SessionUpdate_ClockSynced() when clockSynced != null:
+return clockSynced();case SessionUpdate_ClockNotSynced() when clockNotSynced != null:
+return clockNotSynced();case SessionUpdate_Closed() when closed != null:
 return closed(_that.error);case _:
   return null;
 
@@ -651,6 +663,70 @@ as FeedRefusal?,
 
 
 }
+
+/// @nodoc
+
+
+class SessionUpdate_ClockSynced extends SessionUpdate {
+  const SessionUpdate_ClockSynced(): super._();
+  
+
+
+
+
+
+
+@override
+bool operator ==(Object other) {
+    return identical(this, other) || (other.runtimeType == runtimeType&&other is SessionUpdate_ClockSynced);
+}
+
+
+@override
+int get hashCode => runtimeType.hashCode;
+
+@override
+String toString() {
+    return 'SessionUpdate.clockSynced()';
+}
+
+
+}
+
+
+
+
+/// @nodoc
+
+
+class SessionUpdate_ClockNotSynced extends SessionUpdate {
+  const SessionUpdate_ClockNotSynced(): super._();
+  
+
+
+
+
+
+
+@override
+bool operator ==(Object other) {
+    return identical(this, other) || (other.runtimeType == runtimeType&&other is SessionUpdate_ClockNotSynced);
+}
+
+
+@override
+int get hashCode => runtimeType.hashCode;
+
+@override
+String toString() {
+    return 'SessionUpdate.clockNotSynced()';
+}
+
+
+}
+
+
+
 
 /// @nodoc
 

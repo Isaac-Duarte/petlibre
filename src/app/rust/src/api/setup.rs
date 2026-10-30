@@ -25,7 +25,7 @@ use crate::frb_generated::StreamSink;
 
 /// Writes fit the smallest ATT payload, so they never depend on the MTU
 /// exchange having happened.
-const PIECE: usize = 20;
+const CONTROL_PIECE: usize = 20;
 /// The feeder answers each handshake message at once.
 const HANDSHAKE_WAIT: Duration = Duration::from_secs(10);
 /// Beyond the feeder's own code window, for its reply to arrive.
@@ -77,6 +77,10 @@ pub enum SetupStep {
     },
     /// The feeder said no; the link closes and setup mode stays on.
     Refused { refusal: SetupRefusal },
+    /// A recovery failed. On the stream as a value, since
+    /// flutter_rust_bridge decodes a stream's errors as `AnyhowException`
+    /// whatever Rust encoded, and a typed one would reach Dart as garbage.
+    Failed { error: BridgeError },
 }
 
 /// The fresh secrets one session needs, and its code.
@@ -185,7 +189,10 @@ impl SetupDriver {
 }
 
 fn pieces(message: &[u8]) -> Result<Vec<Vec<u8>>, BridgeError> {
-    Ok(frame(message)?.chunks(PIECE).map(<[u8]>::to_vec).collect())
+    Ok(frame(message)?
+        .chunks(CONTROL_PIECE)
+        .map(<[u8]>::to_vec)
+        .collect())
 }
 
 /// LAN recovery: the code is known before connecting, so the screen can
@@ -214,9 +221,8 @@ impl Recovery {
     }
 
     /// Run the exchange with the feeder at `address` (`ip` or `ip:port`),
-    /// whose recovery window is open, reporting each reply. Runs once.
-    /// Errors arrive on the stream: Dart holds only the stream, not this
-    /// call's own result.
+    /// whose recovery window is open, reporting each reply, and its failure
+    /// as [`SetupStep::Failed`]. Runs once.
     pub async fn run(&self, address: String, steps: StreamSink<SetupStep>) {
         let session = self
             .session
@@ -237,7 +243,7 @@ impl Recovery {
         };
         if let Err(error) = result {
             // Nobody listening means nobody to tell.
-            let _ = steps.add_error(error);
+            let _ = steps.add(SetupStep::Failed { error });
         }
     }
 

@@ -111,6 +111,11 @@ pub enum SessionUpdate {
     CancelUnconfirmed {
         refusal: Option<FeedRefusal>,
     },
+    /// The feeder took this phone's clock.
+    ClockSynced,
+    /// The feeder refused this phone's clock, or never answered. The next
+    /// session tries again.
+    ClockNotSynced,
     /// The session ended; `error` says why when it was not asked to.
     Closed {
         error: Option<BridgeError>,
@@ -123,6 +128,7 @@ struct Start {
     feeder: [u8; 32],
     address: SocketAddr,
     commands: mpsc::UnboundedReceiver<Command>,
+    sync_clock: bool,
 }
 
 #[frb(opaque)]
@@ -133,9 +139,17 @@ pub struct FeederSession {
 
 impl FeederSession {
     /// A session with `feeder` (its identity key) at `address` (`ip:port`,
-    /// as NSD resolved it). Nothing connects until [`Self::run`].
+    /// as NSD resolved it). With `sync_clock`, as after pairing, it gives
+    /// the feeder this phone's clock and zone once it opens; it does that
+    /// anyway when the feeder's clock is not set. Nothing connects until
+    /// [`Self::run`].
     #[frb(sync)]
-    pub fn new(key: &ClientKey, feeder: Vec<u8>, address: String) -> Result<Self, BridgeError> {
+    pub fn new(
+        key: &ClientKey,
+        feeder: Vec<u8>,
+        address: String,
+        sync_clock: bool,
+    ) -> Result<Self, BridgeError> {
         let feeder: [u8; 32] = feeder
             .try_into()
             .map_err(|_| BridgeError::new(ErrorKind::Key, "a feeder identity is 32 bytes"))?;
@@ -148,6 +162,7 @@ impl FeederSession {
                 feeder,
                 address,
                 commands: receiver,
+                sync_clock,
             })),
         })
     }
@@ -166,6 +181,7 @@ impl FeederSession {
             start.keys,
             start.feeder,
             start.address,
+            start.sync_clock,
             start.commands,
             |update| updates.add(update).is_ok(),
         )

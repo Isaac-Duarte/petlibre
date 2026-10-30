@@ -1,8 +1,11 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show MissingPluginException;
 
+import '../src/rust/api/error.dart';
 import '../theme/theme.dart';
 import '../widgets/icons.dart';
 import '../widgets/layout.dart';
@@ -20,6 +23,7 @@ class NameStep extends StatefulWidget {
     this.stepLabel,
     this.progress,
     this.onBack,
+    this.suggest = _phoneModel,
   });
 
   /// The phone's name so far; empty until the owner names it.
@@ -32,10 +36,17 @@ class NameStep extends StatefulWidget {
   final double? progress;
   final VoidCallback? onBack;
 
-  /// The phone's name, then the feeder's when it was asked.
-  final void Function(String label, String? feeder) onDone;
+  /// A name for a phone that has none yet.
+  final Future<String> Function() suggest;
+
+  /// The phone's name, then the feeder's when it was asked. A failed save
+  /// keeps the owner on this step.
+  final FutureOr<void> Function(String label, String? feeder) onDone;
 
   static const maxBytes = 16;
+
+  static Future<String> _phoneModel() async =>
+      (await DeviceInfoPlugin().androidInfo).model;
 
   @override
   State<NameStep> createState() => _NameStepState();
@@ -45,18 +56,26 @@ class _NameStepState extends State<NameStep> {
   final _name = TextEditingController();
   late final _feeder = TextEditingController(text: widget.feeder);
 
+  /// The owner's name could not be saved; stays on this step to say so.
+  String? _failed;
+
   @override
   void initState() {
     super.initState();
     _name.text = widget.initial;
-    if (widget.initial.isEmpty) _suggest();
+    if (widget.initial.isEmpty) unawaited(_suggest());
   }
 
   /// The phone's model, cut to fit.
   Future<void> _suggest() async {
-    final android = await DeviceInfoPlugin().androidInfo;
+    final String suggested;
+    try {
+      suggested = await widget.suggest();
+    } on MissingPluginException {
+      return;
+    }
     if (!mounted || _name.text.isNotEmpty) return;
-    var model = android.model;
+    var model = suggested;
     while (utf8.encode(model).length > NameStep.maxBytes) {
       model = model.substring(0, model.length - 1);
     }
@@ -71,6 +90,18 @@ class _NameStepState extends State<NameStep> {
   }
 
   int get _bytes => utf8.encode(_name.text.trim()).length;
+
+  Future<void> _done() async {
+    final asksFeeder = widget.feeder != null;
+    try {
+      await widget.onDone(
+        _name.text.trim(),
+        asksFeeder ? _feeder.text.trim() : null,
+      );
+    } on BridgeError catch (error) {
+      if (mounted) setState(() => _failed = error.message);
+    }
+  }
 
   bool get _valid =>
       _bytes >= 1 &&
@@ -119,15 +150,18 @@ class _NameStepState extends State<NameStep> {
               "You'll be this feeder's **owner**. Its key stays on this "
               "phone; there's no account to sign in to.",
         ),
+        if (_failed != null) ...[
+          const SizedBox(height: Space.s3),
+          Notice(
+            tone: Tone.fault,
+            lead: "This phone couldn't save that.",
+            text: _failed!,
+          ),
+        ],
       ],
       actions: [
         FilledButton(
-          onPressed: _valid
-              ? () => widget.onDone(
-                  _name.text.trim(),
-                  asksFeeder ? _feeder.text.trim() : null,
-                )
-              : null,
+          onPressed: _valid ? () => unawaited(_done()) : null,
           child: Text(widget.action),
         ),
       ],

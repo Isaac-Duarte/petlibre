@@ -27,15 +27,20 @@ abstract class FeederSession implements RustOpaqueInterface {
   void feed({required int portions});
 
   /// A session with `feeder` (its identity key) at `address` (`ip:port`,
-  /// as NSD resolved it). Nothing connects until [`Self::run`].
+  /// as NSD resolved it). With `sync_clock`, as after pairing, it gives
+  /// the feeder this phone's clock and zone once it opens; it does that
+  /// anyway when the feeder's clock is not set. Nothing connects until
+  /// [`Self::run`].
   factory FeederSession({
     required ClientKey key,
     required List<int> feeder,
     required String address,
+    required bool syncClock,
   }) => RustLib.instance.api.crateApiSessionFeederSessionNew(
     key: key,
     feeder: feeder,
     address: address,
+    syncClock: syncClock,
   );
 
   /// Read the status again.
@@ -220,6 +225,13 @@ sealed class SessionUpdate with _$SessionUpdate {
   /// may still run to its end.
   const factory SessionUpdate.cancelUnconfirmed({FeedRefusal? refusal}) =
       SessionUpdate_CancelUnconfirmed;
+
+  /// The feeder took this phone's clock.
+  const factory SessionUpdate.clockSynced() = SessionUpdate_ClockSynced;
+
+  /// The feeder refused this phone's clock, or never answered. The next
+  /// session tries again.
+  const factory SessionUpdate.clockNotSynced() = SessionUpdate_ClockNotSynced;
 
   /// The session ended; `error` says why when it was not asked to.
   const factory SessionUpdate.closed({BridgeError? error}) =

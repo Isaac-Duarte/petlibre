@@ -13,6 +13,7 @@ crate-type = ["cdylib", "staticlib", "lib"]
 
 [dependencies]
 flutter_rust_bridge = "=2.13.0"
+jiff.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["macros", "sync", "time"] }

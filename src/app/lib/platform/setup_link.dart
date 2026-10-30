@@ -4,10 +4,21 @@ import 'package:flutter_reactive_ble/flutter_reactive_ble.dart';
 
 import '../src/rust/api/setup.dart';
 
+/// A connected feeder's control characteristic.
+abstract interface class BleLink {
+  /// Each notification's bytes, in order; the session reassembles frames.
+  Stream<List<int>> get notifications;
+
+  /// Write `pieces` in order, each acknowledged before the next.
+  Future<void> write(List<List<int>> pieces);
+
+  Future<void> close();
+}
+
 /// The radio half of BLE setup: find a feeder in setup mode, connect, and
 /// carry the setup session's bytes over its control characteristic. What
 /// the bytes mean is the Rust session's business.
-class SetupLink {
+class SetupLink implements BleLink {
   SetupLink._(this._ble, this._connection, this._control, this.notifications);
 
   /// How long a scan waits for the first feeder.
@@ -18,7 +29,7 @@ class SetupLink {
   final StreamSubscription<ConnectionStateUpdate> _connection;
   final QualifiedCharacteristic _control;
 
-  /// Each notification's bytes, in order; the session reassembles frames.
+  @override
   final Stream<List<int>> notifications;
 
   /// Every advertisement of the setup service until cancelled; a feeder
@@ -81,7 +92,7 @@ class SetupLink {
     return SetupLink._(ble, connection, control, notifications);
   }
 
-  /// Write `pieces` in order, each acknowledged before the next.
+  @override
   Future<void> write(List<List<int>> pieces) async {
     for (final piece in pieces) {
       await _ble
@@ -90,5 +101,6 @@ class SetupLink {
     }
   }
 
+  @override
   Future<void> close() => _connection.cancel();
 }

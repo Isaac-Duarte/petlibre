@@ -33,9 +33,8 @@ abstract class Recovery implements RustOpaqueInterface {
       RustLib.instance.api.crateApiSetupRecoveryNew(key: key, label: label);
 
   /// Run the exchange with the feeder at `address` (`ip` or `ip:port`),
-  /// whose recovery window is open, reporting each reply. Runs once.
-  /// Errors arrive on the stream: Dart holds only the stream, not this
-  /// call's own result.
+  /// whose recovery window is open, reporting each reply, and its failure
+  /// as [`SetupStep::Failed`]. Runs once.
   Stream<SetupStep> run({required String address});
 }
 
@@ -89,6 +88,12 @@ sealed class SetupStep with _$SetupStep {
   /// The feeder said no; the link closes and setup mode stays on.
   const factory SetupStep.refused({required SetupRefusal refusal}) =
       SetupStep_Refused;
+
+  /// A recovery failed. On the stream as a value, since
+  /// flutter_rust_bridge decodes a stream's errors as `AnyhowException`
+  /// whatever Rust encoded, and a typed one would reach Dart as garbage.
+  const factory SetupStep.failed({required BridgeError error}) =
+      SetupStep_Failed;
 }
 
 class WifiCredentials {

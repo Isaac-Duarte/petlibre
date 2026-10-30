@@ -56,14 +56,15 @@ extension SetupStepPatterns on SetupStep {
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( SetupStep_Write value)?  write,TResult Function( SetupStep_EnterCode value)?  enterCode,TResult Function( SetupStep_Done value)?  done,TResult Function( SetupStep_Refused value)?  refused,required TResult orElse(),}){
+@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( SetupStep_Write value)?  write,TResult Function( SetupStep_EnterCode value)?  enterCode,TResult Function( SetupStep_Done value)?  done,TResult Function( SetupStep_Refused value)?  refused,TResult Function( SetupStep_Failed value)?  failed,required TResult orElse(),}){
 final _that = this;
 switch (_that) {
 case SetupStep_Write() when write != null:
 return write(_that);case SetupStep_EnterCode() when enterCode != null:
 return enterCode(_that);case SetupStep_Done() when done != null:
 return done(_that);case SetupStep_Refused() when refused != null:
-return refused(_that);case _:
+return refused(_that);case SetupStep_Failed() when failed != null:
+return failed(_that);case _:
   return orElse();
 
 }
@@ -81,14 +82,15 @@ return refused(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( SetupStep_Write value)  write,required TResult Function( SetupStep_EnterCode value)  enterCode,required TResult Function( SetupStep_Done value)  done,required TResult Function( SetupStep_Refused value)  refused,}){
+@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( SetupStep_Write value)  write,required TResult Function( SetupStep_EnterCode value)  enterCode,required TResult Function( SetupStep_Done value)  done,required TResult Function( SetupStep_Refused value)  refused,required TResult Function( SetupStep_Failed value)  failed,}){
 final _that = this;
 switch (_that) {
 case SetupStep_Write():
 return write(_that);case SetupStep_EnterCode():
 return enterCode(_that);case SetupStep_Done():
 return done(_that);case SetupStep_Refused():
-return refused(_that);}
+return refused(_that);case SetupStep_Failed():
+return failed(_that);}
 }
 /// A variant of `map` that fallback to returning `null`.
 ///
@@ -102,14 +104,15 @@ return refused(_that);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( SetupStep_Write value)?  write,TResult? Function( SetupStep_EnterCode value)?  enterCode,TResult? Function( SetupStep_Done value)?  done,TResult? Function( SetupStep_Refused value)?  refused,}){
+@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( SetupStep_Write value)?  write,TResult? Function( SetupStep_EnterCode value)?  enterCode,TResult? Function( SetupStep_Done value)?  done,TResult? Function( SetupStep_Refused value)?  refused,TResult? Function( SetupStep_Failed value)?  failed,}){
 final _that = this;
 switch (_that) {
 case SetupStep_Write() when write != null:
 return write(_that);case SetupStep_EnterCode() when enterCode != null:
 return enterCode(_that);case SetupStep_Done() when done != null:
 return done(_that);case SetupStep_Refused() when refused != null:
-return refused(_that);case _:
+return refused(_that);case SetupStep_Failed() when failed != null:
+return failed(_that);case _:
   return null;
 
 }
@@ -126,13 +129,14 @@ return refused(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( List<Uint8List> pieces)?  write,TResult Function( int seconds)?  enterCode,TResult Function( Enrolled enrolled,  WifiSaved wifi,  Uint8List feeder)?  done,TResult Function( SetupRefusal refusal)?  refused,required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( List<Uint8List> pieces)?  write,TResult Function( int seconds)?  enterCode,TResult Function( Enrolled enrolled,  WifiSaved wifi,  Uint8List feeder)?  done,TResult Function( SetupRefusal refusal)?  refused,TResult Function( BridgeError error)?  failed,required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case SetupStep_Write() when write != null:
 return write(_that.pieces);case SetupStep_EnterCode() when enterCode != null:
 return enterCode(_that.seconds);case SetupStep_Done() when done != null:
 return done(_that.enrolled,_that.wifi,_that.feeder);case SetupStep_Refused() when refused != null:
-return refused(_that.refusal);case _:
+return refused(_that.refusal);case SetupStep_Failed() when failed != null:
+return failed(_that.error);case _:
   return orElse();
 
 }
@@ -150,13 +154,14 @@ return refused(_that.refusal);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( List<Uint8List> pieces)  write,required TResult Function( int seconds)  enterCode,required TResult Function( Enrolled enrolled,  WifiSaved wifi,  Uint8List feeder)  done,required TResult Function( SetupRefusal refusal)  refused,}) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( List<Uint8List> pieces)  write,required TResult Function( int seconds)  enterCode,required TResult Function( Enrolled enrolled,  WifiSaved wifi,  Uint8List feeder)  done,required TResult Function( SetupRefusal refusal)  refused,required TResult Function( BridgeError error)  failed,}) {final _that = this;
 switch (_that) {
 case SetupStep_Write():
 return write(_that.pieces);case SetupStep_EnterCode():
 return enterCode(_that.seconds);case SetupStep_Done():
 return done(_that.enrolled,_that.wifi,_that.feeder);case SetupStep_Refused():
-return refused(_that.refusal);}
+return refused(_that.refusal);case SetupStep_Failed():
+return failed(_that.error);}
 }
 /// A variant of `when` that fallback to returning `null`
 ///
@@ -170,13 +175,14 @@ return refused(_that.refusal);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( List<Uint8List> pieces)?  write,TResult? Function( int seconds)?  enterCode,TResult? Function( Enrolled enrolled,  WifiSaved wifi,  Uint8List feeder)?  done,TResult? Function( SetupRefusal refusal)?  refused,}) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( List<Uint8List> pieces)?  write,TResult? Function( int seconds)?  enterCode,TResult? Function( Enrolled enrolled,  WifiSaved wifi,  Uint8List feeder)?  done,TResult? Function( SetupRefusal refusal)?  refused,TResult? Function( BridgeError error)?  failed,}) {final _that = this;
 switch (_that) {
 case SetupStep_Write() when write != null:
 return write(_that.pieces);case SetupStep_EnterCode() when enterCode != null:
 return enterCode(_that.seconds);case SetupStep_Done() when done != null:
 return done(_that.enrolled,_that.wifi,_that.feeder);case SetupStep_Refused() when refused != null:
-return refused(_that.refusal);case _:
+return refused(_that.refusal);case SetupStep_Failed() when failed != null:
+return failed(_that.error);case _:
   return null;
 
 }
@@ -460,6 +466,74 @@ class _$SetupStep_RefusedCopyWithImpl<$Res>
   return _then(SetupStep_Refused(
 refusal: null == refusal ? _self.refusal : refusal // ignore: cast_nullable_to_non_nullable
 as SetupRefusal,
+  ));
+}
+
+
+}
+
+/// @nodoc
+
+
+class SetupStep_Failed extends SetupStep {
+  const SetupStep_Failed({required this.error}): super._();
+  
+
+ final  BridgeError error;
+
+/// Create a copy of SetupStep
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$SetupStep_FailedCopyWith<SetupStep_Failed> get copyWith => _$SetupStep_FailedCopyWithImpl<SetupStep_Failed>(this, _$identity);
+
+
+
+@override
+bool operator ==(Object other) {
+    return identical(this, other) || (other.runtimeType == runtimeType&&other is SetupStep_Failed&&(identical(other.error, error) || other.error == error));
+}
+
+
+@override
+int get hashCode {
+    return Object.hash(runtimeType,error);
+}
+
+@override
+String toString() {
+    return 'SetupStep.failed(error: $error)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $SetupStep_FailedCopyWith<$Res> implements $SetupStepCopyWith<$Res> {
+  factory $SetupStep_FailedCopyWith(SetupStep_Failed value, $Res Function(SetupStep_Failed) _then) = _$SetupStep_FailedCopyWithImpl;
+@useResult
+$Res call({
+ BridgeError error
+});
+
+
+
+
+}
+/// @nodoc
+class _$SetupStep_FailedCopyWithImpl<$Res>
+    implements $SetupStep_FailedCopyWith<$Res> {
+  _$SetupStep_FailedCopyWithImpl(this._self, this._then);
+
+  final SetupStep_Failed _self;
+  final $Res Function(SetupStep_Failed) _then;
+
+/// Create a copy of SetupStep
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') $Res call({Object? error = null,}) {
+  return _then(SetupStep_Failed(
+error: null == error ? _self.error : error // ignore: cast_nullable_to_non_nullable
+as BridgeError,
   ));
 }
 

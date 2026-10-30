@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_reactive_ble/flutter_reactive_ble.dart'
     show DiscoveredDevice;
@@ -20,6 +18,7 @@ class PairingView extends StatelessWidget {
     required this.flow,
     required this.ble,
     required this.onRetry,
+    required this.onNewCode,
   });
 
   final PairingFlow flow;
@@ -27,6 +26,9 @@ class PairingView extends StatelessWidget {
   /// BLE setup (`true`) or LAN recovery: the wording differs.
   final bool ble;
   final VoidCallback onRetry;
+
+  /// Drop the code on the screen and start over with a new one.
+  final VoidCallback onNewCode;
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
@@ -38,7 +40,7 @@ class PairingView extends StatelessWidget {
         title: 'Connecting',
         body: 'Starting a private session with the feeder.',
       ),
-      PairingPhase.code => _Code(flow: flow, ble: ble),
+      PairingPhase.code => _Code(flow: flow, ble: ble, onNewCode: onNewCode),
       PairingPhase.joining =>
         ble
             ? _Joining(flow: flow)
@@ -194,45 +196,20 @@ class _Found extends StatelessWidget {
 }
 
 class _Code extends StatefulWidget {
-  const _Code({required this.flow, required this.ble});
+  const _Code({required this.flow, required this.ble, required this.onNewCode});
 
   final PairingFlow flow;
   final bool ble;
+  final VoidCallback onNewCode;
 
   @override
   State<_Code> createState() => _CodeState();
 }
 
 class _CodeState extends State<_Code> {
-  late final Timer _tick;
-
-  /// The whole window, for the bar's fill.
-  late final int _window = _left();
-
-  @override
-  void initState() {
-    super.initState();
-    _tick = Timer.periodic(const Duration(seconds: 1), (_) => setState(() {}));
-  }
-
-  int _left() {
-    final deadline = widget.flow.deadline;
-    return deadline == null
-        ? 0
-        : deadline.difference(DateTime.now()).inSeconds.clamp(0, 999);
-  }
-
-  @override
-  void dispose() {
-    _tick.cancel();
-    super.dispose();
-  }
-
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    final left = _left();
-    final clock = '${left ~/ 60}:${(left % 60).toString().padLeft(2, '0')}';
     return StepScaffold(
       stepLabel: widget.ble ? 'Step 4 of 4' : null,
       progress: widget.ble ? 1 : null,
@@ -245,39 +222,22 @@ class _CodeState extends State<_Code> {
         const SizedBox(height: 18),
         const RingLegend(),
         const SizedBox(height: 18),
-        Row(
-          children: [
-            Expanded(
-              child: Bar(
-                value: _window == 0 ? 0 : left / _window,
-                color: left > 10 ? c.accent : c.warning,
-              ),
-            ),
-            const SizedBox(width: Space.s3),
-            Text(
-              clock,
-              style: TextStyle(
-                fontSize: 15,
-                fontWeight: Fonts.semibold,
-                color: left > 10 ? c.text : c.warning,
-                fontFeatures: const [FontFeature.tabularFigures()],
-              ),
-            ),
-          ],
-        ),
+        CodeWindow(deadline: widget.flow.deadline),
       ],
       actions: [
         Text(
-          left > 0
-              ? 'Pressed a wrong button? Let the time run out and start '
-                    'again with a new code.'
-              : 'Waiting for the feeder to confirm…',
+          'Waiting for the feeder to confirm…',
           textAlign: TextAlign.center,
           style: TextStyle(
             fontSize: Sizes.base,
             height: 1.5,
             color: c.textMuted,
           ),
+        ),
+        // A wrong press is not undone: a new code starts the proof over.
+        OutlinedButton(
+          onPressed: widget.onNewCode,
+          child: const Text('Show a new code'),
         ),
       ],
     );
@@ -346,12 +306,14 @@ class _Joining extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(width: Space.s3),
-                  Text(
-                    'Finding it on your network',
-                    style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: Fonts.semibold,
-                      color: c.text,
+                  Expanded(
+                    child: Text(
+                      'Finding it on your network',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: Fonts.semibold,
+                        color: c.text,
+                      ),
                     ),
                   ),
                 ],
@@ -453,6 +415,22 @@ class _Failed extends StatelessWidget {
   final bool ble;
   final VoidCallback onRetry;
 
+  /// Why the phone found no feeder, or the link dropped, and what the owner
+  /// does then.
+  static const _otherReasons = [
+    ('Time ran out', 'The code works for 60 seconds. Ask for a new one.'),
+    (
+      'The feeder is full',
+      'It holds 8 phones and servers. Remove one in its People list.',
+    ),
+    (
+      'Setup mode ended',
+      'After 15 idle minutes the feeder leaves setup mode. Hold Lock and Mic '
+          'again.',
+    ),
+    ('Busy with another phone', 'Only one phone sets it up at a time.'),
+  ];
+
   (String, String) _words() => switch (flow.failure) {
     PairingFailure.notFound => (
       'No feeder in setup mode nearby',
@@ -508,7 +486,8 @@ class _Failed extends StatelessWidget {
     SetupRefusal.wrongCode => (
       "That code didn't match",
       'The feeder heard a different order of presses and played its alert '
-          'sound. Nothing was changed on it. Try again with a new code.',
+          "sound. Nothing was changed on it. It's still in setup mode, so you "
+          'can try again with a new code.',
     ),
     SetupRefusal.full => (
       'The feeder is full',
@@ -559,21 +538,9 @@ class _Failed extends StatelessWidget {
           const SizedBox(height: Space.s6),
           const SectionLabel('Other reasons setup stops'),
           const SizedBox(height: Space.s3),
-          const ReasonList([
-            (
-              'Time ran out',
-              'The code works for 60 seconds. Ask for a new one.',
-            ),
-            (
-              'The feeder is full',
-              'It holds 8 phones and servers. Remove one in its People list.',
-            ),
-            (
-              'Setup mode ended',
-              'After 15 idle minutes the feeder leaves setup mode. Hold Lock '
-                  'and Mic again.',
-            ),
-            ('Busy with another phone', 'Only one phone sets it up at a time.'),
+          ReasonList([
+            for (final reason in _otherReasons)
+              if (reason.$1 != title) reason,
           ]),
         ],
       ],

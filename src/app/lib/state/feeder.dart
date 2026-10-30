@@ -180,6 +180,7 @@ class FeederController extends ChangeNotifier {
         key: _app.key,
         feeder: identityBytes(hex: known.identity),
         address: address,
+        syncClock: _app.clockDue(known.identity),
       );
     } on BridgeError catch (failed) {
       error = failed.kind;
@@ -268,6 +269,11 @@ class FeederController extends ChangeNotifier {
               ),
             );
           }
+        case SessionUpdate_ClockSynced():
+          _app.clockSynced(known.identity);
+        case SessionUpdate_ClockNotSynced():
+          // Still due: the next session tries again.
+          break;
         case SessionUpdate_Closed(error: final e):
           error = e?.kind;
       }

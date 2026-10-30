@@ -5,13 +5,15 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_reactive_ble/flutter_reactive_ble.dart'
     show DiscoveredDevice;
 
-import '../platform/discovery.dart';
+import '../platform/pairing_ports.dart';
 import '../platform/setup_link.dart';
 import '../src/rust/api/error.dart';
 import '../src/rust/api/model.dart';
 import '../src/rust/api/setup.dart';
 import '../src/rust/api/store.dart';
 import 'app_state.dart';
+
+export '../src/rust/api/store.dart' show KnownFeeder;
 
 enum PairingPhase {
   /// Looking for a feeder in setup mode.
@@ -62,7 +64,7 @@ enum PairingFailure {
 /// answering on the LAN. The protocol runs in Rust; this moves its bytes
 /// and tracks what the screen shows.
 class PairingFlow extends ChangeNotifier {
-  PairingFlow(this._app);
+  PairingFlow(this._app, this._ports);
 
   static const handshakeWait = Duration(seconds: 10);
 
@@ -72,7 +74,8 @@ class PairingFlow extends ChangeNotifier {
   /// A feeder restarts and rejoins its Wi-Fi in about 30 s.
   static const rejoinWait = Duration(seconds: 90);
 
-  final AppState _app;
+  final FeederBook _app;
+  final PairingPorts _ports;
 
   PairingPhase phase = PairingPhase.finding;
 
@@ -94,6 +97,10 @@ class PairingFlow extends ChangeNotifier {
   /// The network the feeder was given, for "Keep this phone on …".
   String? network;
 
+  /// The feeder the owner connected to, so a new code goes to it without
+  /// asking again.
+  DiscoveredDevice? chosen;
+
   /// Feeders in setup mode heard so far, by radio id; each sighting
   /// replaces the last, so the signal is current.
   final found = <String, DiscoveredDevice>{};
@@ -101,7 +108,7 @@ class PairingFlow extends ChangeNotifier {
   static const defaultFeederName = 'Feeder';
 
   Completer<DiscoveredDevice>? _chosen;
-  SetupLink? _link;
+  BleLink? _link;
   StreamSubscription<List<int>>? _notifications;
   Timer? _timer;
   Completer<SetupStep>? _ended;
@@ -112,14 +119,16 @@ class PairingFlow extends ChangeNotifier {
   bool _disposed = false;
 
   /// BLE setup: `wifi` for the feeder's next join, or `null` to keep its
-  /// own; `name` is what this phone calls the feeder.
+  /// own; `name` is what this phone calls the feeder. With `device`, the
+  /// feeder an earlier try connected to, the search is skipped.
   Future<void> runSetup({
     required WifiCredentials? wifi,
     required String name,
+    DiscoveredDevice? device,
   }) async {
     final SetupDriver driver;
     try {
-      driver = SetupDriver(key: _app.key, label: _app.label, wifi: wifi);
+      driver = _ports.newDriver(_app.label, wifi);
     } on BridgeError catch (error) {
       _stop(_failureOf(error), error.message);
       return;
@@ -128,24 +137,29 @@ class PairingFlow extends ChangeNotifier {
     feederName = name;
     network = wifi?.ssid;
 
-    _set(PairingPhase.finding);
-    final DiscoveredDevice device;
-    try {
-      device = await _pick();
-    } on TimeoutException {
-      _stop(PairingFailure.notFound, null);
-      return;
-    } on _Failed catch (failed) {
-      _stop(failed.why, failed.detail);
-      return;
+    final DiscoveredDevice target;
+    if (device != null) {
+      target = device;
+    } else {
+      _set(PairingPhase.finding);
+      try {
+        target = await _pick();
+      } on TimeoutException {
+        _stop(PairingFailure.notFound, null);
+        return;
+      } on _Failed catch (failed) {
+        _stop(failed.why, failed.detail);
+        return;
+      }
     }
+    chosen = target;
     // A screen that went away must not then hold the feeder's only link.
     if (_disposed) return;
 
     final SetupStep end;
     try {
       _set(PairingPhase.connecting);
-      final link = await SetupLink.open(device);
+      final link = await _ports.open(target);
       _link = link;
       if (_disposed) return;
 
@@ -187,7 +201,7 @@ class PairingFlow extends ChangeNotifier {
     feederName = name;
     final Recovery recovery;
     try {
-      recovery = Recovery(key: _app.key, label: _app.label);
+      recovery = _ports.newRecovery(_app.label);
     } on BridgeError catch (error) {
       _stop(_failureOf(error), error.message);
       return;
@@ -199,15 +213,21 @@ class PairingFlow extends ChangeNotifier {
     SetupStep? end;
     final done = Completer<void>();
     _recoveryDone = done;
+    // Rust reports a failed recovery as a step. Anything else that arrives
+    // as an error (a panic, a lost stream) is still a screen to show, not an
+    // exception for nobody to catch.
     // Held so dispose can cancel it: the stream waits out the code window.
     _recovering = recovery
         .run(address: address)
         .listen(
           (step) {
-            if (step is SetupStep_EnterCode) {
-              _showCode(step.seconds);
-            } else {
-              end = step;
+            switch (step) {
+              case SetupStep_EnterCode(:final seconds):
+                _showCode(seconds);
+              case SetupStep_Failed(:final error):
+                if (!done.isCompleted) done.completeError(error);
+              default:
+                end = step;
             }
           },
           onError: (Object error) {
@@ -221,6 +241,9 @@ class PairingFlow extends ChangeNotifier {
       await done.future;
     } on BridgeError catch (error) {
       _stop(_failureOf(error), error.message);
+      return;
+    } catch (error) {
+      _stop(PairingFailure.other, '$error');
       return;
     } finally {
       _timer?.cancel();
@@ -239,7 +262,7 @@ class PairingFlow extends ChangeNotifier {
   Future<DiscoveredDevice> _pick() async {
     final chosen = Completer<DiscoveredDevice>();
     _chosen = chosen;
-    final scanning = SetupLink.scan().listen(
+    final scanning = _ports.scan().listen(
       (device) {
         found[device.id] = device;
         if (!_disposed) notifyListeners();
@@ -291,6 +314,8 @@ class PairingFlow extends ChangeNotifier {
           case SetupStep_Done() || SetupStep_Refused():
             _timer?.cancel();
             ended.complete(step);
+          case SetupStep_Failed(:final error):
+            _fail(_failureOf(error), error.message);
         }
       }
     } on BridgeError catch (error) {
@@ -320,11 +345,11 @@ class PairingFlow extends ChangeNotifier {
       ):
         enrolled = how;
         wifiSaved = wifi;
-        final hex = identityHex(identity: identity);
+        final hex = _ports.hexOf(identity);
         _set(PairingPhase.joining);
 
         // After BLE setup the feeder restarts onto its new Wi-Fi first.
-        final address = knownAddress ?? await Discovery.locate(hex, rejoinWait);
+        final address = knownAddress ?? await _ports.locate(hex, rejoinWait);
         final known = KnownFeeder(
           identity: hex,
           name: feederName,
@@ -333,7 +358,7 @@ class PairingFlow extends ChangeNotifier {
         // The feeder enrolled this phone whatever happens here; a failed
         // save is said so, not left on "joining".
         try {
-          await _app.remember(known);
+          await _app.remember(known, paired: true);
         } on BridgeError catch (error) {
           _stop(
             PairingFailure.other,
@@ -347,6 +372,8 @@ class PairingFlow extends ChangeNotifier {
           return;
         }
         _set(PairingPhase.done);
+      case SetupStep_Failed(:final error):
+        _stop(_failureOf(error), error.message);
       case SetupStep_Write() || SetupStep_EnterCode():
         _stop(PairingFailure.other, 'the session ended mid-exchange');
     }
@@ -367,10 +394,12 @@ class PairingFlow extends ChangeNotifier {
 
   Future<void> _closeLink() async {
     _timer?.cancel();
-    await _notifications?.cancel();
-    _notifications = null;
-    await _link?.close();
+    // Taken first: the screen closing and setup ending may both get here.
+    final link = _link;
     _link = null;
+    unawaited(_notifications?.cancel());
+    _notifications = null;
+    await link?.close();
   }
 
   PairingFailure _failureOf(BridgeError error) => switch (error.kind) {

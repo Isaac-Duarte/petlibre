@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../platform/discovery.dart';
+import '../platform/pairing_ports.dart';
 import '../state/app_state.dart';
 import '../state/pairing.dart';
 import '../theme/theme.dart';
@@ -17,9 +18,10 @@ enum _Step { name, pick, pairing }
 /// LAN recovery: a feeder already on this network takes this phone as an
 /// owner while its window is open (Lock, then Dispense, held).
 class RecoverScreen extends StatefulWidget {
-  const RecoverScreen({super.key, required this.app});
+  const RecoverScreen({super.key, required this.app, required this.ports});
 
-  final AppState app;
+  final FeederBook app;
+  final PairingPorts ports;
 
   @override
   State<RecoverScreen> createState() => _RecoverScreenState();
@@ -40,7 +42,7 @@ class _RecoverScreenState extends State<RecoverScreen> {
   Future<void> _pair(String address, String name) async {
     _picked = (address, name);
     _flow?.dispose();
-    final flow = PairingFlow(widget.app);
+    final flow = PairingFlow(widget.app, widget.ports);
     setState(() {
       _flow = flow;
       _step = _Step.pairing;
@@ -55,7 +57,7 @@ class _RecoverScreenState extends State<RecoverScreen> {
       action: 'Continue',
       onDone: (label, _) async {
         await widget.app.setLabel(label);
-        setState(() => _step = _Step.pick);
+        if (mounted) setState(() => _step = _Step.pick);
       },
     ),
     _Step.pick => _Pick(
@@ -65,6 +67,7 @@ class _RecoverScreenState extends State<RecoverScreen> {
       flow: _flow!,
       ble: false,
       onRetry: () => unawaited(_pair(_picked!.$1, _picked!.$2)),
+      onNewCode: () => unawaited(_pair(_picked!.$1, _picked!.$2)),
     ),
   };
 }

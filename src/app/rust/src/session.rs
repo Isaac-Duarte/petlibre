@@ -6,11 +6,18 @@
 //! A feed goes out once, under a fresh request id, and is never sent
 //! again: an answer that never came means the feed may have run, and its
 //! `Fed` event (or the history) settles it.
+//!
+//! After pairing, or whenever the feeder's clock is not set, the session
+//! gives the feeder this phone's clock and zone, as `wellfed time` does.
+//! That sync carries the zone's next change too, so a feeder with no zone
+//! setting keeps local time across it.
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::time::Duration;
 
+use jiff::Timestamp;
+use jiff::tz::TimeZone;
 use tokio::sync::mpsc;
 use wellfed_client::history::{Delivered, Feed};
 use wellfed_connect::{Connection, Cursor, Received};
@@ -41,6 +48,7 @@ enum Asked {
     Status,
     Feed { portions: u8 },
     Cancel,
+    Clock,
 }
 
 /// Run the session until Dart closes it or the feeder goes away. `update`
@@ -49,6 +57,7 @@ pub async fn run(
     keys: Keypair,
     feeder: [u8; 32],
     address: SocketAddr,
+    sync_clock: bool,
     mut commands: mpsc::UnboundedReceiver<Command>,
     mut update: impl FnMut(SessionUpdate) -> bool,
 ) {
@@ -57,6 +66,7 @@ pub async fn run(
         &keys,
         feeder,
         address,
+        sync_clock,
         &mut commands,
         &mut update,
         &mut asked,
@@ -78,6 +88,7 @@ async fn serve(
     keys: &Keypair,
     feeder: [u8; 32],
     address: SocketAddr,
+    sync_clock: bool,
     commands: &mut mpsc::UnboundedReceiver<Command>,
     update: &mut impl FnMut(SessionUpdate) -> bool,
     asked: &mut HashMap<RequestId, Asked>,
@@ -98,6 +109,12 @@ async fn serve(
             "the feeder did not answer with its status",
         ));
     };
+    if sync_clock || status.clock.is_none() {
+        let sync = wellfed_client::time::sync(Timestamp::now(), &TimeZone::system());
+        let id = random()?;
+        connection.request(id, &Op::TimeSync(sync))?;
+        asked.insert(id, Asked::Clock);
+    }
     let from = status.last_event.map(|seq| Cursor {
         epoch: connection.epoch(),
         seq,
@@ -173,6 +190,8 @@ fn answered(what: Asked, answer: Option<Answer>) -> Option<SessionUpdate> {
             refusal: Some(FeedRefusal::from(refusal)),
         }),
         (Asked::Cancel, None) => Some(SessionUpdate::CancelUnconfirmed { refusal: None }),
+        (Asked::Clock, Some(Answer::Done { .. })) => Some(SessionUpdate::ClockSynced),
+        (Asked::Clock, _) => Some(SessionUpdate::ClockNotSynced),
         _ => None,
     }
 }

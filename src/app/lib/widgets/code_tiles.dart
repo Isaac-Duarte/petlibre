@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 import '../theme/theme.dart';
+import 'layout.dart';
 
 /// The symbols printed on the feeder's four buttons, in panel order from
 /// the left (positions 1-4), so the code reads like the panel itself.
@@ -97,6 +100,71 @@ class CodeTiles extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// How long the feeder keeps taking presses: a bar and a clock, turning to
+/// the warning color for the last seconds.
+class CodeWindow extends StatefulWidget {
+  const CodeWindow({super.key, required this.deadline});
+
+  /// When the feeder stops taking presses.
+  final DateTime? deadline;
+
+  @override
+  State<CodeWindow> createState() => _CodeWindowState();
+}
+
+class _CodeWindowState extends State<CodeWindow> {
+  late final Timer _tick;
+
+  /// The whole window, for the bar's fill.
+  late final int _window = _left();
+
+  @override
+  void initState() {
+    super.initState();
+    _tick = Timer.periodic(const Duration(seconds: 1), (_) => setState(() {}));
+  }
+
+  int _left() {
+    final deadline = widget.deadline;
+    return deadline == null
+        ? 0
+        : deadline.difference(DateTime.now()).inSeconds.clamp(0, 999);
+  }
+
+  @override
+  void dispose() {
+    _tick.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final left = _left();
+    final clock = '${left ~/ 60}:${(left % 60).toString().padLeft(2, '0')}';
+    return Row(
+      children: [
+        Expanded(
+          child: Bar(
+            value: _window == 0 ? 0 : left / _window,
+            color: left > 10 ? c.accent : c.warning,
+          ),
+        ),
+        const SizedBox(width: Space.s3),
+        Text(
+          clock,
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: Fonts.semibold,
+            color: left > 10 ? c.text : c.warning,
+            fontFeatures: const [FontFeature.tabularFigures()],
+          ),
+        ),
+      ],
     );
   }
 }

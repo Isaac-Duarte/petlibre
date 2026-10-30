@@ -13,6 +13,7 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{Notify, mpsc};
 use tokio::task::LocalSet;
+use wellfed_app_bridge::api::error::ErrorKind;
 use wellfed_app_bridge::api::keys::ClientKey;
 use wellfed_app_bridge::api::model::{ClientRole, FeedOutcome};
 use wellfed_app_bridge::api::session::{FeedRefusal, SessionUpdate};
@@ -91,6 +92,7 @@ fn the_setup_driver_proves_its_code_and_enrolls_as_owner() {
                         }
                         done @ SetupStep::Done { .. } => break 'exchange done,
                         SetupStep::Refused { refusal } => panic!("refused: {refusal:?}"),
+                        SetupStep::Failed { error } => panic!("failed: {error}"),
                     }
                 }
             }
@@ -182,6 +184,7 @@ fn closing_a_recovery_hangs_up_while_the_code_window_waits() {
 fn start_session(
     feeder: [u8; 32],
     address: std::net::SocketAddr,
+    sync_clock: bool,
 ) -> (
     mpsc::UnboundedSender<Command>,
     mpsc::UnboundedReceiver<SessionUpdate>,
@@ -192,6 +195,7 @@ fn start_session(
         Keypair::from_secret(OWNER),
         feeder,
         address,
+        sync_clock,
         receiver,
         move |update| updates.send(update).is_ok(),
     ));
@@ -220,7 +224,7 @@ fn a_session_shows_the_card_and_runs_a_feed_to_its_end() {
     local(async {
         let owner = *Keypair::from_secret(OWNER).public();
         let sim = Running::start(&Flash::memory(), Some(owner)).await;
-        let (commands, mut heard) = start_session(sim.identity, sim.address);
+        let (commands, mut heard) = start_session(sim.identity, sim.address, false);
 
         let role = next(&mut heard, |update| match update {
             SessionUpdate::Opened { role, .. } => Some(role),
@@ -281,7 +285,7 @@ fn a_feed_whose_answer_never_comes_is_reported_once_and_not_resent() {
         let flash = Flash::memory();
         let sim = Running::start(&flash, Some(owner)).await;
         let relay = Relay::start(sim.address).await;
-        let (commands, mut heard) = start_session(sim.identity, relay.address);
+        let (commands, mut heard) = start_session(sim.identity, relay.address, false);
         next(&mut heard, |update| match update {
             SessionUpdate::Status { .. } => Some(()),
             _ => None,
@@ -324,6 +328,61 @@ fn a_feed_whose_answer_never_comes_is_reported_once_and_not_resent() {
             }
         }
         assert_eq!(fed, 1);
+        sim.stop().await;
+    });
+}
+
+/// After pairing the session gives the feeder this phone's clock, as
+/// `wellfed time` does; the feeder's own event records it, and the next
+/// card shows the clock set.
+#[test]
+fn a_session_after_pairing_syncs_the_feeders_clock() {
+    local(async {
+        let owner = *Keypair::from_secret(OWNER).public();
+        let sim = Running::start(&Flash::memory(), Some(owner)).await;
+        let (commands, mut heard) = start_session(sim.identity, sim.address, true);
+
+        next(&mut heard, |update| match update {
+            SessionUpdate::ClockSynced => Some(()),
+            SessionUpdate::ClockNotSynced => panic!("the feeder refused the clock"),
+            _ => None,
+        })
+        .await;
+        let card = next(&mut heard, |update| match update {
+            SessionUpdate::Status { card } if card.clock_set => Some(card),
+            _ => None,
+        })
+        .await;
+        assert!(card.clock_set);
+
+        commands.send(Command::Close).unwrap();
+        sim.stop().await;
+    });
+}
+
+/// A feeder whose window is shut closes the connection, which is the first
+/// thing most owners meet: the failure stays typed, so the screen can say
+/// to open the window. On the bridge it travels as a stream value.
+#[test]
+fn a_recovery_with_the_window_shut_fails_with_its_kind() {
+    local(async {
+        let sim = Running::start(&Flash::memory(), None).await;
+        let ask = Ask {
+            label: "phone".into(),
+            wifi: None,
+        };
+        let keys = Keypair::from_secret([0x34; 32]);
+        let session =
+            Session::new(&keys, [0x46; 32], ask, Code::from_bits(0x0123), [0x47; 32]).unwrap();
+
+        let error = tokio::time::timeout(
+            WAIT,
+            recover(session, &sim.address.to_string(), &Notify::new(), |_| true),
+        )
+        .await
+        .expect("the feeder answered")
+        .unwrap_err();
+        assert_eq!(error.kind, ErrorKind::Closed, "{error}");
         sim.stop().await;
     });
 }

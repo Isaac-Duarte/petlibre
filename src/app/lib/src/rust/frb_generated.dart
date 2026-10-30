@@ -110,6 +110,7 @@ abstract class RustLibApi extends BaseApi {
     required ClientKey key,
     required List<int> feeder,
     required String address,
+    required bool syncClock,
   });
 
   void crateApiSessionFeederSessionRefresh({required FeederSession that});
@@ -406,6 +407,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     required ClientKey key,
     required List<int> feeder,
     required String address,
+    required bool syncClock,
   }) {
     return handler.executeSync(
       SyncTask(
@@ -417,6 +419,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           );
           sse_encode_list_prim_u_8_loose(feeder, serializer);
           sse_encode_String(address, serializer);
+          sse_encode_bool(syncClock, serializer);
           return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 8)!;
         },
         codec: SseCodec(
@@ -425,7 +428,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeErrorData: sse_decode_bridge_error,
         ),
         constMeta: kCrateApiSessionFeederSessionNewConstMeta,
-        argValues: [key, feeder, address],
+        argValues: [key, feeder, address, syncClock],
         apiImpl: this,
       ),
     );
@@ -434,7 +437,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TaskConstMeta get kCrateApiSessionFeederSessionNewConstMeta =>
       const TaskConstMeta(
         debugName: "FeederSession_new",
-        argNames: ["key", "feeder", "address"],
+        argNames: ["key", "feeder", "address", "syncClock"],
       );
 
   @override
@@ -1461,6 +1464,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           refusal: dco_decode_opt_box_autoadd_feed_refusal(raw[1]),
         );
       case 7:
+        return SessionUpdate_ClockSynced();
+      case 8:
+        return SessionUpdate_ClockNotSynced();
+      case 9:
         return SessionUpdate_Closed(
           error: dco_decode_opt_box_autoadd_bridge_error(raw[1]),
         );
@@ -1493,6 +1500,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         );
       case 3:
         return SetupStep_Refused(refusal: dco_decode_setup_refusal(raw[1]));
+      case 4:
+        return SetupStep_Failed(
+          error: dco_decode_box_autoadd_bridge_error(raw[1]),
+        );
       default:
         throw Exception("unreachable");
     }
@@ -2127,6 +2138,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         var var_refusal = sse_decode_opt_box_autoadd_feed_refusal(deserializer);
         return SessionUpdate_CancelUnconfirmed(refusal: var_refusal);
       case 7:
+        return SessionUpdate_ClockSynced();
+      case 8:
+        return SessionUpdate_ClockNotSynced();
+      case 9:
         var var_error = sse_decode_opt_box_autoadd_bridge_error(deserializer);
         return SessionUpdate_Closed(error: var_error);
       default:
@@ -2165,6 +2180,9 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case 3:
         var var_refusal = sse_decode_setup_refusal(deserializer);
         return SetupStep_Refused(refusal: var_refusal);
+      case 4:
+        var var_error = sse_decode_box_autoadd_bridge_error(deserializer);
+        return SetupStep_Failed(error: var_error);
       default:
         throw UnimplementedError('');
     }
@@ -2802,8 +2820,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case SessionUpdate_CancelUnconfirmed(refusal: final refusal):
         sse_encode_i_32(6, serializer);
         sse_encode_opt_box_autoadd_feed_refusal(refusal, serializer);
-      case SessionUpdate_Closed(error: final error):
+      case SessionUpdate_ClockSynced():
         sse_encode_i_32(7, serializer);
+      case SessionUpdate_ClockNotSynced():
+        sse_encode_i_32(8, serializer);
+      case SessionUpdate_Closed(error: final error):
+        sse_encode_i_32(9, serializer);
         sse_encode_opt_box_autoadd_bridge_error(error, serializer);
     }
   }
@@ -2836,6 +2858,9 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case SetupStep_Refused(refusal: final refusal):
         sse_encode_i_32(3, serializer);
         sse_encode_setup_refusal(refusal, serializer);
+      case SetupStep_Failed(error: final error):
+        sse_encode_i_32(4, serializer);
+        sse_encode_box_autoadd_bridge_error(error, serializer);
     }
   }
 
@@ -2980,9 +3005,8 @@ class RecoveryImpl extends RustOpaque implements Recovery {
       RustLib.instance.api.crateApiSetupRecoveryCode(that: this);
 
   /// Run the exchange with the feeder at `address` (`ip` or `ip:port`),
-  /// whose recovery window is open, reporting each reply. Runs once.
-  /// Errors arrive on the stream: Dart holds only the stream, not this
-  /// call's own result.
+  /// whose recovery window is open, reporting each reply, and its failure
+  /// as [`SetupStep::Failed`]. Runs once.
   Stream<SetupStep> run({required String address}) => RustLib.instance.api
       .crateApiSetupRecoveryRun(that: this, address: address);
 }

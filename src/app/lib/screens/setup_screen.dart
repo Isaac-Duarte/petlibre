@@ -1,9 +1,11 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show MissingPluginException;
 import 'package:network_info_plus/network_info_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import '../platform/pairing_ports.dart';
 import '../src/rust/api/setup.dart';
 import '../state/app_state.dart';
 import '../state/pairing.dart';
@@ -28,9 +30,18 @@ const _permissions = [
 /// this phone, then pick it and key in the code. The name and Wi-Fi come
 /// first because the setup session carries them with the code.
 class SetupScreen extends StatefulWidget {
-  const SetupScreen({super.key, required this.app});
+  const SetupScreen({
+    super.key,
+    required this.app,
+    required this.ports,
+    this.askPermissions = true,
+  });
 
-  final AppState app;
+  final FeederBook app;
+  final PairingPorts ports;
+
+  /// Android's permissions, which have no answer in a widget test.
+  final bool askPermissions;
 
   @override
   State<SetupScreen> createState() => _SetupScreenState();
@@ -50,6 +61,7 @@ class _SetupScreenState extends State<SetupScreen> {
 
   /// The permissions screen only when something is still to grant.
   Future<void> _askFirst() async {
+    if (!widget.askPermissions) return;
     for (final permission in _permissions) {
       if (!await permission.isGranted) {
         if (mounted) setState(() => _step = _Step.permissions);
@@ -99,24 +111,29 @@ class _SetupScreenState extends State<SetupScreen> {
     ),
   );
 
-  Future<void> _pair() async {
-    final granted = await [
-      Permission.bluetoothScan,
-      Permission.bluetoothConnect,
-    ].request();
-    if (!mounted) return;
-    if (granted.values.any((status) => !status.isGranted)) {
-      await _bluetoothOff();
-      return;
+  /// Pair, with a fresh code. With `again`, at the feeder the last try
+  /// connected to: it stays in setup mode, so nobody has to pick it twice.
+  Future<void> _pair({bool again = false}) async {
+    if (widget.askPermissions) {
+      final granted = await [
+        Permission.bluetoothScan,
+        Permission.bluetoothConnect,
+      ].request();
+      if (!mounted) return;
+      if (granted.values.any((status) => !status.isGranted)) {
+        await _bluetoothOff();
+        return;
+      }
     }
 
+    final device = again ? _flow?.chosen : null;
     _flow?.dispose();
-    final flow = PairingFlow(widget.app);
+    final flow = PairingFlow(widget.app, widget.ports);
     setState(() {
       _flow = flow;
       _step = _Step.pairing;
     });
-    await flow.runSetup(wifi: _wifi, name: _feederName);
+    await flow.runSetup(wifi: _wifi, name: _feederName, device: device);
   }
 
   void _to(_Step step) => setState(() => _step = step);
@@ -147,8 +164,10 @@ class _SetupScreenState extends State<SetupScreen> {
         ),
       ],
     ),
-    _Step.wifi => _WifiStep(
+    _Step.wifi => WifiStep(
       initial: _wifi,
+      stepLabel: 'Step 2 of 4',
+      progress: 0.5,
       onBack: () => _to(_Step.setupMode),
       onDone: (wifi) {
         _wifi = wifi;
@@ -171,7 +190,8 @@ class _SetupScreenState extends State<SetupScreen> {
     _Step.pairing => PairingView(
       flow: _flow!,
       ble: true,
-      onRetry: () => unawaited(_pair()),
+      onRetry: () => unawaited(_pair(again: true)),
+      onNewCode: () => unawaited(_pair(again: true)),
     ),
   };
 }
@@ -249,22 +269,31 @@ class _Permissions extends StatelessWidget {
 /// The network the feeder joins after setup. The phone's current network
 /// is filled in when location is allowed; Android needs it to read the
 /// name, and nothing else uses it.
-class _WifiStep extends StatefulWidget {
-  const _WifiStep({
+class WifiStep extends StatefulWidget {
+  const WifiStep({
+    super.key,
     required this.initial,
     required this.onBack,
     required this.onDone,
+    this.stepLabel,
+    this.progress,
+    this.mayKeep = true,
   });
 
   final WifiCredentials? initial;
   final VoidCallback onBack;
   final ValueChanged<WifiCredentials?> onDone;
+  final String? stepLabel;
+  final double? progress;
+
+  /// A feeder may keep the Wi-Fi it has, unless it has none yet.
+  final bool mayKeep;
 
   @override
-  State<_WifiStep> createState() => _WifiStepState();
+  State<WifiStep> createState() => _WifiStepState();
 }
 
-class _WifiStepState extends State<_WifiStep> {
+class _WifiStepState extends State<WifiStep> {
   late final _ssid = TextEditingController(text: widget.initial?.ssid);
   late final _password = TextEditingController(
     text: widget.initial?.passphrase,
@@ -281,11 +310,7 @@ class _WifiStepState extends State<_WifiStep> {
   }
 
   Future<void> _prefill() async {
-    if (!await Permission.locationWhenInUse.isGranted) {
-      if (mounted) setState(() => _typing = true);
-      return;
-    }
-    final name = await NetworkInfo().getWifiName();
+    final name = await _currentNetwork();
     if (!mounted) return;
     if (name == null) {
       setState(() => _typing = true);
@@ -294,6 +319,16 @@ class _WifiStepState extends State<_WifiStep> {
     if (_ssid.text.isNotEmpty) return;
     // Android quotes the name.
     setState(() => _ssid.text = name.replaceAll(RegExp(r'^"|"$'), ''));
+  }
+
+  /// The plugins only answer on a phone; typing the name always works.
+  Future<String?> _currentNetwork() async {
+    try {
+      if (!await Permission.locationWhenInUse.isGranted) return null;
+      return await NetworkInfo().getWifiName();
+    } on MissingPluginException {
+      return null;
+    }
   }
 
   @override
@@ -312,8 +347,8 @@ class _WifiStepState extends State<_WifiStep> {
   Widget build(BuildContext context) {
     final c = context.colors;
     return StepScaffold(
-      stepLabel: 'Step 2 of 4',
-      progress: 0.5,
+      stepLabel: widget.stepLabel,
+      progress: widget.progress,
       onLeading: widget.onBack,
       title: 'Connect it to your Wi-Fi',
       content: [
@@ -384,10 +419,11 @@ class _WifiStepState extends State<_WifiStep> {
           child: const Text('Continue'),
         ),
         // A feeder already on the network only needs a new owner.
-        TextButton(
-          onPressed: () => widget.onDone(null),
-          child: const Text("Keep the feeder's Wi-Fi"),
-        ),
+        if (widget.mayKeep)
+          TextButton(
+            onPressed: () => widget.onDone(null),
+            child: const Text("Keep the feeder's Wi-Fi"),
+          ),
       ],
     );
   }

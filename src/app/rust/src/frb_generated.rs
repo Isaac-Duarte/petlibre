@@ -371,6 +371,7 @@ fn wire__crate__api__session__FeederSession_new_impl(
             >>::sse_decode(&mut deserializer);
             let api_feeder = <Vec<u8>>::sse_decode(&mut deserializer);
             let api_address = <String>::sse_decode(&mut deserializer);
+            let api_sync_clock = <bool>::sse_decode(&mut deserializer);
             deserializer.end();
             transform_result_sse::<_, crate::api::error::BridgeError>((move || {
                 let mut api_key_guard = None;
@@ -391,6 +392,7 @@ fn wire__crate__api__session__FeederSession_new_impl(
                     &*api_key_guard,
                     api_feeder,
                     api_address,
+                    api_sync_clock,
                 )?;
                 std::result::Result::Ok(output_ok)
             })())
@@ -1749,6 +1751,12 @@ impl SseDecode for crate::api::session::SessionUpdate {
                 };
             }
             7 => {
+                return crate::api::session::SessionUpdate::ClockSynced;
+            }
+            8 => {
+                return crate::api::session::SessionUpdate::ClockNotSynced;
+            }
+            9 => {
                 let mut var_error =
                     <Option<crate::api::error::BridgeError>>::sse_decode(deserializer);
                 return crate::api::session::SessionUpdate::Closed { error: var_error };
@@ -1806,6 +1814,10 @@ impl SseDecode for crate::api::setup::SetupStep {
                 return crate::api::setup::SetupStep::Refused {
                     refusal: var_refusal,
                 };
+            }
+            4 => {
+                let mut var_error = <crate::api::error::BridgeError>::sse_decode(deserializer);
+                return crate::api::setup::SetupStep::Failed { error: var_error };
             }
             _ => {
                 unimplemented!("");
@@ -2337,8 +2349,10 @@ impl flutter_rust_bridge::IntoDart for crate::api::session::SessionUpdate {
             crate::api::session::SessionUpdate::CancelUnconfirmed { refusal } => {
                 [6.into_dart(), refusal.into_into_dart().into_dart()].into_dart()
             }
+            crate::api::session::SessionUpdate::ClockSynced => [7.into_dart()].into_dart(),
+            crate::api::session::SessionUpdate::ClockNotSynced => [8.into_dart()].into_dart(),
             crate::api::session::SessionUpdate::Closed { error } => {
-                [7.into_dart(), error.into_into_dart().into_dart()].into_dart()
+                [9.into_dart(), error.into_into_dart().into_dart()].into_dart()
             }
             _ => {
                 unimplemented!("");
@@ -2405,6 +2419,9 @@ impl flutter_rust_bridge::IntoDart for crate::api::setup::SetupStep {
             .into_dart(),
             crate::api::setup::SetupStep::Refused { refusal } => {
                 [3.into_dart(), refusal.into_into_dart().into_dart()].into_dart()
+            }
+            crate::api::setup::SetupStep::Failed { error } => {
+                [4.into_dart(), error.into_into_dart().into_dart()].into_dart()
             }
             _ => {
                 unimplemented!("");
@@ -2963,8 +2980,14 @@ impl SseEncode for crate::api::session::SessionUpdate {
                 <i32>::sse_encode(6, serializer);
                 <Option<crate::api::session::FeedRefusal>>::sse_encode(refusal, serializer);
             }
-            crate::api::session::SessionUpdate::Closed { error } => {
+            crate::api::session::SessionUpdate::ClockSynced => {
                 <i32>::sse_encode(7, serializer);
+            }
+            crate::api::session::SessionUpdate::ClockNotSynced => {
+                <i32>::sse_encode(8, serializer);
+            }
+            crate::api::session::SessionUpdate::Closed { error } => {
+                <i32>::sse_encode(9, serializer);
                 <Option<crate::api::error::BridgeError>>::sse_encode(error, serializer);
             }
             _ => {
@@ -3019,6 +3042,10 @@ impl SseEncode for crate::api::setup::SetupStep {
             crate::api::setup::SetupStep::Refused { refusal } => {
                 <i32>::sse_encode(3, serializer);
                 <crate::api::model::SetupRefusal>::sse_encode(refusal, serializer);
+            }
+            crate::api::setup::SetupStep::Failed { error } => {
+                <i32>::sse_encode(4, serializer);
+                <crate::api::error::BridgeError>::sse_encode(error, serializer);
             }
             _ => {
                 unimplemented!("");

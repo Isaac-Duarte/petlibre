@@ -75,4 +75,7 @@ enum ErrorKind {
 
   /// The app's own file could not be read or written.
   store,
+
+  /// The text is not an invite.
+  invite,
 }

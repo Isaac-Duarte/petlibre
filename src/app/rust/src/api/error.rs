@@ -37,6 +37,8 @@ pub enum ErrorKind {
     Ended,
     /// The app's own file could not be read or written.
     Store,
+    /// The text is not an invite.
+    Invite,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

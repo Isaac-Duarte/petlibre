@@ -4,6 +4,7 @@
 pub mod error;
 pub mod feeder;
 pub mod install;
+pub mod join;
 pub mod keys;
 pub mod model;
 pub mod session;

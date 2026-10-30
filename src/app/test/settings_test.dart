@@ -31,6 +31,7 @@ Future<(FeederController, FakeSession)> _settingsTab(
   session.updates.add(SessionUpdate.opened(build: 'test', role: role));
   session.status(fakeCard(settings: _settings));
   await showTab(tester, SettingsTab(feeder: feeder));
+  session.requests.clear();
   return (feeder, session);
 }
 
@@ -45,7 +46,7 @@ void main() {
       expect(find.text('7:00 AM to 10:00 PM'), findsOneWidget);
       expect(find.text('Any time'), findsOneWidget);
       expect(find.text('50'), findsOneWidget);
-      expect(find.text('Shows in History 15 minutes ahead'), findsOneWidget);
+      expect(find.text('15 minutes ahead'), findsOneWidget);
       expect(find.text('Desiccant every 14 days'), findsOneWidget);
       expect(find.text('Next change in 9 days'), findsOneWidget);
       for (final row in ['Wi-Fi', 'Time zone', 'People', 'Firmware']) {

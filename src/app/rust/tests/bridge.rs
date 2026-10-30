@@ -18,6 +18,7 @@ use wellfed_app_bridge::api::feeder::{
     FeederRefusal, FeederReply, FeederRequest, NotAsked, PlanEdit, PlanView, PortionChange,
     SettingsChanges,
 };
+use wellfed_app_bridge::api::join::{JoinAnswer, invite_feeder, join_feeder};
 use wellfed_app_bridge::api::keys::ClientKey;
 use wellfed_app_bridge::api::model::{CallClip, ClientRole, FeedOutcome, StatsSection};
 use wellfed_app_bridge::api::session::{FedBy, FeedRefusal, HistoryBody, SessionUpdate};
@@ -498,6 +499,27 @@ fn requests_read_and_change_the_feeder_through_the_session() {
                 .feeder,
             sim.identity
         );
+
+        // The invite's reader names the feeder, and the invite works once.
+        assert_eq!(invite_feeder(&invite.text), Some(sim.identity.to_vec()));
+        assert_eq!(invite_feeder("not an invite"), None);
+        let joining = ClientKey::generate().unwrap();
+        let answer = join_feeder(
+            &joining,
+            invite.text.clone(),
+            "Ana".into(),
+            sim.address.to_string(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            answer,
+            JoinAnswer::Joined {
+                role: ClientRole::Member
+            }
+        );
+        let again = join_feeder(&joining, invite.text, "Ana".into(), sim.address.to_string()).await;
+        assert!(again.is_err(), "{again:?}");
 
         let FeederReply::Clients { clients } = ask(FeederRequest::ListClients).await else {
             panic!("no clients");

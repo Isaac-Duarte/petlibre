@@ -3,11 +3,13 @@ import 'package:go_router/go_router.dart';
 
 import 'platform/feeder_ports.dart';
 import 'platform/install_ports.dart';
+import 'platform/join_ports.dart';
 import 'platform/pairing_ports.dart';
 import 'screens/add_feeder.dart';
 import 'screens/feeder/shell.dart';
 import 'screens/home.dart';
 import 'screens/install_screen.dart';
+import 'screens/join.dart';
 import 'screens/recover_screen.dart';
 import 'screens/setup_screen.dart';
 import 'screens/welcome.dart';
@@ -70,6 +72,8 @@ class _WellfedAppState extends State<WellfedApp> {
     pages: {
       '/add': (context) => const AddFeederScreen(),
       '/setup': (context) => SetupScreen(app: widget.app, ports: _pairing),
+      '/join': (context) =>
+          JoinScreen(book: widget.app, ports: AppJoinPorts(widget.app.key)),
       '/recover': (context) => RecoverScreen(app: widget.app, ports: _pairing),
       '/install': (context) => InstallScreen(
         book: widget.app,

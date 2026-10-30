@@ -538,15 +538,10 @@ class _ReminderRow extends StatelessWidget {
       child: Row(
         children: [
           Expanded(
-            child: _Words(
-              'Before each meal',
-              // The feeder records it: this app sends no notifications yet.
-              switch (reminder) {
-                MealReminder_Off() => 'Off',
-                MealReminder_Before(:final minutes) =>
-                  'Shows in History $minutes minutes ahead',
-              },
-            ),
+            child: _Words('Before each meal', switch (reminder) {
+              MealReminder_Off() => 'Off',
+              MealReminder_Before(:final minutes) => '$minutes minutes ahead',
+            }),
           ),
           StrokeIcon(Glyph.chevron, size: 20, color: context.colors.textMuted),
         ],
@@ -643,10 +638,23 @@ class _DesiccantRowState extends State<_DesiccantRow> {
   }
 }
 
-class _OwnerSection extends StatelessWidget {
+class _OwnerSection extends StatefulWidget {
   const _OwnerSection({required this.feeder});
 
   final FeederController feeder;
+
+  @override
+  State<_OwnerSection> createState() => _OwnerSectionState();
+}
+
+class _OwnerSectionState extends State<_OwnerSection> {
+  FeederController get feeder => widget.feeder;
+
+  @override
+  void initState() {
+    super.initState();
+    if (feeder.clients.isEmpty) unawaited(feeder.loadClients());
+  }
 
   void _open(BuildContext context, Widget screen) => unawaited(
     Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => screen)),

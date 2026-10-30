@@ -6,6 +6,7 @@
 import 'api/error.dart';
 import 'api/feeder.dart';
 import 'api/install.dart';
+import 'api/join.dart';
 import 'api/keys.dart';
 import 'api/model.dart';
 import 'api/session.dart';
@@ -506,6 +507,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   InviteView dco_decode_invite_view(dynamic raw);
 
   @protected
+  JoinAnswer dco_decode_join_answer(dynamic raw);
+
+  @protected
   KnownFeeder dco_decode_known_feeder(dynamic raw);
 
   @protected
@@ -672,6 +676,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   ZoneChange? dco_decode_opt_box_autoadd_zone_change(dynamic raw);
+
+  @protected
+  Uint8List? dco_decode_opt_list_prim_u_8_strict(dynamic raw);
 
   @protected
   List<Weekday>? dco_decode_opt_list_weekday(dynamic raw);
@@ -1295,6 +1302,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   InviteView sse_decode_invite_view(SseDeserializer deserializer);
 
   @protected
+  JoinAnswer sse_decode_join_answer(SseDeserializer deserializer);
+
+  @protected
   KnownFeeder sse_decode_known_feeder(SseDeserializer deserializer);
 
   @protected
@@ -1495,6 +1505,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   ZoneChange? sse_decode_opt_box_autoadd_zone_change(
     SseDeserializer deserializer,
   );
+
+  @protected
+  Uint8List? sse_decode_opt_list_prim_u_8_strict(SseDeserializer deserializer);
 
   @protected
   List<Weekday>? sse_decode_opt_list_weekday(SseDeserializer deserializer);
@@ -2236,6 +2249,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_invite_view(InviteView self, SseSerializer serializer);
 
   @protected
+  void sse_encode_join_answer(JoinAnswer self, SseSerializer serializer);
+
+  @protected
   void sse_encode_known_feeder(KnownFeeder self, SseSerializer serializer);
 
   @protected
@@ -2499,6 +2515,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_opt_box_autoadd_zone_change(
     ZoneChange? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_list_prim_u_8_strict(
+    Uint8List? self,
     SseSerializer serializer,
   );
 

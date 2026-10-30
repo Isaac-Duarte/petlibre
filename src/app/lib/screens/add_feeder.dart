@@ -5,8 +5,7 @@ import '../theme/theme.dart';
 import '../widgets/icons.dart';
 import '../widgets/layout.dart';
 
-/// The ways in. Only the routes that are built are listed; invites and
-/// servers appear as they land.
+/// The ways in.
 class AddFeederScreen extends StatelessWidget {
   const AddFeederScreen({super.key});
 
@@ -31,6 +30,13 @@ class AddFeederScreen extends StatelessWidget {
             'It already runs Wellfed but was reset, or can\'t reach your '
             'Wi-Fi. Set up over Bluetooth.',
         onTap: () => context.push('/setup'),
+      ),
+      const SizedBox(height: Space.s3),
+      RouteCard(
+        glyph: Glyph.add,
+        title: 'Join with an invite',
+        body: 'Someone who owns a feeder gave you a code or a link.',
+        onTap: () => context.push('/join'),
       ),
       const SizedBox(height: Space.s3),
       RouteCard(

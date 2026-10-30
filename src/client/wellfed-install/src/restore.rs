@@ -19,6 +19,9 @@
 //! the key is not enrolled. A spent key stays listed on the feeder with its
 //! private half gone, and signs nothing more.
 //!
+//! The press is consent to this restore, not to one days later: a file older
+//! than [`KEY_LIFE`] is spent like the others, and the run enrolls a new key.
+//!
 //! The push is the installer's own, from either bank: on bank 1 the offer is
 //! recorded and bank 1 gives way, then bank 0 takes the same manifest and
 //! statement (both banks read one store and one list of enrolled keys, and the
@@ -303,12 +306,29 @@ async fn drive(
     }
 }
 
-/// The key an earlier run of this restore left, or a new one. A file that
-/// does not load was never enrolled, since enrolling takes a loaded key, so
-/// it is replaced.
+/// How long a key file left by an earlier run still stands for the press
+/// that enrolled it.
+const KEY_LIFE: Duration = Duration::from_secs(60 * 60);
+
+/// Whether `file` was written within [`KEY_LIFE`]. A time that cannot be read,
+/// or one ahead of the clock, proves nothing, so it does not stand.
+fn key_is_recent(file: &Path) -> bool {
+    std::fs::metadata(file)
+        .and_then(|metadata| metadata.modified())
+        .ok()
+        .and_then(|written| written.elapsed().ok())
+        .is_some_and(|age| age < KEY_LIFE)
+}
+
+/// The key an earlier run of this restore left, or a new one. A file too old
+/// to stand for its press is replaced, so a new press enrolls the new key. So
+/// is a file that does not load, which was never enrolled, since enrolling
+/// takes a loaded key.
 fn fresh_key(file: &Path) -> Result<Key, Error> {
     if file.exists() {
-        if let Ok(key) = Key::load(file) {
+        if key_is_recent(file)
+            && let Ok(key) = Key::load(file)
+        {
             return Ok(key);
         }
         std::fs::remove_file(file).map_err(|source| Error::Remove {
@@ -460,6 +480,7 @@ impl<D: Discovery> Sessions<'_, D> {
 mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
+    use std::time::SystemTime;
 
     use tokio::task::LocalSet;
     use wellfed_client::install::StockPins;
@@ -897,6 +918,50 @@ mod tests {
 
             assert_eq!(restored, Restored::Activated);
             assert_eq!(hands.asked.get(), 1);
+            rig.sim.stop().await;
+        });
+    }
+
+    /// A press from long ago is not consent to this restore: the listed key's
+    /// file is spent by age, and only a new press enrolls a new one.
+    #[test]
+    fn a_key_older_than_an_hour_takes_a_new_press() {
+        paused(async {
+            let rig = Rig::start().await;
+            let backup = synthetic();
+            let hands = Hands::pressing(&rig.sim);
+            let sim = &rig.sim;
+            let report = |event| {
+                if matches!(event, Event::KeyEnrollment { .. }) {
+                    sim.control(Control::Quit);
+                }
+            };
+            let plan = rig.plan(&backup, Signing::Fresh);
+            assert!(rig.run(plan, &hands, report).await.is_err());
+            let old = Key::load(&rig.key_file()).unwrap().id();
+
+            let written = SystemTime::now() - KEY_LIFE - Duration::from_secs(1);
+            std::fs::File::options()
+                .write(true)
+                .open(rig.key_file())
+                .unwrap()
+                .set_modified(written)
+                .unwrap();
+
+            let rig = rig.again().await;
+            let hands = Hands::pressing(&rig.sim);
+            let signed = Cell::new(None);
+            let report = |event| {
+                if let Event::RestoreSigned { key, .. } = event {
+                    signed.set(Some(key));
+                }
+            };
+            let plan = rig.plan(&backup, Signing::Fresh);
+            let second = rig.run(plan, &hands, report).await.unwrap();
+
+            assert_eq!(second, Restored::Activated);
+            assert_eq!(hands.asked.get(), 1, "a new press");
+            assert_ne!(signed.get(), Some(old), "signed with a new key");
             rig.sim.stop().await;
         });
     }

@@ -2,7 +2,9 @@
 //! write it sent whose outcome had not settled (the request until the
 //! replacement answers, the update key's enrollment until the run moves on,
 //! the promotion until bank 1 confirms it, the plans' put until the end).
-//! That write is uncertain, and never sent again.
+//! That write is uncertain. None is sent again, but for the plans' put: a later
+//! run sends it again only if the plans' generation still equals the base kept
+//! on disk before it left, and otherwise stops with nothing sent.
 
 use std::fmt;
 
@@ -21,7 +23,8 @@ pub enum Unsettled {
     /// bank 1 confirms it.
     Promotion,
     /// Stock's converted plans, put on the replacement: settled once the
-    /// run ends, a put that went unanswered being judged by a read back.
+    /// run ends, a put that went unanswered being judged by a read back. A
+    /// later run sends it again only from an unchanged generation.
     Plans,
 }
 
@@ -158,9 +161,15 @@ fn unsettled_note(phase: Phase, unsettled: Option<Unsettled>) -> String {
             } else {
                 ""
             };
+            let again = match write {
+                Unsettled::Plans => {
+                    "a later run sends it again only if the feeder's plans have not changed since"
+                }
+                _ => "it is not sent again",
+            };
             format!(
-                ", with {write} sent and its outcome not yet settled: it may have run, and it is \
-                 not sent again.{enrollment} Read what the feeder runs (wellfed status, or \
+                ", with {write} sent and its outcome not yet settled: it may have run, and \
+                 {again}.{enrollment} Read what the feeder runs (wellfed status, or \
                  stock's own report) before running again"
             )
         }
@@ -234,6 +243,8 @@ mod tests {
         // A put that went unanswered is judged by reading the plans back.
         track.enter(Phase::ApplyPlans);
         assert_eq!(track.unsettled, Some(Unsettled::Plans));
+        let stopped = track.stopped(Stop::Interrupt).to_string();
+        assert!(stopped.contains("only if the feeder's plans have not changed since"));
         track.enter(Phase::Done);
         assert_eq!(track.unsettled, None);
     }

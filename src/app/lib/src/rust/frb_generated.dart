@@ -2564,10 +2564,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case 21:
         return StopCase_PlansNotApplied();
       case 22:
-        return StopCase_ServerFailed();
+        return StopCase_PlansUnknown();
       case 23:
-        return StopCase_Cancelled();
+        return StopCase_ServerFailed();
       case 24:
+        return StopCase_Cancelled();
+      case 25:
         return StopCase_Other();
       default:
         throw Exception("unreachable");
@@ -3904,10 +3906,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case 21:
         return StopCase_PlansNotApplied();
       case 22:
-        return StopCase_ServerFailed();
+        return StopCase_PlansUnknown();
       case 23:
-        return StopCase_Cancelled();
+        return StopCase_ServerFailed();
       case 24:
+        return StopCase_Cancelled();
+      case 25:
         return StopCase_Other();
       default:
         throw UnimplementedError('');
@@ -5220,12 +5224,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_i_32(20, serializer);
       case StopCase_PlansNotApplied():
         sse_encode_i_32(21, serializer);
-      case StopCase_ServerFailed():
+      case StopCase_PlansUnknown():
         sse_encode_i_32(22, serializer);
-      case StopCase_Cancelled():
+      case StopCase_ServerFailed():
         sse_encode_i_32(23, serializer);
-      case StopCase_Other():
+      case StopCase_Cancelled():
         sse_encode_i_32(24, serializer);
+      case StopCase_Other():
+        sse_encode_i_32(25, serializer);
     }
   }
 

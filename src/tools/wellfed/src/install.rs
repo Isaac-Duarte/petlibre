@@ -21,7 +21,8 @@
 //!
 //! SIGTERM (a job's cancel) and SIGINT end the run through the same stop as
 //! its end. The report names the step it stopped in and any write whose
-//! outcome had not settled; that write is uncertain, and never sent again.
+//! outcome had not settled; that write is uncertain, and never sent again, but
+//! for the plans' put, which a later run sends only from an unchanged generation.
 //!
 //! [consumer installation]: ../../../../docs/firmware/consumer-installation.md
 

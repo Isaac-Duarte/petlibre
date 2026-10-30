@@ -197,6 +197,15 @@ pub enum Error {
         path.display()
     )]
     PlansExist { path: PathBuf },
+    #[error(
+        "{} says an earlier put of stock's plans went against generation {kept}, not {base}; nothing is sent",
+        path.display()
+    )]
+    PutBaseExists {
+        path: PathBuf,
+        kept: wellfed_model::Generation,
+        base: wellfed_model::Generation,
+    },
     #[error("the stock backup is not stock's pinned image")]
     Unverified,
     /// No verified backup could be had: the promotion, which overwrites
@@ -210,6 +219,9 @@ pub enum Error {
         "Promotion refused: stock's plans could not be kept; the feeder runs the replacement from bank 0 and still holds stock in bank 1"
     )]
     KeepPlans(#[source] Box<Error>),
+    /// The put's base could not be kept, so the put did not go out.
+    #[error("stock's plans were not sent: the generation they go against could not be kept")]
+    KeepPutBase(#[source] Box<Error>),
     /// Bluetooth setup failed; the replacement runs from bank 0.
     #[error(transparent)]
     Setup(Box<Error>),

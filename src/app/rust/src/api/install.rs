@@ -285,8 +285,9 @@ pub enum InstallAnswer {
     },
 }
 
-/// A write whose outcome is not settled. It may have run, and it is never
-/// sent again.
+/// A write whose outcome is not settled. It may have run, and it is never sent
+/// again, but for the plans' put, which a pick-up sends only from a generation
+/// that has not moved.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UncertainWrite {
     /// The update key's enrollment.
@@ -373,6 +374,10 @@ pub enum StopCase {
     /// The replacement is installed and confirmed, but stock's plans were
     /// not applied.
     PlansNotApplied,
+    /// The replacement is installed and confirmed, but a put of stock's plans
+    /// went out and whether they are on it is unknown. Not sent again: the
+    /// owner checks the meals.
+    PlansUnknown,
     /// The stock server could not start: its port is taken, say.
     ServerFailed,
     /// The owner stopped the run, with nothing unsettled.

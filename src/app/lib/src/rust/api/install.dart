@@ -648,6 +648,11 @@ sealed class StopCase with _$StopCase {
   /// not applied.
   const factory StopCase.plansNotApplied() = StopCase_PlansNotApplied;
 
+  /// The replacement is installed and confirmed, but a put of stock's plans
+  /// went out and whether they are on it is unknown. Not sent again: the
+  /// owner checks the meals.
+  const factory StopCase.plansUnknown() = StopCase_PlansUnknown;
+
   /// The stock server could not start: its port is taken, say.
   const factory StopCase.serverFailed() = StopCase_ServerFailed;
 
@@ -656,8 +661,9 @@ sealed class StopCase with _$StopCase {
   const factory StopCase.other() = StopCase_Other;
 }
 
-/// A write whose outcome is not settled. It may have run, and it is never
-/// sent again.
+/// A write whose outcome is not settled. It may have run, and it is never sent
+/// again, but for the plans' put, which a pick-up sends only from a generation
+/// that has not moved.
 enum UncertainWrite {
   /// The update key's enrollment.
   updateKey,

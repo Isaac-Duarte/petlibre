@@ -557,6 +557,9 @@ impl From<Event> for InstallEvent {
             Event::SessionDropped { .. } => Self::SessionDropped,
             Event::AlreadyActivated | Event::Activated => Self::Activated,
             Event::PuttingPlans => Self::PuttingPlans,
+            Event::EarlierPut { base } => note(format!(
+                "an earlier put of the plans went against generation {base}"
+            )),
             Event::Installed { build } => Self::Installed { build },
             Event::Plans(result) => Self::Plans {
                 result: match result {
@@ -634,8 +637,8 @@ pub fn stop_of(error: &Error, from_stock: bool) -> (StopCase, Resume) {
             | InstallError::PlansNotWritable
             | InstallError::PlansStale { .. }
             | InstallError::PlansRefused(_)
-            | InstallError::PlansUncertain
             | InstallError::PlansUnread => (StopCase::PlansNotApplied, Nothing),
+            InstallError::PlansUncertain => (StopCase::PlansUnknown, Nothing),
             InstallError::ResetDeclined | InstallError::WrongReplacement { .. } => {
                 (StopCase::Other, Nothing)
             }
@@ -672,9 +675,10 @@ pub fn stop_of(error: &Error, from_stock: bool) -> (StopCase, Resume) {
             (StopCase::Other, FromBank0)
         }
         Error::NotAnswering { .. } | Error::NoAddress => (StopCase::NotAnswering, FromBank0),
-        Error::NoHomeNetwork | Error::KeepPlans(_) | Error::PlansNotSent(_) => {
-            (StopCase::Other, FromBank0)
-        }
+        Error::NoHomeNetwork
+        | Error::KeepPlans(_)
+        | Error::PlansNotSent(_)
+        | Error::KeepPutBase(_) => (StopCase::Other, FromBank0),
         Error::StockServer(_)
         | Error::Images(_)
         | Error::StockServerGone
@@ -1044,7 +1048,7 @@ fn run_on_this_thread(
             let (case, resume) = stop_of(&error, from_stock);
             // Installed and confirmed, with only its meals left behind: there
             // is nothing to pick up, and the record would offer it forever.
-            if case == StopCase::PlansNotApplied {
+            if matches!(case, StopCase::PlansNotApplied | StopCase::PlansUnknown) {
                 let _ = wellfed_install::storage::forget_paired(&backups);
                 let _ = wellfed_install::stock::forget_enrollment(&config);
             }
@@ -1200,6 +1204,12 @@ mod tests {
             steps(InstallError::RequestUncertain),
             (StopCase::Uncertain, Resume::Nothing)
         );
+        // Installed, with the meals unknown: not "not set", and no way on that
+        // could send them.
+        assert_eq!(
+            steps(InstallError::PlansUncertain),
+            (StopCase::PlansUnknown, Resume::Nothing)
+        );
     }
 
     /// A wait that ran out says nothing was sent only before the request;
@@ -1286,7 +1296,7 @@ mod tests {
     }
 
     /// A stop keeps what it had not settled: the request is listened for,
-    /// a later write resumes from bank 0 and is not sent again.
+    /// a later write resumes from bank 0, which reads where it got to.
     #[test]
     fn a_stop_names_the_write_it_left_unsettled() {
         use wellfed_install::Stopped;

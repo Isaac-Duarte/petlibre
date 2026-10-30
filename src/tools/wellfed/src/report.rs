@@ -195,6 +195,10 @@ pub(crate) fn line(event: &Event) -> String {
             format!("The replacement's plans could not be read ({error}).")
         }
         Event::PuttingPlans => "Setting stock's converted plans on the replacement.".to_string(),
+        Event::EarlierPut { base } => format!(
+            "An earlier run may have sent stock's plans, against generation {base}: they go \
+             again only if the feeder's plans are still at it."
+        ),
         Event::Installed { build } => format!(
             "Installed: build {} confirmed on bank 1. This computer is its owner.",
             short(build)

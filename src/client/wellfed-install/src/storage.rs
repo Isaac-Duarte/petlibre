@@ -1,7 +1,7 @@
 //! What an install keeps, under the owner's backups directory: one
 //! subdirectory per feeder (named by its identity) holding its stock backup
-//! (`stock-1.1.15.bin`), stock's plan sectors and the promotion manifests the
-//! run signed, and beside them `installing.json`, the record a resumed run
+//! (`stock-1.1.15.bin`), stock's plan sectors, the generation their put went
+//! against and the promotion manifests the run signed, and beside them `installing.json`, the record a resumed run
 //! finds its feeder by. The CLI's directory is `private/stock-backups`; the
 //! app's is in its own storage.
 //!
@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 
 use wellfed_client::install::{STOCK_VERSION, StockBackup};
 use wellfed_formats::hex;
+use wellfed_model::Generation;
 
 use crate::Error;
 
@@ -41,6 +42,65 @@ pub fn promotion_path(backups: &Path, identity: &[u8; 32], version: u32) -> Path
 /// reads again.
 pub fn plans_path(backups: &Path, identity: &[u8; 32]) -> PathBuf {
     feeder_directory(backups, identity).join("stock-plans.bin")
+}
+
+/// Where the install keeps the generation its put of stock's plans goes against,
+/// beside the plans it puts ([`keep_put_base`]).
+pub fn put_base_path(backups: &Path, identity: &[u8; 32]) -> PathBuf {
+    feeder_directory(backups, identity).join("stock-plans.base.json")
+}
+
+/// Keep the generation a put goes against, on disk before that put leaves: the
+/// file and its directory are synced before this returns, so with no file here
+/// no put ever left. A later run compares it with the table's generation, the
+/// only proof that neither that put nor the owner has changed the table. A base
+/// already here stays: the steps only go again from the same one, and a
+/// different one refuses, so nothing is sent on a wrong record.
+pub fn keep_put_base(path: &Path, base: Generation) -> Result<(), Error> {
+    if let Some(kept) = kept_put_base(path)? {
+        return wellfed_formats::require(kept == base, || Error::PutBaseExists {
+            path: path.to_path_buf(),
+            kept,
+            base,
+        });
+    }
+    let bytes = serde_json::to_vec(&base).map_err(|source| Error::Parse {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    write_new(path, &bytes)
+}
+
+/// The generation an earlier put went against, if one may have left.
+pub(crate) fn kept_put_base(path: &Path) -> Result<Option<Generation>, Error> {
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => {
+            return Err(Error::Read {
+                path: path.to_path_buf(),
+                source,
+            });
+        }
+    };
+    serde_json::from_slice(&bytes)
+        .map(Some)
+        .map_err(|source| Error::Parse {
+            path: path.to_path_buf(),
+            source,
+        })
+}
+
+/// The install reached its end: no put is left to judge.
+pub(crate) fn forget_put_base(path: &Path) -> Result<(), Error> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(source) => Err(Error::Remove {
+            path: path.to_path_buf(),
+            source,
+        }),
+    }
 }
 
 /// The backup kept at `path`, checked again; `None` when there is none.
@@ -247,6 +307,32 @@ mod tests {
             Err(Error::PlansExist { .. })
         ));
         assert_eq!(std::fs::read(&at).unwrap(), [1, 2, 3]);
+    }
+
+    /// A put's base stays as it was kept until the install's end. No file is the
+    /// only answer that says no put left: a damaged one is an error, which a run
+    /// treats as one that may have.
+    #[test]
+    fn a_puts_base_is_kept_once_and_forgotten_at_the_end() {
+        let dir = tempfile::tempdir().unwrap();
+        let kept = put_base_path(dir.path(), &[0xab; 32]);
+        assert_eq!(kept_put_base(&kept).unwrap(), None);
+
+        keep_put_base(&kept, Generation(4)).unwrap();
+        assert_eq!(kept_put_base(&kept).unwrap(), Some(Generation(4)));
+        keep_put_base(&kept, Generation(4)).unwrap();
+        assert!(matches!(
+            keep_put_base(&kept, Generation(5)),
+            Err(Error::PutBaseExists { .. })
+        ));
+        assert_eq!(kept_put_base(&kept).unwrap(), Some(Generation(4)));
+
+        std::fs::write(&kept, b"not a generation").unwrap();
+        assert!(kept_put_base(&kept).is_err());
+
+        forget_put_base(&kept).unwrap();
+        forget_put_base(&kept).unwrap();
+        assert_eq!(kept_put_base(&kept).unwrap(), None);
     }
 
     /// An applied copy is set aside, never over an earlier one, so a

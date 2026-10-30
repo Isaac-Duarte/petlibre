@@ -1039,7 +1039,8 @@ class _Stopped extends StatelessWidget {
               'it plugged in: picking up reads where it got to.',
         UncertainWrite.plans =>
           'Its meals may or may not have been set. Picking up reads them back '
-              'from the feeder, and sets them only if it holds none.',
+              'from the feeder, and sets them again only if nothing has changed '
+              'on it since. Otherwise it stops, and you check them yourself.',
       },
     ),
     StopCase_OtherFirmware(:final version) => (
@@ -1170,6 +1171,12 @@ class _Stopped extends StatelessWidget {
       'Wellfed is installed, but its meals are not',
       "The feeder runs Wellfed. Its old meals weren't set on it. Set them up "
           'again here.',
+    ),
+    StopCase_PlansUnknown() => (
+      "We don't know if its meals came along",
+      'The feeder runs Wellfed. Its old meals were sent, but they may not have '
+          'arrived, or something on the feeder has changed since, so they are '
+          'not sent again. Check its meals, and set up any that are missing.',
     ),
     StopCase_ServerFailed() => (
       "This phone couldn't serve the feeder",
@@ -1308,9 +1315,8 @@ class _Stopped extends StatelessWidget {
       StopCase_TwoFeeders() || StopCase_NotYourFeeder() => [
         primary('Start again', () => unawaited(flow.again(forget: true))),
       ],
-      StopCase_PlansNotApplied() => [
-        primary('Go to Home', () => context.go('/')),
-      ],
+      StopCase_PlansNotApplied() ||
+      StopCase_PlansUnknown() => [primary('Go to Home', () => context.go('/'))],
       StopCase_NotJoined() => [
         primary('Enter the Wi-Fi again', flow.newWifiForSetup),
         const SizedBox(height: Space.s2),

@@ -719,6 +719,155 @@ fn plans_already_set_are_never_replaced() {
     assert_eq!(locked.step(), Step::Failed(InstallError::PlansNotWritable));
 }
 
+/// A run whose bank 1 just confirmed, whose earlier run sent its put against
+/// the generation [`view`] reads.
+fn confirmed_after_a_put() -> Install {
+    let mut install = run_to(Phase::AwaitConfirm);
+    install.earlier_put(Generation(4));
+    install.confirmed(
+        Replacement {
+            build: BUILD,
+            bank: 1,
+        },
+        VERSION,
+    );
+    install
+}
+
+/// The same generation is proof nothing changed the table since that put went
+/// out, so it goes once more, against that generation.
+#[test]
+fn an_earlier_put_goes_again_once_from_an_unchanged_generation() {
+    let mut install = confirmed_after_a_put();
+    install.plans(&view([None; PLANS], true));
+    assert!(matches!(
+        install.step(),
+        Step::PutPlans {
+            base: Generation(4),
+            ..
+        }
+    ));
+    for _ in 0..3 {
+        assert_eq!(install.step(), Step::AwaitPut);
+    }
+    install.plans_put(PlansPut::Done);
+    assert_eq!(install.step(), Step::Done);
+}
+
+/// Anything else stops with nothing sent. An empty table at a later generation
+/// is the owner having emptied it after the put landed: putting it back would
+/// bring back meals the owner deleted.
+#[test]
+fn an_earlier_put_never_goes_again_once_the_generation_moved() {
+    let mut breakfast = [None; PLANS];
+    breakfast[3] = Some(Plan {
+        minute: 600,
+        portions: 1,
+        days: Weekdays::ONCE,
+        enabled: true,
+        call: 0,
+    });
+    let emptied = Plans {
+        generation: Generation(6),
+        writable: true,
+        plans: [None; PLANS],
+    };
+    let edited = Plans {
+        generation: Generation(5),
+        writable: true,
+        plans: breakfast,
+    };
+    for table in [emptied, edited] {
+        let mut install = confirmed_after_a_put();
+        install.plans(&table);
+        assert_eq!(install.step(), Step::Failed(InstallError::PlansUncertain));
+    }
+
+    let mut locked = confirmed_after_a_put();
+    locked.plans(&view([None; PLANS], false));
+    assert_eq!(locked.step(), Step::Failed(InstallError::PlansUncertain));
+
+    // A record that cannot be read is no proof of anything.
+    let mut unread = run_to(Phase::AwaitConfirm);
+    unread.earlier_put_unread();
+    unread.confirmed(
+        Replacement {
+            build: BUILD,
+            bank: 1,
+        },
+        VERSION,
+    );
+    unread.plans(&view([None; PLANS], true));
+    assert_eq!(unread.step(), Step::Failed(InstallError::PlansUncertain));
+
+    // Not reading the plans leaves it just as unknown.
+    let mut silent = confirmed_after_a_put();
+    silent.gave_up();
+    assert_eq!(silent.step(), Step::Failed(InstallError::PlansUncertain));
+}
+
+/// A put already settled is not sent again, at whatever generation it landed.
+#[test]
+fn an_earlier_put_that_landed_is_done_and_not_sent_again() {
+    let mut install = confirmed_after_a_put();
+    let imported = install.import().unwrap().plans;
+    install.plans(&Plans {
+        generation: Generation(5),
+        writable: true,
+        plans: imported,
+    });
+    assert_eq!(install.step(), Step::Done);
+}
+
+/// The first put arriving late moves the table, and the feeder refuses the
+/// second by its base. That refusal says the first may have landed, not that
+/// someone else changed the plans.
+#[test]
+fn a_put_refused_after_an_earlier_one_leaves_it_uncertain() {
+    for refusal in [
+        Refusal::Stale {
+            current: Generation(5),
+        },
+        Refusal::Busy,
+    ] {
+        let mut install = confirmed_after_a_put();
+        install.plans(&view([None; PLANS], true));
+        assert!(matches!(install.step(), Step::PutPlans { .. }));
+        install.plans_put(PlansPut::Refused(refusal));
+        assert_eq!(install.step(), Step::Failed(InstallError::PlansUncertain));
+    }
+}
+
+/// With no record, no put ever left: the first put's path, and its refusals in
+/// their own words.
+#[test]
+fn no_earlier_put_is_the_first_puts_path() {
+    let mut install = confirmed();
+    install.plans(&view([None; PLANS], true));
+    assert!(matches!(install.step(), Step::PutPlans { .. }));
+    install.plans_put(PlansPut::Refused(Refusal::Stale {
+        current: Generation(5),
+    }));
+    assert_eq!(
+        install.step(),
+        Step::Failed(InstallError::PlansStale {
+            current: Generation(5)
+        })
+    );
+
+    // Reported any later, it changes nothing: this run's own unanswered put is
+    // judged by its read back.
+    let mut late = confirmed();
+    late.earlier_put(Generation(4));
+    late.plans(&view([None; PLANS], true));
+    assert!(matches!(late.step(), Step::PutPlans { .. }));
+    late.plans_put(PlansPut::Refused(Refusal::Invalid));
+    assert_eq!(
+        late.step(),
+        Step::Failed(InstallError::PlansRefused(Refusal::Invalid))
+    );
+}
+
 /// A stale or refused put changed nothing and ends the run; an
 /// unanswered one is judged by reading the plans back, never resent.
 #[test]

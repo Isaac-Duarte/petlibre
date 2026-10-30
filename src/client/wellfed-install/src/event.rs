@@ -184,6 +184,11 @@ pub enum Event {
     },
     /// Stock's converted plans go to the replacement, once.
     PuttingPlans,
+    /// An earlier run may have sent its put of stock's plans, against this
+    /// generation: it goes again only from the same one.
+    EarlierPut {
+        base: wellfed_model::Generation,
+    },
     /// The install is confirmed on bank 1.
     Installed {
         build: String,

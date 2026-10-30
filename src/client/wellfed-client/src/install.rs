@@ -380,7 +380,7 @@ pub enum InstallError {
     )]
     PlansRefused(Refusal),
     #[error(
-        "the replacement is installed and confirmed, but the put of stock's plans went unanswered and the plans read back are not the import; it is not sent again: check the plans on the feeder"
+        "the replacement is installed and confirmed, but a put of stock's plans went out and whether they are on it is unknown: the plans read back are not the import, and it is not sent again: check the meals on the feeder and set any that are missing"
     )]
     PlansUncertain,
     #[error(
@@ -484,7 +484,9 @@ pub enum Step {
     /// empty, and after a put that went unanswered, to judge it.
     ReadPlans,
     /// Send `PutPlans` with these values once, and report the answer with
-    /// [`Install::plans_put`]. Never resent.
+    /// [`Install::plans_put`]. Goes once in a run. Keep `base` durably before it
+    /// leaves: a later run reports it with [`Install::earlier_put`], and goes
+    /// again only if the plans are still at it.
     PutPlans {
         base: Generation,
         plans: [Option<Plan>; PLANS],
@@ -562,6 +564,19 @@ pub struct Install {
     without_plans: bool,
     /// Why stock's plans were left behind, when the owner chose to go on.
     plans_skipped: Option<InstallError>,
+    /// What an earlier run's put of them left on record.
+    earlier_put: EarlierPut,
+}
+
+/// What an earlier run's put of stock's plans left on record, which is on disk
+/// before any put leaves. So `None` means no put ever left.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EarlierPut {
+    None,
+    /// One may have left, against this generation.
+    From(Generation),
+    /// There is a record that cannot be read: one may have left.
+    Unread,
 }
 
 impl Install {
@@ -601,6 +616,7 @@ impl Install {
             import: None,
             without_plans: false,
             plans_skipped: None,
+            earlier_put: EarlierPut::None,
         }
     }
 
@@ -1101,11 +1117,34 @@ impl Install {
         }
     }
 
+    /// An earlier run may have sent its put of the import, against `base`.
+    /// Reported before the confirmation, as [`Install::kept_stock_plans`] is.
+    pub fn earlier_put(&mut self, base: Generation) {
+        if self.stage == Stage::AwaitConfirm {
+            self.earlier_put = EarlierPut::From(base);
+        }
+    }
+
+    /// An earlier run left a record of its put that cannot be read: treated as
+    /// a put against a table that has moved, so nothing is sent.
+    pub fn earlier_put_unread(&mut self) {
+        if self.stage == Stage::AwaitConfirm {
+            self.earlier_put = EarlierPut::Unread;
+        }
+    }
+
     /// The replacement's plans, read for [`Step::ReadPlans`]. Before the
     /// put, the import goes only onto a writable table with every slot
-    /// empty. After an unanswered put, the table read back is the judge:
-    /// the import there is done, anything else is uncertain, and the put
-    /// is never sent again.
+    /// empty. After an unanswered put in this run, the table read back is the
+    /// judge: the import there is done, anything else is uncertain, and this
+    /// run does not send it again.
+    ///
+    /// After an earlier run's put ([`Install::earlier_put`]), the import there
+    /// is done, and otherwise it goes again only from the generation that put
+    /// was sent against. Every change to the table moves the generation, so
+    /// that one is proof neither the put nor the owner changed it; an empty
+    /// table alone is not, since the owner may have emptied it. Anything else
+    /// is uncertain, and nothing is sent.
     pub fn plans(&mut self, view: &Plans) {
         match self.stage {
             // The import already there: a put an earlier run sent landed.
@@ -1124,7 +1163,16 @@ impl Install {
                     .enumerate()
                     .filter_map(|(slot, plan)| plan.map(|_| slot))
                     .collect();
-                self.stage = if !slots.is_empty() {
+                let moved = match self.earlier_put {
+                    EarlierPut::None => false,
+                    EarlierPut::From(base) => {
+                        base != view.generation || !slots.is_empty() || !view.writable
+                    }
+                    EarlierPut::Unread => true,
+                };
+                self.stage = if moved {
+                    Stage::Failed(InstallError::PlansUncertain)
+                } else if !slots.is_empty() {
                     Stage::Failed(InstallError::PlansAlreadySet { slots })
                 } else if !view.writable {
                     Stage::Failed(InstallError::PlansNotWritable)
@@ -1150,13 +1198,18 @@ impl Install {
     }
 
     /// What became of the one put [`Step::PutPlans`] asked for. A refusal
-    /// changed nothing; no answer is judged by reading the plans back.
+    /// changed nothing; no answer is judged by reading the plans back. Refused
+    /// after an earlier run's put, it says nothing of that one: it may be what
+    /// moved the table.
     pub fn plans_put(&mut self, outcome: PlansPut) {
         if self.stage != Stage::Putting {
             return;
         }
         self.stage = match outcome {
             PlansPut::Done => Stage::Done,
+            PlansPut::Refused(_) if self.earlier_put != EarlierPut::None => {
+                Stage::Failed(InstallError::PlansUncertain)
+            }
             PlansPut::Refused(Refusal::Stale { current }) => {
                 Stage::Failed(InstallError::PlansStale { current })
             }
@@ -1169,8 +1222,10 @@ impl Install {
     pub fn gave_up(&mut self) {
         self.stage = match self.stage {
             Stage::Done | Stage::Failed(_) => return,
-            // Installed and confirmed: what is left unknown is the plans,
-            // and the put is never sent again.
+            // Installed and confirmed: what is left unknown is the plans.
+            Stage::CheckPlans | Stage::PutPlans { .. } if self.earlier_put != EarlierPut::None => {
+                Stage::Failed(InstallError::PlansUncertain)
+            }
             Stage::CheckPlans | Stage::PutPlans { .. } => Stage::Failed(InstallError::PlansUnread),
             Stage::Putting | Stage::VerifyPlans => Stage::Failed(InstallError::PlansUncertain),
             // Unanswered may have enrolled the key; it is never sent again.

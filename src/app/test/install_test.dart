@@ -1036,6 +1036,12 @@ void main() {
         'Go to Home',
       ),
       (
+        const StopCase.plansUnknown(),
+        "We don't know if its meals came along",
+        Resume.nothing,
+        'Go to Home',
+      ),
+      (
         const StopCase.plansNotApplied(),
         'Wellfed is installed, but its meals are not',
         Resume.nothing,

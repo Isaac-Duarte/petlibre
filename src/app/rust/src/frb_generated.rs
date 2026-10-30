@@ -3176,12 +3176,15 @@ impl SseDecode for crate::api::install::StopCase {
                 return crate::api::install::StopCase::PlansNotApplied;
             }
             22 => {
-                return crate::api::install::StopCase::ServerFailed;
+                return crate::api::install::StopCase::PlansUnknown;
             }
             23 => {
-                return crate::api::install::StopCase::Cancelled;
+                return crate::api::install::StopCase::ServerFailed;
             }
             24 => {
+                return crate::api::install::StopCase::Cancelled;
+            }
+            25 => {
                 return crate::api::install::StopCase::Other;
             }
             _ => {
@@ -4471,9 +4474,10 @@ impl flutter_rust_bridge::IntoDart for crate::api::install::StopCase {
             crate::api::install::StopCase::PromotionFailed => [19.into_dart()].into_dart(),
             crate::api::install::StopCase::FellBack => [20.into_dart()].into_dart(),
             crate::api::install::StopCase::PlansNotApplied => [21.into_dart()].into_dart(),
-            crate::api::install::StopCase::ServerFailed => [22.into_dart()].into_dart(),
-            crate::api::install::StopCase::Cancelled => [23.into_dart()].into_dart(),
-            crate::api::install::StopCase::Other => [24.into_dart()].into_dart(),
+            crate::api::install::StopCase::PlansUnknown => [22.into_dart()].into_dart(),
+            crate::api::install::StopCase::ServerFailed => [23.into_dart()].into_dart(),
+            crate::api::install::StopCase::Cancelled => [24.into_dart()].into_dart(),
+            crate::api::install::StopCase::Other => [25.into_dart()].into_dart(),
             _ => {
                 unimplemented!("");
             }
@@ -5791,14 +5795,17 @@ impl SseEncode for crate::api::install::StopCase {
             crate::api::install::StopCase::PlansNotApplied => {
                 <i32>::sse_encode(21, serializer);
             }
-            crate::api::install::StopCase::ServerFailed => {
+            crate::api::install::StopCase::PlansUnknown => {
                 <i32>::sse_encode(22, serializer);
             }
-            crate::api::install::StopCase::Cancelled => {
+            crate::api::install::StopCase::ServerFailed => {
                 <i32>::sse_encode(23, serializer);
             }
-            crate::api::install::StopCase::Other => {
+            crate::api::install::StopCase::Cancelled => {
                 <i32>::sse_encode(24, serializer);
+            }
+            crate::api::install::StopCase::Other => {
+                <i32>::sse_encode(25, serializer);
             }
             _ => {
                 unimplemented!("");

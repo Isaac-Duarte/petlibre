@@ -239,7 +239,8 @@ pub enum ActivityKind {
     Build,
     /// `wellfed-stock`: a server, an image server or a request.
     Stock,
-    /// `wellfed install`, which stops its own stock server on SIGTERM.
+    /// `wellfed install`, which stops its own stock server on SIGTERM, or
+    /// `wellfed restore-stock`.
     Install,
     /// `sigrok-cli`.
     Analyzer,

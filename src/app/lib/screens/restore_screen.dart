@@ -239,9 +239,7 @@ class _Running extends StatelessWidget {
         const Notice(
           tone: Tone.warning,
           lead: 'Press Dispense on the feeder, once.',
-          text:
-              'You have 60 seconds. If its lock light is on, hold Lock for 5 '
-              'seconds first. The press shows you have the feeder in hand.',
+          text: 'You have 60 seconds. The press shows you have the feeder in hand.',
         ),
         const SizedBox(height: Space.s4),
       ],
@@ -440,8 +438,7 @@ class _Stopped extends StatelessWidget {
       switch (stop) {
         RestoreStop.noPress => (
           'Dispense was not pressed in time',
-          '$name keeps running Wellfed, and nothing was sent. If its lock '
-              'light is on, hold Lock for 5 seconds before you press.',
+          '$name keeps running Wellfed, and nothing was sent.',
         ),
         RestoreStop.enrollmentUnknown => (
           "We don't know if the press got through",

@@ -215,6 +215,33 @@ struct AnswerArgs {
 
 #[derive(Debug, Clone, PartialEq, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+struct RestoreStockArgs {
+    /// A stock 1.1.15 image to restore instead of the kept backup; it must
+    /// match the pinned image exactly.
+    backup: Option<String>,
+    /// An update-signing key the feeder already trusts, such as the bench's.
+    /// Otherwise a fresh key is made and enrolled with a Dispense press.
+    key: Option<String>,
+    /// The version the stock manifest carries; otherwise one above the
+    /// feeder's floor.
+    version: Option<u32>,
+    /// The job presses Dispense itself on a running virtual-panel build.
+    #[serde(default)]
+    virtual_panel: bool,
+    /// Required with virtual_panel: the hopper is empty.
+    #[serde(default)]
+    confirm_motion: bool,
+    /// This computer's client key; the tool's default otherwise.
+    keys: Option<String>,
+    /// The feeder's identity, as a hex prefix, when the key file knows more
+    /// than one.
+    feeder: Option<String>,
+    /// The feeder's address; found over mDNS otherwise.
+    address: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct InstallArgs {
     /// The replacement's frozen review, root-relative.
     review: String,
@@ -719,6 +746,11 @@ const SPECS: &[Spec] = &[
         description: "Stock to Wellfed with `wellfed install` as a job: its own stock server and sessions (the server's session pauses), stock installs the review into bank 0 over its own updater, then promotion writes bank 1. Restarts the feeder itself with relay 1 (off about 10 s, then on). With virtual_panel (needs confirm_motion) it also keys a consumer image's setup code in and presses Dispense for the update key's enrollment on a running virtual-panel build, as press does, and a failed press stops the install. Its other questions wait in bench_status's prompt for job_answer or a person (expect_device answers the feeder check ahead, for the pinned device only); no flash write over UART.",
         schema: schema::<InstallArgs>,
     },
+    Spec {
+        name: "restore_stock",
+        description: "Put stock back from the kept backup with `wellfed restore-stock` as a job: its own sessions (the server's session pauses), a fresh update key enrolled with a Dispense press unless key names one the feeder trusts, then bank 1 gives way and bank 0 writes stock. With virtual_panel (needs confirm_motion) it presses Dispense itself on a running virtual-panel build, and a failed press stops the job; otherwise the press waits in bench_status's prompt for a person. Nothing is retried or offered again: a feeder that stops answering after the offer ends the job uncertain, and stock serves no device API to ask. No flash write over UART.",
+        schema: schema::<RestoreStockArgs>,
+    },
 ];
 
 /// Every tool, as `tools/list` answers.
@@ -1098,6 +1130,20 @@ fn job_words(name: &str, args: JsonObject) -> Result<Vec<String>, ToolError> {
                 .value("--keys", args.keys)
                 .value("--address", args.address)
         }
+        "restore_stock" => {
+            let args: RestoreStockArgs = parse(name, args)?;
+            if args.virtual_panel && !args.confirm_motion {
+                return Err(ToolError::UnconfirmedPanel { tool: name.into() });
+            }
+            Line::new(&["restore-stock"])
+                .value("--backup", args.backup)
+                .value("--key", args.key)
+                .value("--version", args.version)
+                .switch("--virtual-panel", args.virtual_panel)
+                .value("--keys", args.keys)
+                .value("--feeder", args.feeder)
+                .value("--address", args.address)
+        }
         _ => return Err(ToolError::Unknown { name: name.into() }),
     };
     Ok(line.finish())
@@ -1231,6 +1277,24 @@ mod tests {
             ),
             Err(ToolError::LeadingDash { .. })
         ));
+
+        let restore = serde_json::json!({"virtual_panel": true});
+        assert!(matches!(
+            call("restore_stock", args(restore)),
+            Err(ToolError::UnconfirmedPanel { .. })
+        ));
+        assert_eq!(
+            call(
+                "restore_stock",
+                args(serde_json::json!({"virtual_panel": true, "confirm_motion": true}))
+            )
+            .unwrap(),
+            Call::Job(
+                ["restore-stock", "--virtual-panel"]
+                    .map(String::from)
+                    .to_vec()
+            )
+        );
 
         // The unattended consumer run: the job presses Dispense itself, so
         // it needs the motion confirmed.

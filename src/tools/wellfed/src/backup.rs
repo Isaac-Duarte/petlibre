@@ -33,7 +33,7 @@ use wellfed_install::storage::{backup_path, load_backup};
 use wellfed_install::{Discovery, Mdns};
 use wellfed_signing::Key;
 
-use crate::ask::Asker;
+use crate::ask::{Asker, Prompts};
 use crate::keys::OwnerKey;
 use crate::report::Printer;
 use crate::{Target, connect};
@@ -111,6 +111,11 @@ pub(crate) struct RestoreArgs {
     /// feeder's floor.
     #[arg(long)]
     version: Option<u32>,
+    /// How the press is announced: at this terminal, or as JSON lines on
+    /// standard output and input for the bench server, which runs this as a
+    /// job.
+    #[arg(long, value_enum, default_value_t)]
+    prompts: Prompts,
 }
 
 /// What `show` prints.
@@ -199,13 +204,7 @@ pub(crate) async fn restore(args: RestoreArgs) -> Result<()> {
         Some(file) => Signing::Given(Box::new(
             Key::load(file).with_context(|| format!("load {}", file.display()))?,
         )),
-        None => {
-            eprintln!(
-                "This asks for a Dispense press at the feeder. If its lock light is on, hold \
-                 Lock for 5 seconds first."
-            );
-            Signing::Fresh
-        }
+        None => Signing::Fresh,
     };
     let address = args
         .target
@@ -228,7 +227,11 @@ pub(crate) async fn restore(args: RestoreArgs) -> Result<()> {
 
     let discovery = if located { Finder::Given } else { Finder::Mdns };
     let platform = Platform {
-        prompter: Asker::terminal_notices(),
+        // Only announcements: a terminal has nothing to read back.
+        prompter: match args.prompts {
+            Prompts::Terminal => Asker::terminal_notices(),
+            Prompts::Lines => Asker::standard(Prompts::Lines),
+        },
         discovery,
         keypair: key_file.keypair().clone(),
         report: Printer,

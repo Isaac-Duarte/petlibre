@@ -633,3 +633,103 @@ exit 1
 
     server.quit().await;
 }
+
+/// A restore that answers its panel prompt itself.
+const RESTORE: &[&str] = &["restore-stock", "--virtual-panel"];
+
+/// `restore-stock` presses Dispense once for the tool's announcement, answers
+/// it done, and records stock in bank 1 when the tool ends well. The flag stays
+/// the server's.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_restore_job_presses_dispense_once_and_records_stock() {
+    if crate::tests::run_alone() {
+        return;
+    }
+    let _one = ONE_SERVER.lock().await;
+    let checkout = Checkout::new(0.0);
+    stand_in(
+        &checkout,
+        "wellfed",
+        r#"#!/bin/sh
+echo "$@" > args
+echo '{"kind":"press-dispense","purpose":"enroll-update-key"}'
+read a; echo "dispense $a" >> answers
+"#,
+    );
+    checkout.board.lock().on[1] = true;
+    let server = Running::start(checkout.open());
+
+    let id = server.submit(RESTORE).await.unwrap();
+    let (end, lines) = follow(&server.client, id).await;
+
+    assert_eq!((end.code, end.error), (0, None), "{lines:?}");
+    assert_eq!(read(&checkout, "presses"), "dispense 150\n");
+    assert_eq!(read(&checkout, "answers"), "dispense \"done\"\n");
+    assert_eq!(
+        read(&checkout, "args").trim(),
+        "restore-stock --prompts=lines"
+    );
+    let bank = server.state().await.banks.banks[&Bank::One].clone();
+    assert_eq!(bank.content, Content::Stock);
+
+    server.quit().await;
+}
+
+/// A press that does not echo stops the tool, nothing is pressed again, and
+/// bank 1 is unknown; an uncertain restore's own words end the job as they were.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_restore_job_s_failed_press_stops_it_and_its_uncertain_words_end_it() {
+    if crate::tests::run_alone() {
+        return;
+    }
+    let _one = ONE_SERVER.lock().await;
+    let checkout = Checkout::new(0.0);
+    stand_in(
+        &checkout,
+        "wellfed",
+        r#"#!/bin/sh
+trap 'echo TERM > signal; kill $! 2>/dev/null; exit 1' TERM
+echo '{"kind":"press-dispense","purpose":"enroll-update-key"}'
+sleep 30 & wait $!
+"#,
+    );
+    fs::write(checkout.root().join("press-fails"), "dispense").unwrap();
+    checkout.board.lock().on[1] = true;
+    let server = Running::start(checkout.open());
+
+    let id = server.submit(RESTORE).await.unwrap();
+    let (end, _) = follow(&server.client, id).await;
+
+    assert_eq!(end.code, 1);
+    assert!(
+        end.error
+            .as_deref()
+            .is_some_and(|error| error.contains("press 1 of 1")),
+        "{end:?}"
+    );
+    assert_eq!(read(&checkout, "presses"), "dispense 150\n");
+    assert_eq!(read(&checkout, "signal").trim(), "TERM");
+    assert_eq!(
+        server.state().await.banks.banks[&Bank::One].content,
+        Content::Unknown
+    );
+
+    stand_in(
+        &checkout,
+        "wellfed",
+        "#!/bin/sh\necho \"Error: uncertain: the feeder stopped answering\" >&2\nexit 1\n",
+    );
+    let id = server.submit(&["restore-stock"]).await.unwrap();
+    let (end, _) = follow(&server.client, id).await;
+    assert_eq!(end.code, 1);
+    assert_eq!(
+        end.error.as_deref(),
+        Some("uncertain: the feeder stopped answering")
+    );
+    assert_eq!(
+        server.state().await.banks.banks[&Bank::One].content,
+        Content::Unknown
+    );
+
+    server.quit().await;
+}

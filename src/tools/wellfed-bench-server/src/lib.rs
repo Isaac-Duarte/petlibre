@@ -54,7 +54,7 @@ pub use jobs::{JobCommand, JobOptions, ToolPaths};
 pub use output::{CONSOLE_QUEUE, Console};
 pub use server::{Answers, Options, Outputs, ServeError, Server, restore_output};
 pub use state::{JobOutput, Store};
-pub use tool_jobs::InstallArgs;
+pub use tool_jobs::{InstallArgs, RestoreStockArgs};
 
 #[cfg(test)]
 mod tests;

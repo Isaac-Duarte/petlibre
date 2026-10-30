@@ -59,6 +59,7 @@ class MainActivity : FlutterActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        current = this
         // The Bluetooth plugin's RxJava throws when a link drops as its stream is
         // cancelled, which the feeder's restart at the end of setup can do, and
         // with no handler that kills the app, and the install with it.
@@ -202,11 +203,19 @@ class MainActivity : FlutterActivity() {
         feeder?.let { connectivity.unregisterNetworkCallback(it) }
         feeder = null
         connectivity.unregisterNetworkCallback(wifi)
-        connectivity.bindProcessToNetwork(null)
+        // Android can create a new activity before destroying the old one, and
+        // the binding belongs to the process: clearing it here would send the
+        // new activity's sockets out over mobile data.
+        if (current === this) {
+            current = null
+            connectivity.bindProcessToNetwork(null)
+        }
         super.onDestroy()
     }
 
     private companion object {
+        var current: MainActivity? = null
+
         const val TAG = "wellfed"
         const val CHANNEL = "io.github.isaacduarte.wellfed/wifi"
         const val SCREEN_CHANNEL = "io.github.isaacduarte.wellfed/screen"

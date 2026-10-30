@@ -6,6 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
+use wellfed_client::install::CONTAINER_HEADER;
 use wellfed_formats::manifest::{BuildManifest, Provisioning};
 use wellfed_signing::Key;
 
@@ -55,6 +56,13 @@ impl Review {
         wellfed_stock::ota::image::Build::load(directory)
             .map(|_| ())
             .map_err(|error| Error::Images(error.into()))
+    }
+
+    /// The image an update sends: the container past its header.
+    pub fn payload(&self) -> Result<&[u8], Error> {
+        self.container
+            .get(CONTAINER_HEADER..)
+            .ok_or(Error::ShortImage)
     }
 
     /// The startup identity, 64 lowercase hex.

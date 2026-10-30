@@ -6,7 +6,7 @@
 use flutter_rust_bridge::frb;
 pub use wellfed_model::setup::{Enrolled, Refusal as SetupRefusal, WifiSaved};
 pub use wellfed_model::{
-    Blocked, ClientRole, FeedOutcome, FeedReason, FoodLevel, MissedReason, UpdatePhase,
+    Blocked, ClientRole, FeedOutcome, FeedReason, FoodLevel, MissedReason, UpdatePhase, UpdateStop,
 };
 
 #[frb(mirror(Enrolled))]
@@ -198,6 +198,18 @@ pub enum _UpdatePhase {
     GivingWay,
     Receiving,
     Activated,
+}
+
+#[frb(mirror(UpdateStop))]
+pub enum _UpdateStop {
+    Timeout,
+    Cancelled,
+    Order,
+    Marker,
+    Write,
+    Hash,
+    Activate,
+    Store,
 }
 
 #[frb(mirror(MissedReason))]

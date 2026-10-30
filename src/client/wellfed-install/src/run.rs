@@ -22,8 +22,8 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use wellfed_client::install::{
-    CONTAINER_HEADER, FeederTrust, Install, InstallError, Options, PairRoute, PlansPut, Promotion,
-    Provision, Replacement, Requested, Step, StockBackup, StockNotReady, UpdateKey, plans,
+    FeederTrust, Install, InstallError, Options, PairRoute, PlansPut, Promotion, Provision,
+    Replacement, Requested, Step, StockBackup, StockNotReady, UpdateKey, plans,
 };
 use wellfed_client::setup::Credentials;
 use wellfed_client::update::{Image, InstallError as UpdateError};
@@ -1500,11 +1500,7 @@ where
     /// there would interrupt the trial, so the promotion counts as
     /// activated instead.
     async fn promote(&mut self, served: &str) -> Result<Result<(), UpdateError>, Error> {
-        let payload = self
-            .review
-            .container
-            .get(CONTAINER_HEADER..)
-            .ok_or(Error::ShortImage)?;
+        let payload = self.review.payload()?;
         let manifest = self.manifest.as_deref().ok_or(Error::NoManifest)?;
         let image = Image {
             manifest,

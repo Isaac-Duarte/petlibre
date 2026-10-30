@@ -26,6 +26,7 @@ use wellfed_app_bridge::api::setup::{
     SetupDriver, SetupStep, recover, setup_control, setup_service,
 };
 use wellfed_app_bridge::api::store::{AppStore, KnownFeeder, load_store, save_store};
+use wellfed_app_bridge::api::update::{UpdateEnd, update};
 use wellfed_app_bridge::requests;
 use wellfed_app_bridge::session::{self, Command};
 use wellfed_client::setup::{Ask, Session, panel_position};
@@ -828,5 +829,24 @@ fn a_recording_uploads_as_the_meal_call_and_a_trace_refused_says_so() {
 
         commands.send(Command::Close).unwrap();
         sim.stop().await;
+    });
+}
+
+/// An app with no pinned image offers the feeder nothing: the check comes
+/// before the first connection, so even a dead address ends the same way.
+#[test]
+fn an_update_without_a_pinned_image_sends_nothing() {
+    local(async {
+        let empty = tempfile::tempdir().unwrap();
+        let keys = Keypair::from_secret(OWNER);
+        let end = update(
+            &keys,
+            [0; 32],
+            "not an address",
+            &empty.path().to_string_lossy(),
+            &|_| panic!("nothing to report"),
+        )
+        .await;
+        assert!(matches!(end, UpdateEnd::Failed { .. }));
     });
 }

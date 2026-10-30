@@ -17,6 +17,7 @@ import 'package:wellfed/src/rust/api/model.dart';
 import 'package:wellfed/src/rust/api/session.dart';
 import 'package:wellfed/src/rust/api/setup.dart';
 import 'package:wellfed/src/rust/api/store.dart';
+import 'package:wellfed/src/rust/api/update.dart';
 import 'package:wellfed/state/app_state.dart';
 import 'package:wellfed/theme/theme.dart';
 
@@ -489,10 +490,25 @@ class FakeFeederPorts implements FeederPorts {
 
   @override
   Future<String?> locate(String identity, Duration wait) async => 'lan:4747';
+
+  ImageCheck image = const ImageCheck.absent();
+  final pushes = <String>[];
+  // ignore: close_sinks, a test ends with its stream open, as a run does when its screen goes.
+  final progress = StreamController<UpdateProgress>();
+
+  @override
+  Future<ImageCheck> updateImage() async => image;
+
+  @override
+  Stream<UpdateProgress> pushUpdate(String identity, String address) {
+    pushes.add(address);
+    return progress.stream;
+  }
 }
 
 /// A feeder that is ready, with what a test leaves out unread.
 Card fakeCard({
+  String build = 'test',
   FoodLevel food = FoodLevel.present,
   bool? locked = false,
   bool ready = true,
@@ -510,7 +526,7 @@ Card fakeCard({
   SettingsView? settings,
   PlansView? plans,
 }) => Card(
-  build: 'test',
+  build: build,
   food: food,
   locked: locked,
   ready: ready,

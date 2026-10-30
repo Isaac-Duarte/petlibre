@@ -673,6 +673,17 @@ enum UpdateRefusal {
   battery,
 }
 
+enum UpdateStop {
+  timeout,
+  cancelled,
+  order,
+  marker,
+  write,
+  hash,
+  activate,
+  store,
+}
+
 enum Weekday { mon, tue, wed, thu, fri, sat, sun }
 
 enum WifiSaved { saved, unchanged }

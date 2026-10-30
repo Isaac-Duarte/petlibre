@@ -92,6 +92,9 @@ class FeederController extends ChangeNotifier {
 
   final FeederBook _book;
   final FeederPorts _ports;
+
+  /// What the firmware screen reaches outside Dart.
+  FeederPorts get ports => _ports;
   KnownFeeder known;
 
   Connection connection = Connection.looking;

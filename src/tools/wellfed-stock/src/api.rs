@@ -1,16 +1,17 @@
-//! Loopback HTTP API of `wellfed-stock serve`.
+//! Loopback HTTP API of the stock server ([`crate::server`]).
 //!
 //! Every route except `/health` needs the bearer token from the private
 //! configuration, compared in constant time, and write bodies are capped at
-//! 4096 bytes. Handlers never touch device state themselves: they hand a
-//! `Request` to the MQTT actor and wait up to 5 s. A timeout leaves the outcome
-//! unknown, so the caller queries status or repeats the same request ID
-//! instead of creating a new one.
+//! 4096 bytes. Handlers never touch device state themselves: they go
+//! through the server's [`Handle`], which hands a `Request` to the MQTT
+//! actor and waits up to 5 s. A timeout leaves the outcome unknown, so the
+//! caller queries status or repeats the same request ID instead of creating
+//! a new one.
 //!
 //! Response structs declare their fields in sorted order, the order the
 //! `json!` bodies they replaced had.
 
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use axum::{
     Json, Router,
@@ -21,13 +22,11 @@ use axum::{
 };
 use serde::Serialize;
 use subtle::ConstantTimeEq;
-use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::{
     controller::{Rejection, Status},
-    enroll::Enrollment,
-    mqtt::Request,
     ota,
+    server::{Handle, Refusal},
 };
 
 use crate::build_info::BUILD;
@@ -38,11 +37,7 @@ pub const ENROLLMENT_UNREADABLE: &str = "enrollment unreadable";
 #[derive(Clone)]
 pub struct ApiState {
     pub token: Arc<str>,
-    pub requests: mpsc::Sender<Request>,
-    pub status: watch::Receiver<Status>,
-    /// Config location; the image server's private lease is written beside it.
-    pub config_path: Arc<std::path::Path>,
-    pub image_host: std::net::IpAddr,
+    pub handle: Handle,
 }
 
 /// A refused request: its status and the `{"error": ..}` body.
@@ -91,6 +86,16 @@ impl From<Rejection> for ApiError {
     }
 }
 
+impl From<Refusal> for ApiError {
+    fn from(refusal: Refusal) -> Self {
+        match refusal {
+            Refusal::Contested => Self::new(StatusCode::CONFLICT, refusal.to_string()),
+            Refusal::Rejected(rejection) => rejection.into(),
+            Refusal::Unanswered => Self::new(StatusCode::GATEWAY_TIMEOUT, refusal.to_string()),
+        }
+    }
+}
+
 fn authenticate(headers: &HeaderMap, state: &ApiState) -> Result<(), ApiError> {
     let supplied = headers
         .get("authorization")
@@ -108,42 +113,15 @@ fn authenticate(headers: &HeaderMap, state: &ApiState) -> Result<(), ApiError> {
     }
 }
 
-async fn operation<T: Serialize>(
-    state: ApiState,
-    build: impl FnOnce(oneshot::Sender<Result<T, Rejection>>) -> Request,
-) -> Result<Json<T>, ApiError> {
-    let (send, receive) = oneshot::channel();
-    state
-        .requests
-        .try_send(build(send))
-        .map_err(|_| Rejection::Offline)?;
-
-    let result = tokio::time::timeout(Duration::from_secs(5), receive)
-        .await
-        .map_err(|_| {
-            ApiError::new(
-                StatusCode::GATEWAY_TIMEOUT,
-                "outcome unknown; query status or repeat the SAME request ID",
-            )
-        })?
-        .map_err(|_| Rejection::Offline)?;
-
-    Ok(Json(result?))
-}
-
 async fn status(
     State(state): State<ApiState>,
     headers: HeaderMap,
 ) -> Result<Json<Status>, ApiError> {
     authenticate(&headers, &state)?;
-    let mut status = state.status.borrow().clone();
-    // Read beside the config at each call: the broker child writes a
-    // contest while the server runs.
-    // An unreadable record fails the status: a client must not read it as
-    // a captured device and skip the owner's check. The record holds the
-    // feeder's password, and a parse error can quote a field's value, so
-    // the details stay in the server's log and the body is fixed.
-    status.enrollment = Enrollment::view(&state.config_path).map_err(|error| {
+    // The record holds the feeder's password, and a parse error can quote
+    // a field's value, so the details stay in the server's log and the
+    // body is fixed.
+    let status = state.handle.status().map_err(|error| {
         tracing::warn!("enrollment unreadable: {error:#}");
         ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, ENROLLMENT_UNREADABLE)
     })?;
@@ -156,15 +134,7 @@ async fn ota_trial_request(
     Json(input): Json<ota::trial::Input>,
 ) -> Result<Json<ota::trial::Record>, ApiError> {
     authenticate(&headers, &state)?;
-    // Which of two feeders is the owner's cannot be told; nothing is sent.
-    if Enrollment::contested_path(&state.config_path).exists() {
-        return Err(ApiError::new(
-            StatusCode::CONFLICT,
-            "the enrollment is contested: another device tried the broker during the window",
-        ));
-    }
-    let lease = ota::image::current(&state.config_path, state.image_host).await;
-    operation(state, |response| Request::OtaTrial(input, lease, response)).await
+    Ok(Json(state.handle.trial(input).await?))
 }
 
 async fn ota_trial_resolve(
@@ -173,7 +143,7 @@ async fn ota_trial_resolve(
     Json(input): Json<ota::trial::ResolveInput>,
 ) -> Result<Json<ota::trial::Record>, ApiError> {
     authenticate(&headers, &state)?;
-    operation(state, |response| Request::ResolveTrial(input, response)).await
+    Ok(Json(state.handle.resolve(input).await?))
 }
 
 /// The operator's client saw the trial's build answer the device API from
@@ -185,7 +155,7 @@ async fn ota_trial_answered(
     Json(input): Json<ota::trial::AnsweredInput>,
 ) -> Result<Json<ota::trial::Record>, ApiError> {
     authenticate(&headers, &state)?;
-    operation(state, |response| Request::TrialAnswered(input, response)).await
+    Ok(Json(state.handle.answered(input).await?))
 }
 
 /// `/health`: which build is serving, without authentication.

@@ -1,38 +1,32 @@
 //! `wellfed-stock` command line: the bench's server for stock 1.1.15.
 //!
-//! `serve` runs the server: the MQTT broker stock connects to, as a child
-//! process of this binary, the stock install path, and the loopback HTTP
-//! API. Most other subcommands are clients of that API and read the bearer
-//! token from the private configuration, so the token never appears in
-//! shell arguments. Starting the service redirects no traffic; `network
-//! apply` is the separate, privileged step that does.
+//! `serve` runs the server ([`wellfed_stock::server`]): the MQTT broker
+//! stock connects to, the stock install path, and the loopback HTTP API, in
+//! this one process. Most other subcommands are clients of that API and read
+//! the bearer token from the private configuration, so the token never
+//! appears in shell arguments. Starting the service redirects no traffic;
+//! `network apply` is the separate, privileged step that does.
 
 #![forbid(unsafe_code)]
 #![warn(clippy::print_stdout)]
 
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{path::PathBuf, time::Duration};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use reqwest::Method;
 use serde::Serialize;
-use tokio::{
-    process::Command,
-    sync::{mpsc, watch},
-};
 use tracing::info;
 use wellfed_client::install::{SETUP_ADDRESS, SetupFrame};
 use wellfed_formats::bench::lease::Lease;
 use wellfed_stock::{
-    api::{self, ApiState},
     broker_name,
     build_info::{self, BUILD},
     clock,
     config::{self, State},
-    controller::{self, Controller},
-    enroll::Enrollment,
-    mqtt::{self, broker, broker::DeviceAuth},
+    mqtt::{broker, broker::DeviceAuth},
     neighbour, network, ota, plans,
+    server::{self, OtaTrial, Server},
 };
 
 #[derive(Parser)]
@@ -294,7 +288,10 @@ async fn main() -> Result<()> {
                     bail!("no feeder is enrolled; pass --enroll-minutes to admit one")
                 }
             };
-            broker::run(listen, auth).await?
+            let stop = async {
+                let _ = tokio::signal::ctrl_c().await;
+            };
+            broker::run(listen, auth, stop).await?
         }
         Action::Serve {
             config,
@@ -371,14 +368,25 @@ async fn main() -> Result<()> {
                     }
                 },
             };
-            // The bench stops it with SIGTERM; either way its lease is removed.
-            let stop = async {
-                tokio::select! {
-                    _ = tokio::signal::ctrl_c() => {},
-                    _ = terminated() => {},
-                }
+            let mut images = ota::image::start(&config, &path, &directory, peer).await?;
+            let std::net::IpAddr::V4(host) = config.mqtt_listen.ip() else {
+                bail!("OTA image host must use IPv4");
             };
-            ota::image::serve(config, &path, &directory, peer, stop).await?;
+            println!(
+                "Image server only; no update requested. Stops accepting at {} or on Ctrl-C or SIGTERM; active transfers drain.",
+                images.lease.expires_at
+            );
+            println!("Server token: {}", images.lease.token);
+            println!("Build: {}", images.url(host));
+
+            // The bench stops it with SIGTERM; either way its lease is removed.
+            let ended = tokio::select! {
+                result = images.finished() => Some(result),
+                _ = tokio::signal::ctrl_c() => None,
+                _ = terminated() => None,
+            };
+            images.stop(DRAIN).await;
+            ended.transpose()?;
         }
 
         Action::OtaTrialResolve {
@@ -522,51 +530,9 @@ fn bench_lease(config: &std::path::Path) -> Result<Lease> {
     Lease::acquire_in(&directory).context("bench lease")
 }
 
-/// Whether `serve` may dispatch the stock-to-replacement install trial.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum OtaTrial {
-    Enabled,
-    Disabled,
-}
-
-/// How often `serve` looks for a feeder's enrollment while it waits.
-const ENROLL_POLL: Duration = Duration::from_secs(1);
-
-/// With no feeder enrolled, wait for the broker child to record one within
-/// `minutes`, then the config with that device. Stops with the broker or a
-/// signal.
-async fn enrolled(
-    path: &std::path::Path,
-    minutes: u64,
-    broker: &mut tokio::process::Child,
-) -> Result<config::Config> {
-    info!(
-        minutes,
-        "no feeder enrolled; the first stock feeder to connect is trusted"
-    );
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(minutes * 60);
-    let record = Enrollment::path(path);
-    loop {
-        if record.exists() {
-            return config::load(path);
-        }
-        if tokio::time::Instant::now() >= deadline {
-            bail!("no stock feeder connected within {minutes} min; nothing enrolled");
-        }
-        tokio::select! {
-            _ = tokio::time::sleep(ENROLL_POLL) => {}
-            result = broker.wait() => bail!("broker exited while waiting for a feeder: {result:?}"),
-            result = tokio::signal::ctrl_c() => {
-                result.context("shutdown signal failed")?;
-                bail!("stopped before a feeder enrolled");
-            }
-            result = terminated() => {
-                result.context("shutdown signal failed")?;
-                bail!("stopped before a feeder enrolled");
-            }
-        }
-    }
-}
+/// How long a stopped `ota-images` lets a transfer under way finish: its
+/// connection deadline, and a little more.
+const DRAIN: Duration = Duration::from_secs(310);
 
 async fn serve(
     path: PathBuf,
@@ -595,95 +561,24 @@ async fn serve(
         OtaTrial::Disabled => None,
     };
     let path = path.canonicalize()?;
-    let state = config::state(&path)?;
-    let enrolling = match (&state, enroll_minutes) {
-        (State::Device(_), _) => None,
-        (State::Unenrolled(_), Some(minutes)) => Some(minutes),
-        (State::Unenrolled(_), None) => bail!(
-            "no feeder is enrolled in {}; pass --enroll-minutes during an install",
-            path.display()
-        ),
-    };
-
-    // The broker runs as a child process of this same binary; kill_on_drop
-    // ties its lifetime to serve. It starts first: an installer's waits
-    // for a feeder to enroll before anything else knows the device.
-    let mut broker_command = Command::new(std::env::current_exe()?);
-    broker_command.arg("broker").arg("--config").arg(&path);
-    if let Some(minutes) = enrolling {
-        broker_command
-            .arg("--enroll-minutes")
-            .arg(minutes.to_string());
-    }
-    let mut child = broker_command.kill_on_drop(true).spawn()?;
-
-    let config = match (state, enrolling) {
-        (State::Device(config), _) => *config,
-        (State::Unenrolled(_), Some(minutes)) => enrolled(&path, minutes, &mut child).await?,
-        (State::Unenrolled(_), None) => bail!("no feeder is enrolled"),
-    };
-    let config = Arc::new(config);
-    let listener = tokio::net::TcpListener::bind(config.http_listen)
-        .await
-        .context("bind loopback HTTP API")?;
-
-    let mut controller = Controller::load(
-        (*config).clone(),
-        path.parent()
-            .context("config directory missing")?
-            .join(controller::LEDGER_FILE),
-        BUILD,
+    let mut server = Server::start(
+        &path,
+        server::Options {
+            trial,
+            enroll: enroll_minutes.map(|minutes| Duration::from_secs(minutes * 60)),
+            clock,
+            api: server::Api::Loopback,
+        },
     )?;
-    if trial == OtaTrial::Enabled {
-        controller.enable_ota_trial();
-    }
 
-    let (requests, receiver) = mpsc::channel(16);
-    let (status, status_rx) = watch::channel(controller.status.clone());
-    let (shutdown, mut shutdown_rx) = watch::channel(false);
-    let mut worker = tokio::spawn(mqtt::run(
-        config.clone(),
-        controller,
-        receiver,
-        status,
-        clock,
-    ));
-
-    let app = api::router(ApiState {
-        token: Arc::from(config.api_token.as_str()),
-        requests,
-        status: status_rx,
-        config_path: Arc::from(path.as_path()),
-        image_host: config.mqtt_listen.ip(),
-    });
-    let mut http = tokio::spawn(async move {
-        axum::serve(listener, app)
-            .with_graceful_shutdown(async move {
-                let _ = shutdown_rx.changed().await;
-            })
-            .await
-    });
-
-    info!(mqtt=%config.mqtt_listen,http=%config.http_listen,"local service starting; no traffic redirection applied");
-    // select! may consume `http`; a JoinHandle must not be awaited again after
-    // it completes, so the shutdown wait below is skipped in that case.
-    let mut http_finished = false;
+    // A SIGTERM (kill, timeout) must stop the broker too, through the same
+    // stop as Ctrl-C.
     let outcome: Result<()> = tokio::select! {
-        result = &mut worker => result.context("MQTT worker panicked").and_then(|r|r),
-        result = &mut http => {http_finished=true; Err(anyhow::anyhow!("HTTP server exited unexpectedly: {result:?}"))},
-        result = child.wait() => Err(anyhow::anyhow!("broker exited unexpectedly: {result:?}")),
+        result = server.finished() => result,
         result = tokio::signal::ctrl_c() => result.context("shutdown signal failed"),
-        // A SIGTERM (kill, timeout) must also stop the broker child; ending
-        // without this cleanup orphaned it (observed).
         result = terminated() => result.context("shutdown signal failed"),
     };
-
-    let _ = shutdown.send(true);
-    worker.abort();
-    let _ = child.kill().await;
-    if !http_finished {
-        let _ = tokio::time::timeout(Duration::from_secs(3), http).await;
-    }
+    server.stop().await;
 
     info!("service stopped; use network remove to restore cloud routing if enabled");
     outcome

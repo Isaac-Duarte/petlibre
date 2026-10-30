@@ -1,8 +1,9 @@
 //! Serve one reviewed replacement build for stock to install; never
 //! publishes a device command.
 //!
-//! `ota-images` runs this HTTP server on the fixed trial port for a single
-//! peer and a 15-minute accept window. The build is bound to its frozen
+//! [`start`] runs this HTTP server as a task, on the fixed trial port for a
+//! single peer and a 15-minute accept window: for `ota-images`, and for an
+//! installer in its own process. The build is bound to its frozen
 //! review's `ota_sha256` and held in memory once loaded, so changing the files
 //! afterwards cannot change what is served. A private lease beside the config
 //! records the random URL token, the served digest and the build's identity;
@@ -11,6 +12,8 @@ use std::{
     convert::Infallible, future::Future, io::Read, net::Ipv4Addr, path::Path, sync::Arc,
     time::Duration,
 };
+
+use tokio::{sync::watch, task::JoinHandle};
 
 use anyhow::{Context, Result, ensure};
 use axum::{
@@ -277,13 +280,71 @@ async fn run(
     Ok(())
 }
 
-pub async fn serve(
-    config: Config,
+/// The running image server, owned by whoever started it: the
+/// `ota-images` binary, or an installer in its own process.
+pub struct Images {
+    /// What the server serves, under which token, until when.
+    pub lease: Lease,
+    stop: watch::Sender<bool>,
+    task: Option<JoinHandle<Result<()>>>,
+    lease_path: std::path::PathBuf,
+}
+
+impl Images {
+    /// Where the server listens, as the trial's URL names it.
+    pub fn url(&self, host: Ipv4Addr) -> String {
+        format!("http://{host}:{PORT}/ota/{}/{ROUTE}", self.lease.token)
+    }
+
+    /// Whether the server has ended (its accept window closed, or it
+    /// failed).
+    pub fn is_finished(&self) -> bool {
+        self.task.as_ref().is_none_or(JoinHandle::is_finished)
+    }
+
+    /// Wait for the server to end on its own, and how it ended.
+    pub async fn finished(&mut self) -> Result<()> {
+        match self.task.take() {
+            Some(task) => task.await.context("the image server panicked")?,
+            None => Ok(()),
+        }
+    }
+
+    /// Stop admitting connections and let a transfer already under way
+    /// finish within `drain`; past it the server is aborted. Either way
+    /// its own lease is removed.
+    pub async fn stop(mut self, drain: Duration) {
+        self.stop.send_replace(true);
+        if let Some(mut task) = self.task.take()
+            && tokio::time::timeout(drain, &mut task).await.is_err()
+        {
+            task.abort();
+        }
+        remove_own(&self.lease_path, &self.lease);
+    }
+}
+
+/// Remove the lease at `path` only if it is `lease`: a newer server may
+/// have replaced it.
+fn remove_own(path: &Path, lease: &Lease) {
+    if std::fs::read(path)
+        .ok()
+        .and_then(|data| serde_json::from_slice::<Lease>(&data).ok())
+        .is_some_and(|current| current == *lease)
+    {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+/// Serve the build `review` holds to `peer` alone, for the accept window
+/// or until stopped, with its lease written beside `config_path`. Must be
+/// called inside a tokio runtime.
+pub async fn start(
+    config: &Config,
     config_path: &Path,
     review: &Path,
     peer: Ipv4Addr,
-    stop: impl Future<Output = ()>,
-) -> Result<()> {
+) -> Result<Images> {
     let std::net::IpAddr::V4(host) = config.mqtt_listen.ip() else {
         anyhow::bail!("OTA image host must use IPv4");
     };
@@ -310,37 +371,27 @@ pub async fn serve(
     // token appears. No directory listing, upload, generic file route, redirect,
     // firmware command or firewall change exists.
     storage::write_json(&lease_path, &lease)?;
-    #[expect(
-        clippy::print_stdout,
-        reason = "the operator's notice that the server is image-only"
-    )]
-    {
-        println!(
-            "Image server only; no update requested. Stops accepting at {} or on Ctrl-C or SIGTERM; active transfers drain.",
-            lease.expires_at
-        );
-        println!("Server token: {}", lease.token);
-        println!("Build: http://{host}:{PORT}/ota/{}/{ROUTE}", lease.token);
-    }
 
-    let result = run(listener, build, peer, lease.token, async {
-        tokio::select! {
-            _ = stop => {},
-            _ = tokio::time::sleep(Duration::from_secs(ACCEPT_WINDOW_SECONDS as u64)) => {},
-        }
+    let (stop, mut stopped) = watch::channel(false);
+    let token = lease.token;
+    let own = (lease_path.clone(), lease.clone());
+    let task = tokio::spawn(async move {
+        let result = run(listener, build, peer, token, async move {
+            tokio::select! {
+                _ = stopped.wait_for(|stop| *stop) => {},
+                _ = tokio::time::sleep(Duration::from_secs(ACCEPT_WINDOW_SECONDS as u64)) => {},
+            }
+        })
+        .await;
+        remove_own(&own.0, &own.1);
+        result
+    });
+    Ok(Images {
+        lease,
+        stop,
+        task: Some(task),
+        lease_path,
     })
-    .await;
-
-    // Remove only our own lease; a newer server may have replaced it.
-    if std::fs::read(&lease_path)
-        .ok()
-        .and_then(|data| serde_json::from_slice::<Lease>(&data).ok())
-        .is_some_and(|current| current == lease)
-    {
-        let _ = std::fs::remove_file(&lease_path);
-    }
-
-    result
 }
 
 #[cfg(test)]

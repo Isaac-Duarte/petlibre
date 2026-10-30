@@ -1,4 +1,6 @@
-//! The embedded MQTT broker, which `serve` runs as its `broker` child process.
+//! The embedded MQTT broker, which `serve` runs in its own process beside
+//! the server's session ([`crate::server`]); the `broker` subcommand runs it
+//! alone.
 //!
 //! The broker itself listens only on an ephemeral loopback port. The
 //! configured feeder-facing address is served by `compat`, which normalizes
@@ -13,6 +15,14 @@
 //! recorded and becomes the device; every other identity is refused as
 //! before. The server's own identity is derived from the device's ID, so
 //! the server logs in only once a device is known.
+//!
+//! That ordering loses stock's connect burst unless the broker waits: stock
+//! publishes its clock request, its start event and its version report as
+//! soon as its CONNACK arrives, and no retained message or queue keeps them
+//! for a subscriber that comes later (physical, October 30: the server
+//! subscribed 0.7 s after stock connected, and the version report was lost).
+//! So a [`Handoff`] holds the enrolling feeder's CONNACK until the server,
+//! told of the enrollment at once, has subscribed.
 
 use std::{
     future::Future,
@@ -35,6 +45,7 @@ use mqtt5::{
     protocol::v5::reason_codes::ReasonCode,
 };
 use subtle::ConstantTimeEq;
+use tokio::sync::watch;
 use tracing::{info, warn};
 
 use crate::{
@@ -59,6 +70,20 @@ struct Window {
     until: Instant,
 }
 
+/// How long an enrolling feeder's CONNACK waits for the server to
+/// subscribe. On loopback the server takes milliseconds; the bound only
+/// keeps a server that never comes from failing the feeder's connect, which
+/// the broker gives up on after 10 s. Past it the feeder is admitted
+/// anyway, and its burst may be lost as before.
+const HANDOFF_WAIT: Duration = Duration::from_secs(3);
+
+/// An enrollment handed to a server in the same process: `enrolled` is set
+/// as the feeder is recorded, and its CONNACK waits until `listening` is.
+pub struct Handoff {
+    pub enrolled: watch::Sender<bool>,
+    pub listening: watch::Receiver<bool>,
+}
+
 /// Who may log in: the device (once known) and the server.
 pub struct DeviceAuth {
     server_password: String,
@@ -66,6 +91,7 @@ pub struct DeviceAuth {
     window: Option<Window>,
     /// The feeder's own address behind each relayed connection.
     peers: Peers,
+    handoff: Option<Handoff>,
 }
 
 impl DeviceAuth {
@@ -81,6 +107,7 @@ impl DeviceAuth {
             })),
             window: None,
             peers: Peers::default(),
+            handoff: None,
         }
     }
 
@@ -96,7 +123,15 @@ impl DeviceAuth {
                 until: Instant::now() + window,
             }),
             peers: Peers::default(),
+            handoff: None,
         }
+    }
+
+    /// Hand the enrollment to a server in this process ([`Handoff`]).
+    #[must_use]
+    pub fn with_handoff(mut self, handoff: Handoff) -> Self {
+        self.handoff = Some(handoff);
+        self
     }
 
     /// The enrolled device's ID, once there is one.
@@ -213,11 +248,30 @@ impl AuthProvider for DeviceAuth {
         let password = connect.password.as_deref().unwrap_or(&[]);
         let peer = self.peers.feeder(addr);
 
-        let result = match self.login(&connect.client_id, username, password, peer) {
-            Some(user) => AuthResult::success_with_user(user),
-            None => AuthResult::fail(ReasonCode::NotAuthorized),
+        let unknown = self.device_id().is_none();
+        let user = self.login(&connect.client_id, username, password, peer);
+        let listening = match (&self.handoff, user) {
+            (Some(handoff), Some("device")) if unknown => {
+                handoff.enrolled.send_replace(true);
+                Some(handoff.listening.clone())
+            }
+            _ => None,
         };
-        Box::pin(async move { Ok(result) })
+        Box::pin(async move {
+            if let Some(mut listening) = listening
+                && tokio::time::timeout(HANDOFF_WAIT, listening.wait_for(|on| *on))
+                    .await
+                    .is_err()
+            {
+                warn!(
+                    "the server did not subscribe in time; the feeder's first reports may be lost"
+                );
+            }
+            Ok(match user {
+                Some(user) => AuthResult::success_with_user(user),
+                None => AuthResult::fail(ReasonCode::NotAuthorized),
+            })
+        })
     }
 
     fn authorize_publish<'a>(
@@ -303,8 +357,12 @@ pub fn subscribe_allowed(device: &str, user: Option<&str>, topic: &str) -> bool 
     }
 }
 
-/// Serve stock on `listen` with `auth` until stopped.
-pub async fn run(listen: SocketAddr, auth: DeviceAuth) -> Result<()> {
+/// Serve stock on `listen` with `auth` until `stop` resolves.
+pub async fn run(
+    listen: SocketAddr,
+    auth: DeviceAuth,
+    stop: impl Future<Output = ()>,
+) -> Result<()> {
     let listener = tokio::net::TcpListener::bind(listen).await?;
     let peers = auth.peers.clone();
 
@@ -341,17 +399,24 @@ pub async fn run(listen: SocketAddr, auth: DeviceAuth) -> Result<()> {
         .local_addr()
         .context("broker has no loopback listener")?;
 
+    // Shut down rather than dropped: the broker's client tasks end with it,
+    // so nothing is left holding a session once `run` returns.
     let shutdown = broker.shutdown_handle();
-    tokio::spawn(async move {
-        let _ = tokio::signal::ctrl_c().await;
-        shutdown.shutdown();
-    });
-
+    let running = broker.run();
+    tokio::pin!(running);
     tokio::select! {
-        result=broker.run()=>{result?;Ok(())},
-        result=compat::run(listener,broker_address,peers)=>result,
+        result = &mut running => {result?; Ok(())},
+        result = compat::run(listener, broker_address, peers) => result,
+        () = stop => {
+            shutdown.shutdown();
+            let _ = tokio::time::timeout(STOP_WAIT, running).await;
+            Ok(())
+        }
     }
 }
+
+/// How long a stopped broker gets to end its client tasks.
+const STOP_WAIT: Duration = Duration::from_secs(3);
 
 #[cfg(test)]
 mod tests {

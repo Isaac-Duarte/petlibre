@@ -208,3 +208,85 @@ async fn the_first_stock_feeder_enrolls_and_is_then_the_only_one() {
         json!({"error": wellfed_stock::api::ENROLLMENT_UNREADABLE})
     );
 }
+
+/// Stock sends its version once, as soon as it is admitted, and never
+/// repeats it until it restarts. In one process the server learns of the
+/// enrollment at once, and the broker holds the feeder's CONNACK until the
+/// server has subscribed, so that single report reaches the status.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_feeder_s_first_report_reaches_an_in_process_server() {
+    use wellfed_stock::{
+        clock,
+        server::{Api, Options, OtaTrial, Server},
+    };
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("server.json");
+    let [listen] = common::addresses().unwrap();
+    config::init_installer(&path, listen, chrono_tz::UTC).unwrap();
+    let server = Server::start(
+        &path.canonicalize().unwrap(),
+        Options {
+            trial: OtaTrial::Disabled,
+            enroll: Some(Duration::from_secs(60)),
+            clock: clock::Policy::Bounded,
+            api: Api::Off,
+        },
+    )
+    .unwrap();
+    assert!(server.handle().is_none(), "no session before a feeder");
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    while std::net::TcpStream::connect(listen).is_err() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the broker never listened"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    // Queued before the connect, so it goes once, the moment the CONNACK
+    // arrives, as stock's connect burst goes.
+    let (client, mut events) = stock(listen, DEVICE, "its-own-password");
+    client
+        .publish(
+            format!("dl/PLAF103/{DEVICE}/device/event/post"),
+            QoS::AtLeastOnce,
+            false,
+            json!({"cmd":"DEVICE_START_EVENT","ts":Utc::now().timestamp_millis(),
+                   "softwareVersion":"1.1.15","powerType":1})
+            .to_string(),
+        )
+        .await
+        .unwrap();
+    let session = tokio::spawn(async move { while events.poll().await.is_ok() {} });
+
+    let mut handle = None;
+    for _ in 0..100 {
+        handle = server.handle();
+        if handle.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let handle = handle.expect("the session runs once a feeder enrolled");
+    let mut reported = false;
+    for _ in 0..100 {
+        let status = handle.status().unwrap();
+        if status.version_reported_at.is_some() {
+            assert_eq!(status.attributes["softwareVersion"], "1.1.15");
+            assert_eq!(status.enrollment.unwrap().device, DEVICE);
+            reported = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(reported, "the single report reached the server");
+
+    session.abort();
+    server.stop().await;
+    // Stopped, the broker no longer listens.
+    assert!(
+        tokio::net::TcpStream::connect(listen).await.is_err(),
+        "the broker stopped with the server"
+    );
+}

@@ -28,6 +28,11 @@ abstract interface class FeederBook implements Listenable {
   /// Keep where `identity` last answered, so the next start tries it before
   /// NSD has looked.
   Future<void> answeredAt(String identity, String address);
+
+  /// Whether this phone owes `identity` its clock, having just paired.
+  bool clockDue(String identity);
+
+  void clockSynced(String identity);
 }
 
 /// The phone's identity and the feeders it knows. The client secret lives
@@ -75,8 +80,10 @@ class AppState extends ChangeNotifier implements FeederBook {
   @override
   List<KnownFeeder> get feeders => _store.feeders;
 
+  @override
   bool clockDue(String identity) => _clockDue.contains(identity);
 
+  @override
   void clockSynced(String identity) => _clockDue.remove(identity);
 
   @override

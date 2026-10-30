@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
 import '../src/rust/api/model.dart';
 import '../src/rust/api/session.dart';
@@ -6,6 +9,8 @@ import '../state/feeder.dart';
 import '../theme/theme.dart';
 import '../widgets/icons.dart';
 import '../widgets/layout.dart';
+import '../widgets/when.dart';
+import 'feeder/tabs.dart';
 
 /// Feed now: confirm the portions, then follow the feed to its end. The
 /// sheet shows only what the feeder said; an uncertain feed shows its range
@@ -37,12 +42,8 @@ TextStyle _title(BuildContext context, {double size = 24}) => TextStyle(
 
 String _portions(int n) => n == 1 ? 'portion' : 'portions';
 
-String _time(BuildContext context, DateTime? at) => at == null
-    ? ''
-    : MaterialLocalizations.of(context).formatTimeOfDay(
-        TimeOfDay.fromDateTime(at),
-        alwaysUse24HourFormat: MediaQuery.alwaysUse24HourFormatOf(context),
-      );
+String _time(BuildContext context, DateTime? at) =>
+    at == null ? '' : clockText(context, at);
 
 class _Confirm extends StatefulWidget {
   const _Confirm({required this.feeder});
@@ -124,7 +125,7 @@ class _ConfirmState extends State<_Confirm> {
         const SizedBox(height: 20),
         Text(
           "One portion is one turn of the feeder's wheel, about 9 seconds. "
-          'Up to $_most.',
+          "Up to $_most. Today's meals still run.",
           textAlign: TextAlign.center,
           style: TextStyle(
             fontSize: Sizes.base,
@@ -253,7 +254,8 @@ class _Progress extends StatelessWidget {
         ),
         _muted(
           context,
-          "You can close this. The result shows on $_name's card.",
+          "You can close this. The result shows on $_name's card and in its "
+          'history.',
         ),
         if (running) ...[
           OutlinedButton(
@@ -338,9 +340,29 @@ class _Progress extends StatelessWidget {
             'bowl before you feed again.',
           ),
         ),
-        FilledButton(
-          onPressed: () => _close(context),
-          child: const Text('Close'),
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton(
+                onPressed: () {
+                  _close(context);
+                  unawaited(
+                    context.push(
+                      '/feeder/${feeder.known.identity}?tab=$historyTab',
+                    ),
+                  );
+                },
+                child: const Text('See history'),
+              ),
+            ),
+            const SizedBox(width: Space.s3),
+            Expanded(
+              child: FilledButton(
+                onPressed: () => _close(context),
+                child: const Text('Close'),
+              ),
+            ),
+          ],
         ),
       ],
     );

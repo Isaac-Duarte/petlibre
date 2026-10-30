@@ -2,8 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
-import '../platform/discovery.dart';
+import '../platform/feeder_ports.dart';
 import '../src/rust/api/error.dart';
+import '../src/rust/api/feeder.dart';
 import '../src/rust/api/model.dart';
 import '../src/rust/api/session.dart';
 import '../src/rust/api/store.dart';
@@ -81,7 +82,7 @@ class FeedState {
 /// goes through the device API like any other client's; this holds no
 /// feeding logic beyond showing what the feeder said.
 class FeederController extends ChangeNotifier {
-  FeederController(this._app, this.known) {
+  FeederController(this._book, this._ports, this.known) {
     unawaited(_serve());
   }
 
@@ -89,7 +90,8 @@ class FeederController extends ChangeNotifier {
   static const _retryFirst = Duration(seconds: 3);
   static const _retryMost = Duration(seconds: 30);
 
-  final AppState _app;
+  final FeederBook _book;
+  final FeederPorts _ports;
   KnownFeeder known;
 
   Connection connection = Connection.looking;
@@ -100,6 +102,12 @@ class FeederController extends ChangeNotifier {
   ClientRole? role;
   ErrorKind? error;
   FeedState feed = FeedState.idle;
+
+  /// The feeder's history as this session has read it, oldest first.
+  List<HistoryEntry> history = const [];
+
+  /// [history] holds everything the feeder kept when this session opened.
+  bool historyRead = false;
 
   FeederSession? _session;
   bool _disposed = false;
@@ -144,6 +152,14 @@ class FeederController extends ChangeNotifier {
 
   void dismissFeed() => _setFeed(FeedState.idle);
 
+  /// One request to the feeder. A write goes out once and is never sent
+  /// again; the reply says how it ended, an unknown end included.
+  Future<FeederReply> ask(FeederRequest request) async {
+    final session = _session;
+    if (session == null) return const FeederReply.notSent();
+    return session.ask(request: request);
+  }
+
   Future<void> _serve() async {
     var retry = _retryFirst;
     while (!_disposed) {
@@ -169,18 +185,17 @@ class FeederController extends ChangeNotifier {
       return known.address;
     }
     _set(Connection.looking);
-    return await Discovery.locate(known.identity, _locateWait) ?? known.address;
+    return await _ports.locate(known.identity, _locateWait) ?? known.address;
   }
 
   /// One session until it closes; whether it opened.
   Future<bool> _run(String address) async {
     final FeederSession session;
     try {
-      session = FeederSession(
-        key: _app.key,
-        feeder: identityBytes(hex: known.identity),
-        address: address,
-        syncClock: _app.clockDue(known.identity),
+      session = _ports.open(
+        known.identity,
+        address,
+        syncClock: _book.clockDue(known.identity),
       );
     } on BridgeError catch (failed) {
       error = failed.kind;
@@ -201,10 +216,12 @@ class FeederController extends ChangeNotifier {
           opened = true;
           role = r;
           error = null;
+          history = const [];
+          historyRead = false;
           _set(Connection.online);
           try {
-            await _app.answeredAt(known.identity, address);
-            known = _app.feeders.firstWhere(
+            await _book.answeredAt(known.identity, address);
+            known = _book.feeders.firstWhere(
               (f) => f.identity == known.identity,
               orElse: () => known,
             );
@@ -270,9 +287,16 @@ class FeederController extends ChangeNotifier {
             );
           }
         case SessionUpdate_ClockSynced():
-          _app.clockSynced(known.identity);
+          _book.clockSynced(known.identity);
         case SessionUpdate_ClockNotSynced():
           // Still due: the next session tries again.
+          break;
+        case SessionUpdate_History(:final entries, :final caughtUp):
+          history = [...history, ...entries];
+          historyRead = historyRead || caughtUp;
+          _notify();
+        case SessionUpdate_Log():
+          // Heard only by a screen that asked; none does yet.
           break;
         case SessionUpdate_Closed(error: final e):
           error = e?.kind;

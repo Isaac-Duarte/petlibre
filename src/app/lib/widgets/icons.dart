@@ -37,7 +37,15 @@ enum Glyph {
   ),
   failed('<circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/>'),
   warning('<path d="M12 3L2 21h20L12 3zM12 10v5M12 18h.01"/>'),
-  install('<path d="M12 3v12M7 10l5 5 5-5M4 20h16"/>');
+  install('<path d="M12 3v12M7 10l5 5 5-5M4 20h16"/>'),
+  food(
+    '<rect x="6" y="3" width="12" height="11" rx="3"/><path d="M5 16h14M7 19h10"/>',
+  ),
+  power('<path d="M13 2L4 14h7l-1 8 9-12h-7z"/>'),
+  droplet('<path d="M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11z"/>'),
+  lock(
+    '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+  );
 
   const Glyph(this.paths);
 

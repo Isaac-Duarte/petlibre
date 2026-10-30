@@ -163,10 +163,10 @@ async fn serve(
     };
     if sync_clock || status.clock.is_none() {
         let sync = wellfed_client::time::sync(Timestamp::now(), &TimeZone::system());
-        serving.request(Op::TimeSync(sync), Asked::Clock)?;
+        serving.request(&Op::TimeSync(sync), Asked::Clock)?;
     }
-    serving.request(Op::GetPlans, Asked::Plans)?;
-    serving.request(Op::GetTime, Asked::Time)?;
+    serving.request(&Op::GetPlans, Asked::Plans)?;
+    serving.request(&Op::GetTime, Asked::Time)?;
     serving.connection.subscribe(None, false).await?;
     serving.facts.status = Some(status);
     if !serving.card() {
@@ -192,7 +192,7 @@ async fn serve(
                     Command::CancelFeed { feed } => (Op::CancelFeed { feed }, Asked::Cancel),
                     Command::Ask { op, reply } => (op, Asked::Ask(reply)),
                 };
-                serving.request(op, what)?;
+                serving.request(&op, what)?;
             }
             received = serving.connection.receive(wait) => {
                 let more = match received {
@@ -211,9 +211,9 @@ async fn serve(
 }
 
 impl<U: FnMut(SessionUpdate) -> bool> Serving<'_, U> {
-    fn request(&mut self, op: Op, what: Asked) -> Result<(), BridgeError> {
+    fn request(&mut self, op: &Op, what: Asked) -> Result<(), BridgeError> {
         let id = random()?;
-        self.connection.request(id, &op)?;
+        self.connection.request(id, op)?;
         self.asked.insert(id, what);
         Ok(())
     }
@@ -233,7 +233,7 @@ impl<U: FnMut(SessionUpdate) -> bool> Serving<'_, U> {
             .values()
             .any(|what| matches!(what, Asked::Status))
         {
-            self.request(Op::Status, Asked::Status)?;
+            self.request(&Op::Status, Asked::Status)?;
         }
         Ok(())
     }
@@ -280,7 +280,7 @@ impl<U: FnMut(SessionUpdate) -> bool> Serving<'_, U> {
                 Ok(true)
             }
             (Asked::Clock, Some(Answer::Done { .. })) => {
-                self.request(Op::GetTime, Asked::Time)?;
+                self.request(&Op::GetTime, Asked::Time)?;
                 Ok((self.update)(SessionUpdate::ClockSynced))
             }
             (Asked::Clock, _) => Ok((self.update)(SessionUpdate::ClockNotSynced)),
@@ -330,8 +330,8 @@ impl<U: FnMut(SessionUpdate) -> bool> Serving<'_, U> {
     fn news(&mut self, pushed: &Pushed, fed: Option<&Feed>) -> Result<bool, BridgeError> {
         if let Pushed::Event(event) = pushed {
             match event.body {
-                EventBody::Plans { .. } => self.request(Op::GetPlans, Asked::Plans)?,
-                EventBody::ClockSync { .. } => self.request(Op::GetTime, Asked::Time)?,
+                EventBody::Plans { .. } => self.request(&Op::GetPlans, Asked::Plans)?,
+                EventBody::ClockSync { .. } => self.request(&Op::GetTime, Asked::Time)?,
                 _ => {}
             }
         }

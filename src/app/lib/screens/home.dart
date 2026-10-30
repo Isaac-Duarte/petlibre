@@ -1,65 +1,37 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../src/rust/api/model.dart';
 import '../src/rust/api/session.dart' as api;
-import '../state/app_state.dart';
 import '../state/feeder.dart';
+import '../state/fleet.dart';
 import '../theme/theme.dart';
 import '../widgets/icons.dart';
 import '../widgets/layout.dart';
+import '../widgets/when.dart';
 import 'feed_sheet.dart';
+import 'feeder/no_time.dart';
+import 'feeder/tabs.dart';
 
 /// Feeder-first Home: one card per feeder this phone knows, large for one
 /// feeder and compact for several.
-class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key, required this.app});
+class HomeScreen extends StatelessWidget {
+  const HomeScreen({super.key, required this.fleet});
 
-  final AppState app;
-
-  @override
-  State<HomeScreen> createState() => _HomeScreenState();
-}
-
-class _HomeScreenState extends State<HomeScreen> {
-  final _feeders = <String, FeederController>{};
+  final FeederFleet fleet;
 
   @override
-  void initState() {
-    super.initState();
-    widget.app.addListener(_sync);
-    _sync();
-  }
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: fleet,
+    builder: (context, _) => _build(context),
+  );
 
-  /// One controller per known feeder, kept across rebuilds.
-  void _sync() {
-    final known = {for (final f in widget.app.feeders) f.identity: f};
-    for (final gone
-        in _feeders.keys.where((id) => !known.containsKey(id)).toList()) {
-      _feeders.remove(gone)?.dispose();
-    }
-    for (final feeder in known.values) {
-      _feeders.putIfAbsent(
-        feeder.identity,
-        () => FeederController(widget.app, feeder),
-      );
-    }
-    if (mounted) setState(() {});
-  }
-
-  @override
-  void dispose() {
-    widget.app.removeListener(_sync);
-    for (final controller in _feeders.values) {
-      controller.dispose();
-    }
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
+  Widget _build(BuildContext context) {
     final c = context.colors;
-    final one = _feeders.length == 1;
+    final feeders = fleet.all.toList();
+    final one = feeders.length == 1;
     return Scaffold(
       appBar: AppBar(
         toolbarHeight: 64,
@@ -84,10 +56,11 @@ class _HomeScreenState extends State<HomeScreen> {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
         children: [
-          for (final (i, controller) in _feeders.values.indexed) ...[
+          for (final (i, controller) in feeders.indexed) ...[
             if (i > 0) const SizedBox(height: Space.s3),
             FeederCard(controller: controller, compact: !one),
           ],
+          if (one) TodaysMeals(controller: feeders.first),
         ],
       ),
     );
@@ -117,28 +90,32 @@ class FeederCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            children: [
-              FeederImage(size: 96, dimmed: _unreachable),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      controller.known.name,
-                      style: TextStyle(
-                        fontSize: 22,
-                        fontWeight: Fonts.semibold,
-                        color: c.text,
+          InkWell(
+            onTap: () => _open(context),
+            child: Row(
+              children: [
+                FeederImage(size: 96, dimmed: _unreachable),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        controller.known.name,
+                        style: TextStyle(
+                          fontSize: 22,
+                          fontWeight: Fonts.semibold,
+                          color: c.text,
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: Space.s2),
-                    _chips(context),
-                  ],
+                      const SizedBox(height: Space.s2),
+                      _chips(context),
+                    ],
+                  ),
                 ),
-              ),
-            ],
+                StrokeIcon(Glyph.chevron, size: 22, color: c.textMuted),
+              ],
+            ),
           ),
           if (card != null) ...[
             const SizedBox(height: Space.s4),
@@ -164,14 +141,17 @@ class FeederCard extends StatelessWidget {
     );
   }
 
+  void _open(BuildContext context, [int tab = todayTab]) =>
+      unawaited(context.push('/feeder/${controller.known.identity}?tab=$tab'));
+
   Widget _compact(BuildContext context) {
     final c = context.colors;
-    final line = _line();
+    final line = _line(context);
     final why = _why();
     return Panel(
       padding: const EdgeInsets.fromLTRB(10, 14, 14, 14),
       onTap: controller.feed.phase == FeedPhase.idle
-          ? null
+          ? () => _open(context)
           : () => showFeedSheet(context, controller),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -326,24 +306,32 @@ class FeederCard extends StatelessWidget {
       (false, null) => ('Battery', 'Wi-Fi off'),
       (null, _) => ('Unknown', 'Not read yet'),
     };
-    final signal = switch (card.rssi) {
-      >= -60 => 'Good',
-      >= -72 => 'Fair',
-      _ => 'Weak',
-    };
+    final next = card.nextMeal;
+    final last = card.lastFed;
+    final lastAt = last?.atMs;
     return Row(
       children: [
-        Expanded(child: _Tile('Power', power, battery)),
-        const SizedBox(width: Space.s2),
         Expanded(
-          child: _Tile('Panel', switch (card.locked) {
-            true => 'Locked',
-            false => 'Unlocked',
-            null => 'Unknown',
-          }, 'Child lock'),
+          child: next == null
+              ? const _Tile('Next meal', 'None', 'No meal set')
+              : _Tile(
+                  'Next meal',
+                  minuteText(context, next.minute),
+                  portionsText(next.portions),
+                ),
         ),
         const SizedBox(width: Space.s2),
-        Expanded(child: _Tile('Wi-Fi', signal, '${card.rssi} dBm')),
+        Expanded(
+          child: last == null
+              ? const _Tile('Last fed', 'None', 'Not read yet')
+              : _Tile(
+                  'Last fed',
+                  lastAt == null ? 'Unknown' : clockTextMs(context, lastAt),
+                  deliveredText(last),
+                ),
+        ),
+        const SizedBox(width: Space.s2),
+        Expanded(child: _Tile('Power', power, battery)),
       ],
     );
   }
@@ -353,20 +341,13 @@ class FeederCard extends StatelessWidget {
     final live = _live;
     final why = _why();
     return [
-      if (live != null && !live.clockSet)
-        const Notice(
-          tone: Tone.warning,
-          lead: 'Meals are on hold.',
-          text:
-              "The feeder doesn't know the time yet, so it won't guess when "
-              'to feed. Feed now still works.',
-        ),
+      if (live != null && !live.clockSet) NoTimeNotice(feeder: controller),
       if (live?.blocked case final blocked? when blocked != Blocked.feeding)
         Notice(tone: Tone.warning, text: '${blockedWords(blocked)}.'),
       if (card?.fault case final fault?)
         Notice(
           tone: Tone.fault,
-          lead: fault == FeedOutcome.uncertain
+          lead: fault.outcome == FeedOutcome.uncertain
               ? "The last feed didn't finish."
               : 'The last feed failed.',
           text:
@@ -374,20 +355,34 @@ class FeederCard extends StatelessWidget {
               'at the bowl before you feed again.',
         ),
       if (card?.food == FoodLevel.empty)
-        const Notice(
+        Notice(
           tone: Tone.fault,
-          lead: 'The hopper is empty.',
-          text: 'Refill it, or meals and feeds drop nothing.',
+          lead: _emptyLead(context, card),
+          text: 'Refill it, then feed again if your pet missed the meal.',
         ),
       if (why != null) Notice(tone: Tone.neutral, text: why),
     ];
   }
 
+  /// The hopper's last reading, when the history has its feed.
+  static String _emptyLead(BuildContext context, api.Card? card) {
+    final at = card?.lastFed?.atMs;
+    return at == null
+        ? 'The hopper is empty.'
+        : 'The hopper read empty at ${clockTextMs(context, at)}.';
+  }
+
   /// The compact card's second line.
-  String? _line() {
+  String? _line(BuildContext context) {
     final feed = controller.feed;
     if (feed.phase == FeedPhase.running) return 'Started from this phone';
-    if (controller.connection != Connection.offline) return null;
+    if (controller.connection != Connection.offline) {
+      final next = controller.card?.nextMeal;
+      return next == null
+          ? null
+          : 'Next ${minuteText(context, next.minute)} · '
+                '${portionsText(next.portions)}';
+    }
     final at = controller.cardAt;
     if (at == null) return 'Not heard from yet';
     final minutes = DateTime.now().difference(at).inMinutes;
@@ -433,6 +428,139 @@ String blockedWords(Blocked reason) => switch (reason) {
   Blocked.battery => 'Battery too low to feed',
   Blocked.restarting => 'Restarting',
 };
+
+/// What today's meals come to (5.1), below the only card.
+class TodaysMeals extends StatelessWidget {
+  const TodaysMeals({super.key, required this.controller});
+
+  final FeederController controller;
+
+  @override
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: controller,
+    builder: (context, _) {
+      final c = context.colors;
+      final meals = controller.card?.meals ?? const <api.MealView>[];
+      if (meals.isEmpty) return const SizedBox.shrink();
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const SizedBox(height: Space.s4),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  "Today's meals",
+                  style: TextStyle(
+                    fontSize: Sizes.md,
+                    fontWeight: Fonts.semibold,
+                    color: c.text,
+                  ),
+                ),
+              ),
+              TextButton(
+                onPressed: () => unawaited(
+                  context.push(
+                    '/feeder/${controller.known.identity}?tab=$scheduleTab',
+                  ),
+                ),
+                child: const Text('Schedule'),
+              ),
+            ],
+          ),
+          Panel(
+            child: Column(
+              children: [
+                for (final (i, meal) in meals.indexed)
+                  _MealRow(meal, first: i == 0),
+              ],
+            ),
+          ),
+        ],
+      );
+    },
+  );
+}
+
+class _MealRow extends StatelessWidget {
+  const _MealRow(this.meal, {required this.first});
+
+  final api.MealView meal;
+  final bool first;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final portions = portionsText(meal.portions);
+    final what = meal.call > 0 ? '$portions · meal call' : portions;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: Space.s4, vertical: 12),
+      decoration: BoxDecoration(
+        border: first ? null : Border(top: BorderSide(color: c.line)),
+      ),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 64,
+            child: Text(
+              minuteText(context, meal.minute),
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: Fonts.semibold,
+                color: c.text,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              what,
+              style: TextStyle(fontSize: Sizes.base, color: c.textMuted),
+            ),
+          ),
+          _standing(context),
+        ],
+      ),
+    );
+  }
+
+  Widget _standing(BuildContext context) {
+    final c = context.colors;
+    Text words(String text, Color color) => Text(
+      text,
+      style: TextStyle(
+        fontSize: Sizes.base,
+        fontWeight: Fonts.medium,
+        color: color,
+      ),
+    );
+    return switch (meal.standing) {
+      api.MealStanding_Fed(:final result) when result.uncertain => words(
+        'Uncertain',
+        c.warning,
+      ),
+      api.MealStanding_Fed(:final result)
+          when result.confirmed == result.requested =>
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            StrokeIcon(Glyph.check, size: 16, color: c.ok, weight: 2),
+            const SizedBox(width: Space.s1),
+            words('Fed', c.ok),
+          ],
+        ),
+      api.MealStanding_Fed(:final result) => words(
+        'Fed ${result.confirmed} of ${result.requested}',
+        c.warning,
+      ),
+      api.MealStanding_Passed() => words('No feed recorded', c.textMuted),
+      api.MealStanding_Next(:final atMs) => words(
+        untilText(DateTime.now(), atMs),
+        c.accent,
+      ),
+      api.MealStanding_Later() => words('Later', c.textMuted),
+    };
+  }
+}
 
 /// A sunken fact: a label, the value, and a note under it.
 class _Tile extends StatelessWidget {

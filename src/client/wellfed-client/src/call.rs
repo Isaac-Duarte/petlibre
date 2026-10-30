@@ -812,4 +812,84 @@ mod tests {
         assert_eq!(clip.settled(&none), Err(UploadError::Rejected));
         assert_eq!(clip.resume(&none), Err(UploadError::Lost));
     }
+
+    fn short_clip() -> Clip {
+        Clip {
+            stream: vec![7; CALL_CHUNK_MAX + 1],
+            crc: 9,
+        }
+    }
+
+    #[test]
+    fn an_upload_waits_on_busy_and_gives_up_past_its_bound() {
+        let clip = short_clip();
+        let start = Instant::now();
+        let mut upload = Upload::new(&clip);
+        assert_eq!(upload.poll(start), Step::Ask(clip.start()));
+        upload.answer(&Answer::Done { generation: None }, start);
+
+        let Step::Ask(first) = upload.poll(start) else {
+            panic!("no first chunk");
+        };
+        upload.answer(&Answer::Refused(Refusal::Busy), start);
+        assert_eq!(upload.poll(start), Step::Wait(RETRY));
+        assert_eq!(upload.poll(start), Step::Ask(first));
+
+        let late = start + BUSY_WAIT + Duration::from_secs(1);
+        assert_eq!(upload.poll(late), Step::Failed(UploadFailed::Busy));
+    }
+
+    #[test]
+    fn an_upload_ends_once_the_feeder_stored_the_clip_it_sent() {
+        let clip = short_clip();
+        let now = Instant::now();
+        let (bytes, crc) = (clip.bytes(), clip.crc());
+        let view = |clip| CallView {
+            writable: true,
+            clip,
+        };
+        let mut upload = Upload::new(&clip);
+        assert!(matches!(upload.poll(now), Step::Ask(_)));
+        upload.answer(&Answer::Done { generation: None }, now);
+
+        // Two chunks, the last shorter.
+        for received in [512, bytes] {
+            assert!(matches!(upload.poll(now), Step::Ask(Op::CallChunk { .. })));
+            let receiving = CallClip::Receiving {
+                bytes,
+                crc,
+                received,
+            };
+            upload.answer(&Answer::Call(view(receiving)), now);
+        }
+
+        assert_eq!(upload.poll(now), Step::Ask(Op::GetCall));
+        let reading = CallClip::Receiving {
+            bytes,
+            crc,
+            received: bytes,
+        };
+        upload.answer(&Answer::Call(view(reading)), now);
+        assert_eq!(upload.poll(now), Step::Wait(RETRY));
+
+        assert_eq!(upload.poll(now), Step::Ask(Op::GetCall));
+        let stored = view(CallClip::Stored { bytes, crc });
+        upload.answer(&Answer::Call(stored), now);
+        assert_eq!(upload.poll(now), Step::Stored(stored));
+    }
+
+    #[test]
+    fn an_upload_refused_at_its_start_says_so() {
+        let clip = short_clip();
+        let now = Instant::now();
+        let mut upload = Upload::new(&clip);
+        upload.poll(now);
+        upload.answer(&Answer::Refused(Refusal::Forbidden), now);
+        assert_eq!(
+            upload.poll(now),
+            Step::Failed(UploadFailed::Upload(UploadError::Refused(
+                Refusal::Forbidden
+            )))
+        );
+    }
 }

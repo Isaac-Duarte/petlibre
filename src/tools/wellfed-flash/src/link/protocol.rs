@@ -871,7 +871,9 @@ impl Echo {
             press.chord, press.hold_ms
         );
         let released = format!("PLKEY1 up chord={} ", press.chord);
-        let lines: Vec<&str> = text.lines().map(str::trim_end).collect();
+        // The build's log lines can start with a stray `\r` as well as end
+        // with one (physical, October 29), so both ends are trimmed.
+        let lines: Vec<&str> = text.lines().map(str::trim).collect();
 
         if let Some(at) = lines.iter().position(|line| *line == pressed) {
             return Self::Pressed {
@@ -1007,6 +1009,16 @@ mod press_tests {
         let result = press(&mut feeder, DISPENSE).unwrap();
         assert!(result.echoed && result.released);
         assert_eq!(feeder.sent, LINE);
+    }
+
+    #[test]
+    fn records_framed_as_the_feeder_frames_them_still_match() {
+        // The bytes the first hardware press returned.
+        let mut feeder = Feeder::new(
+            b"PLKEY1 virtual press=dispense hold_ms=150\r\n\rPLKEY1 down chord=dispense dropped=0\r\n\
+              \rPLKEY1 up chord=dispense level=0 held_ms=143 dropped=0\r\n",
+        );
+        assert!(press(&mut feeder, DISPENSE).unwrap().released);
     }
 
     #[test]

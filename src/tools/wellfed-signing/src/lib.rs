@@ -264,6 +264,20 @@ impl Frozen {
         })
     }
 
+    /// [`Self::stock`] without the pin, for tests and simulators, which
+    /// cannot hold the vendor's image. Never in a build that ships: only
+    /// the `fixtures` feature has it.
+    #[cfg(feature = "fixtures")]
+    pub fn synthetic_stock(image: Vec<u8>) -> Self {
+        let build_id = Sha256::digest(image.get(CONTAINER_HEADER..).unwrap_or_default()).into();
+        Self {
+            image,
+            kind: ImageKind::Stock,
+            build_id,
+            manifest: None,
+        }
+    }
+
     /// Stock or a build, as the verified review records it.
     pub fn kind(&self) -> ImageKind {
         self.kind

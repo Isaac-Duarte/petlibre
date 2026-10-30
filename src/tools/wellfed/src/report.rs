@@ -2,7 +2,7 @@
 //! [`Event`] as the line (or lines) it has always printed, on standard
 //! error, so standard output carries only what `--prompts lines` puts there.
 
-use wellfed_client::install::DnsCheck;
+use wellfed_client::install::{DnsCheck, STOCK_VERSION};
 use wellfed_client::update_key::Enrolled;
 use wellfed_install::Report;
 use wellfed_install::event::{Enrollment, Event, PlansResult, Wait};
@@ -141,6 +141,21 @@ pub(crate) fn line(event: &Event) -> String {
         }
         Event::SignersUnread { error } => {
             format!("The feeder's clients could not be read ({error}).")
+        }
+        Event::RestoreSigned {
+            version,
+            floor,
+            key,
+        } => format!(
+            "Signed stock {STOCK_VERSION} as version {version} (a downgrade at floor {floor}) \
+             with update key {}.",
+            wellfed_formats::hex::encode(key)
+        ),
+        Event::Restoring => {
+            "Offering stock: bank 1 gives way, and bank 0 writes stock into bank 1.".to_string()
+        }
+        Event::RestoreKeyKept { error } => {
+            format!("The restore's update key file could not be removed: {error}")
         }
         Event::Floor(floor) => format!("The feeder's floor is version {floor}."),
         Event::FloorUnread { error } => format!("The feeder's floor could not be read ({error})."),

@@ -48,6 +48,7 @@ pub mod listen;
 pub mod pairing;
 pub mod platform;
 pub mod push;
+pub mod restore;
 mod review;
 mod run;
 pub mod session;

@@ -34,6 +34,8 @@ uuid.workspace = true
 wellfed-core.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
 wellfed-feeder-sim = { workspace = true, features = ["harness"] }
+wellfed-install = { workspace = true, features = ["fixtures"] }
+wellfed-signing.workspace = true
 
 [lints]
 workspace = true

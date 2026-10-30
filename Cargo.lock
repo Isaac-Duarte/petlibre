@@ -4982,6 +4982,7 @@ dependencies = [
  "wellfed-install",
  "wellfed-model",
  "wellfed-session",
+ "wellfed-signing",
 ]
 
 [[package]]
@@ -5359,6 +5360,7 @@ dependencies = [
  "uuid",
  "wellfed-client",
  "wellfed-connect",
+ "wellfed-core",
  "wellfed-feeder-sim",
  "wellfed-formats",
  "wellfed-model",

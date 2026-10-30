@@ -242,6 +242,10 @@ pub struct Hardware {
     pub ble_notify_fails: bool,
     pub ble_disconnects: u32,
     pub ble_stats: BleStats,
+    /// Bytes waiting in the log UART's receive FIFO, and whether it
+    /// overran before the next is read.
+    pub log_uart_rx: VecDeque<u8>,
+    pub log_uart_overrun: bool,
 }
 
 impl Default for Hardware {
@@ -390,6 +394,8 @@ impl Default for Hardware {
             ble_notify_fails: false,
             ble_disconnects: 0,
             ble_stats: BleStats::default(),
+            log_uart_rx: VecDeque::new(),
+            log_uart_overrun: false,
         }
     }
 }

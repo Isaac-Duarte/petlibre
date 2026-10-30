@@ -89,6 +89,33 @@ const _: () = assert!(
         && k::WELLFED_PINMUX_GPIO == 0
 );
 
+/// The log UART's line status and receive buffer, as offsets into
+/// `UART_TypeDef` (`LSR`, `RB_THR`) in the pinned `hal_platform.h`.
+const LOGUART_LSR: u32 = 0x14;
+const LOGUART_RBR: u32 = 0x24;
+
+/// The oldest byte the log UART received, if any. Only the `virtual-panel`
+/// variant calls it: no other code in the image reads that FIFO (no vendor
+/// shell is linked, KM0 disables the log UART's interrupt, and KM4 holds
+/// its PMU wakelock, so KM0's tickless drain never runs).
+pub fn log_uart_receive() -> crate::LogUartReceive {
+    // SAFETY: the log UART's registers are always mapped on KM4, which
+    // prints through the same block. Reading the status clears only its
+    // error flags; reading the receive register pops one byte, and only
+    // after the status says one is there.
+    unsafe {
+        let status = ptr::read_volatile(reg(k::WELLFED_LOGUART + LOGUART_LSR));
+        if status & k::WELLFED_LOGUART_DATA_READY == 0 {
+            return crate::LogUartReceive::Empty;
+        }
+        let word = ptr::read_volatile(reg(k::WELLFED_LOGUART + LOGUART_RBR));
+        crate::LogUartReceive::Byte {
+            byte: word.to_le_bytes()[0],
+            overrun: status & k::WELLFED_LOGUART_OVERRUN != 0,
+        }
+    }
+}
+
 /// LP `REG_SWD_PMUX_EN`.
 pub fn swd_pinmux() -> u32 {
     // SAFETY: a fixed register in the pinned SDK memory map.

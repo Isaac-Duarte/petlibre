@@ -21,9 +21,9 @@ check: check-rust check-deps check-cross check-virtual-feeder check-docs
 PRODUCTION_LINTS = -D clippy::unwrap_used -D clippy::cast_possible_truncation \
 	-D clippy::needless_pass_by_value -D unreachable_pub
 
-# The last six lines check the bench variants' injections in wellfed-hal
-# (`stop-fail`, and `feed-faults` for `feed-jam` and `sensor-fault`), which
-# no workspace build enables.
+# The last nine lines check the bench variants' injections in wellfed-hal
+# (`stop-fail`, `feed-faults` for `feed-jam` and `sensor-fault`, and
+# `virtual-panel`), which no workspace build enables.
 check-rust:
 	cargo fmt --all -- --check
 	cargo clippy --locked --workspace --all-targets -- -D warnings
@@ -36,6 +36,9 @@ check-rust:
 	cargo clippy --locked -p wellfed-hal --features feed-faults --all-targets -- -D warnings
 	cargo clippy --locked -p wellfed-hal --features feed-faults --lib -- -D warnings $(PRODUCTION_LINTS)
 	cargo nextest run --locked -p wellfed-hal --features feed-faults --test feed_faults
+	cargo clippy --locked -p wellfed-hal --features virtual-panel --all-targets -- -D warnings
+	cargo clippy --locked -p wellfed-hal --features virtual-panel --lib -- -D warnings $(PRODUCTION_LINTS)
+	cargo nextest run --locked -p wellfed-hal --features virtual-panel --test virtual_panel
 
 # Licenses, advisories, duplicate versions and sources (deny.toml), then the
 # out-of-workspace fuzz and bench board crates' own lockfiles under their own

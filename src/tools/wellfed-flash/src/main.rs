@@ -156,23 +156,12 @@ struct ReadArgs {
     #[arg(long, value_enum, default_value = "km4")]
     start_core: Core,
     /// The button a press holds: reset, mic, dispense or lock.
-    #[arg(long, value_parser = button)]
+    #[arg(long, value_parser = virtual_panel::button)]
     button: Option<Button>,
     /// How long a press holds its button.
     #[arg(long, default_value_t = virtual_panel::DEFAULT_HOLD_MS,
           value_parser = clap::value_parser!(u32).range(1..=i64::from(virtual_panel::MAX_HOLD_MS)))]
     hold_ms: u32,
-}
-
-/// Why a `--button` did not parse; clap shows it.
-#[derive(Debug, thiserror::Error)]
-#[error("{text} is not reset, mic, dispense or lock")]
-struct ButtonError {
-    text: String,
-}
-
-fn button(text: &str) -> Result<Button, ButtonError> {
-    Button::parse(text).ok_or_else(|| ButtonError { text: text.into() })
 }
 
 #[derive(Args)]

@@ -39,7 +39,8 @@ An install job asks questions: wait_for {for: prompt}, read bench_status's promp
 job_answer; whether this is the owner's feeder and the panel's recovery window are a person's to answer. \
 One job runs at a time. Write tools (flash_execute, give_way_execute, stock_execute) need the plan \
 SHA-256 a prepare printed, after review. During a UART write nothing on the bench may be touched and \
-the bench host should stay idle. Motion needs a person at the bench and is refused here. Record steps, \
+the bench host should stay idle. Motion needs a person at the bench and is refused here, except a \
+press of a virtual-panel build's Dispense with confirm_motion (the hopper empty). Record steps, \
 timers and evidence with the note tools. Label findings physical observation, static analysis or \
 simulation.";
 

@@ -380,6 +380,16 @@ pub unsafe fn gpio_enable_outputs(port: u32, mask: u32) {
     }
 }
 
+pub fn log_uart_receive() -> crate::LogUartReceive {
+    with(|h| match h.log_uart_rx.pop_front() {
+        None => crate::LogUartReceive::Empty,
+        Some(byte) => crate::LogUartReceive::Byte {
+            byte,
+            overrun: core::mem::take(&mut h.log_uart_overrun),
+        },
+    })
+}
+
 pub fn swd_pinmux() -> u32 {
     with(|h| h.swd_pmux)
 }

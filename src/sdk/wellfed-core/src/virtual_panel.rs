@@ -20,8 +20,27 @@ pub const DEFAULT_HOLD_MS: u32 = 150;
 /// The longest hold a line may ask for: past every hold threshold a
 /// firmware sets, short of a stuck button.
 pub const MAX_HOLD_MS: u32 = 15_000;
-/// The longest line kept; a longer one is dropped whole at its end.
+/// The longest line kept; a longer one, or one that lost bytes, is
+/// refused whole at its end.
 const LINE: usize = 40;
+
+/// A button name that is none of the panel's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UnknownButton;
+
+impl core::fmt::Display for UnknownButton {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("not reset, mic, dispense or lock")
+    }
+}
+
+impl core::error::Error for UnknownButton {}
+
+/// The button `text` names, as a press line and the bench's commands
+/// spell it.
+pub fn button(text: &str) -> Result<Button, UnknownButton> {
+    Button::parse(text).ok_or(UnknownButton)
+}
 
 /// A press a line asked for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -89,6 +108,11 @@ impl Reader {
             len: 0,
             overflow: false,
         }
+    }
+
+    /// Bytes of the line under way were lost: it is refused at its end.
+    pub fn lost(&mut self) {
+        self.overflow = true;
     }
 
     /// Takes one byte; a finished line comes back.
@@ -217,6 +241,23 @@ mod tests {
                     hold_ms: DEFAULT_HOLD_MS
                 })
             ]
+        );
+    }
+
+    #[test]
+    fn a_line_that_lost_bytes_is_refused_whole() {
+        let mut reader = Reader::new();
+        for byte in b"press dispense" {
+            assert_eq!(reader.byte(*byte), None);
+        }
+        reader.lost();
+        assert_eq!(reader.byte(b'\n'), Some(Line::Refused));
+        assert_eq!(
+            lines("press mic\n"),
+            [Line::Press(Press {
+                button: Button::Mic,
+                hold_ms: DEFAULT_HOLD_MS
+            })]
         );
     }
 

@@ -50,10 +50,11 @@ pub enum JobCommand {
     /// its UART: the same gesture as a finger, with nobody at the bench.
     Press {
         /// The button: reset, mic, dispense or lock.
-        #[arg(value_parser = panel_button)]
+        #[arg(value_parser = wellfed_core::virtual_panel::button)]
         button: Button,
-        /// How long it is held.
-        #[arg(long, default_value_t = 150)]
+        /// How long it is held, 1 to 15000 ms.
+        #[arg(long, default_value_t = wellfed_core::virtual_panel::DEFAULT_HOLD_MS,
+              value_parser = clap::value_parser!(u32).range(1..=i64::from(wellfed_core::virtual_panel::MAX_HOLD_MS)))]
         hold_ms: u32,
     },
     /// Cold boot into the application while capturing.
@@ -424,7 +425,7 @@ fn record_start(
     let label = command.label();
     let steps: Vec<&str> = match command {
         JobCommand::Capture { .. } => vec!["capture"],
-        JobCommand::Press { .. } => vec!["wellfed-flash read"],
+        JobCommand::Press { .. } => vec!["wellfed-flash read press"],
         JobCommand::Ota(args) if args.cancel => vec![commands::ota::CANCEL_STEP],
         JobCommand::Ota(args) => commands::ota::steps(args.source()),
         JobCommand::Itest(args) => wellfed_itest::itest_steps(args)?,
@@ -451,17 +452,6 @@ fn record_start(
         bench.status.flash_tool(tool);
     }
     Ok(())
-}
-
-/// Why a press's button did not parse; clap shows it.
-#[derive(Debug, thiserror::Error)]
-#[error("{text} is not reset, mic, dispense or lock")]
-pub struct ButtonError {
-    text: String,
-}
-
-fn panel_button(text: &str) -> Result<Button, ButtonError> {
-    Button::parse(text).ok_or_else(|| ButtonError { text: text.into() })
 }
 
 /// A press's evidence directory under private/captures/: one per press, by

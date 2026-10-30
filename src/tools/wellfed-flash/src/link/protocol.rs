@@ -81,12 +81,22 @@ pub enum ProtocolError {
     ObservationWindow { seconds: f64 },
     #[error("Console command is outside the fixed ROM-inspection profile")]
     ConsoleCommand,
-    /// No `PLKEY1 virtual press=` came back: the running build is not the
+    /// The press line this tool built does not read back as that press.
+    #[error("The press line does not read back as the press asked for")]
+    PressLine,
+    /// No `PLKEY1 virtual` line came back: the running build is not the
     /// `virtual-panel` variant, or it is not running. Never resent.
     #[error(
         "The feeder did not echo the press within {window_ms} ms: is a virtual-panel build running?"
     )]
     PressUnanswered { window_ms: u128 },
+    #[error("The feeder refused the press line: bytes were lost; nothing was pressed")]
+    PressRefused,
+    /// Bytes were lost into another valid line, which the build pressed.
+    #[error("The feeder pressed something else ({echoed}): bytes were lost; check the capture")]
+    PressMismatch { echoed: String },
+    #[error("The feeder echoed the press but reported no release of its button")]
+    PressNotReleased,
     #[error("Fault or startup observed during console query; stop and inspect capture")]
     ConsoleFault,
     #[error("Unexpected pre-existing fault output")]
@@ -820,53 +830,106 @@ mod tests {
 pub struct PressResult {
     pub button: &'static str,
     pub hold_ms: u32,
+    /// The build echoed this exact press, then its button's release.
     pub echoed: bool,
+    pub released: bool,
     pub bytes: usize,
     pub limit: &'static str,
 }
 
 /// Gap between the press line's bytes: the build drains the UART's 16-byte
-/// FIFO every 5 ms, so one byte every 2 ms never fills it.
+/// FIFO every 5 ms, so one byte every 2 ms keeps it from filling unless the
+/// button task is held off (an overrun then refuses the line).
 const PRESS_BYTE_GAP: Duration = Duration::from_millis(2);
-/// How long the feeder has to echo the line.
-const PRESS_ECHO: Duration = Duration::from_millis(1500);
+/// How long past the hold the feeder has to echo the press and report the
+/// release: the echo is at once, the release a debounce after the hold.
+const PRESS_MARGIN: Duration = Duration::from_millis(1500);
+
+/// What the build said about a press line.
+#[derive(Debug, PartialEq, Eq)]
+enum Echo {
+    /// Its exact echo, and whether the release followed.
+    Pressed { released: bool },
+    /// The build read a line and refused it: bytes were lost or mangled.
+    Refused,
+    /// The build pressed something else: bytes were lost into another
+    /// valid line.
+    Other { echoed: String },
+    /// No echo at all: not a virtual-panel build, or not running.
+    Silent,
+}
+
+impl Echo {
+    fn read(reply: &[u8], press: wellfed_core::virtual_panel::Press) -> Self {
+        let text = String::from_utf8_lossy(reply);
+        let pressed = format!(
+            "PLKEY1 virtual press={} hold_ms={}",
+            press.button, press.hold_ms
+        );
+        let released = format!("PLKEY1 up chord={} ", press.button);
+        let mut lines = text.lines().map(str::trim_end);
+
+        let Some(echo) = lines.find(|line| line.starts_with("PLKEY1 virtual ")) else {
+            return Self::Silent;
+        };
+        if echo == pressed {
+            Self::Pressed {
+                released: lines.any(|line| line.starts_with(&released)),
+            }
+        } else if echo == "PLKEY1 virtual refused" {
+            Self::Refused
+        } else {
+            Self::Other {
+                echoed: echo.into(),
+            }
+        }
+    }
+}
 
 /// Types one press line to a running `virtual-panel` build, paced, and
-/// waits for its echo. The line is built here from the typed press, and
-/// read back through the firmware's own parser, so nothing else is ever
-/// sent; it is sent once, never again on a missing echo.
+/// waits through the hold for its echo and its button's release. The line
+/// is built here from the typed press and read back through the firmware's
+/// own parser, so nothing else is ever sent; a leading line end first ends
+/// any partial line the build holds. It is sent once, never again: a line
+/// the build read wrongly may already have pressed something.
 pub fn press(
     port: &mut dyn Port,
     press: wellfed_core::virtual_panel::Press,
 ) -> Result<PressResult> {
     use wellfed_core::virtual_panel::Line;
 
-    let line = format!("press {} hold {}\n", press.button, press.hold_ms);
-    require(
-        Line::parse(line.trim_end()) == Some(Line::Press(press)),
-        || ProtocolError::ConsoleCommand,
-    )?;
+    let line = format!("press {} hold {}", press.button, press.hold_ms);
+    require(Line::parse(&line) == Some(Line::Press(press)), || {
+        ProtocolError::PressLine
+    })?;
 
-    for byte in line.as_bytes() {
+    for byte in format!("\n{line}\n").as_bytes() {
         send(port, std::slice::from_ref(byte))?;
         std::thread::sleep(PRESS_BYTE_GAP);
     }
-    let reply = collect(port, PRESS_ECHO)?;
-    let echo = format!(
-        "PLKEY1 virtual press={} hold_ms={}",
-        press.button, press.hold_ms
-    );
-    let echoed = contains(&reply, echo.as_bytes());
-    require(echoed, || ProtocolError::PressUnanswered {
-        window_ms: PRESS_ECHO.as_millis(),
-    })?;
+    let window = Duration::from_millis(u64::from(press.hold_ms)) + PRESS_MARGIN;
+    let reply = collect(port, window)?;
+
+    let released = match Echo::read(&reply, press) {
+        Echo::Pressed { released } => released,
+        Echo::Refused => return Err(ProtocolError::PressRefused.into()),
+        Echo::Other { echoed } => return Err(ProtocolError::PressMismatch { echoed }.into()),
+        Echo::Silent => {
+            return Err(ProtocolError::PressUnanswered {
+                window_ms: window.as_millis(),
+            }
+            .into());
+        }
+    };
+    require(released, || ProtocolError::PressNotReleased)?;
 
     Ok(PressResult {
         button: press.button.as_str(),
         hold_ms: press.hold_ms,
-        echoed,
+        echoed: true,
+        released,
         bytes: reply.len(),
-        limit: "The echo shows the build read the line; the gesture it made is in the capture",
+        limit: "The build read the line and its button went down and up; what the gesture did is in the capture",
     })
 }
 
@@ -876,12 +939,21 @@ mod press_tests {
     use wellfed_core::buttons::Button;
     use wellfed_core::virtual_panel::Press;
 
-    /// A feeder that echoes a whole press line as the variant does, or
-    /// stays silent as every other build does.
+    /// A feeder answering a whole press line with `reply`.
     struct Feeder {
-        echo: bool,
+        answer: &'static [u8],
         sent: Vec<u8>,
         reply: Vec<u8>,
+    }
+
+    impl Feeder {
+        fn new(answer: &'static [u8]) -> Self {
+            Self {
+                answer,
+                sent: Vec::new(),
+                reply: Vec::new(),
+            }
+        }
     }
 
     impl Port for Feeder {
@@ -898,9 +970,8 @@ mod press_tests {
 
         fn write(&mut self, data: &[u8]) -> io::Result<usize> {
             self.sent.extend_from_slice(data);
-            if self.echo && data.ends_with(b"\n") {
-                self.reply
-                    .extend_from_slice(b"PLKEY1 virtual press=dispense hold_ms=150\r\n");
+            if self.sent.ends_with(b"150\n") {
+                self.reply.extend_from_slice(self.answer);
             }
             Ok(data.len())
         }
@@ -918,32 +989,44 @@ mod press_tests {
         button: Button::Dispense,
         hold_ms: 150,
     };
+    const LINE: &[u8] = b"\npress dispense hold 150\n";
 
     #[test]
-    fn a_press_sends_its_one_line_and_reads_the_echo() {
-        let mut feeder = Feeder {
-            echo: true,
-            sent: Vec::new(),
-            reply: Vec::new(),
-        };
+    fn a_press_sends_its_one_line_and_reads_the_echo_and_release() {
+        let mut feeder = Feeder::new(
+            b"PLKEY1 virtual press=dispense hold_ms=150\r\nPLKEY1 down chord=dispense dropped=0\r\n\
+              PLKEY1 up chord=dispense level=0 held_ms=150 dropped=0\r\n",
+        );
         let result = press(&mut feeder, DISPENSE).unwrap();
-        assert!(result.echoed);
-        assert_eq!(feeder.sent, b"press dispense hold 150\n");
+        assert!(result.echoed && result.released);
+        assert_eq!(feeder.sent, LINE);
     }
 
     #[test]
-    fn a_build_without_the_panel_is_never_sent_the_line_again() {
-        let mut feeder = Feeder {
-            echo: false,
-            sent: Vec::new(),
-            reply: Vec::new(),
-        };
-        assert!(matches!(
-            press(&mut feeder, DISPENSE),
-            Err(crate::Error::Protocol(
-                ProtocolError::PressUnanswered { .. }
-            ))
-        ));
-        assert_eq!(feeder.sent, b"press dispense hold 150\n", "sent once");
+    fn each_wrong_answer_is_its_own_refusal_and_is_never_resent() {
+        for (answer, refusal) in [
+            (&b""[..], "unanswered"),
+            (b"PLKEY1 virtual refused\r\n", "refused"),
+            (
+                b"PLKEY1 virtual press=dispense hold_ms=1500\r\n",
+                "mismatch",
+            ),
+            (
+                b"PLKEY1 virtual press=dispense hold_ms=150\r\n",
+                "not released",
+            ),
+        ] {
+            let mut feeder = Feeder::new(answer);
+            let error = press(&mut feeder, DISPENSE).unwrap_err();
+            let matched = match &error {
+                crate::Error::Protocol(ProtocolError::PressUnanswered { .. }) => "unanswered",
+                crate::Error::Protocol(ProtocolError::PressRefused) => "refused",
+                crate::Error::Protocol(ProtocolError::PressMismatch { .. }) => "mismatch",
+                crate::Error::Protocol(ProtocolError::PressNotReleased) => "not released",
+                _ => "other",
+            };
+            assert_eq!(matched, refusal, "{error}");
+            assert_eq!(feeder.sent, LINE, "sent once");
+        }
     }
 }

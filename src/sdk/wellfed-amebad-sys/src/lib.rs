@@ -29,6 +29,18 @@ pub const SWD_PMUX_BIT: u32 = 1;
 /// Checked against SDK constants in target builds.
 pub(crate) const PAD_GPIO_CLEAR: u32 = 1 << 15 | 0x1f;
 
+/// One read of the log UART's receive side.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LogUartReceive {
+    Empty,
+    /// The oldest byte; `overrun` when the FIFO filled before it was read,
+    /// so a byte before this one was lost.
+    Byte {
+        byte: u8,
+        overrun: bool,
+    },
+}
+
 /// The architectural SysTick control and status register (CTRL).
 pub const SYSTICK_CTRL: u32 = 0xe000_e010;
 

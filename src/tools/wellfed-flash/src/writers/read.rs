@@ -1,5 +1,6 @@
 //! The restricted reader: receive-only observation, ROM identity, bounded and
-//! full reads, and status reads. It never programs or erases flash.
+//! full reads, status reads, and a virtual-panel press typed to a running
+//! bench build. It never programs or erases flash.
 //!
 //! Port of `main` in `src/tools/flash/uart-flash-read.py`; its reports keep the
 //! same fields, so either implementation's later sessions accept them.

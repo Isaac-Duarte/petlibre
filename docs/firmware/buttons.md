@@ -38,7 +38,7 @@ while let Some(gesture) = wellfed_sdk::buttons::next() { /* … */ }
 
 - **Task.** `start` creates `wellfed-key`, which polls every 5 ms (stack bound 728 of 2048 B). A firmware that never calls it links none of it. It is one of the four tasks a firmware gets ([task slots](../../src/firmware/wellfed/README.md)).
 - **Queue.** Gestures go to an eight-entry queue with one reader. A full queue drops new gestures and counts them; it never overwrites unread ones.
-- **UART.** Each gesture is also a `PLKEY1` record, each with `dropped=N`: `open inputs=1 pressed=none`, `down chord=dispense+lock`, `hold chord=reset level=2`, `up chord=reset level=2 held_ms=6671`.
+- **UART.** Each gesture is also a `PLKEY1` record, each with `dropped=N`: `open inputs=1 pressed=none`, `down chord=dispense+lock`, `hold chord=reset level=2`, `up chord=reset level=2 held_ms=6671`. The `virtual-panel` bench variant adds `virtual press=dispense hold_ms=150` for each line it reads from the UART and `virtual refused` for one it does not ([virtual panel](../devices/plaf103/bench.md#virtual-panel)).
 - **Ownership.** The reader is the task that owns what a gesture does. A Dispense press is submitted to the feeding owner by that task, the same way a network feed request is.
 
 The stack audit reads its task table from the runtime and from every SDK service that creates a task (`RUNTIME_SOURCE` and `SERVICE_SOURCES` in the builder). A test fails if one is missed.

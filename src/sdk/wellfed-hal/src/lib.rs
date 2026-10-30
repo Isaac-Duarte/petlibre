@@ -45,7 +45,7 @@ pub mod inject;
 #[cfg(feature = "feed-faults")]
 pub mod feed_faults;
 #[cfg(feature = "virtual-panel")]
-pub mod virtual_panel;
+mod virtual_panel;
 
 pub mod flash_lock;
 pub mod health;

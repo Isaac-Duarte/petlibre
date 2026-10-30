@@ -107,6 +107,7 @@ The files and shapes they share (the bench config, a command's progress record, 
 | `mcp` | The bench's tools for an agent, over the [Model Context Protocol](#mcp) on stdio, as a client of the server |
 | `on`, `off` | Power the feeder with the strap released, or release the strap and cut power |
 | `capture NAME` | Receive-only recording of the running feeder. Power is untouched. |
+| `press BUTTON` | Holds a panel button (`reset`, `mic`, `dispense` or `lock`) on a running `virtual-panel` build, for `--hold-ms` (150 by default, at most 15000), typed on its UART ([virtual panel](#virtual-panel)). Power is untouched; refused unless the build echoes the line. |
 | `boot NAME` | Power off, start a receive-only capture, confirm it holds the port, then power on |
 | `loader NAME` | The same, with the strap held for 2 s across power-on. Requires the download banner and a NAK run, otherwise powers off. |
 | `transients NAME` | Repeated logic-analyzer captures (`sigrok-cli`, fx2lafw) of relay power-ons or, with `--mode loader`, loader entries. Each cycle arms the analyzer before power-on and ends powered off. No UART, no flash. See [motor driver](motor-driver.md#capture-startup-transients). |
@@ -123,6 +124,15 @@ The files and shapes they share (the bench config, a command's progress record, 
 `wellfed-bench <command> --help` lists the flags. `flash-prepare` and `flash-execute` take the updater's `--bank`, `--source`, `--original-read`, `--target`, `--interrupted` and `--restore-marker`, and `--attended-motion` for a target whose manifest names a motion policy.
 
 Every command from `on` down is a job: it needs the server running, and refuses otherwise, naming `wellfed-bench serve`.
+
+### Virtual panel
+
+The feeder's `virtual-panel` variant lets the bench press the panel's buttons with nobody there: Bluetooth setup codes, the recovery window and the Dispense press that enrolls an update key. `press BUTTON` runs `wellfed-flash read press`, which types one line, `press <button> hold <ms>`, on the feeder's UART, one byte every 2 ms, and waits 1.5 s for the build's `PLKEY1 virtual press=…` echo. The build holds that button down for the hold, merged into the levels its button task reads every 5 ms, so the press goes through the same debounce, holds and gestures as a finger, and the gesture's own `PLKEY1` line follows in the capture.
+
+- **Only that variant reads the line.** No other image links a UART reader (the build links no vendor shell), so a line typed to any other build does nothing, and `press` stops on the missing echo. The line is sent once, never again.
+- **It never ships.** The variant is chosen only with `--variant`, the build identity names it, and an image with any variant is for the bench alone.
+- **A Dispense press is a feed** outside a setup or enrollment window, exactly as a finger's would be. Keep the hopper empty.
+- **The bench, not the client under test, presses.** A pairing that passes with a press here is one that would pass with a person there.
 
 **Names and evidence.** Session evidence goes to new directories under `private/captures/`, `private/flash-backups/` and `private/verification/`, named after `NAME`. It must be a single plain name. An existing path is refused before any relay changes.
 
@@ -385,7 +395,7 @@ What a run does:
 **Choosing a build.** `--firmware qa|optics|buttons|adc|speaker|blink|trial|feeder` picks the build (default `qa`), and `--variant` picks a variant of that firmware:
 
 - `stall|fail` with `--firmware trial`;
-- `entropy|owner-stall|held-stall|gap-probe|feed-stall|stop-fail|owner-fail|twin` with `--firmware feeder`.
+- `entropy|owner-stall|held-stall|gap-probe|feed-stall|stop-fail|owner-fail|twin|virtual-panel` with `--firmware feeder`.
 
 `feed-stall` and `stop-fail` move the motor only for a feed request, like the feeder, and inject a fault into it ([motor pulse](../../firmware/motor-pulse.md)). `owner-fail` never opens its feeding owner, so its trial must fall back. `owner-stall` resets about 3 minutes into every boot once confirmed, a reset storm ([OTA design](../../firmware/ota-design.md)).
 

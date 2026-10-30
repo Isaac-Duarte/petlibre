@@ -22,6 +22,10 @@ stop-fail = []
 # (`feed_faults`). Only the feeder's `feed-jam` and `sensor-fault` bench
 # variants set it.
 feed-faults = []
+# Button presses typed on the log UART (`wellfed_core::virtual_panel`),
+# for a bench with nobody at it. Only the feeder's `virtual-panel` bench
+# variant sets it.
+virtual-panel = []
 # The RAM log tail beside the UART log.
 log-tail = ["wellfed-amebad-sys/log-tail"]
 

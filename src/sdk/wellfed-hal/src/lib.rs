@@ -44,6 +44,8 @@ pub mod inject;
 // faults; never in a product image.
 #[cfg(feature = "feed-faults")]
 pub mod feed_faults;
+#[cfg(feature = "virtual-panel")]
+pub mod virtual_panel;
 
 pub mod flash_lock;
 pub mod health;

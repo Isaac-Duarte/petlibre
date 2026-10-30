@@ -17,6 +17,7 @@ use std::time::{Duration, Instant};
 
 use clap::{Args, ValueEnum};
 use serde::Deserialize;
+use wellfed_core::buttons::Button;
 use wellfed_formats::canonical::sha256;
 use wellfed_formats::flash_plan::{DevelopmentPlan, GiveWayPlan, StockRecoveryReviewed};
 use wellfed_formats::manifest::BuildManifest;
@@ -64,6 +65,9 @@ const STOPPED_POWERED: &str =
 pub enum CommandsError {
     #[error("Session name {name:?} must be a single plain name")]
     BadName { name: String },
+    /// A press needs a running feeder to read it.
+    #[error("The feeder is off: power it and boot a virtual-panel build first")]
+    PressUnpowered,
     /// Evidence directories are never reused; `path` root-relative.
     #[error("Refusing to reuse {path}")]
     NameTaken { path: String },
@@ -453,6 +457,37 @@ impl Bench {
         let mut observer = self.start_observer(&output, length)?;
         let result = self.finish_observer(observer.as_mut())?;
         say!("Captured {} bytes in {}", result.bytes, self.rel(&output));
+        Ok(0)
+    }
+
+    /// Type one press to the running `virtual-panel` build: the button held
+    /// for `hold_ms`, through the same gestures as a finger. Never touches
+    /// power; the press is sent once, and a missing echo stops the job.
+    pub fn press(&mut self, name: &str, button: Button, hold_ms: u32) -> Result<u8> {
+        if !self.get(POWER)? {
+            return Err(CommandsError::PressUnpowered.into());
+        }
+        let output = self.root.join(CAPTURES).join(name);
+        self.fresh(&output)?;
+        self.connect_uart()?;
+
+        let step = argv(
+            &["read", "press"],
+            &[
+                &["--port".into(), self.config.uart_port.clone()],
+                &self.out(&output),
+                &[
+                    "--button".into(),
+                    button.as_str().into(),
+                    "--hold-ms".into(),
+                    hold_ms.to_string(),
+                ],
+            ],
+        );
+        if !self.run_all(&[step])? {
+            return Ok(1);
+        }
+        say!("Pressed {button} for {hold_ms} ms; the gesture is in the capture");
         Ok(0)
     }
 
@@ -1356,6 +1391,7 @@ pub fn steps(command: BenchCommand) -> &'static [&'static str] {
         | BenchCommand::Off
         | BenchCommand::On
         | BenchCommand::Capture
+        | BenchCommand::Press
         | BenchCommand::Transients
         | BenchCommand::Itest
         | BenchCommand::StockOta

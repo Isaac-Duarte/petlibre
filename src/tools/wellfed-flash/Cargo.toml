@@ -11,6 +11,7 @@ publish.workspace = true
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 clap.workspace = true
 ctrlc.workspace = true
+wellfed-core.workspace = true
 wellfed-formats.workspace = true
 wellfed-image.workspace = true
 serde.workspace = true

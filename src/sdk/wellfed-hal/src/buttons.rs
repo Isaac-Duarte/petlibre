@@ -35,6 +35,9 @@ static DROPPED: AtomicU32 = AtomicU32::new(0);
 /// What the service reports on the UART.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Record {
+    /// A line the virtual panel read (the `virtual-panel` variant).
+    #[cfg(feature = "virtual-panel")]
+    Virtual(wellfed_core::virtual_panel::Line),
     /// The pins are open: whether all four read as inputs, and who is
     /// already pressed.
     Open { inputs: bool, pressed: Buttons },
@@ -52,6 +55,16 @@ pub fn describe(record: Record, f: &mut core::fmt::Formatter<'_>) -> core::fmt::
         }
         Record::Gesture { gesture, dropped } => write!(f, "{gesture} dropped={dropped}"),
         Record::Refused => f.write_str("refused config"),
+        #[cfg(feature = "virtual-panel")]
+        Record::Virtual(wellfed_core::virtual_panel::Line::Press(press)) => write!(
+            f,
+            "virtual press={} hold_ms={}",
+            press.button, press.hold_ms
+        ),
+        #[cfg(feature = "virtual-panel")]
+        Record::Virtual(wellfed_core::virtual_panel::Line::Refused) => {
+            f.write_str("virtual refused")
+        }
     }
 }
 
@@ -67,6 +80,8 @@ pub struct Step {
 pub struct Service {
     config: Config,
     engine: Option<Engine>,
+    #[cfg(feature = "virtual-panel")]
+    panel: crate::virtual_panel::Panel,
 }
 
 impl Service {
@@ -74,6 +89,8 @@ impl Service {
         Self {
             config,
             engine: None,
+            #[cfg(feature = "virtual-panel")]
+            panel: crate::virtual_panel::Panel::new(),
         }
     }
 
@@ -85,6 +102,19 @@ impl Service {
         };
 
         let pressed = Buttons::from_port_b(sdk::gpio_port_read(PORT_B, MASK));
+        // A typed line skips this poll's update, so its record is the
+        // step's one line; the engine reads the held set 5 ms later, well
+        // inside its debounce.
+        #[cfg(feature = "virtual-panel")]
+        let pressed = match self.panel.poll(now) {
+            (_, Some(line)) => {
+                return Step {
+                    delay_ms: POLL_MS,
+                    record: Some(Record::Virtual(line)),
+                };
+            }
+            (held, None) => Buttons::from_bits(pressed.bits() | held.bits()),
+        };
         let record = engine.update(now, pressed).map(|gesture| Record::Gesture {
             gesture,
             dropped: publish(gesture),

@@ -5235,6 +5235,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "uuid",
+ "wellfed-core",
  "wellfed-emu",
  "wellfed-formats",
  "wellfed-image",

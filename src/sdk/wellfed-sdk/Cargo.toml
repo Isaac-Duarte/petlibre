@@ -20,6 +20,9 @@ stop-fail = ["wellfed-hal/stop-fail"]
 # (`hal::feed_faults`). Only the feeder's `feed-jam` and `sensor-fault`
 # variants set it.
 feed-faults = ["wellfed-hal/feed-faults"]
+# Button presses typed on the log UART. Only the feeder's
+# `virtual-panel` bench variant sets it.
+virtual-panel = ["wellfed-hal/virtual-panel"]
 # The BLE peripheral. A firmware enables it with `bluetooth = true`
 # in its metadata, which links the device's BLE source.
 bluetooth = ["wellfed-hal/bluetooth"]

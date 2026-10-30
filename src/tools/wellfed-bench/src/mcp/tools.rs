@@ -311,6 +311,35 @@ struct NamedArgs {
     name: String,
 }
 
+/// A panel button, as `wellfed-bench press` names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+enum PanelButton {
+    Reset,
+    Mic,
+    Dispense,
+    Lock,
+}
+
+impl PanelButton {
+    fn word(self) -> &'static str {
+        match self {
+            Self::Reset => "reset",
+            Self::Mic => "mic",
+            Self::Dispense => "dispense",
+            Self::Lock => "lock",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct PressArgs {
+    button: PanelButton,
+    /// How long the button is held, 1 to 15000 ms (default 150: a press).
+    hold_ms: Option<u32>,
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct TimedArgs {
@@ -568,6 +597,11 @@ const SPECS: &[Spec] = &[
         name: "capture",
         description: "Record the running feeder's UART, receive only. Power is untouched.",
         schema: schema::<TimedArgs>,
+    },
+    Spec {
+        name: "press",
+        description: "Hold a panel button on a running virtual-panel build, typed on its UART: the same gesture as a finger (setup codes, recovery windows, update-key enrollment). Refused unless the build echoes it. A Dispense press outside a setup or enrollment window feeds, so the hopper must be empty.",
+        schema: schema::<PressArgs>,
     },
     Spec {
         name: "loader",
@@ -862,6 +896,10 @@ fn job_words(name: &str, args: JsonObject) -> Result<Vec<String>, ToolError> {
                 .word(args.name)
                 .value("--seconds", args.seconds)
         }
+        "press" => {
+            let args: PressArgs = parse(name, args)?;
+            Line::new(&["press", args.button.word()]).value("--hold-ms", args.hold_ms)
+        }
         "loader" | "dump" => Line::new(&[name]).word(parse::<NamedArgs>(name, args)?.name),
         "flash_prepare" => Line::new(&["flash-prepare"]).update(parse(name, args)?),
         "flash_execute" => {
@@ -1003,6 +1041,7 @@ mod tests {
             "power",
             "boot",
             "capture",
+            "press",
             "loader",
             "dump",
             "flash_prepare",

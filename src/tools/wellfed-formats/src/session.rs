@@ -57,6 +57,8 @@ pub enum Mode {
     /// Receive only, from a running feeder.
     Observe,
     InspectRom,
+    /// A virtual-panel press typed to a running `virtual-panel` build.
+    Press,
     ReadSmall,
     ReadFull,
     ReadStatus,
@@ -76,6 +78,7 @@ impl Mode {
         match self {
             Self::Observe => "observe",
             Self::InspectRom => "inspect-rom",
+            Self::Press => "press",
             Self::ReadSmall => "read-small",
             Self::ReadFull => "read-full",
             Self::ReadStatus => "read-status",
@@ -111,6 +114,7 @@ mod tests {
         for (mode, name) in [
             (Mode::Observe, "observe"),
             (Mode::InspectRom, "inspect-rom"),
+            (Mode::Press, "press"),
             (Mode::ReadSmall, "read-small"),
             (Mode::ReadFull, "read-full"),
             (Mode::ReadStatus, "read-status"),

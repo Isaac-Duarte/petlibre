@@ -54,6 +54,10 @@ sensor-fault = ["wellfed-sdk/feed-faults"]
 # Pulse and toggle PA25, stock's buzzer line, at rest, for the bench to
 # find out whether it reaches anything.
 buzzer = []
+# Read `press <button> [hold <ms>]` lines from the log UART and hold that
+# button down, for a bench with nobody at it (setup codes, recovery
+# windows, update-key enrollment). Never in a released image.
+virtual-panel = ["wellfed-sdk/virtual-panel"]
 # Nothing but another build identity: installed after the feeder, it goes
 # through a trial and still serves the device API.
 twin = []
@@ -114,6 +118,9 @@ summary = "Shows each feed a sensor fault: for one portion the marks lost from t
 
 [package.metadata.wellfed.variants.buzzer]
 summary = "Drives PA25, stock's buzzer line, a minute into the boot and every 30 s while no feed is queued or runs: stock's 200 ms HIGH pulse, then 200 ms square waves at 500 Hz and 2 kHz, each logged with the pad's readback; no motion"
+
+[package.metadata.wellfed.variants.virtual-panel]
+summary = "Reads `press <button> [hold <ms>]` lines from the log UART and holds that button down, through the same debounce and gestures as a finger, so the bench keys setup codes, opens recovery windows and enrolls update keys with nobody there; logs PLKEY1 virtual for each line. Never in a released image"
 
 [package.metadata.wellfed.variants.twin]
 summary = "The feeder unchanged under another build identity, so the bench's drills can install a build that goes through a trial and still serves the device API"

@@ -298,6 +298,7 @@ fn a_read_session_keeps_its_report_and_summary_fields() {
             small_report: None,
             seconds: 1.0,
             start_core: crate::link::protocol::Core::Km4,
+            press: None,
         },
     )
     .unwrap();

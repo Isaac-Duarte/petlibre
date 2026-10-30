@@ -24,6 +24,8 @@ use wellfed_rig::commands::{
 };
 use wellfed_rig::tools::{Children, Processes};
 
+use wellfed_core::buttons::Button;
+
 use crate::api::Refusal;
 use crate::board::SharedBoard;
 use crate::feeder::Feeder;
@@ -43,6 +45,16 @@ pub enum JobCommand {
         name: String,
         #[arg(long, default_value_t = 60.0)]
         seconds: f64,
+    },
+    /// Hold a panel button on a running `virtual-panel` build, typed on
+    /// its UART: the same gesture as a finger, with nobody at the bench.
+    Press {
+        /// The button: reset, mic, dispense or lock.
+        #[arg(value_parser = panel_button)]
+        button: Button,
+        /// How long it is held.
+        #[arg(long, default_value_t = 150)]
+        hold_ms: u32,
     },
     /// Cold boot into the application while capturing.
     Boot {
@@ -106,6 +118,7 @@ impl JobCommand {
             Self::Off => BenchCommand::Off,
             Self::On => BenchCommand::On,
             Self::Capture { .. } => BenchCommand::Capture,
+            Self::Press { .. } => BenchCommand::Press,
             Self::Boot { .. } => BenchCommand::Boot,
             Self::Loader { .. } => BenchCommand::Loader,
             Self::Transients(_) => BenchCommand::Transients,
@@ -125,7 +138,7 @@ impl JobCommand {
 
     pub fn name(&self) -> Option<&str> {
         match self {
-            Self::Off | Self::On | Self::Install(_) => None,
+            Self::Off | Self::On | Self::Press { .. } | Self::Install(_) => None,
             Self::Capture { name, .. }
             | Self::Boot { name, .. }
             | Self::Loader { name }
@@ -159,6 +172,7 @@ impl JobCommand {
     pub(crate) fn holds_uart(&self) -> bool {
         match self {
             Self::Capture { .. }
+            | Self::Press { .. }
             | Self::Boot { .. }
             | Self::Loader { .. }
             | Self::Transients(_)
@@ -410,6 +424,7 @@ fn record_start(
     let label = command.label();
     let steps: Vec<&str> = match command {
         JobCommand::Capture { .. } => vec!["capture"],
+        JobCommand::Press { .. } => vec!["wellfed-flash read"],
         JobCommand::Ota(args) if args.cancel => vec![commands::ota::CANCEL_STEP],
         JobCommand::Ota(args) => commands::ota::steps(args.source()),
         JobCommand::Itest(args) => wellfed_itest::itest_steps(args)?,
@@ -438,6 +453,26 @@ fn record_start(
     Ok(())
 }
 
+/// Why a press's button did not parse; clap shows it.
+#[derive(Debug, thiserror::Error)]
+#[error("{text} is not reset, mic, dispense or lock")]
+pub struct ButtonError {
+    text: String,
+}
+
+fn panel_button(text: &str) -> Result<Button, ButtonError> {
+    Button::parse(text).ok_or_else(|| ButtonError { text: text.into() })
+}
+
+/// A press's evidence directory under private/captures/: one per press, by
+/// the time it was typed, so a job needs no name.
+fn press_name() -> String {
+    format!(
+        "press-{}",
+        wellfed_formats::bench::since_epoch().as_millis()
+    )
+}
+
 /// Run the command: the suite's on `wellfed-itest`, the rest on the rig.
 fn dispatch(
     bench: &mut Bench,
@@ -456,6 +491,7 @@ fn dispatch(
                 bench.capture(name, length)
             })
         }
+        JobCommand::Press { button, hold_ms } => bench.press(&press_name(), *button, *hold_ms),
         JobCommand::Boot { name, seconds } => seconds_arg("--seconds", *seconds)
             .and_then(|length| bench.boot(&captures.join(name), length))
             .map(|_| 0),

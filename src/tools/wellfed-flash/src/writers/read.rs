@@ -14,8 +14,8 @@ use crate::error::Result;
 use crate::evidence::report::{Session, Status, Transport};
 use crate::evidence::session::{self, Completion, Context, Outcome, progress};
 use crate::link::protocol::{
-    self, CAPACITY, Core, HELPER_SHA256, Observation, Port, ROM_BYTES, ROM_SHA256, RomInspection,
-    Transfer,
+    self, CAPACITY, Core, HELPER_SHA256, Observation, Port, PressResult, ROM_BYTES, ROM_SHA256,
+    RomInspection, Transfer,
 };
 use crate::link::status::{self, Assessment};
 use wellfed_formats::canonical::sha256;
@@ -44,6 +44,8 @@ pub enum ReadError {
     FinalLength { bytes: u64, length: u64 },
     #[error("Refusing to overwrite a completed read")]
     WouldOverwrite { path: PathBuf },
+    #[error("A press needs --button")]
+    PressMissing,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
@@ -58,6 +60,9 @@ pub enum Mode {
     Full,
     /// Continue the bounded read's helper session and read the status registers.
     Status,
+    /// Type one press to a running `virtual-panel` build and wait for its
+    /// echo; nothing else is sent.
+    Press,
 }
 
 impl Mode {
@@ -69,6 +74,7 @@ impl Mode {
             Self::Small => ReportMode::ReadSmall,
             Self::Full => ReportMode::ReadFull,
             Self::Status => ReportMode::ReadStatus,
+            Self::Press => ReportMode::Press,
         }
     }
 }
@@ -86,6 +92,8 @@ pub struct Args {
     pub seconds: f64,
     /// Which core owns the console when ROM inspection starts.
     pub start_core: Core,
+    /// The press `Mode::Press` types.
+    pub press: Option<wellfed_core::virtual_panel::Press>,
 }
 
 /// Two matching status observations and what they permit for bank 1.
@@ -115,6 +123,7 @@ pub enum Reading {
     Rom(RomInspection),
     Status(StatusInspection),
     Flash(FlashRead),
+    Press(PressResult),
 }
 
 /// The reader's report fields beyond the shared lifecycle.
@@ -198,6 +207,7 @@ pub fn run(context: &Context, args: &Args) -> Result<Outcome> {
 
     match args.mode {
         Mode::Observe => window = protocol::observation_window(args.seconds)?,
+        Mode::Press => require(args.press.is_some(), || ReadError::PressMissing)?,
 
         Mode::InspectRom => {
             require(!args.candidate_rom.is_empty(), || {
@@ -291,6 +301,10 @@ pub fn run(context: &Context, args: &Args) -> Result<Outcome> {
 
         match args.mode {
             Mode::Observe => protocol::observe(&mut port, window).map(Reading::Observation),
+            Mode::Press => match args.press {
+                Some(press) => protocol::press(&mut port, press).map(Reading::Press),
+                None => Err(ReadError::PressMissing.into()),
+            },
             Mode::InspectRom => {
                 protocol::inspect_rom(&mut port, &candidates, args.start_core).map(Reading::Rom)
             }

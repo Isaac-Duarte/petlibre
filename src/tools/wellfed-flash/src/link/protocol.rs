@@ -81,6 +81,12 @@ pub enum ProtocolError {
     ObservationWindow { seconds: f64 },
     #[error("Console command is outside the fixed ROM-inspection profile")]
     ConsoleCommand,
+    /// No `PLKEY1 virtual press=` came back: the running build is not the
+    /// `virtual-panel` variant, or it is not running. Never resent.
+    #[error(
+        "The feeder did not echo the press within {window_ms} ms: is a virtual-panel build running?"
+    )]
+    PressUnanswered { window_ms: u128 },
     #[error("Fault or startup observed during console query; stop and inspect capture")]
     ConsoleFault,
     #[error("Unexpected pre-existing fault output")]
@@ -806,5 +812,138 @@ mod tests {
         assert!(dumped_words(b"00001298: 4B02", 0x1298).is_empty());
         assert_eq!(rom_sample_addresses().len(), 68);
         assert_eq!(rom_sample_addresses()[..2], [0x1298, 0x129c]);
+    }
+}
+
+/// A virtual-panel press and what the feeder said to it.
+#[derive(Debug, Clone, Serialize)]
+pub struct PressResult {
+    pub button: &'static str,
+    pub hold_ms: u32,
+    pub echoed: bool,
+    pub bytes: usize,
+    pub limit: &'static str,
+}
+
+/// Gap between the press line's bytes: the build drains the UART's 16-byte
+/// FIFO every 5 ms, so one byte every 2 ms never fills it.
+const PRESS_BYTE_GAP: Duration = Duration::from_millis(2);
+/// How long the feeder has to echo the line.
+const PRESS_ECHO: Duration = Duration::from_millis(1500);
+
+/// Types one press line to a running `virtual-panel` build, paced, and
+/// waits for its echo. The line is built here from the typed press, and
+/// read back through the firmware's own parser, so nothing else is ever
+/// sent; it is sent once, never again on a missing echo.
+pub fn press(
+    port: &mut dyn Port,
+    press: wellfed_core::virtual_panel::Press,
+) -> Result<PressResult> {
+    use wellfed_core::virtual_panel::Line;
+
+    let line = format!("press {} hold {}\n", press.button, press.hold_ms);
+    require(
+        Line::parse(line.trim_end()) == Some(Line::Press(press)),
+        || ProtocolError::ConsoleCommand,
+    )?;
+
+    for byte in line.as_bytes() {
+        send(port, std::slice::from_ref(byte))?;
+        std::thread::sleep(PRESS_BYTE_GAP);
+    }
+    let reply = collect(port, PRESS_ECHO)?;
+    let echo = format!(
+        "PLKEY1 virtual press={} hold_ms={}",
+        press.button, press.hold_ms
+    );
+    let echoed = contains(&reply, echo.as_bytes());
+    require(echoed, || ProtocolError::PressUnanswered {
+        window_ms: PRESS_ECHO.as_millis(),
+    })?;
+
+    Ok(PressResult {
+        button: press.button.as_str(),
+        hold_ms: press.hold_ms,
+        echoed,
+        bytes: reply.len(),
+        limit: "The echo shows the build read the line; the gesture it made is in the capture",
+    })
+}
+
+#[cfg(test)]
+mod press_tests {
+    use super::*;
+    use wellfed_core::buttons::Button;
+    use wellfed_core::virtual_panel::Press;
+
+    /// A feeder that echoes a whole press line as the variant does, or
+    /// stays silent as every other build does.
+    struct Feeder {
+        echo: bool,
+        sent: Vec<u8>,
+        reply: Vec<u8>,
+    }
+
+    impl Port for Feeder {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            if self.reply.is_empty() {
+                std::thread::sleep(Duration::from_millis(10));
+                return Ok(0);
+            }
+            let count = self.reply.len().min(buffer.len());
+            buffer[..count].copy_from_slice(&self.reply[..count]);
+            self.reply.drain(..count);
+            Ok(count)
+        }
+
+        fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+            self.sent.extend_from_slice(data);
+            if self.echo && data.ends_with(b"\n") {
+                self.reply
+                    .extend_from_slice(b"PLKEY1 virtual press=dispense hold_ms=150\r\n");
+            }
+            Ok(data.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+
+        fn in_waiting(&mut self) -> io::Result<usize> {
+            Ok(self.reply.len())
+        }
+    }
+
+    const DISPENSE: Press = Press {
+        button: Button::Dispense,
+        hold_ms: 150,
+    };
+
+    #[test]
+    fn a_press_sends_its_one_line_and_reads_the_echo() {
+        let mut feeder = Feeder {
+            echo: true,
+            sent: Vec::new(),
+            reply: Vec::new(),
+        };
+        let result = press(&mut feeder, DISPENSE).unwrap();
+        assert!(result.echoed);
+        assert_eq!(feeder.sent, b"press dispense hold 150\n");
+    }
+
+    #[test]
+    fn a_build_without_the_panel_is_never_sent_the_line_again() {
+        let mut feeder = Feeder {
+            echo: false,
+            sent: Vec::new(),
+            reply: Vec::new(),
+        };
+        assert!(matches!(
+            press(&mut feeder, DISPENSE),
+            Err(crate::Error::Protocol(
+                ProtocolError::PressUnanswered { .. }
+            ))
+        ));
+        assert_eq!(feeder.sent, b"press dispense hold 150\n", "sent once");
     }
 }

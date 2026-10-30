@@ -202,8 +202,8 @@ pub enum ArgError {
     UnknownFirmware { text: String },
     #[error(
         "unknown variant {text:?}; the trial firmware has stall and fail, the feeder entropy, \
-         owner-stall, held-stall, gap-probe, feed-stall, stop-fail, owner-fail, feed-jam, sensor-fault, buzzer \
-         and twin"
+         owner-stall, held-stall, gap-probe, feed-stall, stop-fail, owner-fail, feed-jam, sensor-fault, buzzer, \
+         twin and virtual-panel"
     )]
     UnknownVariant { text: String },
     #[error("{at:?} is not a byte offset")]
@@ -342,6 +342,10 @@ pub enum Variant {
     /// after the baseline goes through a trial and still serves the device
     /// API.
     Twin,
+    /// The feeder holding the panel buttons that lines on its UART name
+    /// (`wellfed-bench press`), for a bench with nobody at it; no motion of
+    /// its own.
+    VirtualPanel,
 }
 
 impl Variant {
@@ -361,6 +365,7 @@ impl Variant {
             Self::SensorFault => "sensor-fault",
             Self::Buzzer => "buzzer",
             Self::Twin => "twin",
+            Self::VirtualPanel => "virtual-panel",
         }
     }
 
@@ -378,7 +383,8 @@ impl Variant {
             | Self::FeedJam
             | Self::SensorFault
             | Self::Buzzer
-            | Self::Twin => Firmware::Feeder,
+            | Self::Twin
+            | Self::VirtualPanel => Firmware::Feeder,
         }
     }
 }
@@ -399,6 +405,7 @@ pub fn parse_variant(text: &str) -> std::result::Result<Variant, ArgError> {
         "sensor-fault" => Ok(Variant::SensorFault),
         "buzzer" => Ok(Variant::Buzzer),
         "twin" => Ok(Variant::Twin),
+        "virtual-panel" => Ok(Variant::VirtualPanel),
         "pulse" => Err(ArgError::PulseVariant),
         other => Err(ArgError::UnknownVariant { text: other.into() }),
     }
@@ -468,8 +475,8 @@ pub struct OtaArgs {
     #[arg(long, value_parser = parse_firmware)]
     pub firmware: Option<Firmware>,
     /// Variant for --build: stall or fail with --firmware trial, entropy, owner-stall,
-    /// held-stall, gap-probe, feed-stall, stop-fail, owner-fail, feed-jam, sensor-fault, buzzer or twin with
-    /// --firmware feeder.
+    /// held-stall, gap-probe, feed-stall, stop-fail, owner-fail, feed-jam, sensor-fault, buzzer, twin or
+    /// virtual-panel with --firmware feeder.
     #[arg(long, value_parser = parse_variant)]
     pub variant: Option<Variant>,
     /// wellfed-stock config (root-relative): its hotspot interface and

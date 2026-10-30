@@ -108,6 +108,7 @@ abstract interface class InstallPorts {
 
 class AppInstallPorts implements InstallPorts {
   static const _wifi = MethodChannel('io.github.isaacduarte.wellfed/wifi');
+  static const _screen = MethodChannel('io.github.isaacduarte.wellfed/screen');
 
   const AppInstallPorts(this._key);
 
@@ -230,6 +231,9 @@ class AppInstallPorts implements InstallPorts {
 
   @override
   Future<bool> holdProcess(String text) async {
+    // A locked phone dozes whatever the service asks: the run's own sockets
+    // and discovery stall until someone wakes it.
+    await _screen.invokeMethod<void>('keepOn', true);
     if (await FlutterForegroundTask.isRunningService) {
       final updated = await FlutterForegroundTask.updateService(
         notificationTitle: _notificationTitle,
@@ -251,9 +255,11 @@ class AppInstallPorts implements InstallPorts {
         allowWakeLock: true,
         allowWifiLock: true,
         allowAutoRestart: false,
-        // A run lives in this process: swiping the app away ends it, and
-        // nothing would be left for the notification to speak for.
-        stopWithTask: true,
+        // A run lives in this process, so swiping the app away ends it, which
+        // the manifest's `android:stopWithTask` says. This option must stay
+        // unset: the plugin takes it to mean stopping the service as soon as
+        // the activity pauses, so a locked screen would drop the service and
+        // its wake and Wi-Fi locks in the middle of a run.
       ),
     );
     final started = await FlutterForegroundTask.startService(
@@ -267,6 +273,7 @@ class AppInstallPorts implements InstallPorts {
 
   @override
   Future<void> releaseProcess() async {
+    await _screen.invokeMethod<void>('keepOn', false);
     await FlutterForegroundTask.stopService();
   }
 

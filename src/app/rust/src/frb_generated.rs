@@ -27,6 +27,7 @@
 
 // Section: imports
 
+use crate::api::install::*;
 use crate::api::keys::*;
 use crate::api::session::*;
 use crate::api::setup::*;
@@ -42,7 +43,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.13.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -106934916;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -1048310491;
 
 // Section: executor
 
@@ -507,6 +508,486 @@ fn wire__crate__api__session__FeederSession_run_impl(
         },
     )
 }
+fn wire__crate__api__install__InstallListener_new_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "InstallListener_new",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_data_dir = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let output_ok =
+                    Ok::<_, ()>(crate::api::install::InstallListener::new(api_data_dir))?;
+                std::result::Result::Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__install__InstallListener_run_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "InstallListener_run",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<InstallListener>,
+            >>::sse_decode(&mut deserializer);
+            let api_updates = <StreamSink<
+                crate::api::install::ListenUpdate,
+                flutter_rust_bridge::for_generated::SseCodec,
+            >>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, ()>(
+                    (move || async move {
+                        let mut api_that_guard = None;
+                        let decode_indices_ =
+                            flutter_rust_bridge::for_generated::lockable_compute_decode_order(
+                                vec![flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                                    &api_that, 0, false,
+                                )],
+                            );
+                        for i in decode_indices_ {
+                            match i {
+                                0 => {
+                                    api_that_guard =
+                                        Some(api_that.lockable_decode_async_ref().await)
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                        let api_that_guard = api_that_guard.unwrap();
+                        let output_ok = Ok::<_, ()>({
+                            crate::api::install::InstallListener::run(
+                                &*api_that_guard,
+                                api_updates,
+                            )
+                            .await;
+                        })?;
+                        std::result::Result::Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
+fn wire__crate__api__install__InstallListener_stop_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "InstallListener_stop",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<InstallListener>,
+            >>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let mut api_that_guard = None;
+                let decode_indices_ =
+                    flutter_rust_bridge::for_generated::lockable_compute_decode_order(vec![
+                        flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                            &api_that, 0, false,
+                        ),
+                    ]);
+                for i in decode_indices_ {
+                    match i {
+                        0 => api_that_guard = Some(api_that.lockable_decode_sync_ref()),
+                        _ => unreachable!(),
+                    }
+                }
+                let api_that_guard = api_that_guard.unwrap();
+                let output_ok = Ok::<_, ()>({
+                    crate::api::install::InstallListener::stop(&*api_that_guard);
+                })?;
+                std::result::Result::Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__install__InstallListener_wait_seconds_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "InstallListener_wait_seconds",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let output_ok = Ok::<_, ()>(crate::api::install::InstallListener::wait_seconds())?;
+                std::result::Result::Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__install__InstallRun_answer_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "InstallRun_answer",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<InstallRun>,
+            >>::sse_decode(&mut deserializer);
+            let api_id = <u32>::sse_decode(&mut deserializer);
+            let api_answer = <crate::api::install::InstallAnswer>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let mut api_that_guard = None;
+                let decode_indices_ =
+                    flutter_rust_bridge::for_generated::lockable_compute_decode_order(vec![
+                        flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                            &api_that, 0, false,
+                        ),
+                    ]);
+                for i in decode_indices_ {
+                    match i {
+                        0 => api_that_guard = Some(api_that.lockable_decode_sync_ref()),
+                        _ => unreachable!(),
+                    }
+                }
+                let api_that_guard = api_that_guard.unwrap();
+                let output_ok = Ok::<_, ()>({
+                    crate::api::install::InstallRun::answer(&*api_that_guard, api_id, api_answer);
+                })?;
+                std::result::Result::Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__install__InstallRun_link_lost_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "InstallRun_link_lost",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<InstallRun>,
+            >>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let mut api_that_guard = None;
+                let decode_indices_ =
+                    flutter_rust_bridge::for_generated::lockable_compute_decode_order(vec![
+                        flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                            &api_that, 0, false,
+                        ),
+                    ]);
+                for i in decode_indices_ {
+                    match i {
+                        0 => api_that_guard = Some(api_that.lockable_decode_sync_ref()),
+                        _ => unreachable!(),
+                    }
+                }
+                let api_that_guard = api_that_guard.unwrap();
+                let output_ok = Ok::<_, ()>({
+                    crate::api::install::InstallRun::link_lost(&*api_that_guard);
+                })?;
+                std::result::Result::Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__install__InstallRun_new_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "InstallRun_new",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_key = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<ClientKey>,
+            >>::sse_decode(&mut deserializer);
+            let api_spec = <crate::api::install::InstallSpec>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let mut api_key_guard = None;
+                let decode_indices_ =
+                    flutter_rust_bridge::for_generated::lockable_compute_decode_order(vec![
+                        flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                            &api_key, 0, false,
+                        ),
+                    ]);
+                for i in decode_indices_ {
+                    match i {
+                        0 => api_key_guard = Some(api_key.lockable_decode_sync_ref()),
+                        _ => unreachable!(),
+                    }
+                }
+                let api_key_guard = api_key_guard.unwrap();
+                let output_ok = Ok::<_, ()>(crate::api::install::InstallRun::new(
+                    &*api_key_guard,
+                    api_spec,
+                ))?;
+                std::result::Result::Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__install__InstallRun_notified_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "InstallRun_notified",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<InstallRun>,
+            >>::sse_decode(&mut deserializer);
+            let api_bytes = <Vec<u8>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let mut api_that_guard = None;
+                let decode_indices_ =
+                    flutter_rust_bridge::for_generated::lockable_compute_decode_order(vec![
+                        flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                            &api_that, 0, false,
+                        ),
+                    ]);
+                for i in decode_indices_ {
+                    match i {
+                        0 => api_that_guard = Some(api_that.lockable_decode_sync_ref()),
+                        _ => unreachable!(),
+                    }
+                }
+                let api_that_guard = api_that_guard.unwrap();
+                let output_ok = Ok::<_, ()>({
+                    crate::api::install::InstallRun::notified(&*api_that_guard, api_bytes);
+                })?;
+                std::result::Result::Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__install__InstallRun_run_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "InstallRun_run",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<InstallRun>,
+            >>::sse_decode(&mut deserializer);
+            let api_updates = <StreamSink<
+                crate::api::install::InstallUpdate,
+                flutter_rust_bridge::for_generated::SseCodec,
+            >>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, ()>(
+                    (move || async move {
+                        let mut api_that_guard = None;
+                        let decode_indices_ =
+                            flutter_rust_bridge::for_generated::lockable_compute_decode_order(
+                                vec![flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                                    &api_that, 0, false,
+                                )],
+                            );
+                        for i in decode_indices_ {
+                            match i {
+                                0 => {
+                                    api_that_guard =
+                                        Some(api_that.lockable_decode_async_ref().await)
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                        let api_that_guard = api_that_guard.unwrap();
+                        let output_ok = Ok::<_, ()>({
+                            crate::api::install::InstallRun::run(&*api_that_guard, api_updates)
+                                .await;
+                        })?;
+                        std::result::Result::Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
+fn wire__crate__api__install__InstallRun_stop_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "InstallRun_stop",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<InstallRun>,
+            >>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let mut api_that_guard = None;
+                let decode_indices_ =
+                    flutter_rust_bridge::for_generated::lockable_compute_decode_order(vec![
+                        flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                            &api_that, 0, false,
+                        ),
+                    ]);
+                for i in decode_indices_ {
+                    match i {
+                        0 => api_that_guard = Some(api_that.lockable_decode_sync_ref()),
+                        _ => unreachable!(),
+                    }
+                }
+                let api_that_guard = api_that_guard.unwrap();
+                let output_ok = Ok::<_, ()>({
+                    crate::api::install::InstallRun::stop(&*api_that_guard);
+                })?;
+                std::result::Result::Ok(output_ok)
+            })())
+        },
+    )
+}
 fn wire__crate__api__setup__Recovery_close_impl(
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
     rust_vec_len_: i32,
@@ -938,6 +1419,104 @@ fn wire__crate__api__store__app_store_default_impl(
         },
     )
 }
+fn wire__crate__api__install__check_build_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "check_build",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let output_ok = Ok::<_, ()>(crate::api::install::check_build())?;
+                std::result::Result::Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__install__check_dns_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "check_dns",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_name = <String>::sse_decode(&mut deserializer);
+            let api_phone_ip = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, ()>(
+                    (move || async move {
+                        let output_ok = Ok::<_, ()>(
+                            crate::api::install::check_dns(api_name, api_phone_ip).await,
+                        )?;
+                        std::result::Result::Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
+fn wire__crate__api__install__check_image_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "check_image",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_dir = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let output_ok = Ok::<_, ()>(crate::api::install::check_image(api_dir))?;
+                std::result::Result::Ok(output_ok)
+            })())
+        },
+    )
+}
 fn wire__crate__api__store__fingerprint_impl(
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
     rust_vec_len_: i32,
@@ -1095,6 +1674,36 @@ fn wire__crate__api__store__load_store_impl(
         },
     )
 }
+fn wire__crate__api__install__pending_install_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "pending_install",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_data_dir = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let output_ok = Ok::<_, ()>(crate::api::install::pending_install(api_data_dir))?;
+                std::result::Result::Ok(output_ok)
+            })())
+        },
+    )
+}
 fn wire__crate__api__store__save_store_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -1197,6 +1806,12 @@ flutter_rust_bridge::frb_generated_moi_arc_impl_value!(
     flutter_rust_bridge::for_generated::RustAutoOpaqueInner<FeederSession>
 );
 flutter_rust_bridge::frb_generated_moi_arc_impl_value!(
+    flutter_rust_bridge::for_generated::RustAutoOpaqueInner<InstallListener>
+);
+flutter_rust_bridge::frb_generated_moi_arc_impl_value!(
+    flutter_rust_bridge::for_generated::RustAutoOpaqueInner<InstallRun>
+);
+flutter_rust_bridge::frb_generated_moi_arc_impl_value!(
     flutter_rust_bridge::for_generated::RustAutoOpaqueInner<Recovery>
 );
 flutter_rust_bridge::frb_generated_moi_arc_impl_value!(
@@ -1228,6 +1843,26 @@ impl SseDecode for FeederSession {
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         let mut inner = <RustOpaqueMoi<
             flutter_rust_bridge::for_generated::RustAutoOpaqueInner<FeederSession>,
+        >>::sse_decode(deserializer);
+        return flutter_rust_bridge::for_generated::rust_auto_opaque_decode_owned(inner);
+    }
+}
+
+impl SseDecode for InstallListener {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <RustOpaqueMoi<
+            flutter_rust_bridge::for_generated::RustAutoOpaqueInner<InstallListener>,
+        >>::sse_decode(deserializer);
+        return flutter_rust_bridge::for_generated::rust_auto_opaque_decode_owned(inner);
+    }
+}
+
+impl SseDecode for InstallRun {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <RustOpaqueMoi<
+            flutter_rust_bridge::for_generated::RustAutoOpaqueInner<InstallRun>,
         >>::sse_decode(deserializer);
         return flutter_rust_bridge::for_generated::rust_auto_opaque_decode_owned(inner);
     }
@@ -1274,6 +1909,26 @@ impl SseDecode
 }
 
 impl SseDecode
+    for RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<InstallListener>>
+{
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <usize>::sse_decode(deserializer);
+        return decode_rust_opaque_moi(inner);
+    }
+}
+
+impl SseDecode
+    for RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<InstallRun>>
+{
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <usize>::sse_decode(deserializer);
+        return decode_rust_opaque_moi(inner);
+    }
+}
+
+impl SseDecode
     for RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<Recovery>>
 {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -1290,6 +1945,26 @@ impl SseDecode
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         let mut inner = <usize>::sse_decode(deserializer);
         return decode_rust_opaque_moi(inner);
+    }
+}
+
+impl SseDecode
+    for StreamSink<crate::api::install::InstallUpdate, flutter_rust_bridge::for_generated::SseCodec>
+{
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <String>::sse_decode(deserializer);
+        return StreamSink::deserialize(inner);
+    }
+}
+
+impl SseDecode
+    for StreamSink<crate::api::install::ListenUpdate, flutter_rust_bridge::for_generated::SseCodec>
+{
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <String>::sse_decode(deserializer);
+        return StreamSink::deserialize(inner);
     }
 }
 
@@ -1373,6 +2048,25 @@ impl SseDecode for crate::api::error::BridgeError {
     }
 }
 
+impl SseDecode for crate::api::install::BuildCheck {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut tag_ = <i32>::sse_decode(deserializer);
+        match tag_ {
+            0 => {
+                return crate::api::install::BuildCheck::Reviewable;
+            }
+            1 => {
+                let mut var_commit = <String>::sse_decode(deserializer);
+                return crate::api::install::BuildCheck::Unreviewed { commit: var_commit };
+            }
+            _ => {
+                unimplemented!("");
+            }
+        }
+    }
+}
+
 impl SseDecode for crate::api::session::Card {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -1412,6 +2106,35 @@ impl SseDecode for crate::api::model::ClientRole {
             3 => crate::api::model::ClientRole::UpdateSigner,
             _ => unreachable!("Invalid variant for ClientRole: {}", inner),
         };
+    }
+}
+
+impl SseDecode for crate::api::install::DnsResult {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut tag_ = <i32>::sse_decode(deserializer);
+        match tag_ {
+            0 => {
+                return crate::api::install::DnsResult::Points;
+            }
+            1 => {
+                let mut var_others = <Vec<String>>::sse_decode(deserializer);
+                return crate::api::install::DnsResult::Mixed { others: var_others };
+            }
+            2 => {
+                let mut var_others = <Vec<String>>::sse_decode(deserializer);
+                return crate::api::install::DnsResult::Elsewhere { others: var_others };
+            }
+            3 => {
+                return crate::api::install::DnsResult::Unresolved;
+            }
+            4 => {
+                return crate::api::install::DnsResult::BadName;
+            }
+            _ => {
+                unimplemented!("");
+            }
+        }
     }
 }
 
@@ -1553,6 +2276,384 @@ impl SseDecode for i32 {
     }
 }
 
+impl SseDecode for crate::api::install::ImageCheck {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut tag_ = <i32>::sse_decode(deserializer);
+        match tag_ {
+            0 => {
+                let mut var_provisioning =
+                    <crate::api::install::ImageProvisioning>::sse_decode(deserializer);
+                let mut var_build = <String>::sse_decode(deserializer);
+                let mut var_version = <u32>::sse_decode(deserializer);
+                return crate::api::install::ImageCheck::Ready {
+                    provisioning: var_provisioning,
+                    build: var_build,
+                    version: var_version,
+                };
+            }
+            1 => {
+                return crate::api::install::ImageCheck::Absent;
+            }
+            2 => {
+                return crate::api::install::ImageCheck::NotPinned;
+            }
+            3 => {
+                let mut var_detail = <String>::sse_decode(deserializer);
+                return crate::api::install::ImageCheck::Mismatch { detail: var_detail };
+            }
+            _ => {
+                unimplemented!("");
+            }
+        }
+    }
+}
+
+impl SseDecode for crate::api::install::ImageProvisioning {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <i32>::sse_decode(deserializer);
+        return match inner {
+            0 => crate::api::install::ImageProvisioning::Consumer,
+            1 => crate::api::install::ImageProvisioning::Bench,
+            _ => unreachable!("Invalid variant for ImageProvisioning: {}", inner),
+        };
+    }
+}
+
+impl SseDecode for crate::api::install::InstallAnswer {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut tag_ = <i32>::sse_decode(deserializer);
+        match tag_ {
+            0 => {
+                return crate::api::install::InstallAnswer::Done;
+            }
+            1 => {
+                let mut var_yes = <bool>::sse_decode(deserializer);
+                return crate::api::install::InstallAnswer::Yes { yes: var_yes };
+            }
+            2 => {
+                let mut var_address = <Option<String>>::sse_decode(deserializer);
+                return crate::api::install::InstallAnswer::Located {
+                    address: var_address,
+                };
+            }
+            3 => {
+                let mut var_reason = <String>::sse_decode(deserializer);
+                return crate::api::install::InstallAnswer::Failed { reason: var_reason };
+            }
+            _ => {
+                unimplemented!("");
+            }
+        }
+    }
+}
+
+impl SseDecode for crate::api::install::InstallAsk {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut tag_ = <i32>::sse_decode(deserializer);
+        match tag_ {
+            0 => {
+                let mut var_name = <String>::sse_decode(deserializer);
+                let mut var_broker = <String>::sse_decode(deserializer);
+                return crate::api::install::InstallAsk::SetOverride {
+                    name: var_name,
+                    broker: var_broker,
+                };
+            }
+            1 => {
+                return crate::api::install::InstallAsk::RestartFeeder;
+            }
+            2 => {
+                let mut var_device = <String>::sse_decode(deserializer);
+                let mut var_address = <String>::sse_decode(deserializer);
+                return crate::api::install::InstallAsk::RecognizeFeeder {
+                    device: var_device,
+                    address: var_address,
+                };
+            }
+            3 => {
+                return crate::api::install::InstallAsk::OpenRecoveryWindow;
+            }
+            4 => {
+                return crate::api::install::InstallAsk::OpenLink;
+            }
+            5 => {
+                let mut var_pieces = <Vec<Vec<u8>>>::sse_decode(deserializer);
+                return crate::api::install::InstallAsk::WriteLink { pieces: var_pieces };
+            }
+            6 => {
+                return crate::api::install::InstallAsk::CloseLink;
+            }
+            7 => {
+                let mut var_identity = <String>::sse_decode(deserializer);
+                return crate::api::install::InstallAsk::Locate {
+                    identity: var_identity,
+                };
+            }
+            _ => {
+                unimplemented!("");
+            }
+        }
+    }
+}
+
+impl SseDecode for crate::api::install::InstallEnd {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut tag_ = <i32>::sse_decode(deserializer);
+        match tag_ {
+            0 => {
+                return crate::api::install::InstallEnd::Done;
+            }
+            1 => {
+                let mut var_case_ = <crate::api::install::StopCase>::sse_decode(deserializer);
+                let mut var_resume = <crate::api::install::Resume>::sse_decode(deserializer);
+                let mut var_detail = <String>::sse_decode(deserializer);
+                return crate::api::install::InstallEnd::Stopped {
+                    case: var_case_,
+                    resume: var_resume,
+                    detail: var_detail,
+                };
+            }
+            _ => {
+                unimplemented!("");
+            }
+        }
+    }
+}
+
+impl SseDecode for crate::api::install::InstallEvent {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut tag_ = <i32>::sse_decode(deserializer);
+        match tag_ {
+            0 => {
+                let mut var_result = <crate::api::install::DnsResult>::sse_decode(deserializer);
+                return crate::api::install::InstallEvent::DnsChecked { result: var_result };
+            }
+            1 => {
+                return crate::api::install::InstallEvent::StockServerStarted;
+            }
+            2 => {
+                return crate::api::install::InstallEvent::AwaitingStock;
+            }
+            3 => {
+                let mut var_why = <crate::api::install::WaitReason>::sse_decode(deserializer);
+                return crate::api::install::InstallEvent::Waiting { why: var_why };
+            }
+            4 => {
+                return crate::api::install::InstallEvent::VersionLost;
+            }
+            5 => {
+                let mut var_error = <String>::sse_decode(deserializer);
+                return crate::api::install::InstallEvent::StockServerEnded { error: var_error };
+            }
+            6 => {
+                let mut var_build = <String>::sse_decode(deserializer);
+                return crate::api::install::InstallEvent::Requesting { build: var_build };
+            }
+            7 => {
+                let mut var_percent = <u8>::sse_decode(deserializer);
+                return crate::api::install::InstallEvent::StockProgress {
+                    percent: var_percent,
+                };
+            }
+            8 => {
+                return crate::api::install::InstallEvent::StockRestarting;
+            }
+            9 => {
+                return crate::api::install::InstallEvent::KeyKnown;
+            }
+            10 => {
+                return crate::api::install::InstallEvent::SetupStarting;
+            }
+            11 => {
+                let mut var_error = <String>::sse_decode(deserializer);
+                return crate::api::install::InstallEvent::NoSetupFeeder { error: var_error };
+            }
+            12 => {
+                let mut var_code = <Vec<u8>>::sse_decode(deserializer);
+                let mut var_seconds = <u16>::sse_decode(deserializer);
+                return crate::api::install::InstallEvent::Code {
+                    code: var_code,
+                    seconds: var_seconds,
+                };
+            }
+            13 => {
+                return crate::api::install::InstallEvent::PressDispense;
+            }
+            14 => {
+                let mut var_identity = <Vec<u8>>::sse_decode(deserializer);
+                let mut var_address = <Option<String>>::sse_decode(deserializer);
+                let mut var_rebooting = <bool>::sse_decode(deserializer);
+                return crate::api::install::InstallEvent::Paired {
+                    identity: var_identity,
+                    address: var_address,
+                    rebooting: var_rebooting,
+                };
+            }
+            15 => {
+                let mut var_address = <String>::sse_decode(deserializer);
+                return crate::api::install::InstallEvent::Joined {
+                    address: var_address,
+                };
+            }
+            16 => {
+                let mut var_build = <String>::sse_decode(deserializer);
+                let mut var_bank = <u8>::sse_decode(deserializer);
+                return crate::api::install::InstallEvent::ReplacementAnswers {
+                    build: var_build,
+                    bank: var_bank,
+                };
+            }
+            17 => {
+                let mut var_total = <u32>::sse_decode(deserializer);
+                return crate::api::install::InstallEvent::ReadingBackup { total: var_total };
+            }
+            18 => {
+                let mut var_bytes = <u64>::sse_decode(deserializer);
+                let mut var_total = <u32>::sse_decode(deserializer);
+                return crate::api::install::InstallEvent::BackupRead {
+                    bytes: var_bytes,
+                    total: var_total,
+                };
+            }
+            19 => {
+                let mut var_path = <String>::sse_decode(deserializer);
+                return crate::api::install::InstallEvent::BackupKept { path: var_path };
+            }
+            20 => {
+                let mut var_converted = <u8>::sse_decode(deserializer);
+                let mut var_refused = <u8>::sse_decode(deserializer);
+                return crate::api::install::InstallEvent::StockPlans {
+                    converted: var_converted,
+                    refused: var_refused,
+                };
+            }
+            21 => {
+                return crate::api::install::InstallEvent::WithoutStockPlans;
+            }
+            22 => {
+                return crate::api::install::InstallEvent::Promoting;
+            }
+            23 => {
+                let mut var_written = <u32>::sse_decode(deserializer);
+                let mut var_length = <u32>::sse_decode(deserializer);
+                return crate::api::install::InstallEvent::Written {
+                    written: var_written,
+                    length: var_length,
+                };
+            }
+            24 => {
+                return crate::api::install::InstallEvent::SessionDropped;
+            }
+            25 => {
+                return crate::api::install::InstallEvent::Activated;
+            }
+            26 => {
+                return crate::api::install::InstallEvent::PuttingPlans;
+            }
+            27 => {
+                let mut var_build = <String>::sse_decode(deserializer);
+                return crate::api::install::InstallEvent::Installed { build: var_build };
+            }
+            28 => {
+                let mut var_result = <crate::api::install::PlansOutcome>::sse_decode(deserializer);
+                return crate::api::install::InstallEvent::Plans { result: var_result };
+            }
+            29 => {
+                let mut var_text = <String>::sse_decode(deserializer);
+                return crate::api::install::InstallEvent::Note { text: var_text };
+            }
+            _ => {
+                unimplemented!("");
+            }
+        }
+    }
+}
+
+impl SseDecode for crate::api::install::InstallSpec {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_start = <crate::api::install::InstallStart>::sse_decode(deserializer);
+        let mut var_phoneIp = <String>::sse_decode(deserializer);
+        let mut var_home = <Option<crate::api::setup::WifiCredentials>>::sse_decode(deserializer);
+        let mut var_label = <String>::sse_decode(deserializer);
+        let mut var_feederName = <String>::sse_decode(deserializer);
+        let mut var_knownFeeders = <Vec<String>>::sse_decode(deserializer);
+        let mut var_storePath = <String>::sse_decode(deserializer);
+        let mut var_imageDir = <String>::sse_decode(deserializer);
+        let mut var_dataDir = <String>::sse_decode(deserializer);
+        let mut var_calibrateClock = <bool>::sse_decode(deserializer);
+        let mut var_withoutStockPlans = <bool>::sse_decode(deserializer);
+        let mut var_forgetEnrollment = <bool>::sse_decode(deserializer);
+        return crate::api::install::InstallSpec {
+            start: var_start,
+            phone_ip: var_phoneIp,
+            home: var_home,
+            label: var_label,
+            feeder_name: var_feederName,
+            known_feeders: var_knownFeeders,
+            store_path: var_storePath,
+            image_dir: var_imageDir,
+            data_dir: var_dataDir,
+            calibrate_clock: var_calibrateClock,
+            without_stock_plans: var_withoutStockPlans,
+            forget_enrollment: var_forgetEnrollment,
+        };
+    }
+}
+
+impl SseDecode for crate::api::install::InstallStart {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut tag_ = <i32>::sse_decode(deserializer);
+        match tag_ {
+            0 => {
+                let mut var_name = <String>::sse_decode(deserializer);
+                return crate::api::install::InstallStart::Dns { name: var_name };
+            }
+            1 => {
+                return crate::api::install::InstallStart::Bank0;
+            }
+            _ => {
+                unimplemented!("");
+            }
+        }
+    }
+}
+
+impl SseDecode for crate::api::install::InstallUpdate {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut tag_ = <i32>::sse_decode(deserializer);
+        match tag_ {
+            0 => {
+                let mut var_event = <crate::api::install::InstallEvent>::sse_decode(deserializer);
+                return crate::api::install::InstallUpdate::Event { event: var_event };
+            }
+            1 => {
+                let mut var_id = <u32>::sse_decode(deserializer);
+                let mut var_ask = <crate::api::install::InstallAsk>::sse_decode(deserializer);
+                return crate::api::install::InstallUpdate::Ask {
+                    id: var_id,
+                    ask: var_ask,
+                };
+            }
+            2 => {
+                let mut var_end = <crate::api::install::InstallEnd>::sse_decode(deserializer);
+                return crate::api::install::InstallUpdate::Ended { end: var_end };
+            }
+            _ => {
+                unimplemented!("");
+            }
+        }
+    }
+}
+
 impl SseDecode for crate::api::store::KnownFeeder {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -1564,6 +2665,18 @@ impl SseDecode for crate::api::store::KnownFeeder {
             name: var_name,
             address: var_address,
         };
+    }
+}
+
+impl SseDecode for Vec<String> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<String>::sse_decode(deserializer));
+        }
+        return ans_;
     }
 }
 
@@ -1612,6 +2725,48 @@ impl SseDecode for Vec<crate::api::setup::SetupStep> {
             ans_.push(<crate::api::setup::SetupStep>::sse_decode(deserializer));
         }
         return ans_;
+    }
+}
+
+impl SseDecode for crate::api::install::ListenUpdate {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut tag_ = <i32>::sse_decode(deserializer);
+        match tag_ {
+            0 => {
+                let mut var_seconds = <u32>::sse_decode(deserializer);
+                let mut var_stock = <bool>::sse_decode(deserializer);
+                return crate::api::install::ListenUpdate::Tick {
+                    seconds: var_seconds,
+                    stock: var_stock,
+                };
+            }
+            1 => {
+                let mut var_address = <String>::sse_decode(deserializer);
+                return crate::api::install::ListenUpdate::Replacement {
+                    address: var_address,
+                };
+            }
+            2 => {
+                let mut var_resolved = <bool>::sse_decode(deserializer);
+                return crate::api::install::ListenUpdate::StockStayed {
+                    resolved: var_resolved,
+                };
+            }
+            3 => {
+                return crate::api::install::ListenUpdate::Silent;
+            }
+            4 => {
+                let mut var_detail = <String>::sse_decode(deserializer);
+                return crate::api::install::ListenUpdate::Failed { detail: var_detail };
+            }
+            5 => {
+                return crate::api::install::ListenUpdate::Stopped;
+            }
+            _ => {
+                unimplemented!("");
+            }
+        }
     }
 }
 
@@ -1681,6 +2836,28 @@ impl SseDecode for Option<crate::api::session::FeedRefusal> {
     }
 }
 
+impl SseDecode for Option<crate::api::model::SetupRefusal> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<crate::api::model::SetupRefusal>::sse_decode(deserializer));
+        } else {
+            return None;
+        }
+    }
+}
+
+impl SseDecode for Option<u32> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<u32>::sse_decode(deserializer));
+        } else {
+            return None;
+        }
+    }
+}
+
 impl SseDecode for Option<u8> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -1702,6 +2879,34 @@ impl SseDecode for Option<crate::api::setup::WifiCredentials> {
         } else {
             return None;
         }
+    }
+}
+
+impl SseDecode for crate::api::install::PlansOutcome {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <i32>::sse_decode(deserializer);
+        return match inner {
+            0 => crate::api::install::PlansOutcome::Set,
+            1 => crate::api::install::PlansOutcome::NoneHeld,
+            2 => crate::api::install::PlansOutcome::NoneConverted,
+            3 => crate::api::install::PlansOutcome::NotRead,
+            4 => crate::api::install::PlansOutcome::Skipped,
+            _ => unreachable!("Invalid variant for PlansOutcome: {}", inner),
+        };
+    }
+}
+
+impl SseDecode for crate::api::install::Resume {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <i32>::sse_decode(deserializer);
+        return match inner {
+            0 => crate::api::install::Resume::FromStart,
+            1 => crate::api::install::Resume::FromBank0,
+            2 => crate::api::install::Resume::Nothing,
+            _ => unreachable!("Invalid variant for Resume: {}", inner),
+        };
     }
 }
 
@@ -1826,6 +3031,87 @@ impl SseDecode for crate::api::setup::SetupStep {
     }
 }
 
+impl SseDecode for crate::api::install::StopCase {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut tag_ = <i32>::sse_decode(deserializer);
+        match tag_ {
+            0 => {
+                return crate::api::install::StopCase::Uncertain;
+            }
+            1 => {
+                let mut var_write = <crate::api::install::UncertainWrite>::sse_decode(deserializer);
+                return crate::api::install::StopCase::UncertainWrite { write: var_write };
+            }
+            2 => {
+                let mut var_version = <String>::sse_decode(deserializer);
+                return crate::api::install::StopCase::OtherFirmware {
+                    version: var_version,
+                };
+            }
+            3 => {
+                return crate::api::install::StopCase::TwoFeeders;
+            }
+            4 => {
+                return crate::api::install::StopCase::BackupMismatch;
+            }
+            5 => {
+                return crate::api::install::StopCase::NotYourFeeder;
+            }
+            6 => {
+                return crate::api::install::StopCase::NoFeederCame;
+            }
+            7 => {
+                return crate::api::install::StopCase::EarlierRequestOpen;
+            }
+            8 => {
+                let mut var_code = <Option<u32>>::sse_decode(deserializer);
+                return crate::api::install::StopCase::StockRefused { code: var_code };
+            }
+            9 => {
+                return crate::api::install::StopCase::ClockUnset;
+            }
+            10 => {
+                return crate::api::install::StopCase::NoSetupFeeder;
+            }
+            11 => {
+                let mut var_refusal =
+                    <Option<crate::api::model::SetupRefusal>>::sse_decode(deserializer);
+                return crate::api::install::StopCase::SetupFailed {
+                    refusal: var_refusal,
+                };
+            }
+            12 => {
+                return crate::api::install::StopCase::NotAnswering;
+            }
+            13 => {
+                return crate::api::install::StopCase::PlansUnreadable;
+            }
+            14 => {
+                return crate::api::install::StopCase::PromotionFailed;
+            }
+            15 => {
+                return crate::api::install::StopCase::FellBack;
+            }
+            16 => {
+                return crate::api::install::StopCase::PlansNotApplied;
+            }
+            17 => {
+                return crate::api::install::StopCase::ServerFailed;
+            }
+            18 => {
+                return crate::api::install::StopCase::Cancelled;
+            }
+            19 => {
+                return crate::api::install::StopCase::Other;
+            }
+            _ => {
+                unimplemented!("");
+            }
+        }
+    }
+}
+
 impl SseDecode for u16 {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -1840,10 +3126,30 @@ impl SseDecode for u32 {
     }
 }
 
+impl SseDecode for u64 {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        deserializer.cursor.read_u64::<NativeEndian>().unwrap()
+    }
+}
+
 impl SseDecode for u8 {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         deserializer.cursor.read_u8().unwrap()
+    }
+}
+
+impl SseDecode for crate::api::install::UncertainWrite {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <i32>::sse_decode(deserializer);
+        return match inner {
+            0 => crate::api::install::UncertainWrite::UpdateKey,
+            1 => crate::api::install::UncertainWrite::Promotion,
+            2 => crate::api::install::UncertainWrite::Plans,
+            _ => unreachable!("Invalid variant for UncertainWrite: {}", inner),
+        };
     }
 }
 
@@ -1856,6 +3162,21 @@ impl SseDecode for usize {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         deserializer.cursor.read_u64::<NativeEndian>().unwrap() as _
+    }
+}
+
+impl SseDecode for crate::api::install::WaitReason {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <i32>::sse_decode(deserializer);
+        return match inner {
+            0 => crate::api::install::WaitReason::NoFeeder,
+            1 => crate::api::install::WaitReason::Unreadable,
+            2 => crate::api::install::WaitReason::Offline,
+            3 => crate::api::install::WaitReason::NoVersion,
+            4 => crate::api::install::WaitReason::NotOnAdapter,
+            _ => unreachable!("Invalid variant for WaitReason: {}", inner),
+        };
     }
 }
 
@@ -1893,11 +3214,16 @@ fn pde_ffi_dispatcher_primary_impl(
     // Codec=Pde (Serialization + dispatch), see doc to use other codecs
     match func_id {
         10 => wire__crate__api__session__FeederSession_run_impl(port, ptr, rust_vec_len, data_len),
-        14 => wire__crate__api__setup__Recovery_run_impl(port, ptr, rust_vec_len, data_len),
-        19 => wire__crate__api__store__app_store_default_impl(port, ptr, rust_vec_len, data_len),
-        23 => wire__crate__api__init_app_impl(port, ptr, rust_vec_len, data_len),
-        24 => wire__crate__api__store__load_store_impl(port, ptr, rust_vec_len, data_len),
-        25 => wire__crate__api__store__save_store_impl(port, ptr, rust_vec_len, data_len),
+        12 => {
+            wire__crate__api__install__InstallListener_run_impl(port, ptr, rust_vec_len, data_len)
+        }
+        19 => wire__crate__api__install__InstallRun_run_impl(port, ptr, rust_vec_len, data_len),
+        24 => wire__crate__api__setup__Recovery_run_impl(port, ptr, rust_vec_len, data_len),
+        29 => wire__crate__api__store__app_store_default_impl(port, ptr, rust_vec_len, data_len),
+        31 => wire__crate__api__install__check_dns_impl(port, ptr, rust_vec_len, data_len),
+        36 => wire__crate__api__init_app_impl(port, ptr, rust_vec_len, data_len),
+        37 => wire__crate__api__store__load_store_impl(port, ptr, rust_vec_len, data_len),
+        39 => wire__crate__api__store__save_store_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -1919,18 +3245,33 @@ fn pde_ffi_dispatcher_sync_impl(
         7 => wire__crate__api__session__FeederSession_feed_impl(ptr, rust_vec_len, data_len),
         8 => wire__crate__api__session__FeederSession_new_impl(ptr, rust_vec_len, data_len),
         9 => wire__crate__api__session__FeederSession_refresh_impl(ptr, rust_vec_len, data_len),
-        11 => wire__crate__api__setup__Recovery_close_impl(ptr, rust_vec_len, data_len),
-        12 => wire__crate__api__setup__Recovery_code_impl(ptr, rust_vec_len, data_len),
-        13 => wire__crate__api__setup__Recovery_new_impl(ptr, rust_vec_len, data_len),
-        15 => wire__crate__api__setup__SetupDriver_code_impl(ptr, rust_vec_len, data_len),
-        16 => wire__crate__api__setup__SetupDriver_new_impl(ptr, rust_vec_len, data_len),
-        17 => wire__crate__api__setup__SetupDriver_notified_impl(ptr, rust_vec_len, data_len),
-        18 => wire__crate__api__setup__SetupDriver_start_impl(ptr, rust_vec_len, data_len),
-        20 => wire__crate__api__store__fingerprint_impl(ptr, rust_vec_len, data_len),
-        21 => wire__crate__api__store__identity_bytes_impl(ptr, rust_vec_len, data_len),
-        22 => wire__crate__api__store__identity_hex_impl(ptr, rust_vec_len, data_len),
-        26 => wire__crate__api__setup__setup_control_impl(ptr, rust_vec_len, data_len),
-        27 => wire__crate__api__setup__setup_service_impl(ptr, rust_vec_len, data_len),
+        11 => wire__crate__api__install__InstallListener_new_impl(ptr, rust_vec_len, data_len),
+        13 => wire__crate__api__install__InstallListener_stop_impl(ptr, rust_vec_len, data_len),
+        14 => wire__crate__api__install__InstallListener_wait_seconds_impl(
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        15 => wire__crate__api__install__InstallRun_answer_impl(ptr, rust_vec_len, data_len),
+        16 => wire__crate__api__install__InstallRun_link_lost_impl(ptr, rust_vec_len, data_len),
+        17 => wire__crate__api__install__InstallRun_new_impl(ptr, rust_vec_len, data_len),
+        18 => wire__crate__api__install__InstallRun_notified_impl(ptr, rust_vec_len, data_len),
+        20 => wire__crate__api__install__InstallRun_stop_impl(ptr, rust_vec_len, data_len),
+        21 => wire__crate__api__setup__Recovery_close_impl(ptr, rust_vec_len, data_len),
+        22 => wire__crate__api__setup__Recovery_code_impl(ptr, rust_vec_len, data_len),
+        23 => wire__crate__api__setup__Recovery_new_impl(ptr, rust_vec_len, data_len),
+        25 => wire__crate__api__setup__SetupDriver_code_impl(ptr, rust_vec_len, data_len),
+        26 => wire__crate__api__setup__SetupDriver_new_impl(ptr, rust_vec_len, data_len),
+        27 => wire__crate__api__setup__SetupDriver_notified_impl(ptr, rust_vec_len, data_len),
+        28 => wire__crate__api__setup__SetupDriver_start_impl(ptr, rust_vec_len, data_len),
+        30 => wire__crate__api__install__check_build_impl(ptr, rust_vec_len, data_len),
+        32 => wire__crate__api__install__check_image_impl(ptr, rust_vec_len, data_len),
+        33 => wire__crate__api__store__fingerprint_impl(ptr, rust_vec_len, data_len),
+        34 => wire__crate__api__store__identity_bytes_impl(ptr, rust_vec_len, data_len),
+        35 => wire__crate__api__store__identity_hex_impl(ptr, rust_vec_len, data_len),
+        38 => wire__crate__api__install__pending_install_impl(ptr, rust_vec_len, data_len),
+        40 => wire__crate__api__setup__setup_control_impl(ptr, rust_vec_len, data_len),
+        41 => wire__crate__api__setup__setup_service_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -1963,6 +3304,36 @@ impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for FrbWrapper<
 
 impl flutter_rust_bridge::IntoIntoDart<FrbWrapper<FeederSession>> for FeederSession {
     fn into_into_dart(self) -> FrbWrapper<FeederSession> {
+        self.into()
+    }
+}
+
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for FrbWrapper<InstallListener> {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        flutter_rust_bridge::for_generated::rust_auto_opaque_encode::<_, MoiArc<_>>(self.0)
+            .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for FrbWrapper<InstallListener> {}
+
+impl flutter_rust_bridge::IntoIntoDart<FrbWrapper<InstallListener>> for InstallListener {
+    fn into_into_dart(self) -> FrbWrapper<InstallListener> {
+        self.into()
+    }
+}
+
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for FrbWrapper<InstallRun> {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        flutter_rust_bridge::for_generated::rust_auto_opaque_encode::<_, MoiArc<_>>(self.0)
+            .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for FrbWrapper<InstallRun> {}
+
+impl flutter_rust_bridge::IntoIntoDart<FrbWrapper<InstallRun>> for InstallRun {
+    fn into_into_dart(self) -> FrbWrapper<InstallRun> {
         self.into()
     }
 }
@@ -2067,6 +3438,31 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::error::BridgeError>
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::install::BuildCheck {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            crate::api::install::BuildCheck::Reviewable => [0.into_dart()].into_dart(),
+            crate::api::install::BuildCheck::Unreviewed { commit } => {
+                [1.into_dart(), commit.into_into_dart().into_dart()].into_dart()
+            }
+            _ => {
+                unimplemented!("");
+            }
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::install::BuildCheck
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::install::BuildCheck>
+    for crate::api::install::BuildCheck
+{
+    fn into_into_dart(self) -> crate::api::install::BuildCheck {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::session::Card {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -2111,6 +3507,36 @@ impl flutter_rust_bridge::IntoIntoDart<FrbWrapper<crate::api::model::ClientRole>
 {
     fn into_into_dart(self) -> FrbWrapper<crate::api::model::ClientRole> {
         self.into()
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::install::DnsResult {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            crate::api::install::DnsResult::Points => [0.into_dart()].into_dart(),
+            crate::api::install::DnsResult::Mixed { others } => {
+                [1.into_dart(), others.into_into_dart().into_dart()].into_dart()
+            }
+            crate::api::install::DnsResult::Elsewhere { others } => {
+                [2.into_dart(), others.into_into_dart().into_dart()].into_dart()
+            }
+            crate::api::install::DnsResult::Unresolved => [3.into_dart()].into_dart(),
+            crate::api::install::DnsResult::BadName => [4.into_dart()].into_dart(),
+            _ => {
+                unimplemented!("");
+            }
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::install::DnsResult
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::install::DnsResult>
+    for crate::api::install::DnsResult
+{
+    fn into_into_dart(self) -> crate::api::install::DnsResult {
+        self
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
@@ -2299,6 +3725,370 @@ impl flutter_rust_bridge::IntoIntoDart<FrbWrapper<crate::api::model::FoodLevel>>
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::install::ImageCheck {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            crate::api::install::ImageCheck::Ready {
+                provisioning,
+                build,
+                version,
+            } => [
+                0.into_dart(),
+                provisioning.into_into_dart().into_dart(),
+                build.into_into_dart().into_dart(),
+                version.into_into_dart().into_dart(),
+            ]
+            .into_dart(),
+            crate::api::install::ImageCheck::Absent => [1.into_dart()].into_dart(),
+            crate::api::install::ImageCheck::NotPinned => [2.into_dart()].into_dart(),
+            crate::api::install::ImageCheck::Mismatch { detail } => {
+                [3.into_dart(), detail.into_into_dart().into_dart()].into_dart()
+            }
+            _ => {
+                unimplemented!("");
+            }
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::install::ImageCheck
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::install::ImageCheck>
+    for crate::api::install::ImageCheck
+{
+    fn into_into_dart(self) -> crate::api::install::ImageCheck {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::install::ImageProvisioning {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            Self::Consumer => 0.into_dart(),
+            Self::Bench => 1.into_dart(),
+            _ => unreachable!(),
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::install::ImageProvisioning
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::install::ImageProvisioning>
+    for crate::api::install::ImageProvisioning
+{
+    fn into_into_dart(self) -> crate::api::install::ImageProvisioning {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::install::InstallAnswer {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            crate::api::install::InstallAnswer::Done => [0.into_dart()].into_dart(),
+            crate::api::install::InstallAnswer::Yes { yes } => {
+                [1.into_dart(), yes.into_into_dart().into_dart()].into_dart()
+            }
+            crate::api::install::InstallAnswer::Located { address } => {
+                [2.into_dart(), address.into_into_dart().into_dart()].into_dart()
+            }
+            crate::api::install::InstallAnswer::Failed { reason } => {
+                [3.into_dart(), reason.into_into_dart().into_dart()].into_dart()
+            }
+            _ => {
+                unimplemented!("");
+            }
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::install::InstallAnswer
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::install::InstallAnswer>
+    for crate::api::install::InstallAnswer
+{
+    fn into_into_dart(self) -> crate::api::install::InstallAnswer {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::install::InstallAsk {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            crate::api::install::InstallAsk::SetOverride { name, broker } => [
+                0.into_dart(),
+                name.into_into_dart().into_dart(),
+                broker.into_into_dart().into_dart(),
+            ]
+            .into_dart(),
+            crate::api::install::InstallAsk::RestartFeeder => [1.into_dart()].into_dart(),
+            crate::api::install::InstallAsk::RecognizeFeeder { device, address } => [
+                2.into_dart(),
+                device.into_into_dart().into_dart(),
+                address.into_into_dart().into_dart(),
+            ]
+            .into_dart(),
+            crate::api::install::InstallAsk::OpenRecoveryWindow => [3.into_dart()].into_dart(),
+            crate::api::install::InstallAsk::OpenLink => [4.into_dart()].into_dart(),
+            crate::api::install::InstallAsk::WriteLink { pieces } => {
+                [5.into_dart(), pieces.into_into_dart().into_dart()].into_dart()
+            }
+            crate::api::install::InstallAsk::CloseLink => [6.into_dart()].into_dart(),
+            crate::api::install::InstallAsk::Locate { identity } => {
+                [7.into_dart(), identity.into_into_dart().into_dart()].into_dart()
+            }
+            _ => {
+                unimplemented!("");
+            }
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::install::InstallAsk
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::install::InstallAsk>
+    for crate::api::install::InstallAsk
+{
+    fn into_into_dart(self) -> crate::api::install::InstallAsk {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::install::InstallEnd {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            crate::api::install::InstallEnd::Done => [0.into_dart()].into_dart(),
+            crate::api::install::InstallEnd::Stopped {
+                case,
+                resume,
+                detail,
+            } => [
+                1.into_dart(),
+                case.into_into_dart().into_dart(),
+                resume.into_into_dart().into_dart(),
+                detail.into_into_dart().into_dart(),
+            ]
+            .into_dart(),
+            _ => {
+                unimplemented!("");
+            }
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::install::InstallEnd
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::install::InstallEnd>
+    for crate::api::install::InstallEnd
+{
+    fn into_into_dart(self) -> crate::api::install::InstallEnd {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::install::InstallEvent {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            crate::api::install::InstallEvent::DnsChecked { result } => {
+                [0.into_dart(), result.into_into_dart().into_dart()].into_dart()
+            }
+            crate::api::install::InstallEvent::StockServerStarted => [1.into_dart()].into_dart(),
+            crate::api::install::InstallEvent::AwaitingStock => [2.into_dart()].into_dart(),
+            crate::api::install::InstallEvent::Waiting { why } => {
+                [3.into_dart(), why.into_into_dart().into_dart()].into_dart()
+            }
+            crate::api::install::InstallEvent::VersionLost => [4.into_dart()].into_dart(),
+            crate::api::install::InstallEvent::StockServerEnded { error } => {
+                [5.into_dart(), error.into_into_dart().into_dart()].into_dart()
+            }
+            crate::api::install::InstallEvent::Requesting { build } => {
+                [6.into_dart(), build.into_into_dart().into_dart()].into_dart()
+            }
+            crate::api::install::InstallEvent::StockProgress { percent } => {
+                [7.into_dart(), percent.into_into_dart().into_dart()].into_dart()
+            }
+            crate::api::install::InstallEvent::StockRestarting => [8.into_dart()].into_dart(),
+            crate::api::install::InstallEvent::KeyKnown => [9.into_dart()].into_dart(),
+            crate::api::install::InstallEvent::SetupStarting => [10.into_dart()].into_dart(),
+            crate::api::install::InstallEvent::NoSetupFeeder { error } => {
+                [11.into_dart(), error.into_into_dart().into_dart()].into_dart()
+            }
+            crate::api::install::InstallEvent::Code { code, seconds } => [
+                12.into_dart(),
+                code.into_into_dart().into_dart(),
+                seconds.into_into_dart().into_dart(),
+            ]
+            .into_dart(),
+            crate::api::install::InstallEvent::PressDispense => [13.into_dart()].into_dart(),
+            crate::api::install::InstallEvent::Paired {
+                identity,
+                address,
+                rebooting,
+            } => [
+                14.into_dart(),
+                identity.into_into_dart().into_dart(),
+                address.into_into_dart().into_dart(),
+                rebooting.into_into_dart().into_dart(),
+            ]
+            .into_dart(),
+            crate::api::install::InstallEvent::Joined { address } => {
+                [15.into_dart(), address.into_into_dart().into_dart()].into_dart()
+            }
+            crate::api::install::InstallEvent::ReplacementAnswers { build, bank } => [
+                16.into_dart(),
+                build.into_into_dart().into_dart(),
+                bank.into_into_dart().into_dart(),
+            ]
+            .into_dart(),
+            crate::api::install::InstallEvent::ReadingBackup { total } => {
+                [17.into_dart(), total.into_into_dart().into_dart()].into_dart()
+            }
+            crate::api::install::InstallEvent::BackupRead { bytes, total } => [
+                18.into_dart(),
+                bytes.into_into_dart().into_dart(),
+                total.into_into_dart().into_dart(),
+            ]
+            .into_dart(),
+            crate::api::install::InstallEvent::BackupKept { path } => {
+                [19.into_dart(), path.into_into_dart().into_dart()].into_dart()
+            }
+            crate::api::install::InstallEvent::StockPlans { converted, refused } => [
+                20.into_dart(),
+                converted.into_into_dart().into_dart(),
+                refused.into_into_dart().into_dart(),
+            ]
+            .into_dart(),
+            crate::api::install::InstallEvent::WithoutStockPlans => [21.into_dart()].into_dart(),
+            crate::api::install::InstallEvent::Promoting => [22.into_dart()].into_dart(),
+            crate::api::install::InstallEvent::Written { written, length } => [
+                23.into_dart(),
+                written.into_into_dart().into_dart(),
+                length.into_into_dart().into_dart(),
+            ]
+            .into_dart(),
+            crate::api::install::InstallEvent::SessionDropped => [24.into_dart()].into_dart(),
+            crate::api::install::InstallEvent::Activated => [25.into_dart()].into_dart(),
+            crate::api::install::InstallEvent::PuttingPlans => [26.into_dart()].into_dart(),
+            crate::api::install::InstallEvent::Installed { build } => {
+                [27.into_dart(), build.into_into_dart().into_dart()].into_dart()
+            }
+            crate::api::install::InstallEvent::Plans { result } => {
+                [28.into_dart(), result.into_into_dart().into_dart()].into_dart()
+            }
+            crate::api::install::InstallEvent::Note { text } => {
+                [29.into_dart(), text.into_into_dart().into_dart()].into_dart()
+            }
+            _ => {
+                unimplemented!("");
+            }
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::install::InstallEvent
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::install::InstallEvent>
+    for crate::api::install::InstallEvent
+{
+    fn into_into_dart(self) -> crate::api::install::InstallEvent {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::install::InstallSpec {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.start.into_into_dart().into_dart(),
+            self.phone_ip.into_into_dart().into_dart(),
+            self.home.into_into_dart().into_dart(),
+            self.label.into_into_dart().into_dart(),
+            self.feeder_name.into_into_dart().into_dart(),
+            self.known_feeders.into_into_dart().into_dart(),
+            self.store_path.into_into_dart().into_dart(),
+            self.image_dir.into_into_dart().into_dart(),
+            self.data_dir.into_into_dart().into_dart(),
+            self.calibrate_clock.into_into_dart().into_dart(),
+            self.without_stock_plans.into_into_dart().into_dart(),
+            self.forget_enrollment.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::install::InstallSpec
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::install::InstallSpec>
+    for crate::api::install::InstallSpec
+{
+    fn into_into_dart(self) -> crate::api::install::InstallSpec {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::install::InstallStart {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            crate::api::install::InstallStart::Dns { name } => {
+                [0.into_dart(), name.into_into_dart().into_dart()].into_dart()
+            }
+            crate::api::install::InstallStart::Bank0 => [1.into_dart()].into_dart(),
+            _ => {
+                unimplemented!("");
+            }
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::install::InstallStart
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::install::InstallStart>
+    for crate::api::install::InstallStart
+{
+    fn into_into_dart(self) -> crate::api::install::InstallStart {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::install::InstallUpdate {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            crate::api::install::InstallUpdate::Event { event } => {
+                [0.into_dart(), event.into_into_dart().into_dart()].into_dart()
+            }
+            crate::api::install::InstallUpdate::Ask { id, ask } => [
+                1.into_dart(),
+                id.into_into_dart().into_dart(),
+                ask.into_into_dart().into_dart(),
+            ]
+            .into_dart(),
+            crate::api::install::InstallUpdate::Ended { end } => {
+                [2.into_dart(), end.into_into_dart().into_dart()].into_dart()
+            }
+            _ => {
+                unimplemented!("");
+            }
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::install::InstallUpdate
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::install::InstallUpdate>
+    for crate::api::install::InstallUpdate
+{
+    fn into_into_dart(self) -> crate::api::install::InstallUpdate {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::store::KnownFeeder {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -2317,6 +4107,87 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::store::KnownFeeder>
     for crate::api::store::KnownFeeder
 {
     fn into_into_dart(self) -> crate::api::store::KnownFeeder {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::install::ListenUpdate {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            crate::api::install::ListenUpdate::Tick { seconds, stock } => [
+                0.into_dart(),
+                seconds.into_into_dart().into_dart(),
+                stock.into_into_dart().into_dart(),
+            ]
+            .into_dart(),
+            crate::api::install::ListenUpdate::Replacement { address } => {
+                [1.into_dart(), address.into_into_dart().into_dart()].into_dart()
+            }
+            crate::api::install::ListenUpdate::StockStayed { resolved } => {
+                [2.into_dart(), resolved.into_into_dart().into_dart()].into_dart()
+            }
+            crate::api::install::ListenUpdate::Silent => [3.into_dart()].into_dart(),
+            crate::api::install::ListenUpdate::Failed { detail } => {
+                [4.into_dart(), detail.into_into_dart().into_dart()].into_dart()
+            }
+            crate::api::install::ListenUpdate::Stopped => [5.into_dart()].into_dart(),
+            _ => {
+                unimplemented!("");
+            }
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::install::ListenUpdate
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::install::ListenUpdate>
+    for crate::api::install::ListenUpdate
+{
+    fn into_into_dart(self) -> crate::api::install::ListenUpdate {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::install::PlansOutcome {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            Self::Set => 0.into_dart(),
+            Self::NoneHeld => 1.into_dart(),
+            Self::NoneConverted => 2.into_dart(),
+            Self::NotRead => 3.into_dart(),
+            Self::Skipped => 4.into_dart(),
+            _ => unreachable!(),
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::install::PlansOutcome
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::install::PlansOutcome>
+    for crate::api::install::PlansOutcome
+{
+    fn into_into_dart(self) -> crate::api::install::PlansOutcome {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::install::Resume {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            Self::FromStart => 0.into_dart(),
+            Self::FromBank0 => 1.into_dart(),
+            Self::Nothing => 2.into_dart(),
+            _ => unreachable!(),
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for crate::api::install::Resume {}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::install::Resume>
+    for crate::api::install::Resume
+{
+    fn into_into_dart(self) -> crate::api::install::Resume {
         self
     }
 }
@@ -2438,6 +4309,98 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::setup::SetupStep>
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::install::StopCase {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            crate::api::install::StopCase::Uncertain => [0.into_dart()].into_dart(),
+            crate::api::install::StopCase::UncertainWrite { write } => {
+                [1.into_dart(), write.into_into_dart().into_dart()].into_dart()
+            }
+            crate::api::install::StopCase::OtherFirmware { version } => {
+                [2.into_dart(), version.into_into_dart().into_dart()].into_dart()
+            }
+            crate::api::install::StopCase::TwoFeeders => [3.into_dart()].into_dart(),
+            crate::api::install::StopCase::BackupMismatch => [4.into_dart()].into_dart(),
+            crate::api::install::StopCase::NotYourFeeder => [5.into_dart()].into_dart(),
+            crate::api::install::StopCase::NoFeederCame => [6.into_dart()].into_dart(),
+            crate::api::install::StopCase::EarlierRequestOpen => [7.into_dart()].into_dart(),
+            crate::api::install::StopCase::StockRefused { code } => {
+                [8.into_dart(), code.into_into_dart().into_dart()].into_dart()
+            }
+            crate::api::install::StopCase::ClockUnset => [9.into_dart()].into_dart(),
+            crate::api::install::StopCase::NoSetupFeeder => [10.into_dart()].into_dart(),
+            crate::api::install::StopCase::SetupFailed { refusal } => {
+                [11.into_dart(), refusal.into_into_dart().into_dart()].into_dart()
+            }
+            crate::api::install::StopCase::NotAnswering => [12.into_dart()].into_dart(),
+            crate::api::install::StopCase::PlansUnreadable => [13.into_dart()].into_dart(),
+            crate::api::install::StopCase::PromotionFailed => [14.into_dart()].into_dart(),
+            crate::api::install::StopCase::FellBack => [15.into_dart()].into_dart(),
+            crate::api::install::StopCase::PlansNotApplied => [16.into_dart()].into_dart(),
+            crate::api::install::StopCase::ServerFailed => [17.into_dart()].into_dart(),
+            crate::api::install::StopCase::Cancelled => [18.into_dart()].into_dart(),
+            crate::api::install::StopCase::Other => [19.into_dart()].into_dart(),
+            _ => {
+                unimplemented!("");
+            }
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for crate::api::install::StopCase {}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::install::StopCase>
+    for crate::api::install::StopCase
+{
+    fn into_into_dart(self) -> crate::api::install::StopCase {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::install::UncertainWrite {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            Self::UpdateKey => 0.into_dart(),
+            Self::Promotion => 1.into_dart(),
+            Self::Plans => 2.into_dart(),
+            _ => unreachable!(),
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::install::UncertainWrite
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::install::UncertainWrite>
+    for crate::api::install::UncertainWrite
+{
+    fn into_into_dart(self) -> crate::api::install::UncertainWrite {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::install::WaitReason {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            Self::NoFeeder => 0.into_dart(),
+            Self::Unreadable => 1.into_dart(),
+            Self::Offline => 2.into_dart(),
+            Self::NoVersion => 3.into_dart(),
+            Self::NotOnAdapter => 4.into_dart(),
+            _ => unreachable!(),
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::install::WaitReason
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::install::WaitReason>
+    for crate::api::install::WaitReason
+{
+    fn into_into_dart(self) -> crate::api::install::WaitReason {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::setup::WifiCredentials {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -2501,6 +4464,20 @@ impl SseEncode for FeederSession {
     }
 }
 
+impl SseEncode for InstallListener {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<InstallListener>>>::sse_encode(flutter_rust_bridge::for_generated::rust_auto_opaque_encode::<_, MoiArc<_>>(self), serializer);
+    }
+}
+
+impl SseEncode for InstallRun {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<InstallRun>>>::sse_encode(flutter_rust_bridge::for_generated::rust_auto_opaque_encode::<_, MoiArc<_>>(self), serializer);
+    }
+}
+
 impl SseEncode for Recovery {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -2538,6 +4515,28 @@ impl SseEncode
 }
 
 impl SseEncode
+    for RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<InstallListener>>
+{
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        let (ptr, size) = self.sse_encode_raw();
+        <usize>::sse_encode(ptr, serializer);
+        <i32>::sse_encode(size, serializer);
+    }
+}
+
+impl SseEncode
+    for RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<InstallRun>>
+{
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        let (ptr, size) = self.sse_encode_raw();
+        <usize>::sse_encode(ptr, serializer);
+        <i32>::sse_encode(size, serializer);
+    }
+}
+
+impl SseEncode
     for RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<Recovery>>
 {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -2556,6 +4555,24 @@ impl SseEncode
         let (ptr, size) = self.sse_encode_raw();
         <usize>::sse_encode(ptr, serializer);
         <i32>::sse_encode(size, serializer);
+    }
+}
+
+impl SseEncode
+    for StreamSink<crate::api::install::InstallUpdate, flutter_rust_bridge::for_generated::SseCodec>
+{
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        unimplemented!("")
+    }
+}
+
+impl SseEncode
+    for StreamSink<crate::api::install::ListenUpdate, flutter_rust_bridge::for_generated::SseCodec>
+{
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        unimplemented!("")
     }
 }
 
@@ -2632,6 +4649,24 @@ impl SseEncode for crate::api::error::BridgeError {
     }
 }
 
+impl SseEncode for crate::api::install::BuildCheck {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        match self {
+            crate::api::install::BuildCheck::Reviewable => {
+                <i32>::sse_encode(0, serializer);
+            }
+            crate::api::install::BuildCheck::Unreviewed { commit } => {
+                <i32>::sse_encode(1, serializer);
+                <String>::sse_encode(commit, serializer);
+            }
+            _ => {
+                unimplemented!("");
+            }
+        }
+    }
+}
+
 impl SseEncode for crate::api::session::Card {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -2663,6 +4698,34 @@ impl SseEncode for crate::api::model::ClientRole {
             },
             serializer,
         );
+    }
+}
+
+impl SseEncode for crate::api::install::DnsResult {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        match self {
+            crate::api::install::DnsResult::Points => {
+                <i32>::sse_encode(0, serializer);
+            }
+            crate::api::install::DnsResult::Mixed { others } => {
+                <i32>::sse_encode(1, serializer);
+                <Vec<String>>::sse_encode(others, serializer);
+            }
+            crate::api::install::DnsResult::Elsewhere { others } => {
+                <i32>::sse_encode(2, serializer);
+                <Vec<String>>::sse_encode(others, serializer);
+            }
+            crate::api::install::DnsResult::Unresolved => {
+                <i32>::sse_encode(3, serializer);
+            }
+            crate::api::install::DnsResult::BadName => {
+                <i32>::sse_encode(4, serializer);
+            }
+            _ => {
+                unimplemented!("");
+            }
+        }
     }
 }
 
@@ -2818,12 +4881,350 @@ impl SseEncode for i32 {
     }
 }
 
+impl SseEncode for crate::api::install::ImageCheck {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        match self {
+            crate::api::install::ImageCheck::Ready {
+                provisioning,
+                build,
+                version,
+            } => {
+                <i32>::sse_encode(0, serializer);
+                <crate::api::install::ImageProvisioning>::sse_encode(provisioning, serializer);
+                <String>::sse_encode(build, serializer);
+                <u32>::sse_encode(version, serializer);
+            }
+            crate::api::install::ImageCheck::Absent => {
+                <i32>::sse_encode(1, serializer);
+            }
+            crate::api::install::ImageCheck::NotPinned => {
+                <i32>::sse_encode(2, serializer);
+            }
+            crate::api::install::ImageCheck::Mismatch { detail } => {
+                <i32>::sse_encode(3, serializer);
+                <String>::sse_encode(detail, serializer);
+            }
+            _ => {
+                unimplemented!("");
+            }
+        }
+    }
+}
+
+impl SseEncode for crate::api::install::ImageProvisioning {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(
+            match self {
+                crate::api::install::ImageProvisioning::Consumer => 0,
+                crate::api::install::ImageProvisioning::Bench => 1,
+                _ => {
+                    unimplemented!("");
+                }
+            },
+            serializer,
+        );
+    }
+}
+
+impl SseEncode for crate::api::install::InstallAnswer {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        match self {
+            crate::api::install::InstallAnswer::Done => {
+                <i32>::sse_encode(0, serializer);
+            }
+            crate::api::install::InstallAnswer::Yes { yes } => {
+                <i32>::sse_encode(1, serializer);
+                <bool>::sse_encode(yes, serializer);
+            }
+            crate::api::install::InstallAnswer::Located { address } => {
+                <i32>::sse_encode(2, serializer);
+                <Option<String>>::sse_encode(address, serializer);
+            }
+            crate::api::install::InstallAnswer::Failed { reason } => {
+                <i32>::sse_encode(3, serializer);
+                <String>::sse_encode(reason, serializer);
+            }
+            _ => {
+                unimplemented!("");
+            }
+        }
+    }
+}
+
+impl SseEncode for crate::api::install::InstallAsk {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        match self {
+            crate::api::install::InstallAsk::SetOverride { name, broker } => {
+                <i32>::sse_encode(0, serializer);
+                <String>::sse_encode(name, serializer);
+                <String>::sse_encode(broker, serializer);
+            }
+            crate::api::install::InstallAsk::RestartFeeder => {
+                <i32>::sse_encode(1, serializer);
+            }
+            crate::api::install::InstallAsk::RecognizeFeeder { device, address } => {
+                <i32>::sse_encode(2, serializer);
+                <String>::sse_encode(device, serializer);
+                <String>::sse_encode(address, serializer);
+            }
+            crate::api::install::InstallAsk::OpenRecoveryWindow => {
+                <i32>::sse_encode(3, serializer);
+            }
+            crate::api::install::InstallAsk::OpenLink => {
+                <i32>::sse_encode(4, serializer);
+            }
+            crate::api::install::InstallAsk::WriteLink { pieces } => {
+                <i32>::sse_encode(5, serializer);
+                <Vec<Vec<u8>>>::sse_encode(pieces, serializer);
+            }
+            crate::api::install::InstallAsk::CloseLink => {
+                <i32>::sse_encode(6, serializer);
+            }
+            crate::api::install::InstallAsk::Locate { identity } => {
+                <i32>::sse_encode(7, serializer);
+                <String>::sse_encode(identity, serializer);
+            }
+            _ => {
+                unimplemented!("");
+            }
+        }
+    }
+}
+
+impl SseEncode for crate::api::install::InstallEnd {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        match self {
+            crate::api::install::InstallEnd::Done => {
+                <i32>::sse_encode(0, serializer);
+            }
+            crate::api::install::InstallEnd::Stopped {
+                case,
+                resume,
+                detail,
+            } => {
+                <i32>::sse_encode(1, serializer);
+                <crate::api::install::StopCase>::sse_encode(case, serializer);
+                <crate::api::install::Resume>::sse_encode(resume, serializer);
+                <String>::sse_encode(detail, serializer);
+            }
+            _ => {
+                unimplemented!("");
+            }
+        }
+    }
+}
+
+impl SseEncode for crate::api::install::InstallEvent {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        match self {
+            crate::api::install::InstallEvent::DnsChecked { result } => {
+                <i32>::sse_encode(0, serializer);
+                <crate::api::install::DnsResult>::sse_encode(result, serializer);
+            }
+            crate::api::install::InstallEvent::StockServerStarted => {
+                <i32>::sse_encode(1, serializer);
+            }
+            crate::api::install::InstallEvent::AwaitingStock => {
+                <i32>::sse_encode(2, serializer);
+            }
+            crate::api::install::InstallEvent::Waiting { why } => {
+                <i32>::sse_encode(3, serializer);
+                <crate::api::install::WaitReason>::sse_encode(why, serializer);
+            }
+            crate::api::install::InstallEvent::VersionLost => {
+                <i32>::sse_encode(4, serializer);
+            }
+            crate::api::install::InstallEvent::StockServerEnded { error } => {
+                <i32>::sse_encode(5, serializer);
+                <String>::sse_encode(error, serializer);
+            }
+            crate::api::install::InstallEvent::Requesting { build } => {
+                <i32>::sse_encode(6, serializer);
+                <String>::sse_encode(build, serializer);
+            }
+            crate::api::install::InstallEvent::StockProgress { percent } => {
+                <i32>::sse_encode(7, serializer);
+                <u8>::sse_encode(percent, serializer);
+            }
+            crate::api::install::InstallEvent::StockRestarting => {
+                <i32>::sse_encode(8, serializer);
+            }
+            crate::api::install::InstallEvent::KeyKnown => {
+                <i32>::sse_encode(9, serializer);
+            }
+            crate::api::install::InstallEvent::SetupStarting => {
+                <i32>::sse_encode(10, serializer);
+            }
+            crate::api::install::InstallEvent::NoSetupFeeder { error } => {
+                <i32>::sse_encode(11, serializer);
+                <String>::sse_encode(error, serializer);
+            }
+            crate::api::install::InstallEvent::Code { code, seconds } => {
+                <i32>::sse_encode(12, serializer);
+                <Vec<u8>>::sse_encode(code, serializer);
+                <u16>::sse_encode(seconds, serializer);
+            }
+            crate::api::install::InstallEvent::PressDispense => {
+                <i32>::sse_encode(13, serializer);
+            }
+            crate::api::install::InstallEvent::Paired {
+                identity,
+                address,
+                rebooting,
+            } => {
+                <i32>::sse_encode(14, serializer);
+                <Vec<u8>>::sse_encode(identity, serializer);
+                <Option<String>>::sse_encode(address, serializer);
+                <bool>::sse_encode(rebooting, serializer);
+            }
+            crate::api::install::InstallEvent::Joined { address } => {
+                <i32>::sse_encode(15, serializer);
+                <String>::sse_encode(address, serializer);
+            }
+            crate::api::install::InstallEvent::ReplacementAnswers { build, bank } => {
+                <i32>::sse_encode(16, serializer);
+                <String>::sse_encode(build, serializer);
+                <u8>::sse_encode(bank, serializer);
+            }
+            crate::api::install::InstallEvent::ReadingBackup { total } => {
+                <i32>::sse_encode(17, serializer);
+                <u32>::sse_encode(total, serializer);
+            }
+            crate::api::install::InstallEvent::BackupRead { bytes, total } => {
+                <i32>::sse_encode(18, serializer);
+                <u64>::sse_encode(bytes, serializer);
+                <u32>::sse_encode(total, serializer);
+            }
+            crate::api::install::InstallEvent::BackupKept { path } => {
+                <i32>::sse_encode(19, serializer);
+                <String>::sse_encode(path, serializer);
+            }
+            crate::api::install::InstallEvent::StockPlans { converted, refused } => {
+                <i32>::sse_encode(20, serializer);
+                <u8>::sse_encode(converted, serializer);
+                <u8>::sse_encode(refused, serializer);
+            }
+            crate::api::install::InstallEvent::WithoutStockPlans => {
+                <i32>::sse_encode(21, serializer);
+            }
+            crate::api::install::InstallEvent::Promoting => {
+                <i32>::sse_encode(22, serializer);
+            }
+            crate::api::install::InstallEvent::Written { written, length } => {
+                <i32>::sse_encode(23, serializer);
+                <u32>::sse_encode(written, serializer);
+                <u32>::sse_encode(length, serializer);
+            }
+            crate::api::install::InstallEvent::SessionDropped => {
+                <i32>::sse_encode(24, serializer);
+            }
+            crate::api::install::InstallEvent::Activated => {
+                <i32>::sse_encode(25, serializer);
+            }
+            crate::api::install::InstallEvent::PuttingPlans => {
+                <i32>::sse_encode(26, serializer);
+            }
+            crate::api::install::InstallEvent::Installed { build } => {
+                <i32>::sse_encode(27, serializer);
+                <String>::sse_encode(build, serializer);
+            }
+            crate::api::install::InstallEvent::Plans { result } => {
+                <i32>::sse_encode(28, serializer);
+                <crate::api::install::PlansOutcome>::sse_encode(result, serializer);
+            }
+            crate::api::install::InstallEvent::Note { text } => {
+                <i32>::sse_encode(29, serializer);
+                <String>::sse_encode(text, serializer);
+            }
+            _ => {
+                unimplemented!("");
+            }
+        }
+    }
+}
+
+impl SseEncode for crate::api::install::InstallSpec {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <crate::api::install::InstallStart>::sse_encode(self.start, serializer);
+        <String>::sse_encode(self.phone_ip, serializer);
+        <Option<crate::api::setup::WifiCredentials>>::sse_encode(self.home, serializer);
+        <String>::sse_encode(self.label, serializer);
+        <String>::sse_encode(self.feeder_name, serializer);
+        <Vec<String>>::sse_encode(self.known_feeders, serializer);
+        <String>::sse_encode(self.store_path, serializer);
+        <String>::sse_encode(self.image_dir, serializer);
+        <String>::sse_encode(self.data_dir, serializer);
+        <bool>::sse_encode(self.calibrate_clock, serializer);
+        <bool>::sse_encode(self.without_stock_plans, serializer);
+        <bool>::sse_encode(self.forget_enrollment, serializer);
+    }
+}
+
+impl SseEncode for crate::api::install::InstallStart {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        match self {
+            crate::api::install::InstallStart::Dns { name } => {
+                <i32>::sse_encode(0, serializer);
+                <String>::sse_encode(name, serializer);
+            }
+            crate::api::install::InstallStart::Bank0 => {
+                <i32>::sse_encode(1, serializer);
+            }
+            _ => {
+                unimplemented!("");
+            }
+        }
+    }
+}
+
+impl SseEncode for crate::api::install::InstallUpdate {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        match self {
+            crate::api::install::InstallUpdate::Event { event } => {
+                <i32>::sse_encode(0, serializer);
+                <crate::api::install::InstallEvent>::sse_encode(event, serializer);
+            }
+            crate::api::install::InstallUpdate::Ask { id, ask } => {
+                <i32>::sse_encode(1, serializer);
+                <u32>::sse_encode(id, serializer);
+                <crate::api::install::InstallAsk>::sse_encode(ask, serializer);
+            }
+            crate::api::install::InstallUpdate::Ended { end } => {
+                <i32>::sse_encode(2, serializer);
+                <crate::api::install::InstallEnd>::sse_encode(end, serializer);
+            }
+            _ => {
+                unimplemented!("");
+            }
+        }
+    }
+}
+
 impl SseEncode for crate::api::store::KnownFeeder {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <String>::sse_encode(self.identity, serializer);
         <String>::sse_encode(self.name, serializer);
         <Option<String>>::sse_encode(self.address, serializer);
+    }
+}
+
+impl SseEncode for Vec<String> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <String>::sse_encode(item, serializer);
+        }
     }
 }
 
@@ -2863,6 +5264,40 @@ impl SseEncode for Vec<crate::api::setup::SetupStep> {
         <i32>::sse_encode(self.len() as _, serializer);
         for item in self {
             <crate::api::setup::SetupStep>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for crate::api::install::ListenUpdate {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        match self {
+            crate::api::install::ListenUpdate::Tick { seconds, stock } => {
+                <i32>::sse_encode(0, serializer);
+                <u32>::sse_encode(seconds, serializer);
+                <bool>::sse_encode(stock, serializer);
+            }
+            crate::api::install::ListenUpdate::Replacement { address } => {
+                <i32>::sse_encode(1, serializer);
+                <String>::sse_encode(address, serializer);
+            }
+            crate::api::install::ListenUpdate::StockStayed { resolved } => {
+                <i32>::sse_encode(2, serializer);
+                <bool>::sse_encode(resolved, serializer);
+            }
+            crate::api::install::ListenUpdate::Silent => {
+                <i32>::sse_encode(3, serializer);
+            }
+            crate::api::install::ListenUpdate::Failed { detail } => {
+                <i32>::sse_encode(4, serializer);
+                <String>::sse_encode(detail, serializer);
+            }
+            crate::api::install::ListenUpdate::Stopped => {
+                <i32>::sse_encode(5, serializer);
+            }
+            _ => {
+                unimplemented!("");
+            }
         }
     }
 }
@@ -2927,6 +5362,26 @@ impl SseEncode for Option<crate::api::session::FeedRefusal> {
     }
 }
 
+impl SseEncode for Option<crate::api::model::SetupRefusal> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::api::model::SetupRefusal>::sse_encode(value, serializer);
+        }
+    }
+}
+
+impl SseEncode for Option<u32> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <u32>::sse_encode(value, serializer);
+        }
+    }
+}
+
 impl SseEncode for Option<u8> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -2944,6 +5399,42 @@ impl SseEncode for Option<crate::api::setup::WifiCredentials> {
         if let Some(value) = self {
             <crate::api::setup::WifiCredentials>::sse_encode(value, serializer);
         }
+    }
+}
+
+impl SseEncode for crate::api::install::PlansOutcome {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(
+            match self {
+                crate::api::install::PlansOutcome::Set => 0,
+                crate::api::install::PlansOutcome::NoneHeld => 1,
+                crate::api::install::PlansOutcome::NoneConverted => 2,
+                crate::api::install::PlansOutcome::NotRead => 3,
+                crate::api::install::PlansOutcome::Skipped => 4,
+                _ => {
+                    unimplemented!("");
+                }
+            },
+            serializer,
+        );
+    }
+}
+
+impl SseEncode for crate::api::install::Resume {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(
+            match self {
+                crate::api::install::Resume::FromStart => 0,
+                crate::api::install::Resume::FromBank0 => 1,
+                crate::api::install::Resume::Nothing => 2,
+                _ => {
+                    unimplemented!("");
+                }
+            },
+            serializer,
+        );
     }
 }
 
@@ -3054,6 +5545,81 @@ impl SseEncode for crate::api::setup::SetupStep {
     }
 }
 
+impl SseEncode for crate::api::install::StopCase {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        match self {
+            crate::api::install::StopCase::Uncertain => {
+                <i32>::sse_encode(0, serializer);
+            }
+            crate::api::install::StopCase::UncertainWrite { write } => {
+                <i32>::sse_encode(1, serializer);
+                <crate::api::install::UncertainWrite>::sse_encode(write, serializer);
+            }
+            crate::api::install::StopCase::OtherFirmware { version } => {
+                <i32>::sse_encode(2, serializer);
+                <String>::sse_encode(version, serializer);
+            }
+            crate::api::install::StopCase::TwoFeeders => {
+                <i32>::sse_encode(3, serializer);
+            }
+            crate::api::install::StopCase::BackupMismatch => {
+                <i32>::sse_encode(4, serializer);
+            }
+            crate::api::install::StopCase::NotYourFeeder => {
+                <i32>::sse_encode(5, serializer);
+            }
+            crate::api::install::StopCase::NoFeederCame => {
+                <i32>::sse_encode(6, serializer);
+            }
+            crate::api::install::StopCase::EarlierRequestOpen => {
+                <i32>::sse_encode(7, serializer);
+            }
+            crate::api::install::StopCase::StockRefused { code } => {
+                <i32>::sse_encode(8, serializer);
+                <Option<u32>>::sse_encode(code, serializer);
+            }
+            crate::api::install::StopCase::ClockUnset => {
+                <i32>::sse_encode(9, serializer);
+            }
+            crate::api::install::StopCase::NoSetupFeeder => {
+                <i32>::sse_encode(10, serializer);
+            }
+            crate::api::install::StopCase::SetupFailed { refusal } => {
+                <i32>::sse_encode(11, serializer);
+                <Option<crate::api::model::SetupRefusal>>::sse_encode(refusal, serializer);
+            }
+            crate::api::install::StopCase::NotAnswering => {
+                <i32>::sse_encode(12, serializer);
+            }
+            crate::api::install::StopCase::PlansUnreadable => {
+                <i32>::sse_encode(13, serializer);
+            }
+            crate::api::install::StopCase::PromotionFailed => {
+                <i32>::sse_encode(14, serializer);
+            }
+            crate::api::install::StopCase::FellBack => {
+                <i32>::sse_encode(15, serializer);
+            }
+            crate::api::install::StopCase::PlansNotApplied => {
+                <i32>::sse_encode(16, serializer);
+            }
+            crate::api::install::StopCase::ServerFailed => {
+                <i32>::sse_encode(17, serializer);
+            }
+            crate::api::install::StopCase::Cancelled => {
+                <i32>::sse_encode(18, serializer);
+            }
+            crate::api::install::StopCase::Other => {
+                <i32>::sse_encode(19, serializer);
+            }
+            _ => {
+                unimplemented!("");
+            }
+        }
+    }
+}
+
 impl SseEncode for u16 {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -3068,10 +5634,34 @@ impl SseEncode for u32 {
     }
 }
 
+impl SseEncode for u64 {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        serializer.cursor.write_u64::<NativeEndian>(self).unwrap();
+    }
+}
+
 impl SseEncode for u8 {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         serializer.cursor.write_u8(self).unwrap();
+    }
+}
+
+impl SseEncode for crate::api::install::UncertainWrite {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(
+            match self {
+                crate::api::install::UncertainWrite::UpdateKey => 0,
+                crate::api::install::UncertainWrite::Promotion => 1,
+                crate::api::install::UncertainWrite::Plans => 2,
+                _ => {
+                    unimplemented!("");
+                }
+            },
+            serializer,
+        );
     }
 }
 
@@ -3087,6 +5677,25 @@ impl SseEncode for usize {
             .cursor
             .write_u64::<NativeEndian>(self as _)
             .unwrap();
+    }
+}
+
+impl SseEncode for crate::api::install::WaitReason {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(
+            match self {
+                crate::api::install::WaitReason::NoFeeder => 0,
+                crate::api::install::WaitReason::Unreadable => 1,
+                crate::api::install::WaitReason::Offline => 2,
+                crate::api::install::WaitReason::NoVersion => 3,
+                crate::api::install::WaitReason::NotOnAdapter => 4,
+                _ => {
+                    unimplemented!("");
+                }
+            },
+            serializer,
+        );
     }
 }
 
@@ -3122,6 +5731,7 @@ mod io {
     // Section: imports
 
     use super::*;
+    use crate::api::install::*;
     use crate::api::keys::*;
     use crate::api::session::*;
     use crate::api::setup::*;
@@ -3161,6 +5771,34 @@ mod io {
         ptr: *const std::ffi::c_void,
     ) {
         MoiArc::<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<FeederSession>>::decrement_strong_count(ptr as _);
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn frbgen_wellfed_rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerInstallListener(
+        ptr: *const std::ffi::c_void,
+    ) {
+        MoiArc::<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<InstallListener>>::increment_strong_count(ptr as _);
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn frbgen_wellfed_rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerInstallListener(
+        ptr: *const std::ffi::c_void,
+    ) {
+        MoiArc::<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<InstallListener>>::decrement_strong_count(ptr as _);
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn frbgen_wellfed_rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerInstallRun(
+        ptr: *const std::ffi::c_void,
+    ) {
+        MoiArc::<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<InstallRun>>::increment_strong_count(ptr as _);
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn frbgen_wellfed_rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerInstallRun(
+        ptr: *const std::ffi::c_void,
+    ) {
+        MoiArc::<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<InstallRun>>::decrement_strong_count(ptr as _);
     }
 
     #[unsafe(no_mangle)]

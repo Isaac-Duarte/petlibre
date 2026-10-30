@@ -15,17 +15,21 @@ crate-type = ["cdylib", "staticlib", "lib"]
 flutter_rust_bridge = "=2.13.0"
 jiff.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["macros", "sync", "time"] }
+tokio = { workspace = true, features = ["macros", "net", "rt", "sync", "time"] }
+uuid = { workspace = true, features = ["v4"] }
 wellfed-client.workspace = true
 wellfed-connect.workspace = true
 wellfed-formats.workspace = true
+wellfed-install.workspace = true
 wellfed-model.workspace = true
 wellfed-session.workspace = true
 
 [dev-dependencies]
-serde_json.workspace = true
+chrono = { version = "0.4.45", default-features = false, features = ["std"] }
 tempfile.workspace = true
+wellfed-core.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
 wellfed-feeder-sim = { workspace = true, features = ["harness"] }
 

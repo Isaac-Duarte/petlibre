@@ -25,7 +25,7 @@ use crate::frb_generated::StreamSink;
 
 /// Writes fit the smallest ATT payload, so they never depend on the MTU
 /// exchange having happened.
-const CONTROL_PIECE: usize = 20;
+pub(crate) const CONTROL_PIECE: usize = 20;
 /// The feeder answers each handshake message at once.
 const HANDSHAKE_WAIT: Duration = Duration::from_secs(10);
 /// Beyond the feeder's own code window, for its reply to arrive.

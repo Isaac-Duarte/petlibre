@@ -4,6 +4,7 @@
 // ignore_for_file: unused_import, unused_element, unnecessary_import, duplicate_ignore, invalid_use_of_internal_member, annotate_overrides, non_constant_identifier_names, curly_braces_in_flow_control_structures, prefer_const_literals_to_create_immutables, unused_field
 
 import 'api/error.dart';
+import 'api/install.dart';
 import 'api/keys.dart';
 import 'api/model.dart';
 import 'api/session.dart';
@@ -35,6 +36,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerFeederSessionPtr;
 
   CrossPlatformFinalizerArg
+  get rust_arc_decrement_strong_count_InstallListenerPtr => wire
+      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerInstallListenerPtr;
+
+  CrossPlatformFinalizerArg
+  get rust_arc_decrement_strong_count_InstallRunPtr => wire
+      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerInstallRunPtr;
+
+  CrossPlatformFinalizerArg
   get rust_arc_decrement_strong_count_RecoveryPtr => wire
       ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRecoveryPtr;
 
@@ -54,6 +63,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   FeederSession
   dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerFeederSession(
+    dynamic raw,
+  );
+
+  @protected
+  InstallListener
+  dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerInstallListener(
+    dynamic raw,
+  );
+
+  @protected
+  InstallRun
+  dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerInstallRun(
     dynamic raw,
   );
 
@@ -88,6 +109,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  InstallListener
+  dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerInstallListener(
+    dynamic raw,
+  );
+
+  @protected
+  InstallRun
+  dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerInstallRun(
+    dynamic raw,
+  );
+
+  @protected
   Recovery
   dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRecovery(
     dynamic raw,
@@ -112,6 +145,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  InstallListener
+  dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerInstallListener(
+    dynamic raw,
+  );
+
+  @protected
+  InstallRun
+  dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerInstallRun(
+    dynamic raw,
+  );
+
+  @protected
   Recovery
   dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRecovery(
     dynamic raw,
@@ -120,6 +165,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   SetupDriver
   dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSetupDriver(
+    dynamic raw,
+  );
+
+  @protected
+  RustStreamSink<InstallUpdate> dco_decode_StreamSink_install_update_Sse(
+    dynamic raw,
+  );
+
+  @protected
+  RustStreamSink<ListenUpdate> dco_decode_StreamSink_listen_update_Sse(
     dynamic raw,
   );
 
@@ -159,6 +214,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Card dco_decode_box_autoadd_card(dynamic raw);
 
   @protected
+  DnsResult dco_decode_box_autoadd_dns_result(dynamic raw);
+
+  @protected
   FeedOutcome dco_decode_box_autoadd_feed_outcome(dynamic raw);
 
   @protected
@@ -166,6 +224,30 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   FeedResult dco_decode_box_autoadd_feed_result(dynamic raw);
+
+  @protected
+  InstallAnswer dco_decode_box_autoadd_install_answer(dynamic raw);
+
+  @protected
+  InstallAsk dco_decode_box_autoadd_install_ask(dynamic raw);
+
+  @protected
+  InstallEnd dco_decode_box_autoadd_install_end(dynamic raw);
+
+  @protected
+  InstallEvent dco_decode_box_autoadd_install_event(dynamic raw);
+
+  @protected
+  InstallSpec dco_decode_box_autoadd_install_spec(dynamic raw);
+
+  @protected
+  SetupRefusal dco_decode_box_autoadd_setup_refusal(dynamic raw);
+
+  @protected
+  StopCase dco_decode_box_autoadd_stop_case(dynamic raw);
+
+  @protected
+  int dco_decode_box_autoadd_u_32(dynamic raw);
 
   @protected
   int dco_decode_box_autoadd_u_8(dynamic raw);
@@ -177,10 +259,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BridgeError dco_decode_bridge_error(dynamic raw);
 
   @protected
+  BuildCheck dco_decode_build_check(dynamic raw);
+
+  @protected
   Card dco_decode_card(dynamic raw);
 
   @protected
   ClientRole dco_decode_client_role(dynamic raw);
+
+  @protected
+  DnsResult dco_decode_dns_result(dynamic raw);
 
   @protected
   Enrolled dco_decode_enrolled(dynamic raw);
@@ -207,7 +295,37 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   int dco_decode_i_32(dynamic raw);
 
   @protected
+  ImageCheck dco_decode_image_check(dynamic raw);
+
+  @protected
+  ImageProvisioning dco_decode_image_provisioning(dynamic raw);
+
+  @protected
+  InstallAnswer dco_decode_install_answer(dynamic raw);
+
+  @protected
+  InstallAsk dco_decode_install_ask(dynamic raw);
+
+  @protected
+  InstallEnd dco_decode_install_end(dynamic raw);
+
+  @protected
+  InstallEvent dco_decode_install_event(dynamic raw);
+
+  @protected
+  InstallSpec dco_decode_install_spec(dynamic raw);
+
+  @protected
+  InstallStart dco_decode_install_start(dynamic raw);
+
+  @protected
+  InstallUpdate dco_decode_install_update(dynamic raw);
+
+  @protected
   KnownFeeder dco_decode_known_feeder(dynamic raw);
+
+  @protected
+  List<String> dco_decode_list_String(dynamic raw);
 
   @protected
   List<KnownFeeder> dco_decode_list_known_feeder(dynamic raw);
@@ -223,6 +341,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<SetupStep> dco_decode_list_setup_step(dynamic raw);
+
+  @protected
+  ListenUpdate dco_decode_listen_update(dynamic raw);
 
   @protected
   String? dco_decode_opt_String(dynamic raw);
@@ -243,10 +364,22 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   FeedRefusal? dco_decode_opt_box_autoadd_feed_refusal(dynamic raw);
 
   @protected
+  SetupRefusal? dco_decode_opt_box_autoadd_setup_refusal(dynamic raw);
+
+  @protected
+  int? dco_decode_opt_box_autoadd_u_32(dynamic raw);
+
+  @protected
   int? dco_decode_opt_box_autoadd_u_8(dynamic raw);
 
   @protected
   WifiCredentials? dco_decode_opt_box_autoadd_wifi_credentials(dynamic raw);
+
+  @protected
+  PlansOutcome dco_decode_plans_outcome(dynamic raw);
+
+  @protected
+  Resume dco_decode_resume(dynamic raw);
 
   @protected
   SessionUpdate dco_decode_session_update(dynamic raw);
@@ -258,19 +391,31 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   SetupStep dco_decode_setup_step(dynamic raw);
 
   @protected
+  StopCase dco_decode_stop_case(dynamic raw);
+
+  @protected
   int dco_decode_u_16(dynamic raw);
 
   @protected
   int dco_decode_u_32(dynamic raw);
 
   @protected
+  BigInt dco_decode_u_64(dynamic raw);
+
+  @protected
   int dco_decode_u_8(dynamic raw);
+
+  @protected
+  UncertainWrite dco_decode_uncertain_write(dynamic raw);
 
   @protected
   void dco_decode_unit(dynamic raw);
 
   @protected
   BigInt dco_decode_usize(dynamic raw);
+
+  @protected
+  WaitReason dco_decode_wait_reason(dynamic raw);
 
   @protected
   WifiCredentials dco_decode_wifi_credentials(dynamic raw);
@@ -290,6 +435,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   FeederSession
   sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerFeederSession(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  InstallListener
+  sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerInstallListener(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  InstallRun
+  sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerInstallRun(
     SseDeserializer deserializer,
   );
 
@@ -324,6 +481,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  InstallListener
+  sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerInstallListener(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  InstallRun
+  sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerInstallRun(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   Recovery
   sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRecovery(
     SseDeserializer deserializer,
@@ -348,6 +517,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  InstallListener
+  sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerInstallListener(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  InstallRun
+  sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerInstallRun(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   Recovery
   sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRecovery(
     SseDeserializer deserializer,
@@ -356,6 +537,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   SetupDriver
   sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSetupDriver(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  RustStreamSink<InstallUpdate> sse_decode_StreamSink_install_update_Sse(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  RustStreamSink<ListenUpdate> sse_decode_StreamSink_listen_update_Sse(
     SseDeserializer deserializer,
   );
 
@@ -397,6 +588,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Card sse_decode_box_autoadd_card(SseDeserializer deserializer);
 
   @protected
+  DnsResult sse_decode_box_autoadd_dns_result(SseDeserializer deserializer);
+
+  @protected
   FeedOutcome sse_decode_box_autoadd_feed_outcome(SseDeserializer deserializer);
 
   @protected
@@ -404,6 +598,36 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   FeedResult sse_decode_box_autoadd_feed_result(SseDeserializer deserializer);
+
+  @protected
+  InstallAnswer sse_decode_box_autoadd_install_answer(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  InstallAsk sse_decode_box_autoadd_install_ask(SseDeserializer deserializer);
+
+  @protected
+  InstallEnd sse_decode_box_autoadd_install_end(SseDeserializer deserializer);
+
+  @protected
+  InstallEvent sse_decode_box_autoadd_install_event(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  InstallSpec sse_decode_box_autoadd_install_spec(SseDeserializer deserializer);
+
+  @protected
+  SetupRefusal sse_decode_box_autoadd_setup_refusal(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  StopCase sse_decode_box_autoadd_stop_case(SseDeserializer deserializer);
+
+  @protected
+  int sse_decode_box_autoadd_u_32(SseDeserializer deserializer);
 
   @protected
   int sse_decode_box_autoadd_u_8(SseDeserializer deserializer);
@@ -417,10 +641,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BridgeError sse_decode_bridge_error(SseDeserializer deserializer);
 
   @protected
+  BuildCheck sse_decode_build_check(SseDeserializer deserializer);
+
+  @protected
   Card sse_decode_card(SseDeserializer deserializer);
 
   @protected
   ClientRole sse_decode_client_role(SseDeserializer deserializer);
+
+  @protected
+  DnsResult sse_decode_dns_result(SseDeserializer deserializer);
 
   @protected
   Enrolled sse_decode_enrolled(SseDeserializer deserializer);
@@ -447,7 +677,37 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   int sse_decode_i_32(SseDeserializer deserializer);
 
   @protected
+  ImageCheck sse_decode_image_check(SseDeserializer deserializer);
+
+  @protected
+  ImageProvisioning sse_decode_image_provisioning(SseDeserializer deserializer);
+
+  @protected
+  InstallAnswer sse_decode_install_answer(SseDeserializer deserializer);
+
+  @protected
+  InstallAsk sse_decode_install_ask(SseDeserializer deserializer);
+
+  @protected
+  InstallEnd sse_decode_install_end(SseDeserializer deserializer);
+
+  @protected
+  InstallEvent sse_decode_install_event(SseDeserializer deserializer);
+
+  @protected
+  InstallSpec sse_decode_install_spec(SseDeserializer deserializer);
+
+  @protected
+  InstallStart sse_decode_install_start(SseDeserializer deserializer);
+
+  @protected
+  InstallUpdate sse_decode_install_update(SseDeserializer deserializer);
+
+  @protected
   KnownFeeder sse_decode_known_feeder(SseDeserializer deserializer);
+
+  @protected
+  List<String> sse_decode_list_String(SseDeserializer deserializer);
 
   @protected
   List<KnownFeeder> sse_decode_list_known_feeder(SseDeserializer deserializer);
@@ -465,6 +725,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<SetupStep> sse_decode_list_setup_step(SseDeserializer deserializer);
+
+  @protected
+  ListenUpdate sse_decode_listen_update(SseDeserializer deserializer);
 
   @protected
   String? sse_decode_opt_String(SseDeserializer deserializer);
@@ -491,12 +754,26 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  SetupRefusal? sse_decode_opt_box_autoadd_setup_refusal(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  int? sse_decode_opt_box_autoadd_u_32(SseDeserializer deserializer);
+
+  @protected
   int? sse_decode_opt_box_autoadd_u_8(SseDeserializer deserializer);
 
   @protected
   WifiCredentials? sse_decode_opt_box_autoadd_wifi_credentials(
     SseDeserializer deserializer,
   );
+
+  @protected
+  PlansOutcome sse_decode_plans_outcome(SseDeserializer deserializer);
+
+  @protected
+  Resume sse_decode_resume(SseDeserializer deserializer);
 
   @protected
   SessionUpdate sse_decode_session_update(SseDeserializer deserializer);
@@ -508,19 +785,31 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   SetupStep sse_decode_setup_step(SseDeserializer deserializer);
 
   @protected
+  StopCase sse_decode_stop_case(SseDeserializer deserializer);
+
+  @protected
   int sse_decode_u_16(SseDeserializer deserializer);
 
   @protected
   int sse_decode_u_32(SseDeserializer deserializer);
 
   @protected
+  BigInt sse_decode_u_64(SseDeserializer deserializer);
+
+  @protected
   int sse_decode_u_8(SseDeserializer deserializer);
+
+  @protected
+  UncertainWrite sse_decode_uncertain_write(SseDeserializer deserializer);
 
   @protected
   void sse_decode_unit(SseDeserializer deserializer);
 
   @protected
   BigInt sse_decode_usize(SseDeserializer deserializer);
+
+  @protected
+  WaitReason sse_decode_wait_reason(SseDeserializer deserializer);
 
   @protected
   WifiCredentials sse_decode_wifi_credentials(SseDeserializer deserializer);
@@ -545,6 +834,20 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void
   sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerFeederSession(
     FeederSession self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
+  sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerInstallListener(
+    InstallListener self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
+  sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerInstallRun(
+    InstallRun self,
     SseSerializer serializer,
   );
 
@@ -585,6 +888,20 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void
+  sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerInstallListener(
+    InstallListener self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
+  sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerInstallRun(
+    InstallRun self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
   sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRecovery(
     Recovery self,
     SseSerializer serializer,
@@ -613,6 +930,20 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void
+  sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerInstallListener(
+    InstallListener self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
+  sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerInstallRun(
+    InstallRun self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
   sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRecovery(
     Recovery self,
     SseSerializer serializer,
@@ -622,6 +953,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void
   sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSetupDriver(
     SetupDriver self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_StreamSink_install_update_Sse(
+    RustStreamSink<InstallUpdate> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_StreamSink_listen_update_Sse(
+    RustStreamSink<ListenUpdate> self,
     SseSerializer serializer,
   );
 
@@ -671,6 +1014,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_box_autoadd_card(Card self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_dns_result(
+    DnsResult self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_feed_outcome(
     FeedOutcome self,
     SseSerializer serializer,
@@ -689,6 +1038,51 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_install_answer(
+    InstallAnswer self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_install_ask(
+    InstallAsk self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_install_end(
+    InstallEnd self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_install_event(
+    InstallEvent self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_install_spec(
+    InstallSpec self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_setup_refusal(
+    SetupRefusal self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_stop_case(
+    StopCase self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_u_32(int self, SseSerializer serializer);
+
+  @protected
   void sse_encode_box_autoadd_u_8(int self, SseSerializer serializer);
 
   @protected
@@ -701,10 +1095,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_bridge_error(BridgeError self, SseSerializer serializer);
 
   @protected
+  void sse_encode_build_check(BuildCheck self, SseSerializer serializer);
+
+  @protected
   void sse_encode_card(Card self, SseSerializer serializer);
 
   @protected
   void sse_encode_client_role(ClientRole self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_dns_result(DnsResult self, SseSerializer serializer);
 
   @protected
   void sse_encode_enrolled(Enrolled self, SseSerializer serializer);
@@ -731,7 +1131,40 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_i_32(int self, SseSerializer serializer);
 
   @protected
+  void sse_encode_image_check(ImageCheck self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_image_provisioning(
+    ImageProvisioning self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_install_answer(InstallAnswer self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_install_ask(InstallAsk self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_install_end(InstallEnd self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_install_event(InstallEvent self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_install_spec(InstallSpec self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_install_start(InstallStart self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_install_update(InstallUpdate self, SseSerializer serializer);
+
+  @protected
   void sse_encode_known_feeder(KnownFeeder self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_String(List<String> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_known_feeder(
@@ -759,6 +1192,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
     List<SetupStep> self,
     SseSerializer serializer,
   );
+
+  @protected
+  void sse_encode_listen_update(ListenUpdate self, SseSerializer serializer);
 
   @protected
   void sse_encode_opt_String(String? self, SseSerializer serializer);
@@ -791,6 +1227,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_opt_box_autoadd_setup_refusal(
+    SetupRefusal? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_u_32(int? self, SseSerializer serializer);
+
+  @protected
   void sse_encode_opt_box_autoadd_u_8(int? self, SseSerializer serializer);
 
   @protected
@@ -798,6 +1243,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
     WifiCredentials? self,
     SseSerializer serializer,
   );
+
+  @protected
+  void sse_encode_plans_outcome(PlansOutcome self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_resume(Resume self, SseSerializer serializer);
 
   @protected
   void sse_encode_session_update(SessionUpdate self, SseSerializer serializer);
@@ -809,19 +1260,34 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_setup_step(SetupStep self, SseSerializer serializer);
 
   @protected
+  void sse_encode_stop_case(StopCase self, SseSerializer serializer);
+
+  @protected
   void sse_encode_u_16(int self, SseSerializer serializer);
 
   @protected
   void sse_encode_u_32(int self, SseSerializer serializer);
 
   @protected
+  void sse_encode_u_64(BigInt self, SseSerializer serializer);
+
+  @protected
   void sse_encode_u_8(int self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_uncertain_write(
+    UncertainWrite self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_unit(void self, SseSerializer serializer);
 
   @protected
   void sse_encode_usize(BigInt self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_wait_reason(WaitReason self, SseSerializer serializer);
 
   @protected
   void sse_encode_wifi_credentials(
@@ -913,6 +1379,74 @@ class RustLibWire implements BaseWire {
       );
   late final _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerFeederSession =
       _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerFeederSessionPtr
+          .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
+
+  void
+  rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerInstallListener(
+    ffi.Pointer<ffi.Void> ptr,
+  ) {
+    return _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerInstallListener(
+      ptr,
+    );
+  }
+
+  late final _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerInstallListenerPtr =
+      _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<ffi.Void>)>>(
+        'frbgen_wellfed_rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerInstallListener',
+      );
+  late final _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerInstallListener =
+      _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerInstallListenerPtr
+          .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
+
+  void
+  rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerInstallListener(
+    ffi.Pointer<ffi.Void> ptr,
+  ) {
+    return _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerInstallListener(
+      ptr,
+    );
+  }
+
+  late final _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerInstallListenerPtr =
+      _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<ffi.Void>)>>(
+        'frbgen_wellfed_rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerInstallListener',
+      );
+  late final _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerInstallListener =
+      _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerInstallListenerPtr
+          .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
+
+  void
+  rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerInstallRun(
+    ffi.Pointer<ffi.Void> ptr,
+  ) {
+    return _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerInstallRun(
+      ptr,
+    );
+  }
+
+  late final _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerInstallRunPtr =
+      _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<ffi.Void>)>>(
+        'frbgen_wellfed_rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerInstallRun',
+      );
+  late final _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerInstallRun =
+      _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerInstallRunPtr
+          .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
+
+  void
+  rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerInstallRun(
+    ffi.Pointer<ffi.Void> ptr,
+  ) {
+    return _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerInstallRun(
+      ptr,
+    );
+  }
+
+  late final _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerInstallRunPtr =
+      _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<ffi.Void>)>>(
+        'frbgen_wellfed_rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerInstallRun',
+      );
+  late final _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerInstallRun =
+      _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerInstallRunPtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
   void

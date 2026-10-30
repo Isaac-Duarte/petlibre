@@ -2,6 +2,7 @@
 //! that cross are owned, so nothing borrows across the bridge.
 
 pub mod error;
+pub mod install;
 pub mod keys;
 pub mod model;
 pub mod session;

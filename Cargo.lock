@@ -4964,6 +4964,7 @@ dependencies = [
 name = "wellfed-app-bridge"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "flutter_rust_bridge",
  "jiff",
  "serde",
@@ -4971,10 +4972,13 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tokio",
+ "uuid",
  "wellfed-client",
  "wellfed-connect",
+ "wellfed-core",
  "wellfed-feeder-sim",
  "wellfed-formats",
+ "wellfed-install",
  "wellfed-model",
  "wellfed-session",
 ]

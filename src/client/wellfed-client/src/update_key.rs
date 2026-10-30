@@ -87,7 +87,9 @@ pub enum EnrollError {
     Uncertain,
     /// No answer came to the client list: nothing was enrolled, and asking
     /// again is safe.
-    #[error("no answer came to the client list; nothing was enrolled")]
+    #[error(
+        "no answer came to the client list; nothing was enrolled, and asking again is safe (an install resumes with --from-bank0)"
+    )]
     ListUnanswered,
     #[error("the feeder refused the key: {0:?}")]
     Refused(Refusal),

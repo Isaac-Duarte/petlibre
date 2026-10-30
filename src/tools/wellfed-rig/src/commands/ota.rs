@@ -38,14 +38,14 @@ use wellfed_formats::review::ImageKind;
 /// The bench's signing key file, which also signs stock's downgrade
 /// statements; re-exported so the suite need not link `wellfed-signing`.
 pub use wellfed_signing::KEY_PATH;
-use wellfed_signing::{Frozen, Key, Motion, highest_signed};
+use wellfed_signing::{Frozen, Key, Motion, signed_so_far};
 
 use super::{Attendance, Bench};
 use crate::device::{DeviceStatus, Fault};
 use crate::tools::{InstallJob, Installing, PushError};
 use crate::{Error, Result};
 use wellfed_formats::bench::banks::{Bank, Content, Source as Wrote};
-use wellfed_formats::bench::{CAPTURES, VERIFICATION, since_epoch};
+use wellfed_formats::bench::{CAPTURES, STOCK_BACKUPS, VERIFICATION, since_epoch};
 use wellfed_formats::require;
 
 /// Each capture segment; the classifier reads it once it ends.
@@ -991,7 +991,7 @@ impl Bench {
     }
 
     fn ota_version(&self, given: Option<u32>) -> Result<u32> {
-        let highest = highest_signed(&self.root.join(VERIFICATION));
+        let highest = signed_so_far(&self.root, Path::new(STOCK_BACKUPS));
         match (given, highest) {
             (Some(version), Some((top, file))) if version <= top => {
                 say!(
@@ -1013,7 +1013,7 @@ impl Bench {
                 Ok(version)
             }
             (None, None) => {
-                say!("Version 1: no signed manifest in {VERIFICATION}");
+                say!("Version 1: no signed manifest in {VERIFICATION} or {STOCK_BACKUPS}");
                 Ok(1)
             }
         }

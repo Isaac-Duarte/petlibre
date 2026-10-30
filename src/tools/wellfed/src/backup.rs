@@ -39,7 +39,7 @@ use crate::push::{Pushed, push};
 use crate::{Target, connect};
 
 /// The owner's data directory for backups, one subdirectory per feeder.
-pub(crate) const BACKUPS: &str = "private/stock-backups";
+pub(crate) const BACKUPS: &str = wellfed_formats::bench::STOCK_BACKUPS;
 /// Report the read's progress every this many bytes.
 const PROGRESS: usize = 256 * 1024;
 

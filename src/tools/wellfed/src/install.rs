@@ -66,7 +66,6 @@ use wellfed_client::install::{
 use wellfed_client::setup::Credentials;
 use wellfed_client::update::{Image, InstallError as UpdateError};
 use wellfed_client::update_key::{EnrollError, Enrolled};
-use wellfed_formats::bench::VERIFICATION;
 use wellfed_formats::bench::lease::Lease;
 use wellfed_formats::bench::prompt::Prompt;
 use wellfed_formats::credentials::KeyScope;
@@ -76,7 +75,7 @@ use wellfed_formats::stock::{
 };
 use wellfed_model::{Answer, Generation, Op, PLANS, Plan, Plans};
 use wellfed_proto::api::PORT;
-use wellfed_signing::{Frozen, Key, Motion, highest_signed};
+use wellfed_signing::{Frozen, Key, Motion, highest_signed, signed_so_far};
 use wellfed_stock_api::{ApiError, Auth, StockApi};
 
 use crate::ask::{Asker, Prompts};
@@ -129,6 +128,7 @@ pub(crate) struct InstallArgs {
     /// the run enrolls it after pairing, confirmed by a Dispense press.
     /// Without it, a bench review signs with the bench key
     /// (private/ota-key.json), and a consumer review needs --manifest.
+    /// Refused with --manifest, which is promoted as signed.
     #[arg(long)]
     update_key: Option<PathBuf>,
     /// The network a consumer image is given over Bluetooth setup
@@ -489,8 +489,9 @@ pub(crate) async fn run(args: InstallArgs) -> Result<()> {
             (Some(manifest), Promotion::Signed(version), None)
         }
         None => {
-            let frozen = frozen_review(&args.review, &build)?;
-            let above = signed_before(&args.backups);
+            let (frozen, root) = frozen_review(&args.review, &build)?;
+            let backups = std::path::absolute(&args.backups).context("--backups")?;
+            let above = signed_so_far(&root, &backups).map_or(0, |(version, _)| version);
             if let Some(key) = &update_key {
                 eprintln!(
                     "The run signs build {} with update key {} once it has read the feeder's \
@@ -604,14 +605,76 @@ enum Refused {
     OtherBuild { signed: String, served: String },
     #[error("{} is not under a checkout's private/ directory, where reviews are signed", review.display())]
     NotPrivate { review: PathBuf },
+    /// `--manifest` names its own signer, which the run cannot see: an
+    /// update key beside it would be enrolled for nothing, or the manifest
+    /// refused for want of its own.
+    #[error(
+        "--manifest and --update-key are exclusive: a given manifest is promoted as signed, and the run enrolls no key for it; pass one or the other"
+    )]
+    KeyWithManifest,
+    #[error(
+        "feeder {feeder} knows this computer's key, but it did not answer where it last did, where stock connected from, or over mDNS: pass --address <ip> to resume"
+    )]
+    NotAnswering { feeder: String },
 }
 
-/// The update key the run uses: `--update-key` (created if missing), or
-/// the bench key, never created here, for a bench review that signs here.
-/// `None` when a given manifest needs no key of the run's own.
+/// The feeder an install paired with and where it answered, kept beside
+/// the backups (`installing.json`) so a resumed run finds it with no image
+/// lease left. Its identity is the one the feeder proved.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct Paired {
+    identity: wellfed_model::Hex<32>,
+    address: SocketAddr,
+}
+
+impl Paired {
+    const FILE: &str = "installing.json";
+
+    fn load(backups: &Path) -> Result<Option<Self>> {
+        let path = backups.join(Self::FILE);
+        match std::fs::read(&path) {
+            Ok(bytes) => serde_json::from_slice(&bytes)
+                .map(Some)
+                .with_context(|| format!("read {}", path.display())),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error).with_context(|| format!("read {}", path.display())),
+        }
+    }
+
+    fn keep(self, backups: &Path) -> Result<()> {
+        std::fs::create_dir_all(backups)
+            .with_context(|| format!("create {}", backups.display()))?;
+        let path = backups.join(Self::FILE);
+        wellfed_formats::private::write_json(&path, &self)
+            .with_context(|| format!("write {}", path.display()))
+    }
+}
+
+/// Which feeder a resumed run looks for, and where it last answered: the
+/// one an earlier run recorded (unless `--feeder` names another), else the
+/// one the key file knows (`known`, `None` when it knows none).
+fn resumed_feeder(
+    record: Option<&Paired>,
+    prefix: Option<&str>,
+    known: impl FnOnce() -> Result<Option<[u8; 32]>>,
+) -> Result<Option<([u8; 32], Option<SocketAddr>)>> {
+    if let Some(record) = record {
+        let identity = wellfed_formats::hex::encode(&record.identity.0);
+        if prefix.is_none_or(|prefix| identity.starts_with(prefix)) {
+            return Ok(Some((record.identity.0, Some(record.address))));
+        }
+    }
+    Ok(known()?.map(|identity| (identity, None)))
+}
+
+/// The update key the run signs with: `--update-key` (created if
+/// missing), or the bench key, never created here, for a bench review.
+/// `None` with `--manifest`, which is promoted as signed; the two together
+/// are refused.
 fn update_key(args: &InstallArgs, provisioning: Provisioning) -> Result<Option<Key>> {
     match (&args.update_key, &args.manifest, provisioning) {
-        (Some(path), _, _) => open_update_key(path).map(Some),
+        (Some(_), Some(_), _) => Err(Refused::KeyWithManifest.into()),
+        (Some(path), None, _) => open_update_key(path).map(Some),
         (None, Some(_), _) => Ok(None),
         (None, None, Provisioning::Bench) => {
             let path = Path::new(wellfed_signing::KEY_PATH);
@@ -650,7 +713,8 @@ fn builds_in(review: &BuildManifest, key: &Key) -> bool {
 /// The review, verified as the signer verifies it; refused when it is not
 /// the served build, or when it moves the motor at startup (signed only
 /// attended).
-fn frozen_review(review: &Path, build: &str) -> Result<Frozen> {
+/// With it, the checkout root the review sits under.
+fn frozen_review(review: &Path, build: &str) -> Result<(Frozen, PathBuf)> {
     let absolute = std::path::absolute(review).context("--review")?;
     let root = absolute
         .ancestors()
@@ -673,24 +737,7 @@ fn frozen_review(review: &Path, build: &str) -> Result<Frozen> {
         }
         .into());
     }
-    Ok(frozen)
-}
-
-/// The highest version this checkout signed before: the bench's manifests
-/// (`wellfed-bench ota` signs one above them) and the promotions earlier
-/// runs kept beside each feeder's backup. The run signs above it, so no
-/// two manifests share a version.
-fn signed_before(backups: &Path) -> u32 {
-    let mut directories = vec![PathBuf::from(VERIFICATION)];
-    if let Ok(entries) = std::fs::read_dir(backups) {
-        directories.extend(entries.flatten().map(|entry| entry.path()));
-    }
-    directories
-        .iter()
-        .filter_map(|directory| highest_signed(directory))
-        .map(|(version, _)| version)
-        .max()
-        .unwrap_or(0)
+    Ok((frozen, root.to_path_buf()))
 }
 
 /// The Wi-Fi Bluetooth setup gives a consumer image: `--home-ssid`, or the
@@ -1299,14 +1346,22 @@ impl Run {
     /// looks for it advertising until it does; the exchange then goes once,
     /// with the code the owner keys in.
     async fn set_up(&mut self, install: &mut Install) -> Result<()> {
-        // Only where this feeder is known to be: the key file may know
-        // another feeder of the owner's, which mDNS would find.
-        if let Ok(identity) = self.key.feeder(self.args.feeder.as_deref())
-            && let Some(address) = self.answering(identity, Look::Known).await
+        if self.args.from_bank0 {
+            if let Some(identity) = self.resume(install).await? {
+                eprintln!(
+                    "The replacement knows this computer's key already: feeder {}.",
+                    fingerprint(&identity)
+                );
+                return Ok(());
+            }
+        } else if let Ok(identity) = self.key.feeder(self.args.feeder.as_deref())
+            // Only where this feeder is known to be: the key file may know
+            // another feeder of the owner's, which mDNS would find, and a
+            // replacement stock just installed has no network until setup.
+            && let Some(address) = self.answering(identity, Look::Known, None).await
         {
             eprintln!("The replacement knows this computer's key already, at {address}.");
-            self.identity = Some(identity);
-            self.found = Some(address);
+            self.paired_at(identity, address)?;
             install.paired();
             return Ok(());
         }
@@ -1355,9 +1410,9 @@ impl Run {
             .context("the feeder's identity is not known yet")?;
         let deadline = Instant::now() + JOIN_WAIT;
         while Instant::now() < deadline {
-            if let Some(address) = self.answering(identity, Look::Mdns).await {
+            if let Some(address) = self.answering(identity, Look::Mdns, None).await {
                 eprintln!("The replacement joined the network and answers at {address}.");
-                self.found = Some(address);
+                self.paired_at(identity, address)?;
                 install.joined();
                 return Ok(());
             }
@@ -1367,12 +1422,66 @@ impl Run {
         Ok(())
     }
 
+    /// A resumed consumer run: the feeder this computer's key already
+    /// opens, never Bluetooth setup once the key knows it. The feeder is the
+    /// one an earlier run recorded beside the backups (its proven identity
+    /// and last address), or the one the key file names; it is looked for
+    /// there, where stock connected from, and over mDNS, where only that
+    /// identity can complete the session. `None` when the key knows no
+    /// feeder: setup is the way in.
+    async fn resume(&mut self, install: &mut Install) -> Result<Option<[u8; 32]>> {
+        let record = Paired::load(&self.args.backups)?;
+        let known = || {
+            if self.key.knows_feeders() {
+                self.key.feeder(self.args.feeder.as_deref()).map(Some)
+            } else {
+                Ok(None)
+            }
+        };
+        let Some((identity, last)) =
+            resumed_feeder(record.as_ref(), self.args.feeder.as_deref(), known)?
+        else {
+            return Ok(None);
+        };
+
+        let Some(address) = self.answering(identity, Look::Mdns, last).await else {
+            return Err(Refused::NotAnswering {
+                feeder: fingerprint(&identity),
+            }
+            .into());
+        };
+        self.paired_at(identity, address)?;
+        install.paired();
+        Ok(Some(identity))
+    }
+
+    /// The paired feeder answered at `address`: use it, and record it
+    /// beside the backups for a resumed run, which may find no image lease
+    /// (the image server removes it when it stops).
+    fn paired_at(&mut self, identity: [u8; 32], address: SocketAddr) -> Result<()> {
+        self.identity = Some(identity);
+        self.found = Some(address);
+        Paired {
+            identity: wellfed_model::Hex(identity),
+            address,
+        }
+        .keep(&self.args.backups)
+    }
+
     /// Where the feeder with `identity` opens a session with this
-    /// computer's key now, if anywhere: `--address`, else (by `look`) over
-    /// mDNS, else where it answered or stock connected from. Opening a
-    /// session sends nothing.
-    async fn answering(&self, identity: [u8; 32], look: Look) -> Option<SocketAddr> {
+    /// computer's key now, if anywhere: `--address`; else `last` (where it
+    /// answered before), then (by `look`) over mDNS, then where it answered
+    /// this run or stock connected from. Opening a session sends nothing.
+    async fn answering(
+        &self,
+        identity: [u8; 32],
+        look: Look,
+        last: Option<SocketAddr>,
+    ) -> Option<SocketAddr> {
         let mut candidates = Vec::new();
+        if self.args.address.is_none() {
+            candidates.extend(last);
+        }
         if self.args.address.is_none() && look == Look::Mdns {
             // mDNS browsing blocks its thread for the discovery window.
             let located =
@@ -1503,6 +1612,14 @@ impl Run {
     /// The version an earlier run promoted for this feeder, from the
     /// manifests kept beside its backup, for a run that signs for itself
     /// and finds bank 1 already activated.
+    ///
+    /// The highest kept one is the right one: every run signs above all
+    /// versions signed so far, and keeps its manifest before offering it,
+    /// so the last promotion is always the highest. A lower kept manifest
+    /// is an earlier promotion bank 1 has already confirmed past; and if
+    /// the highest was kept but never activated, bank 1 confirming the
+    /// served build cannot reach it, so the run waits and then times out
+    /// rather than reporting a confirmation it did not see.
     fn kept_promotion(&self, install: &mut Install) {
         let Some(identity) = self.identity else {
             return;
@@ -1971,6 +2088,38 @@ mod tests {
             Some(PromptsRefused::Frame)
         ));
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+
+        // A consumer image's home network reads its passphrase the same way.
+        let home = Line::parse_from([
+            "install",
+            "--review",
+            "missing-review",
+            "--stock-config",
+            config.to_str().unwrap(),
+            "--home-ssid",
+            "Home",
+            "--prompts",
+            "lines",
+        ]);
+        let error = run(home.args).await.unwrap_err();
+        assert!(matches!(
+            error.downcast_ref::<PromptsRefused>(),
+            Some(PromptsRefused::HomeNetwork)
+        ));
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    /// The update key's enrollment stays unsettled until the run moves
+    /// past it, so a signal during the press names it.
+    #[test]
+    fn the_enrollment_stays_unsettled_until_the_run_moves_on() {
+        let mut track = Track::new();
+        track.enter(Phase::UpdateKey);
+        track.sent(Unsettled::UpdateKey);
+        track.enter(Phase::UpdateKey);
+        assert_eq!(track.unsettled, Some(Unsettled::UpdateKey));
+        track.enter(Phase::Backup);
+        assert_eq!(track.unsettled, None);
     }
 
     /// Stopped while stock downloads: the request is out and unsettled,
@@ -2264,6 +2413,74 @@ mod tests {
         assert!(builds_in(&review, &created));
         review.ota_public_key = Some("ab".repeat(32));
         assert!(!builds_in(&review, &created));
+    }
+
+    /// A given manifest is promoted as signed: an update key beside it is
+    /// refused rather than enrolled for nothing.
+    #[test]
+    fn an_update_key_beside_a_manifest_is_refused() {
+        let both = args(&[
+            "--manifest",
+            "private/v9.manifest",
+            "--update-key",
+            "private/update-key.json",
+        ]);
+        let Err(refused) = update_key(&both, Provisioning::Bench) else {
+            panic!("a key beside a manifest is refused");
+        };
+        assert!(matches!(
+            refused.downcast_ref::<Refused>(),
+            Some(Refused::KeyWithManifest)
+        ));
+    }
+
+    /// A resumed run looks for the feeder an earlier run recorded, with the
+    /// address it answered at, before the one the key file names; a
+    /// `--feeder` naming another passes the record over.
+    #[test]
+    fn a_resumed_run_finds_the_recorded_feeder_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let backups = dir.path().join("stock-backups");
+        assert_eq!(Paired::load(&backups).unwrap(), None);
+
+        let recorded = Paired {
+            identity: wellfed_model::Hex([0xab; 32]),
+            address: "192.168.4.20:7100".parse().unwrap(),
+        };
+        recorded.clone().keep(&backups).unwrap();
+        let loaded = Paired::load(&backups).unwrap().unwrap();
+        assert_eq!(loaded, recorded);
+
+        let key_file = || Ok(Some([0xcd; 32]));
+        assert_eq!(
+            resumed_feeder(Some(&loaded), None, key_file).unwrap(),
+            Some(([0xab; 32], Some(recorded.address)))
+        );
+        assert_eq!(
+            resumed_feeder(Some(&loaded), Some("abab"), key_file).unwrap(),
+            Some(([0xab; 32], Some(recorded.address)))
+        );
+        // Another feeder named: the key file's, with no address known.
+        assert_eq!(
+            resumed_feeder(Some(&loaded), Some("cd"), key_file).unwrap(),
+            Some(([0xcd; 32], None))
+        );
+        assert_eq!(
+            resumed_feeder(None, None, key_file).unwrap(),
+            Some(([0xcd; 32], None))
+        );
+        // A key that knows no feeder: Bluetooth setup is the way in.
+        assert_eq!(resumed_feeder(None, None, || Ok(None)).unwrap(), None);
+        // An ambiguous key file stops the run rather than guess.
+        assert!(resumed_feeder(None, None, || bail!("2 feeders match")).is_err());
+
+        // A later pairing replaces the record.
+        let moved = Paired {
+            address: "192.168.4.31:7100".parse().unwrap(),
+            ..recorded
+        };
+        moved.clone().keep(&backups).unwrap();
+        assert_eq!(Paired::load(&backups).unwrap(), Some(moved));
     }
 
     #[test]

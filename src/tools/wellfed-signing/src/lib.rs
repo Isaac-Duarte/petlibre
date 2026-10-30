@@ -43,6 +43,7 @@ use ed25519_dalek::{Signer, SigningKey};
 use sha2::{Digest, Sha256};
 use wellfed_core::ota::offer::{self, ImageKind as OfferKind, KeyId, Signed};
 use wellfed_core::ota::{self, MARKER, Manifest};
+use wellfed_formats::bench::VERIFICATION;
 use wellfed_formats::canonical::sha256;
 use wellfed_formats::credentials::{KeyScope, OtaKeyFile};
 use wellfed_formats::hex;
@@ -63,10 +64,27 @@ pub use error::{Error, FrozenError, ImageError, KeyError, Result};
 /// The bench key's root-relative path. Firmware builds embed its public half.
 pub const KEY_PATH: &str = "private/ota-key.json";
 
+/// The highest version signed so far in the checkout at `root`, with its
+/// file: the bench's manifests in [`VERIFICATION`] and the promotions
+/// `wellfed install` kept beside each feeder's backup under `backups`
+/// (root-relative unless absolute; `wellfed_formats::bench::STOCK_BACKUPS`
+/// by default). The bench
+/// and the installer both sign one above it, so neither reuses a version
+/// the other signed.
+pub fn signed_so_far(root: &Path, backups: &Path) -> Option<(u32, PathBuf)> {
+    let mut directories = vec![root.join(VERIFICATION)];
+    if let Ok(entries) = std::fs::read_dir(root.join(backups)) {
+        directories.extend(entries.flatten().map(|entry| entry.path()));
+    }
+    directories
+        .iter()
+        .filter_map(|directory| highest_signed(directory))
+        .max_by_key(|(version, _)| *version)
+}
+
 /// The highest version among the signed manifests (`*.manifest`) in
 /// `directory`, with its file; `None` when it holds none. Only the header
-/// is read, unverified: a feeder checks the signature. Signers pick the
-/// next version above it, so no two manifests they made share a version.
+/// is read, unverified: a feeder checks the signature.
 pub fn highest_signed(directory: &Path) -> Option<(u32, PathBuf)> {
     std::fs::read_dir(directory)
         .ok()?
@@ -354,6 +372,7 @@ mod tests {
     use serde_json::json;
     use wellfed_core::ota::SECTOR;
     use wellfed_core::record::Tag;
+    use wellfed_formats::bench::STOCK_BACKUPS;
 
     use super::*;
 
@@ -763,5 +782,39 @@ mod tests {
         let (version, path) = highest_signed(dir.path()).unwrap();
         assert_eq!(version, 12);
         assert!(path.ends_with("b-v12.manifest"));
+    }
+
+    /// The bench's manifests and the installs' kept promotions are one
+    /// sequence: the highest of either is what both sign above.
+    #[test]
+    fn versions_signed_so_far_cover_the_bench_and_the_installs() {
+        let root = tempfile::tempdir().unwrap();
+        let backups = Path::new(STOCK_BACKUPS);
+        assert_eq!(signed_so_far(root.path(), backups), None);
+
+        let manifest = |version: u32| {
+            let mut bytes = vec![0u8; offer::MANIFEST_LEN];
+            bytes[..8].copy_from_slice(&offer::MAGIC);
+            bytes[8..12].copy_from_slice(&version.to_le_bytes());
+            bytes
+        };
+        let verification = root.path().join(VERIFICATION);
+        let feeder = root.path().join(STOCK_BACKUPS).join("ab".repeat(32));
+        fs::create_dir_all(&verification).unwrap();
+        fs::create_dir_all(&feeder).unwrap();
+        fs::write(verification.join("unit-v7.manifest"), manifest(7)).unwrap();
+        assert_eq!(signed_so_far(root.path(), backups).unwrap().0, 7);
+
+        fs::write(feeder.join("promotion-v9.manifest"), manifest(9)).unwrap();
+        let (version, path) = signed_so_far(root.path(), backups).unwrap();
+        assert_eq!(version, 9);
+        assert!(path.ends_with("promotion-v9.manifest"));
+
+        // An absolute directory elsewhere counts as given.
+        let elsewhere = tempfile::tempdir().unwrap();
+        let other = elsewhere.path().join("cd".repeat(32));
+        fs::create_dir_all(&other).unwrap();
+        fs::write(other.join("promotion-v11.manifest"), manifest(11)).unwrap();
+        assert_eq!(signed_so_far(root.path(), elsewhere.path()).unwrap().0, 11);
     }
 }

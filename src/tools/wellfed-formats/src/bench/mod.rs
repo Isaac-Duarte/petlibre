@@ -36,6 +36,9 @@ pub const STATUS_DIR: &str = "private/bench-status";
 pub const CAPTURES: &str = "private/captures";
 pub const FLASH_BACKUPS: &str = "private/flash-backups";
 pub const VERIFICATION: &str = "private/verification";
+/// Root-relative: the owner's stock backups, one directory per feeder,
+/// where `wellfed install` also keeps the promotions it signed.
+pub const STOCK_BACKUPS: &str = "private/stock-backups";
 
 /// `private/bench.json`: the ports and pinned evidence the bench uses.
 #[derive(Debug, Clone, Deserialize)]

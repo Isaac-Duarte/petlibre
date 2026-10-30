@@ -290,3 +290,36 @@ async fn a_feeder_s_first_report_reaches_an_in_process_server() {
         "the broker stopped with the server"
     );
 }
+
+/// Every caller that enables the trial is held to a reviewable build, not
+/// only the binary: an installer in its own process is refused the same way.
+#[tokio::test]
+async fn an_in_process_server_refuses_the_trial_on_an_unreviewable_build() {
+    use wellfed_stock::{
+        build_info::{ALLOW_UNREVIEWED_ENV, BUILD},
+        clock,
+        server::{Api, Options, OtaTrial, Server},
+    };
+    if BUILD.reviewable() || std::env::var_os(ALLOW_UNREVIEWED_ENV).is_some() {
+        return; // A clean build, or the escape hatch: the guard permits it.
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("server.json");
+    let [listen] = common::addresses().unwrap();
+    config::init_installer(&path, listen, chrono_tz::UTC).unwrap();
+    let options = Options {
+        trial: OtaTrial::Enabled,
+        enroll: Some(Duration::from_secs(60)),
+        clock: clock::Policy::Bounded,
+        api: Api::Off,
+    };
+    let Err(error) = Server::start(&path.canonicalize().unwrap(), options) else {
+        panic!("the trial is refused on an unreviewable build");
+    };
+    assert!(error.to_string().contains("clean commit"), "{error:#}");
+    assert!(
+        std::net::TcpStream::connect(listen).is_err(),
+        "nothing started"
+    );
+}

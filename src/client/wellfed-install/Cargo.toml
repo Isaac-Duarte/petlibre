@@ -24,6 +24,12 @@ wellfed-signing.workspace = true
 # the bench host's routing and its binary.
 wellfed-stock = { workspace = true, default-features = false }
 
+[features]
+# The bench host's side of stock's server: a captured device, which records
+# no address, is found on the hotspot by its MAC. The CLI enables it; an app
+# does not, and needs the address the enrollment recorded.
+bench = ["wellfed-stock/bench"]
+
 [dev-dependencies]
 chrono = { version = "0.4.45", default-features = false, features = ["std"] }
 tempfile.workspace = true

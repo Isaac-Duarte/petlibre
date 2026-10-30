@@ -167,6 +167,8 @@ Install trials are recorded in `stock-ledger.json` beside the configuration, und
 
 `serve --enable-ota-trial` holds the [bench lease](../devices/plaf103/bench.md#bench-lease) beside its configuration for as long as it runs, since an install it dispatches runs for minutes. `ota-trial` only asks that server, so it takes no lease of its own. `setup-send` takes the lease for its one frame. A plain `serve`, `broker` and `ota-images` take none: they only answer, beside the command that drives the feeder.
 
+A server with the trial enabled starts only from a reviewable build: a clean commit of every input `build.rs` records. Those cover `wellfed-stock`, the crates it links, and the crates that decide and send the request in an installer (`wellfed-client`, `wellfed-install`). `server::Server::start` enforces it, so the binary and an in-process installer are refused alike; tests set `WELLFED_ALLOW_UNREVIEWED_OTA_BUILD`.
+
 An older ledger, `feed-ledger.json`, also held feeds and probe queries. `serve` refuses to start while it is present. Check that no trial in it is submitted, uncertain or failed, then rename it.
 
 ## HTTP API

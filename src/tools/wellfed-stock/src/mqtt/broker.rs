@@ -406,7 +406,11 @@ pub async fn run(
     tokio::pin!(running);
     tokio::select! {
         result = &mut running => {result?; Ok(())},
-        result = compat::run(listener, broker_address, peers) => result,
+        result = compat::run(listener, broker_address, peers) => {
+            shutdown.shutdown();
+            let _ = tokio::time::timeout(STOP_WAIT, running).await;
+            result
+        }
         () = stop => {
             shutdown.shutdown();
             let _ = tokio::time::timeout(STOP_WAIT, running).await;

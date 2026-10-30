@@ -4,7 +4,7 @@
 //! started for the one request. Both stop when the run ends, however it
 //! ends, so the broker is never left on the MQTT port.
 
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -129,7 +129,9 @@ impl Stock {
             .ok_or(Error::StockServerGone)
     }
 
-    /// Serve `review` to the enrolled feeder, and the lease that names it.
+    /// Serve `review` to the enrolled feeder, at the address its enrollment
+    /// recorded (with the `bench` feature, a captured device is found on
+    /// the hotspot instead), and the lease that names it.
     pub(crate) async fn images(&mut self, review: &Path) -> Result<ImageLease, Error> {
         let path = self
             .options
@@ -141,9 +143,7 @@ impl Stock {
             })?;
         let config =
             wellfed_stock::config::load(&path).map_err(|error| Error::StockServer(error.into()))?;
-        let Some(IpAddr::V4(peer)) = config.device_address else {
-            return Err(Error::NoPeer);
-        };
+        let peer = peer(&config)?;
         let images = image::start(&config, &path, review, peer)
             .await
             .map_err(|error| Error::Images(error.into()))?;
@@ -194,6 +194,27 @@ impl Stock {
             server.stop().await;
         }
     }
+}
+
+/// Where the image server admits the feeder from: the address the
+/// enrollment recorded. A captured device has none; on the bench host it is
+/// found by its MAC in the hotspot's neighbour table, as `ota-images` finds
+/// it. Without the `bench` feature (an app) the enrollment is the only
+/// source, and a captured device is refused.
+fn peer(config: &wellfed_stock::config::Config) -> Result<Ipv4Addr, Error> {
+    if let Some(IpAddr::V4(enrolled)) = config.device_address {
+        return Ok(enrolled);
+    }
+    #[cfg(feature = "bench")]
+    {
+        match wellfed_stock::neighbour::discover(config) {
+            Ok(IpAddr::V4(found)) => Ok(found),
+            Ok(IpAddr::V6(_)) => Err(Error::NoPeer),
+            Err(error) => Err(Error::Images(error.into())),
+        }
+    }
+    #[cfg(not(feature = "bench"))]
+    Err(Error::NoPeer)
 }
 
 /// Stock's latest OTA report on request `id`: one naming it, or naming

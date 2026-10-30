@@ -1,11 +1,13 @@
 //! Record the source commit so a running service can prove what it executes.
 //! Paths are relative to this package. The inputs are its own sources, the
 //! first-party crates it links (`wellfed-formats` the status types,
-//! `wellfed-core` and `wellfed-session` the update format and hex), and the
+//! `wellfed-core` and `wellfed-session` the update format and hex), the
+//! crates that decide and send the install request in another process
+//! (`wellfed-client`'s steps and `wellfed-install`'s driver), and the
 //! workspace's manifest, lockfile and toolchain.
 use std::process::Command;
 
-const BUILD_INPUTS: [&str; 12] = [
+const BUILD_INPUTS: [&str; 16] = [
     "src",
     "build.rs",
     "Cargo.toml",
@@ -15,6 +17,10 @@ const BUILD_INPUTS: [&str; 12] = [
     "../../sdk/wellfed-core/Cargo.toml",
     "../../sdk/wellfed-session/src",
     "../../sdk/wellfed-session/Cargo.toml",
+    "../../client/wellfed-client/src",
+    "../../client/wellfed-client/Cargo.toml",
+    "../../client/wellfed-install/src",
+    "../../client/wellfed-install/Cargo.toml",
     "../../../Cargo.toml",
     "../../../Cargo.lock",
     "../../../rust-toolchain.toml",

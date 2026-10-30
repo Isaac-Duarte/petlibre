@@ -85,9 +85,16 @@ pub struct Server {
 impl Server {
     /// Start the server for the config at `path` (canonical: the
     /// enrollment, the ledger and the image lease sit beside it). Refused
-    /// at once when the config cannot run: no device and no enrollment
-    /// window. Must be called inside a tokio runtime.
+    /// at once when the config cannot run (no device and no enrollment
+    /// window), or when the trial is enabled on a build that is not
+    /// reviewable ([`crate::build_info::Build::require_reviewed`]). Must be
+    /// called inside a tokio runtime.
     pub fn start(path: &Path, options: Options) -> Result<Self> {
+        // Every caller that enables the trial dispatches stock's install, so
+        // every one is held to a build whose sources can be reviewed.
+        if options.trial == OtaTrial::Enabled {
+            BUILD.require_reviewed()?;
+        }
         let state = config::state(path)?;
         let window = match (&state, options.enroll) {
             (State::Device(_), _) => None,
@@ -260,7 +267,22 @@ async fn run(
         (State::Unenrolled(_), None) => bail!("no feeder is enrolled"),
     };
 
-    let broker = broker::run(listen, auth, stopped(stop.clone()));
+    // The broker stops when the server is asked to, or when the session
+    // ends on its own (a failure, say): either way through its shutdown,
+    // so none of its client tasks outlives the server in a long-lived
+    // process.
+    let (end, ended) = watch::channel(false);
+    let broker_stop = {
+        let stop = stop.clone();
+        async move {
+            tokio::select! {
+                () = stopped(stop) => {}
+                () = stopped(ended) => {}
+            }
+        }
+    };
+    let broker = broker::run(listen, auth, broker_stop);
+    tokio::pin!(broker);
     let session = async {
         let config = match (known, window) {
             (Some(config), _) => config,
@@ -271,8 +293,12 @@ async fn run(
     };
 
     let outcome = tokio::select! {
-        result = broker => result.context("the broker"),
-        result = session => result,
+        result = &mut broker => result.context("the broker"),
+        result = session => {
+            end.send_replace(true);
+            let _ = tokio::time::timeout(STOP_WAIT, &mut broker).await;
+            result
+        }
     };
     match outcome {
         Ok(()) if !*stop.borrow() => bail!("the stock server stopped unexpectedly"),

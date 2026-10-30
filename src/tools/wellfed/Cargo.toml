@@ -21,7 +21,8 @@ jiff = "0.2.38"
 wellfed-client.workspace = true
 wellfed-connect.workspace = true
 wellfed-formats = { workspace = true, features = ["device"] }
-wellfed-install.workspace = true
+# `bench`: a captured device is found on the hotspot for the image server.
+wellfed-install = { workspace = true, features = ["bench"] }
 wellfed-model.workspace = true
 wellfed-proto.workspace = true
 wellfed-server-client.workspace = true

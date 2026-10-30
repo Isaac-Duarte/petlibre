@@ -21,7 +21,7 @@ use wellfed_client::install::{SETUP_ADDRESS, SetupFrame};
 use wellfed_formats::bench::lease::Lease;
 use wellfed_stock::{
     broker_name,
-    build_info::{self, BUILD},
+    build_info::BUILD,
     clock,
     config::{self, State},
     mqtt::{broker, broker::DeviceAuth},
@@ -542,15 +542,11 @@ async fn serve(
 ) -> Result<()> {
     // Trial dispatch must run a binary whose source can be reviewed: a clean
     // commit of every build input. Status and /health report the commit.
-    if trial == OtaTrial::Enabled
-        && !BUILD.reviewable()
-        && std::env::var_os(build_info::ALLOW_UNREVIEWED_ENV).is_none()
-    {
-        bail!(
-            "--enable-ota-trial requires a binary built from a clean commit (this build: {}, clean: {})",
-            BUILD.commit,
-            BUILD.clean
-        );
+    // Checked here before the lease, and again where the server starts.
+    if trial == OtaTrial::Enabled {
+        BUILD
+            .require_reviewed()
+            .context("--enable-ota-trial refused")?;
     }
 
     // Taken before the API binds, so a trial cannot be asked of a server

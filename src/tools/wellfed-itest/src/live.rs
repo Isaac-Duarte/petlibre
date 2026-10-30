@@ -316,7 +316,7 @@ impl<'b> LiveRig<'b> {
         ready
     }
 
-    /// SIGTERM, which `serve` handles by stopping its broker child too; a
+    /// SIGTERM, which `serve` handles by stopping its broker and session too;
     /// kill if it is still running after [`STOP_WAIT`].
     fn stop(running: Option<Running>) {
         let Some((mut child, tracked)) = running else {

@@ -239,12 +239,6 @@ enum Refused {
     NotAnswering { feeder: String },
     #[error("pass --address: no image lease names where the feeder connected from")]
     NoAddress,
-    /// The install is dispatched by this binary's stock server, so its
-    /// sources must be reviewable: a clean commit of every build input.
-    #[error(
-        "wellfed install dispatches stock's install, which requires a binary built from a clean commit (this build: {commit}, clean: {clean})"
-    )]
-    Unreviewed { commit: &'static str, clean: bool },
 }
 
 pub(crate) async fn run(args: InstallArgs) -> Result<()> {
@@ -307,8 +301,10 @@ pub(crate) async fn run(args: InstallArgs) -> Result<()> {
         .map(wellfed_connect::parse_address)
         .transpose()
         .context("--address")?;
+    // The stock server refuses the trial on such a build too; checked here
+    // as well, so a refused run stops before the feeder is touched.
     if !args.from_bank0 {
-        reviewable()?;
+        build_info::BUILD.require_reviewed()?;
     }
 
     let platform = Platform {
@@ -443,21 +439,6 @@ fn explain(error: wellfed_install::Error, calibrate_clock: bool) -> anyhow::Erro
         Error::NoAddress => Refused::NoAddress.into(),
         error => error.into(),
     }
-}
-
-/// The install request is dispatched by this binary, so it must be one
-/// whose stock server's source can be reviewed: a clean commit of every
-/// build input, as `wellfed-stock serve --enable-ota-trial` requires of
-/// itself. Tests, which run from uncommitted trees, set the escape hatch.
-fn reviewable() -> Result<(), Refused> {
-    let build = build_info::BUILD;
-    wellfed_formats::require(
-        build.reviewable() || std::env::var_os(build_info::ALLOW_UNREVIEWED_ENV).is_some(),
-        || Refused::Unreviewed {
-            commit: build.commit,
-            clean: build.clean,
-        },
-    )
 }
 
 /// The update key the run signs with: `--update-key` (created if

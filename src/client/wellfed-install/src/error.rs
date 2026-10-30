@@ -94,7 +94,10 @@ pub enum Error {
     StockServerGone,
     #[error(transparent)]
     Trial(#[from] wellfed_stock::server::Refusal),
-    #[error("the stock server knows no IPv4 address for the enrolled feeder to serve the image to")]
+    /// The image server admits one IPv4 peer: the address the enrollment
+    /// recorded (or, on the bench host, the captured device's on the
+    /// hotspot).
+    #[error("the stock server knows no IPv4 address for the feeder to serve the image to")]
     NoPeer,
     #[error("read the enrollment {}", path.display())]
     EnrollmentUnreadable {

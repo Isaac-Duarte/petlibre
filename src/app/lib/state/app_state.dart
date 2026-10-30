@@ -29,6 +29,10 @@ abstract interface class FeederBook implements Listenable {
   /// NSD has looked.
   Future<void> answeredAt(String identity, String address);
 
+  /// Remove `identity` from this phone. It leaves the feeder's list as it
+  /// is: only an owner's revocation takes a key off a feeder.
+  Future<void> forget(String identity);
+
   /// Whether this phone owes `identity` its clock, having just paired.
   bool clockDue(String identity);
 
@@ -113,6 +117,17 @@ class AppState extends ChangeNotifier implements FeederBook {
       );
     });
   }
+
+  @override
+  Future<void> forget(String identity) => _update(
+    (store) => AppStore(
+      label: store.label,
+      feeders: [
+        for (final feeder in store.feeders)
+          if (feeder.identity != identity) feeder,
+      ],
+    ),
+  );
 
   @override
   Future<void> answeredAt(String identity, String address) async {

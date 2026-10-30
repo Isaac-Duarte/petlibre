@@ -638,6 +638,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Resets? dco_decode_opt_box_autoadd_resets(dynamic raw);
 
   @protected
+  SettingsView? dco_decode_opt_box_autoadd_settings_view(dynamic raw);
+
+  @protected
   SetupRefusal? dco_decode_opt_box_autoadd_setup_refusal(dynamic raw);
 
   @protected
@@ -1444,6 +1447,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   Resets? sse_decode_opt_box_autoadd_resets(SseDeserializer deserializer);
+
+  @protected
+  SettingsView? sse_decode_opt_box_autoadd_settings_view(
+    SseDeserializer deserializer,
+  );
 
   @protected
   SetupRefusal? sse_decode_opt_box_autoadd_setup_refusal(
@@ -2431,6 +2439,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_opt_box_autoadd_resets(
     Resets? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_settings_view(
+    SettingsView? self,
     SseSerializer serializer,
   );
 

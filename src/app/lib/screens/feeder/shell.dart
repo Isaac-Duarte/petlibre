@@ -10,6 +10,7 @@ import '../../widgets/icons.dart';
 import '../../widgets/replies.dart';
 import 'history.dart';
 import 'schedule.dart';
+import 'settings_tab.dart';
 import 'today.dart';
 
 /// One feeder: its name, the menu, and the tabs (board 7).
@@ -93,7 +94,7 @@ class FeederShell extends StatelessWidget {
             TodayTab(feeder: feeder),
             ScheduleTab(feeder: feeder),
             HistoryTab(feeder: feeder),
-            const _NotBuilt('Settings'),
+            SettingsTab(feeder: feeder),
           ],
         ),
       ),
@@ -134,20 +135,6 @@ Future<void> confirmRestart(
       SnackBar(content: Text('${feeder.known.name} is restarting.')),
     );
   }
-}
-
-class _NotBuilt extends StatelessWidget {
-  const _NotBuilt(this.name);
-
-  final String name;
-
-  @override
-  Widget build(BuildContext context) => Center(
-    child: Text(
-      '$name is coming.',
-      style: TextStyle(fontSize: Sizes.base, color: context.colors.textMuted),
-    ),
-  );
 }
 
 class _Gone extends StatelessWidget {

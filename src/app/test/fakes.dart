@@ -85,6 +85,15 @@ class FakeBook extends ChangeNotifier implements FeederBook {
   @override
   Future<void> answeredAt(String identity, String address) async {}
 
+  @override
+  Future<void> forget(String identity) async {
+    feeders = [
+      for (final feeder in feeders)
+        if (feeder.identity != identity) feeder,
+    ];
+    notifyListeners();
+  }
+
   final _clockDue = <String>{};
 
   void clockOwed(String identity) => _clockDue.add(identity);
@@ -498,6 +507,7 @@ Card fakeCard({
   FeedResult? lastFed,
   List<MealView> meals = const [],
   TimeInfo? time,
+  SettingsView? settings,
   PlansView? plans,
 }) => Card(
   build: 'test',
@@ -517,6 +527,7 @@ Card fakeCard({
   lastFed: lastFed,
   meals: meals,
   time: time,
+  settings: settings,
   plans: plans,
   wifiGeneration: 1,
 );

@@ -102,6 +102,9 @@ class Card {
   /// The time settings and the clock, once read.
   final TimeInfo? time;
 
+  /// The settings, once read.
+  final SettingsView? settings;
+
   /// The feeding plans, once read.
   final PlansView? plans;
 
@@ -126,6 +129,7 @@ class Card {
     this.lastFed,
     required this.meals,
     this.time,
+    this.settings,
     this.plans,
     required this.wifiGeneration,
   });
@@ -149,6 +153,7 @@ class Card {
       lastFed.hashCode ^
       meals.hashCode ^
       time.hashCode ^
+      settings.hashCode ^
       plans.hashCode ^
       wifiGeneration.hashCode;
 
@@ -174,6 +179,7 @@ class Card {
           lastFed == other.lastFed &&
           meals == other.meals &&
           time == other.time &&
+          settings == other.settings &&
           plans == other.plans &&
           wifiGeneration == other.wifiGeneration;
 }

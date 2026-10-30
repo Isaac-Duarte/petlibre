@@ -2508,6 +2508,7 @@ impl SseDecode for crate::api::session::Card {
         let mut var_lastFed = <Option<crate::api::session::FeedResult>>::sse_decode(deserializer);
         let mut var_meals = <Vec<crate::api::session::MealView>>::sse_decode(deserializer);
         let mut var_time = <Option<crate::api::feeder::TimeInfo>>::sse_decode(deserializer);
+        let mut var_settings = <Option<crate::api::feeder::SettingsView>>::sse_decode(deserializer);
         let mut var_plans = <Option<crate::api::feeder::PlansView>>::sse_decode(deserializer);
         let mut var_wifiGeneration = <u32>::sse_decode(deserializer);
         return crate::api::session::Card {
@@ -2528,6 +2529,7 @@ impl SseDecode for crate::api::session::Card {
             last_fed: var_lastFed,
             meals: var_meals,
             time: var_time,
+            settings: var_settings,
             plans: var_plans,
             wifi_generation: var_wifiGeneration,
         };
@@ -4379,6 +4381,17 @@ impl SseDecode for Option<crate::api::model::Resets> {
     }
 }
 
+impl SseDecode for Option<crate::api::feeder::SettingsView> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<crate::api::feeder::SettingsView>::sse_decode(deserializer));
+        } else {
+            return None;
+        }
+    }
+}
+
 impl SseDecode for Option<crate::api::model::SetupRefusal> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -5925,6 +5938,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::session::Card {
             self.last_fed.into_into_dart().into_dart(),
             self.meals.into_into_dart().into_dart(),
             self.time.into_into_dart().into_dart(),
+            self.settings.into_into_dart().into_dart(),
             self.plans.into_into_dart().into_dart(),
             self.wifi_generation.into_into_dart().into_dart(),
         ]
@@ -8884,6 +8898,7 @@ impl SseEncode for crate::api::session::Card {
         <Option<crate::api::session::FeedResult>>::sse_encode(self.last_fed, serializer);
         <Vec<crate::api::session::MealView>>::sse_encode(self.meals, serializer);
         <Option<crate::api::feeder::TimeInfo>>::sse_encode(self.time, serializer);
+        <Option<crate::api::feeder::SettingsView>>::sse_encode(self.settings, serializer);
         <Option<crate::api::feeder::PlansView>>::sse_encode(self.plans, serializer);
         <u32>::sse_encode(self.wifi_generation, serializer);
     }
@@ -10482,6 +10497,16 @@ impl SseEncode for Option<crate::api::model::Resets> {
         <bool>::sse_encode(self.is_some(), serializer);
         if let Some(value) = self {
             <crate::api::model::Resets>::sse_encode(value, serializer);
+        }
+    }
+}
+
+impl SseEncode for Option<crate::api::feeder::SettingsView> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::api::feeder::SettingsView>::sse_encode(value, serializer);
         }
     }
 }

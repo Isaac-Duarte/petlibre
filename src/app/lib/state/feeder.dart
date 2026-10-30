@@ -174,6 +174,9 @@ class FeederController extends ChangeNotifier {
     }
   }
 
+  /// Take this feeder off this phone.
+  Future<void> forgetHere() => _book.forget(known.identity);
+
   /// One request to the feeder. A write goes out once and is never sent
   /// again; the reply says how it ended, an unknown end included.
   Future<FeederReply> ask(FeederRequest request) async {

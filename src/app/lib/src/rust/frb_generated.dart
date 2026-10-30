@@ -2295,8 +2295,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   Card dco_decode_card(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 19)
-      throw Exception('unexpected arr length: expect 19 but see ${arr.length}');
+    if (arr.length != 20)
+      throw Exception('unexpected arr length: expect 20 but see ${arr.length}');
     return Card(
       build: dco_decode_String(arr[0]),
       food: dco_decode_food_level(arr[1]),
@@ -2315,8 +2315,9 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       lastFed: dco_decode_opt_box_autoadd_feed_result(arr[14]),
       meals: dco_decode_list_meal_view(arr[15]),
       time: dco_decode_opt_box_autoadd_time_info(arr[16]),
-      plans: dco_decode_opt_box_autoadd_plans_view(arr[17]),
-      wifiGeneration: dco_decode_u_32(arr[18]),
+      settings: dco_decode_opt_box_autoadd_settings_view(arr[17]),
+      plans: dco_decode_opt_box_autoadd_plans_view(arr[18]),
+      wifiGeneration: dco_decode_u_32(arr[19]),
     );
   }
 
@@ -3475,6 +3476,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   Resets? dco_decode_opt_box_autoadd_resets(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_box_autoadd_resets(raw);
+  }
+
+  @protected
+  SettingsView? dco_decode_opt_box_autoadd_settings_view(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_settings_view(raw);
   }
 
   @protected
@@ -4974,6 +4981,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_lastFed = sse_decode_opt_box_autoadd_feed_result(deserializer);
     var var_meals = sse_decode_list_meal_view(deserializer);
     var var_time = sse_decode_opt_box_autoadd_time_info(deserializer);
+    var var_settings = sse_decode_opt_box_autoadd_settings_view(deserializer);
     var var_plans = sse_decode_opt_box_autoadd_plans_view(deserializer);
     var var_wifiGeneration = sse_decode_u_32(deserializer);
     return Card(
@@ -4994,6 +5002,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       lastFed: var_lastFed,
       meals: var_meals,
       time: var_time,
+      settings: var_settings,
       plans: var_plans,
       wifiGeneration: var_wifiGeneration,
     );
@@ -6463,6 +6472,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
     if (sse_decode_bool(deserializer)) {
       return (sse_decode_box_autoadd_resets(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  SettingsView? sse_decode_opt_box_autoadd_settings_view(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_settings_view(deserializer));
     } else {
       return null;
     }
@@ -8261,6 +8283,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_opt_box_autoadd_feed_result(self.lastFed, serializer);
     sse_encode_list_meal_view(self.meals, serializer);
     sse_encode_opt_box_autoadd_time_info(self.time, serializer);
+    sse_encode_opt_box_autoadd_settings_view(self.settings, serializer);
     sse_encode_opt_box_autoadd_plans_view(self.plans, serializer);
     sse_encode_u_32(self.wifiGeneration, serializer);
   }
@@ -9532,6 +9555,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self != null, serializer);
     if (self != null) {
       sse_encode_box_autoadd_resets(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_settings_view(
+    SettingsView? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_settings_view(self, serializer);
     }
   }
 

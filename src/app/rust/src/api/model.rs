@@ -5,7 +5,9 @@
 
 use flutter_rust_bridge::frb;
 pub use wellfed_model::setup::{Enrolled, Refusal as SetupRefusal, WifiSaved};
-pub use wellfed_model::{Blocked, ClientRole, FeedOutcome, FeedReason, FoodLevel};
+pub use wellfed_model::{
+    Blocked, ClientRole, FeedOutcome, FeedReason, FoodLevel, MissedReason, UpdatePhase,
+};
 
 #[frb(mirror(Enrolled))]
 pub enum _Enrolled {
@@ -88,8 +90,8 @@ pub enum _FeedReason {
 }
 
 pub use wellfed_model::{
-    Bowl, CallClip, Counters, Counts, CurrentUnit, Desiccant, Erases, FeedStats, Flash,
-    Food, MealReminder, Memory, NtpResult, Phase, Portions, PowerStats, ResetCause, Resets, Stats,
+    Bowl, CallClip, Counters, Counts, CurrentUnit, Desiccant, Erases, FeedStats, Flash, Food,
+    MealReminder, Memory, NtpResult, Phase, Portions, PowerStats, ResetCause, Resets, Stats,
     StatsSection, TaskStack, TimeSource, TraceEntry, TraceMotor, TraceSummary, Tune, UpdateRefusal,
     Weekday, Window,
 };

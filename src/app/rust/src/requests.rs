@@ -17,7 +17,8 @@ use wellfed_client::setup::Credentials;
 use wellfed_client::trace::Pages;
 use wellfed_model::{
     Answer, Calibration, CalibrationView, CallView, Client, ClientRole, Generation, NtpServer, Op,
-    Plan, Plans, Refusal, SettingsPatch, TimeChanges, TimeOfDay, TimeView, Weekday, Weekdays,
+    Plan, Plans, Refusal, Settings, SettingsPatch, TimeChanges, TimeOfDay, TimeView, Weekday,
+    Weekdays,
 };
 
 use crate::api::feeder::{
@@ -348,6 +349,21 @@ pub(crate) fn plans_view(plans: &Plans) -> PlansView {
     }
 }
 
+pub(crate) fn settings_view(settings: &Settings) -> SettingsView {
+    SettingsView {
+        generation: settings.generation.0,
+        lights: settings.lights,
+        sound: settings.sound,
+        volume: settings.volume,
+        lights_window: settings.lights_window,
+        sound_window: settings.sound_window,
+        desiccant_days: settings.desiccant_days,
+        desiccant_replaced: settings.desiccant_replaced.map(|date| date.to_string()),
+        meal_reminder: settings.meal_reminder,
+        writable: settings.writable,
+    }
+}
+
 pub(crate) fn time_info(view: &TimeView) -> TimeInfo {
     let ntp = match view.ntp {
         NtpServer::Off => NtpView::Off,
@@ -442,18 +458,7 @@ fn reply_of(answer: Answer) -> FeederReply {
             generation: generation.map(|generation| generation.0),
         },
         Answer::Settings(settings) => FeederReply::Settings {
-            settings: SettingsView {
-                generation: settings.generation.0,
-                lights: settings.lights,
-                sound: settings.sound,
-                volume: settings.volume,
-                lights_window: settings.lights_window,
-                sound_window: settings.sound_window,
-                desiccant_days: settings.desiccant_days,
-                desiccant_replaced: settings.desiccant_replaced.map(|date| date.to_string()),
-                meal_reminder: settings.meal_reminder,
-                writable: settings.writable,
-            },
+            settings: settings_view(&settings),
         },
         Answer::Time(time) => FeederReply::Time {
             time: time_info(&time),

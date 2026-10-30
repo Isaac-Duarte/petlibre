@@ -9,7 +9,8 @@ use wellfed_client::history::Feed;
 use wellfed_client::plans::{self, MealState};
 use wellfed_client::time::{feeder_zone, next_meal};
 use wellfed_model::{
-    Battery, Event, EventBody, FeedOutcome, Gap, Plans, Readiness, Source, Status, TimeView,
+    Battery, Event, EventBody, FeedOutcome, Gap, Plans, Readiness, Settings, Source, Status,
+    TimeView,
 };
 
 use crate::api::feeder::TimeInfo;
@@ -17,12 +18,13 @@ use crate::api::session::{
     Card, FaultView, FedBy, FeedResult, HistoryBody, HistoryEntry, MealStanding, MealView,
     NextMealView,
 };
-use crate::requests::{plans_view, time_info};
+use crate::requests::{plans_view, settings_view, time_info};
 
 /// What a session has read of the feeder.
 #[derive(Default)]
 pub(crate) struct Facts {
     pub(crate) status: Option<Status>,
+    pub(crate) settings: Option<Settings>,
     pub(crate) plans: Option<Plans>,
     pub(crate) time: Option<TimeView>,
     /// The history's feeds so far, oldest first.
@@ -77,6 +79,7 @@ impl Facts {
             last_fed: self.feeds.last().map(result),
             meals,
             time,
+            settings: self.settings.as_ref().map(settings_view),
             plans: self.plans.as_ref().map(plans_view),
             wifi_generation: status.wifi_generation.0,
         })

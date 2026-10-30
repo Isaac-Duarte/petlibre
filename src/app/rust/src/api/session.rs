@@ -11,7 +11,7 @@ use wellfed_model::Refusal;
 use wellfed_session::noise::Keypair;
 
 use crate::api::error::{BridgeError, ErrorKind};
-use crate::api::feeder::{FeederReply, FeederRequest, PlansView, TimeInfo};
+use crate::api::feeder::{FeederReply, FeederRequest, PlansView, SettingsView, TimeInfo};
 use crate::api::keys::ClientKey;
 use crate::api::model::{
     Blocked, ClientRole, Desiccant, FeedOutcome, FeedReason, FoodLevel, MissedReason,
@@ -53,6 +53,8 @@ pub struct Card {
     pub meals: Vec<MealView>,
     /// The time settings and the clock, once read.
     pub time: Option<TimeInfo>,
+    /// The settings, once read.
+    pub settings: Option<SettingsView>,
     /// The feeding plans, once read.
     pub plans: Option<PlansView>,
     /// The base of a Wi-Fi change.

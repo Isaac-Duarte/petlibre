@@ -68,6 +68,7 @@ pub enum Command {
 /// What an outstanding request was for.
 enum Asked {
     Status,
+    Settings,
     Plans,
     Time,
     Feed { portions: u8 },
@@ -165,6 +166,7 @@ async fn serve(
         let sync = wellfed_client::time::sync(Timestamp::now(), &TimeZone::system());
         serving.request(&Op::TimeSync(sync), Asked::Clock)?;
     }
+    serving.request(&Op::GetSettings, Asked::Settings)?;
     serving.request(&Op::GetPlans, Asked::Plans)?;
     serving.request(&Op::GetTime, Asked::Time)?;
     serving.connection.subscribe(None, false).await?;
@@ -266,6 +268,10 @@ impl<U: FnMut(SessionUpdate) -> bool> Serving<'_, U> {
                 self.facts.status = Some(status);
                 Ok(self.card())
             }
+            (Asked::Settings, Some(Answer::Settings(settings))) => {
+                self.facts.settings = Some(settings);
+                Ok(self.card())
+            }
             (Asked::Plans, Some(Answer::Plans(plans))) => {
                 self.facts.plans = Some(plans);
                 Ok(self.card())
@@ -331,6 +337,7 @@ impl<U: FnMut(SessionUpdate) -> bool> Serving<'_, U> {
         if let Pushed::Event(event) = pushed {
             match event.body {
                 EventBody::Plans { .. } => self.request(&Op::GetPlans, Asked::Plans)?,
+                EventBody::Settings { .. } => self.request(&Op::GetSettings, Asked::Settings)?,
                 EventBody::ClockSync { .. } => self.request(&Op::GetTime, Asked::Time)?,
                 _ => {}
             }

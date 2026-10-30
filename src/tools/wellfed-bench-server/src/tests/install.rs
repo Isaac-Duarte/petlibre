@@ -356,3 +356,174 @@ async fn a_restart_whose_cut_fails_part_way_powers_the_feeder_again() {
 
     server.quit().await;
 }
+
+/// An install job that answers the panel's prompts itself: the words of a
+/// consumer run, unattended.
+const UNATTENDED: &[&str] = &[
+    "install",
+    "--review",
+    "private/verification/consumer",
+    "--update-key",
+    "private/ota-key.json",
+    "--stock-config",
+    "private/installer.json",
+    "--broker-name",
+    "broker.example.net",
+    "--home-network",
+    "private/hotspot.json",
+    "--expect-device",
+    "AF_FEEDER",
+    "--virtual-panel",
+];
+
+/// An installer that announces the setup code, then the Dispense press,
+/// and records each answer it reads; until a signal stops it, if one does.
+const PANEL: &str = r#"#!/bin/sh
+trap 'echo TERM > signal; kill $! 2>/dev/null; exit 1' TERM
+echo "$@" > args
+echo '{"kind":"key-setup-code","presses":["dispense","lock","mic","reset","lock","dispense"]}'
+read a; echo "code $a" >> answers
+echo '{"kind":"press-dispense","purpose":"enroll-update-key"}'
+read a; echo "dispense $a" >> answers
+echo "Installed" >&2
+"#;
+
+/// With `--virtual-panel` the job keys the code in and presses Dispense
+/// itself, each press its own `read press` in order with nothing unlocked
+/// first, and answers done for each; nothing goes to the state. The flag
+/// stays the server's, and the rest reach the installer.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_virtual_panel_install_presses_the_code_and_dispense_itself() {
+    if crate::tests::run_alone() {
+        return;
+    }
+    let _one = ONE_SERVER.lock().await;
+    let checkout = Checkout::new(0.0);
+    stand_in(&checkout, "wellfed", PANEL);
+    checkout.board.lock().on[1] = true;
+    let server = Running::start(checkout.open());
+
+    let id = server.submit(UNATTENDED).await.unwrap();
+    let (end, lines) = follow(&server.client, id).await;
+
+    assert_eq!((end.code, end.error), (0, None), "{lines:?}");
+    assert_eq!(
+        read(&checkout, "presses"),
+        "dispense 150\nlock 150\nmic 150\nreset 150\nlock 150\ndispense 150\ndispense 150\n"
+    );
+    assert_eq!(
+        read(&checkout, "answers"),
+        "code \"done\"\ndispense \"done\"\n"
+    );
+    for number in 1..=6 {
+        let recorded = format!("press {number} of 6, ");
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("key-setup-code") && line.contains(&recorded)),
+            "{lines:?}"
+        );
+    }
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("press-dispense") && line.contains("press 1 of 1, dispense")),
+        "{lines:?}"
+    );
+    let args = read(&checkout, "args");
+    assert!(
+        args.contains("--update-key=private/ota-key.json")
+            && args.contains("--home-network=private/hotspot.json")
+            && args.contains("--expect-device=AF_FEEDER")
+            && !args.contains("--manifest")
+            && !args.contains("virtual"),
+        "{args}"
+    );
+    assert!(server.state().await.prompt.is_none());
+
+    server.quit().await;
+}
+
+/// A press that does not echo and release stops the installer: the
+/// presses after it are never typed, the one that failed is not typed
+/// again, and the code goes unanswered.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_failed_press_stops_the_installer_and_presses_nothing_more() {
+    if crate::tests::run_alone() {
+        return;
+    }
+    let _one = ONE_SERVER.lock().await;
+    let checkout = Checkout::new(0.0);
+    stand_in(
+        &checkout,
+        "wellfed",
+        r#"#!/bin/sh
+trap 'echo TERM > signal; kill $! 2>/dev/null; exit 1' TERM
+echo '{"kind":"key-setup-code","presses":["dispense","lock","mic","reset","lock","dispense"]}'
+sleep 30 & wait $!
+"#,
+    );
+    fs::write(checkout.root().join("press-fails"), "mic").unwrap();
+    checkout.board.lock().on[1] = true;
+    let server = Running::start(checkout.open());
+
+    let id = server.submit(UNATTENDED).await.unwrap();
+    let (end, _) = follow(&server.client, id).await;
+
+    assert_eq!(end.code, 1);
+    assert!(
+        end.error
+            .as_deref()
+            .is_some_and(|error| error.contains("press 3 of 6") && error.contains("(mic)")),
+        "{end:?}"
+    );
+    assert_eq!(
+        read(&checkout, "presses"),
+        "dispense 150\nlock 150\nmic 150\n"
+    );
+    assert_eq!(read(&checkout, "signal").trim(), "TERM");
+    assert_eq!(read(&checkout, "answers"), "");
+    assert!(server.state().await.prompt.is_none());
+
+    server.quit().await;
+}
+
+/// Without `--virtual-panel` the panel's prompts go to the state, for a
+/// person at the panel to answer once done.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn without_the_virtual_panel_the_code_is_a_person_s_to_key_in() {
+    if crate::tests::run_alone() {
+        return;
+    }
+    let _one = ONE_SERVER.lock().await;
+    let checkout = Checkout::new(0.0);
+    stand_in(&checkout, "wellfed", PANEL);
+    checkout.board.lock().on[1] = true;
+    let server = Running::start(checkout.open());
+    let words: Vec<&str> = UNATTENDED
+        .iter()
+        .copied()
+        .filter(|word| *word != "--virtual-panel")
+        .collect();
+
+    let id = server.submit(&words).await.unwrap();
+    let asked = prompt_until(&server, 1).await;
+    assert_eq!(asked.prompt.name(), "key-setup-code");
+    assert!(
+        asked
+            .text
+            .contains("dispense, lock, mic, reset, lock, dispense"),
+        "{}",
+        asked.text
+    );
+    server.client.answer(id, 1, Answer::Done).await.unwrap();
+    let asked = prompt_until(&server, 2).await;
+    assert_eq!(asked.prompt.name(), "press-dispense");
+    server.client.answer(id, 2, Answer::Done).await.unwrap();
+
+    let (end, _) = follow(&server.client, id).await;
+    assert_eq!((end.code, end.error), (0, None));
+    assert_eq!(read(&checkout, "presses"), "");
+
+    server.quit().await;
+}

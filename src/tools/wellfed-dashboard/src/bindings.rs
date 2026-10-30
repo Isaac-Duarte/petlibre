@@ -21,7 +21,7 @@ use wellfed_formats::bench::progress::{
     BenchCommand, Capture, Current, FlashTool, HistoryEntry, Outcome, Progress, RelayState, Step,
     StepState, Transfer, Unit,
 };
-use wellfed_formats::bench::prompt::{Answer, Expects, Prompt};
+use wellfed_formats::bench::prompt::{Answer, DispensePurpose, Expects, Prompt};
 use wellfed_formats::bench::run::{Evidence, RunRecord, ScenarioRecord, ScenarioVerdict};
 
 /// One exported declaration, with its doc comment.
@@ -64,6 +64,7 @@ fn generated() -> String {
         decl::<JobView>(&cfg),
         decl::<PendingPrompt>(&cfg),
         decl::<Prompt>(&cfg),
+        decl::<DispensePurpose>(&cfg),
         decl::<Expects>(&cfg),
         decl::<Answer>(&cfg),
         decl::<AnswerRequest>(&cfg),

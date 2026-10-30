@@ -3,16 +3,19 @@
 //! session, the one the Android app runs, and show the one-time code the
 //! owner keys in on the feeder's buttons.
 
+use std::io::Write;
 use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use clap::Args;
 use wellfed_client::setup::{Ask, Credentials, Session, Step, panel_position};
+use wellfed_formats::bench::prompt::{CodePresses, Prompt};
 use wellfed_formats::private;
 use wellfed_model::setup::{Enrolled, Refusal, Reply, WifiSaved};
 use wellfed_session::setup_code::Code;
 
+use crate::ask::Asker;
 use crate::ble::Link;
 use crate::keys::{OwnerKey, fingerprint};
 use crate::passphrase;
@@ -46,7 +49,8 @@ pub(crate) async fn setup(args: SetupArgs) -> Result<()> {
     };
     let mut key = OwnerKey::open(&args.keys, args.label.as_deref(), OwnerKey::system())?;
     let link = Link::open(args.address).await?;
-    let (identity, enrolled) = over_ble(&mut key, wifi, link).await?;
+    let mut asker = Asker::terminal_notices();
+    let (identity, enrolled) = over_ble(&mut key, wifi, link, &mut asker).await?;
     println!(
         "Paired with feeder {} ({}); it reboots now without BLE.",
         fingerprint(&identity),
@@ -56,13 +60,14 @@ pub(crate) async fn setup(args: SetupArgs) -> Result<()> {
 }
 
 /// Enroll `key` as an owner over `link` to a feeder in setup mode, giving
-/// it `wifi` when set, the owner keying in the code shown; the feeder's
-/// identity, remembered in the key file, and what the feeder said. The
-/// link is closed either way.
-pub(crate) async fn over_ble(
+/// it `wifi` when set, the owner keying in the code `asker` announces; the
+/// feeder's identity, remembered in the key file, and what the feeder said.
+/// The link is closed either way.
+pub(crate) async fn over_ble<W: Write>(
     key: &mut OwnerKey,
     wifi: Option<Credentials>,
     mut link: Link,
+    asker: &mut Asker<W>,
 ) -> Result<([u8; 32], String)> {
     let ask = Ask {
         label: key.label().to_string(),
@@ -75,7 +80,7 @@ pub(crate) async fn over_ble(
     let code = Code::from_bits(u16::from_le_bytes(bits));
     let mut session = Session::new(key.keypair(), ephemeral, ask, code, seed)?;
 
-    let result = exchange(&mut session, &mut link).await;
+    let result = exchange(&mut session, &mut link, asker).await;
     link.close().await;
     let enrolled = result?;
 
@@ -87,7 +92,11 @@ pub(crate) async fn over_ble(
 }
 
 /// Run the session to its end; the outcome as text.
-async fn exchange(session: &mut Session, link: &mut Link) -> Result<String> {
+async fn exchange<W: Write>(
+    session: &mut Session,
+    link: &mut Link,
+    asker: &mut Asker<W>,
+) -> Result<String> {
     link.send(&session.start()?).await?;
     let mut wait = HANDSHAKE_WAIT;
     loop {
@@ -96,7 +105,7 @@ async fn exchange(session: &mut Session, link: &mut Link) -> Result<String> {
             Step::Send(bytes) => link.send(&bytes).await?,
             Step::Reply(reply) => match outcome(reply) {
                 SetupOutcome::EnterCode(seconds) => {
-                    eprintln!("{}", instructions(session.code(), seconds));
+                    show_code(asker, session.code(), seconds).await?;
                     wait = Duration::from_secs(seconds.into()) + CONFIRM_SLACK;
                 }
                 SetupOutcome::Done(text) => return Ok(text),
@@ -104,6 +113,19 @@ async fn exchange(session: &mut Session, link: &mut Link) -> Result<String> {
             },
         }
     }
+}
+
+/// Announce the code to key in. The feeder already waits for it when it
+/// asks, so the announcement goes at once and the run waits only for the
+/// feeder's outcome, within its window.
+async fn show_code<W: Write>(asker: &mut Asker<W>, code: Code, seconds: u16) -> Result<()> {
+    let prompt = Prompt::KeySetupCode {
+        presses: CodePresses::new(*code.presses()),
+    };
+    asker
+        .announce(prompt, &instructions(code, seconds))
+        .await
+        .context("show the setup code")
 }
 
 /// The code as the owner keys it in: button positions, then their names.
@@ -176,17 +198,18 @@ pub(crate) struct RecoverArgs {
 pub(crate) async fn recover_command(args: RecoverArgs) -> Result<()> {
     let mut key = OwnerKey::open(&args.keys, args.label.as_deref(), OwnerKey::system())?;
     let address = wellfed_connect::parse_address(&args.address).context("--address")?;
-    let (identity, text) = recover(&mut key, address).await?;
+    let (identity, text) = recover(&mut key, address, &mut Asker::terminal_notices()).await?;
     println!("Recovered feeder {} ({text}).", fingerprint(&identity));
     Ok(())
 }
 
 /// Enroll `key` as an owner through the feeder's recovery window at
-/// `address`, the owner keying in the code shown; the feeder's identity,
-/// remembered in the key file, and what the feeder said.
-pub(crate) async fn recover(
+/// `address`, the owner keying in the code `asker` announces; the feeder's
+/// identity, remembered in the key file, and what the feeder said.
+pub(crate) async fn recover<W: Write>(
     key: &mut OwnerKey,
     address: std::net::SocketAddr,
+    asker: &mut Asker<W>,
 ) -> Result<([u8; 32], String)> {
     let random = OwnerKey::system();
     let ephemeral: [u8; 32] = private::random(random).context("read the system random source")?;
@@ -218,7 +241,7 @@ pub(crate) async fn recover(
         };
         match outcome(reply) {
             SetupOutcome::EnterCode(seconds) => {
-                eprintln!("{}", instructions(recovery.session().code(), seconds));
+                show_code(asker, recovery.session().code(), seconds).await?;
                 wait = Duration::from_secs(seconds.into()) + CONFIRM_SLACK;
             }
             SetupOutcome::Done(text) => break text,

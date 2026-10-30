@@ -99,7 +99,9 @@ pub(crate) fn run_alone() -> bool {
 /// - `read observe` holds the port for `hold` seconds; a capture named
 ///   `burst` first prints 3000 lines on stderr;
 /// - `update execute` reports 3 of 19 sectors, then writes until a signal,
-///   which it records in `update-signal` at the root.
+///   which it records in `update-signal` at the root;
+/// - `read press` appends its chord and hold to `presses` at the root, and
+///   fails, as a press with no echo does, for the chord `press-fails` names.
 struct Checkout {
     dir: tempfile::TempDir,
     board: FakeBoard,
@@ -131,6 +133,11 @@ case "$3 $4" in
   trap 'echo TERM > "$out/signal"; kill $! 2>/dev/null; exit 1' TERM
   sleep {hold} & wait $!
   echo '{{"status":"complete","result":{{"bytes":7}}}}' > "$out/report.json"
+  ;;
+"read press")
+  mkdir -p "$8"
+  echo "${{10}} ${{12}}" >> "$2/presses"
+  if [ "$(cat "$2/press-fails" 2>/dev/null)" = "${{10}}" ]; then exit 1; fi
   ;;
 "update execute")
   trap 'echo INT > "$2/update-signal"; kill $! 2>/dev/null; exit 1' INT

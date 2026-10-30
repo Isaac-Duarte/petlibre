@@ -17,6 +17,16 @@
 //! no prompt means the installer and the server disagree about what is
 //! asked, and nothing it waits for could be answered safely: the job shows
 //! the line and stops the installer.
+//!
+//! With `--virtual-panel` the job also answers the panel's prompts itself,
+//! as the restart is answered: it types the setup code's presses, or the
+//! Dispense press, to a running `virtual-panel` build ([`Bench::press`]),
+//! from this thread, each `wellfed-flash read press` a child under the
+//! server's lease. The server's UART capture is already stopped for every
+//! job and starts again only once it ends, so the port is free for them.
+//! A press that does not echo and release stops the installer, and nothing
+//! is pressed again: a code half keyed in is not keyed over, and a Dispense
+//! pressed twice may feed.
 
 use std::ffi::OsString;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -26,13 +36,15 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use clap::Args;
+use wellfed_core::buttons::Buttons;
+use wellfed_core::virtual_panel::DEFAULT_HOLD_MS;
 use wellfed_formats::bench::banks::{Bank, Content, Source};
 use wellfed_formats::bench::live::{ActivityKind, AnswerError, JobId, PendingPrompt};
-use wellfed_formats::bench::prompt::{Answer, Prompt};
+use wellfed_formats::bench::prompt::{Answer, DispensePurpose, Prompt};
 use wellfed_rig::commands::{Bench, installed};
 use wellfed_rig::tools::own_group_with_input;
 
-use crate::jobs::{JobError, ToolPaths};
+use crate::jobs::{JobError, ToolPaths, press_name};
 use crate::state::Store;
 
 /// How often the job looks at its cancel while its child is quiet.
@@ -52,15 +64,39 @@ const RESTART_OFF: Duration = if cfg!(test) {
 
 /// `install`: the flags of `wellfed install` the bench uses. The job adds
 /// `--prompts lines` and the server's own `wellfed-stock`; the frame route
-/// (`--ssid`) reads a passphrase at a terminal and has no place here.
+/// (`--ssid`) and `--home-ssid` read a passphrase at a terminal and have no
+/// place here.
 #[derive(Debug, Clone, Args)]
 pub struct InstallArgs {
     /// The replacement's frozen review, root-relative.
     #[arg(long)]
     pub review: PathBuf,
-    /// The signed update manifest for the same build.
+    /// The signed update manifest for the same build. Without it the
+    /// installer signs with --update-key (a consumer review), or the bench
+    /// key (a bench review).
     #[arg(long)]
-    pub manifest: PathBuf,
+    pub manifest: Option<PathBuf>,
+    /// The update-signing key the installer signs the promotion with and
+    /// enrolls (a Dispense press) when the image does not build it in.
+    #[arg(long, conflicts_with = "manifest")]
+    pub update_key: Option<PathBuf>,
+    /// A consumer image's network, from a private file of its `ssid` and
+    /// `password` (private/hotspot.json on the bench).
+    #[arg(long)]
+    pub home_network: Option<PathBuf>,
+    /// The feeder's Bluetooth address for a consumer image's setup.
+    #[arg(long)]
+    pub ble_address: Option<String>,
+    /// Stock's MQTT client ID the owner pins: the feeder check passes
+    /// without a question for it, and stops the run for any other.
+    #[arg(long)]
+    pub expect_device: Option<String>,
+    /// Answer the installer's panel prompts by typing the presses to a
+    /// running virtual-panel build: the setup code, and the Dispense press
+    /// that enrolls the update key. The server's own flag; the installer
+    /// never sees it.
+    #[arg(long)]
+    pub virtual_panel: bool,
     /// The installer's `wellfed-stock` config (`init-installer`).
     #[arg(long)]
     pub stock_config: PathBuf,
@@ -100,7 +136,21 @@ impl InstallArgs {
         };
         value("stock-server", &stock_bin);
         value("review", &self.review);
-        value("manifest", &self.manifest);
+        if let Some(manifest) = &self.manifest {
+            value("manifest", manifest);
+        }
+        if let Some(key) = &self.update_key {
+            value("update-key", key);
+        }
+        if let Some(network) = &self.home_network {
+            value("home-network", network);
+        }
+        if let Some(address) = &self.ble_address {
+            value("ble-address", address);
+        }
+        if let Some(device) = &self.expect_device {
+            value("expect-device", device);
+        }
         value("stock-config", &self.stock_config);
         if let Some(name) = &self.broker_name {
             value("broker-name", name);
@@ -140,6 +190,17 @@ pub(crate) enum ToolJobError {
     /// prompt; it was stopped.
     #[error("wellfed install wrote {line:?} where a prompt goes; it was stopped")]
     Garbled { line: String },
+    /// A press for the installer's panel prompt did not echo and release;
+    /// the installer was stopped, and nothing was pressed again.
+    #[error(
+        "the virtual panel's press {number} of {count} for the {prompt} prompt ({chord}) did not echo and release; wellfed install was stopped and nothing is pressed again"
+    )]
+    PressFailed {
+        prompt: &'static str,
+        number: usize,
+        count: usize,
+        chord: Buttons,
+    },
     /// The installer stopped: its own last words, as it printed them.
     #[error("{}", message.as_deref().unwrap_or("wellfed install stopped without saying why"))]
     InstallStopped { code: i32, message: Option<String> },
@@ -358,6 +419,7 @@ pub(crate) fn install(
         read_lines(stderr, asking.sender.clone(), Event::Output);
     }
     let mut talk = Conversation {
+        virtual_panel: args.virtual_panel,
         input: child.stdin.take(),
         seq: 0,
         stopping: None,
@@ -414,6 +476,8 @@ fn record_install(bench: &mut Bench, args: &InstallArgs, succeeded: bool) {
 
 /// One install's questions and answers, until its pipes close.
 struct Conversation {
+    /// The job answers the panel's prompts with presses.
+    virtual_panel: bool,
     input: Option<ChildStdin>,
     /// The number of the last question passed on.
     seq: u32,
@@ -458,6 +522,15 @@ impl Conversation {
                     Ok(()) => self.reply(Answer::Done),
                     Err(error) => self.stop(bench, asking, error.into()),
                 },
+                Event::Prompt(prompt) if self.virtual_panel && panel_presses(&prompt).is_some() => {
+                    match press_for(bench, &prompt) {
+                        Ok(()) => self.reply(Answer::Done),
+                        // A cancel interrupted the press: the loop's own
+                        // check stops the installer.
+                        Err(_) if bench.cancel.is_cancelled() => {}
+                        Err(error) => self.stop(bench, asking, error),
+                    }
+                }
                 Event::Prompt(prompt) => {
                     self.seq += 1;
                     let pending = PendingPrompt::new(asking.job, self.seq, prompt);
@@ -509,6 +582,58 @@ impl Conversation {
     }
 }
 
+/// The chords that answer `prompt` on the panel, in order, each held for a
+/// press; `None` for a prompt no press answers.
+///
+/// No Lock hold unlocks the panel first, though a person might: a code
+/// being keyed in takes every gesture, whatever the lock says, so the hold
+/// would count as a Lock press of the code; and a waiting enrollment takes
+/// the next Dispense on a locked panel too. A locked panel also means a
+/// stray Dispense outside a window feeds nothing.
+fn panel_presses(prompt: &Prompt) -> Option<Vec<Buttons>> {
+    match prompt {
+        Prompt::KeySetupCode { presses } => {
+            Some(presses.buttons().iter().map(|&b| Buttons::of(b)).collect())
+        }
+        Prompt::PressDispense {
+            purpose: DispensePurpose::EnrollUpdateKey,
+        } => Some(vec![Buttons::of(wellfed_core::buttons::Button::Dispense)]),
+        Prompt::SetOverride { .. }
+        | Prompt::RestartFeeder
+        | Prompt::RecognizeFeeder { .. }
+        | Prompt::EraseStockPlans
+        | Prompt::SetupMode
+        | Prompt::JoinBack
+        | Prompt::OpenRecoveryWindow => None,
+    }
+}
+
+/// Type `prompt`'s presses to the virtual panel, in order, each recorded
+/// in the job's output; the first that does not echo and release ends it,
+/// and none is typed again.
+fn press_for(bench: &mut Bench, prompt: &Prompt) -> Result<(), JobError> {
+    let chords = panel_presses(prompt).unwrap_or_default();
+    let count = chords.len();
+    for (index, chord) in chords.into_iter().enumerate() {
+        let number = index + 1;
+        wellfed_rig::say!(
+            "Virtual panel, for the {} prompt: press {number} of {count}, {chord}",
+            prompt.name()
+        );
+        // Numbered too: two presses must never share a millisecond's
+        // evidence directory, which the second would refuse.
+        let name = format!("{}-{number}", press_name());
+        let code = bench.press(&name, chord, DEFAULT_HOLD_MS)?;
+        wellfed_formats::require(code == 0, || ToolJobError::PressFailed {
+            prompt: prompt.name(),
+            number,
+            count,
+            chord,
+        })?;
+    }
+    Ok(())
+}
+
 /// Restart the feeder for the installer: power off for `off`, then on
 /// again, whatever came of the wait. A cancel during it still leaves the
 /// feeder powered, as it was before the job.
@@ -543,9 +668,14 @@ mod tests {
     fn install_values_go_as_one_word_each_with_lines_prompts_and_the_server_s_stock() {
         let args = InstallArgs {
             review: "private/r".into(),
-            manifest: "private/m.json".into(),
+            manifest: Some("private/m.json".into()),
             stock_config: "private/installer.json".into(),
             broker_name: Some("-x.example".into()),
+            update_key: None,
+            home_network: None,
+            ble_address: None,
+            expect_device: None,
+            virtual_panel: false,
             from_bank0: false,
             enroll_minutes: Some(5),
             calibrate_clock: true,

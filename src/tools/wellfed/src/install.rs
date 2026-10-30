@@ -37,7 +37,11 @@
 //!
 //! What the run asks the owner goes through one `Asker`, at a terminal or,
 //! with `--prompts lines`, as JSON lines for the bench server that runs it
-//! as a job. SIGTERM (a job's cancel) and SIGINT end the run through the
+//! as a job. The setup code and the enrollment's Dispense press are only
+//! announced: the feeder times their windows and judges the presses. A
+//! job needs nothing read at a terminal, so its home network comes from a
+//! file (`--home-network`), and the owner may answer the feeder check ahead
+//! (`--expect-device`). SIGTERM (a job's cancel) and SIGINT end the run through the
 //! same stop as its end. The report names the step it stopped in and any
 //! write whose outcome had not settled (the request until the replacement
 //! answers, the promotion until bank 1 confirms it, the plans' put until
@@ -68,7 +72,7 @@ use wellfed_client::update::{Image, InstallError as UpdateError};
 use wellfed_client::update_key::{EnrollError, Enrolled};
 use wellfed_formats::bench::lease::Lease;
 use wellfed_formats::bench::prompt::Prompt;
-use wellfed_formats::credentials::KeyScope;
+use wellfed_formats::credentials::{KeyScope, WifiCredential};
 use wellfed_formats::manifest::{BuildManifest, Provisioning};
 use wellfed_formats::stock::{
     Enrollment, ImageLease, OtaReport, ServerConfig, StockStatus, TrialAnswer, TrialPhase,
@@ -136,6 +140,19 @@ pub(crate) struct InstallArgs {
     /// (passphrase from standard input); with --ssid, that network.
     #[arg(long, conflicts_with = "ssid")]
     home_ssid: Option<String>,
+    /// The network a consumer image is given, from a private JSON file of
+    /// its `ssid` and `password` (as `private/hotspot.json` holds them),
+    /// so nothing is read at a terminal and the run works with --prompts
+    /// lines. The passphrase is never printed.
+    #[arg(long, conflicts_with_all = ["home_ssid", "ssid"])]
+    home_network: Option<PathBuf>,
+    /// Stock's MQTT client ID as the owner already knows it (the feeder's
+    /// label, the vendor app): when the broker enrolls exactly this
+    /// device, the feeder check passes without asking, and when it enrolls
+    /// another, the run stops before anything is sent to stock. The
+    /// owner's answer to that check, given ahead from evidence they hold.
+    #[arg(long)]
+    expect_device: Option<String>,
     /// The feeder's Bluetooth address for setup; otherwise the first in
     /// setup mode.
     #[arg(long)]
@@ -225,7 +242,7 @@ enum PromptsRefused {
     Frame,
     #[error(
         "--home-ssid reads the network's passphrase at a terminal, so it does not run with \
-         --prompts lines; nothing was started. Run it at a terminal"
+         --prompts lines; nothing was started. Pass --home-network <file> instead"
     )]
     HomeNetwork,
 }
@@ -593,11 +610,23 @@ enum Refused {
     )]
     NoSigner,
     #[error(
-        "a consumer image joins no network until Bluetooth setup gives it one: pass --home-ssid <network> (or --ssid)"
+        "a consumer image joins no network until Bluetooth setup gives it one: pass --home-network <file> or --home-ssid <network> (or --ssid)"
     )]
     NoHomeNetwork,
-    #[error("a bench image joins its build network; --home-ssid is for a consumer image")]
+    #[error(
+        "a bench image joins its build network; --home-ssid and --home-network are for a consumer image"
+    )]
     HomeForBench,
+    /// The broker enrolled another device than the owner pinned: whatever
+    /// reached it first is not the feeder the owner means to install.
+    #[error(
+        "the broker enrolled device {enrolled}, connecting from {address}, but --expect-device is {expected}; nothing was sent to stock. Check which device reached the broker before running again"
+    )]
+    OtherDevice {
+        expected: String,
+        enrolled: String,
+        address: String,
+    },
     #[error(
         "the build moves the motor at startup ({policy}): sign it attended (wellfed-build sign --attended-motion) and pass --manifest"
     )]
@@ -800,27 +829,44 @@ fn frozen_review(review: &Path, build: &str) -> Result<(Frozen, PathBuf)> {
     Ok((frozen, root.to_path_buf()))
 }
 
-/// The Wi-Fi Bluetooth setup gives a consumer image: `--home-ssid`, or the
-/// frame's `--ssid`, with the passphrase read once.
+/// The Wi-Fi Bluetooth setup gives a consumer image: `--home-network`'s
+/// file, or `--home-ssid` (or the frame's `--ssid`) with the passphrase
+/// read once.
 fn home_wifi(
     args: &InstallArgs,
     route: PairRoute,
     passphrase: Option<&str>,
 ) -> Result<Option<Credentials>> {
-    let ssid = args.home_ssid.as_ref().or(args.ssid.as_ref());
-    match (route, ssid, passphrase) {
-        (PairRoute::Setup, Some(ssid), Some(passphrase)) => Ok(Some(
-            Credentials::new(ssid.clone().into_bytes(), passphrase.to_string())
-                .context("the home network")?,
+    if route == PairRoute::Recovery {
+        return match (&args.home_ssid, &args.home_network) {
+            (None, None) => Ok(None),
+            _ => Err(Refused::HomeForBench.into()),
+        };
+    }
+    let network = match (&args.home_network, &args.home_ssid, &args.ssid, passphrase) {
+        (Some(path), _, _, _) => Some(home_network(path)?),
+        (None, Some(ssid), _, Some(passphrase)) | (None, None, Some(ssid), Some(passphrase)) => {
+            Some((ssid.clone(), passphrase.to_string()))
+        }
+        _ => None,
+    };
+    match network {
+        Some((ssid, password)) => Ok(Some(
+            Credentials::new(ssid.into_bytes(), password).context("the home network")?,
         )),
         // A resumed run may find the feeder on the network already.
-        (PairRoute::Setup, None, _) if args.from_bank0 => Ok(None),
-        (PairRoute::Setup, _, _) => Err(Refused::NoHomeNetwork.into()),
-        (PairRoute::Recovery, _, _) if args.home_ssid.is_some() => {
-            Err(Refused::HomeForBench.into())
-        }
-        (PairRoute::Recovery, _, _) => Ok(None),
+        None if args.from_bank0 => Ok(None),
+        None => Err(Refused::NoHomeNetwork.into()),
     }
+}
+
+/// The SSID and passphrase in `path`, a file shaped as the bench's
+/// `private/hotspot.json` is. Neither the error nor anything else here
+/// prints the passphrase.
+fn home_network(path: &Path) -> Result<(String, String)> {
+    let WifiCredential { ssid, password } = wellfed_formats::load(path)
+        .with_context(|| format!("read the home network from {}", path.display()))?;
+    Ok((ssid, password))
 }
 
 /// The startup identity the review's build manifest records, and the
@@ -918,16 +964,57 @@ async fn stop_child(mut child: Child) {
 /// the whole install, so the owner checks the device ID (on the feeder's
 /// label or in the vendor app) and the address (the router's client list)
 /// before anything is sent.
-async fn recognized(asker: &mut Asker<Box<dyn Write>>, trust: FeederTrust) -> Result<bool> {
+///
+/// With `expected` (`--expect-device`) the owner has answered ahead: the
+/// device they pinned passes without a question, and any other stops the
+/// run. The address is then not checked by anyone, which the owner accepts
+/// by pinning: the device ID is what stock's credentials are bound to.
+async fn recognized(
+    asker: &mut Asker<Box<dyn Write>>,
+    trust: FeederTrust,
+    expected: Option<&str>,
+) -> Result<bool> {
     let (device, address) = match trust {
         FeederTrust::Enrolled { device, address } => (device, address),
         // The bench: its credentials came from a capture of this feeder.
         FeederTrust::Captured => return Ok(true),
         FeederTrust::Contested => return Ok(false),
     };
-    Ok(asker
-        .yes(Prompt::RecognizeFeeder { device, address })
-        .await?)
+    match pinned(expected, &device, &address)? {
+        Pin::Matches => {
+            eprintln!(
+                "The broker enrolled device {device} from {address}, the device --expect-device \
+                 pins; no question asked."
+            );
+            Ok(true)
+        }
+        Pin::Unpinned => Ok(asker
+            .yes(Prompt::RecognizeFeeder { device, address })
+            .await?),
+    }
+}
+
+/// What the owner's `--expect-device` says of the enrolled device.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Pin {
+    /// It is the pinned device.
+    Matches,
+    /// Nothing pinned: a person answers the check.
+    Unpinned,
+}
+
+/// The owner's pin against the enrolled `device`, refused when it names
+/// another.
+fn pinned(expected: Option<&str>, device: &str, address: &str) -> Result<Pin, Refused> {
+    let Some(expected) = expected else {
+        return Ok(Pin::Unpinned);
+    };
+    wellfed_formats::require(expected == device, || Refused::OtherDevice {
+        expected: expected.to_string(),
+        enrolled: device.to_string(),
+        address: address.to_string(),
+    })?;
+    Ok(Pin::Matches)
 }
 
 /// Guide the owner through the DNS override, then look the name up from
@@ -1006,7 +1093,8 @@ impl Run {
                     self.await_stock(install).await?;
                 }
                 Step::ConfirmFeeder(trust) => {
-                    if recognized(&mut self.asker, trust).await? {
+                    let expected = self.args.expect_device.as_deref();
+                    if recognized(&mut self.asker, trust, expected).await? {
                         install.feeder_confirmed();
                     } else {
                         install.feeder_rejected();
@@ -1399,7 +1487,8 @@ impl Run {
             tokio::time::sleep(POLL).await;
         }
         self.asker.done(Prompt::OpenRecoveryWindow).await?;
-        let (identity, text) = crate::pairing::recover(&mut self.key, address).await?;
+        let (identity, text) =
+            crate::pairing::recover(&mut self.key, address, &mut self.asker).await?;
         eprintln!("Paired with feeder {} ({text}).", fingerprint(&identity));
         self.identity = Some(identity);
         install.paired();
@@ -1457,13 +1546,14 @@ impl Run {
                 Err(_) => tokio::time::sleep(POLL).await,
             }
         };
-        let (identity, text) = crate::pairing::over_ble(&mut self.key, Some(wifi), link)
-            .await
-            .context(
-                "Bluetooth setup failed: the feeder runs the replacement from bank 0 and still \
+        let (identity, text) =
+            crate::pairing::over_ble(&mut self.key, Some(wifi), link, &mut self.asker)
+                .await
+                .context(
+                    "Bluetooth setup failed: the feeder runs the replacement from bank 0 and still \
                  holds stock in bank 1. Run again with --from-bank0; with no Wi-Fi stored, the \
                  replacement starts setup again at its next boot",
-            )?;
+                )?;
         eprintln!(
             "Paired with feeder {} ({text}); it reboots to join the network.",
             fingerprint(&identity)
@@ -1579,7 +1669,9 @@ impl Run {
         let id = wellfed_formats::hex::encode(&key.id());
         let mut connection = crate::device::Connection::from(self.session(PLANS_WAIT).await?);
         self.track.sent(Unsettled::UpdateKey);
-        let outcome = crate::update_key::enrolled(&mut connection, key, UPDATE_KEY_LABEL).await?;
+        let outcome =
+            crate::update_key::enrolled(&mut connection, key, UPDATE_KEY_LABEL, &mut self.asker)
+                .await?;
         match &outcome {
             Ok(Enrolled::Now) => eprintln!("Enrolled update key {id}."),
             Ok(Enrolled::Already) => {
@@ -2456,6 +2548,125 @@ mod tests {
         assert_eq!(
             home_wifi(&frame, PairRoute::Recovery, Some("x")).unwrap(),
             None
+        );
+    }
+
+    /// `--home-network` gives a consumer image the network from a file, so
+    /// it reads nothing at a terminal: it runs with lines prompts, and it
+    /// takes the place of `--home-ssid` and `--ssid`, never beside them.
+    #[tokio::test]
+    async fn a_home_network_file_runs_with_lines_prompts_and_alone() {
+        use clap::Parser;
+
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("hotspot.json");
+        std::fs::write(
+            &file,
+            json!({"connection": "bench", "ssid": "Bench", "password": "pass word!"}).to_string(),
+        )
+        .unwrap();
+        let path = file.to_str().unwrap();
+
+        let given = args(&["--home-network", path]);
+        let wifi = home_wifi(&given, PairRoute::Setup, None).unwrap();
+        assert!(wifi.is_some());
+        assert!(matches!(
+            home_wifi(&given, PairRoute::Recovery, None)
+                .unwrap_err()
+                .downcast::<Refused>(),
+            Ok(Refused::HomeForBench)
+        ));
+        let missing = args(&["--home-network", "private/none.json"]);
+        let error = home_wifi(&missing, PairRoute::Setup, None).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("private/none.json"),
+            "{error:#}"
+        );
+
+        // Refused before it reads anything only for a missing review: the
+        // prompts mode lets it through.
+        let config = dir.path().join("server.json");
+        let line = Line::parse_from([
+            "install",
+            "--review",
+            "missing-review",
+            "--stock-config",
+            config.to_str().unwrap(),
+            "--home-network",
+            path,
+            "--prompts",
+            "lines",
+        ]);
+        let error = run(line.args).await.unwrap_err();
+        assert!(
+            error.downcast_ref::<PromptsRefused>().is_none(),
+            "{error:#}"
+        );
+        assert!(!format!("{error:#}").contains("pass word!"), "{error:#}");
+
+        for other in [["--home-ssid", "Home"], ["--ssid", "Home"]] {
+            let line = Line::try_parse_from(
+                [
+                    &["install", "--review", "r", "--stock-config", "c"][..],
+                    &["--home-network", path],
+                    &other,
+                ]
+                .concat(),
+            );
+            assert!(line.is_err(), "{other:?}");
+        }
+    }
+
+    /// `--expect-device` answers the feeder check ahead: the pinned device
+    /// passes without a question, any other stops the run naming both, and
+    /// without it a person is asked.
+    #[tokio::test]
+    async fn an_expected_device_answers_the_feeder_check_or_stops_the_run() {
+        let enrolled = || FeederTrust::Enrolled {
+            device: "AF_FEEDER".into(),
+            address: "10.42.103.172".into(),
+        };
+        // An asker with nobody behind it: any question it put would fail.
+        let mut asker = Asker::terminal_notices();
+
+        assert!(
+            recognized(&mut asker, enrolled(), Some("AF_FEEDER"))
+                .await
+                .unwrap()
+        );
+
+        let error = recognized(&mut asker, enrolled(), Some("AF_OTHER"))
+            .await
+            .unwrap_err();
+        match error.downcast_ref::<Refused>() {
+            Some(Refused::OtherDevice {
+                expected,
+                enrolled,
+                address,
+            }) => assert_eq!(
+                (expected.as_str(), enrolled.as_str(), address.as_str()),
+                ("AF_OTHER", "AF_FEEDER", "10.42.103.172")
+            ),
+            other => panic!("{other:?}"),
+        }
+        assert!(error.to_string().contains("AF_OTHER") && error.to_string().contains("AF_FEEDER"));
+
+        let error = recognized(&mut asker, enrolled(), None).await.unwrap_err();
+        assert!(
+            matches!(
+                error.downcast_ref::<crate::ask::AskError>(),
+                Some(crate::ask::AskError::Closed {
+                    prompt: Prompt::RecognizeFeeder { .. }
+                })
+            ),
+            "{error:#}"
+        );
+
+        // A contested enrollment is no feeder, pinned or not.
+        assert!(
+            !recognized(&mut asker, FeederTrust::Contested, Some("AF_FEEDER"))
+                .await
+                .unwrap()
         );
     }
 

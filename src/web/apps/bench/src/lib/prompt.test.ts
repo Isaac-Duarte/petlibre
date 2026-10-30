@@ -1,10 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { choices, refusalText } from "./prompt";
+import { choices, codePresses, refusalText } from "./prompt";
 
 describe("prompt", () => {
   it("offers done for an instruction and yes or no for a question", () => {
     expect(choices("done").map((c) => c.answer)).toEqual(["done"]);
     expect(choices("yes-no").map((c) => c.answer)).toEqual(["yes", "no"]);
+  });
+
+  it("lists a setup code's presses in order, and nothing for another question", () => {
+    expect(
+      codePresses({ kind: "key-setup-code", presses: ["lock", "dispense", "dispense", "mic", "reset", "lock"] }),
+    ).toEqual(["lock", "dispense", "dispense", "mic", "reset", "lock"]);
+    expect(codePresses({ kind: "press-dispense", purpose: "enroll-update-key" })).toEqual([]);
   });
 
   it("says why an answer was refused", () => {

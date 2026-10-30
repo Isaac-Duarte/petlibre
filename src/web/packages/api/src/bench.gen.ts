@@ -225,7 +225,12 @@ text: string, expects: Expects, };
 /**
  * One question the installer stops at until it is answered.
  */
-export type Prompt = { "kind": "set-override", name: string, broker: string, } | { "kind": "restart-feeder" } | { "kind": "recognize-feeder", device: string, address: string, } | { "kind": "erase-stock-plans" } | { "kind": "setup-mode" } | { "kind": "join-back" } | { "kind": "open-recovery-window" };
+export type Prompt = { "kind": "set-override", name: string, broker: string, } | { "kind": "restart-feeder" } | { "kind": "recognize-feeder", device: string, address: string, } | { "kind": "erase-stock-plans" } | { "kind": "setup-mode" } | { "kind": "join-back" } | { "kind": "open-recovery-window" } | { "kind": "key-setup-code", presses: Array<"reset" | "mic" | "dispense" | "lock">, } | { "kind": "press-dispense", purpose: DispensePurpose, };
+
+/**
+ * What a Dispense press asked for confirms.
+ */
+export type DispensePurpose = "enroll-update-key";
 
 /**
  * The kind of answer a prompt takes.

@@ -58,6 +58,12 @@ pub(crate) enum ToolError {
         "{tool}: a dispense press is refused over MCP without confirm_motion: outside a setup or enrollment window it is a feed on an unlocked panel; with the hopper empty, set confirm_motion to true to mean it"
     )]
     UnconfirmedMotion { tool: String },
+    /// The job's own presses include Dispense: the update key's
+    /// enrollment, and any setup code with Dispense in it.
+    #[error(
+        "{tool}: virtual_panel is refused over MCP without confirm_motion: the job presses Dispense itself (the update key's enrollment, and any setup code that holds it), which outside a window is a feed on an unlocked panel; with the hopper empty, set confirm_motion to true to mean it"
+    )]
+    UnconfirmedPanel { tool: String },
     #[error(
         "{tool}: a reset hold over 1000 ms is refused over MCP without confirm_destructive: one of 5 s on an unlocked panel erases the feeder's enrolled keys, the bench's included; set confirm_destructive to true to mean it"
     )]
@@ -212,8 +218,28 @@ struct AnswerArgs {
 struct InstallArgs {
     /// The replacement's frozen review, root-relative.
     review: String,
-    /// The signed update manifest for the same build.
-    manifest: String,
+    /// The signed update manifest for the same build; without it the
+    /// installer signs with update_key (or, for a bench review, the bench
+    /// key).
+    manifest: Option<String>,
+    /// The update-signing key to sign with and enroll by a Dispense press.
+    update_key: Option<String>,
+    /// A consumer image's network: a private file of its ssid and password
+    /// (private/hotspot.json on the bench).
+    home_network: Option<String>,
+    /// The feeder's Bluetooth address for a consumer image's setup.
+    ble_address: Option<String>,
+    /// Stock's MQTT client ID, pinned by the owner: the feeder check passes
+    /// for it without a question and stops the run for any other.
+    expect_device: Option<String>,
+    /// The job answers the installer's panel prompts itself on a running
+    /// virtual-panel build: the setup code's presses and the Dispense press.
+    #[serde(default)]
+    virtual_panel: bool,
+    /// Required with virtual_panel, whose presses include Dispense: the
+    /// hopper is empty.
+    #[serde(default)]
+    confirm_motion: bool,
     /// The installer's wellfed-stock config (init-installer).
     stock_config: String,
     /// Stock's broker name, which the owner's resolver points here.
@@ -690,7 +716,7 @@ const SPECS: &[Spec] = &[
     },
     Spec {
         name: "install",
-        description: "Stock to Wellfed with `wellfed install` as a job: its own stock server and sessions (the server's session pauses), stock installs the review into bank 0 over its own updater, then promotion writes bank 1. Restarts the feeder itself with relay 1 (off about 10 s, then on). Its other questions wait in bench_status's prompt for job_answer or a person; no UART write.",
+        description: "Stock to Wellfed with `wellfed install` as a job: its own stock server and sessions (the server's session pauses), stock installs the review into bank 0 over its own updater, then promotion writes bank 1. Restarts the feeder itself with relay 1 (off about 10 s, then on). With virtual_panel (needs confirm_motion) it also keys a consumer image's setup code in and presses Dispense for the update key's enrollment on a running virtual-panel build, as press does, and a failed press stops the install. Its other questions wait in bench_status's prompt for job_answer or a person (expect_device answers the feeder check ahead, for the pinned device only); no flash write over UART.",
         schema: schema::<InstallArgs>,
     },
 ];
@@ -831,11 +857,15 @@ pub(crate) fn agent_may_answer(prompt: &Prompt) -> Result<(), ToolError> {
                 name: prompt.name(),
             })
         }
+        // The feeder's own check of the code or the press decides, not the
+        // answer, which only lets the installer ask its next question.
         Prompt::SetOverride { .. }
         | Prompt::RestartFeeder
         | Prompt::EraseStockPlans
         | Prompt::SetupMode
-        | Prompt::JoinBack => Ok(()),
+        | Prompt::JoinBack
+        | Prompt::KeySetupCode { .. }
+        | Prompt::PressDispense { .. } => Ok(()),
     }
 }
 
@@ -1048,9 +1078,17 @@ fn job_words(name: &str, args: JsonObject) -> Result<Vec<String>, ToolError> {
         }
         "install" => {
             let args: InstallArgs = parse(name, args)?;
+            if args.virtual_panel && !args.confirm_motion {
+                return Err(ToolError::UnconfirmedPanel { tool: name.into() });
+            }
             Line::new(&["install"])
                 .value("--review", Some(args.review))
-                .value("--manifest", Some(args.manifest))
+                .value("--manifest", args.manifest)
+                .value("--update-key", args.update_key)
+                .value("--home-network", args.home_network)
+                .value("--ble-address", args.ble_address)
+                .value("--expect-device", args.expect_device)
+                .switch("--virtual-panel", args.virtual_panel)
                 .value("--stock-config", Some(args.stock_config))
                 .value("--broker-name", args.broker_name)
                 .switch("--from-bank0", args.from_bank0)
@@ -1193,6 +1231,47 @@ mod tests {
             ),
             Err(ToolError::LeadingDash { .. })
         ));
+
+        // The unattended consumer run: the job presses Dispense itself, so
+        // it needs the motion confirmed.
+        let consumer = serde_json::json!({
+            "review": "private/verification/c",
+            "update_key": "private/ota-key.json",
+            "home_network": "private/hotspot.json",
+            "ble_address": "AA:BB:CC:DD:EE:FF",
+            "expect_device": "AF_FEEDER",
+            "stock_config": "private/installer.json",
+            "virtual_panel": true,
+        });
+        assert!(matches!(
+            call("install", args(consumer.clone())),
+            Err(ToolError::UnconfirmedPanel { .. })
+        ));
+        let mut confirmed = consumer;
+        confirmed["confirm_motion"] = true.into();
+        assert_eq!(
+            call("install", args(confirmed)).unwrap(),
+            Call::Job(
+                [
+                    "install",
+                    "--review",
+                    "private/verification/c",
+                    "--update-key",
+                    "private/ota-key.json",
+                    "--home-network",
+                    "private/hotspot.json",
+                    "--ble-address",
+                    "AA:BB:CC:DD:EE:FF",
+                    "--expect-device",
+                    "AF_FEEDER",
+                    "--virtual-panel",
+                    "--stock-config",
+                    "private/installer.json",
+                ]
+                .map(String::from)
+                .to_vec()
+            )
+        );
         assert_eq!(
             call(
                 "job_answer",
@@ -1229,6 +1308,9 @@ mod tests {
                 broker: "192.168.1.20".parse().unwrap(),
             },
             Prompt::JoinBack,
+            Prompt::PressDispense {
+                purpose: wellfed_formats::bench::prompt::DispensePurpose::EnrollUpdateKey,
+            },
         ] {
             assert!(agent_may_answer(&prompt).is_ok(), "{prompt:?}");
         }

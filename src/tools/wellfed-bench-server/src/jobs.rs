@@ -457,7 +457,7 @@ fn record_start(
 
 /// A press's evidence directory under private/captures/: one per press, by
 /// the time it was typed, so a job needs no name.
-fn press_name() -> String {
+pub(crate) fn press_name() -> String {
     format!(
         "press-{}",
         wellfed_formats::bench::since_epoch().as_millis()

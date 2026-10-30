@@ -1,7 +1,9 @@
 <script lang="ts">
   // The question a job waits on (`install`'s prompts), with the buttons
   // that answer it. It sits right above the job's output, where the
-  // installer prints what goes with a question, such as a recovery code.
+  // installer prints what goes with a question. A setup code's presses
+  // are also listed one per button, to key in from left to right; the
+  // installer goes on without waiting, and done only tells it the code is in.
   // An answer is sent once: a refused one says why, and the buttons stay
   // off for that question until the server moves on. A page opened
   // without the console's link shows the question but cannot answer.
@@ -9,7 +11,7 @@
   import type { Answer, PendingPrompt } from "@wellfed/api";
   import { Panel } from "@wellfed/ui";
   import { app } from "../lib/bench.svelte";
-  import { choices, refusalText } from "../lib/prompt";
+  import { choices, codePresses, refusalText } from "../lib/prompt";
 
   const prompt = $derived(app.state?.prompt ?? null);
   /** The question an answer went out for, `job:seq`. */
@@ -35,6 +37,13 @@
     {#snippet meta()}question {asked.seq}, {asked.prompt.kind}{/snippet}
     <div class="prompt" role="alert">
       <p>{asked.text}</p>
+      {#if codePresses(asked.prompt).length > 0}
+        <ol class="code" aria-label="Setup code">
+          {#each codePresses(asked.prompt) as press, index (index)}
+            <li>{press}</li>
+          {/each}
+        </ol>
+      {/if}
       {#if !canAnswer()}
         <p class="readonly">To answer here, open the link the bench console printed.</p>
       {:else}
@@ -65,6 +74,21 @@
   p {
     margin: 0;
     line-height: 1.5;
+  }
+  .code {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    margin: var(--space-3) 0 0;
+    padding: 0;
+    list-style: none;
+  }
+  .code li {
+    padding: var(--space-1) var(--space-3);
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-card);
+    font-family: var(--mono);
+    font-weight: 600;
   }
   .buttons {
     display: flex;

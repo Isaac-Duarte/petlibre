@@ -3,7 +3,7 @@
 // number and kind, so the page only offers the answers a question takes
 // and says why one was refused.
 
-import type { Answer, AnswerError, Expects } from "@wellfed/api";
+import type { Answer, AnswerError, Expects, Prompt } from "@wellfed/api";
 
 export interface Choice {
   answer: Answer;
@@ -17,6 +17,11 @@ export function choices(expects: Expects): Choice[] {
     { answer: "yes", label: "Yes" },
     { answer: "no", label: "No" },
   ];
+}
+
+/** A setup code's presses, in order, to show one per button; empty for any other question. */
+export function codePresses(prompt: Prompt): readonly string[] {
+  return prompt.kind === "key-setup-code" ? prompt.presses : [];
 }
 
 /** Why the server did not take an answer; `null` when it said nothing readable. */

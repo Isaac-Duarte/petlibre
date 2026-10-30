@@ -14,6 +14,12 @@
 //! not yet answered, never one queued ahead for a prompt still to come,
 //! and never a second one: an extra line would answer the next prompt.
 //!
+//! Two prompts ask for presses on the feeder's panel inside a window the
+//! feeder times itself ([`Prompt::KeySetupCode`], [`Prompt::PressDispense`]).
+//! The installer writes them and goes on at once, reading their answer only
+//! before it writes its next prompt, so the alternation holds and a slow
+//! answer never eats into the feeder's window.
+//!
 //! A prompt expects one kind of answer ([`Expects`]). An answer of the
 //! other kind is refused, never read as "no" or as "go on": a confirmation
 //! that the feeder restarted and a yes to "is this your feeder?" mean
@@ -22,7 +28,8 @@
 use std::fmt;
 use std::net::IpAddr;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use wellfed_session::setup_code::{Button, PRESSES};
 
 /// One question the installer stops at until it is answered.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -49,6 +56,83 @@ pub enum Prompt {
     /// Lock, then Dispense, on the replacement's panel opens its recovery
     /// window, through which this computer becomes its owner.
     OpenRecoveryWindow,
+    /// Key the one-time setup code in on the feeder's panel, one button at
+    /// a time, within the window the feeder opened for it. Answered done
+    /// once keyed in; the feeder's proof of the code, not the answer,
+    /// decides the pairing.
+    KeySetupCode {
+        #[cfg_attr(
+            feature = "ts",
+            ts(type = r#"Array<"reset" | "mic" | "dispense" | "lock">"#)
+        )]
+        presses: CodePresses,
+    },
+    /// Press Dispense once on the feeder's panel, within the feeder's 60 s
+    /// window, for `purpose`. Answered done once pressed.
+    PressDispense { purpose: DispensePurpose },
+}
+
+/// What a Dispense press asked for confirms.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[serde(rename_all = "kebab-case")]
+pub enum DispensePurpose {
+    /// The installer's update-signing key, which the feeder admits only
+    /// with a press at its panel.
+    EnrollUpdateKey,
+}
+
+/// The presses of a setup code, in order, as a prompt carries them: on the
+/// wire as the buttons' names (`["lock", "dispense", …]`), which the bench
+/// server and a person both read. Like `wellfed_session`'s `Code`, it never
+/// shows its presses in `Debug`, so an error or a log line that prints a
+/// prompt does not carry the code.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct CodePresses([Button; PRESSES]);
+
+impl CodePresses {
+    pub const fn new(presses: [Button; PRESSES]) -> Self {
+        Self(presses)
+    }
+
+    pub const fn buttons(&self) -> &[Button; PRESSES] {
+        &self.0
+    }
+}
+
+impl fmt::Debug for CodePresses {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("CodePresses(..)")
+    }
+}
+
+impl Serialize for CodePresses {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let names: Vec<&str> = self.0.iter().map(|button| button.as_str()).collect();
+        names.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for CodePresses {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::Error;
+
+        let names = Vec::<String>::deserialize(deserializer)?;
+        let buttons = names
+            .iter()
+            .map(|name| {
+                Button::parse(name)
+                    .ok_or_else(|| D::Error::custom(format!("{name:?} is no panel button")))
+            })
+            .collect::<Result<Vec<Button>, D::Error>>()?;
+        let presses: [Button; PRESSES] = buttons.try_into().map_err(|buttons: Vec<Button>| {
+            D::Error::custom(format!(
+                "a setup code is {PRESSES} presses, not {}",
+                buttons.len()
+            ))
+        })?;
+        Ok(Self(presses))
+    }
 }
 
 /// The kind of answer a prompt takes.
@@ -81,7 +165,9 @@ impl Prompt {
             | Self::RestartFeeder
             | Self::SetupMode
             | Self::JoinBack
-            | Self::OpenRecoveryWindow => Expects::Done,
+            | Self::OpenRecoveryWindow
+            | Self::KeySetupCode { .. }
+            | Self::PressDispense { .. } => Expects::Done,
         }
     }
 
@@ -96,6 +182,8 @@ impl Prompt {
             Self::SetupMode => "setup-mode",
             Self::JoinBack => "join-back",
             Self::OpenRecoveryWindow => "open-recovery-window",
+            Self::KeySetupCode { .. } => "key-setup-code",
+            Self::PressDispense { .. } => "press-dispense",
         }
     }
 
@@ -147,6 +235,20 @@ impl Prompt {
             Self::OpenRecoveryWindow => "Pair with the replacement: on its panel (unlocked), \
                                          hold Lock, then Dispense, to open the recovery window."
                 .to_string(),
+            Self::KeySetupCode { presses } => {
+                let names: Vec<&str> = presses.0.iter().map(|button| button.as_str()).collect();
+                format!(
+                    "Key in the setup code on the feeder's panel within its window, one button \
+                     at a time: {}. It proves this computer is talking to that feeder, and is \
+                     used once.",
+                    names.join(", ")
+                )
+            }
+            Self::PressDispense {
+                purpose: DispensePurpose::EnrollUpdateKey,
+            } => "Press Dispense once on the feeder's panel within 60 s, to enroll the \
+                  installer's update key."
+                .to_string(),
         }
     }
 }
@@ -180,7 +282,16 @@ impl fmt::Display for Answer {
 mod tests {
     use super::*;
 
-    fn every() -> [Prompt; 7] {
+    const CODE: [Button; PRESSES] = [
+        Button::Lock,
+        Button::Dispense,
+        Button::Dispense,
+        Button::Mic,
+        Button::Reset,
+        Button::Lock,
+    ];
+
+    fn every() -> [Prompt; 9] {
         [
             Prompt::SetOverride {
                 name: "broker.example.net".into(),
@@ -195,6 +306,12 @@ mod tests {
             Prompt::SetupMode,
             Prompt::JoinBack,
             Prompt::OpenRecoveryWindow,
+            Prompt::KeySetupCode {
+                presses: CodePresses::new(CODE),
+            },
+            Prompt::PressDispense {
+                purpose: DispensePurpose::EnrollUpdateKey,
+            },
         ]
     }
 
@@ -217,6 +334,46 @@ mod tests {
             let tagged = format!(r#"{{"kind":"{}""#, prompt.name());
             assert!(line.starts_with(&tagged), "{line}");
             assert_eq!(serde_json::from_str::<Prompt>(&line).unwrap(), prompt);
+        }
+    }
+
+    /// The panel's prompts carry what the bench server presses: the code's
+    /// buttons by name, in order, and what the Dispense press is for.
+    #[test]
+    fn the_panel_prompts_name_their_presses() {
+        let code = Prompt::KeySetupCode {
+            presses: CodePresses::new(CODE),
+        };
+        assert_eq!(
+            serde_json::to_string(&code).unwrap(),
+            r#"{"kind":"key-setup-code","presses":["lock","dispense","dispense","mic","reset","lock"]}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&Prompt::PressDispense {
+                purpose: DispensePurpose::EnrollUpdateKey
+            })
+            .unwrap(),
+            r#"{"kind":"press-dispense","purpose":"enroll-update-key"}"#
+        );
+        assert!(
+            code.text()
+                .contains("lock, dispense, dispense, mic, reset, lock")
+        );
+
+        // The code stays out of anything that prints the prompt's Debug.
+        let debug = format!("{code:?}");
+        assert!(
+            !debug.contains("Dispense") && !debug.contains("Mic"),
+            "{debug}"
+        );
+
+        // Five presses, or a button the panel has not, is no code.
+        for line in [
+            r#"{"kind":"key-setup-code","presses":["lock","lock","lock","lock","lock"]}"#,
+            r#"{"kind":"key-setup-code","presses":["lock","lock","lock","lock","lock","power"]}"#,
+            r#"{"kind":"press-dispense","purpose":"feed"}"#,
+        ] {
+            assert!(serde_json::from_str::<Prompt>(line).is_err(), "{line}");
         }
     }
 

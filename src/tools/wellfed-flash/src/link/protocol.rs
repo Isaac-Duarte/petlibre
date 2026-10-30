@@ -885,8 +885,13 @@ impl Echo {
         );
         let released = format!("PLKEY1 up chord={} ", press.chord);
         // The build's log lines can start with a stray `\r` as well as end
-        // with one (physical, October 29), so both ends are trimmed.
-        let lines: Vec<&str> = text.lines().map(str::trim).collect();
+        // with one, and the first line after the feeder restarts can start
+        // with a NUL (both physical, October 29 and 30), so control
+        // characters are trimmed from both ends with the whitespace.
+        let lines: Vec<&str> = text
+            .lines()
+            .map(|line| line.trim_matches(|c: char| c.is_whitespace() || c.is_control()))
+            .collect();
 
         if let Some(at) = lines.iter().position(|line| *line == pressed) {
             return Self::Pressed {
@@ -1055,6 +1060,17 @@ mod press_tests {
         // The bytes the first hardware press returned.
         let mut feeder = Feeder::new(
             b"PLKEY1 virtual press=dispense hold_ms=150\r\n\rPLKEY1 down chord=dispense dropped=0\r\n\
+              \rPLKEY1 up chord=dispense level=0 held_ms=143 dropped=0\r\n",
+        );
+        assert!(press(&mut feeder, DISPENSE).unwrap().released);
+    }
+
+    #[test]
+    fn a_nul_before_the_echo_still_matches() {
+        // The bytes the install's first press returned, on the feeder's
+        // first log line since it restarted into the replacement.
+        let mut feeder = Feeder::new(
+            b"\0\rPLKEY1 virtual press=dispense hold_ms=150\r\n\rPLKEY1 down chord=dispense dropped=0\r\n\
               \rPLKEY1 up chord=dispense level=0 held_ms=143 dropped=0\r\n",
         );
         assert!(press(&mut feeder, DISPENSE).unwrap().released);

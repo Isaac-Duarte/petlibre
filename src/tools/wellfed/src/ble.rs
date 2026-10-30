@@ -113,22 +113,26 @@ impl Link {
     }
 }
 
-/// The feeder: `address` if given, otherwise the first device advertising
-/// the setup service now.
+/// The feeder advertising the setup service now: `address` if given,
+/// otherwise the first one heard. Discovery runs even for a known address:
+/// BlueZ connects only to a device it has heard since it last forgot it,
+/// and refuses one it has not ("not available").
 async fn find(adapter: &bluer::Adapter, address: Option<Address>) -> Result<bluer::Device> {
-    if let Some(address) = address {
-        return Ok(adapter.device(address)?);
-    }
-
     // Held for the search: discovery runs while the stream lives.
     let _discovery = adapter.discover_devices().await?;
     timeout(FIND_TIMEOUT, async {
         loop {
             // BlueZ reports a cached device once, before it has been heard,
             // so poll the list: only a device advertising now has an RSSI.
-            for address in adapter.device_addresses().await? {
-                let device = adapter.device(address)?;
-                let advertising = device.rssi().await?.is_some();
+            for heard in adapter.device_addresses().await? {
+                if address.is_some_and(|wanted| wanted != heard) {
+                    continue;
+                }
+                let device = adapter.device(heard)?;
+                // A feeder still linked from a run before stops
+                // advertising; the address names it, so it counts.
+                let advertising = device.rssi().await?.is_some()
+                    || (address.is_some() && device.is_connected().await?);
                 let setup = device
                     .uuids()
                     .await?

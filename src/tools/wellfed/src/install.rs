@@ -64,8 +64,8 @@ use tokio::signal::unix::{SignalKind, signal};
 use wellfed_client::install::{
     CONTAINER_HEADER, DnsCheck, DnsOverride, FeederTrust, Install, InstallError, Options,
     PairRoute, Phase, PlansPut, Promotion, Provision, Replacement, Requested, SETUP_ADDRESS,
-    STOCK_BROKER_PORT, SetupFrame, Step, StockBackup, StockPower, StockView, UpdateKey,
-    manifest_version, plans,
+    STOCK_BROKER_PORT, SetupFrame, Step, StockBackup, StockNotReady, StockPower, StockView,
+    UpdateKey, manifest_version, plans,
 };
 use wellfed_client::setup::Credentials;
 use wellfed_client::update::{Image, InstallError as UpdateError};
@@ -94,6 +94,11 @@ const POLL: Duration = Duration::from_secs(5);
 /// Stock joins the owner's Wi-Fi and reports within a minute or two of the
 /// frame; the enrollment window bounds this wait.
 const STOCK_GRACE: Duration = Duration::from_secs(5 * 60);
+/// Stock reports its version in the burst it sends as it connects, and
+/// otherwise only heartbeats. The server subscribes only once the broker
+/// has enrolled the feeder, so a burst sent in between is lost (physical,
+/// October 30); past this, a restart replays it.
+const VERSION_WAIT: Duration = Duration::from_secs(90);
 /// Stock downloads in about 40 s, then restarts; generous, as on the bench.
 const INSTALL_WAIT: Duration = Duration::from_secs(10 * 60);
 /// From stock's restart until the replacement answers the device API.
@@ -1299,14 +1304,33 @@ impl Run {
         let deadline =
             Instant::now() + Duration::from_secs(self.args.enroll_minutes * 60) + STOCK_GRACE;
         let mut said = String::new();
+        let mut silent_since = None;
+        let mut restarted = false;
         loop {
             let reason = match self.stock_status() {
                 Ok(status) => match install.stock(&view(&status)) {
                     Ok(()) => return Ok(()),
-                    Err(reason) => reason.to_string(),
+                    Err(reason) => Ok(reason),
                 },
-                Err(error) => format!("the stock server is not answering yet ({error})"),
+                Err(error) => Err(format!("the stock server is not answering yet ({error})")),
             };
+
+            // Once only: a second silence is not the startup race.
+            if !matches!(reason, Ok(StockNotReady::NoVersion)) {
+                silent_since = None;
+            } else if !restarted
+                && silent_since.get_or_insert_with(Instant::now).elapsed() >= VERSION_WAIT
+            {
+                eprintln!(
+                    "Stock connected but sent no version: its startup reports came before the \
+                     server listened. Restarting it once replays them."
+                );
+                restart_feeder(&mut self.asker).await?;
+                restarted = true;
+                silent_since = None;
+            }
+
+            let reason = reason.map_or_else(|text| text, |reason| reason.to_string());
             if reason != said {
                 eprintln!("Waiting: {reason}");
                 said = reason;

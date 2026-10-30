@@ -35,6 +35,20 @@ PlansView _plans(List<PlanView?> filled, {int generation = 3}) => PlansView(
 
 void main() {
   group('Schedule', () {
+    testWidgets(
+      'coming to the tab reads the plans again, and only when online',
+      (tester) async {
+        final (feeder, session) = await oneFeeder(tester);
+        session.status(fakeCard());
+        await settle(tester);
+        session.requests.clear();
+
+        await showTab(tester, ScheduleTab(feeder: feeder));
+
+        expect(session.requests.single, const FeederRequest.getPlans());
+      },
+    );
+
     Future<FakeSession> show(
       WidgetTester tester,
       PlansView plans, {
@@ -43,6 +57,7 @@ void main() {
       final (feeder, session) = await oneFeeder(tester);
       session.status(fakeCard(plans: plans, clockSet: clockSet));
       await showTab(tester, ScheduleTab(feeder: feeder));
+      session.requests.clear();
       return session;
     }
 
@@ -207,7 +222,7 @@ void main() {
       await tapIn(tester, find.text('Save'));
 
       expect(
-        find.text('Someone else changed the meals while you were editing'),
+        find.text('The meals changed while you were editing'),
         findsOneWidget,
       );
       expect(find.text('2:00 AM · 2 portions'), findsOneWidget);
@@ -220,6 +235,58 @@ void main() {
       expect(session.requests, hasLength(3));
     });
 
+    testWidgets(
+      'a delete refused as stale shows the meal now, sends nothing more, '
+      'and goes only on a choice, against the fresh read',
+      (tester) async {
+        final session = await show(tester, _plans([_plan(60)]));
+        final fresh = _plans([_plan(60)], generation: 4);
+
+        await tapIn(tester, find.text('1:00 AM'));
+        session.replies
+          ..add(
+            const FeederReply.refused(refusal: FeederRefusal.stale(current: 4)),
+          )
+          ..add(FeederReply.plans(plans: fresh));
+        await tapIn(tester, find.text('Delete meal'));
+
+        expect(
+          find.text('The meals changed while you were editing'),
+          findsOneWidget,
+        );
+        expect(find.textContaining('a one-off meal ran'), findsOneWidget);
+        expect(find.text('1:00 AM · 2 portions'), findsOneWidget);
+        expect(
+          session.requests,
+          hasLength(2),
+          reason: 'the delete, then a read',
+        );
+        expect(session.requests.last, const FeederRequest.getPlans());
+
+        await tapIn(tester, find.text('Delete it'));
+        final again = session.requests.last as FeederRequest_EditPlans;
+        expect(again.plans, fresh);
+        expect(session.requests, hasLength(3));
+        expect(find.text('Delete meal'), findsNothing);
+      },
+    );
+
+    testWidgets('a stale switch reads the plans and does not switch again', (
+      tester,
+    ) async {
+      final session = await show(tester, _plans([_plan(60)]));
+      session.replies.add(
+        const FeederReply.refused(refusal: FeederRefusal.stale(current: 4)),
+      );
+
+      await tapIn(tester, find.byType(Switch).first);
+
+      expect(session.requests, hasLength(2));
+      expect(session.requests.first, isA<FeederRequest_EditPlans>());
+      expect(session.requests.last, const FeederRequest.getPlans());
+      expect(find.textContaining('This changed just now'), findsOneWidget);
+    });
+
     testWidgets('keeping theirs sends nothing more', (tester) async {
       final session = await show(tester, _plans([_plan(60)]));
 
@@ -230,7 +297,7 @@ void main() {
         )
         ..add(FeederReply.plans(plans: _plans([_plan(120)])));
       await tapIn(tester, find.text('Save'));
-      await tapIn(tester, find.text('Keep theirs'));
+      await tapIn(tester, find.text("Keep what's there"));
 
       expect(session.requests, hasLength(2));
       expect(find.text('Delete meal'), findsNothing);

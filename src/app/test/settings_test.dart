@@ -85,7 +85,7 @@ void main() {
         ..add(const FeederReply.unanswered());
 
       await tapIn(tester, find.byType(Switch).first);
-      expect(find.textContaining('Someone else changed'), findsOneWidget);
+      expect(find.textContaining('This changed just now'), findsOneWidget);
       await tapIn(tester, find.byType(Switch).first);
       expect(find.textContaining('may or may not have'), findsOneWidget);
       expect(session.requests, hasLength(2));

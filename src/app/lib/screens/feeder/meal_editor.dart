@@ -37,9 +37,9 @@ const _weekdays = [
 ];
 const _weekend = [Weekday.sat, Weekday.sun];
 
-/// Edit one meal (8.2). A save goes back against the table this opened on, so
-/// another client's change meanwhile is refused and asked about (8.4), never
-/// overwritten unseen.
+/// Edit one meal (8.2). A save goes back against the table this opened on, so a
+/// change meanwhile (another client's, or a one-off meal disabling itself as it
+/// runs) is refused and asked about (8.4), never overwritten unseen.
 class MealEditor extends StatefulWidget {
   const MealEditor({
     super.key,
@@ -119,15 +119,28 @@ class _MealEditorState extends State<MealEditor> {
     setState(() => _asking = false);
 
     if (reply is FeederReply_Refused && reply.refusal is FeederRefusal_Stale) {
-      await _changedMeanwhile();
+      await _changedMeanwhile(
+        wrote: "Your change wasn't saved, so nothing was overwritten.",
+        yours: (context) => [('Your version', _line(context, _plan))],
+        keep: "Keep what's there",
+        go: 'Save mine over it',
+        again: _save,
+      );
     } else if (showProblem(context, reply)) {
       Navigator.pop(context);
     }
   }
 
-  /// Someone else's change came first (8.4): show both, and let the owner
-  /// choose. Saving over it is a new write, against what the feeder now holds.
-  Future<void> _changedMeanwhile() async {
+  /// The meals moved first (8.4): show them, and let the owner choose. Going on
+  /// is a new write of their choosing, against what the feeder now holds; nothing
+  /// here sends the edit by itself.
+  Future<void> _changedMeanwhile({
+    required String wrote,
+    required List<(String, String)> Function(BuildContext) yours,
+    required String keep,
+    required String go,
+    required Future<void> Function() again,
+  }) async {
     final reply = await widget.feeder.ask(const FeederRequest.getPlans());
     if (!mounted) return;
     if (reply is! FeederReply_Plans) {
@@ -141,14 +154,12 @@ class _MealEditorState extends State<MealEditor> {
       context: context,
       builder: (context) => AlertDialog(
         scrollable: true,
-        title: const Text(
-          'Someone else changed the meals while you were editing',
-        ),
+        title: const Text('The meals changed while you were editing'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Text("Your change wasn't saved, so nothing was overwritten."),
+            Text('Someone else changed them, or a one-off meal ran. $wrote'),
             const SizedBox(height: Space.s3),
             FactList(sunken: true, [
               if (slot != null)
@@ -161,23 +172,19 @@ class _MealEditorState extends State<MealEditor> {
                     ),
                   ),
                 ),
-              (
-                'Your version',
-                Flexible(
-                  child: Text(_line(context, _plan), textAlign: TextAlign.end),
-                ),
-              ),
+              for (final (name, line) in yours(context))
+                (name, Flexible(child: Text(line, textAlign: TextAlign.end))),
             ]),
           ],
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Keep theirs'),
+            child: Text(keep),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Save mine over it'),
+            child: Text(go),
           ),
         ],
       ),
@@ -186,7 +193,7 @@ class _MealEditorState extends State<MealEditor> {
 
     if (mine == true) {
       _held = reply.plans;
-      await _save();
+      await again();
     } else if (mine == false) {
       Navigator.pop(context);
     }
@@ -207,7 +214,22 @@ class _MealEditorState extends State<MealEditor> {
     );
     if (!mounted) return;
     setState(() => _asking = false);
-    if (showProblem(context, reply)) Navigator.pop(context);
+
+    if (reply is FeederReply_Refused && reply.refusal is FeederRefusal_Stale) {
+      await _changedMeanwhile(
+        wrote: "This meal wasn't deleted.",
+        yours: (_) => const [],
+        keep: 'Keep it',
+        go: 'Delete it',
+        again: _delete,
+      );
+    } else if (reply is FeederReply_NotAsked &&
+        reply.reason == NotAsked.emptySlot) {
+      // Gone already, which is what the owner asked for.
+      Navigator.pop(context);
+    } else if (showProblem(context, reply)) {
+      Navigator.pop(context);
+    }
   }
 
   Future<void> _pickTime() async {

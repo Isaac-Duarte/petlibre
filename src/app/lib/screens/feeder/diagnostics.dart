@@ -80,7 +80,8 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
     final c = context.colors;
     final feeder = widget.feeder;
     final counters = _counters;
-    final lifetime = counters?.lifetime ?? counters?.boot;
+    final boot = counters?.boot;
+    final lifetime = counters?.lifetime;
     final resets = counters?.resets;
     final restarts = resets == null
         ? null
@@ -152,17 +153,31 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
             Notice(tone: Tone.warning, glyph: Glyph.warning, text: problem),
             const SizedBox(height: Space.s3),
           ],
-          const SectionLabel('Since it was installed'),
+          const SectionLabel('Since it last started'),
           const SizedBox(height: Space.s2),
           Row(
             children: [
-              tile('feeds', '${lifetime?.feeds ?? '–'}'),
+              tile('feeds', '${boot?.feeds ?? '–'}'),
               const SizedBox(width: Space.s2),
-              tile('restarts', '${restarts ?? '–'}'),
-              const SizedBox(width: Space.s2),
-              tile('failed feeds', '${lifetime?.feedsFailed ?? '–'}'),
+              tile("didn't finish", '${boot?.feedsFailed ?? '–'}'),
             ],
           ),
+          const SizedBox(height: Space.s2),
+          Text(
+            'History has every feed it kept, from before that too.',
+            style: TextStyle(fontSize: Sizes.sm, color: c.textMuted),
+          ),
+          // The store saves hourly, so an unclean restart loses what came since
+          // and a new store starts from zero: these are floors, not totals.
+          if (lifetime != null || restarts != null) ...[
+            const SizedBox(height: Space.s4),
+            const SectionLabel('Counted so far, at least'),
+            const SizedBox(height: Space.s2),
+            FactList([
+              if (lifetime != null) ('Feeds', Text('${lifetime.feeds}')),
+              if (restarts != null) ('Starts', Text('$restarts')),
+            ]),
+          ],
           const SizedBox(height: Space.s4),
           const SectionLabel('Right now'),
           const SizedBox(height: Space.s2),

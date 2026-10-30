@@ -281,6 +281,13 @@ impl<U: FnMut(SessionUpdate) -> bool> Serving<'_, U> {
                 Ok(self.card())
             }
             (Asked::Ask(reply), answer) => {
+                // A screen's read is news for the card as well.
+                if let Some(Answer::Plans(plans)) = &answer {
+                    self.facts.plans = Some(*plans);
+                    if !self.card() {
+                        return Ok(false);
+                    }
+                }
                 // Dart stopped waiting: nothing to tell it.
                 let _ = reply.send(answer);
                 Ok(true)
@@ -336,7 +343,7 @@ impl<U: FnMut(SessionUpdate) -> bool> Serving<'_, U> {
     fn news(&mut self, pushed: &Pushed, fed: Option<&Feed>) -> Result<bool, BridgeError> {
         if let Pushed::Event(event) = pushed {
             match event.body {
-                EventBody::Plans { .. } => self.request(&Op::GetPlans, Asked::Plans)?,
+                ref body if moves_plans(body) => self.request(&Op::GetPlans, Asked::Plans)?,
                 EventBody::Settings { .. } => self.request(&Op::GetSettings, Asked::Settings)?,
                 EventBody::ClockSync { .. } => self.request(&Op::GetTime, Asked::Time)?,
                 _ => {}
@@ -368,5 +375,48 @@ fn feed_answered(what: Asked, answer: Option<Answer>) -> Option<SessionUpdate> {
         }),
         (Asked::Cancel, None) => Some(SessionUpdate::CancelUnconfirmed { refusal: None }),
         _ => None,
+    }
+}
+
+/// Whether `body` may mean the plans moved. A one-off plan disables itself when
+/// it is claimed or passed, which moves the generation with no `Plans` event:
+/// the feed or the missed meal is the only news of it.
+const fn moves_plans(body: &EventBody) -> bool {
+    matches!(
+        body,
+        EventBody::Plans { .. } | EventBody::Fed { .. } | EventBody::Missed { .. }
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use jiff::Timestamp;
+    use wellfed_model::{FeedOutcome, FeedReason, FoodLevel, Generation, MissedReason, Source};
+
+    use super::*;
+
+    #[test]
+    fn a_feed_or_a_missed_meal_reads_the_plans_again() {
+        let fed = EventBody::Fed {
+            feed: 1,
+            requested: 1,
+            completed: 1,
+            outcome: FeedOutcome::Done,
+            reason: FeedReason::Done,
+            hopper: FoodLevel::Present,
+            by: Source::Schedule { plan: 0 },
+        };
+        let missed = EventBody::Missed {
+            plan: 0,
+            due: Timestamp::UNIX_EPOCH,
+            reason: MissedReason::Late,
+        };
+
+        assert!(moves_plans(&fed));
+        assert!(moves_plans(&missed));
+        assert!(!moves_plans(&EventBody::Settings {
+            generation: Generation(1),
+            by: Source::Feeder,
+        }));
     }
 }

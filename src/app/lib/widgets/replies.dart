@@ -19,7 +19,7 @@ String? replyProblem(FeederReply reply) => switch (reply) {
 String refusalWords(FeederRefusal refusal) => switch (refusal) {
   FeederRefusal_Forbidden() => "This phone isn't allowed to do that here.",
   FeederRefusal_Stale() =>
-    'Someone else changed this just now. Look again and decide again.',
+    'This changed just now. Look again and decide again.',
   FeederRefusal_Busy() => "It's busy. Try again in a moment.",
   FeederRefusal_Unavailable() => "This feeder's firmware doesn't do that yet.",
   FeederRefusal_Invalid() => 'The feeder refused that value.',

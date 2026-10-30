@@ -17,7 +17,7 @@ import 'harness.dart';
 
 const _counts = Counts(
   uptimeS: 3 * 86400 + 4 * 3600,
-  feeds: 143,
+  feeds: 9,
   feedsFailed: 2,
   portions: 300,
   presses: 0,
@@ -68,7 +68,18 @@ void main() {
               Counters(
                 boot: _counts,
                 reset: ResetCause.powerOn,
-                lifetime: _counts,
+                lifetime: Counts(
+                  uptimeS: 0,
+                  feeds: 143,
+                  feedsFailed: 3,
+                  portions: 0,
+                  presses: 0,
+                  sessions: 0,
+                  reconnects: 0,
+                  dhcpRenewals: 0,
+                  outages: 0,
+                  batteryS: 0,
+                ),
                 resets: Resets(
                   powerOn: 40,
                   watchdog: 1,
@@ -112,6 +123,9 @@ void main() {
 
       await showTab(tester, DiagnosticsScreen(feeder: feeder));
 
+      expect(find.text('SINCE IT LAST STARTED'), findsOneWidget);
+      expect(find.text('9'), findsOneWidget);
+      expect(find.text('COUNTED SO FAR, AT LEAST'), findsOneWidget);
       expect(find.text('143'), findsOneWidget);
       expect(find.text('41'), findsOneWidget);
       expect(find.text('2'), findsOneWidget);

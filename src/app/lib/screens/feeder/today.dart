@@ -254,15 +254,11 @@ class _Facts extends StatelessWidget {
         (null, _) => 'Not read yet',
       };
 
-  /// Every session in the app goes straight to the feeder.
-  static String _signal(int rssi) {
-    final strength = switch (rssi) {
-      >= -60 => 'Strong',
-      >= -72 => 'Fair',
-      _ => 'Weak',
-    };
-    return '$strength · direct to this phone';
-  }
+  static String _signal(int rssi) => switch (rssi) {
+    >= -60 => 'Strong',
+    >= -72 => 'Fair',
+    _ => 'Weak',
+  };
 }
 
 /// Who last set the feeder's clock, and when.

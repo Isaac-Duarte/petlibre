@@ -46,10 +46,53 @@ String _calls(int plays) => switch (plays) {
 /// The feeder's meals (8.1), with its limit and hold (8.3). The table is the
 /// feeder's: this shows the last it said, and each change goes back against
 /// that reading.
-class ScheduleTab extends StatelessWidget {
+class ScheduleTab extends StatefulWidget {
   const ScheduleTab({super.key, required this.feeder});
 
   final FeederController feeder;
+
+  @override
+  State<ScheduleTab> createState() => _ScheduleTabState();
+}
+
+class _ScheduleTabState extends State<ScheduleTab> {
+  static const _thisTab = 1;
+
+  TabController? _tabs;
+  bool _opened = false;
+
+  FeederController get feeder => widget.feeder;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final first = !_opened;
+    _opened = true;
+    _tabs?.removeListener(_tabChanged);
+    _tabs = DefaultTabController.maybeOf(context)?..addListener(_tabChanged);
+    if (first && (_tabs?.index ?? _thisTab) == _thisTab) _read();
+  }
+
+  @override
+  void dispose() {
+    _tabs?.removeListener(_tabChanged);
+    super.dispose();
+  }
+
+  void _tabChanged() {
+    final tabs = _tabs;
+    if (tabs != null && tabs.index == _thisTab && !tabs.indexIsChanging) {
+      _read();
+    }
+  }
+
+  /// Coming here reads the plans again; the session puts them on the card. A
+  /// read that fails leaves what the card last showed.
+  void _read() {
+    if (feeder.connection == Connection.online) {
+      unawaited(feeder.ask(const FeederRequest.getPlans()));
+    }
+  }
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
@@ -202,6 +245,12 @@ class _MealRowState extends State<_MealRow> {
     if (!mounted) return;
     setState(() => _asking = false);
     showProblem(context, reply);
+
+    // Stale says the table moved: a read puts it on the card, and the owner
+    // decides again from what it shows. The edit never goes again by itself.
+    if (reply is FeederReply_Refused && reply.refusal is FeederRefusal_Stale) {
+      await widget.feeder.ask(const FeederRequest.getPlans());
+    }
   }
 
   @override

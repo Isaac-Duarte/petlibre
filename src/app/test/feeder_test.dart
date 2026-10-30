@@ -92,7 +92,7 @@ void main() {
     expect(find.text('Last fed 7:30 AM · 2 of 2'), findsOneWidget);
     expect(find.text('In the hopper at 7:30 AM'), findsOneWidget);
     expect(find.text('Mains · batteries 90%'), findsOneWidget);
-    expect(find.text('Strong · direct to this phone'), findsOneWidget);
+    expect(find.text('Strong'), findsOneWidget);
     expect(find.text('Set by your router at 11:58 AM'), findsOneWidget);
     expect(find.text('Change in 9 days'), findsOneWidget);
     expect(find.text('Changed today'), findsNothing);

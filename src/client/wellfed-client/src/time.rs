@@ -23,7 +23,7 @@ use jiff::Timestamp;
 use jiff::tz::TimeZone;
 use wellfed_core::clock::zone::{Rule, Zone};
 use wellfed_core::schedule;
-use wellfed_model::{NextMeal, Plan, Plans, TimeSync};
+use wellfed_model::{NextMeal, Plan, Plans, TimeSync, TimeView};
 
 /// How far ahead a rule must agree with its zone.
 const AGREE_S: i64 = 10 * 366 * 86_400;
@@ -81,6 +81,22 @@ pub fn next_meal(plans: &Plans, now: Timestamp, zone: &TimeZone) -> Option<NextM
         }
     }
     next
+}
+
+/// The feeder's zone as its time settings give it: its POSIX rule, or the
+/// offset a sync left it, or `fallback` (a host's own zone) with neither, when
+/// the feeder has no idea of local time and the host's is the best guess.
+pub fn feeder_zone(view: &TimeView, fallback: TimeZone) -> TimeZone {
+    if let Some(zone) = view
+        .zone
+        .as_deref()
+        .and_then(|rule| TimeZone::posix(rule).ok())
+    {
+        return zone;
+    }
+    view.offset_s
+        .and_then(|seconds| jiff::tz::Offset::from_seconds(seconds).ok())
+        .map_or(fallback, TimeZone::fixed)
 }
 
 /// The model's plan as the feeder's schedule holds it: the same fields,

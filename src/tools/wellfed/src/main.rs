@@ -90,6 +90,8 @@ enum Command {
     Desiccant(configure::DesiccantArgs),
     /// Lock or unlock the panel.
     Lock(configure::LockArgs),
+    /// Play one of the feeder's built-in tunes, if sound is on and allowed now.
+    Play(configure::PlayArgs),
     /// Store or clear the network the feeder joins next.
     Wifi(configure::WifiArgs),
     /// Set the feeder's clock from this computer's, with its time zone's
@@ -187,6 +189,7 @@ fn main() -> Result<ExitCode> {
         Command::Call(args) => runtime.block_on(call::command(args)),
         Command::Desiccant(args) => runtime.block_on(configure::desiccant_command(args)),
         Command::Lock(args) => runtime.block_on(configure::lock_command(args)),
+        Command::Play(args) => runtime.block_on(configure::play_command(args)),
         Command::Wifi(args) => runtime.block_on(configure::wifi_command(args)),
         Command::Time(args) => runtime.block_on(configure::time_command(args)),
         Command::Events(args) => runtime.block_on(history::events_command(args)),

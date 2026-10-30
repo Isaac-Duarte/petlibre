@@ -6,12 +6,13 @@
 //!
 //! `wellfed server plans` makes the same changes through the server, from
 //! the same arguments ([`NewPlan`], [`PlanChange`], [`Slot`]) and with the
-//! same edit ([`edited`]).
+//! same edit (`wellfed_client::plans::edited`).
 
 use anyhow::{Result, bail};
 use clap::{Args, Subcommand};
+use wellfed_client::plans::{Edit, edited};
 use wellfed_model::{
-    Answer, CALL_PLAYS_MAX, Op, PLANS, PORTIONS_MAX, Plan, Plans, Refusal, TimeOfDay, Weekdays,
+    Answer, CALL_PLAYS_MAX, Op, PLANS, PORTIONS_MAX, Plan, Refusal, TimeOfDay, Weekdays,
 };
 
 use crate::{Target, connect, print_answer, text};
@@ -166,26 +167,6 @@ fn plays() -> clap::builder::RangedI64ValueParser<u8> {
     clap::value_parser!(u8).range(0..=i64::from(CALL_PLAYS_MAX))
 }
 
-/// What a change does to the table.
-#[derive(Clone, Copy)]
-pub(crate) enum Edit {
-    Add(Plan),
-    Change {
-        slot: u8,
-        at: Option<TimeOfDay>,
-        portions: Option<u8>,
-        days: Option<Weekdays>,
-        call: Option<u8>,
-    },
-    Enabled {
-        slot: u8,
-        enabled: bool,
-    },
-    Delete {
-        slot: u8,
-    },
-}
-
 pub(crate) async fn command(args: PlansArgs) -> Result<()> {
     let (target, edit) = match args.action {
         Action::List { target, json } => return list(&target, json).await,
@@ -227,120 +208,5 @@ async fn list(target: &Target, json: bool) -> Result<()> {
             Ok(())
         }
         answer => print_answer(&answer),
-    }
-}
-
-/// The table `plans` holds with `edit` applied.
-pub(crate) fn edited(plans: &Plans, edit: Edit) -> Result<[Option<Plan>; PLANS]> {
-    let mut table = plans.plans;
-    let filled = |table: &[Option<Plan>; PLANS], slot: u8| -> Result<Plan> {
-        match table.get(usize::from(slot)).copied().flatten() {
-            Some(plan) => Ok(plan),
-            None => bail!("slot {slot} holds no plan"),
-        }
-    };
-
-    match edit {
-        Edit::Add(plan) => {
-            let Some(free) = table.iter_mut().find(|slot| slot.is_none()) else {
-                bail!("every one of the {PLANS} slots holds a plan");
-            };
-            *free = Some(plan);
-        }
-        Edit::Change {
-            slot,
-            at,
-            portions,
-            days,
-            call,
-        } => {
-            let mut plan = filled(&table, slot)?;
-            if at.is_none() && portions.is_none() && days.is_none() && call.is_none() {
-                bail!("pass --at, --portions, --days or --call");
-            }
-            plan.minute = at.map_or(plan.minute, |at| at.0);
-            plan.portions = portions.unwrap_or(plan.portions);
-            plan.days = days.unwrap_or(plan.days);
-            plan.call = call.unwrap_or(plan.call);
-            table[usize::from(slot)] = Some(plan);
-        }
-        Edit::Enabled { slot, enabled } => {
-            let plan = filled(&table, slot)?;
-            table[usize::from(slot)] = Some(Plan { enabled, ..plan });
-        }
-        Edit::Delete { slot } => {
-            filled(&table, slot)?;
-            table[usize::from(slot)] = None;
-        }
-    }
-    Ok(table)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use wellfed_model::Generation;
-
-    fn plans(table: [Option<Plan>; PLANS]) -> Plans {
-        Plans {
-            generation: Generation(3),
-            writable: true,
-            plans: table,
-        }
-    }
-
-    const BREAKFAST: Plan = Plan {
-        minute: 7 * 60 + 30,
-        portions: 2,
-        days: Weekdays::DAILY,
-        enabled: true,
-        call: 0,
-    };
-
-    #[test]
-    fn a_new_plan_takes_the_first_free_slot() {
-        let mut table = [None; PLANS];
-        table[0] = Some(BREAKFAST);
-        let table = edited(&plans(table), Edit::Add(BREAKFAST)).unwrap();
-        assert_eq!(table[1], Some(BREAKFAST));
-
-        let full = plans([Some(BREAKFAST); PLANS]);
-        assert!(edited(&full, Edit::Add(BREAKFAST)).is_err());
-    }
-
-    #[test]
-    fn an_edit_keeps_what_it_does_not_name() {
-        let mut table = [None; PLANS];
-        table[4] = Some(BREAKFAST);
-        let change = Edit::Change {
-            slot: 4,
-            at: None,
-            portions: Some(3),
-            days: None,
-            call: Some(2),
-        };
-        let table = edited(&plans(table), change).unwrap();
-        assert_eq!(
-            table[4],
-            Some(Plan {
-                portions: 3,
-                call: 2,
-                ..BREAKFAST
-            })
-        );
-    }
-
-    #[test]
-    fn an_empty_slot_cannot_be_changed() {
-        let table = plans([None; PLANS]);
-        for edit in [
-            Edit::Delete { slot: 2 },
-            Edit::Enabled {
-                slot: 2,
-                enabled: true,
-            },
-        ] {
-            assert!(edited(&table, edit).is_err());
-        }
     }
 }

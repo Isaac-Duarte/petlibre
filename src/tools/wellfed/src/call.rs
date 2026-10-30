@@ -8,15 +8,14 @@
 //! call only once its `--call` names how many times.
 
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
-use wellfed_client::call::{Clip, Sent};
-use wellfed_model::{Answer, CallView, Op, Refusal};
+use wellfed_client::call::Clip;
+use wellfed_connect::call::upload;
+use wellfed_model::Op;
 
-use crate::device::Connection;
-use crate::{Target, ask_and_print, connect, print_answer, print_json};
+use crate::{Target, ask_and_print, connect, print_json};
 
 #[derive(Args)]
 pub(crate) struct CallArgs {
@@ -40,13 +39,6 @@ enum Action {
     Delete(Target),
 }
 
-/// The pause before a chunk the feeder was still writing for is sent
-/// again.
-const RETRY: Duration = Duration::from_millis(50);
-/// How long an upload waits on chunks the feeder keeps refusing `Busy`:
-/// past any feed, during which no store is written.
-const BUSY_WAIT: Duration = Duration::from_secs(180);
-
 pub(crate) async fn command(args: CallArgs) -> Result<()> {
     match args.action {
         Action::Show(target) => ask_and_print(&target, &Op::GetCall).await,
@@ -62,63 +54,8 @@ pub(crate) async fn command(args: CallArgs) -> Result<()> {
                 clip.bytes()
             );
             let (_, _, mut connection) = connect(&target).await?;
-            let view = upload(&mut connection, &clip).await?;
+            let view = upload(&clip, async |op: &Op| connection.ask(op).await).await??;
             print_json(&view)
-        }
-    }
-}
-
-/// Upload `clip` whole: the feeder's view once it has stored it.
-async fn upload(connection: &mut Connection, clip: &Clip) -> Result<CallView> {
-    let answer = connection.ask(&clip.start()).await?;
-    if !matches!(answer, Answer::Done { .. }) {
-        print_answer(&answer)?;
-        bail!("the feeder did not start the upload");
-    }
-
-    let mut offset = 0;
-    let mut busy_since = None;
-    while let Some(op) = clip.chunk(offset) {
-        let answer = connection.ask(&op).await?;
-        match clip.after_chunk(offset, &answer)? {
-            Sent::Next(next) => {
-                offset = next;
-                busy_since = None;
-            }
-            Sent::Retry => {
-                let since = *busy_since.get_or_insert_with(Instant::now);
-                if since.elapsed() > BUSY_WAIT {
-                    bail!("the feeder stayed busy for {} s", BUSY_WAIT.as_secs());
-                }
-                tokio::time::sleep(RETRY).await;
-            }
-            Sent::Ask => offset = clip.resume(&call(connection).await?)?,
-        }
-    }
-
-    // The last chunk is in: the feeder reads the stream back, then stores
-    // it, on its writer's next turns.
-    let deadline = Instant::now() + BUSY_WAIT;
-    loop {
-        let view = call(connection).await?;
-        if clip.settled(&view)? {
-            return Ok(view);
-        }
-        if Instant::now() > deadline {
-            bail!("the feeder did not store the clip in time");
-        }
-        tokio::time::sleep(RETRY).await;
-    }
-}
-
-/// The feeder's view of the call.
-async fn call(connection: &mut Connection) -> Result<CallView> {
-    match connection.ask(&Op::GetCall).await? {
-        Answer::Call(view) => Ok(view),
-        Answer::Refused(Refusal::Unavailable) => bail!("this feeder keeps no meal call"),
-        answer => {
-            print_answer(&answer)?;
-            bail!("the feeder did not return its meal call");
         }
     }
 }

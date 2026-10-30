@@ -16,6 +16,7 @@
 //! - [`join`] redeems an invite, and [`Recovery`] runs the recovery window.
 //! - [`update::push`] drives a signed update until bank 1 is activated,
 //!   over the CLI's own session or the server's feeder task.
+//! - [`call::upload`] sends a meal call a chunk at a time over any session.
 //!
 //! Every method is cancel-safe, so a caller can `select!` on
 //! [`Connection::next`] beside its own work: reads keep nothing in flight,
@@ -30,6 +31,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod call;
 pub mod update;
 
 use std::collections::VecDeque;

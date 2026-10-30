@@ -12,7 +12,9 @@ use wellfed_server_client::api::PlansChange;
 
 use super::feeders::Which;
 use super::{Output, Settled, Written, write};
-use crate::plans::{NewPlan, PlanChange, Slot, edited};
+use wellfed_client::plans::edited;
+
+use crate::plans::{NewPlan, PlanChange, Slot};
 
 #[derive(Args)]
 pub(crate) struct PlansArgs {

@@ -29,6 +29,15 @@ impl StatsSection {
         Self::Feeds,
         Self::Portions,
     ];
+
+    /// Whether a feeder with `capabilities` keeps this section at all.
+    pub const fn served(self, capabilities: crate::Capabilities) -> bool {
+        match self {
+            Self::Feeds => capabilities.traces,
+            Self::Portions => capabilities.calibration,
+            Self::Counters | Self::Memory | Self::Flash | Self::Power | Self::Food => true,
+        }
+    }
 }
 
 /// One section of the statistics.

@@ -74,6 +74,18 @@ impl Delivered {
         }
     }
 
+    /// The portions confirmed and the most that may have dropped: the same
+    /// number unless the feed is uncertain, which is never one number.
+    pub const fn bounds(self) -> (u8, u8) {
+        match self {
+            Self::Counted(count) => (count, count),
+            Self::Uncertain {
+                confirmed,
+                requested,
+            } => (confirmed, requested),
+        }
+    }
+
     /// The portions and the ending in words, the same in every line that
     /// shows a feed's result: `2 of 3 portions, failed`, or for an
     /// uncertain feed `0 to 3 of 3 portions, uncertain`.
@@ -128,6 +140,34 @@ impl Entry {
             Pushed::Gap(gap) => Some(Self::Gap(*gap)),
             Pushed::Sample(_) | Pushed::Log(_) => None,
         }
+    }
+}
+
+/// Where the history a subscription sends first ends: the newest event the
+/// feeder had when asked. Later events may follow at once; a reader of the
+/// history stops here, or tells history from news, rather than waiting for a
+/// quiet moment after it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Backlog {
+    /// `Status::last_event` as read before subscribing.
+    pub newest: Option<u64>,
+}
+
+impl Backlog {
+    /// Whether a reader at `after` has it all already.
+    pub fn read(self, after: Option<u64>) -> bool {
+        self.newest
+            .is_none_or(|newest| after.is_some_and(|after| after >= newest))
+    }
+
+    /// Whether `pushed` is the backlog's newest event, or past it.
+    pub fn ends_at(self, pushed: &Pushed) -> bool {
+        let seq = match pushed {
+            Pushed::Event(event) => event.seq,
+            Pushed::Gap(gap) => gap.to,
+            Pushed::Sample(_) | Pushed::Log(_) => return false,
+        };
+        self.read(Some(seq))
     }
 }
 

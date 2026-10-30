@@ -24,7 +24,7 @@ use wellfed_rig::commands::{
 };
 use wellfed_rig::tools::{Children, Processes};
 
-use wellfed_core::buttons::Button;
+use wellfed_core::buttons::Buttons;
 
 use crate::api::Refusal;
 use crate::board::SharedBoard;
@@ -49,9 +49,10 @@ pub enum JobCommand {
     /// Hold a panel button on a running `virtual-panel` build, typed on
     /// its UART: the same gesture as a finger, with nobody at the bench.
     Press {
-        /// The button: reset, mic, dispense or lock.
-        #[arg(value_parser = wellfed_core::virtual_panel::button)]
-        button: Button,
+        /// The chord: reset, mic, dispense or lock, or several joined by +
+        /// (lock+dispense).
+        #[arg(value_parser = wellfed_core::virtual_panel::chord)]
+        chord: Buttons,
         /// How long it is held, 1 to 15000 ms.
         #[arg(long, default_value_t = wellfed_core::virtual_panel::DEFAULT_HOLD_MS,
               value_parser = clap::value_parser!(u32).range(1..=i64::from(wellfed_core::virtual_panel::MAX_HOLD_MS)))]
@@ -481,7 +482,7 @@ fn dispatch(
                 bench.capture(name, length)
             })
         }
-        JobCommand::Press { button, hold_ms } => bench.press(&press_name(), *button, *hold_ms),
+        JobCommand::Press { chord, hold_ms } => bench.press(&press_name(), *chord, *hold_ms),
         JobCommand::Boot { name, seconds } => seconds_arg("--seconds", *seconds)
             .and_then(|length| bench.boot(&captures.join(name), length))
             .map(|_| 0),

@@ -59,9 +59,11 @@ pub(crate) enum ToolError {
     )]
     UnconfirmedMotion { tool: String },
     #[error(
-        "{tool}: a reset hold of 5000 ms or more is refused over MCP without confirm_destructive: on an unlocked panel it erases the feeder's enrolled keys, the bench's included; set confirm_destructive to true to mean it"
+        "{tool}: a reset hold over 1000 ms is refused over MCP without confirm_destructive: one of 5 s on an unlocked panel erases the feeder's enrolled keys, the bench's included; set confirm_destructive to true to mean it"
     )]
     UnconfirmedReset { tool: String },
+    #[error("{tool}: a press names each button once")]
+    RepeatedButton { tool: String },
     /// The owner's identity check, and a step at the feeder's panel: an
     /// agent saying yes or done would stand in for a person who may not
     /// be there.
@@ -343,7 +345,10 @@ impl PanelButton {
 #[derive(Debug, Clone, PartialEq, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct PressArgs {
-    button: PanelButton,
+    /// The chord: one button, or several held together (lock and dispense
+    /// open the recovery window).
+    #[schemars(length(min = 1, max = 4))]
+    buttons: Vec<PanelButton>,
     /// How long the button is held, 1 to 15000 ms (default 150: a press).
     #[schemars(range(min = 1, max = 15000))]
     hold_ms: Option<u32>,
@@ -351,14 +356,17 @@ struct PressArgs {
     /// enrollment window: the hopper is empty.
     #[serde(default)]
     confirm_motion: bool,
-    /// Required for a reset hold of 5000 ms or more, which erases the
-    /// enrolled keys on an unlocked panel.
+    /// Required for a reset hold over 1000 ms: one of 5 s erases the
+    /// enrolled keys on an unlocked panel, and a late poll can count a
+    /// hold just short of it as reaching it.
     #[serde(default)]
     confirm_destructive: bool,
 }
 
-/// A reset hold this long is the panel's factory restore.
-const RESET_HOLD_MS: u32 = 5_000;
+/// The longest Reset hold allowed without `confirm_destructive`: far
+/// enough below the panel's 5 s factory restore that no stall in the
+/// button task can carry a hold to it.
+const RESET_HOLD_MS: u32 = 1_000;
 
 #[derive(Debug, Clone, PartialEq, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -620,7 +628,7 @@ const SPECS: &[Spec] = &[
     },
     Spec {
         name: "press",
-        description: "Hold a panel button on a running virtual-panel build, typed on its UART: the same gesture as a finger, for setup codes, recovery windows and update-key enrollment. Refused unless the build echoes it. Its effects are a finger's: a 5 s Lock hold unlocks the panel; Dispense on an unlocked panel feeds (needs confirm_motion, hopper empty); a 5 s Reset hold on an unlocked panel erases the enrolled keys (needs confirm_destructive).",
+        description: "Hold panel buttons together on a running virtual-panel build, typed on its UART: the same gesture as fingers, for setup codes, the recovery window (lock and dispense held 5 s) and update-key enrollment. Refused unless the build echoes the press and reports its release. Its effects are a finger's: a 5 s Lock hold unlocks the panel; any press with Dispense can feed (needs confirm_motion, hopper empty); a Reset hold over 1 s needs confirm_destructive, as one of 5 s on an unlocked panel erases the enrolled keys. Opening the recovery window does not let an agent answer an install's recovery question: that stays a person's.",
         schema: schema::<PressArgs>,
     },
     Spec {
@@ -918,16 +926,31 @@ fn job_words(name: &str, args: JsonObject) -> Result<Vec<String>, ToolError> {
         }
         "press" => {
             let args: PressArgs = parse(name, args)?;
-            if args.button == PanelButton::Dispense && !args.confirm_motion {
+            let has = |button| args.buttons.contains(&button);
+            let mut words: Vec<&str> = args.buttons.iter().map(|b| b.word()).collect();
+            words.sort_unstable();
+            words.dedup();
+            if words.len() != args.buttons.len() {
+                return Err(ToolError::RepeatedButton { tool: name.into() });
+            }
+            if has(PanelButton::Dispense) && !args.confirm_motion {
                 return Err(ToolError::UnconfirmedMotion { tool: name.into() });
             }
-            if args.button == PanelButton::Reset
-                && args.hold_ms.is_some_and(|ms| ms >= RESET_HOLD_MS)
+            if has(PanelButton::Reset)
+                && args.hold_ms.is_some_and(|ms| ms > RESET_HOLD_MS)
                 && !args.confirm_destructive
             {
                 return Err(ToolError::UnconfirmedReset { tool: name.into() });
             }
-            Line::new(&["press", args.button.word()]).value("--hold-ms", args.hold_ms)
+            let chord = args
+                .buttons
+                .iter()
+                .map(|b| b.word())
+                .collect::<Vec<_>>()
+                .join("+");
+            Line::new(&["press"])
+                .value("--hold-ms", args.hold_ms)
+                .word(chord)
         }
         "loader" | "dump" => Line::new(&[name]).word(parse::<NamedArgs>(name, args)?.name),
         "flash_prepare" => Line::new(&["flash-prepare"]).update(parse(name, args)?),
@@ -1263,31 +1286,34 @@ mod tests {
 
     #[test]
     fn a_press_that_can_feed_or_erase_keys_needs_its_confirmation() {
+        let press = |value| call("press", args(value));
         assert!(matches!(
-            call("press", args(serde_json::json!({"button": "dispense"}))),
+            press(serde_json::json!({"buttons": ["dispense"]})),
             Err(ToolError::UnconfirmedMotion { .. })
         ));
         assert!(matches!(
-            call("press", args(serde_json::json!({"button": "dispense", "confirm_motion": true}))),
-            Ok(Call::Job(words)) if words == ["press", "dispense"]
+            press(serde_json::json!({"buttons": ["lock", "dispense"], "hold_ms": 5200})),
+            Err(ToolError::UnconfirmedMotion { .. })
         ));
         assert!(matches!(
-            call(
-                "press",
-                args(serde_json::json!({"button": "reset", "hold_ms": 5000}))
-            ),
+            press(serde_json::json!({"buttons": ["lock", "dispense"], "hold_ms": 5200, "confirm_motion": true})),
+            Ok(Call::Job(words)) if words == ["press", "--hold-ms", "5200", "--", "lock+dispense"]
+        ));
+        assert!(matches!(
+            press(serde_json::json!({"buttons": ["reset"], "hold_ms": 1001})),
             Err(ToolError::UnconfirmedReset { .. })
         ));
         assert!(matches!(
-            call(
-                "press",
-                args(serde_json::json!({"button": "reset", "hold_ms": 4999}))
-            ),
+            press(serde_json::json!({"buttons": ["reset"], "hold_ms": 1000})),
             Ok(Call::Job(_))
         ));
         assert!(matches!(
-            call("press", args(serde_json::json!({"button": "lock", "hold_ms": 5200}))),
-            Ok(Call::Job(words)) if words == ["press", "lock", "--hold-ms", "5200"]
+            press(serde_json::json!({"buttons": ["mic", "mic"]})),
+            Err(ToolError::RepeatedButton { .. })
+        ));
+        assert!(matches!(
+            press(serde_json::json!({"buttons": ["lock"], "hold_ms": 5200})),
+            Ok(Call::Job(words)) if words == ["press", "--hold-ms", "5200", "--", "lock"]
         ));
     }
 

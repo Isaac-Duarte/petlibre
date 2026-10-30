@@ -51,7 +51,7 @@ fn a_typed_press_is_a_finger_s_press() {
     assert_eq!(
         records.first(),
         Some(&Record::Virtual(Line::Press(Press {
-            button: Button::Dispense,
+            chord: dispense,
             hold_ms: 150
         })))
     );
@@ -67,6 +67,35 @@ fn a_typed_press_is_a_finger_s_press() {
         [Gesture::Down { chord }, Gesture::Up { chord: up, .. }] if *chord == dispense && *up == dispense
     ));
     assert_eq!(buttons::next(), Some(gestures[0]));
+}
+
+#[test]
+fn a_chord_holds_its_buttons_together() {
+    let (_guard, mut service) = start();
+
+    type_line(b"\npress lock+dispense hold 300\n");
+    let records = run(&mut service, 500);
+
+    let chord = Buttons::of(Button::Lock).with(Button::Dispense);
+    assert!(records.iter().any(|record| matches!(
+        record,
+        Record::Gesture { gesture: Gesture::Down { chord: down }, .. } if *down == chord
+    )));
+}
+
+#[test]
+fn an_overrun_reported_on_the_leading_line_end_refuses_the_line_behind_it() {
+    let (_guard, mut service) = start();
+
+    // The FIFO kept the line end and the line's start; the rest was lost,
+    // and the UART flags it with the oldest byte, the line end.
+    fake::with(|h| h.log_uart_overrun = true);
+    type_line(b"\npress dis");
+    type_line(b"pense\n");
+    let records = run(&mut service, 400);
+
+    assert_eq!(records, [Record::Virtual(Line::Refused)]);
+    assert_eq!(buttons::next(), None);
 }
 
 #[test]

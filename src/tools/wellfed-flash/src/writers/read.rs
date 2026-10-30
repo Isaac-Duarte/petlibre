@@ -45,7 +45,7 @@ pub enum ReadError {
     FinalLength { bytes: u64, length: u64 },
     #[error("Refusing to overwrite a completed read")]
     WouldOverwrite { path: PathBuf },
-    #[error("A press needs --button")]
+    #[error("A press needs --chord")]
     PressMissing,
 }
 

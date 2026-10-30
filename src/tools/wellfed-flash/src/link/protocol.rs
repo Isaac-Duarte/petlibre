@@ -90,7 +90,9 @@ pub enum ProtocolError {
         "The feeder did not echo the press within {window_ms} ms: is a virtual-panel build running?"
     )]
     PressUnanswered { window_ms: u128 },
-    #[error("The feeder refused the press line: bytes were lost; nothing was pressed")]
+    #[error(
+        "The feeder refused the press line (bytes were lost) and echoed no press; check the capture"
+    )]
     PressRefused,
     /// Bytes were lost into another valid line, which the build pressed.
     #[error("The feeder pressed something else ({echoed}): bytes were lost; check the capture")]
@@ -828,7 +830,7 @@ mod tests {
 /// A virtual-panel press and what the feeder said to it.
 #[derive(Debug, Clone, Serialize)]
 pub struct PressResult {
-    pub button: &'static str,
+    pub chord: String,
     pub hold_ms: u32,
     /// The build echoed this exact press, then its button's release.
     pub echoed: bool,
@@ -845,16 +847,18 @@ const PRESS_BYTE_GAP: Duration = Duration::from_millis(2);
 /// release: the echo is at once, the release a debounce after the hold.
 const PRESS_MARGIN: Duration = Duration::from_millis(1500);
 
-/// What the build said about a press line.
+/// What the build said about a press line, from every `PLKEY1 virtual`
+/// line in the reply: a stray byte before the line ends a refused line of
+/// its own first, so the first echo is not always the press's.
 #[derive(Debug, PartialEq, Eq)]
 enum Echo {
-    /// Its exact echo, and whether the release followed.
+    /// The exact echo, and whether its chord's release followed.
     Pressed { released: bool },
-    /// The build read a line and refused it: bytes were lost or mangled.
-    Refused,
     /// The build pressed something else: bytes were lost into another
     /// valid line.
     Other { echoed: String },
+    /// Only refused lines: the press line lost bytes.
+    Refused,
     /// No echo at all: not a virtual-panel build, or not running.
     Silent,
 }
@@ -864,25 +868,28 @@ impl Echo {
         let text = String::from_utf8_lossy(reply);
         let pressed = format!(
             "PLKEY1 virtual press={} hold_ms={}",
-            press.button, press.hold_ms
+            press.chord, press.hold_ms
         );
-        let released = format!("PLKEY1 up chord={} ", press.button);
-        let mut lines = text.lines().map(str::trim_end);
+        let released = format!("PLKEY1 up chord={} ", press.chord);
+        let lines: Vec<&str> = text.lines().map(str::trim_end).collect();
 
-        let Some(echo) = lines.find(|line| line.starts_with("PLKEY1 virtual ")) else {
-            return Self::Silent;
-        };
-        if echo == pressed {
-            Self::Pressed {
-                released: lines.any(|line| line.starts_with(&released)),
-            }
-        } else if echo == "PLKEY1 virtual refused" {
-            Self::Refused
-        } else {
-            Self::Other {
-                echoed: echo.into(),
-            }
+        if let Some(at) = lines.iter().position(|line| *line == pressed) {
+            return Self::Pressed {
+                released: lines[at..].iter().any(|line| line.starts_with(&released)),
+            };
         }
+        if let Some(other) = lines
+            .iter()
+            .find(|line| line.starts_with("PLKEY1 virtual press="))
+        {
+            return Self::Other {
+                echoed: (*other).into(),
+            };
+        }
+        if lines.contains(&"PLKEY1 virtual refused") {
+            return Self::Refused;
+        }
+        Self::Silent
     }
 }
 
@@ -898,7 +905,7 @@ pub fn press(
 ) -> Result<PressResult> {
     use wellfed_core::virtual_panel::Line;
 
-    let line = format!("press {} hold {}", press.button, press.hold_ms);
+    let line = format!("press {} hold {}", press.chord, press.hold_ms);
     require(Line::parse(&line) == Some(Line::Press(press)), || {
         ProtocolError::PressLine
     })?;
@@ -924,7 +931,7 @@ pub fn press(
     require(released, || ProtocolError::PressNotReleased)?;
 
     Ok(PressResult {
-        button: press.button.as_str(),
+        chord: press.chord.to_string(),
         hold_ms: press.hold_ms,
         echoed: true,
         released,
@@ -936,7 +943,7 @@ pub fn press(
 #[cfg(test)]
 mod press_tests {
     use super::*;
-    use wellfed_core::buttons::Button;
+    use wellfed_core::buttons::{Button, Buttons};
     use wellfed_core::virtual_panel::Press;
 
     /// A feeder answering a whole press line with `reply`.
@@ -986,7 +993,7 @@ mod press_tests {
     }
 
     const DISPENSE: Press = Press {
-        button: Button::Dispense,
+        chord: Buttons::of(Button::Dispense),
         hold_ms: 150,
     };
     const LINE: &[u8] = b"\npress dispense hold 150\n";
@@ -1003,6 +1010,15 @@ mod press_tests {
     }
 
     #[test]
+    fn a_stray_line_refused_before_the_press_does_not_hide_it() {
+        let mut feeder = Feeder::new(
+            b"PLKEY1 virtual refused\r\nPLKEY1 virtual press=dispense hold_ms=150\r\n\
+              PLKEY1 up chord=dispense level=0 held_ms=150 dropped=0\r\n",
+        );
+        assert!(press(&mut feeder, DISPENSE).unwrap().released);
+    }
+
+    #[test]
     fn each_wrong_answer_is_its_own_refusal_and_is_never_resent() {
         for (answer, refusal) in [
             (&b""[..], "unanswered"),
@@ -1014,6 +1030,10 @@ mod press_tests {
             (
                 b"PLKEY1 virtual press=dispense hold_ms=150\r\n",
                 "not released",
+            ),
+            (
+                b"PLKEY1 virtual refused\r\nPLKEY1 virtual press=mic hold_ms=150\r\n",
+                "mismatch",
             ),
         ] {
             let mut feeder = Feeder::new(answer);

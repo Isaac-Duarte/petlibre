@@ -14,7 +14,7 @@ use std::sync::atomic::Ordering;
 use clap::{Args, Parser, Subcommand};
 use serde::Serialize;
 use serde_json::Value;
-use wellfed_core::buttons::Button;
+use wellfed_core::buttons::Buttons;
 use wellfed_core::virtual_panel;
 
 use wellfed_flash::error::ErrorKind;
@@ -155,9 +155,10 @@ struct ReadArgs {
     /// Known console owner for ROM inspection; never inferred on a mismatch.
     #[arg(long, value_enum, default_value = "km4")]
     start_core: Core,
-    /// The button a press holds: reset, mic, dispense or lock.
-    #[arg(long, value_parser = virtual_panel::button)]
-    button: Option<Button>,
+    /// The chord a press holds: reset, mic, dispense or lock, or several
+    /// joined by + (lock+dispense).
+    #[arg(long, value_parser = virtual_panel::chord)]
+    chord: Option<Buttons>,
     /// How long a press holds its button.
     #[arg(long, default_value_t = virtual_panel::DEFAULT_HOLD_MS,
           value_parser = clap::value_parser!(u32).range(1..=i64::from(virtual_panel::MAX_HOLD_MS)))]
@@ -332,8 +333,8 @@ fn main() -> ExitCode {
                     small_report: args.small_report,
                     seconds: args.seconds,
                     start_core: args.start_core,
-                    press: args.button.map(|button| virtual_panel::Press {
-                        button,
+                    press: args.chord.map(|chord| virtual_panel::Press {
+                        chord,
                         hold_ms: args.hold_ms,
                     }),
                 },

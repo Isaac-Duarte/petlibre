@@ -56,11 +56,9 @@ pub fn describe(record: Record, f: &mut core::fmt::Formatter<'_>) -> core::fmt::
         Record::Gesture { gesture, dropped } => write!(f, "{gesture} dropped={dropped}"),
         Record::Refused => f.write_str("refused config"),
         #[cfg(feature = "virtual-panel")]
-        Record::Virtual(wellfed_core::virtual_panel::Line::Press(press)) => write!(
-            f,
-            "virtual press={} hold_ms={}",
-            press.button, press.hold_ms
-        ),
+        Record::Virtual(wellfed_core::virtual_panel::Line::Press(press)) => {
+            write!(f, "virtual press={} hold_ms={}", press.chord, press.hold_ms)
+        }
         #[cfg(feature = "virtual-panel")]
         Record::Virtual(wellfed_core::virtual_panel::Line::Refused) => {
             f.write_str("virtual refused")

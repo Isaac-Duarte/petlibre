@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 
 use clap::{Args, ValueEnum};
 use serde::Deserialize;
-use wellfed_core::buttons::Button;
+use wellfed_core::buttons::Buttons;
 use wellfed_formats::canonical::sha256;
 use wellfed_formats::flash_plan::{DevelopmentPlan, GiveWayPlan, StockRecoveryReviewed};
 use wellfed_formats::manifest::BuildManifest;
@@ -463,7 +463,7 @@ impl Bench {
     /// Type one press to the running `virtual-panel` build: the button held
     /// for `hold_ms`, through the same gestures as a finger. Never touches
     /// power; the press is sent once, and a missing echo stops the job.
-    pub fn press(&mut self, name: &str, button: Button, hold_ms: u32) -> Result<u8> {
+    pub fn press(&mut self, name: &str, chord: Buttons, hold_ms: u32) -> Result<u8> {
         if !self.get(POWER)? {
             return Err(CommandsError::PressUnpowered.into());
         }
@@ -477,8 +477,8 @@ impl Bench {
                 &["--port".into(), self.config.uart_port.clone()],
                 &self.out(&output),
                 &[
-                    "--button".into(),
-                    button.as_str().into(),
+                    "--chord".into(),
+                    chord.to_string(),
                     "--hold-ms".into(),
                     hold_ms.to_string(),
                 ],
@@ -487,7 +487,7 @@ impl Bench {
         if !self.run_all(&[step])? {
             return Ok(1);
         }
-        say!("Pressed {button} for {hold_ms} ms; the gesture is in the capture");
+        say!("Pressed {chord} for {hold_ms} ms; the gesture is in the capture");
         Ok(0)
     }
 

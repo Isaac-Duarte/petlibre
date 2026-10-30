@@ -4,6 +4,7 @@ import 'package:wellfed/app.dart';
 import 'package:wellfed/screens/feeder/shell.dart';
 import 'package:wellfed/screens/home.dart';
 import 'package:wellfed/src/rust/api/feeder.dart';
+import 'package:wellfed/src/rust/api/install.dart';
 import 'package:wellfed/src/rust/api/model.dart';
 import 'package:wellfed/src/rust/api/session.dart';
 import 'package:wellfed/src/rust/api/store.dart';
@@ -299,12 +300,16 @@ void main() {
   });
 
   group('Home', () {
-    Future<(FeederFleet, FakeSession)> home(WidgetTester tester) async {
+    Future<(FeederFleet, FakeSession)> home(
+      WidgetTester tester, {
+      PendingInstall earlier = PendingInstall.nothing,
+    }) async {
       _phone(tester);
       final (fleet, session) = await _fleet(tester);
       final router = wellfedRouter(
         book: FakeBook(),
-        root: (context) => HomeScreen(fleet: fleet),
+        root: (context) =>
+            HomeScreen(fleet: fleet, earlierInstall: () async => earlier),
         pages: const {},
         feeder: (context, identity, tab) =>
             FeederShell.of(fleet, identity, initialTab: tab),
@@ -319,6 +324,14 @@ void main() {
       await settle(tester);
       return (fleet, session);
     }
+
+    testWidgets('says when an earlier install did not finish', (tester) async {
+      await home(tester);
+      expect(find.text('Finish installing'), findsNothing);
+
+      await home(tester, earlier: PendingInstall.values.last);
+      expect(find.text('Finish installing'), findsOneWidget);
+    });
 
     testWidgets("shows the next meal, the last feed and today's meals", (
       tester,

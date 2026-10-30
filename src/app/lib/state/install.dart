@@ -399,7 +399,7 @@ class InstallFlow extends ChangeNotifier {
       return;
     }
     // The run ended while the picker was up: nothing will ever ask to leave.
-    if (!identical(_run, run)) {
+    if (_disposed || !identical(_run, run)) {
       await _ports.leaveFeederNetwork();
       return;
     }
@@ -830,7 +830,9 @@ class InstallFlow extends ChangeNotifier {
     _updates = null;
     unawaited(_settle());
     _closeLink();
-    if (end case InstallEnd_Stopped(case_: StopCase_NoFeederCame())) {
+    if (end case InstallEnd_Stopped(
+      case_: StopCase_NoFeederCame() || StopCase_TwoFeeders(),
+    )) {
       _frameTaken = false;
     }
     switch (end) {

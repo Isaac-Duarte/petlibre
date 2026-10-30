@@ -14,6 +14,8 @@ import android.util.Log
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import io.reactivex.exceptions.UndeliverableException
+import io.reactivex.plugins.RxJavaPlugins
 import java.net.Inet4Address
 
 class MainActivity : FlutterActivity() {
@@ -46,7 +48,9 @@ class MainActivity : FlutterActivity() {
 
             override fun onLost(network: Network) {
                 if (home == network) home = null
-                if (connectivity.boundNetworkForProcess == network) {
+                // This request matches the feeder's network too: while it is
+                // held, an unbound process would send the frame out by default.
+                if (feeder == null && connectivity.boundNetworkForProcess == network) {
                     connectivity.bindProcessToNetwork(null)
                 }
             }
@@ -54,6 +58,18 @@ class MainActivity : FlutterActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // The Bluetooth plugin's RxJava throws when a link drops as its stream is
+        // cancelled, which the feeder's restart at the end of setup can do, and
+        // with no handler that kills the app, and the install with it.
+        RxJavaPlugins.setErrorHandler { error ->
+            if (error is UndeliverableException) {
+                Log.w(TAG, "after its stream ended: ${error.cause}")
+            } else {
+                Thread.currentThread().let {
+                    it.uncaughtExceptionHandler?.uncaughtException(it, error)
+                }
+            }
+        }
         val request =
             NetworkRequest.Builder()
                 .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)

@@ -68,7 +68,13 @@ class _WellfedAppState extends State<WellfedApp> {
     book: widget.app,
     root: (context) => widget.app.feeders.isEmpty
         ? const WelcomeScreen()
-        : HomeScreen(fleet: _fleet),
+        : HomeScreen(
+            fleet: _fleet,
+            earlierInstall: () async {
+              final ports = AppInstallPorts(widget.app.key);
+              return ports.pending(await ports.paths());
+            },
+          ),
     feeder: (context, identity, tab) =>
         FeederShell.of(_fleet, identity, initialTab: tab),
     pages: {

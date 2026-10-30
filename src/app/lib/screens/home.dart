@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../src/rust/api/install.dart' show PendingInstall;
 import '../src/rust/api/model.dart';
 import '../src/rust/api/session.dart' as api;
 import '../state/feeder.dart';
@@ -18,20 +19,52 @@ import 'feeder/tabs.dart';
 
 /// Feeder-first Home: one card per feeder this phone knows, large for one
 /// feeder and compact for several.
-class HomeScreen extends StatelessWidget {
-  const HomeScreen({super.key, required this.fleet});
+class HomeScreen extends StatefulWidget {
+  const HomeScreen({
+    super.key,
+    required this.fleet,
+    required this.earlierInstall,
+  });
 
   final FeederFleet fleet;
 
+  /// What an earlier install left, read from its records. A run that died
+  /// before it ended (the app killed, say) has no other way to say so, and a
+  /// feeder on bank 0 answers Ready with its stock not yet saved.
+  final Future<PendingInstall> Function() earlierInstall;
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  PendingInstall _earlier = PendingInstall.nothing;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_readEarlier());
+  }
+
+  Future<void> _readEarlier() async {
+    final earlier = await widget.earlierInstall();
+    if (mounted) setState(() => _earlier = earlier);
+  }
+
+  Future<void> _openInstall() async {
+    await context.push('/install');
+    await _readEarlier();
+  }
+
   @override
   Widget build(BuildContext context) => ListenableBuilder(
-    listenable: fleet,
+    listenable: widget.fleet,
     builder: (context, _) => _build(context),
   );
 
   Widget _build(BuildContext context) {
     final c = context.colors;
-    final feeders = fleet.all.toList();
+    final feeders = widget.fleet.all.toList();
     final one = feeders.length == 1;
     return Scaffold(
       bottomNavigationBar: const MainNav(selected: 0),
@@ -58,6 +91,21 @@ class HomeScreen extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
         children: [
+          if (_earlier != PendingInstall.nothing) ...[
+            const Notice(
+              tone: Tone.warning,
+              lead: "An install didn't finish.",
+              text:
+                  "The original firmware isn't saved yet, and Wellfed isn't "
+                  'permanent. Finish it before you rely on this feeder.',
+            ),
+            const SizedBox(height: Space.s2),
+            FilledButton(
+              onPressed: () => unawaited(_openInstall()),
+              child: const Text('Finish installing'),
+            ),
+            const SizedBox(height: Space.s4),
+          ],
           for (final (i, controller) in feeders.indexed) ...[
             if (i > 0) const SizedBox(height: Space.s3),
             FeederCard(controller: controller, compact: !one),

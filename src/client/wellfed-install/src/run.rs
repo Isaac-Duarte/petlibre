@@ -771,7 +771,7 @@ where
             // Enrolled by an earlier run, a feeder that never took this frame
             // reads as offline, not as no feeder.
             let absent = matches!(wait, Wait::NoFeeder | Wait::Stock(StockNotReady::Offline));
-            arrived |= !absent;
+            arrived |= !absent && !matches!(wait, Wait::Unreadable { .. });
             if said.as_ref() != Some(&wait) {
                 self.io.report.event(Event::Waiting(wait.clone()));
                 said = Some(wait);

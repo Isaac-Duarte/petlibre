@@ -153,7 +153,7 @@ A request's own `x-request-id` is kept when it is one plain id: at most 64 bytes
 
 ## Add the first owner
 
-A fresh server has no accounts. The first visitor creates the first owner. The server doesn't serve its web UI yet, so you do this over the API.
+A fresh server has no accounts. The first visitor creates the first owner. The server has no web UI, so you do this over the API.
 
 1. Run `curl http://127.0.0.1:8080/api/v1/setup`. You should see `"open": true`, and the host's time zone as `zone` if it has one.
 2. Create the owner with a name, a password of at least 10 characters, and the household's IANA zone:

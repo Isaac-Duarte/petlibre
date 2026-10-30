@@ -3,8 +3,8 @@
 //!
 //! The server serializes these, and the app (through generated bindings)
 //! and tests deserialize them, so the crate builds for every target and
-//! carries no server dependency. The web UI's types come from the
-//! `openapi.json` the server generates from them.
+//! carries no server dependency. Clients outside Rust take their types from
+//! the `openapi.json` the server generates from them.
 //!
 //! Fields are `snake_case`, IDs UUIDv7, and times RFC 3339. Feeder keys and
 //! fingerprints travel as lowercase hex.

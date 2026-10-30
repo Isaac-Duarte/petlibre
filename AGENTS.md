@@ -42,9 +42,9 @@ The Android app in `src/app/` is the only Dart in the repository. Its protocol l
 
 ## Web conventions
 
-The web frontends in `src/web/` follow the [TypeScript standard](docs/development/typescript.md) (the full rule set and its enforcement) and the [web UI design](docs/web/README.md). In short:
+The web frontends in `src/web/` follow the [TypeScript standard](docs/development/typescript.md), the full rule set and its enforcement. In short:
 
-- **Generated contracts.** The server UI's types and client come from `openapi.json`, the bench's from ts-rs, and colors and spacing from `assets/brand/tokens.json`. Never hand-write a TypeScript copy of a Rust type or a hex value.
+- **Generated contracts.** The bench's types come from ts-rs, and colors and spacing from `assets/brand/tokens.json`. Never hand-write a TypeScript copy of a Rust type or a hex value.
 - **Boundaries.** Only `packages/ui` imports bits-ui, and only the API layer touches `fetch`, `EventSource` or `BroadcastChannel`. ESLint enforces both.
 - **Dependencies.** Exact versions, a frozen lockfile, a 7-day minimum release age, no install scripts unless listed, and an allowed license (`pnpm run licenses`).
 - **Feeding safety.** Mutations never retry. A feed keeps one idempotency key from confirm to a terminal result, and an uncertain feed is never retried.

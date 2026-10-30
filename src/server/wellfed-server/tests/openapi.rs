@@ -1,4 +1,4 @@
-//! `openapi.json` is committed, so the web UI's generated types build
+//! `openapi.json` is committed, so another client's generated types build
 //! without Rust and a review sees every contract change. This test fails
 //! when it is stale; `UPDATE_OPENAPI=1 cargo test -p wellfed-server
 //! --test openapi` rewrites it.

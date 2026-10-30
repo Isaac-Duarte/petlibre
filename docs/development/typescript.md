@@ -1,6 +1,6 @@
 # TypeScript standard
 
-These are the rules for the web frontends in `src/web/` (TypeScript and Svelte), why each exists, and what enforces it. [AGENTS.md](../../AGENTS.md#web-conventions) keeps the short form. The [web UI design](../web/README.md#quality-standard) adds what is specific to the UI: accessibility, performance budgets and tests by layer.
+These are the rules for the web frontends in `src/web/` (TypeScript and Svelte), why each exists, and what enforces it. [AGENTS.md](../../AGENTS.md#web-conventions) keeps the short form. These apps are the bench page, the landing page and the docs site. The server has no web UI: owners use the [app and the CLI](../firmware/product-architecture.md#frontends).
 
 Every rule marked with a tool runs in `make check-web`.
 
@@ -10,6 +10,7 @@ Every rule marked with a tool runs in `make check-web`.
 src/web/
   apps/bench/          the bench page (Svelte 5, which wellfed-bench serve --ui embeds with --features ui)
   apps/site/           the project's landing page, prerendered to static files (see docs/web/site.md)
+  apps/docs/           the docs/ folder as a searchable site (see docs/web/docs-site.md)
   packages/tokens/     CSS generated from assets/brand/tokens.json, and the contrast check
   packages/ui/         the page base and components over the tokens and bits-ui
   packages/api/        typed clients; types generated from Rust
@@ -17,22 +18,26 @@ src/web/
   eslint.config.js     the lint rules below
 ```
 
+The bench keeps its own stack: it is a dev tool that never ships to owners, and shares only the tokens and components. The tokens come from one file, `assets/brand/tokens.json`, which the Flutter theme reads too, so the app and the web can't drift apart.
+
 ## Rules
 
 | Rule | Why | Enforced by |
 | --- | --- | --- |
 | **Strict types.** `strict`, `noUncheckedIndexedAccess`, `noImplicitOverride` and `verbatimModuleSyntax` everywhere. | Index reads and optional fields are handled where they happen. | `tsconfig.base.json`; `tsc` and `svelte-check --fail-on-warnings` |
 | **No `any`, no `!`, no `as`.** Narrow with a check (`instanceof`, `in`, a type guard) instead of asserting. `as const` is fine. | An assertion moves a wrong assumption from where it is made to where it crashes. | ESLint (`no-explicit-any`, `no-non-null-assertion`, `consistent-type-assertions: never`) |
-| **The API layer is the boundary.** `packages/api` (and later an app's `lib/api`) is where a response body becomes a generated type. Assertions are allowed there and nowhere else. | One place to audit what the server is trusted to send. | ESLint override for `packages/api/**` |
-| **Generated contracts.** Rust types arrive through ts-rs (`*.gen.ts`) and later `openapi.json`. Colors, spacing and type arrive through `@wellfed/tokens`. Never hand-write a copy of a Rust type or a hex value. Generated files are rewritten, never edited, and committed with the change that caused them. | Two copies drift. | `tokens.test.ts` fails when `tokens.gen.css` is stale; ESLint and Prettier skip `*.gen.*` |
+| **The API layer is the boundary.** `packages/api` is where a response body becomes a generated type. Assertions are allowed there and nowhere else. | One place to audit what the server is trusted to send. | ESLint override for `packages/api/**` |
+| **Generated contracts.** Rust types arrive through ts-rs (`*.gen.ts`). Colors, spacing and type arrive through `@wellfed/tokens`. Never hand-write a copy of a Rust type or a hex value. Generated files are rewritten, never edited, and committed with the change that caused them. | Two copies drift. | `tokens.test.ts` fails when `tokens.gen.css` is stale; ESLint and Prettier skip `*.gen.*` |
 | **Only `packages/ui` imports bits-ui.** Apps use its wrappers. | A widget's behavior and look change in one place. | ESLint (`no-restricted-imports`) |
 | **Only the API layer touches the network.** No `fetch`, `EventSource`, `BroadcastChannel`, `WebSocket` or `XMLHttpRequest` elsewhere. | Retry and idempotency rules live in one place. | ESLint (`no-restricted-globals`) |
 | **Runes only.** `$state`, `$derived` and `$props`; no `svelte/store`. Prefer `$derived` to `$effect`. An effect only syncs with something outside Svelte, and says why. | One reactivity model. | ESLint for stores; review for effects |
-| **Feeding safety.** Mutations never retry. A feed keeps one idempotency key from confirm to a terminal result, and an uncertain feed is never retried. | A retried feed can dispense twice. | Review now; a lint rule when the server UI adds mutations |
+| **Feeding safety.** Mutations never retry. A feed keeps one idempotency key from confirm to a terminal result, and an uncertain feed is never retried. | A retried feed can dispense twice. | Review |
 | **Zero warnings.** typescript-eslint `strict-type-checked` and `stylistic-type-checked`, eslint-plugin-svelte, `--max-warnings 0`. | A warning nobody fixes hides the next one. | `pnpm lint` |
 | **Deliberate exceptions.** A disable covers one line and gives its reason after `--`, as `#[expect(…, reason)]` does in Rust. | The next reader knows whether it still applies. | ESLint (`eslint-comments/require-description`, `no-unused-disable`) |
 | **One format.** Prettier with the Svelte plugin, 120 columns. | No formatting in review. | `pnpm format:check` |
 | **Comments explain why:** an invariant, a browser quirk, a feeding-safety rule. | As in Rust. | Review |
+| **Small components.** Typed props, snippets for content, one concern each. `packages/ui` components never fetch. | A shared widget stays reusable and testable. | Review |
+| **Accessible.** WCAG 2.2 AA: semantic HTML first, every control usable by keyboard, visible focus, `prefers-reduced-motion` respected, and tests that find elements by role and name. | People use these pages with a keyboard and a screen reader too. | The contrast check for tokens; review for the rest |
 
 ## Dependencies
 

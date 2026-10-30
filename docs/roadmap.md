@@ -58,10 +58,12 @@ This page tracks what works today and what comes next. It covers the replacement
 | Capability | Status | Notes |
 | --- | --- | --- |
 | Command-line client (`wellfed`) | Partial | Every owner setting and action: pairing, status, settings, plans, the meal call, feeds, history, the desiccant reminder, lock, Wi-Fi, time, invites and the installer, with text for people and `--json` for scripts. The meal call, the desiccant reminder and the newer status fields are tested in simulation only. See [the command overview](../src/tools/README.md#the-wellfed-command-line). |
-| Self-hosted server | Partial | Adopts a real feeder and keeps its history whole across a server restart, a power cut and a Wi-Fi drop. A phone talking to the feeder directly gets no events while the server is connected. Feeds, plans with the next meal, accounts, releases and installs are tested in simulation only. |
-| Server web UI | Not started | |
+| Self-hosted server | Partial | Optional: the app alone is the complete product, and the server adds long history, remote access, accounts, pets and food, and firmware releases. It has no web page of its own, and you use it through the CLI until the app connects to it. Adopts a real feeder and keeps its history whole across a server restart, a power cut and a Wi-Fi drop. A phone talking to the feeder directly gets no events while the server is connected. Feeds, plans with the next meal, accounts, releases and installs are tested in simulation only. |
 | Android app | Experimental | Installs from stock through the feeder's own Wi-Fi after a Reset hold, or through a DNS record, sets up a feeder over Bluetooth or takes it back over the LAN, and has a screen for everything the device API offers: meals, history, settings, people and invites, updates and diagnostics. Its install has run once on the research unit from each route, the Reset route to the end; the other screens have run only against fakes and the simulator so far. It can put the vendor's firmware back from its backup, with a Dispense press at the feeder; that is simulated only so far. See [the app](../src/app/README.md). |
-| Home Assistant | Not started | Paused. |
+| Desktop app (macOS and Linux) | Not started | The same app as Android, including the install. |
+| iPhone app | Not started | The same app, for setup and daily use. Whether it can install is an open question, so you would install from Android or a computer. |
+| Windows app | Not started | Waits for a machine to test it on. |
+| Home Assistant | Not started | Paused. Planned as an integration over the server's API. |
 
 ## Development hardware
 
@@ -74,5 +76,7 @@ This page tracks what works today and what comes next. It covers the replacement
 1. A long unattended run with injected faults, to prove the feeder stays safe over hours.
 2. Checking calibration, jams, lights and the battery on the bench.
 3. Schedules, then a finished manual feed with stock's portion rules.
-4. The server's web UI, and the Android app's first run of its new screens on the research unit.
-5. A first research release.
+4. Finishing the Android app, with the first run of its new screens on the research unit.
+5. Proving the server on a real feeder, and connecting the app to it.
+6. A first research release.
+7. The desktop app on macOS and Linux, then iPhone, then Windows.

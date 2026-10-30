@@ -70,7 +70,6 @@ export const NAV: NavGroup[] = [
       { file: "server/README.md", label: "The server" },
       { file: "server/running.md", label: "Running the server" },
       { file: "server/design.md", label: "Server design" },
-      { file: "web/README.md", label: "Web UI design" },
       { file: "web/site.md", label: "well-fed.dev" },
       { file: "web/docs-site.md", label: "docs.well-fed.dev" },
     ],

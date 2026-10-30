@@ -4,7 +4,7 @@ The Wellfed server is an optional program you run at home, on a small Linux mach
 
 ## What it is, and what it isn't
 
-The feeder doesn't need the server. It keeps its own feed journal, event history and schedules, and the app and the `wellfed` CLI can talk to it directly on your home network. If the server is down, the feeder keeps feeding.
+The feeder doesn't need the server, and the app alone is the complete product. The feeder keeps its own feed journal, event history and schedules, and the app and the `wellfed` CLI can talk to it directly on your home network. If the server is down, the feeder keeps feeding. The server has no web page of its own: you use it through the `wellfed` CLI today, and through the app once the app connects to it.
 
 The server adds what a small device can't hold:
 
@@ -36,9 +36,11 @@ This costs the feeder a client slot per phone. A feeder has 8 slots: the server,
 
 Every device operation the app can make has a server route, or a stated reason it has none, in `wellfed_service::parity`. It is an exhaustive match over the device API's operations, so a new operation doesn't build until it gets one. Some routes need the feeder's owner role: Wi-Fi, reboot, revoking a client, a phone's invite, the time zone rule, installs and the stock backup. They work only when the server was adopted with an owner's invite. With the `server` role, the feeder refuses them `forbidden`.
 
+**Adopt with an owner's invite.** That is the supported setup, since it is the only one where every route works. It gives the server the feeder's full authority, as your own CLI has: it can change Wi-Fi, revoke clients and offer updates, including downgrades and update key changes. The feeder still checks the signature on every image. So protect the server's data directory as you would your owner key.
+
 ## The HTTP API
 
-The API lives under `/api/v1`, as JSON. The complete reference is [`openapi.json`](../../src/server/wellfed-server/openapi.json), which is generated from the handlers and checked for staleness in `make check`. The web UI's types come from it too.
+The API lives under `/api/v1`, as JSON. The complete reference is [`openapi.json`](../../src/server/wellfed-server/openapi.json), which is generated from the handlers and checked for staleness in `make check`.
 
 | Group | Routes | What they do |
 | --- | --- | --- |
@@ -67,7 +69,6 @@ Some conventions hold across the API:
 | Install and run the server | [Running the server](running.md) |
 | Understand how it's built, or change it | [Server design](design.md) |
 | Know what the feeder itself serves | [Device API](../firmware/device-api.md) |
-| See the web UI | [Web UI](../web/README.md) |
 | See the product the server is part of | [Product architecture](../firmware/product-architecture.md) |
 | Check what works today | [Roadmap](../roadmap.md) |
 

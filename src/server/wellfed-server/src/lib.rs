@@ -55,7 +55,7 @@ pub(crate) struct AppState {
 #[openapi(
     info(
         title = "Wellfed server",
-        description = "The owner's server: mirrors each feeder's history and serves it to the web UI and the app. Unstable until the first release.",
+        description = "The owner's server: mirrors each feeder's history and serves it to the app and the CLI. Unstable until the first release.",
         license(name = "MIT"),
     ),
     tags(

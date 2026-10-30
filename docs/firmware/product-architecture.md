@@ -51,23 +51,22 @@ Most of this is design. What has been built and observed is on the [roadmap](../
 
 - **A new `wellfed-server` crate.** Growing the bench's server (now `wellfed-stock`'s binary) would mix bench shortcuts and the stock protocol into the owners' product.
 - **Stock firmware is used only to install and roll back.** Ongoing stock control would mean two device protocols forever.
-- **An Android app in Flutter, over a sans-IO Rust core.** It talks to feeders directly, and to a server when one exists.
+- **One app in Flutter, over a sans-IO Rust core, for phones and computers.** Android comes first, then macOS and Linux, then iPhone, then Windows ([frontends](#frontends)). It talks to feeders directly, and to a server when one exists.
   - Tauri was rejected: one UI, but mobile BLE and Wi-Fi need native plugins, and the app feels like a web page.
   - Native Swift and Kotlin would mean two or three UIs for one maintainer.
-  - iOS and a desktop app aren't needed now.
-- **The only web UI is the server's Svelte UI, and the browser never talks to the feeder.** Browsers have no raw TCP, no mDNS, and no Web Bluetooth on iOS or Firefox. Chrome restricts HTTPS pages from reaching LAN devices. A UI served by the feeder would cost flash and a second listener, and its page would arrive over plain HTTP.
-- **Owners without a server use the Android app.**
-- **The installer** is the Android app, and `wellfed-server` or the CLI.
-- **Distribution:** APKs and server builds as GitHub releases. App stores and F-Droid come later.
+- **No web UI for owners, and the browser never talks to the feeder.** Browsers have no raw TCP, no mDNS, and no Web Bluetooth on iOS or Firefox. Chrome restricts HTTPS pages from reaching LAN devices. A UI served by the feeder would cost flash and a second listener, and its page would arrive over plain HTTP. A browser UI on the server was dropped on October 30, 2026: it would repeat every app screen, its feeding-safety logic included, and reach only owners who run a server. It would come back only as the way onto iPhones if Apple refuses the app.
+- **The app alone is the complete product.** The server is an opt-in add-on, for long history, remote access, accounts, pets and food, and firmware releases.
+- **The installer** is the app on Android or a computer, and `wellfed-server` or the CLI. An install on an iPhone is an open question: iOS suspends an app soon after it leaves the screen, and the phone is serving the feeder its firmware.
+- **Distribution:** APKs and server builds as GitHub releases. App stores and F-Droid come later. Apple's review of an app that replaces a feeder's firmware is an open question, to settle before any public iPhone release.
 - **App and server together.** When a server is configured, the app goes through it first. It goes straight to the feeder on the LAN only when the server is down, and an uncertain write never switches path ([two paths, one feed](../server/README.md#two-paths-one-feed)). Going app-direct only was rejected: no remote access, and each person's actions would reach the audit log only through the feeder.
-- **Notifications** come later, through the Android app's push. The server decides what is an alert ([deferred](#deferred)).
+- **Notifications** aren't planned ([deferred](#deferred)).
 - **Remote access** goes through a reverse proxy in front of the server, or the owner's VPN ([deferred](#deferred)).
-- **Home Assistant is paused** ([below](#home-assistant)).
+- **Home Assistant is paused**, with its route chosen ([below](#home-assistant)).
 
 ## Components
 
 ```text
-  Android app (Flutter) ── BLE (setup mode only) ──┐
+  the app (Flutter) ─────── BLE (setup mode only) ──┐
       │   │                                        ▼
       │   │  Noise message stream (mDNS)       ┌────────┐   NTP
       │   └───────────────────────────────────►│ feeder │◄──────
@@ -77,7 +76,7 @@ Most of this is design. What has been built and observed is on the [roadmap](../
       history store, release fetching, installer
       ▲
       │ HTTP
-  browser (server's Svelte UI)
+  the CLI, and later a Home Assistant integration
 ```
 
 In code:
@@ -106,8 +105,12 @@ Some detail on each:
   - With a server, it talks to the server over HTTP first, and to the feeder directly only when the server is down. Without one, it talks to feeders on the LAN.
   - Setup, pairing and the installer always go to the feeder.
   - It can run the stock installer through a DNS record on the owner's router, serving the image itself from a foreground service. The route through stock's setup access point and the `DL` frame is not built ([consumer installation](consumer-installation.md)).
-- **The server web UI** is a SvelteKit single-page app embedded in `wellfed-server`. It shares the bench's tokens and components, and its types are generated from the server's `openapi.json` ([web UI design](../web/README.md)). Browsers reach the feeder only through the server.
-- **Two UIs** means two codebases. That cost is accepted for a native-feeling mobile app; Rust-generated types keep their data models identical.
+- **Other platforms** are the same app and the same Rust, not a fork. Each needs its own side of the platform IO: Bluetooth, discovery, joining a network and keeping the process alive. In order:
+  - macOS and Linux, which run the install and can hand a feeder to a phone with an owner's invite;
+  - iPhone, for setup and daily use;
+  - Windows, once there is a machine to test it on.
+- **The CLI** (`wellfed`) speaks the device API and, under `wellfed server`, the server's HTTP API. It also runs the install. It stays the tool the bench drives, on Linux.
+- **One UI** means one codebase for one maintainer. The server's HTTP API stays public through `openapi.json`, for anyone building another client.
 - **Setup first.** The app's first milestone covers the risky parts in the real app rather than a throwaway spike: BLE setup on a real phone, NSD discovery on a real network, and a session with feeds. Its Rust half is tested against the simulated feeder.
 
 ## Setup and pairing
@@ -213,16 +216,16 @@ The goal is that anyone can do anything with their feeder's data. The server kee
 
 ## Home Assistant
 
-Paused by the owner. The options when it resumes:
+Paused by the owner, until the server has proven itself on a real feeder. When it resumes, it is a custom integration that calls the server's HTTP API, in a repository of its own, since this one holds no Python under `src/`. So it needs a server, but no code on the feeder and no feeder key of its own.
 
-- **ESPHome native API on the feeder.** Auto-discovered, with no add-on and no server. But it reimplements an unofficial protocol that changes with Home Assistant releases, and it spends firmware RAM. Prove it first with a host stub that a real Home Assistant instance adopts.
-- **MQTT discovery through `wellfed-server`.** A documented, stable protocol with no Home Assistant code in the firmware. But it needs the server and a broker.
-
-The entity model in `wellfed-feeder` should not assume either one.
+- **One press, one feed.** Each press carries one `Idempotency-Key`. An uncertain feed is reported as uncertain and never retried, and reconnects and automation replays can't feed twice.
+- **Least access.** It uses the narrowest token the server can give it.
+- **Rejected: the ESPHome native API on the feeder.** It reimplements an unofficial protocol that changes with Home Assistant releases, and it spends firmware RAM.
+- **Rejected: MQTT discovery through `wellfed-server`.** It adds a broker and a second protocol, and MQTT can deliver a command twice, so a feed would need its own protection against duplicates.
 
 ## Deferred
 
-- **Notifications.** Later, through the Android app: the server decides what is an alert, and the app delivers it. Push on iOS and Android goes through Apple and Google services, which need credentials tied to the app's publisher, so a self-hosted server can't send them alone. The options are ntfy or UnifiedPush, a small project relay, or both.
+- **Notifications.** Removed from the plan on October 30, 2026. If they return, the server decides what is an alert, and the app delivers it. Push on iOS and Android goes through Apple and Google services, which need credentials tied to the app's publisher, so a self-hosted server can't send them alone. The options are ntfy or UnifiedPush, a small project relay, or both.
 - **Remote access.** Only through the owner's server; the owner's VPN is one route.
 
 ## What this asks of the SDK
@@ -234,12 +237,11 @@ The entity model in `wellfed-feeder` should not assume either one.
 | Offline time | NTP, drift learning, the error-bound validity, time across warm resets, the no-source hold | [Clock](clock.md) |
 | Device-hosted API | The Noise message stream, mDNS, generation-checked writes, the event cursor and samples, several clients served by one loop task | [Device API](device-api.md) |
 | Updates over the device API | Offers from any paired client, the project key and an owner key | [OTA design](ota-design.md) |
-| ESPHome native API | Paused with Home Assistant | [Above](#home-assistant) |
 | Device layer for other models | An audit of the HAL and `device.json` for PLAF103 assumptions | [Device layer](device-layer.md) |
 
 ## Evidence
 
-- **Design:** the decisions above are the owner's, recorded on October 23, 2026, with the app-and-server path and notifications decided on October 26, and the "not automatic" setup rule on October 24.
+- **Design:** the decisions above are the owner's, recorded on October 23, 2026, with the app-and-server path decided on October 26, the "not automatic" setup rule on October 24, and the frontends, the dropped web UI, notifications and the Home Assistant route on October 30.
 - **Observed:** a Wi-Fi association held every task, a priority-4 one included, for 0.45–0.72 s on October 25 ([resource budget](resource-budget.md#scheduling-gaps-across-wi-fi-rejoins)).
 - **Observed:** PA18 rests HIGH and reads LOW for about 1.17 s at each rotor mark, one mark per portion. During a 3 s empty drive, channel 4 read a scaled maximum of 166 and a mean of 64 ([motor pulse](motor-pulse.md)).
 - **Observed:** the task-slot limit was found in another session's captures (`fw44-simon-01`).

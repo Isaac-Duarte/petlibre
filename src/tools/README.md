@@ -73,7 +73,7 @@ wellfed-stock    lib + binary   the stock 1.1.15 protocol, only what install and
                                  the legacy MQTT 3.1 broker, OTA_UPGRADE and its trial ledger,
                                  the setup frame; the binary is the bench's stock server
 wellfed          CLI            the owner's command line
-wellfed-server   binary         the owner's server, its web UI, and installs
+wellfed-server   binary         the owner's optional server, and installs
 wellfed-build    CLI            builds, reviews, and update signing (keygen, sign)
 wellfed-signing  lib            update signing behind a frozen review, for the builder's
                                  commands, the bench, the CLI and, later, the server's installs

@@ -303,7 +303,7 @@ The vendor's firmware can't ship with the app. But each feeder already holds its
   After promotion the feeder holds no copy, so the backup comes from the owner's copy, never read back from the feeder.
 - **Saving a copy:** when an install ends, the Android app can hand the backup to any app through the share sheet.
 - **Restoring from the app:** the app shows the kept backup (stock version, checked) and offers "Restore original firmware". If the phone holds no copy, it says so and takes a file you saved, through the same check.
-- **Still to come:** the server's web UI will show the backup, copy it to the owner's server and offer "Restore stock", through the same `wellfed-client` steps.
+- **Still to come:** the app, connected to a server, will show the backup, copy it to the owner's server and offer "Restore stock", through the same `wellfed-client` steps.
 - **Why not keep it on the feeder.** The only place it fits is bank 1. That means running from bank 0 for good, with no known-good fallback bank, and the first update into bank 1 would destroy it anyway. No other 1.3 MiB of flash is established as free.
 - **Why this route.** These are your own bytes, from your own device, so there is no redistribution question.
 

@@ -39,13 +39,13 @@ src/server/wellfed-releases  fetch, upload and verify releases, the release cach
 src/server/wellfed-service   the use cases: accounts and auth, household, commands and their journal, pets and food,
                               derived views, alerts, audit, export, and the hub. No axum, no SQL
 src/server/wellfed-server    the binary: config, axum routers per resource, the auth extractors, SSE, the jobs
-                              supervisor, the embedded web UI
+                              supervisor
 src/server/wellfed-server-testkit  a temp store, a fixed clock and random, the simulator harness, signed test releases, the server in process
 src/app/                      Flutter app, plus a thin flutter_rust_bridge crate (wellfed-app-bridge) over wellfed-client,
                               wellfed-connect and wellfed-model, and wellfed-api once it has server screens
 ```
 
-The map is the target. Today the server is `wellfed-api`, `wellfed-store`, `wellfed-mirror`, `wellfed-releases`, `wellfed-service` and `wellfed-server`, with `wellfed-server-client` and `wellfed-server-testkit` beside them. The embedded web UI isn't built yet, and the app talks to feeders only, not yet to a server.
+The map is the target. Today the server is `wellfed-api`, `wellfed-store`, `wellfed-mirror`, `wellfed-releases`, `wellfed-service` and `wellfed-server`, with `wellfed-server-client` and `wellfed-server-testkit` beside them. The app talks to feeders only, not yet to a server. There is no web UI, and none is planned.
 
 The server's crates follow one rule: **a crate per runtime or dependency boundary, a module per domain inside it.** A new domain, such as pets or alerts, is a module and some tables, not a crate. It gets a crate only if it brings its own runtime (tasks), a heavy dependency (`reqwest`) or a consumer outside the server. That's why the mirror (the feeder tasks), the releases (`reqwest` and the verifier) and the HTTP client (the CLI) are crates, and accounts and alerts are not.
 
@@ -161,7 +161,7 @@ Daily times are in the household's zone (UTC before there is one).
 ## Accounts and roles
 
 - **Passwords** are argon2id-hashed, at least 10 characters, with no other rule. The server hashes at most two at once (about 19 MiB each), and an unknown name costs the same hash as a wrong password.
-- **Browsers** get a session cookie (`HttpOnly`, `SameSite=Strict`, `Secure` when a trusted proxy reports HTTPS). A session lasts 30 days from its last use. Every cookie-authenticated write needs an `Origin` matching the server, and `Sec-Fetch-Site: same-origin` when the browser sends it.
+- **A login** gets a session cookie (`HttpOnly`, `SameSite=Strict`, `Secure` when a trusted proxy reports HTTPS). The server has no web UI, but a token is made from a login, so the CLI logs in this way, and these rules keep a browser on the owner's machine from being turned against the API. A session lasts 30 days from its last use. Every cookie-authenticated write needs an `Origin` matching the server, and `Sec-Fetch-Site: same-origin` when the browser sends it.
 - **Phones and the CLI** get a bearer token, made from a login only: `plt_` and 64 hex digits, shown once and stored as its SHA-256. A token carries its user, not a role, so a role change applies at once. A request with `Authorization` is judged by it alone and skips the `Origin` check. From a token, making another token, setting a password or adding an account is `403 session_required`, so a leaked token can't mint others.
 - **Expiry.** An account may carry an expiry, for a pet sitter. Past it, the account is disabled, not deleted: its login, sessions and tokens are refused `403 account_disabled` until an owner extends it. Owners never expire, and the last owner can be neither demoted nor deleted (`409 last_owner`).
 - **Failed logins** are limited to 5 a minute per name and 20 a minute per address, in token buckets on the injected clock. A limited login is `429 login_limited` with `Retry-After`. No account is ever locked. The buckets live in one map of at most 10,000 entries.

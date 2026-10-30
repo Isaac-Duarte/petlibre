@@ -111,4 +111,13 @@ mod tests {
         assert!(reserve());
         assert!(!reserve());
     }
+
+    /// The runtime creates the feeder with the priority written out, for
+    /// the stack audit; it must stay the one the task cap compares with.
+    #[test]
+    fn the_feeder_is_created_at_the_capped_priority() {
+        let runtime = include_str!("runtime.rs");
+        let created = format!("task_create(c\"wellfed-wdg\", 512, {FEEDER_PRIORITY}, feeder_task");
+        assert!(runtime.contains(&created), "runtime.rs: {created}");
+    }
 }

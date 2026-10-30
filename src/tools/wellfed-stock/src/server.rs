@@ -311,6 +311,14 @@ async fn stopped(mut stop: watch::Receiver<bool>) {
     let _ = stop.wait_for(|stop| *stop).await;
 }
 
+/// The enrollment window closed with no feeder: the server ended as asked,
+/// unlike one whose port was taken or whose records could not be read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("no stock feeder connected within {minutes} min; nothing enrolled")]
+pub struct NoFeederEnrolled {
+    pub minutes: u64,
+}
+
 /// With no feeder enrolled, wait for the broker to admit one within
 /// `window`, then the config with that device.
 async fn enrolled_device(
@@ -326,7 +334,7 @@ async fn enrolled_device(
     match tokio::time::timeout(window, enrollment.wait_for(|enrolled| *enrolled)).await {
         Ok(Ok(_)) => config::load(path),
         Ok(Err(_)) => bail!("the broker ended while waiting for a feeder"),
-        Err(_) => bail!("no stock feeder connected within {minutes} min; nothing enrolled"),
+        Err(_) => Err(NoFeederEnrolled { minutes }.into()),
     }
 }
 
@@ -352,9 +360,7 @@ async fn serve(
 
     let mut controller = Controller::load(
         (*config).clone(),
-        path.parent()
-            .context("config directory missing")?
-            .join(controller::LEDGER_FILE),
+        controller::ledger_path(path, &config.device_id)?,
         BUILD,
     )?;
     if options.trial == OtaTrial::Enabled {

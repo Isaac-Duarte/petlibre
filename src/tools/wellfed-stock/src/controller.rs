@@ -8,7 +8,11 @@
 //! in-flight trial uncertain. Stock is only installed from and rolled back to
 //! (src/tools/README.md), so this server never feeds.
 
-use std::{collections::BTreeMap, fs, path::PathBuf};
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context, Result, ensure};
 use chrono::{DateTime, Utc};
@@ -16,11 +20,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
-use wellfed_formats::stock::StockStatus;
+use wellfed_formats::stock::{Enrollment, StockStatus};
 
 use crate::{
     build_info::Build,
-    config::Config,
+    config::{self, Config, State},
     ota::{
         self,
         report::{self, REPORT_LIMIT},
@@ -51,7 +55,7 @@ const QUIET_SECONDS: i64 = 10 * 60;
 /// 90 s tolerates one late heartbeat but not a missed one.
 const TELEMETRY_SECONDS: i64 = 90;
 
-/// The trial ledger, persisted as [`LEDGER_FILE`] beside the config.
+/// The trial ledger, persisted beside the config ([`ledger_path`]).
 #[derive(Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Ledger {
@@ -115,6 +119,45 @@ pub enum Rejection {
     StockRunning,
     #[error("the answer must name the trial's served build on bank 0")]
     WrongBuild,
+}
+
+/// Where `device`'s ledger lives beside the config at `config_path`: the one
+/// [`LEDGER_FILE`] for a captured device, and one per device for an installer,
+/// which may serve several feeders over its life. An open trial stays with its
+/// device however often that device's trust is forgotten and given again, so
+/// it still holds back a second request. The name is a digest, since a device
+/// ID is whatever a client on the LAN said it was.
+pub fn ledger_path(config_path: &Path, device: &str) -> Result<PathBuf> {
+    let directory = config_path.parent().context("config directory missing")?;
+    if !Enrollment::path(config_path).exists() {
+        return Ok(directory.join(LEDGER_FILE));
+    }
+    let digest = wellfed_formats::canonical::sha256(device.as_bytes());
+    let name = digest.get(..16).context("a digest is 64 hex digits")?;
+    Ok(directory.join(format!("stock-ledger.{name}.json")))
+}
+
+/// Whether the device the config at `config_path` now names has a request
+/// whose outcome is not settled: its latest trial is submitted (the server
+/// that sent it is gone), uncertain, or failed. Reads the ledger only; a
+/// running server holds the same answer in its status.
+pub fn open_request(config_path: &Path) -> Result<bool> {
+    let State::Device(config) = config::state(config_path)? else {
+        return Ok(false);
+    };
+    let path = ledger_path(config_path, &config.device_id)?;
+    if !path.exists() {
+        return Ok(false);
+    }
+    let ledger: Ledger =
+        serde_json::from_slice(&fs::read(&path)?).context("invalid stock ledger")?;
+    let latest = ledger.ota_trials.values().max_by_key(|r| r.sequence);
+    Ok(latest.is_some_and(|record| {
+        matches!(
+            record.phase,
+            TrialPhase::Submitted | TrialPhase::Uncertain | TrialPhase::ReportedError
+        )
+    }))
 }
 
 pub struct Controller {

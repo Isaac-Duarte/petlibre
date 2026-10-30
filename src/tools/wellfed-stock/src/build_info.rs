@@ -1,8 +1,8 @@
 //! The serving binary's source identity, which the status document and
 //! `/health` report. `build.rs` records it; trial dispatch requires a clean
 //! commit of every build input, which covers the crates that decide and
-//! send the install request (this one, `wellfed-client` and
-//! `wellfed-install`), whichever process links them.
+//! send the install request (this one, `wellfed-client`, `wellfed-install`
+//! and the app's bridge), whichever process links them.
 use serde::Serialize;
 
 #[derive(Clone, Copy, Debug, Serialize)]

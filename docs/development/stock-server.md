@@ -158,7 +158,7 @@ The seeded plans reach the replacement disabled. Delete them with `wellfed plans
 
 ## The install ledger
 
-Install trials are recorded in `stock-ledger.json` beside the configuration, under an exclusive lock.
+Install trials are recorded in `stock-ledger.json` beside the configuration, under an exclusive lock. An installer's config, which may serve several feeders over its life, keeps one ledger per device (`stock-ledger.<digest>.json`), so another feeder is not refused by this one's, and this one's open trial still holds back a second request after its trust is forgotten and given again.
 
 - Each trial is persisted before its one `OTA_UPGRADE` goes out, and is never resent. A repeated request ID returns the stored record.
 - A trial in flight when the server stops or loses the broker becomes uncertain.

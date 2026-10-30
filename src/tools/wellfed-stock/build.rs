@@ -3,11 +3,12 @@
 //! first-party crates it links (`wellfed-formats` the status types,
 //! `wellfed-core` and `wellfed-session` the update format and hex), the
 //! crates that decide and send the install request in another process
-//! (`wellfed-client`'s steps and `wellfed-install`'s driver), and the
+//! (`wellfed-client`'s steps, `wellfed-install`'s driver and the Android
+//! app's `wellfed-app-bridge`, which hands that driver its plan), and the
 //! workspace's manifest, lockfile and toolchain.
 use std::process::Command;
 
-const BUILD_INPUTS: [&str; 16] = [
+const BUILD_INPUTS: [&str; 17] = [
     "src",
     "build.rs",
     "Cargo.toml",
@@ -21,6 +22,7 @@ const BUILD_INPUTS: [&str; 16] = [
     "../../client/wellfed-client/Cargo.toml",
     "../../client/wellfed-install/src",
     "../../client/wellfed-install/Cargo.toml",
+    "../../app/rust",
     "../../../Cargo.toml",
     "../../../Cargo.lock",
     "../../../rust-toolchain.toml",

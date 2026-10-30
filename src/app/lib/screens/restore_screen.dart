@@ -421,11 +421,20 @@ class _UncertainState extends State<_Uncertain> {
         "The restore didn't finish, and nothing is lost. You can restore "
             'again; you press Dispense on the feeder once more.',
       ),
+      RestoreLook.sighted => (
+        "We still can't tell",
+        '$name showed up on your Wi-Fi, but it never answered this phone as '
+            'idle. It may be finishing or restarting. Close this and check '
+            'again in a few minutes, here or in the vendor\'s app.',
+      ),
       RestoreLook.setup => (
-        '$name is still running Wellfed, and needs setting up',
-        "The restore didn't finish, and Wellfed had already cleared its Wi-Fi, "
-            'its phones and its meals to make way. Your backup is still good. '
-            'Set it up again, then restore from there if you still want to.',
+        'A feeder nearby is waiting to be set up',
+        "If that's $name, the restore didn't finish, and Wellfed had already "
+            'cleared its Wi-Fi, its phones and its meals to make way. Your '
+            'backup is still good: set it up, then restore from there if you '
+            'still want to. If you have another feeder in setup, this may be '
+            'that one, and $name may be on the original firmware: check in the '
+            "vendor's app.",
       ),
       RestoreLook.nothing => (
         "It's probably on the original firmware",
@@ -442,13 +451,13 @@ class _UncertainState extends State<_Uncertain> {
           RestoreLook.looking => const Searching(
             'Looking for it on your Wi-Fi and over Bluetooth…',
           ),
-          RestoreLook.wellfed => const SizedBox.shrink(),
+          RestoreLook.wellfed || RestoreLook.sighted => const SizedBox.shrink(),
           RestoreLook.setup => const Notice(
             tone: Tone.warning,
-            lead: "Don't hold Reset.",
+            lead: "Don't hold Reset yet.",
             text:
-                'On Wellfed, that erases the identity your backup is filed '
-                'under.',
+                'If this feeder is on Wellfed, that erases the identity your '
+                "backup is filed under. Check the vendor's app first.",
           ),
           RestoreLook.nothing => const Notice(
             tone: Tone.warning,
@@ -581,7 +590,9 @@ class _Stopped extends StatelessWidget {
     RestoreStop.refused => (
       '$name said no',
       "It keeps running Wellfed, though the vendor's copy may be partly "
-          "written. This isn't sent again from here.",
+          "written. This isn't sent again from here. If you want to try again, "
+          'unplug the feeder for a few seconds first, since it can refuse '
+          'until its power has been off, then start a new restore.',
     ),
     RestoreStop.cancelled => (
       'Stopped',

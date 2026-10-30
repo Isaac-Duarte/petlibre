@@ -76,7 +76,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.13.0';
 
   @override
-  int get rustContentHash => 1912847342;
+  int get rustContentHash => 1899065843;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -235,6 +235,12 @@ abstract class RustLibApi extends BaseApi {
   Future<AppStore> crateApiStoreLoadStore({required String path});
 
   PendingInstall crateApiInstallPendingInstall({required String dataDir});
+
+  Future<RestoreSeen> crateApiRestoreReadRestoreFeeder({
+    required ClientKey key,
+    required List<int> identity,
+    required String address,
+  });
 
   Future<void> crateApiStoreSaveStore({
     required String path,
@@ -1651,6 +1657,46 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(debugName: "pending_install", argNames: ["dataDir"]);
 
   @override
+  Future<RestoreSeen> crateApiRestoreReadRestoreFeeder({
+    required ClientKey key,
+    required List<int> identity,
+    required String address,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerClientKey(
+            key,
+            serializer,
+          );
+          sse_encode_list_prim_u_8_loose(identity, serializer);
+          sse_encode_String(address, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 46,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_restore_seen,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiRestoreReadRestoreFeederConstMeta,
+        argValues: [key, identity, address],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiRestoreReadRestoreFeederConstMeta =>
+      const TaskConstMeta(
+        debugName: "read_restore_feeder",
+        argNames: ["key", "identity", "address"],
+      );
+
+  @override
   Future<void> crateApiStoreSaveStore({
     required String path,
     required AppStore store,
@@ -1664,7 +1710,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 46,
+            funcId: 47,
             port: port_,
           );
         },
@@ -1688,7 +1734,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 47)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 48)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_String,
@@ -1710,7 +1756,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 48)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 49)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_String,
@@ -2748,6 +2794,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       default:
         throw Exception("unreachable");
     }
+  }
+
+  @protected
+  RestoreSeen dco_decode_restore_seen(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return RestoreSeen.values[raw as int];
   }
 
   @protected
@@ -4244,6 +4296,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       default:
         throw UnimplementedError('');
     }
+  }
+
+  @protected
+  RestoreSeen sse_decode_restore_seen(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return RestoreSeen.values[inner];
   }
 
   @protected
@@ -5751,6 +5810,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_restore_stop(case_, serializer);
         sse_encode_String(detail, serializer);
     }
+  }
+
+  @protected
+  void sse_encode_restore_seen(RestoreSeen self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
   }
 
   @protected

@@ -425,6 +425,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RestoreEnd dco_decode_restore_end(dynamic raw);
 
   @protected
+  RestoreSeen dco_decode_restore_seen(dynamic raw);
+
+  @protected
   RestoreSpec dco_decode_restore_spec(dynamic raw);
 
   @protected
@@ -870,6 +873,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RestoreEnd sse_decode_restore_end(SseDeserializer deserializer);
+
+  @protected
+  RestoreSeen sse_decode_restore_seen(SseDeserializer deserializer);
 
   @protected
   RestoreSpec sse_decode_restore_spec(SseDeserializer deserializer);
@@ -1414,6 +1420,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_restore_end(RestoreEnd self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_restore_seen(RestoreSeen self, SseSerializer serializer);
 
   @protected
   void sse_encode_restore_spec(RestoreSpec self, SseSerializer serializer);

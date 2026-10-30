@@ -11,7 +11,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'restore.freezed.dart';
 
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// Check the copy of stock at `path`, as a run will.
 BackupCheck checkBackup({required String path}) =>
@@ -25,6 +25,19 @@ void forgetRestoreKey({required String dataDir, required List<int> identity}) =>
       dataDir: dataDir,
       identity: identity,
     );
+
+/// Read the feeder at `address` over a session. A sighting on the network may
+/// come from a cache or a feeder about to restart, and only this says it runs
+/// Wellfed now. It sends nothing but the read.
+Future<RestoreSeen> readRestoreFeeder({
+  required ClientKey key,
+  required List<int> identity,
+  required String address,
+}) => RustLib.instance.api.crateApiRestoreReadRestoreFeeder(
+  key: key,
+  identity: identity,
+  address: address,
+);
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<RestoreRun>>
 abstract class RestoreRun implements RustOpaqueInterface {
@@ -79,6 +92,18 @@ sealed class RestoreEnd with _$RestoreEnd {
     /// The run's own words, for the screen's small print.
     required String detail,
   }) = RestoreEnd_Stopped;
+}
+
+/// What a read over a session says of a feeder a restore lost sight of.
+enum RestoreSeen {
+  /// It answers this phone's key, with no install in hand: it is on Wellfed.
+  idle,
+
+  /// It answers, with an install running or activated: it may restart yet.
+  installing,
+
+  /// No session opened, or no answer came: a sighting, and nothing more.
+  unread,
 }
 
 /// What a restore needs, read and checked before the feeder is touched.

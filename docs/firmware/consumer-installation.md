@@ -304,7 +304,8 @@ The vendor's firmware can't ship with the app. But each feeder already holds its
   - `wellfed restore-stock --version <n>` is "Restore stock", the signed install below.
 
   After promotion the feeder holds no copy, so the backup comes from the owner's copy, never read back from the feeder.
-- **Still to come:** the Android app and the server's web UI will show the backup (stock version, verified), export it as a file, copy it to the owner's server and offer "Restore stock", through the same `wellfed-client` steps.
+- **Saving a copy:** when an install ends, the Android app can hand the backup to any app through the share sheet.
+- **Still to come:** the Android app and the server's web UI will show the backup (stock version, verified), copy it to the owner's server and offer "Restore stock", through the same `wellfed-client` steps.
 - **Why not keep it on the feeder.** The only place it fits is bank 1. That means running from bank 0 for good, with no known-good fallback bank, and the first update into bank 1 would destroy it anyway. No other 1.3 MiB of flash is established as free.
 - **Why this route.** These are your own bytes, from your own device, so there is no redistribution question.
 
@@ -344,7 +345,7 @@ This needs the owner. It starts from a confirmed `feeder` on bank 1 and an older
 The decisions are in [product architecture](product-architecture.md). For the installer they mean:
 
 - **The steps live in `wellfed-client`:** the setup frame, the single stock request, the progress tracking, the backup gate and the backup receiver. The Android app, `wellfed-server` and the CLI run the same steps the bench proves. Each caller supplies the IO: the image server, the broker and the sockets.
-- **The Android app** joins the feeder's access point through platform Wi-Fi APIs, and serves the image itself, in the foreground, for about 3 minutes.
+- **The Android app** runs the DNS route, and serves the image itself from a foreground service ([the app](../../src/app/README.md#the-install)). Its route through the feeder's access point is not built: it waits for a person to see stock's Reset hold once.
 - **The server and the CLI** can run the same install for owners who self-host. `wellfed-stock` stays the bench's stock-protocol tool.
 - **Afterwards,** the feeder is handed to the pairing flow, not to a server. The app talks to it directly on the LAN, and a server is optional.
 

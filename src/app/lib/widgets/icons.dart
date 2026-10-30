@@ -36,7 +36,8 @@ enum Glyph {
     '<circle cx="12" cy="12" r="3"/><path d="M3 3l18 18"/>',
   ),
   failed('<circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/>'),
-  warning('<path d="M12 3L2 21h20L12 3zM12 10v5M12 18h.01"/>');
+  warning('<path d="M12 3L2 21h20L12 3zM12 10v5M12 18h.01"/>'),
+  install('<path d="M12 3v12M7 10l5 5 5-5M4 20h16"/>');
 
   const Glyph(this.paths);
 

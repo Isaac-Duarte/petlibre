@@ -10,6 +10,7 @@ dependencies:
   device_info_plus: 13.3.0
   flutter:
     sdk: flutter
+  flutter_foreground_task: 11.0.3
   flutter_reactive_ble: 5.6.0
   flutter_rust_bridge: 2.13.0
   flutter_secure_storage: 11.2.0
@@ -20,6 +21,7 @@ dependencies:
   nsd: 5.0.1
   path_provider: 2.1.6
   permission_handler: 13.0.2
+  share_plus: 13.3.1
   wellfed_app_bridge:
     path: rust_builder
 
@@ -35,6 +37,7 @@ flutter:
   assets:
     - assets/brand/
     - assets/renders/
+    - assets/installer/
   fonts:
     - family: Inter
       fonts:

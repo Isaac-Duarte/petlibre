@@ -102,7 +102,7 @@ Some detail on each:
 
 ## Frontends
 
-- **The Android app** (`src/app/`) does its platform IO in Dart through maintained, permissively licensed plugins: BLE (`flutter_reactive_ble`), NSD, and joining a Wi-Fi network for the installer. Its Rust half, `wellfed-app-bridge`, runs every protocol step through `wellfed-client` and its LAN sessions through `wellfed-connect`, over `flutter_rust_bridge`, which also generates the Dart types.
+- **The Android app** (`src/app/`) does its platform IO in Dart through maintained, permissively licensed plugins: BLE (`flutter_reactive_ble`), NSD, and a foreground service for the install. Its Rust half, `wellfed-app-bridge`, runs every protocol step through `wellfed-client` and its LAN sessions through `wellfed-connect`, over `flutter_rust_bridge`, which also generates the Dart types. An install runs `wellfed-install` on a thread of its own, and asks Dart for what only the phone has.
   - With a server, it talks to the server over HTTP first, and to the feeder directly only when the server is down. Without one, it talks to feeders on the LAN.
   - Setup, pairing and the installer always go to the feeder.
   - It can run the stock installer: it joins stock's setup access point, sends the `DL` frame, and serves the image in the foreground for about 3 minutes ([consumer installation](consumer-installation.md)).

@@ -5,8 +5,8 @@ import '../theme/theme.dart';
 import '../widgets/icons.dart';
 import '../widgets/layout.dart';
 
-/// The ways in. Only the routes that are built are listed; installing on a
-/// stock feeder, invites and servers appear as they land.
+/// The ways in. Only the routes that are built are listed; invites and
+/// servers appear as they land.
 class AddFeederScreen extends StatelessWidget {
   const AddFeederScreen({super.key});
 
@@ -15,6 +15,15 @@ class AddFeederScreen extends StatelessWidget {
     appBarTitle: 'Add a feeder',
     body: 'How is this feeder getting to you?',
     content: [
+      RouteCard(
+        glyph: Glyph.install,
+        title: 'Install Wellfed',
+        body:
+            'It still runs the vendor\'s firmware. Replace it from this '
+            'phone, with a backup of the original.',
+        onTap: () => context.push('/install'),
+      ),
+      const SizedBox(height: Space.s3),
       RouteCard(
         glyph: Glyph.bluetooth,
         title: 'Set up a reset feeder',

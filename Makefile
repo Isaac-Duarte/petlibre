@@ -1,4 +1,4 @@
-.PHONY: help check check-rust check-deps check-cross check-bench-board check-virtual-feeder check-docs check-fixtures ui check-web check-app sqlx-prepare server-dist server-image check-server-release
+.PHONY: help check check-rust check-deps check-cross check-bench-board check-virtual-feeder check-docs check-fixtures ui check-web check-app app-installer-input sqlx-prepare server-dist server-image check-server-release
 
 help:
 	@echo "check: formatting, Clippy, Rust tests, cross-builds, simulator, repository checks"
@@ -8,6 +8,7 @@ help:
 	@echo "ui: build the web page (pnpm in src/web/) that wellfed-bench serve --ui embeds (built with --features ui)"
 	@echo "check-web: web types, unit tests, build, then the page end to end against wellfed-bench serve --ui on a fake relay board"
 	@echo "check-app: the Android app's bindings and tokens unchanged, format, analysis, widget tests and a debug APK (needs Flutter)"
+	@echo "app-installer-input: copy a review and its signed manifest in as the image the APK installs, and print its pin"
 	@echo "sqlx-prepare: regenerate the server store's query metadata (.sqlx/) after changing a query or migration"
 	@echo "server-dist / server-image: the server's static release binaries in dist/server/ and its container image (docker or podman)"
 	@echo "check-server-release: the release check against dist/server/ and the image"
@@ -113,6 +114,19 @@ check-app:
 	cd $(APP) && flutter analyze
 	cd $(APP) && flutter test
 	cd $(APP) && flutter build apk --debug --target-platform android-arm64,android-x64
+
+# The image the APK installs is a build-time input, from a frozen review and
+# its signed update manifest under private/. This copies them in (they are
+# ignored) and prints the pin a bench build compiles in; a release build's pin
+# is committed in the bridge instead. Without either, the app builds and says
+# it has no firmware to install.
+APP_INSTALLER = $(APP)/assets/installer
+app-installer-input:
+	@test -n "$(REVIEW)" -a -n "$(MANIFEST)" || \
+		{ echo "usage: make app-installer-input REVIEW=<review directory> MANIFEST=<signed update manifest>"; exit 1; }
+	cp $(REVIEW)/review.json $(REVIEW)/build-manifest.json $(REVIEW)/image.bin $(APP_INSTALLER)/
+	cp $(MANIFEST) $(APP_INSTALLER)/update.manifest
+	@echo "WELLFED_INSTALLER_PIN=$$(sha256sum $(APP_INSTALLER)/review.json | cut -d' ' -f1):$$(sha256sum $(APP_INSTALLER)/update.manifest | cut -d' ' -f1):<the manifest's version>"
 
 # The server store's queries are checked at build time against committed
 # metadata, so no build needs a database. After changing a query or a

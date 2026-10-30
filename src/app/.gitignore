@@ -46,3 +46,7 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# The image the APK installs: a build-time input, never in Git.
+/assets/installer/*
+!/assets/installer/README.md

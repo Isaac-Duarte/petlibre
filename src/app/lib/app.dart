@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import 'platform/install_ports.dart';
 import 'platform/pairing_ports.dart';
 import 'screens/add_feeder.dart';
 import 'screens/home.dart';
+import 'screens/install_screen.dart';
 import 'screens/recover_screen.dart';
 import 'screens/setup_screen.dart';
 import 'screens/welcome.dart';
@@ -52,6 +54,10 @@ class _WellfedAppState extends State<WellfedApp> {
       '/add': (context) => const AddFeederScreen(),
       '/setup': (context) => SetupScreen(app: widget.app, ports: _pairing),
       '/recover': (context) => RecoverScreen(app: widget.app, ports: _pairing),
+      '/install': (context) => InstallScreen(
+        book: widget.app,
+        ports: AppInstallPorts(widget.app.key),
+      ),
     },
   );
 

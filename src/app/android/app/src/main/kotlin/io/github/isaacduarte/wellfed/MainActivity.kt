@@ -46,7 +46,9 @@ class MainActivity : FlutterActivity() {
 
             override fun onLost(network: Network) {
                 if (home == network) home = null
-                if (connectivity.boundNetworkForProcess == network) {
+                // This request matches the feeder's network too: while it is
+                // held, an unbound process would send the frame out by default.
+                if (feeder == null && connectivity.boundNetworkForProcess == network) {
                     connectivity.bindProcessToNetwork(null)
                 }
             }

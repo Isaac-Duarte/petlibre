@@ -16,7 +16,7 @@ Stock's own updater does the hard part. Stock 1.1.15 will install any image we s
 | Moving stock to the installer by DNS | Works: run on the research unit, from the bench and from the phone |
 | The Reset hold and the setup frame, from the app | Works: run once on the research unit, from the phone |
 | The guided installer, `wellfed install` | Experimental |
-| Saving and restoring the feeder's own stock image | Experimental |
+| Saving and restoring the feeder's own stock image, from the CLI and the app | Experimental: simulation only, not yet run on the research unit |
 
 ## What already works on the bench
 
@@ -304,11 +304,12 @@ The vendor's firmware can't ship with the app. But each feeder already holds its
   - `wellfed backup read` reads and keeps it from a replacement on bank 0, outside an install;
   - `wellfed backup show` prints its version, digest and path;
   - `wellfed backup export --output <file>` checks it again and copies it byte for byte to a new file;
-  - `wellfed restore-stock --version <n>` is "Restore stock", the signed install below.
+  - `wellfed restore-stock` is "Restore stock", the signed install below.
 
   After promotion the feeder holds no copy, so the backup comes from the owner's copy, never read back from the feeder.
 - **Saving a copy:** when an install ends, the Android app can hand the backup to any app through the share sheet.
-- **Still to come:** the Android app and the server's web UI will show the backup (stock version, verified), copy it to the owner's server and offer "Restore stock", through the same `wellfed-client` steps.
+- **Restoring from the app:** the app shows the kept backup (stock version, checked) and offers "Restore original firmware". If the phone holds no copy, it says so and takes a file you saved, through the same check.
+- **Still to come:** the server's web UI will show the backup, copy it to the owner's server and offer "Restore stock", through the same `wellfed-client` steps.
 - **Why not keep it on the feeder.** The only place it fits is bank 1. That means running from bank 0 for good, with no known-good fallback bank, and the first update into bank 1 would destroy it anyway. No other 1.3 MiB of flash is established as free.
 - **Why this route.** These are your own bytes, from your own device, so there is no redistribution question.
 
@@ -316,16 +317,18 @@ The vendor's firmware can't ship with the app. But each feeder already holds its
 
 **Rolling back.** Our firmware installs a stock image as a signed update (`wellfed-bench ota --review <stock review>`). The bank-0 build writes it into bank 1. Stock's own KM0 then runs, so our trial counter never counts it.
 
-`wellfed restore-stock` does the same from the owner's backup.
-- `wellfed_signing::Frozen::stock` signs it as the stock image. Only the pinned container passes, as for a stock review.
+`wellfed restore-stock` and the app do the same from the owner's backup, through one driver, `wellfed_install::restore`.
+- **The key.** A stock offer always needs a downgrade statement bound to the feeder's identity, the manifest's digest and the floor, so nothing can be signed ahead of time. The restore makes an update key when it starts, enrolls it (you press Dispense at the feeder, the physical consent) and signs on the phone or computer. `--key` on the CLI gives a key the feeder already trusts instead, for the bench, and enrolls nothing.
+- **The key's file** sits beside the backup only until the restore ends. If the enrollment went through and the run ended before its offer, the next run finds the key listed: it sends no second enrollment and asks for no second press. The file goes before the offer does, with the manifest and statement already signed in memory, so a run killed after that cannot offer again with no press; a feeder that never answered the offer costs a second press. It also goes once the feeder says the key is not enrolled, and in the app when you leave the screen. A spent key stays listed on the feeder with its private half gone: it signs nothing more, but it takes a client slot until someone removes it.
+- `wellfed_signing::Frozen::stock` signs it as the stock image, at a version above the feeder's floor (`--version` overrides that). Only the pinned container passes, as for a stock review.
 - The downgrade statement is bound to the feeder's identity and the floor it reports.
-- The push is the installer's own: bank 1 gives way, and bank 0 writes and activates stock.
+- The push is the installer's own, from either bank: from bank 1, the normal case after promotion, bank 1 gives way and bank 0 writes and activates stock. Both banks read one store and one list of enrolled keys, so bank 0 takes the same offer.
 - Nothing re-offers once the push has returned. (Within it, the shared installer offers again only where the update protocol needs it, as after bank 1 gives way.)
 - A refusal ends the restore. A feeder that stops answering after the offer leaves the result **uncertain**, since it may already run stock, which serves no device API. That is reported as such, and never re-offered.
 
 What a rollback keeps and leaves behind:
 
-- **Stock's settings stay.** Our firmware never writes `0x3e8000`–`0x3f0000`, so stock comes back still provisioned. After the DNS route it still names the vendor's broker, so it returns to the cloud once the override is gone. After the fallback it points at the installer's broker; re-pairing with the vendor app returns it to the cloud.
+- **Stock's settings stay.** Our firmware never writes `0x3e8000`–`0x3f0000`, so stock comes back still provisioned. After the DNS route it still names the vendor's broker, so it returns to the cloud once the override is gone. After the Reset route it still names the installer's broker and retries forever: hold Reset for about 5 seconds and set it up in the vendor's app. The app and the CLI record neither route, so their last screen says both.
 - **Our storage stays.** `0x340000`–`0x370000` holds the journal, network credentials, the confirmation record and the lifetime statistics. Stock does not read it.
 - **Bank 0 keeps our build** as a fallback, which the loader never chooses while stock in bank 1 is valid.
 - **Stock's OTA status sector** (`0x3ef000`) may differ from the original after the install.
@@ -340,7 +343,7 @@ This needs the owner. It starts from a confirmed `feeder` on bank 1 and an older
 3. **Check the gate holds.** Plant a foreign file at `private/stock-backups/<identity>/stock-1.1.15.bin` (any bytes; the identity is the key file's 64 hex). Write an installer's config (`wellfed-stock init-installer --mqtt-listen 10.42.103.1:1883 --output private/installer.json`): the bench's captured `server.json` holds a plan snapshot, which `wellfed install` refuses. Then run `wellfed install --stock-config private/installer.json --review private/verification/fw43-01-review --manifest private/verification/fw43-01-manifest.bin`, and confirm the enrolled feeder. Stock installs the build into bank 0, the run pairs (the bench key is already enrolled), and it stops at the backup step: you should see the kept file refused and nothing promoted. Check the feeder answers from bank 0 (`wellfed status`), then remove the planted file.
 4. **Take the backup:** `wellfed install --from-bank0 --stock-config private/installer.json --review … --manifest …`. It reads bank 1 (1,792 pages), keeps it, promotes and confirms. Check that `sha256sum private/stock-backups/<identity>/stock-1.1.15.bin` prints `05147476…` (so its payload is `802ef620…`), and that `cmp` finds the file identical to the stock review's `image.bin`.
 5. **Export:** `wellfed backup export --output private/fw43-export.bin`, then `cmp` it with the kept file.
-6. **Roll back.** With `wellfed-stock serve --config private/installer.json` running (the installer's config from step 3, or a captured config without a `plans` key, never the bench's `server.json`, whose `plans: []` would erase stock's plans as soon as stock comes back) and a UART capture (`wellfed-flash read observe`), run `wellfed restore-stock --version <next+1>`. Bank 1 gives way, bank 0 writes stock, and the restore reports activated. You should see stock's `app_main:version:` banner from bank 1 on the UART, and stock connecting to the broker it was provisioned to with no new setup frame (`/api/status`: online, `softwareVersion` 1.1.15).
+6. **Roll back.** With `wellfed-stock serve --config private/installer.json` running (the installer's config from step 3, or a captured config without a `plans` key, never the bench's `server.json`, whose `plans: []` would erase stock's plans as soon as stock comes back) and a UART capture (`wellfed-flash read observe`), run `wellfed restore-stock --key private/ota-key.json --version <next+1>`. Bank 1 gives way, bank 0 writes stock, and the restore reports activated. You should see stock's `app_main:version:` banner from bank 1 on the UART, and stock connecting to the broker it was provisioned to with no new setup frame (`/api/status`: online, `softwareVersion` 1.1.15).
 7. **Go back and restore:** `wellfed-bench stock-ota` with a `feeder` review, back to the replacement confirmed on bank 1. Stop `serve` and the hotspot as before, and record the run: versions, digests and the kept file's path.
 
 ## Where the installer lives
@@ -365,4 +368,5 @@ The decisions are in [product architecture](product-architecture.md). For the in
 - **Recovered** (October 28, read-only static pass over the 1.1.15 image): the broker kept as a DNS name in `0x3e8000` on plaintext 1883 with no TLS or pinning; setup mode reached only through the Reset hold, whose factory restore erases the plans; the plan reply's fields.
 - **Observed** (October 23, `fw40-stock-ota-07-uart-01`): stock looking its broker name up through the network's resolver and then a public one, and a set-up stock connecting with no `BINDING`.
 - **Modeled** (October 28): the DNS route's steps, the reset warning and the `broker-name` read, host-tested on synthetic bytes. Not yet run on stock.
+- **Modeled** (October 30): the restore with a fresh update key, from bank 1, from the CLI and the app, simulated on synthetic bytes. Not yet run on the feeder.
 - **Modeled** (October 26): the installer, trust on first use, the setup-frame encoder, the backup gate, the stock backup read and `wellfed restore-stock`, host-tested and simulated, on synthetic bytes. Nothing has run on the feeder yet.

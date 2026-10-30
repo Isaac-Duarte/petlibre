@@ -10,6 +10,7 @@ import 'package:flutter_test/flutter_test.dart' show WidgetTester;
 import 'package:wellfed/platform/feeder_ports.dart';
 import 'package:wellfed/platform/install_ports.dart';
 import 'package:wellfed/platform/pairing_ports.dart';
+import 'package:wellfed/platform/restore_ports.dart';
 import 'package:wellfed/platform/setup_link.dart';
 import 'package:wellfed/src/rust/api/feeder.dart';
 import 'package:wellfed/src/rust/api/install.dart';
@@ -19,6 +20,7 @@ import 'package:wellfed/src/rust/api/setup.dart';
 import 'package:wellfed/src/rust/api/store.dart';
 import 'package:wellfed/src/rust/api/update.dart';
 import 'package:wellfed/state/app_state.dart';
+import 'package:wellfed/state/feeder.dart';
 import 'package:wellfed/theme/theme.dart';
 
 /// Pump past transitions. Not `pumpAndSettle`: a screen waiting on the feeder
@@ -500,8 +502,15 @@ class FakeFeederPorts implements FeederPorts {
   @override
   Future<String?> locate(String identity, Duration wait) async => 'lan:4747';
 
+  /// For a test that leaves a screen and comes back to the same feeder.
+  late FeederController controller;
+
   ImageCheck image = const ImageCheck.absent();
-  final pushes = <String>[];
+  final pushes = <String?>[];
+  final located = <(int, String?)>[];
+  int holds = 0;
+  int releases = 0;
+  bool holdGranted = true;
   // ignore: close_sinks, a test ends with its stream open, as a run does when its screen goes.
   final progress = StreamController<UpdateProgress>();
 
@@ -509,10 +518,34 @@ class FakeFeederPorts implements FeederPorts {
   Future<ImageCheck> updateImage() async => image;
 
   @override
-  Stream<UpdateProgress> pushUpdate(String identity, String address) {
+  UpdatePush pushUpdate(String identity, String? address) {
     pushes.add(address);
-    return progress.stream;
+    return _FakePush(this);
   }
+
+  @override
+  Future<bool> holdProcess(String text) async {
+    holds++;
+    return holdGranted;
+  }
+
+  @override
+  Future<void> releaseProcess() async => releases++;
+
+  @override
+  RestorePorts get restore => throw UnimplementedError('no restore here');
+}
+
+class _FakePush implements UpdatePush {
+  _FakePush(this._ports);
+
+  final FakeFeederPorts _ports;
+
+  @override
+  Stream<UpdateProgress> get progress => _ports.progress.stream;
+
+  @override
+  void located(int id, String? address) => _ports.located.add((id, address));
 }
 
 /// A feeder that is ready, with what a test leaves out unread.

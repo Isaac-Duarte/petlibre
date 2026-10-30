@@ -30,13 +30,18 @@ wellfed-stock = { workspace = true, default-features = false }
 # no address, is found on the hotspot by its MAC. The CLI enables it; an app
 # does not, and needs the address the enrollment recorded.
 bench = ["wellfed-stock/bench"]
+# A restore of a stock image no pin names, for tests and simulators, which
+# cannot hold the vendor's image.
+fixtures = ["wellfed-signing/fixtures"]
 
 [dev-dependencies]
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
 rumqttc = { version = "0.25.1", default-features = false }
 tempfile.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "test-util"] }
+wellfed-core.workspace = true
 wellfed-feeder-sim = { workspace = true, features = ["harness"] }
+wellfed-signing = { workspace = true, features = ["fixtures"] }
 
 [lints]
 workspace = true

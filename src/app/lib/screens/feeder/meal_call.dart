@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 
-import 'package:file_picker/file_picker.dart';
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 
 import '../../src/rust/api/feeder.dart';
@@ -16,11 +16,9 @@ import '../../widgets/replies.dart';
 typedef PickRecording = Future<Uint8List?> Function();
 
 Future<Uint8List?> _pickWav() async {
-  final picked = await FilePicker.pickFiles(
-    type: FileType.custom,
-    allowedExtensions: const ['wav'],
-  );
-  return picked.isEmpty ? null : picked.single.readAsBytes();
+  const wav = XTypeGroup(label: 'WAV', extensions: ['wav']);
+  final picked = await openFile(acceptedTypeGroups: const [wav]);
+  return picked?.readAsBytes();
 }
 
 /// The meal call's clip: a plain screen, as no board draws one. Rust converts

@@ -692,7 +692,9 @@ impl Shared {
             }));
         } else if spec.command.own_sessions() {
             let pause = match spec.command {
-                jobs::JobCommand::Install(_) => Pause::StockInstall { job: id },
+                jobs::JobCommand::Install(_) | jobs::JobCommand::RestoreStock(_) => {
+                    Pause::StockInstall { job: id }
+                }
                 _ => Pause::StockOta { job: id },
             };
             self.bed.feeder.hold(Some(pause));

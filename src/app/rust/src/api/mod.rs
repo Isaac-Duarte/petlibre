@@ -7,6 +7,7 @@ pub mod install;
 pub mod join;
 pub mod keys;
 pub mod model;
+pub mod restore;
 pub mod session;
 pub mod setup;
 pub mod store;

@@ -14,9 +14,10 @@ So far it does:
 - **History:** what happened, by kind, and one feed's detail.
 - **Settings:** lights, sounds and their hours, reminders, Wi-Fi, time zone, where the time comes from, and the portion size.
 - **People:** who a feeder lists, removing them, invites as a code or a link, and joining with one.
-- **Updates:** the image this APK carries, offered once and followed to its end.
+- **Updates:** the image this APK carries, offered once and followed to its end. The run outlives the screen, and an end only the feeder can settle stays until it answers that nothing is under way. Restoring the original firmware opens from here.
 - **Diagnostics:** the feeder's counters, motor traces and the live log.
 - **App settings:** appearance, this phone's name, kept backups and About.
+- **Restore:** the vendor's firmware back on the feeder, from the backup the install kept or a copy you saved. You press Dispense on the feeder, and it goes across as an update. Then stock runs, which this app cannot talk to.
 
 Servers come later ([roadmap](../../docs/roadmap.md)). Meal reminders are a setting on the feeder for now: the app sends no notifications.
 
@@ -37,6 +38,14 @@ Servers come later ([roadmap](../../docs/roadmap.md)). Meal reminders are a sett
 - **A session gives a feeder this phone's clock** right after pairing, and whenever the feeder's clock is not set, as `wellfed time` does.
 - **Every socket follows the Wi-Fi network.** Android keeps mobile data as the default network while the Wi-Fi has no internet, so `MainActivity` binds the app to Wi-Fi. A VPN that apps cannot bypass (Tailscale, for one) refuses that: exclude Wellfed from it.
 
+## The restore
+
+`wellfed_install::restore` drives it, the same as `wellfed restore-stock`, on a thread of its own (`rust/src/restore.rs`), with the install's asks and events on its stream and an end of its own. `platform/restore_ports.dart` is what its screens reach outside Dart.
+
+- **The key lasts only as long as the restore.** It is made when the restore starts, enrolled with a Dispense press, and removed before an offer goes out, or when you leave the screen. A retry from the same screen after an enrollment that went through needs no second press.
+- **An uncertain restore is never sent again.** Once the offer may be out, the screen has no way back, and a feeder that stops answering ends on "We can't tell if it went through" with no retry.
+- **A picked file takes the same checks as the kept backup:** `StockBackup::open`, then the signer's own pin.
+
 ## The install
 
 `wellfed_install::run` drives the whole run, the same as the CLI's. Its future is not `Send`, so `rust/src/install.rs` runs it on a thread of its own, with a current-thread tokio runtime. Stock's broker and image server are tasks on that runtime, in this process, on unprivileged ports. The `bench` feature stays off.
@@ -55,7 +64,7 @@ Stock's install goes only from a build whose sources can be reviewed, as with ev
 
 ### The image it installs
 
-The APK carries one image, the consumer build signed with the key the image trusts, so nothing is downloaded at install time. The phone never holds a key a feeder trusts: the update manifest is signed elsewhere, and the run promotes it as signed.
+The APK carries one image, the consumer build signed with the key the image trusts, so nothing is downloaded at install time. Installing, the phone never holds a key a feeder trusts: the update manifest is signed elsewhere, and the run promotes it as signed.
 
 The image is a build-time input. `make app-installer-input` copies a review and its signed manifest into `assets/installer/`, which Git ignores, and prints the pin to build with:
 

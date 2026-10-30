@@ -36,6 +36,12 @@ pub fn promotion_path(backups: &Path, identity: &[u8; 32], version: u32) -> Path
     feeder_directory(backups, identity).join(format!("promotion-v{version}.manifest"))
 }
 
+/// Where a restore keeps the update key it made for the feeder `identity`,
+/// only until the restore ends ([`crate::restore`]).
+pub fn restore_key_path(backups: &Path, identity: &[u8; 32]) -> PathBuf {
+    feeder_directory(backups, identity).join("restore-key.json")
+}
+
 /// Where the install keeps stock's plan sectors, beside the feeder's
 /// backup: the count byte and entries as the feeder served them
 /// (`wellfed_client::install::plans::kept`), which `wellfed-stock plans`

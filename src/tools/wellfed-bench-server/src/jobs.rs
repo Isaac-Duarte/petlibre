@@ -29,7 +29,7 @@ use wellfed_core::buttons::Buttons;
 use crate::api::Refusal;
 use crate::board::SharedBoard;
 use crate::feeder::Feeder;
-use crate::tool_jobs::{self, Asking, InstallArgs, ToolJobError};
+use crate::tool_jobs::{self, Asking, InstallArgs, RestoreStockArgs, ToolJobError};
 
 /// A bench command that touches the hardware, as a job.
 #[derive(Debug, Clone, Subcommand)]
@@ -112,6 +112,10 @@ pub enum JobCommand {
     /// `wellfed-bench answer` or by an agent. Restarts the
     /// feeder itself with relay 1 when the installer asks for it.
     Install(InstallArgs),
+    /// `wellfed restore-stock` as a job: a fresh update key enrolled with a
+    /// Dispense press, or a key the feeder trusts, then stock over the device
+    /// API. Nothing is offered again once its push returned.
+    RestoreStock(RestoreStockArgs),
 }
 
 impl JobCommand {
@@ -135,12 +139,17 @@ impl JobCommand {
             Self::Itest(_) => BenchCommand::Itest,
             Self::StockOta(_) => BenchCommand::StockOta,
             Self::Install(_) => BenchCommand::Install,
+            Self::RestoreStock(_) => BenchCommand::RestoreStock,
         }
     }
 
     pub fn name(&self) -> Option<&str> {
         match self {
-            Self::Off | Self::On | Self::Press { .. } | Self::Install(_) => None,
+            Self::Off
+            | Self::On
+            | Self::Press { .. }
+            | Self::Install(_)
+            | Self::RestoreStock(_) => None,
             Self::Capture { name, .. }
             | Self::Boot { name, .. }
             | Self::Loader { name }
@@ -190,7 +199,8 @@ impl JobCommand {
             | Self::Ota(_)
             | Self::Itest(_)
             | Self::StockOta(_)
-            | Self::Install(_) => false,
+            | Self::Install(_)
+            | Self::RestoreStock(_) => false,
         }
     }
 
@@ -202,7 +212,10 @@ impl JobCommand {
     /// opens no session beside the server's unless the server shows it
     /// paused for the job.
     pub(crate) fn own_sessions(&self) -> bool {
-        matches!(self, Self::StockOta(_) | Self::Install(_))
+        matches!(
+            self,
+            Self::StockOta(_) | Self::Install(_) | Self::RestoreStock(_)
+        )
     }
 
     /// One of the integration suite's commands.
@@ -501,6 +514,9 @@ fn dispatch(
             return Ok(wellfed_itest::stock_ota(bench, args, stock_bin)?);
         }
         JobCommand::Install(args) => return tool_jobs::install(bench, args, tools, asking),
+        JobCommand::RestoreStock(args) => {
+            return tool_jobs::restore_stock(bench, args, tools, asking);
+        }
     };
     Ok(ran?)
 }

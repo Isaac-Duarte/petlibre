@@ -119,6 +119,7 @@ The files and shapes they share (the bench config, a command's progress record, 
 | `ota NAME` | One over-the-air update of the running feeder ([below](#over-the-air-updates)). Never touches power or opens the relay board. |
 | `stock-ota NAME` | Stock installs a Wellfed build through its own updater ([below](#stock-to-a-replacement-stock-ota)) |
 | `install` | `wellfed install` as a job: its questions show on the page and the console, and the page, `answer` and the agent answer them, and it restarts the feeder itself with relay 1 ([below](#install-as-a-job)) |
+| `restore-stock` | `wellfed restore-stock` as a job: a fresh update key enrolled with a Dispense press (unless `--key` names one the feeder trusts), then stock over the device API. With `--virtual-panel` it presses Dispense itself on a running virtual-panel build, and a failed press stops it. Nothing is offered again, and a feeder gone after the offer ends it uncertain ([rollback](../../firmware/consumer-installation.md#rollback)) |
 | `itest NAME` | The real-device [integration suite](#integration-suite). Runs its own hotspot, `serve` and receive-only UART capture, installs over the air, and restores the bench at the end. Opens the relay board only with `--power`, for cold boots. |
 
 `wellfed-bench <command> --help` lists the flags. `flash-prepare` and `flash-execute` take the updater's `--bank`, `--source`, `--original-read`, `--target`, `--interrupted` and `--restore-marker`, and `--attended-motion` for a target whose manifest names a motion policy.

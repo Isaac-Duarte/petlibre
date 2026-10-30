@@ -45,7 +45,7 @@ use crate::api::setup::CONTROL_PIECE;
 use crate::api::store::{KnownFeeder, load_store, save_store};
 
 /// The run's future is deep; a debug build's frames are large.
-const STACK: usize = 16 * 1024 * 1024;
+pub(crate) const STACK: usize = 16 * 1024 * 1024;
 /// How long Dart's NSD lookup may take before the run looks elsewhere.
 const LOCATE_WAIT: Duration = Duration::from_secs(15);
 /// A link the feeder already dropped may stall hanging up.
@@ -58,7 +58,7 @@ const ENROLL: Duration = Duration::from_secs(15 * 60);
 
 /// Where the installer keeps its files under its data directory.
 const CONFIG: &str = "installer.json";
-const BACKUPS: &str = "backups";
+pub(crate) const BACKUPS: &str = "backups";
 
 /// The image's own files, in the folder the APK's were unpacked into.
 pub(crate) const UPDATE_MANIFEST: &str = "update.manifest";
@@ -200,7 +200,7 @@ pub const fn listen_wait() -> Duration {
 }
 
 /// `error` and its causes on one line.
-fn text(error: &(dyn std::error::Error + 'static)) -> String {
+pub(crate) fn text(error: &(dyn std::error::Error + 'static)) -> String {
     let mut text = error.to_string();
     let mut source = error.source();
     while let Some(cause) = source {
@@ -212,11 +212,11 @@ fn text(error: &(dyn std::error::Error + 'static)) -> String {
 }
 
 /// Hands an update to Dart; `false` once nobody listens.
-type Deliver = Box<dyn Fn(InstallUpdate) -> bool + Send>;
+pub(crate) type Deliver = Box<dyn Fn(InstallUpdate) -> bool + Send>;
 
 /// One outstanding set of asks, shared between the run's adapters and the
 /// bridge's answers.
-struct Asks {
+pub(crate) struct Asks {
     /// Taken at the end of the run, which closes Dart's stream.
     deliver: Mutex<Option<Deliver>>,
     waiting: Mutex<HashMap<u32, oneshot::Sender<InstallAnswer>>>,
@@ -226,7 +226,7 @@ struct Asks {
 }
 
 impl Asks {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             deliver: Mutex::new(None),
             waiting: Mutex::new(HashMap::new()),
@@ -237,7 +237,7 @@ impl Asks {
 
     /// The delivery, even after a panic while it was held: the last update
     /// is what tells the screen that happened.
-    fn deliver(&self) -> MutexGuard<'_, Option<Deliver>> {
+    pub(crate) fn deliver(&self) -> MutexGuard<'_, Option<Deliver>> {
         self.deliver.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
@@ -273,7 +273,7 @@ impl Asks {
         }
     }
 
-    fn answer(&self, id: u32, answer: InstallAnswer) {
+    pub(crate) fn answer(&self, id: u32, answer: InstallAnswer) {
         let waiting = self.waiting.lock().ok().and_then(|mut w| w.remove(&id));
         if let Some(waiting) = waiting {
             // The run stopped waiting: nothing to tell.
@@ -292,7 +292,7 @@ impl Asks {
 }
 
 /// The person at the feeder, on Dart's screens.
-struct AppPrompter(Arc<Asks>);
+pub(crate) struct AppPrompter(pub(crate) Arc<Asks>);
 
 impl Prompter for AppPrompter {
     async fn done(&mut self, prompt: Prompt) -> Result<(), PlatformError> {
@@ -407,7 +407,7 @@ impl Bluetooth for AppBluetooth {
     }
 }
 
-struct AppDiscovery(Arc<Asks>);
+pub(crate) struct AppDiscovery(pub(crate) Arc<Asks>);
 
 impl Discovery for AppDiscovery {
     async fn locate(&self, identity: [u8; 32]) -> Option<SocketAddr> {
@@ -472,7 +472,7 @@ impl Keys for AppKeys {
     }
 }
 
-struct AppReport(Arc<Asks>);
+pub(crate) struct AppReport(pub(crate) Arc<Asks>);
 
 impl Report for AppReport {
     fn event(&self, event: Event) {
@@ -592,6 +592,11 @@ impl From<Event> for InstallEvent {
                     "the update key's enrollment went unanswered".to_string()
                 }
             }),
+            Event::Restoring => Self::Promoting,
+            Event::RestoreSigned { version, .. } => {
+                note(format!("stock signed at version {version}"))
+            }
+            Event::RestoreKeyKept { error } => note(error),
             Event::Floor(floor) => note(format!("the feeder's floor is {floor}")),
             Event::Signed { version, .. } => note(format!("signed at version {version}")),
             Event::PlansKept { .. } => note("stock's plans were kept".to_string()),
@@ -1008,7 +1013,7 @@ impl Run {
 
 /// `work`, or `on_panic` with what it said if it panicked: a thread that just
 /// died would leave its screen waiting for an update that never comes.
-fn guarded<T>(work: impl FnOnce() -> T, on_panic: impl FnOnce(String) -> T) -> T {
+pub(crate) fn guarded<T>(work: impl FnOnce() -> T, on_panic: impl FnOnce(String) -> T) -> T {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(work)).unwrap_or_else(|panic| {
         let said = panic
             .downcast_ref::<&str>()
@@ -1109,7 +1114,7 @@ fn run_on_this_thread(
 }
 
 /// Resolves when `stop` says so, or when whoever could say so is gone.
-async fn stopped(mut stop: watch::Receiver<bool>) -> Stop {
+pub(crate) async fn stopped(mut stop: watch::Receiver<bool>) -> Stop {
     // A dropped sender is a stop too: the screen that held it went away.
     let _ = stop.wait_for(|stop| *stop).await;
     Stop::Terminate

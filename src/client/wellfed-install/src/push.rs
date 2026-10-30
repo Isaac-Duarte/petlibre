@@ -1,11 +1,14 @@
 //! Pushing a signed update over the device API until bank 1 is activated:
-//! the install's promotion and the CLI's "Restore stock" both run it.
+//! the install's promotion and a restore of stock ([`crate::restore`]) both
+//! run it.
 //!
 //! The driver is `wellfed_connect::update::push`, which the server's
 //! installs share; this module gives it sessions the caller opens (and
 //! reopens across the feeder's restarts), and reports the progress.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use tokio::time::Instant;
 
 use wellfed_client::update::Image;
 use wellfed_connect::update::{Opened, Pace, Steps};

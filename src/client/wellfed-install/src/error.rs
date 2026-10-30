@@ -237,6 +237,20 @@ pub enum Error {
     #[error(transparent)]
     Setup(Box<Error>),
 
+    #[error("this build takes no updates over the device API")]
+    RestoreNoUpdates,
+    #[error("the feeder was not found on the network")]
+    RestoreNotFound,
+    /// The update key a restore signs with did not reach the feeder.
+    #[error("the restore's update key")]
+    RestoreEnroll(#[source] wellfed_client::update_key::EnrollError),
+    /// The update key could not be made or read back here.
+    #[error("the restore's update key file")]
+    RestoreKey(#[source] wellfed_signing::Error),
+    /// Stopped with nothing offered, so the feeder keeps the replacement.
+    #[error("the restore stopped on {0}, with nothing offered")]
+    RestoreStopped(crate::track::Stop),
+
     #[error("no update key to enroll")]
     NoUpdateKey,
     #[error("no review and key to sign the promotion with")]

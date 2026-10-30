@@ -259,6 +259,24 @@ void main() {
       expect(button.onPressed, isNull);
     });
 
+    testWidgets('a broken connection is uncertain, not a turned-down invite', (
+      tester,
+    ) async {
+      final (ports, _, seen) = await join(tester);
+      ports.answers.add(
+        const BridgeError(kind: ErrorKind.interrupted, message: 'reset'),
+      );
+
+      seen('wellfed-invite:1:x');
+      await settle(tester);
+      await tapIn(tester, find.text('Join Feeder'));
+
+      expect(find.textContaining('may or may not have joined'), findsOneWidget);
+      expect(find.textContaining('turned this invite down'), findsNothing);
+      final button = tester.widget<FilledButton>(find.byType(FilledButton));
+      expect(button.onPressed, isNull);
+    });
+
     testWidgets('no answer is uncertain, and the invite is not sent again', (
       tester,
     ) async {

@@ -9,6 +9,7 @@ import '../src/rust/api/model.dart';
 import '../src/rust/api/session.dart';
 import '../src/rust/api/store.dart';
 import 'app_state.dart';
+import 'update.dart';
 
 enum Connection {
   /// Looking for the feeder's address on the LAN.
@@ -95,6 +96,11 @@ class FeederController extends ChangeNotifier {
 
   /// What the firmware screen reaches outside Dart.
   FeederPorts get ports => _ports;
+
+  /// This feeder's update: it outlives the firmware screen, so coming back shows
+  /// the run as it stands and can never start a second one.
+  UpdateFlow get update => _update ??= UpdateFlow(this);
+  UpdateFlow? _update;
   KnownFeeder known;
 
   Connection connection = Connection.looking;
@@ -117,6 +123,9 @@ class FeederController extends ChangeNotifier {
 
   /// The card was read in the session now open, not an earlier one.
   bool _fresh = false;
+
+  /// The card is what this session read, not an earlier one.
+  bool get cardIsCurrent => connection == Connection.online && _fresh;
 
   bool get canFeed =>
       connection == Connection.online &&
@@ -378,6 +387,7 @@ class FeederController extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _session?.close();
+    _update?.dispose();
     super.dispose();
   }
 }

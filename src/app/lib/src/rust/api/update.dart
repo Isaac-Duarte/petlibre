@@ -6,6 +6,7 @@
 import '../frb_generated.dart';
 import 'error.dart';
 import 'feeder.dart';
+import 'install.dart';
 import 'keys.dart';
 import 'model.dart';
 
@@ -13,15 +14,17 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'update.freezed.dart';
 
-// These functions are ignored because they are not marked as `pub`: `confirm`, `reading`, `try_update`
-// These functions are ignored (category: IgnoreBecauseExplicitAttribute): `update`
+// These functions are ignored because they are not marked as `pub`: `confirm`, `reading`, `try_update`, `update`
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<FirmwareUpdate>>
 abstract class FirmwareUpdate implements RustOpaqueInterface {
+  /// Answer the ask `id`. An answer nobody waits for any more is dropped.
+  void answer({required int id, required InstallAnswer answer});
+
   factory FirmwareUpdate({
     required ClientKey key,
     required List<int> feeder,
-    required String address,
+    String? address,
     required String imageDir,
   }) => RustLib.instance.api.crateApiUpdateFirmwareUpdateNew(
     key: key,
@@ -65,11 +68,11 @@ sealed class UpdateEnd with _$UpdateEnd {
   /// install gives it.
   const factory UpdateEnd.unconfirmed() = UpdateEnd_Unconfirmed;
 
-  /// The new version was activated, and the feeder runs another: it went
-  /// back by itself.
+  /// The new version was activated, and the feeder runs bank 0's copy, which
+  /// may be older than what it ran before the update: a trial that failed.
   const factory UpdateEnd.wentBack() = UpdateEnd_WentBack;
 
-  /// Something of this phone's: the image, or its random source.
+  /// Something of this phone's before any offer: the image, or its address.
   const factory UpdateEnd.failed({required String detail}) = UpdateEnd_Failed;
 }
 
@@ -85,6 +88,10 @@ sealed class UpdateProgress with _$UpdateProgress {
 
   /// The connection dropped; chunks resume where the feeder says.
   const factory UpdateProgress.reconnecting() = UpdateProgress_Reconnecting;
+
+  /// Where the feeder is: answer by id with [`FirmwareUpdate::answer`].
+  const factory UpdateProgress.ask({required int id, required InstallAsk ask}) =
+      UpdateProgress_Ask;
 
   /// The feeder restarts onto the new version and tries it.
   const factory UpdateProgress.activated() = UpdateProgress_Activated;

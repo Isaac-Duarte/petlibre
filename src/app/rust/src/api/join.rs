@@ -45,7 +45,14 @@ pub async fn join_feeder(
         Invite::parse(invite.trim()).map_err(|error| BridgeError::new(ErrorKind::Invite, error))?;
     let address = wellfed_connect::parse_address(&address)?;
 
-    let joined = wellfed_connect::join(key.keypair(), invite, &label, address, random()?).await?;
+    let joined = wellfed_connect::join(key.keypair(), invite, &label, address, random()?)
+        .await
+        .map_err(|error| match error {
+            // A reset is not the feeder's quiet close of a bad invite: the hello
+            // went out, and it may have been spent.
+            wellfed_connect::Error::Io(_) => BridgeError::new(ErrorKind::Interrupted, error),
+            error => error.into(),
+        })?;
     Ok(match joined {
         Joined::Enrolled { role } => JoinAnswer::Joined { role },
         Joined::Refused(refusal) => JoinAnswer::Refused {

@@ -1,8 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../src/rust/api/feeder.dart';
 import '../../src/rust/api/model.dart';
 import '../../src/rust/api/update.dart';
+import '../../state/feeder.dart';
+import '../../theme/theme.dart';
+import '../../widgets/icons.dart';
 import '../../widgets/layout.dart';
 
 /// What an update's end comes to: a title and what it means (12.3).
@@ -18,15 +23,18 @@ import '../../widgets/layout.dart';
   UpdateEnd_Refused(:final refusal) => _refused(name, refusal),
   UpdateEnd_Stopped(stop: UpdateStop.cancelled) => (
     'Update cancelled',
-    '$name still runs its current version.',
+    ' runs its other copy of Wellfed now. It can feed, and may be older '
+        'than the one it ran.',
   ),
   UpdateEnd_Stopped(stop: UpdateStop.hash || UpdateStop.marker) => (
     "Signature didn't check out",
-    'The image may be damaged. Nothing was installed.',
+    "The image may be damaged, so it wasn't installed. $name runs its other "
+        'copy of Wellfed now, which can feed and may be older.',
   ),
   UpdateEnd_Stopped() || UpdateEnd_Lost() => (
     'Stopped partway',
-    "It didn't finish. $name still runs its current version.",
+    "It didn't finish. $name runs its other copy of Wellfed now, which can "
+        'feed and may be older than the one it ran.',
   ),
   UpdateEnd_Uncertain() => (
     '$name stopped answering',
@@ -40,12 +48,12 @@ import '../../widgets/layout.dart';
   UpdateEnd_Unconfirmed() => (
     'Not confirmed yet',
     "$name took the update, but hasn't confirmed the new version. If it "
-        "doesn't start properly, it goes back by itself.",
+        "doesn't start properly, it goes to its other copy of Wellfed by itself.",
   ),
   UpdateEnd_WentBack() => (
-    '$name went back',
-    "The new version didn't start properly, so it returned to the one it ran "
-        'before.',
+    '$name is on its other copy',
+    "The new version didn't start properly, so it runs its other copy of "
+        'Wellfed. That copy can feed, and may be older than the one it ran.',
   ),
   UpdateEnd_Failed(:final detail) => (
     "This phone couldn't send it",
@@ -110,34 +118,63 @@ import '../../widgets/layout.dart';
   _ => ('$name said no', 'Nothing changed.'),
 };
 
-/// Where an update ended, and only one that never reached the feeder offers
-/// another try.
+/// Where an update ended, with what the feeder runs once it answers. An end only
+/// the feeder can settle stays until it has: Done leaves the screen, and coming
+/// back shows the same end rather than an offer.
 class UpdateEndScreen extends StatelessWidget {
-  const UpdateEndScreen({
-    super.key,
-    required this.name,
-    required this.end,
-    this.onTryAgain,
-  });
+  const UpdateEndScreen({super.key, required this.feeder, required this.end});
 
-  final String name;
+  final FeederController feeder;
   final UpdateEnd end;
-  final VoidCallback? onTryAgain;
 
   @override
   Widget build(BuildContext context) {
-    final (title, body) = updateEndWords(name, end);
+    final flow = feeder.update;
+    final (title, body) = updateEndWords(feeder.known.name, end);
+    final card = feeder.card;
     return StepScaffold(
       title: title,
       body: body,
+      content: [
+        FactList([
+          (
+            'Running now',
+            Flexible(
+              child: Text(
+                card != null && feeder.cardIsCurrent
+                    ? 'Bank ${card.bank}, build ${_short(card.build)}'
+                    : 'Shown once it answers',
+                textAlign: TextAlign.end,
+              ),
+            ),
+          ),
+        ]),
+        if (flow.stillUnknown) ...[
+          const SizedBox(height: Space.s3),
+          const Notice(
+            tone: Tone.neutral,
+            glyph: Glyph.info,
+            text: "It hasn't settled yet, or didn't answer. Look again soon.",
+          ),
+        ],
+      ],
       actions: [
-        if (onTryAgain case final tryAgain?)
-          FilledButton(onPressed: tryAgain, child: const Text('Try again')),
+        if (flow.endUnknown)
+          FilledButton(
+            onPressed: () => unawaited(flow.lookAgain()),
+            child: const Text('Look again'),
+          ),
         OutlinedButton(
-          onPressed: () => Navigator.pop(context),
+          onPressed: () {
+            flow.acknowledge();
+            if (flow.endUnknown) Navigator.pop(context);
+          },
           child: const Text('Done'),
         ),
       ],
     );
   }
+
+  static String _short(String build) =>
+      build.length > 12 ? build.substring(0, 12) : build;
 }

@@ -178,6 +178,19 @@ pub enum Event {
     AlreadyActivated,
     /// Bank 1 is activated; the feeder restarts into it.
     Activated,
+    /// A restore signed stock at `version`, for the feeder's `floor`, with
+    /// the update key `key`.
+    RestoreSigned {
+        version: u32,
+        floor: u32,
+        key: [u8; 8],
+    },
+    /// A restore's offer goes out: bank 1 gives way, and bank 0 writes stock.
+    Restoring,
+    /// A restore's update key is spent, and its file could not be removed.
+    RestoreKeyKept {
+        error: String,
+    },
     /// The replacement's plans could not be read.
     PlansUnread {
         error: String,

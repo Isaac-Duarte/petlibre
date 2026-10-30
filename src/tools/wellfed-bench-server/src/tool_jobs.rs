@@ -1,7 +1,12 @@
-//! The `install` job, which runs one tool to its end rather than a rig
-//! sequence: `wellfed install --prompts lines`, as a child of the server,
-//! so the bench lease it takes comes back inherited and the server never
-//! stops for it.
+//! The `install` and `restore-stock` jobs, which each run one tool to its end
+//! rather than a rig sequence: `wellfed install --prompts lines`, or `wellfed
+//! restore-stock --prompts lines`, as a child of the server, so the bench
+//! lease it takes comes back inherited and the server never stops for it.
+//! Nothing here retries either: a press is typed once, and a restore's offer
+//! is the tool's own, which never goes again once its push returned.
+//!
+//! What follows says the installer; a restore talks the same way and asks
+//! only for the Dispense press.
 //!
 //! The installer asks the person at the feeder as it goes. Each question is
 //! one [`Prompt`] line on its standard output, and it waits for one
@@ -179,6 +184,69 @@ impl InstallArgs {
     }
 }
 
+/// `restore-stock`: the flags of `wellfed restore-stock` the bench uses. The
+/// job adds `--prompts lines`.
+#[derive(Debug, Clone, Args)]
+pub struct RestoreStockArgs {
+    /// A stock 1.1.15 image to restore instead of the kept backup; it must
+    /// match the pinned image exactly.
+    #[arg(long)]
+    pub backup: Option<PathBuf>,
+    /// An update-signing key the feeder already trusts. Otherwise a fresh
+    /// key is made and enrolled with a Dispense press.
+    #[arg(long)]
+    pub key: Option<PathBuf>,
+    /// The version the stock manifest carries; otherwise one above the
+    /// feeder's floor.
+    #[arg(long)]
+    pub version: Option<u32>,
+    /// Answer the Dispense press by typing it to a running virtual-panel
+    /// build. The server's own flag; the tool never sees it.
+    #[arg(long)]
+    pub virtual_panel: bool,
+    /// This computer's client key; the tool's default otherwise.
+    #[arg(long)]
+    pub keys: Option<PathBuf>,
+    /// The feeder's identity, as a hex prefix, when the key file knows more
+    /// than one.
+    #[arg(long)]
+    pub feeder: Option<String>,
+    /// The feeder's address; found over mDNS otherwise.
+    #[arg(long)]
+    pub address: Option<String>,
+}
+
+impl RestoreStockArgs {
+    /// The tool's arguments, each value one `--flag=value` word.
+    fn arguments(&self) -> Vec<OsString> {
+        let mut arguments: Vec<OsString> = vec!["restore-stock".into(), "--prompts=lines".into()];
+        let mut value = |flag: &str, value: &dyn AsRef<std::ffi::OsStr>| {
+            let mut word = OsString::from(format!("--{flag}="));
+            word.push(value);
+            arguments.push(word);
+        };
+        if let Some(backup) = &self.backup {
+            value("backup", backup);
+        }
+        if let Some(key) = &self.key {
+            value("key", key);
+        }
+        if let Some(version) = self.version {
+            value("version", &version.to_string());
+        }
+        if let Some(keys) = &self.keys {
+            value("keys", keys);
+        }
+        if let Some(feeder) = &self.feeder {
+            value("feeder", feeder);
+        }
+        if let Some(address) = &self.address {
+            value("address", address);
+        }
+        arguments
+    }
+}
+
 /// Why a tool job stopped.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum ToolJobError {
@@ -189,12 +257,12 @@ pub(crate) enum ToolJobError {
     WellfedMissing { path: PathBuf },
     /// The installer wrote a line on its standard output that is no
     /// prompt; it was stopped.
-    #[error("wellfed install wrote {line:?} where a prompt goes; it was stopped")]
+    #[error("wellfed wrote {line:?} where a prompt goes; it was stopped")]
     Garbled { line: String },
     /// A press for the installer's panel prompt did not echo and release;
     /// the installer was stopped, and nothing was pressed again.
     #[error(
-        "the virtual panel's press {number} of {count} for the {prompt} prompt ({chord}) did not echo and release; wellfed install was stopped and nothing is pressed again"
+        "the virtual panel's press {number} of {count} for the {prompt} prompt ({chord}) did not echo and release; wellfed was stopped and nothing is pressed again"
     )]
     PressFailed {
         prompt: &'static str,
@@ -221,7 +289,7 @@ pub(crate) enum ToolJobError {
         source: wellfed_formats::Error,
     },
     /// The installer stopped: its own last words, as it printed them.
-    #[error("{}", message.as_deref().unwrap_or("wellfed install stopped without saying why"))]
+    #[error("{}", message.as_deref().unwrap_or("wellfed stopped without saying why"))]
     InstallStopped { code: i32, message: Option<String> },
     /// The installer opens its own sessions only beside a server session
     /// shown paused for its job, and it did not show that in time.
@@ -414,25 +482,72 @@ pub(crate) fn install(
     tools: &ToolPaths,
     asking: &Asking,
 ) -> Result<u8, JobError> {
+    if args.virtual_panel {
+        consumer_review(&bench.root, &args.review)?;
+    }
+
+    let talked = converse(
+        bench,
+        tools,
+        asking,
+        args.arguments(),
+        args.virtual_panel,
+        "install",
+    )?;
+    let succeeded = talked.waited.as_ref().is_ok_and(|status| status.success());
+    record_install(bench, args, succeeded);
+    talked.ended()
+}
+
+/// Run `wellfed restore-stock` to its end. Only a whole restore says what
+/// bank 1 holds: anything else may have stopped part-way through its write.
+pub(crate) fn restore_stock(
+    bench: &mut Bench,
+    args: &RestoreStockArgs,
+    tools: &ToolPaths,
+    asking: &Asking,
+) -> Result<u8, JobError> {
+    let talked = converse(
+        bench,
+        tools,
+        asking,
+        args.arguments(),
+        args.virtual_panel,
+        "restore-stock",
+    )?;
+    let succeeded = talked.waited.as_ref().is_ok_and(|status| status.success());
+    let content = if succeeded {
+        Content::Stock
+    } else {
+        Content::Unknown
+    };
+    bench.wrote(Bank::One, content, Source::Install);
+    talked.ended()
+}
+
+/// `wellfed` with `arguments`, spoken with until its pipes close.
+fn converse(
+    bench: &mut Bench,
+    tools: &ToolPaths,
+    asking: &Asking,
+    arguments: Vec<OsString>,
+    virtual_panel: bool,
+    label: &str,
+) -> Result<Talked, JobError> {
     let path = &tools.wellfed_bin;
     wellfed_formats::require(path.is_file(), || ToolJobError::WellfedMissing {
         path: path.clone(),
     })?;
-    if args.virtual_panel {
-        consumer_review(&bench.root, &args.review)?;
-    }
     asking.until_paused(&bench.cancel)?;
 
     let mut command = Command::new(path);
     own_group_with_input(&mut command)
         .current_dir(&bench.root)
-        .args(args.arguments())
+        .args(arguments)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let mut child = command.spawn().map_err(wellfed_rig::Error::from)?;
-    let tracked = bench
-        .children
-        .track(&child, ActivityKind::Install, "install");
+    let tracked = bench.children.track(&child, ActivityKind::Install, label);
 
     if let Some(stdout) = child.stdout.take() {
         read_lines(stdout, asking.sender.clone(), prompt_line);
@@ -441,7 +556,7 @@ pub(crate) fn install(
         read_lines(stderr, asking.sender.clone(), Event::Output);
     }
     let mut talk = Conversation {
-        virtual_panel: args.virtual_panel,
+        virtual_panel,
         input: child.stdin.take(),
         seq: 0,
         stopping: None,
@@ -455,29 +570,41 @@ pub(crate) fn install(
     let waited = child.wait();
     drop(tracked);
     asking.withdraw();
-    let succeeded = waited.as_ref().is_ok_and(|status| status.success());
-    record_install(bench, args, succeeded);
-    let status = waited.map_err(wellfed_rig::Error::from)?;
+    Ok(Talked { waited, talk })
+}
 
-    if let Some(error) = talk.stopping {
-        return Err(error);
-    }
-    if talk.cancelled {
-        return Err(wellfed_rig::Error::Interrupted.into());
-    }
-    match status.code() {
-        Some(0) => Ok(0),
-        Some(code) => Err(ToolJobError::InstallStopped {
-            code,
-            message: talk.last_words.message(),
+/// The tool has exited, and the job's talk with it is over.
+struct Talked {
+    waited: std::io::Result<std::process::ExitStatus>,
+    talk: Conversation,
+}
+
+impl Talked {
+    /// How the job ends, from why it stopped the tool and how the tool exited.
+    fn ended(self) -> Result<u8, JobError> {
+        let Self { waited, talk } = self;
+        let status = waited.map_err(wellfed_rig::Error::from)?;
+
+        if let Some(error) = talk.stopping {
+            return Err(error);
         }
-        .into()),
-        // A signal: whatever it printed last was not its own error.
-        None => Err(ToolJobError::InstallStopped {
-            code: 1,
-            message: None,
+        if talk.cancelled {
+            return Err(wellfed_rig::Error::Interrupted.into());
         }
-        .into()),
+        match status.code() {
+            Some(0) => Ok(0),
+            Some(code) => Err(ToolJobError::InstallStopped {
+                code,
+                message: talk.last_words.message(),
+            }
+            .into()),
+            // A signal: whatever it printed last was not its own error.
+            None => Err(ToolJobError::InstallStopped {
+                code: 1,
+                message: None,
+            }
+            .into()),
+        }
     }
 }
 

@@ -4,20 +4,18 @@ import 'package:flutter/material.dart';
 
 import '../../src/rust/api/feeder.dart';
 import '../../src/rust/api/install.dart';
-import '../../src/rust/api/update.dart';
 import '../../state/feeder.dart';
+import '../../state/update.dart';
 import '../../theme/theme.dart';
 import '../../widgets/icons.dart';
 import '../../widgets/layout.dart';
 import '../../widgets/replies.dart';
+import '../restore_screen.dart';
 import 'update_end.dart';
 
-enum _Stage { offer, sending, restarting, ended }
-
 /// The firmware on this feeder and the update this app carries (12.1, 12.2).
-/// One press offers it once. Nothing here sends it again: an update that ended
-/// without certainty ends on a screen that says so, and only one that never
-/// reached the feeder offers another try.
+/// One press offers it once. The run belongs to the feeder's controller, so
+/// leaving and coming back shows it as it stands rather than a second offer.
 class UpdatesScreen extends StatefulWidget {
   const UpdatesScreen({super.key, required this.feeder});
 
@@ -30,28 +28,14 @@ class UpdatesScreen extends StatefulWidget {
 class _UpdatesScreenState extends State<UpdatesScreen> {
   ImageCheck? _image;
   UpdateInfo? _state;
-  _Stage _stage = _Stage.offer;
-  int _written = 0;
-  int _length = 0;
-  bool _reconnecting = false;
-  UpdateEnd? _end;
-  bool _cancelling = false;
-  StreamSubscription<UpdateProgress>? _run;
 
   FeederController get _feeder => widget.feeder;
+  UpdateFlow get _flow => widget.feeder.update;
 
   @override
   void initState() {
     super.initState();
     unawaited(_read());
-  }
-
-  @override
-  void dispose() {
-    // The driver's thread goes on: a feeder mid-install wants its chunks, and
-    // leaving this screen is not a cancel.
-    unawaited(_run?.cancel());
-    super.dispose();
   }
 
   Future<void> _read() async {
@@ -64,69 +48,22 @@ class _UpdatesScreenState extends State<UpdatesScreen> {
     });
   }
 
-  void _install() {
-    final address = _feeder.known.address;
-    if (address == null) return;
-    setState(() => _stage = _Stage.sending);
-    _run = _feeder.ports
-        .pushUpdate(_feeder.known.identity, address)
-        .listen(
-          _heard,
-          // Rust ends every run with a value; a stream that closes without one
-          // lost its thread, and what the feeder did is not known here.
-          onDone: () {
-            if (mounted && _stage != _Stage.ended) {
-              setState(() {
-                _stage = _Stage.ended;
-                _end = const UpdateEnd.uncertain();
-              });
-            }
-          },
-        );
-  }
-
-  void _heard(UpdateProgress progress) {
-    if (!mounted) return;
-    setState(() {
-      switch (progress) {
-        case UpdateProgress_Sending(:final written, :final length):
-          _written = written;
-          _length = length;
-          _reconnecting = false;
-        case UpdateProgress_Reconnecting():
-          _reconnecting = true;
-        case UpdateProgress_Activated():
-          _stage = _Stage.restarting;
-          _reconnecting = false;
-        case UpdateProgress_Ended(:final end):
-          _stage = _Stage.ended;
-          _end = end;
-      }
-    });
-  }
-
   Future<void> _cancel() async {
-    setState(() => _cancelling = true);
-    final reply = await _feeder.ask(const FeederRequest.cancelUpdate());
-    if (!mounted) return;
-    setState(() => _cancelling = false);
-    showProblem(context, reply);
+    final reply = await _flow.cancel();
+    if (mounted) showProblem(context, reply);
   }
 
   @override
-  Widget build(BuildContext context) {
-    if (_end case final end? when _stage == _Stage.ended) {
-      return UpdateEndScreen(
-        name: _feeder.known.name,
-        end: end,
-        onTryAgain: end is UpdateEnd_NotOffered
-            ? () => setState(() {
-                _end = null;
-                _stage = _Stage.offer;
-              })
-            : null,
-      );
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: Listenable.merge([_flow, _feeder]),
+    builder: (context, _) => _build(context),
+  );
+
+  Widget _build(BuildContext context) {
+    if (_flow.end case final end? when _flow.stage == UpdateStage.ended) {
+      return UpdateEndScreen(feeder: _feeder, end: end);
     }
+    final offering = _flow.stage == UpdateStage.idle;
     return Scaffold(
       appBar: AppBar(
         toolbarHeight: 64,
@@ -138,9 +75,7 @@ class _UpdatesScreenState extends State<UpdatesScreen> {
           icon: StrokeIcon(Glyph.back, color: context.colors.text),
         ),
         title: Text(
-          _stage == _Stage.offer
-              ? 'Firmware'
-              : 'Updating ${_feeder.known.name}',
+          offering ? 'Firmware' : 'Updating ${_feeder.known.name}',
           style: TextStyle(
             fontSize: 20,
             fontWeight: Fonts.semibold,
@@ -148,7 +83,7 @@ class _UpdatesScreenState extends State<UpdatesScreen> {
           ),
         ),
       ),
-      body: _stage == _Stage.offer ? _offer(context) : _progress(context),
+      body: offering ? _offer(context) : _progress(context),
     );
   }
 
@@ -164,10 +99,7 @@ class _UpdatesScreenState extends State<UpdatesScreen> {
     };
     final current = offered != null && build != null && offered.$1 == build;
     final can =
-        offered != null &&
-        !current &&
-        _feeder.connection == Connection.online &&
-        _feeder.known.address != null;
+        offered != null && !current && _feeder.connection == Connection.online;
 
     return ListView(
       padding: const EdgeInsets.all(Space.s4),
@@ -175,8 +107,9 @@ class _UpdatesScreenState extends State<UpdatesScreen> {
         const SectionLabel('Firmware'),
         const SizedBox(height: Space.s2),
         FactList([
+          // The floor, not what runs: a feeder on bank 0 may run older.
           if (state != null && state.minVersion > 0)
-            ('Version', Text('${state.minVersion}')),
+            ('Newest confirmed version', Text('${state.minVersion}')),
           if (build != null) ('Build', Text(_short(build))),
           if (card != null) ('Running from', Text('Bank ${card.bank}')),
         ]),
@@ -213,24 +146,32 @@ class _UpdatesScreenState extends State<UpdatesScreen> {
           ),
           const SizedBox(height: Space.s2),
           Text(
-            "If the new version doesn't start properly, $name goes back to "
-            'this one by itself.',
+            "If the new version doesn't start properly, $name goes to its "
+            'other copy of Wellfed by itself. That copy can feed, and may be '
+            'older than the one it runs now.',
             style: TextStyle(fontSize: 15, height: 1.5, color: c.text),
           ),
           const SizedBox(height: Space.s4),
           FilledButton(
-            onPressed: can ? _install : null,
+            onPressed: can ? () => unawaited(_flow.start()) : null,
             child: Text('Install on $name'),
           ),
         ],
         const SizedBox(height: Space.s5),
         const SectionLabel('Original firmware'),
         const SizedBox(height: Space.s2),
-        // Returning to stock opens from here. It is its own flow, with its own
-        // fresh key and a press on the feeder.
-        const OutlinedButton(
-          onPressed: null,
-          child: Text('Put the original firmware back'),
+        OutlinedButton(
+          onPressed: () => unawaited(
+            Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => RestoreScreen(
+                  feeder: _feeder.known,
+                  ports: _feeder.ports.restore,
+                ),
+              ),
+            ),
+          ),
+          child: const Text('Restore original firmware'),
         ),
       ],
     );
@@ -238,10 +179,11 @@ class _UpdatesScreenState extends State<UpdatesScreen> {
 
   Widget _progress(BuildContext context) {
     final c = context.colors;
+    final flow = _flow;
     final name = _feeder.known.name;
-    final sending = _stage == _Stage.sending;
-    final accepted = _length > 0;
-    final percent = accepted ? (_written * 100 ~/ _length) : 0;
+    final sending = flow.stage == UpdateStage.sending;
+    final accepted = flow.length > 0;
+    final percent = accepted ? (flow.written * 100 ~/ flow.length) : 0;
     return ListView(
       padding: const EdgeInsets.all(Space.s4),
       children: [
@@ -254,7 +196,7 @@ class _UpdatesScreenState extends State<UpdatesScreen> {
           done: !sending,
           active: accepted && sending,
           text: sending
-              ? (_reconnecting ? 'Reconnecting…' : 'Sending $percent%')
+              ? (flow.reconnecting ? 'Reconnecting…' : 'Sending $percent%')
               : 'Sent',
         ),
         _Line(
@@ -262,7 +204,7 @@ class _UpdatesScreenState extends State<UpdatesScreen> {
           active: !sending,
           text: 'Restart on the new version',
         ),
-        _Line(
+        const _Line(
           done: false,
           active: false,
           text: 'Check it can feed, then keep it',
@@ -270,13 +212,22 @@ class _UpdatesScreenState extends State<UpdatesScreen> {
         const SizedBox(height: Space.s4),
         Text(
           'Keep the feeder plugged in. If this phone loses the connection, the '
-          "feeder keeps the version it's running.",
+          'feeder runs its other copy of Wellfed, which can feed and may be '
+          'older than the one it ran.',
           style: TextStyle(fontSize: Sizes.sm, height: 1.5, color: c.textMuted),
         ),
+        if (flow.holdRefused) ...[
+          const SizedBox(height: Space.s3),
+          const Notice(
+            tone: Tone.warning,
+            glyph: Glyph.warning,
+            text: 'Keep this app open until it finishes.',
+          ),
+        ],
         if (sending) ...[
           const SizedBox(height: Space.s4),
           OutlinedButton(
-            onPressed: _cancelling ? null : () => unawaited(_cancel()),
+            onPressed: flow.cancelling ? null : () => unawaited(_cancel()),
             child: const Text('Cancel update'),
           ),
         ],

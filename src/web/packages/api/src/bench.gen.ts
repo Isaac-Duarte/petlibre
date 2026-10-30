@@ -38,7 +38,7 @@ export type FlashTool = { path: string, sha256: string, };
  * history line naming a command this bench no longer has does not read,
  * and the page skips it.
  */
-export type BenchCommand = "status" | "off" | "on" | "capture" | "press" | "boot" | "loader" | "transients" | "dump" | "flash-prepare" | "flash-execute" | "give-way-prepare" | "give-way-execute" | "stock-prepare" | "stock-execute" | "ota" | "itest" | "stock-ota" | "install";
+export type BenchCommand = "status" | "off" | "on" | "capture" | "press" | "boot" | "loader" | "transients" | "dump" | "flash-prepare" | "flash-execute" | "give-way-prepare" | "give-way-execute" | "stock-prepare" | "stock-execute" | "ota" | "itest" | "stock-ota" | "install" | "restore-stock";
 
 export type HistoryEntry = { command: BenchCommand, name: string | null, started: number, finished: number | null, outcome: Outcome, error: string | null, next?: string | null, };
 

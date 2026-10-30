@@ -20,19 +20,22 @@
 //!
 //! [rollback]: ../../../../docs/firmware/consumer-installation.md#rollback
 
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use clap::{Args, Subcommand};
 use serde::Serialize;
 use wellfed_client::install::{STOCK_VERSION, StockBackup};
-use wellfed_client::update::Image;
 use wellfed_formats::canonical::sha256;
-use wellfed_install::push::{Pushed, push};
+use wellfed_install::restore::{
+    Offering, Plan, Platform, Restored, Signing, Target as RestoreTarget, Uncertainty,
+};
 use wellfed_install::storage::{backup_path, load_backup};
-use wellfed_model::{Answer, Op};
-use wellfed_signing::{Frozen, Key, Motion};
+use wellfed_install::{Discovery, Mdns};
+use wellfed_signing::Key;
 
+use crate::ask::{Asker, Prompts};
 use crate::keys::OwnerKey;
 use crate::report::Printer;
 use crate::{Target, connect};
@@ -101,12 +104,20 @@ pub(crate) struct RestoreArgs {
     /// exported copy, say); it must match the pinned image exactly.
     #[arg(long)]
     backup: Option<PathBuf>,
-    /// The update-signing key the feeder trusts.
-    #[arg(long, default_value = wellfed_signing::KEY_PATH)]
-    key: PathBuf,
-    /// The version the stock manifest carries.
+    /// An update-signing key the feeder already trusts, such as the bench's.
+    /// Otherwise a fresh key is made, enrolled with a Dispense press at the
+    /// feeder, and removed when the restore ends.
     #[arg(long)]
-    version: u32,
+    key: Option<PathBuf>,
+    /// The version the stock manifest carries; otherwise one above the
+    /// feeder's floor.
+    #[arg(long)]
+    version: Option<u32>,
+    /// How the press is announced: at this terminal, or as JSON lines on
+    /// standard output and input for the bench server, which runs this as a
+    /// job.
+    #[arg(long, value_enum, default_value_t)]
+    prompts: Prompts,
 }
 
 /// What `show` prints.
@@ -191,71 +202,92 @@ pub(crate) async fn restore(args: RestoreArgs) -> Result<()> {
         }
     };
 
-    // Signed as the stock image: only the pinned container passes.
-    let frozen = Frozen::stock(backup.bytes().to_vec()).context("sign the backup as stock")?;
-    let key = Key::load(&args.key).with_context(|| format!("load {}", args.key.display()))?;
-    let manifest = frozen.offer(&key, args.version, Motion::Refused)?;
-
-    let (_, _, mut connection) = connect(&args.target).await?;
-    if !connection.capabilities().update {
-        bail!("this build takes no updates over the device API");
-    }
-    let floor = match connection.ask(&Op::UpdateState).await? {
-        Answer::Update(view) => view.min_version,
-        other => bail!("the feeder answered {other:?} to an update state request"),
+    let signing = match &args.key {
+        Some(file) => Signing::Given(Box::new(
+            Key::load(file).with_context(|| format!("load {}", file.display()))?,
+        )),
+        None => Signing::Fresh,
     };
-    let downgrade = key.downgrade(&manifest, &identity, floor)?;
-    drop(connection);
-
-    eprintln!(
-        "Restoring stock {STOCK_VERSION} as version {} (a downgrade at floor {floor}).",
-        args.version
-    );
-    let address = crate::device::locate(&identity, args.target.address.as_deref())?;
-    let image = Image {
-        manifest: &manifest,
-        downgrade: Some(&downgrade),
-        payload: backup.payload(),
-    };
-    let keypair = key_file.keypair();
-    let pushed = push(
-        image,
-        async || {
-            Ok(wellfed_connect::Connection::open(
-                keypair,
-                identity,
-                address,
-                wellfed_install::session::random()?,
-            )
-            .await?)
+    let address = args
+        .target
+        .address
+        .as_deref()
+        .map(wellfed_connect::parse_address)
+        .transpose()?;
+    let located = address.is_some();
+    let plan = Plan::new(
+        &backup,
+        RestoreTarget {
+            identity,
+            address,
+            backups: args.backups,
+            signing,
+            version: args.version,
         },
-        // Stock serves no device API: a session that opens is never it.
-        |_, _| false,
-        &Printer,
     )
-    .await?;
+    .context("sign the backup as stock")?;
 
-    match pushed {
-        Pushed::Activated | Pushed::AlreadyRunning => {
+    let discovery = if located { Finder::Given } else { Finder::Mdns };
+    let platform = Platform {
+        // Only announcements: a terminal has nothing to read back.
+        prompter: match args.prompts {
+            Prompts::Terminal => Asker::terminal_notices(),
+            Prompts::Lines => Asker::standard(Prompts::Lines),
+        },
+        discovery,
+        keypair: key_file.keypair().clone(),
+        report: Printer,
+        offering: Offering::default(),
+    };
+    match wellfed_install::restore::restore(plan, platform, crate::install::signalled()?).await? {
+        Restored::Activated => {
             eprintln!(
-                "Activated: the feeder restarts into stock {STOCK_VERSION} from bank 1, with \
-                 its own settings. Stock serves no device API: check it in stock's app, or \
-                 on the broker it was provisioned to."
+                "Activated: the feeder restarts into stock {STOCK_VERSION} from bank 1, with its \
+                 own settings. Stock serves no device API: check it in stock's app, or on the \
+                 broker it was provisioned to. After a Reset install it still names this \
+                 computer's broker and retries forever: hold Reset for about 5 seconds and set \
+                 it up in the vendor's app. After a DNS install it returns to the vendor's cloud \
+                 once the DNS override is gone."
             );
             Ok(())
         }
-        Pushed::Failed(error) => bail!(
+        Restored::Refused(error) => bail!(
             "the restore stopped: {error}; the offer is not sent again. The feeder keeps \
              running the replacement from bank 0 (bank 1 may be partly written)."
         ),
-        Pushed::Gone { offered: true } => bail!(
-            "uncertain: the feeder stopped answering after the offer went out. It may be \
-             running stock already, or still the replacement; nothing is sent again. Look at \
-             the feeder (stock's app, or a session with this computer's key) before trying \
-             anything else."
-        ),
-        Pushed::Gone { offered: false } => {
-            bail!("the feeder did not answer; nothing was offered")
+        Restored::Uncertain(why) => {
+            let what = match why {
+                Uncertainty::Gone => {
+                    "the feeder stopped answering after the offer went out".to_string()
+                }
+                Uncertainty::Stopped(by) => {
+                    format!("stopped on {by} as the offer was going out, or after it had")
+                }
+                Uncertainty::Failed(error) => {
+                    format!("this run failed as the offer was going out, or after it had ({error})")
+                }
+            };
+            bail!(
+                "uncertain: {what}. The feeder may be running stock already, or still the \
+                 replacement; nothing is sent again. Look at the feeder (stock's app, or a \
+                 session with this computer's key) before trying anything else."
+            )
+        }
+    }
+}
+
+/// Where a restore looks for the feeder once its address stops answering: an
+/// address the owner gave is the only one.
+enum Finder {
+    Given,
+    Mdns,
+}
+
+impl Discovery for Finder {
+    async fn locate(&self, identity: [u8; 32]) -> Option<SocketAddr> {
+        match self {
+            Self::Given => None,
+            Self::Mdns => Mdns.locate(identity).await,
         }
     }
 }

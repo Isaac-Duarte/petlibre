@@ -9,6 +9,7 @@ import 'api/install.dart';
 import 'api/join.dart';
 import 'api/keys.dart';
 import 'api/model.dart';
+import 'api/restore.dart';
 import 'api/session.dart';
 import 'api/setup.dart';
 import 'api/store.dart';
@@ -55,6 +56,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRecoveryPtr;
 
   CrossPlatformFinalizerArg
+  get rust_arc_decrement_strong_count_RestoreRunPtr => wire
+      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRestoreRunPtr;
+
+  CrossPlatformFinalizerArg
   get rust_arc_decrement_strong_count_SetupDriverPtr => wire
       ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSetupDriverPtr;
 
@@ -94,6 +99,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   Recovery
   dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRecovery(
+    dynamic raw,
+  );
+
+  @protected
+  RestoreRun
+  dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRestoreRun(
     dynamic raw,
   );
 
@@ -146,6 +157,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  RestoreRun
+  dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRestoreRun(
+    dynamic raw,
+  );
+
+  @protected
   SetupDriver
   dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSetupDriver(
     dynamic raw,
@@ -188,6 +205,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  RestoreRun
+  dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRestoreRun(
+    dynamic raw,
+  );
+
+  @protected
   SetupDriver
   dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSetupDriver(
     dynamic raw,
@@ -200,6 +223,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RustStreamSink<ListenUpdate> dco_decode_StreamSink_listen_update_Sse(
+    dynamic raw,
+  );
+
+  @protected
+  RustStreamSink<RestoreUpdate> dco_decode_StreamSink_restore_update_Sse(
     dynamic raw,
   );
 
@@ -224,6 +252,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   Appearance dco_decode_appearance(dynamic raw);
+
+  @protected
+  BackupCheck dco_decode_backup_check(dynamic raw);
 
   @protected
   Blocked dco_decode_blocked(dynamic raw);
@@ -356,6 +387,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   Resets dco_decode_box_autoadd_resets(dynamic raw);
+
+  @protected
+  RestoreEnd dco_decode_box_autoadd_restore_end(dynamic raw);
+
+  @protected
+  RestoreSpec dco_decode_box_autoadd_restore_spec(dynamic raw);
 
   @protected
   SettingsChanges dco_decode_box_autoadd_settings_changes(dynamic raw);
@@ -754,6 +791,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Resets dco_decode_resets(dynamic raw);
 
   @protected
+  RestoreEnd dco_decode_restore_end(dynamic raw);
+
+  @protected
+  RestoreSpec dco_decode_restore_spec(dynamic raw);
+
+  @protected
+  RestoreStop dco_decode_restore_stop(dynamic raw);
+
+  @protected
+  RestoreUpdate dco_decode_restore_update(dynamic raw);
+
+  @protected
   Resume dco_decode_resume(dynamic raw);
 
   @protected
@@ -815,6 +864,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   int dco_decode_u_8(dynamic raw);
+
+  @protected
+  UncertainWhy dco_decode_uncertain_why(dynamic raw);
 
   @protected
   UncertainWrite dco_decode_uncertain_write(dynamic raw);
@@ -901,6 +953,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  RestoreRun
+  sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRestoreRun(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   SetupDriver
   sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSetupDriver(
     SseDeserializer deserializer,
@@ -949,6 +1007,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  RestoreRun
+  sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRestoreRun(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   SetupDriver
   sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSetupDriver(
     SseDeserializer deserializer,
@@ -991,6 +1055,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  RestoreRun
+  sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRestoreRun(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   SetupDriver
   sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSetupDriver(
     SseDeserializer deserializer,
@@ -1003,6 +1073,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RustStreamSink<ListenUpdate> sse_decode_StreamSink_listen_update_Sse(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  RustStreamSink<RestoreUpdate> sse_decode_StreamSink_restore_update_Sse(
     SseDeserializer deserializer,
   );
 
@@ -1029,6 +1104,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   Appearance sse_decode_appearance(SseDeserializer deserializer);
+
+  @protected
+  BackupCheck sse_decode_backup_check(SseDeserializer deserializer);
 
   @protected
   Blocked sse_decode_blocked(SseDeserializer deserializer);
@@ -1179,6 +1257,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   Resets sse_decode_box_autoadd_resets(SseDeserializer deserializer);
+
+  @protected
+  RestoreEnd sse_decode_box_autoadd_restore_end(SseDeserializer deserializer);
+
+  @protected
+  RestoreSpec sse_decode_box_autoadd_restore_spec(SseDeserializer deserializer);
 
   @protected
   SettingsChanges sse_decode_box_autoadd_settings_changes(
@@ -1621,6 +1705,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Resets sse_decode_resets(SseDeserializer deserializer);
 
   @protected
+  RestoreEnd sse_decode_restore_end(SseDeserializer deserializer);
+
+  @protected
+  RestoreSpec sse_decode_restore_spec(SseDeserializer deserializer);
+
+  @protected
+  RestoreStop sse_decode_restore_stop(SseDeserializer deserializer);
+
+  @protected
+  RestoreUpdate sse_decode_restore_update(SseDeserializer deserializer);
+
+  @protected
   Resume sse_decode_resume(SseDeserializer deserializer);
 
   @protected
@@ -1682,6 +1778,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   int sse_decode_u_8(SseDeserializer deserializer);
+
+  @protected
+  UncertainWhy sse_decode_uncertain_why(SseDeserializer deserializer);
 
   @protected
   UncertainWrite sse_decode_uncertain_write(SseDeserializer deserializer);
@@ -1778,6 +1877,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void
+  sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRestoreRun(
+    RestoreRun self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
   sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSetupDriver(
     SetupDriver self,
     SseSerializer serializer,
@@ -1834,6 +1940,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void
+  sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRestoreRun(
+    RestoreRun self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
   sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSetupDriver(
     SetupDriver self,
     SseSerializer serializer,
@@ -1883,6 +1996,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void
+  sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRestoreRun(
+    RestoreRun self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
   sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSetupDriver(
     SetupDriver self,
     SseSerializer serializer,
@@ -1897,6 +2017,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_StreamSink_listen_update_Sse(
     RustStreamSink<ListenUpdate> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_StreamSink_restore_update_Sse(
+    RustStreamSink<RestoreUpdate> self,
     SseSerializer serializer,
   );
 
@@ -1926,6 +2052,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_appearance(Appearance self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_backup_check(BackupCheck self, SseSerializer serializer);
 
   @protected
   void sse_encode_blocked(Blocked self, SseSerializer serializer);
@@ -2139,6 +2268,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_box_autoadd_resets(Resets self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_restore_end(
+    RestoreEnd self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_restore_spec(
+    RestoreSpec self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_box_autoadd_settings_changes(
@@ -2690,6 +2831,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_resets(Resets self, SseSerializer serializer);
 
   @protected
+  void sse_encode_restore_end(RestoreEnd self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_restore_spec(RestoreSpec self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_restore_stop(RestoreStop self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_restore_update(RestoreUpdate self, SseSerializer serializer);
+
+  @protected
   void sse_encode_resume(Resume self, SseSerializer serializer);
 
   @protected
@@ -2754,6 +2907,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_u_8(int self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_uncertain_why(UncertainWhy self, SseSerializer serializer);
 
   @protected
   void sse_encode_uncertain_write(
@@ -3026,6 +3182,40 @@ class RustLibWire implements BaseWire {
       );
   late final _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRecovery =
       _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRecoveryPtr
+          .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
+
+  void
+  rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRestoreRun(
+    ffi.Pointer<ffi.Void> ptr,
+  ) {
+    return _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRestoreRun(
+      ptr,
+    );
+  }
+
+  late final _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRestoreRunPtr =
+      _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<ffi.Void>)>>(
+        'frbgen_wellfed_rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRestoreRun',
+      );
+  late final _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRestoreRun =
+      _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRestoreRunPtr
+          .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
+
+  void
+  rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRestoreRun(
+    ffi.Pointer<ffi.Void> ptr,
+  ) {
+    return _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRestoreRun(
+      ptr,
+    );
+  }
+
+  late final _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRestoreRunPtr =
+      _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<ffi.Void>)>>(
+        'frbgen_wellfed_rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRestoreRun',
+      );
+  late final _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRestoreRun =
+      _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRestoreRunPtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
   void

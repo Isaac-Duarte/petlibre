@@ -78,4 +78,7 @@ enum ErrorKind {
 
   /// The text is not an invite.
   invite,
+
+  /// The connection broke during an exchange: its outcome is unknown.
+  interrupted,
 }

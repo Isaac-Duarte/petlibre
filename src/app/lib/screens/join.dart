@@ -149,6 +149,9 @@ class _JoinScreenState extends State<JoinScreen> {
                 'Ask for a new one.',
           ErrorKind.label => 'A phone name is 1 to 16 bytes.',
           ErrorKind.store => 'Joined, but this phone could not save it.',
+          ErrorKind.interrupted =>
+            'The connection broke, so you may or may not have joined. Wellfed '
+                "won't send this invite again. Ask for a new one.",
           ErrorKind.timeout =>
             "No answer came, so you may or may not have joined. Wellfed won't "
                 'send this invite again. Ask for a new one.',

@@ -701,12 +701,13 @@ extension UpdateProgressPatterns on UpdateProgress {
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( UpdateProgress_Sending value)?  sending,TResult Function( UpdateProgress_Reconnecting value)?  reconnecting,TResult Function( UpdateProgress_Activated value)?  activated,TResult Function( UpdateProgress_Ended value)?  ended,required TResult orElse(),}){
+@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( UpdateProgress_Sending value)?  sending,TResult Function( UpdateProgress_Reconnecting value)?  reconnecting,TResult Function( UpdateProgress_Ask value)?  ask,TResult Function( UpdateProgress_Activated value)?  activated,TResult Function( UpdateProgress_Ended value)?  ended,required TResult orElse(),}){
 final _that = this;
 switch (_that) {
 case UpdateProgress_Sending() when sending != null:
 return sending(_that);case UpdateProgress_Reconnecting() when reconnecting != null:
-return reconnecting(_that);case UpdateProgress_Activated() when activated != null:
+return reconnecting(_that);case UpdateProgress_Ask() when ask != null:
+return ask(_that);case UpdateProgress_Activated() when activated != null:
 return activated(_that);case UpdateProgress_Ended() when ended != null:
 return ended(_that);case _:
   return orElse();
@@ -726,12 +727,13 @@ return ended(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( UpdateProgress_Sending value)  sending,required TResult Function( UpdateProgress_Reconnecting value)  reconnecting,required TResult Function( UpdateProgress_Activated value)  activated,required TResult Function( UpdateProgress_Ended value)  ended,}){
+@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( UpdateProgress_Sending value)  sending,required TResult Function( UpdateProgress_Reconnecting value)  reconnecting,required TResult Function( UpdateProgress_Ask value)  ask,required TResult Function( UpdateProgress_Activated value)  activated,required TResult Function( UpdateProgress_Ended value)  ended,}){
 final _that = this;
 switch (_that) {
 case UpdateProgress_Sending():
 return sending(_that);case UpdateProgress_Reconnecting():
-return reconnecting(_that);case UpdateProgress_Activated():
+return reconnecting(_that);case UpdateProgress_Ask():
+return ask(_that);case UpdateProgress_Activated():
 return activated(_that);case UpdateProgress_Ended():
 return ended(_that);}
 }
@@ -747,12 +749,13 @@ return ended(_that);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( UpdateProgress_Sending value)?  sending,TResult? Function( UpdateProgress_Reconnecting value)?  reconnecting,TResult? Function( UpdateProgress_Activated value)?  activated,TResult? Function( UpdateProgress_Ended value)?  ended,}){
+@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( UpdateProgress_Sending value)?  sending,TResult? Function( UpdateProgress_Reconnecting value)?  reconnecting,TResult? Function( UpdateProgress_Ask value)?  ask,TResult? Function( UpdateProgress_Activated value)?  activated,TResult? Function( UpdateProgress_Ended value)?  ended,}){
 final _that = this;
 switch (_that) {
 case UpdateProgress_Sending() when sending != null:
 return sending(_that);case UpdateProgress_Reconnecting() when reconnecting != null:
-return reconnecting(_that);case UpdateProgress_Activated() when activated != null:
+return reconnecting(_that);case UpdateProgress_Ask() when ask != null:
+return ask(_that);case UpdateProgress_Activated() when activated != null:
 return activated(_that);case UpdateProgress_Ended() when ended != null:
 return ended(_that);case _:
   return null;
@@ -771,11 +774,12 @@ return ended(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( int written,  int length)?  sending,TResult Function()?  reconnecting,TResult Function()?  activated,TResult Function( UpdateEnd end)?  ended,required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( int written,  int length)?  sending,TResult Function()?  reconnecting,TResult Function( int id,  InstallAsk ask)?  ask,TResult Function()?  activated,TResult Function( UpdateEnd end)?  ended,required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case UpdateProgress_Sending() when sending != null:
 return sending(_that.written,_that.length);case UpdateProgress_Reconnecting() when reconnecting != null:
-return reconnecting();case UpdateProgress_Activated() when activated != null:
+return reconnecting();case UpdateProgress_Ask() when ask != null:
+return ask(_that.id,_that.ask);case UpdateProgress_Activated() when activated != null:
 return activated();case UpdateProgress_Ended() when ended != null:
 return ended(_that.end);case _:
   return orElse();
@@ -795,11 +799,12 @@ return ended(_that.end);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( int written,  int length)  sending,required TResult Function()  reconnecting,required TResult Function()  activated,required TResult Function( UpdateEnd end)  ended,}) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( int written,  int length)  sending,required TResult Function()  reconnecting,required TResult Function( int id,  InstallAsk ask)  ask,required TResult Function()  activated,required TResult Function( UpdateEnd end)  ended,}) {final _that = this;
 switch (_that) {
 case UpdateProgress_Sending():
 return sending(_that.written,_that.length);case UpdateProgress_Reconnecting():
-return reconnecting();case UpdateProgress_Activated():
+return reconnecting();case UpdateProgress_Ask():
+return ask(_that.id,_that.ask);case UpdateProgress_Activated():
 return activated();case UpdateProgress_Ended():
 return ended(_that.end);}
 }
@@ -815,11 +820,12 @@ return ended(_that.end);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( int written,  int length)?  sending,TResult? Function()?  reconnecting,TResult? Function()?  activated,TResult? Function( UpdateEnd end)?  ended,}) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( int written,  int length)?  sending,TResult? Function()?  reconnecting,TResult? Function( int id,  InstallAsk ask)?  ask,TResult? Function()?  activated,TResult? Function( UpdateEnd end)?  ended,}) {final _that = this;
 switch (_that) {
 case UpdateProgress_Sending() when sending != null:
 return sending(_that.written,_that.length);case UpdateProgress_Reconnecting() when reconnecting != null:
-return reconnecting();case UpdateProgress_Activated() when activated != null:
+return reconnecting();case UpdateProgress_Ask() when ask != null:
+return ask(_that.id,_that.ask);case UpdateProgress_Activated() when activated != null:
 return activated();case UpdateProgress_Ended() when ended != null:
 return ended(_that.end);case _:
   return null;
@@ -930,6 +936,85 @@ String toString() {
 
 
 
+
+/// @nodoc
+
+
+class UpdateProgress_Ask extends UpdateProgress {
+  const UpdateProgress_Ask({required this.id, required this.ask}): super._();
+  
+
+ final  int id;
+ final  InstallAsk ask;
+
+/// Create a copy of UpdateProgress
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$UpdateProgress_AskCopyWith<UpdateProgress_Ask> get copyWith => _$UpdateProgress_AskCopyWithImpl<UpdateProgress_Ask>(this, _$identity);
+
+
+
+@override
+bool operator ==(Object other) {
+    return identical(this, other) || (other.runtimeType == runtimeType&&other is UpdateProgress_Ask&&(identical(other.id, id) || other.id == id)&&(identical(other.ask, ask) || other.ask == ask));
+}
+
+
+@override
+int get hashCode {
+    return Object.hash(runtimeType,id,ask);
+}
+
+@override
+String toString() {
+    return 'UpdateProgress.ask(id: $id, ask: $ask)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $UpdateProgress_AskCopyWith<$Res> implements $UpdateProgressCopyWith<$Res> {
+  factory $UpdateProgress_AskCopyWith(UpdateProgress_Ask value, $Res Function(UpdateProgress_Ask) _then) = _$UpdateProgress_AskCopyWithImpl;
+@useResult
+$Res call({
+ int id, InstallAsk ask
+});
+
+
+$InstallAskCopyWith<$Res> get ask;
+
+}
+/// @nodoc
+class _$UpdateProgress_AskCopyWithImpl<$Res>
+    implements $UpdateProgress_AskCopyWith<$Res> {
+  _$UpdateProgress_AskCopyWithImpl(this._self, this._then);
+
+  final UpdateProgress_Ask _self;
+  final $Res Function(UpdateProgress_Ask) _then;
+
+/// Create a copy of UpdateProgress
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') $Res call({Object? id = null,Object? ask = null,}) {
+  return _then(UpdateProgress_Ask(
+id: null == id ? _self.id : id // ignore: cast_nullable_to_non_nullable
+as int,ask: null == ask ? _self.ask : ask // ignore: cast_nullable_to_non_nullable
+as InstallAsk,
+  ));
+}
+
+/// Create a copy of UpdateProgress
+/// with the given fields replaced by the non-null parameter values.
+@override
+@pragma('vm:prefer-inline')
+$InstallAskCopyWith<$Res> get ask {
+  
+  return $InstallAskCopyWith<$Res>(_self.ask, (value) {
+    return _then(_self.copyWith(ask: value));
+  });
+}
+}
 
 /// @nodoc
 

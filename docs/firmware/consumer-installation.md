@@ -329,10 +329,11 @@ The vendor's firmware can't ship with the app. But each feeder already holds its
 What a rollback keeps and leaves behind:
 
 - **Stock's settings stay.** Our firmware never writes `0x3e8000`–`0x3f0000`, so stock comes back still provisioned. After the DNS route it still names the vendor's broker, so it returns to the cloud once the override is gone. After the Reset route it still names the installer's broker and retries forever: hold Reset for about 5 seconds and set it up in the vendor's app. The app and the CLI record neither route, so their last screen says both.
-- **Our storage stays.** `0x340000`–`0x370000` holds the journal, network credentials, the confirmation record and the lifetime statistics. Stock does not read it.
+- **Our storage stays, except the owner's Wi-Fi and clients.** `0x340000`–`0x370000` holds the journal, the confirmation record, the lifetime statistics and the feeder's identity. Stock does not read it. Bank 0 leaves a handover mark when it activates stock, and the next Wellfed boot, a later install or the loader's fallback, clears the stored Wi-Fi and every client before anything reads them. It keeps the identity, since the owner's backup is filed by it. So a later consumer install behaves like a first one and starts Bluetooth setup by itself, and a phone that was the owner pairs again. An image with build Wi-Fi (a bench image) pairs through the recovery window, so it keeps both and only erases the mark.
+- **A cut stays recoverable.** The record goes first, then the mark, then the bank 1 marker. A cut before the mark leaves this Wellfed with its owner. A cut after it leaves a boot that clears itself into Bluetooth setup, whether or not stock went in. The clearing itself repeats after a cut, because the mark goes last. A record with no marker still refuses the same manifest as failed, as it always did.
 - **Bank 0 keeps our build** as a fallback, which the loader never chooses while stock in bank 1 is valid.
 - **Stock's OTA status sector** (`0x3ef000`) may differ from the original after the install.
-- **No automatic fallback.** If stock fails to boot from bank 1, recovery is UART only (`wellfed-bench stock-prepare` / `stock-execute`).
+- **No automatic fallback from a stock that hangs.** The loader falls back to bank 0 only when bank 1 is invalid, and Wellfed is then in Bluetooth setup. If a valid stock fails to boot from bank 1, recovery is UART only (`wellfed-bench stock-prepare` / `stock-execute`).
 
 ### Proving rollback on the bench
 

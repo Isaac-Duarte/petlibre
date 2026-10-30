@@ -972,6 +972,33 @@ mod tests {
         });
     }
 
+    /// Stock's activation leaves what the next Wellfed boot acts on, as after
+    /// the loader falls back: no clients, so the owner's key no longer opens
+    /// a session, and the identity the backup is filed by.
+    #[test]
+    fn a_boot_after_a_restore_has_no_clients_and_the_same_identity() {
+        paused(async {
+            let rig = Rig::start().await;
+            let backup = synthetic();
+            let hands = Hands::pressing(&rig.sim);
+            let plan = rig.plan(&backup, Signing::Fresh);
+            let restored = rig.run(plan, &hands, |_| {}).await.unwrap();
+            assert_eq!(restored, Restored::Activated);
+            let identity = rig.sim.identity;
+            let address = rig.sim.address;
+            rig.sim.stop().await;
+
+            let sim = Running::start_with(&rig.flash, &rig.banks, None, None, address).await;
+
+            assert_eq!(sim.identity, identity);
+            let opened =
+                Connection::open(&Keypair::from_secret(OWNER), identity, sim.address, [7; 32])
+                    .await;
+            assert!(opened.is_err(), "the owner's key is not listed");
+            sim.stop().await;
+        });
+    }
+
     /// A key file removed from under the run (an earlier screen's forget) is
     /// its own stop, before anything is offered.
     #[test]

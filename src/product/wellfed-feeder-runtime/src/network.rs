@@ -27,6 +27,7 @@
 
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 
+use wellfed_core::store::handover;
 use wellfed_core::store::slot::SlotIo;
 use wellfed_device_api::mailbox::{WifiResult, WifiSource, WifiView};
 use wellfed_device_api::wifi::Credentials;
@@ -280,13 +281,15 @@ impl SlotIo for MappedNet {
 }
 
 /// The stored credentials, read once through the flash map (no lease).
-/// None while a factory reset is unfinished: the Wi-Fi task may ask before
-/// the settings writer has erased the credentials the reset clears.
+/// None while a factory reset or a handover is unfinished: the Wi-Fi task may
+/// ask before the settings writer has erased the credentials it clears. An
+/// image with build Wi-Fi keeps its stores through a handover.
 fn stored(join: &mut Join) -> Option<Credentials> {
     if !join.opened {
         join.opened = true;
         let mut marker = [0; reset::MARKER.len()];
-        let resetting = sdk::storage_read(RESET_BASE, 0, &mut marker) && reset::marked(&marker);
+        let resetting = sdk::storage_read(RESET_BASE, 0, &mut marker)
+            && (reset::marked(&marker) || (!cfg!(build_wifi) && handover::marked(&marker)));
         let mut store = NetStore::default();
         if !resetting {
             store.open(MappedNet);

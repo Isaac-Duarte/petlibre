@@ -37,6 +37,7 @@ use wellfed_core::clock::zone::Rule;
 use wellfed_core::indicator::Light;
 use wellfed_core::log_tail::{Batch as LogBatch, LogTail};
 use wellfed_core::ota::install::{Answer, Progress, Refused};
+use wellfed_core::store::handover;
 use wellfed_core::store::slot::{SlotIo, crc32};
 use wellfed_core::supply::{self, Reading, Sample};
 use wellfed_core::tone::Tune;
@@ -278,6 +279,7 @@ impl SimPlatform {
         mdns: Option<(UdpSocket, Ipv4Addr)>,
     ) -> Result<Self, DeviceError> {
         finish_reset(flash);
+        finish_handover(flash);
         let mut settings = SettingsStore::default();
         settings.open(Region::new(flash, storage::SETTINGS), BINDING);
         let mut net = NetStore::default();
@@ -716,6 +718,26 @@ fn finish_reset(flash: &Rc<Flash>) {
         }
     }
     reset::clear(&marker);
+}
+
+/// A handover from stock's activation, as the settings writer finishes it: a
+/// consumer image's, for the simulator has no build Wi-Fi. A cut in the middle
+/// repeats it, since the mark goes last.
+fn finish_handover(flash: &Rc<Flash>) {
+    let marker = Region::new(flash, storage::RESET);
+    if !handover::pending(&marker) {
+        return;
+    }
+    let net = Region::new(flash, storage::NET);
+    for unit in 0..storage::NET.count {
+        net.erase(unit);
+    }
+    let mut clients = ClientStore::default();
+    clients.open(Region::new(flash, storage::CLIENTS));
+    if let Some(identity) = clients.identity().copied() {
+        let _ = clients.reset(&identity);
+    }
+    handover::clear(&marker);
 }
 
 /// The meal call's work waiting for the writer's turn.

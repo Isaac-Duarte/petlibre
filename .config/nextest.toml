@@ -8,3 +8,12 @@
 slow-timeout = { period = "60s", terminate-after = 3 }
 # Report every failure in one run rather than stopping at the first.
 fail-fast = false
+
+# The app's install runs bind the stock broker's fixed port, and the Reset route
+# binds it on every address, which no other address on that port can share.
+[test-groups]
+app-install-broker = { max-threads = 1 }
+
+[[profile.default.overrides]]
+filter = 'package(wellfed-app-bridge) & binary(install)'
+test-group = 'app-install-broker'

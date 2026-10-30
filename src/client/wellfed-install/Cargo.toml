@@ -35,7 +35,7 @@ bench = ["wellfed-stock/bench"]
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
 rumqttc = { version = "0.25.1", default-features = false }
 tempfile.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "test-util"] }
 wellfed-feeder-sim = { workspace = true, features = ["harness"] }
 
 [lints]

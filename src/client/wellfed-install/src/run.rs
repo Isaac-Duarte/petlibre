@@ -698,10 +698,8 @@ where
     }
 
     async fn send_frame(&mut self, frame: &[u8]) -> Result<(), Error> {
-        // Static analysis: Reset held about 5 s on an unlocked stock panel
-        // starts its factory restore, which is how the vendor app's "add
-        // device" begins; that it leaves stock in setup mode is still to be
-        // seen on hardware.
+        // Reset held about 5 s on an unlocked stock panel starts its factory
+        // restore, which leaves stock in setup mode (observed).
         self.io
             .prompter
             .done(Prompt::SetupMode)
@@ -1278,23 +1276,12 @@ where
     /// starts the read again.
     async fn backup(&self) -> Result<StockBackup, Error> {
         let identity = self.identity.ok_or(Error::NoIdentity)?;
-        let deadline = Instant::now() + BACKUP_RECONNECT;
-        loop {
-            let read = async {
-                let mut connection = self.connect().await?;
-                backup::fetch(&mut connection, &self.backups, &identity, &self.io.report).await
-            };
-            match read.await {
-                Ok((_, backup)) => return Ok(backup),
-                Err(error) if error.is_connection_lost() && Instant::now() < deadline => {
-                    self.io.report.event(Event::SessionDropped {
-                        error: crate::text(&error),
-                    });
-                    tokio::time::sleep(POLL).await;
-                }
-                Err(error) => return Err(error),
-            }
-        }
+        let (_, backup) = again_while_lost(&self.io.report, async || {
+            let mut connection = self.connect().await?;
+            backup::fetch(&mut connection, &self.backups, &identity, &self.io.report).await
+        })
+        .await?;
+        Ok(backup)
     }
 
     /// Stock's plan sectors from the bank-0 role: kept beside the backup,
@@ -1565,6 +1552,26 @@ where
     }
 }
 
+/// `read` until it ends with anything but a lost connection, for as long as
+/// [`BACKUP_RECONNECT`]. Only for what changes nothing on the feeder.
+async fn again_while_lost<T>(
+    report: &impl Report,
+    mut read: impl AsyncFnMut() -> Result<T, Error>,
+) -> Result<T, Error> {
+    let deadline = tokio::time::Instant::now() + BACKUP_RECONNECT;
+    loop {
+        match read().await {
+            Err(error) if error.is_connection_lost() && tokio::time::Instant::now() < deadline => {
+                report.event(Event::SessionDropped {
+                    error: crate::text(&error),
+                });
+                tokio::time::sleep(POLL).await;
+            }
+            read => return read,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1603,6 +1610,40 @@ mod tests {
             installer.poll(),
             Next::Send(wellfed_client::update::Sent::Offer, _)
         ));
+    }
+
+    /// A dropped connection reads again, and is said each time. What the read
+    /// itself found ends it at once, and a feeder that stays gone ends it when
+    /// the time is up.
+    #[tokio::test(start_paused = true)]
+    async fn a_read_goes_again_only_while_the_connection_is_lost() {
+        let lost = || Error::Platform("connection reset".into());
+        let said = std::cell::Cell::new(0);
+        let report = |event| {
+            assert!(matches!(event, Event::SessionDropped { .. }), "{event:?}");
+            said.set(said.get() + 1);
+        };
+
+        let mut reads = 0;
+        let read = again_while_lost(&report, async || {
+            reads += 1;
+            if reads < 3 { Err(lost()) } else { Ok(reads) }
+        });
+        assert_eq!(read.await.unwrap(), 3);
+        assert_eq!(said.get(), 2);
+
+        let mut reads = 0;
+        let read = again_while_lost(&report, async || -> Result<(), Error> {
+            reads += 1;
+            Err(Error::Unverified)
+        });
+        assert!(matches!(read.await, Err(Error::Unverified)));
+        assert_eq!(reads, 1);
+
+        let began = tokio::time::Instant::now();
+        let read = again_while_lost(&report, async || -> Result<(), Error> { Err(lost()) });
+        assert!(read.await.unwrap_err().is_connection_lost());
+        assert!(began.elapsed() >= BACKUP_RECONNECT);
     }
 
     /// An expected device answers the feeder check ahead: the pinned

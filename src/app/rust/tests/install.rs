@@ -791,6 +791,89 @@ fn another_feeder_is_served_after_the_owner_said_no_to_the_first() {
     });
 }
 
+/// Saying no to the erase ends the run with nothing sent: the frame comes only
+/// after the owner accepted it and the phone is on the feeder's network.
+#[test]
+fn a_reset_run_asks_for_the_erase_first() {
+    local(async {
+        let fixture = Fixture::new(Provisioning::Consumer);
+        let (run, mut heard) = started(&fixture, fixture.spec(InstallStart::Reset, "127.41.8.40"));
+
+        let (id, ask) = next_ask(&mut heard).await;
+        assert_eq!(ask, InstallAsk::EraseStockPlans);
+        run.answer(id, InstallAnswer::Yes { yes: false });
+
+        let end = ended(&mut heard).await;
+        let InstallEnd::Stopped { resume, .. } = end else {
+            panic!("{end:?}");
+        };
+        assert_eq!(resume, Resume::Nothing);
+    });
+}
+
+/// A phone that cannot join the feeder's network has asked nothing of the
+/// feeder, so the owner may simply start over.
+#[test]
+fn a_join_that_fails_stops_the_reset_run_before_the_frame() {
+    // SAFETY: nextest runs each test in a process of its own, and no other
+    // thread is running yet.
+    unsafe { std::env::set_var("WELLFED_ALLOW_UNREVIEWED_OTA_BUILD", "1") };
+    local(async {
+        let fixture = Fixture::new(Provisioning::Consumer);
+        let (run, mut heard) = started(&fixture, fixture.spec(InstallStart::Reset, "127.41.8.41"));
+
+        let (id, _) = next_ask(&mut heard).await;
+        run.answer(id, InstallAnswer::Yes { yes: true });
+        let (id, ask) = next_ask(&mut heard).await;
+        assert_eq!(ask, InstallAsk::JoinFeederNetwork);
+        run.answer(
+            id,
+            InstallAnswer::Failed {
+                reason: "no such network".into(),
+            },
+        );
+
+        let end = ended(&mut heard).await;
+        let InstallEnd::Stopped {
+            case,
+            resume,
+            detail,
+            ..
+        } = end
+        else {
+            panic!("{end:?}");
+        };
+        assert_eq!(case, StopCase::HandoverFailed);
+        assert_eq!(resume, Resume::FromStart);
+        assert!(detail.contains("no such network"), "{detail}");
+    });
+}
+
+/// A run for a stock that kept an earlier frame asks only for the check: its
+/// feeder comes to a broker listening on every address, which is what lets a
+/// single-radio phone send the frame from the feeder's network.
+#[test]
+fn a_frame_taken_run_waits_for_the_feeder_and_asks_nothing_of_the_handover() {
+    // SAFETY: nextest runs each test in a process of its own, and no other
+    // thread is running yet.
+    unsafe { std::env::set_var("WELLFED_ALLOW_UNREVIEWED_OTA_BUILD", "1") };
+    local(async {
+        let fixture = Fixture::new(Provisioning::Consumer);
+        let (_run, mut heard) = started(
+            &fixture,
+            fixture.spec(InstallStart::FrameTaken, "127.0.0.1"),
+        );
+
+        let feeder = stock_feeder("127.0.0.9", "AF_RESET_FEEDER");
+        let (_, ask) = next_ask(&mut heard).await;
+        feeder.abort();
+        let InstallAsk::RecognizeFeeder { device, .. } = ask else {
+            panic!("{ask:?}");
+        };
+        assert_eq!(device, "AF_RESET_FEEDER");
+    });
+}
+
 /// A dead server is the server's failure: not "no feeder connected".
 #[test]
 fn a_taken_port_is_not_no_feeder() {

@@ -156,7 +156,7 @@ class _UpdatesScreenState extends State<UpdatesScreen> {
           const SizedBox(height: Space.s3),
           Text(
             'Takes a few minutes. Feeding waits while it installs, and meals '
-            "due in that minute run when it's done.",
+            "due meanwhile run when it's done.",
             style: TextStyle(fontSize: 15, height: 1.5, color: c.text),
           ),
           const SizedBox(height: Space.s2),

@@ -1186,3 +1186,18 @@ fn a_candidate_that_fails_its_trial_falls_back_and_is_not_installed_again() {
     .unwrap();
     assert_running(&rig, 0x33, 3);
 }
+
+/// The app's stop screen shows this line, so a refusal an owner can meet
+/// reads as words, and the rest keep the names a bug report can quote.
+#[test]
+fn a_refused_update_says_why_in_words() {
+    use wellfed_model::{Refusal, UpdateRefusal};
+
+    let words = |refusal| InstallError::Refused(Refusal::Update(refusal)).to_string();
+
+    assert_eq!(
+        words(UpdateRefusal::Key),
+        "the feeder refused the update: it does not trust the key that signed this firmware"
+    );
+    assert!(words(UpdateRefusal::Store).contains("Store"));
+}

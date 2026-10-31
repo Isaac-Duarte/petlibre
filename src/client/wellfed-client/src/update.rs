@@ -63,9 +63,29 @@ pub enum Next {
     Cancelled,
 }
 
+/// A refusal as an owner reads it on the app's stop screen and at the CLI.
+/// The rarer ones keep their names, which a bug report can quote.
+fn refused_words(refusal: &Refusal) -> String {
+    let words = match refusal {
+        Refusal::Update(UpdateRefusal::Key) => {
+            "it does not trust the key that signed this firmware"
+        }
+        Refusal::Update(UpdateRefusal::Revoked) => "the key that signed this firmware was retired",
+        Refusal::Update(UpdateRefusal::Signature) => "this firmware's signature does not check out",
+        Refusal::Update(UpdateRefusal::Downgrade) => {
+            "this version is not newer than what it has run"
+        }
+        Refusal::Update(UpdateRefusal::Failed) => "this firmware already failed on it",
+        Refusal::Update(UpdateRefusal::Installing) => "another update is in progress",
+        Refusal::Update(UpdateRefusal::Unconfirmed) => "nobody pressed Dispense in time",
+        other => return format!("{other:?}"),
+    };
+    words.to_owned()
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum InstallError {
-    #[error("the feeder refused the update: {0:?}")]
+    #[error("the feeder refused the update: {}", refused_words(.0))]
     Refused(Refusal),
     #[error("the install stopped before activation: {0:?}")]
     Stopped(UpdateStop),

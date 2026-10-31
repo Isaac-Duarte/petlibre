@@ -423,6 +423,16 @@ void main() {
       );
       expect(ports.held.last, contains('serving the firmware'));
 
+      run.event(const InstallEvent.stockProgress(percent: 100));
+      await settle(tester);
+      await tester.pump(WaitWords.after);
+      await tester.pump();
+      expect(
+        find.textContaining('is installing it', findRichText: true),
+        findsOneWidget,
+      );
+      expect(find.textContaining('next part'), findsNothing);
+
       run.event(const InstallEvent.stockRestarting());
       await settle(tester);
       expect(find.text('The feeder is restarting'), findsOneWidget);

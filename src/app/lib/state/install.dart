@@ -241,6 +241,9 @@ class InstallFlow extends ChangeNotifier {
     InstallStage.sending when restarting =>
       'Waiting for the feeder to restart into Wellfed and come back. This can '
           'take a few minutes.',
+    InstallStage.sending when percent >= 100 =>
+      'The feeder has the firmware and is installing it. It restarts on its '
+          'own, which can take a few minutes.',
     InstallStage.sending =>
       'Waiting for the feeder to ask for the next part of the firmware.',
     InstallStage.finishing when joining == CheckState.running =>

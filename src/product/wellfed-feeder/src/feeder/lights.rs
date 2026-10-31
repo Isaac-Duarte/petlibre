@@ -16,8 +16,13 @@
 //! | an offer waits for a press or its code | lock | blink 250/250 ms | 70 |
 //! | the battery holds feeds | fault | blink 1000/1000 ms | 60 |
 //! | a feed is queued or runs | food | blink 500/500 ms | 50 |
+//! | the last feed's food beam read low | food | steady | 10 |
 //! | the panel is locked | lock | steady | 10 |
 //! | the feeder has an address | connection | steady | 10 |
+//!
+//! The food beam is lit only during feeds, so low food shows the last reading:
+//! it stays on until a feed reads food again, even after a refill, and shows
+//! nothing until this boot's first feed has read.
 //!
 //! With the `lights` setting off, or outside its window on the local clock,
 //! every light is dark, faults included, as stock drives them all LOW; the
@@ -50,6 +55,7 @@ wellfed_core::named_enum! {
         Pairing = "pairing",
         Battery = "battery",
         Feeding = "feeding",
+        LowFood = "low-food",
         Locked = "locked",
         Online = "online",
     }
@@ -57,13 +63,14 @@ wellfed_core::named_enum! {
 
 /// The states held while a condition lasts, in [`State::ALL`] order but
 /// for [`State::Refused`], which ends by itself.
-const HELD: [State; 8] = [
+const HELD: [State; 9] = [
     State::Fault,
     State::Updating,
     State::Setup,
     State::Pairing,
     State::Battery,
     State::Feeding,
+    State::LowFood,
     State::Locked,
     State::Online,
 ];
@@ -89,6 +96,7 @@ impl State {
             Self::Pairing => (Light::Lock, blink(250, 250), 70),
             Self::Battery => (Light::Fault, blink(1_000, 1_000), 60),
             Self::Feeding => (Light::Food, blink(500, 500), 50),
+            Self::LowFood => (Light::Food, Pattern::Steady, 10),
             Self::Locked => (Light::Lock, Pattern::Steady, 10),
             Self::Online => (Light::Connection, Pattern::Steady, 10),
         };
@@ -114,6 +122,7 @@ pub struct States {
     pub pairing: bool,
     pub battery: bool,
     pub feeding: bool,
+    pub low_food: bool,
     pub locked: bool,
     pub online: bool,
     /// The `lights` setting inside its window; true until the settings
@@ -130,6 +139,7 @@ impl States {
             State::Pairing => self.pairing,
             State::Battery => self.battery,
             State::Feeding => self.feeding,
+            State::LowFood => self.low_food,
             State::Locked => self.locked,
             State::Online => self.online,
             State::Refused => false,

@@ -89,6 +89,7 @@ const IDLE: States = States {
     pairing: false,
     battery: false,
     feeding: false,
+    low_food: false,
     locked: false,
     online: false,
     lights: true,
@@ -420,4 +421,33 @@ fn the_lights_window_darkens_the_panel_outside_it() {
     passes(&mut feeder, 400, 200);
     assert!(on(Light::Lock) && on(Light::Fault));
     drop(rig);
+}
+
+/// Low food holds the light steady at rest, a feed's blink shows over it, and
+/// a reading of food turns it off.
+#[test]
+fn low_food_is_steady_under_a_feed_s_blink() {
+    let mut rig = Rig::new();
+    let low = States {
+        low_food: true,
+        ..IDLE
+    };
+    assert!(
+        rig.run(low, 1_200)
+            .iter()
+            .all(|(_, lit)| lit[Light::Food.index()])
+    );
+
+    let feeding = States {
+        feeding: true,
+        ..low
+    };
+    let seen = rig.run(feeding, 1_200);
+    assert!(seen.iter().any(|(_, lit)| lit[Light::Food.index()]));
+    assert!(seen.iter().any(|(_, lit)| !lit[Light::Food.index()]));
+
+    rig.run(low, 20);
+    assert!(on(Light::Food));
+    rig.run(IDLE, 20);
+    assert!(!on(Light::Food));
 }

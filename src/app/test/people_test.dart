@@ -137,6 +137,10 @@ void main() {
       );
       expect(find.text('Owner invite'), findsOneWidget);
       expect(find.text('9:59 until it expires · works once'), findsOneWidget);
+
+      // Whoever used it joined meanwhile, so closing it reads the list again.
+      await tapIn(tester, find.byTooltip('Close'));
+      expect(session.requests.last, const FeederRequest.listClients());
     });
 
     testWidgets('a create refused or unanswered shows no invite', (

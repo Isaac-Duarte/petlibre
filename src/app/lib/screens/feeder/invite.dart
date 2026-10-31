@@ -32,6 +32,8 @@ Future<void> inviteSomeone(
         builder: (_) => InviteScreen(invite: reply.invite),
       ),
     );
+    // Whoever scanned it joined while it was on screen.
+    await feeder.loadClients();
   } else {
     showProblem(context, reply);
   }

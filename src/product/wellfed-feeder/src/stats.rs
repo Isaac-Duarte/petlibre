@@ -352,7 +352,7 @@ impl Supply {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct Beam {
     present: Option<bool>,
-    emptied: u32,
+    ran_low: u32,
     refilled: u32,
     feeds_since_refill: Option<u32>,
 }
@@ -360,7 +360,7 @@ struct Beam {
 impl Beam {
     fn reading(&mut self, present: bool) {
         match self.present {
-            Some(true) if !present => self.emptied = self.emptied.saturating_add(1),
+            Some(true) if !present => self.ran_low = self.ran_low.saturating_add(1),
             Some(false) if present => {
                 self.refilled = self.refilled.saturating_add(1);
                 self.feeds_since_refill = Some(0);
@@ -463,7 +463,7 @@ impl Keeper {
             supply: Supply::new(),
             beam: Beam {
                 present: None,
-                emptied: 0,
+                ran_low: 0,
                 refilled: 0,
                 feeds_since_refill: None,
             },
@@ -725,7 +725,7 @@ impl Keeper {
         let beam = &self.beam;
         Food {
             present: beam.present,
-            emptied: beam.emptied,
+            ran_low: beam.ran_low,
             refilled: beam.refilled,
             feeds_since_refill: beam.feeds_since_refill,
         }

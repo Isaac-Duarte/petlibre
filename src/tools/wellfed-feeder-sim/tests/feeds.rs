@@ -332,7 +332,7 @@ fn a_feed_on_an_empty_hopper_runs_and_records_that_it_read_empty() {
         let mut id = 2;
         for (line, level) in [
             (None, FoodLevel::Present),
-            (Some("empty"), FoodLevel::Empty),
+            (Some("empty"), FoodLevel::Low),
             (Some("fill"), FoodLevel::Present),
         ] {
             if let Some(line) = line {

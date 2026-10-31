@@ -36,7 +36,7 @@ pub const OWNER: OwnerConfig = OwnerConfig {
     },
     sensors: SensorLimits {
         optical_settle_ms: 100,
-        food_empty_delay_ms: 1000,
+        food_low_delay_ms: 1000,
         outlet_block_delay_ms: 1000,
         power_settle_ms: 100,
         max_observation_gap_ms: 100,

@@ -298,13 +298,13 @@ class _Progress extends StatelessWidget {
           ('Finished', Text(_time(context, feeder.feed.endedAt))),
           if (food != null && food != FoodLevel.unread)
             (
-              'Food in the hopper',
+              'Food level',
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   FoodDot(present: food == FoodLevel.present),
                   const SizedBox(width: 6),
-                  Text(food == FoodLevel.present ? 'Yes' : 'Empty'),
+                  Text(food == FoodLevel.present ? 'Enough' : 'Low'),
                 ],
               ),
             ),

@@ -167,7 +167,7 @@ async fn the_latest_of_each_section_and_every_food_read_are_kept() {
     let (_dir, store) = fresh().await;
     let food = |present| FoodStats {
         present: Some(present),
-        emptied: 1,
+        ran_low: 1,
         refilled: u32::from(present),
         feeds_since_refill: Some(3),
     };

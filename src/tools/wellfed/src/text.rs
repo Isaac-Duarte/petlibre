@@ -49,7 +49,7 @@ fn source(by: Option<Source>) -> String {
 /// events and the feed's own result line all show it.
 pub(crate) fn fed(feed: &Feed) -> String {
     let empty = match feed.hopper {
-        FoodLevel::Empty => "  hopper read empty",
+        FoodLevel::Low => "  food read low",
         FoodLevel::Unread | FoodLevel::Present => "",
     };
     format!(
@@ -156,7 +156,7 @@ fn food(level: FoodLevel) -> &'static str {
     match level {
         FoodLevel::Unread => "not read yet (the food beam reads only during feeds)",
         FoodLevel::Present => "present at the last feed",
-        FoodLevel::Empty => "empty at the last feed",
+        FoodLevel::Low => "low at the last feed",
     }
 }
 
@@ -494,7 +494,7 @@ mod tests {
             wifi_generation: Generation(3),
             last_event: Some(1175),
             sessions: 1,
-            food: FoodLevel::Empty,
+            food: FoodLevel::Low,
             feed_fault: Some(FeedFault {
                 feed: 128,
                 outcome: FeedOutcome::Uncertain,
@@ -524,7 +524,7 @@ mod tests {
             "Build feeder 345 on bank 1, boot 42, up 1 h 2 min",
             "Clock: not set: scheduled meals hold until a sync",
             "Feeding: blocked, restarting (a restart is coming within seconds)",
-            "Food: empty at the last feed",
+            "Food: low at the last feed",
             "Last fault: feed 128 uncertain (interrupted); `wellfed feeds` has its portions",
             "Power: on batteries (Wi-Fi off 5 s after the adapter goes); batteries 10% (4310 mV), \
              pack below the floor a feed on batteries needs",
@@ -597,9 +597,9 @@ mod tests {
         );
         assert_eq!(
             event(EventBody::Food {
-                level: FoodLevel::Empty
+                level: FoodLevel::Low
             }),
-            "hopper empty"
+            "hopper low"
         );
         assert_eq!(
             event(EventBody::Supply {

@@ -2451,7 +2451,7 @@ fn every_body() -> Vec<EventBody> {
             portions: 2,
         },
         EventBody::Food {
-            level: proto::FoodLevel::Empty,
+            level: proto::FoodLevel::Low,
         },
     ];
     let mut seen: Vec<usize> = bodies.iter().map(variant).collect();

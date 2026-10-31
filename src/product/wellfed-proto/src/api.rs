@@ -1531,7 +1531,7 @@ pub struct FeedFault {
 
 /// What the food beam across the hopper reads, filtered as stock filters
 /// its `surplusGrain`: one reading with food shows food at once, and the
-/// hopper reads empty only after a run of readings without. Stock counts 20
+/// hopper reads low only after a run of readings without. Stock counts 20
 /// readings; its poll rate is not recovered, and the firmware assumes the
 /// nominal 50 ms its outlet filter implies, so a second. The beam is lit
 /// only during feeds, so the level is the last feed's.
@@ -1541,8 +1541,9 @@ pub enum FoodLevel {
     /// feed ended before the beam settled.
     Unread,
     Present,
-    /// The beam read no food (at any time during a feed, for a `Fed`).
-    Empty,
+    /// The beam read no food, which leaves about five portions, since it sits
+    /// above the rotor (at any time during a feed, for a `Fed`).
+    Low,
 }
 
 /// Why a feed ended.
@@ -1864,7 +1865,7 @@ pub struct Food {
     /// The beam's last reading: `Some(true)` with food, `None` before one.
     pub present: Option<bool>,
     /// The beam went from food to none.
-    pub emptied: u32,
+    pub ran_low: u32,
     /// The beam went from none to food.
     pub refilled: u32,
     /// Feeds since the last refill this boot saw; `None` before one.
@@ -2256,7 +2257,7 @@ mod tests {
             }),
             Stats::Food(Food {
                 present: Some(true),
-                emptied: u32::MAX,
+                ran_low: u32::MAX,
                 refilled: u32::MAX,
                 feeds_since_refill: Some(u32::MAX),
             }),
@@ -2462,7 +2463,7 @@ mod tests {
                 completed: u8::MAX,
                 outcome: FeedOutcome::Uncertain,
                 reason: FeedReason::Output,
-                hopper: FoodLevel::Empty,
+                hopper: FoodLevel::Low,
                 by: Source::Schedule(u8::MAX),
             },
             EventBody::Plans {
@@ -2484,7 +2485,7 @@ mod tests {
                 portions: u8::MAX,
             },
             EventBody::Food {
-                level: FoodLevel::Empty,
+                level: FoodLevel::Low,
             },
         ] {
             let mut out = [0; EVENT_BODY_MAX];

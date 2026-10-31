@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO food_readings\n                     (feeder_id, received_ms, boot_count, present, ran_low, refilled, feeds_since_refill)\n                 VALUES (?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": []
+  },
+  "hash": "3ae21930fc740ca24e0aa242e003faeddc5b5c46cb2b7a328de1b2487e7cfeea"
+}

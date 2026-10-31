@@ -2652,7 +2652,7 @@ const _: fn() = || {
     {
         let Food = None::<crate::api::model::Food>.unwrap();
         let _: Option<bool> = Food.present;
-        let _: u32 = Food.emptied;
+        let _: u32 = Food.ran_low;
         let _: u32 = Food.refilled;
         let _: Option<u32> = Food.feeds_since_refill;
     }
@@ -3932,12 +3932,12 @@ impl SseDecode for crate::api::model::Food {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         let mut var_present = <Option<bool>>::sse_decode(deserializer);
-        let mut var_emptied = <u32>::sse_decode(deserializer);
+        let mut var_ranLow = <u32>::sse_decode(deserializer);
         let mut var_refilled = <u32>::sse_decode(deserializer);
         let mut var_feedsSinceRefill = <Option<u32>>::sse_decode(deserializer);
         return crate::api::model::Food {
             present: var_present,
-            emptied: var_emptied,
+            ran_low: var_ranLow,
             refilled: var_refilled,
             feeds_since_refill: var_feedsSinceRefill,
         };
@@ -3951,7 +3951,7 @@ impl SseDecode for crate::api::model::FoodLevel {
         return match inner {
             0 => crate::api::model::FoodLevel::Unread,
             1 => crate::api::model::FoodLevel::Present,
-            2 => crate::api::model::FoodLevel::Empty,
+            2 => crate::api::model::FoodLevel::Low,
             _ => unreachable!("Invalid variant for FoodLevel: {}", inner),
         };
     }
@@ -7618,7 +7618,7 @@ impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::api::model::Food> {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
             self.0.present.into_into_dart().into_dart(),
-            self.0.emptied.into_into_dart().into_dart(),
+            self.0.ran_low.into_into_dart().into_dart(),
             self.0.refilled.into_into_dart().into_dart(),
             self.0.feeds_since_refill.into_into_dart().into_dart(),
         ]
@@ -7642,7 +7642,7 @@ impl flutter_rust_bridge::IntoDart for FrbWrapper<crate::api::model::FoodLevel> 
         match self.0 {
             crate::api::model::FoodLevel::Unread => 0.into_dart(),
             crate::api::model::FoodLevel::Present => 1.into_dart(),
-            crate::api::model::FoodLevel::Empty => 2.into_dart(),
+            crate::api::model::FoodLevel::Low => 2.into_dart(),
             _ => unreachable!(),
         }
     }
@@ -10775,7 +10775,7 @@ impl SseEncode for crate::api::model::Food {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <Option<bool>>::sse_encode(self.present, serializer);
-        <u32>::sse_encode(self.emptied, serializer);
+        <u32>::sse_encode(self.ran_low, serializer);
         <u32>::sse_encode(self.refilled, serializer);
         <Option<u32>>::sse_encode(self.feeds_since_refill, serializer);
     }
@@ -10788,7 +10788,7 @@ impl SseEncode for crate::api::model::FoodLevel {
             match self {
                 crate::api::model::FoodLevel::Unread => 0,
                 crate::api::model::FoodLevel::Present => 1,
-                crate::api::model::FoodLevel::Empty => 2,
+                crate::api::model::FoodLevel::Low => 2,
                 _ => {
                     unimplemented!("");
                 }

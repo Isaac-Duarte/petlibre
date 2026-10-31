@@ -6421,7 +6421,7 @@
               },
               "hopper": {
                 "$ref": "#/components/schemas/FoodLevel",
-                "description": "What the food beam read during the feed. A feed runs whatever\nit reads, so an empty hopper is recorded here, not refused."
+                "description": "What the food beam read during the feed. A feed runs whatever\nit reads, so low food is recorded here, not refused."
               },
               "kind": {
                 "type": "string",
@@ -7441,11 +7441,11 @@
       },
       "FoodLevel": {
         "type": "string",
-        "description": "What the food beam across the hopper reads. One reading with food shows\nfood at once; the hopper reads empty after a second without (stock\ncounts 20 readings; the second assumes its poll is 50 ms).",
+        "description": "What the food beam across the hopper reads. One reading with food shows\nfood at once; the hopper reads low after a second without (stock\ncounts 20 readings; the second assumes its poll is 50 ms).",
         "enum": [
           "unread",
           "present",
-          "empty"
+          "low"
         ]
       },
       "FoodPatch": {
@@ -7517,15 +7517,10 @@
       "FoodStats": {
         "type": "object",
         "required": [
-          "emptied",
+          "ran_low",
           "refilled"
         ],
         "properties": {
-          "emptied": {
-            "type": "integer",
-            "format": "int32",
-            "minimum": 0
-          },
           "feeds_since_refill": {
             "type": [
               "integer",
@@ -7539,6 +7534,11 @@
               "boolean",
               "null"
             ]
+          },
+          "ran_low": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
           },
           "refilled": {
             "type": "integer",

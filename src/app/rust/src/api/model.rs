@@ -43,7 +43,7 @@ pub enum _ClientRole {
 pub enum _FoodLevel {
     Unread,
     Present,
-    Empty,
+    Low,
 }
 
 #[frb(mirror(Blocked))]
@@ -335,7 +335,7 @@ pub struct _Portions {
 #[frb(mirror(Food))]
 pub struct _Food {
     pub present: Option<bool>,
-    pub emptied: u32,
+    pub ran_low: u32,
     pub refilled: u32,
     pub feeds_since_refill: Option<u32>,
 }

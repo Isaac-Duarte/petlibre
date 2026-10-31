@@ -214,7 +214,7 @@ fn the_statistics_are_read_at_connect_and_then_periodically() {
         })
         .await;
         let readings = store.food_readings(ID, from, to).await.unwrap();
-        assert_eq!(readings[0].food.emptied, 0);
+        assert_eq!(readings[0].food.ran_low, 0);
         assert_eq!(readings[0].boot_count, Some(1));
 
         mirror.shutdown().await;

@@ -107,7 +107,7 @@ pub enum EventBody {
         outcome: FeedOutcome,
         reason: FeedReason,
         /// What the food beam read during the feed. A feed runs whatever
-        /// it reads, so an empty hopper is recorded here, not refused.
+        /// it reads, so low food is recorded here, not refused.
         hopper: FoodLevel,
         by: Source,
     },
@@ -167,7 +167,7 @@ pub enum EventBody {
 }
 
 /// What the food beam across the hopper reads. One reading with food shows
-/// food at once; the hopper reads empty after a second without (stock
+/// food at once; the hopper reads low after a second without (stock
 /// counts 20 readings; the second assumes its poll is 50 ms).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -175,9 +175,9 @@ pub enum FoodLevel {
     /// Not read yet: the beam is lit only during feeds.
     Unread,
     Present,
-    /// No food in front of the beam (at any time during a feed, for a
-    /// `Fed` event).
-    Empty,
+    /// No food in front of the beam, which sits above the rotor, so about five
+    /// portions remain (at any time during a feed, for a `Fed` event).
+    Low,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]

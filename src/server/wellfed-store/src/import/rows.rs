@@ -177,14 +177,14 @@ pub(super) async fn feeder_stat(tx: &mut SqliteConnection, stat: &FeederStat) ->
 
 pub(super) async fn food_reading(tx: &mut SqliteConnection, reading: &FoodReading) -> Result<()> {
     sqlx::query!(
-        "INSERT INTO food_readings (feeder_id, received_ms, boot_count, present, emptied,
+        "INSERT INTO food_readings (feeder_id, received_ms, boot_count, present, ran_low,
                                     refilled, feeds_since_refill)
          VALUES (?, ?, ?, ?, ?, ?, ?)",
         reading.feeder_id,
         reading.received_ms,
         reading.boot_count,
         reading.present,
-        reading.emptied,
+        reading.ran_low,
         reading.refilled,
         reading.feeds_since_refill,
     )

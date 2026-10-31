@@ -189,7 +189,7 @@ pub struct Portions {
 #[schema(as = FoodStats)]
 pub struct Food {
     pub present: Option<bool>,
-    pub emptied: u32,
+    pub ran_low: u32,
     pub refilled: u32,
     pub feeds_since_refill: Option<u32>,
 }

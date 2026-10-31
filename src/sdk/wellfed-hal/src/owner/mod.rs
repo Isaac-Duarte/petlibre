@@ -94,7 +94,7 @@ pub struct FeedTrace {
     pub current_samples: u16,
     /// Times the drive backed off a jam.
     pub reversals: u8,
-    /// The food beam during this feed: `Some(false)` once it read empty,
+    /// The food beam during this feed: `Some(false)` once it read low,
     /// `Some(true)` while it has read only food, `None` before it
     /// qualified a reading. A feed never waits on it, so a short or
     /// cancelled one can end unread.

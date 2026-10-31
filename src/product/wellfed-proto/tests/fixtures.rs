@@ -338,7 +338,7 @@ fn messages() -> Vec<Fixture> {
                     completed: 1,
                     outcome: FeedOutcome::Failed,
                     reason: FeedReason::NoFeedback,
-                    hopper: FoodLevel::Empty,
+                    hopper: FoodLevel::Low,
                     by: Source::Panel,
                 },
             }]),
@@ -581,7 +581,7 @@ fn messages() -> Vec<Fixture> {
             "outcome-stats-food",
             entry(&response(Outcome::Stats(Stats::Food(Food {
                 present: Some(false),
-                emptied: 1,
+                ran_low: 1,
                 refilled: 1,
                 feeds_since_refill: Some(4),
             })))),
@@ -1019,7 +1019,7 @@ fn messages() -> Vec<Fixture> {
         (
             "event-food",
             entry(&EventBody::Food {
-                level: FoodLevel::Empty,
+                level: FoodLevel::Low,
             }),
             |b| decode::<EventBody>(b).is_ok(),
         ),

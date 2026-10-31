@@ -98,7 +98,7 @@ class FeedDetail extends StatelessWidget {
                 ),
               ),
             ('Started by', Text(whoText(feeder, result.by))),
-            ('Food in the hopper', Text(_hopper(result.hopper))),
+            ('Food level', Text(_hopper(result.hopper))),
             ('Feed number', Text('${result.feed}')),
           ]),
           if (result.uncertain) ...[
@@ -132,8 +132,8 @@ class FeedDetail extends StatelessWidget {
   }
 
   static String _hopper(FoodLevel level) => switch (level) {
-    FoodLevel.present => 'Yes',
-    FoodLevel.empty => 'Empty',
+    FoodLevel.present => 'Enough',
+    FoodLevel.low => 'Low',
     FoodLevel.unread => 'Not checked',
   };
 }

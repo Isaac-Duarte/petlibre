@@ -22,7 +22,7 @@ bool _shown(_Filter filter, HistoryBody body) => switch (filter) {
     HistoryBody_Fed(:final result) =>
       result.outcome != FeedOutcome.done ||
           result.confirmed != result.requested,
-    HistoryBody_Food(:final level) => level == FoodLevel.empty,
+    HistoryBody_Food(:final level) => level == FoodLevel.low,
     HistoryBody_FeedingBlocked(:final reason) => reason != null,
     HistoryBody_Missed() ||
     HistoryBody_DispenseRefused() ||
@@ -350,9 +350,9 @@ class _EntryRow extends StatelessWidget {
       ),
       HistoryBody_Food(:final level) => (
         Glyph.food,
-        level == FoodLevel.empty ? c.fault : c.textMuted,
+        level == FoodLevel.low ? c.fault : c.textMuted,
         switch (level) {
-          FoodLevel.empty => 'Hopper read empty',
+          FoodLevel.low => 'Food read low',
           FoodLevel.present => 'Food in the hopper',
           FoodLevel.unread => 'Food not read',
         },

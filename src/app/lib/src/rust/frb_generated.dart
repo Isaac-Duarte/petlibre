@@ -3382,7 +3382,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
     return Food(
       present: dco_decode_opt_box_autoadd_bool(arr[0]),
-      emptied: dco_decode_u_32(arr[1]),
+      ranLow: dco_decode_u_32(arr[1]),
       refilled: dco_decode_u_32(arr[2]),
       feedsSinceRefill: dco_decode_opt_box_autoadd_u_32(arr[3]),
     );
@@ -6350,12 +6350,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   Food sse_decode_food(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_present = sse_decode_opt_box_autoadd_bool(deserializer);
-    var var_emptied = sse_decode_u_32(deserializer);
+    var var_ranLow = sse_decode_u_32(deserializer);
     var var_refilled = sse_decode_u_32(deserializer);
     var var_feedsSinceRefill = sse_decode_opt_box_autoadd_u_32(deserializer);
     return Food(
       present: var_present,
-      emptied: var_emptied,
+      ranLow: var_ranLow,
       refilled: var_refilled,
       feedsSinceRefill: var_feedsSinceRefill,
     );
@@ -9783,7 +9783,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   void sse_encode_food(Food self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_opt_box_autoadd_bool(self.present, serializer);
-    sse_encode_u_32(self.emptied, serializer);
+    sse_encode_u_32(self.ranLow, serializer);
     sse_encode_u_32(self.refilled, serializer);
     sse_encode_opt_box_autoadd_u_32(self.feedsSinceRefill, serializer);
   }

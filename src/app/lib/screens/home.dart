@@ -322,7 +322,7 @@ class FeederCard extends StatelessWidget {
     final c = context.colors;
     final (text, color) = switch (food) {
       FoodLevel.present => ('Food in', c.text),
-      FoodLevel.empty => ('Hopper empty', c.fault),
+      FoodLevel.low => ('Food low', c.fault),
       FoodLevel.unread => ('Food not read', c.textMuted),
     };
     return Row(
@@ -331,7 +331,7 @@ class FeederCard extends StatelessWidget {
         FoodDot(
           present: switch (food) {
             FoodLevel.present => true,
-            FoodLevel.empty => false,
+            FoodLevel.low => false,
             FoodLevel.unread => null,
           },
         ),
@@ -404,22 +404,22 @@ class FeederCard extends StatelessWidget {
               'The feeder stopped without recording how much came out. Look '
               'at the bowl before you feed again.',
         ),
-      if (card?.food == FoodLevel.empty)
+      if (card?.food == FoodLevel.low)
         Notice(
           tone: Tone.fault,
-          lead: _emptyLead(context, card),
-          text: 'Refill it, then feed again if your pet missed the meal.',
+          lead: _lowLead(context, card),
+          text: 'About five portions remain. Refill it soon.',
         ),
       if (why != null) Notice(tone: Tone.neutral, text: why),
     ];
   }
 
   /// The hopper's last reading, when the history has its feed.
-  static String _emptyLead(BuildContext context, api.Card? card) {
+  static String _lowLead(BuildContext context, api.Card? card) {
     final at = card?.lastFed?.atMs;
     return at == null
-        ? 'The hopper is empty.'
-        : 'The hopper read empty at ${clockTextMs(context, at)}.';
+        ? 'Food is low.'
+        : 'Food read low at ${clockTextMs(context, at)}.';
   }
 
   /// The compact card's second line.

@@ -116,7 +116,7 @@ fn widest(section: StatsSection) -> Stats<'static> {
         }),
         StatsSection::Food => Stats::Food(proto::Food {
             present: Some(true),
-            emptied: u32::MAX,
+            ran_low: u32::MAX,
             refilled: u32::MAX,
             feeds_since_refill: Some(u32::MAX),
         }),

@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT feeder_id AS \"feeder_id: Uuid\", received_ms, boot_count,\n                              present AS \"present: bool\", emptied, refilled, feeds_since_refill\n                       FROM food_readings ORDER BY rowid",
+  "query": "SELECT feeder_id AS \"feeder_id: Uuid\", received_ms, boot_count,\n                              present AS \"present: bool\", ran_low, refilled, feeds_since_refill\n                       FROM food_readings ORDER BY rowid",
   "describe": {
     "columns": [
       {
@@ -48,13 +48,13 @@
         }
       },
       {
-        "name": "emptied",
+        "name": "ran_low",
         "ordinal": 4,
         "type_info": "Integer",
         "origin": {
           "Table": {
             "table": "food_readings",
-            "name": "emptied"
+            "name": "ran_low"
           }
         }
       },
@@ -94,5 +94,5 @@
       true
     ]
   },
-  "hash": "668d2bb6275cc3671396452179126e9f0641c5f69c8b7a72144dc27ee68fce3d"
+  "hash": "46ce58c918953aa197f7f0fba0031de032ecc0098aa71dc2a7762ed0ee7a42a3"
 }

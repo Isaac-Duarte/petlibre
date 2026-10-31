@@ -20,7 +20,7 @@ use crate::{HALF_RANGE, interval_valid};
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SensorLimits {
     pub optical_settle_ms: u32,
-    pub food_empty_delay_ms: u32,
+    pub food_low_delay_ms: u32,
     pub outlet_block_delay_ms: u32,
     pub power_settle_ms: u32,
     pub max_observation_gap_ms: u32,
@@ -108,7 +108,7 @@ impl SensorInputs {
     pub fn new(limits: &SensorLimits, calibration: &AdcCalibration) -> Option<Self> {
         let valid = calibration.valid()
             && interval_valid(limits.optical_settle_ms)
-            && interval_valid(limits.food_empty_delay_ms)
+            && interval_valid(limits.food_low_delay_ms)
             && interval_valid(limits.outlet_block_delay_ms)
             && interval_valid(limits.power_settle_ms)
             && interval_valid(limits.max_observation_gap_ms)
@@ -204,7 +204,7 @@ impl SensorInputs {
 
         if self.optical_ready {
             self.food
-                .update(!reading.food_high, now_ms, self.limits.food_empty_delay_ms);
+                .update(!reading.food_high, now_ms, self.limits.food_low_delay_ms);
             self.outlet.update(
                 reading.outlet_high,
                 now_ms,

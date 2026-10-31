@@ -291,13 +291,13 @@ class Flash {
 
 class Food {
   final bool? present;
-  final int emptied;
+  final int ranLow;
   final int refilled;
   final int? feedsSinceRefill;
 
   const Food({
     this.present,
-    required this.emptied,
+    required this.ranLow,
     required this.refilled,
     this.feedsSinceRefill,
   });
@@ -305,7 +305,7 @@ class Food {
   @override
   int get hashCode =>
       present.hashCode ^
-      emptied.hashCode ^
+      ranLow.hashCode ^
       refilled.hashCode ^
       feedsSinceRefill.hashCode;
 
@@ -315,12 +315,12 @@ class Food {
       other is Food &&
           runtimeType == other.runtimeType &&
           present == other.present &&
-          emptied == other.emptied &&
+          ranLow == other.ranLow &&
           refilled == other.refilled &&
           feedsSinceRefill == other.feedsSinceRefill;
 }
 
-enum FoodLevel { unread, present, empty }
+enum FoodLevel { unread, present, low }
 
 @freezed
 sealed class MealReminder with _$MealReminder {

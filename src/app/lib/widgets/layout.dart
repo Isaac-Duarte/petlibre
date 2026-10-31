@@ -313,7 +313,7 @@ class StatusChip extends StatelessWidget {
   );
 }
 
-/// The food dot: amber when there is food, an amber ring when empty, and
+/// The food dot: amber when there is food, an amber ring when low, and
 /// muted when the hopper has not been read.
 class FoodDot extends StatelessWidget {
   const FoodDot({super.key, required this.present});

@@ -453,7 +453,7 @@ async fn the_cached_status_and_settings_read_back() {
         wifi_generation: Generation(0),
         last_event: Some(9),
         sessions: 1,
-        food: FoodLevel::Empty,
+        food: FoodLevel::Low,
         feed_fault: None,
         readiness: Some(Readiness::Blocked(Blocked::Joining)),
         desiccant: Desiccant::Remaining {

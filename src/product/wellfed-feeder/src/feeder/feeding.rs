@@ -260,7 +260,7 @@ mod tests {
         let mut watch = Watch::new();
         assert_eq!(watch.food(None, true), None, "no reading at boot");
 
-        // A feed reads food, then empty, then food, and ends.
+        // A feed reads food, then low, then food, and ends.
         for reading in [true, false, true] {
             assert_eq!(watch.food(Some(reading), false), None, "during a feed");
         }
@@ -268,7 +268,7 @@ mod tests {
         assert_eq!(watch.food(Some(true), true), None, "no repeat");
 
         assert_eq!(watch.food(Some(false), false), None);
-        assert_eq!(watch.food(Some(false), true), Some(FoodLevel::Empty));
+        assert_eq!(watch.food(Some(false), true), Some(FoodLevel::Low));
         assert_eq!(watch.food(Some(false), true), None);
     }
 }

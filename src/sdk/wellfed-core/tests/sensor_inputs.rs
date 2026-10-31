@@ -18,7 +18,7 @@ use wellfed_core::supply::FloorLimits;
 /// Compressed durations exercise software; no deployment defaults are implied.
 const LIMITS: SensorLimits = SensorLimits {
     optical_settle_ms: 2,
-    food_empty_delay_ms: 5,
+    food_low_delay_ms: 5,
     outlet_block_delay_ms: 5,
     power_settle_ms: 2,
     max_observation_gap_ms: 2,
@@ -396,7 +396,7 @@ fn the_food_reading_is_known_only_while_the_emitters_qualify_it() {
 
     // Empty only after the filter's delay of steady HIGH readings.
     f.raw.food_high = true;
-    f.advance(LIMITS.food_empty_delay_ms);
+    f.advance(LIMITS.food_low_delay_ms);
     assert_eq!(f.inputs.food_present(), Some(true));
     f.advance(1);
     assert_eq!(f.inputs.food_present(), Some(false));

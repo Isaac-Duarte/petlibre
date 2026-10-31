@@ -185,13 +185,13 @@ impl Store {
         if let Stats::Food(food) = stats {
             sqlx::query!(
                 "INSERT INTO food_readings
-                     (feeder_id, received_ms, boot_count, present, emptied, refilled, feeds_since_refill)
+                     (feeder_id, received_ms, boot_count, present, ran_low, refilled, feeds_since_refill)
                  VALUES (?, ?, ?, ?, ?, ?, ?)",
                 id.0,
                 received,
                 boot_count,
                 food.present,
-                food.emptied,
+                food.ran_low,
                 food.refilled,
                 food.feeds_since_refill,
             )
@@ -238,7 +238,7 @@ impl Store {
     ) -> Result<Vec<FoodReading>> {
         let (from, to) = (millis(from), millis(to));
         let rows = sqlx::query!(
-            "SELECT received_ms, boot_count, present, emptied, refilled, feeds_since_refill
+            "SELECT received_ms, boot_count, present, ran_low, refilled, feeds_since_refill
              FROM food_readings WHERE feeder_id = ? AND received_ms >= ? AND received_ms < ?
              ORDER BY received_ms, rowid",
             id.0,
@@ -256,7 +256,7 @@ impl Store {
                     boot_count: boot(row.boot_count)?,
                     food: FoodStats {
                         present: row.present.map(|present| present != 0),
-                        emptied: count(row.emptied)?,
+                        ran_low: count(row.ran_low)?,
                         refilled: count(row.refilled)?,
                         feeds_since_refill: row.feeds_since_refill.map(count).transpose()?,
                     },

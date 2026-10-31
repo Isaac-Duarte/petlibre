@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT received_ms, boot_count, present, emptied, refilled, feeds_since_refill\n             FROM food_readings WHERE feeder_id = ? AND received_ms >= ? AND received_ms < ?\n             ORDER BY received_ms, rowid",
+  "query": "SELECT received_ms, boot_count, present, ran_low, refilled, feeds_since_refill\n             FROM food_readings WHERE feeder_id = ? AND received_ms >= ? AND received_ms < ?\n             ORDER BY received_ms, rowid",
   "describe": {
     "columns": [
       {
@@ -37,13 +37,13 @@
         }
       },
       {
-        "name": "emptied",
+        "name": "ran_low",
         "ordinal": 3,
         "type_info": "Integer",
         "origin": {
           "Table": {
             "table": "food_readings",
-            "name": "emptied"
+            "name": "ran_low"
           }
         }
       },
@@ -82,5 +82,5 @@
       true
     ]
   },
-  "hash": "570ff7df2ae901de86afb69534d57456b32fd17274197eeecc85fd35fd17f9e8"
+  "hash": "b50a16779b26cc869868214275797124c436810f0a508163f461a9503cbe7dc1"
 }

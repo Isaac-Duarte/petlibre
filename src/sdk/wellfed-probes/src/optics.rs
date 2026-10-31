@@ -61,7 +61,7 @@ pub const EVENTS: EventsConfig = EventsConfig {
 /// 50 ms polling (about 1 s) before a bad state.
 pub const SENSORS: SensorLimits = SensorLimits {
     optical_settle_ms: 100,
-    food_empty_delay_ms: 1000,
+    food_low_delay_ms: 1000,
     outlet_block_delay_ms: 1000,
     power_settle_ms: 100,
     max_observation_gap_ms: 100,
@@ -327,7 +327,7 @@ pub fn describe(record: Record, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             let food = match w.food {
                 State::Unknown => "unknown",
                 State::Good => "present",
-                State::Bad => "empty",
+                State::Bad => "low",
             };
             let outlet = match w.outlet {
                 State::Unknown => "unknown",

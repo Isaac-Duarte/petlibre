@@ -45,7 +45,7 @@ fn run_pipeline() -> Option<()> {
     // Compressed synthetic intervals, not settings for a physical board.
     let sensor_limits = SensorLimits {
         optical_settle_ms: 2,
-        food_empty_delay_ms: 5,
+        food_low_delay_ms: 5,
         outlet_block_delay_ms: 5,
         power_settle_ms: 2,
         max_observation_gap_ms: 2,

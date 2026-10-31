@@ -200,7 +200,7 @@ impl Snapshot {
                 sqlx::query_as!(
                     FoodReading,
                     r#"SELECT feeder_id AS "feeder_id: Uuid", received_ms, boot_count,
-                              present AS "present: bool", emptied, refilled, feeds_since_refill
+                              present AS "present: bool", ran_low, refilled, feeds_since_refill
                        FROM food_readings ORDER BY rowid"#
                 )
                 .fetch(tx),

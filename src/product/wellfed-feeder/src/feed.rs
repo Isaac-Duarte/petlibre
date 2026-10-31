@@ -2,7 +2,7 @@
 //!
 //! A feed runs whatever the food beam reads, as stock's does, so a beam
 //! that misreads never skips a meal; the event records what it read
-//! (`hopper`), an empty hopper included.
+//! (`hopper`), low food included.
 //!
 //! The owner's result is durable once it reports it; one that is not (the
 //! owner faulted before its journal write) may have dispensed anything up
@@ -31,7 +31,7 @@ pub const fn food_level(reading: Option<bool>) -> FoodLevel {
     match reading {
         None => FoodLevel::Unread,
         Some(true) => FoodLevel::Present,
-        Some(false) => FoodLevel::Empty,
+        Some(false) => FoodLevel::Low,
     }
 }
 
@@ -134,7 +134,7 @@ mod tests {
                 completed: 1,
                 outcome: FeedOutcome::Failed,
                 reason: FeedReason::NoFeedback,
-                hopper: FoodLevel::Empty,
+                hopper: FoodLevel::Low,
                 by: Source::Panel,
             }
         );
@@ -160,13 +160,13 @@ mod tests {
         );
     }
 
-    /// A feed runs on an empty hopper, as stock's does, and its event says
-    /// the hopper read empty; one reading of food and none empty is food.
+    /// A feed runs on low food, as stock's does, and its event says the
+    /// hopper read low; one reading of food and none low is food.
     #[test]
     fn the_event_records_what_the_food_beam_read() {
         let done = result(OwnerOutcome::Done, CoreReason::Done);
         for (reading, level) in [
-            (Some(false), FoodLevel::Empty),
+            (Some(false), FoodLevel::Low),
             (Some(true), FoodLevel::Present),
             (None, FoodLevel::Unread),
         ] {

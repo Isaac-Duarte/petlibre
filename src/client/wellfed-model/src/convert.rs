@@ -489,7 +489,7 @@ impl From<proto::FoodLevel> for FoodLevel {
         match level {
             proto::FoodLevel::Unread => Self::Unread,
             proto::FoodLevel::Present => Self::Present,
-            proto::FoodLevel::Empty => Self::Empty,
+            proto::FoodLevel::Low => Self::Low,
         }
     }
 }
@@ -499,7 +499,7 @@ impl From<FoodLevel> for proto::FoodLevel {
         match level {
             FoodLevel::Unread => Self::Unread,
             FoodLevel::Present => Self::Present,
-            FoodLevel::Empty => Self::Empty,
+            FoodLevel::Low => Self::Low,
         }
     }
 }
@@ -1112,12 +1112,12 @@ impl From<proto::Stats<'_>> for Stats {
             }),
             proto::Stats::Food(proto::Food {
                 present,
-                emptied,
+                ran_low,
                 refilled,
                 feeds_since_refill,
             }) => Self::Food(Food {
                 present,
-                emptied,
+                ran_low,
                 refilled,
                 feeds_since_refill,
             }),
@@ -1747,7 +1747,7 @@ mod tests {
                 completed: 1,
                 outcome: proto::FeedOutcome::Uncertain,
                 reason: proto::FeedReason::FeedbackStream,
-                hopper: proto::FoodLevel::Empty,
+                hopper: proto::FoodLevel::Low,
                 by,
             },
             proto::EventBody::FeedingBlocked {

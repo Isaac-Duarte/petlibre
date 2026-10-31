@@ -35,14 +35,14 @@ CREATE TABLE feeder_stats (
 
 -- Every read of the food section, typed, for the food views and alerts:
 -- the food beam's last reading (`present`, absent while unknown), its
--- empty and refill transitions and the feeds since a refill, as the
+-- low and refill transitions and the feeds since a refill, as the
 -- feeder counts them.
 CREATE TABLE food_readings (
     feeder_id BLOB NOT NULL REFERENCES feeders (id) ON DELETE CASCADE,
     received_ms INTEGER NOT NULL,
     boot_count INTEGER,
     present INTEGER,
-    emptied INTEGER NOT NULL,
+    ran_low INTEGER NOT NULL,
     refilled INTEGER NOT NULL,
     feeds_since_refill INTEGER
 ) STRICT;

@@ -1,6 +1,6 @@
 # Optical inputs
 
-The feeder watches its food with infrared beams. One beam looks across the hopper and says whether food is there; it sits above the rotor, so it is a low warning that reads empty with about five portions left. Another looks across the outlet chute and says whether it is clear or blocked. A third input, the rotor's mark sensor, tells the feeder when a portion has turned past. This page covers how the firmware drives the emitters, reads the receivers and keeps both bounded, and the optics probe that proved them.
+The feeder watches its food with infrared beams. One beam looks across the hopper and says whether food is there; it sits above the rotor, so it is a low warning that reads low with about five portions left. Another looks across the outlet chute and says whether it is clear or blocked. A third input, the rotor's mark sensor, tells the feeder when a portion has turned past. This page covers how the firmware drives the emitters, reads the receivers and keeps both bounded, and the optics probe that proved them.
 
 | Input | Pin | Emitter | Reads |
 | --- | --- | --- | --- |
@@ -49,7 +49,7 @@ The image runs plan 2, whose longer windows suit meter readings. Its start recor
 `PLOPT1` lines:
 
 - `open board= ready= attached= events= inputs= ms=`
-- `window n= emitters=off|a|b|both start= len= samples= gap= edges= dropped= food=unknown|present|empty outlet=unknown|clear|blocked stopped=`
+- `window n= emitters=off|a|b|both start= len= samples= gap= edges= dropped= food=unknown|present|low outlet=unknown|clear|blocked stopped=`
 - `inputs n= highs=food,outlet,feedback begin= end= first= low_min=`: high counts, levels at the window's start and end, ms to each input's first change, and the shortest complete LOW run
 - `edge n= input= level= ms=`: up to 16 per window, the rest counted as dropped
 - `stall cut= fault= off= stopped= closed=`, then `done windows=`
@@ -72,7 +72,7 @@ Observed on the research unit, October 21, 2026, over the UART. The hopper was e
 - **Unattended run.**
   - Pairing: PA15 lights the food receiver (PA17), and PB3 lights the outlet receiver (PA16). All six cycles agreed.
   - Settling: within one 2 ms poll on, 1–3 ms off.
-  - Empty hopper: the lit food beam read "empty" through the filter, and the clear chute read "clear".
+  - Empty hopper: the lit food beam read "low" through the filter, and the clear chute read "clear".
   - Mark sensor: PA18 read HIGH throughout, with emitters off and on. Neither emitter lights it.
   - Gaps: the longest gap between polls was 21 ms, with Wi-Fi and the transport running.
   - Stall: the cut came 305 ms after the last renewal, with fault 7 (OWNER). Emitters were off, the motor at STOP, the supervisor closed.
@@ -81,6 +81,6 @@ Observed on the research unit, October 21, 2026, over the UART. The hopper was e
   - Food: the food line dropped when the block began, and the both-on window inside it reported "present".
   - Stall: the cut came 300 ms after the last renewal.
 - **PB3.** Observed: the first bench run stopped when PB3 failed its enable readback. Our startup had not released SWD, so the latch never reached the pad, which read its pull-down. Every earlier "PB3 off" readback reflected the pull-down, not a driven LOW. PB3's OFF level now comes from a driven pin.
-- **Food beam with food.** Observed October 29, owner weighing: a feed with food in read "present". From a hand-emptied hopper, eight 1-portion feeds read "empty" from their start, yet dropped 36.8 g, about five portions at 7.11 g ([calibration](calibration.md#evidence)).
+- **Food beam with food.** Observed October 29, owner weighing: a feed with food in read "present". From a hand-emptied hopper, eight 1-portion feeds read "low" from their start, yet dropped 36.8 g, about five portions at 7.11 g ([calibration](calibration.md#evidence)).
 - **Mark sensor.** Observed later, with motion: PA18 is the rotor's mark sensor ([motor pulse](motor-pulse.md#evidence)).
 - **Optics fault on trial boots.** Observed: the first WPA3 join starved the probe past its owner lease (`stall=703`). The radio now waits for startup ([QA](qa.md#known-issues)).

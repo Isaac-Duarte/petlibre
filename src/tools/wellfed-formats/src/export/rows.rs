@@ -359,7 +359,7 @@ pub struct FoodReading {
     pub received_ms: i64,
     pub boot_count: Option<i64>,
     pub present: Option<bool>,
-    pub emptied: i64,
+    pub ran_low: i64,
     pub refilled: i64,
     pub feeds_since_refill: Option<i64>,
 }

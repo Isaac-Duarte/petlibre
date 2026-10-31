@@ -98,6 +98,20 @@ void main() {
     expect(find.text('Changed today'), findsNothing);
   });
 
+  testWidgets('a low reading says low, and never that the hopper is empty', (
+    tester,
+  ) async {
+    final (fleet, session) = await _fleet(tester);
+    await _showShell(tester, fleet);
+
+    session.status(fakeCard(food: FoodLevel.low));
+    await settle(tester);
+
+    expect(find.textContaining('Low'), findsWidgets);
+    expect(find.textContaining('empty'), findsNothing);
+    expect(find.textContaining('Hopper'), findsNothing);
+  });
+
   testWidgets('an uncertain last feed is a range, never one number', (
     tester,
   ) async {

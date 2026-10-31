@@ -129,7 +129,7 @@ fn the_food_beam_counts_its_transitions_and_feeds_since_a_refill() {
     keeper.fed(&fed);
     let food = keeper.food_stats();
     assert_eq!(food.present, Some(true));
-    assert_eq!((food.emptied, food.refilled), (1, 1));
+    assert_eq!((food.ran_low, food.refilled), (1, 1));
     assert_eq!(food.feeds_since_refill, Some(2));
     assert_eq!((keeper.counts(0).feeds, keeper.counts(0).portions), (3, 3));
 }

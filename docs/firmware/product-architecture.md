@@ -188,7 +188,7 @@ What the feeder can measure decides what anyone can store. On the PLAF103:
 | --- | --- | --- |
 | Feed requested, source, result | Feeding owner, journal | Works |
 | Delivered portions | Rotor marks on PA18; the outlet beam for food passing | Partial: one mark per portion is observed; counting food needs calibration |
-| Food level (ok, low, empty) | Food beam | Partial: polarity known; levels need the food-level feature |
+| Food level (present, low) | Food beam | Partial: polarity known; levels need the food-level feature |
 | Motor current per feed | ADC channel 4 | Partial: read during drives; scaling to milliamps needs a reference |
 | Supply voltage, adapter or battery | ADC channel 5, PA19 | Works |
 | Buttons, lock, resets | PB4–PB7 | Works |

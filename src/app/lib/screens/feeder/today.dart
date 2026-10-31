@@ -193,7 +193,7 @@ class _Facts extends StatelessWidget {
     final at = last == null ? '' : ' at ${clockTextMs(context, last)}';
     final (food, foodColor) = switch (card.food) {
       FoodLevel.present => ('In the hopper$at', c.food),
-      FoodLevel.empty => ('Hopper empty$at', c.fault),
+      FoodLevel.low => ('Low$at', c.fault),
       FoodLevel.unread => ('Not read yet', c.textMuted),
     };
     final online = feeder.connection == Connection.online;

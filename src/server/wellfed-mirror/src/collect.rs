@@ -14,7 +14,7 @@
 //! - **Statistics.** Every section the session's capabilities allow, at
 //!   each connect and then every [`Diagnostics::Read`]'s `stats_every`, and
 //!   the food section alone after each `Fed` event, ahead of its trace: the
-//!   food beam reaches the server only through it, so an emptied or
+//!   food beam reaches the server only through it, so a low or
 //!   refilled hopper shows one feed late at most, not one period. A
 //!   section the feeder refuses (memory is an owner's, and busy during a
 //!   feed) keeps its last read.

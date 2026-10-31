@@ -431,11 +431,11 @@ mod tests {
         else {
             unreachable!("feed builds a feed")
         };
-        empty.hopper = FoodLevel::Empty;
+        empty.hopper = FoodLevel::Low;
 
         assert!(
             line(&Entry::Feed(empty), &TimeZone::UTC)
-                .ends_with("1 of 3 portions, done (done)  hopper read empty")
+                .ends_with("1 of 3 portions, done (done)  food read low")
         );
     }
 

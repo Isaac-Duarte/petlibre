@@ -21,6 +21,7 @@ use tokio::sync::{mpsc, oneshot, watch};
 use tracing::{info, warn};
 
 use crate::{
+    clock::StockPlans,
     config::Config,
     controller::{Controller, Rejection, Status},
     ota,
@@ -59,6 +60,8 @@ struct Actor {
     config: Arc<Config>,
     controller: Controller,
     status: watch::Sender<Status>,
+    /// What is known of stock's own plans, which decides its clock.
+    stock_plans: StockPlans,
 }
 
 impl Actor {
@@ -115,7 +118,8 @@ impl Actor {
         let now = Utc::now();
         let first_seen = self.controller.status.last_seen.is_none();
         self.controller.observe(channel, &message, now)?;
-        if let Some(reply) = protocol::reply(&self.config, channel, &message, now) {
+        if let Some(reply) = protocol::reply(&self.config, channel, &message, now, self.stock_plans)
+        {
             publish(client, reply)?;
         }
         if first_seen || message.cmd == "DEVICE_START_EVENT" {
@@ -311,10 +315,12 @@ pub async fn run(
     controller: Controller,
     mut requests: mpsc::Receiver<Request>,
     status: watch::Sender<Status>,
+    stock_plans: StockPlans,
 ) -> Result<()> {
     let mut actor = Actor {
         config,
         controller,
+        stock_plans,
         status,
     };
 

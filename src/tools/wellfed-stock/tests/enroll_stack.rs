@@ -228,6 +228,7 @@ async fn a_feeder_s_first_report_reaches_an_in_process_server() {
             enroll: Some(Duration::from_secs(60)),
             api: Api::Off,
             bind: Bind::Configured,
+            stock_plans: wellfed_stock::clock::StockPlans::Unknown,
         },
     )
     .unwrap();
@@ -309,6 +310,7 @@ async fn an_in_process_server_refuses_the_trial_on_an_unreviewable_build() {
         enroll: Some(Duration::from_secs(60)),
         api: Api::Off,
         bind: Bind::Configured,
+        stock_plans: wellfed_stock::clock::StockPlans::Unknown,
     };
     let Err(error) = Server::start(&path.canonicalize().unwrap(), options) else {
         panic!("the trial is refused on an unreviewable build");
@@ -337,6 +339,7 @@ async fn a_broker_bound_to_any_address_answers_beyond_the_configured_one() {
             enroll: Some(Duration::from_secs(60)),
             api: Api::Off,
             bind: Bind::Any,
+            stock_plans: wellfed_stock::clock::StockPlans::Unknown,
         },
     )
     .unwrap();

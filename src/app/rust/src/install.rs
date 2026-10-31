@@ -44,6 +44,7 @@ use crate::api::install::{
 use crate::api::model::SetupRefusal;
 use crate::api::setup::CONTROL_PIECE;
 use crate::api::store::{KnownFeeder, load_store, save_store};
+use wellfed_install::StockPlans;
 
 /// The run's future is deep; a debug build's frames are large.
 pub(crate) const STACK: usize = 16 * 1024 * 1024;
@@ -710,6 +711,15 @@ const fn timed_out(phase: Phase, from_stock: bool) -> (StopCase, Resume) {
     }
 }
 
+/// A frame follows the Reset hold, which erased stock's plans, and `FrameTaken`
+/// resumes a run that sent one. Anything else may still hold them.
+const fn stock_plans(start: &InstallStart) -> StockPlans {
+    match start {
+        InstallStart::Reset | InstallStart::FrameTaken => StockPlans::Erased,
+        InstallStart::Bank0 => StockPlans::Unknown,
+    }
+}
+
 /// The installer's config, under its data directory.
 fn installer_config(dir: &Path, phone: IpAddr) -> Result<PathBuf, Error> {
     std::fs::create_dir_all(dir).map_err(|source| Error::Create {
@@ -760,6 +770,7 @@ fn plan(
     })?;
     let version = manifest_version(&manifest).ok_or(Error::NoManifest)?;
 
+    let plans = stock_plans(&spec.start);
     let from_stock = matches!(spec.start, InstallStart::Reset | InstallStart::FrameTaken);
     let sends_frame = matches!(spec.start, InstallStart::Reset);
     let unjoined = if spec.setup_again {
@@ -853,6 +864,7 @@ fn plan(
             } else {
                 Bind::Configured
             },
+            stock_plans: plans,
         },
     };
     let known: Vec<([u8; 32], Option<SocketAddr>)> = spec
@@ -1171,6 +1183,13 @@ mod tests {
         assert_eq!(parse_pin(short), None);
         let long: &'static str = Box::leak(format!("{hash}:{hash}:7:8").into_boxed_str());
         assert_eq!(parse_pin(long), None);
+    }
+
+    #[test]
+    fn only_the_frame_route_says_stock_s_plans_are_erased() {
+        assert_eq!(stock_plans(&InstallStart::Reset), StockPlans::Erased);
+        assert_eq!(stock_plans(&InstallStart::FrameTaken), StockPlans::Erased);
+        assert_eq!(stock_plans(&InstallStart::Bank0), StockPlans::Unknown);
     }
 
     /// A code the feeder could not prove is not a dropped link: the screen

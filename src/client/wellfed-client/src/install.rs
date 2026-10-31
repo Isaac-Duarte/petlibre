@@ -298,7 +298,7 @@ pub enum InstallError {
     /// Stock's [`STOCK_CLOCK_UNSET`]: it refused before downloading, most
     /// likely because its clock was never set.
     #[error(
-        "stock refused the install before downloading (error {STOCK_CLOCK_UNSET}), most likely because its clock is not set: the stock server sets it only when it is within 10 minutes or the owner asks; it keeps running stock"
+        "stock refused the install before downloading (error {STOCK_CLOCK_UNSET}), most likely because its clock is not set: the stock server sets it only after the Reset hold and setup frame, since stock may otherwise still hold meals; it keeps running stock"
     )]
     StockClockUnset,
     #[error("build {reported} answers on bank {bank}, not the served build")]

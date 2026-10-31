@@ -38,6 +38,7 @@ use wellfed_formats::bench::lease::Lease;
 use wellfed_formats::credentials::{KeyScope, WifiCredential};
 use wellfed_formats::manifest::Provisioning;
 use wellfed_formats::stock::ServerConfig;
+use wellfed_install::StockPlans;
 use wellfed_install::{
     Api, Mdns, Plan, Platform, Review, Signer, Start, StockOptions, Stop, build_info,
 };
@@ -313,6 +314,7 @@ pub(crate) async fn run(args: InstallArgs) -> Result<()> {
             // The bench's page reads the stock server's status.
             api: Api::Loopback,
             bind: wellfed_install::Bind::Configured,
+            stock_plans: stock_plans(&args),
         },
     };
 
@@ -359,6 +361,17 @@ enum Route {
 
 /// The run's error in this command's words: the flags that resume it, or
 /// that answer a refusal, where the run names none.
+/// Only the setup frame follows the Reset hold, which erases stock's plans.
+/// Without it stock reached the broker some other way and may still hold them,
+/// so its clock stays where it reads.
+fn stock_plans(args: &InstallArgs) -> StockPlans {
+    if args.ssid.is_some() {
+        StockPlans::Erased
+    } else {
+        StockPlans::Unknown
+    }
+}
+
 fn explain(error: wellfed_install::Error) -> anyhow::Error {
     use wellfed_install::Error;
 
@@ -565,6 +578,13 @@ fn provision(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn only_the_setup_frame_says_stock_s_plans_are_erased() {
+        let frame = args(&["--ssid", "Maple St"]);
+        assert_eq!(stock_plans(&frame), StockPlans::Erased);
+        assert_eq!(stock_plans(&args(&[])), StockPlans::Unknown);
+    }
 
     #[derive(clap::Parser)]
     struct Line {

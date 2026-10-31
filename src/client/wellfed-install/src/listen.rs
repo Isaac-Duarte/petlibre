@@ -20,6 +20,7 @@ use std::time::{Duration, Instant};
 
 use wellfed_formats::stock::StockStatus;
 use wellfed_proto::api::PORT;
+use wellfed_stock::clock::StockPlans;
 use wellfed_stock::ota::trial::{ORIGINAL_VERSION, ResolveInput};
 use wellfed_stock::server::{self, Api, Handle, OtaTrial, Server};
 
@@ -76,6 +77,7 @@ pub async fn listen(
             enroll: None,
             api: Api::Off,
             bind: server::Bind::Configured,
+            stock_plans: StockPlans::Unknown,
         },
     )
     .map_err(|error| Error::StockServer(error.into()))?;

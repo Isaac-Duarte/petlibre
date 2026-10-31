@@ -66,8 +66,9 @@ pub use track::{Stop, Stopped, Unsettled};
 /// What stock's server is built from, which the CLI checks before it
 /// dispatches an install.
 pub use wellfed_stock::build_info;
-/// Whether stock's clock is set even when its own reading is far off, and
-/// whether stock's server answers its loopback API.
+/// What is known of stock's own plans, which decides its clock.
+pub use wellfed_stock::clock::StockPlans;
+/// Whether stock's server answers its loopback API, and on which address.
 pub use wellfed_stock::server::{Api, Bind};
 /// Why the server would not send the install request.
 pub use wellfed_stock::{controller::Rejection, server::Refusal};

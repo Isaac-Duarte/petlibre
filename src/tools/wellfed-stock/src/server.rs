@@ -35,6 +35,7 @@ use tracing::info;
 use crate::{
     api::{self, ApiState},
     build_info::BUILD,
+    clock,
     config::{self, Config, State},
     controller::{self, Controller, Rejection, Status},
     enroll::Enrollment,
@@ -70,6 +71,8 @@ pub struct Options {
     pub enroll: Option<Duration>,
     pub api: Api,
     pub bind: Bind,
+    /// What is known of stock's own plans, which decides its clock.
+    pub stock_plans: clock::StockPlans,
 }
 
 /// Which address the broker listens on.
@@ -401,7 +404,13 @@ async fn serve(
     };
     ready.send_replace(Some(handle.clone()));
 
-    let worker = mqtt::run(config.clone(), controller, receiver, status);
+    let worker = mqtt::run(
+        config.clone(),
+        controller,
+        receiver,
+        status,
+        options.stock_plans,
+    );
     // The broker admits an enrolling feeder once the session subscribed.
     let mut connected = status_rx;
     let subscribed = async move {

@@ -21,6 +21,7 @@ use wellfed_client::install::{SETUP_ADDRESS, SetupFrame};
 use wellfed_formats::bench::lease::Lease;
 use wellfed_stock::{
     build_info::BUILD,
+    clock,
     config::{self, State},
     mqtt::{broker, broker::DeviceAuth},
     neighbour, network, ota,
@@ -502,6 +503,7 @@ async fn serve(path: PathBuf, trial: OtaTrial, enroll_minutes: Option<u64>) -> R
             enroll: enroll_minutes.map(|minutes| Duration::from_secs(minutes * 60)),
             api: server::Api::Loopback,
             bind: server::Bind::Configured,
+            stock_plans: clock::StockPlans::Unknown,
         },
     )?;
 

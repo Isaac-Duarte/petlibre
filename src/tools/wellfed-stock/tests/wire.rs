@@ -32,7 +32,16 @@ fn answer(config: &wellfed_stock::config::Config, channel: &str, message: Value)
     )
     .unwrap();
     let now = Utc.with_ymd_and_hms(2026, 10, 17, 21, 17, 41).unwrap();
-    bytes(&protocol::reply(config, channel, &message, now).unwrap())
+    bytes(
+        &protocol::reply(
+            config,
+            channel,
+            &message,
+            now,
+            wellfed_stock::clock::StockPlans::Erased,
+        )
+        .unwrap(),
+    )
 }
 
 #[test]

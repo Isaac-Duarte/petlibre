@@ -36,7 +36,14 @@ fn acknowledgements_preserve_event_id_and_step_without_sending_a_feed() {
     )
     .unwrap();
 
-    let reply = protocol::reply(&config, channel, &msg, Utc::now()).unwrap();
+    let reply = protocol::reply(
+        &config,
+        channel,
+        &msg,
+        Utc::now(),
+        wellfed_stock::clock::StockPlans::Unknown,
+    )
+    .unwrap();
     assert_eq!(reply.topic, config.topic("event/sub"));
     assert_eq!(reply.payload["msgId"], "event42");
     assert_eq!(reply.payload["execStep"], "GRAIN_END");
@@ -53,7 +60,16 @@ fn stock_ota_report_topic_is_parsed_without_sending_an_acknowledgement_or_comman
         let (channel, msg) = protocol::parse(&config, &config.topic("ota/post"), &payload).unwrap();
         assert_eq!(channel, Channel::Ota);
         assert_eq!(msg.cmd, cmd);
-        assert!(protocol::reply(&config, channel, &msg, Utc::now()).is_none());
+        assert!(
+            protocol::reply(
+                &config,
+                channel,
+                &msg,
+                Utc::now(),
+                wellfed_stock::clock::StockPlans::Unknown
+            )
+            .is_none()
+        );
         assert!(protocol::parse(&config, "dl/PLAF103/ANOTHER/device/ota/post", &payload).is_err());
     }
 }
@@ -69,7 +85,16 @@ fn configuration_reply_uses_its_own_channel_without_an_automatic_response() {
     .unwrap();
 
     assert_eq!(channel, Channel::Config);
-    assert!(protocol::reply(&config, channel, &msg, Utc::now()).is_none());
+    assert!(
+        protocol::reply(
+            &config,
+            channel,
+            &msg,
+            Utc::now(),
+            wellfed_stock::clock::StockPlans::Unknown
+        )
+        .is_none()
+    );
     assert!(
         protocol::parse(
             &config,
@@ -91,7 +116,14 @@ fn plan_requests_return_imported_snapshot_and_clock_changes_are_held_for_nonempt
     )
     .unwrap();
 
-    let reply = protocol::reply(&config, Channel::Event, &msg, Utc::now()).unwrap();
+    let reply = protocol::reply(
+        &config,
+        Channel::Event,
+        &msg,
+        Utc::now(),
+        wellfed_stock::clock::StockPlans::Unknown,
+    )
+    .unwrap();
     assert_eq!(reply.payload["plans"], json!(config.plans.clone().unwrap()));
 
     let (_, msg) = protocol::parse(
@@ -101,9 +133,15 @@ fn plan_requests_return_imported_snapshot_and_clock_changes_are_held_for_nonempt
     )
     .unwrap();
     assert_eq!(
-        protocol::reply(&config, Channel::Ntp, &msg, Utc::now())
-            .unwrap()
-            .payload["calibrationTag"],
+        protocol::reply(
+            &config,
+            Channel::Ntp,
+            &msg,
+            Utc::now(),
+            wellfed_stock::clock::StockPlans::Unknown
+        )
+        .unwrap()
+        .payload["calibrationTag"],
         false
     );
 }
@@ -125,7 +163,13 @@ fn plans_are_sent_only_as_captured() {
         )
         .unwrap();
         assert_eq!(parsed, channel);
-        protocol::reply(config, channel, &msg, Utc::now())
+        protocol::reply(
+            config,
+            channel,
+            &msg,
+            Utc::now(),
+            wellfed_stock::clock::StockPlans::Unknown,
+        )
     };
 
     assert!(
@@ -189,7 +233,13 @@ fn a_seeded_table_replays_as_written_and_removing_it_leaves_stock_s_alone() {
     let ask = |config: &wellfed_stock::config::Config, topic: &str, cmd: &str| {
         let body = serde_json::to_vec(&json!({"cmd": cmd, "msgId": "m", "ts": 0})).unwrap();
         let (channel, msg) = protocol::parse(config, &config.topic(topic), &body).unwrap();
-        protocol::reply(config, channel, &msg, Utc::now())
+        protocol::reply(
+            config,
+            channel,
+            &msg,
+            Utc::now(),
+            wellfed_stock::clock::StockPlans::Unknown,
+        )
     };
     let reply = ask(&config, "event/post", "GET_FEEDING_PLAN_EVENT").unwrap();
     assert_eq!(reply.payload["plans"], seed);
@@ -207,4 +257,27 @@ fn a_seeded_table_replays_as_written_and_removing_it_leaves_stock_s_alone() {
     let config = wellfed_stock::config::load(&path).unwrap();
     assert_eq!(config.plans, None);
     assert!(ask(&config, "event/post", "GET_FEEDING_PLAN_EVENT").is_none());
+}
+
+/// An installer captures no table, so its clock turns on what is known of
+/// stock's own plans: set after the frame, left as it reads otherwise.
+#[test]
+fn an_installer_sets_the_clock_only_after_the_frame() {
+    let mut config = common::config();
+    config.plans = None;
+    let (_, msg) = protocol::parse(
+        &config,
+        &config.topic("ntp/post"),
+        br#"{"cmd":"NTP","ts":1000}"#,
+    )
+    .unwrap();
+    let tag = |plans| {
+        protocol::reply(&config, Channel::Ntp, &msg, Utc::now(), plans)
+            .unwrap()
+            .payload["calibrationTag"]
+            .clone()
+    };
+
+    assert_eq!(tag(wellfed_stock::clock::StockPlans::Erased), true);
+    assert_eq!(tag(wellfed_stock::clock::StockPlans::Unknown), false);
 }

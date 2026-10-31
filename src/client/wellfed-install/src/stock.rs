@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use wellfed_client::install::{FeederTrust, StockPower, StockView};
 use wellfed_formats::stock::{Enrollment, ImageLease, OtaReport, StockStatus};
+use wellfed_stock::clock::StockPlans;
 use wellfed_stock::ota::image::{self, Images};
 use wellfed_stock::ota::trial::{AnsweredInput, Input, Record};
 use wellfed_stock::server::{self, Api, Handle, NoFeederEnrolled, OtaTrial, Refusal, Server};
@@ -34,6 +35,9 @@ pub struct StockOptions {
     pub api: Api,
     /// Which address the broker listens on.
     pub bind: server::Bind,
+    /// What is known of stock's own plans: `Erased` only when this run's frame
+    /// followed the Reset hold, or resumes one that did.
+    pub stock_plans: StockPlans,
 }
 
 /// The installer's config at `path`, for a broker at `listen`: created once,
@@ -164,6 +168,7 @@ impl Stock {
                 enroll: Some(self.options.enroll),
                 api: self.options.api,
                 bind: self.options.bind,
+                stock_plans: self.options.stock_plans,
             },
         )
         .map_err(|error| Error::StockServer(error.into()))?;
@@ -395,6 +400,7 @@ mod tests {
                     enroll: None,
                     api: Api::Off,
                     bind: server::Bind::Configured,
+                    stock_plans: StockPlans::Unknown,
                 },
             )
             .unwrap();

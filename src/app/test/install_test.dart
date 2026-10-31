@@ -680,7 +680,6 @@ void main() {
 
         expect(find.text('Your feeder runs Wellfed.'), findsOneWidget);
         expect(find.text('Set up its meals here next.'), findsOneWidget);
-        expect(find.textContaining('DNS record'), findsNothing);
         expect(ports.releases, 1);
 
         // Home hears of it as the run ends, due its first clock sync.

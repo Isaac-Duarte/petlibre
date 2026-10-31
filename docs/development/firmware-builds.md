@@ -64,6 +64,8 @@ The release key file holds only the public half:
 
 Any other field is refused, so a file that also holds a `seed` never reaches a build. The release key itself stays offline.
 
+A manifest for the app's installer must be signed by the private half of this same key, with `wellfed-build sign --key <file>`. The default, `private/ota-key.json`, is the bench key, and a consumer image refuses its manifest at promotion once the handover from stock has cleared enrolled keys. Until the real release key exists, create a stand-in with `wellfed-build keygen --output private/release-standin-key.json` and put its public half in `private/release-key.pub.json`. A stand-in is for the bench only.
+
 The manifest records `provisioning`, and the source identity binds it, so a bench and a consumer image of the same sources never share an identity. `source-id` and `inputs` take `--provisioning` too. The image's Rust learns whether build Wi-Fi exists from the presence of `WELLFED_BUILD_WIFI`, which the builder sets exactly when the generated header names a network. The header defines a macro of the same name, and the entry reads a runtime symbol that only the matching Rust build defines, so a header and a runtime that disagree fail the link. The loop reads the same answer (`Platform::build_wifi`): a consumer image with no Wi-Fi stored starts BLE setup mode at boot ([product architecture](../firmware/product-architecture.md#setup-and-pairing)).
 
 A consumer image trusts the release key, not the bench key, so once installed the bench could offer it nothing more. `wellfed-bench ota` therefore refuses a consumer review unless the feeder already lists the bench key as an enrolled update signer: run `wellfed update-key enroll` with the bench key first.

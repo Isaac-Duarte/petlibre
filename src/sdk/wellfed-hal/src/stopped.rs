@@ -15,9 +15,13 @@ use crate::sdk::{self, IrqGuard};
 pub const PA_MASK: u32 = MOTOR_MASK | IR_PA_BIT;
 pub const PB_MASK: u32 = IR_PB_BIT;
 
-/// Emitters the probe holds on under an armed supervisor budget: bit 0
-/// PA15, bit 1 PB3. Written only by that probe; read by health.
+/// Emitters held on at rest under an armed supervisor budget: bit 0 PA15,
+/// bit 1 PB3. Written by the optics probe and by the owner's food readings,
+/// which never share a firmware; read by health.
 static SUPERVISED: AtomicU32 = AtomicU32::new(0);
+
+/// Both emitters, as [`set_supervised`] takes them.
+pub const BOTH_EMITTERS: u32 = 3;
 
 /// Publish the emitters now on under supervision (0 before any emitter change).
 pub fn set_supervised(emitters: u32) {

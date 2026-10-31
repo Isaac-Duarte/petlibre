@@ -1475,9 +1475,9 @@ pub enum EventBody {
         minute: u16,
         portions: u8,
     },
-    /// The food beam's level changed: at most once a feed, since the beam
-    /// is read only while a feed's emitters are on. The first reading
-    /// after a boot counts as a change.
+    /// The food beam's level changed: at most once a feed or a reading at
+    /// rest, however it flickers. The first reading after a boot counts as a
+    /// change.
     Food {
         level: FoodLevel,
     },
@@ -1534,10 +1534,11 @@ pub struct FeedFault {
 /// hopper reads low only after a run of readings without. Stock counts 20
 /// readings; its poll rate is not recovered, and the firmware assumes the
 /// nominal 50 ms its outlet filter implies, so a second. The beam is lit
-/// only during feeds, so the level is the last feed's.
+/// during feeds and in a short window at rest, so the level is the latest of
+/// either's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FoodLevel {
-    /// No qualified reading: no feed has lit the beam this boot, or this
+    /// No qualified reading: nothing has read the beam this boot, or this
     /// feed ended before the beam settled.
     Unread,
     Present,
@@ -1858,8 +1859,8 @@ pub struct PowerStats {
     pub period_s: u32,
 }
 
-/// The food beam since this boot. It is read only while the emitters are
-/// on, during feeds.
+/// The food beam since this boot. It is read while the emitters are on:
+/// during feeds, and in a short window at rest on the adapter.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Food {
     /// The beam's last reading: `Some(true)` with food, `None` before one.

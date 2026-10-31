@@ -82,7 +82,7 @@ pub trait Feeds {
     /// Stop the feed `feed` if it is still running.
     fn cancel(&self, feed: u32) -> bool;
     /// The food beam's latest reading (true with food), once the owner has
-    /// taken one; it reads the beam only while its emitters are on.
+    /// taken one: during a feed, or in a short window at rest.
     fn food(&self) -> Option<bool> {
         None
     }

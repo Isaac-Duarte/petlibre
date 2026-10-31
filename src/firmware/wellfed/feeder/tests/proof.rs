@@ -2,7 +2,8 @@
 //! its journal and at rest, every check passing, for `PROOF_MS`; and what
 //! makes the trial fail at once instead.
 
-use wellfed_fw_feeder::feeding::{Opened, PROOF_MS, Proof};
+use wellfed_core::feed::food_read::{FOOD_READ_FIRST_MS, FoodReads, FoodStep, FoodView};
+use wellfed_fw_feeder::feeding::{InFlight, Opened, PROOF_MS, Proof, food_read_held};
 use wellfed_sdk::Feeding;
 use wellfed_sdk::hal::owner::{OwnerFault, OwnerState, OwnerStatus};
 use wellfed_sdk::hal::supervision::events::EventsFault;
@@ -38,6 +39,58 @@ fn an_owner_at_rest_with_its_checks_passing_proves_itself_after_the_window() {
         proof.step(owner(&status), 1_000 + PROOF_MS),
         Feeding::Proven
     );
+}
+
+/// Why a trial holds food readings: lit emitters are a lapse in its proof. So
+/// the firmware holds them while the build is confirming, the trial proves
+/// itself with no reading in its way, and readings start only after.
+#[test]
+fn a_trial_holds_food_readings_so_it_still_proves_itself() {
+    let mut proof = Proof::default();
+    let lit = OwnerStatus {
+        optics_off: false,
+        food_reading: true,
+        ..resting()
+    };
+    assert_eq!(proof.step(owner(&resting()), 0), Feeding::Pending);
+    assert_eq!(proof.step(owner(&lit), PROOF_MS - 100), Feeding::Pending);
+    assert_eq!(
+        proof.step(owner(&resting()), PROOF_MS),
+        Feeding::Pending,
+        "a reading would start the window again"
+    );
+
+    // Confirming: the schedule never asks, however long the trial takes, and
+    // the owner's proof runs its window out.
+    let mut reads = FoodReads::new();
+    let mut proof = Proof::default();
+    let held = food_read_held(true, InFlight::Nothing, false, false);
+    let view = FoodView::default();
+    let mut proven = false;
+    for now in (0..2 * PROOF_MS + FOOD_READ_FIRST_MS).step_by(20) {
+        assert_eq!(reads.step(now, view, held), FoodStep::Rest);
+        proven = proof.step(owner(&resting()), now) == Feeding::Proven;
+    }
+    assert!(proven);
+
+    // Confirmed: the first reading comes after its usual wait.
+    let confirmed = 2 * PROOF_MS + FOOD_READ_FIRST_MS;
+    let held = food_read_held(false, InFlight::Nothing, false, false);
+    assert_eq!(reads.step(confirmed, view, held), FoodStep::Rest);
+    assert_eq!(
+        reads.step(confirmed + FOOD_READ_FIRST_MS, view, held),
+        FoodStep::Start
+    );
+}
+
+/// A feed in flight, one being resolved and work queued for a writer each
+/// hold readings too.
+#[test]
+fn a_feed_or_queued_work_holds_food_readings() {
+    assert!(food_read_held(false, InFlight::Feed, false, false));
+    assert!(food_read_held(false, InFlight::Nothing, true, false));
+    assert!(food_read_held(false, InFlight::Nothing, false, true));
+    assert!(!food_read_held(false, InFlight::Nothing, false, false));
 }
 
 #[test]

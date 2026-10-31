@@ -73,6 +73,13 @@
 //! `FEED_BOUND_MS`), and a feed that finds a write running waits for it in
 //! the loop, at most `WRITE_WAIT_MS`. The journal writes under the loop's
 //! own claim, at the owner's rest boundaries.
+//!
+//! The food beam is also read at rest (`wellfed_core::feed::food_read`), so
+//! the low-food light and `Status.food` follow a refill or a restart with no
+//! feed. The loop drives that from here, before each owner step, and every
+//! reason to hold a reading gives way to the feed or write in question:
+//! `submit` ends a reading before it claims, a writer waiting ends it within a
+//! step, and a trial holds readings until it has confirmed ([`food_read_held`]).
 
 use wellfed_core::feed::controller::FeedLimits;
 use wellfed_core::feed::progress::BowlMode;
@@ -232,6 +239,23 @@ pub fn writes_queued() -> bool {
     use wellfed_feeder_runtime::{keys, network, traces};
     use wellfed_sdk::hal::settings;
     settings::pending().is_some() || network::saving() || keys::queued() || traces::queued()
+}
+
+/// Whether the firmware's own reasons hold food readings at rest
+/// (`Owner::food_read_step` gathers the rest).
+///
+/// A trial is the one that needs a hold of its own. Its confirmation requires
+/// outputs verified stopped for 30 s and then [`Proof`]'s [`PROOF_MS`] of
+/// emitters read back off, so lit emitters would restart both; and its
+/// deadline resets the boot however close that came. So a trial reads nothing
+/// until it has confirmed, and its low-food light stays dark until then.
+pub const fn food_read_held(
+    confirming: bool,
+    in_flight: InFlight,
+    interrupted: bool,
+    queued: bool,
+) -> bool {
+    confirming || matches!(in_flight, InFlight::Feed) || interrupted || queued
 }
 
 /// The owner's figures for a feed's drive, as its trace's summary keeps
@@ -702,6 +726,7 @@ pub use target::Feeding;
 
 #[cfg(target_os = "none")]
 mod target {
+    use wellfed_core::feed::food_read::FoodReads;
     use wellfed_core::feed::progress::Direction;
     use wellfed_core::feed::storage::{OwnerResult, RotorPhase};
     use wellfed_core::store::feed_journal::{FeedJournal, JournalError};
@@ -799,6 +824,8 @@ mod target {
         homed: u32,
         /// Outlet-beam breaks this boot's feeds saw.
         outlet_breaks: u32,
+        /// When to read the food beam at rest.
+        food_reads: FoodReads,
     }
 
     impl Feeding {
@@ -853,6 +880,18 @@ mod target {
                 current.max_gap_ms = current.max_gap_ms.max(now.wrapping_sub(last));
             }
             self.stepped_ms = Some(now);
+            let in_flight = if self.current.is_some() {
+                super::InFlight::Feed
+            } else {
+                super::InFlight::Nothing
+            };
+            let held = super::food_read_held(
+                wellfed_sdk::confirming(),
+                in_flight,
+                self.interrupted.is_some(),
+                super::writes_queued(),
+            );
+            owner.food_read_step(&mut self.food_reads, &INTERLOCK, now, held);
             let delay = match owner.step() {
                 Step::Wait(ms) => Some(ms),
                 Step::Stopped | Step::Refused => None,
@@ -1091,6 +1130,9 @@ mod target {
             if self.current.is_some() || wellfed_sdk::hal::ota::mailbox::installing() {
                 return Err(Refusal::Busy);
             }
+            // A feed goes before a food reading, and the claim below can wait
+            // in this task for a write, which lit emitters would outlast.
+            owner.yield_food_read(&INTERLOCK);
             let clock = wellfed_sdk::hal::sdk::uptime_ms;
             let delay = wellfed_sdk::hal::sdk::delay_ms;
             super::claim_outputs(&INTERLOCK, super::writes_queued, clock, delay, |held| {
@@ -1238,8 +1280,7 @@ mod target {
             }
         }
 
-        /// The food beam's latest reading, taken while a feed's emitters
-        /// were on.
+        /// The food beam's latest reading, from a feed or a reading at rest.
         pub fn food(&self) -> Option<bool> {
             OWNER.enter()?.status().food
         }

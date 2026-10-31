@@ -204,7 +204,7 @@ A healthy network proves the update path still works, not that the build can fee
 
 1. **The runtime's own health has held for 30 s:** the startup probes finished, outputs verified stopped, and the link live.
 2. **The confirmation has armed the flash hooks.** The owner opens only on armed hooks, and on a trial boot this is the first arming, so the confirmation arms and then waits. Arming and the record's write each take the write turn, and set the attempt marker for themselves only, so the wait between them leaves the marker clear.
-3. **The owner has proved itself** (`feeding::Proof`, reported each loop pass with `wellfed_sdk::report_feeding`). It has opened on its journal, resolved any feed a reset interrupted as uncertain, and stayed at rest for 2 s: Idle, no owner or supervisor fault, and motor STOP and the emitters off read back. That is about a hundred of its 20 ms samples, each of which reads the sensors and the motor current.
+3. **The owner has proved itself** (`feeding::Proof`, reported each loop pass with `wellfed_sdk::report_feeding`). It has opened on its journal, resolved any feed a reset interrupted as uncertain, and stayed at rest for 2 s: Idle, no owner or supervisor fault, and motor STOP and the emitters off read back. That is about a hundred of its 20 ms samples, each of which reads the sensors and the motor current. So a trial reads the food beam at rest only after it has confirmed ([optical inputs](optical-inputs.md#reading-the-food-beam-at-rest)): a window's lit emitters would restart this and step 1's 30 s.
 4. **The link is still live at that moment.**
 
 Then the floor rises and the record is written. A firmware with no feeding owner (`blink`, `qa`, the bring-up areas) has nothing to prove, and confirms on step 1 alone.

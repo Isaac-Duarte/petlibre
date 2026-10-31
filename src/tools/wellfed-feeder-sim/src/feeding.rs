@@ -36,14 +36,16 @@
 //! - The hopper has food until [`SimFeeds::fill`] empties it. Each feed
 //!   reads it as the food beam would, runs whatever it reads (as the
 //!   firmware's and stock's do) and records the reading in its `Fed`
-//!   event; the reading stays the feeder's food level until the next feed,
-//!   since the beam is lit only during feeds.
+//!   event; the reading stays the feeder's food level until the next one.
+//!   With no feed the beam is read on the firmware's own schedule
+//!   ([`FoodReads`]), on the adapter only, each reading taking no time here.
 
 use std::cell::Cell;
 use std::rc::Rc;
 
 use wellfed_board_plaf103::storage;
 use wellfed_core::feed::controller::{FeedReason, FeedRequest};
+use wellfed_core::feed::food_read::{FoodReads, FoodStep, FoodView};
 use wellfed_core::feed::progress::{BowlMode, Direction};
 use wellfed_core::feed::storage::{OwnerOutcome, OwnerRecovery, OwnerResult};
 use wellfed_core::store::feed_journal::{FeedJournal, JournalConfig, JournalError};
@@ -101,8 +103,11 @@ pub struct SimFeeds {
     adapter: bool,
     /// Whether the hopper has food in front of the beam.
     hopper: bool,
-    /// What the beam read in the last feed this boot, once one has run.
+    /// What the beam last read this boot, in a feed or at rest.
     food: Option<bool>,
+    /// When to read it at rest, and the readings at rest this boot.
+    food_reads: FoodReads,
+    reads: u32,
     /// The fault the next feed ends on, after its first portion.
     fault: Option<FeedReason>,
 }
@@ -132,6 +137,8 @@ impl SimFeeds {
             adapter: true,
             hopper: true,
             food: None,
+            food_reads: FoodReads::new(),
+            reads: 0,
             fault: None,
         }
     }
@@ -186,6 +193,9 @@ impl SimFeeds {
                 Some(feed::interrupted(number, &result, Source::Feeder)),
                 None,
             );
+        }
+        if self.current.is_none() {
+            self.read_food(now_ms);
         }
         let Some(current) = self.current.as_mut() else {
             return (None, None);
@@ -257,6 +267,20 @@ impl SimFeeds {
         self.current = None;
         self.food = Some(self.hopper);
         (Some(self.finish(&result, by)), None)
+    }
+
+    /// A food reading at rest, if one is due and the adapter is in.
+    fn read_food(&mut self, now_ms: u32) {
+        let view = FoodView {
+            reading: false,
+            reads: self.reads,
+        };
+        let held = self.failed || !self.adapter;
+        if self.food_reads.step(now_ms, view, held) == FoodStep::Start {
+            self.food_reads.started();
+            self.food = Some(self.hopper);
+            self.reads = self.reads.wrapping_add(1);
+        }
     }
 
     /// Write `result` into the journal: the `Fed` event it makes, uncertain

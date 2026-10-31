@@ -4,6 +4,7 @@
 pub mod controller;
 pub mod diagnostic;
 pub mod feedback;
+pub mod food_read;
 pub mod motor_gate;
 pub mod observe;
 pub mod owner;

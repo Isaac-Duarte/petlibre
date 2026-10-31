@@ -42,7 +42,7 @@ pub struct Status {
     pub last_event: Option<u64>,
     /// Open device API sessions, the server's included.
     pub sessions: u8,
-    /// The hopper as the food beam last read it (during the last feed).
+    /// The hopper as the food beam last read it, in a feed or at rest.
     pub food: FoodLevel,
     /// The last feed this boot that ended on a fault (failed or
     /// uncertain), until a later feed completes.

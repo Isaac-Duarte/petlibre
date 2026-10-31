@@ -16,7 +16,7 @@ use crate::{HarnessError, Result, require};
 pub const VERSION: u64 = 2;
 const MAX_ACTIONS: usize = 10_000;
 /// Ten minutes: the longest feed the limits allow, and then some.
-pub const MAX_END_MS: u64 = 600_000;
+pub const MAX_END_MS: u64 = 900_000;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -102,6 +102,9 @@ pub struct Expectation {
     pub device_ms: Option<u64>,
     pub durable: Option<bool>,
     pub fault: Option<Fault>,
+    pub food: Option<Option<bool>>,
+    pub food_reading: Option<bool>,
+    pub food_reads: Option<u32>,
     pub high_water_id: Option<u64>,
     pub id: Option<u64>,
     pub journal_error: Option<u32>,
@@ -116,6 +119,7 @@ pub struct Expectation {
     pub homed: Option<bool>,
     pub reason: Option<Reason>,
     pub response: Option<u64>,
+    pub sensing: Option<bool>,
     pub state: Option<State>,
     pub stopped: Option<bool>,
     pub submission: Option<Submission>,
@@ -147,7 +151,7 @@ impl Scenario {
             (1..=100).contains(&fields.name.chars().count()),
             "Scenario needs a name of 1..100 characters",
         )?;
-        require(fields.end_ms <= MAX_END_MS, "end_ms must be 0..600000")?;
+        require(fields.end_ms <= MAX_END_MS, "end_ms must be 0..900000")?;
         require(
             fields.actions.len() <= MAX_ACTIONS,
             "actions must be a list with at most 10000 entries",

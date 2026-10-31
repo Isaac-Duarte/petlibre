@@ -60,6 +60,21 @@
 //! boundaries (the outputs already stopped), so it takes no write turn.
 //! Writes and joins do not exclude each other.
 //!
+//! **Food readings.** A reading lights the emitters at rest, which a lease
+//! finds not stopped, so writes must not overlap it either; but it is no feed
+//! and claims nothing a client can see ([`Interlock::outputs_claimed`] stays
+//! false, so a settings or Wi-Fi change is not refused `Busy`, and handshakes
+//! go on). It holds a flag of its own ([`Interlock::begin_reading`]):
+//!
+//! - It starts only on a free turn, with no write running or waiting.
+//! - While it is set a writer waits and counts among the waiters, and the
+//!   loop, seeing that ([`Interlock::holds_reading`]), ends the reading within
+//!   a step: writes yield nothing to it but those few milliseconds.
+//! - A join waits for its end, at most the bound it published, rather than
+//!   ending it: joins retry every second or so while there is no network, and
+//!   would leave no gap long enough for a reading.
+//! - A feed never waits for it: the loop ends the reading before it claims.
+//!
 //! [scheduling gaps]: ../../../../docs/firmware/resource-budget.md#scheduling-gaps-across-wi-fi-rejoins
 
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
@@ -92,7 +107,9 @@ pub const WRITE_WAIT_MS: u32 = 3_000;
 const _: () = assert!(WRITE_WAIT_MS >= 3 * FLASH_LIMITS.total_ms + WRITER_POLL_MS);
 
 /// The turn byte's flags above the [`Turn`] code.
-const TURN_BITS: u8 = 0x0f;
+const TURN_BITS: u8 = 0x07;
+/// A food reading has the emitters lit.
+const READING: u8 = 0x08;
 /// A storage write holds the flash.
 const WRITING: u8 = 0x10;
 /// How many writers wait for their turn, in the top three bits: while any
@@ -233,6 +250,7 @@ pub enum WriteStart {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct State {
     turn: Turn,
+    reading: bool,
     writing: bool,
     /// Writers waiting for their turn; saturates rather than wraps.
     waiters: u8,
@@ -250,13 +268,22 @@ impl State {
     const fn from_byte(byte: u8) -> Self {
         Self {
             turn: Turn::from_byte(byte & TURN_BITS),
+            reading: byte & READING != 0,
             writing: byte & WRITING != 0,
             waiters: byte >> WAITERS_SHIFT,
         }
     }
 
     const fn code(self) -> u8 {
-        self.turn.code() | if self.writing { WRITING } else { 0 } | (self.waiters << WAITERS_SHIFT)
+        self.turn.code()
+            | if self.reading { READING } else { 0 }
+            | if self.writing { WRITING } else { 0 }
+            | (self.waiters << WAITERS_SHIFT)
+    }
+
+    /// Whether a food reading may not start, or must end for a write.
+    const fn holds_reading(self) -> bool {
+        self.writing || self.waiters > 0 || !matches!(self.turn, Turn::Free)
     }
 
     /// A claim: refused by a write as well as a join, except that the loop's
@@ -285,7 +312,7 @@ impl State {
     /// the waiters. A writer that must wait counts itself; one that gets the
     /// turn leaves the count, so another's wait stays marked.
     const fn request_write(self, counted: bool) -> (Self, bool) {
-        if self.outputs_claimed() || self.writing {
+        if self.outputs_claimed() || self.writing || self.reading {
             let waiters = if counted || self.waiters == WAITERS_MAX {
                 self.waiters
             } else {
@@ -455,6 +482,43 @@ impl Interlock {
         }
     }
 
+    /// A food reading must not start now, or must end for a write: a write runs
+    /// or waits, or a join or the loop's own claim has the turn.
+    pub fn holds_reading(&self) -> bool {
+        self.state().holds_reading()
+    }
+
+    /// The loop, before it lights the emitters for a food reading: true when
+    /// nothing holds it, and from then until [`Self::end_reading`] no write
+    /// or join starts. `bound_ms` is the longest a waiting join is held off,
+    /// should the reading's end never come.
+    pub fn begin_reading(&self, bound_ms: u32) -> bool {
+        // As in `try_claim`: published first, so a join that sees the reading
+        // sees its bound. A feed's claim publishes its own in turn.
+        self.bound_ms.store(bound_ms, Ordering::Release);
+        self.update(|state| {
+            if state.holds_reading() || state.reading {
+                return (state, false);
+            }
+            let next = State {
+                reading: true,
+                ..state
+            };
+            (next, true)
+        })
+    }
+
+    /// The emitters are off again. Harmless when no reading runs.
+    pub fn end_reading(&self) {
+        self.update(|state| {
+            let next = State {
+                reading: false,
+                ..state
+            };
+            (next, ())
+        });
+    }
+
     /// The loop, before it submits a feed: claim the outputs for at most
     /// `bound_ms`, the longest the feed can keep them from rest. One attempt,
     /// refused by a running or waiting join or storage write.
@@ -583,7 +647,13 @@ impl Interlock {
             let now = now_ms();
             self.join_began_ms.store(now, Ordering::Release);
             self.join_counted.store(false, Ordering::Release);
-            let step = self.transition(Turn::request_join);
+            let step = self.update(|state| {
+                if state.reading {
+                    return (state, JoinStep::Wait);
+                }
+                let (turn, step) = state.turn.request_join();
+                (State { turn, ..state }, step)
+            });
             let ms = now.wrapping_sub(begun);
             if step == JoinStep::Go {
                 if !waited {

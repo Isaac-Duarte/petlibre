@@ -27,6 +27,9 @@ use core::ptr;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use wellfed_core::feed::controller::{FeedController, FeedReason, FeedRequest};
+use wellfed_core::feed::food_read::{
+    FOOD_READ_BOUND_MS, FOOD_READ_BUDGET_MS, FoodReads, FoodStep, FoodView,
+};
 use wellfed_core::feed::observe::Observation;
 use wellfed_core::feed::progress::BowlMode;
 use wellfed_core::feed::sensor_inputs::SensorInputs;
@@ -34,7 +37,9 @@ use wellfed_core::feed::storage::{OwnerRecovery, OwnerResult, OwnerStorage, Roto
 use wellfed_core::flash_coord::{FlashFault, FlashPhase};
 
 use crate::board::{self, Board};
+use crate::interlock::Interlock;
 use crate::sdk::{self, IrqGuard};
+use crate::stopped;
 use crate::supervision::active::active_pointer;
 use crate::supervision::beat;
 use crate::supervision::events::{EDGE_LOG, Events, EventsFault, PinWatch};
@@ -134,8 +139,15 @@ pub struct OwnerStatus {
     pub optics_off: bool,
     pub trace: FeedTrace,
     /// The food beam's latest qualified reading (`true` with food), kept
-    /// after the emitters go off; `None` until a feed has lit them.
+    /// after the emitters go off; `None` until a feed or a reading at rest
+    /// has judged it.
     pub food: Option<bool>,
+    /// A food reading's emitters are lit.
+    pub food_reading: bool,
+    /// Food readings at rest judged this boot.
+    pub food_reads: u32,
+    /// On the adapter, settled: a food reading may start.
+    pub on_adapter: bool,
     /// The pack against its floor (`SensorInputs::floor`), `None` before
     /// the owner has judged it.
     pub below_floor: Option<bool>,
@@ -171,6 +183,11 @@ struct Shared {
     /// Copied from the configuration at open: what `submit` checks.
     max_portions: u16,
     bowl_mode: BowlMode,
+    /// The supervisor's clock when a food reading lit the emitters, until it
+    /// ends. Here rather than in the task half, since the loop can end a
+    /// reading between steps ([`Owner::end_food_read`]).
+    food_read_at: Option<u32>,
+    food_reads: u32,
 }
 
 /// The feeding owner: fixed-address storage the caller keeps in place from
@@ -504,6 +521,128 @@ impl<S> Owner<S> {
             status.result_durable = false;
         }
         status
+    }
+
+    /// Light both emitters for one food reading, at rest: true when they are
+    /// lit, and the owner's steps judge the window from here.
+    ///
+    /// Only on the adapter: what the emitters draw has not been measured, so
+    /// no reading runs on a pack that also has to last for the next meal. The
+    /// level then stays as the last reading left it.
+    ///
+    /// The caller holds the interlock's reading flag first
+    /// ([`Self::food_read_step`]): a lease finds lit emitters not stopped.
+    pub fn read_food(&self) -> bool {
+        let _guard = IrqGuard::lock();
+        let running = self.running();
+        // SAFETY: as for `submit`.
+        let shared = unsafe { &mut *self.shared.get() };
+        let at_rest = shared.published.state == OwnerState::Idle
+            && shared.published.fault == OwnerFault::Ok
+            && shared.published.on_adapter
+            && !shared.mailbox.has_request
+            && !shared.mailbox.stop
+            && shared.food_read_at.is_none();
+        let view = self.board.view();
+        if !running
+            || !at_rest
+            || view.optics_enabled
+            || board::outputs_blocked(view.flash)
+            || crate::ota::mailbox::installing()
+        {
+            return false;
+        }
+        let Some(at) = self.events.now_ms() else {
+            return false;
+        };
+
+        // Published first, so no moment reads as unsupervised emitters; the
+        // watchdog's feeder sees "stopped" until they light, under this guard.
+        stopped::set_supervised(stopped::BOTH_EMITTERS);
+        if !self.events.optics_for_reading(FOOD_READ_BUDGET_MS) {
+            stopped::set_supervised(0);
+            return false;
+        }
+        shared.food_read_at = Some(at);
+        shared.published.food_reading = true;
+        shared.published.optics_off = false;
+        true
+    }
+
+    /// End a food reading now, unjudged, from the task that steps the owner:
+    /// a feed or a write wants the feeder. False only if the emitters would
+    /// not go off, which faults the supervisor as any failed stop does.
+    pub fn end_food_read(&self) -> bool {
+        let _guard = IrqGuard::lock();
+        // SAFETY: as for `submit`.
+        let shared = unsafe { &mut *self.shared.get() };
+        if shared.food_read_at.take().is_none() {
+            return true;
+        }
+        let off = self.events.optics(false, 0) && board::optics_off();
+        stopped::set_supervised(0);
+        shared.published.food_reading = false;
+        shared.published.optics_off = off;
+        off
+    }
+
+    /// As [`Self::end_food_read`], and the interlock's flag with it, so a feed
+    /// claiming next meets the turn as it would with no reading.
+    pub fn yield_food_read(&self, interlock: &Interlock) {
+        if self.end_food_read() {
+            interlock.end_reading();
+        }
+    }
+
+    /// The loop's half of food readings, before each owner step: start one
+    /// that is due, end one that something holds, and hand the interlock's
+    /// flag back once the emitters read off. `held` is what only the firmware
+    /// knows (a trial's confirmation, work queued for a writer, a feed in
+    /// flight); an install, a reset on its way, a write and the owner's own
+    /// state are gathered here.
+    pub fn food_read_step(
+        &self,
+        reads: &mut FoodReads,
+        interlock: &Interlock,
+        now_ms: u32,
+        held: bool,
+    ) {
+        let (view, off, free) = {
+            let _guard = IrqGuard::lock();
+            // SAFETY: as for `submit`.
+            let shared = unsafe { &*self.shared.get() };
+            let s = &shared.published;
+            let view = FoodView {
+                reading: s.food_reading,
+                reads: s.food_reads,
+            };
+            let free = s.state == OwnerState::Idle && s.on_adapter && !shared.mailbox.has_request;
+            (view, s.optics_off, free)
+        };
+        if !view.reading && off {
+            interlock.end_reading();
+        }
+
+        let held = held
+            || !free
+            || interlock.holds_reading()
+            || crate::ota::mailbox::installing()
+            || crate::supervision::restart_requested()
+            || crate::supervision::writes_held();
+        match reads.step(now_ms, view, held) {
+            FoodStep::Rest => {}
+            FoodStep::Yield => self.yield_food_read(interlock),
+            FoodStep::Start => {
+                if !interlock.begin_reading(FOOD_READ_BOUND_MS) {
+                    return;
+                }
+                if self.read_food() {
+                    reads.started();
+                } else {
+                    interlock.end_reading();
+                }
+            }
+        }
     }
 
     /// The board the owner drives, for the host tests and the virtual

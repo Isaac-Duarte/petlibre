@@ -159,8 +159,8 @@ pub enum EventBody {
     DispenseRefused {
         reason: Blocked,
     },
-    /// The food beam's level changed (at most once a feed: the beam is lit
-    /// only during feeds). The first reading after a boot counts as one.
+    /// The food beam's level changed (at most once a feed or a reading at
+    /// rest). The first reading after a boot counts as one.
     Food {
         level: FoodLevel,
     },
@@ -172,7 +172,8 @@ pub enum EventBody {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum FoodLevel {
-    /// Not read yet: the beam is lit only during feeds.
+    /// Not read yet: the beam reads soon after a boot, on the adapter, or
+    /// during the first feed.
     Unread,
     Present,
     /// No food in front of the beam, which sits above the rotor, so about five

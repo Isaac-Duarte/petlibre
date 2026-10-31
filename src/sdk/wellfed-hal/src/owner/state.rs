@@ -5,6 +5,7 @@ use wellfed_core::HALF_RANGE;
 use wellfed_core::feed::controller::{
     FeedController, FeedReason, FeedRequest, FeedStartResult, FeedState, MotorCommand,
 };
+use wellfed_core::feed::food_read::FOOD_READ_MS;
 use wellfed_core::feed::observe::{Beams, Observation};
 use wellfed_core::feed::progress::{BowlMode, Direction};
 use wellfed_core::feed::sensor_inputs::{SensorInputs, SensorReading};
@@ -14,6 +15,7 @@ use wellfed_core::flash_coord::{FlashCoord, FlashFault, FlashPhase};
 use crate::board::{self, Board, CaptureFault};
 use crate::power;
 use crate::sdk::{self, IrqGuard};
+use crate::stopped;
 use crate::supervision::beat;
 use crate::supervision::events::{Events, EventsSnapshot};
 
@@ -93,6 +95,7 @@ impl<S: OwnerStorage> OwnerTask<S> {
             food: self.food,
             below_floor: self.sensors.floor.below(),
             supply_low: self.sensors.supply_low(),
+            on_adapter: self.sensors.on_adapter(),
             ..OwnerStatus::default()
         };
 
@@ -101,6 +104,8 @@ impl<S: OwnerStorage> OwnerTask<S> {
         value.flash_phase = self.flash().phase;
         value.flash_fault = self.flash().fault;
         self.shared(|shared| {
+            value.food_reading = shared.food_read_at.is_some();
+            value.food_reads = shared.food_reads;
             shared.published = value;
             shared.clock_ms = clock;
         });
@@ -145,7 +150,44 @@ impl<S: OwnerStorage> OwnerTask<S> {
         if self.events().opened() {
             self.events().capture(false);
         }
+        // Whatever quieted the outputs ended any food reading with them.
+        self.shared(|shared| shared.food_read_at = None);
+        stopped::set_supervised(0);
         true
+    }
+
+    /// A food reading's window, after this step's acquisition. A reading is
+    /// never a reason to fail: anything amiss ends it unjudged, and the level
+    /// stays as it was until the next.
+    fn step_food_read(&mut self) {
+        let Some(at) = self.shared(|shared| shared.food_read_at) else {
+            return;
+        };
+
+        let at_rest = self.state == OwnerState::Idle
+            && self.fault == OwnerFault::Ok
+            && self.sensors.on_adapter()
+            && !self.stop_requested()
+            // Cut by the supervisor: the owner was held off past its lease.
+            && self.board().view().optics_enabled;
+        let spent = self
+            .events()
+            .now_ms()
+            .is_some_and(|now| now.wrapping_sub(at) >= FOOD_READ_MS);
+        if at_rest && !spent {
+            return;
+        }
+
+        let level = at_rest.then(|| self.sensors.food_settled()).flatten();
+        if !self.quiet() {
+            self.fail(OwnerFault::Hardware);
+            self.state = OwnerState::Fault;
+            return;
+        }
+        if let Some(present) = level {
+            self.food = Some(present);
+            self.shared(|shared| shared.food_reads = shared.food_reads.wrapping_add(1));
+        }
     }
 
     fn reporting(&mut self, outcome: OwnerOutcome, reason: FeedReason) {
@@ -522,9 +564,12 @@ impl<S: OwnerStorage> OwnerTask<S> {
         let captured = self.board().capture(&mut raw);
         let valid = captured.is_ok();
         self.sensors.update(started, valid.then_some(&raw));
-        // The beam qualifies only while a feed's emitters are on, so every
-        // reading belongs to the feed the trace follows.
-        if let Some(present) = self.sensors.food_present() {
+        // A food reading's level is judged at its window's end, so a flicker
+        // inside it changes nothing; the beam qualifies otherwise only while
+        // a feed's emitters are on, so the reading belongs to the feed the
+        // trace follows.
+        let at_rest = self.shared(|shared| shared.food_read_at.is_some());
+        if !at_rest && let Some(present) = self.sensors.food_present() {
             self.food = Some(present);
             self.trace.hopper = Some(self.trace.hopper.unwrap_or(true) && present);
         }
@@ -783,6 +828,8 @@ impl<S: OwnerStorage> OwnerTask<S> {
                     }
                 }
             }
+
+            (*this).step_food_read();
 
             if (*this).fault == OwnerFault::Ok {
                 (*this).check_progress(); // Before optical/motor enable.

@@ -25,11 +25,12 @@
 //! still recorded. Back-to-back feeds share the reason `Feeding`, so presses
 //! across them record once. Every press goes to the log.
 //!
-//! **Food level.** The food beam is lit only during feeds, so its level is
-//! the last feed's. Once a feed has ended, a level that differs from the
-//! last one recorded this boot (the first included) is a `Food` event
-//! ([`Watch::food`]): at most one a feed, however the beam flickers as the
-//! last kibble passes. No feed waits on it or is refused for it, as stock.
+//! **Food level.** The food beam is lit during feeds and in a short window at
+//! rest (`wellfed_core::feed::food_read`), so its level is the latest of
+//! either's. With no feed in flight, a level that differs from the last one
+//! recorded this boot (the first included) is a `Food` event ([`Watch::food`]):
+//! at most one a feed or a window, however the beam flickers as the last
+//! kibble passes. No feed waits on it or is refused for it, as stock.
 //!
 //! **Silent.** A feed plays no tune; that is the owner's choice. A tune a
 //! client asks for with `play` is stepped after the owner and the device

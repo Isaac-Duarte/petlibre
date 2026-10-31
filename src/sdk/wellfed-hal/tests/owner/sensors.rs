@@ -242,3 +242,246 @@ fn an_owner_that_resolved_a_feed_and_lost_its_sensors_holds_the_result() {
     assert!(beats_over_the_gap(&mut f) > 0);
     f.stop();
 }
+
+mod food_reads {
+    use super::*;
+    use wellfed_core::feed::food_read::{FOOD_READ_MS, FoodReads};
+    use wellfed_hal::interlock::Interlock;
+    use wellfed_hal::ota::mailbox::{self, Request};
+    use wellfed_hal::plaf103::pins::ADAPTER;
+    use wellfed_hal::sdk;
+    use wellfed_hal::stopped;
+    use wellfed_hal::supervision::beat;
+    use wellfed_hal::supervision::events::{EventsFault, OpticsFor};
+    use wellfed_hal::supervision::supervise::{self, Inputs, Startup};
+
+    /// An owner settled on the adapter, its beam reading `food`.
+    fn at_rest(food: bool) -> Box<Fixture> {
+        let mut f = boot();
+        hw(|h| {
+            h.input[0] |= bit(ADAPTER);
+            if !food {
+                h.input[0] |= bit(FOOD);
+            }
+        });
+        f.advance(10);
+        assert!(f.status().on_adapter);
+        f
+    }
+
+    /// What the runtime's watchdog feeder would decide now, the role started.
+    fn watchdog_fed() -> bool {
+        let outputs = stopped::observe();
+        supervise::feed(&Inputs {
+            now_ms: sdk::uptime_ms(),
+            startup: Startup::Started,
+            tasks_alive: true,
+            outputs_ok: outputs.verified() || outputs.sensing(),
+            owner: beat::read(),
+            ..Inputs::default()
+        })
+    }
+
+    #[test]
+    fn a_window_reads_low_without_touching_the_motor_or_the_watchdog() {
+        let mut f = at_rest(false);
+        assert!(f.owner.read_food());
+        assert!(f.status().food_reading && !f.status().optics_off);
+        assert!(stopped::observe().sensing(), "reported as sensing");
+        assert!(!stopped::observe().verified());
+
+        for _ in 0..FOOD_READ_MS - 1 {
+            f.advance(1);
+            assert_eq!(motor_pins(), MOTOR_MASK);
+            assert!(stopped::observe().sensing());
+            assert!(watchdog_fed());
+            assert_eq!(f.status().food, None, "judged at the window's end");
+            assert_eq!(f.status().state, OwnerState::Idle);
+        }
+        f.advance(2);
+
+        let s = f.status();
+        assert_eq!((s.food, s.food_reads), (Some(false), 1));
+        assert!(!s.food_reading && s.optics_off && s.stopped);
+        assert!(stopped::observe().verified() && !stopped::observe().sensing());
+        assert_eq!(s.trace.hopper, None, "no feed's trace");
+        assert!(watchdog_fed());
+        f.stop();
+    }
+
+    #[test]
+    fn a_flicker_inside_a_window_is_no_change() {
+        let mut f = at_rest(true);
+        assert!(f.owner.read_food());
+        // Food, then none for longer than the filter's delay here, then food.
+        f.advance(100);
+        hw(|h| h.input[0] |= bit(FOOD));
+        f.advance(100);
+        hw(|h| h.input[0] &= !bit(FOOD));
+        assert_eq!(f.status().food, None);
+        f.advance(FOOD_READ_MS);
+        assert_eq!(f.status().food, Some(true));
+        f.stop();
+    }
+
+    /// The filter on its way down at the window's end says neither.
+    #[test]
+    fn a_window_that_ends_between_levels_settles_nothing() {
+        let mut f = at_rest(true);
+        assert!(f.owner.read_food());
+        f.advance(FOOD_READ_MS - 3);
+        hw(|h| h.input[0] |= bit(FOOD));
+        f.advance(5);
+        let s = f.status();
+        assert!(!s.food_reading && s.optics_off);
+        assert_eq!((s.food, s.food_reads), (None, 0));
+        f.stop();
+    }
+
+    #[test]
+    fn no_reading_starts_on_the_pack_or_with_the_owner_busy() {
+        let mut f = boot();
+        hw(|h| h.input[0] &= !bit(ADAPTER));
+        f.advance(10);
+        assert!(!f.status().on_adapter);
+        assert!(!f.owner.read_food(), "on the pack");
+        assert!(optics_off());
+
+        hw(|h| h.input[0] |= bit(ADAPTER));
+        f.advance(10);
+        assert_eq!(f.owner.submit(1, 1), SubmitResult::Enqueued);
+        assert!(!f.owner.read_food(), "a feed is queued");
+        f.step();
+        assert!(!f.owner.read_food(), "a feed is preparing");
+        f.stop();
+    }
+
+    #[test]
+    fn no_reading_starts_while_an_update_holds_the_flash_or_a_lease_runs() {
+        let mut f = at_rest(false);
+        mailbox::reset();
+        mailbox::request(Request::offer(&[0; 160], None, [0; 32]).unwrap()).unwrap();
+        assert!(!f.owner.read_food(), "an install");
+
+        // The loop's half holds it too, with no interlock flag left behind.
+        let interlock = Interlock::new();
+        let mut reads = FoodReads::new();
+        for now in (0..30_000).step_by(20) {
+            f.owner.food_read_step(&mut reads, &interlock, now, false);
+            assert!(optics_off() && !f.status().food_reading);
+        }
+        assert!(!interlock.holds_reading());
+        assert!(interlock.begin_reading(10), "the flag was never left set");
+        interlock.end_reading();
+
+        mailbox::finish(Err(wellfed_core::ota::install::Refused::Busy));
+        mailbox::reset();
+
+        // A lease in progress: refused, with no fault latched.
+        f.hold();
+        assert!(!f.owner.read_food(), "a lease");
+        assert_eq!(f.status().fault, OwnerFault::Ok);
+        assert_eq!(f.owner.events().view().fault, EventsFault::Ok);
+        f.release_hold();
+        f.stop();
+    }
+
+    /// A feed the owner takes during a reading wins: the emitters drop before
+    /// its journal write, the reading is not judged, and the feed runs.
+    #[test]
+    fn a_feed_during_a_window_wins() {
+        let mut f = at_rest(false);
+        assert!(f.owner.read_food());
+        f.advance(50);
+
+        assert_eq!(f.owner.submit(1, 1), SubmitResult::Enqueued);
+        // The storage callback asserts the emitters are off as it reserves.
+        f.step();
+        assert!(f.status().intent_reserved);
+        assert!(!f.status().food_reading);
+        assert!(!stopped::observe().sensing());
+        f.advance(5);
+        assert_eq!(f.status().state, OwnerState::Feeding);
+        assert_eq!(motor_pins(), 1 << 13);
+        assert_eq!(f.status().food_reads, 0);
+        f.complete();
+        assert_eq!(f.status().result.outcome, OwnerOutcome::Done);
+        f.stop();
+    }
+
+    /// The loop can end a reading between steps, which a feed's claim relies on.
+    #[test]
+    fn the_loop_ends_a_window_at_once_and_a_later_step_judges_nothing() {
+        let mut f = at_rest(false);
+        let interlock = Interlock::new();
+        assert!(interlock.begin_reading(10));
+        assert!(f.owner.read_food());
+        f.advance(FOOD_READ_MS - 10);
+
+        f.owner.yield_food_read(&interlock);
+        assert!(optics_off() && stopped::observe().verified());
+        assert!(!stopped::observe().sensing());
+        assert!(!f.status().food_reading && f.status().optics_off);
+        assert!(interlock.begin_reading(10), "the flag was handed back");
+        interlock.end_reading();
+
+        f.advance(FOOD_READ_MS);
+        let s = f.status();
+        assert_eq!((s.food, s.food_reads), (None, 0));
+        assert_eq!(s.state, OwnerState::Idle);
+        f.stop();
+    }
+
+    /// A stale owner lease cuts a reading from the timer interrupt alone, with
+    /// nothing latched, where a feed's emitters latch the OWNER fault.
+    #[test]
+    fn a_held_off_owner_loses_the_reading_and_nothing_else() {
+        let mut f = at_rest(false);
+        assert!(f.owner.read_food());
+        for _ in 0..CONFIG.motor_lease_ms + 2 * CONFIG.events.timer_period_ms {
+            fake::advance(32, true);
+        }
+        assert!(optics_off(), "cut with no step");
+        assert_eq!(f.owner.events().view().fault, EventsFault::Ok);
+
+        f.advance(5);
+        let s = f.status();
+        assert!(s.state == OwnerState::Idle && s.fault == OwnerFault::Ok);
+        assert_eq!(s.supervisor_fault, EventsFault::Ok);
+        assert!(!s.food_reading && s.optics_off);
+        assert_eq!((s.food, s.food_reads), (None, 0));
+        assert!(!stopped::observe().sensing());
+        f.stop();
+    }
+
+    /// The supervisor's budget holds with the owner renewing its lease: the
+    /// emitters go off at the budget, whatever the owner meant to do.
+    #[test]
+    fn the_supervisor_cuts_a_reading_at_its_budget() {
+        let mut f = at_rest(false);
+        assert!(f.owner.events().optics_for_reading(20));
+        f.advance(10);
+        assert!(!optics_off());
+        f.advance(15);
+        assert!(optics_off(), "cut at the budget");
+        assert_eq!(f.owner.events().view().fault, EventsFault::Ok);
+        f.stop();
+    }
+
+    /// After a reading, a feed's own emitters are a feed's: a stale lease then
+    /// latches a fault as before.
+    #[test]
+    fn a_feed_s_emitters_after_a_reading_still_latch_a_fault() {
+        let mut f = at_rest(true);
+        assert!(f.owner.read_food());
+        f.advance(FOOD_READ_MS + 2);
+        assert_eq!(f.status().food, Some(true));
+
+        f.start_feed();
+        assert_eq!(f.owner.events().view().optics_for, OpticsFor::Feed);
+        for _ in 0..CONFIG.motor_lease_ms + 2 * CONFIG.events.timer_period_ms {
+            fake::advance(32, true);
+        }
+        assert_ne!(f.owner.events().view().fault, EventsFault::Ok);
+    }
+}

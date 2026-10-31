@@ -150,13 +150,13 @@ const fn blocked(reason: Blocked) -> &'static str {
     }
 }
 
-/// The hopper as the status reports it: the food beam's reading during
-/// the last feed, since the beam is lit only then.
+/// The hopper as the status reports it: the food beam's latest reading, from
+/// a feed or a short window at rest.
 fn food(level: FoodLevel) -> &'static str {
     match level {
-        FoodLevel::Unread => "not read yet (the food beam reads only during feeds)",
-        FoodLevel::Present => "present at the last feed",
-        FoodLevel::Low => "low at the last feed",
+        FoodLevel::Unread => "not read yet (the food beam reads soon after a boot, on the adapter)",
+        FoodLevel::Present => "present at the last reading",
+        FoodLevel::Low => "low at the last reading",
     }
 }
 
@@ -524,7 +524,7 @@ mod tests {
             "Build feeder 345 on bank 1, boot 42, up 1 h 2 min",
             "Clock: not set: scheduled meals hold until a sync",
             "Feeding: blocked, restarting (a restart is coming within seconds)",
-            "Food: low at the last feed",
+            "Food: low at the last reading",
             "Last fault: feed 128 uncertain (interrupted); `wellfed feeds` has its portions",
             "Power: on batteries (Wi-Fi off 5 s after the adapter goes); batteries 10% (4310 mV), \
              pack below the floor a feed on batteries needs",

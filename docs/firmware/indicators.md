@@ -63,11 +63,11 @@ Startup still enables the indicators only from verified stopped outputs and leav
 | `pairing` | An offer waits for a Dispense press or its code | lock | Blink 250/250 ms | 70 |
 | `battery` | The battery holds feeds | fault | Blink 1000/1000 ms | 60 |
 | `feeding` | A feed is queued or runs | food | Blink 500/500 ms | 50 |
-| `low-food` | The last feed's food beam read low | food | Steady | 10 |
+| `low-food` | The food beam's latest reading is low | food | Steady | 10 |
 | `locked` | The panel is locked | lock | Steady | 10 |
 | `online` | The feeder has an address | connection | Steady | 10 |
 
-With `lights` off every light is dark, as stock drives them all LOW. The requests still hold, so the lights come back as they were. Low food shows the last feed's reading, since the food beam is lit only during feeds: it stays on after a refill until a feed reads food again, and stays dark until this boot's first feed has read. Missing-time indications wait for the light policy features ([product architecture](product-architecture.md)).
+With `lights` off every light is dark, as stock drives them all LOW. The requests still hold, so the lights come back as they were. Low food shows the beam's latest reading, from a feed or a [window at rest](optical-inputs.md#reading-the-food-beam-at-rest). So on the adapter it lights within seconds of a boot and clears within 10 minutes of a refill. On batteries no window runs, so it holds the last reading until a feed. Missing-time indications wait for the light policy features ([product architecture](product-architecture.md)).
 
 Each pass, the loop steps the lights after readiness. A change in what a light shows is logged once, not at each blink edge: `PLIND1 show light=lock state=pairing`, or `state=none` when nothing does. A failure is `PLIND1 fail light=… check=refused|input-mismatch|abort`.
 

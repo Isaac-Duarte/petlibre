@@ -21,6 +21,26 @@ Each receiver changes within one 2 ms poll of its emitter turning on, and within
 
 Receiver levels show beam state only. They do not show beam geometry, or how much food it takes to read "present".
 
+## Reading the food beam at rest
+
+A feed reads the food beam as it runs. So that the low-food light and `Status.food` also follow a restart or a refill, the feeder reads it with no feed running: once 5 s after it is first free to, then every 10 minutes (`FOOD_READ_EVERY_MS`). A window that does not reach a level is tried again 30 s later.
+
+A window lights both emitters for 1.2 s (`FOOD_READ_MS`): the filter's 100 ms of settling, 1 s of bad readings, and a few samples of lag. The owner judges the level at the window's end, so a flicker inside it changes nothing. A window that ends between levels settles nothing. The level then goes on to the light and the `Food` event like any other, one event a change.
+
+A window never moves the motor, and these rules keep it out of everything else's way:
+
+| Against | What happens |
+| --- | --- |
+| A feed or a Dispense press | The feed goes first. The loop turns the emitters off before it claims the outputs, so the feed starts as it would from rest. The owner's state stays `Idle` throughout, so readiness never reports a window. |
+| A store write | Lit emitters would fail a flash lease's stopped check, which resets the board. So a window holds a flag on the [interlock](../../src/sdk/wellfed-hal/src/interlock.rs). It starts only with no write running or waiting and none queued for a writer. A writer that finds the flag set waits and counts itself, and the loop then ends the window within a step. |
+| An install | No window starts or runs while a request or an install holds the flash. |
+| A Wi-Fi join | The join waits for the window's end, at most 2.4 s. Joins retry often while there is no network, so a window that gave way to them might never finish. |
+| A client | Nothing changes. The window claims no outputs, so a settings change is not refused `Busy`, and handshakes go on. |
+| A trial boot | No window runs until the build has confirmed: its [confirmation](ota-design.md#what-confirmation-proves) requires the emitters read back off. The light stays dark until then. |
+| Batteries | No window runs, since the emitters' current has not been measured. The level stays as the last reading left it. A window ends if the adapter leaves. |
+
+**Supervision.** The emitters are under the same timer as a feed's: a non-renewable 1.4 s budget and the 200 ms owner lease. The window publishes them as sensing, so the watchdog's feeder keeps feeding. What differs is the price of a lapse. A feed's stale lease latches a fault, since the motor may be moving. A window's cuts the emitters from the timer interrupt and latches nothing, because the loop runs at low priority, the Wi-Fi driver can hold it off past the lease, and a reset would be a high price for one reading.
+
 ## PB3 is SWD_CLK
 
 The outlet emitter, PB3, is also the SWD clock pin (`SWD_CLK` in the SDK pin map). `REG_SWD_PMUX_EN` bit 0 resets to 1, giving the pad to SWD. Stock's sensor GPIO setup calls the SDK's `sys_jtag_off()`, which clears that bit, immediately before it configures PB3.
@@ -62,7 +82,8 @@ A passing run has the planned sequence and timing, every gap within the filter's
 ## Limits
 
 - **Food passing the outlet.** Stock latches food passage through the outlet beam. The probe resolves LOW runs to about 2 ms, but a real pulse needs motion. Feeds now count outlet-beam breaks as a lower bound ([calibration](calibration.md#delivered-food-estimate)).
-- **Emitter current, thermal duty and electrical OFF levels** are not measured. The probe's duty (40 % over two minutes, each window budgeted) is a bound, not a characterization.
+- **Emitter current, thermal duty and electrical OFF levels** are not measured. The probe's duty (40 % over two minutes, each window budgeted) is a bound, not a characterization. The windows at rest add 0.2 % continuously, 4 % at worst while each one is retried.
+- **Windows at rest** have run in simulation only. Whether the beam settles and reads as it does in a feed, with the motor still and nothing moving in the hopper, is unobserved.
 - **Ambient light** on the receivers is not measured, and the owner does not yet check for a receiver lit with its emitter off ([jams and sensor faults](jams-and-sensor-faults.md#outlet-and-food-sensors)).
 
 ## Evidence
@@ -84,3 +105,4 @@ Observed on the research unit, October 21, 2026, over the UART. The hopper was e
 - **Food beam with food.** Observed October 29, owner weighing: a feed with food in read "present". From a hand-emptied hopper, eight 1-portion feeds read "low" from their start, yet dropped 36.8 g, about five portions at 7.11 g ([calibration](calibration.md#evidence)).
 - **Mark sensor.** Observed later, with motion: PA18 is the rotor's mark sensor ([motor pulse](motor-pulse.md#evidence)).
 - **Optics fault on trial boots.** Observed: the first WPA3 join starved the probe past its owner lease (`stall=703`). The radio now waits for startup ([QA](qa.md#known-issues)).
+- **Windows at rest.** Modeled, October 30: `wellfed-sim`'s virtual feeder and the HAL's owner tests run the real owner, supervisor and interlock against the fake board: a boot's window, a refill, a write, a feed, batteries, a held trial and a stalled loop.

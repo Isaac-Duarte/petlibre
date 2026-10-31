@@ -251,4 +251,19 @@ impl SensorInputs {
     pub fn food_present(&self) -> Option<bool> {
         self.food.known.then_some(self.food.good)
     }
+
+    /// The food beam's level at the end of a window at rest: as
+    /// [`Self::food_present`], but `None` while the filter is between levels
+    /// (food seen, then a run without that is still too short to say low), so
+    /// a window that ends on a flicker settles nothing.
+    pub fn food_settled(&self) -> Option<bool> {
+        let settled = self.food.good != self.food.pending_bad;
+        self.food_present().filter(|_| settled)
+    }
+
+    /// Running on the adapter, settled since it last changed: the only supply
+    /// a food reading at rest may draw on.
+    pub fn on_adapter(&self) -> bool {
+        self.power_known && self.dc_present && self.power_settled
+    }
 }

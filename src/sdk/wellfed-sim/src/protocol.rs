@@ -426,6 +426,15 @@ pub enum Command {
     Inputs {
         args: [Bounded<0, 7>; 1],
     },
+    /// Run the firmware's food readings at rest from the loop, or stop. Off
+    /// at start, as scenarios that time a feed assert every output change.
+    FoodReads {
+        args: [Flag; 1],
+    },
+    /// Hold the food readings back, as a trial's confirmation does.
+    FoodHeld {
+        args: [Flag; 1],
+    },
 
     Status {
         #[serde(default)]
@@ -490,6 +499,13 @@ pub struct Status {
     /// The owner's supply verdict: on the pack, and the pack not judged
     /// above its floor.
     pub supply_low: bool,
+    /// The food beam's latest level (`true` with food), once one was judged.
+    pub food: Option<bool>,
+    /// A food reading's emitters are lit, and readings judged this boot.
+    pub food_reading: bool,
+    pub food_reads: u32,
+    /// `stopped::observe` reads motor STOP with the supervised emitters lit.
+    pub sensing: bool,
 }
 
 impl Status {

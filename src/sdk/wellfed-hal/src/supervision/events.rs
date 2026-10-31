@@ -48,6 +48,22 @@ impl EventsFault {
     }
 }
 
+/// Whose emitters are lit, which decides what a stale owner or a spent budget
+/// costs. Either way the emitters go off from the timer interrupt, on the same
+/// tick.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum OpticsFor {
+    /// A feed's: the motor may be moving on what the emitters report, so
+    /// anything amiss latches a fault and the feed ends.
+    #[default]
+    Feed,
+    /// A food reading at rest: nothing moves, and all that a held-off loop
+    /// (a low-priority task, which the Wi-Fi driver alone can hold off past
+    /// the lease) has lost is this reading. A latched fault here would reset
+    /// an idle feeder for a light, so the emitters are cut and nothing latches.
+    Reading,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct EventsConfig {
     pub ticks_per_second: u32,
@@ -77,6 +93,7 @@ pub struct EventsState {
     pub timer_seen: bool,
     pub owner_seen: bool,
     pub optics_armed: bool,
+    pub optics_for: OpticsFor,
     /// The previous timer interrupt saw no SYSTIMER advance. One such reading
     /// is a pending interrupt coalesced with the next update after a masked
     /// window; a second consecutive one is a frozen clock.
@@ -169,6 +186,7 @@ impl Default for EventsState {
             timer_seen: false,
             owner_seen: false,
             optics_armed: false,
+            optics_for: OpticsFor::Feed,
             timer_raw_repeat: false,
             timer_count: 0,
             edges: FeedbackEdges::default(),
@@ -413,9 +431,17 @@ impl EventsState {
         }
 
         self.optics_armed = enabled;
+        self.optics_for = OpticsFor::Feed;
         self.optics_at = value;
         self.optics_max_ms = max_on_ms;
         true
+    }
+
+    /// A food reading's emitters off, by the supervisor: no fault unless they
+    /// will not go. False once that has faulted.
+    fn cut_reading(&mut self) -> bool {
+        self.optics_armed = false;
+        self.board().optics(false) || self.fail(EventsFault::Output)
     }
 
     fn capture(&mut self, enabled: bool) -> bool {
@@ -480,7 +506,10 @@ impl EventsState {
             && self.board().view().optics_enabled
             && !self.owner_ready(value)
         {
-            result = self.fail(EventsFault::Owner);
+            result = match self.optics_for {
+                OpticsFor::Feed => self.fail(EventsFault::Owner),
+                OpticsFor::Reading => self.cut_reading(),
+            };
         }
 
         let Some(value) = read.filter(|_| result) else {
@@ -663,10 +692,19 @@ impl EventsState {
         if !self.board().view().optics_enabled {
             return;
         }
-        if !self.owner_ready(value) {
-            self.fail(EventsFault::Owner);
-        } else if !self.optics_armed || value.wrapping_sub(self.optics_at) >= self.optics_max_ms {
-            self.fail(EventsFault::Optics);
+        let stale = !self.owner_ready(value);
+        let spent = !self.optics_armed || value.wrapping_sub(self.optics_at) >= self.optics_max_ms;
+        match self.optics_for {
+            OpticsFor::Feed if stale => {
+                self.fail(EventsFault::Owner);
+            }
+            OpticsFor::Feed if spent => {
+                self.fail(EventsFault::Optics);
+            }
+            OpticsFor::Reading if stale || spent => {
+                self.cut_reading();
+            }
+            OpticsFor::Feed | OpticsFor::Reading => {}
         }
     }
 
@@ -774,6 +812,19 @@ impl Events {
     /// returns whether the emitters already match it.
     pub fn optics_select(&self, a: bool, b: bool, max_on_ms: u32) -> bool {
         self.with(|state| state.optics_select(a, b, max_on_ms))
+    }
+
+    /// Both emitters on for a food reading, under the same non-renewable
+    /// budget and owner lease as a feed's; see [`OpticsFor::Reading`] for what
+    /// differs.
+    pub fn optics_for_reading(&self, max_on_ms: u32) -> bool {
+        self.with(|state| {
+            let lit = state.optics_select(true, true, max_on_ms);
+            if lit {
+                state.optics_for = OpticsFor::Reading;
+            }
+            lit
+        })
     }
 
     /// Enable only while verified stopped and after observing a timer

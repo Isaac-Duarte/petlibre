@@ -12,8 +12,9 @@ use wellfed_core::settings::Window;
 use wellfed_device_api::mailbox::SettingsView;
 use wellfed_feeder::feeder::lights::{Lights, REFUSED_MS, Record, State, States, describe};
 use wellfed_feeder::feeder::{Feeder, Feeds, Record as PassRecord};
+use wellfed_feeder_runtime::events;
 use wellfed_fw_feeder::platform::{Driver, Plaf103};
-use wellfed_proto::api::{Blocked, Refusal, Source};
+use wellfed_proto::api::{Blocked, EventBody, FoodLevel, Refusal, Source};
 use wellfed_sdk::hal::leds::{self, Led};
 use wellfed_sdk::hal::plaf103::pins::{IR_PA_BIT, MOTOR_A_BIT};
 use wellfed_sdk::hal::sdk::fake;
@@ -366,6 +367,90 @@ fn the_loop_shows_the_lock_and_a_held_fault() {
     assert!(on(Light::Lock) && on(Light::Fault));
     assert!(lines.contains(&"PLIND1 show light=lock state=locked".to_owned()));
     assert!(lines.contains(&"PLIND1 show light=fault state=fault".to_owned()));
+    drop(rig);
+}
+
+/// An owner at rest with nothing to feed, whose food beam reads `food`.
+struct AtRest {
+    food: Option<bool>,
+}
+
+impl Feeds for AtRest {
+    fn feeding(&self) -> bool {
+        false
+    }
+
+    fn busy(&self) -> bool {
+        false
+    }
+
+    fn blocked(&self) -> Option<Blocked> {
+        None
+    }
+
+    fn submit(&mut self, _: u8, _: Source) -> Result<u32, Refusal> {
+        Err(Refusal::Busy)
+    }
+
+    fn reserved(&self, _: u32) -> Option<Result<(), Refusal>> {
+        Some(Err(Refusal::Busy))
+    }
+
+    fn cancel(&self, _: u32) -> bool {
+        false
+    }
+
+    fn food(&self) -> Option<bool> {
+        self.food
+    }
+}
+
+/// With no feed in the boot, a reading at rest lights low food and one of
+/// food clears it, each change one `Food` event however often it reads.
+#[test]
+fn a_reading_at_rest_lights_low_food_and_a_refill_clears_it() {
+    let rig = Rig::new();
+    settings::publish(SettingsView {
+        lights: true,
+        ..Default::default()
+    });
+    events::reset();
+    let mut feeder = Box::new(Feeder::new(Plaf103::new()));
+    let mut owner = AtRest { food: None };
+    let run = |feeder: &mut Feeder<Plaf103>, from: u32, owner: &mut AtRest| {
+        for now in (from..from + 200).step_by(10) {
+            fake::with(|h| h.uptime_ms = now);
+            feeder.pass(now, owner, |_: PassRecord<Driver>| {});
+        }
+    };
+    let food_events = || {
+        let mut levels = Vec::new();
+        while let Some(queued) = events::pending() {
+            let body: EventBody = wellfed_proto::decode_padded(&queued.body).unwrap();
+            if let EventBody::Food { level } = body {
+                levels.push(level);
+            }
+            events::finish_pending(None);
+        }
+        levels
+    };
+
+    run(&mut feeder, 0, &mut owner);
+    assert!(!on(Light::Food), "no reading yet");
+    assert_eq!(food_events(), []);
+
+    owner.food = Some(false);
+    run(&mut feeder, 1_000, &mut owner);
+    assert!(on(Light::Food), "low with no feed");
+    assert_eq!(food_events(), [FoodLevel::Low]);
+
+    run(&mut feeder, 2_000, &mut owner);
+    assert_eq!(food_events(), [], "no repeat");
+
+    owner.food = Some(true);
+    run(&mut feeder, 3_000, &mut owner);
+    assert!(!on(Light::Food), "a refill clears it");
+    assert_eq!(food_events(), [FoodLevel::Present]);
     drop(rig);
 }
 

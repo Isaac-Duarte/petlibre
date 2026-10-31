@@ -24,6 +24,7 @@ use std::process::exit;
 use clap::Parser;
 
 use wellfed_core::feed::controller::FeedRequest;
+use wellfed_core::feed::food_read::FoodReads;
 use wellfed_core::feed::progress::{BowlMode, Direction};
 use wellfed_core::feed::storage::{OwnerRecovery, OwnerResult, OwnerStorage, RotorPhase};
 use wellfed_core::flash_coord::{FlashCoord, FlashParty, FlashReply, FlashToken};
@@ -117,6 +118,11 @@ struct World {
     previous_motor: u32,
 
     writer: Writer,
+
+    /// The firmware's food readings run, and the firmware's own hold on them.
+    food_reads_on: bool,
+    food_held: bool,
+    food_reads: FoodReads,
 
     // Power-cut injection: cut after `cut_remaining` more mutations in storage phase
     // `cut_phase` (or at that phase's start when the count is already zero).
@@ -464,6 +470,10 @@ fn current(response: u64) -> Status {
             writes_done: (*world).writer.done,
             writes_waiting: (*world).writer.waiting(),
             supply_low: s.supply_low,
+            food: s.food,
+            food_reading: s.food_reading,
+            food_reads: s.food_reads,
+            sensing: stopped::observe().sensing(),
         }
     }
 }
@@ -729,6 +739,16 @@ fn poll() {
     unsafe {
         let world = w();
         let due = (*world).device_ms >= (*world).step_ms;
+        // As the firmware's loop does it, before the owner's step. The worker
+        // has no mailbox, so work queued for a writer is the writer's own.
+        if (*world).food_reads_on && (*world).run_owner && (*world).owner.running() && due {
+            let held = (*world).food_held || (*world).writer.queued;
+            let reads = &raw mut (*world).food_reads;
+            let now = now_ms();
+            (*world)
+                .owner
+                .food_read_step(&mut *reads, &INTERLOCK, now, held);
+        }
         if (*world).run_owner
             && (*world).owner.running()
             && due
@@ -769,6 +789,8 @@ fn run(ms: u32) {
 /// letting a queued or running store write go first (time passes for the
 /// writer meanwhile, not for the loop), then hand it to the owner.
 fn submit(id: u64, portions: u16) -> Submission {
+    // SAFETY: see `w`.
+    unsafe { (*w()).owner.yield_food_read(&INTERLOCK) };
     let claimed = INTERLOCK.claim_feed_after_writes(
         FEED_BOUND_MS,
         // SAFETY: see `w`.
@@ -856,6 +878,9 @@ fn main() {
         drive_ms: 0,
         previous_motor: 0,
         writer: Writer::default(),
+        food_reads_on: false,
+        food_held: false,
+        food_reads: FoodReads::new(),
         cut_phase: StoragePhase::None,
         active_phase: StoragePhase::None,
         phase_start_mutations: 0,
@@ -1005,6 +1030,9 @@ unsafe fn execute(world: *mut World, command: Command) -> u64 {
                     | if bits & 2 != 0 { 1 << 17 } else { 0 }
                     | if bits & 4 != 0 { 1 << 19 } else { 0 };
             }),
+
+            Command::FoodReads { args: [on] } => (*world).food_reads_on = on.0,
+            Command::FoodHeld { args: [held] } => (*world).food_held = held.0,
 
             Command::Status { .. } => {}
             Command::Stop { .. } => {

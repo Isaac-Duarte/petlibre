@@ -227,7 +227,7 @@ impl Sim {
         self.feeds.fault(reason);
     }
 
-    /// Fill the hopper (`true`) or empty it, for the next feed's food beam.
+    /// Fill the hopper (`true`) or empty it, as the food beam next reads it.
     /// A restart fills it again.
     pub fn fill_hopper(&mut self, food: bool) {
         self.feeds.fill(food);

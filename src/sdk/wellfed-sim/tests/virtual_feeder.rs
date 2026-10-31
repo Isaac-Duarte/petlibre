@@ -1316,7 +1316,7 @@ fn invalid_scenarios_rejected_before_worker_launch() {
     // Each top-level field invalid.
     for (key, value) in [
         ("version", json!(1)),
-        ("end_ms", json!(600_001)),
+        ("end_ms", json!(900_001)),
         ("profile", json!("stock")),
         ("plant", json!(true)),
         ("plant", json!({"low_ms": 3, "low_jitter_ms": 0})),
@@ -1605,4 +1605,284 @@ fn the_floor_refuses_feeds_until_the_pack_reads_the_clear_level() {
         e["device_ms"].as_u64().unwrap_or(0) < 5900 && matches!(e["motor"].as_u64(), Some(1 | 2))
     });
     assert!(!drove_low, "no drive while the pack was under its floor");
+}
+
+/// When a food reading's emitters are lit, in a scenario that turns readings
+/// on at `FOOD_ON`: the first comes `FOOD_READ_FIRST_MS` after that, for
+/// `FOOD_READ_MS`. An `inputs` of 7 reads no food, 5 reads food, on the adapter.
+const FOOD_ON: u64 = 60;
+const FOOD_LIT: u64 = FOOD_ON + 5_000;
+const FOOD_DONE: u64 = FOOD_LIT + 1_300;
+
+/// When a scenario's emitters first came on after `after`, and went off again.
+fn lit_window(report: &Value, after: u64) -> (u64, u64) {
+    let at = |e: &Value| e["device_ms"].as_u64().unwrap();
+    let on = events(report, "outputs")
+        .find(|e| e["optics"] != 0 && at(e) >= after)
+        .map(at)
+        .expect("the emitters lit");
+    let off = events(report, "outputs")
+        .find(|e| e["optics"] == 0 && at(e) > on)
+        .map(at)
+        .expect("the emitters went off");
+    (on, off)
+}
+
+/// With no feed at all, the boot's reading reads the beam under supervision
+/// (motor STOP, emitters lit and reported as sensing, nothing lost) and leaves
+/// the level low.
+#[test]
+fn a_boot_reading_finds_low_food_with_no_feed() {
+    let report = passing(
+        vec![
+            act(50, "inputs", &[7]),
+            act(FOOD_ON, "food_reads", &[1]),
+            expect(
+                FOOD_LIT - 100,
+                json!({"food_reads": 0, "food_reading": false, "optics": 0}),
+            ),
+            expect(
+                FOOD_LIT + 500,
+                json!({"state": "idle", "food_reading": true, "optics": 3, "motor": 0,
+                       "sensing": true, "stopped": true, "fault": "ok",
+                       "supervisor_fault": 0, "food_reads": 0}),
+            ),
+            expect(
+                FOOD_DONE,
+                json!({"state": "idle", "food": false, "food_reads": 1, "food_reading": false,
+                       "optics": 0, "optics_off": true, "sensing": false, "motor": 0,
+                       "fault": "ok", "supervisor_fault": 0, "watchdog_resets": 0}),
+            ),
+        ],
+        FOOD_DONE + 100,
+        "single",
+    );
+
+    // One window, no longer than the filter needs, and nothing ever drove.
+    let (on, off) = lit_window(&report, 0);
+    assert!((1_100..=1_260).contains(&(off - on)), "{} ms", off - on);
+    assert!(!events(&report, "outputs").any(|e| e["motor"] != 0));
+}
+
+/// A refill shows at the next reading at rest, an interval later, with no
+/// feed in between; until then the level stays as it was.
+#[test]
+fn a_refill_clears_low_food_at_the_next_idle_reading() {
+    let next = FOOD_DONE + 10 * 60_000;
+    passing(
+        vec![
+            act(50, "inputs", &[7]),
+            act(FOOD_ON, "food_reads", &[1]),
+            expect(FOOD_DONE, json!({"food": false, "food_reads": 1})),
+            act(FOOD_DONE + 100, "inputs", &[5]),
+            expect(
+                next - 500,
+                json!({"food": false, "food_reads": 1, "optics": 0}),
+            ),
+            expect(
+                next + 1_300,
+                json!({"food": true, "food_reads": 2, "optics": 0, "state": "idle",
+                       "watchdog_resets": 0}),
+            ),
+        ],
+        next + 1_400,
+        "single",
+    );
+}
+
+/// A write that comes during a reading ends it at once and takes its lease
+/// with the emitters off (the harness's `no_lease_while_driving` invariant):
+/// it waits for nothing but the next step. The level waits for the retry.
+#[test]
+fn a_write_ends_a_reading() {
+    let write = FOOD_LIT + 400;
+    let retry = write + 30_000;
+    let report = passing(
+        vec![
+            act(50, "inputs", &[7]),
+            act(FOOD_ON, "food_reads", &[1]),
+            expect(FOOD_LIT + 300, json!({"food_reading": true})),
+            act(write, "write", &[1, 0]),
+            expect(
+                write + 700,
+                json!({"writes_done": 1, "food_reading": false, "food_reads": 0, "optics": 0,
+                       "fault": "ok", "supervisor_fault": 0}),
+            ),
+            expect(retry - 100, json!({"food_reads": 0, "optics": 0})),
+            expect(
+                retry + 1_400,
+                json!({"food": false, "food_reads": 1, "optics": 0, "watchdog_resets": 0}),
+            ),
+        ],
+        retry + 1_500,
+        "single",
+    );
+    let (on, off) = lit_window(&report, 0);
+    assert!(off > write && off - on < 1_000, "{on} to {off}");
+}
+
+/// A write pending when a reading falls due holds it off: the emitters never
+/// light before the write has gone.
+#[test]
+fn no_reading_starts_while_a_write_is_pending() {
+    let report = passing(
+        vec![
+            act(50, "inputs", &[7]),
+            act(FOOD_ON, "food_reads", &[1]),
+            act(FOOD_LIT - 1, "write", &[1, 0]),
+            expect(FOOD_LIT + 700, json!({"writes_done": 1, "food_reads": 0})),
+        ],
+        FOOD_LIT + 2_500,
+        "single",
+    );
+    let lease = events(&report, "lease")
+        .next()
+        .and_then(|e| e["device_ms"].as_u64())
+        .unwrap();
+    let (on, _) = lit_window(&report, 0);
+    assert!(on > lease, "lit at {on}, the lease began at {lease}");
+}
+
+/// A feed that arrives during a reading goes straight on: the reading ends
+/// unjudged, and the feed starts when it would have from rest.
+#[test]
+fn a_feed_during_a_reading_wins() {
+    let submit = FOOD_LIT + 500;
+    let report = passing(
+        vec![
+            act(50, "inputs", &[5]),
+            act(FOOD_ON, "food_reads", &[1]),
+            expect(submit - 100, json!({"food_reading": true, "food_reads": 0})),
+            act(submit, "submit", &[1, 1]),
+            expect(
+                submit,
+                json!({"submission": "enqueued", "food_reading": false}),
+            ),
+            expect(
+                submit + 200,
+                json!({"state": "feeding", "motor": 1, "food_reads": 0}),
+            ),
+            expect(
+                submit + ONE_PORTION,
+                json!({"state": "terminal", "outcome": "done", "completed": 1, "durable": true,
+                       "food": true}),
+            ),
+        ],
+        submit + ONE_PORTION + 100,
+        "single",
+    );
+
+    let drive = events(&report, "outputs")
+        .find(|e| e["motor"] != 0)
+        .and_then(|e| e["device_ms"].as_u64())
+        .unwrap();
+    assert!(drive - submit <= 150, "drove {} ms after", drive - submit);
+    assert_eq!(drives(&report, 1), 1);
+}
+
+/// On the pack alone no reading runs, however long; the adapter's return
+/// lets the one that is due go ahead.
+#[test]
+fn no_reading_on_batteries() {
+    let back = 3 * FOOD_LIT;
+    let report = passing(
+        vec![
+            act(50, "battery", &[2309]),
+            act(50, "inputs", &[3]),
+            act(FOOD_ON, "food_reads", &[1]),
+            expect(
+                back,
+                json!({"food_reads": 0, "food_reading": false, "optics": 0, "state": "idle"}),
+            ),
+            act(back, "inputs", &[7]),
+            expect(
+                back + FOOD_LIT + 2_000,
+                json!({"food": false, "food_reads": 1, "optics": 0}),
+            ),
+        ],
+        back + FOOD_LIT + 2_100,
+        "single",
+    );
+    let (on, _) = lit_window(&report, 0);
+    assert!(on > back, "lit at {on} on the pack");
+}
+
+/// The adapter leaving mid-window ends the reading unjudged.
+#[test]
+fn a_reading_ends_when_the_adapter_leaves() {
+    passing(
+        vec![
+            act(50, "inputs", &[7]),
+            act(FOOD_ON, "food_reads", &[1]),
+            expect(FOOD_LIT + 300, json!({"food_reading": true})),
+            act(FOOD_LIT + 400, "battery", &[2309]),
+            act(FOOD_LIT + 400, "inputs", &[3]),
+            expect(
+                FOOD_LIT + 500,
+                json!({"food_reading": false, "food_reads": 0, "optics": 0, "fault": "ok",
+                       "supervisor_fault": 0}),
+            ),
+        ],
+        FOOD_LIT + 600,
+        "single",
+    );
+}
+
+/// While the firmware holds readings back, as a trial's confirmation does, the
+/// emitters stay off; the first reading comes only a little after it lets go.
+#[test]
+fn a_held_feeder_reads_nothing_until_it_lets_go() {
+    let release = 40_000;
+    let report = passing(
+        vec![
+            act(50, "inputs", &[7]),
+            act(FOOD_ON, "food_held", &[1]),
+            act(FOOD_ON, "food_reads", &[1]),
+            expect(
+                release,
+                json!({"food_reads": 0, "optics": 0, "optics_off": true}),
+            ),
+            act(release, "food_held", &[0]),
+            expect(release + 4_900, json!({"food_reads": 0, "optics": 0})),
+            expect(
+                release + 6_300,
+                json!({"food": false, "food_reads": 1, "optics": 0}),
+            ),
+        ],
+        release + 6_400,
+        "single",
+    );
+    let (on, _) = lit_window(&report, 0);
+    assert!(on >= release + 5_000, "lit at {on}");
+}
+
+/// A loop held off during a reading (the Wi-Fi driver can do that to it) has
+/// the emitters cut within the owner lease and costs that reading alone: no
+/// latched fault and no reset, and the retry reads as usual.
+#[test]
+fn a_stalled_loop_loses_only_the_reading() {
+    let stall = FOOD_LIT + 300;
+    let retry = stall + 600 + 30_000;
+    let report = passing(
+        vec![
+            act(50, "inputs", &[7]),
+            act(FOOD_ON, "food_reads", &[1]),
+            act(stall, "owner", &[0]),
+            expect(stall + 500, json!({"optics": 0, "motor": 0})),
+            act(stall + 600, "owner", &[1]),
+            expect(
+                stall + 700,
+                json!({"state": "idle", "fault": "ok", "supervisor_fault": 0,
+                       "food_reading": false, "food_reads": 0, "watchdog_resets": 0}),
+            ),
+            expect(
+                retry + 1_400,
+                json!({"food": false, "food_reads": 1, "fault": "ok", "watchdog_resets": 0}),
+            ),
+        ],
+        retry + 1_500,
+        "single",
+    );
+    let (_, off) = lit_window(&report, 0);
+    assert!(off - stall <= 240, "cut {} ms into the stall", off - stall);
 }

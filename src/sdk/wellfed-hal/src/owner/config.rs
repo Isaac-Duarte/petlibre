@@ -5,6 +5,7 @@ use core::ptr;
 use wellfed_core::adc_scale::AdcCalibration;
 use wellfed_core::feed::controller::{FeedController, FeedLimits};
 use wellfed_core::feed::feedback::CAPACITY;
+use wellfed_core::feed::food_read::FOOD_READ_MS;
 use wellfed_core::feed::progress::BowlMode;
 use wellfed_core::feed::sensor_inputs::{SensorInputs, SensorLimits};
 use wellfed_core::flash_coord::{FlashCoord, FlashLimits};
@@ -88,6 +89,12 @@ impl OwnerConfig {
             || c.sensors.power_settle_ms >= c.prepare_timeout_ms
             || u64::from(c.prepare_timeout_ms) + u64::from(c.feed.max_duration_ms)
                 > u64::from(c.optics_max_on_ms)
+            // A food reading's window must let the filter say low, with a
+            // sample's lag at each of its two ends.
+            || u64::from(c.sensors.optical_settle_ms)
+                + u64::from(c.sensors.food_low_delay_ms)
+                + 2 * u64::from(c.sample_period_ms)
+                > u64::from(FOOD_READ_MS)
             || c.events.ticks_per_second < 1000
             || c.events.ticks_per_second > 1_000_000
             || c.events.timer_period_ms == 0

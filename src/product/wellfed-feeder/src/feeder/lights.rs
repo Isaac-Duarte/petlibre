@@ -16,13 +16,15 @@
 //! | an offer waits for a press or its code | lock | blink 250/250 ms | 70 |
 //! | the battery holds feeds | fault | blink 1000/1000 ms | 60 |
 //! | a feed is queued or runs | food | blink 500/500 ms | 50 |
-//! | the last feed's food beam read low | food | steady | 10 |
+//! | the food beam's latest reading is low | food | steady | 10 |
 //! | the panel is locked | lock | steady | 10 |
 //! | the feeder has an address | connection | steady | 10 |
 //!
-//! The food beam is lit only during feeds, so low food shows the last reading:
-//! it stays on until a feed reads food again, even after a refill, and shows
-//! nothing until this boot's first feed has read.
+//! The food beam is read during feeds and at rest, soon after boot and every
+//! ten minutes on the adapter ([`wellfed_core::feed::food_read`]), so low food
+//! shows within a few seconds of a boot and clears within ten minutes of a
+//! refill. On batteries, and on a trial boot until it has confirmed, it shows
+//! the latest reading there is, which may be none.
 //!
 //! With the `lights` setting off, or outside its window on the local clock,
 //! every light is dark, faults included, as stock drives them all LOW; the

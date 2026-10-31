@@ -10,8 +10,10 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use tokio::task::LocalSet;
+use tokio::time::sleep;
 use wellfed_client::history::{Delivered, Entry};
 use wellfed_connect::Connection;
+use wellfed_core::feed::food_read::{FOOD_READ_EVERY_MS, FOOD_READ_FIRST_MS};
 use wellfed_feeder_sim::feeding;
 use wellfed_feeder_sim::flash::Flash;
 use wellfed_feeder_sim::harness::Running;
@@ -314,6 +316,40 @@ async fn food(connection: &mut Connection, id: u8) -> FoodLevel {
         Answer::Status(status) => status.food,
         other => panic!("{other:?}"),
     }
+}
+
+/// With no feed at all, the boot's food reading shows an empty hopper as one
+/// `Food` event, and the next, ten minutes on, shows a refill.
+#[test]
+fn the_food_beam_reads_at_rest_after_a_boot_and_a_refill() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .start_paused(true)
+        .build()
+        .unwrap();
+    runtime.block_on(LocalSet::new().run_until(async {
+        let flash = Flash::memory();
+        let sim = start(&flash).await;
+        sim.type_line("empty").unwrap();
+        let mut owner = open(&sim).await;
+        owner.subscribe(None, false).await.unwrap();
+        assert_eq!(food(&mut owner, 1).await, FoodLevel::Unread, "just booted");
+
+        sleep(Duration::from_millis(u64::from(FOOD_READ_FIRST_MS) + 100)).await;
+        assert_eq!(next_food(&mut owner).await, FoodLevel::Low);
+        assert_eq!(food(&mut owner, 2).await, FoodLevel::Low);
+
+        // A session lasts 90 s without a request; the reading does not care.
+        sim.type_line("fill").unwrap();
+        let mut owner = open(&sim).await;
+        assert_eq!(food(&mut owner, 3).await, FoodLevel::Low, "not read yet");
+        drop(owner);
+        sleep(Duration::from_millis(u64::from(FOOD_READ_EVERY_MS))).await;
+        let mut owner = open(&sim).await;
+        assert_eq!(food(&mut owner, 4).await, FoodLevel::Present);
+
+        sim.stop().await;
+    }));
 }
 
 /// A feed runs whatever the food beam reads, as stock's does: on an empty

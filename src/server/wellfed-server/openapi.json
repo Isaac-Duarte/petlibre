@@ -6617,7 +6617,7 @@
           },
           {
             "type": "object",
-            "description": "The food beam's level changed (at most once a feed: the beam is lit\nonly during feeds). The first reading after a boot counts as one.",
+            "description": "The food beam's level changed (at most once a feed or a reading at\nrest). The first reading after a boot counts as one.",
             "required": [
               "level",
               "kind"
@@ -7215,7 +7215,7 @@
           },
           "food": {
             "$ref": "#/components/schemas/FoodLevel",
-            "description": "The hopper as the food beam last read it (during the last feed)."
+            "description": "The hopper as the food beam last read it, in a feed or at rest."
           },
           "last_event": {
             "type": [

@@ -58,8 +58,8 @@ pub enum Control {
     /// The battery channel's pin millivolts from now on and across
     /// restarts; `None` takes the cells out.
     Pack(Option<u32>),
-    /// Fill the hopper (`true`) or empty it, as the next feed's food beam
-    /// reads it. A restart fills it again.
+    /// Fill the hopper (`true`) or empty it, as the food beam next reads it.
+    /// A restart fills it again.
     Hopper(bool),
     /// End the next feed on this fault once it has driven a portion.
     FaultFeed(FeedFault),

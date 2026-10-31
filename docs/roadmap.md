@@ -31,7 +31,7 @@ This page tracks what works today and what comes next. It covers the replacement
 | Jam and sensor fault handling | Works | A jam, a blocked outlet or a sensor fault ends the feed by name, never retried, and shows in the status and history. Simulated jams on the feeder end as `jammed` and `mark_stuck`, and a blocked outlet stops the motor within about a second; kibble pressed into the rotor by hand did not jam it. |
 | Schedules | Works | Up to ten plans, run on the feeder with no server. |
 | Feeding history | Partial | `wellfed feeds` lists each feed the feeder keeps, across reboots; a long history needs the server. |
-| Food level | Works | The status shows the hopper as the last feed read it. A feed on low food still runs, as stock's does, and its history entry says the food read low. Checked on the feeder with and without food. The food beam is a low warning, reading empty while about five portions are still left. |
+| Food level | Partial | The status and the low-food light show the hopper's latest reading. A feed reads it, and on the adapter so does a short window soon after a boot and every 10 minutes, so a refill shows with no feed. A feed on low food still runs, as stock's does, and its history entry says the food read low. Checked on the feeder with and without food during feeds; the window at rest is tested in simulation only, and its emitter current is unmeasured. The food beam is a low warning, reading empty while about five portions are still left. |
 
 ## The feeder itself
 

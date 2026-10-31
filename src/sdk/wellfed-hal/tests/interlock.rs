@@ -660,3 +660,122 @@ mod writes {
         assert_eq!(OVERLAPS.load(Ordering::SeqCst), 0);
     }
 }
+
+/// A food reading holds writes and joins off, is ended by a waiting write,
+/// shows nothing to a client, and starts only on a free turn.
+mod food_readings {
+    use super::*;
+    use wellfed_hal::interlock::{WriteStart, WriteStep, WriteTurn};
+
+    #[test]
+    fn a_reading_starts_only_with_nothing_else_running_or_waiting() {
+        let interlock = Interlock::new();
+        assert!(!interlock.holds_reading());
+        assert!(interlock.begin_reading(BOUND_MS));
+        assert!(!interlock.begin_reading(BOUND_MS), "one at a time");
+        interlock.end_reading();
+
+        // A write running, then one waiting.
+        let mut first = WriteTurn::new();
+        assert_eq!(
+            first.begin(&interlock, 0, || true),
+            WriteStep::Go(WriteStart::Free)
+        );
+        assert!(interlock.holds_reading());
+        assert!(!interlock.begin_reading(BOUND_MS));
+        let mut second = WriteTurn::new();
+        assert_eq!(second.begin(&interlock, 0, || true), WriteStep::Wait);
+        interlock.end_write();
+        assert!(interlock.holds_reading(), "a writer waits");
+        assert!(!interlock.begin_reading(BOUND_MS));
+        assert!(matches!(
+            second.begin(&interlock, 10, || true),
+            WriteStep::Go(_)
+        ));
+        interlock.end_write();
+        assert!(interlock.begin_reading(BOUND_MS));
+        interlock.end_reading();
+
+        // A feed's claim, then a join's turn.
+        interlock.claim_feed(BOUND_MS).unwrap();
+        assert!(!interlock.begin_reading(BOUND_MS));
+        interlock.release_feed();
+        let clock = Clock::new();
+        assert_eq!(clock.join(&interlock, |_| {}), JoinStart::Free);
+        assert!(!interlock.begin_reading(BOUND_MS));
+        interlock.end_join();
+        assert!(interlock.begin_reading(BOUND_MS));
+    }
+
+    /// The write waits, whatever it reads of the outputs, and tells the loop.
+    #[test]
+    fn a_write_waits_for_a_reading_and_marks_it_to_end() {
+        let interlock = Interlock::new();
+        assert!(interlock.begin_reading(BOUND_MS));
+        assert!(!interlock.holds_reading());
+
+        // Far past any bound, and reading stopped: still never forced.
+        let mut turn = WriteTurn::new();
+        for now in [0, BOUND_MS + 1, 2 * BOUND_MS + 2] {
+            assert_eq!(turn.begin(&interlock, now, || true), WriteStep::Wait);
+        }
+        assert!(interlock.holds_reading());
+        assert!(!interlock.writing());
+
+        interlock.end_reading();
+        assert!(matches!(
+            turn.begin(&interlock, 2 * BOUND_MS + 3, || true),
+            WriteStep::Go(WriteStart::Waited { .. })
+        ));
+    }
+
+    /// Clients see nothing of a reading: nothing refuses them `Busy`, and
+    /// the turn a feed reads is free.
+    #[test]
+    fn a_reading_claims_nothing_a_client_can_see() {
+        let interlock = Interlock::new();
+        assert!(interlock.begin_reading(BOUND_MS));
+        assert!(!interlock.outputs_claimed());
+        assert!(!interlock.claim_in_bound(0));
+        assert_eq!(interlock.turn(), Turn::Free);
+    }
+
+    /// A join waits for the reading's end, and no longer than its bound.
+    #[test]
+    fn a_join_waits_for_a_reading_for_at_most_its_bound() {
+        let interlock = Interlock::new();
+        assert!(interlock.begin_reading(BOUND_MS));
+        let clock = Clock::new();
+        let start = clock.join(&interlock, |waits| {
+            if waits == 3 {
+                interlock.end_reading();
+            }
+        });
+        assert_eq!(
+            start,
+            JoinStart::Waited {
+                ms: 3 * JOIN_POLL_MS
+            }
+        );
+        interlock.end_join();
+
+        assert!(interlock.begin_reading(JOIN_POLL_MS));
+        let clock = Clock::new();
+        assert_eq!(
+            clock.join(&interlock, |_| {}),
+            JoinStart::Forced { ms: JOIN_POLL_MS }
+        );
+    }
+
+    /// A feed's claim is refused nothing by a reading. The loop ends the
+    /// reading first, so it meets the turn as it would with none.
+    #[test]
+    fn a_feed_claims_straight_through_a_reading() {
+        let interlock = Interlock::new();
+        assert!(interlock.begin_reading(BOUND_MS));
+        assert_eq!(interlock.claim_feed(BOUND_MS), Ok(()));
+        assert!(interlock.outputs_claimed());
+        interlock.end_reading();
+        assert!(interlock.outputs_claimed());
+    }
+}
